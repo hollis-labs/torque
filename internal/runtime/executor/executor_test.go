@@ -96,3 +96,32 @@ func TestExecutorInterfaceRun(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "done", result.Status)
 }
+
+func TestRegistryRegisterAndGet(t *testing.T) {
+	reg := executor.NewRegistry()
+
+	mock := executor.NewMockExecutor()
+	reg.Register(mock)
+
+	got, err := reg.Get("mock")
+	require.NoError(t, err)
+	assert.Equal(t, "mock", got.Name())
+}
+
+func TestRegistryGetNotFound(t *testing.T) {
+	reg := executor.NewRegistry()
+
+	_, err := reg.Get("nonexistent")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestRegistryList(t *testing.T) {
+	reg := executor.NewRegistry()
+
+	mock := executor.NewMockExecutor()
+	reg.Register(mock)
+
+	names := reg.List()
+	assert.Equal(t, []string{"mock"}, names)
+}
