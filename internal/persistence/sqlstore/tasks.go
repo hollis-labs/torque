@@ -1,0 +1,496 @@
+package sqlstore
+
+import (
+	"database/sql"
+	"fmt"
+	"strings"
+	"time"
+)
+
+// TaskRecord mirrors the tasks table row.
+type TaskRecord struct {
+	ID               string
+	Title            string
+	Description      string
+	Status           string
+	Priority         int
+	Tags             string
+	Manual           bool
+	Executor         string
+	AgentProfile     string
+	WorkingDir       string
+	Tools            sql.NullString
+	Permissions      sql.NullString
+	Environment      sql.NullString
+	SystemPrompt     string
+	Files            sql.NullString
+	CostBudget       sql.NullFloat64
+	MaxRetries       int
+	MaxDurationMs    sql.NullInt64
+	TokenBudget      sql.NullInt64
+	OnDone           string
+	OnFail           string
+	OnReview         string
+	EscalationChain  sql.NullString
+	QualityGates     sql.NullString
+	Deliverables     sql.NullString
+	DeliverablePreset string
+	OnDoneMerge      string
+	DependsOn        sql.NullString
+	BlockedReason    string
+	Metadata         sql.NullString
+	SprintID         sql.NullString
+	ProjectID        sql.NullString
+	EpicID           sql.NullString
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+// TaskFilter holds optional filter criteria for ListTasks.
+type TaskFilter struct {
+	Status    string
+	Priority  int
+	SprintID  string
+	ProjectID string
+	EpicID    string
+	Tag       string
+	Executor  string
+	Limit     int
+	Offset    int
+}
+
+// TaskUpdate holds optional fields to update; nil pointer = no change.
+type TaskUpdate struct {
+	Title             *string
+	Description       *string
+	Status            *string
+	Priority          *int
+	Tags              *string
+	Manual            *bool
+	Executor          *string
+	AgentProfile      *string
+	WorkingDir        *string
+	Tools             *sql.NullString
+	Permissions       *sql.NullString
+	Environment       *sql.NullString
+	SystemPrompt      *string
+	Files             *sql.NullString
+	CostBudget        *sql.NullFloat64
+	MaxRetries        *int
+	MaxDurationMs     *sql.NullInt64
+	TokenBudget       *sql.NullInt64
+	OnDone            *string
+	OnFail            *string
+	OnReview          *string
+	EscalationChain   *sql.NullString
+	QualityGates      *sql.NullString
+	Deliverables      *sql.NullString
+	DeliverablePreset *string
+	OnDoneMerge       *string
+	DependsOn         *sql.NullString
+	BlockedReason     *string
+	Metadata          *sql.NullString
+	SprintID          *sql.NullString
+	ProjectID         *sql.NullString
+	EpicID            *sql.NullString
+}
+
+// applyDefaults fills zero-value fields with domain defaults.
+func applyDefaults(t *TaskRecord) {
+	if t.Status == "" {
+		t.Status = "todo"
+	}
+	if t.Tags == "" {
+		t.Tags = "[]"
+	}
+	if t.OnDone == "" {
+		t.OnDone = "review"
+	}
+	if t.OnFail == "" {
+		t.OnFail = "retry"
+	}
+	if t.OnReview == "" {
+		t.OnReview = "pause"
+	}
+	if t.OnDoneMerge == "" {
+		t.OnDoneMerge = "none"
+	}
+	if t.MaxRetries == 0 {
+		t.MaxRetries = 3
+	}
+}
+
+// The 35-column SELECT list used by GetTask, ListTasks, and SearchTasks.
+const taskSelectCols = `id, title, description, status, priority, tags, manual,
+	executor, agent_profile, working_dir, tools, permissions, environment,
+	system_prompt, files, cost_budget, max_retries, max_duration_ms, token_budget,
+	on_done, on_fail, on_review, escalation_chain, quality_gates, deliverables,
+	deliverable_preset, on_done_merge, depends_on, blocked_reason, metadata,
+	sprint_id, project_id, epic_id, created_at, updated_at`
+
+// scanTask scans a single row into a TaskRecord.
+func scanTask(row interface {
+	Scan(...any) error
+}) (*TaskRecord, error) {
+	var t TaskRecord
+	var manual int
+	err := row.Scan(
+		&t.ID, &t.Title, &t.Description, &t.Status, &t.Priority, &t.Tags, &manual,
+		&t.Executor, &t.AgentProfile, &t.WorkingDir, &t.Tools, &t.Permissions, &t.Environment,
+		&t.SystemPrompt, &t.Files, &t.CostBudget, &t.MaxRetries, &t.MaxDurationMs, &t.TokenBudget,
+		&t.OnDone, &t.OnFail, &t.OnReview, &t.EscalationChain, &t.QualityGates, &t.Deliverables,
+		&t.DeliverablePreset, &t.OnDoneMerge, &t.DependsOn, &t.BlockedReason, &t.Metadata,
+		&t.SprintID, &t.ProjectID, &t.EpicID, &t.CreatedAt, &t.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	t.Manual = manual != 0
+	return &t, nil
+}
+
+// CreateTask inserts a new task with defaults applied.
+func (s *Store) CreateTask(t *TaskRecord) error {
+	applyDefaults(t)
+	now := time.Now().UTC()
+	t.CreatedAt = now
+	t.UpdatedAt = now
+
+	var manual int
+	if t.Manual {
+		manual = 1
+	}
+
+	const q = `INSERT INTO tasks (
+		id, title, description, status, priority, tags, manual,
+		executor, agent_profile, working_dir, tools, permissions, environment,
+		system_prompt, files, cost_budget, max_retries, max_duration_ms, token_budget,
+		on_done, on_fail, on_review, escalation_chain, quality_gates, deliverables,
+		deliverable_preset, on_done_merge, depends_on, blocked_reason, metadata,
+		sprint_id, project_id, epic_id
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+
+	_, err := s.db.Exec(q,
+		t.ID, t.Title, t.Description, t.Status, t.Priority, t.Tags, manual,
+		t.Executor, t.AgentProfile, t.WorkingDir, t.Tools, t.Permissions, t.Environment,
+		t.SystemPrompt, t.Files, t.CostBudget, t.MaxRetries, t.MaxDurationMs, t.TokenBudget,
+		t.OnDone, t.OnFail, t.OnReview, t.EscalationChain, t.QualityGates, t.Deliverables,
+		t.DeliverablePreset, t.OnDoneMerge, t.DependsOn, t.BlockedReason, t.Metadata,
+		t.SprintID, t.ProjectID, t.EpicID,
+	)
+	return err
+}
+
+// GetTask fetches a single task by ID.
+func (s *Store) GetTask(id string) (*TaskRecord, error) {
+	q := `SELECT ` + taskSelectCols + ` FROM tasks WHERE id = ?`
+	row := s.db.QueryRow(q, id)
+	t, err := scanTask(row)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("task %s not found", id)
+	}
+	return t, err
+}
+
+// ListTasks returns tasks matching the filter, ordered by priority ASC, created_at ASC.
+func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
+	var where []string
+	var args []any
+
+	if f.Status != "" {
+		where = append(where, "status = ?")
+		args = append(args, f.Status)
+	}
+	if f.Priority != 0 {
+		where = append(where, "priority = ?")
+		args = append(args, f.Priority)
+	}
+	if f.SprintID != "" {
+		where = append(where, "sprint_id = ?")
+		args = append(args, f.SprintID)
+	}
+	if f.ProjectID != "" {
+		where = append(where, "project_id = ?")
+		args = append(args, f.ProjectID)
+	}
+	if f.EpicID != "" {
+		where = append(where, "epic_id = ?")
+		args = append(args, f.EpicID)
+	}
+	if f.Tag != "" {
+		where = append(where, "tags LIKE ?")
+		args = append(args, "%"+f.Tag+"%")
+	}
+	if f.Executor != "" {
+		where = append(where, "executor = ?")
+		args = append(args, f.Executor)
+	}
+
+	q := `SELECT ` + taskSelectCols + ` FROM tasks`
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	q += " ORDER BY priority ASC, created_at ASC"
+	if f.Limit > 0 {
+		q += fmt.Sprintf(" LIMIT %d", f.Limit)
+	}
+	if f.Offset > 0 {
+		q += fmt.Sprintf(" OFFSET %d", f.Offset)
+	}
+
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tasks []TaskRecord
+	for rows.Next() {
+		t, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, *t)
+	}
+	return tasks, rows.Err()
+}
+
+// UpdateTask applies non-nil pointer fields to the task row.
+func (s *Store) UpdateTask(id string, u TaskUpdate) error {
+	var setClauses []string
+	var args []any
+
+	if u.Title != nil {
+		setClauses = append(setClauses, "title = ?")
+		args = append(args, *u.Title)
+	}
+	if u.Description != nil {
+		setClauses = append(setClauses, "description = ?")
+		args = append(args, *u.Description)
+	}
+	if u.Status != nil {
+		setClauses = append(setClauses, "status = ?")
+		args = append(args, *u.Status)
+	}
+	if u.Priority != nil {
+		setClauses = append(setClauses, "priority = ?")
+		args = append(args, *u.Priority)
+	}
+	if u.Tags != nil {
+		setClauses = append(setClauses, "tags = ?")
+		args = append(args, *u.Tags)
+	}
+	if u.Manual != nil {
+		v := 0
+		if *u.Manual {
+			v = 1
+		}
+		setClauses = append(setClauses, "manual = ?")
+		args = append(args, v)
+	}
+	if u.Executor != nil {
+		setClauses = append(setClauses, "executor = ?")
+		args = append(args, *u.Executor)
+	}
+	if u.AgentProfile != nil {
+		setClauses = append(setClauses, "agent_profile = ?")
+		args = append(args, *u.AgentProfile)
+	}
+	if u.WorkingDir != nil {
+		setClauses = append(setClauses, "working_dir = ?")
+		args = append(args, *u.WorkingDir)
+	}
+	if u.Tools != nil {
+		setClauses = append(setClauses, "tools = ?")
+		args = append(args, *u.Tools)
+	}
+	if u.Permissions != nil {
+		setClauses = append(setClauses, "permissions = ?")
+		args = append(args, *u.Permissions)
+	}
+	if u.Environment != nil {
+		setClauses = append(setClauses, "environment = ?")
+		args = append(args, *u.Environment)
+	}
+	if u.SystemPrompt != nil {
+		setClauses = append(setClauses, "system_prompt = ?")
+		args = append(args, *u.SystemPrompt)
+	}
+	if u.Files != nil {
+		setClauses = append(setClauses, "files = ?")
+		args = append(args, *u.Files)
+	}
+	if u.CostBudget != nil {
+		setClauses = append(setClauses, "cost_budget = ?")
+		args = append(args, *u.CostBudget)
+	}
+	if u.MaxRetries != nil {
+		setClauses = append(setClauses, "max_retries = ?")
+		args = append(args, *u.MaxRetries)
+	}
+	if u.MaxDurationMs != nil {
+		setClauses = append(setClauses, "max_duration_ms = ?")
+		args = append(args, *u.MaxDurationMs)
+	}
+	if u.TokenBudget != nil {
+		setClauses = append(setClauses, "token_budget = ?")
+		args = append(args, *u.TokenBudget)
+	}
+	if u.OnDone != nil {
+		setClauses = append(setClauses, "on_done = ?")
+		args = append(args, *u.OnDone)
+	}
+	if u.OnFail != nil {
+		setClauses = append(setClauses, "on_fail = ?")
+		args = append(args, *u.OnFail)
+	}
+	if u.OnReview != nil {
+		setClauses = append(setClauses, "on_review = ?")
+		args = append(args, *u.OnReview)
+	}
+	if u.EscalationChain != nil {
+		setClauses = append(setClauses, "escalation_chain = ?")
+		args = append(args, *u.EscalationChain)
+	}
+	if u.QualityGates != nil {
+		setClauses = append(setClauses, "quality_gates = ?")
+		args = append(args, *u.QualityGates)
+	}
+	if u.Deliverables != nil {
+		setClauses = append(setClauses, "deliverables = ?")
+		args = append(args, *u.Deliverables)
+	}
+	if u.DeliverablePreset != nil {
+		setClauses = append(setClauses, "deliverable_preset = ?")
+		args = append(args, *u.DeliverablePreset)
+	}
+	if u.OnDoneMerge != nil {
+		setClauses = append(setClauses, "on_done_merge = ?")
+		args = append(args, *u.OnDoneMerge)
+	}
+	if u.DependsOn != nil {
+		setClauses = append(setClauses, "depends_on = ?")
+		args = append(args, *u.DependsOn)
+	}
+	if u.BlockedReason != nil {
+		setClauses = append(setClauses, "blocked_reason = ?")
+		args = append(args, *u.BlockedReason)
+	}
+	if u.Metadata != nil {
+		setClauses = append(setClauses, "metadata = ?")
+		args = append(args, *u.Metadata)
+	}
+	if u.SprintID != nil {
+		setClauses = append(setClauses, "sprint_id = ?")
+		args = append(args, *u.SprintID)
+	}
+	if u.ProjectID != nil {
+		setClauses = append(setClauses, "project_id = ?")
+		args = append(args, *u.ProjectID)
+	}
+	if u.EpicID != nil {
+		setClauses = append(setClauses, "epic_id = ?")
+		args = append(args, *u.EpicID)
+	}
+
+	// Always update updated_at
+	setClauses = append(setClauses, "updated_at = ?")
+	args = append(args, time.Now().UTC())
+	args = append(args, id)
+
+	q := `UPDATE tasks SET ` + strings.Join(setClauses, ", ") + ` WHERE id = ?`
+	res, err := s.db.Exec(q, args...)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("task %s not found", id)
+	}
+	return nil
+}
+
+// TransitionTask sets a new status on the task.
+func (s *Store) TransitionTask(id, newStatus string) error {
+	res, err := s.db.Exec(
+		`UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?`,
+		newStatus, time.Now().UTC(), id,
+	)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("task %s not found", id)
+	}
+	return nil
+}
+
+// DeleteTask removes a task by ID.
+func (s *Store) DeleteTask(id string) error {
+	res, err := s.db.Exec(`DELETE FROM tasks WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("task %s not found", id)
+	}
+	return nil
+}
+
+// SearchTasks does a LIKE search on title and description.
+func (s *Store) SearchTasks(query string) ([]TaskRecord, error) {
+	pattern := "%" + query + "%"
+	q := `SELECT ` + taskSelectCols + ` FROM tasks WHERE title LIKE ? OR description LIKE ? ORDER BY priority ASC, created_at ASC`
+	rows, err := s.db.Query(q, pattern, pattern)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tasks []TaskRecord
+	for rows.Next() {
+		t, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, *t)
+	}
+	return tasks, rows.Err()
+}
+
+// NextTaskID generates an ID in CW-YYYYMMDD-NNNN format.
+func (s *Store) NextTaskID() (string, error) {
+	today := time.Now().UTC().Format("20060102")
+	prefix := "CW-" + today + "-"
+
+	var maxID sql.NullString
+	err := s.db.QueryRow(
+		`SELECT MAX(id) FROM tasks WHERE id LIKE ?`,
+		prefix+"%",
+	).Scan(&maxID)
+	if err != nil {
+		return "", err
+	}
+
+	seq := 1
+	if maxID.Valid && maxID.String != "" {
+		parts := strings.Split(maxID.String, "-")
+		if len(parts) == 3 {
+			_, _ = fmt.Sscanf(parts[2], "%d", &seq)
+			seq++
+		}
+	}
+
+	return fmt.Sprintf("%s%04d", prefix, seq), nil
+}
