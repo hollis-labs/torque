@@ -3,6 +3,7 @@ module github.com/hollis-labs/clockwork-manifold
 go 1.26.1
 
 require (
+	github.com/go-chi/chi/v5 v5.2.5
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/mark3labs/mcp-go v0.47.0
 	github.com/spf13/cobra v1.10.2
