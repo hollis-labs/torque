@@ -54,7 +54,7 @@ func TestEventTypes(t *testing.T) {
 		executor.EventTokenUsage,
 	}
 	for _, et := range events {
-		assert.NotEmpty(t, string(et))
+		assert.NotEmpty(t, et.String())
 	}
 }
 
