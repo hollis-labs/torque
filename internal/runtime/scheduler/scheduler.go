@@ -238,7 +238,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 				Type:   "run.event",
 				TaskID: capturedTaskID,
 				RunID:  capturedRunID,
-				Data:   map[string]interface{}{"event_type": string(event.Type), "content": event.Content},
+				Data:   map[string]interface{}{"event_type": event.Type.String(), "content": event.Content},
 			})
 		}
 

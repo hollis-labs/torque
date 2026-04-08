@@ -24,6 +24,8 @@ func main() {
 	})
 
 	root.AddCommand(mcpCmd())
+	root.AddCommand(newPluginCmd())
+	root.AddCommand(serveCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)

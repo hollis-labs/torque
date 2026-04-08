@@ -23,6 +23,7 @@ func setupScheduler(t *testing.T) (*scheduler.Scheduler, *sqlstore.Store, *execu
 
 	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
+	db.SetMaxOpenConns(1) // in-memory SQLite is per-connection; force single conn
 	require.NoError(t, migrations.Run(db))
 	store, err := sqlstore.New(db, "sqlite")
 	require.NoError(t, err)

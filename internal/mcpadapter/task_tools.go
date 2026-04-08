@@ -2,6 +2,7 @@ package mcpadapter
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -27,6 +28,9 @@ func (a *Adapter) registerTaskTools() {
 		mcp.WithString("on_done_merge", mcp.Description("Merge hook on done")),
 		mcp.WithString("depends_on", mcp.Description("JSON array of dependency task IDs")),
 		mcp.WithBoolean("manual", mcp.Description("Whether the task is manual")),
+		mcp.WithString("sprint_id", mcp.Description("Sprint ID to associate this task with (requires features.sprints)")),
+		mcp.WithString("project_id", mcp.Description("Project ID to associate this task with (requires features.projects)")),
+		mcp.WithString("epic_id", mcp.Description("Epic ID to associate this task with (requires features.epics)")),
 	), a.handleTaskCreate)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_get",
@@ -49,6 +53,9 @@ func (a *Adapter) registerTaskTools() {
 		mcp.WithString("description", mcp.Description("New description")),
 		mcp.WithNumber("priority", mcp.Description("New priority")),
 		mcp.WithString("tags", mcp.Description("New tags JSON array")),
+		mcp.WithString("sprint_id", mcp.Description("Sprint ID (set empty string to unassign)")),
+		mcp.WithString("project_id", mcp.Description("Project ID (set empty string to unassign)")),
+		mcp.WithString("epic_id", mcp.Description("Epic ID (set empty string to unassign)")),
 	), a.handleTaskUpdate)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_delete",
@@ -87,6 +94,9 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest)
 		OnFail:       reqStr(req, "on_fail"),
 		OnDoneMerge:  reqStr(req, "on_done_merge"),
 		Manual:       reqBool(req, "manual"),
+		SprintID:     reqStr(req, "sprint_id"),
+		ProjectID:    reqStr(req, "project_id"),
+		EpicID:       reqStr(req, "epic_id"),
 	}
 
 	if raw := reqStr(req, "tags"); raw != "" {
@@ -148,6 +158,24 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 	}
 	if v := reqStr(req, "tags"); v != "" {
 		update.Tags = &v
+	}
+
+	// Association fields — allow setting to empty string to unassign
+	args := req.GetArguments()
+	if _, ok := args["sprint_id"]; ok {
+		v := reqStr(req, "sprint_id")
+		ns := sql.NullString{String: v, Valid: v != ""}
+		update.SprintID = &ns
+	}
+	if _, ok := args["project_id"]; ok {
+		v := reqStr(req, "project_id")
+		ns := sql.NullString{String: v, Valid: v != ""}
+		update.ProjectID = &ns
+	}
+	if _, ok := args["epic_id"]; ok {
+		v := reqStr(req, "epic_id")
+		ns := sql.NullString{String: v, Valid: v != ""}
+		update.EpicID = &ns
 	}
 
 	if err := a.svc.Task.Update(id, update); err != nil {

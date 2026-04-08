@@ -44,7 +44,8 @@ type TaskCreateInput struct {
 
 // TaskService provides business logic for tasks.
 type TaskService struct {
-	store *sqlstore.Store
+	store   *sqlstore.Store
+	feature *FeatureService
 }
 
 // Create validates and creates a new task.
@@ -56,6 +57,44 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	priority := input.Priority
 	if priority == 0 {
 		priority = 2
+	}
+
+	// Validate sprint association
+	if input.SprintID != "" {
+		if s.feature != nil && s.feature.IsEnabled("sprints") {
+			sprint, err := s.store.GetSprint(input.SprintID)
+			if err != nil {
+				return nil, &ValidationError{Field: "sprint_id", Message: "sprint not found: " + input.SprintID}
+			}
+			if sprint.Status == "completed" {
+				return nil, &ValidationError{Field: "sprint_id", Message: "cannot add tasks to a completed sprint"}
+			}
+		} else {
+			// Feature not enabled — silently clear the association
+			input.SprintID = ""
+		}
+	}
+
+	// Validate project association
+	if input.ProjectID != "" {
+		if s.feature != nil && s.feature.IsEnabled("projects") {
+			if _, err := s.store.GetProject(input.ProjectID); err != nil {
+				return nil, &ValidationError{Field: "project_id", Message: "project not found: " + input.ProjectID}
+			}
+		} else {
+			input.ProjectID = ""
+		}
+	}
+
+	// Validate epic association
+	if input.EpicID != "" {
+		if s.feature != nil && s.feature.IsEnabled("epics") {
+			if _, err := s.store.GetEpic(input.EpicID); err != nil {
+				return nil, &ValidationError{Field: "epic_id", Message: "epic not found: " + input.EpicID}
+			}
+		} else {
+			input.EpicID = ""
+		}
 	}
 
 	id, err := s.store.NextTaskID()

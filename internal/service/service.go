@@ -9,15 +9,25 @@ type Service struct {
 	Artifact *ArtifactService
 	Comment  *CommentService
 	Settings *SettingsService
+	Feature  *FeatureService
+	Sprint   *SprintService
+	Project  *ProjectService
+	Epic     *EpicService
 }
 
 // New constructs a Service wired to the provided store.
 func New(store *sqlstore.Store) *Service {
+	feature := &FeatureService{store: store}
+	task := &TaskService{store: store, feature: feature}
 	return &Service{
-		Task:     &TaskService{store: store},
+		Task:     task,
 		Run:      &RunService{store: store},
 		Artifact: &ArtifactService{store: store},
 		Comment:  &CommentService{store: store},
 		Settings: &SettingsService{store: store},
+		Feature:  feature,
+		Sprint:   &SprintService{store: store, feature: feature, task: task},
+		Project:  &ProjectService{store: store, feature: feature},
+		Epic:     &EpicService{store: store, feature: feature},
 	}
 }

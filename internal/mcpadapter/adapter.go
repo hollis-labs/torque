@@ -24,6 +24,7 @@ func New(svc *service.Service) *Adapter {
 	)
 	a := &Adapter{svc: svc, server: s}
 	a.registerCoreTools()
+	a.registerOptInTools()
 	return a
 }
 
@@ -42,8 +43,27 @@ func (a *Adapter) registerCoreTools() {
 	a.registerSchedulerTools()
 }
 
+// registerOptInTools checks feature flags and registers tools for enabled layers.
+// Called at startup; features must be enabled before the adapter is created.
+func (a *Adapter) registerOptInTools() {
+	if a.svc.Feature.IsEnabled("sprints") {
+		a.registerSprintTools()
+	}
+	if a.svc.Feature.IsEnabled("projects") {
+		a.registerProjectTools()
+	}
+	if a.svc.Feature.IsEnabled("epics") {
+		a.registerEpicTools()
+	}
+}
+
 func (a *Adapter) handleHealth(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return mcp.NewToolResultText("Clockwork Manifold is running"), nil
+	features := a.svc.Feature.ListEnabled()
+	return jsonResult(map[string]interface{}{
+		"status":           "running",
+		"message":          "Clockwork Manifold is running",
+		"enabled_features": features,
+	})
 }
 
 // ---- helpers ----------------------------------------------------------------

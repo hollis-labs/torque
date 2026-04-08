@@ -48,7 +48,8 @@ type TaskRecord struct {
 
 // TaskFilter holds optional filter criteria for ListTasks.
 type TaskFilter struct {
-	Status    string
+	Status    string   // single status (legacy)
+	Statuses  []string // multiple statuses (OR filter)
 	Priority  int
 	SprintID  string
 	ProjectID string
@@ -197,7 +198,14 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 	var where []string
 	var args []any
 
-	if f.Status != "" {
+	if len(f.Statuses) > 0 {
+		placeholders := make([]string, len(f.Statuses))
+		for i, s := range f.Statuses {
+			placeholders[i] = "?"
+			args = append(args, s)
+		}
+		where = append(where, "status IN ("+strings.Join(placeholders, ",")+")")
+	} else if f.Status != "" {
 		where = append(where, "status = ?")
 		args = append(args, f.Status)
 	}

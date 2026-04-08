@@ -12,6 +12,35 @@ type Config struct {
 	RepoRoot    string
 	DataDir     string
 	Scheduler   SchedulerConfig
+	Concurrency ConcurrencyConfig
+	Merge       MergeConfig
+}
+
+type ConcurrencyConfig struct {
+	MaxReadConns     int
+	BusyTimeoutMs    int
+	WriteChannelSize int
+	DrainBatchSize   int
+	DrainIntervalMs  int
+	QueueDBPath      string
+}
+
+// MergeConfig holds configuration for merge conflict resolution.
+type MergeConfig struct {
+	// ResolutionExecutor is the executor to use for resolution tasks (e.g., "cli").
+	ResolutionExecutor string
+
+	// ResolutionAgent is the agent profile to use for resolution tasks.
+	ResolutionAgent string
+
+	// ConfidenceThreshold is the minimum confidence score to auto-accept a resolution.
+	ConfidenceThreshold float64
+
+	// MaxResolutionAttempts is the max number of times a resolution task can be retried.
+	MaxResolutionAttempts int
+
+	// NotifyOnConflict sends a notification when a merge conflict is detected.
+	NotifyOnConflict bool
 }
 
 type SchedulerConfig struct {
@@ -24,6 +53,7 @@ type SchedulerConfig struct {
 	Enabled          bool
 	MaxPerProject    int
 	DefaultMerge     string
+	WorktreeCleanup  string
 }
 
 func Load() (*Config, error) {
@@ -43,6 +73,22 @@ func Load() (*Config, error) {
 			Enabled:          envBool("CLOCKWORK_SCHED_ENABLED", true),
 			MaxPerProject:    envInt("CLOCKWORK_SCHED_MAX_PER_PROJECT", 2),
 			DefaultMerge:     envOr("CLOCKWORK_SCHED_DEFAULT_MERGE", "none"),
+			WorktreeCleanup:  envOr("CLOCKWORK_SCHED_WORKTREE_CLEANUP", "on_merge"),
+		},
+		Concurrency: ConcurrencyConfig{
+			MaxReadConns:     envInt("CLOCKWORK_MAX_READ_CONNS", 4),
+			BusyTimeoutMs:    envInt("CLOCKWORK_BUSY_TIMEOUT_MS", 5000),
+			WriteChannelSize: envInt("CLOCKWORK_WRITE_CHANNEL_SIZE", 256),
+			DrainBatchSize:   envInt("CLOCKWORK_DRAIN_BATCH_SIZE", 50),
+			DrainIntervalMs:  envInt("CLOCKWORK_DRAIN_INTERVAL_MS", 1000),
+			QueueDBPath:      envOr("CLOCKWORK_QUEUE_DB_PATH", "queue.db"),
+		},
+		Merge: MergeConfig{
+			ResolutionExecutor:    envOr("CLOCKWORK_MERGE_EXECUTOR", "cli"),
+			ResolutionAgent:       envOr("CLOCKWORK_MERGE_AGENT", "default"),
+			ConfidenceThreshold:   envFloat("CLOCKWORK_MERGE_CONFIDENCE", 0.8),
+			MaxResolutionAttempts: envInt("CLOCKWORK_MERGE_MAX_ATTEMPTS", 1),
+			NotifyOnConflict:      envBool("CLOCKWORK_MERGE_NOTIFY", true),
 		},
 	}
 	return cfg, nil

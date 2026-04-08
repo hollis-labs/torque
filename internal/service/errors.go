@@ -27,3 +27,11 @@ type TransitionError struct {
 func (e *TransitionError) Error() string {
 	return fmt.Sprintf("cannot transition from %s to %s: %s", e.From, e.To, e.Message)
 }
+
+type FeatureDisabledError struct {
+	Feature string
+}
+
+func (e *FeatureDisabledError) Error() string {
+	return fmt.Sprintf("feature %q is not enabled — set features.%s = true in settings", e.Feature, e.Feature)
+}

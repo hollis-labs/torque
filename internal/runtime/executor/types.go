@@ -1,11 +1,15 @@
 package executor
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // ExecutionJob is the self-contained execution contract passed to an executor.
 // Built from a TaskRecord's fields by the scheduler.
 type ExecutionJob struct {
 	TaskID       string
+	RunID        int64
 	Description  string
 	SystemPrompt string
 	WorkingDir   string
@@ -16,6 +20,14 @@ type ExecutionJob struct {
 	Files        []string
 	Deliverables []Deliverable
 	Limits       ExecutionLimits
+}
+
+// Validate checks that the job has all required fields.
+func (j *ExecutionJob) Validate() error {
+	if j.TaskID == "" {
+		return fmt.Errorf("job missing TaskID")
+	}
+	return nil
 }
 
 // Deliverable declares a required output artifact.
@@ -31,6 +43,14 @@ type ExecutionLimits struct {
 	TokenBudget *int
 	MaxDuration *time.Duration
 	MaxRetries  int
+}
+
+// EffectiveTimeout returns the configured max duration, or a default of 5 minutes.
+func (l ExecutionLimits) EffectiveTimeout() time.Duration {
+	if l.MaxDuration != nil {
+		return *l.MaxDuration
+	}
+	return 5 * time.Minute
 }
 
 // ExecutionEvent is a single event emitted during execution.
@@ -56,6 +76,7 @@ type Artifact struct {
 type TokenUsage struct {
 	PromptTokens     int
 	CompletionTokens int
+	Cost             float64
 }
 
 // ExecutionResult is the final outcome of an execution run.
@@ -74,4 +95,22 @@ type ExecutorCapabilities struct {
 	SupportsTools       bool
 	SupportsSandbox     bool
 	SupportsPermissions bool
+}
+
+// SignalEvent creates an ExecutionEvent for a CLOCKWORK_* signal.
+func SignalEvent(signal, payload string) ExecutionEvent {
+	return ExecutionEvent{Type: EventSignal, Signal: signal, Content: payload}
+}
+
+// LogEvent creates an ExecutionEvent for a log line.
+func LogEvent(content string) ExecutionEvent {
+	return ExecutionEvent{Type: EventLog, Content: content}
+}
+
+// TokenEvent creates an ExecutionEvent for token usage.
+func TokenEvent(prompt, completion int, cost float64) ExecutionEvent {
+	return ExecutionEvent{
+		Type:   EventTokenUsage,
+		Tokens: &TokenUsage{PromptTokens: prompt, CompletionTokens: completion, Cost: cost},
+	}
 }
