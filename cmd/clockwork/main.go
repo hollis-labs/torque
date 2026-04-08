@@ -23,6 +23,8 @@ func main() {
 		},
 	})
 
+	root.AddCommand(mcpCmd())
+
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
