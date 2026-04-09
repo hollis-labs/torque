@@ -46,6 +46,7 @@ type TaskCreateInput struct {
 type TaskService struct {
 	store   *sqlstore.Store
 	feature *FeatureService
+	tags    *TagService
 }
 
 // Create validates and creates a new task.
