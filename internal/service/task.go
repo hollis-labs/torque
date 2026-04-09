@@ -8,12 +8,12 @@ import (
 
 // validTransitions defines the allowed FSM transitions for task status.
 var validTransitions = map[string][]string{
-	"todo":     {"doing", "blocked", "paused", "archived"},
-	"doing":    {"review", "done", "blocked", "paused", "todo", "archived"},
-	"review":   {"done", "doing", "blocked", "paused", "archived"},
-	"blocked":  {"todo", "archived"},
-	"paused":   {"todo", "archived"},
-	"done":     {"archived"},
+	"todo":    {"doing", "blocked", "paused", "archived"},
+	"doing":   {"review", "done", "blocked", "paused", "todo", "archived"},
+	"review":  {"done", "doing", "blocked", "paused", "archived"},
+	"blocked": {"todo", "archived"},
+	"paused":  {"todo", "archived"},
+	"done":    {"archived"},
 }
 
 // TaskCreateInput holds user-facing fields for creating a task.
