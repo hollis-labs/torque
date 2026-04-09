@@ -6,6 +6,9 @@ import type {
   Comment,
   SSEEvent,
   FeatureFlags,
+  Project,
+  Sprint,
+  Epic,
 } from './types'
 
 class ApiError extends Error {
@@ -69,6 +72,15 @@ export class ClockworkApiClient {
   private async patch<T>(path: string, body: unknown): Promise<T> {
     const res = await fetch(this.url(path), {
       method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    return parseResponse<T>(res)
+  }
+
+  private async put<T>(path: string, body: unknown): Promise<T> {
+    const res = await fetch(this.url(path), {
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
       body: JSON.stringify(body),
     })
@@ -180,6 +192,84 @@ export class ClockworkApiClient {
 
   async getFeatureFlags(): Promise<FeatureFlags> {
     return this.get<FeatureFlags>('/settings/feature-flags')
+  }
+
+  // -------------------------
+  // Projects
+  // -------------------------
+
+  async listProjects(status?: string): Promise<{ projects: Project[] }> {
+    const params: Record<string, string | number | boolean | undefined> = {}
+    if (status) params['status'] = status
+    return this.get<{ projects: Project[] }>('/projects', params)
+  }
+
+  async getProject(id: string): Promise<Project> {
+    return this.get<Project>(`/projects/${id}`)
+  }
+
+  async createProject(data: Partial<Project>): Promise<Project> {
+    return this.post<Project>('/projects', data)
+  }
+
+  async updateProject(id: string, data: Partial<Project>): Promise<Project> {
+    return this.put<Project>(`/projects/${id}`, data)
+  }
+
+  async deleteProject(id: string): Promise<void> {
+    return this.delete<void>(`/projects/${id}`)
+  }
+
+  // -------------------------
+  // Sprints
+  // -------------------------
+
+  async listSprints(params?: { status?: string; project_id?: string }): Promise<{ sprints: Sprint[] }> {
+    return this.get<{ sprints: Sprint[] }>('/sprints', params)
+  }
+
+  async getSprint(id: string): Promise<Sprint> {
+    return this.get<Sprint>(`/sprints/${id}`)
+  }
+
+  async createSprint(data: Partial<Sprint>): Promise<Sprint> {
+    return this.post<Sprint>('/sprints', data)
+  }
+
+  async updateSprint(id: string, data: Partial<Sprint>): Promise<Sprint> {
+    return this.put<Sprint>(`/sprints/${id}`, data)
+  }
+
+  async deleteSprint(id: string): Promise<void> {
+    return this.delete<void>(`/sprints/${id}`)
+  }
+
+  async transitionSprint(id: string, status: string): Promise<Sprint> {
+    return this.post<Sprint>(`/sprints/${id}/transition`, { status })
+  }
+
+  // -------------------------
+  // Epics
+  // -------------------------
+
+  async listEpics(params?: { status?: string; project_id?: string }): Promise<{ epics: Epic[] }> {
+    return this.get<{ epics: Epic[] }>('/epics', params)
+  }
+
+  async getEpic(id: string): Promise<Epic> {
+    return this.get<Epic>(`/epics/${id}`)
+  }
+
+  async createEpic(data: Partial<Epic>): Promise<Epic> {
+    return this.post<Epic>('/epics', data)
+  }
+
+  async updateEpic(id: string, data: Partial<Epic>): Promise<Epic> {
+    return this.put<Epic>(`/epics/${id}`, data)
+  }
+
+  async deleteEpic(id: string): Promise<void> {
+    return this.delete<void>(`/epics/${id}`)
   }
 
   // -------------------------

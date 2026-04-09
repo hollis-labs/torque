@@ -80,6 +80,43 @@ export interface FeatureFlags {
   epics: boolean
 }
 
+export type ContainerStatus = 'active' | 'inactive'
+
+export interface Project {
+  id: string
+  name: string
+  description: string
+  repo_path: string
+  status: ContainerStatus
+  icon: string
+  created_at: string
+  updated_at: string
+}
+
+export interface Sprint {
+  id: string
+  name: string
+  status: ContainerStatus
+  approval_mode: string
+  cost_budget: number | null
+  project_id: string | null
+  started_at: string | null
+  ended_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface Epic {
+  id: string
+  name: string
+  description: string
+  status: ContainerStatus
+  priority: number | null
+  project_id: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface TaskFilter {
   status?: TaskStatus[]
   priority?: number[]
