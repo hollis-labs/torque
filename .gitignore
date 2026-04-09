@@ -22,3 +22,6 @@ queue.db
 
 # Build
 dist/
+
+# Worktrees
+.worktrees/
