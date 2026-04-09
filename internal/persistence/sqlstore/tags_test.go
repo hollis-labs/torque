@@ -126,3 +126,83 @@ func TestDeleteTagNotFound(t *testing.T) {
 	err := store.DeleteTag("nope")
 	assert.Error(t, err)
 }
+
+// seedTaskAndTags is a test helper that creates a minimal task row and the
+// referenced tag rows. Uses the sampleTask() helper from tasks_test.go (same
+// external test package) to create the task via store.CreateTask.
+func seedTaskAndTags(t *testing.T, store *sqlstore.Store, taskID string, tagSlugs ...string) {
+	t.Helper()
+	task := sampleTask(taskID)
+	require.NoError(t, store.CreateTask(task))
+	for _, slug := range tagSlugs {
+		require.NoError(t, store.CreateTag(&sqlstore.TagRecord{Slug: slug, Name: slug, Color: "zinc"}))
+	}
+}
+
+func TestSetTaskTagsReplaceAll(t *testing.T) {
+	store := setupTestStore(t)
+	seedTaskAndTags(t, store, "CW-0001", "bug", "ui", "frontend")
+
+	require.NoError(t, store.SetTaskTags("CW-0001", []string{"bug", "ui"}))
+
+	linked, err := store.ListTaskTags("CW-0001")
+	require.NoError(t, err)
+	require.Len(t, linked, 2)
+	assert.Equal(t, "bug", linked[0].Slug)
+	assert.Equal(t, "ui", linked[1].Slug)
+
+	// Replace with a different set
+	require.NoError(t, store.SetTaskTags("CW-0001", []string{"frontend"}))
+	linked, err = store.ListTaskTags("CW-0001")
+	require.NoError(t, err)
+	require.Len(t, linked, 1)
+	assert.Equal(t, "frontend", linked[0].Slug)
+}
+
+func TestSetTaskTagsPreservesOrder(t *testing.T) {
+	store := setupTestStore(t)
+	seedTaskAndTags(t, store, "CW-0001", "z-zzz", "a-aaa", "m-mmm")
+
+	// Explicitly non-alphabetical order
+	require.NoError(t, store.SetTaskTags("CW-0001", []string{"z-zzz", "a-aaa", "m-mmm"}))
+
+	linked, err := store.ListTaskTags("CW-0001")
+	require.NoError(t, err)
+	require.Len(t, linked, 3)
+	assert.Equal(t, "z-zzz", linked[0].Slug)
+	assert.Equal(t, "a-aaa", linked[1].Slug)
+	assert.Equal(t, "m-mmm", linked[2].Slug)
+}
+
+func TestSetTaskTagsEmpty(t *testing.T) {
+	store := setupTestStore(t)
+	seedTaskAndTags(t, store, "CW-0001", "bug")
+
+	require.NoError(t, store.SetTaskTags("CW-0001", []string{"bug"}))
+	require.NoError(t, store.SetTaskTags("CW-0001", []string{}))
+
+	linked, err := store.ListTaskTags("CW-0001")
+	require.NoError(t, err)
+	assert.Empty(t, linked)
+}
+
+func TestListTaskTagsEmpty(t *testing.T) {
+	store := setupTestStore(t)
+	seedTaskAndTags(t, store, "CW-0001")
+
+	linked, err := store.ListTaskTags("CW-0001")
+	require.NoError(t, err)
+	assert.Empty(t, linked)
+}
+
+func TestDeleteTagCascadesTaskTags(t *testing.T) {
+	store := setupTestStore(t)
+	seedTaskAndTags(t, store, "CW-0001", "bug")
+	require.NoError(t, store.SetTaskTags("CW-0001", []string{"bug"}))
+
+	require.NoError(t, store.DeleteTag("bug"))
+
+	linked, err := store.ListTaskTags("CW-0001")
+	require.NoError(t, err)
+	assert.Empty(t, linked)
+}

@@ -141,3 +141,70 @@ func (s *Store) DeleteTag(slug string) error {
 	}
 	return nil
 }
+
+// SetTaskTags replaces all tags linked to the given task in a single transaction.
+// Preserves input order via explicit sort_order (0-indexed). An empty slugs slice
+// clears all tags on the task.
+func (s *Store) SetTaskTags(taskID string, slugs []string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM task_tags WHERE task_id = ?`, taskID); err != nil {
+		return err
+	}
+
+	now := time.Now().UTC()
+	for i, slug := range slugs {
+		_, err := tx.Exec(
+			`INSERT INTO task_tags (task_id, tag_slug, sort_order, created_at)
+			 VALUES (?, ?, ?, ?)`,
+			taskID, slug, i, now,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+// ListTaskTags returns all tags linked to a task, ordered by the user's
+// assignment order (sort_order ASC).
+func (s *Store) ListTaskTags(taskID string) ([]TagRecord, error) {
+	rows, err := s.db.Query(
+		`SELECT `+prefixCols("t.", tagSelectCols)+`
+		 FROM tags t
+		 JOIN task_tags tt ON tt.tag_slug = t.slug
+		 WHERE tt.task_id = ?
+		 ORDER BY tt.sort_order ASC`,
+		taskID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tags []TagRecord
+	for rows.Next() {
+		t, err := scanTag(rows)
+		if err != nil {
+			return nil, err
+		}
+		tags = append(tags, *t)
+	}
+	return tags, rows.Err()
+}
+
+// prefixCols prefixes a comma-separated column list with a table alias.
+// e.g. prefixCols("t.", "slug, name") → "t.slug, t.name"
+func prefixCols(prefix, cols string) string {
+	parts := strings.Split(cols, ",")
+	out := make([]string, len(parts))
+	for i, p := range parts {
+		out[i] = prefix + strings.TrimSpace(p)
+	}
+	return strings.Join(out, ", ")
+}
