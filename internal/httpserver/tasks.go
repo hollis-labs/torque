@@ -180,6 +180,10 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		Manual:      req.Manual,
 	})
 	if err != nil {
+		if _, ok := err.(*service.ValidationError); ok {
+			writeError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -227,6 +231,10 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.svc.Task.Update(id, input); err != nil {
+		if _, ok := err.(*service.ValidationError); ok {
+			writeError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

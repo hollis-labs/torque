@@ -80,6 +80,27 @@ func (a *Adapter) registerTaskTools() {
 	), a.handleTaskBulkTransition)
 }
 
+// taskWithTags is an MCP result shape that flattens a TaskRecord's fields
+// and appends a "Tags" key alongside them (via Go's embedded-struct JSON
+// marshaling). Used so MCP task outputs include linked tags inline without
+// a nested wrapper, matching the HTTP API's single-object shape.
+type taskWithTags struct {
+	*sqlstore.TaskRecord
+	Tags []sqlstore.TagRecord `json:"Tags"`
+}
+
+// taskResult loads the linked tags for a task and returns a combined MCP result.
+func (a *Adapter) taskResult(task *sqlstore.TaskRecord) (*mcp.CallToolResult, error) {
+	tags, err := a.svc.Task.ListTags(task.ID)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if tags == nil {
+		tags = []sqlstore.TagRecord{}
+	}
+	return jsonResult(taskWithTags{TaskRecord: task, Tags: tags})
+}
+
 func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	input := service.TaskCreateInput{
 		Title:        reqStr(req, "title"),
@@ -113,7 +134,7 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return jsonResult(task)
+	return a.taskResult(task)
 }
 
 func (a *Adapter) handleTaskGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -121,7 +142,7 @@ func (a *Adapter) handleTaskGet(ctx context.Context, req mcp.CallToolRequest) (*
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return jsonResult(task)
+	return a.taskResult(task)
 }
 
 func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -181,7 +202,7 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return jsonResult(task)
+	return a.taskResult(task)
 }
 
 func (a *Adapter) handleTaskDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -199,7 +220,7 @@ func (a *Adapter) handleTaskTransition(ctx context.Context, req mcp.CallToolRequ
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return jsonResult(task)
+	return a.taskResult(task)
 }
 
 func (a *Adapter) handleTaskSearch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
