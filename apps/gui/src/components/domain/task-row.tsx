@@ -21,7 +21,7 @@ export function TaskRow({ task, selected, onSelect }: TaskRowProps) {
   return (
     <tr className={`${selected ? 'bg-zinc-900/35' : 'bg-zinc-950 hover:bg-zinc-900/35'}`}>
       {onSelect && (
-        <td className="w-10 py-2 pr-0 pl-3">
+        <td className="w-10 py-1.5 pr-0 pl-3">
           <input
             type="checkbox"
             checked={selected ?? false}
@@ -32,19 +32,19 @@ export function TaskRow({ task, selected, onSelect }: TaskRowProps) {
         </td>
       )}
       {/* Status */}
-      <td className="w-px whitespace-nowrap px-2 py-2 text-right">
+      <td className="w-px whitespace-nowrap px-2 py-1.5">
         <StatusBadge status={task.status} />
       </td>
       {/* Priority */}
-      <td className="w-px whitespace-nowrap px-2 py-2 text-right">
+      <td className="w-px whitespace-nowrap px-2 py-1.5">
         <PriorityBadge priority={task.priority} />
       </td>
       {/* Title + tags */}
-      <td className="px-3 py-2 text-left max-w-[400px]">
+      <td className="px-3 py-1.5 text-left">
         <div className="min-w-0">
           <Link
             to={`/tasks/${task.id}`}
-            className="block truncate font-semibold tracking-[.03em] text-zinc-100 hover:text-zinc-300 transition-colors"
+            className="block truncate tracking-[.02em] text-zinc-100 hover:text-zinc-300 transition-colors"
             title={task.title}
           >
             {task.title}
@@ -64,12 +64,12 @@ export function TaskRow({ task, selected, onSelect }: TaskRowProps) {
         </div>
       </td>
       {/* Executor */}
-      <td className="w-px whitespace-nowrap px-2 py-2 text-right text-[12px] text-zinc-400">
+      <td className="w-px whitespace-nowrap px-2 py-1.5 text-right text-[12px] text-zinc-500">
         {task.executor || <span className="italic text-zinc-600">—</span>}
       </td>
       {/* Updated */}
-      <td className="w-px whitespace-nowrap px-2 py-2 text-right">
-        <div className="text-[11px] leading-4 text-zinc-300 uppercase tracking-[.12em]">{dateStr}</div>
+      <td className="w-px whitespace-nowrap px-2 py-1.5 text-right">
+        <div className="text-[11px] leading-4 text-zinc-400 uppercase tracking-[.12em]">{dateStr}</div>
         <div className="text-[11px] leading-4 text-zinc-600 uppercase tracking-[.12em]">{agoStr}</div>
       </td>
     </tr>

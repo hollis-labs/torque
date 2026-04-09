@@ -23,12 +23,12 @@ function sortTasks(tasks: Task[], key: SortKey, dir: SortDir): Task[] {
   })
 }
 
-const COLUMNS: { key: SortKey; label: string }[] = [
-  { key: 'status',     label: 'Status'   },
-  { key: 'priority',   label: 'Pri'      },
-  { key: 'title',      label: 'Task'     },
-  { key: 'executor',   label: 'Executor' },
-  { key: 'updated_at', label: 'Updated'  },
+const COLUMNS: { key: SortKey; label: string; align: 'left' | 'right' }[] = [
+  { key: 'status',     label: 'Status',   align: 'left'  },
+  { key: 'priority',   label: 'Pri',      align: 'left'  },
+  { key: 'title',      label: 'Task',     align: 'left'  },
+  { key: 'executor',   label: 'Executor', align: 'right' },
+  { key: 'updated_at', label: 'Updated',  align: 'right' },
 ]
 
 export function TaskTable({ tasks, onTransition, emptyVariant = 'no-tasks' }: TaskTableProps) {
@@ -75,7 +75,7 @@ export function TaskTable({ tasks, onTransition, emptyVariant = 'no-tasks' }: Ta
       <table className="min-w-full">
         <thead className="text-[10px] uppercase tracking-[.28em] text-zinc-500">
           <tr className="border-b border-zinc-800/80">
-            <th className="w-10 py-2 pr-0 pl-3">
+            <th className="w-10 py-1.5 pr-0 pl-3">
               <input
                 type="checkbox"
                 checked={allSelected}
@@ -84,13 +84,13 @@ export function TaskTable({ tasks, onTransition, emptyVariant = 'no-tasks' }: Ta
                 aria-label="Select all tasks"
               />
             </th>
-            {COLUMNS.map(({ key, label }) => {
+            {COLUMNS.map(({ key, label, align }) => {
               const isSorted = sortKey === key
               const isTitle = key === 'title'
               return (
                 <th
                   key={key}
-                  className={`py-2 font-medium ${isTitle ? 'px-3 text-left' : 'w-px whitespace-nowrap px-2 text-right'}`}
+                  className={`py-1.5 font-medium ${isTitle ? 'px-3 text-left' : `w-px whitespace-nowrap px-2 text-${align}`}`}
                 >
                   <button
                     type="button"

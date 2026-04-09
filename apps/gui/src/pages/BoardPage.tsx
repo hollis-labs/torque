@@ -33,6 +33,7 @@ export default function BoardPage() {
   const [error, setError] = useState<string | null>(null)
   const [activeStatuses, setActiveStatuses] = useState<TaskStatus[]>(DEFAULT_ACTIVE_STATUSES)
   const [mode, setMode] = useState<ModePreset>('all')
+  const [activePriorities, setActivePriorities] = useState<number[]>([])
 
   const fetchTasks = useCallback(async () => {
     try {
@@ -61,6 +62,12 @@ export default function BoardPage() {
   function handleStatusToggle(status: TaskStatus) {
     setActiveStatuses((prev) =>
       prev.includes(status) ? prev.filter((s) => s !== status) : [...prev, status]
+    )
+  }
+
+  function handlePriorityToggle(priority: number) {
+    setActivePriorities((prev) =>
+      prev.includes(priority) ? prev.filter((p) => p !== priority) : [...prev, priority]
     )
   }
 
@@ -107,6 +114,8 @@ export default function BoardPage() {
         onStatusToggle={handleStatusToggle}
         mode={mode}
         onModeChange={handleModeChange}
+        activePriorities={activePriorities}
+        onPriorityToggle={handlePriorityToggle}
       />
       <div className="flex-1 overflow-auto">
         {loading ? (

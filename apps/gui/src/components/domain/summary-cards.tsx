@@ -11,26 +11,26 @@ interface SummaryCardsProps {
 
 export function SummaryCards({ cards }: SummaryCardsProps) {
   return (
-    <div className="grid grid-cols-4 gap-3 px-4 py-3">
+    <div className="grid grid-cols-4 gap-2 px-4 py-2">
       {cards.map((card) => (
         <div
           key={card.label}
-          className="rounded-md border border-zinc-800/80 bg-zinc-950 p-3"
+          className="relative overflow-hidden rounded border border-zinc-800/80 bg-zinc-950 px-3 py-2"
         >
           <div className="text-[10px] uppercase tracking-[.16em] text-zinc-500">
             {card.label}
+            {card.subtitle && (
+              <span className="ml-2 normal-case tracking-normal text-zinc-600">{card.subtitle}</span>
+            )}
           </div>
-          <div className="mt-1 flex items-baseline gap-2">
-            <span className="font-mono text-2xl font-semibold text-zinc-100">
+          <div className="mt-0.5">
+            <span className="font-mono text-xl font-semibold text-zinc-100">
               {card.value}
             </span>
-            {card.subtitle && (
-              <span className="text-[10px] text-zinc-500">{card.subtitle}</span>
-            )}
           </div>
           {card.accentColor && (
             <div
-              className="mt-2 h-0.5 w-full rounded-full"
+              className="absolute bottom-0 left-0 h-[2px] w-full"
               style={{ backgroundColor: card.accentColor }}
             />
           )}
