@@ -191,7 +191,20 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 		update.Priority = &p
 	}
 
-	if err := s.svc.Task.Update(id, update); err != nil {
+	input := service.TaskUpdateInput{TaskUpdate: update}
+	if raw, ok := req["tags"]; ok {
+		if arr, ok := raw.([]interface{}); ok {
+			slugs := make([]string, 0, len(arr))
+			for _, item := range arr {
+				if s, ok := item.(string); ok {
+					slugs = append(slugs, s)
+				}
+			}
+			input.Tags = &slugs
+		}
+	}
+
+	if err := s.svc.Task.Update(id, input); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

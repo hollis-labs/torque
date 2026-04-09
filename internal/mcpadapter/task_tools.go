@@ -174,7 +174,7 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 		update.EpicID = &ns
 	}
 
-	if err := a.svc.Task.Update(id, update); err != nil {
+	if err := a.svc.Task.Update(id, service.TaskUpdateInput{TaskUpdate: update}); err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	task, err := a.svc.Task.Get(id)

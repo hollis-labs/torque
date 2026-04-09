@@ -53,7 +53,6 @@ type TaskFilter struct {
 	SprintID  string
 	ProjectID string
 	EpicID    string
-	Tag       string
 	Executor  string
 	Limit     int
 	Offset    int
@@ -219,10 +218,6 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 	if f.EpicID != "" {
 		where = append(where, "epic_id = ?")
 		args = append(args, f.EpicID)
-	}
-	if f.Tag != "" {
-		where = append(where, "tags LIKE ?")
-		args = append(args, "%"+f.Tag+"%")
 	}
 	if f.Executor != "" {
 		where = append(where, "executor = ?")
