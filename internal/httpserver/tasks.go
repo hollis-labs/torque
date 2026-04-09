@@ -12,14 +12,16 @@ import (
 )
 
 // taskJSON converts a TaskRecord to a JSON-friendly map with snake_case keys
-// and proper null handling for sql.Null* types.
-func taskJSON(t *sqlstore.TaskRecord) map[string]interface{} {
+// and proper null handling for sql.Null* types. Tags are passed in so the
+// caller can batch-load them rather than requiring a store handle here.
+func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord) map[string]interface{} {
 	return map[string]interface{}{
 		"id":              t.ID,
 		"title":           t.Title,
 		"description":     t.Description,
 		"status":          t.Status,
 		"priority":        t.Priority,
+		"tags":            tagsJSON(tags),
 		"manual":          t.Manual,
 		"executor":        t.Executor,
 		"agent_profile":   t.AgentProfile,
@@ -40,12 +42,18 @@ func taskJSON(t *sqlstore.TaskRecord) map[string]interface{} {
 	}
 }
 
-func tasksJSON(tasks []sqlstore.TaskRecord) []map[string]interface{} {
+// tasksJSON converts a slice of TaskRecord to a JSON-friendly slice.
+// Loads linked tags per-task (N+1 — acceptable at current scale).
+func (s *Server) tasksJSON(tasks []sqlstore.TaskRecord) ([]map[string]interface{}, error) {
 	out := make([]map[string]interface{}, len(tasks))
 	for i := range tasks {
-		out[i] = taskJSON(&tasks[i])
+		tags, err := s.svc.Task.ListTags(tasks[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = taskJSON(&tasks[i], tags)
 	}
-	return out
+	return out, nil
 }
 
 func nullStr(ns sql.NullString) interface{} {
@@ -123,7 +131,12 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	if tasks == nil {
 		tasks = []sqlstore.TaskRecord{}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"tasks": tasksJSON(tasks)})
+	out, err := s.tasksJSON(tasks)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"tasks": out})
 }
 
 func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
@@ -133,7 +146,12 @@ func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, taskJSON(task))
+	tags, err := s.svc.Task.ListTags(task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, taskJSON(task, tags))
 }
 
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
@@ -167,8 +185,13 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tags, err := s.svc.Task.ListTags(task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	s.sse.Broadcast("task.created", map[string]interface{}{"task_id": task.ID, "title": task.Title})
-	writeJSON(w, http.StatusCreated, taskJSON(task))
+	writeJSON(w, http.StatusCreated, taskJSON(task, tags))
 }
 
 func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
@@ -215,8 +238,14 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tags, err := s.svc.Task.ListTags(task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	s.sse.Broadcast("task.updated", map[string]interface{}{"task_id": id})
-	writeJSON(w, http.StatusOK, taskJSON(task))
+	writeJSON(w, http.StatusOK, taskJSON(task, tags))
 }
 
 func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
@@ -249,8 +278,14 @@ func (s *Server) transitionTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tags, err := s.svc.Task.ListTags(task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	s.sse.Broadcast("task.transitioned", map[string]interface{}{"task_id": id, "status": req.Status})
-	writeJSON(w, http.StatusOK, taskJSON(task))
+	writeJSON(w, http.StatusOK, taskJSON(task, tags))
 }
 
 func (s *Server) bulkTransitionTasks(w http.ResponseWriter, r *http.Request) {
@@ -284,5 +319,10 @@ func (s *Server) searchTasks(w http.ResponseWriter, r *http.Request) {
 	if tasks == nil {
 		tasks = []sqlstore.TaskRecord{}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"tasks": tasksJSON(tasks)})
+	out, err := s.tasksJSON(tasks)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"tasks": out})
 }

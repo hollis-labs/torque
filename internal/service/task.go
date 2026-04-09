@@ -200,6 +200,11 @@ func (s *TaskService) Delete(id string) error {
 	return s.store.DeleteTask(id)
 }
 
+// ListTags returns the tags linked to a task.
+func (s *TaskService) ListTags(taskID string) ([]sqlstore.TagRecord, error) {
+	return s.store.ListTaskTags(taskID)
+}
+
 // Transition moves a task to a new status if the FSM allows it.
 func (s *TaskService) Transition(id, newStatus string) error {
 	task, err := s.store.GetTask(id)

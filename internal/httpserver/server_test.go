@@ -207,6 +207,74 @@ func TestDeleteTag(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, resp2.StatusCode)
 }
 
+func TestCreateTaskWithTags(t *testing.T) {
+	ts := setupTestServer(t)
+
+	body := `{"title":"Test","description":"x","priority":1,"executor":"cli","tags":["Bug","UI"]}`
+	resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var created map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+
+	tags, ok := created["tags"].([]interface{})
+	require.True(t, ok, "tags field should be an array")
+	require.Len(t, tags, 2)
+
+	tag0 := tags[0].(map[string]interface{})
+	assert.Equal(t, "bug", tag0["slug"])
+	assert.Equal(t, "Bug", tag0["name"])
+	assert.Equal(t, "zinc", tag0["color"])
+
+	tag1 := tags[1].(map[string]interface{})
+	assert.Equal(t, "ui", tag1["slug"])
+}
+
+func TestUpdateTaskTags(t *testing.T) {
+	ts := setupTestServer(t)
+
+	// Create with one tag
+	body := `{"title":"Test","description":"x","priority":1,"executor":"cli","tags":["bug"]}`
+	resp, _ := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body))
+	var created map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&created)
+	id := created["id"].(string)
+
+	// Replace tags
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/tasks/"+id, bytes.NewBufferString(`{"tags":["ui","frontend"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp2, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp2.StatusCode)
+
+	var updated map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp2.Body).Decode(&updated))
+	tags := updated["tags"].([]interface{})
+	require.Len(t, tags, 2)
+	assert.Equal(t, "ui", tags[0].(map[string]interface{})["slug"])
+	assert.Equal(t, "frontend", tags[1].(map[string]interface{})["slug"])
+}
+
+func TestGetTaskIncludesTags(t *testing.T) {
+	ts := setupTestServer(t)
+
+	body := `{"title":"Test","description":"x","priority":1,"executor":"cli","tags":["bug"]}`
+	resp, _ := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body))
+	var created map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&created)
+	id := created["id"].(string)
+
+	resp2, err := http.Get(ts.URL + "/api/v1/tasks/" + id)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp2.StatusCode)
+
+	var fetched map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp2.Body).Decode(&fetched))
+	tags := fetched["tags"].([]interface{})
+	require.Len(t, tags, 1)
+}
+
 func TestMergeTags(t *testing.T) {
 	ts := setupTestServer(t)
 	http.Post(ts.URL+"/api/v1/tags", "application/json", bytes.NewBufferString(`{"name":"Bug","color":"red"}`))
