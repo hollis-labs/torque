@@ -198,6 +198,55 @@ func (s *Store) ListTaskTags(taskID string) ([]TagRecord, error) {
 	return tags, rows.Err()
 }
 
+// MergeTags folds the source tag into the destination.
+// All task_tags rows pointing at source are rewritten to dest.
+// If a task already has both source and dest, the source row is dropped
+// (dest wins). Finally the source tag row is deleted.
+// Both tags must exist; source must differ from dest.
+func (s *Store) MergeTags(sourceSlug, destSlug string) error {
+	if sourceSlug == destSlug {
+		return fmt.Errorf("merge source and destination cannot be the same")
+	}
+	// Verify both exist before touching anything
+	if _, err := s.GetTag(sourceSlug); err != nil {
+		return err
+	}
+	if _, err := s.GetTag(destSlug); err != nil {
+		return err
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Remove source rows for tasks that already have the destination
+	if _, err := tx.Exec(
+		`DELETE FROM task_tags
+		 WHERE tag_slug = ?
+		   AND task_id IN (SELECT task_id FROM task_tags WHERE tag_slug = ?)`,
+		sourceSlug, destSlug,
+	); err != nil {
+		return err
+	}
+
+	// Rewrite remaining source rows to dest
+	if _, err := tx.Exec(
+		`UPDATE task_tags SET tag_slug = ? WHERE tag_slug = ?`,
+		destSlug, sourceSlug,
+	); err != nil {
+		return err
+	}
+
+	// Delete the source tag itself
+	if _, err := tx.Exec(`DELETE FROM tags WHERE slug = ?`, sourceSlug); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
 // prefixCols prefixes a comma-separated column list with a table alias.
 // e.g. prefixCols("t.", "slug, name") → "t.slug, t.name"
 func prefixCols(prefix, cols string) string {
