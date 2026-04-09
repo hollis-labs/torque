@@ -11,9 +11,9 @@ import { PriorityBadge } from '@/components/domain/priority-badge'
 import { CommentList } from '@/components/domain/comment-list'
 import { RunCard } from '@/components/domain/run-card'
 import { EmptyState } from '@/components/domain/empty-state'
+import { TagChip } from '@/components/domain/tag-chip'
 import { useApi } from '@/hooks/use-api'
 import { TASK_STATUSES } from '@/lib/constants'
-import { parseTags } from '@/lib/utils'
 import type { Task, Run, Comment, Artifact, TaskStatus } from '@/lib/types'
 
 const TRANSITION_LABELS: Partial<Record<TaskStatus, string>> = {
@@ -105,7 +105,6 @@ export default function TaskDetailPage() {
     )
   }
 
-  const tags = parseTags(task.tags)
   const nextStatuses = TASK_STATUSES.filter((s) => s !== task.status).slice(0, 4)
 
   return (
@@ -130,10 +129,8 @@ export default function TaskDetailPage() {
             <div className="flex items-center gap-2 flex-wrap">
               <StatusBadge status={task.status} />
               <PriorityBadge priority={task.priority} />
-              {tags.map((tag) => (
-                <span key={tag} className="rounded px-1.5 py-0.5 text-xs bg-muted text-muted-foreground font-mono">
-                  {tag}
-                </span>
+              {task.tags.map((tag) => (
+                <TagChip key={tag.slug} tag={tag} />
               ))}
             </div>
           </div>

@@ -9,41 +9,40 @@ import (
 
 // TaskRecord mirrors the tasks table row.
 type TaskRecord struct {
-	ID               string
-	Title            string
-	Description      string
-	Status           string
-	Priority         int
-	Tags             string
-	Manual           bool
-	Executor         string
-	AgentProfile     string
-	WorkingDir       string
-	Tools            sql.NullString
-	Permissions      sql.NullString
-	Environment      sql.NullString
-	SystemPrompt     string
-	Files            sql.NullString
-	CostBudget       sql.NullFloat64
-	MaxRetries       int
-	MaxDurationMs    sql.NullInt64
-	TokenBudget      sql.NullInt64
-	OnDone           string
-	OnFail           string
-	OnReview         string
-	EscalationChain  sql.NullString
-	QualityGates     sql.NullString
-	Deliverables     sql.NullString
+	ID                string
+	Title             string
+	Description       string
+	Status            string
+	Priority          int
+	Manual            bool
+	Executor          string
+	AgentProfile      string
+	WorkingDir        string
+	Tools             sql.NullString
+	Permissions       sql.NullString
+	Environment       sql.NullString
+	SystemPrompt      string
+	Files             sql.NullString
+	CostBudget        sql.NullFloat64
+	MaxRetries        int
+	MaxDurationMs     sql.NullInt64
+	TokenBudget       sql.NullInt64
+	OnDone            string
+	OnFail            string
+	OnReview          string
+	EscalationChain   sql.NullString
+	QualityGates      sql.NullString
+	Deliverables      sql.NullString
 	DeliverablePreset string
-	OnDoneMerge      string
-	DependsOn        sql.NullString
-	BlockedReason    string
-	Metadata         sql.NullString
-	SprintID         sql.NullString
-	ProjectID        sql.NullString
-	EpicID           sql.NullString
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	OnDoneMerge       string
+	DependsOn         sql.NullString
+	BlockedReason     string
+	Metadata          sql.NullString
+	SprintID          sql.NullString
+	ProjectID         sql.NullString
+	EpicID            sql.NullString
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 // TaskFilter holds optional filter criteria for ListTasks.
@@ -54,7 +53,6 @@ type TaskFilter struct {
 	SprintID  string
 	ProjectID string
 	EpicID    string
-	Tag       string
 	Executor  string
 	Limit     int
 	Offset    int
@@ -66,7 +64,6 @@ type TaskUpdate struct {
 	Description       *string
 	Status            *string
 	Priority          *int
-	Tags              *string
 	Manual            *bool
 	Executor          *string
 	AgentProfile      *string
@@ -101,9 +98,6 @@ func applyDefaults(t *TaskRecord) {
 	if t.Status == "" {
 		t.Status = "todo"
 	}
-	if t.Tags == "" {
-		t.Tags = "[]"
-	}
 	if t.OnDone == "" {
 		t.OnDone = "review"
 	}
@@ -121,8 +115,8 @@ func applyDefaults(t *TaskRecord) {
 	}
 }
 
-// The 35-column SELECT list used by GetTask, ListTasks, and SearchTasks.
-const taskSelectCols = `id, title, description, status, priority, tags, manual,
+// The 34-column SELECT list used by GetTask, ListTasks, and SearchTasks.
+const taskSelectCols = `id, title, description, status, priority, manual,
 	executor, agent_profile, working_dir, tools, permissions, environment,
 	system_prompt, files, cost_budget, max_retries, max_duration_ms, token_budget,
 	on_done, on_fail, on_review, escalation_chain, quality_gates, deliverables,
@@ -136,7 +130,7 @@ func scanTask(row interface {
 	var t TaskRecord
 	var manual int
 	err := row.Scan(
-		&t.ID, &t.Title, &t.Description, &t.Status, &t.Priority, &t.Tags, &manual,
+		&t.ID, &t.Title, &t.Description, &t.Status, &t.Priority, &manual,
 		&t.Executor, &t.AgentProfile, &t.WorkingDir, &t.Tools, &t.Permissions, &t.Environment,
 		&t.SystemPrompt, &t.Files, &t.CostBudget, &t.MaxRetries, &t.MaxDurationMs, &t.TokenBudget,
 		&t.OnDone, &t.OnFail, &t.OnReview, &t.EscalationChain, &t.QualityGates, &t.Deliverables,
@@ -163,16 +157,16 @@ func (s *Store) CreateTask(t *TaskRecord) error {
 	}
 
 	const q = `INSERT INTO tasks (
-		id, title, description, status, priority, tags, manual,
+		id, title, description, status, priority, manual,
 		executor, agent_profile, working_dir, tools, permissions, environment,
 		system_prompt, files, cost_budget, max_retries, max_duration_ms, token_budget,
 		on_done, on_fail, on_review, escalation_chain, quality_gates, deliverables,
 		deliverable_preset, on_done_merge, depends_on, blocked_reason, metadata,
 		sprint_id, project_id, epic_id
-	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
 	_, err := s.db.Exec(q,
-		t.ID, t.Title, t.Description, t.Status, t.Priority, t.Tags, manual,
+		t.ID, t.Title, t.Description, t.Status, t.Priority, manual,
 		t.Executor, t.AgentProfile, t.WorkingDir, t.Tools, t.Permissions, t.Environment,
 		t.SystemPrompt, t.Files, t.CostBudget, t.MaxRetries, t.MaxDurationMs, t.TokenBudget,
 		t.OnDone, t.OnFail, t.OnReview, t.EscalationChain, t.QualityGates, t.Deliverables,
@@ -224,10 +218,6 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 	if f.EpicID != "" {
 		where = append(where, "epic_id = ?")
 		args = append(args, f.EpicID)
-	}
-	if f.Tag != "" {
-		where = append(where, "tags LIKE ?")
-		args = append(args, "%"+f.Tag+"%")
 	}
 	if f.Executor != "" {
 		where = append(where, "executor = ?")
@@ -283,10 +273,6 @@ func (s *Store) UpdateTask(id string, u TaskUpdate) error {
 	if u.Priority != nil {
 		setClauses = append(setClauses, "priority = ?")
 		args = append(args, *u.Priority)
-	}
-	if u.Tags != nil {
-		setClauses = append(setClauses, "tags = ?")
-		args = append(args, *u.Tags)
 	}
 	if u.Manual != nil {
 		v := 0

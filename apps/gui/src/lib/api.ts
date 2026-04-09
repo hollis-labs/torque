@@ -9,6 +9,8 @@ import type {
   Project,
   Sprint,
   Epic,
+  Tag,
+  TagColor,
 } from './types'
 
 class ApiError extends Error {
@@ -117,11 +119,11 @@ export class ClockworkApiClient {
     return this.get<Task>(`/tasks/${id}`)
   }
 
-  async createTask(data: Partial<Task>): Promise<Task> {
+  async createTask(data: Partial<Omit<Task, 'tags'>> & { tags?: string[] }): Promise<Task> {
     return this.post<Task>('/tasks', data)
   }
 
-  async updateTask(id: string, data: Partial<Task>): Promise<Task> {
+  async updateTask(id: string, data: Partial<Omit<Task, 'tags'>> & { tags?: string[] }): Promise<Task> {
     return this.patch<Task>(`/tasks/${id}`, data)
   }
 
@@ -270,6 +272,43 @@ export class ClockworkApiClient {
 
   async deleteEpic(id: string): Promise<void> {
     return this.delete<void>(`/epics/${id}`)
+  }
+
+  // -------------------------
+  // Tags
+  // -------------------------
+
+  async listTags(): Promise<{ tags: Tag[] }> {
+    return this.get<{ tags: Tag[] }>('/tags')
+  }
+
+  async getTag(slug: string): Promise<Tag> {
+    return this.get<Tag>(`/tags/${slug}`)
+  }
+
+  async createTag(data: {
+    name: string
+    slug?: string
+    description?: string
+    color?: TagColor
+  }): Promise<Tag> {
+    return this.post<Tag>('/tags', data)
+  }
+
+  async updateTag(slug: string, data: {
+    name?: string
+    description?: string
+    color?: TagColor
+  }): Promise<Tag> {
+    return this.patch<Tag>(`/tags/${slug}`, data)
+  }
+
+  async deleteTag(slug: string): Promise<void> {
+    return this.delete<void>(`/tags/${slug}`)
+  }
+
+  async mergeTags(sourceSlug: string, into: string): Promise<Tag> {
+    return this.post<Tag>(`/tags/${sourceSlug}/merge`, { into })
   }
 
   // -------------------------

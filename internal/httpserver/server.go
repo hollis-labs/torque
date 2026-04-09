@@ -67,6 +67,14 @@ func (s *Server) routes() {
 		r.Put("/epics/{id}", s.updateEpic)
 		r.Delete("/epics/{id}", s.deleteEpic)
 
+		// Tags
+		r.Get("/tags", s.listTags)
+		r.Post("/tags", s.createTag)
+		r.Get("/tags/{slug}", s.getTag)
+		r.Patch("/tags/{slug}", s.updateTag)
+		r.Delete("/tags/{slug}", s.deleteTag)
+		r.Post("/tags/{slug}/merge", s.mergeTags)
+
 		// Runs
 		r.Get("/runs", s.listRuns)
 		r.Get("/runs/{id}", s.getRun)

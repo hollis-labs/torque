@@ -128,16 +128,15 @@ func (r *Resolver) CreateResolutionTask(ctx context.Context, req *ResolutionRequ
 		Title:        fmt.Sprintf("Resolve merge conflicts: %s -> %s", req.SourceTaskID, req.TargetBranch),
 		Description:  description,
 		Status:       "todo",
-		Priority:     1,       // P1 — queue jump for immediate dispatch
-		Tags:         `["merge-resolution","auto-generated"]`,
+		Priority:     1, // P1 — queue jump for immediate dispatch
 		Executor:     r.mergeCfg.ResolutionExecutor,
 		AgentProfile: r.mergeCfg.ResolutionAgent,
 		WorkingDir:   req.WorktreePath,
 		SystemPrompt: systemPrompt,
-		OnDone:       "close",  // Auto-close on success
-		OnFail:       "block",  // Block on failure — no infinite recursion
+		OnDone:       "close", // Auto-close on success
+		OnFail:       "block", // Block on failure — no infinite recursion
 		OnReview:     "pause",
-		OnDoneMerge:  "none",   // Resolution task does not re-trigger merge
+		OnDoneMerge:  "none", // Resolution task does not re-trigger merge
 		MaxRetries:   r.mergeCfg.MaxResolutionAttempts,
 	}
 
@@ -150,6 +149,27 @@ func (r *Resolver) CreateResolutionTask(ctx context.Context, req *ResolutionRequ
 
 	if err := r.store.CreateTask(record); err != nil {
 		return nil, fmt.Errorf("create resolution task: %w", err)
+	}
+
+	// Attach default tags so merge-resolution tasks can be filtered/triaged.
+	// Uses CreateTagIfNotExists so we don't collide with any previously-created
+	// versions of these tags.
+	defaultTagSlugs := []string{"merge-resolution", "auto-generated"}
+	defaultTagNames := map[string]string{
+		"merge-resolution": "Merge Resolution",
+		"auto-generated":   "Auto Generated",
+	}
+	for _, slug := range defaultTagSlugs {
+		if err := r.store.CreateTagIfNotExists(&sqlstore.TagRecord{
+			Slug:  slug,
+			Name:  defaultTagNames[slug],
+			Color: "zinc",
+		}); err != nil {
+			return nil, fmt.Errorf("ensure resolution tag %q: %w", slug, err)
+		}
+	}
+	if err := r.store.SetTaskTags(id, defaultTagSlugs); err != nil {
+		return nil, fmt.Errorf("link resolution task tags: %w", err)
 	}
 
 	return r.store.GetTask(id)

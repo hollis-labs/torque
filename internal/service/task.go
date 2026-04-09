@@ -8,12 +8,12 @@ import (
 
 // validTransitions defines the allowed FSM transitions for task status.
 var validTransitions = map[string][]string{
-	"todo":     {"doing", "blocked", "paused", "archived"},
-	"doing":    {"review", "done", "blocked", "paused", "todo", "archived"},
-	"review":   {"done", "doing", "blocked", "paused", "archived"},
-	"blocked":  {"todo", "archived"},
-	"paused":   {"todo", "archived"},
-	"done":     {"archived"},
+	"todo":    {"doing", "blocked", "paused", "archived"},
+	"doing":   {"review", "done", "blocked", "paused", "todo", "archived"},
+	"review":  {"done", "doing", "blocked", "paused", "archived"},
+	"blocked": {"todo", "archived"},
+	"paused":  {"todo", "archived"},
+	"done":    {"archived"},
 }
 
 // TaskCreateInput holds user-facing fields for creating a task.
@@ -46,6 +46,7 @@ type TaskCreateInput struct {
 type TaskService struct {
 	store   *sqlstore.Store
 	feature *FeatureService
+	tags    *TagService
 }
 
 // Create validates and creates a new task.
@@ -107,7 +108,6 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		Title:             input.Title,
 		Description:       input.Description,
 		Priority:          priority,
-		Tags:              marshalJSON(input.Tags),
 		Manual:            input.Manual,
 		Executor:          orDefault(input.Executor, "cli"),
 		AgentProfile:      input.AgentProfile,
@@ -146,6 +146,18 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	if err := s.store.CreateTask(rec); err != nil {
 		return nil, err
 	}
+
+	// Resolve tag names/slugs and link them to the task
+	if len(input.Tags) > 0 {
+		slugs, err := s.tags.ResolveNames(input.Tags)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.store.SetTaskTags(id, slugs); err != nil {
+			return nil, err
+		}
+	}
+
 	return s.store.GetTask(id)
 }
 
@@ -159,14 +171,38 @@ func (s *TaskService) List(filter sqlstore.TaskFilter) ([]sqlstore.TaskRecord, e
 	return s.store.ListTasks(filter)
 }
 
-// Update applies a partial update to a task.
-func (s *TaskService) Update(id string, update sqlstore.TaskUpdate) error {
-	return s.store.UpdateTask(id, update)
+// TaskUpdateInput wraps the store-level TaskUpdate and adds a tags field.
+// The store-level TaskUpdate no longer carries tags because they live in
+// the task_tags link table, not a column on tasks.
+type TaskUpdateInput struct {
+	sqlstore.TaskUpdate
+	Tags *[]string // nil = no change; non-nil = replace all linked tags
+}
+
+// Update applies a partial update to a task. If Tags is non-nil, linked
+// tags are resolved and replaced.
+func (s *TaskService) Update(id string, input TaskUpdateInput) error {
+	if err := s.store.UpdateTask(id, input.TaskUpdate); err != nil {
+		return err
+	}
+	if input.Tags != nil {
+		slugs, err := s.tags.ResolveNames(*input.Tags)
+		if err != nil {
+			return err
+		}
+		return s.store.SetTaskTags(id, slugs)
+	}
+	return nil
 }
 
 // Delete removes a task by ID.
 func (s *TaskService) Delete(id string) error {
 	return s.store.DeleteTask(id)
+}
+
+// ListTags returns the tags linked to a task.
+func (s *TaskService) ListTags(taskID string) ([]sqlstore.TagRecord, error) {
+	return s.store.ListTaskTags(taskID)
 }
 
 // Transition moves a task to a new status if the FSM allows it.

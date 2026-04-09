@@ -52,7 +52,7 @@ func (a *Adapter) registerTaskTools() {
 		mcp.WithString("title", mcp.Description("New title")),
 		mcp.WithString("description", mcp.Description("New description")),
 		mcp.WithNumber("priority", mcp.Description("New priority")),
-		mcp.WithString("tags", mcp.Description("New tags JSON array")),
+		mcp.WithString("tags", mcp.Description("JSON array of tag names/slugs — replaces the full linked tag set")),
 		mcp.WithString("sprint_id", mcp.Description("Sprint ID (set empty string to unassign)")),
 		mcp.WithString("project_id", mcp.Description("Project ID (set empty string to unassign)")),
 		mcp.WithString("epic_id", mcp.Description("Epic ID (set empty string to unassign)")),
@@ -79,6 +79,30 @@ func (a *Adapter) registerTaskTools() {
 		mcp.WithString("ids", mcp.Required(), mcp.Description("JSON array of task IDs")),
 		mcp.WithString("status", mcp.Required(), mcp.Description("Target status")),
 	), a.handleTaskBulkTransition)
+}
+
+// taskWithTags is an MCP result shape that flattens a TaskRecord's fields
+// and appends a Tags key alongside them (via Go's embedded-struct JSON
+// marshaling). The MCP adapter marshals TaskRecord with Go's default
+// capitalization (no json tags on TaskRecord), so this struct keeps Tags
+// capitalized to stay consistent with the surrounding fields — this is
+// intentionally different from the HTTP API, which lowercases everything
+// via an explicit taskJSON builder.
+type taskWithTags struct {
+	*sqlstore.TaskRecord
+	Tags []sqlstore.TagRecord `json:"Tags"`
+}
+
+// taskResult loads the linked tags for a task and returns a combined MCP result.
+func (a *Adapter) taskResult(task *sqlstore.TaskRecord) (*mcp.CallToolResult, error) {
+	tags, err := a.svc.Task.ListTags(task.ID)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if tags == nil {
+		tags = []sqlstore.TagRecord{}
+	}
+	return jsonResult(taskWithTags{TaskRecord: task, Tags: tags})
 }
 
 func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -114,7 +138,7 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return jsonResult(task)
+	return a.taskResult(task)
 }
 
 func (a *Adapter) handleTaskGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -122,7 +146,7 @@ func (a *Adapter) handleTaskGet(ctx context.Context, req mcp.CallToolRequest) (*
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return jsonResult(task)
+	return a.taskResult(task)
 }
 
 func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -156,9 +180,6 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 	if v := reqInt(req, "priority"); v != 0 {
 		update.Priority = &v
 	}
-	if v := reqStr(req, "tags"); v != "" {
-		update.Tags = &v
-	}
 
 	// Association fields — allow setting to empty string to unassign
 	args := req.GetArguments()
@@ -178,14 +199,23 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 		update.EpicID = &ns
 	}
 
-	if err := a.svc.Task.Update(id, update); err != nil {
+	input := service.TaskUpdateInput{TaskUpdate: update}
+	if raw := reqStr(req, "tags"); raw != "" {
+		var slugs []string
+		if err := json.Unmarshal([]byte(raw), &slugs); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("invalid tags JSON: %v", err)), nil
+		}
+		input.Tags = &slugs
+	}
+
+	if err := a.svc.Task.Update(id, input); err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	task, err := a.svc.Task.Get(id)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return jsonResult(task)
+	return a.taskResult(task)
 }
 
 func (a *Adapter) handleTaskDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -203,7 +233,7 @@ func (a *Adapter) handleTaskTransition(ctx context.Context, req mcp.CallToolRequ
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return jsonResult(task)
+	return a.taskResult(task)
 }
 
 func (a *Adapter) handleTaskSearch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

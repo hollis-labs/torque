@@ -13,12 +13,14 @@ type Service struct {
 	Sprint   *SprintService
 	Project  *ProjectService
 	Epic     *EpicService
+	Tag      *TagService
 }
 
 // New constructs a Service wired to the provided store.
 func New(store *sqlstore.Store) *Service {
 	feature := &FeatureService{store: store}
-	task := &TaskService{store: store, feature: feature}
+	tag := &TagService{store: store}
+	task := &TaskService{store: store, feature: feature, tags: tag}
 	return &Service{
 		Task:     task,
 		Run:      &RunService{store: store},
@@ -29,5 +31,6 @@ func New(store *sqlstore.Store) *Service {
 		Sprint:   &SprintService{store: store, feature: feature, task: task},
 		Project:  &ProjectService{store: store, feature: feature},
 		Epic:     &EpicService{store: store, feature: feature},
+		Tag:      tag,
 	}
 }

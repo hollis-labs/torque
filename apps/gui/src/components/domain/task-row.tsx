@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { MoreHorizontal } from 'lucide-react'
 import { StatusBadge } from './status-badge'
 import { PriorityBadge } from './priority-badge'
+import { TagChip } from './tag-chip'
 import { formatRelativeTime } from '@/lib/utils'
 import type { Task, TaskStatus } from '@/lib/types'
 
@@ -43,6 +44,18 @@ export function TaskRow({ task, selected, onSelect }: TaskRowProps) {
           </Link>
           {task.executor && (
             <span className="text-[10px] text-zinc-600">{task.executor}</span>
+          )}
+          {task.tags && task.tags.length > 0 && (
+            <div className="mt-0.5 flex items-center gap-1">
+              {task.tags.slice(0, 3).map((tag) => (
+                <TagChip key={tag.slug} tag={tag} />
+              ))}
+              {task.tags.length > 3 && (
+                <span className="text-[10px] text-zinc-500">
+                  +{task.tags.length - 3} more
+                </span>
+              )}
+            </div>
           )}
         </div>
       </td>

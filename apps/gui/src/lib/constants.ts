@@ -1,4 +1,4 @@
-import type { TaskStatus } from './types'
+import type { TaskStatus, TagColor } from './types'
 
 export const TASK_STATUSES: readonly TaskStatus[] = [
   'backlog',
@@ -79,4 +79,16 @@ export const DEFAULT_STATUS_COLOR = {
   text: 'text-zinc-300',
   border: 'border-zinc-500/40',
   dot: 'bg-zinc-400',
+}
+
+export const TAG_COLOR_CLASSES: Record<TagColor, string> = {
+  zinc:   'bg-zinc-900 text-zinc-400 border border-zinc-800',
+  red:    'bg-red-950 text-red-400 border border-red-900',
+  orange: 'bg-orange-950 text-orange-400 border border-orange-900',
+  amber:  'bg-amber-950 text-amber-400 border border-amber-900',
+  green:  'bg-green-950 text-green-400 border border-green-900',
+  teal:   'bg-teal-950 text-teal-400 border border-teal-900',
+  blue:   'bg-blue-950 text-blue-400 border border-blue-900',
+  violet: 'bg-violet-950 text-violet-400 border border-violet-900',
+  pink:   'bg-pink-950 text-pink-400 border border-pink-900',
 }

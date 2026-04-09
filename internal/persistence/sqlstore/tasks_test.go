@@ -56,7 +56,6 @@ func TestCreateTask(t *testing.T) {
 	assert.Equal(t, "retry", got.OnFail)
 	assert.Equal(t, "pause", got.OnReview)
 	assert.Equal(t, "none", got.OnDoneMerge)
-	assert.Equal(t, "[]", got.Tags)
 	assert.Equal(t, 3, got.MaxRetries)
 }
 
