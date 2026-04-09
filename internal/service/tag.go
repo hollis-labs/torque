@@ -137,3 +137,67 @@ func (s *TagService) Update(slug string, u TagUpdateInput) (*sqlstore.TagRecord,
 func (s *TagService) Delete(slug string) error {
 	return s.store.DeleteTag(slug)
 }
+
+// Merge folds source into destination. Both must exist; source ≠ dest.
+// Rewrites all task_tags links and deletes the source tag.
+func (s *TagService) Merge(sourceSlug, destSlug string) error {
+	if sourceSlug == destSlug {
+		return &ValidationError{Field: "into", Message: "merge source and destination cannot be the same"}
+	}
+	return s.store.MergeTags(sourceSlug, destSlug)
+}
+
+// ResolveNames takes a list of tag names (or existing slugs), normalizes each
+// via strutil.Slugify, skips any that normalize to empty, deduplicates while
+// preserving first-occurrence order, and auto-creates any missing tags with
+// the raw input as the display name (first-seen wins). Returns the slug list
+// in input order.
+func (s *TagService) ResolveNames(inputs []string) ([]string, error) {
+	var result []string
+	seen := make(map[string]bool)
+	// Track the first-seen raw input for each new slug so we can use it as the name
+	rawByFirstSlug := make(map[string]string)
+
+	for _, raw := range inputs {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		slug := strutil.Slugify(trimmed)
+		if slug == "" {
+			continue
+		}
+		if seen[slug] {
+			continue
+		}
+		seen[slug] = true
+		result = append(result, slug)
+		if _, exists := rawByFirstSlug[slug]; !exists {
+			rawByFirstSlug[slug] = trimmed
+		}
+	}
+
+	// Auto-create any that don't exist. Race conditions are not a concern for
+	// single-node SQLite; we do a check-then-insert.
+	for _, slug := range result {
+		if _, err := s.store.GetTag(slug); err == nil {
+			continue // already exists
+		}
+		name := rawByFirstSlug[slug]
+		// Truncate name if the raw input exceeds 64 chars so we don't reject a
+		// task-create just because a tag name was long.
+		if len(name) > 64 {
+			name = name[:64]
+		}
+		rec := &sqlstore.TagRecord{
+			Slug:  slug,
+			Name:  name,
+			Color: "zinc",
+		}
+		if err := s.store.CreateTag(rec); err != nil {
+			return nil, err
+		}
+	}
+
+	return result, nil
+}
