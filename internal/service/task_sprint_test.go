@@ -20,17 +20,17 @@ func TestTaskCreateValidatesSprintExists(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestTaskCreateRejectsCompletedSprint(t *testing.T) {
+func TestTaskCreateRejectsInactiveSprint(t *testing.T) {
 	svc := setupService(t)
 	svc.Feature.Enable("sprints")
 
 	sprint, _ := svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint"})
-	svc.Sprint.Transition(sprint.ID, "active")
-	svc.Sprint.Transition(sprint.ID, "completed")
+	// Sprint starts as active; move to inactive
+	svc.Sprint.Transition(sprint.ID, "inactive")
 
 	_, err := svc.Task.Create(service.TaskCreateInput{
 		Title:       "Task",
-		Description: "In a completed sprint",
+		Description: "In an inactive sprint",
 		SprintID:    sprint.ID,
 	})
 	assert.Error(t, err)

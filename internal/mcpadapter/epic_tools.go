@@ -97,7 +97,7 @@ func (a *Adapter) handleEpicDelete(ctx context.Context, req mcp.CallToolRequest)
 }
 
 func (a *Adapter) handleEpicList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	epics, err := a.svc.Epic.List(reqStr(req, "status"))
+	epics, err := a.svc.Epic.List(reqStr(req, "status"), reqStr(req, "project_id"))
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}

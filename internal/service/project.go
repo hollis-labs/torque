@@ -13,6 +13,7 @@ type ProjectCreateInput struct {
 	Name        string
 	Description string
 	RepoPath    string
+	Icon        string
 }
 
 // Create validates and creates a new project.
@@ -34,6 +35,8 @@ func (s *ProjectService) Create(input ProjectCreateInput) (*sqlstore.ProjectReco
 		Name:        input.Name,
 		Description: input.Description,
 		RepoPath:    input.RepoPath,
+		Icon:        input.Icon,
+		Status:      "active",
 	}
 
 	if err := s.store.CreateProject(record); err != nil {
@@ -57,6 +60,22 @@ func (s *ProjectService) List(status string) ([]sqlstore.ProjectRecord, error) {
 		return nil, err
 	}
 	return s.store.ListProjects(sqlstore.ProjectFilter{Status: status})
+}
+
+// Update applies a partial update to a project.
+func (s *ProjectService) Update(id string, update sqlstore.ProjectUpdate) error {
+	if err := s.feature.Require("projects"); err != nil {
+		return err
+	}
+	if update.Status != nil {
+		if *update.Status != "active" && *update.Status != "inactive" {
+			return &ValidationError{
+				Field:   "status",
+				Message: "must be one of: active, inactive",
+			}
+		}
+	}
+	return s.store.UpdateProject(id, update)
 }
 
 // Delete removes a project by ID.

@@ -3,6 +3,7 @@ package service_test
 import (
 	"testing"
 
+	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,6 +51,45 @@ func TestProjectList(t *testing.T) {
 	projects, err := svc.Project.List("")
 	require.NoError(t, err)
 	assert.Len(t, projects, 2)
+}
+
+func TestProjectCreateWithIcon(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("projects")
+
+	proj, err := svc.Project.Create(service.ProjectCreateInput{
+		Name: "Iconic Project",
+		Icon: "rocket",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "rocket", proj.Icon)
+	assert.Equal(t, "active", proj.Status)
+}
+
+func TestProjectUpdate(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("projects")
+
+	proj, _ := svc.Project.Create(service.ProjectCreateInput{Name: "Project 1"})
+
+	inactive := "inactive"
+	err := svc.Project.Update(proj.ID, sqlstore.ProjectUpdate{Status: &inactive})
+	require.NoError(t, err)
+
+	got, _ := svc.Project.Get(proj.ID)
+	assert.Equal(t, "inactive", got.Status)
+}
+
+func TestProjectUpdateInvalidStatus(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("projects")
+
+	proj, _ := svc.Project.Create(service.ProjectCreateInput{Name: "Project 1"})
+
+	bad := "deleted"
+	err := svc.Project.Update(proj.ID, sqlstore.ProjectUpdate{Status: &bad})
+	assert.Error(t, err)
+	assert.IsType(t, &service.ValidationError{}, err)
 }
 
 func TestProjectDelete(t *testing.T) {

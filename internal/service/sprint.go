@@ -16,17 +16,15 @@ type SprintService struct {
 // SprintCreateInput holds user-facing fields for creating a sprint.
 type SprintCreateInput struct {
 	Name         string
-	Goal         string
 	ApprovalMode string
 	CostBudget   *float64
+	ProjectID    string // optional
 }
 
 // validSprintTransitions defines the sprint status FSM.
-// planning -> active -> completed (forward only, no backwards)
 var validSprintTransitions = map[string][]string{
-	"planning":  {"active"},
-	"active":    {"completed"},
-	"completed": {},
+	"active":   {"inactive"},
+	"inactive": {"active"},
 }
 
 // validApprovalModes lists the allowed approval mode values.
@@ -62,13 +60,16 @@ func (s *SprintService) Create(input SprintCreateInput) (*sqlstore.SprintRecord,
 	record := &sqlstore.SprintRecord{
 		ID:           id,
 		Name:         input.Name,
-		Goal:         input.Goal,
-		Status:       "planning",
+		Status:       "active",
 		ApprovalMode: input.ApprovalMode,
 	}
 
 	if input.CostBudget != nil {
 		record.CostBudget = sql.NullFloat64{Float64: *input.CostBudget, Valid: true}
+	}
+
+	if input.ProjectID != "" {
+		record.ProjectID = sql.NullString{String: input.ProjectID, Valid: true}
 	}
 
 	if err := s.store.CreateSprint(record); err != nil {
@@ -86,12 +87,12 @@ func (s *SprintService) Get(id string) (*sqlstore.SprintRecord, error) {
 	return s.store.GetSprint(id)
 }
 
-// List returns sprints optionally filtered by status.
-func (s *SprintService) List(status string) ([]sqlstore.SprintRecord, error) {
+// List returns sprints optionally filtered by status and projectID.
+func (s *SprintService) List(status, projectID string) ([]sqlstore.SprintRecord, error) {
 	if err := s.feature.Require("sprints"); err != nil {
 		return nil, err
 	}
-	return s.store.ListSprints(sqlstore.SprintFilter{Status: status})
+	return s.store.ListSprints(sqlstore.SprintFilter{Status: status, ProjectID: projectID})
 }
 
 // Update applies a partial update to a sprint.
@@ -143,18 +144,7 @@ func (s *SprintService) Transition(id, newStatus string) error {
 		return &TransitionError{From: sprint.Status, To: newStatus, Message: "transition not allowed"}
 	}
 
-	if err := s.store.TransitionSprint(id, newStatus); err != nil {
-		return err
-	}
-
-	// Set timestamps for state changes
-	if newStatus == "active" {
-		s.store.DB().Exec("UPDATE sprints SET started_at = CURRENT_TIMESTAMP WHERE id = ?", id)
-	} else if newStatus == "completed" {
-		s.store.DB().Exec("UPDATE sprints SET ended_at = CURRENT_TIMESTAMP WHERE id = ?", id)
-	}
-
-	return nil
+	return s.store.TransitionSprint(id, newStatus)
 }
 
 // CheckCostBudget returns whether the sprint is within its cost budget

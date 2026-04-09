@@ -27,7 +27,7 @@ func TestEpicCreate(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, epic.ID, "EP-")
 	assert.Equal(t, "Auth Overhaul", epic.Name)
-	assert.Equal(t, "open", epic.Status)
+	assert.Equal(t, "active", epic.Status)
 }
 
 func TestEpicCreateValidation(t *testing.T) {
@@ -59,12 +59,12 @@ func TestEpicUpdateStatus(t *testing.T) {
 
 	epic, _ := svc.Epic.Create(service.EpicCreateInput{Name: "Epic"})
 
-	closed := "closed"
-	err := svc.Epic.Update(epic.ID, service.EpicUpdateInput{Status: &closed})
+	inactive := "inactive"
+	err := svc.Epic.Update(epic.ID, service.EpicUpdateInput{Status: &inactive})
 	require.NoError(t, err)
 
 	got, _ := svc.Epic.Get(epic.ID)
-	assert.Equal(t, "closed", got.Status)
+	assert.Equal(t, "inactive", got.Status)
 }
 
 func TestEpicUpdateInvalidStatus(t *testing.T) {
@@ -86,7 +86,7 @@ func TestEpicList(t *testing.T) {
 	svc.Epic.Create(service.EpicCreateInput{Name: "Epic A"})
 	svc.Epic.Create(service.EpicCreateInput{Name: "Epic B"})
 
-	epics, err := svc.Epic.List("")
+	epics, err := svc.Epic.List("", "")
 	require.NoError(t, err)
 	assert.Len(t, epics, 2)
 }
@@ -95,15 +95,15 @@ func TestEpicListFilterStatus(t *testing.T) {
 	svc := setupService(t)
 	svc.Feature.Enable("epics")
 
-	svc.Epic.Create(service.EpicCreateInput{Name: "Open Epic"})
-	e2, _ := svc.Epic.Create(service.EpicCreateInput{Name: "Closed Epic"})
-	closed := "closed"
-	svc.Epic.Update(e2.ID, service.EpicUpdateInput{Status: &closed})
+	svc.Epic.Create(service.EpicCreateInput{Name: "Active Epic"})
+	e2, _ := svc.Epic.Create(service.EpicCreateInput{Name: "Inactive Epic"})
+	inactive := "inactive"
+	svc.Epic.Update(e2.ID, service.EpicUpdateInput{Status: &inactive})
 
-	epics, err := svc.Epic.List("open")
+	epics, err := svc.Epic.List("active", "")
 	require.NoError(t, err)
 	assert.Len(t, epics, 1)
-	assert.Equal(t, "Open Epic", epics[0].Name)
+	assert.Equal(t, "Active Epic", epics[0].Name)
 }
 
 func TestEpicDelete(t *testing.T) {

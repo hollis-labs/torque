@@ -53,8 +53,8 @@ func (a *Adapter) registerSprintTools() {
 func (a *Adapter) handleSprintCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	input := service.SprintCreateInput{
 		Name:         reqStr(req, "name"),
-		Goal:         reqStr(req, "goal"),
 		ApprovalMode: reqStr(req, "approval_mode"),
+		ProjectID:    reqStr(req, "project_id"),
 	}
 
 	if budget := reqFloat(req, "cost_budget"); budget > 0 {
@@ -131,7 +131,7 @@ func (a *Adapter) handleSprintDelete(ctx context.Context, req mcp.CallToolReques
 }
 
 func (a *Adapter) handleSprintList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	sprints, err := a.svc.Sprint.List(reqStr(req, "status"))
+	sprints, err := a.svc.Sprint.List(reqStr(req, "status"), reqStr(req, "project_id"))
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}

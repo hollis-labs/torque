@@ -22,13 +22,12 @@ func TestSprintCreate(t *testing.T) {
 
 	sprint, err := svc.Sprint.Create(service.SprintCreateInput{
 		Name:         "Sprint 1",
-		Goal:         "Ship auth",
 		ApprovalMode: "approve_each",
 		CostBudget:   floatPtr(50.0),
 	})
 	require.NoError(t, err)
 	assert.Contains(t, sprint.ID, "SP-")
-	assert.Equal(t, "planning", sprint.Status)
+	assert.Equal(t, "active", sprint.Status)
 	assert.Equal(t, "approve_each", sprint.ApprovalMode)
 	assert.Equal(t, 50.0, sprint.CostBudget.Float64)
 }
@@ -59,18 +58,20 @@ func TestSprintTransitionFSM(t *testing.T) {
 	svc.Feature.Enable("sprints")
 
 	sprint, _ := svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint 1"})
+	// default is active
+	assert.Equal(t, "active", sprint.Status)
 
-	// planning -> active
-	err := svc.Sprint.Transition(sprint.ID, "active")
+	// active -> inactive
+	err := svc.Sprint.Transition(sprint.ID, "inactive")
 	require.NoError(t, err)
 	got, _ := svc.Sprint.Get(sprint.ID)
-	assert.Equal(t, "active", got.Status)
+	assert.Equal(t, "inactive", got.Status)
 
-	// active -> completed
-	err = svc.Sprint.Transition(sprint.ID, "completed")
+	// inactive -> active
+	err = svc.Sprint.Transition(sprint.ID, "active")
 	require.NoError(t, err)
 	got, _ = svc.Sprint.Get(sprint.ID)
-	assert.Equal(t, "completed", got.Status)
+	assert.Equal(t, "active", got.Status)
 }
 
 func TestSprintTransitionInvalid(t *testing.T) {
@@ -79,14 +80,15 @@ func TestSprintTransitionInvalid(t *testing.T) {
 
 	sprint, _ := svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint 1"})
 
-	// planning -> completed (invalid — must go through active)
-	err := svc.Sprint.Transition(sprint.ID, "completed")
+	// active -> active (no-op, invalid)
+	err := svc.Sprint.Transition(sprint.ID, "active")
 	assert.Error(t, err)
 	assert.IsType(t, &service.TransitionError{}, err)
 
-	// planning -> planning (no-op but invalid)
-	err = svc.Sprint.Transition(sprint.ID, "planning")
+	// active -> unknown (invalid)
+	err = svc.Sprint.Transition(sprint.ID, "completed")
 	assert.Error(t, err)
+	assert.IsType(t, &service.TransitionError{}, err)
 }
 
 func TestSprintTransitionBackwardsInvalid(t *testing.T) {
@@ -94,10 +96,10 @@ func TestSprintTransitionBackwardsInvalid(t *testing.T) {
 	svc.Feature.Enable("sprints")
 
 	sprint, _ := svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint 1"})
-	svc.Sprint.Transition(sprint.ID, "active")
+	svc.Sprint.Transition(sprint.ID, "inactive")
 
-	// active -> planning (backwards, invalid)
-	err := svc.Sprint.Transition(sprint.ID, "planning")
+	// inactive -> inactive (no-op, invalid)
+	err := svc.Sprint.Transition(sprint.ID, "inactive")
 	assert.Error(t, err)
 	assert.IsType(t, &service.TransitionError{}, err)
 }
@@ -125,7 +127,7 @@ func TestSprintApproveAll(t *testing.T) {
 		Name:         "Approve Sprint",
 		ApprovalMode: "approve_sprint",
 	})
-	svc.Sprint.Transition(sprint.ID, "active")
+	// Sprint starts as active by default
 
 	// Create tasks in the sprint and move them to review
 	task1, _ := svc.Task.Create(service.TaskCreateInput{
@@ -159,7 +161,7 @@ func TestSprintApproveTask(t *testing.T) {
 		Name:         "Approve Each Sprint",
 		ApprovalMode: "approve_each",
 	})
-	svc.Sprint.Transition(sprint.ID, "active")
+	// Sprint starts as active by default
 
 	task, _ := svc.Task.Create(service.TaskCreateInput{
 		Title: "Task 1", Description: "Do thing", SprintID: sprint.ID,
@@ -180,7 +182,7 @@ func TestSprintApproveTaskWrongSprint(t *testing.T) {
 	svc.Feature.Enable("sprints")
 
 	sprint, _ := svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint A"})
-	svc.Sprint.Transition(sprint.ID, "active")
+	// Sprint starts as active by default
 
 	// Task not in this sprint
 	task, _ := svc.Task.Create(service.TaskCreateInput{
@@ -200,7 +202,7 @@ func TestSprintList(t *testing.T) {
 	svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint 1"})
 	svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint 2"})
 
-	sprints, err := svc.Sprint.List("")
+	sprints, err := svc.Sprint.List("", "")
 	require.NoError(t, err)
 	assert.Len(t, sprints, 2)
 }

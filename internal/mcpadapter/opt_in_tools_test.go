@@ -104,7 +104,6 @@ func TestSprintFullLifecycleViaMCP(t *testing.T) {
 	// Create sprint
 	text, isErr := callTool(t, a, "clockwork_sprint_create", map[string]interface{}{
 		"name":          "Lifecycle Sprint",
-		"goal":          "Test the full lifecycle",
 		"approval_mode": "approve_each",
 		"cost_budget":   float64(100),
 	})
@@ -120,20 +119,13 @@ func TestSprintFullLifecycleViaMCP(t *testing.T) {
 	})
 	require.False(t, isErr, "sprint_get should succeed: %s", text)
 
-	// Transition to active
-	text, isErr = callTool(t, a, "clockwork_sprint_update", map[string]interface{}{
-		"id":     sprintID,
-		"status": "active",
-	})
-	require.False(t, isErr, "sprint_update to active should succeed: %s", text)
-
-	// List sprints
+	// List active sprints (sprint is active by default)
 	text, isErr = callTool(t, a, "clockwork_sprint_list", map[string]interface{}{
 		"status": "active",
 	})
 	require.False(t, isErr, "sprint_list should succeed: %s", text)
 
-	// Create task in sprint
+	// Create task in sprint (sprint is active)
 	text, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{
 		"title":       "Sprint task",
 		"description": "Task in the sprint",
@@ -162,6 +154,13 @@ func TestSprintFullLifecycleViaMCP(t *testing.T) {
 	var updatedTask map[string]interface{}
 	require.NoError(t, json.Unmarshal([]byte(text), &updatedTask))
 	assert.Equal(t, "done", updatedTask["Status"])
+
+	// Transition sprint to inactive
+	text, isErr = callTool(t, a, "clockwork_sprint_update", map[string]interface{}{
+		"id":     sprintID,
+		"status": "inactive",
+	})
+	require.False(t, isErr, "sprint_update to inactive should succeed: %s", text)
 
 	// Delete sprint
 	text, isErr = callTool(t, a, "clockwork_sprint_delete", map[string]interface{}{
@@ -236,13 +235,13 @@ func TestEpicToolsViaMCP(t *testing.T) {
 	text, isErr = callTool(t, a, "clockwork_epic_update", map[string]interface{}{
 		"id":     epicID,
 		"name":   "Auth Overhaul v2",
-		"status": "closed",
+		"status": "inactive",
 	})
 	require.False(t, isErr, "epic_update should succeed: %s", text)
 
-	// List epics filtered by closed
+	// List epics filtered by inactive
 	text, isErr = callTool(t, a, "clockwork_epic_list", map[string]interface{}{
-		"status": "closed",
+		"status": "inactive",
 	})
 	require.False(t, isErr, "epic_list should succeed: %s", text)
 
@@ -279,10 +278,7 @@ func TestSprintApproveAllViaMCP(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(text), &sprint))
 	sprintID := sprint["ID"].(string)
 
-	// Activate sprint
-	_, _ = callTool(t, a, "clockwork_sprint_update", map[string]interface{}{
-		"id": sprintID, "status": "active",
-	})
+	// Sprint is already active by default — no transition needed
 
 	// Create two tasks, move to review
 	text1, _ := callTool(t, a, "clockwork_task_create", map[string]interface{}{
