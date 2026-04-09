@@ -9,13 +9,26 @@ export type TaskStatus =
   | 'paused'
   | 'archived'
 
+export type TagColor =
+  | 'zinc' | 'red' | 'orange' | 'amber'
+  | 'green' | 'teal' | 'blue' | 'violet' | 'pink'
+
+export interface Tag {
+  slug: string
+  name: string
+  description: string
+  color: TagColor
+  created_at: string
+  updated_at: string
+}
+
 export interface Task {
   id: string
   title: string
   description: string
   status: TaskStatus
   priority: number
-  tags: string
+  tags: Tag[]
   manual: boolean
   executor: string
   agent_profile: string
