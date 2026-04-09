@@ -70,6 +70,13 @@ func nullInt(ni sql.NullInt64) interface{} {
 	return nil
 }
 
+func nullTime(nt sql.NullTime) interface{} {
+	if nt.Valid {
+		return nt.Time
+	}
+	return nil
+}
+
 
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	filter := sqlstore.TaskFilter{}
