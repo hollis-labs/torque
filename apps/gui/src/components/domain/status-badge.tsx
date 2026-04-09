@@ -1,4 +1,4 @@
-import { STATUS_COLORS, DEFAULT_STATUS_COLOR } from '@/lib/constants'
+import { STATUS_COLORS, CONTAINER_STATUS_COLORS, DEFAULT_STATUS_COLOR } from '@/lib/constants'
 
 interface StatusBadgeProps {
   status: string
@@ -7,7 +7,7 @@ interface StatusBadgeProps {
 
 export function StatusBadge({ status, className = '' }: StatusBadgeProps) {
   const normalized = (status || '').toLowerCase()
-  const colors = STATUS_COLORS[normalized] ?? DEFAULT_STATUS_COLOR
+  const colors = STATUS_COLORS[normalized] ?? CONTAINER_STATUS_COLORS[normalized] ?? DEFAULT_STATUS_COLOR
 
   return (
     <span
