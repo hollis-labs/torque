@@ -9,40 +9,40 @@ import (
 
 // TaskRecord mirrors the tasks table row.
 type TaskRecord struct {
-	ID               string
-	Title            string
-	Description      string
-	Status           string
-	Priority         int
-	Manual           bool
-	Executor         string
-	AgentProfile     string
-	WorkingDir       string
-	Tools            sql.NullString
-	Permissions      sql.NullString
-	Environment      sql.NullString
-	SystemPrompt     string
-	Files            sql.NullString
-	CostBudget       sql.NullFloat64
-	MaxRetries       int
-	MaxDurationMs    sql.NullInt64
-	TokenBudget      sql.NullInt64
-	OnDone           string
-	OnFail           string
-	OnReview         string
-	EscalationChain  sql.NullString
-	QualityGates     sql.NullString
-	Deliverables     sql.NullString
+	ID                string
+	Title             string
+	Description       string
+	Status            string
+	Priority          int
+	Manual            bool
+	Executor          string
+	AgentProfile      string
+	WorkingDir        string
+	Tools             sql.NullString
+	Permissions       sql.NullString
+	Environment       sql.NullString
+	SystemPrompt      string
+	Files             sql.NullString
+	CostBudget        sql.NullFloat64
+	MaxRetries        int
+	MaxDurationMs     sql.NullInt64
+	TokenBudget       sql.NullInt64
+	OnDone            string
+	OnFail            string
+	OnReview          string
+	EscalationChain   sql.NullString
+	QualityGates      sql.NullString
+	Deliverables      sql.NullString
 	DeliverablePreset string
-	OnDoneMerge      string
-	DependsOn        sql.NullString
-	BlockedReason    string
-	Metadata         sql.NullString
-	SprintID         sql.NullString
-	ProjectID        sql.NullString
-	EpicID           sql.NullString
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	OnDoneMerge       string
+	DependsOn         sql.NullString
+	BlockedReason     string
+	Metadata          sql.NullString
+	SprintID          sql.NullString
+	ProjectID         sql.NullString
+	EpicID            sql.NullString
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 // TaskFilter holds optional filter criteria for ListTasks.

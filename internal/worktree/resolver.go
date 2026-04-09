@@ -128,15 +128,15 @@ func (r *Resolver) CreateResolutionTask(ctx context.Context, req *ResolutionRequ
 		Title:        fmt.Sprintf("Resolve merge conflicts: %s -> %s", req.SourceTaskID, req.TargetBranch),
 		Description:  description,
 		Status:       "todo",
-		Priority:     1,       // P1 — queue jump for immediate dispatch
+		Priority:     1, // P1 — queue jump for immediate dispatch
 		Executor:     r.mergeCfg.ResolutionExecutor,
 		AgentProfile: r.mergeCfg.ResolutionAgent,
 		WorkingDir:   req.WorktreePath,
 		SystemPrompt: systemPrompt,
-		OnDone:       "close",  // Auto-close on success
-		OnFail:       "block",  // Block on failure — no infinite recursion
+		OnDone:       "close", // Auto-close on success
+		OnFail:       "block", // Block on failure — no infinite recursion
 		OnReview:     "pause",
-		OnDoneMerge:  "none",   // Resolution task does not re-trigger merge
+		OnDoneMerge:  "none", // Resolution task does not re-trigger merge
 		MaxRetries:   r.mergeCfg.MaxResolutionAttempts,
 	}
 
