@@ -115,3 +115,113 @@ func TestSettingsGetSet(t *testing.T) {
 	resp.Body.Close()
 	assert.Equal(t, "true", result["value"])
 }
+
+func TestCreateAndGetTag(t *testing.T) {
+	ts := setupTestServer(t)
+
+	body := `{"name":"Frontend Bug","color":"red","description":"UI issues"}`
+	resp, err := http.Post(ts.URL+"/api/v1/tags", "application/json", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var created map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+	assert.Equal(t, "frontend-bug", created["slug"])
+	assert.Equal(t, "Frontend Bug", created["name"])
+	assert.Equal(t, "red", created["color"])
+
+	// GET it back
+	resp2, err := http.Get(ts.URL + "/api/v1/tags/frontend-bug")
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp2.StatusCode)
+}
+
+func TestCreateTagValidationErrors(t *testing.T) {
+	ts := setupTestServer(t)
+
+	// Missing name
+	resp, _ := http.Post(ts.URL+"/api/v1/tags", "application/json", bytes.NewBufferString(`{}`))
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+
+	// Invalid color
+	resp, _ = http.Post(ts.URL+"/api/v1/tags", "application/json",
+		bytes.NewBufferString(`{"name":"Bug","color":"turquoise"}`))
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+
+	// Malformed JSON
+	resp, _ = http.Post(ts.URL+"/api/v1/tags", "application/json", bytes.NewBufferString(`{not json`))
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestGetTagNotFound(t *testing.T) {
+	ts := setupTestServer(t)
+
+	resp, err := http.Get(ts.URL + "/api/v1/tags/nonexistent")
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+func TestListTags(t *testing.T) {
+	ts := setupTestServer(t)
+
+	http.Post(ts.URL+"/api/v1/tags", "application/json", bytes.NewBufferString(`{"name":"Bug","color":"red"}`))
+	http.Post(ts.URL+"/api/v1/tags", "application/json", bytes.NewBufferString(`{"name":"UI","color":"blue"}`))
+
+	resp, err := http.Get(ts.URL + "/api/v1/tags")
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var out map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
+	tags, ok := out["tags"].([]interface{})
+	require.True(t, ok)
+	assert.Len(t, tags, 2)
+}
+
+func TestPatchTag(t *testing.T) {
+	ts := setupTestServer(t)
+	http.Post(ts.URL+"/api/v1/tags", "application/json", bytes.NewBufferString(`{"name":"Bug","color":"red"}`))
+
+	req, _ := http.NewRequest(http.MethodPatch, ts.URL+"/api/v1/tags/bug", bytes.NewBufferString(`{"color":"orange"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var updated map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&updated))
+	assert.Equal(t, "orange", updated["color"])
+}
+
+func TestDeleteTag(t *testing.T) {
+	ts := setupTestServer(t)
+	http.Post(ts.URL+"/api/v1/tags", "application/json", bytes.NewBufferString(`{"name":"Bug","color":"red"}`))
+
+	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/v1/tags/bug", nil)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusNoContent, resp.StatusCode)
+
+	// GET returns 404 now
+	resp2, _ := http.Get(ts.URL + "/api/v1/tags/bug")
+	assert.Equal(t, http.StatusNotFound, resp2.StatusCode)
+}
+
+func TestMergeTags(t *testing.T) {
+	ts := setupTestServer(t)
+	http.Post(ts.URL+"/api/v1/tags", "application/json", bytes.NewBufferString(`{"name":"Bug","color":"red"}`))
+	http.Post(ts.URL+"/api/v1/tags", "application/json", bytes.NewBufferString(`{"name":"Defect","color":"red"}`))
+
+	resp, err := http.Post(ts.URL+"/api/v1/tags/bug/merge", "application/json",
+		bytes.NewBufferString(`{"into":"defect"}`))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	assert.Equal(t, "defect", result["slug"])
+
+	// Source tag is gone
+	resp2, _ := http.Get(ts.URL + "/api/v1/tags/bug")
+	assert.Equal(t, http.StatusNotFound, resp2.StatusCode)
+}
