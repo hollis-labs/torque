@@ -70,3 +70,59 @@ func TestListTagsSortedByName(t *testing.T) {
 	// CreatedAt/UpdatedAt are populated
 	assert.WithinDuration(t, time.Now(), tags[0].CreatedAt, 5*time.Second)
 }
+
+func TestUpdateTag(t *testing.T) {
+	store := setupTestStore(t)
+
+	require.NoError(t, store.CreateTag(&sqlstore.TagRecord{
+		Slug: "bug", Name: "Bug", Description: "orig", Color: "zinc",
+	}))
+
+	newName := "Bug Report"
+	newColor := "red"
+	require.NoError(t, store.UpdateTag("bug", sqlstore.TagUpdate{
+		Name:  &newName,
+		Color: &newColor,
+	}))
+
+	got, err := store.GetTag("bug")
+	require.NoError(t, err)
+	assert.Equal(t, "Bug Report", got.Name)
+	assert.Equal(t, "red", got.Color)
+	assert.Equal(t, "orig", got.Description) // unchanged
+	assert.True(t, got.UpdatedAt.After(got.CreatedAt) || got.UpdatedAt.Equal(got.CreatedAt))
+}
+
+func TestUpdateTagNotFound(t *testing.T) {
+	store := setupTestStore(t)
+
+	newName := "x"
+	err := store.UpdateTag("nope", sqlstore.TagUpdate{Name: &newName})
+	assert.Error(t, err)
+}
+
+func TestUpdateTagNoChanges(t *testing.T) {
+	store := setupTestStore(t)
+	require.NoError(t, store.CreateTag(&sqlstore.TagRecord{Slug: "bug", Name: "Bug", Color: "zinc"}))
+
+	// Empty update should be a no-op, not an error
+	err := store.UpdateTag("bug", sqlstore.TagUpdate{})
+	assert.NoError(t, err)
+}
+
+func TestDeleteTag(t *testing.T) {
+	store := setupTestStore(t)
+	require.NoError(t, store.CreateTag(&sqlstore.TagRecord{Slug: "bug", Name: "Bug", Color: "zinc"}))
+
+	require.NoError(t, store.DeleteTag("bug"))
+
+	_, err := store.GetTag("bug")
+	assert.Error(t, err)
+}
+
+func TestDeleteTagNotFound(t *testing.T) {
+	store := setupTestStore(t)
+
+	err := store.DeleteTag("nope")
+	assert.Error(t, err)
+}
