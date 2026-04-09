@@ -3,7 +3,7 @@ import { TaskRow } from './task-row'
 import { EmptyState } from './empty-state'
 import type { Task, TaskStatus } from '@/lib/types'
 
-type SortKey = 'status' | 'priority' | 'title' | 'executor' | 'updated_at'
+type SortKey = 'status' | 'priority' | 'title' | 'updated_at'
 type SortDir = 'asc' | 'desc'
 
 interface TaskTableProps {
@@ -23,12 +23,11 @@ function sortTasks(tasks: Task[], key: SortKey, dir: SortDir): Task[] {
   })
 }
 
-const COLUMNS: { key: SortKey; label: string; align: 'left' | 'right' }[] = [
-  { key: 'title',      label: 'Task',     align: 'left'  },
-  { key: 'status',     label: 'Status',   align: 'left'  },
-  { key: 'priority',   label: 'Pri',      align: 'left'  },
-  { key: 'executor',   label: 'Executor', align: 'right' },
-  { key: 'updated_at', label: 'Updated',  align: 'right' },
+const COLUMNS: { key: SortKey; label: string }[] = [
+  { key: 'title',      label: 'Task'    },
+  { key: 'status',     label: 'Status'  },
+  { key: 'priority',   label: 'Pri'     },
+  { key: 'updated_at', label: 'Updated' },
 ]
 
 export function TaskTable({ tasks, onTransition, emptyVariant = 'no-tasks' }: TaskTableProps) {
@@ -75,22 +74,22 @@ export function TaskTable({ tasks, onTransition, emptyVariant = 'no-tasks' }: Ta
       <table className="min-w-full">
         <thead className="text-[10px] uppercase tracking-[.28em] text-zinc-500">
           <tr className="border-b border-zinc-800/80">
-            <th className="w-10 py-1.5 pr-0 pl-3">
+            <th className="w-8 py-1.5 pl-4 pr-0">
               <input
                 type="checkbox"
                 checked={allSelected}
                 onChange={handleSelectAll}
-                className="h-3.5 w-3.5 rounded border-zinc-700 bg-zinc-900 accent-zinc-400 cursor-pointer"
+                className="h-3 w-3 appearance-none rounded-sm border border-zinc-700 bg-zinc-900 checked:bg-zinc-600 checked:border-zinc-500 cursor-pointer"
                 aria-label="Select all tasks"
               />
             </th>
-            {COLUMNS.map(({ key, label, align }) => {
+            {COLUMNS.map(({ key, label }) => {
               const isSorted = sortKey === key
               const isTitle = key === 'title'
               return (
                 <th
                   key={key}
-                  className={`py-1.5 font-medium ${isTitle ? 'px-3 text-left' : `w-px whitespace-nowrap px-2 text-${align}`}`}
+                  className={`py-1.5 font-medium ${isTitle ? 'px-3 text-left' : 'w-px whitespace-nowrap px-1.5 text-left'}`}
                 >
                   <button
                     type="button"
@@ -105,6 +104,8 @@ export function TaskTable({ tasks, onTransition, emptyVariant = 'no-tasks' }: Ta
                 </th>
               )
             })}
+            {/* Actions header spacer */}
+            <th className="w-px pr-3" />
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-800/60 text-[13px] leading-4">
