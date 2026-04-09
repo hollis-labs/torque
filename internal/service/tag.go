@@ -177,15 +177,13 @@ func (s *TagService) ResolveNames(inputs []string) ([]string, error) {
 		}
 	}
 
-	// Auto-create any that don't exist. Race conditions are not a concern for
-	// single-node SQLite; we do a check-then-insert.
+	// Auto-create any missing tags. Uses CreateTagIfNotExists so that
+	// concurrent requests resolving the same new name don't collide on the
+	// UNIQUE(slug) constraint — the second caller silently no-ops.
 	for _, slug := range result {
-		if _, err := s.store.GetTag(slug); err == nil {
-			continue // already exists
-		}
 		name := rawByFirstSlug[slug]
-		// Truncate name if the raw input exceeds 64 chars so we don't reject a
-		// task-create just because a tag name was long.
+		// Truncate name if the raw input exceeds 64 chars so we don't reject
+		// a task-create just because a tag name was long.
 		if len(name) > 64 {
 			name = name[:64]
 		}
@@ -194,7 +192,7 @@ func (s *TagService) ResolveNames(inputs []string) ([]string, error) {
 			Name:  name,
 			Color: "zinc",
 		}
-		if err := s.store.CreateTag(rec); err != nil {
+		if err := s.store.CreateTagIfNotExists(rec); err != nil {
 			return nil, err
 		}
 	}

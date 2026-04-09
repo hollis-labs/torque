@@ -219,15 +219,21 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 
 	input := service.TaskUpdateInput{TaskUpdate: update}
 	if raw, ok := req["tags"]; ok {
-		if arr, ok := raw.([]interface{}); ok {
-			slugs := make([]string, 0, len(arr))
-			for _, item := range arr {
-				if s, ok := item.(string); ok {
-					slugs = append(slugs, s)
-				}
-			}
-			input.Tags = &slugs
+		arr, ok := raw.([]interface{})
+		if !ok {
+			writeError(w, http.StatusBadRequest, "invalid tags: must be an array of strings")
+			return
 		}
+		slugs := make([]string, 0, len(arr))
+		for _, item := range arr {
+			str, ok := item.(string)
+			if !ok {
+				writeError(w, http.StatusBadRequest, "invalid tags: must be an array of strings")
+				return
+			}
+			slugs = append(slugs, str)
+		}
+		input.Tags = &slugs
 	}
 
 	if err := s.svc.Task.Update(id, input); err != nil {

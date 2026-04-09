@@ -2,10 +2,16 @@ package sqlstore
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 )
+
+// ErrTagNotFound is returned wrapped by GetTag/UpdateTag/DeleteTag when the
+// tag slug does not exist. Callers should use errors.Is(err, ErrTagNotFound)
+// to distinguish missing tags from other storage errors.
+var ErrTagNotFound = errors.New("tag not found")
 
 // TagRecord mirrors the tags table row.
 type TagRecord struct {
@@ -38,7 +44,7 @@ func scanTag(row interface {
 	return &t, nil
 }
 
-// CreateTag inserts a new tag row.
+// CreateTag inserts a new tag row. Returns an error if the slug already exists.
 func (s *Store) CreateTag(t *TagRecord) error {
 	now := time.Now().UTC()
 	t.CreatedAt = now
@@ -56,12 +62,34 @@ func (s *Store) CreateTag(t *TagRecord) error {
 	return err
 }
 
-// GetTag fetches a single tag by slug.
+// CreateTagIfNotExists inserts a tag row only if no row with the given slug
+// exists. Uses INSERT OR IGNORE so concurrent callers can both succeed without
+// a UNIQUE constraint race. Returns nil on successful insert OR on silent skip.
+// Callers that need the final row should follow up with GetTag.
+func (s *Store) CreateTagIfNotExists(t *TagRecord) error {
+	now := time.Now().UTC()
+	t.CreatedAt = now
+	t.UpdatedAt = now
+
+	if t.Color == "" {
+		t.Color = "zinc"
+	}
+
+	_, err := s.db.Exec(
+		`INSERT OR IGNORE INTO tags (slug, name, description, color, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		t.Slug, t.Name, t.Description, t.Color, t.CreatedAt, t.UpdatedAt,
+	)
+	return err
+}
+
+// GetTag fetches a single tag by slug. Returns an error wrapping
+// ErrTagNotFound if no row matches; callers can use errors.Is to detect.
 func (s *Store) GetTag(slug string) (*TagRecord, error) {
 	row := s.db.QueryRow(`SELECT `+tagSelectCols+` FROM tags WHERE slug = ?`, slug)
 	t, err := scanTag(row)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("tag %s not found", slug)
+		return nil, fmt.Errorf("tag %s: %w", slug, ErrTagNotFound)
 	}
 	return t, err
 }
@@ -85,7 +113,8 @@ func (s *Store) ListTags() ([]TagRecord, error) {
 	return tags, rows.Err()
 }
 
-// UpdateTag applies a partial update. Used in Task 4.
+// UpdateTag applies a partial update. Returns an error wrapping
+// ErrTagNotFound if the slug does not exist.
 func (s *Store) UpdateTag(slug string, u TagUpdate) error {
 	var sets []string
 	var args []any
@@ -121,12 +150,13 @@ func (s *Store) UpdateTag(slug string, u TagUpdate) error {
 		return err
 	}
 	if n == 0 {
-		return fmt.Errorf("tag %s not found", slug)
+		return fmt.Errorf("tag %s: %w", slug, ErrTagNotFound)
 	}
 	return nil
 }
 
-// DeleteTag removes a tag by slug. CASCADE via FK removes task_tags rows. Used in Task 4.
+// DeleteTag removes a tag by slug. CASCADE via FK removes task_tags rows.
+// Returns an error wrapping ErrTagNotFound if the slug does not exist.
 func (s *Store) DeleteTag(slug string) error {
 	res, err := s.db.Exec(`DELETE FROM tags WHERE slug = ?`, slug)
 	if err != nil {
@@ -137,7 +167,7 @@ func (s *Store) DeleteTag(slug string) error {
 		return err
 	}
 	if n == 0 {
-		return fmt.Errorf("tag %s not found", slug)
+		return fmt.Errorf("tag %s: %w", slug, ErrTagNotFound)
 	}
 	return nil
 }

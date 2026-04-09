@@ -293,3 +293,40 @@ func TestMergeTags(t *testing.T) {
 	resp2, _ := http.Get(ts.URL + "/api/v1/tags/bug")
 	assert.Equal(t, http.StatusNotFound, resp2.StatusCode)
 }
+
+func TestCreateTagDuplicateReturns409(t *testing.T) {
+	ts := setupTestServer(t)
+
+	body := `{"name":"Bug","color":"red"}`
+	resp1, _ := http.Post(ts.URL+"/api/v1/tags", "application/json", bytes.NewBufferString(body))
+	assert.Equal(t, http.StatusCreated, resp1.StatusCode)
+
+	// Second create with the same slug should return 409 Conflict, not 500.
+	resp2, _ := http.Post(ts.URL+"/api/v1/tags", "application/json", bytes.NewBufferString(body))
+	assert.Equal(t, http.StatusConflict, resp2.StatusCode)
+}
+
+func TestUpdateTaskTagsInvalidPayloadReturns400(t *testing.T) {
+	ts := setupTestServer(t)
+
+	// Create a task with one tag
+	body := `{"title":"Test","description":"x","priority":1,"executor":"cli","tags":["bug"]}`
+	resp, _ := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body))
+	var created map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&created)
+	id := created["id"].(string)
+
+	// Non-array tags payload (string instead of array) must fail with 400
+	req1, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/tasks/"+id, bytes.NewBufferString(`{"tags":"bug,ui"}`))
+	req1.Header.Set("Content-Type", "application/json")
+	resp1, err := http.DefaultClient.Do(req1)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp1.StatusCode)
+
+	// Array of non-strings must also fail with 400
+	req2, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/tasks/"+id, bytes.NewBufferString(`{"tags":[1,2,3]}`))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err := http.DefaultClient.Do(req2)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp2.StatusCode)
+}

@@ -1,13 +1,25 @@
 package httpserver
 
 import (
+	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 )
+
+// isUniqueConstraintError heuristically detects a SQLite UNIQUE constraint
+// violation by substring-matching the driver's error message. Used to map
+// duplicate-slug errors from CreateTag to 409 Conflict.
+func isUniqueConstraintError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "UNIQUE constraint failed")
+}
 
 // tagJSON converts a TagRecord to a JSON-friendly map.
 func tagJSON(t *sqlstore.TagRecord) map[string]interface{} {
@@ -45,7 +57,11 @@ func (s *Server) getTag(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
 	tag, err := s.svc.Tag.Get(slug)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		if errors.Is(err, sqlstore.ErrTagNotFound) {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, tagJSON(tag))
@@ -72,6 +88,10 @@ func (s *Server) createTag(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if _, ok := err.(*service.ValidationError); ok {
 			writeError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		if isUniqueConstraintError(err) {
+			writeError(w, http.StatusConflict, "tag slug already exists")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -102,8 +122,11 @@ func (s *Server) updateTag(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
-		// Store layer returns "tag X not found" — translate to 404
-		writeError(w, http.StatusNotFound, err.Error())
+		if errors.Is(err, sqlstore.ErrTagNotFound) {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, tagJSON(tag))
@@ -112,7 +135,11 @@ func (s *Server) updateTag(w http.ResponseWriter, r *http.Request) {
 func (s *Server) deleteTag(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
 	if err := s.svc.Tag.Delete(slug); err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		if errors.Is(err, sqlstore.ErrTagNotFound) {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -137,7 +164,11 @@ func (s *Server) mergeTags(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
-		writeError(w, http.StatusNotFound, err.Error())
+		if errors.Is(err, sqlstore.ErrTagNotFound) {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 

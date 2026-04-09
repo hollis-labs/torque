@@ -151,6 +151,27 @@ func (r *Resolver) CreateResolutionTask(ctx context.Context, req *ResolutionRequ
 		return nil, fmt.Errorf("create resolution task: %w", err)
 	}
 
+	// Attach default tags so merge-resolution tasks can be filtered/triaged.
+	// Uses CreateTagIfNotExists so we don't collide with any previously-created
+	// versions of these tags.
+	defaultTagSlugs := []string{"merge-resolution", "auto-generated"}
+	defaultTagNames := map[string]string{
+		"merge-resolution": "Merge Resolution",
+		"auto-generated":   "Auto Generated",
+	}
+	for _, slug := range defaultTagSlugs {
+		if err := r.store.CreateTagIfNotExists(&sqlstore.TagRecord{
+			Slug:  slug,
+			Name:  defaultTagNames[slug],
+			Color: "zinc",
+		}); err != nil {
+			return nil, fmt.Errorf("ensure resolution tag %q: %w", slug, err)
+		}
+	}
+	if err := r.store.SetTaskTags(id, defaultTagSlugs); err != nil {
+		return nil, fmt.Errorf("link resolution task tags: %w", err)
+	}
+
 	return r.store.GetTask(id)
 }
 

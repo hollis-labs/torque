@@ -1,6 +1,7 @@
 package sqlstore_test
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -273,4 +274,51 @@ func TestMergeTagsDestNotFound(t *testing.T) {
 
 	err := store.MergeTags("bug", "nope")
 	assert.Error(t, err)
+}
+
+func TestGetTagReturnsSentinelOnMissing(t *testing.T) {
+	store := setupTestStore(t)
+
+	_, err := store.GetTag("nope")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, sqlstore.ErrTagNotFound), "expected ErrTagNotFound, got %v", err)
+}
+
+func TestUpdateTagReturnsSentinelOnMissing(t *testing.T) {
+	store := setupTestStore(t)
+
+	newName := "X"
+	err := store.UpdateTag("nope", sqlstore.TagUpdate{Name: &newName})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, sqlstore.ErrTagNotFound), "expected ErrTagNotFound, got %v", err)
+}
+
+func TestDeleteTagReturnsSentinelOnMissing(t *testing.T) {
+	store := setupTestStore(t)
+
+	err := store.DeleteTag("nope")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, sqlstore.ErrTagNotFound), "expected ErrTagNotFound, got %v", err)
+}
+
+func TestCreateTagIfNotExists(t *testing.T) {
+	store := setupTestStore(t)
+
+	// First call inserts
+	require.NoError(t, store.CreateTagIfNotExists(&sqlstore.TagRecord{
+		Slug: "bug", Name: "Bug", Color: "red",
+	}))
+	got, err := store.GetTag("bug")
+	require.NoError(t, err)
+	assert.Equal(t, "Bug", got.Name)
+	assert.Equal(t, "red", got.Color)
+
+	// Second call with a different name/color is a silent no-op — existing row wins
+	require.NoError(t, store.CreateTagIfNotExists(&sqlstore.TagRecord{
+		Slug: "bug", Name: "Bug Report", Color: "orange",
+	}))
+	got2, err := store.GetTag("bug")
+	require.NoError(t, err)
+	assert.Equal(t, "Bug", got2.Name, "first-seen name should be preserved")
+	assert.Equal(t, "red", got2.Color, "first-seen color should be preserved")
 }

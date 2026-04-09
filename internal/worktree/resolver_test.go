@@ -121,7 +121,7 @@ func TestCreateResolutionTask(t *testing.T) {
 	assert.Contains(t, task.ID, "CW-")
 	assert.Contains(t, task.Title, "Resolve merge conflicts")
 	assert.Contains(t, task.Title, "CW-20260407-0001")
-	assert.Equal(t, 1, task.Priority)  // P1 — queue jump
+	assert.Equal(t, 1, task.Priority) // P1 — queue jump
 	assert.Equal(t, "todo", task.Status)
 	assert.Equal(t, "cli", task.Executor)
 	assert.Equal(t, "resolver-profile", task.AgentProfile)
@@ -129,6 +129,15 @@ func TestCreateResolutionTask(t *testing.T) {
 	assert.Equal(t, "none", task.OnDoneMerge) // Resolution task does not re-trigger merge
 	assert.Contains(t, task.Description, "pkg/user/validate.go")
 	assert.Contains(t, task.Description, "CW-20260407-0001")
+
+	// Default tags should be attached so merge-resolution tasks can be filtered/triaged
+	linked, err := store.ListTaskTags(task.ID)
+	require.NoError(t, err)
+	slugs := make([]string, len(linked))
+	for i, tg := range linked {
+		slugs[i] = tg.Slug
+	}
+	assert.ElementsMatch(t, []string{"merge-resolution", "auto-generated"}, slugs)
 }
 
 func TestEvaluateResolution(t *testing.T) {
