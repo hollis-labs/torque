@@ -31,14 +31,6 @@ export function TaskRow({ task, selected, onSelect }: TaskRowProps) {
           />
         </td>
       )}
-      {/* Status */}
-      <td className="w-px whitespace-nowrap px-2 py-1.5">
-        <StatusBadge status={task.status} />
-      </td>
-      {/* Priority */}
-      <td className="w-px whitespace-nowrap px-2 py-1.5">
-        <PriorityBadge priority={task.priority} />
-      </td>
       {/* Title + tags */}
       <td className="px-3 py-1.5 text-left">
         <div className="min-w-0">
@@ -62,6 +54,14 @@ export function TaskRow({ task, selected, onSelect }: TaskRowProps) {
             </div>
           )}
         </div>
+      </td>
+      {/* Status */}
+      <td className="w-px whitespace-nowrap px-2 py-1.5">
+        <StatusBadge status={task.status} />
+      </td>
+      {/* Priority */}
+      <td className="w-px whitespace-nowrap px-2 py-1.5">
+        <PriorityBadge priority={task.priority} />
       </td>
       {/* Executor */}
       <td className="w-px whitespace-nowrap px-2 py-1.5 text-right text-[12px] text-zinc-500">

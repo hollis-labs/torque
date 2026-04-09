@@ -24,9 +24,9 @@ function sortTasks(tasks: Task[], key: SortKey, dir: SortDir): Task[] {
 }
 
 const COLUMNS: { key: SortKey; label: string; align: 'left' | 'right' }[] = [
+  { key: 'title',      label: 'Task',     align: 'left'  },
   { key: 'status',     label: 'Status',   align: 'left'  },
   { key: 'priority',   label: 'Pri',      align: 'left'  },
-  { key: 'title',      label: 'Task',     align: 'left'  },
   { key: 'executor',   label: 'Executor', align: 'right' },
   { key: 'updated_at', label: 'Updated',  align: 'right' },
 ]
