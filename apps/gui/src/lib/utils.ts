@@ -67,11 +67,3 @@ export function priorityLabel(p: number): string {
     default: return `P${p}`
   }
 }
-
-/**
- * Parse a comma-separated tags string into an array of trimmed, non-empty strings
- */
-export function parseTags(tags: string): string[] {
-  if (!tags || tags.trim() === '') return []
-  return tags.split(',').map(t => t.trim()).filter(Boolean)
-}
