@@ -15,6 +15,7 @@ type SprintRecord struct {
 	Status       string
 	ApprovalMode string
 	CostBudget   sql.NullFloat64
+	ProjectID    sql.NullString
 	StartedAt    sql.NullTime
 	EndedAt      sql.NullTime
 	CreatedAt    time.Time
@@ -23,9 +24,10 @@ type SprintRecord struct {
 
 // SprintFilter holds optional filter criteria for ListSprints.
 type SprintFilter struct {
-	Status string
-	Limit  int
-	Offset int
+	Status    string
+	ProjectID string
+	Limit     int
+	Offset    int
 }
 
 // SprintUpdate holds optional fields to update; nil pointer = no change.
@@ -34,22 +36,23 @@ type SprintUpdate struct {
 	Goal         *string
 	ApprovalMode *string
 	CostBudget   *float64
+	ProjectID    *string
 }
 
 // CreateSprint inserts a new sprint with defaults applied.
 func (s *Store) CreateSprint(sp *SprintRecord) error {
 	if sp.Status == "" {
-		sp.Status = "planning"
+		sp.Status = "active"
 	}
 	if sp.ApprovalMode == "" {
 		sp.ApprovalMode = "approve_each"
 	}
 
 	_, err := s.db.Exec(`INSERT INTO sprints (
-		id, name, goal, status, approval_mode, cost_budget, started_at, ended_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, name, goal, status, approval_mode, cost_budget, project_id, started_at, ended_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sp.ID, sp.Name, sp.Goal, sp.Status, sp.ApprovalMode,
-		sp.CostBudget, sp.StartedAt, sp.EndedAt,
+		sp.CostBudget, sp.ProjectID, sp.StartedAt, sp.EndedAt,
 	)
 	return err
 }
@@ -58,11 +61,11 @@ func (s *Store) CreateSprint(sp *SprintRecord) error {
 func (s *Store) GetSprint(id string) (*SprintRecord, error) {
 	sp := &SprintRecord{}
 	err := s.db.QueryRow(`SELECT
-		id, name, goal, status, approval_mode, cost_budget,
+		id, name, goal, status, approval_mode, cost_budget, project_id,
 		started_at, ended_at, created_at, updated_at
 	FROM sprints WHERE id = ?`, id).Scan(
 		&sp.ID, &sp.Name, &sp.Goal, &sp.Status, &sp.ApprovalMode,
-		&sp.CostBudget, &sp.StartedAt, &sp.EndedAt,
+		&sp.CostBudget, &sp.ProjectID, &sp.StartedAt, &sp.EndedAt,
 		&sp.CreatedAt, &sp.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -73,7 +76,7 @@ func (s *Store) GetSprint(id string) (*SprintRecord, error) {
 
 // ListSprints returns sprints matching the filter, ordered by created_at DESC.
 func (s *Store) ListSprints(f SprintFilter) ([]SprintRecord, error) {
-	query := `SELECT id, name, goal, status, approval_mode, cost_budget,
+	query := `SELECT id, name, goal, status, approval_mode, cost_budget, project_id,
 		started_at, ended_at, created_at, updated_at FROM sprints`
 
 	var conditions []string
@@ -82,6 +85,10 @@ func (s *Store) ListSprints(f SprintFilter) ([]SprintRecord, error) {
 	if f.Status != "" {
 		conditions = append(conditions, "status = ?")
 		args = append(args, f.Status)
+	}
+	if f.ProjectID != "" {
+		conditions = append(conditions, "project_id = ?")
+		args = append(args, f.ProjectID)
 	}
 
 	if len(conditions) > 0 {
@@ -107,7 +114,7 @@ func (s *Store) ListSprints(f SprintFilter) ([]SprintRecord, error) {
 		var sp SprintRecord
 		if err := rows.Scan(
 			&sp.ID, &sp.Name, &sp.Goal, &sp.Status, &sp.ApprovalMode,
-			&sp.CostBudget, &sp.StartedAt, &sp.EndedAt,
+			&sp.CostBudget, &sp.ProjectID, &sp.StartedAt, &sp.EndedAt,
 			&sp.CreatedAt, &sp.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -137,6 +144,10 @@ func (s *Store) UpdateSprint(id string, u SprintUpdate) error {
 	if u.CostBudget != nil {
 		sets = append(sets, "cost_budget = ?")
 		args = append(args, *u.CostBudget)
+	}
+	if u.ProjectID != nil {
+		sets = append(sets, "project_id = ?")
+		args = append(args, *u.ProjectID)
 	}
 
 	if len(sets) == 0 {

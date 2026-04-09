@@ -1,6 +1,7 @@
 package sqlstore_test
 
 import (
+	"database/sql"
 	"testing"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
@@ -24,9 +25,29 @@ func TestCreateSprint(t *testing.T) {
 	got, err := store.GetSprint("SP-20260407-0001")
 	require.NoError(t, err)
 	assert.Equal(t, "Sprint 1", got.Name)
-	assert.Equal(t, "planning", got.Status)
+	assert.Equal(t, "active", got.Status)
 	assert.Equal(t, "approve_each", got.ApprovalMode)
 	assert.Equal(t, "Ship auth module", got.Goal)
+}
+
+func TestCreateSprintWithProjectID(t *testing.T) {
+	store := setupTestStore(t)
+
+	store.CreateProject(&sqlstore.ProjectRecord{ID: "PRJ-20260407-0001", Name: "Project"})
+
+	sprint := &sqlstore.SprintRecord{
+		ID:        "SP-20260407-0001",
+		Name:      "Sprint 1",
+		ProjectID: sql.NullString{String: "PRJ-20260407-0001", Valid: true},
+	}
+
+	err := store.CreateSprint(sprint)
+	require.NoError(t, err)
+
+	got, err := store.GetSprint("SP-20260407-0001")
+	require.NoError(t, err)
+	assert.True(t, got.ProjectID.Valid)
+	assert.Equal(t, "PRJ-20260407-0001", got.ProjectID.String)
 }
 
 func TestListSprints(t *testing.T) {
@@ -43,13 +64,36 @@ func TestListSprints(t *testing.T) {
 func TestListSprintsFilterByStatus(t *testing.T) {
 	store := setupTestStore(t)
 
-	store.CreateSprint(&sqlstore.SprintRecord{ID: "SP-20260407-0001", Name: "Sprint 1", Status: "planning"})
+	store.CreateSprint(&sqlstore.SprintRecord{ID: "SP-20260407-0001", Name: "Sprint 1", Status: "inactive"})
 	store.CreateSprint(&sqlstore.SprintRecord{ID: "SP-20260407-0002", Name: "Sprint 2", Status: "active"})
 
 	sprints, err := store.ListSprints(sqlstore.SprintFilter{Status: "active"})
 	require.NoError(t, err)
 	assert.Len(t, sprints, 1)
 	assert.Equal(t, "Sprint 2", sprints[0].Name)
+}
+
+func TestListSprintsFilterByProjectID(t *testing.T) {
+	store := setupTestStore(t)
+
+	store.CreateProject(&sqlstore.ProjectRecord{ID: "PRJ-20260407-0001", Name: "Project A"})
+	store.CreateProject(&sqlstore.ProjectRecord{ID: "PRJ-20260407-0002", Name: "Project B"})
+
+	store.CreateSprint(&sqlstore.SprintRecord{
+		ID:        "SP-20260407-0001",
+		Name:      "Sprint A",
+		ProjectID: sql.NullString{String: "PRJ-20260407-0001", Valid: true},
+	})
+	store.CreateSprint(&sqlstore.SprintRecord{
+		ID:        "SP-20260407-0002",
+		Name:      "Sprint B",
+		ProjectID: sql.NullString{String: "PRJ-20260407-0002", Valid: true},
+	})
+
+	sprints, err := store.ListSprints(sqlstore.SprintFilter{ProjectID: "PRJ-20260407-0001"})
+	require.NoError(t, err)
+	assert.Len(t, sprints, 1)
+	assert.Equal(t, "Sprint A", sprints[0].Name)
 }
 
 func TestUpdateSprint(t *testing.T) {
@@ -69,10 +113,27 @@ func TestUpdateSprint(t *testing.T) {
 	assert.Equal(t, "Updated goal", got.Goal)
 }
 
+func TestUpdateSprintProjectID(t *testing.T) {
+	store := setupTestStore(t)
+
+	store.CreateProject(&sqlstore.ProjectRecord{ID: "PRJ-20260407-0001", Name: "Project"})
+	store.CreateSprint(&sqlstore.SprintRecord{ID: "SP-20260407-0001", Name: "Sprint 1"})
+
+	err := store.UpdateSprint("SP-20260407-0001", sqlstore.SprintUpdate{
+		ProjectID: strPtr("PRJ-20260407-0001"),
+	})
+	require.NoError(t, err)
+
+	got, err := store.GetSprint("SP-20260407-0001")
+	require.NoError(t, err)
+	assert.True(t, got.ProjectID.Valid)
+	assert.Equal(t, "PRJ-20260407-0001", got.ProjectID.String)
+}
+
 func TestTransitionSprint(t *testing.T) {
 	store := setupTestStore(t)
 
-	store.CreateSprint(&sqlstore.SprintRecord{ID: "SP-20260407-0001", Name: "Sprint 1", Status: "planning"})
+	store.CreateSprint(&sqlstore.SprintRecord{ID: "SP-20260407-0001", Name: "Sprint 1", Status: "inactive"})
 
 	err := store.TransitionSprint("SP-20260407-0001", "active")
 	require.NoError(t, err)

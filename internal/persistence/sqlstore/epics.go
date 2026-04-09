@@ -13,15 +13,18 @@ type EpicRecord struct {
 	Name        string
 	Description string
 	Status      string
+	Priority    sql.NullInt64
+	ProjectID   sql.NullString
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
 
 // EpicFilter holds optional filter criteria for ListEpics.
 type EpicFilter struct {
-	Status string
-	Limit  int
-	Offset int
+	Status    string
+	ProjectID string
+	Limit     int
+	Offset    int
 }
 
 // EpicUpdate holds optional fields to update; nil pointer = no change.
@@ -29,16 +32,18 @@ type EpicUpdate struct {
 	Name        *string
 	Description *string
 	Status      *string
+	Priority    *int64
+	ProjectID   *string
 }
 
 // CreateEpic inserts a new epic with defaults applied.
 func (s *Store) CreateEpic(e *EpicRecord) error {
 	if e.Status == "" {
-		e.Status = "open"
+		e.Status = "active"
 	}
 
-	_, err := s.db.Exec(`INSERT INTO epics (id, name, description, status) VALUES (?, ?, ?, ?)`,
-		e.ID, e.Name, e.Description, e.Status,
+	_, err := s.db.Exec(`INSERT INTO epics (id, name, description, status, priority, project_id) VALUES (?, ?, ?, ?, ?, ?)`,
+		e.ID, e.Name, e.Description, e.Status, e.Priority, e.ProjectID,
 	)
 	return err
 }
@@ -46,8 +51,8 @@ func (s *Store) CreateEpic(e *EpicRecord) error {
 // GetEpic fetches a single epic by ID.
 func (s *Store) GetEpic(id string) (*EpicRecord, error) {
 	e := &EpicRecord{}
-	err := s.db.QueryRow(`SELECT id, name, description, status, created_at, updated_at FROM epics WHERE id = ?`, id).Scan(
-		&e.ID, &e.Name, &e.Description, &e.Status, &e.CreatedAt, &e.UpdatedAt,
+	err := s.db.QueryRow(`SELECT id, name, description, status, priority, project_id, created_at, updated_at FROM epics WHERE id = ?`, id).Scan(
+		&e.ID, &e.Name, &e.Description, &e.Status, &e.Priority, &e.ProjectID, &e.CreatedAt, &e.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("epic %s not found", id)
@@ -57,7 +62,7 @@ func (s *Store) GetEpic(id string) (*EpicRecord, error) {
 
 // ListEpics returns epics matching the filter, ordered by created_at DESC.
 func (s *Store) ListEpics(f EpicFilter) ([]EpicRecord, error) {
-	query := `SELECT id, name, description, status, created_at, updated_at FROM epics`
+	query := `SELECT id, name, description, status, priority, project_id, created_at, updated_at FROM epics`
 
 	var conditions []string
 	var args []interface{}
@@ -65,6 +70,10 @@ func (s *Store) ListEpics(f EpicFilter) ([]EpicRecord, error) {
 	if f.Status != "" {
 		conditions = append(conditions, "status = ?")
 		args = append(args, f.Status)
+	}
+	if f.ProjectID != "" {
+		conditions = append(conditions, "project_id = ?")
+		args = append(args, f.ProjectID)
 	}
 
 	if len(conditions) > 0 {
@@ -88,7 +97,7 @@ func (s *Store) ListEpics(f EpicFilter) ([]EpicRecord, error) {
 	var epics []EpicRecord
 	for rows.Next() {
 		var e EpicRecord
-		if err := rows.Scan(&e.ID, &e.Name, &e.Description, &e.Status, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.Name, &e.Description, &e.Status, &e.Priority, &e.ProjectID, &e.CreatedAt, &e.UpdatedAt); err != nil {
 			return nil, err
 		}
 		epics = append(epics, e)
@@ -112,6 +121,14 @@ func (s *Store) UpdateEpic(id string, u EpicUpdate) error {
 	if u.Status != nil {
 		sets = append(sets, "status = ?")
 		args = append(args, *u.Status)
+	}
+	if u.Priority != nil {
+		sets = append(sets, "priority = ?")
+		args = append(args, *u.Priority)
+	}
+	if u.ProjectID != nil {
+		sets = append(sets, "project_id = ?")
+		args = append(args, *u.ProjectID)
 	}
 
 	if len(sets) == 0 {

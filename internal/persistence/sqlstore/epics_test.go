@@ -24,7 +24,30 @@ func TestCreateEpic(t *testing.T) {
 	got, err := store.GetEpic("EP-20260407-0001")
 	require.NoError(t, err)
 	assert.Equal(t, "Auth Overhaul", got.Name)
-	assert.Equal(t, "open", got.Status)
+	assert.Equal(t, "active", got.Status)
+}
+
+func TestCreateEpicWithPriorityAndProjectID(t *testing.T) {
+	store := setupTestStore(t)
+
+	store.CreateProject(&sqlstore.ProjectRecord{ID: "PRJ-20260407-0001", Name: "Project"})
+
+	epic := &sqlstore.EpicRecord{
+		ID:        "EP-20260407-0001",
+		Name:      "Big Feature",
+		Priority:  sql.NullInt64{Int64: 1, Valid: true},
+		ProjectID: sql.NullString{String: "PRJ-20260407-0001", Valid: true},
+	}
+
+	err := store.CreateEpic(epic)
+	require.NoError(t, err)
+
+	got, err := store.GetEpic("EP-20260407-0001")
+	require.NoError(t, err)
+	assert.True(t, got.Priority.Valid)
+	assert.Equal(t, int64(1), got.Priority.Int64)
+	assert.True(t, got.ProjectID.Valid)
+	assert.Equal(t, "PRJ-20260407-0001", got.ProjectID.String)
 }
 
 func TestListEpics(t *testing.T) {
@@ -41,13 +64,36 @@ func TestListEpics(t *testing.T) {
 func TestListEpicsFilterByStatus(t *testing.T) {
 	store := setupTestStore(t)
 
-	store.CreateEpic(&sqlstore.EpicRecord{ID: "EP-20260407-0001", Name: "Open", Status: "open"})
-	store.CreateEpic(&sqlstore.EpicRecord{ID: "EP-20260407-0002", Name: "Closed", Status: "closed"})
+	store.CreateEpic(&sqlstore.EpicRecord{ID: "EP-20260407-0001", Name: "Active", Status: "active"})
+	store.CreateEpic(&sqlstore.EpicRecord{ID: "EP-20260407-0002", Name: "Inactive", Status: "inactive"})
 
-	epics, err := store.ListEpics(sqlstore.EpicFilter{Status: "open"})
+	epics, err := store.ListEpics(sqlstore.EpicFilter{Status: "active"})
 	require.NoError(t, err)
 	assert.Len(t, epics, 1)
-	assert.Equal(t, "Open", epics[0].Name)
+	assert.Equal(t, "Active", epics[0].Name)
+}
+
+func TestListEpicsFilterByProjectID(t *testing.T) {
+	store := setupTestStore(t)
+
+	store.CreateProject(&sqlstore.ProjectRecord{ID: "PRJ-20260407-0001", Name: "Project A"})
+	store.CreateProject(&sqlstore.ProjectRecord{ID: "PRJ-20260407-0002", Name: "Project B"})
+
+	store.CreateEpic(&sqlstore.EpicRecord{
+		ID:        "EP-20260407-0001",
+		Name:      "Epic A",
+		ProjectID: sql.NullString{String: "PRJ-20260407-0001", Valid: true},
+	})
+	store.CreateEpic(&sqlstore.EpicRecord{
+		ID:        "EP-20260407-0002",
+		Name:      "Epic B",
+		ProjectID: sql.NullString{String: "PRJ-20260407-0002", Valid: true},
+	})
+
+	epics, err := store.ListEpics(sqlstore.EpicFilter{ProjectID: "PRJ-20260407-0001"})
+	require.NoError(t, err)
+	assert.Len(t, epics, 1)
+	assert.Equal(t, "Epic A", epics[0].Name)
 }
 
 func TestUpdateEpic(t *testing.T) {
@@ -72,13 +118,35 @@ func TestUpdateEpicStatus(t *testing.T) {
 
 	store.CreateEpic(&sqlstore.EpicRecord{ID: "EP-20260407-0001", Name: "Epic"})
 
-	closed := "closed"
+	closed := "inactive"
 	err := store.UpdateEpic("EP-20260407-0001", sqlstore.EpicUpdate{Status: &closed})
 	require.NoError(t, err)
 
 	got, err := store.GetEpic("EP-20260407-0001")
 	require.NoError(t, err)
-	assert.Equal(t, "closed", got.Status)
+	assert.Equal(t, "inactive", got.Status)
+}
+
+func TestUpdateEpicPriorityAndProjectID(t *testing.T) {
+	store := setupTestStore(t)
+
+	store.CreateProject(&sqlstore.ProjectRecord{ID: "PRJ-20260407-0001", Name: "Project"})
+	store.CreateEpic(&sqlstore.EpicRecord{ID: "EP-20260407-0001", Name: "Epic"})
+
+	prio := int64(2)
+	proj := "PRJ-20260407-0001"
+	err := store.UpdateEpic("EP-20260407-0001", sqlstore.EpicUpdate{
+		Priority:  &prio,
+		ProjectID: &proj,
+	})
+	require.NoError(t, err)
+
+	got, err := store.GetEpic("EP-20260407-0001")
+	require.NoError(t, err)
+	assert.True(t, got.Priority.Valid)
+	assert.Equal(t, int64(2), got.Priority.Int64)
+	assert.True(t, got.ProjectID.Valid)
+	assert.Equal(t, "PRJ-20260407-0001", got.ProjectID.String)
 }
 
 func TestDeleteEpic(t *testing.T) {

@@ -41,7 +41,7 @@ func (a *Adapter) handleProjectCreate(ctx context.Context, req mcp.CallToolReque
 }
 
 func (a *Adapter) handleProjectList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	projects, err := a.svc.Project.List()
+	projects, err := a.svc.Project.List("")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}

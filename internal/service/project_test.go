@@ -47,7 +47,7 @@ func TestProjectList(t *testing.T) {
 	svc.Project.Create(service.ProjectCreateInput{Name: "Project A"})
 	svc.Project.Create(service.ProjectCreateInput{Name: "Project B"})
 
-	projects, err := svc.Project.List()
+	projects, err := svc.Project.List("")
 	require.NoError(t, err)
 	assert.Len(t, projects, 2)
 }

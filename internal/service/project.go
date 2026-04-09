@@ -51,12 +51,12 @@ func (s *ProjectService) Get(id string) (*sqlstore.ProjectRecord, error) {
 	return s.store.GetProject(id)
 }
 
-// List returns all projects.
-func (s *ProjectService) List() ([]sqlstore.ProjectRecord, error) {
+// List returns projects optionally filtered by status.
+func (s *ProjectService) List(status string) ([]sqlstore.ProjectRecord, error) {
 	if err := s.feature.Require("projects"); err != nil {
 		return nil, err
 	}
-	return s.store.ListProjects()
+	return s.store.ListProjects(sqlstore.ProjectFilter{Status: status})
 }
 
 // Delete removes a project by ID.
