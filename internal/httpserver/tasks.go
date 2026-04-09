@@ -20,7 +20,6 @@ func taskJSON(t *sqlstore.TaskRecord) map[string]interface{} {
 		"description":     t.Description,
 		"status":          t.Status,
 		"priority":        t.Priority,
-		"tags":            t.Tags,
 		"manual":          t.Manual,
 		"executor":        t.Executor,
 		"agent_profile":   t.AgentProfile,

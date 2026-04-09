@@ -129,7 +129,6 @@ func (r *Resolver) CreateResolutionTask(ctx context.Context, req *ResolutionRequ
 		Description:  description,
 		Status:       "todo",
 		Priority:     1,       // P1 — queue jump for immediate dispatch
-		Tags:         `["merge-resolution","auto-generated"]`,
 		Executor:     r.mergeCfg.ResolutionExecutor,
 		AgentProfile: r.mergeCfg.ResolutionAgent,
 		WorkingDir:   req.WorktreePath,

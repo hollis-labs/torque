@@ -107,7 +107,6 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		Title:             input.Title,
 		Description:       input.Description,
 		Priority:          priority,
-		Tags:              marshalJSON(input.Tags),
 		Manual:            input.Manual,
 		Executor:          orDefault(input.Executor, "cli"),
 		AgentProfile:      input.AgentProfile,

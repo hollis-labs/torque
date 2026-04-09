@@ -52,7 +52,6 @@ func (a *Adapter) registerTaskTools() {
 		mcp.WithString("title", mcp.Description("New title")),
 		mcp.WithString("description", mcp.Description("New description")),
 		mcp.WithNumber("priority", mcp.Description("New priority")),
-		mcp.WithString("tags", mcp.Description("New tags JSON array")),
 		mcp.WithString("sprint_id", mcp.Description("Sprint ID (set empty string to unassign)")),
 		mcp.WithString("project_id", mcp.Description("Project ID (set empty string to unassign)")),
 		mcp.WithString("epic_id", mcp.Description("Epic ID (set empty string to unassign)")),
@@ -155,9 +154,6 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 	}
 	if v := reqInt(req, "priority"); v != 0 {
 		update.Priority = &v
-	}
-	if v := reqStr(req, "tags"); v != "" {
-		update.Tags = &v
 	}
 
 	// Association fields — allow setting to empty string to unassign
