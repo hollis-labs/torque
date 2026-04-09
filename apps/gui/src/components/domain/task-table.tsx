@@ -27,7 +27,7 @@ const COLUMNS: { key: SortKey; label: string }[] = [
   { key: 'title',      label: 'Task'    },
   { key: 'status',     label: 'Status'  },
   { key: 'priority',   label: 'Pri'     },
-  { key: 'updated_at', label: 'Updated' },
+  { key: 'updated_at', label: 'Date' },
 ]
 
 export function TaskTable({ tasks, onTransition, emptyVariant = 'no-tasks' }: TaskTableProps) {
@@ -74,7 +74,7 @@ export function TaskTable({ tasks, onTransition, emptyVariant = 'no-tasks' }: Ta
       <table className="min-w-full">
         <thead className="text-[10px] uppercase tracking-[.28em] text-zinc-500">
           <tr className="border-b border-zinc-800/80">
-            <th className="w-8 py-1.5 pl-4 pr-0">
+            <th className="w-8 py-1.5 pl-[14px] pr-0">
               <input
                 type="checkbox"
                 checked={allSelected}
@@ -89,7 +89,7 @@ export function TaskTable({ tasks, onTransition, emptyVariant = 'no-tasks' }: Ta
               return (
                 <th
                   key={key}
-                  className={`py-1.5 font-medium ${isTitle ? 'px-3 text-left' : 'w-px whitespace-nowrap px-1.5 text-left'}`}
+                  className={`py-1.5 font-medium ${isTitle ? 'px-3 text-left' : 'w-px whitespace-nowrap px-1.5'}`}
                 >
                   <button
                     type="button"

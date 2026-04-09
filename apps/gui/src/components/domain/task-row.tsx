@@ -55,15 +55,15 @@ export function TaskRow({ task, selected, onSelect }: TaskRowProps) {
         <PriorityBadge priority={task.priority} />
       </td>
       {/* Updated */}
-      <td className="w-px whitespace-nowrap pl-1.5 pr-1 py-1.5 text-right">
+      <td className="w-px whitespace-nowrap px-1.5 py-1.5">
         <div className="text-[11px] leading-4 text-zinc-400 uppercase tracking-[.12em]">{dateStr}</div>
         <div className="text-[11px] leading-4 text-zinc-600 uppercase tracking-[.12em]">{agoStr}</div>
       </td>
       {/* Actions (inert) */}
-      <td className="w-px whitespace-nowrap pl-0 pr-3 py-1.5">
+      <td className="w-px whitespace-nowrap pl-1 pr-3 py-1.5">
         <button
           type="button"
-          className="inline-flex h-6 w-6 items-center justify-center rounded text-zinc-600 hover:bg-zinc-800 hover:text-zinc-400 transition-colors"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-700/80 bg-zinc-900 text-zinc-500 hover:border-zinc-600 hover:text-zinc-300 transition-colors"
           tabIndex={-1}
         >
           <MoreHorizontal className="h-3.5 w-3.5" />
