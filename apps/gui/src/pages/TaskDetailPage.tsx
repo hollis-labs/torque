@@ -93,8 +93,9 @@ export default function TaskDetailPage() {
   }, [editing, api])
 
   // Lazy-load tab content (view mode only)
+  const taskLoaded = task !== null
   useEffect(() => {
-    if (!id || !task || editing) return
+    if (!id || !taskLoaded || editing) return
     if (activeTab === 'comments' && comments === null) {
       api.listComments(id).then(setComments).catch(() => setComments([]))
     }
@@ -104,7 +105,7 @@ export default function TaskDetailPage() {
     if (activeTab === 'artifacts' && artifacts === null) {
       api.listArtifacts(id).then(setArtifacts).catch(() => setArtifacts([]))
     }
-  }, [activeTab, id, task, editing, comments, runs, artifacts, api])
+  }, [activeTab, id, taskLoaded, editing, comments, runs, artifacts, api])
 
   const updateDraft = useCallback(
     <K extends keyof Task>(field: K, value: Task[K]) => {
