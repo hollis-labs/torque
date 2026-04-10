@@ -224,6 +224,9 @@ type TaskUpdateInput struct {
 // Update applies a partial update to a task. If Tags is non-nil, linked
 // tags are resolved and replaced.
 func (s *TaskService) Update(id string, input TaskUpdateInput) error {
+	if err := s.validateTaskWrites(extractUpdateFields(input)); err != nil {
+		return err
+	}
 	if err := s.store.UpdateTask(id, input.TaskUpdate); err != nil {
 		return err
 	}

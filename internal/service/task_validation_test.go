@@ -291,3 +291,33 @@ func TestValidateTaskWritesDependsOnRejectsMissing(t *testing.T) {
 	assert.Contains(t, err.Error(), "depends_on")
 	assert.Contains(t, err.Error(), "CW-99999999-9999")
 }
+
+func TestUpdateValidatesEnums(t *testing.T) {
+	svc := setupTaskValidationTest(t)
+
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "Test"})
+	require.NoError(t, err)
+
+	// Bad on_done on update
+	bad := "purge"
+	err = svc.Task.Update(task.ID, service.TaskUpdateInput{
+		TaskUpdate: sqlstore.TaskUpdate{OnDone: &bad},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "on_done")
+}
+
+func TestUpdateValidatesNumericSentinels(t *testing.T) {
+	svc := setupTaskValidationTest(t)
+
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "Test"})
+	require.NoError(t, err)
+
+	// Bad max_duration_ms (zero) on update
+	zero := sql.NullInt64{Int64: 0, Valid: true}
+	err = svc.Task.Update(task.ID, service.TaskUpdateInput{
+		TaskUpdate: sqlstore.TaskUpdate{MaxDurationMs: &zero},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "max_duration_ms")
+}

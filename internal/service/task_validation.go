@@ -204,3 +204,53 @@ func extractCreateFields(input TaskCreateInput) taskWriteFields {
 		DependsOn:     input.DependsOn,
 	}
 }
+
+// extractUpdateFields projects a TaskUpdateInput into the validation helper's
+// internal field set. Only fields where the update pointer is non-nil get
+// passed through — fields the caller didn't touch are left zero so the
+// validator skips them.
+func extractUpdateFields(input TaskUpdateInput) taskWriteFields {
+	f := taskWriteFields{}
+
+	if input.OnDone != nil {
+		f.OnDone = *input.OnDone
+	}
+	if input.OnFail != nil {
+		f.OnFail = *input.OnFail
+	}
+	if input.OnReview != nil {
+		f.OnReview = *input.OnReview
+	}
+	if input.OnDoneMerge != nil {
+		f.OnDoneMerge = *input.OnDoneMerge
+	}
+	if input.CostBudget != nil && input.CostBudget.Valid {
+		v := input.CostBudget.Float64
+		f.CostBudget = &v
+	}
+	if input.MaxRetries != nil {
+		f.MaxRetries = input.MaxRetries
+	}
+	if input.MaxDurationMs != nil && input.MaxDurationMs.Valid {
+		v := input.MaxDurationMs.Int64
+		f.MaxDurationMs = &v
+	}
+	if input.TokenBudget != nil && input.TokenBudget.Valid {
+		v := input.TokenBudget.Int64
+		f.TokenBudget = &v
+	}
+	if input.Deliverables != nil && input.Deliverables.Valid && input.Deliverables.String != "" {
+		var dels []Deliverable
+		if err := unmarshalJSON([]byte(input.Deliverables.String), &dels); err == nil {
+			f.Deliverables = dels
+		}
+	}
+	if input.DependsOn != nil && input.DependsOn.Valid && input.DependsOn.String != "" {
+		var deps []string
+		if err := unmarshalJSON([]byte(input.DependsOn.String), &deps); err == nil {
+			f.DependsOn = deps
+		}
+	}
+
+	return f
+}
