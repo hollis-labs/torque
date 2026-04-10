@@ -41,8 +41,8 @@ type TaskCreateInput struct {
 	ProjectID         string
 	EpicID            string
 
-	// New in Project 2 (defined here for compile-time access in task_validation_test.go;
-	// wired into Create's record build in Task 3)
+	// Project 2 canonical task fields. These are persisted by Create's
+	// record build below and validated by validateTaskWrites.
 	Permissions     map[string]any
 	Environment     map[string]string
 	MaxDurationMs   *int64
@@ -73,7 +73,11 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	}
 
 	// Validate write-time invariants (enums, numeric bounds, deliverables, depends_on).
-	if err := s.validateTaskWrites(extractCreateFields(input)); err != nil {
+	fields, err := extractCreateFields(input)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.validateTaskWrites(fields); err != nil {
 		return nil, err
 	}
 
@@ -224,7 +228,11 @@ type TaskUpdateInput struct {
 // Update applies a partial update to a task. If Tags is non-nil, linked
 // tags are resolved and replaced.
 func (s *TaskService) Update(id string, input TaskUpdateInput) error {
-	if err := s.validateTaskWrites(extractUpdateFields(input)); err != nil {
+	fields, err := extractUpdateFields(input)
+	if err != nil {
+		return err
+	}
+	if err := s.validateTaskWrites(fields); err != nil {
 		return err
 	}
 	if err := s.store.UpdateTask(id, input.TaskUpdate); err != nil {

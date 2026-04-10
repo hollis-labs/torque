@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"database/sql"
+	"errors"
 	"testing"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
@@ -13,7 +14,13 @@ import (
 )
 
 func TestUnlimitedConstantExists(t *testing.T) {
-	assert.Equal(t, int64(-1), service.Unlimited)
+	// Unlimited is intentionally an untyped constant so it works in both
+	// int64 contexts (MaxDurationMs, TokenBudget) and float64 contexts
+	// (CostBudget) without explicit conversion. Verify both forms.
+	var asInt64 int64 = service.Unlimited
+	var asFloat64 float64 = service.Unlimited
+	assert.Equal(t, int64(-1), asInt64)
+	assert.Equal(t, float64(-1), asFloat64)
 }
 
 func TestDeliverableTypeExists(t *testing.T) {
@@ -320,4 +327,89 @@ func TestUpdateValidatesNumericSentinels(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "max_duration_ms")
+}
+
+// TestUpdateRejectsEmptyEnumString verifies the validator rejects an
+// explicitly-empty lifecycle enum on update. Empty strings would persist as
+// non-canonical column values and break clients that expect the enum.
+// "Use default" is expressed by omitting the field, not by sending "".
+func TestUpdateRejectsEmptyEnumString(t *testing.T) {
+	svc := setupTaskValidationTest(t)
+
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "Test"})
+	require.NoError(t, err)
+
+	cases := []struct {
+		field   string
+		setter  func(*sqlstore.TaskUpdate)
+		message string
+	}{
+		{"on_done", func(u *sqlstore.TaskUpdate) { empty := ""; u.OnDone = &empty }, "on_done"},
+		{"on_fail", func(u *sqlstore.TaskUpdate) { empty := ""; u.OnFail = &empty }, "on_fail"},
+		{"on_review", func(u *sqlstore.TaskUpdate) { empty := ""; u.OnReview = &empty }, "on_review"},
+		{"on_done_merge", func(u *sqlstore.TaskUpdate) { empty := ""; u.OnDoneMerge = &empty }, "on_done_merge"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.field, func(t *testing.T) {
+			update := sqlstore.TaskUpdate{}
+			tc.setter(&update)
+			err := svc.Task.Update(task.ID, service.TaskUpdateInput{TaskUpdate: update})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.message)
+			assert.Contains(t, err.Error(), "empty string")
+		})
+	}
+}
+
+// TestUpdateRejectsInvalidDeliverablesJSON verifies extractUpdateFields
+// surfaces a ValidationError when the Deliverables NullString contains
+// malformed JSON, instead of silently dropping the field.
+func TestUpdateRejectsInvalidDeliverablesJSON(t *testing.T) {
+	svc := setupTaskValidationTest(t)
+
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "Test"})
+	require.NoError(t, err)
+
+	bad := sql.NullString{String: "{not valid json", Valid: true}
+	err = svc.Task.Update(task.ID, service.TaskUpdateInput{
+		TaskUpdate: sqlstore.TaskUpdate{Deliverables: &bad},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "deliverables")
+	assert.Contains(t, err.Error(), "invalid")
+}
+
+// TestUpdateRejectsInvalidDependsOnJSON verifies extractUpdateFields surfaces
+// a ValidationError when the DependsOn NullString contains malformed JSON.
+func TestUpdateRejectsInvalidDependsOnJSON(t *testing.T) {
+	svc := setupTaskValidationTest(t)
+
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "Test"})
+	require.NoError(t, err)
+
+	bad := sql.NullString{String: "[unterminated", Valid: true}
+	err = svc.Task.Update(task.ID, service.TaskUpdateInput{
+		TaskUpdate: sqlstore.TaskUpdate{DependsOn: &bad},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "depends_on")
+	assert.Contains(t, err.Error(), "invalid")
+}
+
+// TestDependsOnValidationDistinguishesNotFoundFromOtherErrors verifies that
+// the validator wraps a not-found dep as a ValidationError (so the HTTP layer
+// returns 422), while leaving other store errors propagating as-is (so they
+// surface as 500).
+func TestDependsOnValidationReturnsValidationErrorForMissing(t *testing.T) {
+	svc := setupTaskValidationTest(t)
+
+	_, err := svc.Task.Create(service.TaskCreateInput{
+		Title:     "Test",
+		DependsOn: []string{"CW-99999999-9999"},
+	})
+	require.Error(t, err)
+	var verr *service.ValidationError
+	require.True(t, errors.As(err, &verr), "expected *ValidationError, got %T", err)
+	assert.Equal(t, "depends_on", verr.Field)
+	assert.Contains(t, verr.Message, "CW-99999999-9999")
 }
