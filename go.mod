@@ -6,7 +6,7 @@ require (
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/google/uuid v1.6.0
 	github.com/hollis-labs/go-queue v0.0.0-00010101000000-000000000000
-	github.com/hollis-labs/go-strutil v0.0.0-00010101000000-000000000000
+	github.com/hollis-labs/go-strutil v0.0.0-20260409170855-ca5f29e8b1db
 	github.com/hollis-labs/plugin v0.0.0-00010101000000-000000000000
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/mark3labs/mcp-go v0.47.0
@@ -43,5 +43,3 @@ require (
 replace github.com/hollis-labs/plugin => /Users/chrispian/Projects-apps/plugin
 
 replace github.com/hollis-labs/go-queue => /Users/chrispian/Projects-apps/framework/libs/go-queue
-
-replace github.com/hollis-labs/go-strutil => ../framework/utils/go-strutil

@@ -18,7 +18,7 @@ Promoted tags from a JSON-string column to a first-class relational entity.
 | HTTP | `internal/httpserver/tags.go`, `tasks.go` | `/api/v1/tags` CRUD + merge endpoints, `taskJSON` returns structured `Tag[]`, create/update accept `tags: []string` |
 | MCP | `internal/mcpadapter/task_tools.go` | `taskWithTags` helper restores tag inline output on single-task tools |
 | Frontend | `apps/gui/src/components/domain/tag-chip.tsx`, `lib/types.ts`, `lib/constants.ts`, `task-row.tsx`, `TaskDetailPage.tsx` | Reusable `<TagChip>` component, board row 3-cap + `+N more` overflow, detail page uncapped, `parseTags` removed, color palette in `TAG_COLOR_CLASSES` |
-| External dep | `~/Projects-apps/framework/utils/go-strutil` | New shared module providing `Slugify` + 18 other Laravel-style helpers, wired into Clockwork via local `replace` directive |
+| External dep | `github.com/hollis-labs/go-strutil` | New shared module providing `Slugify` + 18 other Laravel-style helpers, published to GitHub (initially developed alongside Clockwork in `~/Projects-apps/framework/utils/go-strutil` and wired via local `replace` during development; switched to the published version after Project 2 merge) |
 | Worktree resolver | `internal/worktree/resolver.go` | Merge-resolution auto-tasks re-attach `merge-resolution` + `auto-generated` tags via `CreateTagIfNotExists` + `SetTaskTags` |
 
 ### Project 2 — Task API expansion (PR #2)
@@ -87,7 +87,7 @@ This resolves the common "remove a previously-set cap" workflow without needing 
 - **PUT vs PATCH harmonization** — task update uses PUT, tag endpoints use PATCH (pre-existing inconsistency)
 - **Timestamp serialization** — `taskJSON` uses raw `time.Time`, `tagJSON` uses `.Format(time.RFC3339)` (cosmetic)
 - **N+1 task-tag loading** in `tasksJSON` — acceptable at current scale, batched lookup is a clean future cleanup
-- **`go-strutil` publishing** — currently consumed via local `replace`; needs a remote publish before public release
+- **`GOPRIVATE` setup** — `go-strutil` is now consumed from the published `github.com/hollis-labs/go-strutil` repo. Until the module is indexed by `proxy.golang.org`/`sum.golang.org`, future `go get` and `go mod tidy` operations involving it need `GOPRIVATE=github.com/hollis-labs/*` set in the environment (or persisted via `go env -w`)
 - **Task list endpoint filters on new fields** — current filter set is status/priority/sprint/project/epic/executor only
 
 ## Test health

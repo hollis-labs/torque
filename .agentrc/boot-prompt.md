@@ -38,7 +38,7 @@ The work over recent sessions has been a chain leading toward a proper task deta
 - Task API contract: task responses now include structured `Tag[]`; create/update accept `tags: []string` (auto-resolved by name)
 - MCP adapter: `taskWithTags` helper restores tags inline on single-task tool outputs
 - Frontend: `Tag`/`TagColor`, `TAG_COLOR_CLASSES`, reusable `<TagChip>` component, board row 3-cap + `+N more` overflow, task detail uncapped, removed legacy `parseTags`
-- External module: `github.com/hollis-labs/go-strutil` wired via local `replace` directive (provides `Slugify`)
+- External module: `github.com/hollis-labs/go-strutil` (provides `Slugify` plus 18 other Laravel-style helpers)
 - Worktree resolver: merge-resolution auto-tasks re-attach `merge-resolution` + `auto-generated` tags
 - Backlog captured: `BLG-20260409-001` (Deliverables in API), `BLG-20260409-002` (tag management GUI, post-MVP)
 
@@ -93,7 +93,7 @@ The previous TaskDetailPage uses an older visual language (border-border, bg-car
 - **PUT vs PATCH harmonization** — task update uses PUT, tag endpoints use PATCH (pre-existing)
 - **Timestamp serialization inconsistency** — `taskJSON` uses raw `time.Time`, `tagJSON` uses `.Format(time.RFC3339)` (cosmetic)
 - **N+1 task-tag loading** — `tasksJSON` loads tags per task in a loop; batched query is a clean future cleanup
-- **`go-strutil` publishing** — currently consumed via local `replace` directive; needs a remote publish before public release
+- **`GOPRIVATE` setup** — `go-strutil` is now consumed from the published `github.com/hollis-labs/go-strutil` repo (no local `replace`). The repo is public on GitHub but not yet indexed by `proxy.golang.org`/`sum.golang.org`, so any future `go get`/`go mod tidy` involving this module needs `GOPRIVATE=github.com/hollis-labs/*` set in the environment (or persisted via `go env -w`). The other hollis-labs modules (`plugin`, `go-queue`) are still on local `replace` directives.
 - **`BLG-20260409-001`** — wire `Task.Deliverables` into the scheduler/executor completion gate (API surface is done; the scheduler integration is the next pass)
 - **`BLG-20260409-002`** — tag management GUI (post-MVP, P3)
 - **Task list endpoint filters on new fields** — not scoped yet; current filter set is status, priority, sprint_id, project_id, epic_id, executor
