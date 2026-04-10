@@ -310,14 +310,7 @@ func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Title       string   `json:"title"`
-		Description string   `json:"description"`
-		Priority    int      `json:"priority"`
-		Tags        []string `json:"tags"`
-		Executor    string   `json:"executor"`
-		Manual      bool     `json:"manual"`
-	}
+	var req TaskCreateRequest
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
@@ -327,14 +320,41 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := s.svc.Task.Create(service.TaskCreateInput{
-		Title:       req.Title,
-		Description: req.Description,
-		Priority:    req.Priority,
-		Tags:        req.Tags,
-		Executor:    req.Executor,
-		Manual:      req.Manual,
-	})
+	input := service.TaskCreateInput{
+		Title:             req.Title,
+		Description:       req.Description,
+		Priority:          req.Priority,
+		Tags:              req.Tags,
+		Manual:            req.Manual,
+		Executor:          req.Executor,
+		AgentProfile:      req.AgentProfile,
+		WorkingDir:        req.WorkingDir,
+		Tools:             req.Tools,
+		Permissions:       req.Permissions,
+		Environment:       req.Environment,
+		SystemPrompt:      req.SystemPrompt,
+		Files:             req.Files,
+		CostBudget:        req.CostBudget,
+		MaxRetries:        req.MaxRetries,
+		MaxDurationMs:     req.MaxDurationMs,
+		TokenBudget:       req.TokenBudget,
+		OnDone:            req.OnDone,
+		OnFail:            req.OnFail,
+		OnReview:          req.OnReview,
+		OnDoneMerge:       req.OnDoneMerge,
+		EscalationChain:   req.EscalationChain,
+		QualityGates:      req.QualityGates,
+		Deliverables:      req.Deliverables,
+		DeliverablePreset: req.DeliverablePreset,
+		DependsOn:         req.DependsOn,
+		BlockedReason:     req.BlockedReason,
+		Metadata:          req.Metadata,
+		SprintID:          req.SprintID,
+		ProjectID:         req.ProjectID,
+		EpicID:            req.EpicID,
+	}
+
+	task, err := s.svc.Task.Create(input)
 	if err != nil {
 		if _, ok := err.(*service.ValidationError); ok {
 			writeError(w, http.StatusUnprocessableEntity, err.Error())

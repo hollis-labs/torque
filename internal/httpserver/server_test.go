@@ -330,3 +330,77 @@ func TestUpdateTaskTagsInvalidPayloadReturns400(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusBadRequest, resp2.StatusCode)
 }
+
+func TestCreateTaskWithAllFields(t *testing.T) {
+	ts := setupTestServer(t)
+
+	body := `{
+		"title": "Full field task",
+		"description": "All the fields",
+		"priority": 1,
+		"tags": ["bug","ui"],
+		"manual": true,
+		"executor": "api",
+		"agent_profile": "claude-opus",
+		"working_dir": "/repos/test",
+		"tools": ["bash","edit"],
+		"permissions": {"network": true},
+		"environment": {"NODE_ENV": "test"},
+		"system_prompt": "test agent",
+		"files": ["src/main.go"],
+		"cost_budget": 50.0,
+		"max_retries": 5,
+		"max_duration_ms": 60000,
+		"token_budget": 100000,
+		"on_done": "close",
+		"on_fail": "block",
+		"on_review": "auto-approve",
+		"on_done_merge": "auto",
+		"escalation_chain": ["senior","human"],
+		"quality_gates": ["go test ./..."],
+		"deliverables": [{"type":"diff","required":true}],
+		"deliverable_preset": "backend-fix",
+		"blocked_reason": "",
+		"metadata": {"source":"test"}
+	}`
+	resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var got map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+
+	assert.Equal(t, "Full field task", got["title"])
+	assert.Equal(t, true, got["manual"])
+	assert.Equal(t, "api", got["executor"])
+	assert.Equal(t, "claude-opus", got["agent_profile"])
+	assert.Equal(t, "close", got["on_done"])
+	assert.Equal(t, "block", got["on_fail"])
+	assert.Equal(t, "auto-approve", got["on_review"])
+	assert.Equal(t, "auto", got["on_done_merge"])
+	assert.Equal(t, "backend-fix", got["deliverable_preset"])
+	assert.Equal(t, float64(5), got["max_retries"])
+	assert.Equal(t, float64(50), got["cost_budget"])
+	assert.Equal(t, float64(60000), got["max_duration_ms"])
+	assert.Equal(t, float64(100000), got["token_budget"])
+
+	// Structured fields
+	tools, ok := got["tools"].([]interface{})
+	require.True(t, ok)
+	assert.Equal(t, []interface{}{"bash", "edit"}, tools)
+
+	perms, ok := got["permissions"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, true, perms["network"])
+
+	env, ok := got["environment"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "test", env["NODE_ENV"])
+
+	delivs, ok := got["deliverables"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, delivs, 1)
+	d0 := delivs[0].(map[string]interface{})
+	assert.Equal(t, "diff", d0["type"])
+	assert.Equal(t, true, d0["required"])
+}
