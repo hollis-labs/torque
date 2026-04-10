@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
@@ -89,4 +90,122 @@ func TestTaskSearch(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	require.Contains(t, results[0].Title, "widgets")
+}
+
+func TestCreateWithAllFieldsRoundTrip(t *testing.T) {
+	svc := setupTaskValidationTest(t)
+
+	// First create a task that the test task can depend on
+	dep, err := svc.Task.Create(service.TaskCreateInput{Title: "Dependency"})
+	require.NoError(t, err)
+
+	costBudget := 50.0
+	maxRetries := 5
+	maxDurationMs := int64(60000)
+	tokenBudget := int64(100000)
+
+	input := service.TaskCreateInput{
+		Title:           "Full field task",
+		Description:     "All the fields",
+		Priority:        1,
+		Tags:            []string{"bug", "ui"},
+		Manual:          true,
+		Executor:        "api",
+		AgentProfile:    "claude-opus",
+		WorkingDir:      "/repos/test",
+		Tools:           []string{"bash", "edit", "read"},
+		Permissions:     map[string]any{"network": true, "filesystem": "read-only"},
+		Environment:     map[string]string{"NODE_ENV": "test", "DEBUG": "1"},
+		SystemPrompt:    "You are a test agent",
+		Files:           []string{"src/main.go", "src/utils.go"},
+		CostBudget:      &costBudget,
+		MaxRetries:      &maxRetries,
+		MaxDurationMs:   &maxDurationMs,
+		TokenBudget:     &tokenBudget,
+		OnDone:          "close",
+		OnFail:          "block",
+		OnReview:        "auto-approve",
+		OnDoneMerge:     "auto",
+		EscalationChain: []string{"senior-agent", "human-reviewer"},
+		QualityGates:    []string{"go test ./...", "go vet ./..."},
+		Deliverables: []service.Deliverable{
+			{Type: "diff", Required: true, Description: "Code changes"},
+			{Type: "test-results", Required: true},
+		},
+		DeliverablePreset: "backend-fix",
+		DependsOn:         []string{dep.ID},
+		BlockedReason:     "",
+		Metadata:          map[string]any{"source": "test", "priority_score": 0.95},
+	}
+
+	created, err := svc.Task.Create(input)
+	require.NoError(t, err)
+	require.NotNil(t, created)
+
+	// Roundtrip via Get
+	got, err := svc.Task.Get(created.ID)
+	require.NoError(t, err)
+
+	// Spot-check the new fields are persisted
+	assert.Equal(t, "Full field task", got.Title)
+	assert.Equal(t, true, got.Manual)
+	assert.Equal(t, "api", got.Executor)
+	assert.Equal(t, "claude-opus", got.AgentProfile)
+	assert.Equal(t, "close", got.OnDone)
+	assert.Equal(t, "block", got.OnFail)
+	assert.Equal(t, "auto-approve", got.OnReview)
+	assert.Equal(t, "auto", got.OnDoneMerge)
+	assert.Equal(t, "backend-fix", got.DeliverablePreset)
+	assert.Equal(t, 5, got.MaxRetries)
+	assert.True(t, got.CostBudget.Valid)
+	assert.Equal(t, 50.0, got.CostBudget.Float64)
+	assert.True(t, got.MaxDurationMs.Valid)
+	assert.Equal(t, int64(60000), got.MaxDurationMs.Int64)
+	assert.True(t, got.TokenBudget.Valid)
+	assert.Equal(t, int64(100000), got.TokenBudget.Int64)
+
+	// Verify JSON-blob fields are populated (parsed shape verified at HTTP layer)
+	assert.True(t, got.Tools.Valid)
+	assert.Contains(t, got.Tools.String, "bash")
+	assert.True(t, got.Permissions.Valid)
+	assert.Contains(t, got.Permissions.String, "network")
+	assert.True(t, got.Environment.Valid)
+	assert.Contains(t, got.Environment.String, "NODE_ENV")
+	assert.True(t, got.Files.Valid)
+	assert.Contains(t, got.Files.String, "main.go")
+	assert.True(t, got.EscalationChain.Valid)
+	assert.Contains(t, got.EscalationChain.String, "senior-agent")
+	assert.True(t, got.QualityGates.Valid)
+	assert.Contains(t, got.QualityGates.String, "go test")
+	assert.True(t, got.Deliverables.Valid)
+	assert.Contains(t, got.Deliverables.String, "diff")
+	assert.True(t, got.DependsOn.Valid)
+	assert.Contains(t, got.DependsOn.String, dep.ID)
+	assert.True(t, got.Metadata.Valid)
+	assert.Contains(t, got.Metadata.String, "source")
+}
+
+func TestCreateWithSentinelValues(t *testing.T) {
+	svc := setupTaskValidationTest(t)
+
+	unlimited := -1.0
+	unlimitedInt := int64(-1)
+
+	created, err := svc.Task.Create(service.TaskCreateInput{
+		Title:         "Sentinel task",
+		CostBudget:    &unlimited,
+		MaxDurationMs: &unlimitedInt,
+		TokenBudget:   &unlimitedInt,
+	})
+	require.NoError(t, err)
+
+	got, err := svc.Task.Get(created.ID)
+	require.NoError(t, err)
+
+	require.True(t, got.CostBudget.Valid)
+	assert.Equal(t, -1.0, got.CostBudget.Float64)
+	require.True(t, got.MaxDurationMs.Valid)
+	assert.Equal(t, int64(-1), got.MaxDurationMs.Int64)
+	require.True(t, got.TokenBudget.Valid)
+	assert.Equal(t, int64(-1), got.TokenBudget.Int64)
 }
