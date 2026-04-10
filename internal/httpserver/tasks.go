@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -16,29 +17,41 @@ import (
 // caller can batch-load them rather than requiring a store handle here.
 func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord) map[string]interface{} {
 	return map[string]interface{}{
-		"id":             t.ID,
-		"title":          t.Title,
-		"description":    t.Description,
-		"status":         t.Status,
-		"priority":       t.Priority,
-		"tags":           tagsJSON(tags),
-		"manual":         t.Manual,
-		"executor":       t.Executor,
-		"agent_profile":  t.AgentProfile,
-		"working_dir":    t.WorkingDir,
-		"system_prompt":  t.SystemPrompt,
-		"cost_budget":    nullFloat(t.CostBudget),
-		"max_retries":    t.MaxRetries,
-		"on_done":        t.OnDone,
-		"on_fail":        t.OnFail,
-		"on_review":      t.OnReview,
-		"on_done_merge":  t.OnDoneMerge,
-		"blocked_reason": t.BlockedReason,
-		"sprint_id":      nullStr(t.SprintID),
-		"project_id":     nullStr(t.ProjectID),
-		"epic_id":        nullStr(t.EpicID),
-		"created_at":     t.CreatedAt,
-		"updated_at":     t.UpdatedAt,
+		"id":                 t.ID,
+		"title":              t.Title,
+		"description":        t.Description,
+		"status":             t.Status,
+		"priority":           t.Priority,
+		"tags":               tagsJSON(tags),
+		"manual":             t.Manual,
+		"executor":           t.Executor,
+		"agent_profile":      t.AgentProfile,
+		"working_dir":        t.WorkingDir,
+		"tools":              parseStringArray(t.Tools),
+		"permissions":        parseFreeMap(t.Permissions),
+		"environment":        parseStringMap(t.Environment),
+		"system_prompt":      t.SystemPrompt,
+		"files":              parseStringArray(t.Files),
+		"cost_budget":        nullFloat(t.CostBudget),
+		"max_retries":        t.MaxRetries,
+		"max_duration_ms":    nullInt(t.MaxDurationMs),
+		"token_budget":       nullInt(t.TokenBudget),
+		"on_done":            t.OnDone,
+		"on_fail":            t.OnFail,
+		"on_review":          t.OnReview,
+		"on_done_merge":      t.OnDoneMerge,
+		"escalation_chain":   parseStringArray(t.EscalationChain),
+		"quality_gates":      parseStringArray(t.QualityGates),
+		"deliverables":       parseDeliverables(t.Deliverables),
+		"deliverable_preset": t.DeliverablePreset,
+		"depends_on":         parseStringArray(t.DependsOn),
+		"blocked_reason":     t.BlockedReason,
+		"metadata":           parseFreeMap(t.Metadata),
+		"sprint_id":          nullStr(t.SprintID),
+		"project_id":         nullStr(t.ProjectID),
+		"epic_id":            nullStr(t.EpicID),
+		"created_at":         t.CreatedAt,
+		"updated_at":         t.UpdatedAt,
 	}
 }
 
@@ -82,6 +95,149 @@ func nullTime(nt sql.NullTime) interface{} {
 		return nt.Time
 	}
 	return nil
+}
+
+// TaskCreateRequest is the JSON request body for POST /api/v1/tasks.
+// Field types are non-pointer where the zero value is acceptable as
+// "not provided" (e.g. empty string), and pointer where we need to
+// distinguish "not provided" from "explicit zero" (numeric nullables).
+type TaskCreateRequest struct {
+	Title             string                `json:"title"`
+	Description       string                `json:"description,omitempty"`
+	Priority          int                   `json:"priority,omitempty"`
+	Tags              []string              `json:"tags,omitempty"`
+	Manual            bool                  `json:"manual,omitempty"`
+	Executor          string                `json:"executor,omitempty"`
+	AgentProfile      string                `json:"agent_profile,omitempty"`
+	WorkingDir        string                `json:"working_dir,omitempty"`
+	Tools             []string              `json:"tools,omitempty"`
+	Permissions       map[string]any        `json:"permissions,omitempty"`
+	Environment       map[string]string     `json:"environment,omitempty"`
+	SystemPrompt      string                `json:"system_prompt,omitempty"`
+	Files             []string              `json:"files,omitempty"`
+	CostBudget        *float64              `json:"cost_budget,omitempty"`
+	MaxRetries        *int                  `json:"max_retries,omitempty"`
+	MaxDurationMs     *int64                `json:"max_duration_ms,omitempty"`
+	TokenBudget       *int64                `json:"token_budget,omitempty"`
+	OnDone            string                `json:"on_done,omitempty"`
+	OnFail            string                `json:"on_fail,omitempty"`
+	OnReview          string                `json:"on_review,omitempty"`
+	OnDoneMerge       string                `json:"on_done_merge,omitempty"`
+	EscalationChain   []string              `json:"escalation_chain,omitempty"`
+	QualityGates      []string              `json:"quality_gates,omitempty"`
+	Deliverables      []service.Deliverable `json:"deliverables,omitempty"`
+	DeliverablePreset string                `json:"deliverable_preset,omitempty"`
+	DependsOn         []string              `json:"depends_on,omitempty"`
+	BlockedReason     string                `json:"blocked_reason,omitempty"`
+	Metadata          map[string]any        `json:"metadata,omitempty"`
+	SprintID          string                `json:"sprint_id,omitempty"`
+	ProjectID         string                `json:"project_id,omitempty"`
+	EpicID            string                `json:"epic_id,omitempty"`
+}
+
+// TaskUpdateRequest is the JSON request body for PUT /api/v1/tasks/:id.
+// Every field is a pointer so "not provided" (nil) is distinguishable from
+// "explicit zero/empty value". The Status field is present only so the
+// handler can detect and reject it — status changes go through the
+// dedicated /transition endpoint instead.
+type TaskUpdateRequest struct {
+	Title             *string                `json:"title,omitempty"`
+	Description       *string                `json:"description,omitempty"`
+	Priority          *int                   `json:"priority,omitempty"`
+	Tags              *[]string              `json:"tags,omitempty"`
+	Manual            *bool                  `json:"manual,omitempty"`
+	Executor          *string                `json:"executor,omitempty"`
+	AgentProfile      *string                `json:"agent_profile,omitempty"`
+	WorkingDir        *string                `json:"working_dir,omitempty"`
+	Tools             *[]string              `json:"tools,omitempty"`
+	Permissions       *map[string]any        `json:"permissions,omitempty"`
+	Environment       *map[string]string     `json:"environment,omitempty"`
+	SystemPrompt      *string                `json:"system_prompt,omitempty"`
+	Files             *[]string              `json:"files,omitempty"`
+	CostBudget        *float64               `json:"cost_budget,omitempty"`
+	MaxRetries        *int                   `json:"max_retries,omitempty"`
+	MaxDurationMs     *int64                 `json:"max_duration_ms,omitempty"`
+	TokenBudget       *int64                 `json:"token_budget,omitempty"`
+	OnDone            *string                `json:"on_done,omitempty"`
+	OnFail            *string                `json:"on_fail,omitempty"`
+	OnReview          *string                `json:"on_review,omitempty"`
+	OnDoneMerge       *string                `json:"on_done_merge,omitempty"`
+	EscalationChain   *[]string              `json:"escalation_chain,omitempty"`
+	QualityGates      *[]string              `json:"quality_gates,omitempty"`
+	Deliverables      *[]service.Deliverable `json:"deliverables,omitempty"`
+	DeliverablePreset *string                `json:"deliverable_preset,omitempty"`
+	DependsOn         *[]string              `json:"depends_on,omitempty"`
+	BlockedReason     *string                `json:"blocked_reason,omitempty"`
+	Metadata          *map[string]any        `json:"metadata,omitempty"`
+	SprintID          *string                `json:"sprint_id,omitempty"`
+	ProjectID         *string                `json:"project_id,omitempty"`
+	EpicID            *string                `json:"epic_id,omitempty"`
+
+	// Status is included only for detection — the handler returns 400 if it
+	// is non-nil and points the caller to POST /tasks/:id/transition.
+	Status *string `json:"status,omitempty"`
+}
+
+// parseStringArray parses a NullString containing a JSON-encoded []string.
+// Returns an empty slice (not nil) on missing or invalid data so the JSON
+// response shape stays stable.
+func parseStringArray(ns sql.NullString) []string {
+	if !ns.Valid || ns.String == "" {
+		return []string{}
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(ns.String), &out); err != nil || out == nil {
+		return []string{}
+	}
+	return out
+}
+
+// parseStringMap parses a NullString containing a JSON-encoded map[string]string.
+func parseStringMap(ns sql.NullString) map[string]string {
+	if !ns.Valid || ns.String == "" {
+		return map[string]string{}
+	}
+	var out map[string]string
+	if err := json.Unmarshal([]byte(ns.String), &out); err != nil || out == nil {
+		return map[string]string{}
+	}
+	return out
+}
+
+// parseFreeMap parses a NullString containing a JSON-encoded free-form map.
+func parseFreeMap(ns sql.NullString) map[string]any {
+	if !ns.Valid || ns.String == "" {
+		return map[string]any{}
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(ns.String), &out); err != nil || out == nil {
+		return map[string]any{}
+	}
+	return out
+}
+
+// parseDeliverables parses a NullString containing a JSON-encoded []Deliverable.
+func parseDeliverables(ns sql.NullString) []service.Deliverable {
+	if !ns.Valid || ns.String == "" {
+		return []service.Deliverable{}
+	}
+	var out []service.Deliverable
+	if err := json.Unmarshal([]byte(ns.String), &out); err != nil || out == nil {
+		return []service.Deliverable{}
+	}
+	return out
+}
+
+// nullJSONString marshals v to JSON and wraps the result in a *sql.NullString
+// suitable for assigning to a TaskUpdate pointer field. Returns a nil-valued
+// NullString if marshaling fails (should never happen for well-formed Go values
+// the request layer accepts).
+func nullJSONString(v any) *sql.NullString {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return &sql.NullString{Valid: false}
+	}
+	return &sql.NullString{String: string(raw), Valid: true}
 }
 
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
@@ -154,14 +310,7 @@ func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Title       string   `json:"title"`
-		Description string   `json:"description"`
-		Priority    int      `json:"priority"`
-		Tags        []string `json:"tags"`
-		Executor    string   `json:"executor"`
-		Manual      bool     `json:"manual"`
-	}
+	var req TaskCreateRequest
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
@@ -171,14 +320,41 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := s.svc.Task.Create(service.TaskCreateInput{
-		Title:       req.Title,
-		Description: req.Description,
-		Priority:    req.Priority,
-		Tags:        req.Tags,
-		Executor:    req.Executor,
-		Manual:      req.Manual,
-	})
+	input := service.TaskCreateInput{
+		Title:             req.Title,
+		Description:       req.Description,
+		Priority:          req.Priority,
+		Tags:              req.Tags,
+		Manual:            req.Manual,
+		Executor:          req.Executor,
+		AgentProfile:      req.AgentProfile,
+		WorkingDir:        req.WorkingDir,
+		Tools:             req.Tools,
+		Permissions:       req.Permissions,
+		Environment:       req.Environment,
+		SystemPrompt:      req.SystemPrompt,
+		Files:             req.Files,
+		CostBudget:        req.CostBudget,
+		MaxRetries:        req.MaxRetries,
+		MaxDurationMs:     req.MaxDurationMs,
+		TokenBudget:       req.TokenBudget,
+		OnDone:            req.OnDone,
+		OnFail:            req.OnFail,
+		OnReview:          req.OnReview,
+		OnDoneMerge:       req.OnDoneMerge,
+		EscalationChain:   req.EscalationChain,
+		QualityGates:      req.QualityGates,
+		Deliverables:      req.Deliverables,
+		DeliverablePreset: req.DeliverablePreset,
+		DependsOn:         req.DependsOn,
+		BlockedReason:     req.BlockedReason,
+		Metadata:          req.Metadata,
+		SprintID:          req.SprintID,
+		ProjectID:         req.ProjectID,
+		EpicID:            req.EpicID,
+	}
+
+	task, err := s.svc.Task.Create(input)
 	if err != nil {
 		if _, ok := err.(*service.ValidationError); ok {
 			writeError(w, http.StatusUnprocessableEntity, err.Error())
@@ -199,42 +375,88 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	var req map[string]interface{}
+	var req TaskUpdateRequest
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
 
-	update := sqlstore.TaskUpdate{}
-	if v, ok := req["title"].(string); ok {
-		update.Title = &v
-	}
-	if v, ok := req["description"].(string); ok {
-		update.Description = &v
-	}
-	if v, ok := req["priority"].(float64); ok {
-		p := int(v)
-		update.Priority = &p
+	if req.Status != nil {
+		writeError(w, http.StatusBadRequest,
+			"status updates are not allowed via PUT /tasks/:id — use POST /tasks/:id/transition")
+		return
 	}
 
-	input := service.TaskUpdateInput{TaskUpdate: update}
-	if raw, ok := req["tags"]; ok {
-		arr, ok := raw.([]interface{})
-		if !ok {
-			writeError(w, http.StatusBadRequest, "invalid tags: must be an array of strings")
-			return
-		}
-		slugs := make([]string, 0, len(arr))
-		for _, item := range arr {
-			str, ok := item.(string)
-			if !ok {
-				writeError(w, http.StatusBadRequest, "invalid tags: must be an array of strings")
-				return
-			}
-			slugs = append(slugs, str)
-		}
-		input.Tags = &slugs
+	update := sqlstore.TaskUpdate{
+		Title:             req.Title,
+		Description:       req.Description,
+		Priority:          req.Priority,
+		Manual:            req.Manual,
+		Executor:          req.Executor,
+		AgentProfile:      req.AgentProfile,
+		WorkingDir:        req.WorkingDir,
+		SystemPrompt:      req.SystemPrompt,
+		MaxRetries:        req.MaxRetries,
+		OnDone:            req.OnDone,
+		OnFail:            req.OnFail,
+		OnReview:          req.OnReview,
+		OnDoneMerge:       req.OnDoneMerge,
+		DeliverablePreset: req.DeliverablePreset,
+		BlockedReason:     req.BlockedReason,
 	}
+
+	// JSON-blob fields wrap as *sql.NullString
+	if req.Tools != nil {
+		update.Tools = nullJSONString(*req.Tools)
+	}
+	if req.Permissions != nil {
+		update.Permissions = nullJSONString(*req.Permissions)
+	}
+	if req.Environment != nil {
+		update.Environment = nullJSONString(*req.Environment)
+	}
+	if req.Files != nil {
+		update.Files = nullJSONString(*req.Files)
+	}
+	if req.EscalationChain != nil {
+		update.EscalationChain = nullJSONString(*req.EscalationChain)
+	}
+	if req.QualityGates != nil {
+		update.QualityGates = nullJSONString(*req.QualityGates)
+	}
+	if req.Deliverables != nil {
+		update.Deliverables = nullJSONString(*req.Deliverables)
+	}
+	if req.DependsOn != nil {
+		update.DependsOn = nullJSONString(*req.DependsOn)
+	}
+	if req.Metadata != nil {
+		update.Metadata = nullJSONString(*req.Metadata)
+	}
+
+	// Numeric nullables wrap as *sql.NullFloat64 / *sql.NullInt64
+	if req.CostBudget != nil {
+		update.CostBudget = &sql.NullFloat64{Float64: *req.CostBudget, Valid: true}
+	}
+	if req.MaxDurationMs != nil {
+		update.MaxDurationMs = &sql.NullInt64{Int64: *req.MaxDurationMs, Valid: true}
+	}
+	if req.TokenBudget != nil {
+		update.TokenBudget = &sql.NullInt64{Int64: *req.TokenBudget, Valid: true}
+	}
+
+	// Association fields wrap as *sql.NullString
+	if req.SprintID != nil {
+		update.SprintID = &sql.NullString{String: *req.SprintID, Valid: *req.SprintID != ""}
+	}
+	if req.ProjectID != nil {
+		update.ProjectID = &sql.NullString{String: *req.ProjectID, Valid: *req.ProjectID != ""}
+	}
+	if req.EpicID != nil {
+		update.EpicID = &sql.NullString{String: *req.EpicID, Valid: *req.EpicID != ""}
+	}
+
+	input := service.TaskUpdateInput{TaskUpdate: update, Tags: req.Tags}
 
 	if err := s.svc.Task.Update(id, input); err != nil {
 		if _, ok := err.(*service.ValidationError); ok {

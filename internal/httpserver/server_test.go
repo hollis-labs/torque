@@ -330,3 +330,269 @@ func TestUpdateTaskTagsInvalidPayloadReturns400(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusBadRequest, resp2.StatusCode)
 }
+
+func TestCreateTaskWithAllFields(t *testing.T) {
+	ts := setupTestServer(t)
+
+	body := `{
+		"title": "Full field task",
+		"description": "All the fields",
+		"priority": 1,
+		"tags": ["bug","ui"],
+		"manual": true,
+		"executor": "api",
+		"agent_profile": "claude-opus",
+		"working_dir": "/repos/test",
+		"tools": ["bash","edit"],
+		"permissions": {"network": true},
+		"environment": {"NODE_ENV": "test"},
+		"system_prompt": "test agent",
+		"files": ["src/main.go"],
+		"cost_budget": 50.0,
+		"max_retries": 5,
+		"max_duration_ms": 60000,
+		"token_budget": 100000,
+		"on_done": "close",
+		"on_fail": "block",
+		"on_review": "auto-approve",
+		"on_done_merge": "auto",
+		"escalation_chain": ["senior","human"],
+		"quality_gates": ["go test ./..."],
+		"deliverables": [{"type":"diff","required":true}],
+		"deliverable_preset": "backend-fix",
+		"blocked_reason": "",
+		"metadata": {"source":"test"}
+	}`
+	resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var got map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+
+	assert.Equal(t, "Full field task", got["title"])
+	assert.Equal(t, true, got["manual"])
+	assert.Equal(t, "api", got["executor"])
+	assert.Equal(t, "claude-opus", got["agent_profile"])
+	assert.Equal(t, "close", got["on_done"])
+	assert.Equal(t, "block", got["on_fail"])
+	assert.Equal(t, "auto-approve", got["on_review"])
+	assert.Equal(t, "auto", got["on_done_merge"])
+	assert.Equal(t, "backend-fix", got["deliverable_preset"])
+	assert.Equal(t, float64(5), got["max_retries"])
+	assert.Equal(t, float64(50), got["cost_budget"])
+	assert.Equal(t, float64(60000), got["max_duration_ms"])
+	assert.Equal(t, float64(100000), got["token_budget"])
+
+	// Structured fields
+	tools, ok := got["tools"].([]interface{})
+	require.True(t, ok)
+	assert.Equal(t, []interface{}{"bash", "edit"}, tools)
+
+	perms, ok := got["permissions"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, true, perms["network"])
+
+	env, ok := got["environment"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "test", env["NODE_ENV"])
+
+	delivs, ok := got["deliverables"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, delivs, 1)
+	d0 := delivs[0].(map[string]interface{})
+	assert.Equal(t, "diff", d0["type"])
+	assert.Equal(t, true, d0["required"])
+}
+
+func TestUpdateTaskAllNewFields(t *testing.T) {
+	ts := setupTestServer(t)
+
+	// Create a task with minimal fields
+	createBody := `{"title":"Test","executor":"cli"}`
+	resp, _ := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(createBody))
+	var created map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&created)
+	id := created["id"].(string)
+
+	// Update each new field type
+	updateBody := `{
+		"agent_profile": "updated-profile",
+		"working_dir": "/new/dir",
+		"tools": ["bash","grep"],
+		"permissions": {"network": false},
+		"environment": {"DEBUG": "1"},
+		"system_prompt": "updated",
+		"files": ["new.go"],
+		"cost_budget": 25.5,
+		"max_retries": 10,
+		"max_duration_ms": 45000,
+		"token_budget": 200000,
+		"on_done": "review",
+		"on_fail": "retry",
+		"escalation_chain": ["senior"],
+		"quality_gates": ["lint"],
+		"deliverables": [{"type":"log","required":false}],
+		"deliverable_preset": "research",
+		"blocked_reason": "waiting on data",
+		"metadata": {"updated":true}
+	}`
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/tasks/"+id, bytes.NewBufferString(updateBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp2, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp2.StatusCode)
+
+	var updated map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp2.Body).Decode(&updated))
+
+	assert.Equal(t, "updated-profile", updated["agent_profile"])
+	assert.Equal(t, "/new/dir", updated["working_dir"])
+	assert.Equal(t, float64(25.5), updated["cost_budget"])
+	assert.Equal(t, float64(10), updated["max_retries"])
+	assert.Equal(t, float64(45000), updated["max_duration_ms"])
+	assert.Equal(t, float64(200000), updated["token_budget"])
+	assert.Equal(t, "review", updated["on_done"])
+	assert.Equal(t, "research", updated["deliverable_preset"])
+	assert.Equal(t, "waiting on data", updated["blocked_reason"])
+}
+
+func TestUpdateTaskRejectsStatusField(t *testing.T) {
+	ts := setupTestServer(t)
+
+	createBody := `{"title":"Test","executor":"cli"}`
+	resp, _ := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(createBody))
+	var created map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&created)
+	id := created["id"].(string)
+
+	updateBody := `{"status":"done"}`
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/tasks/"+id, bytes.NewBufferString(updateBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp2, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp2.StatusCode)
+
+	var errBody map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp2.Body).Decode(&errBody))
+	assert.Contains(t, errBody["error"].(string), "transition")
+}
+
+func TestCreateTaskInvalidEnumReturns422(t *testing.T) {
+	ts := setupTestServer(t)
+
+	body := `{"title":"Test","executor":"cli","on_done":"purge"}`
+	resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+
+	var errBody map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&errBody))
+	assert.Contains(t, errBody["error"].(string), "on_done")
+}
+
+func TestCreateTaskInvalidNumericSentinelReturns422(t *testing.T) {
+	ts := setupTestServer(t)
+
+	// max_duration_ms = 0 is rejected
+	body1 := `{"title":"Test","executor":"cli","max_duration_ms":0}`
+	resp1, _ := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body1))
+	assert.Equal(t, http.StatusUnprocessableEntity, resp1.StatusCode)
+
+	// max_duration_ms = -2 is rejected (only -1 is valid negative)
+	body2 := `{"title":"Test","executor":"cli","max_duration_ms":-2}`
+	resp2, _ := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body2))
+	assert.Equal(t, http.StatusUnprocessableEntity, resp2.StatusCode)
+
+	// cost_budget = -5 is rejected
+	body3 := `{"title":"Test","executor":"cli","cost_budget":-5}`
+	resp3, _ := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body3))
+	assert.Equal(t, http.StatusUnprocessableEntity, resp3.StatusCode)
+}
+
+func TestCreateTaskUnknownDependsOnReturns422(t *testing.T) {
+	ts := setupTestServer(t)
+
+	body := `{"title":"Test","executor":"cli","depends_on":["CW-99999999-9999"]}`
+	resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+
+	var errBody map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&errBody)
+	assert.Contains(t, errBody["error"].(string), "depends_on")
+}
+
+func TestCreateTaskInvalidDeliverableTypeReturns422(t *testing.T) {
+	ts := setupTestServer(t)
+
+	body := `{"title":"Test","executor":"cli","deliverables":[{"type":"screencast","required":true}]}`
+	resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+
+	var errBody map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&errBody)
+	assert.Contains(t, errBody["error"].(string), "deliverables")
+}
+
+func TestCreateTaskSentinelUnlimitedRoundTrip(t *testing.T) {
+	ts := setupTestServer(t)
+
+	body := `{
+		"title":"Sentinel task",
+		"executor":"cli",
+		"cost_budget":-1,
+		"max_duration_ms":-1,
+		"token_budget":-1
+	}`
+	resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var got map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	assert.Equal(t, float64(-1), got["cost_budget"])
+	assert.Equal(t, float64(-1), got["max_duration_ms"])
+	assert.Equal(t, float64(-1), got["token_budget"])
+
+	id := got["id"].(string)
+
+	// Now PUT a partial update with cost_budget = 50 (resetting the sentinel to a real value)
+	updateBody := `{"cost_budget":50.0}`
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/tasks/"+id, bytes.NewBufferString(updateBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp2, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp2.StatusCode)
+
+	var updated map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp2.Body).Decode(&updated))
+	assert.Equal(t, float64(50), updated["cost_budget"])
+	// The other two sentinel fields should be unchanged
+	assert.Equal(t, float64(-1), updated["max_duration_ms"])
+	assert.Equal(t, float64(-1), updated["token_budget"])
+}
+
+func TestUpdateTaskEmptyBodyIsNoOp(t *testing.T) {
+	ts := setupTestServer(t)
+
+	// Create a task
+	createBody := `{"title":"Test","executor":"cli"}`
+	resp, _ := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(createBody))
+	var created map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&created)
+	id := created["id"].(string)
+	originalTitle := created["title"]
+
+	// Empty body update should be 200 with the unchanged task
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/tasks/"+id, bytes.NewBufferString(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp2, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp2.StatusCode)
+
+	var updated map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp2.Body).Decode(&updated))
+	assert.Equal(t, originalTitle, updated["title"])
+}

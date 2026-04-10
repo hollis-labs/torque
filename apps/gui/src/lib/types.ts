@@ -22,6 +22,37 @@ export interface Tag {
   updated_at: string
 }
 
+export type OnDone = 'close' | 'review' | 'notify'
+export type OnFail = 'retry' | 'block' | 'escalate' | 'notify'
+export type OnReview = 'pause' | 'notify' | 'auto-approve'
+export type OnDoneMerge = 'none' | 'auto' | 'pr' | 'auto-resolve'
+
+export type DeliverableType =
+  | 'diff'
+  | 'test-results'
+  | 'screenshot'
+  | 'pr-link'
+  | 'branch'
+  | 'commit'
+  | 'log'
+  | 'finding'
+  | 'report'
+  | 'note'
+  | 'metrics'
+  | 'custom'
+
+export interface Deliverable {
+  type: DeliverableType
+  required: boolean
+  description?: string
+}
+
+/**
+ * Sentinel value meaning "unlimited — no cap" for the three nullable
+ * numeric task fields (cost_budget, max_duration_ms, token_budget).
+ */
+export const UNLIMITED = -1 as const
+
 export interface Task {
   id: string
   title: string
@@ -33,17 +64,66 @@ export interface Task {
   executor: string
   agent_profile: string
   working_dir: string
+
+  // Execution context
+  tools: string[]
+  permissions: Record<string, unknown>
+  environment: Record<string, string>
   system_prompt: string
+  files: string[]
+
+  // Budget & limits
+  /**
+   * Cost budget in dollars. Sentinel values:
+   * - `null` — use default (inherit from sprint/global)
+   * - `-1` — unlimited (no cap)
+   * - `0` — explicit zero (no spend allowed)
+   * - positive — specific budget
+   */
   cost_budget: number | null
   max_retries: number
-  on_done: string
-  on_fail: string
-  on_review: string
-  on_done_merge: string
+  /**
+   * Max execution duration in milliseconds. Sentinel values:
+   * - `null` — use default
+   * - `-1` — unlimited
+   * - positive — specific duration
+   */
+  max_duration_ms: number | null
+  /**
+   * Max tokens per run. Sentinel values:
+   * - `null` — use default
+   * - `-1` — unlimited
+   * - positive — specific cap
+   */
+  token_budget: number | null
+
+  // Lifecycle rules (narrowed from string to enum unions)
+  on_done: OnDone
+  on_fail: OnFail
+  on_review: OnReview
+  on_done_merge: OnDoneMerge
+
+  // Lifecycle extensions
+  escalation_chain: string[]
+  quality_gates: string[]
+
+  // Deliverables
+  deliverables: Deliverable[]
+  deliverable_preset: string
+
+  // Dependencies
+  depends_on: string[]
   blocked_reason: string
+
+  // Metadata
+  metadata: Record<string, unknown>
+
+  // Grouping
   sprint_id: string | null
   project_id: string | null
   epic_id: string | null
+
+  // Audit
   created_at: string
   updated_at: string
 }

@@ -2,10 +2,16 @@ package sqlstore
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 )
+
+// ErrTaskNotFound is returned wrapped by GetTask when the task ID does not
+// exist. Callers should use errors.Is(err, ErrTaskNotFound) to distinguish
+// missing tasks from other storage errors.
+var ErrTaskNotFound = errors.New("task not found")
 
 // TaskRecord mirrors the tasks table row.
 type TaskRecord struct {
@@ -176,13 +182,14 @@ func (s *Store) CreateTask(t *TaskRecord) error {
 	return err
 }
 
-// GetTask fetches a single task by ID.
+// GetTask fetches a single task by ID. Returns an error wrapping
+// ErrTaskNotFound if no row matches; callers can use errors.Is to detect.
 func (s *Store) GetTask(id string) (*TaskRecord, error) {
 	q := `SELECT ` + taskSelectCols + ` FROM tasks WHERE id = ?`
 	row := s.db.QueryRow(q, id)
 	t, err := scanTask(row)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("task %s not found", id)
+		return nil, fmt.Errorf("task %s: %w", id, ErrTaskNotFound)
 	}
 	return t, err
 }

@@ -40,6 +40,18 @@ type TaskCreateInput struct {
 	SprintID          string
 	ProjectID         string
 	EpicID            string
+
+	// Project 2 canonical task fields. These are persisted by Create's
+	// record build below and validated by validateTaskWrites.
+	Permissions     map[string]any
+	Environment     map[string]string
+	MaxDurationMs   *int64
+	TokenBudget     *int64
+	EscalationChain []string
+	QualityGates    []string
+	Deliverables    []Deliverable
+	BlockedReason   string
+	Metadata        map[string]any
 }
 
 // TaskService provides business logic for tasks.
@@ -58,6 +70,15 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	priority := input.Priority
 	if priority == 0 {
 		priority = 2
+	}
+
+	// Validate write-time invariants (enums, numeric bounds, deliverables, depends_on).
+	fields, err := extractCreateFields(input)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.validateTaskWrites(fields); err != nil {
+		return nil, err
 	}
 
 	// Validate sprint association
@@ -114,11 +135,12 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		WorkingDir:        input.WorkingDir,
 		SystemPrompt:      input.SystemPrompt,
 		MaxRetries:        orDefaultInt(input.MaxRetries, 3),
-		OnDone:            input.OnDone,
-		OnFail:            input.OnFail,
-		OnReview:          input.OnReview,
-		OnDoneMerge:       input.OnDoneMerge,
+		OnDone:            orDefault(input.OnDone, "review"),
+		OnFail:            orDefault(input.OnFail, "retry"),
+		OnReview:          orDefault(input.OnReview, "pause"),
+		OnDoneMerge:       orDefault(input.OnDoneMerge, "none"),
 		DeliverablePreset: input.DeliverablePreset,
+		BlockedReason:     input.BlockedReason,
 	}
 
 	if len(input.Tools) > 0 {
@@ -132,6 +154,30 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	}
 	if input.CostBudget != nil {
 		rec.CostBudget = sql.NullFloat64{Float64: *input.CostBudget, Valid: true}
+	}
+	if len(input.Permissions) > 0 {
+		rec.Permissions = sql.NullString{String: marshalJSON(input.Permissions), Valid: true}
+	}
+	if len(input.Environment) > 0 {
+		rec.Environment = sql.NullString{String: marshalJSON(input.Environment), Valid: true}
+	}
+	if input.MaxDurationMs != nil {
+		rec.MaxDurationMs = sql.NullInt64{Int64: *input.MaxDurationMs, Valid: true}
+	}
+	if input.TokenBudget != nil {
+		rec.TokenBudget = sql.NullInt64{Int64: *input.TokenBudget, Valid: true}
+	}
+	if len(input.EscalationChain) > 0 {
+		rec.EscalationChain = sql.NullString{String: marshalJSON(input.EscalationChain), Valid: true}
+	}
+	if len(input.QualityGates) > 0 {
+		rec.QualityGates = sql.NullString{String: marshalJSON(input.QualityGates), Valid: true}
+	}
+	if len(input.Deliverables) > 0 {
+		rec.Deliverables = sql.NullString{String: marshalJSON(input.Deliverables), Valid: true}
+	}
+	if len(input.Metadata) > 0 {
+		rec.Metadata = sql.NullString{String: marshalJSON(input.Metadata), Valid: true}
 	}
 	if input.SprintID != "" {
 		rec.SprintID = sql.NullString{String: input.SprintID, Valid: true}
@@ -182,6 +228,13 @@ type TaskUpdateInput struct {
 // Update applies a partial update to a task. If Tags is non-nil, linked
 // tags are resolved and replaced.
 func (s *TaskService) Update(id string, input TaskUpdateInput) error {
+	fields, err := extractUpdateFields(input)
+	if err != nil {
+		return err
+	}
+	if err := s.validateTaskWrites(fields); err != nil {
+		return err
+	}
 	if err := s.store.UpdateTask(id, input.TaskUpdate); err != nil {
 		return err
 	}
