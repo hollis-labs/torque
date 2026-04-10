@@ -76,8 +76,8 @@ Twelve fields missing from the current `taskJSON` response and write handlers:
 | `permissions` | `sql.NullString` (JSON blob) | `map[string]any` / `Record<string, unknown>` | `{}` | none (free-form) |
 | `environment` | `sql.NullString` (JSON blob) | `map[string]string` / `Record<string, string>` | `{}` | none (values are env var values) |
 | `files` | `sql.NullString` (JSON blob) | `string[]` / `string[]` | `[]` | none |
-| `max_duration_ms` | `sql.NullInt64` | `*int64` / `number \| null` | `null` | must be `> 0` if set |
-| `token_budget` | `sql.NullInt64` | `*int64` / `number \| null` | `null` | must be `> 0` if set |
+| `max_duration_ms` | `sql.NullInt64` | `*int64` / `number \| null` | `null` | `-1` (unlimited) or `> 0` if set |
+| `token_budget` | `sql.NullInt64` | `*int64` / `number \| null` | `null` | `-1` (unlimited) or `> 0` if set |
 | `escalation_chain` | `sql.NullString` (JSON blob) | `[]string` / `string[]` | `[]` | none (agent names) |
 | `quality_gates` | `sql.NullString` (JSON blob) | `[]string` / `string[]` | `[]` | none (shell commands) |
 | `deliverables` | `sql.NullString` (JSON blob) | `[]Deliverable` / `Deliverable[]` | `[]` | each `type` must be in the 12-value set |
@@ -120,6 +120,27 @@ var validDeliverableTypes = map[string]bool{
     "custom":       true,
 }
 ```
+
+### 5.2a `Unlimited` sentinel for nullable numeric fields
+
+```go
+// Unlimited is the sentinel value meaning "no cap" for the three nullable
+// numeric task fields: CostBudget, MaxDurationMs, TokenBudget. Use this
+// instead of a magic -1 at call sites.
+const Unlimited = int64(-1)
+```
+
+Exported from the service package. The wire format for `cost_budget` uses `-1.0` (float); `max_duration_ms` and `token_budget` use `-1` (int). Semantic model per nullable numeric field:
+
+| Value | Meaning |
+|---|---|
+| `null` / omitted | Use default (sprint/global inheritance) |
+| `-1` | Explicit unlimited (override inheritance, no cap) |
+| `0` | Explicit zero — only valid for `cost_budget`; rejected for `max_duration_ms` and `token_budget` |
+| positive | Explicit specific value |
+| `< -1` | Rejected with validation error |
+
+This gives clients three distinct states (`null`, `-1`, and specific value) which resolves the most common "reset a previously-set cap" workflow: send `-1` to remove the cap. The remaining edge case — "restore inheritance from sprint defaults after setting a specific value" — still requires task recreation, but is rare enough to defer.
 
 ### 5.3 Lifecycle enum sets
 
@@ -195,11 +216,13 @@ func (s *TaskService) validateTaskWrites(fields taskWriteFields) error { ... }
 The helper runs these checks in order and returns the first failure:
 
 1. **Lifecycle enums** — if `OnDone` is non-empty and not in `validOnDone`, return `ValidationError{Field: "on_done", Message: "invalid on_done: got '<v>', expected one of: close, review, notify"}`. Same pattern for the other three.
-2. **Numeric bounds:**
-   - `CostBudget != nil && *CostBudget < 0` → `ValidationError{Field: "cost_budget"}`
-   - `MaxRetries != nil && *MaxRetries < 0` → `ValidationError{Field: "max_retries"}`
-   - `MaxDurationMs != nil && *MaxDurationMs <= 0` → `ValidationError{Field: "max_duration_ms"}`
-   - `TokenBudget != nil && *TokenBudget <= 0` → `ValidationError{Field: "token_budget"}`
+2. **Numeric bounds** (all use pointer types so `nil` means "not provided"):
+   - `CostBudget`: allowed values are `-1` (unlimited), `0` (zero budget), or any positive float. Reject if `v < -1 || (v > -1 && v < 0)`.
+   - `MaxRetries`: must be `>= 0` if provided. (No sentinel; zero retries is meaningful.)
+   - `MaxDurationMs`: allowed values are `-1` (unlimited) or any positive int. Reject if `v != -1 && v <= 0`.
+   - `TokenBudget`: allowed values are `-1` (unlimited) or any positive int. Reject if `v != -1 && v <= 0`.
+
+   Validation error messages name the allowed set explicitly, e.g.: `"max_duration_ms must be -1 (unlimited) or a positive value in milliseconds"`.
 3. **Deliverable types** — for each `Deliverables[i]`, if `.Type` is not in `validDeliverableTypes`, return `ValidationError{Field: "deliverables[<i>].type"}`.
 4. **`DependsOn` existence** — for each task ID in `DependsOn`, call `s.store.GetTask(id)`. First not-found returns `ValidationError{Field: "depends_on", Message: "task <id> not found"}`. (N+1 lookups, acceptable given typical dependency counts.)
 
@@ -332,8 +355,17 @@ type TaskUpdateRequest struct {
 | JSON `null` | Same as omit — no change (`json.Unmarshal` sets pointer to nil) |
 | `""`, `[]`, `{}` | Explicit clear (empty string, empty array, empty map persisted) |
 | `"value"`, `[...]`, `{...}` | Explicit set |
+| `-1` (nullable numerics only) | Explicit unlimited — see Section 5.2a |
 
-Trade-off: this convention makes it impossible to distinguish "set to null" from "no change" for a single field. The canonical task model has no writable field where this ambiguity matters — nullable numerics have natural sentinel values (unset `cost_budget` is stored as `sql.NullFloat64{Valid: false}` and the API surfaces as `null`, but you can't set it back to null mid-life; you'd overwrite with a real value).
+**Why null and omit collapse:** Go's `encoding/json` produces `nil` for a pointer field whether the JSON contained `null` or the field was absent. There's no way at the type level to distinguish the two. Collapsing them to "no change" is the common REST convention and avoids needing custom unmarshalers or `json.RawMessage` parsing.
+
+**Nullable numeric fields use sentinel values** (per Section 5.2a) to express the three states clients actually need:
+- `null` / omitted → no change (or "use default" on create)
+- `-1` → explicit unlimited (remove a previously-set cap)
+- positive → explicit specific value
+- `0` (cost_budget only) → explicit zero budget
+
+The remaining edge case — restoring a previously-set numeric field to SQL NULL (so sprint/global defaults take over again) — is not supported through the update API. A caller that needs this would have to recreate the task. This is deliberate: it's a rare workflow, and adding custom three-state unmarshal logic to cover it adds code you'd mostly never exercise. A future follow-up can add a dedicated "reset field to default" endpoint if a concrete need emerges.
 
 ### 6.4 `updateTask` status rejection
 
@@ -495,6 +527,12 @@ export interface Deliverable {
   required: boolean
   description?: string
 }
+
+/**
+ * Sentinel value meaning "unlimited — no cap" for the three nullable
+ * numeric task fields (cost_budget, max_duration_ms, token_budget).
+ */
+export const UNLIMITED = -1 as const
 ```
 
 ### 7.2 Expanded `Task` interface
@@ -520,9 +558,28 @@ export interface Task {
   files: string[]                          // new
 
   // Budget & limits
+  /**
+   * Cost budget in dollars. Sentinel values:
+   * - `null` — use default (inherit from sprint/global)
+   * - `-1` — unlimited (no cap)
+   * - `0` — explicit zero (no spend allowed)
+   * - positive — specific budget
+   */
   cost_budget: number | null
   max_retries: number
+  /**
+   * Max execution duration in milliseconds. Sentinel values:
+   * - `null` — use default
+   * - `-1` — unlimited
+   * - positive — specific duration
+   */
   max_duration_ms: number | null           // new
+  /**
+   * Max tokens per run. Sentinel values:
+   * - `null` — use default
+   * - `-1` — unlimited
+   * - positive — specific cap
+   */
   token_budget: number | null              // new
 
   // Lifecycle rules (narrowed from string to enum union)
@@ -606,7 +663,7 @@ Single vertical slice, stepped internally:
 ## 11. Risks and Open Questions
 
 - **N+1 on `DependsOn` validation.** The validation helper calls `GetTask` for each dependency ID. For typical dependency counts (< 10) this is trivial. If a task somehow depends on hundreds of others, validation becomes a visible cost. Acceptable for now; a future batched lookup is a clean follow-up.
-- **`json.Unmarshal` behavior with null values on pointer-to-slice fields.** Unmarshaling JSON `null` into `*[]string` leaves the pointer nil, identical to "field omitted". Documented in Section 6.3 as the intended convention. A future caller that genuinely needs to distinguish null-from-omit can use `json.RawMessage`, but no current use case demands it.
+- **`json.Unmarshal` behavior with null values on pointer-to-slice fields.** Unmarshaling JSON `null` into `*[]string` leaves the pointer nil, identical to "field omitted". Documented in Section 6.3 as the intended convention. For the three nullable numeric fields (`cost_budget`, `max_duration_ms`, `token_budget`), sentinel values (Section 5.2a) cover the common "remove a previously-set cap" workflow by letting clients send `-1` explicitly. The remaining case — restoring a specific numeric field to SQL NULL so sprint defaults take over again — still requires task recreation, but is rare enough to defer.
 - **`updateTask` refetch path maps missing task to 500.** The existing code path `task, err := s.svc.Task.Get(id)` after a successful update returns 500 if the task disappeared (e.g., another process deleted it between the update and the refetch). This is the existing behavior and not introduced by this project, but worth noting as a carried-forward oddity.
 - **Deliverable type validation vs. `custom`.** The `custom` value in the validation set is intentional per the canonical spec — it's the plugin-extensibility escape hatch. Plugin-defined types are allowed to pass through as `custom` and carry a `Description` that names the actual type.
 - **Permissions and Metadata shape are deliberately loose.** When a concrete consumer of either field emerges (e.g., a permission-override system or a metadata schema for specific plugin integrations), that consumer's spec can narrow the shape via a follow-up. Keeping them as `map[string]any` now unblocks Project 3 without forcing premature design.
@@ -634,4 +691,6 @@ Single vertical slice, stepped internally:
 - Status rejection: `PUT /api/v1/tasks/:id` with `{"status":"done"}` returns 400 with a message pointing to `/transition`
 - Unknown `depends_on` task ID returns 422 with a message identifying the missing ID
 - Unknown `deliverables[0].type` returns 422 with a message naming the allowed type set
+- Sentinel value round-trip: `POST /api/v1/tasks` with `{"cost_budget": -1, "max_duration_ms": -1, "token_budget": -1}` persists and reads back as `-1` for all three; subsequent `PUT` with `{"cost_budget": 50.0}` changes only that field
+- Sentinel value rejection: `{"max_duration_ms": 0}` returns 422 (zero duration is meaningless); `{"max_duration_ms": -2}` returns 422 (only -1 is the valid negative); `{"cost_budget": -5}` returns 422
 - The expanded `Task` interface type-checks against the actual API response for a fully-populated task
