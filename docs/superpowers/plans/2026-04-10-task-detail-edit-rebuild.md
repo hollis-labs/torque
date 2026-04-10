@@ -550,7 +550,7 @@ function formatDuration(ms: number): string {
 Working directory: `apps/gui/`
 
 Run: `npm run test:run -- sentinel-display`
-Expected: All 16 tests pass. Exit 0.
+Expected: All 17 tests pass. Exit 0.
 
 - [ ] **Step 3.5: Lint**
 
