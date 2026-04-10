@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -82,6 +83,149 @@ func nullTime(nt sql.NullTime) interface{} {
 		return nt.Time
 	}
 	return nil
+}
+
+// TaskCreateRequest is the JSON request body for POST /api/v1/tasks.
+// Field types are non-pointer where the zero value is acceptable as
+// "not provided" (e.g. empty string), and pointer where we need to
+// distinguish "not provided" from "explicit zero" (numeric nullables).
+type TaskCreateRequest struct {
+	Title             string                `json:"title"`
+	Description       string                `json:"description,omitempty"`
+	Priority          int                   `json:"priority,omitempty"`
+	Tags              []string              `json:"tags,omitempty"`
+	Manual            bool                  `json:"manual,omitempty"`
+	Executor          string                `json:"executor,omitempty"`
+	AgentProfile      string                `json:"agent_profile,omitempty"`
+	WorkingDir        string                `json:"working_dir,omitempty"`
+	Tools             []string              `json:"tools,omitempty"`
+	Permissions       map[string]any        `json:"permissions,omitempty"`
+	Environment       map[string]string     `json:"environment,omitempty"`
+	SystemPrompt      string                `json:"system_prompt,omitempty"`
+	Files             []string              `json:"files,omitempty"`
+	CostBudget        *float64              `json:"cost_budget,omitempty"`
+	MaxRetries        *int                  `json:"max_retries,omitempty"`
+	MaxDurationMs     *int64                `json:"max_duration_ms,omitempty"`
+	TokenBudget       *int64                `json:"token_budget,omitempty"`
+	OnDone            string                `json:"on_done,omitempty"`
+	OnFail            string                `json:"on_fail,omitempty"`
+	OnReview          string                `json:"on_review,omitempty"`
+	OnDoneMerge       string                `json:"on_done_merge,omitempty"`
+	EscalationChain   []string              `json:"escalation_chain,omitempty"`
+	QualityGates      []string              `json:"quality_gates,omitempty"`
+	Deliverables      []service.Deliverable `json:"deliverables,omitempty"`
+	DeliverablePreset string                `json:"deliverable_preset,omitempty"`
+	DependsOn         []string              `json:"depends_on,omitempty"`
+	BlockedReason     string                `json:"blocked_reason,omitempty"`
+	Metadata          map[string]any        `json:"metadata,omitempty"`
+	SprintID          string                `json:"sprint_id,omitempty"`
+	ProjectID         string                `json:"project_id,omitempty"`
+	EpicID            string                `json:"epic_id,omitempty"`
+}
+
+// TaskUpdateRequest is the JSON request body for PUT /api/v1/tasks/:id.
+// Every field is a pointer so "not provided" (nil) is distinguishable from
+// "explicit zero/empty value". The Status field is present only so the
+// handler can detect and reject it — status changes go through the
+// dedicated /transition endpoint instead.
+type TaskUpdateRequest struct {
+	Title             *string                `json:"title,omitempty"`
+	Description       *string                `json:"description,omitempty"`
+	Priority          *int                   `json:"priority,omitempty"`
+	Tags              *[]string              `json:"tags,omitempty"`
+	Manual            *bool                  `json:"manual,omitempty"`
+	Executor          *string                `json:"executor,omitempty"`
+	AgentProfile      *string                `json:"agent_profile,omitempty"`
+	WorkingDir        *string                `json:"working_dir,omitempty"`
+	Tools             *[]string              `json:"tools,omitempty"`
+	Permissions       *map[string]any        `json:"permissions,omitempty"`
+	Environment       *map[string]string     `json:"environment,omitempty"`
+	SystemPrompt      *string                `json:"system_prompt,omitempty"`
+	Files             *[]string              `json:"files,omitempty"`
+	CostBudget        *float64               `json:"cost_budget,omitempty"`
+	MaxRetries        *int                   `json:"max_retries,omitempty"`
+	MaxDurationMs     *int64                 `json:"max_duration_ms,omitempty"`
+	TokenBudget       *int64                 `json:"token_budget,omitempty"`
+	OnDone            *string                `json:"on_done,omitempty"`
+	OnFail            *string                `json:"on_fail,omitempty"`
+	OnReview          *string                `json:"on_review,omitempty"`
+	OnDoneMerge       *string                `json:"on_done_merge,omitempty"`
+	EscalationChain   *[]string              `json:"escalation_chain,omitempty"`
+	QualityGates      *[]string              `json:"quality_gates,omitempty"`
+	Deliverables      *[]service.Deliverable `json:"deliverables,omitempty"`
+	DeliverablePreset *string                `json:"deliverable_preset,omitempty"`
+	DependsOn         *[]string              `json:"depends_on,omitempty"`
+	BlockedReason     *string                `json:"blocked_reason,omitempty"`
+	Metadata          *map[string]any        `json:"metadata,omitempty"`
+	SprintID          *string                `json:"sprint_id,omitempty"`
+	ProjectID         *string                `json:"project_id,omitempty"`
+	EpicID            *string                `json:"epic_id,omitempty"`
+
+	// Status is included only for detection — the handler returns 400 if it
+	// is non-nil and points the caller to POST /tasks/:id/transition.
+	Status *string `json:"status,omitempty"`
+}
+
+// parseStringArray parses a NullString containing a JSON-encoded []string.
+// Returns an empty slice (not nil) on missing or invalid data so the JSON
+// response shape stays stable.
+func parseStringArray(ns sql.NullString) []string {
+	if !ns.Valid || ns.String == "" {
+		return []string{}
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(ns.String), &out); err != nil || out == nil {
+		return []string{}
+	}
+	return out
+}
+
+// parseStringMap parses a NullString containing a JSON-encoded map[string]string.
+func parseStringMap(ns sql.NullString) map[string]string {
+	if !ns.Valid || ns.String == "" {
+		return map[string]string{}
+	}
+	var out map[string]string
+	if err := json.Unmarshal([]byte(ns.String), &out); err != nil || out == nil {
+		return map[string]string{}
+	}
+	return out
+}
+
+// parseFreeMap parses a NullString containing a JSON-encoded free-form map.
+func parseFreeMap(ns sql.NullString) map[string]any {
+	if !ns.Valid || ns.String == "" {
+		return map[string]any{}
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(ns.String), &out); err != nil || out == nil {
+		return map[string]any{}
+	}
+	return out
+}
+
+// parseDeliverables parses a NullString containing a JSON-encoded []Deliverable.
+func parseDeliverables(ns sql.NullString) []service.Deliverable {
+	if !ns.Valid || ns.String == "" {
+		return []service.Deliverable{}
+	}
+	var out []service.Deliverable
+	if err := json.Unmarshal([]byte(ns.String), &out); err != nil || out == nil {
+		return []service.Deliverable{}
+	}
+	return out
+}
+
+// nullJSONString marshals v to JSON and wraps the result in a *sql.NullString
+// suitable for assigning to a TaskUpdate pointer field. Returns a nil-valued
+// NullString if marshaling fails (should never happen for well-formed Go values
+// the request layer accepts).
+func nullJSONString(v any) *sql.NullString {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return &sql.NullString{Valid: false}
+	}
+	return &sql.NullString{String: string(raw), Valid: true}
 }
 
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
