@@ -93,7 +93,7 @@ The previous TaskDetailPage uses an older visual language (border-border, bg-car
 - **PUT vs PATCH harmonization** — task update uses PUT, tag endpoints use PATCH (pre-existing)
 - **Timestamp serialization inconsistency** — `taskJSON` uses raw `time.Time`, `tagJSON` uses `.Format(time.RFC3339)` (cosmetic)
 - **N+1 task-tag loading** — `tasksJSON` loads tags per task in a loop; batched query is a clean future cleanup
-- **`GOPRIVATE` setup** — `go-strutil` is now consumed from the published `github.com/hollis-labs/go-strutil` repo (no local `replace`). The repo is public on GitHub but not yet indexed by `proxy.golang.org`/`sum.golang.org`, so any future `go get`/`go mod tidy` involving this module needs `GOPRIVATE=github.com/hollis-labs/*` set in the environment (or persisted via `go env -w`). The other hollis-labs modules (`plugin`, `go-queue`) are still on local `replace` directives.
+- **`GOPRIVATE` setup** — all three hollis-labs modules (`go-strutil`, `plugin`, `go-queue`) are now consumed from their published GitHub repos with no local `replace` directives. The repos are public but not yet indexed by `proxy.golang.org`/`sum.golang.org`, so future `go get`/`go mod tidy` operations need `GOPRIVATE=github.com/hollis-labs/*` in the environment. Persist via `go env -w GOPRIVATE='github.com/hollis-labs/*'` (already set in this dev env).
 - **`BLG-20260409-001`** — wire `Task.Deliverables` into the scheduler/executor completion gate (API surface is done; the scheduler integration is the next pass)
 - **`BLG-20260409-002`** — tag management GUI (post-MVP, P3)
 - **Task list endpoint filters on new fields** — not scoped yet; current filter set is status, priority, sprint_id, project_id, epic_id, executor

@@ -87,7 +87,7 @@ This resolves the common "remove a previously-set cap" workflow without needing 
 - **PUT vs PATCH harmonization** — task update uses PUT, tag endpoints use PATCH (pre-existing inconsistency)
 - **Timestamp serialization** — `taskJSON` uses raw `time.Time`, `tagJSON` uses `.Format(time.RFC3339)` (cosmetic)
 - **N+1 task-tag loading** in `tasksJSON` — acceptable at current scale, batched lookup is a clean future cleanup
-- **`GOPRIVATE` setup** — `go-strutil` is now consumed from the published `github.com/hollis-labs/go-strutil` repo. Until the module is indexed by `proxy.golang.org`/`sum.golang.org`, future `go get` and `go mod tidy` operations involving it need `GOPRIVATE=github.com/hollis-labs/*` set in the environment (or persisted via `go env -w`)
+- **`GOPRIVATE` setup** — all three hollis-labs modules (`go-strutil`, `plugin`, `go-queue`) are now consumed from their published GitHub repos with no local `replace` directives. Until the repos are indexed by `proxy.golang.org`/`sum.golang.org`, future `go get`/`go mod tidy` operations need `GOPRIVATE=github.com/hollis-labs/*` in the environment (set globally via `go env -w` in this dev env)
 - **Task list endpoint filters on new fields** — current filter set is status/priority/sprint/project/epic/executor only
 
 ## Test health
