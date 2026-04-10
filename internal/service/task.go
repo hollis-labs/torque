@@ -40,6 +40,18 @@ type TaskCreateInput struct {
 	SprintID          string
 	ProjectID         string
 	EpicID            string
+
+	// New in Project 2 (defined here for compile-time access in task_validation_test.go;
+	// wired into Create's record build in Task 3)
+	Permissions     map[string]any
+	Environment     map[string]string
+	MaxDurationMs   *int64
+	TokenBudget     *int64
+	EscalationChain []string
+	QualityGates    []string
+	Deliverables    []Deliverable
+	BlockedReason   string
+	Metadata        map[string]any
 }
 
 // TaskService provides business logic for tasks.
