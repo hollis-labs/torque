@@ -404,3 +404,76 @@ func TestCreateTaskWithAllFields(t *testing.T) {
 	assert.Equal(t, "diff", d0["type"])
 	assert.Equal(t, true, d0["required"])
 }
+
+func TestUpdateTaskAllNewFields(t *testing.T) {
+	ts := setupTestServer(t)
+
+	// Create a task with minimal fields
+	createBody := `{"title":"Test","executor":"cli"}`
+	resp, _ := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(createBody))
+	var created map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&created)
+	id := created["id"].(string)
+
+	// Update each new field type
+	updateBody := `{
+		"agent_profile": "updated-profile",
+		"working_dir": "/new/dir",
+		"tools": ["bash","grep"],
+		"permissions": {"network": false},
+		"environment": {"DEBUG": "1"},
+		"system_prompt": "updated",
+		"files": ["new.go"],
+		"cost_budget": 25.5,
+		"max_retries": 10,
+		"max_duration_ms": 45000,
+		"token_budget": 200000,
+		"on_done": "review",
+		"on_fail": "retry",
+		"escalation_chain": ["senior"],
+		"quality_gates": ["lint"],
+		"deliverables": [{"type":"log","required":false}],
+		"deliverable_preset": "research",
+		"blocked_reason": "waiting on data",
+		"metadata": {"updated":true}
+	}`
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/tasks/"+id, bytes.NewBufferString(updateBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp2, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp2.StatusCode)
+
+	var updated map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp2.Body).Decode(&updated))
+
+	assert.Equal(t, "updated-profile", updated["agent_profile"])
+	assert.Equal(t, "/new/dir", updated["working_dir"])
+	assert.Equal(t, float64(25.5), updated["cost_budget"])
+	assert.Equal(t, float64(10), updated["max_retries"])
+	assert.Equal(t, float64(45000), updated["max_duration_ms"])
+	assert.Equal(t, float64(200000), updated["token_budget"])
+	assert.Equal(t, "review", updated["on_done"])
+	assert.Equal(t, "research", updated["deliverable_preset"])
+	assert.Equal(t, "waiting on data", updated["blocked_reason"])
+}
+
+func TestUpdateTaskRejectsStatusField(t *testing.T) {
+	ts := setupTestServer(t)
+
+	createBody := `{"title":"Test","executor":"cli"}`
+	resp, _ := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(createBody))
+	var created map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&created)
+	id := created["id"].(string)
+
+	updateBody := `{"status":"done"}`
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/tasks/"+id, bytes.NewBufferString(updateBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp2, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp2.StatusCode)
+
+	var errBody map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp2.Body).Decode(&errBody))
+	assert.Contains(t, errBody["error"].(string), "transition")
+}

@@ -375,42 +375,88 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	var req map[string]interface{}
+	var req TaskUpdateRequest
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
 
-	update := sqlstore.TaskUpdate{}
-	if v, ok := req["title"].(string); ok {
-		update.Title = &v
-	}
-	if v, ok := req["description"].(string); ok {
-		update.Description = &v
-	}
-	if v, ok := req["priority"].(float64); ok {
-		p := int(v)
-		update.Priority = &p
+	if req.Status != nil {
+		writeError(w, http.StatusBadRequest,
+			"status updates are not allowed via PUT /tasks/:id — use POST /tasks/:id/transition")
+		return
 	}
 
-	input := service.TaskUpdateInput{TaskUpdate: update}
-	if raw, ok := req["tags"]; ok {
-		arr, ok := raw.([]interface{})
-		if !ok {
-			writeError(w, http.StatusBadRequest, "invalid tags: must be an array of strings")
-			return
-		}
-		slugs := make([]string, 0, len(arr))
-		for _, item := range arr {
-			str, ok := item.(string)
-			if !ok {
-				writeError(w, http.StatusBadRequest, "invalid tags: must be an array of strings")
-				return
-			}
-			slugs = append(slugs, str)
-		}
-		input.Tags = &slugs
+	update := sqlstore.TaskUpdate{
+		Title:             req.Title,
+		Description:       req.Description,
+		Priority:          req.Priority,
+		Manual:            req.Manual,
+		Executor:          req.Executor,
+		AgentProfile:      req.AgentProfile,
+		WorkingDir:        req.WorkingDir,
+		SystemPrompt:      req.SystemPrompt,
+		MaxRetries:        req.MaxRetries,
+		OnDone:            req.OnDone,
+		OnFail:            req.OnFail,
+		OnReview:          req.OnReview,
+		OnDoneMerge:       req.OnDoneMerge,
+		DeliverablePreset: req.DeliverablePreset,
+		BlockedReason:     req.BlockedReason,
 	}
+
+	// JSON-blob fields wrap as *sql.NullString
+	if req.Tools != nil {
+		update.Tools = nullJSONString(*req.Tools)
+	}
+	if req.Permissions != nil {
+		update.Permissions = nullJSONString(*req.Permissions)
+	}
+	if req.Environment != nil {
+		update.Environment = nullJSONString(*req.Environment)
+	}
+	if req.Files != nil {
+		update.Files = nullJSONString(*req.Files)
+	}
+	if req.EscalationChain != nil {
+		update.EscalationChain = nullJSONString(*req.EscalationChain)
+	}
+	if req.QualityGates != nil {
+		update.QualityGates = nullJSONString(*req.QualityGates)
+	}
+	if req.Deliverables != nil {
+		update.Deliverables = nullJSONString(*req.Deliverables)
+	}
+	if req.DependsOn != nil {
+		update.DependsOn = nullJSONString(*req.DependsOn)
+	}
+	if req.Metadata != nil {
+		update.Metadata = nullJSONString(*req.Metadata)
+	}
+
+	// Numeric nullables wrap as *sql.NullFloat64 / *sql.NullInt64
+	if req.CostBudget != nil {
+		update.CostBudget = &sql.NullFloat64{Float64: *req.CostBudget, Valid: true}
+	}
+	if req.MaxDurationMs != nil {
+		update.MaxDurationMs = &sql.NullInt64{Int64: *req.MaxDurationMs, Valid: true}
+	}
+	if req.TokenBudget != nil {
+		update.TokenBudget = &sql.NullInt64{Int64: *req.TokenBudget, Valid: true}
+	}
+
+	// Association fields wrap as *sql.NullString
+	if req.SprintID != nil {
+		update.SprintID = &sql.NullString{String: *req.SprintID, Valid: *req.SprintID != ""}
+	}
+	if req.ProjectID != nil {
+		update.ProjectID = &sql.NullString{String: *req.ProjectID, Valid: *req.ProjectID != ""}
+	}
+	if req.EpicID != nil {
+		update.EpicID = &sql.NullString{String: *req.EpicID, Valid: *req.EpicID != ""}
+	}
+
+	input := service.TaskUpdateInput{TaskUpdate: update, Tags: req.Tags}
 
 	if err := s.svc.Task.Update(id, input); err != nil {
 		if _, ok := err.(*service.ValidationError); ok {
