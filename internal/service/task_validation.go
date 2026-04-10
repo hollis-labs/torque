@@ -187,3 +187,20 @@ func intToString(i int) string {
 	}
 	return string(digits)
 }
+
+// extractCreateFields projects a TaskCreateInput into the validation helper's
+// internal field set.
+func extractCreateFields(input TaskCreateInput) taskWriteFields {
+	return taskWriteFields{
+		OnDone:        input.OnDone,
+		OnFail:        input.OnFail,
+		OnReview:      input.OnReview,
+		OnDoneMerge:   input.OnDoneMerge,
+		CostBudget:    input.CostBudget,
+		MaxRetries:    input.MaxRetries,
+		MaxDurationMs: input.MaxDurationMs,
+		TokenBudget:   input.TokenBudget,
+		Deliverables:  input.Deliverables,
+		DependsOn:     input.DependsOn,
+	}
+}

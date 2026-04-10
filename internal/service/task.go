@@ -72,6 +72,11 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		priority = 2
 	}
 
+	// Validate write-time invariants (enums, numeric bounds, deliverables, depends_on).
+	if err := s.validateTaskWrites(extractCreateFields(input)); err != nil {
+		return nil, err
+	}
+
 	// Validate sprint association
 	if input.SprintID != "" {
 		if s.feature != nil && s.feature.IsEnabled("sprints") {
@@ -126,11 +131,12 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		WorkingDir:        input.WorkingDir,
 		SystemPrompt:      input.SystemPrompt,
 		MaxRetries:        orDefaultInt(input.MaxRetries, 3),
-		OnDone:            input.OnDone,
-		OnFail:            input.OnFail,
-		OnReview:          input.OnReview,
-		OnDoneMerge:       input.OnDoneMerge,
+		OnDone:            orDefault(input.OnDone, "review"),
+		OnFail:            orDefault(input.OnFail, "retry"),
+		OnReview:          orDefault(input.OnReview, "pause"),
+		OnDoneMerge:       orDefault(input.OnDoneMerge, "none"),
 		DeliverablePreset: input.DeliverablePreset,
+		BlockedReason:     input.BlockedReason,
 	}
 
 	if len(input.Tools) > 0 {
@@ -144,6 +150,30 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	}
 	if input.CostBudget != nil {
 		rec.CostBudget = sql.NullFloat64{Float64: *input.CostBudget, Valid: true}
+	}
+	if len(input.Permissions) > 0 {
+		rec.Permissions = sql.NullString{String: marshalJSON(input.Permissions), Valid: true}
+	}
+	if len(input.Environment) > 0 {
+		rec.Environment = sql.NullString{String: marshalJSON(input.Environment), Valid: true}
+	}
+	if input.MaxDurationMs != nil {
+		rec.MaxDurationMs = sql.NullInt64{Int64: *input.MaxDurationMs, Valid: true}
+	}
+	if input.TokenBudget != nil {
+		rec.TokenBudget = sql.NullInt64{Int64: *input.TokenBudget, Valid: true}
+	}
+	if len(input.EscalationChain) > 0 {
+		rec.EscalationChain = sql.NullString{String: marshalJSON(input.EscalationChain), Valid: true}
+	}
+	if len(input.QualityGates) > 0 {
+		rec.QualityGates = sql.NullString{String: marshalJSON(input.QualityGates), Valid: true}
+	}
+	if len(input.Deliverables) > 0 {
+		rec.Deliverables = sql.NullString{String: marshalJSON(input.Deliverables), Valid: true}
+	}
+	if len(input.Metadata) > 0 {
+		rec.Metadata = sql.NullString{String: marshalJSON(input.Metadata), Valid: true}
 	}
 	if input.SprintID != "" {
 		rec.SprintID = sql.NullString{String: input.SprintID, Valid: true}
