@@ -76,9 +76,9 @@ export default function TaskDetailPage() {
     }
   }, [editing, task])
 
-  // Load container picker options when edit mode activates
+  // Load container lists once on mount. Used for both view-mode name
+  // resolution (linked project/sprint/epic) and edit-mode pickers.
   useEffect(() => {
-    if (!editing) return
     setPickersLoading(true)
     Promise.allSettled([
       api.listProjects(),
@@ -90,7 +90,7 @@ export default function TaskDetailPage() {
       if (eRes.status === 'fulfilled') setEpics(eRes.value.epics)
       setPickersLoading(false)
     })
-  }, [editing, api])
+  }, [api])
 
   // Lazy-load tab content (view mode only)
   const taskLoaded = task !== null
@@ -141,15 +141,15 @@ export default function TaskDetailPage() {
 
   async function handleSave() {
     if (!id || !task || !draft) return
+    const diff = computeTaskDiff(task, draft)
+    if (Object.keys(diff).length === 0) {
+      // Nothing changed — just exit edit mode without flashing the Saving state
+      setSearchParams({})
+      return
+    }
     setSaving(true)
     setSaveError(null)
     try {
-      const diff = computeTaskDiff(task, draft)
-      if (Object.keys(diff).length === 0) {
-        // Nothing changed — just exit edit mode
-        setSearchParams({})
-        return
-      }
       const updated = await api.updateTask(id, diff)
       setTask(updated)
       setDraft(null)
