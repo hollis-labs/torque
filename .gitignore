@@ -25,3 +25,6 @@ dist/
 
 # Worktrees
 .worktrees/
+
+# Brainstorming companion sessions
+.superpowers/

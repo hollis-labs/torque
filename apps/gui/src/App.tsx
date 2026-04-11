@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
 import { LayoutList, Play, BarChart3, Settings, Cog, FolderOpen, Milestone, Layers } from 'lucide-react'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { Toaster } from '@/components/ui/sonner'
 import { ApiProvider } from '@/hooks/use-api'
 import BoardPage from '@/pages/BoardPage'
 import TaskDetailPage from '@/pages/TaskDetailPage'
@@ -112,6 +113,7 @@ export default function App() {
         <BrowserRouter>
           <AppShell />
         </BrowserRouter>
+        <Toaster position="bottom-right" />
       </TooltipProvider>
     </ApiProvider>
   )
