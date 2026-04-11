@@ -76,9 +76,41 @@ export default function TaskDetailPage() {
     }
   }, [editing, task])
 
-  // Load container lists once on mount. Used for both view-mode name
-  // resolution (linked project/sprint/epic) and edit-mode pickers.
+  // View-mode name resolution: fetch only the individual container entities
+  // referenced by the current task, so links render real names instead of
+  // raw IDs. No-op when the task has no containers assigned.
   useEffect(() => {
+    if (!task) return
+    if (task.project_id) {
+      api
+        .getProject(task.project_id)
+        .then((p) =>
+          setProjects((prev) => (prev.some((x) => x.id === p.id) ? prev : [...prev, p])),
+        )
+        .catch(() => {})
+    }
+    if (task.sprint_id) {
+      api
+        .getSprint(task.sprint_id)
+        .then((s) =>
+          setSprints((prev) => (prev.some((x) => x.id === s.id) ? prev : [...prev, s])),
+        )
+        .catch(() => {})
+    }
+    if (task.epic_id) {
+      api
+        .getEpic(task.epic_id)
+        .then((e) =>
+          setEpics((prev) => (prev.some((x) => x.id === e.id) ? prev : [...prev, e])),
+        )
+        .catch(() => {})
+    }
+  }, [task, api])
+
+  // Edit-mode picker loading: fetch the full container lists only when
+  // entering edit mode (drives the project/sprint/epic <Select> options).
+  useEffect(() => {
+    if (!editing) return
     setPickersLoading(true)
     Promise.allSettled([
       api.listProjects(),
@@ -90,7 +122,7 @@ export default function TaskDetailPage() {
       if (eRes.status === 'fulfilled') setEpics(eRes.value.epics)
       setPickersLoading(false)
     })
-  }, [api])
+  }, [editing, api])
 
   // Lazy-load tab content (view mode only)
   const taskLoaded = task !== null
@@ -107,11 +139,18 @@ export default function TaskDetailPage() {
     }
   }, [activeTab, id, taskLoaded, editing, comments, runs, artifacts, api])
 
+  // Seed draft from task if the user's first edit lands before the init
+  // effect has run. Without this, the brief window between entering edit
+  // mode and the draft-init effect committing can silently drop the first
+  // keystroke.
   const updateDraft = useCallback(
     <K extends keyof Task>(field: K, value: Task[K]) => {
-      setDraft((prev) => (prev ? { ...prev, [field]: value } : prev))
+      setDraft((prev) => {
+        const baseDraft = prev ?? (editing && task ? { ...task } : null)
+        return baseDraft ? { ...baseDraft, [field]: value } : baseDraft
+      })
     },
-    [],
+    [editing, task],
   )
 
   async function handleAddComment(content: string) {
