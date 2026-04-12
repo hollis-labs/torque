@@ -209,7 +209,21 @@ func (e *CLIExecutor) runPrintMode(_ context.Context, cmd *exec.Cmd, job *execut
 				cb(executor.TokenEvent(int(p), int(c), cost))
 			}
 
-		case executor.SignalCheckpoint, executor.SignalProgress, executor.SignalSubtask, executor.SignalArtifact:
+		case executor.SignalArtifact:
+			art, err := executor.ParseArtifactPayload(sig.Payload)
+			if err != nil {
+				// Malformed artifact signal — log as a generic log line so it's still visible
+				if cb != nil {
+					cb(executor.LogEvent(line))
+				}
+				break
+			}
+			result.Artifacts = append(result.Artifacts, art)
+			if cb != nil {
+				cb(executor.ArtifactEvent(art))
+			}
+
+		case executor.SignalCheckpoint, executor.SignalProgress, executor.SignalSubtask:
 			if cb != nil {
 				cb(executor.SignalEvent(sig.Type.String(), sig.Payload))
 			}
@@ -281,6 +295,18 @@ func (e *CLIExecutor) runStreamJSON(_ context.Context, cmd *exec.Cmd, _ *executo
 				result.Cost += cost
 				if cb != nil {
 					cb(executor.TokenEvent(int(p), int(c), cost))
+				}
+			case executor.SignalArtifact:
+				art, err := executor.ParseArtifactPayload(sig.Payload)
+				if err != nil {
+					if cb != nil {
+						cb(executor.LogEvent(sig.Payload))
+					}
+					break
+				}
+				result.Artifacts = append(result.Artifacts, art)
+				if cb != nil {
+					cb(executor.ArtifactEvent(art))
 				}
 			default:
 				if cb != nil {

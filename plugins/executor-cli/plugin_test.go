@@ -240,6 +240,75 @@ func TestRunEnvFiltered(t *testing.T) {
 	assert.NotContains(t, output, "sk-secret123", "secret key must be stripped from env")
 }
 
+func TestCLIExecutorArtifactPopulatesResult(t *testing.T) {
+	script := `echo "starting work"
+echo '{"signal": "CLOCKWORK_ARTIFACT", "type": "diff", "content": "--- a/x"}'
+echo CLOCKWORK_DONE`
+	pm := profiles("default", shellProfile(script))
+	e := New(pm)
+	j := job("default")
+
+	results, events := collectEvents(t, e, j)
+	result := results[0]
+
+	assert.Equal(t, "done", result.Status)
+	require.Len(t, result.Artifacts, 1)
+	assert.Equal(t, "diff", result.Artifacts[0].Type)
+	assert.Equal(t, "--- a/x", result.Artifacts[0].Content)
+
+	var sawArtifactEvent bool
+	for _, ev := range events {
+		if ev.Type == executor.EventArtifact {
+			sawArtifactEvent = true
+			require.NotNil(t, ev.Artifact)
+			assert.Equal(t, "diff", ev.Artifact.Type)
+			assert.Equal(t, "--- a/x", ev.Artifact.Content)
+		}
+	}
+	assert.True(t, sawArtifactEvent, "expected EventArtifact to be emitted via cb")
+}
+
+func TestCLIExecutorMultipleArtifacts(t *testing.T) {
+	script := `echo '{"signal": "CLOCKWORK_ARTIFACT", "type": "diff", "content": "first"}'
+echo '{"signal": "CLOCKWORK_ARTIFACT", "type": "log", "content": "second"}'
+echo CLOCKWORK_DONE`
+	pm := profiles("default", shellProfile(script))
+	e := New(pm)
+	j := job("default")
+
+	results, _ := collectEvents(t, e, j)
+	result := results[0]
+
+	assert.Equal(t, "done", result.Status)
+	require.Len(t, result.Artifacts, 2)
+	assert.Equal(t, "diff", result.Artifacts[0].Type)
+	assert.Equal(t, "first", result.Artifacts[0].Content)
+	assert.Equal(t, "log", result.Artifacts[1].Type)
+	assert.Equal(t, "second", result.Artifacts[1].Content)
+}
+
+func TestCLIExecutorMalformedArtifactFallsBackToLog(t *testing.T) {
+	script := `echo '{"signal": "CLOCKWORK_ARTIFACT"}'
+echo CLOCKWORK_DONE`
+	pm := profiles("default", shellProfile(script))
+	e := New(pm)
+	j := job("default")
+
+	results, events := collectEvents(t, e, j)
+	result := results[0]
+
+	assert.Equal(t, "done", result.Status)
+	assert.Empty(t, result.Artifacts, "malformed artifact must not be appended")
+
+	var sawLog bool
+	for _, ev := range events {
+		if ev.Type == executor.EventLog && strings.Contains(ev.Content, "CLOCKWORK_ARTIFACT") {
+			sawLog = true
+		}
+	}
+	assert.True(t, sawLog, "expected malformed artifact to fall back to a LogEvent")
+}
+
 func TestRunTaskIDAndRunIDInjected(t *testing.T) {
 	script := `echo "tid=${CLOCKWORK_TASK_ID} rid=${CLOCKWORK_RUN_ID}"`
 	pm := profiles("default", shellProfile(script))

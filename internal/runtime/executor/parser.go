@@ -2,6 +2,7 @@ package executor
 
 import (
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -90,6 +91,35 @@ func parseJSONSignal(line string) (ParsedSignal, bool) {
 	}
 
 	return ParsedSignal{Type: sigType, Payload: line}, true
+}
+
+// ParseArtifactPayload decodes the JSON payload of a CLOCKWORK_ARTIFACT signal
+// into an Artifact. The payload is the full JSON line (including the "signal"
+// field); unknown fields are ignored.
+//
+// Returns an error if the JSON is invalid or if the required "type" field is
+// missing/empty.
+func ParseArtifactPayload(payload string) (Artifact, error) {
+	var raw struct {
+		Type     string                 `json:"type"`
+		Content  string                 `json:"content,omitempty"`
+		URL      string                 `json:"url,omitempty"`
+		FilePath string                 `json:"file_path,omitempty"`
+		Metadata map[string]interface{} `json:"metadata,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(payload), &raw); err != nil {
+		return Artifact{}, fmt.Errorf("parse artifact payload: %w", err)
+	}
+	if raw.Type == "" {
+		return Artifact{}, fmt.Errorf("artifact payload missing required \"type\" field")
+	}
+	return Artifact{
+		Type:     raw.Type,
+		Content:  raw.Content,
+		URL:      raw.URL,
+		FilePath: raw.FilePath,
+		Metadata: raw.Metadata,
+	}, nil
 }
 
 // ParseTokenPayload parses a CLOCKWORK_TOKENS payload of the form

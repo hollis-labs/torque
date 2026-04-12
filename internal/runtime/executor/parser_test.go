@@ -5,6 +5,7 @@ import (
 
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseLineDone(t *testing.T) {
@@ -116,6 +117,52 @@ func TestParseLineJSONMalformed(t *testing.T) {
 	line := `{this is not valid json`
 	sig := executor.ParseLine(line)
 	assert.Equal(t, executor.SignalLogLine, sig.Type)
+}
+
+func TestParseArtifactPayload(t *testing.T) {
+	t.Run("full payload", func(t *testing.T) {
+		payload := `{"signal":"CLOCKWORK_ARTIFACT","type":"diff","content":"--- a/x\n+++ b/x","url":"https://example.com/x","file_path":"x.go","metadata":{"lines":42}}`
+		art, err := executor.ParseArtifactPayload(payload)
+		require.NoError(t, err)
+		assert.Equal(t, "diff", art.Type)
+		assert.Equal(t, "--- a/x\n+++ b/x", art.Content)
+		assert.Equal(t, "https://example.com/x", art.URL)
+		assert.Equal(t, "x.go", art.FilePath)
+		require.NotNil(t, art.Metadata)
+		// JSON numbers decode to float64
+		assert.Equal(t, float64(42), art.Metadata["lines"])
+	})
+
+	t.Run("minimal payload", func(t *testing.T) {
+		payload := `{"signal":"CLOCKWORK_ARTIFACT","type":"log"}`
+		art, err := executor.ParseArtifactPayload(payload)
+		require.NoError(t, err)
+		assert.Equal(t, "log", art.Type)
+		assert.Equal(t, "", art.Content)
+		assert.Equal(t, "", art.URL)
+		assert.Equal(t, "", art.FilePath)
+		assert.Nil(t, art.Metadata)
+	})
+
+	t.Run("missing type", func(t *testing.T) {
+		payload := `{"signal":"CLOCKWORK_ARTIFACT","content":"body"}`
+		_, err := executor.ParseArtifactPayload(payload)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "type")
+	})
+
+	t.Run("invalid json", func(t *testing.T) {
+		_, err := executor.ParseArtifactPayload("not json")
+		require.Error(t, err)
+	})
+
+	t.Run("metadata preserved", func(t *testing.T) {
+		payload := `{"signal":"CLOCKWORK_ARTIFACT","type":"diff","metadata":{"lines":42}}`
+		art, err := executor.ParseArtifactPayload(payload)
+		require.NoError(t, err)
+		require.NotNil(t, art.Metadata)
+		assert.Equal(t, float64(42), art.Metadata["lines"])
+	})
 }
 
 func TestParseTokenPayload(t *testing.T) {
