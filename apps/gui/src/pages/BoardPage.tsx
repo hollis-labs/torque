@@ -7,6 +7,7 @@ import { TaskTable } from '@/components/domain/task-table'
 import { EmptyState } from '@/components/domain/empty-state'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
+import { notifyError } from '@/lib/toast'
 import { DEFAULT_ACTIVE_STATUSES, MODE_PRESETS } from '@/lib/constants'
 import type { Task, TaskStatus } from '@/lib/types'
 
@@ -84,8 +85,8 @@ export default function BoardPage() {
     try {
       await api.transitionTask(id, status)
       fetchTasks()
-    } catch {
-      // silently fail — user will see no change
+    } catch (err) {
+      notifyError(err, 'Failed to update task status')
     }
   }
 
