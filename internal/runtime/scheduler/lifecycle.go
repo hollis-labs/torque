@@ -44,7 +44,7 @@ func (lm *LifecycleManager) HandleResult(taskID string, runID int64, result *exe
 	case "blocked":
 		return lm.handleBlocked(task, runID, result)
 	case "review":
-		return lm.transition(task, "review", "")
+		return lm.transition(task, runID, "review", "")
 	default:
 		return fmt.Errorf("lifecycle: unknown result status %q", result.Status)
 	}
@@ -60,7 +60,7 @@ func (lm *LifecycleManager) handleDone(task *sqlstore.TaskRecord, runID int64, r
 			missing := lm.checker.Check(required, result.Artifacts)
 			if len(missing) > 0 {
 				log.Printf("[lifecycle] task %s missing deliverables: %v", task.ID, missingTypes(missing))
-				return lm.retryOrBlock(task, "missing required deliverables")
+				return lm.retryOrBlock(task, runID, "missing required deliverables")
 			}
 		}
 	}
@@ -68,12 +68,12 @@ func (lm *LifecycleManager) handleDone(task *sqlstore.TaskRecord, runID int64, r
 	// Apply OnDone rule
 	switch task.OnDone {
 	case "review":
-		return lm.transition(task, "review", "")
+		return lm.transition(task, runID, "review", "")
 	case "close":
-		return lm.transition(task, "done", "")
+		return lm.transition(task, runID, "done", "")
 	case "notify":
 		// Transition to done and emit a notify event
-		if err := lm.transition(task, "done", ""); err != nil {
+		if err := lm.transition(task, runID, "done", ""); err != nil {
 			return err
 		}
 		lm.bus.Publish(SchedulerEvent{
@@ -83,20 +83,20 @@ func (lm *LifecycleManager) handleDone(task *sqlstore.TaskRecord, runID int64, r
 		})
 		return nil
 	default:
-		return lm.transition(task, "review", "")
+		return lm.transition(task, runID, "review", "")
 	}
 }
 
 func (lm *LifecycleManager) handleFailed(task *sqlstore.TaskRecord, runID int64, result *executor.ExecutionResult) error {
 	switch task.OnFail {
 	case "retry":
-		return lm.retryOrBlock(task, result.Reason)
+		return lm.retryOrBlock(task, runID, result.Reason)
 	case "block":
-		return lm.transition(task, "blocked", result.Reason)
+		return lm.transition(task, runID, "blocked", result.Reason)
 	case "escalate":
-		return lm.handleEscalation(task, result)
+		return lm.handleEscalation(task, runID, result)
 	case "notify":
-		if err := lm.transition(task, "blocked", result.Reason); err != nil {
+		if err := lm.transition(task, runID, "blocked", result.Reason); err != nil {
 			return err
 		}
 		lm.bus.Publish(SchedulerEvent{
@@ -106,15 +106,15 @@ func (lm *LifecycleManager) handleFailed(task *sqlstore.TaskRecord, runID int64,
 		})
 		return nil
 	default:
-		return lm.retryOrBlock(task, result.Reason)
+		return lm.retryOrBlock(task, runID, result.Reason)
 	}
 }
 
 func (lm *LifecycleManager) handleBlocked(task *sqlstore.TaskRecord, runID int64, result *executor.ExecutionResult) error {
-	return lm.transition(task, "blocked", result.Reason)
+	return lm.transition(task, runID, "blocked", result.Reason)
 }
 
-func (lm *LifecycleManager) handleEscalation(task *sqlstore.TaskRecord, result *executor.ExecutionResult) error {
+func (lm *LifecycleManager) handleEscalation(task *sqlstore.TaskRecord, runID int64, result *executor.ExecutionResult) error {
 	var chain []string
 	if task.EscalationChain.Valid && task.EscalationChain.String != "" {
 		if err := json.Unmarshal([]byte(task.EscalationChain.String), &chain); err != nil {
@@ -141,13 +141,13 @@ func (lm *LifecycleManager) handleEscalation(task *sqlstore.TaskRecord, result *
 	}
 
 	if resolution.BlockedReason != "" {
-		return lm.transition(task, resolution.NewStatus, resolution.BlockedReason)
+		return lm.transition(task, runID, resolution.NewStatus, resolution.BlockedReason)
 	}
 
-	return lm.transition(task, resolution.NewStatus, "")
+	return lm.transition(task, runID, resolution.NewStatus, "")
 }
 
-func (lm *LifecycleManager) retryOrBlock(task *sqlstore.TaskRecord, reason string) error {
+func (lm *LifecycleManager) retryOrBlock(task *sqlstore.TaskRecord, runID int64, reason string) error {
 	// Read current retry count from DB (uses 002 migration column)
 	var retryCount int
 	lm.store.DB().QueryRow("SELECT retry_count FROM tasks WHERE id = ?", task.ID).Scan(&retryCount)
@@ -155,13 +155,13 @@ func (lm *LifecycleManager) retryOrBlock(task *sqlstore.TaskRecord, reason strin
 	if retryCount < task.MaxRetries {
 		// Increment retry count
 		lm.store.DB().Exec("UPDATE tasks SET retry_count = retry_count + 1 WHERE id = ?", task.ID)
-		return lm.transition(task, "todo", "")
+		return lm.transition(task, runID, "todo", "")
 	}
 
-	return lm.transition(task, "blocked", fmt.Sprintf("retries exhausted (%d/%d): %s", retryCount, task.MaxRetries, reason))
+	return lm.transition(task, runID, "blocked", fmt.Sprintf("retries exhausted (%d/%d): %s", retryCount, task.MaxRetries, reason))
 }
 
-func (lm *LifecycleManager) transition(task *sqlstore.TaskRecord, newStatus, blockedReason string) error {
+func (lm *LifecycleManager) transition(task *sqlstore.TaskRecord, runID int64, newStatus, blockedReason string) error {
 	oldStatus := task.Status
 
 	if err := lm.store.TransitionTask(task.ID, newStatus); err != nil {
@@ -171,6 +171,15 @@ func (lm *LifecycleManager) transition(task *sqlstore.TaskRecord, newStatus, blo
 	if blockedReason != "" {
 		lm.store.UpdateTask(task.ID, sqlstore.TaskUpdate{BlockedReason: &blockedReason})
 	}
+
+	payload := map[string]interface{}{
+		"from": oldStatus,
+		"to":   newStatus,
+	}
+	if blockedReason != "" {
+		payload["reason"] = blockedReason
+	}
+	writeRunEvent(lm.store, runID, task.ID, "task_transitioned", payload)
 
 	lm.bus.Publish(SchedulerEvent{
 		Type:   "task.transitioned",

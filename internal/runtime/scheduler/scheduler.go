@@ -200,6 +200,14 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	workerID := fmt.Sprintf("worker-%s-%d", task.ID, runID)
 	s.heartbeat.Register(workerID, task.ID, runID, task.Executor)
 
+	writeRunEvent(s.store, runID, task.ID, "task_transitioned", map[string]string{
+		"from": "todo",
+		"to":   "doing",
+	})
+	writeRunEvent(s.store, runID, task.ID, "run_started", map[string]string{
+		"executor": task.Executor,
+	})
+
 	s.bus.Publish(SchedulerEvent{
 		Type:   "task.transitioned",
 		TaskID: task.ID,
@@ -233,6 +241,8 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 					URL:     event.Artifact.URL,
 				})
 			}
+
+			writeRunEvent(s.store, capturedRunID, capturedTaskID, runEventType(event), runEventPayload(event))
 
 			s.bus.Publish(SchedulerEvent{
 				Type:   "run.event",
@@ -272,6 +282,11 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 			Cost:             result.Cost,
 			PromptTokens:     result.Tokens.PromptTokens,
 			CompletionTokens: result.Tokens.CompletionTokens,
+		})
+
+		writeRunEvent(s.store, capturedRunID, capturedTaskID, "run_completed", map[string]interface{}{
+			"status": result.Status,
+			"cost":   result.Cost,
 		})
 
 		s.bus.Publish(SchedulerEvent{
