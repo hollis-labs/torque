@@ -217,7 +217,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	capturedRunID := runID
 	capturedWorkerID := workerID
 	capturedTaskID := task.ID
-	s.pool.Submit(task.ID, func(wctx context.Context) (*executor.ExecutionResult, error) {
+	s.pool.Submit(task.ID, runID, func(wctx context.Context) (*executor.ExecutionResult, error) {
 		defer s.heartbeat.Deregister(capturedWorkerID)
 
 		// Create event callback that updates heartbeat and run
@@ -296,17 +296,17 @@ func (s *Scheduler) DrainResults() {
 		select {
 		case r := <-s.results:
 			if r.Err != nil {
-				log.Printf("[scheduler] worker error for %s: %v", r.TaskID, r.Err)
+				log.Printf("[scheduler] worker error for %s (run %d): %v", r.TaskID, r.RunID, r.Err)
 				// Treat executor errors as failures
-				s.lifecycle.HandleResult(r.TaskID, 0, &executor.ExecutionResult{
+				s.lifecycle.HandleResult(r.TaskID, r.RunID, &executor.ExecutionResult{
 					Status: "failed",
 					Reason: r.Err.Error(),
 				})
 				continue
 			}
 			if r.Result != nil {
-				if err := s.lifecycle.HandleResult(r.TaskID, 0, r.Result); err != nil {
-					log.Printf("[scheduler] lifecycle error for %s: %v", r.TaskID, err)
+				if err := s.lifecycle.HandleResult(r.TaskID, r.RunID, r.Result); err != nil {
+					log.Printf("[scheduler] lifecycle error for %s (run %d): %v", r.TaskID, r.RunID, err)
 				}
 			}
 		default:

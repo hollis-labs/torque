@@ -15,6 +15,7 @@ type WorkFunc func(ctx context.Context) (*executor.ExecutionResult, error)
 // WorkerResult is delivered to the OnResult callback when a worker finishes.
 type WorkerResult struct {
 	TaskID string
+	RunID  int64
 	Result *executor.ExecutionResult
 	Err    error
 }
@@ -51,8 +52,9 @@ func (p *WorkerPool) OnResult(fn func(WorkerResult)) {
 }
 
 // Submit enqueues a task for execution. It blocks until a worker slot is
-// available (semaphore acquire).
-func (p *WorkerPool) Submit(taskID string, fn WorkFunc) {
+// available (semaphore acquire). The runID is propagated through to the
+// WorkerResult so downstream lifecycle handling can key on the real run.
+func (p *WorkerPool) Submit(taskID string, runID int64, fn WorkFunc) {
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
@@ -61,7 +63,7 @@ func (p *WorkerPool) Submit(taskID string, fn WorkFunc) {
 		select {
 		case p.semaphore <- struct{}{}:
 		case <-p.ctx.Done():
-			p.deliverResult(WorkerResult{TaskID: taskID, Err: p.ctx.Err()})
+			p.deliverResult(WorkerResult{TaskID: taskID, RunID: runID, Err: p.ctx.Err()})
 			return
 		}
 
@@ -72,7 +74,7 @@ func (p *WorkerPool) Submit(taskID string, fn WorkFunc) {
 		}()
 
 		result, err := fn(p.ctx)
-		p.deliverResult(WorkerResult{TaskID: taskID, Result: result, Err: err})
+		p.deliverResult(WorkerResult{TaskID: taskID, RunID: runID, Result: result, Err: err})
 	}()
 }
 

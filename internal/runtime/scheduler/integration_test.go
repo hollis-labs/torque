@@ -94,6 +94,9 @@ func TestIntegrationFullRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(runs), 1)
 	assert.Equal(t, "done", runs[0].Status)
+	// The lifecycle transition to "done" must have been keyed on a real run ID,
+	// not the historical hardcoded 0. See fix(scheduler): thread RunID through WorkerResult.
+	assert.Greater(t, runs[0].ID, int64(0), "run should have a non-zero ID threaded through the worker pool")
 
 	// Verify executor received the job
 	jobs := mock.RecordedJobs()
