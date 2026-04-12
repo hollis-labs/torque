@@ -9,6 +9,7 @@ import { EmptyState } from '@/components/domain/empty-state'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
 import { DEFAULT_ACTIVE_STATUSES, MODE_PRESETS } from '@/lib/constants'
+import { notifyError } from '@/lib/toast'
 import type { Sprint, Task, TaskStatus } from '@/lib/types'
 
 type ModePreset = keyof typeof MODE_PRESETS | 'all'
@@ -89,8 +90,8 @@ export default function SprintDetailPage() {
     try {
       await api.transitionTask(taskId, status)
       fetchTasks()
-    } catch {
-      // no-op
+    } catch (err) {
+      notifyError(err, 'Failed to update task status')
     }
   }
 
