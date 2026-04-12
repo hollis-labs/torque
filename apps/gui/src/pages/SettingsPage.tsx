@@ -5,6 +5,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useApi } from '@/hooks/use-api'
+import { notifyError } from '@/lib/toast'
 import type { FeatureFlags } from '@/lib/types'
 
 export default function SettingsPage() {
@@ -29,8 +30,9 @@ export default function SettingsPage() {
     setFlags(updated) // optimistic
     try {
       await api.setSetting(`feature-flags.${key}`, String(value))
-    } catch {
+    } catch (err) {
       setFlags(flags) // revert on error
+      notifyError(err, 'Failed to update setting')
     } finally {
       setSaving(null)
     }
