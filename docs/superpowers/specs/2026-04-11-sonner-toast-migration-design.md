@@ -173,3 +173,47 @@ If any failure path can't be forced without destructive actions (killing service
 - `apps/gui/src/App.tsx:116` — existing Toaster mount.
 - `apps/gui/src/components/ui/sonner.tsx` — themed wrapper.
 - Memory: `feedback_one_source_of_truth.md` — "prefer abstractions over duplication" rule that motivates the `@/lib/toast` module shape.
+
+## Implementation deltas (verified 2026-04-11)
+
+The grep-derived inventory in the "Call-site inventory" table needed two corrections during implementation. The corrected scope is **13 mutation handlers**, not 16, with no change in spec intent.
+
+### Excluded — list-fetch silent degradation (3 sites)
+
+These three sites pattern-matched the `} catch {` grep but are NOT mutation handlers — they are list-fetch silent-degradation catches, structurally identical to the "best-effort prefetch catches" already excluded in the Non-goals section. Each falls back to `setTasks([])` and is intentionally invisible.
+
+| Spec row | File:line | Reality |
+|---|---|---|
+| 4 | `pages/EpicDetailPage.tsx` L41–49 | `fetchTasks` callback, falls back to `setTasks([])` |
+| 8 | `pages/SprintDetailPage.tsx` L51–59 | `fetchTasks` callback, falls back to `setTasks([])` |
+| 12 | `pages/ProjectDetailPage.tsx` L47–55 | `fetchTasks` callback, falls back to `setTasks([])` |
+
+These remain as-is. Same exclusion category, same reason.
+
+### Corrected handler / fallback wording (6 sites)
+
+The grep guessed verb-noun pairs from filename context; the actual handlers were different. Fallbacks were corrected during implementation:
+
+| Spec row | File | Spec said | Actual handler | Actual fallback |
+|---|---|---|---|---|
+| 5 | `EpicDetailPage.tsx` L82 | "Failed to update epic" | `handleTransition` | `Failed to update task status` |
+| 6 | `SprintsPage.tsx` L113 | "Failed to create sprint" | `handleToggleStatus` | `Failed to update sprint status` |
+| 9 | `SprintDetailPage.tsx` L92 | "Failed to update sprint" | `handleTransition` | `Failed to update task status` |
+| 10 | `ProjectsPage.tsx` L101 | "Failed to create project" | `handleToggleStatus` | `Failed to update project status` |
+| 13 | `ProjectDetailPage.tsx` L109 | "Failed to update project" | `handleTransition` | `Failed to update task status` |
+| 14 | `EpicsPage.tsx` L114 | "Failed to create epic" | `handleToggleStatus` | `Failed to update epic status` |
+
+### Page-level smoke tests skipped
+
+The spec called for two smoke tests added to existing `TaskDetailPage` and `BoardPage` test suites. **No such suites exist in the repo** — `apps/gui/src/` has only `lib/sentinel-display.test.ts`, `lib/task-diff.test.ts`, and the new `lib/toast.test.ts`. The spec already contemplates skipping when host suites are unfit ("If a collision exists, skip that site's unit test and rely on the module unit tests plus browser verification" — Layer 2). No-host-file is a stronger version of collision, so the same escape hatch was applied.
+
+Coverage in this pass:
+- **Layer 1 (module unit tests):** 5 cases pin the unwrap policy in `lib/toast.test.ts`. Unchanged from spec.
+- **Layer 2 (page smoke tests):** SKIPPED. Not worth creating two new test files (api/router/hook mocking + render setup) for one toast assertion each.
+- **Layer 3 (browser verification):** COMPLETED 2026-04-11 against worktree vite dev on `:5177`. Forced `todo → backlog` transition (API rejects with `cannot transition from todo to backlog: transition not permitted`) — red toast surfaced with the API's exact message verbatim, confirming `extractMessage` unwrapped `err.message` rather than using the hardcoded fallback. Comment-rejection path not forcible from UI (client-side validation blocks empty submission before reaching the handler); the handler's wrap-pattern is identical to the verified transition sites and is covered by the module unit tests.
+
+When real page-level test infrastructure lands later, the unit tests can be re-introduced as a follow-up PR.
+
+### Collateral backend issue captured separately
+
+The `todo → backlog` rejection observed during verification is a **backend transition state machine** concern (the GUI correctly surfaced a valid API error). Parked in `.agentrc/boot-prompt.md` under backend follow-ups (main commit `32a8e57`, 2026-04-11) — NOT in scope for this PR.

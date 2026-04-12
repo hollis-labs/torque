@@ -10,6 +10,7 @@ import { RowActions } from '@/components/domain/row-actions'
 import { EmptyState } from '@/components/domain/empty-state'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
+import { notifyError } from '@/lib/toast'
 import type { Project, ContainerStatus } from '@/lib/types'
 
 type SortKey = 'name' | 'status' | 'repo_path' | 'updated_at'
@@ -98,8 +99,8 @@ export default function ProjectsPage() {
       const newStatus: ContainerStatus = project.status === 'active' ? 'inactive' : 'active'
       await api.updateProject(project.id, { status: newStatus })
       fetchProjects()
-    } catch {
-      // no-op
+    } catch (err) {
+      notifyError(err, 'Failed to update project status')
     }
   }
 
@@ -107,8 +108,8 @@ export default function ProjectsPage() {
     try {
       await api.deleteProject(id)
       fetchProjects()
-    } catch {
-      // no-op
+    } catch (err) {
+      notifyError(err, 'Failed to delete project')
     }
   }
 

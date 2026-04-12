@@ -11,6 +11,7 @@ import { RowActions } from '@/components/domain/row-actions'
 import { EmptyState } from '@/components/domain/empty-state'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
+import { notifyError } from '@/lib/toast'
 import type { Epic, ContainerStatus } from '@/lib/types'
 
 type SortKey = 'name' | 'status' | 'updated_at'
@@ -111,8 +112,8 @@ export default function EpicsPage() {
       const newStatus: ContainerStatus = epic.status === 'active' ? 'inactive' : 'active'
       await api.updateEpic(epic.id, { status: newStatus })
       fetchEpics()
-    } catch {
-      // no-op
+    } catch (err) {
+      notifyError(err, 'Failed to update epic status')
     }
   }
 
@@ -120,8 +121,8 @@ export default function EpicsPage() {
     try {
       await api.deleteEpic(id)
       fetchEpics()
-    } catch {
-      // no-op
+    } catch (err) {
+      notifyError(err, 'Failed to delete epic')
     }
   }
 
