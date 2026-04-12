@@ -5,7 +5,7 @@ Standalone task orchestration and execution engine.
 ## Stack
 - **Backend:** Go 1.26, SQLite
 - **Frontend:** React 19, Vite, Tailwind CSS 4, shadcn/ui, TypeScript (apps/gui/)
-- **CLI:** `cmd/clockwork/` (client), `cmd/clockworkd/` (daemon)
+- **CLI:** `cmd/clockwork/` (client + serve command hosts API, scheduler, and GUI)
 
 ## agentrc
 - If `.agentrc/boot-prompt.md` exists, read it first for session context.
