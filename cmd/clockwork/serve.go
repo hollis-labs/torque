@@ -142,15 +142,18 @@ func runServe(ctx context.Context, ln net.Listener) error {
 
 	srv := &http.Server{Handler: handler}
 
-	// Graceful HTTP shutdown is driven by the same context the goroutines watch.
-	// When ctx fires we Shutdown() with a 5s grace window; if Shutdown exceeds
-	// that budget we fall through to Close() to force the listener closed.
+	// Graceful HTTP shutdown is driven by runCtx, which fires when either the
+	// parent ctx is cancelled (normal SIGINT/SIGTERM path) OR when we call
+	// cancel() ourselves after srv.Serve returns abnormally (e.g. external
+	// listener close). Waiting on runCtx.Done() — not ctx.Done() — is what
+	// lets the abnormal path unblock without a deadlock. Shutdown uses a 5s
+	// grace window; on timeout we fall through to Close() to force the
+	// listener closed.
 	shutdownDone := make(chan struct{})
 	go func() {
 		defer close(shutdownDone)
-		<-ctx.Done()
+		<-runCtx.Done()
 		log.Println("shutting down...")
-		cancel() // belt and suspenders: also cancels runCtx
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
@@ -166,11 +169,17 @@ func runServe(ctx context.Context, ln net.Listener) error {
 		cfg.Scheduler.Workers, cfg.Scheduler.IntervalSeconds, cfg.Scheduler.Enabled)
 
 	serveErr := srv.Serve(ln)
+	// Cancel FIRST so the shutdown goroutine unblocks on <-runCtx.Done() and
+	// runs to completion (closing shutdownDone). If Serve returned an error
+	// other than ErrServerClosed (e.g. an external listener close or accept
+	// error), the parent ctx may not have been cancelled yet — without this
+	// explicit cancel() the shutdown goroutine would block forever and we'd
+	// deadlock on <-shutdownDone below.
+	cancel()
 	// Wait for the shutdown goroutine to finish its Shutdown call before we
 	// wait on the worker goroutines — otherwise we may return before the HTTP
 	// server has fully quiesced.
 	<-shutdownDone
-	cancel()
 	wg.Wait()
 
 	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {

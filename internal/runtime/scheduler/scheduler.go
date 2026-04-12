@@ -259,6 +259,9 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 				Status:       "failed",
 				ErrorMessage: err.Error(),
 			})
+			// TODO(path-b): write run_completed run_event here too so failed-run observability
+			// doesn't require cross-referencing task_transitioned. Success path writes it at
+			// line ~287; failure path transitions via lifecycle which writes task_transitioned.
 			return nil, err
 		}
 

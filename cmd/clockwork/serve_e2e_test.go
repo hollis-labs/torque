@@ -125,6 +125,47 @@ func TestServeE2EMockTaskCompletes(t *testing.T) {
 	}
 }
 
+// TestRunServeUnblocksOnListenerClose exercises the abnormal shutdown path:
+// if srv.Serve returns an error that is NOT http.ErrServerClosed (e.g. the
+// listener is closed externally), runServe must still unblock and return
+// rather than deadlocking on its internal shutdown goroutine. This guards
+// against a regression where cancel() was called AFTER <-shutdownDone, which
+// left the shutdown goroutine blocked on <-ctx.Done() forever.
+func TestRunServeUnblocksOnListenerClose(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLOCKWORK_DB_PATH", filepath.Join(dir, "test.db"))
+	t.Setenv("CLOCKWORK_DATA_DIR", dir)
+	t.Setenv("CLOCKWORK_POSTGRES_DSN", "")
+	t.Setenv("CLOCKWORK_PROFILES_PATH", filepath.Join(dir, "no-profiles.yaml"))
+	t.Setenv("CLOCKWORK_SCHED_INTERVAL", "1")
+	t.Setenv("CLOCKWORK_SCHED_ENABLED", "false") // no scheduler ticks needed for this test
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- runServe(ctx, ln) }()
+
+	// Give runServe a moment to fully start (DB open, migrations, HTTP Serve).
+	time.Sleep(200 * time.Millisecond)
+
+	// Force abnormal Serve exit by closing the listener out from under it.
+	// srv.Serve will return a non-ErrServerClosed error and runServe must
+	// still terminate promptly.
+	_ = ln.Close()
+
+	select {
+	case <-done:
+		// runServe returned — no deadlock. We intentionally do NOT assert on
+		// the specific error value; the point of this test is liveness.
+	case <-time.After(3 * time.Second):
+		t.Fatal("runServe deadlocked after external listener close")
+	}
+}
+
 // waitForListen polls url until the HTTP server is answering or the timeout
 // expires. It is intentionally silent about the response status: we just want
 // to know the socket is live and the handler is wired up.
