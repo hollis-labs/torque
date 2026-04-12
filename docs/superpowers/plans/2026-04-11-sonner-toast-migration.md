@@ -993,7 +993,7 @@ These three sites pattern-matched the `} catch {` grep but are NOT mutation hand
 
 These remain as-is. Same exclusion category, same reason.
 
-### Corrected handler / fallback wording (5 sites)
+### Corrected handler / fallback wording (6 sites)
 
 The grep guessed verb-noun pairs from filename context; the actual handlers were different. Fallbacks were corrected during implementation:
 
@@ -1051,7 +1051,7 @@ gh pr create --title "feat(gui): sonner toast migration — surface mutation err
 - 5 unit tests pin the unwrap policy. Page-level smoke tests skipped (no host suites — see spec deltas).
 
 ## Spec
-`docs/superpowers/specs/2026-04-11-sonner-toast-migration-design.md` — approved 2026-04-11. Implementation deltas appended in this PR (3 list-fetch catches reclassified as best-effort exclusions; corrected handler/fallback wording on 5 sites).
+`docs/superpowers/specs/2026-04-11-sonner-toast-migration-design.md` — approved 2026-04-11. Implementation deltas appended in this PR (3 list-fetch catches reclassified as best-effort exclusions; corrected handler/fallback wording on 6 sites).
 
 ## Test plan
 - [ ] `npm run test:run` (apps/gui) — 31 passing

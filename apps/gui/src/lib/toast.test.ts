@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { notifyError, notifySuccess } from './toast'
 
 vi.mock('sonner', () => ({
   toast: {
@@ -9,6 +8,7 @@ vi.mock('sonner', () => ({
 }))
 
 import { toast } from 'sonner'
+import { notifyError, notifySuccess } from './toast'
 
 describe('notifyError', () => {
   beforeEach(() => {
