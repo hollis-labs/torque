@@ -6,25 +6,40 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 )
 
-// Server holds the router, service layer, and SSE hub.
+// Server holds the router, service layer, scheduler reference, and SSE hub.
 type Server struct {
 	svc    *service.Service
+	sched  *scheduler.Scheduler
 	router chi.Router
 	sse    *SSEHub
 }
 
-// New constructs the HTTP handler with all routes registered.
-func New(svc *service.Service) http.Handler {
+// New constructs an HTTP server with routes registered.
+// sched may be nil — handlers that need it will return 503.
+func New(svc *service.Service, sched *scheduler.Scheduler) *Server {
 	s := &Server{
 		svc:    svc,
+		sched:  sched,
 		router: chi.NewRouter(),
 		sse:    NewSSEHub(),
 	}
 	s.routes()
-	return s.router
+	return s
+}
+
+// ServeHTTP implements http.Handler by delegating to the internal chi router.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.router.ServeHTTP(w, r)
+}
+
+// SSEHub returns the server's SSE hub. Used by the scheduler event bridge
+// at startup to forward bus events to connected SSE clients.
+func (s *Server) SSEHub() *SSEHub {
+	return s.sse
 }
 
 func (s *Server) routes() {
@@ -93,7 +108,7 @@ func (s *Server) routes() {
 		r.Get("/settings/{key}", s.getSetting)
 		r.Put("/settings/{key}", s.saveSetting)
 
-		// Scheduler (stubs)
+		// Scheduler
 		r.Get("/scheduler/status", s.schedulerStatus)
 		r.Post("/scheduler/toggle", s.schedulerToggle)
 

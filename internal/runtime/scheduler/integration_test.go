@@ -94,6 +94,9 @@ func TestIntegrationFullRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(runs), 1)
 	assert.Equal(t, "done", runs[0].Status)
+	// The lifecycle transition to "done" must have been keyed on a real run ID,
+	// not the historical hardcoded 0. See fix(scheduler): thread RunID through WorkerResult.
+	assert.Greater(t, runs[0].ID, int64(0), "run should have a non-zero ID threaded through the worker pool")
 
 	// Verify executor received the job
 	jobs := mock.RecordedJobs()
@@ -119,6 +122,31 @@ checkEvents:
 	}
 	assert.True(t, eventTypes["task.transitioned"], "should have task.transitioned event")
 	assert.True(t, eventTypes["run.started"], "should have run.started event")
+
+	// Verify run events were persisted to the run_events table.
+	// Expect at least: the initial task_transitioned (todo → doing) and
+	// run_started written from dispatchTask, run_completed written after the
+	// worker returns, and another task_transitioned from the lifecycle
+	// manager's final doing → done transition.
+	persistedEvents, err := store.ListRunEvents(sqlstore.RunEventFilter{RunID: runs[0].ID, Limit: 100})
+	require.NoError(t, err)
+	persistedTypes := make(map[string]int)
+	var runStartedIdx, runCompletedIdx = -1, -1
+	for i, e := range persistedEvents {
+		persistedTypes[e.Type]++
+		if e.Type == "run_started" && runStartedIdx == -1 {
+			runStartedIdx = i
+		}
+		if e.Type == "run_completed" && runCompletedIdx == -1 {
+			runCompletedIdx = i
+		}
+	}
+	assert.GreaterOrEqual(t, persistedTypes["task_transitioned"], 1, "should have task_transitioned run events")
+	assert.Equal(t, 1, persistedTypes["run_started"], "should have exactly one run_started run event")
+	assert.Equal(t, 1, persistedTypes["run_completed"], "should have exactly one run_completed run event")
+	assert.NotEqual(t, -1, runStartedIdx, "run_started should be present")
+	assert.NotEqual(t, -1, runCompletedIdx, "run_completed should be present")
+	assert.Less(t, runStartedIdx, runCompletedIdx, "run_started should come before run_completed")
 
 	// Stop scheduler before closing store to avoid use-after-close
 	sched.EventBus().Unsubscribe(sub)

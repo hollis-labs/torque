@@ -200,6 +200,14 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	workerID := fmt.Sprintf("worker-%s-%d", task.ID, runID)
 	s.heartbeat.Register(workerID, task.ID, runID, task.Executor)
 
+	writeRunEvent(s.store, runID, task.ID, "task_transitioned", map[string]string{
+		"from": "todo",
+		"to":   "doing",
+	})
+	writeRunEvent(s.store, runID, task.ID, "run_started", map[string]string{
+		"executor": task.Executor,
+	})
+
 	s.bus.Publish(SchedulerEvent{
 		Type:   "task.transitioned",
 		TaskID: task.ID,
@@ -217,7 +225,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	capturedRunID := runID
 	capturedWorkerID := workerID
 	capturedTaskID := task.ID
-	s.pool.Submit(task.ID, func(wctx context.Context) (*executor.ExecutionResult, error) {
+	s.pool.Submit(task.ID, runID, func(wctx context.Context) (*executor.ExecutionResult, error) {
 		defer s.heartbeat.Deregister(capturedWorkerID)
 
 		// Create event callback that updates heartbeat and run
@@ -225,14 +233,24 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 			s.heartbeat.Beat(capturedWorkerID)
 
 			if event.Type == executor.EventArtifact && event.Artifact != nil {
+				var metadataJSON sql.NullString
+				if event.Artifact.Metadata != nil {
+					if b, err := json.Marshal(event.Artifact.Metadata); err == nil {
+						metadataJSON = sql.NullString{String: string(b), Valid: true}
+					}
+				}
 				s.store.CreateArtifact(&sqlstore.ArtifactRecord{
-					TaskID:  capturedTaskID,
-					RunID:   sql.NullInt64{Int64: capturedRunID, Valid: true},
-					Type:    event.Artifact.Type,
-					Content: event.Artifact.Content,
-					URL:     event.Artifact.URL,
+					TaskID:   capturedTaskID,
+					RunID:    sql.NullInt64{Int64: capturedRunID, Valid: true},
+					Type:     event.Artifact.Type,
+					Content:  event.Artifact.Content,
+					URL:      event.Artifact.URL,
+					FilePath: event.Artifact.FilePath,
+					Metadata: metadataJSON,
 				})
 			}
+
+			writeRunEvent(s.store, capturedRunID, capturedTaskID, runEventType(event), runEventPayload(event))
 
 			s.bus.Publish(SchedulerEvent{
 				Type:   "run.event",
@@ -249,6 +267,9 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 				Status:       "failed",
 				ErrorMessage: err.Error(),
 			})
+			// TODO(path-b): write run_completed run_event here too so failed-run observability
+			// doesn't require cross-referencing task_transitioned. Success path writes it at
+			// line ~287; failure path transitions via lifecycle which writes task_transitioned.
 			return nil, err
 		}
 
@@ -274,6 +295,11 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 			CompletionTokens: result.Tokens.CompletionTokens,
 		})
 
+		writeRunEvent(s.store, capturedRunID, capturedTaskID, "run_completed", map[string]interface{}{
+			"status": result.Status,
+			"cost":   result.Cost,
+		})
+
 		s.bus.Publish(SchedulerEvent{
 			Type:   "run.completed",
 			TaskID: capturedTaskID,
@@ -296,17 +322,17 @@ func (s *Scheduler) DrainResults() {
 		select {
 		case r := <-s.results:
 			if r.Err != nil {
-				log.Printf("[scheduler] worker error for %s: %v", r.TaskID, r.Err)
+				log.Printf("[scheduler] worker error for %s (run %d): %v", r.TaskID, r.RunID, r.Err)
 				// Treat executor errors as failures
-				s.lifecycle.HandleResult(r.TaskID, 0, &executor.ExecutionResult{
+				s.lifecycle.HandleResult(r.TaskID, r.RunID, &executor.ExecutionResult{
 					Status: "failed",
 					Reason: r.Err.Error(),
 				})
 				continue
 			}
 			if r.Result != nil {
-				if err := s.lifecycle.HandleResult(r.TaskID, 0, r.Result); err != nil {
-					log.Printf("[scheduler] lifecycle error for %s: %v", r.TaskID, err)
+				if err := s.lifecycle.HandleResult(r.TaskID, r.RunID, r.Result); err != nil {
+					log.Printf("[scheduler] lifecycle error for %s (run %d): %v", r.TaskID, r.RunID, err)
 				}
 			}
 		default:

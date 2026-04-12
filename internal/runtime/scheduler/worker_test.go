@@ -24,7 +24,7 @@ func TestWorkerPoolConcurrencyLimit(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		taskID := "task-" + string(rune('A'+i))
-		pool.Submit(taskID, func(ctx context.Context) (*executor.ExecutionResult, error) {
+		pool.Submit(taskID, 0, func(ctx context.Context) (*executor.ExecutionResult, error) {
 			c := atomic.AddInt64(&current, 1)
 			mu.Lock()
 			if c > maxConcurrent {
@@ -56,7 +56,7 @@ func TestWorkerPoolGracefulShutdown(t *testing.T) {
 	var completed int64
 	for i := 0; i < 3; i++ {
 		taskID := "task-" + string(rune('A'+i))
-		pool.Submit(taskID, func(ctx context.Context) (*executor.ExecutionResult, error) {
+		pool.Submit(taskID, 0, func(ctx context.Context) (*executor.ExecutionResult, error) {
 			time.Sleep(50 * time.Millisecond)
 			atomic.AddInt64(&completed, 1)
 			return &executor.ExecutionResult{Status: "done"}, nil
@@ -84,7 +84,7 @@ func TestWorkerPoolActiveCount(t *testing.T) {
 	started := make(chan struct{})
 	blocked := make(chan struct{})
 
-	pool.Submit("task-A", func(ctx context.Context) (*executor.ExecutionResult, error) {
+	pool.Submit("task-A", 0, func(ctx context.Context) (*executor.ExecutionResult, error) {
 		started <- struct{}{}
 		<-blocked
 		return &executor.ExecutionResult{Status: "done"}, nil
@@ -107,7 +107,7 @@ func TestWorkerPoolAvailableSlots(t *testing.T) {
 	started := make(chan struct{})
 	blocked := make(chan struct{})
 
-	pool.Submit("task-A", func(ctx context.Context) (*executor.ExecutionResult, error) {
+	pool.Submit("task-A", 0, func(ctx context.Context) (*executor.ExecutionResult, error) {
 		started <- struct{}{}
 		<-blocked
 		return &executor.ExecutionResult{Status: "done"}, nil
@@ -130,7 +130,7 @@ func TestWorkerPoolResultCallback(t *testing.T) {
 		results <- r
 	})
 
-	pool.Submit("CW-0001", func(ctx context.Context) (*executor.ExecutionResult, error) {
+	pool.Submit("CW-0001", 0, func(ctx context.Context) (*executor.ExecutionResult, error) {
 		return &executor.ExecutionResult{Status: "done", Cost: 0.05}, nil
 	})
 
@@ -153,7 +153,7 @@ func TestWorkerPoolErrorCallback(t *testing.T) {
 		results <- r
 	})
 
-	pool.Submit("CW-0001", func(ctx context.Context) (*executor.ExecutionResult, error) {
+	pool.Submit("CW-0001", 0, func(ctx context.Context) (*executor.ExecutionResult, error) {
 		return nil, assert.AnError
 	})
 
@@ -162,6 +162,29 @@ func TestWorkerPoolErrorCallback(t *testing.T) {
 		assert.Equal(t, "CW-0001", r.TaskID)
 		assert.Nil(t, r.Result)
 		assert.Error(t, r.Err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for result")
+	}
+}
+
+func TestWorkerPoolPassesRunID(t *testing.T) {
+	pool := scheduler.NewWorkerPool(1)
+	defer pool.Shutdown(context.Background())
+
+	results := make(chan scheduler.WorkerResult, 1)
+	pool.OnResult(func(r scheduler.WorkerResult) {
+		results <- r
+	})
+
+	pool.Submit("CW-0001", 42, func(ctx context.Context) (*executor.ExecutionResult, error) {
+		return &executor.ExecutionResult{Status: "done"}, nil
+	})
+
+	select {
+	case r := <-results:
+		assert.Equal(t, "CW-0001", r.TaskID)
+		assert.Equal(t, int64(42), r.RunID, "pool should propagate runID to WorkerResult")
+		assert.NoError(t, r.Err)
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for result")
 	}

@@ -114,3 +114,8 @@ func TokenEvent(prompt, completion int, cost float64) ExecutionEvent {
 		Tokens: &TokenUsage{PromptTokens: prompt, CompletionTokens: completion, Cost: cost},
 	}
 }
+
+// ArtifactEvent creates an ExecutionEvent for an artifact produced during execution.
+func ArtifactEvent(a Artifact) ExecutionEvent {
+	return ExecutionEvent{Type: EventArtifact, Artifact: &a}
+}

@@ -170,12 +170,16 @@ echo "CLOCKWORK_REVIEW"
 	}
 
 	var signals []string
+	var sawArtifactEvent bool
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	result, err := exec.Run(ctx, job, func(ev executor.ExecutionEvent) {
 		if ev.Signal != "" {
 			signals = append(signals, ev.Signal)
+		}
+		if ev.Type == executor.EventArtifact && ev.Artifact != nil {
+			sawArtifactEvent = true
 		}
 	})
 	require.NoError(t, err)
@@ -186,6 +190,11 @@ echo "CLOCKWORK_REVIEW"
 	assert.Contains(t, signals, "CLOCKWORK_CHECKPOINT")
 	assert.Contains(t, signals, "CLOCKWORK_PROGRESS")
 	assert.Contains(t, signals, "CLOCKWORK_SUBTASK")
-	assert.Contains(t, signals, "CLOCKWORK_ARTIFACT")
 	assert.Contains(t, signals, "CLOCKWORK_REVIEW")
+	// Artifact signal is now emitted as a structured EventArtifact rather than
+	// a generic SignalEvent, and populates result.Artifacts.
+	assert.True(t, sawArtifactEvent, "expected EventArtifact to be emitted via cb")
+	require.Len(t, result.Artifacts, 1)
+	assert.Equal(t, "diff", result.Artifacts[0].Type)
+	assert.Equal(t, "+fixed", result.Artifacts[0].Content)
 }

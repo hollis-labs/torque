@@ -209,7 +209,10 @@ func (e *CLIExecutor) runPrintMode(_ context.Context, cmd *exec.Cmd, job *execut
 				cb(executor.TokenEvent(int(p), int(c), cost))
 			}
 
-		case executor.SignalCheckpoint, executor.SignalProgress, executor.SignalSubtask, executor.SignalArtifact:
+		case executor.SignalArtifact:
+			handleArtifactSignal(sig, result, cb, line)
+
+		case executor.SignalCheckpoint, executor.SignalProgress, executor.SignalSubtask:
 			if cb != nil {
 				cb(executor.SignalEvent(sig.Type.String(), sig.Payload))
 			}
@@ -282,6 +285,8 @@ func (e *CLIExecutor) runStreamJSON(_ context.Context, cmd *exec.Cmd, _ *executo
 				if cb != nil {
 					cb(executor.TokenEvent(int(p), int(c), cost))
 				}
+			case executor.SignalArtifact:
+				handleArtifactSignal(sig, result, cb, sig.Payload)
 			default:
 				if cb != nil {
 					cb(executor.SignalEvent(sig.Type.String(), sig.Payload))
@@ -335,4 +340,27 @@ func (e *CLIExecutor) runStreamJSON(_ context.Context, cmd *exec.Cmd, _ *executo
 	}
 
 	return nil
+}
+
+// handleArtifactSignal parses a CLOCKWORK_ARTIFACT signal payload and either
+// appends the resulting Artifact to result.Artifacts and emits an ArtifactEvent,
+// or — if the payload is malformed — emits a LogEvent containing fallbackLine
+// so the raw line remains visible. Never panics, never fails the run.
+func handleArtifactSignal(
+	sig executor.ParsedSignal,
+	result *executor.ExecutionResult,
+	cb executor.EventCallback,
+	fallbackLine string,
+) {
+	art, err := executor.ParseArtifactPayload(sig.Payload)
+	if err != nil {
+		if cb != nil {
+			cb(executor.LogEvent(fallbackLine))
+		}
+		return
+	}
+	result.Artifacts = append(result.Artifacts, art)
+	if cb != nil {
+		cb(executor.ArtifactEvent(art))
+	}
 }
