@@ -37,6 +37,20 @@ func waitForEvent(t *testing.T, ch <-chan SSEEvent, timeout time.Duration) SSEEv
 	}
 }
 
+// waitForSubscribed spins until the bridge's subscription is live on the bus,
+// or until timeout elapses. Used to avoid a subscribe/publish race where a
+// Publish call beats the bridge's Subscribe inside Run.
+func waitForSubscribed(t *testing.T, bus *scheduler.EventBus, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for bus.SubscriberCount() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("bridge did not subscribe within %s", timeout)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func TestSchedulerBridgeForwardsEvents(t *testing.T) {
 	t.Parallel()
 
@@ -58,13 +72,7 @@ func TestSchedulerBridgeForwardsEvents(t *testing.T) {
 
 	// Wait briefly for the bridge to register its subscription on the bus,
 	// otherwise the Publish may race ahead of Subscribe.
-	deadline := time.Now().Add(time.Second)
-	for bus.SubscriberCount() == 0 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
-	if bus.SubscriberCount() == 0 {
-		t.Fatal("bridge did not subscribe to bus in time")
-	}
+	waitForSubscribed(t, bus, time.Second)
 
 	bus.Publish(scheduler.SchedulerEvent{
 		Type:   "run.started",
@@ -119,10 +127,7 @@ func TestSchedulerBridgeShutsDownOnCtxCancel(t *testing.T) {
 	}()
 
 	// Wait for subscription so we know Run is actually in its loop.
-	deadline := time.Now().Add(time.Second)
-	for bus.SubscriberCount() == 0 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
+	waitForSubscribed(t, bus, time.Second)
 
 	cancel()
 
@@ -150,10 +155,7 @@ func TestSchedulerBridgeShutsDownOnBusClose(t *testing.T) {
 		close(done)
 	}()
 
-	deadline := time.Now().Add(time.Second)
-	for bus.SubscriberCount() == 0 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
+	waitForSubscribed(t, bus, time.Second)
 
 	bus.Close()
 
@@ -183,13 +185,7 @@ func TestSchedulerBridgeForwardsMultipleEvents(t *testing.T) {
 		close(done)
 	}()
 
-	deadline := time.Now().Add(time.Second)
-	for bus.SubscriberCount() == 0 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
-	if bus.SubscriberCount() == 0 {
-		t.Fatal("bridge did not subscribe to bus in time")
-	}
+	waitForSubscribed(t, bus, time.Second)
 
 	events := []scheduler.SchedulerEvent{
 		{Type: "run.started", TaskID: "task-1", RunID: 1},
@@ -200,6 +196,7 @@ func TestSchedulerBridgeForwardsMultipleEvents(t *testing.T) {
 		bus.Publish(ev)
 	}
 
+	// Single publisher, single subscriber → FIFO preserved per subscriber.
 	for i, want := range events {
 		got := waitForEvent(t, sub, time.Second)
 		if got.Type != want.Type {
@@ -250,10 +247,7 @@ func TestSchedulerBridgeForwardsEventsWithZeroFields(t *testing.T) {
 		close(done)
 	}()
 
-	deadline := time.Now().Add(time.Second)
-	for bus.SubscriberCount() == 0 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
+	waitForSubscribed(t, bus, time.Second)
 
 	bus.Publish(scheduler.SchedulerEvent{Type: "scheduler.tick"})
 
