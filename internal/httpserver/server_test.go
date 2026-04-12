@@ -25,7 +25,7 @@ func setupTestServer(t *testing.T) *httptest.Server {
 	store, err := sqlstore.New(db, "sqlite")
 	require.NoError(t, err)
 	svc := service.New(store)
-	handler := httpserver.New(svc)
+	handler := httpserver.New(svc, nil)
 	ts := httptest.NewServer(handler)
 	t.Cleanup(ts.Close)
 	return ts

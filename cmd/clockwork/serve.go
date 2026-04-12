@@ -49,7 +49,7 @@ func serveCmd() *cobra.Command {
 			}
 
 			svc := service.New(store)
-			handler := httpserver.New(svc)
+			handler := httpserver.New(svc, nil)
 
 			srv := &http.Server{
 				Addr:    addr,

@@ -57,21 +57,21 @@ func (s *Server) saveAllSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) schedulerStatus(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"running":          false,
-		"worker_count":     0,
-		"active_workers":   0,
-		"queue_depth":      0,
-		"interval_seconds": 10,
-		"retry_budget":     3,
-		"cost_ceiling":     0,
-		"total_cost":       0,
-		"last_tick":        "",
-	})
+	if s.sched == nil {
+		writeError(w, http.StatusServiceUnavailable, "scheduler not running")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.sched.Status())
 }
 
 func (s *Server) schedulerToggle(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"message": "Scheduler not yet implemented — see Plan 2"})
+	if s.sched == nil {
+		writeError(w, http.StatusServiceUnavailable, "scheduler not running")
+		return
+	}
+	status := s.sched.Status()
+	s.sched.SetEnabled(!status.Enabled)
+	writeJSON(w, http.StatusOK, s.sched.Status())
 }
 
 func (s *Server) getFeatures(w http.ResponseWriter, r *http.Request) {
