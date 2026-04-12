@@ -233,12 +233,20 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 			s.heartbeat.Beat(capturedWorkerID)
 
 			if event.Type == executor.EventArtifact && event.Artifact != nil {
+				var metadataJSON sql.NullString
+				if event.Artifact.Metadata != nil {
+					if b, err := json.Marshal(event.Artifact.Metadata); err == nil {
+						metadataJSON = sql.NullString{String: string(b), Valid: true}
+					}
+				}
 				s.store.CreateArtifact(&sqlstore.ArtifactRecord{
-					TaskID:  capturedTaskID,
-					RunID:   sql.NullInt64{Int64: capturedRunID, Valid: true},
-					Type:    event.Artifact.Type,
-					Content: event.Artifact.Content,
-					URL:     event.Artifact.URL,
+					TaskID:   capturedTaskID,
+					RunID:    sql.NullInt64{Int64: capturedRunID, Valid: true},
+					Type:     event.Artifact.Type,
+					Content:  event.Artifact.Content,
+					URL:      event.Artifact.URL,
+					FilePath: event.Artifact.FilePath,
+					Metadata: metadataJSON,
 				})
 			}
 

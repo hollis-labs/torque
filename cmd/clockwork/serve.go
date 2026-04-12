@@ -79,16 +79,17 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
-	defer db.Close()
-
 	if err := migrations.Run(db); err != nil {
+		db.Close()
 		return fmt.Errorf("run migrations: %w", err)
 	}
 
 	store, err := sqlstore.New(db, driver)
 	if err != nil {
+		db.Close()
 		return fmt.Errorf("create store: %w", err)
 	}
+	defer store.Close()
 
 	// Queue (hot-write SQLite for scheduler jobs)
 	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
