@@ -10,6 +10,7 @@ import { RowActions } from '@/components/domain/row-actions'
 import { EmptyState } from '@/components/domain/empty-state'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
+import { notifyError } from '@/lib/toast'
 import type { Sprint, ContainerStatus } from '@/lib/types'
 
 type SortKey = 'name' | 'status' | 'updated_at'
@@ -110,8 +111,8 @@ export default function SprintsPage() {
       const newStatus: ContainerStatus = sprint.status === 'active' ? 'inactive' : 'active'
       await api.transitionSprint(sprint.id, newStatus)
       fetchSprints()
-    } catch {
-      // no-op
+    } catch (err) {
+      notifyError(err, 'Failed to update sprint status')
     }
   }
 
@@ -119,8 +120,8 @@ export default function SprintsPage() {
     try {
       await api.deleteSprint(id)
       fetchSprints()
-    } catch {
-      // no-op
+    } catch (err) {
+      notifyError(err, 'Failed to delete sprint')
     }
   }
 
