@@ -41,4 +41,10 @@ func TestMigrationsApply(t *testing.T) {
 	// Verify 005 dropped the legacy tasks.tags column
 	_, err = db.Exec("SELECT tags FROM tasks LIMIT 0")
 	require.Error(t, err, "tasks.tags column should have been dropped by migration 005")
+
+	// Verify 006 made run_events.run_id nullable: inserting with NULL should succeed.
+	_, err = db.Exec(`INSERT INTO tasks (id, title, status) VALUES ('T1', 'test', 'todo')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO run_events (run_id, task_id, type, payload) VALUES (NULL, 'T1', 'task_transitioned', '{}')`)
+	require.NoError(t, err, "run_events.run_id should be nullable after migration 006")
 }
