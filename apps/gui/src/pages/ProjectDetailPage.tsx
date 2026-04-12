@@ -11,6 +11,7 @@ import { CopyableId } from '@/components/domain/copyable-id'
 import { EmptyState } from '@/components/domain/empty-state'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
+import { notifyError } from '@/lib/toast'
 import { DEFAULT_ACTIVE_STATUSES, MODE_PRESETS } from '@/lib/constants'
 import type { Project, Sprint, Task, TaskStatus } from '@/lib/types'
 
@@ -106,8 +107,8 @@ export default function ProjectDetailPage() {
     try {
       await api.transitionTask(taskId, status)
       fetchTasks()
-    } catch {
-      // no-op
+    } catch (err) {
+      notifyError(err, 'Failed to update task status')
     }
   }
 
