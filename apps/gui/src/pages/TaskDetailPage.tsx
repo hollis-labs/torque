@@ -15,6 +15,7 @@ import { LifecycleRules } from '@/components/domain/lifecycle-rules'
 import { DeliverablesAndDeps } from '@/components/domain/deliverables-deps'
 import { useApi } from '@/hooks/use-api'
 import { computeTaskDiff } from '@/lib/task-diff'
+import { notifyError } from '@/lib/toast'
 import type {
   Task,
   Run,
@@ -155,8 +156,12 @@ export default function TaskDetailPage() {
 
   async function handleAddComment(content: string) {
     if (!id) return
-    const comment = await api.addComment(id, content)
-    setComments((prev) => [...(prev ?? []), comment])
+    try {
+      const comment = await api.addComment(id, content)
+      setComments((prev) => [...(prev ?? []), comment])
+    } catch (err) {
+      notifyError(err, 'Failed to add comment')
+    }
   }
 
   async function handleTransition(status: TaskStatus) {
@@ -164,8 +169,8 @@ export default function TaskDetailPage() {
     try {
       const updated = await api.transitionTask(id, status)
       setTask(updated)
-    } catch {
-      // no-op — the badge doesn't change, user sees no update
+    } catch (err) {
+      notifyError(err, 'Failed to update task status')
     }
   }
 
