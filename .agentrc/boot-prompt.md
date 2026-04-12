@@ -36,6 +36,7 @@ Priority: close the gap between "create a task" and "watch it execute and comple
    - `taskJSON` timestamp serialization (raw `time.Time` vs `.Format(time.RFC3339)` in `tagJSON`)
    - N+1 task-tag loading in `tasksJSON` (batch the query)
    - Task list endpoint filters on the new Project-2 fields (currently only status, priority, sprint_id, project_id, epic_id, executor)
+   - **Transition state machine — allow `* → backlog` from any open status.** Surfaced 2026-04-11 during sonner-toast verification: attempting `todo → backlog` from the GUI hits `cannot transition from todo to backlog: transition not permitted`. Parking any task back to the backlog is a standard workflow move and should be permitted from any non-terminal status. Check the transition rule table in `internal/service/task.go` (or wherever the transition matrix lives) and widen the allowed sources for the `backlog` target. Keep `done`/archived exits intact.
 5. Run `go test ./...` after every change. Project has 478+ backend tests; keep them green.
 
 Files to explore first: `internal/runtime/` (scheduler, executor), `internal/service/task.go`, `internal/persistence/sqlstore/`, `internal/httpserver/`, `plugins/executor-*/`.
