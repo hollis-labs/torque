@@ -1,0 +1,14 @@
+# Minimal smoke-echo profile for Step 8 of the Path A E2E plan.
+# Used by cmd/clockwork/smoke_cli_test.go — the path to smoke-echo.sh is
+# injected at test time via CLOCKWORK_PROFILES_PATH pointing at a tempdir
+# copy with an absolute command path.
+#
+# If you want to try this interactively: copy this file to profiles.yaml in
+# your working directory, rewrite the command to an absolute path, and run
+# `clockwork serve`.
+agent_profiles:
+  smoke-echo:
+    executor: cli
+    command: ./docs/examples/profiles/smoke-echo.sh
+    output_format: print
+    timeout_seconds: 10
