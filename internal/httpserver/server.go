@@ -59,6 +59,14 @@ func (s *Server) routes() {
 		r.Put("/tasks/{id}", s.updateTask)
 		r.Delete("/tasks/{id}", s.deleteTask)
 		r.Post("/tasks/{id}/transition", s.transitionTask)
+		r.Get("/tasks/{id}/checkpoints", s.listTaskCheckpoints)
+
+		// Checkpoints — emit/respond/cancel keyed on correlation_id.
+		r.Post("/checkpoints", s.emitCheckpoint)
+		r.Get("/checkpoints/pending", s.listPendingCheckpoints)
+		r.Get("/checkpoints/{correlation_id}", s.getCheckpoint)
+		r.Post("/checkpoints/{correlation_id}/respond", s.respondCheckpoint)
+		r.Post("/checkpoints/{correlation_id}/cancel", s.cancelCheckpoint)
 
 		// Projects
 		r.Get("/projects", s.listProjects)
