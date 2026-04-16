@@ -1,0 +1,27 @@
+# Reference template — commit to DB via clockwork_template_create.
+# Source of truth is the DB row; this file documents the shape for humans.
+#
+# NOTE: the git_tag predicate isn't shipped in the built-in registry (MVP
+# ships task_done/url_reachable/file_exists). This YAML anticipates the
+# BLG-034 plugin-predicate path; use task_done or url_reachable on the
+# tag's archive URL until git_tag lands.
+id: wait-for-git-tag
+name: Wait for Git Tag
+description: "Block until tag {{tag}} is pushed to {{repo_path}}"
+kind: wait
+auto_execute: true
+on_done: close
+required_vars:
+  - repo_path
+  - tag
+metadata_template:
+  wait:
+    predicate_type: git_tag
+    params:
+      repo: "{{repo_path}}"
+      tag: "{{tag}}"
+    poll_interval_seconds: 60
+    max_duration_seconds: 7200
+tags:
+  - wait
+  - dependency

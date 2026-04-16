@@ -1,0 +1,28 @@
+# Reference template — commit to DB via clockwork_template_create.
+# Source of truth is the DB row; this file documents the shape for humans.
+id: backend-fix
+name: Backend Fix
+description: "Fix {{issue}} in {{repo_path}}"
+kind: agent
+auto_execute: true
+executor: cli
+agent_profile: claude-code-sonnet
+on_done: review
+on_fail: retry
+on_done_merge: pr
+max_retries: 2
+quality_gates:
+  - "go vet ./..."
+  - "go test ./..."
+deliverables:
+  - { type: diff,         required: true }
+  - { type: test-results, required: true }
+  - { type: pr-link,      required: false }
+required_vars:
+  - repo_path
+  - issue
+metadata_template:
+  working_dir_template: "{{repo_path}}"
+tags:
+  - code
+  - backend
