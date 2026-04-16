@@ -100,7 +100,9 @@ func TestTemplateService_Delete_Referenced_Conflict(t *testing.T) {
 		"delete-conflict message should not echo 'referencing' twice, got: %q", msg)
 	assert.Contains(t, msg, "archive instead of deleting",
 		"message should steer the caller toward archive: %q", msg)
-	assert.Contains(t, msg, "t", "message should name the template id: %q", msg)
+	// "template t" is the tokenized form the Delete() formatter produces —
+	// bare "t" would false-positive against the word "template" itself.
+	assert.Contains(t, msg, "template t ", "message should name the template id: %q", msg)
 }
 
 func TestTemplateService_Archive(t *testing.T) {
