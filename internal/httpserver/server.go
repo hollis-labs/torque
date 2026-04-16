@@ -68,6 +68,15 @@ func (s *Server) routes() {
 		r.Post("/checkpoints/{correlation_id}/respond", s.respondCheckpoint)
 		r.Post("/checkpoints/{correlation_id}/cancel", s.cancelCheckpoint)
 
+		// Templates — versioned task factories.
+		r.Get("/templates", s.listTemplates)
+		r.Post("/templates", s.createTemplate)
+		r.Get("/templates/{id}", s.getTemplate)
+		r.Put("/templates/{id}", s.updateTemplate)
+		r.Delete("/templates/{id}", s.deleteTemplate)
+		r.Post("/templates/{id}/archive/{version}", s.archiveTemplate)
+		r.Post("/templates/{id}/instantiate", s.instantiateTemplate)
+
 		// Projects
 		r.Get("/projects", s.listProjects)
 		r.Post("/projects", s.createProject)
