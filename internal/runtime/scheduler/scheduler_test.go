@@ -46,7 +46,7 @@ func setupScheduler(t *testing.T) (*scheduler.Scheduler, *sqlstore.Store, *execu
 		Enabled:          true,
 	}
 
-	sched := scheduler.New(store, q, registry, cfg)
+	sched := scheduler.New(store, q, registry, nil, cfg)
 
 	t.Cleanup(func() {
 		sched.Stop(context.Background())

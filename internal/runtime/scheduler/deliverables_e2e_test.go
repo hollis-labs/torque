@@ -52,7 +52,7 @@ func TestDeliverablesE2ERequiredPresent(t *testing.T) {
 		StaleSeconds:    300,
 	}
 
-	sched := scheduler.New(store, q, registry, cfg)
+	sched := scheduler.New(store, q, registry, nil, cfg)
 	defer func() {
 		sched.Stop(context.Background())
 		q.Close()
@@ -116,7 +116,7 @@ func TestDeliverablesE2ERequiredMissing(t *testing.T) {
 		StaleSeconds:    300,
 	}
 
-	sched := scheduler.New(store, q, registry, cfg)
+	sched := scheduler.New(store, q, registry, nil, cfg)
 	defer func() {
 		sched.Stop(context.Background())
 		q.Close()
@@ -187,7 +187,7 @@ func TestDeliverablesE2ETwoRequiredOneMissing(t *testing.T) {
 		StaleSeconds:    300,
 	}
 
-	sched := scheduler.New(store, q, registry, cfg)
+	sched := scheduler.New(store, q, registry, nil, cfg)
 	defer func() {
 		sched.Stop(context.Background())
 		q.Close()
@@ -258,7 +258,7 @@ func TestDeliverablesE2ERequiredAndOptional(t *testing.T) {
 		StaleSeconds:    300,
 	}
 
-	sched := scheduler.New(store, q, registry, cfg)
+	sched := scheduler.New(store, q, registry, nil, cfg)
 	defer func() {
 		sched.Stop(context.Background())
 		q.Close()

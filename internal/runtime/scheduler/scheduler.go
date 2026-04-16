@@ -13,6 +13,7 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/queue"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/waitpoll"
 )
 
 // SchedulerStatus reports the current state of the scheduler.
@@ -29,10 +30,11 @@ type SchedulerStatus struct {
 // dispatches them to executors via a worker pool, and handles results
 // through the lifecycle manager.
 type Scheduler struct {
-	store    *sqlstore.Store
-	queue    *queue.Queue
-	registry *executor.Registry
-	cfg      *config.SchedulerConfig
+	store      *sqlstore.Store
+	queue      *queue.Queue
+	registry   *executor.Registry
+	predicates *waitpoll.Registry
+	cfg        *config.SchedulerConfig
 
 	pool      *WorkerPool
 	picker    *Picker
@@ -47,11 +49,14 @@ type Scheduler struct {
 	stopCh  chan struct{}
 }
 
-// New creates a new scheduler with all sub-components.
+// New creates a new scheduler with all sub-components. predicates may be nil
+// when no kind=wait tasks are expected; in that case, a wait task reaching
+// the tick will be marked blocked with an "unknown predicate" reason.
 func New(
 	store *sqlstore.Store,
 	q *queue.Queue,
 	registry *executor.Registry,
+	predicates *waitpoll.Registry,
 	cfg *config.SchedulerConfig,
 ) *Scheduler {
 	bus := NewEventBus()
@@ -62,20 +67,25 @@ func New(
 		results <- r
 	})
 
+	if predicates == nil {
+		predicates = waitpoll.NewRegistry()
+	}
+
 	s := &Scheduler{
-		store:     store,
-		queue:     q,
-		registry:  registry,
-		cfg:       cfg,
-		pool:      pool,
-		picker:    NewPicker(store),
-		lifecycle: NewLifecycleManager(store, bus),
-		cost:      NewCostTracker(store),
-		heartbeat: NewHeartbeatMonitor(store),
-		bus:       bus,
-		enabled:   cfg.Enabled,
-		results:   results,
-		stopCh:    make(chan struct{}),
+		store:      store,
+		queue:      q,
+		registry:   registry,
+		predicates: predicates,
+		cfg:        cfg,
+		pool:       pool,
+		picker:     NewPicker(store),
+		lifecycle:  NewLifecycleManager(store, bus),
+		cost:       NewCostTracker(store),
+		heartbeat:  NewHeartbeatMonitor(store),
+		bus:        bus,
+		enabled:    cfg.Enabled,
+		results:    results,
+		stopCh:     make(chan struct{}),
 	}
 
 	return s
@@ -146,6 +156,17 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 	}
 
 	for _, task := range tasks {
+		if task.Kind == "wait" {
+			// Wait tasks bypass the executor pool entirely — predicate poll
+			// is cheap and synchronous. Errors stay in the scheduler log;
+			// DispatchWait internally transitions the task to blocked on
+			// fatal config errors so the state machine doesn't stall.
+			t := task
+			if err := DispatchWait(ctx, s.store, s.predicates, s.bus, &t); err != nil {
+				log.Printf("[scheduler] wait dispatch %s: %v", task.ID, err)
+			}
+			continue
+		}
 		if err := s.dispatchTask(ctx, task); err != nil {
 			log.Printf("[scheduler] failed to dispatch %s: %v", task.ID, err)
 			continue

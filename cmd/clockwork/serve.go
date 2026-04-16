@@ -114,7 +114,7 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	}
 
 	// Scheduler
-	sched := scheduler.New(store, q, registry, &cfg.Scheduler)
+	sched := scheduler.New(store, q, registry, nil, &cfg.Scheduler) // waitpoll registry wired in C6
 
 	// Service + HTTP handler
 	svc := service.New(store)
