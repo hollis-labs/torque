@@ -211,6 +211,96 @@ func TestSearchTasks(t *testing.T) {
 	assert.Empty(t, empty)
 }
 
+// TestTaskRecord_FacetsRoundTrip verifies facet fields (migration 007) persist.
+func TestTaskRecord_FacetsRoundTrip(t *testing.T) {
+	store := setupTestStore(t)
+
+	rec := sampleTask("CW-20260416-0001")
+	rec.Kind = "agent"
+	rec.SourceType = "user"
+	rec.SourceRef = sql.NullString{String: "chrispian", Valid: true}
+	rec.Trust = "normal"
+	rec.CheckpointMode = "none"
+	rec.OnCheckpointResponse = "resume"
+
+	require.NoError(t, store.CreateTask(rec))
+
+	got, err := store.GetTask(rec.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "agent", got.Kind)
+	assert.Equal(t, "user", got.SourceType)
+	assert.Equal(t, "chrispian", got.SourceRef.String)
+	assert.True(t, got.SourceRef.Valid)
+	assert.Equal(t, "normal", got.Trust)
+	assert.Equal(t, "none", got.CheckpointMode)
+	assert.Equal(t, "resume", got.OnCheckpointResponse)
+}
+
+// TestTaskRecord_FacetDefaultsApplied verifies applyDefaults fills facet zeros.
+func TestTaskRecord_FacetDefaultsApplied(t *testing.T) {
+	store := setupTestStore(t)
+
+	// Zero-value facets on input → defaults applied.
+	rec := sampleTask("CW-20260416-0002")
+	require.NoError(t, store.CreateTask(rec))
+
+	got, err := store.GetTask(rec.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "agent", got.Kind)
+	assert.Equal(t, "user", got.SourceType)
+	assert.False(t, got.SourceRef.Valid)
+	assert.Equal(t, "normal", got.Trust)
+	assert.Equal(t, "none", got.CheckpointMode)
+	assert.Equal(t, "resume", got.OnCheckpointResponse)
+}
+
+// TestTaskUpdate_Facets verifies facet fields can be partially updated.
+func TestTaskUpdate_Facets(t *testing.T) {
+	store := setupTestStore(t)
+
+	rec := sampleTask("CW-20260416-0003")
+	require.NoError(t, store.CreateTask(rec))
+
+	newKind := "wait"
+	newMode := "blocking"
+	newResp := "review"
+	ref := sql.NullString{String: "github.com/foo/bar#123", Valid: true}
+	err := store.UpdateTask(rec.ID, sqlstore.TaskUpdate{
+		Kind:                 &newKind,
+		CheckpointMode:       &newMode,
+		OnCheckpointResponse: &newResp,
+		SourceRef:            &ref,
+	})
+	require.NoError(t, err)
+
+	got, err := store.GetTask(rec.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "wait", got.Kind)
+	assert.Equal(t, "blocking", got.CheckpointMode)
+	assert.Equal(t, "review", got.OnCheckpointResponse)
+	assert.Equal(t, "github.com/foo/bar#123", got.SourceRef.String)
+	// Untouched defaults remain.
+	assert.Equal(t, "user", got.SourceType)
+	assert.Equal(t, "normal", got.Trust)
+}
+
+// TestListTasks_FilterByKind verifies the Kind filter narrows results.
+func TestListTasks_FilterByKind(t *testing.T) {
+	store := setupTestStore(t)
+
+	t1 := sampleTask("CW-20260416-0010")
+	t1.Kind = "wait"
+	t2 := sampleTask("CW-20260416-0011")
+	t2.Kind = "agent"
+	require.NoError(t, store.CreateTask(t1))
+	require.NoError(t, store.CreateTask(t2))
+
+	waits, err := store.ListTasks(sqlstore.TaskFilter{Kind: "wait"})
+	require.NoError(t, err)
+	require.Len(t, waits, 1)
+	assert.Equal(t, "CW-20260416-0010", waits[0].ID)
+}
+
 // TestNextTaskID verifies sequential ID generation for today.
 func TestNextTaskID(t *testing.T) {
 	store := setupTestStore(t)

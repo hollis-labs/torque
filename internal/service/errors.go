@@ -35,3 +35,12 @@ type FeatureDisabledError struct {
 func (e *FeatureDisabledError) Error() string {
 	return fmt.Sprintf("feature %q is not enabled — set features.%s = true in settings", e.Feature, e.Feature)
 }
+
+// ConflictError indicates a semantic conflict on a state-dependent operation,
+// such as responding to an already-terminal checkpoint. HTTP callers should
+// map this to 409.
+type ConflictError struct {
+	Message string
+}
+
+func (e *ConflictError) Error() string { return "conflict: " + e.Message }

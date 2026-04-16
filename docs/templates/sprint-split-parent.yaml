@@ -1,0 +1,17 @@
+# Reference template — commit to DB via clockwork_template_create.
+# Source of truth is the DB row; this file documents the shape for humans.
+#
+# Parent tasks are status-derived from metadata.children by the scheduler's
+# parent-rollup tick. Populate metadata.children (array of task IDs) after
+# creating the children so the rollup has something to aggregate.
+id: sprint-split-parent
+name: Sprint Split Parent
+description: "Container task aggregating a sub-session's children"
+kind: parent
+auto_execute: true
+on_done: close
+deliverables:
+  - { type: report, required: true, description: "Sub-session rollup" }
+tags:
+  - parent
+  - meta

@@ -34,6 +34,11 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, error) {
 		if task.Manual {
 			continue
 		}
+		// Parent tasks are status-derived by ParentRollupTick, not executor-
+		// dispatched. Skip them here so they don't consume worker slots.
+		if task.Kind == "parent" {
+			continue
+		}
 
 		// Check dependencies
 		if task.DependsOn.Valid && task.DependsOn.String != "" {

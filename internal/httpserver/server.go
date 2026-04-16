@@ -59,6 +59,23 @@ func (s *Server) routes() {
 		r.Put("/tasks/{id}", s.updateTask)
 		r.Delete("/tasks/{id}", s.deleteTask)
 		r.Post("/tasks/{id}/transition", s.transitionTask)
+		r.Get("/tasks/{id}/checkpoints", s.listTaskCheckpoints)
+
+		// Checkpoints — emit/respond/cancel keyed on correlation_id.
+		r.Post("/checkpoints", s.emitCheckpoint)
+		r.Get("/checkpoints/pending", s.listPendingCheckpoints)
+		r.Get("/checkpoints/{correlation_id}", s.getCheckpoint)
+		r.Post("/checkpoints/{correlation_id}/respond", s.respondCheckpoint)
+		r.Post("/checkpoints/{correlation_id}/cancel", s.cancelCheckpoint)
+
+		// Templates — versioned task factories.
+		r.Get("/templates", s.listTemplates)
+		r.Post("/templates", s.createTemplate)
+		r.Get("/templates/{id}", s.getTemplate)
+		r.Put("/templates/{id}", s.updateTemplate)
+		r.Delete("/templates/{id}", s.deleteTemplate)
+		r.Post("/templates/{id}/archive/{version}", s.archiveTemplate)
+		r.Post("/templates/{id}/instantiate", s.instantiateTemplate)
 
 		// Projects
 		r.Get("/projects", s.listProjects)

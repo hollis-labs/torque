@@ -66,6 +66,164 @@ var validOnDoneMerge = map[string]bool{
 	"auto-resolve": true,
 }
 
+// Facet enum value sets (migration 007).
+var validKinds = map[string]bool{
+	"agent":    true,
+	"external": true,
+	"wait":     true,
+	"decision": true,
+	"parent":   true,
+}
+
+var validSourceTypes = map[string]bool{
+	"agent":   true,
+	"user":    true,
+	"api":     true,
+	"system":  true,
+	"webhook": true,
+	"import":  true,
+}
+
+var validTrustLevels = map[string]bool{
+	"trusted":   true,
+	"normal":    true,
+	"untrusted": true,
+}
+
+var validCheckpointModes = map[string]bool{
+	"none":         true,
+	"blocking":     true,
+	"non_blocking": true,
+}
+
+var validOnCheckpointResponse = map[string]bool{
+	"resume": true,
+	"review": true,
+	"custom": true,
+}
+
+// validateTaskKind enforces facet-enum validity and per-kind invariants
+// defined in spec §3.5. Callers pass EFFECTIVE values — the record as it
+// will be stored — so an empty string for any enum column is itself a
+// validation error (callers who want the default must pass it explicitly,
+// e.g. "none" instead of ""). This keeps Update's effective-value overlay
+// from silently letting a client clear a column and hitting the DB CHECK
+// constraint with a cryptic sqlite error.
+//
+// Rules:
+//   - kind / source_type / trust / checkpoint_mode / on_checkpoint_response
+//     must each be non-empty and in their respective allowed sets.
+//   - kind=agent + executor=""                         → 422 (defensive; the
+//     service layer applies a "cli" default for agent, so this is structurally
+//     unreachable in normal flow but guards hand-crafted callers).
+//   - kind=external + executor!=""                     → 422
+//   - kind=external + auto_execute=true                → 422
+//   - kind=wait + no metadata.wait.predicate_type      → 422
+//   - kind=decision + checkpoint_mode!="blocking"      → 422
+//   - kind=decision + auto_execute=true                → 422
+//   - kind=parent + missing metadata.children          → warning only (not
+//     surfaced through this function in MVP).
+func validateTaskKind(
+	kind, executor, sourceType, trust, checkpointMode, onCheckpointResponse string,
+	manual bool,
+	metadata map[string]any,
+) error {
+	if !validKinds[kind] {
+		return &ValidationError{
+			Field:   "kind",
+			Message: "invalid kind: got '" + kind + "', expected one of: agent, external, wait, decision, parent",
+		}
+	}
+	if !validSourceTypes[sourceType] {
+		return &ValidationError{
+			Field:   "source_type",
+			Message: "invalid source_type: got '" + sourceType + "', expected one of: agent, user, api, system, webhook, import",
+		}
+	}
+	if !validTrustLevels[trust] {
+		return &ValidationError{
+			Field:   "trust",
+			Message: "invalid trust: got '" + trust + "', expected one of: trusted, normal, untrusted",
+		}
+	}
+	if !validCheckpointModes[checkpointMode] {
+		return &ValidationError{
+			Field:   "checkpoint_mode",
+			Message: "invalid checkpoint_mode: got '" + checkpointMode + "', expected one of: none, blocking, non_blocking",
+		}
+	}
+	if !validOnCheckpointResponse[onCheckpointResponse] {
+		return &ValidationError{
+			Field:   "on_checkpoint_response",
+			Message: "invalid on_checkpoint_response: got '" + onCheckpointResponse + "', expected one of: resume, review, custom",
+		}
+	}
+
+	autoExecute := !manual
+
+	switch kind {
+	case "agent":
+		if executor == "" {
+			return &ValidationError{
+				Field:   "executor",
+				Message: "executor required for kind=agent",
+			}
+		}
+	case "external":
+		if executor != "" {
+			return &ValidationError{
+				Field:   "executor",
+				Message: "executor not allowed for kind=external",
+			}
+		}
+		if autoExecute {
+			return &ValidationError{
+				Field:   "auto_execute",
+				Message: "external tasks cannot be auto-executed (set manual=true)",
+			}
+		}
+	case "wait":
+		wait, _ := metadata["wait"].(map[string]any)
+		if wait == nil {
+			return &ValidationError{
+				Field:   "metadata.wait.predicate_type",
+				Message: "wait tasks require metadata.wait.predicate_type",
+			}
+		}
+		if pt, _ := wait["predicate_type"].(string); pt == "" {
+			return &ValidationError{
+				Field:   "metadata.wait.predicate_type",
+				Message: "wait tasks require metadata.wait.predicate_type",
+			}
+		}
+	case "decision":
+		if checkpointMode != "blocking" {
+			return &ValidationError{
+				Field:   "checkpoint_mode",
+				Message: "decision tasks require checkpoint_mode=blocking",
+			}
+		}
+		if autoExecute {
+			return &ValidationError{
+				Field:   "auto_execute",
+				Message: "decision tasks are human-driven; set manual=true",
+			}
+		}
+	case "parent":
+		// metadata.children absence is a warning, not an error — MVP silent.
+	}
+	return nil
+}
+
+// ptrOrDefault returns *p if non-nil, otherwise fallback. Used by Update's
+// validateTaskKind overlay to compute the effective value (existing ∪ update).
+func ptrOrDefault(p *string, fallback string) string {
+	if p != nil {
+		return *p
+	}
+	return fallback
+}
+
 // taskWriteFields is the internal projection of writable task fields shared
 // between the Create and Update validation paths. Pointer fields use nil to
 // mean "field not present in this write" so Update can skip rules for fields

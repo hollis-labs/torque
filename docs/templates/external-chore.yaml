@@ -1,0 +1,13 @@
+# Reference template — commit to DB via clockwork_template_create.
+# Source of truth is the DB row; this file documents the shape for humans.
+id: external-chore
+name: External Chore
+description: "Off-system task; transitioned manually via MCP"
+kind: external
+auto_execute: false
+on_done: close
+deliverables:
+  - { type: note, required: true, description: "How it was done" }
+tags:
+  - external
+  - chore

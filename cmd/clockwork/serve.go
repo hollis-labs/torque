@@ -23,6 +23,7 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/queue"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/waitpoll"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 	"github.com/spf13/cobra"
 )
@@ -113,8 +114,14 @@ func runServe(ctx context.Context, ln net.Listener) error {
 		return fmt.Errorf("bootstrap executors: %w", err)
 	}
 
+	// Waitpoll predicate registry (kind=wait dispatch).
+	predicates := waitpoll.NewRegistry()
+	if err := bootstrap.Waitpoll(predicates, store); err != nil {
+		return fmt.Errorf("bootstrap waitpoll: %w", err)
+	}
+
 	// Scheduler
-	sched := scheduler.New(store, q, registry, &cfg.Scheduler)
+	sched := scheduler.New(store, q, registry, predicates, &cfg.Scheduler)
 
 	// Service + HTTP handler
 	svc := service.New(store)

@@ -11,10 +11,11 @@ const (
 	SignalNote                        // CLOCKWORK_NOTE: <text>
 	SignalNewTask                     // CLOCKWORK_TASK: <title>
 	SignalTokens                      // CLOCKWORK_TOKENS: prompt=N completion=M cost=X
-	SignalCheckpoint                  // JSON: {"signal": "CLOCKWORK_CHECKPOINT", ...}
+	SignalCheckpoint                  // JSON: {"signal": "CLOCKWORK_CHECKPOINT", ...} OR inline: CLOCKWORK_CHECKPOINT <corr> <type> <base64(payload)>
 	SignalProgress                    // JSON: {"signal": "CLOCKWORK_PROGRESS", ...}
 	SignalSubtask                     // JSON: {"signal": "CLOCKWORK_SUBTASK", ...}
 	SignalArtifact                    // JSON: {"signal": "CLOCKWORK_ARTIFACT", ...}
+	SignalCheckpointAwait             // inline: CLOCKWORK_CHECKPOINT_AWAIT <correlation_id>
 )
 
 var signalNames = map[SignalType]string{
@@ -25,10 +26,11 @@ var signalNames = map[SignalType]string{
 	SignalNote:       "CLOCKWORK_NOTE",
 	SignalNewTask:    "CLOCKWORK_TASK",
 	SignalTokens:     "CLOCKWORK_TOKENS",
-	SignalCheckpoint: "CLOCKWORK_CHECKPOINT",
-	SignalProgress:   "CLOCKWORK_PROGRESS",
-	SignalSubtask:    "CLOCKWORK_SUBTASK",
-	SignalArtifact:   "CLOCKWORK_ARTIFACT",
+	SignalCheckpoint:      "CLOCKWORK_CHECKPOINT",
+	SignalProgress:        "CLOCKWORK_PROGRESS",
+	SignalSubtask:         "CLOCKWORK_SUBTASK",
+	SignalArtifact:        "CLOCKWORK_ARTIFACT",
+	SignalCheckpointAwait: "CLOCKWORK_CHECKPOINT_AWAIT",
 }
 
 var signalFromString = map[string]SignalType{
@@ -38,10 +40,11 @@ var signalFromString = map[string]SignalType{
 	"CLOCKWORK_NOTE":       SignalNote,
 	"CLOCKWORK_TASK":       SignalNewTask,
 	"CLOCKWORK_TOKENS":     SignalTokens,
-	"CLOCKWORK_CHECKPOINT": SignalCheckpoint,
-	"CLOCKWORK_PROGRESS":   SignalProgress,
-	"CLOCKWORK_SUBTASK":    SignalSubtask,
-	"CLOCKWORK_ARTIFACT":   SignalArtifact,
+	"CLOCKWORK_CHECKPOINT":       SignalCheckpoint,
+	"CLOCKWORK_PROGRESS":         SignalProgress,
+	"CLOCKWORK_SUBTASK":          SignalSubtask,
+	"CLOCKWORK_ARTIFACT":         SignalArtifact,
+	"CLOCKWORK_CHECKPOINT_AWAIT": SignalCheckpointAwait,
 }
 
 // String returns the canonical name of the signal type.

@@ -47,4 +47,105 @@ func TestMigrationsApply(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO run_events (run_id, task_id, type, payload) VALUES (NULL, 'T1', 'task_transitioned', '{}')`)
 	require.NoError(t, err, "run_events.run_id should be nullable after migration 006")
+
+	// Verify 007 added facet columns to tasks.
+	_, err = db.Exec(`SELECT kind, source_type, source_ref, trust, checkpoint_mode, on_checkpoint_response FROM tasks LIMIT 0`)
+	require.NoError(t, err, "tasks facet columns should exist after migration 007")
+
+	// Verify 007 enforces kind CHECK constraint.
+	_, err = db.Exec(`INSERT INTO tasks (id, title, status, kind) VALUES ('T7bad', 'bad', 'todo', 'nonsense')`)
+	require.Error(t, err, "tasks.kind CHECK should reject unknown kinds")
+
+	// Verify 007 allows valid kinds with defaults for other facet columns.
+	_, err = db.Exec(`INSERT INTO tasks (id, title, status, kind) VALUES ('T7ok', 'ok', 'todo', 'wait')`)
+	require.NoError(t, err, "tasks.kind should accept 'wait'")
+
+	// Verify 007 created the new indexes.
+	idxRows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='tasks'`)
+	require.NoError(t, err)
+	defer idxRows.Close()
+	idx := map[string]bool{}
+	for idxRows.Next() {
+		var n string
+		require.NoError(t, idxRows.Scan(&n))
+		idx[n] = true
+	}
+	require.True(t, idx["idx_tasks_kind_status"], "idx_tasks_kind_status should exist")
+	require.True(t, idx["idx_tasks_source"], "idx_tasks_source should exist")
+	require.True(t, idx["idx_tasks_checkpoint_mode"], "idx_tasks_checkpoint_mode should exist")
+
+	// Verify 008 created the checkpoints table with expected columns.
+	_, err = db.Exec(`SELECT id, task_id, run_id, correlation_id, type,
+		payload_json, response_json, emitter_source_type, emitter_source_ref,
+		responder_source_type, responder_source_ref, emitted_at, responded_at,
+		timeout_at, status FROM checkpoints LIMIT 0`)
+	require.NoError(t, err, "checkpoints table should exist after migration 008")
+
+	// Verify 008 status CHECK constraint.
+	_, err = db.Exec(`INSERT INTO tasks (id, title, status) VALUES ('CP-T1', 't', 'doing')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO checkpoints (task_id, correlation_id, type, payload_json, emitter_source_type, status)
+		VALUES ('CP-T1', 'CORR-BAD', 'test', '{}', 'system', 'bogus')`)
+	require.Error(t, err, "checkpoints.status CHECK should reject unknown statuses")
+
+	// Verify 008 accepts a valid pending checkpoint.
+	_, err = db.Exec(`INSERT INTO checkpoints (task_id, correlation_id, type, payload_json, emitter_source_type)
+		VALUES ('CP-T1', 'CORR-OK', 'test', '{}', 'system')`)
+	require.NoError(t, err, "checkpoints insert with default 'pending' status should succeed")
+
+	// Verify 008 correlation_id UNIQUE.
+	_, err = db.Exec(`INSERT INTO checkpoints (task_id, correlation_id, type, payload_json, emitter_source_type)
+		VALUES ('CP-T1', 'CORR-OK', 'test', '{}', 'system')`)
+	require.Error(t, err, "checkpoints.correlation_id should be UNIQUE")
+
+	// Verify 008 indexes.
+	cpRows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='checkpoints'`)
+	require.NoError(t, err)
+	defer cpRows.Close()
+	cpIdx := map[string]bool{}
+	for cpRows.Next() {
+		var n string
+		require.NoError(t, cpRows.Scan(&n))
+		cpIdx[n] = true
+	}
+	require.True(t, cpIdx["idx_checkpoints_task_status"], "idx_checkpoints_task_status should exist")
+	require.True(t, cpIdx["idx_checkpoints_pending"], "idx_checkpoints_pending should exist")
+	require.True(t, cpIdx["idx_checkpoints_correlation"], "idx_checkpoints_correlation should exist")
+	// Cascade-delete behaviour is exercised indirectly via sqlstore tests
+	// where Store.New() enables foreign_keys; this test uses a raw sql.Open
+	// so PRAGMA foreign_keys is OFF by default.
+
+	// Verify 009 task_templates table + composite primary key.
+	_, err = db.Exec(`SELECT id, version, name, description, kind, auto_execute,
+		executor, agent_profile, system_prompt, tools, permissions, environment,
+		cost_budget, max_retries, max_duration_ms, token_budget,
+		on_done, on_fail, on_review, on_done_merge,
+		escalation_chain, quality_gates, deliverables,
+		checkpoint_mode, on_checkpoint_response,
+		metadata_template, required_vars, tags, is_archived, created_at, updated_at
+		FROM task_templates LIMIT 0`)
+	require.NoError(t, err, "task_templates columns should exist after migration 009")
+
+	// Verify 009 allows independent versions under the same id.
+	_, err = db.Exec(`INSERT INTO task_templates (id, version, name, description, kind)
+		VALUES ('T', 1, 'v1', 'x', 'agent')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO task_templates (id, version, name, description, kind)
+		VALUES ('T', 2, 'v2', 'x', 'agent')`)
+	require.NoError(t, err, "distinct versions of the same id should be accepted")
+	_, err = db.Exec(`INSERT INTO task_templates (id, version, name, description, kind)
+		VALUES ('T', 1, 'dup', 'x', 'agent')`)
+	require.Error(t, err, "duplicate (id, version) should be rejected by PK")
+
+	// Verify the idx_templates_kind index exists.
+	tplIdxRows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='task_templates'`)
+	require.NoError(t, err)
+	defer tplIdxRows.Close()
+	tplIdx := map[string]bool{}
+	for tplIdxRows.Next() {
+		var n string
+		require.NoError(t, tplIdxRows.Scan(&n))
+		tplIdx[n] = true
+	}
+	require.True(t, tplIdx["idx_templates_kind"], "idx_templates_kind should exist")
 }

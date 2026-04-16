@@ -1,0 +1,14 @@
+# Reference template — commit to DB via clockwork_template_create.
+# Source of truth is the DB row; this file documents the shape for humans.
+id: decision-checkpoint
+name: Decision Checkpoint
+description: "Human-in-the-loop decision point; emits a blocking checkpoint"
+kind: decision
+auto_execute: false
+checkpoint_mode: blocking
+on_checkpoint_response: resume
+deliverables:
+  - { type: finding, required: true }
+tags:
+  - decision
+  - human-in-loop

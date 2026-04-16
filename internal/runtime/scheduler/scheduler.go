@@ -13,6 +13,7 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/queue"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/waitpoll"
 )
 
 // SchedulerStatus reports the current state of the scheduler.
@@ -29,10 +30,11 @@ type SchedulerStatus struct {
 // dispatches them to executors via a worker pool, and handles results
 // through the lifecycle manager.
 type Scheduler struct {
-	store    *sqlstore.Store
-	queue    *queue.Queue
-	registry *executor.Registry
-	cfg      *config.SchedulerConfig
+	store      *sqlstore.Store
+	queue      *queue.Queue
+	registry   *executor.Registry
+	predicates *waitpoll.Registry
+	cfg        *config.SchedulerConfig
 
 	pool      *WorkerPool
 	picker    *Picker
@@ -47,11 +49,14 @@ type Scheduler struct {
 	stopCh  chan struct{}
 }
 
-// New creates a new scheduler with all sub-components.
+// New creates a new scheduler with all sub-components. predicates may be nil
+// when no kind=wait tasks are expected; in that case, a wait task reaching
+// the tick will be marked blocked with an "unknown predicate" reason.
 func New(
 	store *sqlstore.Store,
 	q *queue.Queue,
 	registry *executor.Registry,
+	predicates *waitpoll.Registry,
 	cfg *config.SchedulerConfig,
 ) *Scheduler {
 	bus := NewEventBus()
@@ -62,20 +67,25 @@ func New(
 		results <- r
 	})
 
+	if predicates == nil {
+		predicates = waitpoll.NewRegistry()
+	}
+
 	s := &Scheduler{
-		store:     store,
-		queue:     q,
-		registry:  registry,
-		cfg:       cfg,
-		pool:      pool,
-		picker:    NewPicker(store),
-		lifecycle: NewLifecycleManager(store, bus),
-		cost:      NewCostTracker(store),
-		heartbeat: NewHeartbeatMonitor(store),
-		bus:       bus,
-		enabled:   cfg.Enabled,
-		results:   results,
-		stopCh:    make(chan struct{}),
+		store:      store,
+		queue:      q,
+		registry:   registry,
+		predicates: predicates,
+		cfg:        cfg,
+		pool:       pool,
+		picker:     NewPicker(store),
+		lifecycle:  NewLifecycleManager(store, bus),
+		cost:       NewCostTracker(store),
+		heartbeat:  NewHeartbeatMonitor(store),
+		bus:        bus,
+		enabled:    cfg.Enabled,
+		results:    results,
+		stopCh:     make(chan struct{}),
 	}
 
 	return s
@@ -134,6 +144,22 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 		}
 	}
 
+	// Sweep timed-out checkpoints before picking — any pending row past
+	// its timeout_at is flipped to "timed_out" and, if its task is parked
+	// in review on that correlation_id, the task transitions review →
+	// blocked. Running ahead of the pick keeps stale-parked tasks from
+	// being considered for dispatch this tick.
+	if _, err := SweepCheckpointTimeouts(s.store, s.bus, time.Now().UTC()); err != nil {
+		log.Printf("[scheduler] checkpoint timeout sweep error: %v", err)
+	}
+
+	// Roll up parent-kind task statuses from their children. Runs before
+	// the pick so a parent transitioned by the rollup isn't picked up
+	// again this tick. Picker also filters kind=parent as belt-and-braces.
+	if err := ParentRollupTick(s.store, s.bus); err != nil {
+		log.Printf("[scheduler] parent rollup error: %v", err)
+	}
+
 	// Pick eligible tasks
 	available := s.pool.AvailableSlots()
 	if available <= 0 {
@@ -146,6 +172,17 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 	}
 
 	for _, task := range tasks {
+		if task.Kind == "wait" {
+			// Wait tasks bypass the executor pool entirely — predicate poll
+			// is cheap and synchronous. Errors stay in the scheduler log;
+			// DispatchWait internally transitions the task to blocked on
+			// fatal config errors so the state machine doesn't stall.
+			t := task
+			if err := DispatchWait(ctx, s.store, s.predicates, s.bus, &t); err != nil {
+				log.Printf("[scheduler] wait dispatch %s: %v", task.ID, err)
+			}
+			continue
+		}
 		if err := s.dispatchTask(ctx, task); err != nil {
 			log.Printf("[scheduler] failed to dispatch %s: %v", task.ID, err)
 			continue
@@ -248,6 +285,28 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 					FilePath: event.Artifact.FilePath,
 					Metadata: metadataJSON,
 				})
+			}
+
+			// Inline-form CLOCKWORK_CHECKPOINT emits are routed to the
+			// checkpoint handler which creates the row and parks the task
+			// if its checkpoint_mode is "blocking". JSON-form checkpoints
+			// (event.Signal == "CLOCKWORK_CHECKPOINT" with a JSON payload)
+			// are left for later work — MVP emits via the inline form.
+			if event.Type == executor.EventSignal && event.Signal == "CLOCKWORK_CHECKPOINT" {
+				if out, err := HandleCheckpointSignal(s.store, capturedTaskID, capturedRunID, event.Content, time.Now().UTC()); err != nil {
+					log.Printf("[scheduler] checkpoint emit error for %s: %v", capturedTaskID, err)
+				} else {
+					s.bus.Publish(SchedulerEvent{
+						Type:   "checkpoint.emitted",
+						TaskID: capturedTaskID,
+						RunID:  capturedRunID,
+						Data: map[string]interface{}{
+							"correlation_id": out.CorrelationID,
+							"type":           out.Type,
+							"park":           out.ParkTask,
+						},
+					})
+				}
 			}
 
 			writeRunEvent(s.store, capturedRunID, capturedTaskID, runEventType(event), runEventPayload(event))

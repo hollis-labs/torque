@@ -53,7 +53,7 @@ func TestIntegrationFullRoundTrip(t *testing.T) {
 		StaleSeconds:    300,
 	}
 
-	sched := scheduler.New(store, q, registry, cfg)
+	sched := scheduler.New(store, q, registry, nil, cfg)
 
 	// Subscribe to events
 	sub := sched.EventBus().Subscribe()
@@ -184,7 +184,7 @@ func TestIntegrationEscalationChain(t *testing.T) {
 		StaleSeconds:    300,
 	}
 
-	sched := scheduler.New(store, q, registry, cfg)
+	sched := scheduler.New(store, q, registry, nil, cfg)
 
 	// Create task with escalation chain
 	store.CreateTask(&sqlstore.TaskRecord{
@@ -250,7 +250,7 @@ func TestIntegrationCostCeiling(t *testing.T) {
 		StaleSeconds:    300,
 	}
 
-	sched := scheduler.New(store, q, registry, cfg)
+	sched := scheduler.New(store, q, registry, nil, cfg)
 
 	// Run first task
 	store.CreateTask(&sqlstore.TaskRecord{

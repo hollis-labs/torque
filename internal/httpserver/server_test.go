@@ -55,6 +55,162 @@ func TestCreateAndGetTask(t *testing.T) {
 	assert.Equal(t, "Test task", got["title"])
 }
 
+func TestHTTP_TaskCreate_RoundTripWithFacets(t *testing.T) {
+	ts := setupTestServer(t)
+
+	body := `{
+        "title": "http facets",
+        "description": "x",
+        "kind": "agent",
+        "executor": "cli",
+        "source_type": "agent",
+        "source_ref": "claude-code",
+        "trust": "trusted",
+        "checkpoint_mode": "blocking",
+        "on_checkpoint_response": "review"
+    }`
+	resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var got map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	resp.Body.Close()
+	assert.Equal(t, "agent", got["kind"])
+	assert.Equal(t, "agent", got["source_type"])
+	assert.Equal(t, "claude-code", got["source_ref"])
+	assert.Equal(t, "trusted", got["trust"])
+	assert.Equal(t, "blocking", got["checkpoint_mode"])
+	assert.Equal(t, "review", got["on_checkpoint_response"])
+}
+
+func TestHTTP_TaskCreate_FacetDefaults(t *testing.T) {
+	ts := setupTestServer(t)
+
+	body := `{"title":"defaults","description":"x"}`
+	resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var got map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	resp.Body.Close()
+	assert.Equal(t, "agent", got["kind"])
+	assert.Equal(t, "user", got["source_type"])
+	assert.Nil(t, got["source_ref"])
+	assert.Equal(t, "normal", got["trust"])
+	assert.Equal(t, "none", got["checkpoint_mode"])
+	assert.Equal(t, "resume", got["on_checkpoint_response"])
+}
+
+func TestHTTP_TaskList_FilterByKind(t *testing.T) {
+	ts := setupTestServer(t)
+
+	http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(
+		`{"title":"a","kind":"agent","executor":"cli","description":"x"}`))
+	http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(
+		`{"title":"e","kind":"external","manual":true,"description":"x"}`))
+
+	resp, err := http.Get(ts.URL + "/api/v1/tasks?kind=external")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	resp.Body.Close()
+	tasks := result["tasks"].([]interface{})
+	require.Len(t, tasks, 1)
+	assert.Equal(t, "external", tasks[0].(map[string]interface{})["kind"])
+}
+
+// TestIntegration_TaskWithFacets_ThroughAllLayers is the Phase A exit-gate
+// integration check: create → get → update → list filter, all via HTTP,
+// exercising the facet pipeline through service + store layers.
+func TestIntegration_TaskWithFacets_ThroughAllLayers(t *testing.T) {
+	ts := setupTestServer(t)
+
+	// Create via HTTP (external/user/trusted).
+	body := `{
+        "title": "e2e facets",
+        "description": "x",
+        "kind": "external",
+        "manual": true,
+        "source_type": "user",
+        "source_ref": "chrispian",
+        "trust": "trusted"
+    }`
+	resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var created map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+	resp.Body.Close()
+	id := created["id"].(string)
+
+	// Get via HTTP — verify persistence.
+	resp, err = http.Get(ts.URL + "/api/v1/tasks/" + id)
+	require.NoError(t, err)
+	var got map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	resp.Body.Close()
+	assert.Equal(t, "external", got["kind"])
+	assert.Equal(t, "user", got["source_type"])
+	assert.Equal(t, "chrispian", got["source_ref"])
+	assert.Equal(t, "trusted", got["trust"])
+
+	// Update trust via HTTP.
+	patchBody := `{"trust":"normal"}`
+	req, err := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/tasks/"+id, bytes.NewBufferString(patchBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var updated map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&updated))
+	resp.Body.Close()
+	assert.Equal(t, "normal", updated["trust"])
+
+	// List filtered by source_ref.
+	resp, err = http.Get(ts.URL + "/api/v1/tasks?source_ref=chrispian")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var listResult map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&listResult))
+	resp.Body.Close()
+	tasks := listResult["tasks"].([]interface{})
+	require.Len(t, tasks, 1)
+	assert.Equal(t, id, tasks[0].(map[string]interface{})["id"])
+	assert.Equal(t, "normal", tasks[0].(map[string]interface{})["trust"])
+}
+
+func TestHTTP_TaskUpdate_Facets(t *testing.T) {
+	ts := setupTestServer(t)
+
+	body := `{"title":"t","description":"x","kind":"agent","executor":"cli"}`
+	resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	var created map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+	resp.Body.Close()
+	id := created["id"].(string)
+
+	upd := `{"checkpoint_mode":"blocking","on_checkpoint_response":"review","source_ref":"ctx-123"}`
+	req, err := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/tasks/"+id, bytes.NewBufferString(upd))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var got map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	resp.Body.Close()
+	assert.Equal(t, "blocking", got["checkpoint_mode"])
+	assert.Equal(t, "review", got["on_checkpoint_response"])
+	assert.Equal(t, "ctx-123", got["source_ref"])
+}
+
 func TestListTasks(t *testing.T) {
 	ts := setupTestServer(t)
 
