@@ -114,4 +114,38 @@ func TestMigrationsApply(t *testing.T) {
 	// Cascade-delete behaviour is exercised indirectly via sqlstore tests
 	// where Store.New() enables foreign_keys; this test uses a raw sql.Open
 	// so PRAGMA foreign_keys is OFF by default.
+
+	// Verify 009 task_templates table + composite primary key.
+	_, err = db.Exec(`SELECT id, version, name, description, kind, auto_execute,
+		executor, agent_profile, system_prompt, tools, permissions, environment,
+		cost_budget, max_retries, max_duration_ms, token_budget,
+		on_done, on_fail, on_review, on_done_merge,
+		escalation_chain, quality_gates, deliverables,
+		checkpoint_mode, on_checkpoint_response,
+		metadata_template, required_vars, tags, is_archived, created_at, updated_at
+		FROM task_templates LIMIT 0`)
+	require.NoError(t, err, "task_templates columns should exist after migration 009")
+
+	// Verify 009 allows independent versions under the same id.
+	_, err = db.Exec(`INSERT INTO task_templates (id, version, name, description, kind)
+		VALUES ('T', 1, 'v1', 'x', 'agent')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO task_templates (id, version, name, description, kind)
+		VALUES ('T', 2, 'v2', 'x', 'agent')`)
+	require.NoError(t, err, "distinct versions of the same id should be accepted")
+	_, err = db.Exec(`INSERT INTO task_templates (id, version, name, description, kind)
+		VALUES ('T', 1, 'dup', 'x', 'agent')`)
+	require.Error(t, err, "duplicate (id, version) should be rejected by PK")
+
+	// Verify the idx_templates_kind index exists.
+	tplIdxRows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='task_templates'`)
+	require.NoError(t, err)
+	defer tplIdxRows.Close()
+	tplIdx := map[string]bool{}
+	for tplIdxRows.Next() {
+		var n string
+		require.NoError(t, tplIdxRows.Scan(&n))
+		tplIdx[n] = true
+	}
+	require.True(t, tplIdx["idx_templates_kind"], "idx_templates_kind should exist")
 }
