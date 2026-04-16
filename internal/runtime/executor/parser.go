@@ -138,22 +138,23 @@ func ParseArtifactPayload(payload string) (Artifact, error) {
 //
 //	<correlation_id> <type> <base64(payload_json)>
 //
+// Splits on any run of whitespace (strings.Fields) so the parser tolerates
+// tab-separated or double-spaced emitters. Base64 itself contains no
+// whitespace, so exactly three fields are expected.
+//
 // Returns the decoded (correlation_id, type, payload_json) triple. The
 // payload_json is the base64-decoded opaque JSON string (validated only to
 // be base64-parseable — its schema is go-envelope's job, BLG-030).
 func ParseCheckpointPayload(payload string) (correlationID, typ, payloadJSON string, err error) {
-	parts := strings.SplitN(payload, " ", 3)
+	parts := strings.Fields(payload)
 	if len(parts) != 3 {
 		return "", "", "", fmt.Errorf("checkpoint payload must have 3 whitespace-separated fields, got %d", len(parts))
 	}
-	correlationID = strings.TrimSpace(parts[0])
-	typ = strings.TrimSpace(parts[1])
-	raw, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(parts[2]))
+	correlationID = parts[0]
+	typ = parts[1]
+	raw, decodeErr := base64.StdEncoding.DecodeString(parts[2])
 	if decodeErr != nil {
 		return "", "", "", fmt.Errorf("decode checkpoint payload base64: %w", decodeErr)
-	}
-	if correlationID == "" || typ == "" {
-		return "", "", "", fmt.Errorf("checkpoint payload missing correlation_id or type")
 	}
 	return correlationID, typ, string(raw), nil
 }

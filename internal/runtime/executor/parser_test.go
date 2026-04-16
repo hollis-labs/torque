@@ -151,6 +151,25 @@ func TestParseCheckpointPayload(t *testing.T) {
 		_, _, _, err := executor.ParseCheckpointPayload("corr type not-base64!")
 		require.Error(t, err)
 	})
+
+	// Real executors emit single-space-separated fields, but the parser
+	// contract promises "whitespace-separated" — tabs and double-spaces
+	// should still decode to the same three fields.
+	t.Run("tolerates multiple spaces", func(t *testing.T) {
+		corr, typ, pj, err := executor.ParseCheckpointPayload("01H-CORR  collect_data   eyJxIjoicGljayJ9")
+		require.NoError(t, err)
+		assert.Equal(t, "01H-CORR", corr)
+		assert.Equal(t, "collect_data", typ)
+		assert.Equal(t, `{"q":"pick"}`, pj)
+	})
+
+	t.Run("tolerates tabs", func(t *testing.T) {
+		corr, typ, pj, err := executor.ParseCheckpointPayload("01H-CORR\tcollect_data\teyJxIjoicGljayJ9")
+		require.NoError(t, err)
+		assert.Equal(t, "01H-CORR", corr)
+		assert.Equal(t, "collect_data", typ)
+		assert.Equal(t, `{"q":"pick"}`, pj)
+	})
 }
 
 func TestParseArtifactPayload(t *testing.T) {
