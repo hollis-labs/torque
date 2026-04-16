@@ -537,6 +537,42 @@ func TestValidateTaskKind_UnknownOnCheckpointResponseRejected(t *testing.T) {
 	assert.Equal(t, "on_checkpoint_response", verr.Field)
 }
 
+// A client explicitly clearing an enum field via Update should get a 422
+// ValidationError, not a cryptic DB CHECK error. validateTaskKind treats
+// empty strings as invalid for its enum columns because it's called with
+// effective values (Create fills defaults before calling; Update overlays
+// the existing value only when the pointer is nil — an explicit &"" from
+// the caller survives).
+func TestValidateTaskKind_UpdateClearCheckpointMode_422(t *testing.T) {
+	svc := setupTaskValidationTest(t)
+	rec, err := svc.Task.Create(service.TaskCreateInput{Title: "t"})
+	require.NoError(t, err)
+
+	empty := ""
+	err = svc.Task.Update(rec.ID, service.TaskUpdateInput{
+		TaskUpdate: sqlstore.TaskUpdate{CheckpointMode: &empty},
+	})
+	require.Error(t, err)
+	var verr *service.ValidationError
+	require.ErrorAs(t, err, &verr)
+	assert.Equal(t, "checkpoint_mode", verr.Field)
+}
+
+func TestValidateTaskKind_UpdateClearKind_422(t *testing.T) {
+	svc := setupTaskValidationTest(t)
+	rec, err := svc.Task.Create(service.TaskCreateInput{Title: "t"})
+	require.NoError(t, err)
+
+	empty := ""
+	err = svc.Task.Update(rec.ID, service.TaskUpdateInput{
+		TaskUpdate: sqlstore.TaskUpdate{Kind: &empty},
+	})
+	require.Error(t, err)
+	var verr *service.ValidationError
+	require.ErrorAs(t, err, &verr)
+	assert.Equal(t, "kind", verr.Field)
+}
+
 // Update must validate against effective (existing + overlay) values.
 func TestValidateTaskKind_UpdateRejectsIncompatibleKindChange(t *testing.T) {
 	svc := setupTaskValidationTest(t)

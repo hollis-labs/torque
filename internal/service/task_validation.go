@@ -103,13 +103,16 @@ var validOnCheckpointResponse = map[string]bool{
 }
 
 // validateTaskKind enforces facet-enum validity and per-kind invariants
-// defined in spec §3.5. Callers pass EFFECTIVE values (post-default overlay),
-// so this function assumes the record as it will be stored.
+// defined in spec §3.5. Callers pass EFFECTIVE values — the record as it
+// will be stored — so an empty string for any enum column is itself a
+// validation error (callers who want the default must pass it explicitly,
+// e.g. "none" instead of ""). This keeps Update's effective-value overlay
+// from silently letting a client clear a column and hitting the DB CHECK
+// constraint with a cryptic sqlite error.
 //
 // Rules:
 //   - kind / source_type / trust / checkpoint_mode / on_checkpoint_response
-//     must be in their respective allowed sets (empty strings treated as
-//     "defaulted upstream" and skipped).
+//     must each be non-empty and in their respective allowed sets.
 //   - kind=agent + executor=""                         → 422 (defensive; the
 //     service layer applies a "cli" default for agent, so this is structurally
 //     unreachable in normal flow but guards hand-crafted callers).
@@ -125,31 +128,31 @@ func validateTaskKind(
 	manual bool,
 	metadata map[string]any,
 ) error {
-	if kind != "" && !validKinds[kind] {
+	if !validKinds[kind] {
 		return &ValidationError{
 			Field:   "kind",
 			Message: "invalid kind: got '" + kind + "', expected one of: agent, external, wait, decision, parent",
 		}
 	}
-	if sourceType != "" && !validSourceTypes[sourceType] {
+	if !validSourceTypes[sourceType] {
 		return &ValidationError{
 			Field:   "source_type",
 			Message: "invalid source_type: got '" + sourceType + "', expected one of: agent, user, api, system, webhook, import",
 		}
 	}
-	if trust != "" && !validTrustLevels[trust] {
+	if !validTrustLevels[trust] {
 		return &ValidationError{
 			Field:   "trust",
 			Message: "invalid trust: got '" + trust + "', expected one of: trusted, normal, untrusted",
 		}
 	}
-	if checkpointMode != "" && !validCheckpointModes[checkpointMode] {
+	if !validCheckpointModes[checkpointMode] {
 		return &ValidationError{
 			Field:   "checkpoint_mode",
 			Message: "invalid checkpoint_mode: got '" + checkpointMode + "', expected one of: none, blocking, non_blocking",
 		}
 	}
-	if onCheckpointResponse != "" && !validOnCheckpointResponse[onCheckpointResponse] {
+	if !validOnCheckpointResponse[onCheckpointResponse] {
 		return &ValidationError{
 			Field:   "on_checkpoint_response",
 			Message: "invalid on_checkpoint_response: got '" + onCheckpointResponse + "', expected one of: resume, review, custom",
