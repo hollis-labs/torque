@@ -210,6 +210,18 @@ func (s *Server) updateTemplate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, templateJSON(tpl))
 }
 
+// getTemplate returns a single template.
+//
+//   - `GET /templates/{id}`           → latest non-archived version via
+//     GetLatestTemplate. Returns 404 if every version is archived.
+//   - `GET /templates/{id}?version=N` → exact (id, version) lookup via
+//     GetTemplate. No is_archived filter on this path, so archived rows
+//     are reachable here for historical `metadata.template_ref` lookups
+//     (spec §5.2: "historical references survive").
+//
+// The `include_archived` query flag applies only to list endpoints; it
+// is intentionally ignored here. Callers who want to inspect an archived
+// row must know its version.
 func (s *Server) getTemplate(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	version := 0

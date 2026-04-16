@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -88,6 +89,20 @@ func TestTemplateService_Delete_Referenced_Conflict(t *testing.T) {
 	require.Error(t, err)
 	var cerr *service.ConflictError
 	require.ErrorAs(t, err, &cerr)
+
+	// Message should be human-readable and actionable; must NOT echo the
+	// sentinel's .Error() text ("template has referencing tasks") into the
+	// wrapped body, because that produces the previous
+	// "conflict: smoke-bug: 1 referencing tasks: template has referencing tasks"
+	// double-stutter. See CW-20260416-0001 (post-MVP smoke finding).
+	msg := cerr.Error()
+	assert.Equal(t, 1, strings.Count(msg, "referencing"),
+		"delete-conflict message should not echo 'referencing' twice, got: %q", msg)
+	assert.Contains(t, msg, "archive instead of deleting",
+		"message should steer the caller toward archive: %q", msg)
+	// "template t" is the tokenized form the Delete() formatter produces —
+	// bare "t" would false-positive against the word "template" itself.
+	assert.Contains(t, msg, "template t ", "message should name the template id: %q", msg)
 }
 
 func TestTemplateService_Archive(t *testing.T) {

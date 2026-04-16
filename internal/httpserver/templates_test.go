@@ -99,6 +99,34 @@ func TestHTTP_Template_Archive(t *testing.T) {
 	assert.Equal(t, true, got["is_archived"])
 }
 
+// GET /templates/{id} without a version resolves to the latest non-archived
+// row; if every version is archived, it 404s. Callers who want the archived
+// data must pass ?version=N. Documented on the handler; covered here so the
+// contract doesn't silently drift.
+func TestHTTP_Template_GetLatest_404_WhenAllArchived(t *testing.T) {
+	ts := setupTestServer(t)
+	httpCreateTemplate(t, ts.URL, `{"id":"t","name":"t","description":"x","kind":"agent","executor":"cli"}`)
+
+	resp, err := http.Post(ts.URL+"/api/v1/templates/t/archive/1", "application/json", nil)
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	// GET without version → 404 (no non-archived rows).
+	resp, err = http.Get(ts.URL + "/api/v1/templates/t")
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	resp.Body.Close()
+
+	// GET with explicit version → 200, archived row still retrievable.
+	resp, err = http.Get(ts.URL + "/api/v1/templates/t?version=1")
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	var got map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	resp.Body.Close()
+	assert.Equal(t, true, got["is_archived"])
+}
+
 func TestHTTP_Template_List(t *testing.T) {
 	ts := setupTestServer(t)
 	httpCreateTemplate(t, ts.URL, `{"id":"a","name":"a","description":"x","kind":"agent","executor":"cli"}`)
