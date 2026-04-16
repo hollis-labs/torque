@@ -114,6 +114,104 @@ func TestFullStack_CreateAndGetTask(t *testing.T) {
 	require.Equal(t, "Fix auth bug", fetched["Title"])
 }
 
+func TestFullStack_TaskCreate_Facets(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":                  "facets",
+		"description":            "x",
+		"kind":                   "external",
+		"manual":                 true,
+		"source_type":            "user",
+		"source_ref":             "chrispian",
+		"trust":                  "normal",
+		"checkpoint_mode":        "none",
+		"on_checkpoint_response": "resume",
+	})
+	require.False(t, isErr, "create should not error: %s", text)
+
+	var created map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	require.Equal(t, "external", created["Kind"])
+	require.Equal(t, "user", created["SourceType"])
+	ref := created["SourceRef"].(map[string]interface{})
+	require.Equal(t, "chrispian", ref["String"])
+	require.Equal(t, true, ref["Valid"])
+	require.Equal(t, "normal", created["Trust"])
+	require.Equal(t, "none", created["CheckpointMode"])
+	require.Equal(t, "resume", created["OnCheckpointResponse"])
+}
+
+func TestFullStack_TaskCreate_FacetDefaults(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":       "defaults",
+		"description": "x",
+	})
+	require.False(t, isErr, "create should not error: %s", text)
+
+	var created map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	require.Equal(t, "agent", created["Kind"])
+	require.Equal(t, "user", created["SourceType"])
+	require.Equal(t, "normal", created["Trust"])
+	require.Equal(t, "none", created["CheckpointMode"])
+	require.Equal(t, "resume", created["OnCheckpointResponse"])
+}
+
+func TestFullStack_TaskList_FilterByKind(t *testing.T) {
+	a := setupAdapter(t)
+
+	_, _ = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":       "agent one",
+		"description": "x",
+	})
+	_, _ = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":       "external one",
+		"description": "x",
+		"kind":        "external",
+		"manual":      true,
+	})
+
+	text, isErr := callTool(t, a, "clockwork_task_list", map[string]interface{}{
+		"kind": "external",
+	})
+	require.False(t, isErr, "list should not error: %s", text)
+
+	var tasks []map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(text), &tasks))
+	require.Len(t, tasks, 1)
+	require.Equal(t, "external", tasks[0]["Kind"])
+}
+
+func TestFullStack_TaskUpdate_Facets(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, _ := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":       "u",
+		"description": "x",
+	})
+	var created map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	id := created["ID"].(string)
+
+	text, isErr := callTool(t, a, "clockwork_task_update", map[string]interface{}{
+		"id":                     id,
+		"checkpoint_mode":        "blocking",
+		"on_checkpoint_response": "review",
+		"source_ref":             "ctx-123",
+	})
+	require.False(t, isErr, "update should not error: %s", text)
+
+	var updated map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(text), &updated))
+	require.Equal(t, "blocking", updated["CheckpointMode"])
+	require.Equal(t, "review", updated["OnCheckpointResponse"])
+	ref := updated["SourceRef"].(map[string]interface{})
+	require.Equal(t, "ctx-123", ref["String"])
+}
+
 func TestFullStack_TaskLifecycle(t *testing.T) {
 	a := setupAdapter(t)
 

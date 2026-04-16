@@ -31,6 +31,13 @@ func (a *Adapter) registerTaskTools() {
 		mcp.WithString("sprint_id", mcp.Description("Sprint ID to associate this task with (requires features.sprints)")),
 		mcp.WithString("project_id", mcp.Description("Project ID to associate this task with (requires features.projects)")),
 		mcp.WithString("epic_id", mcp.Description("Epic ID to associate this task with (requires features.epics)")),
+		mcp.WithString("kind", mcp.Description("agent|external|wait|decision|parent (default agent)")),
+		mcp.WithString("source_type", mcp.Description("agent|user|api|system|webhook|import (default user)")),
+		mcp.WithString("source_ref", mcp.Description("Originating slug/id (free-form)")),
+		mcp.WithString("trust", mcp.Description("trusted|normal|untrusted (defaulted by source_type)")),
+		mcp.WithString("checkpoint_mode", mcp.Description("none|blocking|non_blocking (default none)")),
+		mcp.WithString("on_checkpoint_response", mcp.Description("resume|review|custom (default resume)")),
+		mcp.WithString("metadata", mcp.Description("JSON object: freeform metadata, including metadata.wait for kind=wait")),
 	), a.handleTaskCreate)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_get",
@@ -43,6 +50,11 @@ func (a *Adapter) registerTaskTools() {
 		mcp.WithString("status", mcp.Description("Filter by status")),
 		mcp.WithNumber("priority", mcp.Description("Filter by priority")),
 		mcp.WithString("executor", mcp.Description("Filter by executor")),
+		mcp.WithString("kind", mcp.Description("Filter by kind (agent|external|wait|decision|parent)")),
+		mcp.WithString("source_type", mcp.Description("Filter by source_type")),
+		mcp.WithString("source_ref", mcp.Description("Filter by source_ref")),
+		mcp.WithString("trust", mcp.Description("Filter by trust (trusted|normal|untrusted)")),
+		mcp.WithString("checkpoint_mode", mcp.Description("Filter by checkpoint_mode")),
 		mcp.WithNumber("limit", mcp.Description("Max results (default 50)")),
 	), a.handleTaskList)
 
@@ -56,6 +68,12 @@ func (a *Adapter) registerTaskTools() {
 		mcp.WithString("sprint_id", mcp.Description("Sprint ID (set empty string to unassign)")),
 		mcp.WithString("project_id", mcp.Description("Project ID (set empty string to unassign)")),
 		mcp.WithString("epic_id", mcp.Description("Epic ID (set empty string to unassign)")),
+		mcp.WithString("kind", mcp.Description("New kind (agent|external|wait|decision|parent)")),
+		mcp.WithString("source_type", mcp.Description("New source_type")),
+		mcp.WithString("source_ref", mcp.Description("New source_ref (empty string clears)")),
+		mcp.WithString("trust", mcp.Description("New trust (trusted|normal|untrusted)")),
+		mcp.WithString("checkpoint_mode", mcp.Description("New checkpoint_mode (none|blocking|non_blocking)")),
+		mcp.WithString("on_checkpoint_response", mcp.Description("New on_checkpoint_response (resume|review|custom)")),
 	), a.handleTaskUpdate)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_delete",
@@ -107,20 +125,26 @@ func (a *Adapter) taskResult(task *sqlstore.TaskRecord) (*mcp.CallToolResult, er
 
 func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	input := service.TaskCreateInput{
-		Title:        reqStr(req, "title"),
-		Description:  reqStr(req, "description"),
-		Priority:     reqInt(req, "priority"),
-		Executor:     reqStr(req, "executor"),
-		AgentProfile: reqStr(req, "agent_profile"),
-		WorkingDir:   reqStr(req, "working_dir"),
-		SystemPrompt: reqStr(req, "system_prompt"),
-		OnDone:       reqStr(req, "on_done"),
-		OnFail:       reqStr(req, "on_fail"),
-		OnDoneMerge:  reqStr(req, "on_done_merge"),
-		Manual:       reqBool(req, "manual"),
-		SprintID:     reqStr(req, "sprint_id"),
-		ProjectID:    reqStr(req, "project_id"),
-		EpicID:       reqStr(req, "epic_id"),
+		Title:                reqStr(req, "title"),
+		Description:          reqStr(req, "description"),
+		Priority:             reqInt(req, "priority"),
+		Executor:             reqStr(req, "executor"),
+		AgentProfile:         reqStr(req, "agent_profile"),
+		WorkingDir:           reqStr(req, "working_dir"),
+		SystemPrompt:         reqStr(req, "system_prompt"),
+		OnDone:               reqStr(req, "on_done"),
+		OnFail:               reqStr(req, "on_fail"),
+		OnDoneMerge:          reqStr(req, "on_done_merge"),
+		Manual:               reqBool(req, "manual"),
+		SprintID:             reqStr(req, "sprint_id"),
+		ProjectID:            reqStr(req, "project_id"),
+		EpicID:               reqStr(req, "epic_id"),
+		Kind:                 reqStr(req, "kind"),
+		SourceType:           reqStr(req, "source_type"),
+		SourceRef:            reqStr(req, "source_ref"),
+		Trust:                reqStr(req, "trust"),
+		CheckpointMode:       reqStr(req, "checkpoint_mode"),
+		OnCheckpointResponse: reqStr(req, "on_checkpoint_response"),
 	}
 
 	if raw := reqStr(req, "tags"); raw != "" {
@@ -131,6 +155,11 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest)
 	if raw := reqStr(req, "depends_on"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &input.DependsOn); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("invalid depends_on JSON: %v", err)), nil
+		}
+	}
+	if raw := reqStr(req, "metadata"); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &input.Metadata); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("invalid metadata JSON: %v", err)), nil
 		}
 	}
 
@@ -155,10 +184,15 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 		limit = 50
 	}
 	filter := sqlstore.TaskFilter{
-		Status:   reqStr(req, "status"),
-		Priority: reqInt(req, "priority"),
-		Executor: reqStr(req, "executor"),
-		Limit:    limit,
+		Status:         reqStr(req, "status"),
+		Priority:       reqInt(req, "priority"),
+		Executor:       reqStr(req, "executor"),
+		Kind:           reqStr(req, "kind"),
+		SourceType:     reqStr(req, "source_type"),
+		SourceRef:      reqStr(req, "source_ref"),
+		Trust:          reqStr(req, "trust"),
+		CheckpointMode: reqStr(req, "checkpoint_mode"),
+		Limit:          limit,
 	}
 	tasks, err := a.svc.Task.List(filter)
 	if err != nil {
@@ -197,6 +231,33 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 		v := reqStr(req, "epic_id")
 		ns := sql.NullString{String: v, Valid: v != ""}
 		update.EpicID = &ns
+	}
+
+	// Facet updates — any provided key triggers a change.
+	if _, ok := args["kind"]; ok {
+		v := reqStr(req, "kind")
+		update.Kind = &v
+	}
+	if _, ok := args["source_type"]; ok {
+		v := reqStr(req, "source_type")
+		update.SourceType = &v
+	}
+	if _, ok := args["source_ref"]; ok {
+		v := reqStr(req, "source_ref")
+		ns := sql.NullString{String: v, Valid: v != ""}
+		update.SourceRef = &ns
+	}
+	if _, ok := args["trust"]; ok {
+		v := reqStr(req, "trust")
+		update.Trust = &v
+	}
+	if _, ok := args["checkpoint_mode"]; ok {
+		v := reqStr(req, "checkpoint_mode")
+		update.CheckpointMode = &v
+	}
+	if _, ok := args["on_checkpoint_response"]; ok {
+		v := reqStr(req, "on_checkpoint_response")
+		update.OnCheckpointResponse = &v
 	}
 
 	input := service.TaskUpdateInput{TaskUpdate: update}
