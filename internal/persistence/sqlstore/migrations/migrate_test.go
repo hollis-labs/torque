@@ -73,4 +73,45 @@ func TestMigrationsApply(t *testing.T) {
 	require.True(t, idx["idx_tasks_kind_status"], "idx_tasks_kind_status should exist")
 	require.True(t, idx["idx_tasks_source"], "idx_tasks_source should exist")
 	require.True(t, idx["idx_tasks_checkpoint_mode"], "idx_tasks_checkpoint_mode should exist")
+
+	// Verify 008 created the checkpoints table with expected columns.
+	_, err = db.Exec(`SELECT id, task_id, run_id, correlation_id, type,
+		payload_json, response_json, emitter_source_type, emitter_source_ref,
+		responder_source_type, responder_source_ref, emitted_at, responded_at,
+		timeout_at, status FROM checkpoints LIMIT 0`)
+	require.NoError(t, err, "checkpoints table should exist after migration 008")
+
+	// Verify 008 status CHECK constraint.
+	_, err = db.Exec(`INSERT INTO tasks (id, title, status) VALUES ('CP-T1', 't', 'doing')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO checkpoints (task_id, correlation_id, type, payload_json, emitter_source_type, status)
+		VALUES ('CP-T1', 'CORR-BAD', 'test', '{}', 'system', 'bogus')`)
+	require.Error(t, err, "checkpoints.status CHECK should reject unknown statuses")
+
+	// Verify 008 accepts a valid pending checkpoint.
+	_, err = db.Exec(`INSERT INTO checkpoints (task_id, correlation_id, type, payload_json, emitter_source_type)
+		VALUES ('CP-T1', 'CORR-OK', 'test', '{}', 'system')`)
+	require.NoError(t, err, "checkpoints insert with default 'pending' status should succeed")
+
+	// Verify 008 correlation_id UNIQUE.
+	_, err = db.Exec(`INSERT INTO checkpoints (task_id, correlation_id, type, payload_json, emitter_source_type)
+		VALUES ('CP-T1', 'CORR-OK', 'test', '{}', 'system')`)
+	require.Error(t, err, "checkpoints.correlation_id should be UNIQUE")
+
+	// Verify 008 indexes.
+	cpRows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='checkpoints'`)
+	require.NoError(t, err)
+	defer cpRows.Close()
+	cpIdx := map[string]bool{}
+	for cpRows.Next() {
+		var n string
+		require.NoError(t, cpRows.Scan(&n))
+		cpIdx[n] = true
+	}
+	require.True(t, cpIdx["idx_checkpoints_task_status"], "idx_checkpoints_task_status should exist")
+	require.True(t, cpIdx["idx_checkpoints_pending"], "idx_checkpoints_pending should exist")
+	require.True(t, cpIdx["idx_checkpoints_correlation"], "idx_checkpoints_correlation should exist")
+	// Cascade-delete behaviour is exercised indirectly via sqlstore tests
+	// where Store.New() enables foreign_keys; this test uses a raw sql.Open
+	// so PRAGMA foreign_keys is OFF by default.
 }
