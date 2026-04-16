@@ -202,9 +202,27 @@ func (s *CheckpointService) attachCheckpointResponseToMetadata(
 // Cancel flips a pending checkpoint to canceled, recording the canceler as
 // the responder. Returns ConflictError if the checkpoint is already
 // terminal.
+//
+// CancelerSourceType defaults to "system" when empty (matching Emit's
+// behaviour) and is validated against validSourceTypes so provenance is
+// consistent across emit/respond/cancel.
+//
+// Per spec §4.5, if the task is parked on this correlation (status=review
+// with BlockedReason mentioning the correlation_id), Cancel also updates
+// the task's BlockedReason to "checkpoint <corr> canceled: <reason>" so
+// the human driving the follow-up transition sees why it was canceled.
 func (s *CheckpointService) Cancel(in CheckpointCancelInput) error {
 	if in.CorrelationID == "" {
 		return &ValidationError{Field: "correlation_id", Message: "correlation_id required"}
+	}
+	if in.CancelerSourceType == "" {
+		in.CancelerSourceType = "system"
+	}
+	if !validSourceTypes[in.CancelerSourceType] {
+		return &ValidationError{
+			Field:   "canceler_source_type",
+			Message: "invalid canceler_source_type",
+		}
 	}
 	cp, err := s.store.GetCheckpointByCorrelation(in.CorrelationID)
 	if err != nil {
@@ -213,11 +231,33 @@ func (s *CheckpointService) Cancel(in CheckpointCancelInput) error {
 	if cp.Status != "pending" {
 		return &ConflictError{Message: "checkpoint " + cp.Status}
 	}
-	return s.store.CancelCheckpoint(
+	if err := s.store.CancelCheckpoint(
 		in.CorrelationID, in.Reason,
 		in.CancelerSourceType, in.CancelerSourceRef,
 		time.Now().UTC(),
-	)
+	); err != nil {
+		return err
+	}
+	return s.applyCancelToParkedTask(cp, in.Reason)
+}
+
+// applyCancelToParkedTask updates the parked task's BlockedReason to reflect
+// the cancellation per spec §4.5. If the task is no longer parked on this
+// correlation (already moved on, or non_blocking mode), this is a noop.
+func (s *CheckpointService) applyCancelToParkedTask(cp *sqlstore.CheckpointRecord, reason string) error {
+	task, err := s.store.GetTask(cp.TaskID)
+	if err != nil {
+		return err
+	}
+	parked := task.Status == "review" && strings.Contains(task.BlockedReason, cp.CorrelationID)
+	if !parked {
+		return nil
+	}
+	blockedReason := "checkpoint " + cp.CorrelationID + " canceled"
+	if reason != "" {
+		blockedReason += ": " + reason
+	}
+	return s.store.TransitionTaskWithReason(cp.TaskID, "review", blockedReason)
 }
 
 // Get returns a checkpoint by correlation_id.

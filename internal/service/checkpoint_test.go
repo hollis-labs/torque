@@ -174,6 +174,76 @@ func TestCheckpointService_Respond_AlreadyTerminal_Conflict(t *testing.T) {
 	require.ErrorAs(t, err, &cerr)
 }
 
+// Spec §4.5: a canceled checkpoint should leave the parked task in review
+// with BlockedReason = "checkpoint <corr> canceled: <reason>" so humans
+// see why the task is still there and can transition it manually.
+func TestCheckpointService_Cancel_UpdatesParkedTaskBlockedReason(t *testing.T) {
+	svc, store := setupServiceWithStore(t)
+	taskID := createBlockingDecisionTask(t, svc)
+
+	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID: taskID, Type: "collect_data", PayloadJSON: `{}`, EmitterSourceType: "system",
+	})
+	require.NoError(t, err)
+
+	// Park the task on this correlation (simulating the scheduler).
+	require.NoError(t, store.TransitionTaskWithReason(taskID, "review",
+		"awaiting checkpoint "+out.CorrelationID))
+
+	require.NoError(t, svc.Checkpoint.Cancel(service.CheckpointCancelInput{
+		CorrelationID:      out.CorrelationID,
+		Reason:             "no longer relevant",
+		CancelerSourceType: "user",
+		CancelerSourceRef:  "chrispian",
+	}))
+
+	got, err := svc.Task.Get(taskID)
+	require.NoError(t, err)
+	assert.Equal(t, "review", got.Status, "task stays in review per spec §4.5")
+	assert.Contains(t, got.BlockedReason, "canceled")
+	assert.Contains(t, got.BlockedReason, out.CorrelationID)
+	assert.Contains(t, got.BlockedReason, "no longer relevant")
+}
+
+func TestCheckpointService_Cancel_DefaultsCancelerSourceType(t *testing.T) {
+	svc := setupService(t)
+	taskID := createBlockingDecisionTask(t, svc)
+
+	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID: taskID, Type: "x", PayloadJSON: `{}`, EmitterSourceType: "system",
+	})
+	require.NoError(t, err)
+
+	// Omit canceler_source_type — should default to "system" like Emit.
+	require.NoError(t, svc.Checkpoint.Cancel(service.CheckpointCancelInput{
+		CorrelationID: out.CorrelationID,
+		Reason:        "no reason",
+	}))
+
+	cp, err := svc.Checkpoint.Get(out.CorrelationID)
+	require.NoError(t, err)
+	assert.Equal(t, "system", cp.ResponderSourceType.String)
+}
+
+func TestCheckpointService_Cancel_InvalidCancelerSourceType_422(t *testing.T) {
+	svc := setupService(t)
+	taskID := createBlockingDecisionTask(t, svc)
+
+	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID: taskID, Type: "x", PayloadJSON: `{}`, EmitterSourceType: "system",
+	})
+	require.NoError(t, err)
+
+	err = svc.Checkpoint.Cancel(service.CheckpointCancelInput{
+		CorrelationID:      out.CorrelationID,
+		CancelerSourceType: "bogus",
+	})
+	require.Error(t, err)
+	var verr *service.ValidationError
+	require.ErrorAs(t, err, &verr)
+	assert.Equal(t, "canceler_source_type", verr.Field)
+}
+
 func TestCheckpointService_Cancel(t *testing.T) {
 	svc := setupService(t)
 	taskID := createBlockingDecisionTask(t, svc)
