@@ -183,7 +183,7 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 	// Roll up parent-kind task statuses from their children. Runs before
 	// the pick so a parent transitioned to done here isn't picked up by
 	// the dispatch loop a few lines later.
-	if err := ParentRollupTick(s.store); err != nil {
+	if err := ParentRollupTick(s.store, s.bus); err != nil {
 		log.Printf("[scheduler] parent rollup error: %v", err)
 	}
 

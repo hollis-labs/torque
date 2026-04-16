@@ -10,6 +10,8 @@ import (
 // ParentRollupTick derives each non-terminal parent task's status from its
 // children referenced in metadata.children. Called from Scheduler.Tick
 // before pick/dispatch so parents don't leak into the executor path.
+// bus is optional (nil is fine for contexts that don't subscribe) and is
+// used to publish task.notify when on_done=notify fires.
 //
 // Rules (spec §3.4):
 //   - Parents in terminal states (done, archived) are skipped.
@@ -18,11 +20,11 @@ import (
 //   - Any child in "blocked" → parent transitions to blocked with
 //     "child blocked" as BlockedReason.
 //   - All children in done or archived → parent transitions per its
-//     on_done rule: close → done, review (or default) → review,
-//     notify → done + task.notify bus event.
+//     on_done rule: close → done, notify → done + task.notify event,
+//     review (or default/unknown) → review.
 //   - Otherwise (work in flight, missing children) → parent is left
 //     unchanged so the next tick re-evaluates.
-func ParentRollupTick(store *sqlstore.Store) error {
+func ParentRollupTick(store *sqlstore.Store, bus *EventBus) error {
 	parents, err := store.ListTasks(sqlstore.TaskFilter{Kind: "parent"})
 	if err != nil {
 		return err
@@ -60,16 +62,36 @@ func ParentRollupTick(store *sqlstore.Store) error {
 				return err
 			}
 		case allDone:
-			target := "review"
-			if p.OnDone == "close" {
-				target = "done"
-			}
-			if err := store.TransitionTask(p.ID, target); err != nil {
+			if err := applyParentOnDone(store, bus, p); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// applyParentOnDone maps the parent's on_done rule to a concrete transition.
+// Kept separate so the notify branch can publish cleanly and the rollup
+// switch stays readable.
+func applyParentOnDone(store *sqlstore.Store, bus *EventBus, p sqlstore.TaskRecord) error {
+	switch p.OnDone {
+	case "close":
+		return store.TransitionTask(p.ID, "done")
+	case "notify":
+		if err := store.TransitionTask(p.ID, "done"); err != nil {
+			return err
+		}
+		if bus != nil {
+			bus.Publish(SchedulerEvent{
+				Type:   "task.notify",
+				TaskID: p.ID,
+				Data:   map[string]interface{}{"reason": "parent rollup: all children done"},
+			})
+		}
+		return nil
+	default: // "review" and any unexpected value
+		return store.TransitionTask(p.ID, "review")
+	}
 }
 
 // extractChildIDs reads metadata.children as []string. Non-string elements
