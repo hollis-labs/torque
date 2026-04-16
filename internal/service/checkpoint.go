@@ -1,8 +1,10 @@
 package service
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -128,11 +130,73 @@ func (s *CheckpointService) Respond(in CheckpointRespondInput) error {
 	if cp.Status != "pending" {
 		return &ConflictError{Message: "checkpoint " + cp.Status}
 	}
-	return s.store.RespondCheckpoint(
+	if err := s.store.RespondCheckpoint(
 		in.CorrelationID, in.ResponseJSON,
 		in.ResponderSourceType, in.ResponderSourceRef,
 		time.Now().UTC(),
-	)
+	); err != nil {
+		return err
+	}
+	return s.applyOnCheckpointResponse(cp, in.ResponseJSON)
+}
+
+// applyOnCheckpointResponse enforces the task's on_checkpoint_response rule
+// after a successful Respond. If the task is parked on this correlation_id
+// (status=review AND blocked_reason mentions it):
+//   - resume: transition review → todo, clear BlockedReason, attach response
+//   - review: stay in review, keep BlockedReason, attach response
+//   - custom: plugin hook hand-off (MVP: attach response + stay)
+//
+// If the task isn't parked on this correlation (e.g. non_blocking mode, or a
+// responder racing the executor), only the metadata is attached.
+func (s *CheckpointService) applyOnCheckpointResponse(cp *sqlstore.CheckpointRecord, responseJSON string) error {
+	task, err := s.store.GetTask(cp.TaskID)
+	if err != nil {
+		return err
+	}
+	if err := s.attachCheckpointResponseToMetadata(task, cp.CorrelationID, responseJSON); err != nil {
+		return err
+	}
+	parked := task.Status == "review" && strings.Contains(task.BlockedReason, cp.CorrelationID)
+	if !parked {
+		return nil
+	}
+	switch task.OnCheckpointResponse {
+	case "resume":
+		return s.store.TransitionTaskWithReason(cp.TaskID, "todo", "")
+	case "review", "custom":
+		// Stay parked. Human (or plugin hook) resolves.
+		return nil
+	}
+	return nil
+}
+
+// attachCheckpointResponseToMetadata writes the response into
+// metadata.checkpoint_responses[correlation_id]. If the response string is
+// valid JSON it's stored structurally; otherwise the raw string is stored so
+// downstream tooling still sees it.
+func (s *CheckpointService) attachCheckpointResponseToMetadata(
+	task *sqlstore.TaskRecord, correlationID, responseJSON string,
+) error {
+	md := map[string]any{}
+	if task.Metadata.Valid && task.Metadata.String != "" {
+		_ = unmarshalJSON([]byte(task.Metadata.String), &md)
+	}
+	responses, _ := md["checkpoint_responses"].(map[string]any)
+	if responses == nil {
+		responses = map[string]any{}
+	}
+	var parsed any
+	if err := unmarshalJSON([]byte(responseJSON), &parsed); err != nil {
+		parsed = responseJSON
+	}
+	responses[correlationID] = parsed
+	md["checkpoint_responses"] = responses
+
+	newMD := marshalJSON(md)
+	return s.store.UpdateTask(task.ID, sqlstore.TaskUpdate{
+		Metadata: &sql.NullString{String: newMD, Valid: true},
+	})
 }
 
 // Cancel flips a pending checkpoint to canceled, recording the canceler as
