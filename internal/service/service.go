@@ -15,6 +15,7 @@ type Service struct {
 	Epic       *EpicService
 	Tag        *TagService
 	Checkpoint *CheckpointService
+	Template   *TemplateService
 }
 
 // New constructs a Service wired to the provided store.
@@ -34,5 +35,6 @@ func New(store *sqlstore.Store) *Service {
 		Epic:       &EpicService{store: store, feature: feature},
 		Tag:        tag,
 		Checkpoint: &CheckpointService{store: store},
+		Template:   &TemplateService{store: store, tasks: task},
 	}
 }
