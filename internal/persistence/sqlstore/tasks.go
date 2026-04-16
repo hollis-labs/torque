@@ -519,6 +519,28 @@ func (s *Store) TransitionTask(id, newStatus string) error {
 	return nil
 }
 
+// TransitionTaskWithReason sets a new status and blocked_reason atomically.
+// Used by the scheduler when parking tasks on blocking checkpoints or when
+// sweeping timed-out checkpoints — both cases need the status and the
+// explanatory reason set together.
+func (s *Store) TransitionTaskWithReason(id, newStatus, reason string) error {
+	res, err := s.db.Exec(
+		`UPDATE tasks SET status = ?, blocked_reason = ?, updated_at = ? WHERE id = ?`,
+		newStatus, reason, time.Now().UTC(), id,
+	)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("task %s not found", id)
+	}
+	return nil
+}
+
 // DeleteTask removes a task by ID.
 func (s *Store) DeleteTask(id string) error {
 	res, err := s.db.Exec(`DELETE FROM tasks WHERE id = ?`, id)

@@ -152,6 +152,13 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 		}
 	}
 
+	// Sweep timed-out checkpoints — any pending row past its timeout_at is
+	// flipped to "timed_out" and, if its task is parked in review on that
+	// correlation_id, the task transitions review → blocked.
+	if _, err := SweepCheckpointTimeouts(s.store, s.bus, time.Now().UTC()); err != nil {
+		log.Printf("[scheduler] checkpoint timeout sweep error: %v", err)
+	}
+
 	// Check for stale workers
 	staleThreshold := time.Duration(s.cfg.StaleSeconds) * time.Second
 	stale, err := s.heartbeat.FindStale(staleThreshold)
@@ -248,6 +255,28 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 					FilePath: event.Artifact.FilePath,
 					Metadata: metadataJSON,
 				})
+			}
+
+			// Inline-form CLOCKWORK_CHECKPOINT emits are routed to the
+			// checkpoint handler which creates the row and parks the task
+			// if its checkpoint_mode is "blocking". JSON-form checkpoints
+			// (event.Signal == "CLOCKWORK_CHECKPOINT" with a JSON payload)
+			// are left for later work — MVP emits via the inline form.
+			if event.Type == executor.EventSignal && event.Signal == "CLOCKWORK_CHECKPOINT" {
+				if out, err := HandleCheckpointSignal(s.store, capturedTaskID, capturedRunID, event.Content, time.Now().UTC()); err != nil {
+					log.Printf("[scheduler] checkpoint emit error for %s: %v", capturedTaskID, err)
+				} else {
+					s.bus.Publish(SchedulerEvent{
+						Type:   "checkpoint.emitted",
+						TaskID: capturedTaskID,
+						RunID:  capturedRunID,
+						Data: map[string]interface{}{
+							"correlation_id": out.CorrelationID,
+							"type":           out.Type,
+							"park":           out.ParkTask,
+						},
+					})
+				}
 			}
 
 			writeRunEvent(s.store, capturedRunID, capturedTaskID, runEventType(event), runEventPayload(event))
