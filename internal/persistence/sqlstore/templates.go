@@ -11,10 +11,30 @@ import (
 // located — callers use errors.Is to map to HTTP 404.
 var ErrTemplateNotFound = errors.New("template not found")
 
-// ErrTemplateReferenced is returned from DeleteTemplate when tasks still
-// reference any version of the template. Callers should map to HTTP 409
-// and recommend archive instead.
+// ErrTemplateReferenced is the sentinel returned from DeleteTemplate when
+// tasks still reference any version of the template. DeleteTemplate now
+// returns a *TemplateReferencedError carrying the id + count; use
+// errors.As to unwrap, errors.Is(err, ErrTemplateReferenced) for the
+// simple presence check.
 var ErrTemplateReferenced = errors.New("template has referencing tasks")
+
+// TemplateReferencedError carries the referenced template id and the
+// count of referencing tasks so the service layer can build a clean
+// message without stuttering the sentinel text.
+type TemplateReferencedError struct {
+	ID    string
+	Count int
+}
+
+func (e *TemplateReferencedError) Error() string {
+	return fmt.Sprintf("template %s has %d referencing task(s)", e.ID, e.Count)
+}
+
+// Is makes errors.Is(err, ErrTemplateReferenced) succeed so existing
+// sentinel-based checks keep working.
+func (e *TemplateReferencedError) Is(target error) bool {
+	return target == ErrTemplateReferenced
+}
 
 // TemplateRecord mirrors a row in the task_templates table (migration 009).
 // JSON blob columns (Tools, Permissions, Environment, EscalationChain,
@@ -213,7 +233,7 @@ func (s *Store) DeleteTemplate(id string) error {
 		return err
 	}
 	if n > 0 {
-		return fmt.Errorf("%s: %d referencing tasks: %w", id, n, ErrTemplateReferenced)
+		return &TemplateReferencedError{ID: id, Count: n}
 	}
 	res, err := s.db.Exec(`DELETE FROM task_templates WHERE id = ?`, id)
 	if err != nil {

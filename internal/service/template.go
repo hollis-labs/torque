@@ -164,11 +164,19 @@ func (s *TemplateService) Archive(id string, version int) error {
 }
 
 // Delete hard-deletes every version of a template. Refuses with a
-// ConflictError when tasks still reference any version.
+// ConflictError when tasks still reference any version, steering the
+// caller toward Archive (the recommended lifecycle end-state per spec
+// §5.2).
 func (s *TemplateService) Delete(id string) error {
 	err := s.store.DeleteTemplate(id)
-	if errors.Is(err, sqlstore.ErrTemplateReferenced) {
-		return &ConflictError{Message: err.Error()}
+	var refErr *sqlstore.TemplateReferencedError
+	if errors.As(err, &refErr) {
+		return &ConflictError{
+			Message: fmt.Sprintf(
+				"template %s has %d referencing task(s); archive instead of deleting",
+				refErr.ID, refErr.Count,
+			),
+		}
 	}
 	return err
 }
