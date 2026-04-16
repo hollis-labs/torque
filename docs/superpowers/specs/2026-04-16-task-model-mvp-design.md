@@ -72,7 +72,7 @@ Unchanged: FSM, picker, worker pool, lifecycle manager, deliverables gate, escal
 
 ## 3. Task object deltas
 
-### 3.1 New columns (migration 006, strict — no back-compat)
+### 3.1 New columns (migration 007, strict — no back-compat)
 
 ```sql
 ALTER TABLE tasks
@@ -161,7 +161,7 @@ Known-source registry (deferred to BLG-035) will later override these by `(sourc
 
 Opaque-payload design per Q4 Option C. `go-envelope` (BLG-030) provides schema vocabulary later.
 
-### 4.1 New table (migration 007)
+### 4.1 New table (migration 008)
 
 ```sql
 CREATE TABLE checkpoints (
@@ -266,7 +266,7 @@ Parser is in-tree today at `internal/runtime/executor/signal.go`. Phase B (see �
 
 First-class, versioned, instantiable shapes.
 
-### 5.1 New table (migration 008)
+### 5.1 New table (migration 009)
 
 ```sql
 CREATE TABLE task_templates (
@@ -545,22 +545,22 @@ Land in the existing event emitter. SSE subscribers and plugin hooks automatical
 ### 8.1 Migrations
 
 ```
-006_task_facets.sql    -- ALTER tasks + indexes
-007_checkpoints.sql    -- CREATE TABLE checkpoints + indexes
-008_task_templates.sql -- CREATE TABLE task_templates + indexes
+007_task_facets.sql    -- ALTER tasks + indexes
+008_checkpoints.sql    -- CREATE TABLE checkpoints + indexes
+009_task_templates.sql -- CREATE TABLE task_templates + indexes
 ```
 
-Order: 006 → 007 → 008.
+Order: 007 → 008 → 009. (Migration 006 is already taken by `006_run_events_nullable_run.sql`.)
 
 ### 8.2 Implementation phases
 
 | Phase | Scope | Depends on | Est. (dev days) |
 |-------|-------|-----------|-----------------|
-| A | Migration 006 + facet columns + `validateTaskKind` + service defaults + trust resolver + MCP facet fields + tests | — | 1–2 |
-| B | Migration 007 + `checkpoints` table + checkpoint service + scheduler signal handling + timeout sweep + 6 MCP tools + tests | A | 1–2 |
+| A | Migration 007 + facet columns + `validateTaskKind` + service defaults + trust resolver + MCP facet fields + tests | — | 1–2 |
+| B | Migration 008 + `checkpoints` table + checkpoint service + scheduler signal handling + timeout sweep + 6 MCP tools + tests | A | 1–2 |
 | C | `internal/runtime/waitpoll/` + predicate registry + three built-ins + scheduler dispatch for `kind=wait` + tests | A | 1 |
 | D | `kind=parent` rollup on scheduler tick + tests | A | 0.5 |
-| E | Migration 008 + template table + `TemplateService` + `ResolveVars` + 7 MCP tools + tests | A | 1.5 |
+| E | Migration 009 + template table + `TemplateService` + `ResolveVars` + 7 MCP tools + tests | A | 1.5 |
 | F | Dogfood — create five example templates via MCP, commit YAML reference to `docs/templates/`, run an end-to-end template → scheduler → mock executor → deliverables gate pass | A–E | 0.5 |
 
 Sequencing: A first. B, C, D, E can parallelize after A. F is the validation gate before declaring MVP.
