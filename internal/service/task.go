@@ -89,6 +89,32 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		return nil, err
 	}
 
+	// Facet validation — uses effective values (after defaulting) to match
+	// what will be stored. Executor defaults to "cli" only for kind=agent;
+	// other kinds leave it as the caller set it so validateTaskKind can
+	// enforce kind-specific rules (e.g. external forbids executor).
+	effectiveKind := orDefault(input.Kind, "agent")
+	effectiveExecutor := input.Executor
+	if effectiveKind == "agent" && effectiveExecutor == "" {
+		effectiveExecutor = "cli"
+	}
+	effectiveSourceType := orDefault(input.SourceType, "user")
+	effectiveCheckpointMode := orDefault(input.CheckpointMode, "none")
+	effectiveOnCheckpointResponse := orDefault(input.OnCheckpointResponse, "resume")
+	effectiveTrust := orDefault(input.Trust, ResolveTrust(effectiveSourceType, input.SourceRef))
+	if err := validateTaskKind(
+		effectiveKind,
+		effectiveExecutor,
+		effectiveSourceType,
+		effectiveTrust,
+		effectiveCheckpointMode,
+		effectiveOnCheckpointResponse,
+		input.Manual,
+		input.Metadata,
+	); err != nil {
+		return nil, err
+	}
+
 	// Validate sprint association
 	if input.SprintID != "" {
 		if s.feature != nil && s.feature.IsEnabled("sprints") {
@@ -132,14 +158,13 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		return nil, err
 	}
 
-	sourceType := orDefault(input.SourceType, "user")
 	rec := &sqlstore.TaskRecord{
 		ID:                   id,
 		Title:                input.Title,
 		Description:          input.Description,
 		Priority:             priority,
 		Manual:               input.Manual,
-		Executor:             orDefault(input.Executor, "cli"),
+		Executor:             effectiveExecutor,
 		AgentProfile:         input.AgentProfile,
 		WorkingDir:           input.WorkingDir,
 		SystemPrompt:         input.SystemPrompt,
@@ -150,11 +175,11 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		OnDoneMerge:          orDefault(input.OnDoneMerge, "none"),
 		DeliverablePreset:    input.DeliverablePreset,
 		BlockedReason:        input.BlockedReason,
-		Kind:                 orDefault(input.Kind, "agent"),
-		SourceType:           sourceType,
-		Trust:                orDefault(input.Trust, ResolveTrust(sourceType, input.SourceRef)),
-		CheckpointMode:       orDefault(input.CheckpointMode, "none"),
-		OnCheckpointResponse: orDefault(input.OnCheckpointResponse, "resume"),
+		Kind:                 effectiveKind,
+		SourceType:           effectiveSourceType,
+		Trust:                effectiveTrust,
+		CheckpointMode:       effectiveCheckpointMode,
+		OnCheckpointResponse: effectiveOnCheckpointResponse,
 	}
 	if input.SourceRef != "" {
 		rec.SourceRef = sql.NullString{String: input.SourceRef, Valid: true}
@@ -252,6 +277,47 @@ func (s *TaskService) Update(id string, input TaskUpdateInput) error {
 	if err := s.validateTaskWrites(fields); err != nil {
 		return err
 	}
+
+	// Facet validation against effective values = existing overlaid with update.
+	existing, err := s.store.GetTask(id)
+	if err != nil {
+		return err
+	}
+	effectiveKind := ptrOrDefault(input.Kind, existing.Kind)
+	effectiveExecutor := ptrOrDefault(input.Executor, existing.Executor)
+	effectiveSourceType := ptrOrDefault(input.SourceType, existing.SourceType)
+	effectiveTrust := ptrOrDefault(input.Trust, existing.Trust)
+	effectiveCheckpointMode := ptrOrDefault(input.CheckpointMode, existing.CheckpointMode)
+	effectiveOnCheckpointResponse := ptrOrDefault(input.OnCheckpointResponse, existing.OnCheckpointResponse)
+	effectiveManual := existing.Manual
+	if input.Manual != nil {
+		effectiveManual = *input.Manual
+	}
+	effectiveMetadata := map[string]any{}
+	if existing.Metadata.Valid && existing.Metadata.String != "" {
+		_ = unmarshalJSON([]byte(existing.Metadata.String), &effectiveMetadata)
+	}
+	if input.Metadata != nil && input.Metadata.Valid && input.Metadata.String != "" {
+		overlay := map[string]any{}
+		if err := unmarshalJSON([]byte(input.Metadata.String), &overlay); err == nil {
+			for k, v := range overlay {
+				effectiveMetadata[k] = v
+			}
+		}
+	}
+	if err := validateTaskKind(
+		effectiveKind,
+		effectiveExecutor,
+		effectiveSourceType,
+		effectiveTrust,
+		effectiveCheckpointMode,
+		effectiveOnCheckpointResponse,
+		effectiveManual,
+		effectiveMetadata,
+	); err != nil {
+		return err
+	}
+
 	if err := s.store.UpdateTask(id, input.TaskUpdate); err != nil {
 		return err
 	}
