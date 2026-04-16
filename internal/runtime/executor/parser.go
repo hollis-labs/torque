@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -51,6 +52,16 @@ func ParseLine(line string) ParsedSignal {
 	case strings.HasPrefix(trimmed, "CLOCKWORK_TOKENS:"):
 		payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "CLOCKWORK_TOKENS:"))
 		return ParsedSignal{Type: SignalTokens, Payload: payload}
+
+	// Inline checkpoint signals (spec §4.6). Checkpoint-await must be
+	// matched before Checkpoint because its prefix is the longer one.
+	case strings.HasPrefix(trimmed, "CLOCKWORK_CHECKPOINT_AWAIT "):
+		payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "CLOCKWORK_CHECKPOINT_AWAIT "))
+		return ParsedSignal{Type: SignalCheckpointAwait, Payload: payload}
+
+	case strings.HasPrefix(trimmed, "CLOCKWORK_CHECKPOINT "):
+		payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "CLOCKWORK_CHECKPOINT "))
+		return ParsedSignal{Type: SignalCheckpoint, Payload: payload}
 
 	default:
 		return ParsedSignal{Type: SignalLogLine, Payload: line}
@@ -120,6 +131,31 @@ func ParseArtifactPayload(payload string) (Artifact, error) {
 		FilePath: raw.FilePath,
 		Metadata: raw.Metadata,
 	}, nil
+}
+
+// ParseCheckpointPayload destructures the inline-form payload of a
+// CLOCKWORK_CHECKPOINT signal — three whitespace-separated fields:
+//
+//	<correlation_id> <type> <base64(payload_json)>
+//
+// Returns the decoded (correlation_id, type, payload_json) triple. The
+// payload_json is the base64-decoded opaque JSON string (validated only to
+// be base64-parseable — its schema is go-envelope's job, BLG-030).
+func ParseCheckpointPayload(payload string) (correlationID, typ, payloadJSON string, err error) {
+	parts := strings.SplitN(payload, " ", 3)
+	if len(parts) != 3 {
+		return "", "", "", fmt.Errorf("checkpoint payload must have 3 whitespace-separated fields, got %d", len(parts))
+	}
+	correlationID = strings.TrimSpace(parts[0])
+	typ = strings.TrimSpace(parts[1])
+	raw, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(parts[2]))
+	if decodeErr != nil {
+		return "", "", "", fmt.Errorf("decode checkpoint payload base64: %w", decodeErr)
+	}
+	if correlationID == "" || typ == "" {
+		return "", "", "", fmt.Errorf("checkpoint payload missing correlation_id or type")
+	}
+	return correlationID, typ, string(raw), nil
 }
 
 // ParseTokenPayload parses a CLOCKWORK_TOKENS payload of the form

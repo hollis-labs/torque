@@ -119,6 +119,40 @@ func TestParseLineJSONMalformed(t *testing.T) {
 	assert.Equal(t, executor.SignalLogLine, sig.Type)
 }
 
+func TestParseLine_CheckpointInline(t *testing.T) {
+	// CLOCKWORK_CHECKPOINT <correlation_id> <type> <base64(payload_json)>
+	sig := executor.ParseLine("CLOCKWORK_CHECKPOINT 01H-CORR collect_data eyJxIjoicGljayJ9")
+	assert.Equal(t, executor.SignalCheckpoint, sig.Type)
+	assert.Equal(t, "01H-CORR collect_data eyJxIjoicGljayJ9", sig.Payload)
+}
+
+func TestParseLine_CheckpointAwaitInline(t *testing.T) {
+	sig := executor.ParseLine("CLOCKWORK_CHECKPOINT_AWAIT 01H-CORR")
+	assert.Equal(t, executor.SignalCheckpointAwait, sig.Type)
+	assert.Equal(t, "01H-CORR", sig.Payload)
+}
+
+func TestParseCheckpointPayload(t *testing.T) {
+	t.Run("decodes three-part payload", func(t *testing.T) {
+		// payload_json is `{"q":"pick"}` base64-encoded as `eyJxIjoicGljayJ9`.
+		corr, typ, pj, err := executor.ParseCheckpointPayload("01H-CORR collect_data eyJxIjoicGljayJ9")
+		require.NoError(t, err)
+		assert.Equal(t, "01H-CORR", corr)
+		assert.Equal(t, "collect_data", typ)
+		assert.Equal(t, `{"q":"pick"}`, pj)
+	})
+
+	t.Run("rejects malformed payload", func(t *testing.T) {
+		_, _, _, err := executor.ParseCheckpointPayload("only-two parts")
+		require.Error(t, err)
+	})
+
+	t.Run("rejects bad base64", func(t *testing.T) {
+		_, _, _, err := executor.ParseCheckpointPayload("corr type not-base64!")
+		require.Error(t, err)
+	})
+}
+
 func TestParseArtifactPayload(t *testing.T) {
 	t.Run("full payload", func(t *testing.T) {
 		payload := `{"signal":"CLOCKWORK_ARTIFACT","type":"diff","content":"--- a/x\n+++ b/x","url":"https://example.com/x","file_path":"x.go","metadata":{"lines":42}}`
