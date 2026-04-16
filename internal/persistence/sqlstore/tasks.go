@@ -49,6 +49,14 @@ type TaskRecord struct {
 	EpicID            sql.NullString
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
+
+	// Facet columns (migration 007)
+	Kind                 string
+	SourceType           string
+	SourceRef            sql.NullString
+	Trust                string
+	CheckpointMode       string
+	OnCheckpointResponse string
 }
 
 // TaskFilter holds optional filter criteria for ListTasks.
@@ -62,6 +70,13 @@ type TaskFilter struct {
 	Executor  string
 	Limit     int
 	Offset    int
+
+	// Facet filters (migration 007)
+	Kind           string
+	SourceType     string
+	SourceRef      string
+	Trust          string
+	CheckpointMode string
 }
 
 // TaskUpdate holds optional fields to update; nil pointer = no change.
@@ -97,6 +112,14 @@ type TaskUpdate struct {
 	SprintID          *sql.NullString
 	ProjectID         *sql.NullString
 	EpicID            *sql.NullString
+
+	// Facet fields (migration 007)
+	Kind                 *string
+	SourceType           *string
+	SourceRef            *sql.NullString
+	Trust                *string
+	CheckpointMode       *string
+	OnCheckpointResponse *string
 }
 
 // applyDefaults fills zero-value fields with domain defaults.
@@ -119,15 +142,31 @@ func applyDefaults(t *TaskRecord) {
 	if t.MaxRetries == 0 {
 		t.MaxRetries = 3
 	}
+	if t.Kind == "" {
+		t.Kind = "agent"
+	}
+	if t.SourceType == "" {
+		t.SourceType = "user"
+	}
+	if t.Trust == "" {
+		t.Trust = "normal"
+	}
+	if t.CheckpointMode == "" {
+		t.CheckpointMode = "none"
+	}
+	if t.OnCheckpointResponse == "" {
+		t.OnCheckpointResponse = "resume"
+	}
 }
 
-// The 34-column SELECT list used by GetTask, ListTasks, and SearchTasks.
+// The 40-column SELECT list used by GetTask, ListTasks, and SearchTasks.
 const taskSelectCols = `id, title, description, status, priority, manual,
 	executor, agent_profile, working_dir, tools, permissions, environment,
 	system_prompt, files, cost_budget, max_retries, max_duration_ms, token_budget,
 	on_done, on_fail, on_review, escalation_chain, quality_gates, deliverables,
 	deliverable_preset, on_done_merge, depends_on, blocked_reason, metadata,
-	sprint_id, project_id, epic_id, created_at, updated_at`
+	sprint_id, project_id, epic_id, created_at, updated_at,
+	kind, source_type, source_ref, trust, checkpoint_mode, on_checkpoint_response`
 
 // scanTask scans a single row into a TaskRecord.
 func scanTask(row interface {
@@ -142,6 +181,7 @@ func scanTask(row interface {
 		&t.OnDone, &t.OnFail, &t.OnReview, &t.EscalationChain, &t.QualityGates, &t.Deliverables,
 		&t.DeliverablePreset, &t.OnDoneMerge, &t.DependsOn, &t.BlockedReason, &t.Metadata,
 		&t.SprintID, &t.ProjectID, &t.EpicID, &t.CreatedAt, &t.UpdatedAt,
+		&t.Kind, &t.SourceType, &t.SourceRef, &t.Trust, &t.CheckpointMode, &t.OnCheckpointResponse,
 	)
 	if err != nil {
 		return nil, err
@@ -168,8 +208,9 @@ func (s *Store) CreateTask(t *TaskRecord) error {
 		system_prompt, files, cost_budget, max_retries, max_duration_ms, token_budget,
 		on_done, on_fail, on_review, escalation_chain, quality_gates, deliverables,
 		deliverable_preset, on_done_merge, depends_on, blocked_reason, metadata,
-		sprint_id, project_id, epic_id
-	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+		sprint_id, project_id, epic_id,
+		kind, source_type, source_ref, trust, checkpoint_mode, on_checkpoint_response
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
 	_, err := s.db.Exec(q,
 		t.ID, t.Title, t.Description, t.Status, t.Priority, manual,
@@ -178,6 +219,7 @@ func (s *Store) CreateTask(t *TaskRecord) error {
 		t.OnDone, t.OnFail, t.OnReview, t.EscalationChain, t.QualityGates, t.Deliverables,
 		t.DeliverablePreset, t.OnDoneMerge, t.DependsOn, t.BlockedReason, t.Metadata,
 		t.SprintID, t.ProjectID, t.EpicID,
+		t.Kind, t.SourceType, t.SourceRef, t.Trust, t.CheckpointMode, t.OnCheckpointResponse,
 	)
 	return err
 }
@@ -229,6 +271,26 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 	if f.Executor != "" {
 		where = append(where, "executor = ?")
 		args = append(args, f.Executor)
+	}
+	if f.Kind != "" {
+		where = append(where, "kind = ?")
+		args = append(args, f.Kind)
+	}
+	if f.SourceType != "" {
+		where = append(where, "source_type = ?")
+		args = append(args, f.SourceType)
+	}
+	if f.SourceRef != "" {
+		where = append(where, "source_ref = ?")
+		args = append(args, f.SourceRef)
+	}
+	if f.Trust != "" {
+		where = append(where, "trust = ?")
+		args = append(args, f.Trust)
+	}
+	if f.CheckpointMode != "" {
+		where = append(where, "checkpoint_mode = ?")
+		args = append(args, f.CheckpointMode)
 	}
 
 	q := `SELECT ` + taskSelectCols + ` FROM tasks`
@@ -392,6 +454,30 @@ func (s *Store) UpdateTask(id string, u TaskUpdate) error {
 	if u.EpicID != nil {
 		setClauses = append(setClauses, "epic_id = ?")
 		args = append(args, *u.EpicID)
+	}
+	if u.Kind != nil {
+		setClauses = append(setClauses, "kind = ?")
+		args = append(args, *u.Kind)
+	}
+	if u.SourceType != nil {
+		setClauses = append(setClauses, "source_type = ?")
+		args = append(args, *u.SourceType)
+	}
+	if u.SourceRef != nil {
+		setClauses = append(setClauses, "source_ref = ?")
+		args = append(args, *u.SourceRef)
+	}
+	if u.Trust != nil {
+		setClauses = append(setClauses, "trust = ?")
+		args = append(args, *u.Trust)
+	}
+	if u.CheckpointMode != nil {
+		setClauses = append(setClauses, "checkpoint_mode = ?")
+		args = append(args, *u.CheckpointMode)
+	}
+	if u.OnCheckpointResponse != nil {
+		setClauses = append(setClauses, "on_checkpoint_response = ?")
+		args = append(args, *u.OnCheckpointResponse)
 	}
 
 	// Always update updated_at
