@@ -144,6 +144,22 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 		}
 	}
 
+	// Sweep timed-out checkpoints before picking — any pending row past
+	// its timeout_at is flipped to "timed_out" and, if its task is parked
+	// in review on that correlation_id, the task transitions review →
+	// blocked. Running ahead of the pick keeps stale-parked tasks from
+	// being considered for dispatch this tick.
+	if _, err := SweepCheckpointTimeouts(s.store, s.bus, time.Now().UTC()); err != nil {
+		log.Printf("[scheduler] checkpoint timeout sweep error: %v", err)
+	}
+
+	// Roll up parent-kind task statuses from their children. Runs before
+	// the pick so a parent transitioned by the rollup isn't picked up
+	// again this tick. Picker also filters kind=parent as belt-and-braces.
+	if err := ParentRollupTick(s.store, s.bus); err != nil {
+		log.Printf("[scheduler] parent rollup error: %v", err)
+	}
+
 	// Pick eligible tasks
 	available := s.pool.AvailableSlots()
 	if available <= 0 {
@@ -171,20 +187,6 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 			log.Printf("[scheduler] failed to dispatch %s: %v", task.ID, err)
 			continue
 		}
-	}
-
-	// Sweep timed-out checkpoints — any pending row past its timeout_at is
-	// flipped to "timed_out" and, if its task is parked in review on that
-	// correlation_id, the task transitions review → blocked.
-	if _, err := SweepCheckpointTimeouts(s.store, s.bus, time.Now().UTC()); err != nil {
-		log.Printf("[scheduler] checkpoint timeout sweep error: %v", err)
-	}
-
-	// Roll up parent-kind task statuses from their children. Runs before
-	// the pick so a parent transitioned to done here isn't picked up by
-	// the dispatch loop a few lines later.
-	if err := ParentRollupTick(s.store, s.bus); err != nil {
-		log.Printf("[scheduler] parent rollup error: %v", err)
 	}
 
 	// Check for stale workers
