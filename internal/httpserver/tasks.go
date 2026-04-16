@@ -52,6 +52,13 @@ func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord) map[string]inte
 		"epic_id":            nullStr(t.EpicID),
 		"created_at":         t.CreatedAt,
 		"updated_at":         t.UpdatedAt,
+
+		"kind":                   t.Kind,
+		"source_type":            t.SourceType,
+		"source_ref":             nullStr(t.SourceRef),
+		"trust":                  t.Trust,
+		"checkpoint_mode":        t.CheckpointMode,
+		"on_checkpoint_response": t.OnCheckpointResponse,
 	}
 }
 
@@ -133,6 +140,14 @@ type TaskCreateRequest struct {
 	SprintID          string                `json:"sprint_id,omitempty"`
 	ProjectID         string                `json:"project_id,omitempty"`
 	EpicID            string                `json:"epic_id,omitempty"`
+
+	// Facet fields (migration 007)
+	Kind                 string `json:"kind,omitempty"`
+	SourceType           string `json:"source_type,omitempty"`
+	SourceRef            string `json:"source_ref,omitempty"`
+	Trust                string `json:"trust,omitempty"`
+	CheckpointMode       string `json:"checkpoint_mode,omitempty"`
+	OnCheckpointResponse string `json:"on_checkpoint_response,omitempty"`
 }
 
 // TaskUpdateRequest is the JSON request body for PUT /api/v1/tasks/:id.
@@ -172,6 +187,14 @@ type TaskUpdateRequest struct {
 	SprintID          *string                `json:"sprint_id,omitempty"`
 	ProjectID         *string                `json:"project_id,omitempty"`
 	EpicID            *string                `json:"epic_id,omitempty"`
+
+	// Facet fields (migration 007)
+	Kind                 *string `json:"kind,omitempty"`
+	SourceType           *string `json:"source_type,omitempty"`
+	SourceRef            *string `json:"source_ref,omitempty"`
+	Trust                *string `json:"trust,omitempty"`
+	CheckpointMode       *string `json:"checkpoint_mode,omitempty"`
+	OnCheckpointResponse *string `json:"on_checkpoint_response,omitempty"`
 
 	// Status is included only for detection — the handler returns 400 if it
 	// is non-nil and points the caller to POST /tasks/:id/transition.
@@ -267,6 +290,21 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	if v := r.URL.Query().Get("executor"); v != "" {
 		filter.Executor = v
 	}
+	if v := r.URL.Query().Get("kind"); v != "" {
+		filter.Kind = v
+	}
+	if v := r.URL.Query().Get("source_type"); v != "" {
+		filter.SourceType = v
+	}
+	if v := r.URL.Query().Get("source_ref"); v != "" {
+		filter.SourceRef = v
+	}
+	if v := r.URL.Query().Get("trust"); v != "" {
+		filter.Trust = v
+	}
+	if v := r.URL.Query().Get("checkpoint_mode"); v != "" {
+		filter.CheckpointMode = v
+	}
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			filter.Limit = n
@@ -352,6 +390,13 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		SprintID:          req.SprintID,
 		ProjectID:         req.ProjectID,
 		EpicID:            req.EpicID,
+
+		Kind:                 req.Kind,
+		SourceType:           req.SourceType,
+		SourceRef:            req.SourceRef,
+		Trust:                req.Trust,
+		CheckpointMode:       req.CheckpointMode,
+		OnCheckpointResponse: req.OnCheckpointResponse,
 	}
 
 	task, err := s.svc.Task.Create(input)
@@ -454,6 +499,17 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.EpicID != nil {
 		update.EpicID = &sql.NullString{String: *req.EpicID, Valid: *req.EpicID != ""}
+	}
+
+	// Facet fields (migration 007). String facets map directly; source_ref
+	// wraps as *sql.NullString so the empty string clears the column.
+	update.Kind = req.Kind
+	update.SourceType = req.SourceType
+	update.Trust = req.Trust
+	update.CheckpointMode = req.CheckpointMode
+	update.OnCheckpointResponse = req.OnCheckpointResponse
+	if req.SourceRef != nil {
+		update.SourceRef = &sql.NullString{String: *req.SourceRef, Valid: *req.SourceRef != ""}
 	}
 
 	input := service.TaskUpdateInput{TaskUpdate: update, Tags: req.Tags}
