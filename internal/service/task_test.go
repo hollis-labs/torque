@@ -39,6 +39,40 @@ func TestTaskCreate(t *testing.T) {
 	require.Equal(t, 1, task.Priority)
 }
 
+func TestTaskCreate_FacetDefaults(t *testing.T) {
+	svc := setupService(t)
+
+	rec, err := svc.Task.Create(service.TaskCreateInput{Title: "minimal"})
+	require.NoError(t, err)
+	require.Equal(t, "agent", rec.Kind)
+	require.Equal(t, "user", rec.SourceType)
+	require.False(t, rec.SourceRef.Valid)
+	require.Equal(t, "normal", rec.Trust)
+	require.Equal(t, "none", rec.CheckpointMode)
+	require.Equal(t, "resume", rec.OnCheckpointResponse)
+}
+
+func TestTaskCreate_FacetExplicit(t *testing.T) {
+	svc := setupService(t)
+
+	rec, err := svc.Task.Create(service.TaskCreateInput{
+		Title:                "explicit",
+		Kind:                 "agent",
+		SourceType:           "agent",
+		SourceRef:            "claude-code",
+		Trust:                "trusted",
+		CheckpointMode:       "blocking",
+		OnCheckpointResponse: "review",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "agent", rec.SourceType)
+	require.True(t, rec.SourceRef.Valid)
+	require.Equal(t, "claude-code", rec.SourceRef.String)
+	require.Equal(t, "trusted", rec.Trust)
+	require.Equal(t, "blocking", rec.CheckpointMode)
+	require.Equal(t, "review", rec.OnCheckpointResponse)
+}
+
 func TestTaskCreateValidation(t *testing.T) {
 	svc := setupService(t)
 

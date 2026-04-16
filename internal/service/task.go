@@ -52,6 +52,14 @@ type TaskCreateInput struct {
 	Deliverables    []Deliverable
 	BlockedReason   string
 	Metadata        map[string]any
+
+	// Facet fields (migration 007)
+	Kind                 string
+	SourceType           string
+	SourceRef            string
+	Trust                string // if empty, resolved via ResolveTrust
+	CheckpointMode       string
+	OnCheckpointResponse string
 }
 
 // TaskService provides business logic for tasks.
@@ -124,23 +132,32 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		return nil, err
 	}
 
+	sourceType := orDefault(input.SourceType, "user")
 	rec := &sqlstore.TaskRecord{
-		ID:                id,
-		Title:             input.Title,
-		Description:       input.Description,
-		Priority:          priority,
-		Manual:            input.Manual,
-		Executor:          orDefault(input.Executor, "cli"),
-		AgentProfile:      input.AgentProfile,
-		WorkingDir:        input.WorkingDir,
-		SystemPrompt:      input.SystemPrompt,
-		MaxRetries:        orDefaultInt(input.MaxRetries, 3),
-		OnDone:            orDefault(input.OnDone, "review"),
-		OnFail:            orDefault(input.OnFail, "retry"),
-		OnReview:          orDefault(input.OnReview, "pause"),
-		OnDoneMerge:       orDefault(input.OnDoneMerge, "none"),
-		DeliverablePreset: input.DeliverablePreset,
-		BlockedReason:     input.BlockedReason,
+		ID:                   id,
+		Title:                input.Title,
+		Description:          input.Description,
+		Priority:             priority,
+		Manual:               input.Manual,
+		Executor:             orDefault(input.Executor, "cli"),
+		AgentProfile:         input.AgentProfile,
+		WorkingDir:           input.WorkingDir,
+		SystemPrompt:         input.SystemPrompt,
+		MaxRetries:           orDefaultInt(input.MaxRetries, 3),
+		OnDone:               orDefault(input.OnDone, "review"),
+		OnFail:               orDefault(input.OnFail, "retry"),
+		OnReview:             orDefault(input.OnReview, "pause"),
+		OnDoneMerge:          orDefault(input.OnDoneMerge, "none"),
+		DeliverablePreset:    input.DeliverablePreset,
+		BlockedReason:        input.BlockedReason,
+		Kind:                 orDefault(input.Kind, "agent"),
+		SourceType:           sourceType,
+		Trust:                orDefault(input.Trust, ResolveTrust(sourceType, input.SourceRef)),
+		CheckpointMode:       orDefault(input.CheckpointMode, "none"),
+		OnCheckpointResponse: orDefault(input.OnCheckpointResponse, "resume"),
+	}
+	if input.SourceRef != "" {
+		rec.SourceRef = sql.NullString{String: input.SourceRef, Valid: true}
 	}
 
 	if len(input.Tools) > 0 {
