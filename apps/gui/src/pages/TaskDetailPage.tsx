@@ -10,6 +10,7 @@ import { CommentList } from '@/components/domain/comment-list'
 import { EmptyState } from '@/components/domain/empty-state'
 import { ArtifactCard } from '@/components/domain/artifact-card'
 import { ActivityTimeline } from '@/components/domain/activity-timeline'
+import { SubtodosPanel } from '@/components/domain/subtodos-panel'
 import { DebugTabStub } from '@/components/domain/debug-tab-stub'
 import {
   AttachArtifactDialog,
@@ -443,6 +444,7 @@ export default function TaskDetailPage() {
                 ['details', 'Details'],
                 ['comments', 'Comments'],
                 ['artifacts', 'Artifacts'],
+                ['subtodos', 'Sub-todos'],
                 ['logs', 'Logs'],
                 ['debug', 'Debug'],
               ] as const).map(([value, label]) => (
@@ -544,6 +546,18 @@ export default function TaskDetailPage() {
                   </div>
                 )}
               </div>
+            </TabsContent>
+
+            <TabsContent value="subtodos" className="px-4 py-3">
+              {id && (
+                <SubtodosPanel
+                  taskId={id}
+                  subtodos={task.subtodos ?? []}
+                  onChange={(next) =>
+                    setTask((prev) => (prev ? { ...prev, subtodos: next } : prev))
+                  }
+                />
+              )}
             </TabsContent>
 
             <TabsContent value="logs" className="px-4 py-3">

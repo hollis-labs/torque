@@ -152,6 +152,14 @@ export interface Task {
    * task responses; zero-valued for tasks that have never executed.
    */
   stats?: TaskStats
+
+  /**
+   * Structural checklist. Populated at create time by extracting top-level
+   * `- [ ]` / `- [x]` markdown from the description, writable thereafter via
+   * MCP or the subtodos HTTP endpoints. Always an array on task responses;
+   * empty when the task has no checklist.
+   */
+  subtodos?: Subtodo[]
 }
 
 export interface TaskStats {
@@ -159,6 +167,14 @@ export interface TaskStats {
   prompt_tokens: number
   completion_tokens: number
   cost: number
+}
+
+export interface Subtodo {
+  id: string
+  text: string
+  required: boolean
+  done: boolean
+  evidence?: string
 }
 
 export interface Run {

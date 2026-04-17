@@ -13,11 +13,12 @@ import (
 )
 
 // taskJSON converts a TaskRecord to a JSON-friendly map with snake_case keys
-// and proper null handling for sql.Null* types. Tags and the run aggregate
-// are passed in so the caller can batch-load them rather than requiring a
-// store handle here. When agg is nil, stats are omitted and the client
-// renders zeroes.
-func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, agg *sqlstore.TaskRunAggregate) map[string]interface{} {
+// and proper null handling for sql.Null* types. Tags, the run aggregate,
+// and subtodos are passed in so the caller can batch-load them rather than
+// requiring a store handle here. When agg is nil, stats render as zeroes.
+// Nil subtodos is serialized as an empty array so the client can always
+// rely on the key being present.
+func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, agg *sqlstore.TaskRunAggregate, subtodos []sqlstore.Subtodo) map[string]interface{} {
 	stats := map[string]interface{}{
 		"run_count":         0,
 		"prompt_tokens":     0,
@@ -29,6 +30,9 @@ func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, agg *sqlstore.T
 		stats["prompt_tokens"] = agg.PromptTokens
 		stats["completion_tokens"] = agg.CompletionTokens
 		stats["cost"] = agg.Cost
+	}
+	if subtodos == nil {
+		subtodos = []sqlstore.Subtodo{}
 	}
 	return map[string]interface{}{
 		"id":                 t.ID,
@@ -78,12 +82,17 @@ func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, agg *sqlstore.T
 		// runs for this task, plus a turn count. Nil aggregate renders
 		// zeroes so clients can rely on the keys always being present.
 		"stats": stats,
+
+		// Structural checklist — auto-extracted from markdown `- [ ]` in the
+		// description at create time, also writable via MCP/HTTP. Empty array
+		// (never null) so the client can map without a guard.
+		"subtodos": subtodos,
 	}
 }
 
 // tasksJSON converts a slice of TaskRecord to a JSON-friendly slice.
-// Loads linked tags + run aggregates per-task (N+1 — acceptable at current
-// scale; the aggregate query is an indexed SUM/COUNT per task).
+// Loads linked tags, run aggregates, and subtodos per-task (N+1 — acceptable
+// at current scale; each is an indexed single-row read per task).
 func (s *Server) tasksJSON(tasks []sqlstore.TaskRecord) ([]map[string]interface{}, error) {
 	out := make([]map[string]interface{}, len(tasks))
 	for i := range tasks {
@@ -95,7 +104,11 @@ func (s *Server) tasksJSON(tasks []sqlstore.TaskRecord) ([]map[string]interface{
 		if err != nil {
 			return nil, err
 		}
-		out[i] = taskJSON(&tasks[i], tags, agg)
+		subs, err := s.svc.Task.ListSubtodos(tasks[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = taskJSON(&tasks[i], tags, agg, subs)
 	}
 	return out, nil
 }
@@ -373,7 +386,12 @@ func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, taskJSON(task, tags, agg))
+	subs, err := s.svc.Task.ListSubtodos(task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, taskJSON(task, tags, agg, subs))
 }
 
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
@@ -443,8 +461,16 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Auto-extracted subtodos are persisted during Create; fetch them so the
+	// client sees them on the very first response instead of needing a
+	// follow-up GET.
+	subs, err := s.svc.Task.ListSubtodos(task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	s.sse.Broadcast("task.created", map[string]interface{}{"task_id": task.ID, "title": task.Title})
-	writeJSON(w, http.StatusCreated, taskJSON(task, tags, nil))
+	writeJSON(w, http.StatusCreated, taskJSON(task, tags, nil, subs))
 }
 
 func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
@@ -568,9 +594,14 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	subs, err := s.svc.Task.ListSubtodos(task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	s.sse.Broadcast("task.updated", map[string]interface{}{"task_id": id})
-	writeJSON(w, http.StatusOK, taskJSON(task, tags, agg))
+	writeJSON(w, http.StatusOK, taskJSON(task, tags, agg, subs))
 }
 
 func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
@@ -613,9 +644,14 @@ func (s *Server) transitionTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	subs, err := s.svc.Task.ListSubtodos(task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	s.sse.Broadcast("task.transitioned", map[string]interface{}{"task_id": id, "status": req.Status})
-	writeJSON(w, http.StatusOK, taskJSON(task, tags, agg))
+	writeJSON(w, http.StatusOK, taskJSON(task, tags, agg, subs))
 }
 
 func (s *Server) bulkTransitionTasks(w http.ResponseWriter, r *http.Request) {
