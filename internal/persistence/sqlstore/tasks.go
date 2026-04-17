@@ -69,6 +69,7 @@ type TaskFilter struct {
 	ProjectID string
 	EpicID    string
 	Executor  string
+	TagSlugs  []string // AND-match: task must have all listed tags
 	Limit     int
 	Offset    int
 
@@ -293,6 +294,18 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 	if f.CheckpointMode != "" {
 		where = append(where, "checkpoint_mode = ?")
 		args = append(args, f.CheckpointMode)
+	}
+	if len(f.TagSlugs) > 0 {
+		placeholders := make([]string, len(f.TagSlugs))
+		for i, slug := range f.TagSlugs {
+			placeholders[i] = "?"
+			args = append(args, slug)
+		}
+		args = append(args, len(f.TagSlugs))
+		where = append(where, fmt.Sprintf(
+			"id IN (SELECT task_id FROM task_tags WHERE tag_slug IN (%s) GROUP BY task_id HAVING COUNT(DISTINCT tag_slug) = ?)",
+			strings.Join(placeholders, ","),
+		))
 	}
 
 	q := `SELECT ` + taskSelectCols + ` FROM tasks`

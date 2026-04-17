@@ -7,7 +7,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { STATUS_COLORS, DEFAULT_STATUS_COLOR, MODE_PRESETS, PRIORITIES, TASK_STATUSES } from '@/lib/constants'
-import type { Epic, Project, Sprint, TaskStatus } from '@/lib/types'
+import type { Epic, Project, Sprint, Tag, TaskStatus } from '@/lib/types'
 
 type ModePreset = keyof typeof MODE_PRESETS | 'all'
 
@@ -33,6 +33,9 @@ interface FilterBarProps {
   epics?: Epic[]
   epicId?: string | null
   onEpicChange?: (id: string | null) => void
+  tags?: Tag[]
+  tagSlug?: string | null
+  onTagChange?: (slug: string | null) => void
   onProjectCreate?: () => void
   onEpicCreate?: () => void
 }
@@ -54,10 +57,13 @@ export function FilterBar({
   epics,
   epicId,
   onEpicChange,
+  tags,
+  tagSlug,
+  onTagChange,
   onProjectCreate,
   onEpicCreate,
 }: FilterBarProps) {
-  const showGroups = Boolean(onProjectChange || onSprintChange || onEpicChange)
+  const showGroups = Boolean(onProjectChange || onSprintChange || onEpicChange || onTagChange)
 
   return (
     <div className="flex flex-wrap items-center gap-3 border-b border-zinc-800/80 bg-zinc-950 px-4 py-2.5 text-xs">
@@ -173,6 +179,16 @@ export function FilterBar({
               onChange={onEpicChange}
               onCreate={onEpicCreate}
               createLabel="New epic"
+            />
+          )}
+          {onTagChange && (
+            <GroupSelect
+              label="Tag"
+              ariaLabel="Filter by tag"
+              allLabel="All tags"
+              items={(tags ?? []).map((t) => ({ id: t.slug, name: t.name }))}
+              value={tagSlug ?? null}
+              onChange={onTagChange}
             />
           )}
         </div>
