@@ -163,4 +163,17 @@ func TestMigrationsApply(t *testing.T) {
 	err = db.QueryRow(`SELECT working_dir FROM task_templates WHERE id = 'T-WD'`).Scan(&wd)
 	require.NoError(t, err)
 	require.False(t, wd.Valid, "existing rows inserted without working_dir should have NULL, not ''")
+
+	// Verify 012 added agent_file column to tasks and task_templates.
+	// Column is NOT NULL DEFAULT '' so rows inserted before/after the migration
+	// both default to empty string (no agent file).
+	_, err = db.Exec(`SELECT agent_file FROM tasks LIMIT 0`)
+	require.NoError(t, err, "tasks.agent_file should exist after migration 012")
+	_, err = db.Exec(`SELECT agent_file FROM task_templates LIMIT 0`)
+	require.NoError(t, err, "task_templates.agent_file should exist after migration 012")
+
+	var af string
+	err = db.QueryRow(`SELECT agent_file FROM tasks WHERE id = 'T1'`).Scan(&af)
+	require.NoError(t, err)
+	require.Equal(t, "", af, "existing rows should default to empty agent_file after migration 012")
 }

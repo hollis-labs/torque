@@ -23,6 +23,7 @@ func (a *Adapter) registerTaskTools() {
 		mcp.WithString("agent_profile", mcp.Description("Agent profile name")),
 		mcp.WithString("working_dir", mcp.Description("Working directory")),
 		mcp.WithString("system_prompt", mcp.Description("System prompt override")),
+		mcp.WithString("agent_file", mcp.Description("Absolute or working_dir-relative path to a YAML agent spec; loaded at dispatch")),
 		mcp.WithString("on_done", mcp.Description("Hook on done")),
 		mcp.WithString("on_fail", mcp.Description("Hook on fail")),
 		mcp.WithString("on_done_merge", mcp.Description("Merge hook on done")),
@@ -69,6 +70,7 @@ func (a *Adapter) registerTaskTools() {
 		mcp.WithString("agent_profile", mcp.Description("Agent profile name")),
 		mcp.WithString("working_dir", mcp.Description("Working directory")),
 		mcp.WithString("system_prompt", mcp.Description("System prompt override")),
+		mcp.WithString("agent_file", mcp.Description("Absolute or working_dir-relative path to a YAML agent spec; pass empty string to clear")),
 		mcp.WithString("on_done", mcp.Description("Hook on done (close|review|notify)")),
 		mcp.WithString("on_fail", mcp.Description("Hook on fail (retry|block|escalate|notify)")),
 		mcp.WithString("on_review", mcp.Description("Hook on review (pause|notify|auto-approve)")),
@@ -156,6 +158,7 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest)
 		AgentProfile:         reqStr(req, "agent_profile"),
 		WorkingDir:           reqStr(req, "working_dir"),
 		SystemPrompt:         reqStr(req, "system_prompt"),
+		AgentFile:            reqStr(req, "agent_file"),
 		OnDone:               reqStr(req, "on_done"),
 		OnFail:               reqStr(req, "on_fail"),
 		OnDoneMerge:          reqStr(req, "on_done_merge"),
@@ -263,6 +266,10 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 	if _, ok := args["system_prompt"]; ok {
 		v := reqStr(req, "system_prompt")
 		update.SystemPrompt = &v
+	}
+	if _, ok := args["agent_file"]; ok {
+		v := reqStr(req, "agent_file")
+		update.AgentFile = &v
 	}
 	if _, ok := args["on_done"]; ok {
 		v := reqStr(req, "on_done")

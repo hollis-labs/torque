@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hollis-labs/clockwork-manifold/internal/agentfile"
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 )
@@ -79,7 +80,19 @@ func (e *CLIExecutor) Validate(job *executor.ExecutionJob) error {
 func (e *CLIExecutor) Run(ctx context.Context, job *executor.ExecutionJob, cb executor.EventCallback) (*executor.ExecutionResult, error) {
 	profile := resolveProfile(e.profiles, job)
 
-	spec, err := buildCommandSpec(profile, job)
+	// Agent file v1 (CW-20260417-0082): load the referenced spec at dispatch
+	// time. Parse failures block the run with a clear reason rather than
+	// failing the mutation that created the task — the file may have been
+	// valid when the task was created and edited later.
+	agent, err := loadAgentFile(job)
+	if err != nil {
+		return &executor.ExecutionResult{Status: "blocked", Reason: err.Error()}, nil
+	}
+	if agent != nil && len(agent.Tools) > 0 {
+		log.Printf("executor-cli: agent file declares tools=%v (advisory only in v1; no enforcement) task=%s", agent.Tools, job.TaskID)
+	}
+
+	spec, err := buildCommandSpec(profile, job, agent)
 	if err != nil {
 		return nil, fmt.Errorf("build command spec: %w", err)
 	}
@@ -105,6 +118,19 @@ func (e *CLIExecutor) Run(ctx context.Context, job *executor.ExecutionJob, cb ex
 			"CLOCKWORK_TASK_ID=" + job.TaskID,
 			fmt.Sprintf("CLOCKWORK_RUN_ID=%d", job.RunID),
 		},
+	}
+	// Environment precedence (CW-20260417-0082): agent_file.environment is
+	// applied first so task-level overrides win when the same key is set in
+	// both. Secrets are always filtered regardless of source.
+	if agent != nil {
+		for k, v := range agent.Environment {
+			if _, overridden := job.Environment[k]; overridden {
+				continue
+			}
+			if !executor.LooksLikeSecret(k) {
+				opts.ExtraVars = append(opts.ExtraVars, k+"="+v)
+			}
+		}
 	}
 	// Inject any job-level environment overrides as extra vars, skipping secrets.
 	for k, v := range job.Environment {
@@ -689,4 +715,21 @@ func handleArtifactSignal(
 	if cb != nil {
 		cb(executor.ArtifactEvent(art))
 	}
+}
+
+// loadAgentFile resolves and loads the task's agent file (if any) at dispatch.
+// Returns nil, nil when the task has no agent_file set. Returns a descriptive
+// error when the path can't be resolved or parsed — the executor converts
+// this into a blocked run so operators can fix the file without losing the
+// task. Contents are read here (not at task mutation time) to tolerate files
+// that existed at create but were deleted/edited later.
+func loadAgentFile(job *executor.ExecutionJob) (*agentfile.AgentFile, error) {
+	if job.AgentFile == "" {
+		return nil, nil
+	}
+	resolved, err := agentfile.Resolve(job.AgentFile, job.WorkingDir)
+	if err != nil {
+		return nil, fmt.Errorf("agent_file: %w", err)
+	}
+	return agentfile.Load(resolved)
 }

@@ -3,6 +3,7 @@ package service
 import (
 	"database/sql"
 
+	"github.com/hollis-labs/clockwork-manifold/internal/agentfile"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 )
 
@@ -28,6 +29,7 @@ type TaskCreateInput struct {
 	WorkingDir        string
 	Tools             []string
 	SystemPrompt      string
+	AgentFile         string
 	Files             []string
 	CostBudget        *float64
 	MaxRetries        *int
@@ -92,6 +94,13 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	}
 	if err := s.validateTaskWrites(fields); err != nil {
 		return nil, err
+	}
+
+	// Agent file existence check (CW-20260417-0082). Contents are not read
+	// here — only the path is validated so stale/deleted files surface at
+	// dispatch as a blocked run, not as a task-creation error.
+	if err := agentfile.Validate(input.AgentFile, input.WorkingDir); err != nil {
+		return nil, &ValidationError{Field: "agent_file", Message: err.Error()}
 	}
 
 	// Facet validation — uses effective values (after defaulting) to match
@@ -187,6 +196,7 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		AgentProfile:         input.AgentProfile,
 		WorkingDir:           input.WorkingDir,
 		SystemPrompt:         input.SystemPrompt,
+		AgentFile:            input.AgentFile,
 		MaxRetries:           orDefaultInt(input.MaxRetries, 3),
 		OnDone:               orDefault(input.OnDone, "review"),
 		OnFail:               orDefault(input.OnFail, "retry"),
@@ -349,6 +359,16 @@ func (s *TaskService) Update(id string, input TaskUpdateInput) error {
 		effectiveMetadata,
 	); err != nil {
 		return err
+	}
+
+	// Agent file existence check (CW-20260417-0082). Resolve against the
+	// effective working_dir (existing overlaid with update). An explicit
+	// empty string clears the agent_file and skips the file check; any
+	// non-empty value must resolve and stat successfully.
+	effectiveAgentFile := ptrOrDefault(input.AgentFile, existing.AgentFile)
+	effectiveWorkingDir := ptrOrDefault(input.WorkingDir, existing.WorkingDir)
+	if err := agentfile.Validate(effectiveAgentFile, effectiveWorkingDir); err != nil {
+		return &ValidationError{Field: "agent_file", Message: err.Error()}
 	}
 
 	if err := s.store.UpdateTask(id, input.TaskUpdate); err != nil {
