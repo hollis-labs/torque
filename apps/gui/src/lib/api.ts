@@ -524,6 +524,14 @@ export class ClockworkApiClient {
   }
 
   // -------------------------
+  // Admin
+  // -------------------------
+
+  async restartFrontend(): Promise<{ hash: string; duration_ms: number }> {
+    return this.post<{ hash: string; duration_ms: number }>('/admin/restart-frontend')
+  }
+
+  // -------------------------
   // SSE
   // -------------------------
 
