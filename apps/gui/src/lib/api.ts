@@ -167,7 +167,7 @@ export class ClockworkApiClient {
   }
 
   async updateTask(id: string, data: Partial<Omit<Task, 'tags'>> & { tags?: string[] }): Promise<Task> {
-    return this.patch<Task>(`/tasks/${id}`, data)
+    return this.put<Task>(`/tasks/${id}`, data)
   }
 
   async deleteTask(id: string): Promise<void> {
