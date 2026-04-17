@@ -10,7 +10,7 @@ import (
 var validTransitions = map[string][]string{
 	"todo":    {"doing", "blocked", "paused", "archived"},
 	"doing":   {"review", "done", "blocked", "paused", "todo", "archived"},
-	"review":  {"done", "doing", "blocked", "paused", "archived"},
+	"review":  {"done", "doing", "todo", "blocked", "paused", "archived"},
 	"blocked": {"todo", "archived"},
 	"paused":  {"todo", "archived"},
 	"done":    {"archived"},
