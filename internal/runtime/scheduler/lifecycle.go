@@ -36,6 +36,15 @@ func (lm *LifecycleManager) HandleResult(taskID string, runID int64, result *exe
 		return fmt.Errorf("lifecycle: get task %s: %w", taskID, err)
 	}
 
+	// If the task has already reached a terminal status — e.g. an operator
+	// side-channel marked it done, or a parent rollup archived it — any
+	// in-flight run result must NOT flip the task back. Retry/block/escalate
+	// paths would otherwise re-queue a done task (CW-20260417-0012 incident).
+	// Record the run as superseded and exit without touching task.Status.
+	if isTerminalTaskStatus(task.Status) {
+		return lm.markRunSuperseded(task, runID, result)
+	}
+
 	switch result.Status {
 	case "done":
 		return lm.handleDone(task, runID, result)
@@ -199,4 +208,45 @@ func missingTypes(missing []executor.Deliverable) []string {
 		types = append(types, d.Type)
 	}
 	return types
+}
+
+// isTerminalTaskStatus reports whether a task status is a sink in the task
+// FSM — no outbound transitions should be driven by run results. See the
+// canonical transitions in internal/service/task.go.
+func isTerminalTaskStatus(status string) bool {
+	return status == "done" || status == "archived"
+}
+
+// markRunSuperseded flags a run whose lifecycle result arrived after the
+// task had already moved to a terminal status. The run row is updated to
+// status="superseded" and a run_event is emitted for observability. The
+// task record is left untouched.
+func (lm *LifecycleManager) markRunSuperseded(task *sqlstore.TaskRecord, runID int64, result *executor.ExecutionResult) error {
+	if runID > 0 {
+		if _, err := lm.store.DB().Exec(
+			`UPDATE runs SET status = ? WHERE id = ?`,
+			"superseded", runID,
+		); err != nil {
+			log.Printf("[lifecycle] mark run %d superseded: %v", runID, err)
+		}
+	}
+
+	payload := map[string]interface{}{
+		"task_status":   task.Status,
+		"result_status": result.Status,
+		"result_reason": result.Reason,
+	}
+	writeRunEvent(lm.store, runID, task.ID, "run_superseded", payload)
+
+	lm.bus.Publish(SchedulerEvent{
+		Type:   "run.superseded",
+		TaskID: task.ID,
+		RunID:  runID,
+		Data: map[string]interface{}{
+			"task_status":   task.Status,
+			"result_status": result.Status,
+		},
+	})
+
+	return nil
 }

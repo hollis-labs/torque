@@ -238,6 +238,95 @@ func TestLifecycleMissingDeliverablesCountsAsRetry(t *testing.T) {
 	assert.Equal(t, "todo", task.Status, "missing deliverables should re-queue")
 }
 
+// TestLifecycleRunErrorsWhileTaskTerminalDone reproduces the 2026-04-17
+// CW-20260417-0012 dogfood incident: the task was side-channel marked
+// status=done while a run was in flight, the subprocess was killed, and
+// the lifecycle manager re-queued the task to "todo" via retryOrBlock,
+// causing the scheduler to re-dispatch on the next tick. After the fix,
+// a terminal task must never be transitioned by HandleResult and the
+// run should be recorded as superseded.
+func TestLifecycleRunErrorsWhileTaskTerminalDone(t *testing.T) {
+	store := setupLifecycleStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	lm := scheduler.NewLifecycleManager(store, bus)
+
+	store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-0001", Title: "Task", Status: "done", Executor: "cli",
+		OnFail: "retry", MaxRetries: 3,
+	})
+	runID, err := store.CreateRun(&sqlstore.RunRecord{
+		TaskID: "CW-0001", Executor: "cli", Status: "failed",
+	})
+	require.NoError(t, err)
+
+	// Worker errored (e.g. external SIGTERM to the subprocess).
+	result := &executor.ExecutionResult{Status: "failed", Reason: "signal: killed"}
+
+	require.NoError(t, lm.HandleResult("CW-0001", runID, result))
+
+	task, _ := store.GetTask("CW-0001")
+	assert.Equal(t, "done", task.Status, "terminal task must not be re-queued")
+
+	var retryCount int
+	store.DB().QueryRow("SELECT retry_count FROM tasks WHERE id = ?", "CW-0001").Scan(&retryCount)
+	assert.Equal(t, 0, retryCount, "retry counter must not increment for terminal tasks")
+
+	run, _ := store.GetRun(runID)
+	assert.Equal(t, "superseded", run.Status, "run should be marked superseded when task was already terminal")
+}
+
+func TestLifecycleRunErrorsWhileTaskTerminalArchived(t *testing.T) {
+	store := setupLifecycleStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	lm := scheduler.NewLifecycleManager(store, bus)
+
+	store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-0001", Title: "Task", Status: "archived", Executor: "cli",
+		OnFail: "retry", MaxRetries: 3,
+	})
+	runID, err := store.CreateRun(&sqlstore.RunRecord{
+		TaskID: "CW-0001", Executor: "cli", Status: "failed",
+	})
+	require.NoError(t, err)
+
+	result := &executor.ExecutionResult{Status: "failed", Reason: "signal: killed"}
+	require.NoError(t, lm.HandleResult("CW-0001", runID, result))
+
+	task, _ := store.GetTask("CW-0001")
+	assert.Equal(t, "archived", task.Status, "archived task must not be re-queued")
+
+	run, _ := store.GetRun(runID)
+	assert.Equal(t, "superseded", run.Status)
+}
+
+// TestLifecycleRunErrorsWhileTaskTerminalBlockPath verifies the guard also
+// applies when OnFail=block — the task had been side-channel marked done,
+// a run errored, and without the guard transition() would flip done→blocked.
+func TestLifecycleRunErrorsWhileTaskTerminalBlockPath(t *testing.T) {
+	store := setupLifecycleStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	lm := scheduler.NewLifecycleManager(store, bus)
+
+	store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-0001", Title: "Task", Status: "done", Executor: "cli",
+		OnFail: "block",
+	})
+	runID, err := store.CreateRun(&sqlstore.RunRecord{
+		TaskID: "CW-0001", Executor: "cli", Status: "failed",
+	})
+	require.NoError(t, err)
+
+	result := &executor.ExecutionResult{Status: "failed", Reason: "boom"}
+	require.NoError(t, lm.HandleResult("CW-0001", runID, result))
+
+	task, _ := store.GetTask("CW-0001")
+	assert.Equal(t, "done", task.Status)
+	assert.Empty(t, task.BlockedReason, "blocked_reason should not be set on a done task")
+}
+
 func TestLifecycleEmitsEvents(t *testing.T) {
 	store := setupLifecycleStore(t)
 	bus := scheduler.NewEventBus()
