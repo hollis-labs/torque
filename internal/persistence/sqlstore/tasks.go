@@ -28,6 +28,7 @@ type TaskRecord struct {
 	Permissions       sql.NullString
 	Environment       sql.NullString
 	SystemPrompt      string
+	AgentFile         string
 	Files             sql.NullString
 	CostBudget        sql.NullFloat64
 	MaxRetries        int
@@ -93,6 +94,7 @@ type TaskUpdate struct {
 	Permissions       *sql.NullString
 	Environment       *sql.NullString
 	SystemPrompt      *string
+	AgentFile         *string
 	Files             *sql.NullString
 	CostBudget        *sql.NullFloat64
 	MaxRetries        *int
@@ -162,7 +164,7 @@ func applyDefaults(t *TaskRecord) {
 // The 40-column SELECT list used by GetTask, ListTasks, and SearchTasks.
 const taskSelectCols = `id, title, description, status, priority, manual,
 	executor, agent_profile, working_dir, tools, permissions, environment,
-	system_prompt, files, cost_budget, max_retries, max_duration_ms, token_budget,
+	system_prompt, agent_file, files, cost_budget, max_retries, max_duration_ms, token_budget,
 	on_done, on_fail, on_review, escalation_chain, quality_gates, deliverables,
 	deliverable_preset, on_done_merge, depends_on, blocked_reason, metadata,
 	sprint_id, project_id, epic_id, created_at, updated_at,
@@ -177,7 +179,7 @@ func scanTask(row interface {
 	err := row.Scan(
 		&t.ID, &t.Title, &t.Description, &t.Status, &t.Priority, &manual,
 		&t.Executor, &t.AgentProfile, &t.WorkingDir, &t.Tools, &t.Permissions, &t.Environment,
-		&t.SystemPrompt, &t.Files, &t.CostBudget, &t.MaxRetries, &t.MaxDurationMs, &t.TokenBudget,
+		&t.SystemPrompt, &t.AgentFile, &t.Files, &t.CostBudget, &t.MaxRetries, &t.MaxDurationMs, &t.TokenBudget,
 		&t.OnDone, &t.OnFail, &t.OnReview, &t.EscalationChain, &t.QualityGates, &t.Deliverables,
 		&t.DeliverablePreset, &t.OnDoneMerge, &t.DependsOn, &t.BlockedReason, &t.Metadata,
 		&t.SprintID, &t.ProjectID, &t.EpicID, &t.CreatedAt, &t.UpdatedAt,
@@ -205,17 +207,17 @@ func (s *Store) CreateTask(t *TaskRecord) error {
 	const q = `INSERT INTO tasks (
 		id, title, description, status, priority, manual,
 		executor, agent_profile, working_dir, tools, permissions, environment,
-		system_prompt, files, cost_budget, max_retries, max_duration_ms, token_budget,
+		system_prompt, agent_file, files, cost_budget, max_retries, max_duration_ms, token_budget,
 		on_done, on_fail, on_review, escalation_chain, quality_gates, deliverables,
 		deliverable_preset, on_done_merge, depends_on, blocked_reason, metadata,
 		sprint_id, project_id, epic_id,
 		kind, source_type, source_ref, trust, checkpoint_mode, on_checkpoint_response
-	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
 	_, err := s.db.Exec(q,
 		t.ID, t.Title, t.Description, t.Status, t.Priority, manual,
 		t.Executor, t.AgentProfile, t.WorkingDir, t.Tools, t.Permissions, t.Environment,
-		t.SystemPrompt, t.Files, t.CostBudget, t.MaxRetries, t.MaxDurationMs, t.TokenBudget,
+		t.SystemPrompt, t.AgentFile, t.Files, t.CostBudget, t.MaxRetries, t.MaxDurationMs, t.TokenBudget,
 		t.OnDone, t.OnFail, t.OnReview, t.EscalationChain, t.QualityGates, t.Deliverables,
 		t.DeliverablePreset, t.OnDoneMerge, t.DependsOn, t.BlockedReason, t.Metadata,
 		t.SprintID, t.ProjectID, t.EpicID,
@@ -378,6 +380,10 @@ func (s *Store) UpdateTask(id string, u TaskUpdate) error {
 	if u.SystemPrompt != nil {
 		setClauses = append(setClauses, "system_prompt = ?")
 		args = append(args, *u.SystemPrompt)
+	}
+	if u.AgentFile != nil {
+		setClauses = append(setClauses, "agent_file = ?")
+		args = append(args, *u.AgentFile)
 	}
 	if u.Files != nil {
 		setClauses = append(setClauses, "files = ?")
