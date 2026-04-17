@@ -30,3 +30,8 @@ func (s *RunService) List(taskID string) ([]sqlstore.RunRecord, error) {
 func (s *RunService) Complete(id int64, c sqlstore.RunCompletion) error {
 	return s.store.CompleteRun(id, c)
 }
+
+// Aggregate returns the per-task run count / token / cost roll-up.
+func (s *RunService) Aggregate(taskID string) (*sqlstore.TaskRunAggregate, error) {
+	return s.store.GetTaskRunAggregate(taskID)
+}

@@ -145,6 +145,20 @@ export interface Task {
   // Audit
   created_at: string
   updated_at: string
+
+  /**
+   * Run roll-up — sum of prompt/completion tokens and cost across every
+   * recorded run for this task, plus a turn count. Always present on
+   * task responses; zero-valued for tasks that have never executed.
+   */
+  stats?: TaskStats
+}
+
+export interface TaskStats {
+  run_count: number
+  prompt_tokens: number
+  completion_tokens: number
+  cost: number
 }
 
 export interface Run {

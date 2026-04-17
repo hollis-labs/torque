@@ -91,10 +91,10 @@ export function TaskTable({
                 aria-label="Select all tasks"
               />
             </th>
-            {COLUMNS.map(({ key, label }) => {
+            {COLUMNS.flatMap(({ key, label }) => {
               const isSorted = sortKey === key
               const isTitle = key === 'title'
-              return (
+              const header = (
                 <th
                   key={key}
                   className={`py-1.5 font-medium ${isTitle ? 'px-3 text-left' : 'w-px whitespace-nowrap px-1.5'}`}
@@ -111,6 +111,18 @@ export function TaskTable({
                   </button>
                 </th>
               )
+              if (key === 'priority') {
+                return [
+                  header,
+                  <th
+                    key="usage"
+                    className="w-px whitespace-nowrap px-1.5 py-1.5 font-medium text-zinc-500"
+                  >
+                    Usage
+                  </th>,
+                ]
+              }
+              return [header]
             })}
             {/* Actions header spacer */}
             <th className="w-px pr-3" />

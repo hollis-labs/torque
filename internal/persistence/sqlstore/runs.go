@@ -32,6 +32,34 @@ type RunCompletion struct {
 	ErrorMessage     string
 }
 
+// TaskRunAggregate is the per-task roll-up of run counts, token usage, and
+// cost across every run recorded for the task (any status).
+type TaskRunAggregate struct {
+	TaskID           string
+	Count            int
+	PromptTokens     int
+	CompletionTokens int
+	Cost             float64
+}
+
+// GetTaskRunAggregate returns the run count / token / cost roll-up for a task.
+// Tasks that have never been executed yield a zero-valued aggregate, not an
+// error — callers render this as "0 runs / $0.00 / 0 tokens".
+func (s *Store) GetTaskRunAggregate(taskID string) (*TaskRunAggregate, error) {
+	const q = `SELECT COUNT(*),
+		COALESCE(SUM(prompt_tokens), 0),
+		COALESCE(SUM(completion_tokens), 0),
+		COALESCE(SUM(cost), 0)
+		FROM runs WHERE task_id = ?`
+	agg := TaskRunAggregate{TaskID: taskID}
+	if err := s.db.QueryRow(q, taskID).Scan(
+		&agg.Count, &agg.PromptTokens, &agg.CompletionTokens, &agg.Cost,
+	); err != nil {
+		return nil, err
+	}
+	return &agg, nil
+}
+
 // CreateRun inserts a new run and returns its auto-assigned ID.
 func (s *Store) CreateRun(r *RunRecord) (int64, error) {
 	if r.Status == "" {

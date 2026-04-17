@@ -313,7 +313,7 @@ func (s *Server) instantiateTemplate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, taskJSON(task, tags))
+	writeJSON(w, http.StatusCreated, taskJSON(task, tags, nil))
 }
 
 // writeTemplateError maps template-related service errors to HTTP codes.

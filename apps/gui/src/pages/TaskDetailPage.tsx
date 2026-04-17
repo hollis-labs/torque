@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
+import { useActiveRun } from '@/hooks/active-runs-context'
 import { Plus } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
@@ -84,6 +85,24 @@ export default function TaskDetailPage() {
       .catch((err: Error) => setError(err.message))
       .finally(() => setLoading(false))
   }, [api, id])
+
+  // Refetch the task when an in-flight run finishes so the header stats
+  // (turns / tokens / cost) roll forward without requiring a hard reload.
+  // Drop-to-null is the SSE run.finished signal from ActiveRunsProvider.
+  const activeRun = useActiveRun(id)
+  const hadActiveRun = useRef(false)
+  useEffect(() => {
+    if (activeRun) {
+      hadActiveRun.current = true
+      return
+    }
+    if (!hadActiveRun.current || !id) return
+    hadActiveRun.current = false
+    api.getTask(id).then(setTask).catch(() => {})
+    // Invalidate the runs cache so the Logs tab pulls the completed run
+    // on next visit.
+    setRuns(null)
+  }, [activeRun, id, api])
 
   // Initialize/reset draft when editing starts, or clear when it ends
   useEffect(() => {

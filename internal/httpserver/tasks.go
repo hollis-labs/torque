@@ -13,9 +13,23 @@ import (
 )
 
 // taskJSON converts a TaskRecord to a JSON-friendly map with snake_case keys
-// and proper null handling for sql.Null* types. Tags are passed in so the
-// caller can batch-load them rather than requiring a store handle here.
-func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord) map[string]interface{} {
+// and proper null handling for sql.Null* types. Tags and the run aggregate
+// are passed in so the caller can batch-load them rather than requiring a
+// store handle here. When agg is nil, stats are omitted and the client
+// renders zeroes.
+func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, agg *sqlstore.TaskRunAggregate) map[string]interface{} {
+	stats := map[string]interface{}{
+		"run_count":         0,
+		"prompt_tokens":     0,
+		"completion_tokens": 0,
+		"cost":              0.0,
+	}
+	if agg != nil {
+		stats["run_count"] = agg.Count
+		stats["prompt_tokens"] = agg.PromptTokens
+		stats["completion_tokens"] = agg.CompletionTokens
+		stats["cost"] = agg.Cost
+	}
 	return map[string]interface{}{
 		"id":                 t.ID,
 		"title":              t.Title,
@@ -59,11 +73,17 @@ func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord) map[string]inte
 		"trust":                  t.Trust,
 		"checkpoint_mode":        t.CheckpointMode,
 		"on_checkpoint_response": t.OnCheckpointResponse,
+
+		// Run roll-up — prompt/completion/cost summed across all recorded
+		// runs for this task, plus a turn count. Nil aggregate renders
+		// zeroes so clients can rely on the keys always being present.
+		"stats": stats,
 	}
 }
 
 // tasksJSON converts a slice of TaskRecord to a JSON-friendly slice.
-// Loads linked tags per-task (N+1 — acceptable at current scale).
+// Loads linked tags + run aggregates per-task (N+1 — acceptable at current
+// scale; the aggregate query is an indexed SUM/COUNT per task).
 func (s *Server) tasksJSON(tasks []sqlstore.TaskRecord) ([]map[string]interface{}, error) {
 	out := make([]map[string]interface{}, len(tasks))
 	for i := range tasks {
@@ -71,7 +91,11 @@ func (s *Server) tasksJSON(tasks []sqlstore.TaskRecord) ([]map[string]interface{
 		if err != nil {
 			return nil, err
 		}
-		out[i] = taskJSON(&tasks[i], tags)
+		agg, err := s.svc.Run.Aggregate(tasks[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = taskJSON(&tasks[i], tags, agg)
 	}
 	return out, nil
 }
@@ -344,7 +368,12 @@ func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, taskJSON(task, tags))
+	agg, err := s.svc.Run.Aggregate(task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, taskJSON(task, tags, agg))
 }
 
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
@@ -415,7 +444,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.sse.Broadcast("task.created", map[string]interface{}{"task_id": task.ID, "title": task.Title})
-	writeJSON(w, http.StatusCreated, taskJSON(task, tags))
+	writeJSON(w, http.StatusCreated, taskJSON(task, tags, nil))
 }
 
 func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
@@ -534,9 +563,14 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	agg, err := s.svc.Run.Aggregate(task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	s.sse.Broadcast("task.updated", map[string]interface{}{"task_id": id})
-	writeJSON(w, http.StatusOK, taskJSON(task, tags))
+	writeJSON(w, http.StatusOK, taskJSON(task, tags, agg))
 }
 
 func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
@@ -574,9 +608,14 @@ func (s *Server) transitionTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	agg, err := s.svc.Run.Aggregate(task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	s.sse.Broadcast("task.transitioned", map[string]interface{}{"task_id": id, "status": req.Status})
-	writeJSON(w, http.StatusOK, taskJSON(task, tags))
+	writeJSON(w, http.StatusOK, taskJSON(task, tags, agg))
 }
 
 func (s *Server) bulkTransitionTasks(w http.ResponseWriter, r *http.Request) {
