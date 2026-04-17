@@ -168,6 +168,35 @@ func TestTemplate_List_KindFilter(t *testing.T) {
 	assert.Equal(t, "w", list[0].ID)
 }
 
+// Migration 010 added working_dir as a typed column on task_templates.
+// Round-trip: set on create, read back unchanged.
+func TestTemplate_WorkingDir_RoundTrip(t *testing.T) {
+	store := setupTestStore(t)
+
+	tpl := sampleTemplate("wd", 1)
+	tpl.WorkingDir = sql.NullString{String: "/tmp/repo", Valid: true}
+	require.NoError(t, store.CreateTemplate(tpl))
+
+	got, err := store.GetTemplate("wd", 1)
+	require.NoError(t, err)
+	assert.True(t, got.WorkingDir.Valid)
+	assert.Equal(t, "/tmp/repo", got.WorkingDir.String)
+}
+
+// Templates that don't set working_dir get a null column, which scanTemplate
+// should surface as !Valid rather than the empty string.
+func TestTemplate_WorkingDir_NullWhenUnset(t *testing.T) {
+	store := setupTestStore(t)
+
+	tpl := sampleTemplate("wd-null", 1)
+	require.NoError(t, store.CreateTemplate(tpl))
+
+	got, err := store.GetTemplate("wd-null", 1)
+	require.NoError(t, err)
+	assert.False(t, got.WorkingDir.Valid,
+		"unset working_dir should scan as NullString{Valid:false}")
+}
+
 func TestTemplate_CompositeKey_SameIDDifferentVersions(t *testing.T) {
 	store := setupTestStore(t)
 	v1 := sampleTemplate("t", 1)

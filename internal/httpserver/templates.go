@@ -24,6 +24,7 @@ func templateJSON(t *sqlstore.TemplateRecord) map[string]interface{} {
 		"executor":               nullStr(t.Executor),
 		"agent_profile":          nullStr(t.AgentProfile),
 		"system_prompt":          nullStr(t.SystemPrompt),
+		"working_dir":            nullStr(t.WorkingDir),
 		"tools":                  parseStringArray(t.Tools),
 		"permissions":            parseFreeMap(t.Permissions),
 		"environment":            parseStringMap(t.Environment),
@@ -58,6 +59,7 @@ type templateCreateRequest struct {
 	Executor             string                `json:"executor,omitempty"`
 	AgentProfile         string                `json:"agent_profile,omitempty"`
 	SystemPrompt         string                `json:"system_prompt,omitempty"`
+	WorkingDir           string                `json:"working_dir,omitempty"`
 	Tools                []string              `json:"tools,omitempty"`
 	Permissions          map[string]any        `json:"permissions,omitempty"`
 	Environment          map[string]string     `json:"environment,omitempty"`
@@ -87,6 +89,7 @@ type templateUpdateRequest struct {
 	Executor             *string               `json:"executor,omitempty"`
 	AgentProfile         *string               `json:"agent_profile,omitempty"`
 	SystemPrompt         *string               `json:"system_prompt,omitempty"`
+	WorkingDir           *string               `json:"working_dir,omitempty"`
 	Tools                []string              `json:"tools,omitempty"`
 	Permissions          map[string]any        `json:"permissions,omitempty"`
 	Environment          map[string]string     `json:"environment,omitempty"`
@@ -135,6 +138,7 @@ func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request) {
 		Executor:             req.Executor,
 		AgentProfile:         req.AgentProfile,
 		SystemPrompt:         req.SystemPrompt,
+		WorkingDir:           req.WorkingDir,
 		Tools:                req.Tools,
 		Permissions:          req.Permissions,
 		Environment:          req.Environment,
@@ -182,6 +186,7 @@ func (s *Server) updateTemplate(w http.ResponseWriter, r *http.Request) {
 		Executor:             req.Executor,
 		AgentProfile:         req.AgentProfile,
 		SystemPrompt:         req.SystemPrompt,
+		WorkingDir:           req.WorkingDir,
 		Tools:                req.Tools,
 		Permissions:          req.Permissions,
 		Environment:          req.Environment,

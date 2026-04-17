@@ -21,8 +21,10 @@ deliverables:
 required_vars:
   - repo_path
   - issue
-metadata_template:
-  working_dir_template: "{{repo_path}}"
+# Migration 010 added a typed working_dir column; set it directly here.
+# Instantiate resolves {{var}} into task.working_dir, which the executor
+# reads without having to peek into metadata.
+working_dir: "{{repo_path}}"
 tags:
   - code
   - backend

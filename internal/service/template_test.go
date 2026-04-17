@@ -118,6 +118,90 @@ func TestTemplateService_Archive(t *testing.T) {
 	assert.True(t, tpl.IsArchived)
 }
 
+// Templates can now set task.WorkingDir directly via the typed column
+// (migration 010, decision from CW-20260416-0003). The value supports
+// {{var}} resolution just like description/system_prompt/environment.
+func TestTemplateService_Instantiate_WorkingDir_ResolvesVars(t *testing.T) {
+	svc := setupService(t)
+	_, err := svc.Template.Create(service.TemplateCreateInput{
+		ID:           "backend-fix",
+		Name:         "Backend Fix",
+		Description:  "x",
+		Kind:         "agent",
+		Executor:     "cli",
+		AutoExecute:  true,
+		WorkingDir:   "{{repo_path}}",
+		RequiredVars: []string{"repo_path"},
+	})
+	require.NoError(t, err)
+
+	task, err := svc.Template.Instantiate(service.TemplateInstantiateInput{
+		TemplateID: "backend-fix",
+		Title:      "fix auth",
+		Vars:       map[string]string{"repo_path": "/tmp/repo"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/tmp/repo", task.WorkingDir,
+		"WorkingDir should be resolved from the template's typed column, not metadata")
+}
+
+// Templates without working_dir set should leave task.WorkingDir as its
+// caller/default value.
+func TestTemplateService_Instantiate_NoWorkingDir_TaskWorkingDirEmpty(t *testing.T) {
+	svc := setupService(t)
+	_, err := svc.Template.Create(service.TemplateCreateInput{
+		ID: "plain", Name: "p", Description: "x",
+		Kind: "agent", Executor: "cli", AutoExecute: true,
+	})
+	require.NoError(t, err)
+
+	task, err := svc.Template.Instantiate(service.TemplateInstantiateInput{
+		TemplateID: "plain", Title: "t",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "", task.WorkingDir)
+}
+
+// Unresolved {{var}} in working_dir should be a 422 like the other
+// templatable fields, not a silent half-resolved path.
+func TestTemplateService_Instantiate_WorkingDir_UnresolvedVar_422(t *testing.T) {
+	svc := setupService(t)
+	_, err := svc.Template.Create(service.TemplateCreateInput{
+		ID: "bad", Name: "b", Description: "x",
+		Kind: "agent", Executor: "cli", AutoExecute: true,
+		WorkingDir: "{{never}}",
+	})
+	require.NoError(t, err)
+
+	_, err = svc.Template.Instantiate(service.TemplateInstantiateInput{
+		TemplateID: "bad", Title: "t",
+	})
+	require.Error(t, err)
+	var verr *service.ValidationError
+	require.ErrorAs(t, err, &verr)
+	assert.Equal(t, "working_dir", verr.Field)
+}
+
+// Update flow: append a new version changing working_dir.
+func TestTemplateService_Update_WorkingDir(t *testing.T) {
+	svc := setupService(t)
+	_, err := svc.Template.Create(service.TemplateCreateInput{
+		ID: "t", Name: "v1", Description: "x",
+		Kind: "agent", Executor: "cli", AutoExecute: true,
+		WorkingDir: "/v1",
+	})
+	require.NoError(t, err)
+
+	wd := "/v2"
+	tpl, err := svc.Template.Update("t", service.TemplateUpdateInput{
+		WorkingDir: &wd,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, tpl.Version)
+	assert.True(t, tpl.WorkingDir.Valid)
+	assert.Equal(t, "/v2", tpl.WorkingDir.String)
+}
+
 func TestTemplateService_Instantiate_ResolvesVarsAndStampsTemplateRef(t *testing.T) {
 	svc := setupService(t)
 	_, err := svc.Template.Create(service.TemplateCreateInput{

@@ -28,6 +28,7 @@ type TemplateCreateInput struct {
 	Executor             string
 	AgentProfile         string
 	SystemPrompt         string
+	WorkingDir           string // supports {{var}} resolution at Instantiate
 	Tools                []string
 	Permissions          map[string]any
 	Environment          map[string]string
@@ -60,6 +61,7 @@ type TemplateUpdateInput struct {
 	Executor             *string
 	AgentProfile         *string
 	SystemPrompt         *string
+	WorkingDir           *string // pointer so empty-vs-unset is distinguishable
 	Tools                []string
 	Permissions          map[string]any
 	Environment          map[string]string
@@ -326,6 +328,13 @@ func (s *TemplateService) applyTemplateToInput(tpl *sqlstore.TemplateRecord, in 
 		}
 		input.SystemPrompt = resolved
 	}
+	if tpl.WorkingDir.Valid {
+		resolved, err := ResolveVars(tpl.WorkingDir.String, vars)
+		if err != nil {
+			return input, &ValidationError{Field: "working_dir", Message: err.Error()}
+		}
+		input.WorkingDir = resolved
+	}
 
 	// Tools / escalation / quality gates — unmarshal JSON arrays; leave
 	// as-is (no var substitution in these for MVP).
@@ -459,6 +468,9 @@ func buildTemplateRecord(in TemplateCreateInput, id string, version int) *sqlsto
 	if in.SystemPrompt != "" {
 		rec.SystemPrompt = sql.NullString{String: in.SystemPrompt, Valid: true}
 	}
+	if in.WorkingDir != "" {
+		rec.WorkingDir = sql.NullString{String: in.WorkingDir, Valid: true}
+	}
 	if len(in.Tools) > 0 {
 		rec.Tools = sql.NullString{String: marshalJSON(in.Tools), Valid: true}
 	}
@@ -525,6 +537,9 @@ func mergeTemplateUpdate(prev *sqlstore.TemplateRecord, in TemplateUpdateInput) 
 	}
 	if in.SystemPrompt != nil {
 		next.SystemPrompt = sql.NullString{String: *in.SystemPrompt, Valid: *in.SystemPrompt != ""}
+	}
+	if in.WorkingDir != nil {
+		next.WorkingDir = sql.NullString{String: *in.WorkingDir, Valid: *in.WorkingDir != ""}
 	}
 	if in.Tools != nil {
 		next.Tools = sql.NullString{String: marshalJSON(in.Tools), Valid: true}

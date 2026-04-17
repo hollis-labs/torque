@@ -148,4 +148,19 @@ func TestMigrationsApply(t *testing.T) {
 		tplIdx[n] = true
 	}
 	require.True(t, tplIdx["idx_templates_kind"], "idx_templates_kind should exist")
+
+	// Verify 010 added the working_dir column to task_templates
+	// (decision outcome captured in CW-20260416-0003: pick A).
+	_, err = db.Exec(`SELECT working_dir FROM task_templates LIMIT 0`)
+	require.NoError(t, err, "task_templates.working_dir should exist after migration 010")
+
+	// Existing rows should have a NULL default — the column is nullable so
+	// migrations over populated DBs don't break.
+	_, err = db.Exec(`INSERT INTO task_templates (id, version, name, description, kind)
+		VALUES ('T-WD', 1, 'v1', 'x', 'agent')`)
+	require.NoError(t, err)
+	var wd sql.NullString
+	err = db.QueryRow(`SELECT working_dir FROM task_templates WHERE id = 'T-WD'`).Scan(&wd)
+	require.NoError(t, err)
+	require.False(t, wd.Valid, "existing rows inserted without working_dir should have NULL, not ''")
 }
