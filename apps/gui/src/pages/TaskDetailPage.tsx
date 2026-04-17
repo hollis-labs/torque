@@ -13,9 +13,10 @@ import { TaskProperties } from '@/components/domain/task-properties'
 import { ExecutionContext } from '@/components/domain/execution-context'
 import { LifecycleRules } from '@/components/domain/lifecycle-rules'
 import { DeliverablesAndDeps } from '@/components/domain/deliverables-deps'
+import { SendBackDialog } from '@/components/domain/send-back-dialog'
 import { useApi } from '@/hooks/use-api'
 import { computeTaskDiff } from '@/lib/task-diff'
-import { notifyError } from '@/lib/toast'
+import { notifyError, notifySuccess } from '@/lib/toast'
 import type {
   Task,
   Run,
@@ -40,6 +41,8 @@ export default function TaskDetailPage() {
 
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+
+  const [sendBackOpen, setSendBackOpen] = useState(false)
 
   // Tab data — lazy loaded
   const [comments, setComments] = useState<Comment[] | null>(null)
@@ -174,6 +177,29 @@ export default function TaskDetailPage() {
     }
   }
 
+  // Re-queue a reviewed task with written feedback. Order matters: the
+  // comment lands first so the re-dispatched agent sees the feedback; only
+  // then does status flip so the scheduler re-queues.
+  async function handleSendBack(feedback: string) {
+    if (!id || !task) return
+    const content = `[user feedback]\n\n${feedback}`
+    const comment = await api.addComment(id, content, 'user')
+    if (task.blocked_reason) {
+      try {
+        await api.updateTask(id, { blocked_reason: '' })
+      } catch {
+        // non-fatal — transition still clears the review park
+      }
+    }
+    const updated = await api.transitionTask(id, 'todo')
+    setTask(updated)
+    // Only append locally if the comments pane has already lazy-loaded.
+    // If it hasn't, leave null so the next tab switch fetches a fresh list
+    // that already includes this comment.
+    setComments((prev) => (prev === null ? prev : [...prev, comment]))
+    notifySuccess('Sent back to todo')
+  }
+
   function handleEdit() {
     setSearchParams({ edit: '1' })
   }
@@ -240,6 +266,13 @@ export default function TaskDetailPage() {
         onEdit={handleEdit}
         onSave={handleSave}
         onCancel={handleCancel}
+        onSendBack={() => setSendBackOpen(true)}
+      />
+
+      <SendBackDialog
+        open={sendBackOpen}
+        onOpenChange={setSendBackOpen}
+        onSubmit={handleSendBack}
       />
 
       {/* Save error banner */}

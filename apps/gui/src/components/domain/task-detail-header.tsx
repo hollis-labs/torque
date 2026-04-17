@@ -37,6 +37,7 @@ interface TaskDetailHeaderProps {
   onEdit: () => void
   onSave: () => void
   onCancel: () => void
+  onSendBack?: () => void
 }
 
 export function TaskDetailHeader({
@@ -49,6 +50,7 @@ export function TaskDetailHeader({
   onEdit,
   onSave,
   onCancel,
+  onSendBack,
 }: TaskDetailHeaderProps) {
   const nextStatuses = TASK_STATUSES.filter((s) => s !== task.status).slice(0, 4)
   const source = editing ? draft : task
@@ -142,6 +144,17 @@ export function TaskDetailHeader({
             </>
           ) : (
             <>
+              {task.status === 'review' && onSendBack && (
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={onSendBack}
+                  className="text-[11px] h-7 uppercase tracking-[.18em]"
+                  data-testid="send-back-button"
+                >
+                  Send back to todo
+                </Button>
+              )}
               {nextStatuses.map((s) => (
                 <Button
                   key={s}

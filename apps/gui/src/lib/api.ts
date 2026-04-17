@@ -175,8 +175,10 @@ export class ClockworkApiClient {
     return this.get<Comment[]>(`/tasks/${taskId}/comments`)
   }
 
-  async addComment(taskId: string, content: string): Promise<Comment> {
-    return this.post<Comment>(`/tasks/${taskId}/comments`, { content })
+  async addComment(taskId: string, content: string, author?: string): Promise<Comment> {
+    const body: { content: string; author?: string } = { content }
+    if (author) body.author = author
+    return this.post<Comment>(`/tasks/${taskId}/comments`, body)
   }
 
   // -------------------------
