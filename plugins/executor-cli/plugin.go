@@ -2,16 +2,26 @@ package executorcli
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 )
+
+// stderrTailBytes caps how much stderr we surface in result.Reason on
+// failure. The full stream is still teed to the sidecar file — this is
+// just the inline tail callers (scheduler, MCP clients) see.
+const stderrTailBytes = 8 * 1024
 
 // Compile-time check that CLIExecutor satisfies the Executor interface.
 var _ executor.Executor = (*CLIExecutor)(nil)
@@ -137,6 +147,61 @@ func (e *CLIExecutor) Run(ctx context.Context, job *executor.ExecutionJob, cb ex
 	return result, nil
 }
 
+// attachStderrCapture configures cmd.Stderr to capture into an in-memory
+// buffer AND tee to a sidecar log file at
+// $CLOCKWORK_DATA_DIR/runs/<run_id>.stderr.log (falling back to os.TempDir
+// when the env var is empty). The sidecar path is created on demand; if
+// creation fails we log a warning and continue with buffer-only capture —
+// losing stderr entirely (the old behavior) is never acceptable.
+//
+// Returns the stderr buffer (always non-nil) and a close function that
+// must be called after cmd.Wait() to close the sidecar file.
+func attachStderrCapture(cmd *exec.Cmd, runID int64) (*bytes.Buffer, func()) {
+	buf := &bytes.Buffer{}
+	closer := func() {}
+
+	dataDir := os.Getenv("CLOCKWORK_DATA_DIR")
+	if dataDir == "" {
+		dataDir = filepath.Join(os.TempDir(), "clockwork")
+	}
+	runsDir := filepath.Join(dataDir, "runs")
+
+	// Best-effort: if MkdirAll fails (permissions, ro fs, etc.) we still
+	// capture to the buffer. Log so operators can see the degradation.
+	if err := os.MkdirAll(runsDir, 0o755); err != nil {
+		log.Printf("executor-cli: stderr sidecar dir unavailable (%s): %v — using buffer only", runsDir, err)
+		cmd.Stderr = buf
+		return buf, closer
+	}
+
+	sidecarPath := filepath.Join(runsDir, fmt.Sprintf("%d.stderr.log", runID))
+	f, err := os.OpenFile(sidecarPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		log.Printf("executor-cli: stderr sidecar open failed (%s): %v — using buffer only", sidecarPath, err)
+		cmd.Stderr = buf
+		return buf, closer
+	}
+
+	cmd.Stderr = io.MultiWriter(buf, f)
+	closer = func() {
+		_ = f.Close()
+	}
+	return buf, closer
+}
+
+// stderrTail returns the trailing up-to-stderrTailBytes bytes of buf,
+// trimmed of whitespace, suitable for embedding in result.Reason.
+func stderrTail(buf *bytes.Buffer) string {
+	if buf == nil || buf.Len() == 0 {
+		return ""
+	}
+	b := buf.Bytes()
+	if len(b) > stderrTailBytes {
+		b = b[len(b)-stderrTailBytes:]
+	}
+	return strings.TrimSpace(string(b))
+}
+
 // Kill sends SIGKILL to the currently running process, if any.
 func (e *CLIExecutor) Kill() {
 	e.mu.Lock()
@@ -147,132 +212,257 @@ func (e *CLIExecutor) Kill() {
 	}
 }
 
-// runPrintMode spawns the command and parses stdout line-by-line for CLOCKWORK_* signals.
+// runPrintMode spawns the command and parses stdout line-by-line for
+// CLOCKWORK_* signals.
+//
+// Stderr is captured into a buffer AND teed to a sidecar log file (see
+// attachStderrCapture) so failures can be diagnosed after the fact
+// (Bug CW-20260417-0024). On genuine failure (exit != 0, no terminal
+// signal, no stdout signal rescue) the trailing stderr lands in
+// result.Reason so the scheduler can persist it as the run's
+// ErrorMessage.
+//
+// Exit-code-tolerant completion: exit code 1 accompanied by a valid
+// CLOCKWORK_* terminal signal is treated as success. claude CLI has
+// been observed exiting 1 after fully successful runs
+// (Bug CW-20260417-0025).
 func (e *CLIExecutor) runPrintMode(_ context.Context, cmd *exec.Cmd, job *executor.ExecutionJob, cb executor.EventCallback, result *executor.ExecutionResult) error {
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("stdout pipe: %w", err)
 	}
-	cmd.Stderr = nil // discard stderr
+
+	stderrBuf, closeStderr := attachStderrCapture(cmd, job.RunID)
+	defer closeStderr()
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start process: %w", err)
 	}
 
 	var gotTerminal bool
+	// Accumulate all stdout lines for a fallback re-scan in case no terminal
+	// signal was matched on the first pass (e.g. the agent printed the
+	// signal mid-paragraph; FE's executor does the same rescue pass).
+	var accumulated strings.Builder
 
 	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
-		sig := executor.ParseLine(line)
-
-		switch sig.Type {
-		case executor.SignalDone:
-			result.Status = "done"
+		accumulated.WriteString(line)
+		accumulated.WriteByte('\n')
+		if e.dispatchLineSignal(line, result, cb) {
 			gotTerminal = true
-			if cb != nil {
-				cb(executor.SignalEvent("CLOCKWORK_DONE", ""))
-			}
-
-		case executor.SignalReview:
-			result.Status = "review"
-			gotTerminal = true
-			if cb != nil {
-				cb(executor.SignalEvent("CLOCKWORK_REVIEW", ""))
-			}
-
-		case executor.SignalBlocked:
-			result.Status = "blocked"
-			result.Reason = sig.Payload
-			gotTerminal = true
-			if cb != nil {
-				cb(executor.SignalEvent("CLOCKWORK_BLOCKED", sig.Payload))
-			}
-
-		case executor.SignalNote:
-			if cb != nil {
-				cb(executor.SignalEvent("CLOCKWORK_NOTE", sig.Payload))
-			}
-
-		case executor.SignalNewTask:
-			if cb != nil {
-				cb(executor.SignalEvent("CLOCKWORK_TASK", sig.Payload))
-			}
-
-		case executor.SignalTokens:
-			p, c, cost := executor.ParseTokenPayload(sig.Payload)
-			result.Tokens.PromptTokens += int(p)
-			result.Tokens.CompletionTokens += int(c)
-			result.Tokens.Cost += cost
-			result.Cost += cost
-			if cb != nil {
-				cb(executor.TokenEvent(int(p), int(c), cost))
-			}
-
-		case executor.SignalArtifact:
-			handleArtifactSignal(sig, result, cb, line)
-
-		case executor.SignalCheckpoint, executor.SignalProgress, executor.SignalSubtask:
-			if cb != nil {
-				cb(executor.SignalEvent(sig.Type.String(), sig.Payload))
-			}
-
-		default:
-			if cb != nil {
-				cb(executor.LogEvent(line))
-			}
 		}
 	}
 
 	waitErr := cmd.Wait()
-	if waitErr != nil && !gotTerminal {
-		result.Status = "failed"
-		result.Reason = waitErr.Error()
+
+	// Fallback rescue: if no terminal signal arrived on the per-line pass,
+	// re-scan accumulated stdout. ParseLine is line-oriented, so this only
+	// helps if the signal landed on its own line but was somehow missed
+	// (redundant safety; cheap).
+	if !gotTerminal {
+		if e.fallbackTextParse(accumulated.String(), result, cb) {
+			gotTerminal = true
+		}
+	}
+
+	// Exit-code-tolerant success path: a valid terminal signal wins over
+	// a nonzero exit. The stderr/stdout is still logged for observability.
+	if gotTerminal {
+		if waitErr != nil {
+			log.Printf("executor-cli: %s exited with %v after terminal signal — treating as success-with-noisy-exit (task=%s run=%d)",
+				cmd.Path, waitErr, job.TaskID, job.RunID)
+		}
 		return nil
 	}
 
-	if !gotTerminal && result.Status == "" {
+	// No terminal signal. Exit status determines failure.
+	if waitErr != nil {
 		result.Status = "failed"
+		reason := waitErr.Error()
+		if tail := stderrTail(stderrBuf); tail != "" {
+			reason = tail
+		}
+		result.Reason = reason
+		return nil
+	}
+
+	// Process exited 0 but never signaled completion — treat as failure
+	// with an explicit reason rather than leaving Status empty.
+	if result.Status == "" {
+		result.Status = "failed"
+		result.Reason = "process exited without emitting a CLOCKWORK_* terminal signal"
 	}
 
 	return nil
 }
 
-// runStreamJSON spawns the command and parses stdout as NDJSON.
-func (e *CLIExecutor) runStreamJSON(_ context.Context, cmd *exec.Cmd, _ *executor.ExecutionJob, cb executor.EventCallback, result *executor.ExecutionResult) error {
+// dispatchLineSignal parses a single stdout line and updates result / emits
+// callback events. Returns true when a terminal signal (done/review/blocked)
+// was dispatched.
+func (e *CLIExecutor) dispatchLineSignal(line string, result *executor.ExecutionResult, cb executor.EventCallback) bool {
+	sig := executor.ParseLine(line)
+	switch sig.Type {
+	case executor.SignalDone:
+		result.Status = "done"
+		if cb != nil {
+			cb(executor.SignalEvent("CLOCKWORK_DONE", ""))
+		}
+		return true
+
+	case executor.SignalReview:
+		result.Status = "review"
+		if cb != nil {
+			cb(executor.SignalEvent("CLOCKWORK_REVIEW", ""))
+		}
+		return true
+
+	case executor.SignalBlocked:
+		result.Status = "blocked"
+		result.Reason = sig.Payload
+		if cb != nil {
+			cb(executor.SignalEvent("CLOCKWORK_BLOCKED", sig.Payload))
+		}
+		return true
+
+	case executor.SignalNote:
+		if cb != nil {
+			cb(executor.SignalEvent("CLOCKWORK_NOTE", sig.Payload))
+		}
+
+	case executor.SignalNewTask:
+		if cb != nil {
+			cb(executor.SignalEvent("CLOCKWORK_TASK", sig.Payload))
+		}
+
+	case executor.SignalTokens:
+		p, c, cost := executor.ParseTokenPayload(sig.Payload)
+		result.Tokens.PromptTokens += int(p)
+		result.Tokens.CompletionTokens += int(c)
+		result.Tokens.Cost += cost
+		result.Cost += cost
+		if cb != nil {
+			cb(executor.TokenEvent(int(p), int(c), cost))
+		}
+
+	case executor.SignalArtifact:
+		handleArtifactSignal(sig, result, cb, line)
+
+	case executor.SignalCheckpoint, executor.SignalProgress, executor.SignalSubtask:
+		if cb != nil {
+			cb(executor.SignalEvent(sig.Type.String(), sig.Payload))
+		}
+
+	default:
+		if cb != nil {
+			cb(executor.LogEvent(line))
+		}
+	}
+	return false
+}
+
+// fallbackTextParse re-scans accumulated stdout for terminal signals when
+// the primary per-line pass missed them. Mirrors FE executor.go:443 —
+// defensive recovery for output the agent didn't format cleanly.
+// Returns true if a terminal signal was found.
+func (e *CLIExecutor) fallbackTextParse(text string, result *executor.ExecutionResult, cb executor.EventCallback) bool {
+	var found bool
+	for _, line := range strings.Split(text, "\n") {
+		sig := executor.ParseLine(line)
+		switch sig.Type {
+		case executor.SignalDone:
+			if result.Status == "" {
+				result.Status = "done"
+				if cb != nil {
+					cb(executor.SignalEvent("CLOCKWORK_DONE", ""))
+				}
+			}
+			found = true
+		case executor.SignalReview:
+			if result.Status == "" {
+				result.Status = "review"
+				if cb != nil {
+					cb(executor.SignalEvent("CLOCKWORK_REVIEW", ""))
+				}
+			}
+			found = true
+		case executor.SignalBlocked:
+			if result.Status == "" {
+				result.Status = "blocked"
+				result.Reason = sig.Payload
+				if cb != nil {
+					cb(executor.SignalEvent("CLOCKWORK_BLOCKED", sig.Payload))
+				}
+			}
+			found = true
+		}
+	}
+	return found
+}
+
+// runStreamJSON spawns the command and parses stdout as NDJSON produced
+// by `claude --verbose --output-format stream-json --json-schema <schema>`.
+//
+// The primary completion signal is the structured `result` event
+// (executor.AgentResult) — claude emits this because of --json-schema,
+// which makes the outcome unambiguous regardless of what the agent said
+// in freeform markdown. If the result event is missing (network hiccup,
+// flag mismatch, etc.) we fall back to rescanning accumulated stdout for
+// line-formatted CLOCKWORK_* signals — FE's behavior in executor.go:443.
+//
+// Stderr is captured and teed to a sidecar log; on genuine failure the
+// tail of stderr lands in result.Reason. Exit code 1 after a valid
+// terminal signal is treated as success-with-noisy-exit
+// (Bug CW-20260417-0025).
+func (e *CLIExecutor) runStreamJSON(_ context.Context, cmd *exec.Cmd, job *executor.ExecutionJob, cb executor.EventCallback, result *executor.ExecutionResult) error {
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("stdout pipe: %w", err)
 	}
-	cmd.Stderr = nil
+
+	stderrBuf, closeStderr := attachStderrCapture(cmd, job.RunID)
+	defer closeStderr()
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start process: %w", err)
 	}
 
-	executor.ParseStreamJSON(stdout, func(ev executor.StreamEvent) {
+	var gotTerminal bool
+	// Accumulate content for the fallback rescue parser.
+	var accumulated strings.Builder
+
+	parseErr := executor.ParseStreamJSON(stdout, func(ev executor.StreamEvent) {
 		switch ev.Type {
 		case executor.StreamEventLogLine:
+			accumulated.WriteString(ev.Text)
+			accumulated.WriteByte('\n')
 			if cb != nil {
 				cb(executor.LogEvent(ev.Text))
 			}
 
 		case executor.StreamEventSignal:
 			sig := ev.Signal
+			accumulated.WriteString(sig.Payload)
+			accumulated.WriteByte('\n')
 			switch sig.Type {
 			case executor.SignalDone:
 				result.Status = "done"
+				gotTerminal = true
 				if cb != nil {
 					cb(executor.SignalEvent("CLOCKWORK_DONE", ""))
 				}
 			case executor.SignalReview:
 				result.Status = "review"
+				gotTerminal = true
 				if cb != nil {
 					cb(executor.SignalEvent("CLOCKWORK_REVIEW", ""))
 				}
 			case executor.SignalBlocked:
 				result.Status = "blocked"
 				result.Reason = sig.Payload
+				gotTerminal = true
 				if cb != nil {
 					cb(executor.SignalEvent("CLOCKWORK_BLOCKED", sig.Payload))
 				}
@@ -298,11 +488,13 @@ func (e *CLIExecutor) runStreamJSON(_ context.Context, cmd *exec.Cmd, _ *executo
 				switch ev.Result.Status {
 				case "done":
 					result.Status = "done"
+					gotTerminal = true
 					if cb != nil {
 						cb(executor.SignalEvent("CLOCKWORK_DONE", ""))
 					}
 				case "review":
 					result.Status = "review"
+					gotTerminal = true
 					if cb != nil {
 						cb(executor.SignalEvent("CLOCKWORK_REVIEW", ""))
 					}
@@ -313,9 +505,18 @@ func (e *CLIExecutor) runStreamJSON(_ context.Context, cmd *exec.Cmd, _ *executo
 						reason = ev.Result.Summary
 					}
 					result.Reason = reason
+					gotTerminal = true
 					if cb != nil {
 						cb(executor.SignalEvent("CLOCKWORK_BLOCKED", reason))
 					}
+				}
+				// Attach produced file list as log-level notes so downstream
+				// observers can see what the agent claims to have touched.
+				if len(ev.Result.FilesChanged) > 0 && cb != nil {
+					cb(executor.LogEvent("files_changed: " + strings.Join(ev.Result.FilesChanged, ", ")))
+				}
+				if ev.Result.Summary != "" && cb != nil {
+					cb(executor.SignalEvent("CLOCKWORK_NOTE", ev.Result.Summary))
 				}
 			}
 			if ev.Tokens != nil {
@@ -332,13 +533,46 @@ func (e *CLIExecutor) runStreamJSON(_ context.Context, cmd *exec.Cmd, _ *executo
 			}
 		}
 	})
-
-	waitErr := cmd.Wait()
-	if waitErr != nil && result.Status == "" {
-		result.Status = "failed"
-		result.Reason = waitErr.Error()
+	if parseErr != nil {
+		log.Printf("executor-cli: stream-json parse aborted (task=%s run=%d): %v", job.TaskID, job.RunID, parseErr)
 	}
 
+	waitErr := cmd.Wait()
+
+	// Fallback: if we never got a structured result OR a mid-stream terminal
+	// signal, rescan accumulated content for CLOCKWORK_* signals. Matches
+	// FE's fallbackTextParse.
+	if !gotTerminal {
+		if e.fallbackTextParse(accumulated.String(), result, cb) {
+			gotTerminal = true
+		}
+	}
+
+	if gotTerminal {
+		if waitErr != nil {
+			log.Printf("executor-cli: %s exited with %v after terminal signal — treating as success-with-noisy-exit (task=%s run=%d)",
+				cmd.Path, waitErr, job.TaskID, job.RunID)
+		}
+		return nil
+	}
+
+	// Genuine failure: no terminal signal arrived.
+	if waitErr != nil {
+		if result.Status == "" {
+			result.Status = "failed"
+		}
+		reason := waitErr.Error()
+		if tail := stderrTail(stderrBuf); tail != "" {
+			reason = tail
+		}
+		result.Reason = reason
+		return nil
+	}
+
+	if result.Status == "" {
+		result.Status = "failed"
+		result.Reason = "stream-json ended without a result event or CLOCKWORK_* signal"
+	}
 	return nil
 }
 
