@@ -103,6 +103,56 @@ func TestHTTP_TaskCreate_FacetDefaults(t *testing.T) {
 	assert.Equal(t, "resume", got["on_checkpoint_response"])
 }
 
+func TestHTTP_TaskList_FilterByManual(t *testing.T) {
+	ts := setupTestServer(t)
+
+	// Create two tasks. Both land as manual=true due to the CW-0133 safety
+	// override; flip one to manual=false via the update endpoint so we can
+	// verify both arms of the ?manual= filter.
+	createTask := func(title string) string {
+		resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(
+			`{"title":"`+title+`","description":"x"}`))
+		require.NoError(t, err)
+		var created map[string]interface{}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+		resp.Body.Close()
+		return created["id"].(string)
+	}
+	autoID := createTask("auto-eligible")
+	manualID := createTask("manual-hold")
+
+	flipReq, err := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/tasks/"+autoID,
+		bytes.NewBufferString(`{"manual":false}`))
+	require.NoError(t, err)
+	flipReq.Header.Set("Content-Type", "application/json")
+	flipResp, err := http.DefaultClient.Do(flipReq)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, flipResp.StatusCode)
+	flipResp.Body.Close()
+
+	idsFrom := func(url string) []string {
+		resp, err := http.Get(url)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		var result map[string]interface{}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+		resp.Body.Close()
+		raw := result["tasks"].([]interface{})
+		out := make([]string, 0, len(raw))
+		for _, t := range raw {
+			out = append(out, t.(map[string]interface{})["id"].(string))
+		}
+		return out
+	}
+
+	assert.ElementsMatch(t, []string{autoID, manualID}, idsFrom(ts.URL+"/api/v1/tasks"))
+	assert.Equal(t, []string{autoID}, idsFrom(ts.URL+"/api/v1/tasks?manual=false"))
+	assert.Equal(t, []string{manualID}, idsFrom(ts.URL+"/api/v1/tasks?manual=true"))
+	// UI aliases — `auto` / `manual` — must resolve identically.
+	assert.Equal(t, []string{autoID}, idsFrom(ts.URL+"/api/v1/tasks?manual=auto"))
+	assert.Equal(t, []string{manualID}, idsFrom(ts.URL+"/api/v1/tasks?manual=manual"))
+}
+
 func TestHTTP_TaskList_FilterByKind(t *testing.T) {
 	ts := setupTestServer(t)
 

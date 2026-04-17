@@ -103,6 +103,36 @@ func TestListTasksFilterByStatus(t *testing.T) {
 	assert.Equal(t, "CW-20260407-0002", todo[0].ID)
 }
 
+// TestListTasksFilterByManual verifies the Manual tri-state filter — unset
+// returns all, true returns manual-hold tasks, false returns auto-eligible.
+func TestListTasksFilterByManual(t *testing.T) {
+	store := setupTestStore(t)
+
+	auto := sampleTask("CW-20260417-0001")
+	auto.Manual = false
+	manual := sampleTask("CW-20260417-0002")
+	manual.Manual = true
+
+	require.NoError(t, store.CreateTask(auto))
+	require.NoError(t, store.CreateTask(manual))
+
+	all, err := store.ListTasks(sqlstore.TaskFilter{})
+	require.NoError(t, err)
+	require.Len(t, all, 2)
+
+	trueFlag := true
+	got, err := store.ListTasks(sqlstore.TaskFilter{Manual: &trueFlag})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, manual.ID, got[0].ID)
+
+	falseFlag := false
+	got, err = store.ListTasks(sqlstore.TaskFilter{Manual: &falseFlag})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, auto.ID, got[0].ID)
+}
+
 // TestUpdateTask verifies partial updates apply correctly.
 func TestUpdateTask(t *testing.T) {
 	store := setupTestStore(t)

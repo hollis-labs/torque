@@ -363,6 +363,19 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 			filter.ParentID = v
 		}
 	}
+	// manual filter — accepts the canonical `true`/`false` plus the UI-layer
+	// `manual`/`auto` aliases. Unrecognized values are silently ignored so the
+	// caller can omit the param to mean "no filter".
+	if v := r.URL.Query().Get("manual"); v != "" {
+		switch strings.ToLower(v) {
+		case "true", "1", "manual":
+			t := true
+			filter.Manual = &t
+		case "false", "0", "auto":
+			f := false
+			filter.Manual = &f
+		}
+	}
 	if v := r.URL.Query().Get("tags"); v != "" {
 		parts := strings.Split(v, ",")
 		out := make([]string, 0, len(parts))

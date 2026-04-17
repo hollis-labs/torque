@@ -28,7 +28,7 @@ beforeEach(() => {
 })
 
 describe('ops-filters-storage', () => {
-  it('round-trips all seven filter fields', () => {
+  it('round-trips all eight filter fields', () => {
     const filters: OpsFilters = {
       statuses: ['todo', 'doing'],
       priorities: [1, 2],
@@ -37,10 +37,27 @@ describe('ops-filters-storage', () => {
       epicId: 'epc_123',
       tagSlug: 'infra',
       mode: 'executing',
+      manual: 'auto',
     }
     saveOpsFilters(filters)
     const restored = readOpsFilters()
     expect(restored).toEqual(filters)
+  })
+
+  it('defaults manual to "all" when the stored entry predates the field', () => {
+    localStorage.setItem(
+      'clockwork:ops:filters:v1',
+      JSON.stringify({
+        statuses: ['todo'],
+        priorities: [],
+        projectId: null,
+        sprintId: null,
+        epicId: null,
+        tagSlug: null,
+        mode: 'all',
+      }),
+    )
+    expect(readOpsFilters()?.manual).toBe('all')
   })
 
   it('returns null when no filters are stored', () => {
@@ -59,6 +76,7 @@ describe('ops-filters-storage', () => {
       epicId: null,
       tagSlug: null,
       mode: 'all',
+      manual: 'all',
     })
     const restored = readOpsFilters()
     expect(restored?.projectId).toBe('prj_sticky')
@@ -73,6 +91,7 @@ describe('ops-filters-storage', () => {
       epicId: null,
       tagSlug: null,
       mode: 'all',
+      manual: 'all',
     })
     clearOpsFilters()
     expect(readOpsFilters()).toBeNull()
@@ -101,6 +120,7 @@ describe('ops-filters-storage', () => {
       epicId: null,
       tagSlug: null,
       mode: 'all',
+      manual: 'all',
     })
   })
 
