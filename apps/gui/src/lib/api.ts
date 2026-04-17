@@ -48,6 +48,44 @@ interface ApiRunRecord {
   Metadata?: ApiNullString | null
 }
 
+interface ApiArtifactRecord {
+  ID: number
+  TaskID: string
+  RunID: ApiNullInt64 | null
+  Type: string
+  Content: string
+  URL: string
+  FilePath: string
+  Metadata?: ApiNullString | null
+  CreatedAt: string
+}
+
+function normalizeArtifact(raw: ApiArtifactRecord): Artifact {
+  let metadata: Record<string, unknown> | undefined
+  if (raw.Metadata?.Valid && raw.Metadata.String) {
+    try {
+      const parsed = JSON.parse(raw.Metadata.String) as unknown
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        metadata = parsed as Record<string, unknown>
+      }
+    } catch {
+      // Agent wrote a non-JSON string; treat as no structured metadata
+      // instead of surfacing a parse error to the tab.
+    }
+  }
+  return {
+    id: raw.ID,
+    task_id: raw.TaskID,
+    run_id: raw.RunID?.Valid ? raw.RunID.Int64 : null,
+    type: raw.Type ?? '',
+    content: raw.Content ?? '',
+    url: raw.URL ?? '',
+    file_path: raw.FilePath ?? '',
+    metadata,
+    created_at: raw.CreatedAt,
+  }
+}
+
 function normalizeRun(raw: ApiRunRecord): Run {
   return {
     id: raw.ID,
@@ -204,11 +242,32 @@ export class ClockworkApiClient {
   // -------------------------
 
   async listArtifacts(taskId: string): Promise<Artifact[]> {
-    return this.get<Artifact[]>(`/tasks/${taskId}/artifacts`)
+    // Prefer the query-string form: the /tasks/{id}/artifacts alias is
+    // registered in newer server builds but older binaries serving the
+    // bundled SPA fall through to the index.html fallback instead of the
+    // JSON handler. The envelope shape is identical.
+    const res = await this.get<{ artifacts: ApiArtifactRecord[] }>('/artifacts', { task_id: taskId })
+    return (res.artifacts ?? []).map(normalizeArtifact)
   }
 
-  async createArtifact(taskId: string, data: Partial<Artifact>): Promise<Artifact> {
-    return this.post<Artifact>(`/tasks/${taskId}/artifacts`, data)
+  async createArtifact(data: {
+    task_id: string
+    type: string
+    content?: string
+    url?: string
+    file_path?: string
+    run_id?: number
+  }): Promise<{ id: number }> {
+    return this.post<{ id: number }>('/artifacts', data)
+  }
+
+  async deleteArtifact(id: number): Promise<void> {
+    return this.delete<void>(`/artifacts/${id}`)
+  }
+
+  /** URL the browser can GET to stream the artifact's file content. */
+  artifactContentUrl(id: number): string {
+    return this.url(`/artifacts/${id}/content`)
   }
 
   // -------------------------

@@ -1,12 +1,18 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useParams, useSearchParams, useNavigate, Link } from 'react-router-dom'
-import { FolderOpen } from 'lucide-react'
+import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
+import { Plus } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { CommentList } from '@/components/domain/comment-list'
 import { RunCard } from '@/components/domain/run-card'
 import { EmptyState } from '@/components/domain/empty-state'
+import { ArtifactCard } from '@/components/domain/artifact-card'
+import {
+  AttachArtifactDialog,
+  type AttachArtifactPayload,
+} from '@/components/domain/attach-artifact-dialog'
 import { TaskDetailHeader } from '@/components/domain/task-detail-header'
 import { BlockedReasonAlert } from '@/components/domain/blocked-reason-alert'
 import { DetailSection } from '@/components/domain/detail-section'
@@ -49,6 +55,7 @@ export default function TaskDetailPage() {
 
   const [queueBusy, setQueueBusy] = useState(false)
   const [sendBackOpen, setSendBackOpen] = useState(false)
+  const [attachOpen, setAttachOpen] = useState(false)
 
   // Tab data — lazy loaded
   const [comments, setComments] = useState<Comment[] | null>(null)
@@ -170,6 +177,27 @@ export default function TaskDetailPage() {
       setComments((prev) => [...(prev ?? []), comment])
     } catch (err) {
       notifyError(err, 'Failed to add comment')
+    }
+  }
+
+  async function handleAttachArtifact(payload: AttachArtifactPayload) {
+    if (!id) return
+    await api.createArtifact({ task_id: id, ...payload })
+    // Refetch the list so the new row picks up server-generated fields
+    // (id, created_at, normalized metadata envelope).
+    const fresh = await api.listArtifacts(id)
+    setArtifacts(fresh)
+    notifySuccess('Artifact attached')
+  }
+
+  async function handleDeleteArtifact(artifactId: number) {
+    try {
+      await api.deleteArtifact(artifactId)
+      setArtifacts((prev) => (prev ? prev.filter((a) => a.id !== artifactId) : prev))
+      notifySuccess('Artifact deleted')
+    } catch (err) {
+      notifyError(err, 'Failed to delete artifact')
+      throw err
     }
   }
 
@@ -303,6 +331,12 @@ export default function TaskDetailPage() {
         onSubmit={handleSendBack}
       />
 
+      <AttachArtifactDialog
+        open={attachOpen}
+        onOpenChange={setAttachOpen}
+        onSubmit={handleAttachArtifact}
+      />
+
       {/* Blocked / paused reason — agent's last word before the wheels stopped */}
       {!editing && hasBlockedReason(task) && (
         <BlockedReasonAlert
@@ -434,51 +468,39 @@ export default function TaskDetailPage() {
               </TabsContent>
 
               <TabsContent value="artifacts">
-                {artifacts === null ? (
-                  <Skeleton className="h-24 w-full rounded-md" />
-                ) : artifacts.length === 0 ? (
-                  <EmptyState
-                    variant="no-results"
-                    title="No artifacts"
-                    description="No artifacts have been produced for this task."
-                  />
-                ) : (
-                  <div className="flex flex-col gap-3">
-                    {artifacts.map((artifact) => (
-                      <div
-                        key={artifact.id}
-                        className="rounded-md border border-zinc-800/50 p-3"
-                      >
-                        <div className="flex items-center gap-2 mb-1">
-                          <FolderOpen className="h-3 w-3 text-zinc-500" />
-                          <span className="text-[10px] uppercase tracking-[.18em] text-zinc-500">
-                            {artifact.type}
-                          </span>
-                        </div>
-                        {artifact.file_path && (
-                          <p className="text-[11px] font-mono text-zinc-400 break-all">
-                            {artifact.file_path}
-                          </p>
-                        )}
-                        {artifact.url && (
-                          <Link
-                            to={artifact.url}
-                            className="text-[11px] text-blue-400 hover:text-blue-300 break-all"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            {artifact.url}
-                          </Link>
-                        )}
-                        {artifact.content && (
-                          <pre className="mt-2 text-[11px] bg-zinc-900/60 rounded p-2 overflow-auto max-h-40 whitespace-pre-wrap text-zinc-300">
-                            {artifact.content}
-                          </pre>
-                        )}
-                      </div>
-                    ))}
+                <div className="flex flex-col gap-3">
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setAttachOpen(true)}
+                      className="h-7 gap-1.5 text-[11px]"
+                    >
+                      <Plus className="h-3 w-3" aria-hidden />
+                      Attach artifact
+                    </Button>
                   </div>
-                )}
+                  {artifacts === null ? (
+                    <Skeleton className="h-24 w-full rounded-md" />
+                  ) : artifacts.length === 0 ? (
+                    <EmptyState
+                      variant="no-results"
+                      title="No artifacts"
+                      description="No artifacts have been produced for this task."
+                    />
+                  ) : (
+                    <div className="flex flex-col gap-3">
+                      {artifacts.map((artifact) => (
+                        <ArtifactCard
+                          key={artifact.id}
+                          artifact={artifact}
+                          onDelete={handleDeleteArtifact}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
               </TabsContent>
             </Tabs>
           </div>

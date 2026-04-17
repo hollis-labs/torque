@@ -165,11 +165,17 @@ export interface Run {
 export interface Artifact {
   id: number
   task_id: string
-  run_id: number
+  run_id: number | null
   type: string
   content: string
   url: string
   file_path: string
+  /**
+   * Free-form record written by the creating agent/user. The `origin` key,
+   * if present, drives the agent/user/system badge; other keys are surfaced
+   * verbatim in the collapsed details panel.
+   */
+  metadata?: Record<string, unknown>
   created_at: string
 }
 
