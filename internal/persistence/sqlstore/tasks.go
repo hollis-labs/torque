@@ -541,6 +541,32 @@ func (s *Store) TransitionTaskWithReason(id, newStatus, reason string) error {
 	return nil
 }
 
+// ParkTaskOnCheckpoint atomically transitions a task from "doing" to "review"
+// with the given BlockedReason, but only when the task's current status is
+// "doing" AND its checkpoint_mode is "blocking". Returns (true, nil) when the
+// row was updated; (false, nil) when the predicate didn't match (task moved
+// between the caller's read and this write, or wasn't eligible to begin with).
+//
+// Callers use this to park a task on a newly-emitted checkpoint without
+// risking a clobber of a BlockedReason that another actor wrote between
+// the caller's GetTask and the UPDATE — i.e. the classic TOCTOU
+// race-condition avoidance.
+func (s *Store) ParkTaskOnCheckpoint(id, reason string) (bool, error) {
+	res, err := s.db.Exec(
+		`UPDATE tasks SET status = 'review', blocked_reason = ?, updated_at = ?
+		 WHERE id = ? AND status = 'doing' AND checkpoint_mode = 'blocking'`,
+		reason, time.Now().UTC(), id,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // DeleteTask removes a task by ID.
 func (s *Store) DeleteTask(id string) error {
 	res, err := s.db.Exec(`DELETE FROM tasks WHERE id = ?`, id)

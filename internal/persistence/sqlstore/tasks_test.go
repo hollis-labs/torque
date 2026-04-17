@@ -301,6 +301,74 @@ func TestListTasks_FilterByKind(t *testing.T) {
 	assert.Equal(t, "CW-20260416-0010", waits[0].ID)
 }
 
+// ParkTaskOnCheckpoint is the conditional UPDATE behind
+// CheckpointService.Emit's park. It must only fire for tasks currently
+// in status=doing AND checkpoint_mode=blocking — protecting callers
+// from clobbering a BlockedReason set by another actor between the
+// caller's GetTask and this write.
+func TestParkTaskOnCheckpoint_EligibleDoingBlocking(t *testing.T) {
+	store := setupTestStore(t)
+
+	rec := sampleTask("CW-PARK-1")
+	rec.CheckpointMode = "blocking"
+	rec.Status = "doing"
+	require.NoError(t, store.CreateTask(rec))
+
+	ok, err := store.ParkTaskOnCheckpoint(rec.ID, "awaiting checkpoint CORR-1")
+	require.NoError(t, err)
+	assert.True(t, ok, "eligible task should be parked")
+
+	got, err := store.GetTask(rec.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "review", got.Status)
+	assert.Equal(t, "awaiting checkpoint CORR-1", got.BlockedReason)
+}
+
+func TestParkTaskOnCheckpoint_NotDoing_NoOp(t *testing.T) {
+	store := setupTestStore(t)
+
+	rec := sampleTask("CW-PARK-2")
+	rec.CheckpointMode = "blocking"
+	rec.Status = "review"
+	rec.BlockedReason = "pre-existing reason"
+	require.NoError(t, store.CreateTask(rec))
+
+	ok, err := store.ParkTaskOnCheckpoint(rec.ID, "awaiting checkpoint CORR-2")
+	require.NoError(t, err)
+	assert.False(t, ok, "task not in doing should not be parked")
+
+	got, err := store.GetTask(rec.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "review", got.Status, "status unchanged")
+	assert.Equal(t, "pre-existing reason", got.BlockedReason, "blocked_reason unchanged")
+}
+
+func TestParkTaskOnCheckpoint_NonBlockingMode_NoOp(t *testing.T) {
+	store := setupTestStore(t)
+
+	rec := sampleTask("CW-PARK-3")
+	rec.CheckpointMode = "non_blocking"
+	rec.Status = "doing"
+	require.NoError(t, store.CreateTask(rec))
+
+	ok, err := store.ParkTaskOnCheckpoint(rec.ID, "awaiting checkpoint CORR-3")
+	require.NoError(t, err)
+	assert.False(t, ok, "non_blocking task should not be parked")
+
+	got, err := store.GetTask(rec.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "doing", got.Status, "status unchanged")
+	assert.Equal(t, "", got.BlockedReason)
+}
+
+func TestParkTaskOnCheckpoint_MissingTask_NoOp(t *testing.T) {
+	store := setupTestStore(t)
+
+	ok, err := store.ParkTaskOnCheckpoint("CW-DOESNT-EXIST", "awaiting checkpoint X")
+	require.NoError(t, err)
+	assert.False(t, ok, "missing task id should not be a hard error — just no-op")
+}
+
 // TestNextTaskID verifies sequential ID generation for today.
 func TestNextTaskID(t *testing.T) {
 	store := setupTestStore(t)
