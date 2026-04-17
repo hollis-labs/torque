@@ -83,8 +83,13 @@ type rawDelta struct {
 // Malformed JSON lines are silently skipped with a log warning.
 func ParseStreamJSON(r io.Reader, onEvent func(StreamEvent)) error {
 	scanner := bufio.NewScanner(r)
-	// Increase buffer for potentially large result lines.
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	// Claude's --verbose stream-json output can emit very long NDJSON lines:
+	// the final `result` event embeds the full agent reply as a JSON-encoded
+	// string, and summaries/file lists can easily exceed 1 MB. Start at 1 MB
+	// and allow up to 10 MB per line before the scanner errors. FE's
+	// executor uses 64 KB / 1 MB; we lift both because we've observed
+	// real-world runs exceed 1 MB (Bug CW-20260417-0023 pathology).
+	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
 
 	for scanner.Scan() {
 		line := scanner.Text()
