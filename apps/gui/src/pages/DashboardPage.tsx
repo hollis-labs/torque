@@ -1,13 +1,12 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Card, CardContent } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { PageHeader } from '@/components/domain/page-header'
 import { SummaryCards } from '@/components/domain/summary-cards'
 import { EmptyState } from '@/components/domain/empty-state'
 import { RestartFrontendButton } from '@/components/domain/restart-frontend-button'
-import { OpsWidgetGroupA } from '@/components/widgets'
+import { OpsWidgetGroupA, OpsWidgetGroupB, OpsWidgetGroupC } from '@/components/widgets'
 import { useApi } from '@/hooks/use-api'
 import { STATUS_COLOR_VAR } from '@/lib/constants'
 import type { Run, Task } from '@/lib/types'
@@ -29,14 +28,6 @@ function DashboardSkeleton() {
         ))}
       </div>
       <Skeleton className="h-48 rounded-md" />
-    </div>
-  )
-}
-
-function TabPlaceholder({ label }: { label: string }) {
-  return (
-    <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
-      {label} — coming soon
     </div>
   )
 }
@@ -150,18 +141,10 @@ export default function DashboardPage() {
               <OpsWidgetGroupA tasks={tasks} runs={runs} />
             </TabsContent>
             <TabsContent value="mission-control" className="px-4 py-4">
-              <Card size="sm">
-                <CardContent>
-                  <TabPlaceholder label="Mission Control" />
-                </CardContent>
-              </Card>
+              <OpsWidgetGroupB runs={runs} />
             </TabsContent>
             <TabsContent value="usage" className="px-4 py-4">
-              <Card size="sm">
-                <CardContent>
-                  <TabPlaceholder label="Usage" />
-                </CardContent>
-              </Card>
+              <OpsWidgetGroupC runs={runs} />
             </TabsContent>
           </Tabs>
         )}

@@ -1,6 +1,15 @@
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { ActivityHeatmap, RunsChart, TaskPipeline } from './index'
+import {
+  ActivityHeatmap,
+  RunsChart,
+  TaskPipeline,
+  TokenThroughput,
+  RunStatusDistribution,
+  RecentRuns,
+  Pulse24h,
+  CostPerDay,
+} from './index'
 import type { Run, Task } from '@/lib/types'
 
 function makeTask(over: Partial<Task> = {}): Task {
@@ -109,5 +118,93 @@ describe('TaskPipeline', () => {
       <TaskPipeline tasks={[makeTask({ status: 'doing' }), makeTask({ status: 'done' })]} />
     )
     expect(html).toContain('2 total')
+  })
+})
+
+describe('TokenThroughput', () => {
+  it('renders empty state when no tokens', () => {
+    const html = renderToStaticMarkup(<TokenThroughput runs={[]} />)
+    expect(html).toContain('No tokens in window')
+  })
+
+  it('renders totals when tokens present', () => {
+    const html = renderToStaticMarkup(
+      <TokenThroughput
+        runs={[makeRun({ prompt_tokens: 1200, completion_tokens: 800 })]}
+      />
+    )
+    expect(html).toContain('total tokens')
+  })
+})
+
+describe('RunStatusDistribution', () => {
+  it('renders empty state with no runs', () => {
+    const html = renderToStaticMarkup(<RunStatusDistribution runs={[]} />)
+    expect(html).toContain('No runs recorded')
+  })
+
+  it('classifies statuses into buckets', () => {
+    const html = renderToStaticMarkup(
+      <RunStatusDistribution
+        runs={[
+          makeRun({ id: 1, status: 'success' }),
+          makeRun({ id: 2, status: 'failed' }),
+          makeRun({ id: 3, status: 'running' }),
+        ]}
+      />
+    )
+    expect(html).toContain('success')
+    expect(html).toContain('error')
+    expect(html).toContain('active')
+    expect(html).toContain('3 runs')
+  })
+})
+
+describe('RecentRuns', () => {
+  it('renders empty state with no runs', () => {
+    const html = renderToStaticMarkup(<RecentRuns runs={[]} />)
+    expect(html).toContain('No runs yet')
+  })
+
+  it('limits to N newest runs', () => {
+    const runs = Array.from({ length: 30 }).map((_, i) =>
+      makeRun({
+        id: i + 1,
+        started_at: new Date(Date.now() - i * 60_000).toISOString(),
+      })
+    )
+    const html = renderToStaticMarkup(<RecentRuns runs={runs} limit={5} />)
+    expect(html).toContain('5 shown')
+  })
+})
+
+describe('Pulse24h', () => {
+  it('renders empty state with no recent runs', () => {
+    const html = renderToStaticMarkup(<Pulse24h runs={[]} />)
+    expect(html).toContain('No activity in last 24h')
+  })
+
+  it('counts runs in the last 24h window', () => {
+    const runs = [
+      makeRun({ id: 1, started_at: new Date(Date.now() - 30 * 60_000).toISOString() }),
+      makeRun({ id: 2, started_at: new Date(Date.now() - 3 * 60 * 60_000).toISOString() }),
+    ]
+    const html = renderToStaticMarkup(<Pulse24h runs={runs} />)
+    expect(html).toContain('2 runs')
+  })
+})
+
+describe('CostPerDay', () => {
+  it('renders empty state with no cost', () => {
+    const html = renderToStaticMarkup(<CostPerDay runs={[]} />)
+    expect(html).toContain('No cost recorded')
+  })
+
+  it('shows total cost when populated', () => {
+    const today = new Date().toISOString()
+    const html = renderToStaticMarkup(
+      <CostPerDay runs={[makeRun({ cost: 1.25, started_at: today })]} />
+    )
+    expect(html).toContain('total')
   })
 })
