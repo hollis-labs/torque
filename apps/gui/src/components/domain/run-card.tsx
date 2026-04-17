@@ -1,9 +1,21 @@
 import { Link } from 'react-router-dom'
-import { Clock, Cpu, DollarSign, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react'
+import { Clock, Cpu, DollarSign, AlertCircle, CheckCircle2, Loader2, CalendarClock } from 'lucide-react'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { formatCost, formatTokens, formatDuration } from '@/lib/utils'
 import type { Run } from '@/lib/types'
+
+function formatTimestamp(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+}
 
 interface RunCardProps {
   run: Run
@@ -87,6 +99,17 @@ export function RunCard({ run, showTaskLink }: RunCardProps) {
             <span className="flex items-center gap-1">
               <Clock className="h-3 w-3" />
               {duration}
+            </span>
+          )}
+          {run.completed_at && (
+            <span className="flex items-center gap-1" title={`Ended ${run.completed_at}`}>
+              <CalendarClock className="h-3 w-3" />
+              {formatTimestamp(run.completed_at)}
+            </span>
+          )}
+          {run.exit_code !== 0 && (
+            <span className="flex items-center gap-1 font-mono text-destructive">
+              exit {run.exit_code}
             </span>
           )}
         </div>

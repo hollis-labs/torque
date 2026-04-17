@@ -5,6 +5,7 @@ import { TagChip } from './tag-chip'
 import { CopyableId } from './copyable-id'
 import { TaskActionsMenu } from './task-actions-menu'
 import { formatRelativeTime } from '@/lib/utils'
+import { hasBlockedReason, truncateBlockedReason } from '@/lib/blocked-reason'
 import type { Task, TaskStatus } from '@/lib/types'
 
 interface TaskRowProps {
@@ -92,7 +93,14 @@ export function TaskRow({ task, selected, onSelect, onTaskChange, onTaskDelete }
       </td>
       {/* Status */}
       <td className="w-px whitespace-nowrap px-1.5 py-1.5" onClick={stop}>
-        <StatusBadge status={task.status} />
+        <StatusBadge
+          status={task.status}
+          tooltip={
+            hasBlockedReason(task)
+              ? truncateBlockedReason(task.blocked_reason)
+              : undefined
+          }
+        />
       </td>
       {/* Priority */}
       <td className="w-px whitespace-nowrap px-1.5 py-1.5">
