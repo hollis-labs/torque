@@ -11,6 +11,7 @@ import { TaskDetailHeader } from '@/components/domain/task-detail-header'
 import { BlockedReasonAlert } from '@/components/domain/blocked-reason-alert'
 import { DetailSection } from '@/components/domain/detail-section'
 import { TaskProperties } from '@/components/domain/task-properties'
+import { TaskFacets } from '@/components/domain/task-facets'
 import { ExecutionContext } from '@/components/domain/execution-context'
 import { LifecycleRules } from '@/components/domain/lifecycle-rules'
 import { DeliverablesAndDeps } from '@/components/domain/deliverables-deps'
@@ -313,6 +314,9 @@ export default function TaskDetailPage() {
             epics={epics}
             pickersLoading={pickersLoading}
           />
+
+          {/* Facets — read-only v1: kind, source, trust, checkpoint, template_ref */}
+          {!editing && <TaskFacets task={task} />}
 
           {/* Description — inline, zinc accent, always open */}
           <DetailSection label="Description" accent="zinc" collapsible={false}>

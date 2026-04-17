@@ -53,6 +53,17 @@ export interface Deliverable {
  */
 export const UNLIMITED = -1 as const
 
+export type TaskKind = 'agent' | 'external' | 'wait' | 'decision' | 'parent'
+export type TaskSourceType = 'agent' | 'user' | 'api' | 'system' | 'webhook' | 'import'
+export type TaskTrust = 'trusted' | 'normal' | 'untrusted'
+export type TaskCheckpointMode = 'none' | 'blocking' | 'non_blocking'
+export type TaskOnCheckpointResponse = 'resume' | 'review' | 'custom'
+
+export interface TemplateRef {
+  id: string
+  version: number
+}
+
 export interface Task {
   id: string
   title: string
@@ -64,6 +75,14 @@ export interface Task {
   executor: string
   agent_profile: string
   working_dir: string
+
+  // Facets (migration 007)
+  kind: TaskKind
+  source_type: TaskSourceType
+  source_ref: string | null
+  trust: TaskTrust
+  checkpoint_mode: TaskCheckpointMode
+  on_checkpoint_response: TaskOnCheckpointResponse
 
   // Execution context
   tools: string[]

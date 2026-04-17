@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-export type DetailSectionAccent = 'blue' | 'violet' | 'amber' | 'red' | 'zinc'
+export type DetailSectionAccent = 'blue' | 'violet' | 'amber' | 'red' | 'zinc' | 'teal'
 
 const ACCENT_CLASSES: Record<DetailSectionAccent, string> = {
   blue: 'border-l-blue-500/70',
@@ -10,6 +10,7 @@ const ACCENT_CLASSES: Record<DetailSectionAccent, string> = {
   amber: 'border-l-amber-500/70',
   red: 'border-l-red-500/70',
   zinc: 'border-l-zinc-500/50',
+  teal: 'border-l-teal-500/70',
 }
 
 interface DetailSectionProps {
