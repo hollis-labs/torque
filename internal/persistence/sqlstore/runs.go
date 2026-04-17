@@ -3,6 +3,7 @@ package sqlstore
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -109,11 +110,67 @@ func (s *Store) GetRun(id int64) (*RunRecord, error) {
 
 // ListRuns returns all runs for a task, newest first.
 func (s *Store) ListRuns(taskID string) ([]RunRecord, error) {
-	const q = `SELECT id, task_id, executor, status, started_at, ended_at,
-		prompt_tokens, completion_tokens, cost, exit_code, error_message, metadata
-		FROM runs WHERE task_id = ? ORDER BY started_at DESC`
+	return s.ListRunsFiltered(RunFilter{TaskID: taskID})
+}
 
-	rows, err := s.db.Query(q, taskID)
+// RunFilter parameterizes aggregate queries across runs. Empty fields are
+// treated as "no filter"; Limit <= 0 means "no limit" at the store layer
+// (HTTP handlers cap this before it gets here).
+type RunFilter struct {
+	TaskID    string
+	ProjectID string
+	Statuses  []string
+	Since     time.Time
+	Limit     int
+}
+
+// ListRunsFiltered returns runs matching the filter, newest first
+// (ORDER BY started_at DESC). When ProjectID is set, runs are joined
+// against tasks to filter on the task's project. All filters combine
+// with AND. An empty filter returns every run in the store (bounded
+// only by Limit).
+func (s *Store) ListRunsFiltered(f RunFilter) ([]RunRecord, error) {
+	var (
+		where []string
+		args  []interface{}
+	)
+
+	sel := `SELECT r.id, r.task_id, r.executor, r.status, r.started_at, r.ended_at,
+		r.prompt_tokens, r.completion_tokens, r.cost, r.exit_code, r.error_message, r.metadata
+		FROM runs r`
+	if f.ProjectID != "" {
+		sel += ` INNER JOIN tasks t ON t.id = r.task_id`
+		where = append(where, "t.project_id = ?")
+		args = append(args, f.ProjectID)
+	}
+	if f.TaskID != "" {
+		where = append(where, "r.task_id = ?")
+		args = append(args, f.TaskID)
+	}
+	if !f.Since.IsZero() {
+		where = append(where, "r.started_at >= ?")
+		args = append(args, f.Since.UTC())
+	}
+	if len(f.Statuses) > 0 {
+		placeholders := make([]string, len(f.Statuses))
+		for i, s := range f.Statuses {
+			placeholders[i] = "?"
+			args = append(args, s)
+		}
+		where = append(where, "r.status IN ("+strings.Join(placeholders, ",")+")")
+	}
+
+	q := sel
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	q += " ORDER BY r.started_at DESC"
+	if f.Limit > 0 {
+		q += " LIMIT ?"
+		args = append(args, f.Limit)
+	}
+
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
