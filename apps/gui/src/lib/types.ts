@@ -146,7 +146,7 @@ export interface Run {
 export interface Artifact {
   id: number
   task_id: string
-  run_id: number
+  run_id: number | null
   type: string
   content: string
   url: string

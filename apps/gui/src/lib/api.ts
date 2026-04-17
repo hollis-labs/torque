@@ -48,6 +48,30 @@ interface ApiRunRecord {
   Metadata?: ApiNullString | null
 }
 
+interface ApiArtifactRecord {
+  ID: number
+  TaskID: string
+  RunID: ApiNullInt64 | null
+  Type: string
+  Content: string
+  URL: string
+  FilePath: string
+  CreatedAt: string
+}
+
+function normalizeArtifact(raw: ApiArtifactRecord): Artifact {
+  return {
+    id: raw.ID,
+    task_id: raw.TaskID,
+    run_id: raw.RunID?.Valid ? raw.RunID.Int64 : null,
+    type: raw.Type ?? '',
+    content: raw.Content ?? '',
+    url: raw.URL ?? '',
+    file_path: raw.FilePath ?? '',
+    created_at: raw.CreatedAt,
+  }
+}
+
 function normalizeRun(raw: ApiRunRecord): Run {
   return {
     id: raw.ID,
@@ -204,11 +228,13 @@ export class ClockworkApiClient {
   // -------------------------
 
   async listArtifacts(taskId: string): Promise<Artifact[]> {
-    return this.get<Artifact[]>(`/tasks/${taskId}/artifacts`)
+    const res = await this.get<{ artifacts: ApiArtifactRecord[] }>(`/tasks/${taskId}/artifacts`)
+    return (res.artifacts ?? []).map(normalizeArtifact)
   }
 
-  async createArtifact(taskId: string, data: Partial<Artifact>): Promise<Artifact> {
-    return this.post<Artifact>(`/tasks/${taskId}/artifacts`, data)
+  /** URL the browser can GET to stream the artifact's file content. */
+  artifactContentUrl(id: number): string {
+    return this.url(`/artifacts/${id}/content`)
   }
 
   // -------------------------

@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useParams, useSearchParams, useNavigate, Link } from 'react-router-dom'
-import { FolderOpen } from 'lucide-react'
+import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
 import { CommentList } from '@/components/domain/comment-list'
 import { RunCard } from '@/components/domain/run-card'
 import { EmptyState } from '@/components/domain/empty-state'
+import { ArtifactCard } from '@/components/domain/artifact-card'
 import { TaskDetailHeader } from '@/components/domain/task-detail-header'
 import { BlockedReasonAlert } from '@/components/domain/blocked-reason-alert'
 import { DetailSection } from '@/components/domain/detail-section'
@@ -420,37 +420,7 @@ export default function TaskDetailPage() {
                 ) : (
                   <div className="flex flex-col gap-3">
                     {artifacts.map((artifact) => (
-                      <div
-                        key={artifact.id}
-                        className="rounded-md border border-zinc-800/50 p-3"
-                      >
-                        <div className="flex items-center gap-2 mb-1">
-                          <FolderOpen className="h-3 w-3 text-zinc-500" />
-                          <span className="text-[10px] uppercase tracking-[.18em] text-zinc-500">
-                            {artifact.type}
-                          </span>
-                        </div>
-                        {artifact.file_path && (
-                          <p className="text-[11px] font-mono text-zinc-400 break-all">
-                            {artifact.file_path}
-                          </p>
-                        )}
-                        {artifact.url && (
-                          <Link
-                            to={artifact.url}
-                            className="text-[11px] text-blue-400 hover:text-blue-300 break-all"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            {artifact.url}
-                          </Link>
-                        )}
-                        {artifact.content && (
-                          <pre className="mt-2 text-[11px] bg-zinc-900/60 rounded p-2 overflow-auto max-h-40 whitespace-pre-wrap text-zinc-300">
-                            {artifact.content}
-                          </pre>
-                        )}
-                      </div>
+                      <ArtifactCard key={artifact.id} artifact={artifact} />
                     ))}
                   </div>
                 )}
