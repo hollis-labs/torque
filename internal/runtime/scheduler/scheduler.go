@@ -548,6 +548,18 @@ func (s *Scheduler) publishProgress(taskID string, runID int64, event executor.E
 			},
 		})
 
+	case event.Type == executor.EventToolUse && event.ToolUse != nil:
+		s.bus.Publish(SchedulerEvent{
+			Type:   "run.progress",
+			TaskID: taskID,
+			RunID:  runID,
+			Data: map[string]interface{}{
+				"kind":         "tool_use",
+				"tool_name":    event.ToolUse.Name,
+				"args_summary": event.ToolUse.ArgsSummary,
+			},
+		})
+
 	case event.Type == executor.EventTokenUsage,
 		event.Type == executor.EventSignal && event.Signal == "CLOCKWORK_TOKENS":
 		if !s.progressThrottler.allow(runID, time.Now()) {

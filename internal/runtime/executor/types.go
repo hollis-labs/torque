@@ -61,6 +61,15 @@ type ExecutionEvent struct {
 	Artifact *Artifact // When Type == EventArtifact
 	Tokens   *TokenUsage
 	Progress *float64 // 0.0-1.0 (when Type == EventProgress)
+	ToolUse  *ToolUse  // When Type == EventToolUse
+}
+
+// ToolUse is the payload of an EventToolUse event. ArgsSummary is a
+// truncated, secret-sanitized preview of the tool invocation's input so the
+// UI can show what the agent is doing without leaking credentials.
+type ToolUse struct {
+	Name        string
+	ArgsSummary string
 }
 
 // Artifact is an output produced by an execution run.
@@ -118,4 +127,13 @@ func TokenEvent(prompt, completion int, cost float64) ExecutionEvent {
 // ArtifactEvent creates an ExecutionEvent for an artifact produced during execution.
 func ArtifactEvent(a Artifact) ExecutionEvent {
 	return ExecutionEvent{Type: EventArtifact, Artifact: &a}
+}
+
+// ToolUseEvent creates an ExecutionEvent describing an in-flight tool
+// invocation (Edit, Read, Bash, etc.) surfaced from a streaming agent.
+func ToolUseEvent(name, argsSummary string) ExecutionEvent {
+	return ExecutionEvent{
+		Type:    EventToolUse,
+		ToolUse: &ToolUse{Name: name, ArgsSummary: argsSummary},
+	}
 }

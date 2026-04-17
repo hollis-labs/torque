@@ -52,6 +52,8 @@ func runEventType(event executor.ExecutionEvent) string {
 		return "tokens"
 	case executor.EventProgress:
 		return "progress"
+	case executor.EventToolUse:
+		return "tool_use"
 	default:
 		return "unknown"
 	}
@@ -91,6 +93,14 @@ func runEventPayload(event executor.ExecutionEvent) interface{} {
 			return nil
 		}
 		return map[string]float64{"value": *event.Progress}
+	case executor.EventToolUse:
+		if event.ToolUse == nil {
+			return nil
+		}
+		return map[string]interface{}{
+			"tool_name":    event.ToolUse.Name,
+			"args_summary": event.ToolUse.ArgsSummary,
+		}
 	default:
 		return nil
 	}

@@ -70,6 +70,7 @@ const (
 	EventArtifact                    // Artifact produced
 	EventProgress                    // Progress update (0.0 - 1.0)
 	EventTokenUsage                  // Token usage update
+	EventToolUse                     // Agent invoked a tool (mid-stream content_block tool_use)
 )
 
 var eventNames = map[EventType]string{
@@ -78,6 +79,7 @@ var eventNames = map[EventType]string{
 	EventArtifact:   "artifact",
 	EventProgress:   "progress",
 	EventTokenUsage: "token_usage",
+	EventToolUse:    "tool_use",
 }
 
 // String returns the canonical name of the event type.

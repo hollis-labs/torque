@@ -239,6 +239,72 @@ func jsonQuote(s string) string {
 	return string(b)
 }
 
+// content_block_start with nested type=tool_use must emit StreamEventToolUse
+// carrying the tool name and a sanitized summary of the input.
+func TestParseStreamJSONToolUse(t *testing.T) {
+	input := `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"Edit","input":{"file_path":"/tmp/x.go","old_string":"a","new_string":"b"}}}`
+
+	var events []executor.StreamEvent
+	err := executor.ParseStreamJSON(strings.NewReader(input), func(ev executor.StreamEvent) {
+		events = append(events, ev)
+	})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, executor.StreamEventToolUse, events[0].Type)
+	require.NotNil(t, events[0].ToolUse)
+	assert.Equal(t, "Edit", events[0].ToolUse.Name)
+	assert.Contains(t, events[0].ToolUse.ArgsSummary, "/tmp/x.go")
+}
+
+// Secret-shaped values (api_key, token, long hex strings, JWTs) must be
+// masked before the summary hits the SSE bus.
+func TestParseStreamJSONToolUseRedactsSecrets(t *testing.T) {
+	// api_key under a direct key, plus a JWT in a value under an innocent key.
+	input := `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","name":"Bash","input":{"command":"curl -H 'Authorization: Bearer eyABCDEFGHIJKLMNOPQRST.abcdefghijklmno.signature'","api_key":"sk-proj-abcdefghijklmnopqrstuvwxyz0123456789"}}}`
+
+	var events []executor.StreamEvent
+	err := executor.ParseStreamJSON(strings.NewReader(input), func(ev executor.StreamEvent) {
+		events = append(events, ev)
+	})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	require.NotNil(t, events[0].ToolUse)
+
+	summary := events[0].ToolUse.ArgsSummary
+	assert.NotContains(t, summary, "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789")
+	assert.NotContains(t, summary, "eyABCDEFGHIJKLMNOPQRST.abcdefghijklmno.signature")
+	assert.Contains(t, summary, "[redacted]")
+}
+
+// Non-tool_use content blocks (e.g. text blocks) must not emit tool_use events.
+func TestParseStreamJSONContentBlockStartTextIgnored(t *testing.T) {
+	input := `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`
+
+	var events []executor.StreamEvent
+	err := executor.ParseStreamJSON(strings.NewReader(input), func(ev executor.StreamEvent) {
+		events = append(events, ev)
+	})
+	require.NoError(t, err)
+	assert.Empty(t, events, "text content_block_start must be ignored")
+}
+
+// Long inputs should be truncated, not emitted verbatim, to keep SSE payloads
+// readable.
+func TestParseStreamJSONToolUseTruncatesLongInput(t *testing.T) {
+	long := strings.Repeat("x", 2000)
+	input := `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","name":"Edit","input":{"file_path":"` + long + `"}}}`
+
+	var events []executor.StreamEvent
+	err := executor.ParseStreamJSON(strings.NewReader(input), func(ev executor.StreamEvent) {
+		events = append(events, ev)
+	})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	require.NotNil(t, events[0].ToolUse)
+	// Must be well under the raw payload length.
+	assert.Less(t, len(events[0].ToolUse.ArgsSummary), 500)
+}
+
 func TestParseStreamJSONMultilineContent(t *testing.T) {
 	input := `{"type":"content_block_delta","delta":{"type":"text_delta","text":"line one\nCLOCKWORK_NOTE: important\nline three\n"}}`
 

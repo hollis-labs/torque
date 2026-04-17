@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"regexp"
 	"strings"
 )
 
@@ -15,6 +16,7 @@ const (
 	StreamEventLogLine StreamEventType = iota // Extracted text content — forward to live log
 	StreamEventSignal                         // Mid-stream signal parsed from content text
 	StreamEventResult                         // Final structured result from stream-json
+	StreamEventToolUse                        // Agent invoked a tool (content_block_start tool_use)
 )
 
 // StreamTokens holds token usage from the result event.
@@ -26,11 +28,20 @@ type StreamTokens struct {
 
 // StreamEvent is emitted by ParseStreamJSON for each meaningful event.
 type StreamEvent struct {
-	Type   StreamEventType
-	Text   string        // for LogLine
-	Signal ParsedSignal  // for Signal
-	Result *AgentResult  // for Result
-	Tokens *StreamTokens // for Result (token usage from the result envelope)
+	Type    StreamEventType
+	Text    string             // for LogLine
+	Signal  ParsedSignal       // for Signal
+	Result  *AgentResult       // for Result
+	Tokens  *StreamTokens      // for Result (token usage from the result envelope)
+	ToolUse *StreamToolUseCall // for ToolUse
+}
+
+// StreamToolUseCall describes an in-flight tool invocation surfaced from a
+// content_block_start event. ArgsSummary is already truncated and sanitized
+// (see sanitizeToolUseInput), suitable for direct forwarding to the UI.
+type StreamToolUseCall struct {
+	Name        string
+	ArgsSummary string
 }
 
 // AgentResult is the structured output returned by the CLI when invoked
@@ -61,6 +72,11 @@ type rawStreamLine struct {
 	Type  string          `json:"type"`
 	Delta json.RawMessage `json:"delta,omitempty"`
 
+	// content_block_start carries the opening envelope of a block — when the
+	// nested type is "tool_use" we surface it so the Activity panel can show
+	// what tool the agent just invoked.
+	ContentBlock json.RawMessage `json:"content_block,omitempty"`
+
 	// Claude CLI with --json-schema lands the schema-conformant payload in
 	// StructuredOutput (an object) and leaves Result as an empty string.
 	// Without --json-schema, Result is a JSON-encoded string that itself
@@ -76,6 +92,14 @@ type rawStreamLine struct {
 	// Newer envelopes carry usage/cost on nested fields. Keep legacy fallbacks above.
 	TotalCostUSD float64         `json:"total_cost_usd,omitempty"`
 	Usage        json.RawMessage `json:"usage,omitempty"`
+}
+
+// rawContentBlock is the shape of the content_block field on
+// content_block_start events when the block is a tool invocation.
+type rawContentBlock struct {
+	Type  string          `json:"type"`
+	Name  string          `json:"name,omitempty"`
+	Input json.RawMessage `json:"input,omitempty"`
 }
 
 type rawUsage struct {
@@ -134,6 +158,25 @@ func ParseStreamJSON(r io.Reader, onEvent func(StreamEvent)) error {
 				}
 			}
 
+		case "content_block_start":
+			if len(raw.ContentBlock) == 0 {
+				continue
+			}
+			var block rawContentBlock
+			if err := json.Unmarshal(raw.ContentBlock, &block); err != nil {
+				continue
+			}
+			if block.Type != "tool_use" || block.Name == "" {
+				continue
+			}
+			onEvent(StreamEvent{
+				Type: StreamEventToolUse,
+				ToolUse: &StreamToolUseCall{
+					Name:        block.Name,
+					ArgsSummary: sanitizeToolUseInput(block.Input),
+				},
+			})
+
 		case "result":
 			var result AgentResult
 			// Prefer structured_output (claude --json-schema new behavior).
@@ -188,6 +231,82 @@ func ParseStreamJSON(r io.Reader, onEvent func(StreamEvent)) error {
 		// Other event types (content_block_start, message_start, etc.) are ignored.
 	}
 	return scanner.Err()
+}
+
+// toolUseSummaryMaxLen caps how much of a tool's JSON-encoded input survives
+// in an ArgsSummary string. Long enough to preview a file path or short
+// bash command, short enough to keep the SSE payload and activity feed
+// readable.
+const toolUseSummaryMaxLen = 160
+
+// secretKeyPattern flags JSON keys that commonly hold sensitive values so
+// their values can be masked before the summary hits the SSE bus. The
+// pattern is intentionally broad — false positives only cost visibility,
+// false negatives cost credential leaks.
+var secretKeyPattern = regexp.MustCompile(`(?i)(?:^|[_\-])(?:api[_\-]?key|token|secret|password|passwd|auth|credential|bearer|access[_\-]?key|private[_\-]?key)(?:[_\-]|$)`)
+
+// secretValuePattern catches credential-shaped strings even under unexpected
+// key names — long hex blobs, sk-/pk-prefixed keys, long base64 runs. Used
+// as a post-serialization sweep on the summary string.
+var secretValuePattern = regexp.MustCompile(`(?:sk|pk|ghp|gho|ghu|ghs|ghr|xoxb|xoxp|xoxa)_[A-Za-z0-9_-]{10,}|\b[A-Fa-f0-9]{32,}\b|\bey[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\b`)
+
+// sanitizeToolUseInput renders a tool's JSON input as a single-line preview
+// with secret-shaped values redacted. Returns an empty string when input is
+// empty or unparseable — callers should treat that as "no preview available"
+// rather than surfacing raw JSON that might leak credentials.
+func sanitizeToolUseInput(input json.RawMessage) string {
+	if len(input) == 0 || string(input) == "null" {
+		return ""
+	}
+
+	var parsed any
+	if err := json.Unmarshal(input, &parsed); err != nil {
+		// Not JSON — redact entirely rather than leak whatever it is.
+		return truncateSummary(secretValuePattern.ReplaceAllString(string(input), "[redacted]"))
+	}
+
+	masked := maskSecrets(parsed)
+	encoded, err := json.Marshal(masked)
+	if err != nil {
+		return ""
+	}
+	out := secretValuePattern.ReplaceAllString(string(encoded), "[redacted]")
+	return truncateSummary(out)
+}
+
+// maskSecrets walks a parsed JSON value and replaces values under suspicious
+// keys with "[redacted]". Non-suspicious keys are recursed into so nested
+// secrets still get caught.
+func maskSecrets(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(val))
+		for k, child := range val {
+			if secretKeyPattern.MatchString(k) {
+				out[k] = "[redacted]"
+				continue
+			}
+			out[k] = maskSecrets(child)
+		}
+		return out
+	case []any:
+		out := make([]any, len(val))
+		for i, child := range val {
+			out[i] = maskSecrets(child)
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+// truncateSummary caps a summary string to toolUseSummaryMaxLen, appending
+// an ellipsis marker so consumers can see that truncation happened.
+func truncateSummary(s string) string {
+	if len(s) <= toolUseSummaryMaxLen {
+		return s
+	}
+	return s[:toolUseSummaryMaxLen] + "…"
 }
 
 // splitContentLines splits a content delta text into individual lines,
