@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -25,8 +25,10 @@ import { SendBackDialog } from '@/components/domain/send-back-dialog'
 import { ActivityPanel } from '@/components/domain/activity-panel'
 import { TaskCheckpointsBanner } from '@/components/domain/task-checkpoints-banner'
 import { useApi } from '@/hooks/use-api'
+import { useArrowNav } from '@/hooks/use-arrow-nav'
 import { hasBlockedReason } from '@/lib/blocked-reason'
 import { computeTaskDiff } from '@/lib/task-diff'
+import { readTaskListCursor } from '@/lib/task-list-cursor'
 import { notifyError, notifySuccess } from '@/lib/toast'
 import type {
   Task,
@@ -83,6 +85,30 @@ export default function TaskDetailPage() {
       .catch((err: Error) => setError(err.message))
       .finally(() => setLoading(false))
   }, [api, id])
+
+  // Resolve the current task's position inside the last rendered list so
+  // arrow keys jump to adjacent tasks. The cursor is refreshed whenever
+  // `id` changes — new navigation implies the user may have re-filtered
+  // on BoardPage in between. A missing cursor (deep link / hard refresh)
+  // silently disables navigation.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const cursorIds = useMemo(() => readTaskListCursor(), [id])
+  const cursorIndex = id ? cursorIds.indexOf(id) : -1
+
+  const navigateToAdjacent = useCallback(
+    (delta: -1 | 1) => {
+      if (cursorIndex < 0 || cursorIds.length < 2) return
+      const nextIndex = (cursorIndex + delta + cursorIds.length) % cursorIds.length
+      navigate(`/tasks/${cursorIds[nextIndex]}`)
+    },
+    [cursorIndex, cursorIds, navigate],
+  )
+
+  useArrowNav({
+    enabled: !editing && cursorIndex >= 0 && cursorIds.length > 1,
+    onPrev: () => navigateToAdjacent(-1),
+    onNext: () => navigateToAdjacent(1),
+  })
 
   // Initialize/reset draft when editing starts, or clear when it ends
   useEffect(() => {
