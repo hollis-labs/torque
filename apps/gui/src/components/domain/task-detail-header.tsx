@@ -14,13 +14,13 @@ import { PriorityBadge } from './priority-badge'
 import { TagChip } from './tag-chip'
 import { CopyableId } from './copyable-id'
 import { TaskActionsMenu } from './task-actions-menu'
+import { QueueToggleButton } from './queue-toggle-button'
 import { TASK_STATUSES, PRIORITIES } from '@/lib/constants'
 import { hasBlockedReason, truncateBlockedReason } from '@/lib/blocked-reason'
 import type { Task, TaskStatus, Tag } from '@/lib/types'
 
 const TRANSITION_LABELS: Partial<Record<TaskStatus, string>> = {
   todo: 'Mark To Do',
-  queued: 'Queue',
   doing: 'Start',
   review: 'Send for Review',
   done: 'Mark Done',
@@ -29,13 +29,20 @@ const TRANSITION_LABELS: Partial<Record<TaskStatus, string>> = {
   archived: 'Archive',
 }
 
+// `queued` is driven by the manual flag, not a manual status transition —
+// scheduler sets it automatically once manual=false. The QueueToggleButton
+// owns that affordance, so filter it out of the status-transition row.
+const MANUAL_TRANSITION_SKIP: TaskStatus[] = ['queued']
+
 interface TaskDetailHeaderProps {
   task: Task
   editing: boolean
   draft: Task
   saving: boolean
+  queueBusy?: boolean
   onDraftChange: <K extends keyof Task>(field: K, value: Task[K]) => void
   onTransition: (status: TaskStatus) => void
+  onQueueToggle: () => void
   onEdit: () => void
   onSave: () => void
   onCancel: () => void
@@ -49,8 +56,10 @@ export function TaskDetailHeader({
   editing,
   draft,
   saving,
+  queueBusy,
   onDraftChange,
   onTransition,
+  onQueueToggle,
   onEdit,
   onSave,
   onCancel,
@@ -58,7 +67,9 @@ export function TaskDetailHeader({
   onTaskChange,
   onTaskDelete,
 }: TaskDetailHeaderProps) {
-  const nextStatuses = TASK_STATUSES.filter((s) => s !== task.status).slice(0, 4)
+  const nextStatuses = TASK_STATUSES
+    .filter((s) => s !== task.status && !MANUAL_TRANSITION_SKIP.includes(s))
+    .slice(0, 4)
   const source = editing ? draft : task
 
   return (
@@ -169,6 +180,11 @@ export function TaskDetailHeader({
                   Send back to todo
                 </Button>
               )}
+              <QueueToggleButton
+                task={task}
+                busy={queueBusy}
+                onToggle={onQueueToggle}
+              />
               {nextStatuses.map((s) => (
                 <Button
                   key={s}

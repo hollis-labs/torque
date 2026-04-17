@@ -47,6 +47,7 @@ export default function TaskDetailPage() {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
 
+  const [queueBusy, setQueueBusy] = useState(false)
   const [sendBackOpen, setSendBackOpen] = useState(false)
 
   // Tab data — lazy loaded
@@ -182,6 +183,24 @@ export default function TaskDetailPage() {
     }
   }
 
+  // Flip the manual flag so the scheduler picks up (manual:false) or
+  // releases (manual:true) the task. Status is driven automatically by
+  // the scheduler once manual=false, so we never touch status here.
+  async function handleQueueToggle() {
+    if (!id || !task) return
+    const next = !task.manual
+    setQueueBusy(true)
+    try {
+      const updated = await api.updateTask(id, { manual: next })
+      setTask(updated)
+      notifySuccess(next ? 'Unqueued' : 'Queued')
+    } catch (err) {
+      notifyError(err, 'Failed to update queue state')
+    } finally {
+      setQueueBusy(false)
+    }
+  }
+
   // Re-queue a reviewed task with written feedback. Order matters: the
   // comment lands first so the re-dispatched agent sees the feedback; only
   // then does status flip so the scheduler re-queues.
@@ -266,8 +285,10 @@ export default function TaskDetailPage() {
         editing={editing}
         draft={displayDraft}
         saving={saving}
+        queueBusy={queueBusy}
         onDraftChange={updateDraft}
         onTransition={handleTransition}
+        onQueueToggle={handleQueueToggle}
         onEdit={handleEdit}
         onSave={handleSave}
         onCancel={handleCancel}
