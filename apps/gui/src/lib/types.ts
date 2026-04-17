@@ -53,7 +53,7 @@ export interface Deliverable {
  */
 export const UNLIMITED = -1 as const
 
-export type TaskKind = 'agent' | 'external' | 'wait' | 'decision' | 'parent'
+export type TaskKind = 'agent' | 'external' | 'wait' | 'decision' | 'parent' | 'plan'
 export type TaskSourceType = 'agent' | 'user' | 'api' | 'system' | 'webhook' | 'import'
 export type TaskTrust = 'trusted' | 'normal' | 'untrusted'
 export type TaskCheckpointMode = 'none' | 'blocking' | 'non_blocking'
@@ -141,6 +141,9 @@ export interface Task {
   sprint_id: string | null
   project_id: string | null
   epic_id: string | null
+
+  // Parent linkage (migration 013). null = top of lineage.
+  parent_id?: string | null
 
   // Audit
   created_at: string
@@ -275,6 +278,53 @@ export interface TaskFilter {
   search?: string
   limit?: number
   offset?: number
+  /** Narrow to a single task-kind. "plan" is used by the Plans GUI. */
+  kind?: TaskKind
+  /**
+   * Parent linkage filter (migration 013). "null" returns roots
+   * (parent_id IS NULL); any other value matches that parent id.
+   */
+  parent_id?: string | 'null'
+}
+
+/**
+ * Plan types — kind=plan tasks coordinate phase-scoped child tasks via
+ * parent_id + metadata.phase_id. See docs/plans-v1.md.
+ */
+export interface PlanPhase {
+  id: string
+  name: string
+  order: number
+  acceptance?: string
+}
+
+export interface PlanMetadata {
+  version: number
+  phases: PlanPhase[]
+}
+
+export interface PlanPhaseInput {
+  name: string
+  acceptance?: string
+}
+
+export interface PhaseRollup {
+  total: number
+  done: number
+  blocked: number
+}
+
+export interface PlanProgress {
+  total_children: number
+  done: number
+  blocked: number
+  by_phase: Record<string, PhaseRollup>
+}
+
+export interface PlanDetail {
+  task: Task
+  plan: PlanMetadata
+  progress: PlanProgress
 }
 
 export interface Template {

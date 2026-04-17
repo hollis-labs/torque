@@ -51,7 +51,35 @@ func (s *Server) getPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, detail)
+	payload, err := s.planDetailJSON(detail)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+// planDetailJSON renders a PlanDetail with the same lowercase-keyed task
+// shape the rest of the HTTP API uses, so the GUI can reuse its existing
+// Task type for the plan task field.
+func (s *Server) planDetailJSON(detail *service.PlanDetail) (map[string]interface{}, error) {
+	tags, err := s.svc.Task.ListTags(detail.Task.ID)
+	if err != nil {
+		return nil, err
+	}
+	agg, err := s.svc.Run.Aggregate(detail.Task.ID)
+	if err != nil {
+		return nil, err
+	}
+	subs, err := s.svc.Task.ListSubtodos(detail.Task.ID)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{
+		"task":     taskJSON(detail.Task, tags, agg, subs),
+		"plan":     detail.Plan,
+		"progress": detail.Progress,
+	}, nil
 }
 
 func (s *Server) createPlan(w http.ResponseWriter, r *http.Request) {
@@ -83,8 +111,13 @@ func (s *Server) createPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	payload, err := s.planDetailJSON(detail)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	s.sse.Broadcast("plan.created", map[string]interface{}{"plan_id": task.ID, "title": task.Title})
-	writeJSON(w, http.StatusCreated, detail)
+	writeJSON(w, http.StatusCreated, payload)
 }
 
 func (s *Server) addPlanPhase(w http.ResponseWriter, r *http.Request) {

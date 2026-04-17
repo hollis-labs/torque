@@ -17,6 +17,7 @@ import {
   type AttachArtifactPayload,
 } from '@/components/domain/attach-artifact-dialog'
 import { TaskDetailHeader } from '@/components/domain/task-detail-header'
+import { ParentPlanLink } from '@/components/domain/parent-plan-link'
 import { BlockedReasonAlert } from '@/components/domain/blocked-reason-alert'
 import { DetailSection } from '@/components/domain/detail-section'
 import { TaskProperties } from '@/components/domain/task-properties'
@@ -410,6 +411,8 @@ export default function TaskDetailPage() {
         }}
         onTaskDelete={() => navigate('/operations')}
       />
+
+      {!editing && <ParentPlanLink task={task} />}
 
       <SendBackDialog
         open={sendBackOpen}
