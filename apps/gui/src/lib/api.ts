@@ -56,10 +56,23 @@ interface ApiArtifactRecord {
   Content: string
   URL: string
   FilePath: string
+  Metadata?: ApiNullString | null
   CreatedAt: string
 }
 
 function normalizeArtifact(raw: ApiArtifactRecord): Artifact {
+  let metadata: Record<string, unknown> | undefined
+  if (raw.Metadata?.Valid && raw.Metadata.String) {
+    try {
+      const parsed = JSON.parse(raw.Metadata.String) as unknown
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        metadata = parsed as Record<string, unknown>
+      }
+    } catch {
+      // Agent wrote a non-JSON string; treat as no structured metadata
+      // instead of surfacing a parse error to the tab.
+    }
+  }
   return {
     id: raw.ID,
     task_id: raw.TaskID,
@@ -68,6 +81,7 @@ function normalizeArtifact(raw: ApiArtifactRecord): Artifact {
     content: raw.Content ?? '',
     url: raw.URL ?? '',
     file_path: raw.FilePath ?? '',
+    metadata,
     created_at: raw.CreatedAt,
   }
 }

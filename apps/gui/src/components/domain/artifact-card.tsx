@@ -12,6 +12,20 @@ function isImageArtifact(a: Artifact): boolean {
   return false
 }
 
+type Origin = 'agent' | 'user' | 'system'
+
+const ORIGIN_BADGE: Record<Origin, string> = {
+  agent: 'bg-violet-950/50 text-violet-300 ring-violet-800/50',
+  user: 'bg-emerald-950/50 text-emerald-300 ring-emerald-800/50',
+  system: 'bg-zinc-900 text-zinc-400 ring-zinc-700',
+}
+
+function readOrigin(metadata: Artifact['metadata']): Origin | null {
+  const raw = metadata?.origin
+  if (raw === 'agent' || raw === 'user' || raw === 'system') return raw
+  return null
+}
+
 interface ArtifactCardProps {
   artifact: Artifact
 }
@@ -23,6 +37,10 @@ export function ArtifactCard({ artifact }: ArtifactCardProps) {
   const hasFile = artifact.file_path !== ''
   const contentUrl = hasFile ? api.artifactContentUrl(artifact.id) : ''
   const showImage = hasFile && isImageArtifact(artifact)
+  const origin = readOrigin(artifact.metadata)
+  const metadataJson = artifact.metadata
+    ? JSON.stringify(artifact.metadata, null, 2)
+    : ''
 
   return (
     <div className="rounded-md border border-zinc-800/50 p-3">
@@ -31,6 +49,13 @@ export function ArtifactCard({ artifact }: ArtifactCardProps) {
         <span className="text-[10px] uppercase tracking-[.18em] text-zinc-500">
           {artifact.type}
         </span>
+        {origin && (
+          <span
+            className={`rounded-full px-1.5 py-0.5 text-[9px] uppercase tracking-[.14em] ring-1 ${ORIGIN_BADGE[origin]}`}
+          >
+            {origin}
+          </span>
+        )}
       </div>
 
       {hasFile && (
@@ -76,6 +101,18 @@ export function ArtifactCard({ artifact }: ArtifactCardProps) {
         <pre className="mt-2 text-[11px] bg-zinc-900/60 rounded p-2 overflow-auto max-h-40 whitespace-pre-wrap text-zinc-300">
           {artifact.content}
         </pre>
+      )}
+
+      {metadataJson && (
+        <details className="group mt-2 rounded bg-zinc-900/40 open:bg-zinc-900/60">
+          <summary className="cursor-pointer select-none px-2 py-1 text-[10px] uppercase tracking-[.18em] text-zinc-500 hover:text-zinc-300 list-none [&::-webkit-details-marker]:hidden">
+            <span className="inline-block transition-transform group-open:rotate-90">▸</span>
+            <span className="ml-2">Metadata</span>
+          </summary>
+          <pre className="mx-2 mb-2 mt-1 text-[11px] bg-zinc-950/80 rounded p-2 overflow-auto max-h-48 whitespace-pre-wrap text-zinc-300">
+            {metadataJson}
+          </pre>
+        </details>
       )}
 
       {showImage && (
