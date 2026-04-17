@@ -2,13 +2,21 @@ package httpserver
 
 import (
 	"database/sql"
+	"errors"
 	"net/http"
+	"strconv"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 )
 
 func (s *Server) listArtifacts(w http.ResponseWriter, r *http.Request) {
-	taskID := r.URL.Query().Get("task_id")
+	// Accept task_id either from the URL (alias route /tasks/{id}/artifacts)
+	// or from the query string (/artifacts?task_id=...). URL wins.
+	taskID := chi.URLParam(r, "id")
+	if taskID == "" {
+		taskID = r.URL.Query().Get("task_id")
+	}
 	if taskID == "" {
 		writeError(w, http.StatusBadRequest, "task_id is required")
 		return
@@ -22,6 +30,41 @@ func (s *Server) listArtifacts(w http.ResponseWriter, r *http.Request) {
 		artifacts = []sqlstore.ArtifactRecord{}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"artifacts": artifacts})
+}
+
+func (s *Server) getArtifact(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid artifact ID")
+		return
+	}
+	art, err := s.svc.Artifact.Get(id)
+	if err != nil {
+		if errors.Is(err, sqlstore.ErrArtifactNotFound) {
+			writeError(w, http.StatusNotFound, "artifact not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, art)
+}
+
+func (s *Server) deleteArtifact(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid artifact ID")
+		return
+	}
+	if err := s.svc.Artifact.Delete(id); err != nil {
+		if errors.Is(err, sqlstore.ErrArtifactNotFound) {
+			writeError(w, http.StatusNotFound, "artifact not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) createArtifact(w http.ResponseWriter, r *http.Request) {
