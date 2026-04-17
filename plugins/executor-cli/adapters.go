@@ -57,17 +57,41 @@ func buildCommandSpec(profile config.AgentProfile, job *executor.ExecutionJob) (
 }
 
 // buildClaudeSpec builds a CommandSpec for the Anthropic Claude CLI.
+//
+// Stream-json mode (default): passes `--verbose --output-format stream-json
+// --json-schema <AgentOutputSchema>` so claude emits an NDJSON event stream
+// terminated by a structured `result` event. The schema forces the final
+// reply into a strict JSON shape (see executor.AgentResult) so completion
+// is unambiguous — no more parsing CLOCKWORK_DONE out of freeform markdown.
+//
+// `--verbose` is mandatory: without it, `--output-format stream-json` aborts
+// with a usage error (Bug CW-20260417-0015). The FE executor ships this same
+// flag combo.
+//
+// Print mode (profile.output_format = "print"): plain `--print`, no
+// stream-json parsing. Used for debugging / legacy profiles.
+//
+// `--dangerously-skip-permissions` is expected to come from profile.Args
+// (prepended in buildCommandSpec) so local runs can control it per profile.
 func buildClaudeSpec(profile config.AgentProfile, job *executor.ExecutionJob) CommandSpec {
 	cmd := "claude"
-	args := []string{"--print"}
+	useStream := profile.OutputFormat != "print"
+
+	var args []string
+	if useStream {
+		// NOTE: order is --print, --verbose, --output-format stream-json,
+		// --json-schema <schema>, [--model M], <prompt>. FE uses `-p` which
+		// is the short form; we use `--print` for consistency with the print
+		// branch below.
+		args = append(args, "--print", "--verbose",
+			"--output-format", "stream-json",
+			"--json-schema", executor.AgentOutputSchema)
+	} else {
+		args = append(args, "--print")
+	}
 
 	if profile.Model != "" {
 		args = append(args, "--model", profile.Model)
-	}
-
-	useStream := profile.OutputFormat != "print"
-	if useStream {
-		args = append(args, "--output-format", "stream-json")
 	}
 
 	args = append(args, job.Description)

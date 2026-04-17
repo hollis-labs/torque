@@ -28,6 +28,59 @@ func TestBuildCommandSpec_Claude(t *testing.T) {
 	assert.Contains(t, spec.Args, "do the thing")
 }
 
+// Bug 0015: claude requires --verbose when using --output-format stream-json.
+func TestBuildCommandSpec_ClaudeStreamJSONHasVerbose(t *testing.T) {
+	profile := config.AgentProfile{Provider: "claude"}
+	job := &executor.ExecutionJob{TaskID: "t", Description: "x"}
+
+	spec, err := buildCommandSpec(profile, job)
+	require.NoError(t, err)
+	assert.Contains(t, spec.Args, "--verbose", "stream-json mode must pass --verbose")
+	assert.Contains(t, spec.Args, "--output-format")
+	assert.Contains(t, spec.Args, "stream-json")
+}
+
+// Bug 0025: claude needs --json-schema to produce a structured result event.
+func TestBuildCommandSpec_ClaudeStreamJSONHasJSONSchema(t *testing.T) {
+	profile := config.AgentProfile{Provider: "claude"}
+	job := &executor.ExecutionJob{TaskID: "t", Description: "x"}
+
+	spec, err := buildCommandSpec(profile, job)
+	require.NoError(t, err)
+	assert.Contains(t, spec.Args, "--json-schema", "stream-json mode must pass --json-schema")
+	// The schema constant follows --json-schema.
+	for i, arg := range spec.Args {
+		if arg == "--json-schema" {
+			require.Less(t, i+1, len(spec.Args), "expected schema value after --json-schema")
+			assert.Equal(t, executor.AgentOutputSchema, spec.Args[i+1])
+			return
+		}
+	}
+	t.Fatal("unreachable")
+}
+
+func TestBuildCommandSpec_ClaudeStreamJSONPromptIsLast(t *testing.T) {
+	profile := config.AgentProfile{Provider: "claude"}
+	job := &executor.ExecutionJob{TaskID: "t", Description: "the prompt"}
+
+	spec, err := buildCommandSpec(profile, job)
+	require.NoError(t, err)
+	require.NotEmpty(t, spec.Args)
+	assert.Equal(t, "the prompt", spec.Args[len(spec.Args)-1])
+}
+
+// Print-mode profile should NOT add --verbose / --json-schema / --output-format.
+func TestBuildCommandSpec_ClaudePrintNoStreamFlags(t *testing.T) {
+	profile := config.AgentProfile{Provider: "claude", OutputFormat: "print"}
+	job := &executor.ExecutionJob{TaskID: "t", Description: "x"}
+
+	spec, err := buildCommandSpec(profile, job)
+	require.NoError(t, err)
+	assert.NotContains(t, spec.Args, "--verbose")
+	assert.NotContains(t, spec.Args, "--output-format")
+	assert.NotContains(t, spec.Args, "--json-schema")
+}
+
 func TestBuildCommandSpec_ClaudePrint(t *testing.T) {
 	profile := config.AgentProfile{
 		Provider:     "claude",
