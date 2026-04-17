@@ -23,6 +23,7 @@ import { LifecycleRules } from '@/components/domain/lifecycle-rules'
 import { DeliverablesAndDeps } from '@/components/domain/deliverables-deps'
 import { SendBackDialog } from '@/components/domain/send-back-dialog'
 import { ActivityPanel } from '@/components/domain/activity-panel'
+import { TaskCheckpointsBanner } from '@/components/domain/task-checkpoints-banner'
 import { useApi } from '@/hooks/use-api'
 import { hasBlockedReason } from '@/lib/blocked-reason'
 import { computeTaskDiff } from '@/lib/task-diff'
@@ -345,6 +346,9 @@ export default function TaskDetailPage() {
           className="border-x-0 border-t-0"
         />
       )}
+
+      {/* Pending checkpoints banner — inline respond/cancel */}
+      {!editing && id && <TaskCheckpointsBanner taskId={id} />}
 
       {/* Live activity panel — visible while the task has an active run. */}
       {!editing && id && <ActivityPanel taskId={id} />}
