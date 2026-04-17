@@ -104,6 +104,14 @@ func (s *Server) routes() {
 		r.Put("/epics/{id}", s.updateEpic)
 		r.Delete("/epics/{id}", s.deleteEpic)
 
+		// Plans — convenience endpoints over kind=plan tasks.
+		r.Get("/plans", s.listPlans)
+		r.Post("/plans", s.createPlan)
+		r.Get("/plans/{id}", s.getPlan)
+		r.Post("/plans/{id}/phases", s.addPlanPhase)
+		r.Delete("/plans/{id}/phases/{phase_id}", s.removePlanPhase)
+		r.Get("/plans/{id}/children", s.listPlanChildren)
+
 		// Tags
 		r.Get("/tags", s.listTags)
 		r.Post("/tags", s.createTag)

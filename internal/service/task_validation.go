@@ -66,13 +66,14 @@ var validOnDoneMerge = map[string]bool{
 	"auto-resolve": true,
 }
 
-// Facet enum value sets (migration 007).
+// Facet enum value sets (migration 007; migration 014 adds "plan").
 var validKinds = map[string]bool{
 	"agent":    true,
 	"external": true,
 	"wait":     true,
 	"decision": true,
 	"parent":   true,
+	"plan":     true,
 }
 
 var validSourceTypes = map[string]bool{
@@ -131,7 +132,7 @@ func validateTaskKind(
 	if !validKinds[kind] {
 		return &ValidationError{
 			Field:   "kind",
-			Message: "invalid kind: got '" + kind + "', expected one of: agent, external, wait, decision, parent",
+			Message: "invalid kind: got '" + kind + "', expected one of: agent, external, wait, decision, parent, plan",
 		}
 	}
 	if !validSourceTypes[sourceType] {
@@ -211,6 +212,12 @@ func validateTaskKind(
 		}
 	case "parent":
 		// metadata.children absence is a warning, not an error — MVP silent.
+	case "plan":
+		// Plan tasks coordinate a set of phase-scoped child tasks. Execution
+		// is a wait on child rollup, not an agent dispatch. Callers may
+		// still provide an executor — it's tolerated so imported data with
+		// stale defaults doesn't trip 422; the scheduler treats plan tasks
+		// as non-dispatch-eligible regardless.
 	}
 	return nil
 }

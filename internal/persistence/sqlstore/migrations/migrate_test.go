@@ -197,4 +197,10 @@ func TestMigrationsApply(t *testing.T) {
 		parentIdx[n] = true
 	}
 	require.True(t, parentIdx["idx_tasks_parent_id"], "idx_tasks_parent_id should exist")
+
+	// Verify 014 widened the kind CHECK to accept 'plan'.
+	_, err = db.Exec(`INSERT INTO tasks (id, title, status, kind) VALUES ('T14-plan', 'plan task', 'todo', 'plan')`)
+	require.NoError(t, err, "tasks.kind should accept 'plan' after migration 014")
+	_, err = db.Exec(`INSERT INTO tasks (id, title, status, kind) VALUES ('T14-bad', 'bad', 'todo', 'still-bad')`)
+	require.Error(t, err, "tasks.kind CHECK should still reject unknown kinds after migration 014")
 }
