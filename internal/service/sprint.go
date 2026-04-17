@@ -22,9 +22,15 @@ type SprintCreateInput struct {
 }
 
 // validSprintTransitions defines the sprint status FSM.
+//
+// "completed" is the terminal state for a sprint whose child tasks have all
+// reached done. Both active→completed and inactive→completed are allowed
+// (the latter so abandoned sprints can be closed without first reactivating).
+// There is no outgoing edge from "completed".
 var validSprintTransitions = map[string][]string{
-	"active":   {"inactive"},
-	"inactive": {"active"},
+	"active":    {"inactive", "completed"},
+	"inactive":  {"active", "completed"},
+	"completed": {},
 }
 
 // validApprovalModes lists the allowed approval mode values.

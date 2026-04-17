@@ -30,7 +30,7 @@ func (a *Adapter) registerSprintTools() {
 		mcp.WithString("goal", mcp.Description("New goal")),
 		mcp.WithString("approval_mode", mcp.Description("New approval mode")),
 		mcp.WithNumber("cost_budget", mcp.Description("New cost budget")),
-		mcp.WithString("status", mcp.Description("Transition to new status: active, completed")),
+		mcp.WithString("status", mcp.Description("Transition to new status (active|inactive|completed). active↔inactive; both can transition directly to completed (terminal)")),
 	), a.handleSprintUpdate)
 
 	a.server.AddTool(mcp.NewTool("clockwork_sprint_delete",
@@ -40,7 +40,7 @@ func (a *Adapter) registerSprintTools() {
 
 	a.server.AddTool(mcp.NewTool("clockwork_sprint_list",
 		mcp.WithDescription("List sprints"),
-		mcp.WithString("status", mcp.Description("Filter by status: planning, active, completed")),
+		mcp.WithString("status", mcp.Description("Filter by status: active, inactive, completed")),
 	), a.handleSprintList)
 
 	a.server.AddTool(mcp.NewTool("clockwork_sprint_approve",
