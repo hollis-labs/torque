@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
@@ -153,8 +154,21 @@ func (a *Adapter) taskResult(task *sqlstore.TaskRecord) (*mcp.CallToolResult, er
 }
 
 func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Safety override per CW-20260417-0133: force manual=true on every task
+	// create until portfolio callers stop shipping manual=false (explicitly or
+	// by default). See createTask in internal/httpserver/tasks.go for the
+	// parallel HTTP-side override. Pairs with CW-20260417-0134 (removal) and
+	// CW-20260417-0413 (permanent create-time validation). Update path is
+	// UNCHANGED so reviewed tasks can still be promoted to manual=false.
+	manual := reqBool(req, "manual")
+	title := reqStr(req, "title")
+	if !manual {
+		log.Printf("clockwork_task_create: forcing manual=true on %q (caller passed manual=false) — safety override per CW-20260417-0133", title)
+		manual = true
+	}
+
 	input := service.TaskCreateInput{
-		Title:                reqStr(req, "title"),
+		Title:                title,
 		Description:          reqStr(req, "description"),
 		Priority:             reqInt(req, "priority"),
 		Executor:             reqStr(req, "executor"),
@@ -165,7 +179,7 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest)
 		OnDone:               reqStr(req, "on_done"),
 		OnFail:               reqStr(req, "on_fail"),
 		OnDoneMerge:          reqStr(req, "on_done_merge"),
-		Manual:               reqBool(req, "manual"),
+		Manual:               manual,
 		SprintID:             reqStr(req, "sprint_id"),
 		ProjectID:            reqStr(req, "project_id"),
 		EpicID:               reqStr(req, "epic_id"),

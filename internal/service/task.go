@@ -2,6 +2,7 @@ package service
 
 import (
 	"database/sql"
+	"log"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/agentfile"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
@@ -84,6 +85,16 @@ type TaskService struct {
 func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error) {
 	if input.Title == "" {
 		return nil, &ValidationError{Field: "title", Message: "title is required"}
+	}
+
+	// Belt-and-suspenders visibility for CW-20260417-0133. The HTTP and MCP
+	// input surfaces force manual=true before reaching this point; if a
+	// task arrives here with manual=false the override has been bypassed
+	// (e.g. a new input surface or a direct service consumer). Audit-only
+	// warning — no functional override at this layer so legitimate callers
+	// (tests, Update, smoke-echo/direct-scheduler paths) stay untouched.
+	if !input.Manual {
+		log.Printf("service.Task.Create: manual=false reached service layer for title=%q — input-surface override bypassed; see CW-20260417-0133", input.Title)
 	}
 
 	priority := input.Priority

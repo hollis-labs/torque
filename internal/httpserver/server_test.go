@@ -752,3 +752,86 @@ func TestUpdateTaskEmptyBodyIsNoOp(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp2.Body).Decode(&updated))
 	assert.Equal(t, originalTitle, updated["title"])
 }
+
+// TestCreateTask_ForcesManualTrue_ExplicitFalse verifies the
+// CW-20260417-0133 safety override: POST /tasks with an explicit
+// "manual": false still persists manual=true. The override prevents
+// scheduler pickup of no-agent tasks from misbehaving portfolio callers.
+func TestCreateTask_ForcesManualTrue_ExplicitFalse(t *testing.T) {
+	ts := setupTestServer(t)
+
+	body := `{"title":"force-test-explicit","description":"x","manual":false,"executor":"cli"}`
+	resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var created map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+	resp.Body.Close()
+	assert.Equal(t, true, created["manual"], "manual=false must be coerced to true per CW-20260417-0133")
+}
+
+// TestCreateTask_ManualTrue_Unchanged verifies the override is a no-op when
+// the caller already passed manual=true (no redundant warn, same result).
+func TestCreateTask_ManualTrue_Unchanged(t *testing.T) {
+	ts := setupTestServer(t)
+
+	body := `{"title":"force-test-true","description":"x","manual":true,"executor":"cli"}`
+	resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var created map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+	resp.Body.Close()
+	assert.Equal(t, true, created["manual"])
+}
+
+// TestCreateTask_ManualOmitted_CoercedToTrue verifies that a request with no
+// manual field at all (the default-false historical behavior that caused the
+// bug) is also coerced to manual=true.
+func TestCreateTask_ManualOmitted_CoercedToTrue(t *testing.T) {
+	ts := setupTestServer(t)
+
+	body := `{"title":"force-test-omitted","description":"x","executor":"cli"}`
+	resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var created map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+	resp.Body.Close()
+	assert.Equal(t, true, created["manual"], "omitted manual must default to true per CW-20260417-0133")
+}
+
+// TestUpdateTask_ManualFalse_Unchanged verifies the Update path is NOT
+// affected by the CW-20260417-0133 override — operators need to promote
+// reviewed tasks from manual=true to manual=false explicitly.
+func TestUpdateTask_ManualFalse_Unchanged(t *testing.T) {
+	ts := setupTestServer(t)
+
+	// Create via HTTP (manual will be coerced to true on create).
+	createBody := `{"title":"promote-me","description":"x","executor":"cli"}`
+	resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(createBody))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	var created map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+	resp.Body.Close()
+	id := created["id"].(string)
+	assert.Equal(t, true, created["manual"])
+
+	// PUT /tasks/:id with manual=false should persist manual=false.
+	upd := `{"manual":false}`
+	req, err := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/tasks/"+id, bytes.NewBufferString(upd))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp2, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp2.StatusCode)
+
+	var updated map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp2.Body).Decode(&updated))
+	resp2.Body.Close()
+	assert.Equal(t, false, updated["manual"], "Update path must NOT coerce manual=false — operators need to promote tasks")
+}

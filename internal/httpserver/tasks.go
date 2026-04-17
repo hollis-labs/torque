@@ -3,6 +3,7 @@ package httpserver
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -435,6 +436,18 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	if req.Title == "" {
 		writeError(w, http.StatusBadRequest, "title is required")
 		return
+	}
+
+	// Safety override per CW-20260417-0133: force manual=true on every task
+	// create until portfolio callers stop shipping manual=false (explicitly or
+	// by default). The bug: non-manual tasks are picked up by the scheduler
+	// and, lacking a valid agent_profile, fail-and-burn-retries immediately.
+	// Temporary. Pairs with CW-20260417-0134 (removal) and CW-20260417-0413
+	// (permanent create-time validation). Update path is UNCHANGED so
+	// operators can still promote reviewed tasks to manual=false explicitly.
+	if !req.Manual {
+		log.Printf("POST /tasks: forcing manual=true on %q (caller passed manual=false) — safety override per CW-20260417-0133", req.Title)
+		req.Manual = true
 	}
 
 	input := service.TaskCreateInput{

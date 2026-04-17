@@ -72,6 +72,20 @@ func TestServeE2EMockTaskCompletes(t *testing.T) {
 	taskID, _ := created["id"].(string)
 	require.NotEmpty(t, taskID, "created task must have an id")
 
+	// CW-20260417-0133 safety override forces manual=true on every HTTP task
+	// create. For the scheduler to pick this task up, we flip it back to
+	// manual=false via the PUT path — the Update surface is exempt from the
+	// override by design.
+	promote, err := http.NewRequest(http.MethodPut,
+		base+"/api/v1/tasks/"+taskID,
+		bytes.NewBufferString(`{"manual":false}`))
+	require.NoError(t, err)
+	promote.Header.Set("Content-Type", "application/json")
+	pr, err := http.DefaultClient.Do(promote)
+	require.NoError(t, err)
+	pr.Body.Close()
+	require.Equal(t, http.StatusOK, pr.StatusCode, "promote to manual=false must succeed")
+
 	// Poll until the task reaches a terminal state. With a 1s scheduler tick
 	// and the zero-delay mock executor, this typically completes in ~1-2s.
 	deadline := time.Now().Add(15 * time.Second)

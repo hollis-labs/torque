@@ -390,3 +390,64 @@ func TestFullStack_SearchTasks(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(text), &results))
 	require.Len(t, results, 1, "search for 'login' should return exactly 1 result")
 }
+
+// TestFullStack_TaskCreate_ForcesManualTrue_ExplicitFalse verifies the
+// CW-20260417-0133 safety override at the MCP surface: clockwork_task_create
+// with an explicit manual=false still persists manual=true.
+func TestFullStack_TaskCreate_ForcesManualTrue_ExplicitFalse(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":       "mcp-force-explicit",
+		"description": "x",
+		"manual":      false,
+	})
+	require.False(t, isErr, "create should not error: %s", text)
+
+	var created map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	require.Equal(t, true, created["Manual"], "manual=false must be coerced to true per CW-20260417-0133")
+}
+
+// TestFullStack_TaskCreate_ManualOmitted_CoercedToTrue verifies that a
+// clockwork_task_create call with no manual arg (historical default-false)
+// is coerced to manual=true.
+func TestFullStack_TaskCreate_ManualOmitted_CoercedToTrue(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":       "mcp-force-omitted",
+		"description": "x",
+	})
+	require.False(t, isErr, "create should not error: %s", text)
+
+	var created map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	require.Equal(t, true, created["Manual"], "omitted manual must default to true per CW-20260417-0133")
+}
+
+// TestFullStack_TaskUpdate_ManualFalse_Unchanged verifies the Update path is
+// NOT subject to the CW-20260417-0133 override — operators still need to
+// promote reviewed tasks to manual=false.
+func TestFullStack_TaskUpdate_ManualFalse_Unchanged(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, _ := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":       "mcp-promote-me",
+		"description": "x",
+	})
+	var created map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	id := created["ID"].(string)
+	require.Equal(t, true, created["Manual"])
+
+	text, isErr := callTool(t, a, "clockwork_task_update", map[string]interface{}{
+		"id":     id,
+		"manual": false,
+	})
+	require.False(t, isErr, "update should not error: %s", text)
+
+	var updated map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(text), &updated))
+	require.Equal(t, false, updated["Manual"], "Update path must NOT coerce manual=false")
+}
