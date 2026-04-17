@@ -101,6 +101,15 @@ func TestE2E_Template_Instantiate_Scheduler_PicksUp_Executes(t *testing.T) {
 	assert.Equal(t, "mock", task.Executor)
 	assert.Equal(t, "agent", task.Kind)
 
+	// CW-20260417-0133 safety override forces manual=true on every task
+	// created through the service layer (HTTP / MCP / Template.Instantiate
+	// / etc.). This e2e test deliberately wants the scheduler to pick the
+	// task up, so flip it back to manual=false via the store — bypassing
+	// the service-level override is intentional here, mirroring the
+	// existing smoke-echo / serve-e2e patches.
+	manualFalse := false
+	require.NoError(t, store.UpdateTask(task.ID, sqlstore.TaskUpdate{Manual: &manualFalse}))
+
 	// Scheduler tick picks it up and submits to the worker pool.
 	require.NoError(t, sched.Tick(context.Background()))
 
