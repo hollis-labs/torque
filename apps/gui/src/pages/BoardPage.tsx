@@ -131,6 +131,10 @@ export default function BoardPage() {
           <TaskTable
             tasks={tasks}
             onTransition={handleTransition}
+            onTaskChange={(updated) =>
+              setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)))
+            }
+            onTaskDelete={(id) => setTasks((prev) => prev.filter((t) => t.id !== id))}
             emptyVariant={emptyVariant}
           />
         )}

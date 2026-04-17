@@ -144,6 +144,12 @@ export default function EpicDetailPage() {
             <TaskTable
               tasks={tasks}
               onTransition={handleTransition}
+              onTaskChange={(updated) =>
+                setTasks((prev) => prev?.map((t) => (t.id === updated.id ? updated : t)) ?? prev)
+              }
+              onTaskDelete={(deletedId) =>
+                setTasks((prev) => prev?.filter((t) => t.id !== deletedId) ?? prev)
+              }
               emptyVariant="no-results"
             />
           )}

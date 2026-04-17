@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useParams, useSearchParams, Link } from 'react-router-dom'
+import { useParams, useSearchParams, useNavigate, Link } from 'react-router-dom'
 import { FolderOpen } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
@@ -31,6 +31,7 @@ import type {
 export default function TaskDetailPage() {
   const { id } = useParams<{ id: string }>()
   const api = useApi()
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const editing = searchParams.get('edit') === '1'
 
@@ -267,6 +268,8 @@ export default function TaskDetailPage() {
         onSave={handleSave}
         onCancel={handleCancel}
         onSendBack={() => setSendBackOpen(true)}
+        onTaskChange={setTask}
+        onTaskDelete={() => navigate('/')}
       />
 
       <SendBackDialog

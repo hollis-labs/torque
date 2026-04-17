@@ -13,6 +13,7 @@ import { StatusBadge } from './status-badge'
 import { PriorityBadge } from './priority-badge'
 import { TagChip } from './tag-chip'
 import { CopyableId } from './copyable-id'
+import { TaskActionsMenu } from './task-actions-menu'
 import { TASK_STATUSES, PRIORITIES } from '@/lib/constants'
 import type { Task, TaskStatus, Tag } from '@/lib/types'
 
@@ -38,6 +39,8 @@ interface TaskDetailHeaderProps {
   onSave: () => void
   onCancel: () => void
   onSendBack?: () => void
+  onTaskChange?: (task: Task) => void
+  onTaskDelete?: (id: string) => void
 }
 
 export function TaskDetailHeader({
@@ -51,6 +54,8 @@ export function TaskDetailHeader({
   onSave,
   onCancel,
   onSendBack,
+  onTaskChange,
+  onTaskDelete,
 }: TaskDetailHeaderProps) {
   const nextStatuses = TASK_STATUSES.filter((s) => s !== task.status).slice(0, 4)
   const source = editing ? draft : task
@@ -175,6 +180,12 @@ export function TaskDetailHeader({
               >
                 Edit
               </Button>
+              <TaskActionsMenu
+                task={task}
+                onChange={onTaskChange}
+                onDelete={onTaskDelete}
+                triggerClassName="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-700/80 bg-zinc-900 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200 transition-colors"
+              />
             </>
           )}
         </div>

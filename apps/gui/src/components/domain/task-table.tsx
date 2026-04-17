@@ -10,6 +10,8 @@ interface TaskTableProps {
   tasks: Task[]
   loading?: boolean
   onTransition?: (id: string, status: TaskStatus) => void
+  onTaskChange?: (task: Task) => void
+  onTaskDelete?: (id: string) => void
   emptyVariant?: 'no-tasks' | 'no-results'
 }
 
@@ -30,7 +32,13 @@ const COLUMNS: { key: SortKey; label: string }[] = [
   { key: 'updated_at', label: 'Date' },
 ]
 
-export function TaskTable({ tasks, onTransition, emptyVariant = 'no-tasks' }: TaskTableProps) {
+export function TaskTable({
+  tasks,
+  onTransition,
+  onTaskChange,
+  onTaskDelete,
+  emptyVariant = 'no-tasks',
+}: TaskTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>('updated_at')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -116,6 +124,8 @@ export function TaskTable({ tasks, onTransition, emptyVariant = 'no-tasks' }: Ta
               selected={selected.has(task.id)}
               onSelect={handleSelect}
               onTransition={onTransition}
+              onTaskChange={onTaskChange}
+              onTaskDelete={onTaskDelete}
             />
           ))}
         </tbody>
