@@ -141,8 +141,8 @@ export default function ProjectDetailPage() {
     <div className="flex h-full flex-col">
       <DetailHeader
         title={project.name}
-        backTo="/"
-        backLabel="Tasks"
+        backTo="/operations"
+        backLabel="Operations"
         id={project.id}
         status={project.status}
       />

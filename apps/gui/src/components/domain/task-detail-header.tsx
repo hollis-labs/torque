@@ -77,11 +77,11 @@ export function TaskDetailHeader({
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 mb-2">
         <Link
-          to="/"
+          to="/operations"
           className="flex items-center gap-1 text-[10px] uppercase tracking-[.18em] text-zinc-500 hover:text-zinc-300 transition-colors"
         >
           <ArrowLeft className="h-3 w-3" />
-          Board
+          Operations
         </Link>
         <span className="text-zinc-700 text-[10px]">/</span>
         <CopyableId id={task.id} />

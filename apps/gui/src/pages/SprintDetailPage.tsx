@@ -123,8 +123,8 @@ export default function SprintDetailPage() {
     <div className="flex h-full flex-col">
       <DetailHeader
         title={sprint.name}
-        backTo="/"
-        backLabel="Tasks"
+        backTo="/operations"
+        backLabel="Operations"
         id={sprint.id}
         status={sprint.status}
       />

@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom'
 import { LayoutList, Play, BarChart3, Settings, Cog, FileText, Inbox } from 'lucide-react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster } from '@/components/ui/sonner'
@@ -31,7 +31,7 @@ function NavItem({
   return (
     <NavLink
       to={to}
-      end={to === '/'}
+      end={to === '/operations'}
       title={label}
       className={({ isActive }) =>
         cn(
@@ -61,7 +61,7 @@ function AppShell() {
 
         <div className="h-px w-8 bg-zinc-800 mb-1" />
 
-        <NavItem to="/" label="Board">
+        <NavItem to="/operations" label="Operations">
           <LayoutList className="h-4 w-4" />
         </NavItem>
         <NavItem to="/templates" label="Templates">
@@ -87,7 +87,8 @@ function AppShell() {
       {/* Main content */}
       <main className="flex-1 overflow-auto bg-zinc-950">
         <Routes>
-          <Route path="/" element={<BoardPage />} />
+          <Route path="/" element={<Navigate to="/operations" replace />} />
+          <Route path="/operations" element={<BoardPage />} />
           <Route path="/tasks/:id" element={<TaskDetailPage />} />
           <Route path="/projects/:id" element={<ProjectDetailPage />} />
           <Route path="/sprints/:id" element={<SprintDetailPage />} />
