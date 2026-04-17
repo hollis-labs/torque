@@ -12,7 +12,7 @@ import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
 import { notifyError } from '@/lib/toast'
 import { DEFAULT_ACTIVE_STATUSES, MODE_PRESETS, TASK_STATUSES } from '@/lib/constants'
-import type { Epic, Project, Sprint, Task, TaskStatus } from '@/lib/types'
+import type { Epic, Project, Sprint, Tag, Task, TaskStatus } from '@/lib/types'
 
 type ModePreset = keyof typeof MODE_PRESETS | 'all'
 
@@ -73,6 +73,7 @@ export default function BoardPage() {
   const projectId = searchParams.get('project_id')
   const sprintId = searchParams.get('sprint_id')
   const epicId = searchParams.get('epic_id')
+  const tagSlug = searchParams.get('tag')
 
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
@@ -82,6 +83,7 @@ export default function BoardPage() {
   const [projects, setProjects] = useState<Project[]>([])
   const [sprints, setSprints] = useState<Sprint[]>([])
   const [epics, setEpics] = useState<Epic[]>([])
+  const [tags, setTags] = useState<Tag[]>([])
 
   // Create-modal state
   const [projectCreateOpen, setProjectCreateOpen] = useState(false)
@@ -89,14 +91,16 @@ export default function BoardPage() {
 
   // Fetch pickers once on mount
   const refreshPickers = useCallback(async () => {
-    const [p, s, e] = await Promise.all([
+    const [p, s, e, t] = await Promise.all([
       api.listProjects().catch(() => ({ projects: [] as Project[] })),
       api.listSprints().catch(() => ({ sprints: [] as Sprint[] })),
       api.listEpics().catch(() => ({ epics: [] as Epic[] })),
+      api.listTags().catch(() => ({ tags: [] as Tag[] })),
     ])
     setProjects(p.projects)
     setSprints(s.sprints)
     setEpics(e.epics)
+    setTags(t.tags)
   }, [api])
 
   useEffect(() => {
@@ -145,6 +149,7 @@ export default function BoardPage() {
         project_id: projectId ?? undefined,
         sprint_id: sprintId ?? undefined,
         epic_id: epicId ?? undefined,
+        tags: tagSlug ? [tagSlug] : undefined,
       })
       setTasks(result.tasks)
       setError(null)
@@ -153,7 +158,7 @@ export default function BoardPage() {
     } finally {
       setLoading(false)
     }
-  }, [api, activeStatuses, activePriorities, projectId, sprintId, epicId])
+  }, [api, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug])
 
   useEffect(() => {
     setLoading(true)
@@ -215,7 +220,7 @@ export default function BoardPage() {
     })
   }
 
-  function handleGroupChange(key: 'project_id' | 'sprint_id' | 'epic_id', value: string | null) {
+  function handleGroupChange(key: 'project_id' | 'sprint_id' | 'epic_id' | 'tag', value: string | null) {
     updateParams((p) => {
       if (value === null) p.delete(key)
       else p.set(key, value)
@@ -236,7 +241,8 @@ export default function BoardPage() {
     activePriorities.length > 0 ||
     projectId !== null ||
     sprintId !== null ||
-    epicId !== null
+    epicId !== null ||
+    tagSlug !== null
 
   const emptyVariant = filtersActive ? 'no-results' : 'no-tasks'
 
@@ -274,6 +280,9 @@ export default function BoardPage() {
         epicId={epicId}
         onEpicChange={(id) => handleGroupChange('epic_id', id)}
         onEpicCreate={() => setEpicCreateOpen(true)}
+        tags={tags}
+        tagSlug={tagSlug}
+        onTagChange={(slug) => handleGroupChange('tag', slug)}
       />
 
       <ProjectCreateDialog

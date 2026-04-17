@@ -284,6 +284,47 @@ func TestTaskUpdate_Facets(t *testing.T) {
 	assert.Equal(t, "normal", got.Trust)
 }
 
+// TestListTasks_FilterByTagSlugs verifies filtering tasks by one or more
+// tag slugs. Multi-slug is AND-match (task must carry all listed tags).
+func TestListTasks_FilterByTagSlugs(t *testing.T) {
+	store := setupTestStore(t)
+
+	require.NoError(t, store.CreateTag(&sqlstore.TagRecord{Slug: "bug", Name: "bug"}))
+	require.NoError(t, store.CreateTag(&sqlstore.TagRecord{Slug: "ui", Name: "ui"}))
+	require.NoError(t, store.CreateTag(&sqlstore.TagRecord{Slug: "backend", Name: "backend"}))
+
+	t1 := sampleTask("CW-TAG-0001")
+	t2 := sampleTask("CW-TAG-0002")
+	t3 := sampleTask("CW-TAG-0003")
+	require.NoError(t, store.CreateTask(t1))
+	require.NoError(t, store.CreateTask(t2))
+	require.NoError(t, store.CreateTask(t3))
+
+	require.NoError(t, store.SetTaskTags(t1.ID, []string{"bug", "ui"}))
+	require.NoError(t, store.SetTaskTags(t2.ID, []string{"bug", "backend"}))
+	require.NoError(t, store.SetTaskTags(t3.ID, []string{"ui"}))
+
+	// single tag: bug → t1, t2
+	got, err := store.ListTasks(sqlstore.TaskFilter{TagSlugs: []string{"bug"}})
+	require.NoError(t, err)
+	ids := []string{}
+	for _, r := range got {
+		ids = append(ids, r.ID)
+	}
+	assert.ElementsMatch(t, []string{t1.ID, t2.ID}, ids)
+
+	// AND-match: bug + ui → only t1
+	got, err = store.ListTasks(sqlstore.TaskFilter{TagSlugs: []string{"bug", "ui"}})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, t1.ID, got[0].ID)
+
+	// no matching tag
+	got, err = store.ListTasks(sqlstore.TaskFilter{TagSlugs: []string{"nonexistent"}})
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
 // TestListTasks_FilterByKind verifies the Kind filter narrows results.
 func TestListTasks_FilterByKind(t *testing.T) {
 	store := setupTestStore(t)

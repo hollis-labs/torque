@@ -305,6 +305,18 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	if v := r.URL.Query().Get("checkpoint_mode"); v != "" {
 		filter.CheckpointMode = v
 	}
+	if v := r.URL.Query().Get("tags"); v != "" {
+		parts := strings.Split(v, ",")
+		out := make([]string, 0, len(parts))
+		for _, p := range parts {
+			if s := strings.TrimSpace(p); s != "" {
+				out = append(out, s)
+			}
+		}
+		filter.TagSlugs = out
+	} else if v := r.URL.Query().Get("tag"); v != "" {
+		filter.TagSlugs = []string{strings.TrimSpace(v)}
+	}
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			filter.Limit = n
