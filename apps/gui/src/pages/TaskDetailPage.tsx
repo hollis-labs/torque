@@ -7,9 +7,9 @@ import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { CommentList } from '@/components/domain/comment-list'
-import { RunCard } from '@/components/domain/run-card'
 import { EmptyState } from '@/components/domain/empty-state'
 import { ArtifactCard } from '@/components/domain/artifact-card'
+import { ActivityTimeline } from '@/components/domain/activity-timeline'
 import { DebugTabStub } from '@/components/domain/debug-tab-stub'
 import {
   AttachArtifactDialog,
@@ -169,8 +169,18 @@ export default function TaskDetailPage() {
     if (activeTab === 'comments' && comments === null) {
       api.listComments(id).then(setComments).catch(() => setComments([]))
     }
-    if (activeTab === 'logs' && runs === null) {
-      api.listRuns(id).then(setRuns).catch(() => setRuns([]))
+    if (activeTab === 'logs') {
+      // Timeline unions runs, comments, and artifacts — load any that are
+      // still missing so the view is coherent on first render.
+      if (runs === null) {
+        api.listRuns(id).then(setRuns).catch(() => setRuns([]))
+      }
+      if (comments === null) {
+        api.listComments(id).then(setComments).catch(() => setComments([]))
+      }
+      if (artifacts === null) {
+        api.listArtifacts(id).then(setArtifacts).catch(() => setArtifacts([]))
+      }
     }
     if (activeTab === 'artifacts' && artifacts === null) {
       api.listArtifacts(id).then(setArtifacts).catch(() => setArtifacts([]))
@@ -537,24 +547,13 @@ export default function TaskDetailPage() {
             </TabsContent>
 
             <TabsContent value="logs" className="px-4 py-3">
-              {runs === null ? (
-                <div className="flex flex-col gap-3">
-                  {Array.from({ length: 2 }).map((_, i) => (
-                    <Skeleton key={i} className="h-24 w-full rounded-md" />
-                  ))}
-                </div>
-              ) : runs.length === 0 ? (
-                <EmptyState
-                  variant="no-results"
-                  title="No runs yet"
-                  description="This task hasn't been executed yet."
+              {id && (
+                <ActivityTimeline
+                  taskId={id}
+                  runs={runs}
+                  comments={comments}
+                  artifacts={artifacts}
                 />
-              ) : (
-                <div className="flex flex-col gap-3">
-                  {runs.map((run) => (
-                    <RunCard key={run.id} run={run} />
-                  ))}
-                </div>
               )}
             </TabsContent>
 
