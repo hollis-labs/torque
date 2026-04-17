@@ -1,3 +1,4 @@
+import { Plus } from 'lucide-react'
 import {
   Select,
   SelectContent,
@@ -32,6 +33,8 @@ interface FilterBarProps {
   epics?: Epic[]
   epicId?: string | null
   onEpicChange?: (id: string | null) => void
+  onProjectCreate?: () => void
+  onEpicCreate?: () => void
 }
 
 export function FilterBar({
@@ -51,6 +54,8 @@ export function FilterBar({
   epics,
   epicId,
   onEpicChange,
+  onProjectCreate,
+  onEpicCreate,
 }: FilterBarProps) {
   const showGroups = Boolean(onProjectChange || onSprintChange || onEpicChange)
 
@@ -144,6 +149,8 @@ export function FilterBar({
               items={projects ?? []}
               value={projectId ?? null}
               onChange={onProjectChange}
+              onCreate={onProjectCreate}
+              createLabel="New project"
             />
           )}
           {onSprintChange && (
@@ -164,6 +171,8 @@ export function FilterBar({
               items={epics ?? []}
               value={epicId ?? null}
               onChange={onEpicChange}
+              onCreate={onEpicCreate}
+              createLabel="New epic"
             />
           )}
         </div>
@@ -184,6 +193,8 @@ function GroupSelect({
   items,
   value,
   onChange,
+  onCreate,
+  createLabel,
 }: {
   label: string
   ariaLabel: string
@@ -191,9 +202,11 @@ function GroupSelect({
   items: GroupItem[]
   value: string | null
   onChange: (id: string | null) => void
+  onCreate?: () => void
+  createLabel?: string
 }) {
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex items-center gap-1">
       <span className="text-[10px] uppercase tracking-wider text-zinc-500">{label}:</span>
       <Select
         value={value ?? ALL_VALUE}
@@ -215,6 +228,17 @@ function GroupSelect({
           ))}
         </SelectContent>
       </Select>
+      {onCreate && (
+        <button
+          type="button"
+          aria-label={createLabel ?? `New ${label.toLowerCase()}`}
+          title={createLabel ?? `New ${label.toLowerCase()}`}
+          onClick={onCreate}
+          className="inline-flex h-7 w-7 items-center justify-center rounded border border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200 transition-colors"
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
+      )}
     </div>
   )
 }

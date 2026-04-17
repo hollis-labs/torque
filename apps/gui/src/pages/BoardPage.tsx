@@ -6,6 +6,8 @@ import { SummaryCards } from '@/components/domain/summary-cards'
 import { FilterBar } from '@/components/domain/filter-bar'
 import { TaskTable } from '@/components/domain/task-table'
 import { EmptyState } from '@/components/domain/empty-state'
+import { ProjectCreateDialog } from '@/components/domain/project-create-dialog'
+import { EpicCreateDialog } from '@/components/domain/epic-create-dialog'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
 import { notifyError } from '@/lib/toast'
@@ -81,23 +83,31 @@ export default function BoardPage() {
   const [sprints, setSprints] = useState<Sprint[]>([])
   const [epics, setEpics] = useState<Epic[]>([])
 
+  // Create-modal state
+  const [projectCreateOpen, setProjectCreateOpen] = useState(false)
+  const [epicCreateOpen, setEpicCreateOpen] = useState(false)
+
   // Fetch pickers once on mount
-  useEffect(() => {
-    let cancelled = false
-    Promise.all([
+  const refreshPickers = useCallback(async () => {
+    const [p, s, e] = await Promise.all([
       api.listProjects().catch(() => ({ projects: [] as Project[] })),
       api.listSprints().catch(() => ({ sprints: [] as Sprint[] })),
       api.listEpics().catch(() => ({ epics: [] as Epic[] })),
-    ]).then(([p, s, e]) => {
-      if (cancelled) return
-      setProjects(p.projects)
-      setSprints(s.sprints)
-      setEpics(e.epics)
-    })
+    ])
+    setProjects(p.projects)
+    setSprints(s.sprints)
+    setEpics(e.epics)
+  }, [api])
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      if (!cancelled) await refreshPickers()
+    })()
     return () => {
       cancelled = true
     }
-  }, [api])
+  }, [refreshPickers])
 
   // Cascade sprint/epic options by selected project (client-side filter)
   const visibleSprints = useMemo(
@@ -256,12 +266,33 @@ export default function BoardPage() {
         projects={projects}
         projectId={projectId}
         onProjectChange={(id) => handleGroupChange('project_id', id)}
+        onProjectCreate={() => setProjectCreateOpen(true)}
         sprints={visibleSprints}
         sprintId={sprintId}
         onSprintChange={(id) => handleGroupChange('sprint_id', id)}
         epics={visibleEpics}
         epicId={epicId}
         onEpicChange={(id) => handleGroupChange('epic_id', id)}
+        onEpicCreate={() => setEpicCreateOpen(true)}
+      />
+
+      <ProjectCreateDialog
+        open={projectCreateOpen}
+        onOpenChange={setProjectCreateOpen}
+        onCreated={(p) => {
+          refreshPickers()
+          handleGroupChange('project_id', p.id)
+        }}
+      />
+      <EpicCreateDialog
+        open={epicCreateOpen}
+        onOpenChange={setEpicCreateOpen}
+        projects={projects}
+        defaultProjectId={projectId}
+        onCreated={(e) => {
+          refreshPickers()
+          handleGroupChange('epic_id', e.id)
+        }}
       />
       <div className="flex-1 overflow-auto">
         {loading ? (
