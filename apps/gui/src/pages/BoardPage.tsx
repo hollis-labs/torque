@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Skeleton } from '@/components/ui/skeleton'
 import { PageHeader } from '@/components/domain/page-header'
 import { SummaryCards } from '@/components/domain/summary-cards'
@@ -8,12 +9,36 @@ import { EmptyState } from '@/components/domain/empty-state'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
 import { notifyError } from '@/lib/toast'
-import { DEFAULT_ACTIVE_STATUSES, MODE_PRESETS } from '@/lib/constants'
-import type { Task, TaskStatus } from '@/lib/types'
+import { DEFAULT_ACTIVE_STATUSES, MODE_PRESETS, TASK_STATUSES } from '@/lib/constants'
+import type { Epic, Project, Sprint, Task, TaskStatus } from '@/lib/types'
 
 type ModePreset = keyof typeof MODE_PRESETS | 'all'
 
 const SSE_EVENTS = ['task.created', 'task.updated', 'task.transitioned']
+const MODE_VALUES: ModePreset[] = ['all', 'planning', 'executing', 'reviewing']
+
+function parseStatusParam(raw: string | null): TaskStatus[] {
+  if (raw === null) return DEFAULT_ACTIVE_STATUSES
+  const allowed = new Set<string>(TASK_STATUSES)
+  const parsed = raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => allowed.has(s)) as TaskStatus[]
+  return parsed
+}
+
+function parsePriorityParam(raw: string | null): number[] {
+  if (!raw) return []
+  return raw
+    .split(',')
+    .map((s) => Number.parseInt(s.trim(), 10))
+    .filter((n) => Number.isInteger(n) && n >= 1 && n <= 3)
+}
+
+function parseModeParam(raw: string | null): ModePreset {
+  if (raw && MODE_VALUES.includes(raw as ModePreset)) return raw as ModePreset
+  return 'all'
+}
 
 function TableSkeleton() {
   return (
@@ -28,18 +53,88 @@ function TableSkeleton() {
 export default function BoardPage() {
   const api = useApi()
   const { lastEvent } = useSSE(SSE_EVENTS)
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  // Filter state derived from URL (URL is source of truth for round-tripping)
+  const activeStatuses = useMemo(
+    () => parseStatusParam(searchParams.get('status')),
+    [searchParams]
+  )
+  const activePriorities = useMemo(
+    () => parsePriorityParam(searchParams.get('priority')),
+    [searchParams]
+  )
+  const mode = useMemo(
+    () => parseModeParam(searchParams.get('mode')),
+    [searchParams]
+  )
+  const projectId = searchParams.get('project_id')
+  const sprintId = searchParams.get('sprint_id')
+  const epicId = searchParams.get('epic_id')
 
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [activeStatuses, setActiveStatuses] = useState<TaskStatus[]>(DEFAULT_ACTIVE_STATUSES)
-  const [mode, setMode] = useState<ModePreset>('all')
-  const [activePriorities, setActivePriorities] = useState<number[]>([])
+
+  // Group picker data
+  const [projects, setProjects] = useState<Project[]>([])
+  const [sprints, setSprints] = useState<Sprint[]>([])
+  const [epics, setEpics] = useState<Epic[]>([])
+
+  // Fetch pickers once on mount
+  useEffect(() => {
+    let cancelled = false
+    Promise.all([
+      api.listProjects().catch(() => ({ projects: [] as Project[] })),
+      api.listSprints().catch(() => ({ sprints: [] as Sprint[] })),
+      api.listEpics().catch(() => ({ epics: [] as Epic[] })),
+    ]).then(([p, s, e]) => {
+      if (cancelled) return
+      setProjects(p.projects)
+      setSprints(s.sprints)
+      setEpics(e.epics)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [api])
+
+  // Cascade sprint/epic options by selected project (client-side filter)
+  const visibleSprints = useMemo(
+    () => (projectId ? sprints.filter((s) => s.project_id === projectId) : sprints),
+    [sprints, projectId]
+  )
+  const visibleEpics = useMemo(
+    () => (projectId ? epics.filter((e) => e.project_id === projectId) : epics),
+    [epics, projectId]
+  )
+
+  // Auto-clear sprint/epic selection if it falls outside the cascaded set.
+  useEffect(() => {
+    const sprintInvalid = sprintId && !visibleSprints.some((s) => s.id === sprintId)
+    const epicInvalid = epicId && !visibleEpics.some((e) => e.id === epicId)
+    if (!sprintInvalid && !epicInvalid) return
+    // Wait until we've actually loaded the lists; otherwise everything looks "invalid".
+    if (sprints.length === 0 && epics.length === 0) return
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (sprintInvalid) next.delete('sprint_id')
+        if (epicInvalid) next.delete('epic_id')
+        return next
+      },
+      { replace: true }
+    )
+  }, [projectId, sprintId, epicId, visibleSprints, visibleEpics, sprints.length, epics.length, setSearchParams])
 
   const fetchTasks = useCallback(async () => {
     try {
       const result = await api.listTasks({
         status: activeStatuses,
+        priority: activePriorities.length ? activePriorities : undefined,
+        project_id: projectId ?? undefined,
+        sprint_id: sprintId ?? undefined,
+        epic_id: epicId ?? undefined,
       })
       setTasks(result.tasks)
       setError(null)
@@ -48,7 +143,7 @@ export default function BoardPage() {
     } finally {
       setLoading(false)
     }
-  }, [api, activeStatuses])
+  }, [api, activeStatuses, activePriorities, projectId, sprintId, epicId])
 
   useEffect(() => {
     setLoading(true)
@@ -60,25 +155,61 @@ export default function BoardPage() {
     if (lastEvent) fetchTasks()
   }, [lastEvent, fetchTasks])
 
-  function handleStatusToggle(status: TaskStatus) {
-    setActiveStatuses((prev) =>
-      prev.includes(status) ? prev.filter((s) => s !== status) : [...prev, status]
+  function updateParams(mutate: (params: URLSearchParams) => void) {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        mutate(next)
+        return next
+      },
+      { replace: true }
     )
+  }
+
+  function setStatusList(next: TaskStatus[]) {
+    updateParams((p) => {
+      const sameAsDefault =
+        next.length === DEFAULT_ACTIVE_STATUSES.length &&
+        DEFAULT_ACTIVE_STATUSES.every((s) => next.includes(s))
+      if (sameAsDefault) p.delete('status')
+      else p.set('status', next.join(','))
+    })
+  }
+
+  function handleStatusToggle(status: TaskStatus) {
+    const next = activeStatuses.includes(status)
+      ? activeStatuses.filter((s) => s !== status)
+      : [...activeStatuses, status]
+    setStatusList(next)
   }
 
   function handlePriorityToggle(priority: number) {
-    setActivePriorities((prev) =>
-      prev.includes(priority) ? prev.filter((p) => p !== priority) : [...prev, priority]
-    )
+    const next = activePriorities.includes(priority)
+      ? activePriorities.filter((p) => p !== priority)
+      : [...activePriorities, priority]
+    updateParams((p) => {
+      if (next.length === 0) p.delete('priority')
+      else p.set('priority', next.join(','))
+    })
   }
 
   function handleModeChange(newMode: ModePreset) {
-    setMode(newMode)
-    if (newMode === 'all') {
-      setActiveStatuses(DEFAULT_ACTIVE_STATUSES)
-    } else {
-      setActiveStatuses(MODE_PRESETS[newMode])
-    }
+    updateParams((p) => {
+      if (newMode === 'all') {
+        p.delete('mode')
+        p.delete('status')
+      } else {
+        p.set('mode', newMode)
+        p.set('status', MODE_PRESETS[newMode].join(','))
+      }
+    })
+  }
+
+  function handleGroupChange(key: 'project_id' | 'sprint_id' | 'epic_id', value: string | null) {
+    updateParams((p) => {
+      if (value === null) p.delete(key)
+      else p.set(key, value)
+    })
   }
 
   async function handleTransition(id: string, status: TaskStatus) {
@@ -90,9 +221,14 @@ export default function BoardPage() {
     }
   }
 
-  const emptyVariant = activeStatuses.length < DEFAULT_ACTIVE_STATUSES.length
-    ? 'no-results'
-    : 'no-tasks'
+  const filtersActive =
+    activeStatuses.length !== DEFAULT_ACTIVE_STATUSES.length ||
+    activePriorities.length > 0 ||
+    projectId !== null ||
+    sprintId !== null ||
+    epicId !== null
+
+  const emptyVariant = filtersActive ? 'no-results' : 'no-tasks'
 
   const openCount = tasks.filter((t) => ['backlog', 'todo', 'queued'].includes(t.status)).length
   const doingCount = tasks.filter((t) => t.status === 'doing').length
@@ -117,6 +253,15 @@ export default function BoardPage() {
         onModeChange={handleModeChange}
         activePriorities={activePriorities}
         onPriorityToggle={handlePriorityToggle}
+        projects={projects}
+        projectId={projectId}
+        onProjectChange={(id) => handleGroupChange('project_id', id)}
+        sprints={visibleSprints}
+        sprintId={sprintId}
+        onSprintChange={(id) => handleGroupChange('sprint_id', id)}
+        epics={visibleEpics}
+        epicId={epicId}
+        onEpicChange={(id) => handleGroupChange('epic_id', id)}
       />
       <div className="flex-1 overflow-auto">
         {loading ? (
