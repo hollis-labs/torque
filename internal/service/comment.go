@@ -7,14 +7,18 @@ type CommentService struct {
 	store *sqlstore.Store
 }
 
-// Add inserts a new comment on a task.
-func (s *CommentService) Add(taskID, author, content string) error {
+// Add inserts a new comment on a task and returns the persisted record
+// (including id and created_at populated by the DB).
+func (s *CommentService) Add(taskID, author, content string) (*sqlstore.CommentRecord, error) {
 	rec := &sqlstore.CommentRecord{
 		TaskID:  taskID,
 		Author:  author,
 		Content: content,
 	}
-	return s.store.AddComment(rec)
+	if err := s.store.AddComment(rec); err != nil {
+		return nil, err
+	}
+	return rec, nil
 }
 
 // List returns all comments for a task.
