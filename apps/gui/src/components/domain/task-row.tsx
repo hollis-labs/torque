@@ -39,7 +39,7 @@ export function TaskRow({ task, selected, onSelect }: TaskRowProps) {
 
   return (
     <tr
-      className={`cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-zinc-600 ${selected ? 'bg-zinc-900/35' : 'bg-zinc-950 hover:bg-zinc-900/35'}`}
+      className={`cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-zinc-600 [&>td]:cursor-pointer ${selected ? 'bg-zinc-900/35' : 'bg-zinc-950 hover:bg-zinc-900/35'}`}
       onClick={handleRowClick}
       onKeyDown={handleRowKeyDown}
       tabIndex={0}
