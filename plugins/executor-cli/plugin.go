@@ -84,13 +84,8 @@ func (e *CLIExecutor) Run(ctx context.Context, job *executor.ExecutionJob, cb ex
 		return nil, fmt.Errorf("build command spec: %w", err)
 	}
 
-	// Determine timeout: profile wins, then job limits fallback.
-	var timeout time.Duration
-	if profile.TimeoutSeconds > 0 {
-		timeout = time.Duration(profile.TimeoutSeconds) * time.Second
-	} else {
-		timeout = job.Limits.EffectiveTimeout()
-	}
+	// Determine timeout: task metadata override wins, then profile, then job limits.
+	timeout := resolveTimeout(profile, job)
 
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
