@@ -238,3 +238,34 @@ func TestParseTokenPayloadEmpty(t *testing.T) {
 	assert.Equal(t, int64(0), completion)
 	assert.Equal(t, float64(0), cost)
 }
+
+func TestParseLineSubtodoDone(t *testing.T) {
+	sig := executor.ParseLine("CLOCKWORK_SUBTODO_DONE: item-1 commit-abc123")
+	assert.Equal(t, executor.SignalSubtodoDone, sig.Type)
+	assert.Equal(t, "item-1 commit-abc123", sig.Payload)
+}
+
+func TestParseLineSubtodoDoneNoEvidence(t *testing.T) {
+	sig := executor.ParseLine("CLOCKWORK_SUBTODO_DONE: item-1")
+	assert.Equal(t, executor.SignalSubtodoDone, sig.Type)
+	assert.Equal(t, "item-1", sig.Payload)
+}
+
+func TestParseSubtodoDonePayload(t *testing.T) {
+	id, ev, err := executor.ParseSubtodoDonePayload("item-42 sha256:abcdef 1234")
+	require.NoError(t, err)
+	assert.Equal(t, "item-42", id)
+	assert.Equal(t, "sha256:abcdef 1234", ev)
+}
+
+func TestParseSubtodoDonePayloadIDOnly(t *testing.T) {
+	id, ev, err := executor.ParseSubtodoDonePayload("item-1")
+	require.NoError(t, err)
+	assert.Equal(t, "item-1", id)
+	assert.Equal(t, "", ev)
+}
+
+func TestParseSubtodoDonePayloadEmpty(t *testing.T) {
+	_, _, err := executor.ParseSubtodoDonePayload("   ")
+	require.Error(t, err)
+}

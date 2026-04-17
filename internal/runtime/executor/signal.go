@@ -16,6 +16,7 @@ const (
 	SignalSubtask                     // JSON: {"signal": "CLOCKWORK_SUBTASK", ...}
 	SignalArtifact                    // JSON: {"signal": "CLOCKWORK_ARTIFACT", ...}
 	SignalCheckpointAwait             // inline: CLOCKWORK_CHECKPOINT_AWAIT <correlation_id>
+	SignalSubtodoDone                 // CLOCKWORK_SUBTODO_DONE: <item_id> <evidence>
 )
 
 var signalNames = map[SignalType]string{
@@ -31,6 +32,7 @@ var signalNames = map[SignalType]string{
 	SignalSubtask:         "CLOCKWORK_SUBTASK",
 	SignalArtifact:        "CLOCKWORK_ARTIFACT",
 	SignalCheckpointAwait: "CLOCKWORK_CHECKPOINT_AWAIT",
+	SignalSubtodoDone:     "CLOCKWORK_SUBTODO_DONE",
 }
 
 var signalFromString = map[string]SignalType{
@@ -45,6 +47,7 @@ var signalFromString = map[string]SignalType{
 	"CLOCKWORK_SUBTASK":          SignalSubtask,
 	"CLOCKWORK_ARTIFACT":         SignalArtifact,
 	"CLOCKWORK_CHECKPOINT_AWAIT": SignalCheckpointAwait,
+	"CLOCKWORK_SUBTODO_DONE":     SignalSubtodoDone,
 }
 
 // String returns the canonical name of the signal type.
