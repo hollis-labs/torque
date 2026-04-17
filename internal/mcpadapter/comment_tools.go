@@ -21,7 +21,7 @@ func (a *Adapter) registerCommentTools() {
 }
 
 func (a *Adapter) handleCommentAdd(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if err := a.svc.Comment.Add(
+	if _, err := a.svc.Comment.Add(
 		reqStr(req, "task_id"),
 		reqStr(req, "author"),
 		reqStr(req, "content"),

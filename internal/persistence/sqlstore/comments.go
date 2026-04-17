@@ -6,27 +6,18 @@ import (
 
 // CommentRecord mirrors the comments table row.
 type CommentRecord struct {
-	ID        int64
-	TaskID    string
-	Author    string
-	Content   string
-	CreatedAt time.Time
+	ID        int64     `json:"id"`
+	TaskID    string    `json:"task_id"`
+	Author    string    `json:"author"`
+	Content   string    `json:"content"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
-// AddComment inserts a new comment.
+// AddComment inserts a new comment and populates ID + CreatedAt from the DB.
 func (s *Store) AddComment(c *CommentRecord) error {
-	const q = `INSERT INTO comments (task_id, author, content) VALUES (?, ?, ?)`
-
-	res, err := s.db.Exec(q, c.TaskID, c.Author, c.Content)
-	if err != nil {
-		return err
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return err
-	}
-	c.ID = id
-	return nil
+	const q = `INSERT INTO comments (task_id, author, content) VALUES (?, ?, ?)
+		RETURNING id, created_at`
+	return s.db.QueryRow(q, c.TaskID, c.Author, c.Content).Scan(&c.ID, &c.CreatedAt)
 }
 
 // ListComments returns all comments for a task, oldest first.

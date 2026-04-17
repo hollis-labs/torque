@@ -60,6 +60,8 @@ func (s *Server) routes() {
 		r.Delete("/tasks/{id}", s.deleteTask)
 		r.Post("/tasks/{id}/transition", s.transitionTask)
 		r.Get("/tasks/{id}/checkpoints", s.listTaskCheckpoints)
+		r.Get("/tasks/{id}/comments", s.listComments)
+		r.Post("/tasks/{id}/comments", s.addComment)
 
 		// Checkpoints — emit/respond/cancel keyed on correlation_id.
 		r.Post("/checkpoints", s.emitCheckpoint)
