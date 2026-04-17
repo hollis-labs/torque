@@ -63,6 +63,27 @@ interface ApiArtifactRecord {
   CreatedAt: string
 }
 
+/**
+ * Coerce any of the shapes the artifact list endpoints have historically
+ * returned into a real `Artifact[]`. The frontend shipped against two
+ * variants: a `{artifacts: [...]}` envelope (both legacy and alias
+ * routes) and, briefly during overnight merges, a bare array. We also
+ * defensively treat null / unexpected bodies as an empty list so the
+ * tab renders its empty state instead of crashing on `.map`.
+ */
+export function normalizeArtifactList(raw: unknown): Artifact[] {
+  if (Array.isArray(raw)) {
+    return (raw as ApiArtifactRecord[]).map(normalizeArtifact)
+  }
+  if (raw && typeof raw === 'object') {
+    const inner = (raw as { artifacts?: unknown }).artifacts
+    if (Array.isArray(inner)) {
+      return (inner as ApiArtifactRecord[]).map(normalizeArtifact)
+    }
+  }
+  return []
+}
+
 function normalizeArtifact(raw: ApiArtifactRecord): Artifact {
   let metadata: Record<string, unknown> | undefined
   if (raw.Metadata?.Valid && raw.Metadata.String) {
@@ -245,12 +266,28 @@ export class ClockworkApiClient {
   // -------------------------
 
   async listArtifacts(taskId: string): Promise<Artifact[]> {
-    // Prefer the query-string form: the /tasks/{id}/artifacts alias is
-    // registered in newer server builds but older binaries serving the
-    // bundled SPA fall through to the index.html fallback instead of the
-    // JSON handler. The envelope shape is identical.
-    const res = await this.get<{ artifacts: ApiArtifactRecord[] }>('/artifacts', { task_id: taskId })
-    return (res.artifacts ?? []).map(normalizeArtifact)
+    // Try the nested route first, fall back to the legacy query-string
+    // form. Both are served by the same backend handler and return a
+    // `{artifacts: [...]}` envelope, but older bundled server binaries
+    // predate the alias and fall through to the SPA index.html for the
+    // nested URL — that makes `res.json()` reject, so we retry against
+    // the query-string form. On 404 / transport failure / unrecognized
+    // body we return `[]` so the UI renders an empty state instead of
+    // crashing on a non-array `.map`.
+    const attempts: Array<() => Promise<unknown>> = [
+      () => this.get<unknown>(`/tasks/${taskId}/artifacts`),
+      () => this.get<unknown>('/artifacts', { task_id: taskId }),
+    ]
+    for (const attempt of attempts) {
+      try {
+        return normalizeArtifactList(await attempt())
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return []
+        // Any other failure (non-JSON body, 5xx, network) falls through
+        // to the next attempt; the final catch returns [].
+      }
+    }
+    return []
   }
 
   async createArtifact(data: {
