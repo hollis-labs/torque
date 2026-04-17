@@ -31,6 +31,7 @@ func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord) map[string]inte
 		"permissions":        parseFreeMap(t.Permissions),
 		"environment":        parseStringMap(t.Environment),
 		"system_prompt":      t.SystemPrompt,
+		"agent_file":         t.AgentFile,
 		"files":              parseStringArray(t.Files),
 		"cost_budget":        nullFloat(t.CostBudget),
 		"max_retries":        t.MaxRetries,
@@ -121,6 +122,7 @@ type TaskCreateRequest struct {
 	Permissions       map[string]any        `json:"permissions,omitempty"`
 	Environment       map[string]string     `json:"environment,omitempty"`
 	SystemPrompt      string                `json:"system_prompt,omitempty"`
+	AgentFile         string                `json:"agent_file,omitempty"`
 	Files             []string              `json:"files,omitempty"`
 	CostBudget        *float64              `json:"cost_budget,omitempty"`
 	MaxRetries        *int                  `json:"max_retries,omitempty"`
@@ -168,6 +170,7 @@ type TaskUpdateRequest struct {
 	Permissions       *map[string]any        `json:"permissions,omitempty"`
 	Environment       *map[string]string     `json:"environment,omitempty"`
 	SystemPrompt      *string                `json:"system_prompt,omitempty"`
+	AgentFile         *string                `json:"agent_file,omitempty"`
 	Files             *[]string              `json:"files,omitempty"`
 	CostBudget        *float64               `json:"cost_budget,omitempty"`
 	MaxRetries        *int                   `json:"max_retries,omitempty"`
@@ -371,6 +374,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		Permissions:       req.Permissions,
 		Environment:       req.Environment,
 		SystemPrompt:      req.SystemPrompt,
+		AgentFile:         req.AgentFile,
 		Files:             req.Files,
 		CostBudget:        req.CostBudget,
 		MaxRetries:        req.MaxRetries,
@@ -441,6 +445,7 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 		AgentProfile:      req.AgentProfile,
 		WorkingDir:        req.WorkingDir,
 		SystemPrompt:      req.SystemPrompt,
+		AgentFile:         req.AgentFile,
 		MaxRetries:        req.MaxRetries,
 		OnDone:            req.OnDone,
 		OnFail:            req.OnFail,
