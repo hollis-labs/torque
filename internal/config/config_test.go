@@ -52,6 +52,33 @@ func TestSchedulerWorktreeCleanupDefault(t *testing.T) {
 	assert.Equal(t, "on_merge", cfg.Scheduler.WorktreeCleanup)
 }
 
+func TestPerRunWorktreeDefaults(t *testing.T) {
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	assert.False(t, cfg.Scheduler.WorktreePerRun, "per-run worktrees default off")
+	assert.Equal(t, "", cfg.Scheduler.WorktreeRoot, "empty root means '${repo}-worktrees'")
+	assert.Equal(t, 7, cfg.Scheduler.WorktreeKeepDays)
+}
+
+func TestPerRunWorktreeFromEnv(t *testing.T) {
+	os.Setenv("CLOCKWORK_WORKTREE_PER_RUN", "true")
+	os.Setenv("CLOCKWORK_WORKTREE_ROOT", "/var/clockwork/worktrees")
+	os.Setenv("CLOCKWORK_WORKTREE_KEEP_DAYS", "14")
+	defer func() {
+		os.Unsetenv("CLOCKWORK_WORKTREE_PER_RUN")
+		os.Unsetenv("CLOCKWORK_WORKTREE_ROOT")
+		os.Unsetenv("CLOCKWORK_WORKTREE_KEEP_DAYS")
+	}()
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	assert.True(t, cfg.Scheduler.WorktreePerRun)
+	assert.Equal(t, "/var/clockwork/worktrees", cfg.Scheduler.WorktreeRoot)
+	assert.Equal(t, 14, cfg.Scheduler.WorktreeKeepDays)
+}
+
 func TestConfigFromEnv(t *testing.T) {
 	os.Setenv("CLOCKWORK_DB_PATH", "/tmp/test.db")
 	os.Setenv("CLOCKWORK_HTTP_PORT", "9999")
