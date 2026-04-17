@@ -124,6 +124,98 @@ func TestCheckpointService_Emit_WithTimeout(t *testing.T) {
 	assert.WithinDuration(t, at, cp.TimeoutAt.Time, time.Second)
 }
 
+// Parity with scheduler.HandleCheckpointSignal: CheckpointService.Emit must
+// park a doing+blocking task in review so MCP/HTTP emits get the same
+// behaviour as an in-run CLOCKWORK_CHECKPOINT signal. Spec §4.2.
+func TestCheckpointService_Emit_ParksDoingBlockingTask(t *testing.T) {
+	svc := setupService(t)
+	taskID := createBlockingDecisionTask(t, svc)
+
+	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID: taskID, Type: "collect_data", PayloadJSON: `{}`, EmitterSourceType: "system",
+	})
+	require.NoError(t, err)
+
+	got, err := svc.Task.Get(taskID)
+	require.NoError(t, err)
+	assert.Equal(t, "review", got.Status,
+		"doing+blocking emit should park the task in review")
+	assert.Contains(t, got.BlockedReason, out.CorrelationID,
+		"BlockedReason should name the correlation so respond/cancel can match")
+	assert.Contains(t, got.BlockedReason, "awaiting checkpoint",
+		"BlockedReason should use the same 'awaiting checkpoint <corr>' wording as the scheduler")
+}
+
+// Non-blocking mode: emit records the row but must NOT touch task state.
+func TestCheckpointService_Emit_NonBlocking_LeavesTaskRunning(t *testing.T) {
+	svc := setupService(t)
+	rec, err := svc.Task.Create(service.TaskCreateInput{
+		Title:          "non-blocking work",
+		CheckpointMode: "non_blocking",
+		Executor:       "cli",
+	})
+	require.NoError(t, err)
+	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
+
+	_, err = svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID: rec.ID, Type: "progress", PayloadJSON: `{}`, EmitterSourceType: "system",
+	})
+	require.NoError(t, err)
+
+	got, err := svc.Task.Get(rec.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "doing", got.Status, "non_blocking emit should not transition the task")
+	assert.Equal(t, "", got.BlockedReason)
+}
+
+// A blocking task that hasn't started yet (still in todo) shouldn't be
+// parked by an Emit — the caller might be pre-creating checkpoints before
+// the task runs. Park only when actively in doing.
+func TestCheckpointService_Emit_TodoBlocking_LeavesTaskInTodo(t *testing.T) {
+	svc := setupService(t)
+	rec, err := svc.Task.Create(service.TaskCreateInput{
+		Title:          "pre-staged decision",
+		Kind:           "decision",
+		CheckpointMode: "blocking",
+		Manual:         true,
+	})
+	require.NoError(t, err)
+
+	_, err = svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID: rec.ID, Type: "x", PayloadJSON: `{}`, EmitterSourceType: "system",
+	})
+	require.NoError(t, err)
+
+	got, err := svc.Task.Get(rec.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "todo", got.Status, "Emit should only park when the task is actively doing")
+}
+
+// Second emit on an already-parked (review) task must not rewrite
+// BlockedReason — the first correlation stays recorded so respond/cancel
+// still match it. Defensive check for idempotency.
+func TestCheckpointService_Emit_AlreadyParked_DoesNotRewriteBlockedReason(t *testing.T) {
+	svc, store := setupServiceWithStore(t)
+	taskID := createBlockingDecisionTask(t, svc)
+
+	first, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID: taskID, Type: "x", PayloadJSON: `{}`, EmitterSourceType: "system",
+	})
+	require.NoError(t, err)
+
+	// The task is now in review; emit again (scheduler would normally prevent
+	// this, but MCP/HTTP callers can do it).
+	_, err = svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID: taskID, Type: "x", PayloadJSON: `{}`, EmitterSourceType: "system",
+	})
+	require.NoError(t, err)
+
+	got, err := store.GetTask(taskID)
+	require.NoError(t, err)
+	assert.Contains(t, got.BlockedReason, first.CorrelationID,
+		"first correlation should still be the parked-on id so respond/cancel match it")
+}
+
 func TestCheckpointService_Respond(t *testing.T) {
 	svc := setupService(t)
 	taskID := createBlockingDecisionTask(t, svc)
@@ -362,25 +454,34 @@ func TestCheckpointService_Respond_StaysInReview_OnReviewMode(t *testing.T) {
 
 // When the task was never parked on this checkpoint, Respond still records
 // the answer but does not touch task state.
+// A Respond against a checkpoint whose task isn't parked (non_blocking mode
+// here — emit does NOT park, so the task stays in doing) should attach the
+// response to metadata but not transition task state.
 func TestCheckpointService_Respond_UnparkedTask_NoStateChange(t *testing.T) {
 	svc := setupService(t)
-	taskID := createBlockingDecisionTask(t, svc)
+
+	rec, err := svc.Task.Create(service.TaskCreateInput{
+		Title:          "non-blocking emitter",
+		CheckpointMode: "non_blocking",
+		Executor:       "cli",
+	})
+	require.NoError(t, err)
+	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
 
 	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
-		TaskID: taskID, Type: "x", PayloadJSON: `{}`, EmitterSourceType: "system",
+		TaskID: rec.ID, Type: "x", PayloadJSON: `{}`, EmitterSourceType: "system",
 	})
 	require.NoError(t, err)
 
-	// Task is still in "doing" (scheduler park was skipped in this test).
 	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
 		CorrelationID:       out.CorrelationID,
 		ResponseJSON:        `{"answer":"n"}`,
 		ResponderSourceType: "user",
 	}))
 
-	got, err := svc.Task.Get(taskID)
+	got, err := svc.Task.Get(rec.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "doing", got.Status, "unparked task shouldn't transition")
+	assert.Equal(t, "doing", got.Status, "non_blocking task stays in doing through emit + respond")
 }
 
 func TestCheckpointService_ListForTask(t *testing.T) {

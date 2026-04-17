@@ -58,8 +58,24 @@ type CheckpointCancelInput struct {
 }
 
 // Emit creates a pending checkpoint. Generates a ULID correlation_id, applies
-// source defaults, and persists. Per-kind blocking transition of the task is
-// the scheduler's responsibility (B5), not this method's.
+// source defaults, persists the row, and — when the task is actively running
+// (status=doing) and its checkpoint_mode is "blocking" — parks it in review
+// with BlockedReason="awaiting checkpoint <corr>" so MCP/HTTP emits behave
+// the same as an in-run CLOCKWORK_CHECKPOINT signal handled by the scheduler
+// (spec §4.2).
+//
+// The park is conditional at the SQL level via store.ParkTaskOnCheckpoint:
+// a single UPDATE with "WHERE status='doing' AND checkpoint_mode='blocking'",
+// treating 0 rows affected as a no-op. This closes the TOCTOU window that a
+// Go-level status snapshot would leave open — a concurrent transition
+// (another Emit on this task, scheduler tick, manual review flip) can't get
+// clobbered by a stale read.
+//
+// Non-blocking tasks, already-parked tasks, and tasks that haven't started
+// (todo / any terminal state) are left alone — Emit records the checkpoint
+// row but doesn't manufacture a transition. Idempotency: if the task is
+// already in review on a prior correlation, BlockedReason is preserved so
+// respond/cancel still match the original correlation_id.
 func (s *CheckpointService) Emit(in CheckpointEmitInput) (*CheckpointEmitOutput, error) {
 	if in.TaskID == "" {
 		return nil, &ValidationError{Field: "task_id", Message: "task_id required"}
@@ -74,6 +90,8 @@ func (s *CheckpointService) Emit(in CheckpointEmitInput) (*CheckpointEmitOutput,
 		return nil, &ValidationError{Field: "emitter_source_type", Message: "invalid emitter_source_type"}
 	}
 
+	// Task-existence validation. A missing task here becomes a 422 instead
+	// of a store-level FK violation a few lines later.
 	if _, err := s.store.GetTask(in.TaskID); err != nil {
 		if errors.Is(err, sqlstore.ErrTaskNotFound) {
 			return nil, &ValidationError{Field: "task_id", Message: "task not found"}
@@ -106,6 +124,16 @@ func (s *CheckpointService) Emit(in CheckpointEmitInput) (*CheckpointEmitOutput,
 	if err := s.store.CreateCheckpoint(cp); err != nil {
 		return nil, fmt.Errorf("create checkpoint: %w", err)
 	}
+
+	// Atomic park: no-op unless the task is still eligible when the UPDATE
+	// actually runs. parked=false is fine here — the checkpoint row is
+	// recorded either way, and callers who care can inspect task state
+	// after the fact.
+	reason := "awaiting checkpoint " + corr
+	if _, err := s.store.ParkTaskOnCheckpoint(in.TaskID, reason); err != nil {
+		return nil, fmt.Errorf("park task on checkpoint: %w", err)
+	}
+
 	return &CheckpointEmitOutput{CorrelationID: corr, ID: cp.ID, Status: cp.Status}, nil
 }
 
