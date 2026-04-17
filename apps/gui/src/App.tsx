@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
-import { LayoutList, Play, BarChart3, Settings, Cog, FolderOpen, Milestone, Layers } from 'lucide-react'
+import { LayoutList, Play, BarChart3, Settings, Cog, FileText, Inbox } from 'lucide-react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster } from '@/components/ui/sonner'
 import { ApiProvider } from '@/hooks/use-api'
@@ -9,12 +9,12 @@ import TaskDetailPage from '@/pages/TaskDetailPage'
 import RunsPage from '@/pages/RunsPage'
 import DashboardPage from '@/pages/DashboardPage'
 import SettingsPage from '@/pages/SettingsPage'
-import ProjectsPage from '@/pages/ProjectsPage'
 import ProjectDetailPage from '@/pages/ProjectDetailPage'
-import SprintsPage from '@/pages/SprintsPage'
 import SprintDetailPage from '@/pages/SprintDetailPage'
-import EpicsPage from '@/pages/EpicsPage'
 import EpicDetailPage from '@/pages/EpicDetailPage'
+import TemplatesPage from '@/pages/TemplatesPage'
+import TemplateDetailPage from '@/pages/TemplateDetailPage'
+import CheckpointsPage from '@/pages/CheckpointsPage'
 import { cn } from '@/lib/utils'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined
@@ -64,14 +64,11 @@ function AppShell() {
         <NavItem to="/" label="Board">
           <LayoutList className="h-4 w-4" />
         </NavItem>
-        <NavItem to="/projects" label="Projects">
-          <FolderOpen className="h-4 w-4" />
+        <NavItem to="/templates" label="Templates">
+          <FileText className="h-4 w-4" />
         </NavItem>
-        <NavItem to="/sprints" label="Sprints">
-          <Milestone className="h-4 w-4" />
-        </NavItem>
-        <NavItem to="/epics" label="Epics">
-          <Layers className="h-4 w-4" />
+        <NavItem to="/checkpoints" label="Checkpoints">
+          <Inbox className="h-4 w-4" />
         </NavItem>
         <NavItem to="/runs" label="Runs">
           <Play className="h-4 w-4" />
@@ -92,12 +89,12 @@ function AppShell() {
         <Routes>
           <Route path="/" element={<BoardPage />} />
           <Route path="/tasks/:id" element={<TaskDetailPage />} />
-          <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/:id" element={<ProjectDetailPage />} />
-          <Route path="/sprints" element={<SprintsPage />} />
           <Route path="/sprints/:id" element={<SprintDetailPage />} />
-          <Route path="/epics" element={<EpicsPage />} />
           <Route path="/epics/:id" element={<EpicDetailPage />} />
+          <Route path="/templates" element={<TemplatesPage />} />
+          <Route path="/templates/:id" element={<TemplateDetailPage />} />
+          <Route path="/checkpoints" element={<CheckpointsPage />} />
           <Route path="/runs" element={<RunsPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/settings" element={<SettingsPage />} />

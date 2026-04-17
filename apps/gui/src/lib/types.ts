@@ -240,3 +240,70 @@ export interface TaskFilter {
   limit?: number
   offset?: number
 }
+
+export interface Template {
+  id: string
+  version: number
+  name: string
+  description: string
+  kind: string
+  auto_execute: boolean
+  executor: string | null
+  agent_profile: string | null
+  system_prompt: string | null
+  working_dir: string | null
+  tools: string[]
+  permissions: Record<string, unknown>
+  environment: Record<string, string>
+  cost_budget: number | null
+  max_retries: number
+  max_duration_ms: number | null
+  token_budget: number | null
+  on_done: OnDone
+  on_fail: OnFail
+  on_review: OnReview
+  on_done_merge: OnDoneMerge
+  escalation_chain: string[]
+  quality_gates: string[]
+  deliverables: Deliverable[]
+  checkpoint_mode: TaskCheckpointMode
+  on_checkpoint_response: TaskOnCheckpointResponse
+  metadata_template: Record<string, unknown>
+  required_vars: string[]
+  tags: string[]
+  is_archived: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface TemplateInstantiateRequest {
+  template_version?: number
+  title: string
+  description?: string
+  vars?: Record<string, string>
+  overrides?: Record<string, unknown>
+  sprint_id?: string
+  project_id?: string
+  epic_id?: string
+  tags?: string[]
+}
+
+export type CheckpointStatus = 'pending' | 'responded' | 'canceled' | 'timed_out'
+
+export interface Checkpoint {
+  id: number
+  task_id: string
+  run_id: number | null
+  correlation_id: string
+  type: string
+  payload_json: string
+  response_json: string | null
+  emitter_source_type: string
+  emitter_source_ref: string | null
+  responder_source_type: string | null
+  responder_source_ref: string | null
+  emitted_at: string
+  responded_at: string | null
+  timeout_at: string | null
+  status: CheckpointStatus
+}

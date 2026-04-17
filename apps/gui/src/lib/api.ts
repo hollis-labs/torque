@@ -11,6 +11,9 @@ import type {
   Epic,
   Tag,
   TagColor,
+  Template,
+  TemplateInstantiateRequest,
+  Checkpoint,
 } from './types'
 
 class ApiError extends Error {
@@ -355,6 +358,73 @@ export class ClockworkApiClient {
 
   async mergeTags(sourceSlug: string, into: string): Promise<Tag> {
     return this.post<Tag>(`/tags/${sourceSlug}/merge`, { into })
+  }
+
+  // -------------------------
+  // Templates
+  // -------------------------
+
+  async listTemplates(params?: { kind?: string; include_archived?: boolean }): Promise<{ templates: Template[] }> {
+    const qs: Record<string, string | number | boolean | undefined> = {}
+    if (params?.kind) qs['kind'] = params.kind
+    if (params?.include_archived) qs['include_archived'] = 'true'
+    return this.get<{ templates: Template[] }>('/templates', qs)
+  }
+
+  async getTemplate(id: string, version?: number): Promise<Template> {
+    const qs: Record<string, string | number | boolean | undefined> = {}
+    if (version !== undefined) qs['version'] = version
+    return this.get<Template>(`/templates/${id}`, qs)
+  }
+
+  async createTemplate(data: Partial<Template>): Promise<Template> {
+    return this.post<Template>('/templates', data)
+  }
+
+  async updateTemplate(id: string, data: Partial<Template>): Promise<Template> {
+    return this.put<Template>(`/templates/${id}`, data)
+  }
+
+  async deleteTemplate(id: string): Promise<void> {
+    return this.delete<void>(`/templates/${id}`)
+  }
+
+  async archiveTemplate(id: string, version: number): Promise<void> {
+    return this.post<void>(`/templates/${id}/archive/${version}`)
+  }
+
+  async instantiateTemplate(id: string, body: TemplateInstantiateRequest): Promise<Task> {
+    return this.post<Task>(`/templates/${id}/instantiate`, body)
+  }
+
+  // -------------------------
+  // Checkpoints
+  // -------------------------
+
+  async listPendingCheckpoints(): Promise<{ checkpoints: Checkpoint[] }> {
+    return this.get<{ checkpoints: Checkpoint[] }>('/checkpoints/pending')
+  }
+
+  async listTaskCheckpoints(taskId: string): Promise<{ checkpoints: Checkpoint[] }> {
+    return this.get<{ checkpoints: Checkpoint[] }>(`/tasks/${taskId}/checkpoints`)
+  }
+
+  async getCheckpoint(correlationId: string): Promise<Checkpoint> {
+    return this.get<Checkpoint>(`/checkpoints/${correlationId}`)
+  }
+
+  async respondCheckpoint(
+    correlationId: string,
+    body: { response_json: string; responder_source_type: string; responder_source_ref?: string }
+  ): Promise<Checkpoint> {
+    return this.post<Checkpoint>(`/checkpoints/${correlationId}/respond`, body)
+  }
+
+  async cancelCheckpoint(
+    correlationId: string,
+    body: { reason?: string; canceler_source_type?: string; canceler_source_ref?: string }
+  ): Promise<Checkpoint> {
+    return this.post<Checkpoint>(`/checkpoints/${correlationId}/cancel`, body)
   }
 
   // -------------------------
