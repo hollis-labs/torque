@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"database/sql"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -71,6 +72,54 @@ func TestTaskCreate_FacetExplicit(t *testing.T) {
 	require.Equal(t, "trusted", rec.Trust)
 	require.Equal(t, "blocking", rec.CheckpointMode)
 	require.Equal(t, "review", rec.OnCheckpointResponse)
+}
+
+func TestTaskCreate_ParentKindDefaultsTimeoutOverride(t *testing.T) {
+	svc := setupService(t)
+
+	rec, err := svc.Task.Create(service.TaskCreateInput{
+		Title: "parent task",
+		Kind:  "parent",
+	})
+	require.NoError(t, err)
+	require.True(t, rec.Metadata.Valid, "parent task must persist metadata")
+
+	var md map[string]any
+	require.NoError(t, json.Unmarshal([]byte(rec.Metadata.String), &md))
+	require.Equal(t, float64(1800), md["timeout_seconds_override"])
+}
+
+func TestTaskCreate_ParentKindRespectsExplicitTimeoutOverride(t *testing.T) {
+	svc := setupService(t)
+
+	rec, err := svc.Task.Create(service.TaskCreateInput{
+		Title: "parent with explicit override",
+		Kind:  "parent",
+		Metadata: map[string]any{
+			"timeout_seconds_override": 3600,
+		},
+	})
+	require.NoError(t, err)
+
+	var md map[string]any
+	require.NoError(t, json.Unmarshal([]byte(rec.Metadata.String), &md))
+	require.Equal(t, float64(3600), md["timeout_seconds_override"], "explicit override must not be overwritten")
+}
+
+func TestTaskCreate_AgentKindDoesNotInjectTimeoutOverride(t *testing.T) {
+	svc := setupService(t)
+
+	rec, err := svc.Task.Create(service.TaskCreateInput{
+		Title: "regular agent task",
+	})
+	require.NoError(t, err)
+
+	if rec.Metadata.Valid && rec.Metadata.String != "" {
+		var md map[string]any
+		require.NoError(t, json.Unmarshal([]byte(rec.Metadata.String), &md))
+		_, ok := md["timeout_seconds_override"]
+		assert.False(t, ok, "agent-kind tasks must not auto-inject timeout_seconds_override")
+	}
 }
 
 func TestTaskCreateValidation(t *testing.T) {

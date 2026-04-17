@@ -20,6 +20,10 @@ type ExecutionJob struct {
 	Files        []string
 	Deliverables []Deliverable
 	Limits       ExecutionLimits
+	// Metadata mirrors the task's freeform metadata JSON (map form). Keys
+	// that executors recognize include timeout_seconds_override (int seconds,
+	// valid range 60..7200). Nil when the task has no metadata set.
+	Metadata map[string]any
 }
 
 // Validate checks that the job has all required fields.

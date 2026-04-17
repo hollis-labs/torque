@@ -102,6 +102,20 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	effectiveCheckpointMode := orDefault(input.CheckpointMode, "none")
 	effectiveOnCheckpointResponse := orDefault(input.OnCheckpointResponse, "resume")
 	effectiveTrust := orDefault(input.Trust, ResolveTrust(effectiveSourceType, input.SourceRef))
+
+	// Parent tasks fan out work to child tasks, so their own "execution" is
+	// the coordination wait — typically tens of minutes. The default profile
+	// timeout (20m) is too short for large bundles, so inject a 1800s
+	// override when the caller didn't set one. See CW-20260417-0032.
+	if effectiveKind == "parent" {
+		if input.Metadata == nil {
+			input.Metadata = map[string]any{}
+		}
+		if _, set := input.Metadata["timeout_seconds_override"]; !set {
+			input.Metadata["timeout_seconds_override"] = 1800
+		}
+	}
+
 	if err := validateTaskKind(
 		effectiveKind,
 		effectiveExecutor,

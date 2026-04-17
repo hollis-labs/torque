@@ -594,6 +594,12 @@ func buildJob(task sqlstore.TaskRecord, runID int64) *executor.ExecutionJob {
 	if task.Deliverables.Valid && task.Deliverables.String != "" {
 		json.Unmarshal([]byte(task.Deliverables.String), &job.Deliverables)
 	}
+	if task.Metadata.Valid && task.Metadata.String != "" {
+		var md map[string]any
+		if err := json.Unmarshal([]byte(task.Metadata.String), &md); err == nil {
+			job.Metadata = md
+		}
+	}
 
 	// Parse limits
 	if task.CostBudget.Valid {
