@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { Plus } from 'lucide-react'
 import {
   Select,
@@ -38,6 +39,8 @@ interface FilterBarProps {
   onTagChange?: (slug: string | null) => void
   onProjectCreate?: () => void
   onEpicCreate?: () => void
+  /** Extra controls rendered trailing the filter bar (e.g. Clear filters) */
+  children?: ReactNode
 }
 
 export function FilterBar({
@@ -62,6 +65,7 @@ export function FilterBar({
   onTagChange,
   onProjectCreate,
   onEpicCreate,
+  children,
 }: FilterBarProps) {
   const showGroups = Boolean(onProjectChange || onSprintChange || onEpicChange || onTagChange)
 
@@ -193,6 +197,8 @@ export function FilterBar({
           )}
         </div>
       )}
+
+      {children && <div className="ml-auto flex items-center gap-2">{children}</div>}
     </div>
   )
 }
