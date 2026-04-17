@@ -26,6 +26,12 @@ func (s *RunService) List(taskID string) ([]sqlstore.RunRecord, error) {
 	return s.store.ListRuns(taskID)
 }
 
+// ListFiltered returns runs matching the filter. Used by aggregate
+// endpoints (Ops dashboard widgets) that need to query across tasks.
+func (s *RunService) ListFiltered(f sqlstore.RunFilter) ([]sqlstore.RunRecord, error) {
+	return s.store.ListRunsFiltered(f)
+}
+
 // Complete marks a run as finished with the provided completion data.
 func (s *RunService) Complete(id int64, c sqlstore.RunCompletion) error {
 	return s.store.CompleteRun(id, c)
