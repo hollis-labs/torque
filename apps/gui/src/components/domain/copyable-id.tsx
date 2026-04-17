@@ -8,7 +8,8 @@ interface CopyableIdProps {
 export function CopyableId({ id }: CopyableIdProps) {
   const [copied, setCopied] = useState(false)
 
-  function handleCopy() {
+  function handleCopy(e: React.MouseEvent) {
+    e.stopPropagation()
     navigator.clipboard.writeText(id)
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
@@ -20,6 +21,7 @@ export function CopyableId({ id }: CopyableIdProps) {
       onClick={handleCopy}
       className="inline-flex items-center gap-1 text-[10px] font-mono text-zinc-500 hover:text-zinc-300 transition-colors"
       title="Copy ID"
+      aria-label={copied ? `Copied ${id}` : `Copy ${id}`}
     >
       {id}
       {copied ? (

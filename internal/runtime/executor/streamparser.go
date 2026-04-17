@@ -58,14 +58,29 @@ const AgentOutputSchema = `{
 
 // rawStreamLine is the top-level JSON structure of each NDJSON line.
 type rawStreamLine struct {
-	Type   string          `json:"type"`
-	Delta  json.RawMessage `json:"delta,omitempty"`
-	Result json.RawMessage `json:"result,omitempty"`
+	Type  string          `json:"type"`
+	Delta json.RawMessage `json:"delta,omitempty"`
+
+	// Claude CLI with --json-schema lands the schema-conformant payload in
+	// StructuredOutput (an object) and leaves Result as an empty string.
+	// Without --json-schema, Result is a JSON-encoded string that itself
+	// parses back to AgentResult. Handle both shapes in the "result" case.
+	Result           json.RawMessage `json:"result,omitempty"`
+	StructuredOutput json.RawMessage `json:"structured_output,omitempty"`
 
 	// Token usage fields on the result event envelope.
 	InputTokens  int64   `json:"input_tokens,omitempty"`
 	OutputTokens int64   `json:"output_tokens,omitempty"`
 	CostUSD      float64 `json:"cost_usd,omitempty"`
+
+	// Newer envelopes carry usage/cost on nested fields. Keep legacy fallbacks above.
+	TotalCostUSD float64         `json:"total_cost_usd,omitempty"`
+	Usage        json.RawMessage `json:"usage,omitempty"`
+}
+
+type rawUsage struct {
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
 }
 
 type rawDelta struct {
@@ -121,21 +136,48 @@ func ParseStreamJSON(r io.Reader, onEvent func(StreamEvent)) error {
 
 		case "result":
 			var result AgentResult
-			// result field may be a JSON string or a JSON object.
-			resultStr := string(raw.Result)
-			// Try as quoted string first (the result is often a JSON-encoded string).
-			var unquoted string
-			if err := json.Unmarshal(raw.Result, &unquoted); err == nil {
-				resultStr = unquoted
-			}
-			if err := json.Unmarshal([]byte(resultStr), &result); err != nil {
-				log.Printf("WARN: stream-json: failed to parse result: %v", err)
+			// Prefer structured_output (claude --json-schema new behavior).
+			// Fall back to result: may be a JSON object (legacy) or a JSON-encoded
+			// string (older claude versions). Empty result + empty structured_output
+			// means the agent finished without schema-conformant output; skip.
+			if len(raw.StructuredOutput) > 0 && string(raw.StructuredOutput) != "null" {
+				if err := json.Unmarshal(raw.StructuredOutput, &result); err != nil {
+					log.Printf("WARN: stream-json: failed to parse structured_output: %v", err)
+					continue
+				}
+			} else if len(raw.Result) > 0 && string(raw.Result) != "\"\"" && string(raw.Result) != "null" {
+				resultStr := string(raw.Result)
+				var unquoted string
+				if err := json.Unmarshal(raw.Result, &unquoted); err == nil && unquoted != "" {
+					resultStr = unquoted
+				}
+				if err := json.Unmarshal([]byte(resultStr), &result); err != nil {
+					log.Printf("WARN: stream-json: failed to parse result: %v", err)
+					continue
+				}
+			} else {
+				// No schema-conformant payload. Let fallback text-parse handle it.
 				continue
 			}
+			// Token usage: prefer nested usage{}, fallback to top-level fields.
 			tokens := &StreamTokens{
 				InputTokens:  raw.InputTokens,
 				OutputTokens: raw.OutputTokens,
 				CostUSD:      raw.CostUSD,
+			}
+			if raw.TotalCostUSD > 0 && tokens.CostUSD == 0 {
+				tokens.CostUSD = raw.TotalCostUSD
+			}
+			if len(raw.Usage) > 0 {
+				var u rawUsage
+				if err := json.Unmarshal(raw.Usage, &u); err == nil {
+					if tokens.InputTokens == 0 {
+						tokens.InputTokens = u.InputTokens
+					}
+					if tokens.OutputTokens == 0 {
+						tokens.OutputTokens = u.OutputTokens
+					}
+				}
 			}
 			onEvent(StreamEvent{
 				Type:   StreamEventResult,

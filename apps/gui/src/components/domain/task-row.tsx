@@ -1,8 +1,9 @@
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { MoreHorizontal } from 'lucide-react'
 import { StatusBadge } from './status-badge'
 import { PriorityBadge } from './priority-badge'
 import { TagChip } from './tag-chip'
+import { CopyableId } from './copyable-id'
 import { formatRelativeTime } from '@/lib/utils'
 import type { Task, TaskStatus } from '@/lib/types'
 
@@ -13,16 +14,40 @@ interface TaskRowProps {
   onTransition?: (id: string, status: TaskStatus) => void
 }
 
+function stop(e: React.SyntheticEvent) {
+  e.stopPropagation()
+}
+
 export function TaskRow({ task, selected, onSelect }: TaskRowProps) {
+  const navigate = useNavigate()
   const dateStr = task.updated_at
     ? new Date(task.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
     : '-'
   const agoStr = task.updated_at ? formatRelativeTime(task.updated_at) : ''
 
+  function handleRowClick() {
+    navigate(`/tasks/${task.id}`)
+  }
+
+  function handleRowKeyDown(e: React.KeyboardEvent<HTMLTableRowElement>) {
+    if (e.target !== e.currentTarget) return
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      navigate(`/tasks/${task.id}`)
+    }
+  }
+
   return (
-    <tr className={`${selected ? 'bg-zinc-900/35' : 'bg-zinc-950 hover:bg-zinc-900/35'}`}>
+    <tr
+      className={`cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-zinc-600 ${selected ? 'bg-zinc-900/35' : 'bg-zinc-950 hover:bg-zinc-900/35'}`}
+      onClick={handleRowClick}
+      onKeyDown={handleRowKeyDown}
+      tabIndex={0}
+      role="link"
+      aria-label={`Open task ${task.title}`}
+    >
       {onSelect && (
-        <td className="w-8 py-1.5 pl-4 pr-0">
+        <td className="w-8 py-1.5 pl-4 pr-0" onClick={stop}>
           <input
             type="checkbox"
             checked={selected ?? false}
@@ -37,14 +62,18 @@ export function TaskRow({ task, selected, onSelect }: TaskRowProps) {
         <div className="min-w-0">
           <Link
             to={`/tasks/${task.id}`}
+            onClick={stop}
             className="block truncate tracking-[.02em] text-zinc-100 hover:text-zinc-300 transition-colors"
             title={task.title}
           >
             {task.title}
           </Link>
-          {task.executor && (
-            <span className="text-[10px] text-zinc-600">{task.executor}</span>
-          )}
+          <div className="flex items-center gap-2">
+            {task.executor && (
+              <span className="text-[10px] text-zinc-600">{task.executor}</span>
+            )}
+            <CopyableId id={task.id} />
+          </div>
           {task.tags && task.tags.length > 0 && (
             <div className="mt-0.5 flex items-center gap-1">
               {task.tags.slice(0, 3).map((tag) => (
@@ -60,7 +89,7 @@ export function TaskRow({ task, selected, onSelect }: TaskRowProps) {
         </div>
       </td>
       {/* Status */}
-      <td className="w-px whitespace-nowrap px-1.5 py-1.5">
+      <td className="w-px whitespace-nowrap px-1.5 py-1.5" onClick={stop}>
         <StatusBadge status={task.status} />
       </td>
       {/* Priority */}
@@ -73,11 +102,12 @@ export function TaskRow({ task, selected, onSelect }: TaskRowProps) {
         <div className="text-[11px] leading-4 text-zinc-600 uppercase tracking-[.12em]">{agoStr}</div>
       </td>
       {/* Actions (inert) */}
-      <td className="w-px whitespace-nowrap pl-1 pr-3 py-1.5">
+      <td className="w-px whitespace-nowrap pl-1 pr-3 py-1.5" onClick={stop}>
         <button
           type="button"
           className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-700/80 bg-zinc-900 text-zinc-500 hover:border-zinc-600 hover:text-zinc-300 transition-colors"
           tabIndex={-1}
+          aria-label="Task actions"
         >
           <MoreHorizontal className="h-3.5 w-3.5" />
         </button>

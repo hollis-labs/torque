@@ -12,6 +12,7 @@ import {
 import { StatusBadge } from './status-badge'
 import { PriorityBadge } from './priority-badge'
 import { TagChip } from './tag-chip'
+import { CopyableId } from './copyable-id'
 import { TASK_STATUSES, PRIORITIES } from '@/lib/constants'
 import type { Task, TaskStatus, Tag } from '@/lib/types'
 
@@ -64,7 +65,7 @@ export function TaskDetailHeader({
           Board
         </Link>
         <span className="text-zinc-700 text-[10px]">/</span>
-        <span className="text-[10px] text-zinc-500 font-mono">{task.id}</span>
+        <CopyableId id={task.id} />
       </div>
 
       {/* Title + badges + actions row */}

@@ -72,6 +72,42 @@ func TestParseStreamJSONResultEvent(t *testing.T) {
 	assert.InDelta(t, 0.05, events[0].Tokens.CostUSD, 0.001)
 }
 
+// Claude CLI with --json-schema lands the schema-conformant payload in
+// `structured_output` and leaves `result` empty. Exercise that path.
+func TestParseStreamJSONStructuredOutput(t *testing.T) {
+	input := `{"type":"result","subtype":"success","is_error":false,"result":"","structured_output":{"status":"done","signal":"CLOCKWORK_DONE","summary":"ported executor","files_changed":["a.go","b.go"]},"total_cost_usd":0.27,"usage":{"input_tokens":7,"output_tokens":155}}`
+
+	var events []executor.StreamEvent
+	err := executor.ParseStreamJSON(strings.NewReader(input), func(ev executor.StreamEvent) {
+		events = append(events, ev)
+	})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, executor.StreamEventResult, events[0].Type)
+	require.NotNil(t, events[0].Result)
+	assert.Equal(t, "done", events[0].Result.Status)
+	assert.Equal(t, "CLOCKWORK_DONE", events[0].Result.Signal)
+	assert.Equal(t, "ported executor", events[0].Result.Summary)
+	assert.Equal(t, []string{"a.go", "b.go"}, events[0].Result.FilesChanged)
+	require.NotNil(t, events[0].Tokens)
+	assert.Equal(t, int64(7), events[0].Tokens.InputTokens)
+	assert.Equal(t, int64(155), events[0].Tokens.OutputTokens)
+	assert.InDelta(t, 0.27, events[0].Tokens.CostUSD, 0.001)
+}
+
+// When both structured_output is empty/null AND result is empty, skip the
+// event entirely so the fallback text-parse path can take over.
+func TestParseStreamJSONResultEmptyNoEvent(t *testing.T) {
+	input := `{"type":"result","result":"","structured_output":null}`
+
+	var events []executor.StreamEvent
+	err := executor.ParseStreamJSON(strings.NewReader(input), func(ev executor.StreamEvent) {
+		events = append(events, ev)
+	})
+	require.NoError(t, err)
+	assert.Empty(t, events, "empty result + null structured_output should not emit an event")
+}
+
 func TestParseStreamJSONSkipsMalformed(t *testing.T) {
 	input := `not json at all
 {"type":"content_block_delta","delta":{"type":"text_delta","text":"valid line\n"}}`
