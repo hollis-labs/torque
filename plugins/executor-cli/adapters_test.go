@@ -199,6 +199,85 @@ func TestBuildCommandSpec_ProfileArgsPreprended(t *testing.T) {
 	assert.Equal(t, "--dangerously-skip-permissions", spec.Args[0])
 }
 
+// Bug CW-20260417-0009: task.system_prompt must reach the CLI invocation.
+// For claude, this maps to --append-system-prompt <value>, placed after the
+// model flag and before the positional prompt (job.Description).
+func TestBuildCommandSpec_ClaudeSystemPrompt_AppendFlag(t *testing.T) {
+	profile := config.AgentProfile{Provider: "claude", Model: "claude-3-5-sonnet"}
+	job := &executor.ExecutionJob{
+		TaskID:       "t",
+		Description:  "do the thing",
+		SystemPrompt: "You are a careful, literal test agent.",
+	}
+
+	spec, err := buildCommandSpec(profile, job)
+	require.NoError(t, err)
+
+	// Flag pair must appear and in that order.
+	foundIdx := -1
+	for i := 0; i+1 < len(spec.Args); i++ {
+		if spec.Args[i] == "--append-system-prompt" {
+			assert.Equal(t, "You are a careful, literal test agent.", spec.Args[i+1])
+			foundIdx = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, foundIdx, 0, "expected --append-system-prompt pair in args: %v", spec.Args)
+
+	// Positional prompt (description) must remain last.
+	assert.Equal(t, "do the thing", spec.Args[len(spec.Args)-1])
+
+	// Flag must be before the positional description.
+	descIdx := len(spec.Args) - 1
+	assert.Less(t, foundIdx+1, descIdx, "--append-system-prompt value should come before description")
+}
+
+// When SystemPrompt is empty, the CLI invocation must not gain the flag —
+// profile.Args alone should drive behavior.
+func TestBuildCommandSpec_ClaudeSystemPrompt_EmptyOmitsFlag(t *testing.T) {
+	profile := config.AgentProfile{Provider: "claude"}
+	job := &executor.ExecutionJob{TaskID: "t", Description: "do the thing"}
+
+	spec, err := buildCommandSpec(profile, job)
+	require.NoError(t, err)
+	assert.NotContains(t, spec.Args, "--append-system-prompt",
+		"empty SystemPrompt must not introduce --append-system-prompt")
+}
+
+// Non-claude providers don't expose a stable system-prompt flag surface;
+// for those we prepend the system prompt as a preamble so task.system_prompt
+// still reaches the agent. Empty-SystemPrompt path is a no-op.
+func TestBuildCommandSpec_NonClaudeSystemPromptPreamble(t *testing.T) {
+	cases := []struct {
+		name string
+		prof config.AgentProfile
+	}{
+		{"codex", config.AgentProfile{Provider: "codex"}},
+		{"gemini", config.AgentProfile{Provider: "gemini"}},
+		{"generic", config.AgentProfile{Command: "my-agent"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name+"_with_prompt", func(t *testing.T) {
+			job := &executor.ExecutionJob{
+				TaskID:       "t",
+				Description:  "body",
+				SystemPrompt: "SP",
+			}
+			spec, err := buildCommandSpec(tc.prof, job)
+			require.NoError(t, err)
+			last := spec.Args[len(spec.Args)-1]
+			assert.Contains(t, last, "SP", "expected preamble to include system prompt: %q", last)
+			assert.Contains(t, last, "body", "expected preamble to retain description: %q", last)
+		})
+		t.Run(tc.name+"_empty_prompt", func(t *testing.T) {
+			job := &executor.ExecutionJob{TaskID: "t", Description: "body"}
+			spec, err := buildCommandSpec(tc.prof, job)
+			require.NoError(t, err)
+			assert.Equal(t, "body", spec.Args[len(spec.Args)-1], "empty SystemPrompt must leave description unchanged")
+		})
+	}
+}
+
 func TestResolveProfile(t *testing.T) {
 	profiles := config.ProfileMap{
 		"default": {Provider: "claude"},

@@ -100,6 +100,14 @@ func buildClaudeSpec(profile config.AgentProfile, job *executor.ExecutionJob) Co
 		args = append(args, "--model", profile.Model)
 	}
 
+	// task.system_prompt (CW-20260417-0009): claude supports an explicit
+	// --append-system-prompt flag for per-turn preamble without clobbering
+	// profile-level Args. Placed after --model and before the positional
+	// description so the final arg remains the prompt body.
+	if job.SystemPrompt != "" {
+		args = append(args, "--append-system-prompt", job.SystemPrompt)
+	}
+
 	args = append(args, job.Description)
 
 	return CommandSpec{
@@ -118,7 +126,7 @@ func buildCodexSpec(profile config.AgentProfile, job *executor.ExecutionJob) Com
 		args = append(args, "--model", profile.Model)
 	}
 
-	args = append(args, job.Description)
+	args = append(args, prependSystemPrompt(job))
 
 	return CommandSpec{
 		Command:       cmd,
@@ -130,7 +138,7 @@ func buildCodexSpec(profile config.AgentProfile, job *executor.ExecutionJob) Com
 // buildCopilotSpec builds a CommandSpec for the GitHub Copilot CLI.
 func buildCopilotSpec(profile config.AgentProfile, job *executor.ExecutionJob) CommandSpec {
 	cmd := "gh"
-	args := []string{"copilot", "suggest", "-t", "shell", job.Description}
+	args := []string{"copilot", "suggest", "-t", "shell", prependSystemPrompt(job)}
 
 	return CommandSpec{
 		Command:       cmd,
@@ -148,7 +156,7 @@ func buildGeminiSpec(profile config.AgentProfile, job *executor.ExecutionJob) Co
 		args = append(args, "--model", profile.Model)
 	}
 
-	args = append(args, job.Description)
+	args = append(args, prependSystemPrompt(job))
 
 	return CommandSpec{
 		Command:       cmd,
@@ -164,11 +172,23 @@ func buildGenericSpec(profile config.AgentProfile, job *executor.ExecutionJob) C
 	if cmd == "" {
 		cmd = profile.Provider
 	}
-	args := []string{job.Description}
+	args := []string{prependSystemPrompt(job)}
 
 	return CommandSpec{
 		Command:       cmd,
 		Args:          args,
 		UseStreamJSON: false,
 	}
+}
+
+// prependSystemPrompt returns the positional prompt body for providers that
+// lack a stable per-turn system-prompt flag. When job.SystemPrompt is empty
+// the description is returned verbatim; otherwise the system prompt is
+// prepended as a preamble separated by a blank line so the agent sees it
+// before the task body.
+func prependSystemPrompt(job *executor.ExecutionJob) string {
+	if job.SystemPrompt == "" {
+		return job.Description
+	}
+	return "System: " + job.SystemPrompt + "\n\n" + job.Description
 }

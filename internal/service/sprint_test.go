@@ -85,8 +85,35 @@ func TestSprintTransitionInvalid(t *testing.T) {
 	assert.Error(t, err)
 	assert.IsType(t, &service.TransitionError{}, err)
 
-	// active -> unknown (invalid)
-	err = svc.Sprint.Transition(sprint.ID, "completed")
+	// active -> bogus (invalid)
+	err = svc.Sprint.Transition(sprint.ID, "bogus")
+	assert.Error(t, err)
+	assert.IsType(t, &service.TransitionError{}, err)
+}
+
+// TestSprintTransitionToCompleted verifies the direct active→completed and
+// inactive→completed paths (CW-20260417-0010). Users expect a single
+// transition after all child tasks reach done; previously only active↔inactive
+// was allowed and closing a sprint required a workaround.
+func TestSprintTransitionToCompleted(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("sprints")
+
+	// active -> completed
+	a, _ := svc.Sprint.Create(service.SprintCreateInput{Name: "Active→Completed"})
+	require.NoError(t, svc.Sprint.Transition(a.ID, "completed"))
+	got, _ := svc.Sprint.Get(a.ID)
+	assert.Equal(t, "completed", got.Status)
+
+	// inactive -> completed
+	b, _ := svc.Sprint.Create(service.SprintCreateInput{Name: "Inactive→Completed"})
+	require.NoError(t, svc.Sprint.Transition(b.ID, "inactive"))
+	require.NoError(t, svc.Sprint.Transition(b.ID, "completed"))
+	got, _ = svc.Sprint.Get(b.ID)
+	assert.Equal(t, "completed", got.Status)
+
+	// completed is terminal: completed -> active should fail
+	err := svc.Sprint.Transition(a.ID, "active")
 	assert.Error(t, err)
 	assert.IsType(t, &service.TransitionError{}, err)
 }

@@ -64,6 +64,30 @@ func (a *Adapter) registerTaskTools() {
 		mcp.WithString("title", mcp.Description("New title")),
 		mcp.WithString("description", mcp.Description("New description")),
 		mcp.WithNumber("priority", mcp.Description("New priority")),
+		mcp.WithBoolean("manual", mcp.Description("Manual flag")),
+		mcp.WithString("executor", mcp.Description("Executor type")),
+		mcp.WithString("agent_profile", mcp.Description("Agent profile name")),
+		mcp.WithString("working_dir", mcp.Description("Working directory")),
+		mcp.WithString("system_prompt", mcp.Description("System prompt override")),
+		mcp.WithString("on_done", mcp.Description("Hook on done (close|review|notify)")),
+		mcp.WithString("on_fail", mcp.Description("Hook on fail (retry|block|escalate|notify)")),
+		mcp.WithString("on_review", mcp.Description("Hook on review (pause|notify|auto-approve)")),
+		mcp.WithString("on_done_merge", mcp.Description("Merge hook on done (none|auto|pr|auto-resolve)")),
+		mcp.WithString("deliverable_preset", mcp.Description("Deliverable preset name")),
+		mcp.WithString("blocked_reason", mcp.Description("Blocked reason")),
+		mcp.WithNumber("cost_budget", mcp.Description("Cost budget (-1 unlimited, 0 none, or positive)")),
+		mcp.WithNumber("max_retries", mcp.Description("Max retries (non-negative integer)")),
+		mcp.WithNumber("max_duration_ms", mcp.Description("Max duration in ms (-1 unlimited or positive)")),
+		mcp.WithNumber("token_budget", mcp.Description("Token budget (-1 unlimited or positive)")),
+		mcp.WithString("tools", mcp.Description("JSON array of tool names")),
+		mcp.WithString("files", mcp.Description("JSON array of file paths")),
+		mcp.WithString("permissions", mcp.Description("JSON object of permissions")),
+		mcp.WithString("environment", mcp.Description("JSON object of env vars")),
+		mcp.WithString("escalation_chain", mcp.Description("JSON array of escalation-target names")),
+		mcp.WithString("quality_gates", mcp.Description("JSON array of gate names")),
+		mcp.WithString("deliverables", mcp.Description("JSON array of Deliverable objects")),
+		mcp.WithString("depends_on", mcp.Description("JSON array of dependency task IDs")),
+		mcp.WithString("metadata", mcp.Description("JSON object: freeform metadata")),
 		mcp.WithString("tags", mcp.Description("JSON array of tag names/slugs — replaces the full linked tag set")),
 		mcp.WithString("sprint_id", mcp.Description("Sprint ID (set empty string to unassign)")),
 		mcp.WithString("project_id", mcp.Description("Project ID (set empty string to unassign)")),
@@ -204,6 +228,7 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	id := reqStr(req, "id")
 	update := sqlstore.TaskUpdate{}
+	args := req.GetArguments()
 
 	if v := reqStr(req, "title"); v != "" {
 		update.Title = &v
@@ -215,8 +240,135 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 		update.Priority = &v
 	}
 
+	// Scalar pass-through fields: presence in args is the trigger so callers
+	// can also clear a column by providing an empty string. Lifecycle-enum
+	// fields with an empty string are rejected downstream by
+	// validateLifecycleEnum — intentional parity with the HTTP layer.
+	if _, ok := args["manual"]; ok {
+		v := reqBool(req, "manual")
+		update.Manual = &v
+	}
+	if _, ok := args["executor"]; ok {
+		v := reqStr(req, "executor")
+		update.Executor = &v
+	}
+	if _, ok := args["agent_profile"]; ok {
+		v := reqStr(req, "agent_profile")
+		update.AgentProfile = &v
+	}
+	if _, ok := args["working_dir"]; ok {
+		v := reqStr(req, "working_dir")
+		update.WorkingDir = &v
+	}
+	if _, ok := args["system_prompt"]; ok {
+		v := reqStr(req, "system_prompt")
+		update.SystemPrompt = &v
+	}
+	if _, ok := args["on_done"]; ok {
+		v := reqStr(req, "on_done")
+		update.OnDone = &v
+	}
+	if _, ok := args["on_fail"]; ok {
+		v := reqStr(req, "on_fail")
+		update.OnFail = &v
+	}
+	if _, ok := args["on_review"]; ok {
+		v := reqStr(req, "on_review")
+		update.OnReview = &v
+	}
+	if _, ok := args["on_done_merge"]; ok {
+		v := reqStr(req, "on_done_merge")
+		update.OnDoneMerge = &v
+	}
+	if _, ok := args["deliverable_preset"]; ok {
+		v := reqStr(req, "deliverable_preset")
+		update.DeliverablePreset = &v
+	}
+	if _, ok := args["blocked_reason"]; ok {
+		v := reqStr(req, "blocked_reason")
+		update.BlockedReason = &v
+	}
+
+	// Numeric nullables wrap as *sql.NullFloat64 / *sql.NullInt64
+	if _, ok := args["cost_budget"]; ok {
+		v := reqFloat(req, "cost_budget")
+		update.CostBudget = &sql.NullFloat64{Float64: v, Valid: true}
+	}
+	if _, ok := args["max_retries"]; ok {
+		v := reqInt(req, "max_retries")
+		update.MaxRetries = &v
+	}
+	if _, ok := args["max_duration_ms"]; ok {
+		v := int64(reqFloat(req, "max_duration_ms"))
+		update.MaxDurationMs = &sql.NullInt64{Int64: v, Valid: true}
+	}
+	if _, ok := args["token_budget"]; ok {
+		v := int64(reqFloat(req, "token_budget"))
+		update.TokenBudget = &sql.NullInt64{Int64: v, Valid: true}
+	}
+
+	// JSON-blob fields: callers pass JSON-encoded strings. Skip when empty
+	// string to match the template-tool convention; pass "[]" or "{}" to
+	// explicitly write an empty collection.
+	unmarshalBlob := func(key string, out any) error {
+		raw := reqStr(req, key)
+		if raw == "" {
+			return nil
+		}
+		if err := json.Unmarshal([]byte(raw), out); err != nil {
+			return fmt.Errorf("invalid %s JSON: %v", key, err)
+		}
+		return nil
+	}
+	nullFromRaw := func(key string) *sql.NullString {
+		raw := reqStr(req, key)
+		if raw == "" {
+			return nil
+		}
+		return &sql.NullString{String: raw, Valid: true}
+	}
+	// Validate shape before persisting (reject malformed JSON early).
+	var scratchArr []any
+	var scratchObj map[string]any
+	for _, k := range []string{"tools", "files", "escalation_chain", "quality_gates", "deliverables", "depends_on"} {
+		if err := unmarshalBlob(k, &scratchArr); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+	}
+	for _, k := range []string{"permissions", "environment", "metadata"} {
+		if err := unmarshalBlob(k, &scratchObj); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+	}
+	if ns := nullFromRaw("tools"); ns != nil {
+		update.Tools = ns
+	}
+	if ns := nullFromRaw("files"); ns != nil {
+		update.Files = ns
+	}
+	if ns := nullFromRaw("permissions"); ns != nil {
+		update.Permissions = ns
+	}
+	if ns := nullFromRaw("environment"); ns != nil {
+		update.Environment = ns
+	}
+	if ns := nullFromRaw("escalation_chain"); ns != nil {
+		update.EscalationChain = ns
+	}
+	if ns := nullFromRaw("quality_gates"); ns != nil {
+		update.QualityGates = ns
+	}
+	if ns := nullFromRaw("deliverables"); ns != nil {
+		update.Deliverables = ns
+	}
+	if ns := nullFromRaw("depends_on"); ns != nil {
+		update.DependsOn = ns
+	}
+	if ns := nullFromRaw("metadata"); ns != nil {
+		update.Metadata = ns
+	}
+
 	// Association fields — allow setting to empty string to unassign
-	args := req.GetArguments()
 	if _, ok := args["sprint_id"]; ok {
 		v := reqStr(req, "sprint_id")
 		ns := sql.NullString{String: v, Valid: v != ""}
