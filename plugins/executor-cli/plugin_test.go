@@ -2,6 +2,8 @@ package executorcli
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -307,6 +309,138 @@ echo CLOCKWORK_DONE`
 		}
 	}
 	assert.True(t, sawLog, "expected malformed artifact to fall back to a LogEvent")
+}
+
+// Bug CW-20260417-0025: when the agent emits a valid CLOCKWORK_DONE on its
+// own line but the process exits with status 1 (claude tends to do this
+// after a successful run), the run must still be marked done. Exit code is
+// a weak signal relative to the structured completion marker.
+func TestRunPrintMode_ExitOneWithDoneSignal_IsSuccess(t *testing.T) {
+	// sh script that emits CLOCKWORK_DONE then exits 1.
+	script := `echo CLOCKWORK_DONE
+exit 1`
+	pm := profiles("default", shellProfile(script))
+	e := New(pm)
+	j := job("default")
+
+	result, err := e.Run(context.Background(), j, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "done", result.Status,
+		"exit 1 after a CLOCKWORK_DONE signal must still be treated as success")
+}
+
+// Exit 1 with no terminal signal and no stdout → true failure. The Reason
+// field must carry the stderr tail so callers can diagnose.
+func TestRunPrintMode_ExitOneNoSignal_FailsWithStderr(t *testing.T) {
+	// sh script that writes a diagnostic to stderr and exits 1.
+	script := `echo "claude: usage error: --output-format stream-json requires --verbose" >&2
+exit 1`
+	pm := profiles("default", shellProfile(script))
+	e := New(pm)
+	j := job("default")
+
+	result, err := e.Run(context.Background(), j, nil)
+	require.NoError(t, err, "failures produce a failed result, not a Go error")
+	assert.Equal(t, "failed", result.Status)
+	assert.Contains(t, result.Reason, "requires --verbose",
+		"stderr tail must land in result.Reason so scheduler can persist it")
+}
+
+// Stderr from the child process must be captured to a sidecar file at
+// $CLOCKWORK_DATA_DIR/runs/<run_id>.stderr.log so we can diagnose failures
+// after the fact (Bug CW-20260417-0024 relevance).
+func TestRunPrintMode_StderrTeedToSidecarFile(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("CLOCKWORK_DATA_DIR", dataDir)
+
+	script := `echo "diagnostic: something went sideways" >&2
+echo CLOCKWORK_DONE`
+	pm := profiles("default", shellProfile(script))
+	e := New(pm)
+	j := job("default")
+	j.RunID = 4242
+
+	_, err := e.Run(context.Background(), j, nil)
+	require.NoError(t, err)
+
+	sidecar := filepath.Join(dataDir, "runs", "4242.stderr.log")
+	data, readErr := os.ReadFile(sidecar)
+	require.NoError(t, readErr, "expected stderr sidecar at %s", sidecar)
+	assert.Contains(t, string(data), "diagnostic: something went sideways")
+}
+
+// When the agent emits CLOCKWORK_DONE on its own line but exits 0 normally,
+// the existing happy path must keep working (regression guard for the
+// exit-code-tolerant branch).
+func TestRunPrintMode_ExitZeroWithDoneSignal_StillSucceeds(t *testing.T) {
+	script := `echo CLOCKWORK_DONE`
+	pm := profiles("default", shellProfile(script))
+	e := New(pm)
+	j := job("default")
+
+	result, err := e.Run(context.Background(), j, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "done", result.Status)
+}
+
+// Stream-json profile variant: helper constructs a profile that turns on
+// the stream-json parser but still executes via sh so we can feed canned
+// NDJSON via stdout.
+func streamShellProfile(script string) config.AgentProfile {
+	return config.AgentProfile{
+		Command:        "sh",
+		Args:           []string{"-c", script},
+		OutputFormat:   "stream-json",
+		TimeoutSeconds: 10,
+	}
+}
+
+// Stream-json path: exit 1 but the result event carried status=done → success.
+func TestRunStreamJSON_ExitOneWithResultEvent_IsSuccess(t *testing.T) {
+	// Emit a valid result event then exit 1.
+	script := `cat <<'JSON'
+{"type":"content_block_delta","delta":{"type":"text_delta","text":"working\n"}}
+{"type":"result","result":"{\"status\":\"done\",\"signal\":\"CLOCKWORK_DONE\",\"summary\":\"ok\"}","input_tokens":10,"output_tokens":5,"cost_usd":0.001}
+JSON
+exit 1`
+	pm := profiles("default", streamShellProfile(script))
+	e := New(pm)
+	j := job("default")
+
+	result, err := e.Run(context.Background(), j, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "done", result.Status)
+}
+
+// Stream-json path: no result event, but the mid-stream content carried
+// CLOCKWORK_DONE on its own text_delta line → fallback parse recovers.
+func TestRunStreamJSON_FallbackRecoversDoneFromDelta(t *testing.T) {
+	script := `cat <<'JSON'
+{"type":"content_block_delta","delta":{"type":"text_delta","text":"ran tests\nCLOCKWORK_DONE\n"}}
+JSON`
+	pm := profiles("default", streamShellProfile(script))
+	e := New(pm)
+	j := job("default")
+
+	result, err := e.Run(context.Background(), j, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "done", result.Status,
+		"CLOCKWORK_DONE in a content_block_delta must still succeed when no result event arrived")
+}
+
+// Stream-json path: no result event, no signal, exit 1 → genuine failure.
+// Stderr tail must land in result.Reason.
+func TestRunStreamJSON_ExitOneNoResultNoSignal_FailsWithStderr(t *testing.T) {
+	script := `echo "claude: token expired" >&2
+exit 1`
+	pm := profiles("default", streamShellProfile(script))
+	e := New(pm)
+	j := job("default")
+
+	result, err := e.Run(context.Background(), j, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "failed", result.Status)
+	assert.Contains(t, result.Reason, "token expired")
 }
 
 func TestRunTaskIDAndRunIDInjected(t *testing.T) {

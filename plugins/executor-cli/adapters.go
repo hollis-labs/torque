@@ -48,9 +48,15 @@ func buildCommandSpec(profile config.AgentProfile, job *executor.ExecutionJob) (
 		spec.Args = append(profile.Args, spec.Args...)
 	}
 
-	// Output format: "print" disables stream-json; anything else (default) uses it.
-	if profile.OutputFormat == "print" {
+	// Output format override: "print" disables stream-json; "stream-json"
+	// forces it on even for providers whose adapter defaults to print mode
+	// (useful for generic profiles driving claude-compatible stream-json
+	// producers like the test harness).
+	switch profile.OutputFormat {
+	case "print":
 		spec.UseStreamJSON = false
+	case "stream-json":
+		spec.UseStreamJSON = true
 	}
 
 	return spec, nil
