@@ -3,6 +3,7 @@ import { LayoutList, Play, BarChart3, Settings, Cog, FolderOpen, Milestone, Laye
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster } from '@/components/ui/sonner'
 import { ApiProvider } from '@/hooks/use-api'
+import { ActiveRunsProvider } from '@/hooks/use-active-runs'
 import BoardPage from '@/pages/BoardPage'
 import TaskDetailPage from '@/pages/TaskDetailPage'
 import RunsPage from '@/pages/RunsPage'
@@ -109,12 +110,14 @@ function AppShell() {
 export default function App() {
   return (
     <ApiProvider baseUrl={API_BASE_URL}>
-      <TooltipProvider>
-        <BrowserRouter>
-          <AppShell />
-        </BrowserRouter>
-        <Toaster position="bottom-right" />
-      </TooltipProvider>
+      <ActiveRunsProvider>
+        <TooltipProvider>
+          <BrowserRouter>
+            <AppShell />
+          </BrowserRouter>
+          <Toaster position="bottom-right" />
+        </TooltipProvider>
+      </ActiveRunsProvider>
     </ApiProvider>
   )
 }

@@ -15,6 +15,7 @@ import { ExecutionContext } from '@/components/domain/execution-context'
 import { LifecycleRules } from '@/components/domain/lifecycle-rules'
 import { DeliverablesAndDeps } from '@/components/domain/deliverables-deps'
 import { SendBackDialog } from '@/components/domain/send-back-dialog'
+import { ActivityPanel } from '@/components/domain/activity-panel'
 import { useApi } from '@/hooks/use-api'
 import { hasBlockedReason } from '@/lib/blocked-reason'
 import { computeTaskDiff } from '@/lib/task-diff'
@@ -288,6 +289,9 @@ export default function TaskDetailPage() {
           className="border-x-0 border-t-0"
         />
       )}
+
+      {/* Live activity panel — visible while the task has an active run. */}
+      {!editing && id && <ActivityPanel taskId={id} />}
 
       {/* Save error banner */}
       {saveError && (

@@ -4,6 +4,7 @@ import { PriorityBadge } from './priority-badge'
 import { TagChip } from './tag-chip'
 import { CopyableId } from './copyable-id'
 import { TaskActionsMenu } from './task-actions-menu'
+import { ActiveRunPulse } from './active-run-pulse'
 import { formatRelativeTime } from '@/lib/utils'
 import { hasBlockedReason, truncateBlockedReason } from '@/lib/blocked-reason'
 import type { Task, TaskStatus } from '@/lib/types'
@@ -93,14 +94,17 @@ export function TaskRow({ task, selected, onSelect, onTaskChange, onTaskDelete }
       </td>
       {/* Status */}
       <td className="w-px whitespace-nowrap px-1.5 py-1.5" onClick={stop}>
-        <StatusBadge
-          status={task.status}
-          tooltip={
-            hasBlockedReason(task)
-              ? truncateBlockedReason(task.blocked_reason)
-              : undefined
-          }
-        />
+        <div className="flex items-center gap-2">
+          <StatusBadge
+            status={task.status}
+            tooltip={
+              hasBlockedReason(task)
+                ? truncateBlockedReason(task.blocked_reason)
+                : undefined
+            }
+          />
+          <ActiveRunPulse taskId={task.id} />
+        </div>
       </td>
       {/* Priority */}
       <td className="w-px whitespace-nowrap px-1.5 py-1.5">
