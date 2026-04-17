@@ -1,7 +1,16 @@
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { STATUS_COLORS, DEFAULT_STATUS_COLOR, MODE_PRESETS, PRIORITIES, TASK_STATUSES } from '@/lib/constants'
-import type { TaskStatus } from '@/lib/types'
+import type { Epic, Project, Sprint, TaskStatus } from '@/lib/types'
 
 type ModePreset = keyof typeof MODE_PRESETS | 'all'
+
+const ALL_VALUE = '__all__'
 
 interface FilterBarProps {
   activeStatuses: TaskStatus[]
@@ -13,6 +22,16 @@ interface FilterBarProps {
   /** Show priority filter chips */
   activePriorities?: number[]
   onPriorityToggle?: (priority: number) => void
+  /** Project / Sprint / Epic group selectors (all three are optional — omit to hide) */
+  projects?: Project[]
+  projectId?: string | null
+  onProjectChange?: (id: string | null) => void
+  sprints?: Sprint[]
+  sprintId?: string | null
+  onSprintChange?: (id: string | null) => void
+  epics?: Epic[]
+  epicId?: string | null
+  onEpicChange?: (id: string | null) => void
 }
 
 export function FilterBar({
@@ -23,7 +42,18 @@ export function FilterBar({
   availableStatuses = TASK_STATUSES,
   activePriorities = [],
   onPriorityToggle,
+  projects,
+  projectId,
+  onProjectChange,
+  sprints,
+  sprintId,
+  onSprintChange,
+  epics,
+  epicId,
+  onEpicChange,
 }: FilterBarProps) {
+  const showGroups = Boolean(onProjectChange || onSprintChange || onEpicChange)
+
   return (
     <div className="flex flex-wrap items-center gap-3 border-b border-zinc-800/80 bg-zinc-950 px-4 py-2.5 text-xs">
       {/* Status chips */}
@@ -102,6 +132,89 @@ export function FilterBar({
           All
         </button>
       </div>
+
+      {/* Group selectors: Project / Sprint / Epic */}
+      {showGroups && (
+        <div className="flex flex-wrap items-center gap-2 border-l border-zinc-800 pl-3">
+          {onProjectChange && (
+            <GroupSelect
+              label="Project"
+              ariaLabel="Filter by project"
+              allLabel="All projects"
+              items={projects ?? []}
+              value={projectId ?? null}
+              onChange={onProjectChange}
+            />
+          )}
+          {onSprintChange && (
+            <GroupSelect
+              label="Sprint"
+              ariaLabel="Filter by sprint"
+              allLabel="All sprints"
+              items={sprints ?? []}
+              value={sprintId ?? null}
+              onChange={onSprintChange}
+            />
+          )}
+          {onEpicChange && (
+            <GroupSelect
+              label="Epic"
+              ariaLabel="Filter by epic"
+              allLabel="All epics"
+              items={epics ?? []}
+              value={epicId ?? null}
+              onChange={onEpicChange}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+interface GroupItem {
+  id: string
+  name: string
+}
+
+function GroupSelect({
+  label,
+  ariaLabel,
+  allLabel,
+  items,
+  value,
+  onChange,
+}: {
+  label: string
+  ariaLabel: string
+  allLabel: string
+  items: GroupItem[]
+  value: string | null
+  onChange: (id: string | null) => void
+}) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-[10px] uppercase tracking-wider text-zinc-500">{label}:</span>
+      <Select
+        value={value ?? ALL_VALUE}
+        onValueChange={(v) => onChange(v === ALL_VALUE ? null : v)}
+      >
+        <SelectTrigger
+          aria-label={ariaLabel}
+          size="sm"
+          className="h-7 min-w-[8.5rem] text-[11px]"
+        >
+          <SelectValue placeholder={allLabel} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={ALL_VALUE}>{allLabel}</SelectItem>
+          {items.map((item) => (
+            <SelectItem key={item.id} value={item.id}>
+              {item.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   )
 }
