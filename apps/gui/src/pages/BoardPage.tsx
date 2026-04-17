@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useSearchParams, useLocation } from 'react-router-dom'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { PageHeader } from '@/components/domain/page-header'
@@ -62,6 +62,7 @@ export default function BoardPage() {
   const api = useApi()
   const { lastEvent } = useSSE(SSE_EVENTS)
   const [searchParams, setSearchParams] = useSearchParams()
+  const location = useLocation()
 
   // Filter state derived from URL (URL is source of truth for round-tripping)
   const activeStatuses = useMemo(
@@ -95,15 +96,32 @@ export default function BoardPage() {
   const [projectCreateOpen, setProjectCreateOpen] = useState(false)
   const [epicCreateOpen, setEpicCreateOpen] = useState(false)
 
-  // Hydrate filter state from localStorage on mount. URL params win: if any
-  // filter-relevant param is present, we skip storage entirely so deep
-  // links keep working as authored. Uses state (not a ref) so downstream
-  // effects (save, fetch) can gate on hydration completion — a ref would
-  // let them run on the pre-hydrate render with default values, clobbering
-  // storage and racing an unfiltered fetch past the real one.
+  // Hydrate filter state from localStorage each time we arrive at this
+  // route. URL params win: if any filter-relevant param is present, we
+  // skip storage entirely so deep links keep working as authored.
+  //
+  // Why this keys on location.key rather than running once per mount: the
+  // previous one-shot-flag approach only rehydrated on a fresh BoardPage
+  // mount, which broke in-app navigation back to /operations (task
+  // detail → back arrow / Operations link). Under React 19 + Router v7
+  // the component can't be relied on to unmount cleanly between navs in
+  // every scenario, so a per-mount flag stayed `true` and the effect was
+  // skipped on the return trip — leaving storage ignored and the table
+  // unfiltered until a hard reload reset the flag.
+  //
+  // `location.key` is unique per history entry, so each distinct
+  // navigation arrival gets exactly one restoration attempt, whether the
+  // component remounts or stays put. The write we do via
+  // `setSearchParams({ replace: true })` keeps the same key, so we don't
+  // loop on our own URL edit. The `hydrated` state still gates downstream
+  // effects (save, fetch) so they skip the very first pre-hydrate render
+  // on a fresh mount.
   const [hydrated, setHydrated] = useState(false)
+  const lastHydratedKey = useRef<string | null>(null)
   useEffect(() => {
-    if (hydrated) return
+    if (lastHydratedKey.current === location.key) return
+    lastHydratedKey.current = location.key
+
     const urlHasFilter = FILTER_PARAM_KEYS.some((k) => searchParams.has(k))
     if (urlHasFilter) {
       setHydrated(true)
@@ -134,7 +152,7 @@ export default function BoardPage() {
       { replace: true }
     )
     setHydrated(true)
-  }, [hydrated, searchParams, setSearchParams])
+  }, [location.key, searchParams, setSearchParams])
 
   // Persist current filter state to localStorage whenever it changes. Gated
   // on hydration so the initial pre-hydrate render doesn't write default
