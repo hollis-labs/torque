@@ -1,12 +1,18 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
+import { Plus } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { CommentList } from '@/components/domain/comment-list'
 import { RunCard } from '@/components/domain/run-card'
 import { EmptyState } from '@/components/domain/empty-state'
 import { ArtifactCard } from '@/components/domain/artifact-card'
+import {
+  AttachArtifactDialog,
+  type AttachArtifactPayload,
+} from '@/components/domain/attach-artifact-dialog'
 import { TaskDetailHeader } from '@/components/domain/task-detail-header'
 import { BlockedReasonAlert } from '@/components/domain/blocked-reason-alert'
 import { DetailSection } from '@/components/domain/detail-section'
@@ -47,6 +53,7 @@ export default function TaskDetailPage() {
   const [saveError, setSaveError] = useState<string | null>(null)
 
   const [sendBackOpen, setSendBackOpen] = useState(false)
+  const [attachOpen, setAttachOpen] = useState(false)
 
   // Tab data — lazy loaded
   const [comments, setComments] = useState<Comment[] | null>(null)
@@ -171,6 +178,27 @@ export default function TaskDetailPage() {
     }
   }
 
+  async function handleAttachArtifact(payload: AttachArtifactPayload) {
+    if (!id) return
+    await api.createArtifact({ task_id: id, ...payload })
+    // Refetch the list so the new row picks up server-generated fields
+    // (id, created_at, normalized metadata envelope).
+    const fresh = await api.listArtifacts(id)
+    setArtifacts(fresh)
+    notifySuccess('Artifact attached')
+  }
+
+  async function handleDeleteArtifact(artifactId: number) {
+    try {
+      await api.deleteArtifact(artifactId)
+      setArtifacts((prev) => (prev ? prev.filter((a) => a.id !== artifactId) : prev))
+      notifySuccess('Artifact deleted')
+    } catch (err) {
+      notifyError(err, 'Failed to delete artifact')
+      throw err
+    }
+  }
+
   async function handleTransition(status: TaskStatus) {
     if (!id) return
     try {
@@ -279,6 +307,12 @@ export default function TaskDetailPage() {
         open={sendBackOpen}
         onOpenChange={setSendBackOpen}
         onSubmit={handleSendBack}
+      />
+
+      <AttachArtifactDialog
+        open={attachOpen}
+        onOpenChange={setAttachOpen}
+        onSubmit={handleAttachArtifact}
       />
 
       {/* Blocked / paused reason — agent's last word before the wheels stopped */}
@@ -409,21 +443,39 @@ export default function TaskDetailPage() {
               </TabsContent>
 
               <TabsContent value="artifacts">
-                {artifacts === null ? (
-                  <Skeleton className="h-24 w-full rounded-md" />
-                ) : artifacts.length === 0 ? (
-                  <EmptyState
-                    variant="no-results"
-                    title="No artifacts"
-                    description="No artifacts have been produced for this task."
-                  />
-                ) : (
-                  <div className="flex flex-col gap-3">
-                    {artifacts.map((artifact) => (
-                      <ArtifactCard key={artifact.id} artifact={artifact} />
-                    ))}
+                <div className="flex flex-col gap-3">
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setAttachOpen(true)}
+                      className="h-7 gap-1.5 text-[11px]"
+                    >
+                      <Plus className="h-3 w-3" aria-hidden />
+                      Attach artifact
+                    </Button>
                   </div>
-                )}
+                  {artifacts === null ? (
+                    <Skeleton className="h-24 w-full rounded-md" />
+                  ) : artifacts.length === 0 ? (
+                    <EmptyState
+                      variant="no-results"
+                      title="No artifacts"
+                      description="No artifacts have been produced for this task."
+                    />
+                  ) : (
+                    <div className="flex flex-col gap-3">
+                      {artifacts.map((artifact) => (
+                        <ArtifactCard
+                          key={artifact.id}
+                          artifact={artifact}
+                          onDelete={handleDeleteArtifact}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
               </TabsContent>
             </Tabs>
           </div>

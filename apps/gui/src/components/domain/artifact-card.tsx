@@ -1,6 +1,16 @@
 import { useState } from 'react'
-import { FolderOpen, ExternalLink } from 'lucide-react'
+import { FolderOpen, ExternalLink, Trash2 } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { useApi } from '@/hooks/use-api'
 import type { Artifact } from '@/lib/types'
 
@@ -28,11 +38,14 @@ function readOrigin(metadata: Artifact['metadata']): Origin | null {
 
 interface ArtifactCardProps {
   artifact: Artifact
+  onDelete?: (id: number) => Promise<void> | void
 }
 
-export function ArtifactCard({ artifact }: ArtifactCardProps) {
+export function ArtifactCard({ artifact, onDelete }: ArtifactCardProps) {
   const api = useApi()
   const [lightboxOpen, setLightboxOpen] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const hasFile = artifact.file_path !== ''
   const contentUrl = hasFile ? api.artifactContentUrl(artifact.id) : ''
@@ -42,8 +55,19 @@ export function ArtifactCard({ artifact }: ArtifactCardProps) {
     ? JSON.stringify(artifact.metadata, null, 2)
     : ''
 
+  async function handleConfirmDelete() {
+    if (!onDelete) return
+    setDeleting(true)
+    try {
+      await onDelete(artifact.id)
+      setConfirmOpen(false)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
-    <div className="rounded-md border border-zinc-800/50 p-3">
+    <div className="group relative rounded-md border border-zinc-800/50 p-3">
       <div className="flex items-center gap-2 mb-1">
         <FolderOpen className="h-3 w-3 text-zinc-500" aria-hidden />
         <span className="text-[10px] uppercase tracking-[.18em] text-zinc-500">
@@ -55,6 +79,16 @@ export function ArtifactCard({ artifact }: ArtifactCardProps) {
           >
             {origin}
           </span>
+        )}
+        {onDelete && (
+          <button
+            type="button"
+            onClick={() => setConfirmOpen(true)}
+            aria-label={`Delete artifact ${artifact.id}`}
+            className="ml-auto rounded p-1 text-zinc-600 opacity-0 transition-opacity hover:bg-zinc-900 hover:text-red-400 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/50 group-hover:opacity-100"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
         )}
       </div>
 
@@ -129,6 +163,33 @@ export function ArtifactCard({ artifact }: ArtifactCardProps) {
             />
           </DialogContent>
         </Dialog>
+      )}
+
+      {onDelete && (
+        <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete this artifact?</AlertDialogTitle>
+              <AlertDialogDescription>
+                The database row will be removed. The underlying file on disk
+                is not touched.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                variant="destructive"
+                onClick={(e) => {
+                  e.preventDefault()
+                  void handleConfirmDelete()
+                }}
+                disabled={deleting}
+              >
+                {deleting ? 'Deleting…' : 'Delete'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       )}
     </div>
   )

@@ -246,6 +246,21 @@ export class ClockworkApiClient {
     return (res.artifacts ?? []).map(normalizeArtifact)
   }
 
+  async createArtifact(data: {
+    task_id: string
+    type: string
+    content?: string
+    url?: string
+    file_path?: string
+    run_id?: number
+  }): Promise<{ id: number }> {
+    return this.post<{ id: number }>('/artifacts', data)
+  }
+
+  async deleteArtifact(id: number): Promise<void> {
+    return this.delete<void>(`/artifacts/${id}`)
+  }
+
   /** URL the browser can GET to stream the artifact's file content. */
   artifactContentUrl(id: number): string {
     return this.url(`/artifacts/${id}/content`)
