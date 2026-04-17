@@ -126,6 +126,27 @@ export function ActiveRunsProvider({ children }: ActiveRunsProviderProps) {
               item.kind = 'tokens'
               item.tokens = tokens
               updated.lastTokens = tokens
+            } else if (kind === 'tool_use') {
+              const toolUse = {
+                tool_name:
+                  typeof payload.tool_name === 'string'
+                    ? payload.tool_name
+                    : 'tool',
+                args_summary:
+                  typeof payload.args_summary === 'string'
+                    ? payload.args_summary
+                    : '',
+              }
+              item.kind = 'tool_use'
+              item.tool_use = toolUse
+              updated.lastToolUse = toolUse
+            } else if (kind === 'heartbeat') {
+              // Heartbeats bump liveness state but never enter the feed —
+              // otherwise a long run would be dominated by a wall of
+              // "heartbeat" rows with no signal value.
+              updated.lastHeartbeatAt = new Date().toISOString()
+              next.set(taskId, updated)
+              return next
             } else {
               return next
             }
