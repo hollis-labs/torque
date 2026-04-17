@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
 import { useActiveRun } from '@/hooks/active-runs-context'
 import { Plus } from 'lucide-react'
@@ -28,8 +28,10 @@ import { SendBackDialog } from '@/components/domain/send-back-dialog'
 import { ActivityPanel } from '@/components/domain/activity-panel'
 import { TaskCheckpointsBanner } from '@/components/domain/task-checkpoints-banner'
 import { useApi } from '@/hooks/use-api'
+import { useArrowNav } from '@/hooks/use-arrow-nav'
 import { hasBlockedReason } from '@/lib/blocked-reason'
 import { computeTaskDiff } from '@/lib/task-diff'
+import { readTaskListCursor } from '@/lib/task-list-cursor'
 import { notifyError, notifySuccess } from '@/lib/toast'
 import type {
   Task,
@@ -104,6 +106,27 @@ export default function TaskDetailPage() {
     // on next visit.
     setRuns(null)
   }, [activeRun, id, api])
+
+  // Resolve the current task's position inside the last rendered list so
+  // arrow keys jump to adjacent tasks. Missing cursor silently disables.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const cursorIds = useMemo(() => readTaskListCursor(), [id])
+  const cursorIndex = id ? cursorIds.indexOf(id) : -1
+
+  const navigateToAdjacent = useCallback(
+    (delta: -1 | 1) => {
+      if (cursorIndex < 0 || cursorIds.length < 2) return
+      const nextIndex = (cursorIndex + delta + cursorIds.length) % cursorIds.length
+      navigate(`/tasks/${cursorIds[nextIndex]}`)
+    },
+    [cursorIndex, cursorIds, navigate],
+  )
+
+  useArrowNav({
+    enabled: !editing && cursorIndex >= 0 && cursorIds.length > 1,
+    onPrev: () => navigateToAdjacent(-1),
+    onNext: () => navigateToAdjacent(1),
+  })
 
   // Initialize/reset draft when editing starts, or clear when it ends
   useEffect(() => {

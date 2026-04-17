@@ -8,10 +8,12 @@ import { TaskTable } from '@/components/domain/task-table'
 import { EmptyState } from '@/components/domain/empty-state'
 import { ProjectCreateDialog } from '@/components/domain/project-create-dialog'
 import { EpicCreateDialog } from '@/components/domain/epic-create-dialog'
+import { RestartFrontendButton } from '@/components/domain/restart-frontend-button'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
 import { notifyError } from '@/lib/toast'
 import { DEFAULT_ACTIVE_STATUSES, MODE_PRESETS, TASK_STATUSES } from '@/lib/constants'
+import { saveTaskListCursor } from '@/lib/task-list-cursor'
 import type { Epic, Project, Sprint, Tag, Task, TaskStatus } from '@/lib/types'
 
 type ModePreset = keyof typeof MODE_PRESETS | 'all'
@@ -260,7 +262,9 @@ export default function BoardPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title="Operations" />
+      <PageHeader title="Operations">
+        <RestartFrontendButton />
+      </PageHeader>
       {!loading && !error && <SummaryCards cards={summaryCards} />}
       <FilterBar
         activeStatuses={activeStatuses}
@@ -321,6 +325,7 @@ export default function BoardPage() {
             }
             onTaskDelete={(id) => setTasks((prev) => prev.filter((t) => t.id !== id))}
             emptyVariant={emptyVariant}
+            onVisibleOrderChange={saveTaskListCursor}
           />
         )}
       </div>

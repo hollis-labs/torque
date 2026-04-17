@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { TaskRow } from './task-row'
 import { EmptyState } from './empty-state'
 import type { Task, TaskStatus } from '@/lib/types'
@@ -13,6 +13,8 @@ interface TaskTableProps {
   onTaskChange?: (task: Task) => void
   onTaskDelete?: (id: string) => void
   emptyVariant?: 'no-tasks' | 'no-results'
+  /** Fires with the current render order (post-sort) whenever it changes. */
+  onVisibleOrderChange?: (orderedIds: string[]) => void
 }
 
 function sortTasks(tasks: Task[], key: SortKey, dir: SortDir): Task[] {
@@ -38,6 +40,7 @@ export function TaskTable({
   onTaskChange,
   onTaskDelete,
   emptyVariant = 'no-tasks',
+  onVisibleOrderChange,
 }: TaskTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>('updated_at')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
@@ -69,7 +72,15 @@ export function TaskTable({
     }
   }
 
-  const sorted = sortTasks(tasks, sortKey, sortDir)
+  const sorted = useMemo(() => sortTasks(tasks, sortKey, sortDir), [tasks, sortKey, sortDir])
+
+  // Publish the currently-rendered order so callers (e.g. BoardPage) can
+  // persist a cursor that matches what the user is actually seeing, not
+  // just the raw fetch order.
+  useEffect(() => {
+    if (!onVisibleOrderChange) return
+    onVisibleOrderChange(sorted.map((t) => t.id))
+  }, [sorted, onVisibleOrderChange])
 
   if (tasks.length === 0) {
     return <EmptyState variant={emptyVariant} />

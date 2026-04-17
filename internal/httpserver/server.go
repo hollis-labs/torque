@@ -140,6 +140,11 @@ func (s *Server) routes() {
 		// Features
 		r.Get("/features", s.getFeatures)
 
+		// Admin — localhost-only, optional X-Admin-Token gate.
+		r.Route("/admin", func(r chi.Router) {
+			r.Post("/restart-frontend", adminGate(s.restartFrontend))
+		})
+
 		// Plugin UI (stub)
 		r.Get("/plugins/ui", s.getPluginUI)
 
