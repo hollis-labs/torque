@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
@@ -96,16 +96,24 @@ export default function BoardPage() {
   const [epicCreateOpen, setEpicCreateOpen] = useState(false)
 
   // Hydrate filter state from localStorage on mount. URL params win: if any
-  // filter-relevant param is present, we ignore storage entirely so deep
-  // links keep working as authored.
-  const hydratedRef = useRef(false)
+  // filter-relevant param is present, we skip storage entirely so deep
+  // links keep working as authored. Uses state (not a ref) so downstream
+  // effects (save, fetch) can gate on hydration completion — a ref would
+  // let them run on the pre-hydrate render with default values, clobbering
+  // storage and racing an unfiltered fetch past the real one.
+  const [hydrated, setHydrated] = useState(false)
   useEffect(() => {
-    if (hydratedRef.current) return
-    hydratedRef.current = true
+    if (hydrated) return
     const urlHasFilter = FILTER_PARAM_KEYS.some((k) => searchParams.has(k))
-    if (urlHasFilter) return
+    if (urlHasFilter) {
+      setHydrated(true)
+      return
+    }
     const stored = readOpsFilters()
-    if (!stored) return
+    if (!stored) {
+      setHydrated(true)
+      return
+    }
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev)
@@ -125,13 +133,14 @@ export default function BoardPage() {
       },
       { replace: true }
     )
-  }, [searchParams, setSearchParams])
+    setHydrated(true)
+  }, [hydrated, searchParams, setSearchParams])
 
-  // Persist current filter state to localStorage whenever it changes. Skips
-  // the first run until hydration has had a chance to settle so we don't
-  // clobber storage with the unhydrated default state.
+  // Persist current filter state to localStorage whenever it changes. Gated
+  // on hydration so the initial pre-hydrate render doesn't write default
+  // values over the stored filters before they've been restored.
   useEffect(() => {
-    if (!hydratedRef.current) return
+    if (!hydrated) return
     saveOpsFilters({
       statuses: activeStatuses,
       priorities: activePriorities,
@@ -141,7 +150,7 @@ export default function BoardPage() {
       tagSlug,
       mode,
     })
-  }, [activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, mode])
+  }, [hydrated, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, mode])
 
   // Fetch pickers once on mount
   const refreshPickers = useCallback(async () => {
@@ -215,14 +224,16 @@ export default function BoardPage() {
   }, [api, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug])
 
   useEffect(() => {
+    if (!hydrated) return
     setLoading(true)
     fetchTasks()
-  }, [fetchTasks])
+  }, [hydrated, fetchTasks])
 
   // Refresh on SSE events
   useEffect(() => {
+    if (!hydrated) return
     if (lastEvent) fetchTasks()
-  }, [lastEvent, fetchTasks])
+  }, [hydrated, lastEvent, fetchTasks])
 
   function updateParams(mutate: (params: URLSearchParams) => void) {
     setSearchParams(
