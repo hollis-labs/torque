@@ -485,6 +485,86 @@ exit 1`
 	assert.Contains(t, result.Reason, "token expired")
 }
 
+// CW-20260417-0036: when the agent finishes via stream-json with a
+// schema-conformant result event, every path in files_changed must be
+// auto-converted into an Artifact (classified by extension) and emitted
+// via cb. Schema mode suppresses freeform CLOCKWORK_ARTIFACT lines, so
+// without this conversion the deliverable-check gate sees zero artifacts
+// and erroneously blocks done runs.
+func TestRunStreamJSON_FilesChangedBecomeArtifacts(t *testing.T) {
+	script := `cat <<'JSON'
+{"type":"result","result":"{\"status\":\"done\",\"signal\":\"CLOCKWORK_DONE\",\"summary\":\"ok\",\"files_changed\":[\"src/foo.go\",\"docs/screenshots/before.png\",\"docs/screenshots/after.JPG\"]}"}
+JSON`
+	pm := profiles("default", streamShellProfile(script))
+	e := New(pm)
+	j := job("default")
+
+	results, events := collectEvents(t, e, j)
+	result := results[0]
+
+	assert.Equal(t, "done", result.Status)
+	require.Len(t, result.Artifacts, 3, "every files_changed entry must become an artifact")
+
+	byPath := map[string]executor.Artifact{}
+	for _, a := range result.Artifacts {
+		byPath[a.FilePath] = a
+	}
+	require.Contains(t, byPath, "src/foo.go")
+	require.Contains(t, byPath, "docs/screenshots/before.png")
+	require.Contains(t, byPath, "docs/screenshots/after.JPG")
+	assert.Equal(t, "diff", byPath["src/foo.go"].Type)
+	assert.Equal(t, "screenshot", byPath["docs/screenshots/before.png"].Type)
+	assert.Equal(t, "screenshot", byPath["docs/screenshots/after.JPG"].Type,
+		"extension classification must be case-insensitive")
+	for _, a := range result.Artifacts {
+		assert.Equal(t, "agent-auto", a.Metadata["origin"],
+			"auto-emitted artifacts must carry origin=agent-auto")
+	}
+
+	var artifactEvents int
+	for _, ev := range events {
+		if ev.Type == executor.EventArtifact {
+			artifactEvents++
+		}
+	}
+	assert.Equal(t, 3, artifactEvents,
+		"each auto-classified artifact must be dispatched via cb so the scheduler persists it")
+}
+
+// Manual CLOCKWORK_ARTIFACT signals must not be duplicated by the
+// files_changed auto-emitter. Dedupe key is FilePath.
+func TestRunStreamJSON_FilesChangedDedupesAgainstManualArtifact(t *testing.T) {
+	script := `cat <<'JSON'
+{"type":"content_block_delta","delta":{"type":"text_delta","text":"{\"signal\":\"CLOCKWORK_ARTIFACT\",\"type\":\"diff\",\"file_path\":\"src/foo.go\",\"content\":\"manual\"}\n"}}
+{"type":"result","result":"{\"status\":\"done\",\"signal\":\"CLOCKWORK_DONE\",\"files_changed\":[\"src/foo.go\",\"src/bar.go\"]}"}
+JSON`
+	pm := profiles("default", streamShellProfile(script))
+	e := New(pm)
+	j := job("default")
+
+	results, _ := collectEvents(t, e, j)
+	result := results[0]
+
+	assert.Equal(t, "done", result.Status)
+	require.Len(t, result.Artifacts, 2, "manual artifact + one new auto-classified one (dedupe by file_path)")
+
+	var manualKept, autoNew bool
+	for _, a := range result.Artifacts {
+		if a.FilePath == "src/foo.go" {
+			manualKept = true
+			assert.Equal(t, "manual", a.Content, "manual artifact must win over auto-emit")
+			assert.Nil(t, a.Metadata, "manual artifact must not be tagged agent-auto")
+		}
+		if a.FilePath == "src/bar.go" {
+			autoNew = true
+			assert.Equal(t, "diff", a.Type)
+			assert.Equal(t, "agent-auto", a.Metadata["origin"])
+		}
+	}
+	assert.True(t, manualKept, "manual artifact must remain")
+	assert.True(t, autoNew, "new path must be auto-classified")
+}
+
 func TestRunTaskIDAndRunIDInjected(t *testing.T) {
 	script := `echo "tid=${CLOCKWORK_TASK_ID} rid=${CLOCKWORK_RUN_ID}"`
 	pm := profiles("default", shellProfile(script))

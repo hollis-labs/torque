@@ -540,6 +540,11 @@ func (e *CLIExecutor) runStreamJSON(_ context.Context, cmd *exec.Cmd, job *execu
 				if len(ev.Result.FilesChanged) > 0 && cb != nil {
 					cb(executor.LogEvent("files_changed: " + strings.Join(ev.Result.FilesChanged, ", ")))
 				}
+				// CW-20260417-0036: schema-mode suppresses freeform CLOCKWORK_ARTIFACT
+				// signals, so files_changed is the only artifact evidence the agent
+				// emits. Auto-classify each path and dispatch as an Artifact event
+				// so the scheduler persists records for the deliverable-check gate.
+				autoEmitFilesChangedArtifacts(ev.Result.FilesChanged, result, cb)
 				if ev.Result.Summary != "" && cb != nil {
 					cb(executor.SignalEvent("CLOCKWORK_NOTE", ev.Result.Summary))
 				}
@@ -600,6 +605,67 @@ func (e *CLIExecutor) runStreamJSON(_ context.Context, cmd *exec.Cmd, job *execu
 			job.TaskID, job.RunID, result.Reason)
 	}
 	return nil
+}
+
+// screenshotExtensions lists file extensions that should be classified as
+// the "screenshot" artifact type. Anything else falls back to "diff".
+// Extension matching is case-insensitive.
+var screenshotExtensions = map[string]struct{}{
+	".png":  {},
+	".jpg":  {},
+	".jpeg": {},
+	".gif":  {},
+	".webp": {},
+}
+
+// classifyArtifactType maps a file path to an Artifact.Type label by file
+// extension. Image extensions become "screenshot"; everything else becomes
+// "diff" — which matches the deliverable presets the gate enforces.
+func classifyArtifactType(path string) string {
+	ext := strings.ToLower(filepath.Ext(path))
+	if _, ok := screenshotExtensions[ext]; ok {
+		return "screenshot"
+	}
+	return "diff"
+}
+
+// autoEmitFilesChangedArtifacts converts each path in files_changed into an
+// Artifact tagged with metadata.origin=agent-auto, appends it to result and
+// dispatches an ArtifactEvent so the scheduler persists it. Skips any path
+// already present in result.Artifacts (manual CLOCKWORK_ARTIFACT signals win
+// — operators may have set richer Type/Content values).
+//
+// See CW-20260417-0036: claude --json-schema suppresses freeform artifact
+// signals, so files_changed is the only evidence the deliverable-check gate
+// has to work with.
+func autoEmitFilesChangedArtifacts(paths []string, result *executor.ExecutionResult, cb executor.EventCallback) {
+	if len(paths) == 0 {
+		return
+	}
+	seen := make(map[string]struct{}, len(result.Artifacts))
+	for _, a := range result.Artifacts {
+		if a.FilePath != "" {
+			seen[a.FilePath] = struct{}{}
+		}
+	}
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		if _, dup := seen[p]; dup {
+			continue
+		}
+		seen[p] = struct{}{}
+		art := executor.Artifact{
+			Type:     classifyArtifactType(p),
+			FilePath: p,
+			Metadata: map[string]interface{}{"origin": "agent-auto"},
+		}
+		result.Artifacts = append(result.Artifacts, art)
+		if cb != nil {
+			cb(executor.ArtifactEvent(art))
+		}
+	}
 }
 
 // handleArtifactSignal parses a CLOCKWORK_ARTIFACT signal payload and either
