@@ -355,6 +355,29 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 				})
 			}
 
+			// CLOCKWORK_SUBTODO_DONE: mark the named subtodo as done and
+			// record the agent's evidence token. Parse failures and unknown
+			// item-ids are logged but non-fatal — the gate at lifecycle
+			// time will block the task if required items stay unchecked.
+			if event.Type == executor.EventSignal && event.Signal == "CLOCKWORK_SUBTODO_DONE" {
+				itemID, evidence, perr := executor.ParseSubtodoDonePayload(event.Content)
+				if perr != nil {
+					log.Printf("[scheduler] subtodo signal parse error for %s: %v", capturedTaskID, perr)
+				} else if err := s.store.SetSubtodoDone(capturedTaskID, itemID, evidence); err != nil {
+					log.Printf("[scheduler] subtodo done write error for %s/%s: %v", capturedTaskID, itemID, err)
+				} else {
+					s.bus.Publish(SchedulerEvent{
+						Type:   "subtodo.done",
+						TaskID: capturedTaskID,
+						RunID:  capturedRunID,
+						Data: map[string]interface{}{
+							"item_id":  itemID,
+							"evidence": evidence,
+						},
+					})
+				}
+			}
+
 			// Inline-form CLOCKWORK_CHECKPOINT emits are routed to the
 			// checkpoint handler which creates the row and parks the task
 			// if its checkpoint_mode is "blocking". JSON-form checkpoints

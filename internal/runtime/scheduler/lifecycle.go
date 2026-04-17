@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
@@ -79,6 +80,18 @@ func (lm *LifecycleManager) handleDone(task *sqlstore.TaskRecord, runID int64, r
 				return lm.retryOrBlock(task, runID, "missing required deliverables")
 			}
 		}
+	}
+
+	// Structural acceptance gate: required subtodos must be ticked off. Unlike
+	// deliverables this is keyed by item_id + executor-provided evidence, so a
+	// simple emission of CLOCKWORK_SUBTODO_DONE during the run is the only way
+	// to clear it. Non-required items are ignored.
+	if missing, err := lm.missingRequiredSubtodos(task.ID); err != nil {
+		log.Printf("[lifecycle] subtodo check error for %s: %v", task.ID, err)
+	} else if len(missing) > 0 {
+		reason := "missing required subtodos: " + strings.Join(missing, ", ")
+		log.Printf("[lifecycle] task %s blocked by subtodo gate (%s)", task.ID, reason)
+		return lm.transition(task, runID, "blocked", reason)
 	}
 
 	// Apply OnDone rule
@@ -245,6 +258,23 @@ func (lm *LifecycleManager) emitRunFinished(taskID string, runID int64, result *
 		RunID:  runID,
 		Data:   data,
 	})
+}
+
+// missingRequiredSubtodos returns the ids of required subtodos that are not
+// yet marked done. Returns a nil slice when the task has no subtodos or all
+// required items are ticked off.
+func (lm *LifecycleManager) missingRequiredSubtodos(taskID string) ([]string, error) {
+	items, err := lm.store.GetSubtodos(taskID)
+	if err != nil {
+		return nil, err
+	}
+	var missing []string
+	for _, it := range items {
+		if it.Required && !it.Done {
+			missing = append(missing, it.ID)
+		}
+	}
+	return missing, nil
 }
 
 func missingTypes(missing []executor.Deliverable) []string {
