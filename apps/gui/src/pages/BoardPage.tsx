@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Button } from '@/components/ui/button'
 import { PageHeader } from '@/components/domain/page-header'
 import { SummaryCards } from '@/components/domain/summary-cards'
 import { FilterBar } from '@/components/domain/filter-bar'
@@ -14,7 +15,10 @@ import { useSSE } from '@/hooks/use-sse'
 import { notifyError } from '@/lib/toast'
 import { DEFAULT_ACTIVE_STATUSES, MODE_PRESETS, TASK_STATUSES } from '@/lib/constants'
 import { saveTaskListCursor } from '@/lib/task-list-cursor'
+import { saveOpsFilters, readOpsFilters, clearOpsFilters } from '@/lib/ops-filters-storage'
 import type { Epic, Project, Sprint, Tag, Task, TaskStatus } from '@/lib/types'
+
+const FILTER_PARAM_KEYS = ['status', 'priority', 'project_id', 'sprint_id', 'epic_id', 'tag', 'mode'] as const
 
 type ModePreset = keyof typeof MODE_PRESETS | 'all'
 
@@ -90,6 +94,54 @@ export default function BoardPage() {
   // Create-modal state
   const [projectCreateOpen, setProjectCreateOpen] = useState(false)
   const [epicCreateOpen, setEpicCreateOpen] = useState(false)
+
+  // Hydrate filter state from localStorage on mount. URL params win: if any
+  // filter-relevant param is present, we ignore storage entirely so deep
+  // links keep working as authored.
+  const hydratedRef = useRef(false)
+  useEffect(() => {
+    if (hydratedRef.current) return
+    hydratedRef.current = true
+    const urlHasFilter = FILTER_PARAM_KEYS.some((k) => searchParams.has(k))
+    if (urlHasFilter) return
+    const stored = readOpsFilters()
+    if (!stored) return
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        const sameAsDefault =
+          stored.statuses.length === DEFAULT_ACTIVE_STATUSES.length &&
+          DEFAULT_ACTIVE_STATUSES.every((s) => stored.statuses.includes(s))
+        if (stored.statuses.length > 0 && !sameAsDefault) {
+          next.set('status', stored.statuses.join(','))
+        }
+        if (stored.priorities.length > 0) next.set('priority', stored.priorities.join(','))
+        if (stored.projectId) next.set('project_id', stored.projectId)
+        if (stored.sprintId) next.set('sprint_id', stored.sprintId)
+        if (stored.epicId) next.set('epic_id', stored.epicId)
+        if (stored.tagSlug) next.set('tag', stored.tagSlug)
+        if (stored.mode && stored.mode !== 'all') next.set('mode', stored.mode)
+        return next
+      },
+      { replace: true }
+    )
+  }, [searchParams, setSearchParams])
+
+  // Persist current filter state to localStorage whenever it changes. Skips
+  // the first run until hydration has had a chance to settle so we don't
+  // clobber storage with the unhydrated default state.
+  useEffect(() => {
+    if (!hydratedRef.current) return
+    saveOpsFilters({
+      statuses: activeStatuses,
+      priorities: activePriorities,
+      projectId,
+      sprintId,
+      epicId,
+      tagSlug,
+      mode,
+    })
+  }, [activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, mode])
 
   // Fetch pickers once on mount
   const refreshPickers = useCallback(async () => {
@@ -244,9 +296,40 @@ export default function BoardPage() {
     projectId !== null ||
     sprintId !== null ||
     epicId !== null ||
-    tagSlug !== null
+    tagSlug !== null ||
+    mode !== 'all'
 
   const emptyVariant = filtersActive ? 'no-results' : 'no-tasks'
+
+  function handleClearFilters() {
+    clearOpsFilters()
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        for (const k of FILTER_PARAM_KEYS) next.delete(k)
+        return next
+      },
+      { replace: true }
+    )
+  }
+
+  const cursorFilter = useMemo(
+    () => ({
+      statuses: activeStatuses,
+      priorities: activePriorities,
+      projectId,
+      sprintId,
+      epicId,
+      tagSlug,
+      mode,
+    }),
+    [activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, mode]
+  )
+
+  const handleVisibleOrderChange = useCallback(
+    (ids: string[]) => saveTaskListCursor(ids, cursorFilter),
+    [cursorFilter]
+  )
 
   const openCount = tasks.filter((t) => ['backlog', 'todo', 'queued'].includes(t.status)).length
   const doingCount = tasks.filter((t) => t.status === 'doing').length
@@ -287,7 +370,19 @@ export default function BoardPage() {
         tags={tags}
         tagSlug={tagSlug}
         onTagChange={(slug) => handleGroupChange('tag', slug)}
-      />
+      >
+        {filtersActive && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleClearFilters}
+            className="h-7 border-zinc-700 bg-zinc-900/50 px-2 text-[10px] uppercase tracking-wider text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
+          >
+            Clear filters
+          </Button>
+        )}
+      </FilterBar>
 
       <ProjectCreateDialog
         open={projectCreateOpen}
@@ -325,7 +420,7 @@ export default function BoardPage() {
             }
             onTaskDelete={(id) => setTasks((prev) => prev.filter((t) => t.id !== id))}
             emptyVariant={emptyVariant}
-            onVisibleOrderChange={saveTaskListCursor}
+            onVisibleOrderChange={handleVisibleOrderChange}
           />
         )}
       </div>

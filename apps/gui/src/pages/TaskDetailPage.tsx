@@ -110,7 +110,9 @@ export default function TaskDetailPage() {
   // Resolve the current task's position inside the last rendered list so
   // arrow keys jump to adjacent tasks. Missing cursor silently disables.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const cursorIds = useMemo(() => readTaskListCursor(), [id])
+  const cursor = useMemo(() => readTaskListCursor(), [id])
+  const cursorIds = cursor.ids
+  const cursorFilter = cursor.filter
   const cursorIndex = id ? cursorIds.indexOf(id) : -1
 
   const navigateToAdjacent = useCallback(
@@ -127,6 +129,25 @@ export default function TaskDetailPage() {
     onPrev: () => navigateToAdjacent(-1),
     onNext: () => navigateToAdjacent(1),
   })
+
+  // Auto-advance when the user transitions this task into a status the
+  // active cursor filter excludes (e.g. marks `done` while viewing a
+  // todo|doing|review list). Walks forward through the cursor to the next
+  // still-reachable task; if at the end, returns to /operations.
+  const autoAdvanceAfterTransition = useCallback(
+    (newStatus: TaskStatus) => {
+      if (!cursorFilter || cursorFilter.statuses.length === 0) return
+      if (cursorFilter.statuses.includes(newStatus)) return
+      if (cursorIndex < 0) return
+      const nextId = cursorIds[cursorIndex + 1]
+      if (nextId) {
+        navigate(`/tasks/${nextId}`)
+      } else {
+        navigate('/operations')
+      }
+    },
+    [cursorFilter, cursorIds, cursorIndex, navigate],
+  )
 
   // Initialize/reset draft when editing starts, or clear when it ends
   useEffect(() => {
@@ -261,6 +282,7 @@ export default function TaskDetailPage() {
     try {
       const updated = await api.transitionTask(id, status)
       setTask(updated)
+      autoAdvanceAfterTransition(updated.status)
     } catch (err) {
       notifyError(err, 'Failed to update task status')
     }
@@ -277,6 +299,7 @@ export default function TaskDetailPage() {
       const updated = await api.updateTask(id, { manual: next })
       setTask(updated)
       notifySuccess(next ? 'Unqueued' : 'Queued')
+      if (updated.status !== task.status) autoAdvanceAfterTransition(updated.status)
     } catch (err) {
       notifyError(err, 'Failed to update queue state')
     } finally {
@@ -305,6 +328,7 @@ export default function TaskDetailPage() {
     // that already includes this comment.
     setComments((prev) => (prev === null ? prev : [...prev, comment]))
     notifySuccess('Sent back to todo')
+    autoAdvanceAfterTransition(updated.status)
   }
 
   function handleEdit() {
@@ -376,7 +400,14 @@ export default function TaskDetailPage() {
         onSave={handleSave}
         onCancel={handleCancel}
         onSendBack={() => setSendBackOpen(true)}
-        onTaskChange={setTask}
+        onTaskChange={(next) => {
+          setTask((prev) => {
+            if (prev && prev.status !== next.status) {
+              autoAdvanceAfterTransition(next.status)
+            }
+            return next
+          })
+        }}
         onTaskDelete={() => navigate('/operations')}
       />
 
