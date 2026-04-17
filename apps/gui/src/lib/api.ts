@@ -242,7 +242,11 @@ export class ClockworkApiClient {
   // -------------------------
 
   async listArtifacts(taskId: string): Promise<Artifact[]> {
-    const res = await this.get<{ artifacts: ApiArtifactRecord[] }>(`/tasks/${taskId}/artifacts`)
+    // Prefer the query-string form: the /tasks/{id}/artifacts alias is
+    // registered in newer server builds but older binaries serving the
+    // bundled SPA fall through to the index.html fallback instead of the
+    // JSON handler. The envelope shape is identical.
+    const res = await this.get<{ artifacts: ApiArtifactRecord[] }>('/artifacts', { task_id: taskId })
     return (res.artifacts ?? []).map(normalizeArtifact)
   }
 

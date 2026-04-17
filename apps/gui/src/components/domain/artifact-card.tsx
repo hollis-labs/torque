@@ -152,7 +152,7 @@ export function ArtifactCard({ artifact, onDelete }: ArtifactCardProps) {
       {showImage && (
         <Dialog open={lightboxOpen} onOpenChange={setLightboxOpen}>
           <DialogContent
-            className="bg-zinc-950 ring-zinc-700 max-w-none sm:max-w-none w-auto p-2"
+            className="flex w-auto max-w-none sm:max-w-none bg-zinc-950 p-2 ring-zinc-700"
             showCloseButton
           >
             <DialogTitle className="sr-only">{artifact.file_path}</DialogTitle>
