@@ -1,9 +1,9 @@
 import { Link, useNavigate } from 'react-router-dom'
-import { MoreHorizontal } from 'lucide-react'
 import { StatusBadge } from './status-badge'
 import { PriorityBadge } from './priority-badge'
 import { TagChip } from './tag-chip'
 import { CopyableId } from './copyable-id'
+import { TaskActionsMenu } from './task-actions-menu'
 import { formatRelativeTime } from '@/lib/utils'
 import type { Task, TaskStatus } from '@/lib/types'
 
@@ -12,13 +12,15 @@ interface TaskRowProps {
   selected?: boolean
   onSelect?: (id: string, selected: boolean) => void
   onTransition?: (id: string, status: TaskStatus) => void
+  onTaskChange?: (task: Task) => void
+  onTaskDelete?: (id: string) => void
 }
 
 function stop(e: React.SyntheticEvent) {
   e.stopPropagation()
 }
 
-export function TaskRow({ task, selected, onSelect }: TaskRowProps) {
+export function TaskRow({ task, selected, onSelect, onTaskChange, onTaskDelete }: TaskRowProps) {
   const navigate = useNavigate()
   const dateStr = task.updated_at
     ? new Date(task.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
@@ -101,16 +103,13 @@ export function TaskRow({ task, selected, onSelect }: TaskRowProps) {
         <div className="text-[11px] leading-4 text-zinc-400 uppercase tracking-[.12em]">{dateStr}</div>
         <div className="text-[11px] leading-4 text-zinc-600 uppercase tracking-[.12em]">{agoStr}</div>
       </td>
-      {/* Actions (inert) */}
+      {/* Actions */}
       <td className="w-px whitespace-nowrap pl-1 pr-3 py-1.5" onClick={stop}>
-        <button
-          type="button"
-          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-700/80 bg-zinc-900 text-zinc-500 hover:border-zinc-600 hover:text-zinc-300 transition-colors"
-          tabIndex={-1}
-          aria-label="Task actions"
-        >
-          <MoreHorizontal className="h-3.5 w-3.5" />
-        </button>
+        <TaskActionsMenu
+          task={task}
+          onChange={onTaskChange}
+          onDelete={onTaskDelete}
+        />
       </td>
     </tr>
   )
