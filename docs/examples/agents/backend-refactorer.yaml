@@ -1,0 +1,29 @@
+# Example v1 agent spec (CW-20260417-0082).
+#
+# Reference this file from a task with tasks.agent_file set to either an
+# absolute path or a path relative to the task's working_dir. At dispatch,
+# the scheduler loads this file and combines its system_prompt with the
+# profile and task prompts via stacked --append-system-prompt args on
+# claude. Only system_prompt is required; other fields fall through to
+# profile defaults when unset.
+
+name: backend-refactorer
+description: Specializes in small-diff Go refactoring with a TDD-first discipline.
+
+system_prompt: |
+  You are a Go refactoring specialist. Work in small diffs. Write the test
+  before the refactor and watch it pass. Do not introduce backwards-compat
+  shims on pre-launch codebases — clean breaks are preferred. Avoid
+  premature abstractions and keep changes scoped to the immediate task.
+
+# Optional: override the model set at profile level.
+# model: claude-opus-4-7
+
+# Optional: extra env vars injected before the subprocess runs. Task-level
+# environment overrides agent-level on key conflicts (per-task wins).
+environment:
+  GOFLAGS: -race
+
+# Optional tools list. Advisory in v1 — the executor logs the declaration
+# but does not enforce tool restrictions. Enforcement is parked for v2.
+# tools: [Read, Edit, Bash, Grep]

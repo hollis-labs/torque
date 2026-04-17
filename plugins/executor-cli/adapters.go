@@ -3,6 +3,7 @@ package executorcli
 import (
 	"fmt"
 
+	"github.com/hollis-labs/clockwork-manifold/internal/agentfile"
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 )
@@ -15,19 +16,28 @@ type CommandSpec struct {
 	UseStreamJSON bool
 }
 
-// buildCommandSpec resolves a CommandSpec from the given profile and job.
-// Provider-specific logic selects the binary and flags; the profile Command
-// field overrides the binary if set.
-func buildCommandSpec(profile config.AgentProfile, job *executor.ExecutionJob) (CommandSpec, error) {
+// buildCommandSpec resolves a CommandSpec from the given profile, job, and
+// optional agent file. Provider-specific logic selects the binary and flags;
+// the profile Command field overrides the binary if set. A non-nil agent
+// file can override profile.Model and contributes an extra system prompt
+// that the claude provider stacks via --append-system-prompt.
+func buildCommandSpec(profile config.AgentProfile, job *executor.ExecutionJob, agent *agentfile.AgentFile) (CommandSpec, error) {
 	if profile.Command == "" && profile.Provider == "" {
 		return CommandSpec{}, fmt.Errorf("profile has neither command nor provider set")
+	}
+
+	// Agent file v1: model override applies to every provider that honors
+	// profile.Model. Tools are advisory only (logged at dispatch, not
+	// enforced here — v2 will gate them via a wrapper process).
+	if agent != nil && agent.Model != "" {
+		profile.Model = agent.Model
 	}
 
 	var spec CommandSpec
 
 	switch profile.Provider {
 	case "claude":
-		spec = buildClaudeSpec(profile, job)
+		spec = buildClaudeSpec(profile, job, agent)
 	case "codex":
 		spec = buildCodexSpec(profile, job)
 	case "copilot":
@@ -79,7 +89,12 @@ func buildCommandSpec(profile config.AgentProfile, job *executor.ExecutionJob) (
 //
 // `--dangerously-skip-permissions` is expected to come from profile.Args
 // (prepended in buildCommandSpec) so local runs can control it per profile.
-func buildClaudeSpec(profile config.AgentProfile, job *executor.ExecutionJob) CommandSpec {
+//
+// When a non-nil agent file is passed, its system_prompt is appended via its
+// own --append-system-prompt pair immediately before the task-level prompt.
+// Claude stacks every --append-system-prompt so both personas reach the
+// agent (CW-20260417-0082). Order: [profile args] [agent sp] [task sp] [description].
+func buildClaudeSpec(profile config.AgentProfile, job *executor.ExecutionJob, agent *agentfile.AgentFile) CommandSpec {
 	cmd := "claude"
 	useStream := profile.OutputFormat != "print"
 
@@ -98,6 +113,13 @@ func buildClaudeSpec(profile config.AgentProfile, job *executor.ExecutionJob) Co
 
 	if profile.Model != "" {
 		args = append(args, "--model", profile.Model)
+	}
+
+	// Agent file system prompt (CW-20260417-0082): stacked before the task
+	// system prompt so the persona framing comes first and the task-specific
+	// preamble refines it.
+	if agent != nil && agent.SystemPrompt != "" {
+		args = append(args, "--append-system-prompt", agent.SystemPrompt)
 	}
 
 	// task.system_prompt (CW-20260417-0009): claude supports an explicit

@@ -614,6 +614,7 @@ func buildJob(task sqlstore.TaskRecord, runID int64) *executor.ExecutionJob {
 		RunID:        runID,
 		Description:  task.Description,
 		SystemPrompt: task.SystemPrompt,
+		AgentFile:    task.AgentFile,
 		WorkingDir:   task.WorkingDir,
 		AgentProfile: task.AgentProfile,
 		Limits: executor.ExecutionLimits{

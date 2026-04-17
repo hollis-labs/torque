@@ -12,6 +12,10 @@ type ExecutionJob struct {
 	RunID        int64
 	Description  string
 	SystemPrompt string
+	// AgentFile is the task's agent_file field verbatim: absolute path, or
+	// path relative to WorkingDir. The executor is responsible for resolving
+	// and loading it at dispatch (see internal/agentfile). Empty when unset.
+	AgentFile    string
 	WorkingDir   string
 	AgentProfile string
 	Tools        []string
