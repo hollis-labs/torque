@@ -6,6 +6,7 @@ import { StatusBadge } from '@/components/domain/status-badge'
 import { EmptyState } from '@/components/domain/empty-state'
 import { useApi } from '@/hooks/use-api'
 import { TASK_STATUSES, STATUS_COLOR_VAR } from '@/lib/constants'
+import { hasBlockedReason, truncateBlockedReason } from '@/lib/blocked-reason'
 import { formatRelativeTime } from '@/lib/utils'
 import type { Task, TaskStatus } from '@/lib/types'
 
@@ -147,7 +148,14 @@ export default function DashboardPage() {
                 {recentTasks.map((task) => (
                   <li key={task.id} className="flex items-center justify-between gap-3 px-6 py-3">
                     <div className="flex items-center gap-2 min-w-0">
-                      <StatusBadge status={task.status} />
+                      <StatusBadge
+                        status={task.status}
+                        tooltip={
+                          hasBlockedReason(task)
+                            ? truncateBlockedReason(task.blocked_reason)
+                            : undefined
+                        }
+                      />
                       <Link
                         to={`/tasks/${task.id}`}
                         className="text-sm font-medium text-foreground hover:text-primary hover:underline underline-offset-4 truncate"

@@ -22,6 +22,49 @@ class ApiError extends Error {
   }
 }
 
+/**
+ * Shape of a run row as the backend currently serializes it — fields come
+ * straight off the sqlstore struct, so they use PascalCase and wrap nullable
+ * columns in sql.Null* envelopes. We normalize to the flat snake_case `Run`
+ * type the UI expects.
+ */
+interface ApiNullTime { Time: string; Valid: boolean }
+interface ApiNullInt64 { Int64: number; Valid: boolean }
+interface ApiNullString { String: string; Valid: boolean }
+
+interface ApiRunRecord {
+  ID: number
+  TaskID: string
+  Executor: string
+  AgentProfile?: string
+  Status: string
+  StartedAt: string
+  EndedAt: ApiNullTime | null
+  PromptTokens: number
+  CompletionTokens: number
+  Cost: number
+  ExitCode: ApiNullInt64 | null
+  ErrorMessage: string
+  Metadata?: ApiNullString | null
+}
+
+function normalizeRun(raw: ApiRunRecord): Run {
+  return {
+    id: raw.ID,
+    task_id: raw.TaskID,
+    executor: raw.Executor ?? '',
+    agent_profile: raw.AgentProfile ?? '',
+    status: raw.Status ?? '',
+    prompt_tokens: raw.PromptTokens ?? 0,
+    completion_tokens: raw.CompletionTokens ?? 0,
+    cost: raw.Cost ?? 0,
+    exit_code: raw.ExitCode?.Valid ? raw.ExitCode.Int64 : 0,
+    error_message: raw.ErrorMessage ?? '',
+    started_at: raw.StartedAt,
+    completed_at: raw.EndedAt?.Valid ? raw.EndedAt.Time : null,
+  }
+}
+
 async function parseResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     let message = `HTTP ${res.status}`
@@ -148,11 +191,12 @@ export class ClockworkApiClient {
   // -------------------------
 
   async listRuns(taskId: string): Promise<Run[]> {
-    return this.get<Run[]>(`/tasks/${taskId}/runs`)
+    const res = await this.get<{ runs: ApiRunRecord[] }>('/runs', { task_id: taskId })
+    return (res.runs ?? []).map(normalizeRun)
   }
 
   async getRun(id: number): Promise<Run> {
-    return this.get<Run>(`/runs/${id}`)
+    return normalizeRun(await this.get<ApiRunRecord>(`/runs/${id}`))
   }
 
   // -------------------------

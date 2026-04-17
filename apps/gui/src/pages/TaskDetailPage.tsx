@@ -8,6 +8,7 @@ import { CommentList } from '@/components/domain/comment-list'
 import { RunCard } from '@/components/domain/run-card'
 import { EmptyState } from '@/components/domain/empty-state'
 import { TaskDetailHeader } from '@/components/domain/task-detail-header'
+import { BlockedReasonAlert } from '@/components/domain/blocked-reason-alert'
 import { DetailSection } from '@/components/domain/detail-section'
 import { TaskProperties } from '@/components/domain/task-properties'
 import { ExecutionContext } from '@/components/domain/execution-context'
@@ -15,6 +16,7 @@ import { LifecycleRules } from '@/components/domain/lifecycle-rules'
 import { DeliverablesAndDeps } from '@/components/domain/deliverables-deps'
 import { SendBackDialog } from '@/components/domain/send-back-dialog'
 import { useApi } from '@/hooks/use-api'
+import { hasBlockedReason } from '@/lib/blocked-reason'
 import { computeTaskDiff } from '@/lib/task-diff'
 import { notifyError, notifySuccess } from '@/lib/toast'
 import type {
@@ -277,6 +279,15 @@ export default function TaskDetailPage() {
         onOpenChange={setSendBackOpen}
         onSubmit={handleSendBack}
       />
+
+      {/* Blocked / paused reason — agent's last word before the wheels stopped */}
+      {!editing && hasBlockedReason(task) && (
+        <BlockedReasonAlert
+          status={task.status as 'blocked' | 'paused'}
+          reason={task.blocked_reason}
+          className="border-x-0 border-t-0"
+        />
+      )}
 
       {/* Save error banner */}
       {saveError && (

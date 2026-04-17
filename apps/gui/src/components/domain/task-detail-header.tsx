@@ -15,6 +15,7 @@ import { TagChip } from './tag-chip'
 import { CopyableId } from './copyable-id'
 import { TaskActionsMenu } from './task-actions-menu'
 import { TASK_STATUSES, PRIORITIES } from '@/lib/constants'
+import { hasBlockedReason, truncateBlockedReason } from '@/lib/blocked-reason'
 import type { Task, TaskStatus, Tag } from '@/lib/types'
 
 const TRANSITION_LABELS: Partial<Record<TaskStatus, string>> = {
@@ -92,7 +93,14 @@ export function TaskDetailHeader({
           )}
 
           <div className="flex items-center gap-2 flex-wrap">
-            <StatusBadge status={task.status} />
+            <StatusBadge
+              status={task.status}
+              tooltip={
+                hasBlockedReason(task)
+                  ? truncateBlockedReason(task.blocked_reason)
+                  : undefined
+              }
+            />
             <CopyableId id={task.id} />
             {editing ? (
               <Select
