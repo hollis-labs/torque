@@ -23,6 +23,7 @@ func (a *Adapter) registerTemplateTools() {
 		mcp.WithString("executor", mcp.Description("Executor name for agent-kind tasks")),
 		mcp.WithString("agent_profile", mcp.Description("Agent profile override")),
 		mcp.WithString("system_prompt", mcp.Description("System prompt (supports {{var}})")),
+		mcp.WithString("working_dir", mcp.Description("Task working directory (supports {{var}})")),
 		mcp.WithString("tools", mcp.Description("JSON array of tool names")),
 		mcp.WithString("permissions", mcp.Description("JSON object of permissions")),
 		mcp.WithString("environment", mcp.Description("JSON object of env vars (values support {{var}})")),
@@ -56,6 +57,7 @@ func (a *Adapter) registerTemplateTools() {
 		mcp.WithString("executor"),
 		mcp.WithString("agent_profile"),
 		mcp.WithString("system_prompt"),
+		mcp.WithString("working_dir"),
 		mcp.WithString("tools"),
 		mcp.WithString("permissions"),
 		mcp.WithString("environment"),
@@ -114,6 +116,7 @@ func (a *Adapter) handleTemplateCreate(ctx context.Context, req mcp.CallToolRequ
 		Executor:             reqStr(req, "executor"),
 		AgentProfile:         reqStr(req, "agent_profile"),
 		SystemPrompt:         reqStr(req, "system_prompt"),
+		WorkingDir:           reqStr(req, "working_dir"),
 		OnDone:               reqStr(req, "on_done"),
 		OnFail:               reqStr(req, "on_fail"),
 		OnReview:             reqStr(req, "on_review"),
@@ -223,6 +226,10 @@ func (a *Adapter) handleTemplateUpdate(ctx context.Context, req mcp.CallToolRequ
 	if _, ok := args["system_prompt"]; ok {
 		v := reqStr(req, "system_prompt")
 		in.SystemPrompt = &v
+	}
+	if _, ok := args["working_dir"]; ok {
+		v := reqStr(req, "working_dir")
+		in.WorkingDir = &v
 	}
 	if raw := reqStr(req, "tools"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Tools); err != nil {

@@ -50,6 +50,7 @@ type TemplateRecord struct {
 	Executor             sql.NullString
 	AgentProfile         sql.NullString
 	SystemPrompt         sql.NullString
+	WorkingDir           sql.NullString // migration 010 — templates set task.WorkingDir directly
 	Tools                sql.NullString
 	Permissions          sql.NullString
 	Environment          sql.NullString
@@ -75,7 +76,7 @@ type TemplateRecord struct {
 }
 
 const templateSelectCols = `id, version, name, description, kind, auto_execute,
-	executor, agent_profile, system_prompt, tools, permissions, environment,
+	executor, agent_profile, system_prompt, working_dir, tools, permissions, environment,
 	cost_budget, max_retries, max_duration_ms, token_budget,
 	on_done, on_fail, on_review, on_done_merge,
 	escalation_chain, quality_gates, deliverables,
@@ -89,7 +90,7 @@ func scanTemplate(row interface {
 	var autoExecute, isArchived int
 	err := row.Scan(
 		&t.ID, &t.Version, &t.Name, &t.Description, &t.Kind, &autoExecute,
-		&t.Executor, &t.AgentProfile, &t.SystemPrompt, &t.Tools, &t.Permissions, &t.Environment,
+		&t.Executor, &t.AgentProfile, &t.SystemPrompt, &t.WorkingDir, &t.Tools, &t.Permissions, &t.Environment,
 		&t.CostBudget, &t.MaxRetries, &t.MaxDurationMs, &t.TokenBudget,
 		&t.OnDone, &t.OnFail, &t.OnReview, &t.OnDoneMerge,
 		&t.EscalationChain, &t.QualityGates, &t.Deliverables,
@@ -143,16 +144,16 @@ func (s *Store) CreateTemplate(t *TemplateRecord) error {
 	_, err := s.db.Exec(`
 		INSERT INTO task_templates (
 			id, version, name, description, kind, auto_execute,
-			executor, agent_profile, system_prompt, tools, permissions, environment,
+			executor, agent_profile, system_prompt, working_dir, tools, permissions, environment,
 			cost_budget, max_retries, max_duration_ms, token_budget,
 			on_done, on_fail, on_review, on_done_merge,
 			escalation_chain, quality_gates, deliverables,
 			checkpoint_mode, on_checkpoint_response,
 			metadata_template, required_vars, tags, is_archived,
 			created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, t.Version, t.Name, t.Description, t.Kind, autoExecute,
-		t.Executor, t.AgentProfile, t.SystemPrompt, t.Tools, t.Permissions, t.Environment,
+		t.Executor, t.AgentProfile, t.SystemPrompt, t.WorkingDir, t.Tools, t.Permissions, t.Environment,
 		t.CostBudget, t.MaxRetries, t.MaxDurationMs, t.TokenBudget,
 		t.OnDone, t.OnFail, t.OnReview, t.OnDoneMerge,
 		t.EscalationChain, t.QualityGates, t.Deliverables,
