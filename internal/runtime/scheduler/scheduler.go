@@ -43,18 +43,25 @@ type Scheduler struct {
 	predicates *waitpoll.Registry
 	cfg        *config.SchedulerConfig
 
-	pool      *WorkerPool
-	picker    *Picker
-	lifecycle *LifecycleManager
-	cost      *CostTracker
-	heartbeat *HeartbeatMonitor
-	bus       *EventBus
+	pool              *WorkerPool
+	picker            *Picker
+	lifecycle         *LifecycleManager
+	cost              *CostTracker
+	heartbeat         *HeartbeatMonitor
+	bus               *EventBus
+	progressThrottler *progressThrottler
 
 	mu      sync.RWMutex
 	enabled bool
 	results chan WorkerResult
 	stopCh  chan struct{}
 }
+
+// progressTokensWindow caps how often a run may emit a tokens-class
+// run.progress event. Chatty LLM stream parsers can produce several token
+// updates per second; 2s per run keeps the SSE stream readable without
+// starving the low-frequency note/artifact signals.
+const progressTokensWindow = 2 * time.Second
 
 // New creates a new scheduler with all sub-components. predicates may be nil
 // when no kind=wait tasks are expected; in that case, a wait task reaching
@@ -79,20 +86,21 @@ func New(
 	}
 
 	s := &Scheduler{
-		store:      store,
-		queue:      q,
-		registry:   registry,
-		predicates: predicates,
-		cfg:        cfg,
-		pool:       pool,
-		picker:     NewPicker(store),
-		lifecycle:  NewLifecycleManager(store, bus),
-		cost:       NewCostTracker(store),
-		heartbeat:  NewHeartbeatMonitor(store),
-		bus:        bus,
-		enabled:    cfg.Enabled,
-		results:    results,
-		stopCh:     make(chan struct{}),
+		store:             store,
+		queue:             q,
+		registry:          registry,
+		predicates:        predicates,
+		cfg:               cfg,
+		pool:              pool,
+		picker:            NewPicker(store),
+		lifecycle:         NewLifecycleManager(store, bus),
+		cost:              NewCostTracker(store),
+		heartbeat:         NewHeartbeatMonitor(store),
+		bus:               bus,
+		progressThrottler: newProgressThrottler(progressTokensWindow),
+		enabled:           cfg.Enabled,
+		results:           results,
+		stopCh:            make(chan struct{}),
 	}
 
 	return s
@@ -282,10 +290,15 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		Data:   map[string]interface{}{"from": "todo", "to": "doing"},
 	})
 
+	startedAt := time.Now().UTC()
 	s.bus.Publish(SchedulerEvent{
 		Type:   "run.started",
 		TaskID: task.ID,
 		RunID:  runID,
+		Data: map[string]interface{}{
+			"executor":   task.Executor,
+			"started_at": startedAt.Format(time.RFC3339),
+		},
 	})
 
 	// Submit to worker pool
@@ -296,6 +309,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	capturedRepoHint := task.WorkingDir
 	s.pool.Submit(task.ID, runID, func(wctx context.Context) (*executor.ExecutionResult, error) {
 		defer s.heartbeat.Deregister(capturedWorkerID)
+		defer s.progressThrottler.release(capturedRunID)
 		defer func() {
 			if capturedWorktree == "" {
 				return
@@ -363,6 +377,8 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 				RunID:  capturedRunID,
 				Data:   map[string]interface{}{"event_type": event.Type.String(), "content": event.Content},
 			})
+
+			s.publishProgress(capturedTaskID, capturedRunID, event)
 		}
 
 		result, err := exec.Run(wctx, job, cb)
@@ -489,6 +505,64 @@ func (s *Scheduler) Stop(ctx context.Context) error {
 	}
 	s.bus.Close()
 	return nil
+}
+
+// publishProgress emits a run.progress SSE event for user-visible signals
+// (notes, artifacts, tokens). Log lines and internal signals (CLOCKWORK_DONE,
+// CLOCKWORK_BLOCKED, CLOCKWORK_CHECKPOINT, etc.) are intentionally skipped —
+// those drive lifecycle transitions and are not activity-feed content.
+// Tokens-class emissions are rate-limited via progressThrottler to keep the
+// SSE stream readable during chatty streaming runs.
+func (s *Scheduler) publishProgress(taskID string, runID int64, event executor.ExecutionEvent) {
+	switch {
+	case event.Type == executor.EventSignal && event.Signal == "CLOCKWORK_NOTE":
+		s.bus.Publish(SchedulerEvent{
+			Type:   "run.progress",
+			TaskID: taskID,
+			RunID:  runID,
+			Data: map[string]interface{}{
+				"kind": "note",
+				"text": event.Content,
+			},
+		})
+
+	case event.Type == executor.EventArtifact && event.Artifact != nil:
+		s.bus.Publish(SchedulerEvent{
+			Type:   "run.progress",
+			TaskID: taskID,
+			RunID:  runID,
+			Data: map[string]interface{}{
+				"kind":          "artifact",
+				"artifact_type": event.Artifact.Type,
+				"content":       event.Artifact.Content,
+				"url":           event.Artifact.URL,
+				"file_path":     event.Artifact.FilePath,
+			},
+		})
+
+	case event.Type == executor.EventTokenUsage,
+		event.Type == executor.EventSignal && event.Signal == "CLOCKWORK_TOKENS":
+		if !s.progressThrottler.allow(runID, time.Now()) {
+			return
+		}
+		data := map[string]interface{}{"kind": "tokens"}
+		if event.Tokens != nil {
+			data["prompt"] = event.Tokens.PromptTokens
+			data["completion"] = event.Tokens.CompletionTokens
+			data["cost"] = event.Tokens.Cost
+		} else if event.Type == executor.EventSignal && event.Content != "" {
+			p, c, cost := executor.ParseTokenPayload(event.Content)
+			data["prompt"] = p
+			data["completion"] = c
+			data["cost"] = cost
+		}
+		s.bus.Publish(SchedulerEvent{
+			Type:   "run.progress",
+			TaskID: taskID,
+			RunID:  runID,
+			Data:   data,
+		})
+	}
 }
 
 func buildJob(task sqlstore.TaskRecord, runID int64) *executor.ExecutionJob {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
@@ -31,6 +32,12 @@ func NewLifecycleManager(store *sqlstore.Store, bus *EventBus) *LifecycleManager
 
 // HandleResult processes an execution result and applies the appropriate lifecycle transition.
 func (lm *LifecycleManager) HandleResult(taskID string, runID int64, result *executor.ExecutionResult) error {
+	// run.finished always fires when lifecycle finishes processing — regardless
+	// of which branch ran (done/failed/blocked/review/superseded). It is the
+	// frontend's single signal that a run is over and its pulse/Activity panel
+	// should stop. Uses a deferred closure so early-return paths still emit.
+	defer lm.emitRunFinished(taskID, runID, result)
+
 	task, err := lm.store.GetTask(taskID)
 	if err != nil {
 		return fmt.Errorf("lifecycle: get task %s: %w", taskID, err)
@@ -200,6 +207,44 @@ func (lm *LifecycleManager) transition(task *sqlstore.TaskRecord, runID int64, n
 	})
 
 	return nil
+}
+
+// emitRunFinished publishes the terminal run.finished event. duration_ms is
+// computed from the run row's started_at; if the run can't be read back
+// (unknown runID, store error) duration_ms is zero and the event still fires
+// so the UI can reliably stop the active-run pulse.
+func (lm *LifecycleManager) emitRunFinished(taskID string, runID int64, result *executor.ExecutionResult) {
+	if result == nil {
+		return
+	}
+
+	var durationMs int64
+	if runID > 0 {
+		if run, err := lm.store.GetRun(runID); err == nil && !run.StartedAt.IsZero() {
+			end := time.Now().UTC()
+			if run.EndedAt.Valid {
+				end = run.EndedAt.Time
+			}
+			if d := end.Sub(run.StartedAt); d > 0 {
+				durationMs = d.Milliseconds()
+			}
+		}
+	}
+
+	data := map[string]interface{}{
+		"status":      result.Status,
+		"duration_ms": durationMs,
+	}
+	if result.Reason != "" {
+		data["reason"] = result.Reason
+	}
+
+	lm.bus.Publish(SchedulerEvent{
+		Type:   "run.finished",
+		TaskID: taskID,
+		RunID:  runID,
+		Data:   data,
+	})
 }
 
 func missingTypes(missing []executor.Deliverable) []string {
