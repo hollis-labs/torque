@@ -370,7 +370,7 @@ func (e *CLIExecutor) dispatchLineSignal(line string, result *executor.Execution
 	case executor.SignalArtifact:
 		handleArtifactSignal(sig, result, cb, line)
 
-	case executor.SignalCheckpoint, executor.SignalProgress, executor.SignalSubtask:
+	case executor.SignalCheckpoint, executor.SignalProgress, executor.SignalSubtask, executor.SignalSubtodoDone:
 		if cb != nil {
 			cb(executor.SignalEvent(sig.Type.String(), sig.Payload))
 		}

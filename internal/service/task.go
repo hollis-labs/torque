@@ -60,6 +60,11 @@ type TaskCreateInput struct {
 	Trust                string // if empty, resolved via ResolveTrust
 	CheckpointMode       string
 	OnCheckpointResponse string
+
+	// Subtodos (migration 011). If nil, Create auto-extracts checklist
+	// items from Description. Non-nil (including empty) disables auto-
+	// extraction and stores the caller-provided list as-is.
+	Subtodos []sqlstore.Subtodo
 }
 
 // TaskService provides business logic for tasks.
@@ -249,6 +254,20 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		return nil, err
 	}
 
+	// Subtodos: caller-provided list wins; otherwise auto-extract top-level
+	// "- [ ]" checkboxes from the description so agents get structural
+	// acceptance gating for free. Write only when non-empty to avoid a
+	// redundant UPDATE immediately after INSERT.
+	subtodos := input.Subtodos
+	if subtodos == nil {
+		subtodos = ExtractSubtodosFromDescription(input.Description)
+	}
+	if len(subtodos) > 0 {
+		if err := s.store.SetSubtodos(id, subtodos); err != nil {
+			return nil, err
+		}
+	}
+
 	// Resolve tag names/slugs and link them to the task
 	if len(input.Tags) > 0 {
 		slugs, err := s.tags.ResolveNames(input.Tags)
@@ -381,6 +400,45 @@ func (s *TaskService) Transition(id, newStatus string) error {
 // Search performs a text search over tasks.
 func (s *TaskService) Search(query string) ([]sqlstore.TaskRecord, error) {
 	return s.store.SearchTasks(query)
+}
+
+// ListSubtodos returns the subtodo checklist for a task.
+func (s *TaskService) ListSubtodos(taskID string) ([]sqlstore.Subtodo, error) {
+	return s.store.GetSubtodos(taskID)
+}
+
+// AddSubtodo appends a checklist item. Caller supplies the id to keep it
+// deterministic across repeated emits (e.g. "item-3"); duplicate ids are
+// rejected so downstream mark-done calls stay unambiguous.
+func (s *TaskService) AddSubtodo(taskID string, item sqlstore.Subtodo) ([]sqlstore.Subtodo, error) {
+	if item.ID == "" {
+		return nil, &ValidationError{Field: "id", Message: "id is required"}
+	}
+	if item.Text == "" {
+		return nil, &ValidationError{Field: "text", Message: "text is required"}
+	}
+	existing, err := s.store.GetSubtodos(taskID)
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range existing {
+		if e.ID == item.ID {
+			return nil, &ValidationError{Field: "id", Message: "duplicate subtodo id: " + item.ID}
+		}
+	}
+	existing = append(existing, item)
+	if err := s.store.SetSubtodos(taskID, existing); err != nil {
+		return nil, err
+	}
+	return existing, nil
+}
+
+// MarkSubtodoDone ticks a single item and records its evidence.
+func (s *TaskService) MarkSubtodoDone(taskID, itemID, evidence string) ([]sqlstore.Subtodo, error) {
+	if err := s.store.SetSubtodoDone(taskID, itemID, evidence); err != nil {
+		return nil, err
+	}
+	return s.store.GetSubtodos(taskID)
 }
 
 // BulkTransition applies the same status transition to multiple tasks.

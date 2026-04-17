@@ -53,6 +53,10 @@ func ParseLine(line string) ParsedSignal {
 		payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "CLOCKWORK_TOKENS:"))
 		return ParsedSignal{Type: SignalTokens, Payload: payload}
 
+	case strings.HasPrefix(trimmed, "CLOCKWORK_SUBTODO_DONE:"):
+		payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "CLOCKWORK_SUBTODO_DONE:"))
+		return ParsedSignal{Type: SignalSubtodoDone, Payload: payload}
+
 	// Inline checkpoint signals (spec §4.6). Checkpoint-await must be
 	// matched before Checkpoint because its prefix is the longer one.
 	case strings.HasPrefix(trimmed, "CLOCKWORK_CHECKPOINT_AWAIT "):
@@ -80,6 +84,7 @@ var jsonSignalTypes = map[string]SignalType{
 	"CLOCKWORK_PROGRESS":   SignalProgress,
 	"CLOCKWORK_SUBTASK":    SignalSubtask,
 	"CLOCKWORK_ARTIFACT":   SignalArtifact,
+	"CLOCKWORK_SUBTODO_DONE": SignalSubtodoDone,
 }
 
 // parseJSONSignal attempts to parse a JSON-formatted signal line.
@@ -157,6 +162,26 @@ func ParseCheckpointPayload(payload string) (correlationID, typ, payloadJSON str
 		return "", "", "", fmt.Errorf("decode checkpoint payload base64: %w", decodeErr)
 	}
 	return correlationID, typ, string(raw), nil
+}
+
+// ParseSubtodoDonePayload decodes the payload of a CLOCKWORK_SUBTODO_DONE
+// signal. Format:
+//
+//	<item_id> [evidence...]
+//
+// The first whitespace-separated token is the item id; any remaining text
+// is joined back (preserving internal spacing) as the evidence string. An
+// empty payload returns an error because item_id is required.
+func ParseSubtodoDonePayload(payload string) (itemID, evidence string, err error) {
+	trimmed := strings.TrimSpace(payload)
+	if trimmed == "" {
+		return "", "", fmt.Errorf("CLOCKWORK_SUBTODO_DONE payload missing item_id")
+	}
+	idx := strings.IndexFunc(trimmed, func(r rune) bool { return r == ' ' || r == '\t' })
+	if idx < 0 {
+		return trimmed, "", nil
+	}
+	return trimmed[:idx], strings.TrimSpace(trimmed[idx:]), nil
 }
 
 // ParseTokenPayload parses a CLOCKWORK_TOKENS payload of the form
