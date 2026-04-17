@@ -44,16 +44,17 @@ type MergeConfig struct {
 }
 
 type SchedulerConfig struct {
-	Workers          int
-	IntervalSeconds  int
-	RetryBudget      int
-	CostCeiling      float64
-	HeartbeatSeconds int
-	StaleSeconds     int
-	Enabled          bool
-	MaxPerProject    int
-	DefaultMerge     string
-	WorktreeCleanup  string
+	Workers                  int
+	IntervalSeconds          int
+	RetryBudget              int
+	CostCeiling              float64
+	HeartbeatSeconds         int
+	HeartbeatProgressSeconds int
+	StaleSeconds             int
+	Enabled                  bool
+	MaxPerProject            int
+	DefaultMerge             string
+	WorktreeCleanup          string
 
 	// Per-run worktree dispatch — opt-in. When enabled, each run gets its
 	// own ephemeral git worktree branched from origin/main so concurrent
@@ -72,19 +73,20 @@ func Load() (*Config, error) {
 		RepoRoot:    os.Getenv("CLOCKWORK_REPO"),
 		DataDir:     envOr("CLOCKWORK_DATA_DIR", ".clockwork"),
 		Scheduler: SchedulerConfig{
-			Workers:          envInt("CLOCKWORK_SCHED_WORKERS", 3),
-			IntervalSeconds:  envInt("CLOCKWORK_SCHED_INTERVAL", 10),
-			RetryBudget:      envInt("CLOCKWORK_SCHED_RETRY_BUDGET", 3),
-			CostCeiling:      envFloat("CLOCKWORK_SCHED_COST_CEILING", 0),
-			HeartbeatSeconds: envInt("CLOCKWORK_SCHED_HEARTBEAT", 15),
-			StaleSeconds:     envInt("CLOCKWORK_SCHED_STALE", 300),
-			Enabled:          envBool("CLOCKWORK_SCHED_ENABLED", true),
-			MaxPerProject:    envInt("CLOCKWORK_SCHED_MAX_PER_PROJECT", 2),
-			DefaultMerge:     envOr("CLOCKWORK_SCHED_DEFAULT_MERGE", "none"),
-			WorktreeCleanup:  envOr("CLOCKWORK_SCHED_WORKTREE_CLEANUP", "on_merge"),
-			WorktreePerRun:   envBool("CLOCKWORK_WORKTREE_PER_RUN", false),
-			WorktreeRoot:     os.Getenv("CLOCKWORK_WORKTREE_ROOT"),
-			WorktreeKeepDays: envInt("CLOCKWORK_WORKTREE_KEEP_DAYS", 7),
+			Workers:                  envInt("CLOCKWORK_SCHED_WORKERS", 3),
+			IntervalSeconds:          envInt("CLOCKWORK_SCHED_INTERVAL", 10),
+			RetryBudget:              envInt("CLOCKWORK_SCHED_RETRY_BUDGET", 3),
+			CostCeiling:              envFloat("CLOCKWORK_SCHED_COST_CEILING", 0),
+			HeartbeatSeconds:         envInt("CLOCKWORK_SCHED_HEARTBEAT", 15),
+			HeartbeatProgressSeconds: envInt("CLOCKWORK_PROGRESS_HEARTBEAT_SECONDS", 30),
+			StaleSeconds:             envInt("CLOCKWORK_SCHED_STALE", 300),
+			Enabled:                  envBool("CLOCKWORK_SCHED_ENABLED", true),
+			MaxPerProject:            envInt("CLOCKWORK_SCHED_MAX_PER_PROJECT", 2),
+			DefaultMerge:             envOr("CLOCKWORK_SCHED_DEFAULT_MERGE", "none"),
+			WorktreeCleanup:          envOr("CLOCKWORK_SCHED_WORKTREE_CLEANUP", "on_merge"),
+			WorktreePerRun:           envBool("CLOCKWORK_WORKTREE_PER_RUN", false),
+			WorktreeRoot:             os.Getenv("CLOCKWORK_WORKTREE_ROOT"),
+			WorktreeKeepDays:         envInt("CLOCKWORK_WORKTREE_KEEP_DAYS", 7),
 		},
 		Concurrency: ConcurrencyConfig{
 			MaxReadConns:     envInt("CLOCKWORK_MAX_READ_CONNS", 4),
