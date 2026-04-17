@@ -116,6 +116,7 @@ func (s *Server) routes() {
 		// Artifacts
 		r.Get("/artifacts", s.listArtifacts)
 		r.Post("/artifacts", s.createArtifact)
+		r.Get("/artifacts/{id}/content", s.serveArtifactContent)
 
 		// Comments
 		r.Get("/comments", s.listComments)

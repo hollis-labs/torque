@@ -12,7 +12,17 @@ func (s *ArtifactService) Create(a *sqlstore.ArtifactRecord) error {
 	return s.store.CreateArtifact(a)
 }
 
+// Get returns the artifact with the given ID.
+func (s *ArtifactService) Get(id int64) (*sqlstore.ArtifactRecord, error) {
+	return s.store.GetArtifact(id)
+}
+
 // List returns all artifacts for a task.
 func (s *ArtifactService) List(taskID string) ([]sqlstore.ArtifactRecord, error) {
 	return s.store.ListArtifacts(taskID)
+}
+
+// Delete removes the artifact row by ID. Does not remove the referenced file.
+func (s *ArtifactService) Delete(id int64) error {
+	return s.store.DeleteArtifact(id)
 }
