@@ -222,6 +222,7 @@ export class ClockworkApiClient {
     if (filter?.offset !== undefined) params['offset'] = filter.offset
     if (filter?.kind) params['kind'] = filter.kind
     if (filter?.parent_id !== undefined) params['parent_id'] = filter.parent_id
+    if (filter?.manual !== undefined) params['manual'] = filter.manual ? 'true' : 'false'
     return this.get<{ tasks: Task[]; total: number }>('/tasks', params)
   }
 

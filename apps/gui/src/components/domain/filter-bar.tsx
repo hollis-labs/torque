@@ -8,11 +8,18 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { STATUS_COLORS, DEFAULT_STATUS_COLOR, MODE_PRESETS, PRIORITIES, TASK_STATUSES } from '@/lib/constants'
+import type { ManualFilter } from '@/lib/ops-filters-storage'
 import type { Epic, Project, Sprint, Tag, TaskStatus } from '@/lib/types'
 
 type ModePreset = keyof typeof MODE_PRESETS | 'all'
 
 const ALL_VALUE = '__all__'
+
+const MANUAL_OPTIONS: ReadonlyArray<{ value: ManualFilter; label: string; title: string }> = [
+  { value: 'all', label: 'All', title: 'All tasks (no manual filter)' },
+  { value: 'auto', label: 'Auto', title: 'Scheduler-eligible (manual=false)' },
+  { value: 'manual', label: 'Manual', title: 'Held for review (manual=true)' },
+]
 
 interface FilterBarProps {
   activeStatuses: TaskStatus[]
@@ -24,6 +31,9 @@ interface FilterBarProps {
   /** Show priority filter chips */
   activePriorities?: number[]
   onPriorityToggle?: (priority: number) => void
+  /** Manual-flag filter tri-state (All / Auto / Manual). Omit to hide the toggle. */
+  manualFilter?: ManualFilter
+  onManualFilterChange?: (value: ManualFilter) => void
   /** Project / Sprint / Epic group selectors (all three are optional — omit to hide) */
   projects?: Project[]
   projectId?: string | null
@@ -51,6 +61,8 @@ export function FilterBar({
   availableStatuses = TASK_STATUSES,
   activePriorities = [],
   onPriorityToggle,
+  manualFilter,
+  onManualFilterChange,
   projects,
   projectId,
   onProjectChange,
@@ -147,6 +159,37 @@ export function FilterBar({
           All
         </button>
       </div>
+
+      {/* Manual-flag toggle: All / Auto / Manual */}
+      {onManualFilterChange && (
+        <div
+          role="radiogroup"
+          aria-label="Filter by manual flag"
+          className="flex items-center gap-1 border-l border-zinc-800 pl-3"
+        >
+          <span className="mr-1 text-[10px] uppercase tracking-wider text-zinc-500">Manual:</span>
+          {MANUAL_OPTIONS.map((opt) => {
+            const active = (manualFilter ?? 'all') === opt.value
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                title={opt.title}
+                onClick={() => onManualFilterChange(opt.value)}
+                className={`rounded border px-2 py-0.5 text-[10px] tracking-wider transition-all ${
+                  active
+                    ? 'border-zinc-600 bg-zinc-800 text-zinc-200'
+                    : 'border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
+                }`}
+              >
+                {opt.label}
+              </button>
+            )
+          })}
+        </div>
+      )}
 
       {/* Group selectors: Project / Sprint / Epic */}
       {showGroups && (

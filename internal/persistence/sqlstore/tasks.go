@@ -87,6 +87,9 @@ type TaskFilter struct {
 	// matches. Use ParentIDNull=true to return root tasks (parent_id IS NULL).
 	ParentID     string
 	ParentIDNull bool
+
+	// Manual-flag filter. Nil = no filter; otherwise matches manual=0/1.
+	Manual *bool
 }
 
 // TaskUpdate holds optional fields to update; nil pointer = no change.
@@ -316,6 +319,14 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 	} else if f.ParentID != "" {
 		where = append(where, "parent_id = ?")
 		args = append(args, f.ParentID)
+	}
+	if f.Manual != nil {
+		v := 0
+		if *f.Manual {
+			v = 1
+		}
+		where = append(where, "manual = ?")
+		args = append(args, v)
 	}
 	if len(f.TagSlugs) > 0 {
 		placeholders := make([]string, len(f.TagSlugs))

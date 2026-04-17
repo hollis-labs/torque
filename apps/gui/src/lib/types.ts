@@ -285,6 +285,8 @@ export interface TaskFilter {
    * (parent_id IS NULL); any other value matches that parent id.
    */
   parent_id?: string | 'null'
+  /** Manual-flag filter. `true` = manual-hold only, `false` = auto-eligible only. */
+  manual?: boolean
 }
 
 /**

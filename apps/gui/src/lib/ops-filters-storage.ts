@@ -2,6 +2,22 @@ import type { TaskStatus } from './types'
 
 const KEY = 'clockwork:ops:filters:v1'
 
+/**
+ * Manual-flag filter tri-state.
+ * - `all`    = no filter (default)
+ * - `auto`   = manual=false (scheduler-eligible tasks)
+ * - `manual` = manual=true (held for review before dispatch)
+ */
+export type ManualFilter = 'all' | 'auto' | 'manual'
+
+const MANUAL_VALUES: readonly ManualFilter[] = ['all', 'auto', 'manual'] as const
+
+export function parseManualFilter(raw: unknown): ManualFilter {
+  return typeof raw === 'string' && (MANUAL_VALUES as readonly string[]).includes(raw)
+    ? (raw as ManualFilter)
+    : 'all'
+}
+
 export interface OpsFilters {
   statuses: TaskStatus[]
   priorities: number[]
@@ -10,6 +26,7 @@ export interface OpsFilters {
   epicId: string | null
   tagSlug: string | null
   mode: string
+  manual: ManualFilter
 }
 
 export function saveOpsFilters(filters: OpsFilters): void {
@@ -41,6 +58,7 @@ export function readOpsFilters(): OpsFilters | null {
       epicId: typeof f.epicId === 'string' ? f.epicId : null,
       tagSlug: typeof f.tagSlug === 'string' ? f.tagSlug : null,
       mode: typeof f.mode === 'string' ? f.mode : 'all',
+      manual: parseManualFilter(f.manual),
     }
   } catch {
     return null

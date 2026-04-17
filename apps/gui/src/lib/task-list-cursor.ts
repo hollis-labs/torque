@@ -1,4 +1,5 @@
 import type { TaskStatus } from './types'
+import { parseManualFilter, type ManualFilter } from './ops-filters-storage'
 
 const KEY = 'clockwork:task-list-cursor'
 
@@ -10,6 +11,7 @@ export interface CursorFilter {
   epicId: string | null
   tagSlug: string | null
   mode: string
+  manual: ManualFilter
 }
 
 export interface TaskListCursor {
@@ -69,5 +71,6 @@ function parseFilter(raw: unknown): CursorFilter | null {
     epicId: typeof f.epicId === 'string' ? f.epicId : null,
     tagSlug: typeof f.tagSlug === 'string' ? f.tagSlug : null,
     mode: typeof f.mode === 'string' ? f.mode : 'all',
+    manual: parseManualFilter(f.manual),
   }
 }

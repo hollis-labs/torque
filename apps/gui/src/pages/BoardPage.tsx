@@ -15,10 +15,16 @@ import { useSSE } from '@/hooks/use-sse'
 import { notifyError } from '@/lib/toast'
 import { DEFAULT_ACTIVE_STATUSES, MODE_PRESETS, TASK_STATUSES } from '@/lib/constants'
 import { saveTaskListCursor } from '@/lib/task-list-cursor'
-import { saveOpsFilters, readOpsFilters, clearOpsFilters } from '@/lib/ops-filters-storage'
+import {
+  saveOpsFilters,
+  readOpsFilters,
+  clearOpsFilters,
+  parseManualFilter,
+  type ManualFilter,
+} from '@/lib/ops-filters-storage'
 import type { Epic, Project, Sprint, Tag, Task, TaskStatus } from '@/lib/types'
 
-const FILTER_PARAM_KEYS = ['status', 'priority', 'project_id', 'sprint_id', 'epic_id', 'tag', 'mode'] as const
+const FILTER_PARAM_KEYS = ['status', 'priority', 'project_id', 'sprint_id', 'epic_id', 'tag', 'mode', 'manual'] as const
 
 type ModePreset = keyof typeof MODE_PRESETS | 'all'
 
@@ -75,6 +81,10 @@ export default function BoardPage() {
   )
   const mode = useMemo(
     () => parseModeParam(searchParams.get('mode')),
+    [searchParams]
+  )
+  const manualFilter: ManualFilter = useMemo(
+    () => parseManualFilter(searchParams.get('manual')),
     [searchParams]
   )
   const projectId = searchParams.get('project_id')
@@ -147,6 +157,7 @@ export default function BoardPage() {
         if (stored.epicId) next.set('epic_id', stored.epicId)
         if (stored.tagSlug) next.set('tag', stored.tagSlug)
         if (stored.mode && stored.mode !== 'all') next.set('mode', stored.mode)
+        if (stored.manual && stored.manual !== 'all') next.set('manual', stored.manual)
         return next
       },
       { replace: true }
@@ -167,8 +178,9 @@ export default function BoardPage() {
       epicId,
       tagSlug,
       mode,
+      manual: manualFilter,
     })
-  }, [hydrated, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, mode])
+  }, [hydrated, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, mode, manualFilter])
 
   // Fetch pickers once on mount
   const refreshPickers = useCallback(async () => {
@@ -231,6 +243,7 @@ export default function BoardPage() {
         sprint_id: sprintId ?? undefined,
         epic_id: epicId ?? undefined,
         tags: tagSlug ? [tagSlug] : undefined,
+        manual: manualFilter === 'all' ? undefined : manualFilter === 'manual',
       })
       setTasks(result.tasks)
       setError(null)
@@ -239,7 +252,7 @@ export default function BoardPage() {
     } finally {
       setLoading(false)
     }
-  }, [api, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug])
+  }, [api, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, manualFilter])
 
   useEffect(() => {
     if (!hydrated) return
@@ -310,6 +323,13 @@ export default function BoardPage() {
     })
   }
 
+  function handleManualFilterChange(value: ManualFilter) {
+    updateParams((p) => {
+      if (value === 'all') p.delete('manual')
+      else p.set('manual', value)
+    })
+  }
+
   async function handleTransition(id: string, status: TaskStatus) {
     try {
       await api.transitionTask(id, status)
@@ -326,7 +346,8 @@ export default function BoardPage() {
     sprintId !== null ||
     epicId !== null ||
     tagSlug !== null ||
-    mode !== 'all'
+    mode !== 'all' ||
+    manualFilter !== 'all'
 
   const emptyVariant = filtersActive ? 'no-results' : 'no-tasks'
 
@@ -351,8 +372,9 @@ export default function BoardPage() {
       epicId,
       tagSlug,
       mode,
+      manual: manualFilter,
     }),
-    [activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, mode]
+    [activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, mode, manualFilter]
   )
 
   const handleVisibleOrderChange = useCallback(
@@ -385,6 +407,8 @@ export default function BoardPage() {
         onModeChange={handleModeChange}
         activePriorities={activePriorities}
         onPriorityToggle={handlePriorityToggle}
+        manualFilter={manualFilter}
+        onManualFilterChange={handleManualFilterChange}
         projects={projects}
         projectId={projectId}
         onProjectChange={(id) => handleGroupChange('project_id', id)}
