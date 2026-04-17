@@ -6,9 +6,10 @@ import { PageHeader } from '@/components/domain/page-header'
 import { SummaryCards } from '@/components/domain/summary-cards'
 import { EmptyState } from '@/components/domain/empty-state'
 import { RestartFrontendButton } from '@/components/domain/restart-frontend-button'
+import { ActivityHeatmap, RunsChart, TaskPipeline } from '@/components/widgets'
 import { useApi } from '@/hooks/use-api'
 import { STATUS_COLOR_VAR } from '@/lib/constants'
-import type { Task } from '@/lib/types'
+import type { Run, Task } from '@/lib/types'
 
 type DashboardTab = 'activity' | 'mission-control' | 'usage'
 const TAB_VALUES: DashboardTab[] = ['activity', 'mission-control', 'usage']
@@ -44,6 +45,7 @@ export default function DashboardPage() {
   const [searchParams, setSearchParams] = useSearchParams()
 
   const [tasks, setTasks] = useState<Task[]>([])
+  const [runs, setRuns] = useState<Run[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -55,9 +57,27 @@ export default function DashboardPage() {
   useEffect(() => {
     let cancelled = false
     api
-      .listTasks({ limit: 200 })
+      .listTasks({ limit: 500 })
       .then(({ tasks: t }) => {
-        if (!cancelled) setTasks(t)
+        if (cancelled) return t
+        setTasks(t)
+        return t
+      })
+      .then(async (t) => {
+        if (cancelled || !t) return
+        // Hydrate recent runs so the RunsChart + ActivityHeatmap have some
+        // data today. A cross-task runs endpoint (CW-20260417-0091) will
+        // later replace this fan-out.
+        const recent = t
+          .slice()
+          .sort(
+            (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+          )
+          .slice(0, 20)
+        const lists = await Promise.all(
+          recent.map((x) => api.listRuns(x.id).catch(() => [] as Run[]))
+        )
+        if (!cancelled) setRuns(lists.flat())
       })
       .catch((err: Error) => {
         if (!cancelled) setError(err.message)
@@ -126,7 +146,27 @@ export default function DashboardPage() {
             </TabsList>
 
             <TabsContent value="activity" className="px-4 py-4">
-              <TabPlaceholder label="Activity" />
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-[auto_1fr_260px]">
+                <section className="rounded border border-border/60 bg-card/40 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-4">
+                    <span className="whitespace-nowrap font-mono text-[9px] uppercase tracking-[0.2em] text-muted-foreground">
+                      Activity — 16w
+                    </span>
+                    <span className="font-mono text-[9px] text-muted-foreground/70">
+                      tasks · runs
+                    </span>
+                  </div>
+                  <ActivityHeatmap tasks={tasks} runs={runs} />
+                </section>
+
+                <section className="rounded border border-border/60 bg-card/40 p-4">
+                  <RunsChart runs={runs} />
+                </section>
+
+                <section className="rounded border border-border/60 bg-card/40 p-4">
+                  <TaskPipeline tasks={tasks} />
+                </section>
+              </div>
             </TabsContent>
             <TabsContent value="mission-control" className="px-4 py-4">
               <TabPlaceholder label="Mission Control" />
