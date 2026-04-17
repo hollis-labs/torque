@@ -428,6 +428,48 @@ JSON`
 		"CLOCKWORK_DONE in a content_block_delta must still succeed when no result event arrived")
 }
 
+// Bug CW-20260417-0031: when a run fails with zero stderr (claude --print
+// writes everything to stdout), result.Reason must still carry a
+// diagnostic — fall back to the stdout tail so the scheduler can persist
+// something non-empty as runs.ErrorMessage and operators have a signal.
+func TestRunPrintMode_ExitOneNoStderr_FallsBackToStdoutTail(t *testing.T) {
+	// Script writes only to stdout, emits no terminal signal, exits 1.
+	script := `echo "error: claude model request failed (rate limited)"
+echo "retry after 60s"
+exit 1`
+	pm := profiles("default", shellProfile(script))
+	e := New(pm)
+	j := job("default")
+
+	result, err := e.Run(context.Background(), j, nil)
+	require.NoError(t, err, "failures produce a failed result, not a Go error")
+	assert.Equal(t, "failed", result.Status)
+	assert.NotEmpty(t, result.Reason, "Reason must never be empty on failure")
+	assert.Contains(t, result.Reason, "rate limited",
+		"stdout tail must land in result.Reason when stderr is empty")
+}
+
+// Stream-json path variant: no result event, no signal, exit 1, and the
+// agent printed diagnostic text via content_block_delta (which accumulates
+// into the fallback buffer) — Reason must surface that text.
+func TestRunStreamJSON_ExitOneNoStderr_FallsBackToStdoutTail(t *testing.T) {
+	// Emit a text_delta with diagnostic content but no result event.
+	script := `cat <<'JSON'
+{"type":"content_block_delta","delta":{"type":"text_delta","text":"error: model unavailable\nplease retry later\n"}}
+JSON
+exit 1`
+	pm := profiles("default", streamShellProfile(script))
+	e := New(pm)
+	j := job("default")
+
+	result, err := e.Run(context.Background(), j, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "failed", result.Status)
+	assert.NotEmpty(t, result.Reason)
+	assert.Contains(t, result.Reason, "model unavailable",
+		"stream-json stdout tail must land in result.Reason when stderr is empty")
+}
+
 // Stream-json path: no result event, no signal, exit 1 → genuine failure.
 // Stderr tail must land in result.Reason.
 func TestRunStreamJSON_ExitOneNoResultNoSignal_FailsWithStderr(t *testing.T) {

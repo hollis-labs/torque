@@ -23,6 +23,13 @@ import (
 // just the inline tail callers (scheduler, MCP clients) see.
 const stderrTailBytes = 8 * 1024
 
+// stdoutTailBytes caps how much stdout we surface in result.Reason on
+// failure when stderr is empty (common with claude --print, which writes
+// everything to stdout). Smaller than stderrTailBytes because stdout is
+// prose-heavy and the tail is a fallback diagnostic, not the primary
+// signal. See Bug CW-20260417-0031.
+const stdoutTailBytes = 2 * 1024
+
 // Compile-time check that CLIExecutor satisfies the Executor interface.
 var _ executor.Executor = (*CLIExecutor)(nil)
 
@@ -189,17 +196,33 @@ func attachStderrCapture(cmd *exec.Cmd, runID int64) (*bytes.Buffer, func()) {
 	return buf, closer
 }
 
-// stderrTail returns the trailing up-to-stderrTailBytes bytes of buf,
-// trimmed of whitespace, suitable for embedding in result.Reason.
-func stderrTail(buf *bytes.Buffer) string {
-	if buf == nil || buf.Len() == 0 {
+// tailBytes returns the trailing up-to-max bytes of data, trimmed of
+// surrounding whitespace. Shared by stderr and stdout tail helpers so
+// they never drift.
+func tailBytes(data []byte, max int) string {
+	if len(data) == 0 {
 		return ""
 	}
-	b := buf.Bytes()
-	if len(b) > stderrTailBytes {
-		b = b[len(b)-stderrTailBytes:]
+	if len(data) > max {
+		data = data[len(data)-max:]
 	}
-	return strings.TrimSpace(string(b))
+	return strings.TrimSpace(string(data))
+}
+
+// failureReason returns the best available diagnostic for a failed run:
+// stderr tail if present, otherwise the stdout tail, otherwise fallback.
+// Fallback is returned verbatim — callers typically pass waitErr.Error()
+// so the run still has *some* signal when both streams are empty.
+func failureReason(stderrBuf *bytes.Buffer, stdout string, fallback string) string {
+	if stderrBuf != nil {
+		if tail := tailBytes(stderrBuf.Bytes(), stderrTailBytes); tail != "" {
+			return tail
+		}
+	}
+	if tail := tailBytes([]byte(stdout), stdoutTailBytes); tail != "" {
+		return tail
+	}
+	return fallback
 }
 
 // Kill sends SIGKILL to the currently running process, if any.
@@ -281,19 +304,21 @@ func (e *CLIExecutor) runPrintMode(_ context.Context, cmd *exec.Cmd, job *execut
 	// No terminal signal. Exit status determines failure.
 	if waitErr != nil {
 		result.Status = "failed"
-		reason := waitErr.Error()
-		if tail := stderrTail(stderrBuf); tail != "" {
-			reason = tail
-		}
-		result.Reason = reason
+		result.Reason = failureReason(stderrBuf, accumulated.String(), waitErr.Error())
+		log.Printf("executor-cli: print-mode failure (task=%s run=%d exit=%v): %s",
+			job.TaskID, job.RunID, waitErr, result.Reason)
 		return nil
 	}
 
 	// Process exited 0 but never signaled completion — treat as failure
-	// with an explicit reason rather than leaving Status empty.
+	// with an explicit reason. Prefer stdout tail (the agent may have
+	// emitted a human-readable diagnostic) before the generic fallback.
 	if result.Status == "" {
 		result.Status = "failed"
-		result.Reason = "process exited without emitting a CLOCKWORK_* terminal signal"
+		result.Reason = failureReason(nil, accumulated.String(),
+			"process exited without emitting a CLOCKWORK_* terminal signal")
+		log.Printf("executor-cli: print-mode failure (task=%s run=%d exit=0 no-signal): %s",
+			job.TaskID, job.RunID, result.Reason)
 	}
 
 	return nil
@@ -561,17 +586,18 @@ func (e *CLIExecutor) runStreamJSON(_ context.Context, cmd *exec.Cmd, job *execu
 		if result.Status == "" {
 			result.Status = "failed"
 		}
-		reason := waitErr.Error()
-		if tail := stderrTail(stderrBuf); tail != "" {
-			reason = tail
-		}
-		result.Reason = reason
+		result.Reason = failureReason(stderrBuf, accumulated.String(), waitErr.Error())
+		log.Printf("executor-cli: stream-json failure (task=%s run=%d exit=%v): %s",
+			job.TaskID, job.RunID, waitErr, result.Reason)
 		return nil
 	}
 
 	if result.Status == "" {
 		result.Status = "failed"
-		result.Reason = "stream-json ended without a result event or CLOCKWORK_* signal"
+		result.Reason = failureReason(nil, accumulated.String(),
+			"stream-json ended without a result event or CLOCKWORK_* signal")
+		log.Printf("executor-cli: stream-json failure (task=%s run=%d exit=0 no-result): %s",
+			job.TaskID, job.RunID, result.Reason)
 	}
 	return nil
 }

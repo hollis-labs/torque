@@ -230,8 +230,10 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		return fmt.Errorf("create run: %w", err)
 	}
 
-	// Build execution job
-	job := buildJob(task)
+	// Build execution job. RunID must be the DB-issued runs.id so the
+	// executor can key stderr sidecars, the CLOCKWORK_RUN_ID env var, and
+	// log messages on the same id observers see in runs table.
+	job := buildJob(task, runID)
 
 	// Register heartbeat
 	workerID := fmt.Sprintf("worker-%s-%d", task.ID, runID)
@@ -432,9 +434,10 @@ func (s *Scheduler) Stop(ctx context.Context) error {
 	return nil
 }
 
-func buildJob(task sqlstore.TaskRecord) *executor.ExecutionJob {
+func buildJob(task sqlstore.TaskRecord, runID int64) *executor.ExecutionJob {
 	job := &executor.ExecutionJob{
 		TaskID:       task.ID,
+		RunID:        runID,
 		Description:  task.Description,
 		SystemPrompt: task.SystemPrompt,
 		WorkingDir:   task.WorkingDir,

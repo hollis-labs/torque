@@ -103,6 +103,10 @@ func TestIntegrationFullRoundTrip(t *testing.T) {
 	assert.Len(t, jobs, 1)
 	assert.Equal(t, "CW-20260407-0001", jobs[0].TaskID)
 	assert.Contains(t, jobs[0].Description, "login endpoint")
+	// Regression: the RunID the plugin sees must be the DB-issued runs.id,
+	// not a synthetic counter or the zero value. Stderr sidecar paths and
+	// CLOCKWORK_RUN_ID env var both key on this. See CW-20260417-0030.
+	assert.Equal(t, runs[0].ID, jobs[0].RunID, "plugin should receive the DB-issued run ID in job.RunID")
 
 	// Verify events were emitted
 	var events []scheduler.SchedulerEvent
