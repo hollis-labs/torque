@@ -88,6 +88,7 @@ export function TaskDetailHeader({
 
           <div className="flex items-center gap-2 flex-wrap">
             <StatusBadge status={task.status} />
+            <CopyableId id={task.id} />
             {editing ? (
               <Select
                 value={String(source.priority)}
