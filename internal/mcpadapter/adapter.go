@@ -43,6 +43,7 @@ func (a *Adapter) registerCoreTools() {
 	a.registerSchedulerTools()
 	a.registerCheckpointTools()
 	a.registerTemplateTools()
+	a.registerSubtodoTools()
 }
 
 // registerOptInTools checks feature flags and registers tools for enabled layers.
