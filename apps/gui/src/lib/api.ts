@@ -262,6 +262,26 @@ export class ClockworkApiClient {
     return (res.runs ?? []).map(normalizeRun)
   }
 
+  /**
+   * Aggregate feed across all tasks, newest-first. Clamped server-side to
+   * [1, 1000]; default 200. Powers the Ops dashboard widgets which need a
+   * single cross-task window instead of a per-task fan-out.
+   */
+  async listAllRuns(params?: {
+    limit?: number
+    since?: string
+    status?: string
+    project_id?: string
+  }): Promise<Run[]> {
+    const qs: Record<string, string | number | boolean | undefined> = {}
+    if (params?.limit !== undefined) qs['limit'] = params.limit
+    if (params?.since) qs['since'] = params.since
+    if (params?.status) qs['status'] = params.status
+    if (params?.project_id) qs['project_id'] = params.project_id
+    const res = await this.get<{ runs: ApiRunRecord[] }>('/runs', qs)
+    return (res.runs ?? []).map(normalizeRun)
+  }
+
   async getRun(id: number): Promise<Run> {
     return normalizeRun(await this.get<ApiRunRecord>(`/runs/${id}`))
   }
@@ -604,14 +624,22 @@ export class ClockworkApiClient {
   // SSE
   // -------------------------
 
-  subscribeEvents(onEvent: (event: SSEEvent) => void): () => void {
+  subscribeEvents(
+    onEvent: (event: SSEEvent) => void,
+    onStatus?: (status: 'connecting' | 'live' | 'error') => void,
+  ): () => void {
     const url = this.url('/events')
     let es: EventSource | null = null
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
     let stopped = false
 
     function connect() {
+      onStatus?.('connecting')
       es = new EventSource(url)
+
+      es.onopen = () => {
+        onStatus?.('live')
+      }
 
       es.onmessage = (e: MessageEvent) => {
         try {
@@ -625,6 +653,7 @@ export class ClockworkApiClient {
       es.onerror = () => {
         es?.close()
         if (!stopped) {
+          onStatus?.('error')
           reconnectTimer = setTimeout(connect, 3000)
         }
       }
