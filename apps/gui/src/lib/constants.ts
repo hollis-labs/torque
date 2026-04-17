@@ -92,3 +92,16 @@ export const TAG_COLOR_CLASSES: Record<TagColor, string> = {
   violet: 'bg-violet-950 text-violet-400 border border-violet-900',
   pink:   'bg-pink-950 text-pink-400 border border-pink-900',
 }
+
+/** Muted, text-only per-tag colors for inline (non-pill) rendering. */
+export const TAG_TEXT_CLASSES: Record<TagColor, string> = {
+  zinc:   'text-zinc-500',
+  red:    'text-red-500/80',
+  orange: 'text-orange-500/80',
+  amber:  'text-amber-500/80',
+  green:  'text-green-500/80',
+  teal:   'text-teal-500/80',
+  blue:   'text-blue-500/80',
+  violet: 'text-violet-500/80',
+  pink:   'text-pink-500/80',
+}

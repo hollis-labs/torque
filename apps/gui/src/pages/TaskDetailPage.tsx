@@ -354,7 +354,7 @@ export default function TaskDetailPage() {
         onCancel={handleCancel}
         onSendBack={() => setSendBackOpen(true)}
         onTaskChange={setTask}
-        onTaskDelete={() => navigate('/')}
+        onTaskDelete={() => navigate('/operations')}
       />
 
       <SendBackDialog

@@ -107,8 +107,8 @@ export default function EpicDetailPage() {
     <div className="flex h-full flex-col">
       <DetailHeader
         title={epic.name}
-        backTo="/"
-        backLabel="Tasks"
+        backTo="/operations"
+        backLabel="Operations"
         id={epic.id}
         status={epic.status}
       >

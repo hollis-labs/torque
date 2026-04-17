@@ -260,7 +260,7 @@ export default function BoardPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title="Tasks" />
+      <PageHeader title="Operations" />
       {!loading && !error && <SummaryCards cards={summaryCards} />}
       <FilterBar
         activeStatuses={activeStatuses}
