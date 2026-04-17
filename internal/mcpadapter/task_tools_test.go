@@ -212,6 +212,107 @@ func TestFullStack_TaskUpdate_Facets(t *testing.T) {
 	require.Equal(t, "ctx-123", ref["String"])
 }
 
+// TestFullStack_TaskUpdate_WritableFields exercises each field newly exposed on
+// the clockwork_task_update MCP tool for HTTP PUT parity (CW-20260417-0007).
+// Each field gets a round-trip check via the returned TaskRecord JSON.
+func TestFullStack_TaskUpdate_WritableFields(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, _ := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":       "writable-fields",
+		"description": "x",
+	})
+	var created map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	id := created["ID"].(string)
+
+	// Scalars / simple strings / bools / numbers.
+	text, isErr := callTool(t, a, "clockwork_task_update", map[string]interface{}{
+		"id":                 id,
+		"manual":             true,
+		"executor":           "cli",
+		"agent_profile":      "claude-code",
+		"working_dir":        "/tmp/wd",
+		"system_prompt":      "You are a helpful test agent.",
+		"on_done":            "close",
+		"on_fail":            "block",
+		"on_review":          "notify",
+		"on_done_merge":      "pr",
+		"blocked_reason":     "waiting on X",
+		"deliverable_preset": "diff-only",
+		"cost_budget":        float64(1.5),
+		"max_retries":        float64(7),
+		"max_duration_ms":    float64(60000),
+		"token_budget":       float64(200000),
+	})
+	require.False(t, isErr, "scalar update should not error: %s", text)
+	var u1 map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(text), &u1))
+	require.Equal(t, true, u1["Manual"])
+	require.Equal(t, "cli", u1["Executor"])
+	require.Equal(t, "claude-code", u1["AgentProfile"])
+	require.Equal(t, "/tmp/wd", u1["WorkingDir"])
+	require.Equal(t, "You are a helpful test agent.", u1["SystemPrompt"])
+	require.Equal(t, "close", u1["OnDone"])
+	require.Equal(t, "block", u1["OnFail"])
+	require.Equal(t, "notify", u1["OnReview"])
+	require.Equal(t, "pr", u1["OnDoneMerge"])
+	require.Equal(t, "waiting on X", u1["BlockedReason"])
+	require.Equal(t, "diff-only", u1["DeliverablePreset"])
+	cb := u1["CostBudget"].(map[string]interface{})
+	require.Equal(t, float64(1.5), cb["Float64"])
+	require.Equal(t, true, cb["Valid"])
+	require.Equal(t, float64(7), u1["MaxRetries"])
+	md := u1["MaxDurationMs"].(map[string]interface{})
+	require.Equal(t, float64(60000), md["Int64"])
+	require.Equal(t, true, md["Valid"])
+	tb := u1["TokenBudget"].(map[string]interface{})
+	require.Equal(t, float64(200000), tb["Int64"])
+	require.Equal(t, true, tb["Valid"])
+
+	// JSON-blob fields (passed as JSON-encoded strings).
+	// Need a real task ID for depends_on to satisfy validateTaskWrites.
+	text, _ = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":       "dep",
+		"description": "x",
+	})
+	var dep map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(text), &dep))
+	depID := dep["ID"].(string)
+
+	text, isErr = callTool(t, a, "clockwork_task_update", map[string]interface{}{
+		"id":               id,
+		"tools":            `["Read","Write"]`,
+		"permissions":      `{"net":"allow"}`,
+		"environment":      `{"FOO":"bar"}`,
+		"files":            `["a.go","b.go"]`,
+		"escalation_chain": `["oncall","lead"]`,
+		"quality_gates":    `["lint","tests"]`,
+		"deliverables":     `[{"type":"diff","required":true}]`,
+		"depends_on":       `["` + depID + `"]`,
+		"metadata":         `{"meta_key":"meta_val"}`,
+	})
+	require.False(t, isErr, "json-blob update should not error: %s", text)
+	var u2 map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(text), &u2))
+
+	// Blob fields are sql.NullString on TaskRecord: {String, Valid}.
+	expectNullStringJSON := func(key, wantJSON string) {
+		ns := u2[key].(map[string]interface{})
+		require.Equal(t, true, ns["Valid"], "%s should be Valid", key)
+		require.JSONEq(t, wantJSON, ns["String"].(string), "%s JSON mismatch", key)
+	}
+	expectNullStringJSON("Tools", `["Read","Write"]`)
+	expectNullStringJSON("Permissions", `{"net":"allow"}`)
+	expectNullStringJSON("Environment", `{"FOO":"bar"}`)
+	expectNullStringJSON("Files", `["a.go","b.go"]`)
+	expectNullStringJSON("EscalationChain", `["oncall","lead"]`)
+	expectNullStringJSON("QualityGates", `["lint","tests"]`)
+	expectNullStringJSON("Deliverables", `[{"type":"diff","required":true}]`)
+	expectNullStringJSON("DependsOn", `["`+depID+`"]`)
+	expectNullStringJSON("Metadata", `{"meta_key":"meta_val"}`)
+}
+
 func TestFullStack_TaskLifecycle(t *testing.T) {
 	a := setupAdapter(t)
 
