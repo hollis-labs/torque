@@ -79,6 +79,8 @@ func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, agg *sqlstore.T
 		"checkpoint_mode":        t.CheckpointMode,
 		"on_checkpoint_response": t.OnCheckpointResponse,
 
+		"parent_id": nullStr(t.ParentID),
+
 		// Run roll-up — prompt/completion/cost summed across all recorded
 		// runs for this task, plus a turn count. Nil aggregate renders
 		// zeroes so clients can rely on the keys always being present.
@@ -187,6 +189,9 @@ type TaskCreateRequest struct {
 	Trust                string `json:"trust,omitempty"`
 	CheckpointMode       string `json:"checkpoint_mode,omitempty"`
 	OnCheckpointResponse string `json:"on_checkpoint_response,omitempty"`
+
+	// Parent linkage (migration 013)
+	ParentID string `json:"parent_id,omitempty"`
 }
 
 // TaskUpdateRequest is the JSON request body for PUT /api/v1/tasks/:id.
@@ -235,6 +240,9 @@ type TaskUpdateRequest struct {
 	Trust                *string `json:"trust,omitempty"`
 	CheckpointMode       *string `json:"checkpoint_mode,omitempty"`
 	OnCheckpointResponse *string `json:"on_checkpoint_response,omitempty"`
+
+	// Parent linkage (migration 013). Empty string clears the parent.
+	ParentID *string `json:"parent_id,omitempty"`
 
 	// Status is included only for detection — the handler returns 400 if it
 	// is non-nil and points the caller to POST /tasks/:id/transition.
@@ -344,6 +352,15 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	if v := r.URL.Query().Get("checkpoint_mode"); v != "" {
 		filter.CheckpointMode = v
+	}
+	// parent_id filter — special value "null" returns roots (parent IS NULL).
+	if _, ok := r.URL.Query()["parent_id"]; ok {
+		v := r.URL.Query().Get("parent_id")
+		if v == "" || v == "null" {
+			filter.ParentIDNull = true
+		} else {
+			filter.ParentID = v
+		}
 	}
 	if v := r.URL.Query().Get("tags"); v != "" {
 		parts := strings.Split(v, ",")
@@ -460,6 +477,8 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		Trust:                req.Trust,
 		CheckpointMode:       req.CheckpointMode,
 		OnCheckpointResponse: req.OnCheckpointResponse,
+
+		ParentID: req.ParentID,
 	}
 
 	task, err := s.svc.Task.Create(input)
@@ -582,6 +601,10 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 	update.OnCheckpointResponse = req.OnCheckpointResponse
 	if req.SourceRef != nil {
 		update.SourceRef = &sql.NullString{String: *req.SourceRef, Valid: *req.SourceRef != ""}
+	}
+	// Parent linkage (migration 013). Empty string clears the parent.
+	if req.ParentID != nil {
+		update.ParentID = &sql.NullString{String: *req.ParentID, Valid: *req.ParentID != ""}
 	}
 
 	input := service.TaskUpdateInput{TaskUpdate: update, Tags: req.Tags}

@@ -63,6 +63,10 @@ type TaskCreateInput struct {
 	CheckpointMode       string
 	OnCheckpointResponse string
 
+	// Parent linkage (migration 013). Empty = no parent (root). Validated
+	// against ancestor chain to prevent cycles.
+	ParentID string
+
 	// Subtodos (migration 011). If nil, Create auto-extracts checklist
 	// items from Description. Non-nil (including empty) disables auto-
 	// extraction and stores the caller-provided list as-is.
@@ -181,6 +185,15 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		}
 	}
 
+	// Parent linkage (migration 013). Cycle check uses the existing task graph;
+	// since the candidate task has no ID yet, self-reference only applies at
+	// Update time. Here we just require the parent to exist.
+	if input.ParentID != "" {
+		if _, err := s.store.GetTask(input.ParentID); err != nil {
+			return nil, &ValidationError{Field: "parent_id", Message: "parent task not found: " + input.ParentID}
+		}
+	}
+
 	id, err := s.store.NextTaskID()
 	if err != nil {
 		return nil, err
@@ -258,6 +271,9 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	}
 	if input.EpicID != "" {
 		rec.EpicID = sql.NullString{String: input.EpicID, Valid: true}
+	}
+	if input.ParentID != "" {
+		rec.ParentID = sql.NullString{String: input.ParentID, Valid: true}
 	}
 
 	if err := s.store.CreateTask(rec); err != nil {
@@ -371,6 +387,15 @@ func (s *TaskService) Update(id string, input TaskUpdateInput) error {
 		return &ValidationError{Field: "agent_file", Message: err.Error()}
 	}
 
+	// Parent linkage cycle check (migration 013). Runs before the store write
+	// so cycle-producing updates are rejected with a ValidationError rather
+	// than committed. Only evaluated when the caller is touching parent_id.
+	if input.ParentID != nil {
+		if err := s.validateParentID(id, *input.ParentID); err != nil {
+			return err
+		}
+	}
+
 	if err := s.store.UpdateTask(id, input.TaskUpdate); err != nil {
 		return err
 	}
@@ -387,6 +412,47 @@ func (s *TaskService) Update(id string, input TaskUpdateInput) error {
 // Delete removes a task by ID.
 func (s *TaskService) Delete(id string) error {
 	return s.store.DeleteTask(id)
+}
+
+// validateParentID enforces parent_id invariants for updates (migration 013).
+// A NullString with Valid=false clears the parent — always allowed. Otherwise:
+//
+//   - parent must not equal the task itself (self-reference).
+//   - parent must exist.
+//   - no cycle: walking ancestors from the candidate parent must never reach
+//     the task being updated.
+//
+// Cycle detection caps at 256 ancestors to guard against malformed graphs.
+func (s *TaskService) validateParentID(taskID string, candidate sql.NullString) error {
+	if !candidate.Valid || candidate.String == "" {
+		return nil
+	}
+	parentID := candidate.String
+	if parentID == taskID {
+		return &ValidationError{Field: "parent_id", Message: "parent_id cannot reference the task itself"}
+	}
+	parent, err := s.store.GetTask(parentID)
+	if err != nil {
+		return &ValidationError{Field: "parent_id", Message: "parent task not found: " + parentID}
+	}
+	// Walk ancestors of the proposed parent; if we encounter taskID, a cycle
+	// would be created by this update.
+	cursor := parent
+	for hops := 0; hops < 256; hops++ {
+		if !cursor.ParentID.Valid || cursor.ParentID.String == "" {
+			return nil
+		}
+		if cursor.ParentID.String == taskID {
+			return &ValidationError{Field: "parent_id", Message: "parent_id would create a cycle through task " + taskID}
+		}
+		next, err := s.store.GetTask(cursor.ParentID.String)
+		if err != nil {
+			// Broken ancestor chain — treat as no cycle to avoid false positives.
+			return nil
+		}
+		cursor = next
+	}
+	return &ValidationError{Field: "parent_id", Message: "parent_id ancestor chain exceeds 256 hops"}
 }
 
 // ListTags returns the tags linked to a task.
