@@ -176,4 +176,31 @@ func TestMigrationsApply(t *testing.T) {
 	err = db.QueryRow(`SELECT agent_file FROM tasks WHERE id = 'T1'`).Scan(&af)
 	require.NoError(t, err)
 	require.Equal(t, "", af, "existing rows should default to empty agent_file after migration 012")
+
+	// Verify 013 added parent_id column + index.
+	_, err = db.Exec(`SELECT parent_id FROM tasks LIMIT 0`)
+	require.NoError(t, err, "tasks.parent_id should exist after migration 013")
+
+	var pid sql.NullString
+	err = db.QueryRow(`SELECT parent_id FROM tasks WHERE id = 'T1'`).Scan(&pid)
+	require.NoError(t, err)
+	require.False(t, pid.Valid, "existing rows should have NULL parent_id after migration 013")
+
+	// parent_id index should exist (partial index on non-null rows).
+	idxRows2, err := db.Query(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='tasks'`)
+	require.NoError(t, err)
+	defer idxRows2.Close()
+	parentIdx := map[string]bool{}
+	for idxRows2.Next() {
+		var n string
+		require.NoError(t, idxRows2.Scan(&n))
+		parentIdx[n] = true
+	}
+	require.True(t, parentIdx["idx_tasks_parent_id"], "idx_tasks_parent_id should exist")
+
+	// Verify 014 widened the kind CHECK to accept 'plan'.
+	_, err = db.Exec(`INSERT INTO tasks (id, title, status, kind) VALUES ('T14-plan', 'plan task', 'todo', 'plan')`)
+	require.NoError(t, err, "tasks.kind should accept 'plan' after migration 014")
+	_, err = db.Exec(`INSERT INTO tasks (id, title, status, kind) VALUES ('T14-bad', 'bad', 'todo', 'still-bad')`)
+	require.Error(t, err, "tasks.kind CHECK should still reject unknown kinds after migration 014")
 }

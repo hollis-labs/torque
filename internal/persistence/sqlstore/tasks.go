@@ -58,6 +58,9 @@ type TaskRecord struct {
 	Trust                string
 	CheckpointMode       string
 	OnCheckpointResponse string
+
+	// Parent linkage (migration 013). NULL = top of lineage.
+	ParentID sql.NullString
 }
 
 // TaskFilter holds optional filter criteria for ListTasks.
@@ -79,6 +82,11 @@ type TaskFilter struct {
 	SourceRef      string
 	Trust          string
 	CheckpointMode string
+
+	// Parent linkage (migration 013). When set, returns tasks whose parent_id
+	// matches. Use ParentIDNull=true to return root tasks (parent_id IS NULL).
+	ParentID     string
+	ParentIDNull bool
 }
 
 // TaskUpdate holds optional fields to update; nil pointer = no change.
@@ -123,6 +131,10 @@ type TaskUpdate struct {
 	Trust                *string
 	CheckpointMode       *string
 	OnCheckpointResponse *string
+
+	// Parent linkage (migration 013). Non-nil pointer writes the column;
+	// use a NullString with Valid=false to clear (set to NULL).
+	ParentID *sql.NullString
 }
 
 // applyDefaults fills zero-value fields with domain defaults.
@@ -162,14 +174,15 @@ func applyDefaults(t *TaskRecord) {
 	}
 }
 
-// The 40-column SELECT list used by GetTask, ListTasks, and SearchTasks.
+// The 41-column SELECT list used by GetTask, ListTasks, and SearchTasks.
 const taskSelectCols = `id, title, description, status, priority, manual,
 	executor, agent_profile, working_dir, tools, permissions, environment,
 	system_prompt, agent_file, files, cost_budget, max_retries, max_duration_ms, token_budget,
 	on_done, on_fail, on_review, escalation_chain, quality_gates, deliverables,
 	deliverable_preset, on_done_merge, depends_on, blocked_reason, metadata,
 	sprint_id, project_id, epic_id, created_at, updated_at,
-	kind, source_type, source_ref, trust, checkpoint_mode, on_checkpoint_response`
+	kind, source_type, source_ref, trust, checkpoint_mode, on_checkpoint_response,
+	parent_id`
 
 // scanTask scans a single row into a TaskRecord.
 func scanTask(row interface {
@@ -185,6 +198,7 @@ func scanTask(row interface {
 		&t.DeliverablePreset, &t.OnDoneMerge, &t.DependsOn, &t.BlockedReason, &t.Metadata,
 		&t.SprintID, &t.ProjectID, &t.EpicID, &t.CreatedAt, &t.UpdatedAt,
 		&t.Kind, &t.SourceType, &t.SourceRef, &t.Trust, &t.CheckpointMode, &t.OnCheckpointResponse,
+		&t.ParentID,
 	)
 	if err != nil {
 		return nil, err
@@ -212,8 +226,9 @@ func (s *Store) CreateTask(t *TaskRecord) error {
 		on_done, on_fail, on_review, escalation_chain, quality_gates, deliverables,
 		deliverable_preset, on_done_merge, depends_on, blocked_reason, metadata,
 		sprint_id, project_id, epic_id,
-		kind, source_type, source_ref, trust, checkpoint_mode, on_checkpoint_response
-	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+		kind, source_type, source_ref, trust, checkpoint_mode, on_checkpoint_response,
+		parent_id
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
 	_, err := s.db.Exec(q,
 		t.ID, t.Title, t.Description, t.Status, t.Priority, manual,
@@ -223,6 +238,7 @@ func (s *Store) CreateTask(t *TaskRecord) error {
 		t.DeliverablePreset, t.OnDoneMerge, t.DependsOn, t.BlockedReason, t.Metadata,
 		t.SprintID, t.ProjectID, t.EpicID,
 		t.Kind, t.SourceType, t.SourceRef, t.Trust, t.CheckpointMode, t.OnCheckpointResponse,
+		t.ParentID,
 	)
 	return err
 }
@@ -294,6 +310,12 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 	if f.CheckpointMode != "" {
 		where = append(where, "checkpoint_mode = ?")
 		args = append(args, f.CheckpointMode)
+	}
+	if f.ParentIDNull {
+		where = append(where, "parent_id IS NULL")
+	} else if f.ParentID != "" {
+		where = append(where, "parent_id = ?")
+		args = append(args, f.ParentID)
 	}
 	if len(f.TagSlugs) > 0 {
 		placeholders := make([]string, len(f.TagSlugs))
@@ -497,6 +519,10 @@ func (s *Store) UpdateTask(id string, u TaskUpdate) error {
 	if u.OnCheckpointResponse != nil {
 		setClauses = append(setClauses, "on_checkpoint_response = ?")
 		args = append(args, *u.OnCheckpointResponse)
+	}
+	if u.ParentID != nil {
+		setClauses = append(setClauses, "parent_id = ?")
+		args = append(args, *u.ParentID)
 	}
 
 	// Always update updated_at

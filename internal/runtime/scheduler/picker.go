@@ -62,6 +62,11 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, error) {
 		if task.Kind == "parent" {
 			continue
 		}
+		// Plan tasks are pure coordination — phases hold phase_id-tagged
+		// children that run on their own. The plan itself never dispatches.
+		if task.Kind == "plan" {
+			continue
+		}
 
 		// Per-project concurrency gate (no gate for project-less tasks).
 		if pk := projectKey(task); pk != "" {

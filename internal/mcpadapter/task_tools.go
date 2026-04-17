@@ -39,6 +39,7 @@ func (a *Adapter) registerTaskTools() {
 		mcp.WithString("checkpoint_mode", mcp.Description("none|blocking|non_blocking (default none)")),
 		mcp.WithString("on_checkpoint_response", mcp.Description("resume|review|custom (default resume)")),
 		mcp.WithString("metadata", mcp.Description("JSON object: freeform metadata, including metadata.wait for kind=wait")),
+		mcp.WithString("parent_id", mcp.Description("Optional parent task ID (migration 013). Empty = top of lineage.")),
 	), a.handleTaskCreate)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_get",
@@ -56,6 +57,7 @@ func (a *Adapter) registerTaskTools() {
 		mcp.WithString("source_ref", mcp.Description("Filter by source_ref")),
 		mcp.WithString("trust", mcp.Description("Filter by trust (trusted|normal|untrusted)")),
 		mcp.WithString("checkpoint_mode", mcp.Description("Filter by checkpoint_mode")),
+		mcp.WithString("parent_id", mcp.Description("Filter by parent_id; pass 'null' to return root tasks")),
 		mcp.WithNumber("limit", mcp.Description("Max results (default 50)")),
 	), a.handleTaskList)
 
@@ -100,6 +102,7 @@ func (a *Adapter) registerTaskTools() {
 		mcp.WithString("trust", mcp.Description("New trust (trusted|normal|untrusted)")),
 		mcp.WithString("checkpoint_mode", mcp.Description("New checkpoint_mode (none|blocking|non_blocking)")),
 		mcp.WithString("on_checkpoint_response", mcp.Description("New on_checkpoint_response (resume|review|custom)")),
+		mcp.WithString("parent_id", mcp.Description("New parent_id (migration 013; empty string clears the parent)")),
 	), a.handleTaskUpdate)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_delete",
@@ -172,6 +175,8 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest)
 		Trust:                reqStr(req, "trust"),
 		CheckpointMode:       reqStr(req, "checkpoint_mode"),
 		OnCheckpointResponse: reqStr(req, "on_checkpoint_response"),
+
+		ParentID: reqStr(req, "parent_id"),
 	}
 
 	if raw := reqStr(req, "tags"); raw != "" {
@@ -220,6 +225,14 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 		Trust:          reqStr(req, "trust"),
 		CheckpointMode: reqStr(req, "checkpoint_mode"),
 		Limit:          limit,
+	}
+	if _, ok := req.GetArguments()["parent_id"]; ok {
+		v := reqStr(req, "parent_id")
+		if v == "" || v == "null" {
+			filter.ParentIDNull = true
+		} else {
+			filter.ParentID = v
+		}
 	}
 	tasks, err := a.svc.Task.List(filter)
 	if err != nil {
@@ -417,6 +430,12 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 	if _, ok := args["on_checkpoint_response"]; ok {
 		v := reqStr(req, "on_checkpoint_response")
 		update.OnCheckpointResponse = &v
+	}
+	// Parent linkage (migration 013). Empty string clears the parent.
+	if _, ok := args["parent_id"]; ok {
+		v := reqStr(req, "parent_id")
+		ns := sql.NullString{String: v, Valid: v != ""}
+		update.ParentID = &ns
 	}
 
 	input := service.TaskUpdateInput{TaskUpdate: update}

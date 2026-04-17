@@ -16,6 +16,7 @@ type Service struct {
 	Tag        *TagService
 	Checkpoint *CheckpointService
 	Template   *TemplateService
+	Plan       *PlanService
 }
 
 // New constructs a Service wired to the provided store.
@@ -36,5 +37,6 @@ func New(store *sqlstore.Store) *Service {
 		Tag:        tag,
 		Checkpoint: &CheckpointService{store: store},
 		Template:   &TemplateService{store: store, tasks: task},
+		Plan:       &PlanService{store: store, tasks: task},
 	}
 }

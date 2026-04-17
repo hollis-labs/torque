@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom'
-import { LayoutList, Play, BarChart3, Settings, Cog, FileText, Inbox } from 'lucide-react'
+import { LayoutList, Play, BarChart3, Settings, Cog, FileText, Inbox, FolderTree } from 'lucide-react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster } from '@/components/ui/sonner'
 import { ApiProvider } from '@/hooks/use-api'
@@ -16,6 +16,8 @@ import EpicDetailPage from '@/pages/EpicDetailPage'
 import TemplatesPage from '@/pages/TemplatesPage'
 import TemplateDetailPage from '@/pages/TemplateDetailPage'
 import CheckpointsPage from '@/pages/CheckpointsPage'
+import PlansPage from '@/pages/PlansPage'
+import PlanDetailPage from '@/pages/PlanDetailPage'
 import { cn } from '@/lib/utils'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined
@@ -65,6 +67,9 @@ function AppShell() {
         <NavItem to="/operations" label="Operations">
           <LayoutList className="h-4 w-4" />
         </NavItem>
+        <NavItem to="/plans" label="Plans">
+          <FolderTree className="h-4 w-4" />
+        </NavItem>
         <NavItem to="/templates" label="Templates">
           <FileText className="h-4 w-4" />
         </NavItem>
@@ -94,6 +99,8 @@ function AppShell() {
           <Route path="/projects/:id" element={<ProjectDetailPage />} />
           <Route path="/sprints/:id" element={<SprintDetailPage />} />
           <Route path="/epics/:id" element={<EpicDetailPage />} />
+          <Route path="/plans" element={<PlansPage />} />
+          <Route path="/plans/:id" element={<PlanDetailPage />} />
           <Route path="/templates" element={<TemplatesPage />} />
           <Route path="/templates/:id" element={<TemplateDetailPage />} />
           <Route path="/checkpoints" element={<CheckpointsPage />} />

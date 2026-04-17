@@ -15,6 +15,8 @@ import type {
   TemplateInstantiateRequest,
   Checkpoint,
   Subtodo,
+  PlanDetail,
+  PlanPhaseInput,
 } from './types'
 
 class ApiError extends Error {
@@ -218,6 +220,8 @@ export class ClockworkApiClient {
     if (filter?.search) params['search'] = filter.search
     if (filter?.limit !== undefined) params['limit'] = filter.limit
     if (filter?.offset !== undefined) params['offset'] = filter.offset
+    if (filter?.kind) params['kind'] = filter.kind
+    if (filter?.parent_id !== undefined) params['parent_id'] = filter.parent_id
     return this.get<{ tasks: Task[]; total: number }>('/tasks', params)
   }
 
@@ -517,6 +521,45 @@ export class ClockworkApiClient {
 
   async instantiateTemplate(id: string, body: TemplateInstantiateRequest): Promise<Task> {
     return this.post<Task>(`/templates/${id}/instantiate`, body)
+  }
+
+  // -------------------------
+  // Plans
+  // -------------------------
+
+  async listPlans(): Promise<{ plans: Task[] }> {
+    return this.get<{ plans: Task[] }>('/plans')
+  }
+
+  async getPlan(id: string): Promise<PlanDetail> {
+    return this.get<PlanDetail>(`/plans/${id}`)
+  }
+
+  async createPlan(data: {
+    title: string
+    description?: string
+    priority?: number
+    project_id?: string
+    sprint_id?: string
+    epic_id?: string
+    phases?: PlanPhaseInput[]
+    tags?: string[]
+  }): Promise<PlanDetail> {
+    return this.post<PlanDetail>('/plans', data)
+  }
+
+  async addPlanPhase(planId: string, data: { name: string; acceptance?: string }): Promise<{ phase_id: string }> {
+    return this.post<{ phase_id: string }>(`/plans/${planId}/phases`, data)
+  }
+
+  async removePlanPhase(planId: string, phaseId: string): Promise<void> {
+    return this.delete<void>(`/plans/${planId}/phases/${phaseId}`)
+  }
+
+  async listPlanChildren(planId: string, phaseId?: string): Promise<{ tasks: Task[] }> {
+    const params: Record<string, string | number | boolean | undefined> = {}
+    if (phaseId) params['phase_id'] = phaseId
+    return this.get<{ tasks: Task[] }>(`/plans/${planId}/children`, params)
   }
 
   // -------------------------
