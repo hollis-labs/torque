@@ -7,7 +7,7 @@ import { PageHeader } from '@/components/domain/page-header'
 import { SummaryCards } from '@/components/domain/summary-cards'
 import { EmptyState } from '@/components/domain/empty-state'
 import { RestartFrontendButton } from '@/components/domain/restart-frontend-button'
-import { ActivityHeatmap, RunsChart, TaskPipeline } from '@/components/widgets'
+import { OpsWidgetGroupA } from '@/components/widgets'
 import { useApi } from '@/hooks/use-api'
 import { STATUS_COLOR_VAR } from '@/lib/constants'
 import type { Run, Task } from '@/lib/types'
@@ -147,33 +147,7 @@ export default function DashboardPage() {
             </TabsList>
 
             <TabsContent value="activity" className="px-4 py-4">
-              <div className="grid grid-cols-1 gap-4 xl:grid-cols-[auto_1fr_260px]">
-                <Card size="sm">
-                  <CardContent>
-                    <div className="mb-3 flex items-center justify-between gap-4">
-                      <span className="whitespace-nowrap font-mono text-[9px] uppercase tracking-[0.2em] text-muted-foreground">
-                        Activity — 16w
-                      </span>
-                      <span className="font-mono text-[9px] text-muted-foreground/70">
-                        tasks · runs
-                      </span>
-                    </div>
-                    <ActivityHeatmap tasks={tasks} runs={runs} />
-                  </CardContent>
-                </Card>
-
-                <Card size="sm">
-                  <CardContent>
-                    <RunsChart runs={runs} />
-                  </CardContent>
-                </Card>
-
-                <Card size="sm">
-                  <CardContent>
-                    <TaskPipeline tasks={tasks} />
-                  </CardContent>
-                </Card>
-              </div>
+              <OpsWidgetGroupA tasks={tasks} runs={runs} />
             </TabsContent>
             <TabsContent value="mission-control" className="px-4 py-4">
               <Card size="sm">
