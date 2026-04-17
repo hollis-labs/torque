@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"sync"
 	"time"
 
@@ -14,7 +15,13 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/queue"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/waitpoll"
+	"github.com/hollis-labs/clockwork-manifold/internal/worktree"
 )
+
+// envRepoRoot returns CLOCKWORK_REPO so the startup sweep knows which
+// repo's worktree admin to prune against. Kept as a tiny helper so tests
+// can override behavior by setting the env var.
+func envRepoRoot() string { return os.Getenv("CLOCKWORK_REPO") }
 
 // SchedulerStatus reports the current state of the scheduler.
 type SchedulerStatus struct {
@@ -235,6 +242,27 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	// log messages on the same id observers see in runs table.
 	job := buildJob(task, runID)
 
+	// If per-run worktrees are enabled and the task has a working dir, try
+	// to create an ephemeral worktree branched from origin/main and route
+	// the executor into it. Failure is non-fatal — we log and fall back to
+	// running in task.working_dir so a stale remote or git issue can't block
+	// dispatch.
+	wtPath := ""
+	if s.cfg.WorktreePerRun && task.WorkingDir != "" {
+		path, err := worktree.SetupPerRun(worktree.PerRunOptions{
+			Enabled:  true,
+			Root:     s.cfg.WorktreeRoot,
+			KeepDays: s.cfg.WorktreeKeepDays,
+		}, task.WorkingDir, runID)
+		if err != nil {
+			log.Printf("[scheduler] per-run worktree setup failed for %s run %d: %v (falling back to %s)", task.ID, runID, err, task.WorkingDir)
+		} else {
+			wtPath = path
+			job.WorkingDir = path
+			log.Printf("[scheduler] per-run worktree ready for %s run %d at %s", task.ID, runID, path)
+		}
+	}
+
 	// Register heartbeat
 	workerID := fmt.Sprintf("worker-%s-%d", task.ID, runID)
 	s.heartbeat.Register(workerID, task.ID, runID, task.Executor)
@@ -264,8 +292,24 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	capturedRunID := runID
 	capturedWorkerID := workerID
 	capturedTaskID := task.ID
+	capturedWorktree := wtPath
+	capturedRepoHint := task.WorkingDir
 	s.pool.Submit(task.ID, runID, func(wctx context.Context) (*executor.ExecutionResult, error) {
 		defer s.heartbeat.Deregister(capturedWorkerID)
+		defer func() {
+			if capturedWorktree == "" {
+				return
+			}
+			removed, err := worktree.CleanupPerRun(capturedRepoHint, capturedWorktree)
+			switch {
+			case err != nil:
+				log.Printf("[scheduler] per-run worktree cleanup failed for %s run %d at %s: %v", capturedTaskID, capturedRunID, capturedWorktree, err)
+			case removed:
+				log.Printf("[scheduler] per-run worktree removed for %s run %d at %s", capturedTaskID, capturedRunID, capturedWorktree)
+			default:
+				log.Printf("[scheduler] per-run worktree preserved for %s run %d at %s (commits or uncommitted work present)", capturedTaskID, capturedRunID, capturedWorktree)
+			}
+		}()
 
 		// Create event callback that updates heartbeat and run
 		cb := func(event executor.ExecutionEvent) {
@@ -409,6 +453,19 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	defer ticker.Stop()
 
 	log.Printf("[scheduler] started (workers=%d, interval=%s)", s.cfg.Workers, interval)
+
+	// Best-effort sweep of orphaned per-run worktrees on startup. Requires
+	// CLOCKWORK_REPO so we know which repo's admin to prune against; if the
+	// operator hasn't set it, the sweep is silently skipped.
+	if s.cfg.WorktreePerRun && s.cfg.WorktreeKeepDays > 0 && envRepoRoot() != "" {
+		removed, errs := worktree.SweepPerRun(envRepoRoot(), s.cfg.WorktreeRoot, s.cfg.WorktreeKeepDays, time.Now())
+		for _, p := range removed {
+			log.Printf("[scheduler] swept stale worktree %s", p)
+		}
+		for _, e := range errs {
+			log.Printf("[scheduler] worktree sweep error: %v", e)
+		}
+	}
 
 	for {
 		select {

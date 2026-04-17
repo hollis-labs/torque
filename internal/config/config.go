@@ -54,6 +54,14 @@ type SchedulerConfig struct {
 	MaxPerProject    int
 	DefaultMerge     string
 	WorktreeCleanup  string
+
+	// Per-run worktree dispatch — opt-in. When enabled, each run gets its
+	// own ephemeral git worktree branched from origin/main so concurrent
+	// runs can never collide and human git ops on the main tree can't
+	// silently hijack agent state.
+	WorktreePerRun   bool
+	WorktreeRoot     string // empty means "${repoRoot}-worktrees"
+	WorktreeKeepDays int
 }
 
 func Load() (*Config, error) {
@@ -74,6 +82,9 @@ func Load() (*Config, error) {
 			MaxPerProject:    envInt("CLOCKWORK_SCHED_MAX_PER_PROJECT", 2),
 			DefaultMerge:     envOr("CLOCKWORK_SCHED_DEFAULT_MERGE", "none"),
 			WorktreeCleanup:  envOr("CLOCKWORK_SCHED_WORKTREE_CLEANUP", "on_merge"),
+			WorktreePerRun:   envBool("CLOCKWORK_WORKTREE_PER_RUN", false),
+			WorktreeRoot:     os.Getenv("CLOCKWORK_WORKTREE_ROOT"),
+			WorktreeKeepDays: envInt("CLOCKWORK_WORKTREE_KEEP_DAYS", 7),
 		},
 		Concurrency: ConcurrencyConfig{
 			MaxReadConns:     envInt("CLOCKWORK_MAX_READ_CONNS", 4),
