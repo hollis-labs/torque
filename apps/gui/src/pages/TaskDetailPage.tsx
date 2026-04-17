@@ -9,6 +9,7 @@ import { CommentList } from '@/components/domain/comment-list'
 import { RunCard } from '@/components/domain/run-card'
 import { EmptyState } from '@/components/domain/empty-state'
 import { ArtifactCard } from '@/components/domain/artifact-card'
+import { DebugTabStub } from '@/components/domain/debug-tab-stub'
 import {
   AttachArtifactDialog,
   type AttachArtifactPayload,
@@ -62,7 +63,7 @@ export default function TaskDetailPage() {
   const [comments, setComments] = useState<Comment[] | null>(null)
   const [runs, setRuns] = useState<Run[] | null>(null)
   const [artifacts, setArtifacts] = useState<Artifact[] | null>(null)
-  const [activeTab, setActiveTab] = useState('comments')
+  const [activeTab, setActiveTab] = useState('details')
 
   // Container picker options (loaded when edit mode activates)
   const [projects, setProjects] = useState<Project[]>([])
@@ -149,7 +150,7 @@ export default function TaskDetailPage() {
     if (activeTab === 'comments' && comments === null) {
       api.listComments(id).then(setComments).catch(() => setComments([]))
     }
-    if (activeTab === 'runs' && runs === null) {
+    if (activeTab === 'logs' && runs === null) {
       api.listRuns(id).then(setRuns).catch(() => setRuns([]))
     }
     if (activeTab === 'artifacts' && artifacts === null) {
@@ -360,26 +361,22 @@ export default function TaskDetailPage() {
         </div>
       )}
 
-      {/* Field sections */}
+      {/* Content area — edit mode shows the form flat, view mode tabs everything. */}
       <div className="flex-1 overflow-auto">
-        <div className="flex flex-col gap-3 p-4">
-          <TaskProperties
-            task={task}
-            editing={editing}
-            draft={displayDraft}
-            onDraftChange={updateDraft}
-            projects={projects}
-            sprints={sprints}
-            epics={epics}
-            pickersLoading={pickersLoading}
-          />
+        {editing ? (
+          <div className="flex flex-col gap-3 p-4">
+            <TaskProperties
+              task={task}
+              editing={editing}
+              draft={displayDraft}
+              onDraftChange={updateDraft}
+              projects={projects}
+              sprints={sprints}
+              epics={epics}
+              pickersLoading={pickersLoading}
+            />
 
-          {/* Facets — read-only v1: kind, source, trust, checkpoint, template_ref */}
-          {!editing && <TaskFacets task={task} />}
-
-          {/* Description — inline, zinc accent, always open */}
-          <DetailSection label="Description" accent="zinc" collapsible={false}>
-            {editing ? (
+            <DetailSection label="Description" accent="zinc" collapsible={false}>
               <Textarea
                 value={displayDraft.description}
                 onChange={(e) => updateDraft('description', e.target.value)}
@@ -387,127 +384,165 @@ export default function TaskDetailPage() {
                 className="text-[13px]"
                 placeholder="Task description"
               />
-            ) : task.description ? (
-              <p className="text-[13px] text-zinc-300 whitespace-pre-wrap">{task.description}</p>
-            ) : (
-              <span className="text-[13px] italic text-zinc-600">—</span>
-            )}
-          </DetailSection>
+            </DetailSection>
 
-          <ExecutionContext
-            task={task}
-            editing={editing}
-            draft={displayDraft}
-            onDraftChange={updateDraft}
-          />
+            <ExecutionContext
+              task={task}
+              editing={editing}
+              draft={displayDraft}
+              onDraftChange={updateDraft}
+            />
 
-          <LifecycleRules
-            task={task}
-            editing={editing}
-            draft={displayDraft}
-            onDraftChange={updateDraft}
-          />
+            <LifecycleRules
+              task={task}
+              editing={editing}
+              draft={displayDraft}
+              onDraftChange={updateDraft}
+            />
 
-          <DeliverablesAndDeps
-            task={task}
-            editing={editing}
-            draft={displayDraft}
-            onDraftChange={updateDraft}
-          />
-        </div>
-
-        {/* Activity zone — hidden in edit mode */}
-        {!editing && (
-          <div className="border-t border-zinc-800/80 px-4 py-3">
-            <Tabs value={activeTab} onValueChange={setActiveTab}>
-              <TabsList className="bg-transparent border-b border-zinc-800/50 rounded-none p-0 h-auto mb-3">
+            <DeliverablesAndDeps
+              task={task}
+              editing={editing}
+              draft={displayDraft}
+              onDraftChange={updateDraft}
+            />
+          </div>
+        ) : (
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList className="bg-transparent border-b border-zinc-800/80 rounded-none p-0 h-auto px-4 pt-2 justify-start gap-0 flex-none">
+              {([
+                ['details', 'Details'],
+                ['comments', 'Comments'],
+                ['artifacts', 'Artifacts'],
+                ['logs', 'Logs'],
+                ['debug', 'Debug'],
+              ] as const).map(([value, label]) => (
                 <TabsTrigger
-                  value="comments"
+                  key={value}
+                  value={value}
                   className="text-[10px] uppercase tracking-[.18em] data-[state=active]:border-b data-[state=active]:border-zinc-100 data-[state=active]:text-zinc-100 text-zinc-500 rounded-none bg-transparent px-3 py-1.5"
                 >
-                  Comments
+                  {label}
                 </TabsTrigger>
-                <TabsTrigger
-                  value="runs"
-                  className="text-[10px] uppercase tracking-[.18em] data-[state=active]:border-b data-[state=active]:border-zinc-100 data-[state=active]:text-zinc-100 text-zinc-500 rounded-none bg-transparent px-3 py-1.5"
-                >
-                  Runs
-                </TabsTrigger>
-                <TabsTrigger
-                  value="artifacts"
-                  className="text-[10px] uppercase tracking-[.18em] data-[state=active]:border-b data-[state=active]:border-zinc-100 data-[state=active]:text-zinc-100 text-zinc-500 rounded-none bg-transparent px-3 py-1.5"
-                >
-                  Artifacts
-                </TabsTrigger>
-              </TabsList>
+              ))}
+            </TabsList>
 
-              <TabsContent value="comments">
-                <CommentList
-                  comments={comments ?? []}
-                  loading={comments === null}
-                  onAddComment={handleAddComment}
+            <TabsContent value="details" className="px-4 py-3">
+              <div className="flex flex-col gap-3">
+                <TaskProperties
+                  task={task}
+                  editing={false}
+                  draft={displayDraft}
+                  onDraftChange={updateDraft}
+                  projects={projects}
+                  sprints={sprints}
+                  epics={epics}
+                  pickersLoading={pickersLoading}
                 />
-              </TabsContent>
 
-              <TabsContent value="runs">
-                {runs === null ? (
-                  <div className="flex flex-col gap-3">
-                    {Array.from({ length: 2 }).map((_, i) => (
-                      <Skeleton key={i} className="h-24 w-full rounded-md" />
-                    ))}
-                  </div>
-                ) : runs.length === 0 ? (
+                <TaskFacets task={task} />
+
+                <DetailSection label="Description" accent="zinc" collapsible={false}>
+                  {task.description ? (
+                    <p className="text-[13px] text-zinc-300 whitespace-pre-wrap">{task.description}</p>
+                  ) : (
+                    <span className="text-[13px] italic text-zinc-600">—</span>
+                  )}
+                </DetailSection>
+
+                <ExecutionContext
+                  task={task}
+                  editing={false}
+                  draft={displayDraft}
+                  onDraftChange={updateDraft}
+                />
+
+                <LifecycleRules
+                  task={task}
+                  editing={false}
+                  draft={displayDraft}
+                  onDraftChange={updateDraft}
+                />
+
+                <DeliverablesAndDeps
+                  task={task}
+                  editing={false}
+                  draft={displayDraft}
+                  onDraftChange={updateDraft}
+                />
+              </div>
+            </TabsContent>
+
+            <TabsContent value="comments" className="px-4 py-3">
+              <CommentList
+                comments={comments ?? []}
+                loading={comments === null}
+                onAddComment={handleAddComment}
+              />
+            </TabsContent>
+
+            <TabsContent value="artifacts" className="px-4 py-3">
+              <div className="flex flex-col gap-3">
+                <div className="flex justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setAttachOpen(true)}
+                    className="h-7 gap-1.5 text-[11px]"
+                  >
+                    <Plus className="h-3 w-3" aria-hidden />
+                    Attach artifact
+                  </Button>
+                </div>
+                {artifacts === null ? (
+                  <Skeleton className="h-24 w-full rounded-md" />
+                ) : artifacts.length === 0 ? (
                   <EmptyState
                     variant="no-results"
-                    title="No runs yet"
-                    description="This task hasn't been executed yet."
+                    title="No artifacts"
+                    description="No artifacts have been produced for this task."
                   />
                 ) : (
                   <div className="flex flex-col gap-3">
-                    {runs.map((run) => (
-                      <RunCard key={run.id} run={run} />
+                    {artifacts.map((artifact) => (
+                      <ArtifactCard
+                        key={artifact.id}
+                        artifact={artifact}
+                        onDelete={handleDeleteArtifact}
+                      />
                     ))}
                   </div>
                 )}
-              </TabsContent>
+              </div>
+            </TabsContent>
 
-              <TabsContent value="artifacts">
+            <TabsContent value="logs" className="px-4 py-3">
+              {runs === null ? (
                 <div className="flex flex-col gap-3">
-                  <div className="flex justify-end">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setAttachOpen(true)}
-                      className="h-7 gap-1.5 text-[11px]"
-                    >
-                      <Plus className="h-3 w-3" aria-hidden />
-                      Attach artifact
-                    </Button>
-                  </div>
-                  {artifacts === null ? (
-                    <Skeleton className="h-24 w-full rounded-md" />
-                  ) : artifacts.length === 0 ? (
-                    <EmptyState
-                      variant="no-results"
-                      title="No artifacts"
-                      description="No artifacts have been produced for this task."
-                    />
-                  ) : (
-                    <div className="flex flex-col gap-3">
-                      {artifacts.map((artifact) => (
-                        <ArtifactCard
-                          key={artifact.id}
-                          artifact={artifact}
-                          onDelete={handleDeleteArtifact}
-                        />
-                      ))}
-                    </div>
-                  )}
+                  {Array.from({ length: 2 }).map((_, i) => (
+                    <Skeleton key={i} className="h-24 w-full rounded-md" />
+                  ))}
                 </div>
-              </TabsContent>
-            </Tabs>
-          </div>
+              ) : runs.length === 0 ? (
+                <EmptyState
+                  variant="no-results"
+                  title="No runs yet"
+                  description="This task hasn't been executed yet."
+                />
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {runs.map((run) => (
+                    <RunCard key={run.id} run={run} />
+                  ))}
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="debug" className="px-4 py-3">
+              <DebugTabStub />
+            </TabsContent>
+          </Tabs>
         )}
       </div>
     </div>
