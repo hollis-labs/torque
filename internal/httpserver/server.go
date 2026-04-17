@@ -62,6 +62,7 @@ func (s *Server) routes() {
 		r.Get("/tasks/{id}/checkpoints", s.listTaskCheckpoints)
 		r.Get("/tasks/{id}/comments", s.listComments)
 		r.Post("/tasks/{id}/comments", s.addComment)
+		r.Get("/tasks/{id}/artifacts", s.listArtifacts)
 
 		// Checkpoints — emit/respond/cancel keyed on correlation_id.
 		r.Post("/checkpoints", s.emitCheckpoint)
@@ -116,6 +117,9 @@ func (s *Server) routes() {
 		// Artifacts
 		r.Get("/artifacts", s.listArtifacts)
 		r.Post("/artifacts", s.createArtifact)
+		r.Get("/artifacts/{id}", s.getArtifact)
+		r.Delete("/artifacts/{id}", s.deleteArtifact)
+		r.Get("/artifacts/{id}/content", s.serveArtifactContent)
 
 		// Comments
 		r.Get("/comments", s.listComments)

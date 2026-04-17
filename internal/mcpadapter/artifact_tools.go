@@ -21,6 +21,16 @@ func (a *Adapter) registerArtifactTools() {
 		mcp.WithDescription("List all artifacts for a task"),
 		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),
 	), a.handleArtifactList)
+
+	a.server.AddTool(mcp.NewTool("clockwork_artifact_get",
+		mcp.WithDescription("Get a single artifact by numeric ID"),
+		mcp.WithNumber("artifact_id", mcp.Required(), mcp.Description("Artifact ID")),
+	), a.handleArtifactGet)
+
+	a.server.AddTool(mcp.NewTool("clockwork_artifact_delete",
+		mcp.WithDescription("Delete an artifact row by numeric ID. Does not remove the referenced file on disk."),
+		mcp.WithNumber("artifact_id", mcp.Required(), mcp.Description("Artifact ID")),
+	), a.handleArtifactDelete)
 }
 
 func (a *Adapter) handleArtifactCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -43,4 +53,21 @@ func (a *Adapter) handleArtifactList(ctx context.Context, req mcp.CallToolReques
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	return jsonResult(artifacts)
+}
+
+func (a *Adapter) handleArtifactGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id := int64(reqInt(req, "artifact_id"))
+	art, err := a.svc.Artifact.Get(id)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return jsonResult(art)
+}
+
+func (a *Adapter) handleArtifactDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id := int64(reqInt(req, "artifact_id"))
+	if err := a.svc.Artifact.Delete(id); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return jsonResult(map[string]interface{}{"id": id, "deleted": true})
 }
