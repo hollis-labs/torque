@@ -145,6 +145,36 @@ export interface Task {
   // Audit
   created_at: string
   updated_at: string
+
+  /**
+   * Run roll-up — sum of prompt/completion tokens and cost across every
+   * recorded run for this task, plus a turn count. Always present on
+   * task responses; zero-valued for tasks that have never executed.
+   */
+  stats?: TaskStats
+
+  /**
+   * Structural checklist. Populated at create time by extracting top-level
+   * `- [ ]` / `- [x]` markdown from the description, writable thereafter via
+   * MCP or the subtodos HTTP endpoints. Always an array on task responses;
+   * empty when the task has no checklist.
+   */
+  subtodos?: Subtodo[]
+}
+
+export interface TaskStats {
+  run_count: number
+  prompt_tokens: number
+  completion_tokens: number
+  cost: number
+}
+
+export interface Subtodo {
+  id: string
+  text: string
+  required: boolean
+  done: boolean
+  evidence?: string
 }
 
 export interface Run {

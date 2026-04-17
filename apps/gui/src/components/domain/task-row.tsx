@@ -5,6 +5,8 @@ import { TagChip } from './tag-chip'
 import { CopyableId } from './copyable-id'
 import { TaskActionsMenu } from './task-actions-menu'
 import { ActiveRunPulse } from './active-run-pulse'
+import { TaskStatsCompact } from './task-stats'
+import { SubtodosBadge } from './subtodos-panel'
 import { formatRelativeTime } from '@/lib/utils'
 import { hasBlockedReason, truncateBlockedReason } from '@/lib/blocked-reason'
 import type { Task, TaskStatus } from '@/lib/types'
@@ -77,6 +79,7 @@ export function TaskRow({ task, selected, onSelect, onTaskChange, onTaskDelete }
               <span className="text-[10px] text-zinc-600">{task.executor}</span>
             )}
             <CopyableId id={task.id} />
+            <SubtodosBadge subtodos={task.subtodos} />
           </div>
           {task.tags && task.tags.length > 0 && (
             <div className="mt-0.5 flex items-center gap-1">
@@ -109,6 +112,10 @@ export function TaskRow({ task, selected, onSelect, onTaskChange, onTaskDelete }
       {/* Priority */}
       <td className="w-px whitespace-nowrap px-1.5 py-1.5">
         <PriorityBadge priority={task.priority} />
+      </td>
+      {/* Cost / tokens roll-up */}
+      <td className="w-px whitespace-nowrap px-1.5 py-1.5">
+        <TaskStatsCompact stats={task.stats} />
       </td>
       {/* Updated */}
       <td className="w-px whitespace-nowrap px-1.5 py-1.5">

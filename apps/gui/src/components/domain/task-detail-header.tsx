@@ -15,6 +15,7 @@ import { TagChip } from './tag-chip'
 import { CopyableId } from './copyable-id'
 import { TaskActionsMenu } from './task-actions-menu'
 import { QueueToggleButton } from './queue-toggle-button'
+import { TaskStatsStrip } from './task-stats'
 import { TASK_STATUSES, PRIORITIES } from '@/lib/constants'
 import { hasBlockedReason, truncateBlockedReason } from '@/lib/blocked-reason'
 import type { Task, TaskStatus, Tag } from '@/lib/types'
@@ -113,6 +114,12 @@ export function TaskDetailHeader({
               }
             />
             <CopyableId id={task.id} />
+            {!editing && task.stats && task.stats.run_count > 0 && (
+              <>
+                <span className="h-3 w-px bg-zinc-800" aria-hidden />
+                <TaskStatsStrip stats={task.stats} />
+              </>
+            )}
             {editing ? (
               <Select
                 value={String(source.priority)}

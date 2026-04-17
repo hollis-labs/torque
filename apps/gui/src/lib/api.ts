@@ -14,6 +14,7 @@ import type {
   Template,
   TemplateInstantiateRequest,
   Checkpoint,
+  Subtodo,
 } from './types'
 
 class ApiError extends Error {
@@ -322,6 +323,31 @@ export class ClockworkApiClient {
     const body: { content: string; author?: string } = { content }
     if (author) body.author = author
     return this.post<Comment>(`/tasks/${taskId}/comments`, body)
+  }
+
+  // -------------------------
+  // Subtodos
+  // -------------------------
+
+  async listSubtodos(taskId: string): Promise<Subtodo[]> {
+    const res = await this.get<{ subtodos: Subtodo[] }>(`/tasks/${taskId}/subtodos`)
+    return res.subtodos ?? []
+  }
+
+  /**
+   * Tick a single checklist item. Evidence is optional — typically an
+   * artifact id, commit SHA, or URL the caller wants the item annotated
+   * with. Returns the full updated list so the caller can replace local
+   * state without a second GET.
+   */
+  async markSubtodoDone(taskId: string, itemId: string, evidence?: string): Promise<Subtodo[]> {
+    const body: { evidence?: string } = {}
+    if (evidence) body.evidence = evidence
+    const res = await this.post<{ subtodos: Subtodo[] }>(
+      `/tasks/${taskId}/subtodos/${itemId}/done`,
+      body,
+    )
+    return res.subtodos ?? []
   }
 
   // -------------------------
