@@ -1,6 +1,48 @@
-import { Activity, FileText, Coins, Package } from 'lucide-react'
+import {
+  Activity,
+  Coins,
+  Eye,
+  FileText,
+  ListTodo,
+  MessageSquare,
+  Package,
+  Pencil,
+  Search,
+  Terminal,
+  Wrench,
+} from 'lucide-react'
 import { useActiveRun, type ActivityItem } from '@/hooks/active-runs-context'
 import { useElapsed } from '@/hooks/use-elapsed'
+
+// renderToolIcon returns a JSX element for the given tool name. Matching is
+// case-insensitive so FE renders the right glyph whether the agent calls
+// "Bash" or "bash". Unknown tools fall back to a wrench so the row is still
+// obviously a tool invocation. Returns a ready-to-render element (instead of
+// a component reference) so the react-hooks/static-components rule stays
+// happy.
+function renderToolIcon(name: string, className: string) {
+  switch (name.toLowerCase()) {
+    case 'edit':
+    case 'write':
+    case 'multiedit':
+      return <Pencil className={className} />
+    case 'bash':
+    case 'shell':
+      return <Terminal className={className} />
+    case 'read':
+      return <Eye className={className} />
+    case 'grep':
+    case 'glob':
+      return <Search className={className} />
+    case 'todowrite':
+      return <ListTodo className={className} />
+    case 'task':
+    case 'agent':
+      return <MessageSquare className={className} />
+    default:
+      return <Wrench className={className} />
+  }
+}
 
 interface ActivityPanelProps {
   taskId: string
@@ -87,6 +129,27 @@ function ItemRow({ item }: { item: ActivityItem }) {
     )
   }
 
+  if (item.kind === 'tool_use' && item.tool_use) {
+    return (
+      <div className="flex gap-2 border-b border-zinc-800/40 px-3 py-1.5 last:border-b-0">
+        {renderToolIcon(
+          item.tool_use.tool_name,
+          'mt-0.5 h-3 w-3 flex-none text-sky-400',
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="text-[10px] uppercase tracking-[.18em] text-zinc-500">
+            {item.tool_use.tool_name} · {ts}
+          </div>
+          {item.tool_use.args_summary && (
+            <div className="font-mono text-[11px] text-zinc-300 break-all">
+              {item.tool_use.args_summary}
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   return null
 }
 
@@ -129,7 +192,9 @@ export function ActivityPanel({ taskId }: ActivityPanelProps) {
 
       {run.feed.length === 0 ? (
         <div className="px-3 py-3 text-[11px] italic text-zinc-500">
-          Waiting for the agent's first update…
+          {run.lastHeartbeatAt
+            ? 'Agent working…'
+            : "Waiting for the agent's first update…"}
         </div>
       ) : (
         <div className="max-h-72 overflow-auto">

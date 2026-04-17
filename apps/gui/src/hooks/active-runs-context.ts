@@ -1,6 +1,6 @@
 import { createContext, useContext } from 'react'
 
-export type ActivityKind = 'note' | 'artifact' | 'tokens'
+export type ActivityKind = 'note' | 'artifact' | 'tokens' | 'tool_use'
 
 export interface ActivityItem {
   id: string
@@ -14,6 +14,7 @@ export interface ActivityItem {
     file_path?: string
   }
   tokens?: { prompt: number; completion: number; cost: number }
+  tool_use?: { tool_name: string; args_summary: string }
 }
 
 export interface ActiveRun {
@@ -24,6 +25,11 @@ export interface ActiveRun {
   lastNote?: string
   lastArtifact?: ActivityItem['artifact']
   lastTokens?: ActivityItem['tokens']
+  lastToolUse?: ActivityItem['tool_use']
+  // ISO timestamp of the most recent heartbeat. Presence signals that the
+  // run is genuinely alive — the empty state flips from "Waiting for the
+  // agent's first update" to "Agent working" once a heartbeat has landed.
+  lastHeartbeatAt?: string
   feed: ActivityItem[]
 }
 

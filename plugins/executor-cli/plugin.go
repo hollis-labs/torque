@@ -508,6 +508,11 @@ func (e *CLIExecutor) runStreamJSON(_ context.Context, cmd *exec.Cmd, job *execu
 				}
 			}
 
+		case executor.StreamEventToolUse:
+			if ev.ToolUse != nil && cb != nil {
+				cb(executor.ToolUseEvent(ev.ToolUse.Name, ev.ToolUse.ArgsSummary))
+			}
+
 		case executor.StreamEventResult:
 			if ev.Result != nil {
 				switch ev.Result.Status {

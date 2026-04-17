@@ -50,6 +50,7 @@ type Scheduler struct {
 	heartbeat         *HeartbeatMonitor
 	bus               *EventBus
 	progressThrottler *progressThrottler
+	progressHeartbeat *progressHeartbeat
 
 	mu      sync.RWMutex
 	enabled bool
@@ -98,6 +99,7 @@ func New(
 		heartbeat:         NewHeartbeatMonitor(store),
 		bus:               bus,
 		progressThrottler: newProgressThrottler(progressTokensWindow),
+		progressHeartbeat: newProgressHeartbeat(bus, time.Duration(cfg.HeartbeatProgressSeconds)*time.Second),
 		enabled:           cfg.Enabled,
 		results:           results,
 		stopCh:            make(chan struct{}),
@@ -301,6 +303,11 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		},
 	})
 
+	// Launch the synthetic heartbeat broadcaster so consumers see liveness
+	// even when the executor isn't producing mid-stream signals. Stopped in
+	// the worker closure defer alongside the HeartbeatMonitor deregistration.
+	s.progressHeartbeat.start(task.ID, runID, workerID, startedAt)
+
 	// Submit to worker pool
 	capturedRunID := runID
 	capturedWorkerID := workerID
@@ -309,6 +316,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	capturedRepoHint := task.WorkingDir
 	s.pool.Submit(task.ID, runID, func(wctx context.Context) (*executor.ExecutionResult, error) {
 		defer s.heartbeat.Deregister(capturedWorkerID)
+		defer s.progressHeartbeat.stop(capturedRunID)
 		defer s.progressThrottler.release(capturedRunID)
 		defer func() {
 			if capturedWorktree == "" {
@@ -537,6 +545,18 @@ func (s *Scheduler) publishProgress(taskID string, runID int64, event executor.E
 				"content":       event.Artifact.Content,
 				"url":           event.Artifact.URL,
 				"file_path":     event.Artifact.FilePath,
+			},
+		})
+
+	case event.Type == executor.EventToolUse && event.ToolUse != nil:
+		s.bus.Publish(SchedulerEvent{
+			Type:   "run.progress",
+			TaskID: taskID,
+			RunID:  runID,
+			Data: map[string]interface{}{
+				"kind":         "tool_use",
+				"tool_name":    event.ToolUse.Name,
+				"args_summary": event.ToolUse.ArgsSummary,
 			},
 		})
 
