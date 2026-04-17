@@ -8,6 +8,7 @@ import BoardPage from '@/pages/BoardPage'
 import TaskDetailPage from '@/pages/TaskDetailPage'
 import RunsPage from '@/pages/RunsPage'
 import DashboardPage from '@/pages/DashboardPage'
+import WidgetPreviewPage from '@/pages/WidgetPreviewPage'
 import SettingsPage from '@/pages/SettingsPage'
 import ProjectDetailPage from '@/pages/ProjectDetailPage'
 import SprintDetailPage from '@/pages/SprintDetailPage'
@@ -98,6 +99,7 @@ function AppShell() {
           <Route path="/checkpoints" element={<CheckpointsPage />} />
           <Route path="/runs" element={<RunsPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/dashboard/_widget-preview" element={<WidgetPreviewPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </main>
