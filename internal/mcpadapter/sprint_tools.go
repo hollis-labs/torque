@@ -158,17 +158,3 @@ func (a *Adapter) handleSprintApprove(ctx context.Context, req mcp.CallToolReque
 	}
 	return mcp.NewToolResultText(fmt.Sprintf("%d tasks approved in sprint %s", count, sprintID)), nil
 }
-
-// reqFloat extracts a float64 parameter from an MCP request.
-func reqFloat(req mcp.CallToolRequest, key string) float64 {
-	args := req.GetArguments()
-	if v, ok := args[key]; ok {
-		switch n := v.(type) {
-		case float64:
-			return n
-		case int:
-			return float64(n)
-		}
-	}
-	return 0
-}
