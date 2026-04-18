@@ -101,3 +101,44 @@ func TestPickerAnonymousProjectNotGated(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, picked, 2, "project-less tasks are not gated by the per-project rule")
 }
+
+// Regression: the project-allocation slot must not be consumed by a candidate
+// that then fails its dependency check. Previously the picker reserved the
+// project bucket before verifying deps, so a higher-priority dep-blocked task
+// silently starved every other task in the same project — producing an
+// "idle scheduler despite eligible tasks" state with no error logs.
+// (CW-20260418-0003)
+func TestPickerDoesNotConsumeProjectSlotOnDepBlockedTask(t *testing.T) {
+	store := setupPickerStore(t)
+	picker := scheduler.NewPicker(store)
+
+	// Unmet dependency: CW-DEP is still todo. Marked manual so it cannot
+	// itself be picked — this isolates the per-project-allocation bug from
+	// the project-less-eligible case.
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-DEP", Title: "blocker", Status: "todo",
+		Priority: 1, Executor: "cli", Manual: true,
+	}))
+	// Higher-priority task in project P with CW-DEP as an unmet dep.
+	// Ordering (priority ASC, created_at ASC) places this first.
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-P-BLOCKED", Title: "dep-blocked", Status: "todo",
+		Priority:  1,
+		Executor:  "cli",
+		ProjectID: sql.NullString{String: "PRJ-P", Valid: true},
+		DependsOn: sql.NullString{String: `["CW-DEP"]`, Valid: true},
+	}))
+	// Lower-priority task in the same project with NO deps — this must be
+	// picked once the dep-blocked task is skipped.
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-P-READY", Title: "ready", Status: "todo",
+		Priority:  2,
+		Executor:  "cli",
+		ProjectID: sql.NullString{String: "PRJ-P", Valid: true},
+	}))
+
+	picked, err := picker.Pick(10)
+	require.NoError(t, err)
+	require.Len(t, picked, 1, "dep-blocked task must not starve same-project siblings")
+	assert.Equal(t, "CW-P-READY", picked[0].ID)
+}

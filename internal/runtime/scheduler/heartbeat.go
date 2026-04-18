@@ -78,6 +78,25 @@ func (h *HeartbeatMonitor) FindStale(threshold time.Duration) ([]StaleWorker, er
 	return stale, rows.Err()
 }
 
+// DeleteStale removes heartbeat rows whose last_heartbeat is older than the
+// threshold and returns the number of rows deleted. The scheduler calls this
+// after logging stale workers so zombie rows from crashed or force-killed
+// serves don't persist across sessions (CW-20260418-0003). A zombie row is
+// harmless to dispatch (it does not hold a worker pool slot) but noisy in the
+// log, and its presence made past idle-scheduler diagnoses ambiguous.
+func (h *HeartbeatMonitor) DeleteStale(threshold time.Duration) (int64, error) {
+	thresholdSeconds := int(threshold.Seconds())
+	res, err := h.store.DB().Exec(
+		`DELETE FROM worker_heartbeats
+		 WHERE last_heartbeat < datetime('now', '-' || ? || ' seconds')`,
+		thresholdSeconds,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // ActiveWorkers returns all registered workers.
 func (h *HeartbeatMonitor) ActiveWorkers() ([]StaleWorker, error) {
 	rows, err := h.store.DB().Query(
