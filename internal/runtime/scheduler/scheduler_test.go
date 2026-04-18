@@ -1,9 +1,12 @@
 package scheduler_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"log"
 	"path/filepath"
+	"regexp"
 	"testing"
 	"time"
 
@@ -163,6 +166,131 @@ func TestSchedulerRespectsDisabled(t *testing.T) {
 	sched.DrainResults()
 
 	assert.Len(t, mock.RecordedJobs(), 0, "disabled scheduler should not pick tasks")
+}
+
+// TestSchedulerStatusSurfacesStaleThreshold verifies that the configured
+// StaleSeconds is visible in SchedulerStatus.StaleHeartbeatThresholdSeconds
+// (CW-20260418-0018). The HTTP handler serves status verbatim so this is the
+// contract the GUI and MCP tool see.
+func TestSchedulerStatusSurfacesStaleThreshold(t *testing.T) {
+	sched, _, _ := setupScheduler(t)
+	status := sched.Status()
+	assert.Equal(t, 300, status.StaleHeartbeatThresholdSeconds,
+		"setupScheduler uses default 300s; Status must expose it")
+}
+
+// TestSchedulerTickEmitsHeartbeatGaugeLog verifies the per-tick info-level
+// gauge line from CW-20260418-0018. Format is load-bearing: operators grep
+// `heartbeats live=` to watch zombie accumulation, and the literal
+// `threshold=<N>s` is what distinguishes this line from noise. If the
+// format changes, update docs and downstream log-processors in the same PR.
+func TestSchedulerTickEmitsHeartbeatGaugeLog(t *testing.T) {
+	sched, _, _ := setupScheduler(t) // StaleSeconds=300 from helper
+
+	// Redirect the default logger the scheduler writes to, then restore.
+	var buf bytes.Buffer
+	origOut := log.Writer()
+	origFlags := log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	defer func() {
+		log.SetOutput(origOut)
+		log.SetFlags(origFlags)
+	}()
+
+	require.NoError(t, sched.Tick(context.Background()))
+
+	// Exact format: `[scheduler] heartbeats live=N stale=M threshold=Ts`
+	// live/stale digits and threshold digits are checked via regex so
+	// whitespace changes stay brittle-on-purpose while counts stay flex.
+	re := regexp.MustCompile(`\[scheduler\] heartbeats live=\d+ stale=\d+ threshold=300s`)
+	assert.Regexp(t, re, buf.String(),
+		"Tick must emit the gauge line with the documented format")
+}
+
+// TestSchedulerTickCleansStaleHeartbeatAndReclaimsSlot is the integration
+// test required by CW-20260418-0018: a stale heartbeat row pre-registered
+// before Tick should be cleaned up by that tick, and a pending task should
+// still get dispatched in the same tick (the zombie row does not hold a
+// pool slot, so the picker's AvailableSlots is not gated by it — this test
+// locks in that invariant).
+func TestSchedulerTickCleansStaleHeartbeatAndReclaimsSlot(t *testing.T) {
+	// Build a scheduler with a very short stale threshold so "backdated
+	// by 2 seconds" is already stale. Using a sub-second threshold risks
+	// flake under -race; 1s is the floor that stays deterministic.
+	db, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
+	require.NoError(t, migrations.Run(db))
+	store, err := sqlstore.New(db, "sqlite")
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	q, err := queue.Open(filepath.Join(dir, "queue.db"))
+	require.NoError(t, err)
+
+	mock := executor.NewMockExecutor()
+	registry := executor.NewRegistry()
+	registry.Register(mock)
+
+	cfg := &config.SchedulerConfig{
+		Workers:          2,
+		IntervalSeconds:  1,
+		RetryBudget:      3,
+		HeartbeatSeconds: 15,
+		StaleSeconds:     1, // aggressive so -2m backdate is firmly past it
+		Enabled:          true,
+	}
+	sched := scheduler.New(store, q, registry, nil, cfg)
+	t.Cleanup(func() {
+		sched.Stop(context.Background())
+		q.Close()
+		store.Close()
+	})
+
+	// Pre-plant a zombie heartbeat row for a non-existent worker — the
+	// would-be owner task and run still need to exist because the table
+	// has FK constraints on task_id and run_id.
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-ZOMBIE", Title: "owner of zombie row", Status: "done",
+		Executor: "mock", AgentProfile: "mock",
+	}))
+	zombieRunID, err := store.CreateRun(&sqlstore.RunRecord{
+		TaskID: "CW-ZOMBIE", Executor: "mock", Status: "failed",
+	})
+	require.NoError(t, err)
+	_, err = store.DB().Exec(
+		`INSERT INTO worker_heartbeats (worker_id, task_id, run_id, executor, started_at, last_heartbeat)
+		 VALUES (?, ?, ?, ?, datetime('now', '-2 minutes'), datetime('now', '-2 minutes'))`,
+		"worker-zombie", "CW-ZOMBIE", zombieRunID, "mock",
+	)
+	require.NoError(t, err)
+
+	// Create a pending task the picker should dispatch.
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-PENDING", Title: "next task", Status: "todo", Priority: 1,
+		Executor: "mock", AgentProfile: "mock", OnDone: "close",
+	}))
+	mock.SetResult(&executor.ExecutionResult{Status: "done"})
+
+	// Run one tick — cleanup path runs AFTER dispatch, so the tick both
+	// picks CW-PENDING and prunes the zombie row.
+	require.NoError(t, sched.Tick(context.Background()))
+	time.Sleep(200 * time.Millisecond)
+	sched.DrainResults()
+
+	// Zombie row gone.
+	row := store.DB().QueryRow(
+		`SELECT COUNT(*) FROM worker_heartbeats WHERE worker_id = ?`, "worker-zombie")
+	var n int
+	require.NoError(t, row.Scan(&n))
+	assert.Equal(t, 0, n, "stale zombie row should be deleted by the tick")
+
+	// Pending task picked and completed in the same tick.
+	task, err := store.GetTask("CW-PENDING")
+	require.NoError(t, err)
+	assert.Equal(t, "done", task.Status,
+		"picker should dispatch the pending task regardless of zombie row presence")
 }
 
 func TestSchedulerEventBus(t *testing.T) {
