@@ -34,7 +34,7 @@ func TestPickerProjectConcurrencyGate(t *testing.T) {
 		ProjectID: sql.NullString{String: "PRJ-B", Valid: true},
 	}))
 
-	picked, err := picker.Pick(10)
+	picked, _, err := picker.Pick(10)
 	require.NoError(t, err)
 	require.Len(t, picked, 1, "only B should be picked; A is gated by same-project in-flight")
 	assert.Equal(t, "CW-B-TODO", picked[0].ID)
@@ -57,7 +57,7 @@ func TestPickerSameProjectInSingleTick(t *testing.T) {
 		ProjectID: sql.NullString{String: "PRJ-X", Valid: true},
 	}))
 
-	picked, err := picker.Pick(10)
+	picked, _, err := picker.Pick(10)
 	require.NoError(t, err)
 	require.Len(t, picked, 1, "only one of two same-project tasks picks in a single tick")
 	assert.Equal(t, "CW-X-1", picked[0].ID, "higher-priority one wins")
@@ -76,7 +76,7 @@ func TestPickerDifferentProjectsAllEligible(t *testing.T) {
 		}))
 	}
 
-	picked, err := picker.Pick(10)
+	picked, _, err := picker.Pick(10)
 	require.NoError(t, err)
 	assert.Len(t, picked, 3, "three different projects all eligible")
 }
@@ -97,7 +97,7 @@ func TestPickerAnonymousProjectNotGated(t *testing.T) {
 		Priority: 2, Executor: "cli", AgentProfile: "cli-profile",
 	}))
 
-	picked, err := picker.Pick(10)
+	picked, _, err := picker.Pick(10)
 	require.NoError(t, err)
 	assert.Len(t, picked, 2, "project-less tasks are not gated by the per-project rule")
 }
@@ -137,7 +137,7 @@ func TestPickerDoesNotConsumeProjectSlotOnDepBlockedTask(t *testing.T) {
 		ProjectID: sql.NullString{String: "PRJ-P", Valid: true},
 	}))
 
-	picked, err := picker.Pick(10)
+	picked, _, err := picker.Pick(10)
 	require.NoError(t, err)
 	require.Len(t, picked, 1, "dep-blocked task must not starve same-project siblings")
 	assert.Equal(t, "CW-P-READY", picked[0].ID)

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -56,6 +58,19 @@ type Scheduler struct {
 	enabled bool
 	results chan WorkerResult
 	stopCh  chan struct{}
+
+	// tickCounter monotonically increases each time Tick runs to completion
+	// of the pick phase. Used only for observability — the per-tick
+	// [picker] log line includes it so operators can correlate a quiet
+	// stretch to a specific tick. Access is serialized because Tick runs
+	// from a single ticker loop, but we increment under s.mu.Lock for
+	// safety against future concurrent callers of Tick (tests, drains).
+	tickCounter uint64
+
+	// pickerDebug controls whether per-task [picker] decisions are logged
+	// at debug level. Sampled once at startup from CLOCKWORK_SCHEDULER_DEBUG
+	// so test runs don't flip mid-suite based on env changes.
+	pickerDebug bool
 }
 
 // progressTokensWindow caps how often a run may emit a tokens-class
@@ -103,9 +118,22 @@ func New(
 		enabled:           cfg.Enabled,
 		results:           results,
 		stopCh:            make(chan struct{}),
+		pickerDebug:       isPickerDebugEnabled(),
 	}
 
 	return s
+}
+
+// isPickerDebugEnabled reads the debug-level toggle for the scheduler
+// picker. Set CLOCKWORK_SCHEDULER_DEBUG=1 (or "true") to emit per-task
+// [picker] decision logs. The per-tick counter line is ALWAYS emitted at
+// info level regardless of this toggle.
+func isPickerDebugEnabled() bool {
+	switch os.Getenv("CLOCKWORK_SCHEDULER_DEBUG") {
+	case "1", "true", "TRUE", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // EventBus returns the scheduler's event bus for subscribing to events.
@@ -183,9 +211,30 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 		return nil
 	}
 
-	tasks, err := s.picker.Pick(available)
+	tasks, decisions, err := s.picker.Pick(available)
 	if err != nil {
 		return fmt.Errorf("scheduler: pick tasks: %w", err)
+	}
+
+	s.mu.Lock()
+	s.tickCounter++
+	tickN := s.tickCounter
+	s.mu.Unlock()
+
+	// Per-tick info log: one line per tick with full counter breakdown.
+	// Keep this line stable — it's the primary "why is the scheduler
+	// silent?" diagnostic. Format is grep-friendly:
+	//   [picker] tick=N candidates=C picked=P skipped_by_reason=map[...]
+	log.Printf("[picker] tick=%d candidates=%d picked=%d skipped_by_reason=%s",
+		tickN, decisions.Candidates, len(tasks), formatSkipCounts(decisions.Counts))
+
+	// Per-task debug log: one line per skipped candidate. Gated behind
+	// CLOCKWORK_SCHEDULER_DEBUG so steady-state operators don't drown in
+	// per-tick noise.
+	if s.pickerDebug {
+		for _, d := range decisions.Skipped {
+			log.Printf("[picker] tick=%d skip task=%s reason=%s", tickN, d.TaskID, d.Reason)
+		}
 	}
 
 	for _, task := range tasks {
@@ -495,6 +544,13 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		return result, nil
 	})
 
+	// Post-submit dispatch log. Emitted AFTER pool.Submit so a failure in
+	// any earlier step (transition, run create, worktree setup) never
+	// produces a misleading "dispatched" entry. Pairs with the
+	// run.completed event emitted by the worker closure on finish.
+	log.Printf("[scheduler] dispatched task=%s run=%d executor=%s profile=%s worker=%s",
+		task.ID, runID, task.Executor, task.AgentProfile, workerID)
+
 	return nil
 }
 
@@ -742,4 +798,30 @@ func buildJob(task sqlstore.TaskRecord, runID int64) *executor.ExecutionJob {
 	}
 
 	return job
+}
+
+// formatSkipCounts renders a PickDecisions.Counts map as a stable
+// "map[key1:N key2:M]" string matching Go's fmt default for maps but with
+// a deterministic key order so operators grepping across ticks can diff
+// cleanly. An empty map renders as "map[]" so the log line shape is
+// always parseable.
+func formatSkipCounts(counts map[string]int) string {
+	if len(counts) == 0 {
+		return "map[]"
+	}
+	keys := make([]string, 0, len(counts))
+	for k := range counts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString("map[")
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		fmt.Fprintf(&b, "%s:%d", k, counts[k])
+	}
+	b.WriteByte(']')
+	return b.String()
 }
