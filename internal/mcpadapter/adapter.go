@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strconv"
 
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -13,17 +14,22 @@ import (
 // Adapter wires the service layer to an MCP server.
 type Adapter struct {
 	svc    *service.Service
+	sched  *scheduler.Scheduler
 	server *server.MCPServer
 }
 
-// New creates an Adapter, registers all tools, and returns it.
-func New(svc *service.Service) *Adapter {
+// New creates an Adapter, registers all tools, and returns it. sched may be
+// nil — scheduler tools will respond with a not-available error in that case,
+// mirroring httpserver.New's nil-sched → 503 contract. The stdio mcp
+// subcommand runs in a separate process from serve and passes nil; tests and
+// any future in-process wiring can pass a live *scheduler.Scheduler.
+func New(svc *service.Service, sched *scheduler.Scheduler) *Adapter {
 	s := server.NewMCPServer(
 		"Clockwork Manifold",
 		"0.1.0",
 		server.WithToolCapabilities(true),
 	)
-	a := &Adapter{svc: svc, server: s}
+	a := &Adapter{svc: svc, sched: sched, server: s}
 	a.registerCoreTools()
 	a.registerOptInTools()
 	return a
