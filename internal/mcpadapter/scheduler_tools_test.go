@@ -66,9 +66,11 @@ func TestSchedulerToggle_RoundTrip(t *testing.T) {
 	// Starting state: enabled per cfg.
 	require.True(t, sched.Status().Enabled, "precondition: scheduler starts enabled")
 
-	// Toggle off via MCP.
+	// Toggle off via MCP. Schema declares enabled as a string (Phase A pattern:
+	// every arg is a string, server-side coerce via reqBool). Callers must send
+	// "true"/"false"; mcp-go's stdio schema validator rejects JSON booleans.
 	text, isErr := callTool(t, a, "clockwork_scheduler_toggle", map[string]interface{}{
-		"enabled": false,
+		"enabled": "false",
 	})
 	require.False(t, isErr, "toggle off should succeed: %s", text)
 	var status map[string]interface{}
@@ -86,7 +88,7 @@ func TestSchedulerToggle_RoundTrip(t *testing.T) {
 
 	// Toggle back on.
 	text, isErr = callTool(t, a, "clockwork_scheduler_toggle", map[string]interface{}{
-		"enabled": true,
+		"enabled": "true",
 	})
 	require.False(t, isErr, text)
 	parseData(t, text, &status)
@@ -100,9 +102,9 @@ func TestSchedulerToggle_RoundTrip(t *testing.T) {
 func TestSchedulerToggle_Idempotent(t *testing.T) {
 	a, sched := setupAdapterWithScheduler(t, true)
 
-	// Toggle to enabled=true when already enabled.
+	// Toggle to enabled=true when already enabled. Schema requires string.
 	text, isErr := callTool(t, a, "clockwork_scheduler_toggle", map[string]interface{}{
-		"enabled": true,
+		"enabled": "true",
 	})
 	require.False(t, isErr, text)
 	var status map[string]interface{}
@@ -112,10 +114,10 @@ func TestSchedulerToggle_Idempotent(t *testing.T) {
 
 	// Toggle off, then toggle off again.
 	_, _ = callTool(t, a, "clockwork_scheduler_toggle", map[string]interface{}{
-		"enabled": false,
+		"enabled": "false",
 	})
 	text, isErr = callTool(t, a, "clockwork_scheduler_toggle", map[string]interface{}{
-		"enabled": false,
+		"enabled": "false",
 	})
 	require.False(t, isErr, text)
 	parseData(t, text, &status)

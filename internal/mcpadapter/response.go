@@ -405,7 +405,6 @@ func cappedJSONResult(items []any, limit int) (*mcp.CallToolResult, error) {
 		}
 		if len(b2) <= maxMCPResponseBytes {
 			lo = mid
-			b = b2
 			trimmed = trial
 		} else {
 			hi = mid - 1
