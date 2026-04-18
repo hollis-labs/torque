@@ -20,9 +20,10 @@ interface TaskRowProps {
   onTaskDelete?: (id: string) => void
 }
 
-function stop(e: React.SyntheticEvent) {
-  e.stopPropagation()
-}
+// Any descendant marked `data-row-interactive="true"` owns its own click
+// handling and must not trigger row-level navigation. The row click handler
+// uses `closest()` to honor the flag for any nested target.
+const INTERACTIVE_SELECTOR = '[data-row-interactive="true"]'
 
 export function TaskRow({ task, selected, onSelect, onTaskChange, onTaskDelete }: TaskRowProps) {
   const navigate = useNavigate()
@@ -31,7 +32,17 @@ export function TaskRow({ task, selected, onSelect, onTaskChange, onTaskDelete }
     : '-'
   const agoStr = task.updated_at ? formatRelativeTime(task.updated_at) : ''
 
-  function handleRowClick() {
+  function handleRowClick(e: React.MouseEvent<HTMLTableRowElement>) {
+    // Only the primary button should navigate. Let modifier-clicks and
+    // middle-clicks fall through so they can't hijack "open in new tab"
+    // semantics on the interactive Link children.
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+      return
+    }
+    const target = e.target as HTMLElement | null
+    if (target && target.closest(INTERACTIVE_SELECTOR)) {
+      return
+    }
     navigate(`/tasks/${task.id}`)
   }
 
@@ -51,15 +62,18 @@ export function TaskRow({ task, selected, onSelect, onTaskChange, onTaskDelete }
       tabIndex={0}
       role="link"
       aria-label={`Open task ${task.title}`}
+      data-testid="task-row"
     >
       {onSelect && (
-        <td className="w-8 align-top py-1.5 pl-4 pr-0" onClick={stop}>
+        <td className="w-8 align-top py-1.5 pl-4 pr-0">
           <input
             type="checkbox"
             checked={selected ?? false}
             onChange={(e) => onSelect(task.id, e.target.checked)}
             className="mt-[3px] h-3 w-3 appearance-none rounded-sm border border-zinc-700 bg-zinc-900 checked:bg-zinc-600 checked:border-zinc-500 cursor-pointer"
             aria-label={`Select task ${task.title}`}
+            data-row-interactive="true"
+            data-testid="task-row-checkbox"
           />
         </td>
       )}
@@ -68,9 +82,9 @@ export function TaskRow({ task, selected, onSelect, onTaskChange, onTaskDelete }
         <div className="min-w-0">
           <Link
             to={`/tasks/${task.id}`}
-            onClick={stop}
             className="block truncate tracking-[.02em] text-zinc-100 hover:text-zinc-300 transition-colors"
             title={task.title}
+            data-row-interactive="true"
           >
             {task.title}
           </Link>
@@ -108,7 +122,7 @@ export function TaskRow({ task, selected, onSelect, onTaskChange, onTaskDelete }
         </div>
       </td>
       {/* Status */}
-      <td className="w-px whitespace-nowrap px-1.5 py-1.5" onClick={stop}>
+      <td className="w-px whitespace-nowrap px-1.5 py-1.5">
         <div className="flex items-center gap-2">
           <StatusBadge
             status={task.status}
@@ -135,7 +149,7 @@ export function TaskRow({ task, selected, onSelect, onTaskChange, onTaskDelete }
         <div className="text-[11px] leading-4 text-zinc-600 uppercase tracking-[.12em]">{agoStr}</div>
       </td>
       {/* Actions */}
-      <td className="w-px whitespace-nowrap pl-1 pr-3 py-1.5" onClick={stop}>
+      <td className="w-px whitespace-nowrap pl-1 pr-3 py-1.5">
         <TaskActionsMenu
           task={task}
           onChange={onTaskChange}
