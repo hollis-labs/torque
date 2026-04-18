@@ -114,6 +114,13 @@ func New(
 		predicates = waitpoll.NewRegistry()
 	}
 
+	picker := NewPicker(store)
+	// DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
+	// Stopgap project-scope filter is config-driven; read once here and
+	// never mutated. An empty list leaves the picker in default
+	// all-projects mode.
+	picker.SetProjectAllowlist(cfg.ProjectAllowlist)
+
 	s := &Scheduler{
 		store:             store,
 		queue:             q,
@@ -121,7 +128,7 @@ func New(
 		predicates:        predicates,
 		cfg:               cfg,
 		pool:              pool,
-		picker:            NewPicker(store),
+		picker:            picker,
 		lifecycle:         NewLifecycleManager(store, bus),
 		cost:              NewCostTracker(store),
 		heartbeat:         NewHeartbeatMonitor(store),

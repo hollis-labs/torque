@@ -20,6 +20,12 @@ const (
 	SkipReasonProjectContention  = "project_contention"
 	SkipReasonDepUnmet           = "dep_unmet"
 	SkipReasonDepMalformed       = "dep_malformed"
+	// DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
+	// SkipReasonProjectScopeFilter is recorded when an operator-configured
+	// allowlist (CLOCKWORK_PROJECT_ID / CLOCKWORK_PROJECT_IDS) excludes
+	// this task's project_id. Stopgap for shared-DB cross-project
+	// contamination pending workspaces.
+	SkipReasonProjectScopeFilter = "project_scope_filter"
 )
 
 // SkipDecision records why the picker passed over a single candidate. One
@@ -49,11 +55,45 @@ func newPickDecisions() PickDecisions {
 // Picker selects tasks eligible for scheduling.
 type Picker struct {
 	store *sqlstore.Store
+
+	// DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
+	// projectAllowlist, when non-empty, limits candidates to tasks whose
+	// project_id appears in the map. Nil/empty means no filter (current
+	// all-projects behavior). Populated via SetProjectAllowlist at
+	// scheduler construction; read once and never mutated — no config
+	// reload mechanism exists for this stopgap.
+	projectAllowlist map[string]struct{}
 }
 
 // NewPicker creates a new task picker.
 func NewPicker(store *sqlstore.Store) *Picker {
 	return &Picker{store: store}
+}
+
+// SetProjectAllowlist installs a project-scope filter. When the provided
+// list is non-empty, Pick will skip any task whose project_id is not in
+// the list with SkipReasonProjectScopeFilter. Nil/empty leaves the picker
+// in its default all-projects mode. Safe to call only before the picker
+// is shared across goroutines (i.e. at scheduler construction).
+//
+// DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
+func (p *Picker) SetProjectAllowlist(ids []string) {
+	if len(ids) == 0 {
+		p.projectAllowlist = nil
+		return
+	}
+	m := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		m[id] = struct{}{}
+	}
+	if len(m) == 0 {
+		p.projectAllowlist = nil
+		return
+	}
+	p.projectAllowlist = m
 }
 
 // Pick returns up to `limit` tasks that are eligible for scheduling along
@@ -140,12 +180,32 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, PickDecisions, error) {
 			continue
 		}
 
+		pk := projectKey(task)
+
+		// DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
+		// Operator-configured project scope filter. When an allowlist is
+		// set, any task whose project_id is not in the list is skipped
+		// with SkipReasonProjectScopeFilter BEFORE the per-project
+		// concurrency gate runs, so filtered tasks never consume
+		// contention accounting. Tasks without a project_id (pk == "")
+		// are always skipped when an allowlist is active — the whole
+		// point of the stopgap is to scope to named projects.
+		if len(p.projectAllowlist) > 0 {
+			if pk == "" {
+				record(task.ID, SkipReasonProjectScopeFilter)
+				continue
+			}
+			if _, ok := p.projectAllowlist[pk]; !ok {
+				record(task.ID, SkipReasonProjectScopeFilter)
+				continue
+			}
+		}
+
 		// Per-project concurrency gate (no gate for project-less tasks).
 		// Only consult the gate here — do not reserve the slot yet. The
 		// reservation happens after all other eligibility checks pass so a
 		// dep-blocked task cannot silently starve other same-project
 		// siblings (CW-20260418-0003).
-		pk := projectKey(task)
 		if pk != "" {
 			if _, inflight := busyProjects[pk]; inflight {
 				record(task.ID, SkipReasonProjectBusy)
