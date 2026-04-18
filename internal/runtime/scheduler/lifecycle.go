@@ -62,6 +62,15 @@ func (lm *LifecycleManager) HandleResult(taskID string, runID int64, result *exe
 		return lm.handleBlocked(task, runID, result)
 	case "review":
 		return lm.transition(task, runID, "review", "")
+	case "canceled":
+		// Cancellation path (CW-20260418-0005). The worker already
+		// wrote status=canceled on the run and the task has already
+		// been transitioned by the external actor (DB task_transition
+		// or equivalent). We MUST NOT touch task.Status here — doing
+		// so would clobber the user's intent — and we MUST NOT count
+		// this against retry budget. The deferred emitRunFinished
+		// still fires so SSE consumers see the terminal signal.
+		return nil
 	default:
 		return fmt.Errorf("lifecycle: unknown result status %q", result.Status)
 	}

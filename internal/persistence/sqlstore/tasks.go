@@ -556,45 +556,88 @@ func (s *Store) UpdateTask(id string, u TaskUpdate) error {
 	return nil
 }
 
-// TransitionTask sets a new status on the task.
+// TransitionTask sets a new status on the task. After a successful UPDATE,
+// any task-transition hooks registered via RegisterTaskTransitionHook are
+// invoked with the old/new status. The old status is read in the same
+// transaction as the UPDATE so the hook payload always reflects the actual
+// DB transition and no intermediate write can slip between read and update.
 func (s *Store) TransitionTask(id, newStatus string) error {
-	res, err := s.db.Exec(
-		`UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?`,
-		newStatus, time.Now().UTC(), id,
-	)
+	oldStatus, err := s.transitionTaskTx(id, newStatus, nil)
 	if err != nil {
 		return err
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return fmt.Errorf("task %s not found", id)
-	}
+	s.emitTaskTransition(TaskTransitionEvent{
+		TaskID:    id,
+		OldStatus: oldStatus,
+		NewStatus: newStatus,
+	})
 	return nil
 }
 
 // TransitionTaskWithReason sets a new status and blocked_reason atomically.
 // Used by the scheduler when parking tasks on blocking checkpoints or when
 // sweeping timed-out checkpoints — both cases need the status and the
-// explanatory reason set together.
+// explanatory reason set together. Emits a task-transition hook after a
+// successful UPDATE, same as TransitionTask.
 func (s *Store) TransitionTaskWithReason(id, newStatus, reason string) error {
-	res, err := s.db.Exec(
-		`UPDATE tasks SET status = ?, blocked_reason = ?, updated_at = ? WHERE id = ?`,
-		newStatus, reason, time.Now().UTC(), id,
-	)
+	r := reason
+	oldStatus, err := s.transitionTaskTx(id, newStatus, &r)
 	if err != nil {
 		return err
+	}
+	s.emitTaskTransition(TaskTransitionEvent{
+		TaskID:    id,
+		OldStatus: oldStatus,
+		NewStatus: newStatus,
+		Reason:    reason,
+	})
+	return nil
+}
+
+// transitionTaskTx runs the SELECT-then-UPDATE under a single transaction so
+// the old status we hand to the transition hook is the exact value the
+// UPDATE replaced. Pass reason=nil to skip the blocked_reason column.
+func (s *Store) transitionTaskTx(id, newStatus string, reason *string) (string, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	var oldStatus string
+	if err := tx.QueryRow(`SELECT status FROM tasks WHERE id = ?`, id).Scan(&oldStatus); err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("task %s not found", id)
+		}
+		return "", err
+	}
+
+	var res sql.Result
+	if reason != nil {
+		res, err = tx.Exec(
+			`UPDATE tasks SET status = ?, blocked_reason = ?, updated_at = ? WHERE id = ?`,
+			newStatus, *reason, time.Now().UTC(), id,
+		)
+	} else {
+		res, err = tx.Exec(
+			`UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?`,
+			newStatus, time.Now().UTC(), id,
+		)
+	}
+	if err != nil {
+		return "", err
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return err
+		return "", err
 	}
 	if n == 0 {
-		return fmt.Errorf("task %s not found", id)
+		return "", fmt.Errorf("task %s not found", id)
 	}
-	return nil
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return oldStatus, nil
 }
 
 // ParkTaskOnCheckpoint atomically transitions a task from "doing" to "review"
@@ -619,6 +662,18 @@ func (s *Store) ParkTaskOnCheckpoint(id, reason string) (bool, error) {
 	n, err := res.RowsAffected()
 	if err != nil {
 		return false, err
+	}
+	if n > 0 {
+		// Park is always doing → review for a blocking-mode task. Fire the
+		// transition hook so scheduler observers (worker cancel registry)
+		// see the same event shape as plain TransitionTask. Avoids a silent
+		// gap where a parked checkpoint leaves a worker running.
+		s.emitTaskTransition(TaskTransitionEvent{
+			TaskID:    id,
+			OldStatus: "doing",
+			NewStatus: "review",
+			Reason:    reason,
+		})
 	}
 	return n > 0, nil
 }

@@ -59,6 +59,13 @@ type Scheduler struct {
 	bus               *EventBus
 	progressThrottler *progressThrottler
 	progressHeartbeat *progressHeartbeat
+	cancels           *cancelRegistry
+
+	// cancelGrace is how long the worker gives a child process to exit
+	// after SIGTERM before escalating to SIGKILL. Sourced from
+	// CLOCKWORK_SCHED_CANCEL_GRACE at New() time; defaults to 5s.
+	// (CW-20260418-0005)
+	cancelGrace time.Duration
 
 	mu      sync.RWMutex
 	enabled bool
@@ -121,13 +128,48 @@ func New(
 		bus:               bus,
 		progressThrottler: newProgressThrottler(progressTokensWindow),
 		progressHeartbeat: newProgressHeartbeat(bus, time.Duration(cfg.HeartbeatProgressSeconds)*time.Second),
+		cancels:           newCancelRegistry(),
+		cancelGrace:       cancelGraceFromEnv(),
 		enabled:           cfg.Enabled,
 		results:           results,
 		stopCh:            make(chan struct{}),
 		pickerDebug:       isPickerDebugEnabled(),
 	}
 
+	// Subscribe to DB-driven task transitions so that a manual / external
+	// task_transition out of "doing" cancels the in-flight worker's
+	// context within one tick. Registered once at construction; the hook
+	// lives for the life of the store (which outlives the scheduler, so
+	// never-unregister is the correct choice here — see task_hooks.go).
+	store.RegisterTaskTransitionHook(func(ev sqlstore.TaskTransitionEvent) {
+		if ev.OldStatus != "doing" || ev.NewStatus == "doing" {
+			return
+		}
+		if s.cancels.cancel(ev.TaskID) {
+			log.Printf("[scheduler] canceling in-flight worker for %s (transitioned %s -> %s)",
+				ev.TaskID, ev.OldStatus, ev.NewStatus)
+		}
+	})
+
 	return s
+}
+
+// cancelGraceFromEnv parses CLOCKWORK_SCHED_CANCEL_GRACE (duration string
+// accepted by time.ParseDuration, e.g. "5s", "500ms") and returns the
+// configured grace period. Falls back to 5s when unset or unparseable —
+// matches the ticket default and keeps shutdown latency predictable.
+func cancelGraceFromEnv() time.Duration {
+	const def = 5 * time.Second
+	v := os.Getenv("CLOCKWORK_SCHED_CANCEL_GRACE")
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		log.Printf("[scheduler] invalid CLOCKWORK_SCHED_CANCEL_GRACE=%q, using default %s", v, def)
+		return def
+	}
+	return d
 }
 
 // isPickerDebugEnabled reads the debug-level toggle for the scheduler
@@ -408,13 +450,34 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	// the worker closure defer alongside the HeartbeatMonitor deregistration.
 	s.progressHeartbeat.start(task.ID, runID, workerID, startedAt)
 
+	// Per-dispatch cancel context. Registered BEFORE pool.Submit so that a
+	// cancel arriving while the worker is still queued on the semaphore
+	// (or between submit and the goroutine's first line) is honored —
+	// addresses the "cancellation between dispatch and first tick"
+	// acceptance case in CW-20260418-0005. Parent is context.Background
+	// rather than the tick ctx because the tick ctx goes away after Tick
+	// returns and we don't want its cancellation to kill running workers;
+	// scheduler Stop explicitly calls cancelAll to drain.
+	dispatchCtx, dispatchCancel := context.WithCancel(context.Background())
+	s.cancels.register(task.ID, dispatchCancel)
+
 	// Submit to worker pool
 	capturedRunID := runID
 	capturedWorkerID := workerID
 	capturedTaskID := task.ID
 	capturedWorktree := wtPath
 	capturedRepoHint := task.WorkingDir
+	capturedDispatchCtx := dispatchCtx
+	capturedDispatchCancel := dispatchCancel
 	s.pool.Submit(task.ID, runID, func(wctx context.Context) (*executor.ExecutionResult, error) {
+		// runCtx merges pool-shutdown cancellation (wctx) and per-task
+		// cancellation (capturedDispatchCtx). Either source cancelling
+		// will propagate into exec.Run so the child process can be torn
+		// down via the executor's normal context path.
+		runCtx, runCancel := mergeContexts(wctx, capturedDispatchCtx)
+		defer runCancel()
+		defer s.cancels.deregister(capturedTaskID)
+		defer capturedDispatchCancel() // release context.Background goroutine
 		defer s.heartbeat.Deregister(capturedWorkerID)
 		defer s.progressHeartbeat.stop(capturedRunID)
 		defer s.progressThrottler.release(capturedRunID)
@@ -512,7 +575,43 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 			s.publishProgress(capturedTaskID, capturedRunID, event)
 		}
 
-		result, err := exec.Run(wctx, job, cb)
+		result, err := exec.Run(runCtx, job, cb)
+
+		// Cancellation branch. When the per-task dispatch context is
+		// cancelled (DB transition out of doing) or the pool is shutting
+		// down, the executor's Run returns either a context error or
+		// exits successfully after honoring its grace window. We detect
+		// this by checking the dispatch context FIRST — if it's been
+		// cancelled we treat the run as cancelled regardless of what err
+		// is (the executor may return a legitimate result if it finished
+		// a stream between the cancel fire and the check). Marking
+		// status=canceled with a structured reason keeps retry budgets
+		// intact and gives operators a clear signal.
+		if capturedDispatchCtx.Err() != nil {
+			reason := "task_transition_out_of_doing"
+			s.store.CompleteRun(capturedRunID, sqlstore.RunCompletion{
+				Status:       "canceled",
+				ErrorMessage: reason,
+			})
+			writeRunEvent(s.store, capturedRunID, capturedTaskID, "run_canceled", map[string]string{
+				"reason": reason,
+			})
+			s.bus.Publish(SchedulerEvent{
+				Type:   "run.canceled",
+				TaskID: capturedTaskID,
+				RunID:  capturedRunID,
+				Data:   map[string]interface{}{"reason": reason},
+			})
+			// Return a result with Status=canceled so the lifecycle
+			// manager can short-circuit: the task has already been
+			// transitioned by the external actor, and we must not
+			// retry, re-queue, or block.
+			return &executor.ExecutionResult{
+				Status: "canceled",
+				Reason: reason,
+			}, nil
+		}
+
 		if err != nil {
 			// Complete run with error
 			s.store.CompleteRun(capturedRunID, sqlstore.RunCompletion{
@@ -691,6 +790,13 @@ func (s *Scheduler) Run(ctx context.Context) error {
 // Stop gracefully shuts down the scheduler.
 func (s *Scheduler) Stop(ctx context.Context) error {
 	s.DrainResults()
+	// Cancel any registered per-task dispatch contexts before telling the
+	// pool to shut down. This keeps cancellation semantics consistent on
+	// shutdown: workers see runCtx cancelled and write status=canceled
+	// rather than leaving runs in "running" until the pool hard-cancels.
+	// Pool shutdown still follows to release the semaphore and wait on
+	// the WaitGroup.
+	s.cancels.cancelAll()
 	if err := s.pool.Shutdown(ctx); err != nil {
 		return fmt.Errorf("scheduler: shutdown workers: %w", err)
 	}

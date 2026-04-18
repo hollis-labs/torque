@@ -12,12 +12,29 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/agentfile"
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 )
+
+// cancelGraceFromEnv parses CLOCKWORK_SCHED_CANCEL_GRACE into a duration for
+// SIGTERM→SIGKILL child-process grace. Shares the scheduler's env var so one
+// knob controls both layers; falls back to 5s (CW-20260418-0005 default).
+func cancelGraceFromEnv() time.Duration {
+	const def = 5 * time.Second
+	v := os.Getenv("CLOCKWORK_SCHED_CANCEL_GRACE")
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return def
+	}
+	return d
+}
 
 // stderrTailBytes caps how much stderr we surface in result.Reason on
 // failure. The full stream is still teed to the sidecar file — this is
@@ -112,6 +129,21 @@ func (e *CLIExecutor) Run(ctx context.Context, job *executor.ExecutionJob, cb ex
 
 	//nolint:gosec // command comes from resolved profile config
 	cmd := exec.CommandContext(runCtx, spec.Command, spec.Args...)
+
+	// Graceful cancellation for the child process (CW-20260418-0005).
+	// Default behavior of exec.CommandContext is to send SIGKILL on ctx
+	// cancel; override Cancel so we send SIGTERM first, then rely on
+	// WaitDelay to escalate to SIGKILL if the child doesn't exit in time.
+	// Grace is sourced from CLOCKWORK_SCHED_CANCEL_GRACE (default 5s) —
+	// same env the scheduler reads, so operators have one knob.
+	grace := cancelGraceFromEnv()
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return os.ErrProcessDone
+		}
+		return cmd.Process.Signal(syscall.SIGTERM)
+	}
+	cmd.WaitDelay = grace
 
 	if job.WorkingDir != "" {
 		cmd.Dir = job.WorkingDir
