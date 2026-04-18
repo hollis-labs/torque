@@ -1,4 +1,4 @@
-import { useState, type ReactNode, type SyntheticEvent } from 'react'
+import { useState, type ReactNode } from 'react'
 import { MoreHorizontal } from 'lucide-react'
 import {
   DropdownMenu,
@@ -29,10 +29,6 @@ interface TaskActionsMenuProps {
   triggerClassName?: string
   triggerContent?: ReactNode
   triggerAriaLabel?: string
-}
-
-function stop(e: SyntheticEvent) {
-  e.stopPropagation()
 }
 
 const DEFAULT_TRIGGER_CLASS =
@@ -103,11 +99,12 @@ export function TaskActionsMenu({
 
   return (
     <>
-      <span onClick={stop} onKeyDown={stop}>
+      <span data-row-interactive="true">
         <DropdownMenu>
           <DropdownMenuTrigger
             className={triggerClassName}
             aria-label={triggerAriaLabel}
+            data-testid="task-row-actions-trigger"
           >
             {triggerContent}
           </DropdownMenuTrigger>
