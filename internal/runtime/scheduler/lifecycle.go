@@ -39,6 +39,20 @@ func (lm *LifecycleManager) HandleResult(taskID string, runID int64, result *exe
 	// should stop. Uses a deferred closure so early-return paths still emit.
 	defer lm.emitRunFinished(taskID, runID, result)
 
+	// Run-status guard (CW-20260418-0015). If an operator/scheduler path
+	// already stamped the run row as cancelled/superseded/killed while the
+	// executor was still running, the late-arriving executor result must
+	// NOT drive retry/block/escalate/notify. Operator actions are silent
+	// by design — no on_fail hook should fire, no retry counter should
+	// advance, and the run row stands as stamped. We still emit
+	// run.finished (via the deferred closure) so the UI's active-run pulse
+	// stops.
+	if runID > 0 {
+		if run, err := lm.store.GetRun(runID); err == nil && sqlstore.IsOperatorTerminalRunStatus(run.Status) {
+			return nil
+		}
+	}
+
 	task, err := lm.store.GetTask(taskID)
 	if err != nil {
 		return fmt.Errorf("lifecycle: get task %s: %w", taskID, err)
