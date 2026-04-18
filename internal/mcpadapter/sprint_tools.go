@@ -3,6 +3,7 @@ package mcpadapter
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
@@ -53,6 +54,7 @@ func (a *Adapter) registerSprintTools() {
 func (a *Adapter) handleSprintCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	input := service.SprintCreateInput{
 		Name:         reqStr(req, "name"),
+		Goal:         reqStr(req, "goal"),
 		ApprovalMode: reqStr(req, "approval_mode"),
 		ProjectID:    reqStr(req, "project_id"),
 	}
@@ -159,7 +161,11 @@ func (a *Adapter) handleSprintApprove(ctx context.Context, req mcp.CallToolReque
 	return mcp.NewToolResultText(fmt.Sprintf("%d tasks approved in sprint %s", count, sprintID)), nil
 }
 
-// reqFloat extracts a float64 parameter from an MCP request.
+// reqFloat extracts a float64 argument. Coerces from int, int64, and numeric
+// strings to match mcp-go's CallToolRequest.GetFloat behavior. Without this
+// coercion, a caller passing "cost_budget": "12.5" (string) silently drops to
+// 0 even though the MCP server-side tool declares a Number field.
+// See CW-20260418-0019.
 func reqFloat(req mcp.CallToolRequest, key string) float64 {
 	args := req.GetArguments()
 	if v, ok := args[key]; ok {
@@ -168,6 +174,12 @@ func reqFloat(req mcp.CallToolRequest, key string) float64 {
 			return n
 		case int:
 			return float64(n)
+		case int64:
+			return float64(n)
+		case string:
+			if f, err := strconv.ParseFloat(n, 64); err == nil {
+				return f
+			}
 		}
 	}
 	return 0

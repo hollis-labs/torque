@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/mcpadapter"
@@ -450,4 +451,112 @@ func TestFullStack_TaskUpdate_ManualFalse_Unchanged(t *testing.T) {
 	var updated map[string]interface{}
 	require.NoError(t, json.Unmarshal([]byte(text), &updated))
 	require.Equal(t, false, updated["Manual"], "Update path must NOT coerce manual=false")
+}
+
+// TestFullStack_TaskUpdate_ManualStringCoercion reproduces CW-20260418-0019
+// Instance 1: clockwork_task_update manual=true returned success but the
+// DB column didn't flip. Root cause was the local reqBool helper silently
+// returning false for any non-bool JSON type, including strings. If a
+// caller (or a middle layer) shipped "manual": "true" as a JSON string,
+// presence-detection fired, reqBool returned false, and manual was
+// overwritten with 0. The mcp-go library's own GetBool helper coerces
+// strings via strconv.ParseBool — our local reqBool now matches that
+// behavior so the silent-drop class is closed.
+func TestFullStack_TaskUpdate_ManualStringCoercion(t *testing.T) {
+	a := setupAdapter(t)
+
+	// Create a task (forced manual=true by CW-20260417-0133 override) and
+	// flip it to manual=false with a properly-typed bool so we have a
+	// known baseline to flip back.
+	text, _ := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":       "coerce-me",
+		"description": "x",
+	})
+	var created map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	id := created["ID"].(string)
+
+	text, isErr := callTool(t, a, "clockwork_task_update", map[string]interface{}{
+		"id":     id,
+		"manual": false,
+	})
+	require.False(t, isErr, "baseline flip to false should succeed: %s", text)
+	var flipped map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(text), &flipped))
+	require.Equal(t, false, flipped["Manual"])
+
+	// The silent-drop repro: caller sends "true" as a JSON string.
+	text, isErr = callTool(t, a, "clockwork_task_update", map[string]interface{}{
+		"id":     id,
+		"manual": "true",
+	})
+	require.False(t, isErr, "string-typed manual should be accepted: %s", text)
+	var promoted map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(text), &promoted))
+	assert.Equal(t, true, promoted["Manual"],
+		`clockwork_task_update manual="true" (string) must coerce to bool true; silent drop was CW-20260418-0019 Instance 1`)
+
+	// Confirm the DB row agrees (not just the response echo).
+	text, _ = callTool(t, a, "clockwork_task_get", map[string]interface{}{"id": id})
+	var got map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(text), &got))
+	assert.Equal(t, true, got["Manual"], "task_get must reflect the coerced manual=true in DB")
+}
+
+// TestFullStack_TaskUpdate_BoolCoercionVariants exercises every JSON shape
+// a poorly-behaved client might send for a Boolean-typed MCP arg. Each
+// variant must round-trip deterministically instead of silently dropping
+// to the zero value. Mirrors mcp-go's own CallToolRequest.GetBool accepted
+// type set.
+func TestFullStack_TaskUpdate_BoolCoercionVariants(t *testing.T) {
+	cases := []struct {
+		label string
+		input interface{}
+		want  bool
+	}{
+		{"bool_true", true, true},
+		{"bool_false", false, false},
+		{"string_true", "true", true},
+		{"string_false", "false", false},
+		{"string_1", "1", true},
+		{"string_0", "0", false},
+		{"float64_1", float64(1), true},
+		{"float64_0", float64(0), false},
+		{"int_1", 1, true},
+		{"int_0", 0, false},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.label, func(t *testing.T) {
+			a := setupAdapter(t)
+			text, _ := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+				"title":       "bool-variant",
+				"description": "x",
+			})
+			var created map[string]interface{}
+			require.NoError(t, json.Unmarshal([]byte(text), &created))
+			id := created["ID"].(string)
+
+			// Baseline: flip to the opposite of tc.want so we can detect an
+			// actual change.
+			text, _ = callTool(t, a, "clockwork_task_update", map[string]interface{}{
+				"id":     id,
+				"manual": !tc.want,
+			})
+			var baseline map[string]interface{}
+			require.NoError(t, json.Unmarshal([]byte(text), &baseline))
+			require.Equal(t, !tc.want, baseline["Manual"])
+
+			text, isErr := callTool(t, a, "clockwork_task_update", map[string]interface{}{
+				"id":     id,
+				"manual": tc.input,
+			})
+			require.False(t, isErr, "update should succeed for %v: %s", tc.input, text)
+			var got map[string]interface{}
+			require.NoError(t, json.Unmarshal([]byte(text), &got))
+			assert.Equal(t, tc.want, got["Manual"],
+				"manual=%v (%T) should coerce to %v", tc.input, tc.input, tc.want)
+		})
+	}
 }
