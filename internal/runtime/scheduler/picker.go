@@ -69,14 +69,18 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, error) {
 		}
 
 		// Per-project concurrency gate (no gate for project-less tasks).
-		if pk := projectKey(task); pk != "" {
+		// Only consult the gate here — do not reserve the slot yet. The
+		// reservation happens after all other eligibility checks pass so a
+		// dep-blocked task cannot silently starve other same-project
+		// siblings (CW-20260418-0003).
+		pk := projectKey(task)
+		if pk != "" {
 			if _, inflight := busyProjects[pk]; inflight {
 				continue
 			}
 			if _, taken := allocated[pk]; taken {
 				continue
 			}
-			allocated[pk] = struct{}{}
 		}
 
 		// Check dependencies
@@ -101,6 +105,11 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, error) {
 			if !allMet {
 				continue
 			}
+		}
+
+		// All checks passed — now reserve the per-project slot for this tick.
+		if pk != "" {
+			allocated[pk] = struct{}{}
 		}
 
 		eligible = append(eligible, task)
