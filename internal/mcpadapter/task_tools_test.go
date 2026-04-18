@@ -28,6 +28,45 @@ func setupAdapter(t *testing.T) *mcpadapter.Adapter {
 	return mcpadapter.New(svc)
 }
 
+// dataBytes extracts the marshaled `data` field from a Phase C
+// `{ok, data, error}` response text. Returns the raw JSON so callers can
+// unmarshal into whatever shape they expect. Fails the test if the response
+// is not ok=true.
+func dataBytes(t *testing.T, text string) []byte {
+	t.Helper()
+	var env struct {
+		OK    bool            `json:"ok"`
+		Data  json.RawMessage `json:"data"`
+		Error json.RawMessage `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(text), &env), "response must be valid JSON: %s", text)
+	require.True(t, env.OK, "expected ok=true, got: %s", text)
+	return env.Data
+}
+
+// parseData unmarshals the `data` field of a Phase C envelope into out.
+func parseData(t *testing.T, text string, out any) {
+	t.Helper()
+	require.NoError(t, json.Unmarshal(dataBytes(t, text), out), "data unmarshal: %s", text)
+}
+
+// parseError unmarshals the `error` field of a Phase C envelope. Fails the
+// test if ok=true.
+func parseError(t *testing.T, text string) (code, message, field string) {
+	t.Helper()
+	var env struct {
+		OK    bool `json:"ok"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Field   string `json:"field"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(text), &env), "response must be valid JSON: %s", text)
+	require.False(t, env.OK, "expected ok=false, got: %s", text)
+	return env.Error.Code, env.Error.Message, env.Error.Field
+}
+
 func callTool(t *testing.T, a *mcpadapter.Adapter, name string, args map[string]interface{}) (string, bool) {
 	t.Helper()
 
@@ -98,7 +137,7 @@ func TestFullStack_CreateAndGetTask(t *testing.T) {
 
 	// Parse the task ID from the response JSON (struct fields are uppercased).
 	var created map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	parseData(t, text, &created)
 	id, ok := created["ID"].(string)
 	require.True(t, ok, "response should contain string ID")
 	require.NotEmpty(t, id)
@@ -110,7 +149,7 @@ func TestFullStack_CreateAndGetTask(t *testing.T) {
 	require.False(t, isErr, "get should not error: %s", text)
 
 	var fetched map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &fetched))
+	parseData(t, text, &fetched)
 	require.Equal(t, "Fix auth bug", fetched["Title"])
 }
 
@@ -131,7 +170,7 @@ func TestFullStack_TaskCreate_Facets(t *testing.T) {
 	require.False(t, isErr, "create should not error: %s", text)
 
 	var created map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	parseData(t, text, &created)
 	require.Equal(t, "external", created["Kind"])
 	require.Equal(t, "user", created["SourceType"])
 	ref := created["SourceRef"].(map[string]interface{})
@@ -152,7 +191,7 @@ func TestFullStack_TaskCreate_FacetDefaults(t *testing.T) {
 	require.False(t, isErr, "create should not error: %s", text)
 
 	var created map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	parseData(t, text, &created)
 	require.Equal(t, "agent", created["Kind"])
 	require.Equal(t, "user", created["SourceType"])
 	require.Equal(t, "normal", created["Trust"])
@@ -179,10 +218,16 @@ func TestFullStack_TaskList_FilterByKind(t *testing.T) {
 	})
 	require.False(t, isErr, "list should not error: %s", text)
 
-	var tasks []map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &tasks))
-	require.Len(t, tasks, 1)
-	require.Equal(t, "external", tasks[0]["Kind"])
+	var envelope struct {
+		Items []map[string]interface{} `json:"items"`
+		Meta  map[string]interface{}   `json:"meta"`
+	}
+	parseData(t, text, &envelope)
+	require.Len(t, envelope.Items, 1)
+	// Brief shape uses lowercase "kind".
+	require.Equal(t, "external", envelope.Items[0]["kind"])
+	require.Equal(t, false, envelope.Meta["truncated"])
+	require.Equal(t, float64(1), envelope.Meta["returned"])
 }
 
 func TestFullStack_TaskUpdate_Facets(t *testing.T) {
@@ -193,7 +238,7 @@ func TestFullStack_TaskUpdate_Facets(t *testing.T) {
 		"description": "x",
 	})
 	var created map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	parseData(t, text, &created)
 	id := created["ID"].(string)
 
 	text, isErr := callTool(t, a, "clockwork_task_update", map[string]interface{}{
@@ -205,7 +250,7 @@ func TestFullStack_TaskUpdate_Facets(t *testing.T) {
 	require.False(t, isErr, "update should not error: %s", text)
 
 	var updated map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &updated))
+	parseData(t, text, &updated)
 	require.Equal(t, "blocking", updated["CheckpointMode"])
 	require.Equal(t, "review", updated["OnCheckpointResponse"])
 	ref := updated["SourceRef"].(map[string]interface{})
@@ -223,7 +268,7 @@ func TestFullStack_TaskUpdate_WritableFields(t *testing.T) {
 		"description": "x",
 	})
 	var created map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	parseData(t, text, &created)
 	id := created["ID"].(string)
 
 	// Scalars / simple strings / bools / numbers.
@@ -247,7 +292,7 @@ func TestFullStack_TaskUpdate_WritableFields(t *testing.T) {
 	})
 	require.False(t, isErr, "scalar update should not error: %s", text)
 	var u1 map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &u1))
+	parseData(t, text, &u1)
 	require.Equal(t, true, u1["Manual"])
 	require.Equal(t, "cli", u1["Executor"])
 	require.Equal(t, "claude-code", u1["AgentProfile"])
@@ -277,7 +322,7 @@ func TestFullStack_TaskUpdate_WritableFields(t *testing.T) {
 		"description": "x",
 	})
 	var dep map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &dep))
+	parseData(t, text, &dep)
 	depID := dep["ID"].(string)
 
 	text, isErr = callTool(t, a, "clockwork_task_update", map[string]interface{}{
@@ -294,7 +339,7 @@ func TestFullStack_TaskUpdate_WritableFields(t *testing.T) {
 	})
 	require.False(t, isErr, "json-blob update should not error: %s", text)
 	var u2 map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &u2))
+	parseData(t, text, &u2)
 
 	// Blob fields are sql.NullString on TaskRecord: {String, Valid}.
 	expectNullStringJSON := func(key, wantJSON string) {
@@ -324,7 +369,7 @@ func TestFullStack_TaskLifecycle(t *testing.T) {
 	require.False(t, isErr, "create should not error: %s", text)
 
 	var created map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	parseData(t, text, &created)
 	id := created["ID"].(string)
 
 	// todo → doing.
@@ -386,9 +431,13 @@ func TestFullStack_SearchTasks(t *testing.T) {
 	})
 	require.False(t, isErr, "search should not error: %s", text)
 
-	var results []interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &results))
-	require.Len(t, results, 1, "search for 'login' should return exactly 1 result")
+	var envelope struct {
+		Items []map[string]interface{} `json:"items"`
+		Meta  map[string]interface{}   `json:"meta"`
+	}
+	parseData(t, text, &envelope)
+	require.Len(t, envelope.Items, 1, "search for 'login' should return exactly 1 result")
+	require.Equal(t, false, envelope.Meta["truncated"])
 }
 
 // TestFullStack_TaskCreate_ForcesManualTrue_ExplicitFalse verifies the
@@ -405,7 +454,7 @@ func TestFullStack_TaskCreate_ForcesManualTrue_ExplicitFalse(t *testing.T) {
 	require.False(t, isErr, "create should not error: %s", text)
 
 	var created map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	parseData(t, text, &created)
 	require.Equal(t, true, created["Manual"], "manual=false must be coerced to true per CW-20260417-0133")
 }
 
@@ -422,7 +471,7 @@ func TestFullStack_TaskCreate_ManualOmitted_CoercedToTrue(t *testing.T) {
 	require.False(t, isErr, "create should not error: %s", text)
 
 	var created map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	parseData(t, text, &created)
 	require.Equal(t, true, created["Manual"], "omitted manual must default to true per CW-20260417-0133")
 }
 
@@ -437,7 +486,7 @@ func TestFullStack_TaskUpdate_ManualFalse_Unchanged(t *testing.T) {
 		"description": "x",
 	})
 	var created map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	parseData(t, text, &created)
 	id := created["ID"].(string)
 	require.Equal(t, true, created["Manual"])
 
@@ -448,6 +497,6 @@ func TestFullStack_TaskUpdate_ManualFalse_Unchanged(t *testing.T) {
 	require.False(t, isErr, "update should not error: %s", text)
 
 	var updated map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &updated))
+	parseData(t, text, &updated)
 	require.Equal(t, false, updated["Manual"], "Update path must NOT coerce manual=false")
 }

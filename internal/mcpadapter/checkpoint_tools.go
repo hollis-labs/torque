@@ -2,19 +2,20 @@ package mcpadapter
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 )
 
 func (a *Adapter) registerCheckpointTools() {
 	a.server.AddTool(mcp.NewTool("clockwork_task_checkpoint_emit",
-		mcp.WithDescription("Emit a task checkpoint (pending row, parks task if checkpoint_mode=blocking)"),
+		mcp.WithDescription(`Emit a pending checkpoint on a task. If the task's checkpoint_mode is "blocking", the task parks until respond/cancel.
+Use for mid-run user-interaction gates or data-collection stops; sibling clockwork_task_checkpoint_respond to resolve, clockwork_task_checkpoint_cancel to abandon. clockwork_task_checkpoint_list/pending for discovery.
+Response shape: data = {<CheckpointRecord fields>} — singleton with correlation_id, status="pending".
+Example: {"task_id":"T-123","type":"collect_data","payload_json":"{\"q\":\"?\"}","emitter_source_type":"system"}`),
 		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID to attach the checkpoint to")),
 		mcp.WithString("type", mcp.Required(), mcp.Description("Free-form checkpoint type (e.g. collect_data)")),
 		mcp.WithString("payload_json", mcp.Required(), mcp.Description("Opaque JSON payload — schema owned by go-envelope (deferred)")),
@@ -24,7 +25,10 @@ func (a *Adapter) registerCheckpointTools() {
 	), a.handleCheckpointEmit)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_checkpoint_respond",
-		mcp.WithDescription("Respond to a pending checkpoint; applies on_checkpoint_response rule to the task"),
+		mcp.WithDescription(`Resolve a pending checkpoint with a JSON response; applies the task's on_checkpoint_response rule (resume|review|custom).
+Use to unpark a blocking task; clockwork_task_checkpoint_cancel to abandon without resolution. Responding to a terminal checkpoint returns error.code=conflict.
+Response shape: data = {<CheckpointRecord fields>} — singleton, status="responded".
+Example: {"correlation_id":"01HK...","response_json":"{\"decision\":\"ship\"}","responder_source_type":"user"}`),
 		mcp.WithString("correlation_id", mcp.Required(), mcp.Description("Checkpoint correlation_id (ULID)")),
 		mcp.WithString("response_json", mcp.Required(), mcp.Description("Opaque JSON response body")),
 		mcp.WithString("responder_source_type", mcp.Required(), mcp.Description("agent|user|api|system|webhook|import")),
@@ -32,7 +36,10 @@ func (a *Adapter) registerCheckpointTools() {
 	), a.handleCheckpointRespond)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_checkpoint_cancel",
-		mcp.WithDescription("Cancel a pending checkpoint; task stays in review with a canceled reason"),
+		mcp.WithDescription(`Cancel a pending checkpoint without a response; the task stays in review with the canceled reason logged.
+Use when the checkpoint became obsolete; clockwork_task_checkpoint_respond when you have a real answer. Canceling a terminal checkpoint returns error.code=conflict.
+Response shape: data = {<CheckpointRecord fields>} — singleton, status="canceled".
+Example: {"correlation_id":"01HK...","reason":"superseded","canceler_source_type":"user"}`),
 		mcp.WithString("correlation_id", mcp.Required()),
 		mcp.WithString("reason", mcp.Description("Human-readable cancellation reason")),
 		mcp.WithString("canceler_source_type", mcp.Description("agent|user|api|system|webhook|import")),
@@ -40,17 +47,28 @@ func (a *Adapter) registerCheckpointTools() {
 	), a.handleCheckpointCancel)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_checkpoint_list",
-		mcp.WithDescription("List checkpoints emitted against a task, newest first"),
-		mcp.WithString("task_id", mcp.Required()),
+		mcp.WithDescription(`List checkpoints emitted against one task, newest first. Brief shape drops payload/response bodies; pass verbose="true" for full records.
+Use to inspect one task's checkpoint history; clockwork_task_checkpoints_pending for cross-task pending-only view.
+Response shape: data = {items: [<briefCheckpoint or CheckpointRecord>...], meta: {truncated, returned, limit, hint?}}.
+Example: {"task_id":"T-123"}`),
+		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),
+		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleCheckpointList)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_checkpoint_get",
-		mcp.WithDescription("Get a checkpoint by correlation_id"),
-		mcp.WithString("correlation_id", mcp.Required()),
+		mcp.WithDescription(`Fetch one checkpoint's full record by correlation_id (ULID).
+Use when you have the correlation_id; clockwork_task_checkpoint_list for a task's history, clockwork_task_checkpoints_pending for cross-task pending.
+Response shape: data = {<CheckpointRecord fields>} — singleton.
+Example: {"correlation_id":"01HK..."}`),
+		mcp.WithString("correlation_id", mcp.Required(), mcp.Description("Checkpoint correlation_id (ULID)")),
 	), a.handleCheckpointGet)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_checkpoints_pending",
-		mcp.WithDescription("List every pending checkpoint across all tasks (oldest first)"),
+		mcp.WithDescription(`List every pending (unresolved) checkpoint across all tasks, oldest first — the global response queue.
+Use for agent/user dashboards that need to triage outstanding decision gates; clockwork_task_checkpoint_list for single-task scope.
+Response shape: data = {items: [<briefCheckpoint or CheckpointRecord>...], meta: {truncated, returned, limit, hint?}}.
+Example: {}`),
+		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleCheckpointPending)
 }
 
@@ -65,15 +83,15 @@ func (a *Adapter) handleCheckpointEmit(ctx context.Context, req mcp.CallToolRequ
 	if raw := reqStr(req, "timeout_at"); raw != "" {
 		t, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid timeout_at: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid timeout_at: %v", err), "timeout_at")
 		}
 		in.TimeoutAt = &t
 	}
 	out, err := a.svc.Checkpoint.Emit(in)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(out)
+	return okResult(out)
 }
 
 func (a *Adapter) handleCheckpointRespond(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -84,7 +102,7 @@ func (a *Adapter) handleCheckpointRespond(ctx context.Context, req mcp.CallToolR
 		ResponderSourceRef:  reqStr(req, "responder_source_ref"),
 	})
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	return a.checkpointResultByCorr(reqStr(req, "correlation_id"))
 }
@@ -97,17 +115,27 @@ func (a *Adapter) handleCheckpointCancel(ctx context.Context, req mcp.CallToolRe
 		CancelerSourceRef:  reqStr(req, "canceler_source_ref"),
 	})
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	return a.checkpointResultByCorr(reqStr(req, "correlation_id"))
 }
 
 func (a *Adapter) handleCheckpointList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	verbose := reqStrBool(req, "verbose")
 	list, err := a.svc.Checkpoint.ListForTask(reqStr(req, "task_id"))
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(list)
+	limit := defaultGenericListLimit
+	items := make([]any, 0, len(list))
+	for _, c := range list {
+		if verbose {
+			items = append(items, c)
+		} else {
+			items = append(items, toBriefCheckpoint(c))
+		}
+	}
+	return cappedJSONResult(items, limit)
 }
 
 func (a *Adapter) handleCheckpointGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -115,11 +143,21 @@ func (a *Adapter) handleCheckpointGet(ctx context.Context, req mcp.CallToolReque
 }
 
 func (a *Adapter) handleCheckpointPending(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	verbose := reqStrBool(req, "verbose")
 	pending, err := a.svc.Checkpoint.ListPending()
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(pending)
+	limit := defaultGenericListLimit
+	items := make([]any, 0, len(pending))
+	for _, c := range pending {
+		if verbose {
+			items = append(items, c)
+		} else {
+			items = append(items, toBriefCheckpoint(c))
+		}
+	}
+	return cappedJSONResult(items, limit)
 }
 
 // checkpointResultByCorr loads the current row for correlationID and returns
@@ -128,10 +166,7 @@ func (a *Adapter) handleCheckpointPending(ctx context.Context, req mcp.CallToolR
 func (a *Adapter) checkpointResultByCorr(correlationID string) (*mcp.CallToolResult, error) {
 	cp, err := a.svc.Checkpoint.Get(correlationID)
 	if err != nil {
-		if errors.Is(err, sqlstore.ErrCheckpointNotFound) {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(cp)
+	return okResult(cp)
 }

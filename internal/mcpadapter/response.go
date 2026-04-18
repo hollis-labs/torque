@@ -1,0 +1,444 @@
+package mcpadapter
+
+import (
+	"encoding/json"
+	"time"
+
+	"github.com/mark3labs/mcp-go/mcp"
+
+	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/clockwork-manifold/internal/service"
+)
+
+// maxMCPResponseBytes is the size guard for list/search responses. mark3labs
+// enforces a hard 128KB cap on tool stdio responses; we leave headroom for
+// the JSON-RPC envelope, base64 framing, and future Phase C `{ok, data, error}`
+// wrapping. Every list/search handler that uses the `{items, meta}` envelope
+// feeds through cappedJSONResult so a too-large fan-out degrades to a
+// truncated response with a hint instead of a hard transport error. See
+// CW-20260418-0012.
+const maxMCPResponseBytes = 100 * 1024 // 100KB
+
+// Default and maximum limits for list/search tools. Kept here instead of
+// scattered through per-tool handlers so the shape contract is discoverable
+// in one place.
+const (
+	defaultTaskSearchLimit   = 25
+	maxTaskSearchLimit       = 100
+	maxTaskListLimit         = 200
+	defaultGenericListLimit  = 100
+	maxGenericListLimit      = 500
+	defaultTemplateListLimit = 100
+	maxTemplateListLimit     = 500
+)
+
+// listMeta is the companion to items[] in the list/search response envelope.
+// Fields are intentionally lower-case + snake_case to match the eventual
+// {ok, data, error} Phase C envelope style — every per-tool response is
+// `{items, meta}` at the top level; Phase C will set `data = {items, meta}`
+// with no further nesting.
+type listMeta struct {
+	Truncated bool   `json:"truncated"`
+	Returned  int    `json:"returned"`
+	Limit     int    `json:"limit"`
+	Hint      string `json:"hint,omitempty"`
+}
+
+// ---- brief shapes -----------------------------------------------------------
+
+// All brief shapes target ~150 bytes per record. They intentionally drop large
+// free-text columns (description, system_prompt, template body, stack traces,
+// artifact content, comment content) and JSON-blob columns. Tags, when
+// included, are a flat []string of slugs — never the full TagRecord.
+
+type briefTask struct {
+	ID           string   `json:"id"`
+	Title        string   `json:"title"`
+	Status       string   `json:"status"`
+	Priority     int      `json:"priority"`
+	Manual       bool     `json:"manual"`
+	AgentProfile string   `json:"agent_profile,omitempty"`
+	Kind         string   `json:"kind"`
+	Tags         []string `json:"tags,omitempty"`
+	UpdatedAt    string   `json:"updated_at"`
+}
+
+type briefSprint struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Status       string `json:"status"`
+	ApprovalMode string `json:"approval_mode"`
+	ProjectID    string `json:"project_id,omitempty"`
+	UpdatedAt    string `json:"updated_at"`
+}
+
+type briefEpic struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Status    string `json:"status"`
+	Priority  int64  `json:"priority,omitempty"`
+	ProjectID string `json:"project_id,omitempty"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+type briefProject struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Status    string `json:"status"`
+	RepoPath  string `json:"repo_path,omitempty"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+type briefRun struct {
+	ID       int64  `json:"id"`
+	TaskID   string `json:"task_id"`
+	Executor string `json:"executor,omitempty"`
+	Status   string `json:"status"`
+	ExitCode *int64 `json:"exit_code,omitempty"`
+	Cost     float64 `json:"cost,omitempty"`
+	StartedAt string `json:"started_at"`
+}
+
+type briefTemplate struct {
+	ID          string `json:"id"`
+	Version     int    `json:"version"`
+	Name        string `json:"name"`
+	Kind        string `json:"kind"`
+	AutoExecute bool   `json:"auto_execute"`
+	IsArchived  bool   `json:"is_archived,omitempty"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+type briefComment struct {
+	ID        int64  `json:"id"`
+	TaskID    string `json:"task_id"`
+	Author    string `json:"author,omitempty"`
+	CreatedAt string `json:"created_at"`
+	// First 100 chars of the comment body for context without bloat.
+	Excerpt string `json:"excerpt,omitempty"`
+}
+
+type briefArtifact struct {
+	ID       int64  `json:"id"`
+	TaskID   string `json:"task_id"`
+	Type     string `json:"type"`
+	URL      string `json:"url,omitempty"`
+	FilePath string `json:"file_path,omitempty"`
+	CreatedAt string `json:"created_at"`
+}
+
+type briefSubtodo struct {
+	ID       string `json:"id"`
+	Text     string `json:"text"`
+	Required bool   `json:"required"`
+	Done     bool   `json:"done"`
+}
+
+type briefCheckpoint struct {
+	ID            int64  `json:"id"`
+	TaskID        string `json:"task_id"`
+	CorrelationID string `json:"correlation_id"`
+	Type          string `json:"type"`
+	Status        string `json:"status"`
+	EmittedAt     string `json:"emitted_at"`
+}
+
+// ---- to-brief converters ----------------------------------------------------
+
+func toBriefTask(t sqlstore.TaskRecord, tags []string) briefTask {
+	return briefTask{
+		ID:           t.ID,
+		Title:        t.Title,
+		Status:       t.Status,
+		Priority:     t.Priority,
+		Manual:       t.Manual,
+		AgentProfile: t.AgentProfile,
+		Kind:         t.Kind,
+		Tags:         tags,
+		UpdatedAt:    t.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func toBriefSprint(s sqlstore.SprintRecord) briefSprint {
+	projectID := ""
+	if s.ProjectID.Valid {
+		projectID = s.ProjectID.String
+	}
+	return briefSprint{
+		ID:           s.ID,
+		Name:         s.Name,
+		Status:       s.Status,
+		ApprovalMode: s.ApprovalMode,
+		ProjectID:    projectID,
+		UpdatedAt:    s.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func toBriefEpic(e sqlstore.EpicRecord) briefEpic {
+	projectID := ""
+	if e.ProjectID.Valid {
+		projectID = e.ProjectID.String
+	}
+	var prio int64
+	if e.Priority.Valid {
+		prio = e.Priority.Int64
+	}
+	return briefEpic{
+		ID:        e.ID,
+		Name:      e.Name,
+		Status:    e.Status,
+		Priority:  prio,
+		ProjectID: projectID,
+		UpdatedAt: e.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func toBriefProject(p sqlstore.ProjectRecord) briefProject {
+	return briefProject{
+		ID:        p.ID,
+		Name:      p.Name,
+		Status:    p.Status,
+		RepoPath:  p.RepoPath,
+		UpdatedAt: p.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func toBriefRun(r sqlstore.RunRecord) briefRun {
+	var exit *int64
+	if r.ExitCode.Valid {
+		v := r.ExitCode.Int64
+		exit = &v
+	}
+	return briefRun{
+		ID:        r.ID,
+		TaskID:    r.TaskID,
+		Executor:  r.Executor,
+		Status:    r.Status,
+		ExitCode:  exit,
+		Cost:      r.Cost,
+		StartedAt: r.StartedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func toBriefTemplate(t sqlstore.TemplateRecord) briefTemplate {
+	return briefTemplate{
+		ID:          t.ID,
+		Version:     t.Version,
+		Name:        t.Name,
+		Kind:        t.Kind,
+		AutoExecute: t.AutoExecute,
+		IsArchived:  t.IsArchived,
+		UpdatedAt:   t.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func toBriefComment(c sqlstore.CommentRecord) briefComment {
+	excerpt := c.Content
+	if len(excerpt) > 100 {
+		excerpt = excerpt[:100]
+	}
+	return briefComment{
+		ID:        c.ID,
+		TaskID:    c.TaskID,
+		Author:    c.Author,
+		CreatedAt: c.CreatedAt.UTC().Format(time.RFC3339),
+		Excerpt:   excerpt,
+	}
+}
+
+func toBriefArtifact(a sqlstore.ArtifactRecord) briefArtifact {
+	return briefArtifact{
+		ID:        a.ID,
+		TaskID:    a.TaskID,
+		Type:      a.Type,
+		URL:       a.URL,
+		FilePath:  a.FilePath,
+		CreatedAt: a.CreatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func toBriefSubtodo(s sqlstore.Subtodo) briefSubtodo {
+	return briefSubtodo{
+		ID:       s.ID,
+		Text:     s.Text,
+		Required: s.Required,
+		Done:     s.Done,
+	}
+}
+
+func toBriefCheckpoint(c sqlstore.CheckpointRecord) briefCheckpoint {
+	return briefCheckpoint{
+		ID:            c.ID,
+		TaskID:        c.TaskID,
+		CorrelationID: c.CorrelationID,
+		Type:          c.Type,
+		Status:        c.Status,
+		EmittedAt:     c.EmittedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+// ---- size-guarded envelope --------------------------------------------------
+
+// reqStrBool reads an MCP string arg and coerces "true"/"false"/"1"/"0" to
+// bool. Matches the Phase A convention of declaring numeric/bool-like params
+// as strings so LLM clients that emit "verbose": "false" don't trip schema
+// validation. Missing or unparseable values return false.
+func reqStrBool(req mcp.CallToolRequest, key string) bool {
+	args := req.GetArguments()
+	v, ok := args[key]
+	if !ok {
+		return false
+	}
+	switch n := v.(type) {
+	case bool:
+		return n
+	case string:
+		switch n {
+		case "true", "TRUE", "True", "1", "yes":
+			return true
+		}
+		return false
+	}
+	return false
+}
+
+// clampLimit returns a sane limit for list/search tools. limit<=0 falls back
+// to def; anything above max is clamped down. The caller is responsible for
+// reading the raw int from the request.
+func clampLimit(limit, def, max int) int {
+	if limit <= 0 {
+		return def
+	}
+	if limit > max {
+		return max
+	}
+	return limit
+}
+
+// listEnvelope is the inner {items, meta} payload that rides inside the
+// Phase C Response.Data field. Pulled into a named type so the size-fit
+// search below can marshal the full `{ok, data, error}` envelope (matching
+// wire output) instead of the pre-Phase-C bare `{items, meta}`.
+type listEnvelope struct {
+	Items []any    `json:"items"`
+	Meta  listMeta `json:"meta"`
+}
+
+// cappedJSONResult serializes items into the `{ok: true, data: {items, meta}}`
+// response envelope, enforcing maxMCPResponseBytes. items MUST be a slice
+// (reflected via len() on a known concrete slice type at the call site).
+// limit is the applied limit (reported back in meta.limit). If the marshaled
+// payload exceeds maxMCPResponseBytes, cappedJSONResult drops tail entries
+// one at a time until the envelope fits, sets meta.truncated=true, and adds a
+// hint. Callers pass the already-sliced/limited slice; the function does NOT
+// re-apply limit.
+//
+// Per the Phase C ticket's "critical shape coordination" section, the wire
+// shape is strictly FLAT: top-level `{ok, data, error}` with `data` holding
+// the `{items, meta}` literal — no further nesting. The size budget accounts
+// for the JSON overhead of the outer envelope so a list that nominally fits
+// under the cap doesn't blow it once wrapped.
+func cappedJSONResult(items []any, limit int) (*mcp.CallToolResult, error) {
+	// Marshal via the envelope helper so the size we're budgeting against is
+	// the actual wire payload the caller will see.
+	marshalEnv := func(payload listEnvelope) ([]byte, error) {
+		return json.MarshalIndent(Response{OK: true, Data: payload}, "", "  ")
+	}
+
+	meta := listMeta{
+		Truncated: false,
+		Returned:  len(items),
+		Limit:     limit,
+	}
+	payload := listEnvelope{Items: items, Meta: meta}
+
+	b, err := marshalEnv(payload)
+	if err != nil {
+		return errResult(ErrCodeInternal, "response serialization failed", "")
+	}
+
+	// Fast path: fits in cap.
+	if len(b) <= maxMCPResponseBytes {
+		return mcp.NewToolResultText(string(b)), nil
+	}
+
+	// Slow path: shrink until it fits. We drop from the tail; callers pass
+	// items already sorted by recency where that matters (ListTasks returns
+	// updated_at DESC), so trimming the tail keeps the newest records.
+	// Binary-search-like shrink: halve until it fits, then linearly grow to
+	// the largest prefix that fits. For typical 2-3x overshoots this costs
+	// a handful of marshals, not O(n).
+	trimmed := items
+	for len(trimmed) > 0 && len(b) > maxMCPResponseBytes {
+		trimmed = trimmed[:len(trimmed)/2]
+		meta.Truncated = true
+		meta.Returned = len(trimmed)
+		meta.Hint = "response too large; add filters or lower limit"
+		payload = listEnvelope{Items: trimmed, Meta: meta}
+		b, err = marshalEnv(payload)
+		if err != nil {
+			return errResult(ErrCodeInternal, "response serialization failed", "")
+		}
+	}
+
+	// Grow back toward the largest prefix that still fits, using the full
+	// `items` slice as the upper bound. This avoids losing records to the
+	// halving heuristic when we only overshot by a small margin.
+	lo, hi := len(trimmed), len(items)
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		trial := items[:mid]
+		payloadTry := listEnvelope{Items: trial, Meta: listMeta{
+			Truncated: mid < len(items),
+			Returned:  mid,
+			Limit:     limit,
+			Hint: func() string {
+				if mid < len(items) {
+					return "response too large; add filters or lower limit"
+				}
+				return ""
+			}(),
+		}}
+		b2, err2 := marshalEnv(payloadTry)
+		if err2 != nil {
+			return errResult(ErrCodeInternal, "response serialization failed", "")
+		}
+		if len(b2) <= maxMCPResponseBytes {
+			lo = mid
+			b = b2
+			trimmed = trial
+		} else {
+			hi = mid - 1
+		}
+	}
+
+	// Finalize meta on the resolved prefix.
+	meta.Truncated = len(trimmed) < len(items)
+	meta.Returned = len(trimmed)
+	meta.Hint = ""
+	if meta.Truncated {
+		meta.Hint = "response too large; add filters or lower limit"
+	}
+	payload = listEnvelope{Items: trimmed, Meta: meta}
+	b, err = marshalEnv(payload)
+	if err != nil {
+		return errResult(ErrCodeInternal, "response serialization failed", "")
+	}
+	return mcp.NewToolResultText(string(b)), nil
+}
+
+// ---- tag helper -------------------------------------------------------------
+
+// briefTagSlugs pulls the slug-only projection for a task. The brief shape
+// MUST emit []string of slugs, never TagRecord. Used by task-list handlers.
+func briefTagSlugs(svc *service.Service, taskID string) []string {
+	tags, err := svc.Task.ListTags(taskID)
+	if err != nil || len(tags) == 0 {
+		return nil
+	}
+	slugs := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		slugs = append(slugs, tag.Slug)
+	}
+	return slugs
+}

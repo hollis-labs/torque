@@ -3,18 +3,19 @@ package mcpadapter
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 )
 
 func (a *Adapter) registerTemplateTools() {
 	a.server.AddTool(mcp.NewTool("clockwork_template_create",
-		mcp.WithDescription("Create a new task template (version=1 on first create)"),
+		mcp.WithDescription(`Create a task template at version=1; subsequent clockwork_template_update calls append new versions.
+Use to encode repeated task shapes with {{var}} placeholders and required_vars; clockwork_task_create_from_template instantiates. clockwork_task_create is the ad-hoc alternative.
+Response shape: data = {<TemplateRecord fields>} — singleton.
+Example: {"id":"backend-fix","name":"Backend Fix","description":"Fix {{issue}}","kind":"agent","executor":"cli","required_vars":"[\"issue\"]"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Template id (stable across versions)")),
 		mcp.WithString("name", mcp.Required(), mcp.Description("Human-readable name")),
 		mcp.WithString("description", mcp.Required(), mcp.Description("Template description (supports {{var}})")),
@@ -42,13 +43,19 @@ func (a *Adapter) registerTemplateTools() {
 	), a.handleTemplateCreate)
 
 	a.server.AddTool(mcp.NewTool("clockwork_template_get",
-		mcp.WithDescription("Get a template by id (and optional version — latest non-archived when omitted)"),
-		mcp.WithString("id", mcp.Required()),
-		mcp.WithNumber("version", mcp.Description("Optional; omit for latest non-archived")),
+		mcp.WithDescription(`Fetch a template by id (and optional version). When version is omitted, returns the latest non-archived version.
+Use when you have the id; clockwork_template_list for browsing, clockwork_task_create_from_template when you want to instantiate not inspect.
+Response shape: data = {<TemplateRecord fields>} — singleton.
+Example: {"id":"backend-fix"}`),
+		mcp.WithString("id", mcp.Required(), mcp.Description("Template id (stable across versions)")),
+		mcp.WithString("version", mcp.Description("Optional integer; omit for latest non-archived")),
 	), a.handleTemplateGet)
 
 	a.server.AddTool(mcp.NewTool("clockwork_template_update",
-		mcp.WithDescription("Append a new version with merged changes; old versions stay"),
+		mcp.WithDescription(`Append a new version with merged changes; prior versions remain queryable.
+Use for forward-only template evolution; clockwork_template_archive retires a version, clockwork_template_delete wipes all versions (rejected if referenced).
+Response shape: data = {<TemplateRecord fields>} — singleton, the new version.
+Example: {"id":"backend-fix","description":"Fix {{issue}} in {{component}}"}`),
 		mcp.WithString("id", mcp.Required()),
 		mcp.WithString("name", mcp.Description("New name")),
 		mcp.WithString("description", mcp.Description("New description")),
@@ -76,33 +83,46 @@ func (a *Adapter) registerTemplateTools() {
 	), a.handleTemplateUpdate)
 
 	a.server.AddTool(mcp.NewTool("clockwork_template_archive",
-		mcp.WithDescription("Soft-remove a template (id, version) from the live catalog"),
-		mcp.WithString("id", mcp.Required()),
-		mcp.WithNumber("version", mcp.Required()),
+		mcp.WithDescription(`Soft-remove one (id, version) from the live catalog; the row stays queryable with include_archived=true.
+Use to retire an old template version while keeping audit; clockwork_template_delete when you want to hard-wipe all versions.
+Response shape: data = {id, version, archived: true}.
+Example: {"id":"backend-fix","version":"1"}`),
+		mcp.WithString("id", mcp.Required(), mcp.Description("Template id")),
+		mcp.WithString("version", mcp.Required(), mcp.Description("Template version (integer; pass as string)")),
 	), a.handleTemplateArchive)
 
 	a.server.AddTool(mcp.NewTool("clockwork_template_delete",
-		mcp.WithDescription("Hard-delete every version of a template — refused if tasks reference it"),
-		mcp.WithString("id", mcp.Required()),
+		mcp.WithDescription(`Hard-delete every version of a template. Rejected with error.code=conflict if any task still references it.
+Use sparingly — prefer clockwork_template_archive to retire. Has no version arg because it wipes all versions.
+Response shape: data = {id, deleted: true}.
+Example: {"id":"backend-fix"}`),
+		mcp.WithString("id", mcp.Required(), mcp.Description("Template id")),
 	), a.handleTemplateDelete)
 
 	a.server.AddTool(mcp.NewTool("clockwork_template_list",
-		mcp.WithDescription("List templates"),
+		mcp.WithDescription(`List templates, optionally filtered by kind; include_archived=true surfaces retired rows.
+Use for template discovery; clockwork_template_get when you know the id. Default brief shape excludes the description body; pass verbose="true" for full records (description MAY include {{var}} placeholders).
+Response shape: data = {items: [<briefTemplate or TemplateRecord>...], meta: {truncated, returned, limit, hint?}}.
+Example: {"kind":"agent"}`),
 		mcp.WithBoolean("include_archived", mcp.Description("Surface retired rows (default false)")),
-		mcp.WithString("kind", mcp.Description("Filter by kind")),
+		mcp.WithString("kind", mcp.Description("Filter: agent|external|wait|decision|parent")),
+		mcp.WithString("verbose", mcp.Description("Return full records (incl. description body) instead of brief (string 'true'/'false', default false)")),
 	), a.handleTemplateList)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_create_from_template",
-		mcp.WithDescription("Instantiate a template into a new task; validates required_vars and resolves {{var}} placeholders"),
-		mcp.WithString("template_id", mcp.Required()),
-		mcp.WithNumber("template_version", mcp.Description("Optional; omit for latest non-archived")),
-		mcp.WithString("title", mcp.Required()),
-		mcp.WithString("description"),
+		mcp.WithDescription(`Instantiate a template into a new task; validates required_vars and resolves {{var}} placeholders in description/prompts/metadata.
+Use when a matching template exists; clockwork_task_create for ad-hoc tasks, clockwork_plan_create for multi-phase plans. Missing required_vars return error.code=arg_invalid.
+Response shape: data = {<TaskRecord fields>, Tags[]} — singleton, the new task.
+Example: {"template_id":"backend-fix","title":"Fix auth","vars":"{\"issue\":\"auth-42\"}"}`),
+		mcp.WithString("template_id", mcp.Required(), mcp.Description("Template id to instantiate")),
+		mcp.WithString("template_version", mcp.Description("Optional integer; omit for latest non-archived")),
+		mcp.WithString("title", mcp.Required(), mcp.Description("Title for the new task")),
+		mcp.WithString("description", mcp.Description("Optional description override")),
 		mcp.WithString("vars", mcp.Description("JSON object of variable values")),
-		mcp.WithString("overrides", mcp.Description("JSON object of task-field overrides (last wins)")),
-		mcp.WithString("sprint_id"),
-		mcp.WithString("project_id"),
-		mcp.WithString("epic_id"),
+		mcp.WithString("overrides", mcp.Description("JSON object of task-field overrides (last-wins)")),
+		mcp.WithString("sprint_id", mcp.Description("Optional sprint assignment")),
+		mcp.WithString("project_id", mcp.Description("Optional project assignment")),
+		mcp.WithString("epic_id", mcp.Description("Optional epic assignment")),
 		mcp.WithString("tags", mcp.Description("JSON array of extra tag names")),
 	), a.handleTaskCreateFromTemplate)
 }
@@ -133,55 +153,55 @@ func (a *Adapter) handleTemplateCreate(ctx context.Context, req mcp.CallToolRequ
 
 	if raw := reqStr(req, "tools"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Tools); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid tools JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tools JSON: %v", err), "tools")
 		}
 	}
 	if raw := reqStr(req, "permissions"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Permissions); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid permissions JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid permissions JSON: %v", err), "permissions")
 		}
 	}
 	if raw := reqStr(req, "environment"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Environment); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid environment JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid environment JSON: %v", err), "environment")
 		}
 	}
 	if raw := reqStr(req, "escalation_chain"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.EscalationChain); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid escalation_chain JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid escalation_chain JSON: %v", err), "escalation_chain")
 		}
 	}
 	if raw := reqStr(req, "quality_gates"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.QualityGates); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid quality_gates JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid quality_gates JSON: %v", err), "quality_gates")
 		}
 	}
 	if raw := reqStr(req, "deliverables"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Deliverables); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid deliverables JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid deliverables JSON: %v", err), "deliverables")
 		}
 	}
 	if raw := reqStr(req, "metadata_template"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.MetadataTemplate); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid metadata_template JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid metadata_template JSON: %v", err), "metadata_template")
 		}
 	}
 	if raw := reqStr(req, "required_vars"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.RequiredVars); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid required_vars JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid required_vars JSON: %v", err), "required_vars")
 		}
 	}
 	if raw := reqStr(req, "tags"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Tags); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid tags JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
 		}
 	}
 
 	tpl, err := a.svc.Template.Create(in)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(tpl)
+	return okResult(tpl)
 }
 
 func (a *Adapter) handleTemplateGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -189,12 +209,9 @@ func (a *Adapter) handleTemplateGet(ctx context.Context, req mcp.CallToolRequest
 	version := reqInt(req, "version")
 	tpl, err := a.svc.Template.Get(id, version)
 	if err != nil {
-		if errors.Is(err, sqlstore.ErrTemplateNotFound) {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(tpl)
+	return okResult(tpl)
 }
 
 func (a *Adapter) handleTemplateUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -233,80 +250,103 @@ func (a *Adapter) handleTemplateUpdate(ctx context.Context, req mcp.CallToolRequ
 	}
 	if raw := reqStr(req, "tools"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Tools); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid tools JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tools JSON: %v", err), "tools")
 		}
 	}
 	if raw := reqStr(req, "permissions"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Permissions); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid permissions JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid permissions JSON: %v", err), "permissions")
 		}
 	}
 	if raw := reqStr(req, "environment"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Environment); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid environment JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid environment JSON: %v", err), "environment")
 		}
 	}
 	if raw := reqStr(req, "escalation_chain"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.EscalationChain); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid escalation_chain JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid escalation_chain JSON: %v", err), "escalation_chain")
 		}
 	}
 	if raw := reqStr(req, "quality_gates"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.QualityGates); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid quality_gates JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid quality_gates JSON: %v", err), "quality_gates")
 		}
 	}
 	if raw := reqStr(req, "deliverables"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Deliverables); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid deliverables JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid deliverables JSON: %v", err), "deliverables")
 		}
 	}
 	if raw := reqStr(req, "metadata_template"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.MetadataTemplate); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid metadata_template JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid metadata_template JSON: %v", err), "metadata_template")
 		}
 	}
 	if raw := reqStr(req, "required_vars"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.RequiredVars); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid required_vars JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid required_vars JSON: %v", err), "required_vars")
 		}
 	}
 	if raw := reqStr(req, "tags"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Tags); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid tags JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
 		}
 	}
 
 	tpl, err := a.svc.Template.Update(id, in)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(tpl)
+	return okResult(tpl)
 }
 
 func (a *Adapter) handleTemplateArchive(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if err := a.svc.Template.Archive(reqStr(req, "id"), reqInt(req, "version")); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+	id := reqStr(req, "id")
+	version := reqInt(req, "version")
+	if err := a.svc.Template.Archive(id, version); err != nil {
+		return errFromService(err)
 	}
-	return mcp.NewToolResultText("archived"), nil
+	return okResult(map[string]any{
+		"id":       id,
+		"version":  version,
+		"archived": true,
+	})
 }
 
 func (a *Adapter) handleTemplateDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if err := a.svc.Template.Delete(reqStr(req, "id")); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+	id := reqStr(req, "id")
+	if err := a.svc.Template.Delete(id); err != nil {
+		return errFromService(err)
 	}
-	return mcp.NewToolResultText("deleted"), nil
+	return okResult(map[string]any{
+		"id":      id,
+		"deleted": true,
+	})
 }
 
 func (a *Adapter) handleTemplateList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	verbose := reqStrBool(req, "verbose")
 	list, err := a.svc.Template.List(service.TemplateListOpts{
 		IncludeArchived: reqBool(req, "include_archived"),
 		Kind:            reqStr(req, "kind"),
 	})
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(list)
+	limit := clampLimit(0, defaultTemplateListLimit, maxTemplateListLimit)
+	items := make([]any, 0, len(list))
+	for _, tpl := range list {
+		if verbose {
+			// Verbose includes full record with description body; template
+			// description can hold prose + {{var}} placeholders, which is
+			// the point — callers asking for verbose want it.
+			items = append(items, tpl)
+		} else {
+			items = append(items, toBriefTemplate(tpl))
+		}
+	}
+	return cappedJSONResult(items, limit)
 }
 
 func (a *Adapter) handleTaskCreateFromTemplate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -321,23 +361,23 @@ func (a *Adapter) handleTaskCreateFromTemplate(ctx context.Context, req mcp.Call
 	}
 	if raw := reqStr(req, "vars"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Vars); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid vars JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid vars JSON: %v", err), "vars")
 		}
 	}
 	if raw := reqStr(req, "overrides"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Overrides); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid overrides JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid overrides JSON: %v", err), "overrides")
 		}
 	}
 	if raw := reqStr(req, "tags"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Tags); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid tags JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
 		}
 	}
 
 	task, err := a.svc.Template.Instantiate(in)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	return a.taskResult(task)
 }
