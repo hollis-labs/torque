@@ -2,7 +2,6 @@ package mcpadapter
 
 import (
 	"context"
-	"encoding/json"
 	"strconv"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
@@ -34,7 +33,10 @@ func (a *Adapter) Server() *server.MCPServer { return a.server }
 
 func (a *Adapter) registerCoreTools() {
 	a.server.AddTool(mcp.NewTool("clockwork_health",
-		mcp.WithDescription("Check Clockwork Manifold health status"),
+		mcp.WithDescription(`Liveness probe for the Clockwork MCP server.
+Use before any other tool when you need to confirm the service is reachable and discover which opt-in feature flags (sprints, projects, epics) are enabled.
+Response shape: data = {status, message, enabled_features[]}.
+Example: {}`),
 	), a.handleHealth)
 	a.registerTaskTools()
 	a.registerRunTools()
@@ -64,7 +66,7 @@ func (a *Adapter) registerOptInTools() {
 
 func (a *Adapter) handleHealth(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	features := a.svc.Feature.ListEnabled()
-	return jsonResult(map[string]interface{}{
+	return okResult(map[string]interface{}{
 		"status":           "running",
 		"message":          "Clockwork Manifold is running",
 		"enabled_features": features,
@@ -162,12 +164,4 @@ func reqBool(req mcp.CallToolRequest, key string) bool {
 		}
 	}
 	return false
-}
-
-func jsonResult(v interface{}) (*mcp.CallToolResult, error) {
-	b, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-	return mcp.NewToolResultText(string(b)), nil
 }

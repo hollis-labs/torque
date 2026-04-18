@@ -1,7 +1,6 @@
 package mcpadapter_test
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,7 +19,7 @@ func TestMCP_Template_Create_And_Get(t *testing.T) {
 	})
 	require.False(t, isErr, text)
 	var tpl map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &tpl))
+	parseData(t, text, &tpl)
 	assert.Equal(t, "backend-fix", tpl["ID"])
 	assert.Equal(t, float64(1), tpl["Version"])
 	assert.Equal(t, "agent", tpl["Kind"])
@@ -34,7 +33,7 @@ func TestMCP_Template_Create_And_Get(t *testing.T) {
 	})
 	require.False(t, isErr)
 	var got map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(getText), &got))
+	parseData(t, getText, &got)
 	assert.Equal(t, "Backend Fix", got["Name"])
 }
 
@@ -49,7 +48,7 @@ func TestMCP_Template_Update_AppendsVersion(t *testing.T) {
 	})
 	require.False(t, isErr, text)
 	var tpl map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &tpl))
+	parseData(t, text, &tpl)
 	assert.Equal(t, float64(2), tpl["Version"])
 	assert.Equal(t, "v2", tpl["Name"])
 }
@@ -68,7 +67,7 @@ func TestMCP_Template_Archive(t *testing.T) {
 		"id": "t", "version": 1,
 	})
 	var got map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(getText), &got))
+	parseData(t, getText, &got)
 	assert.Equal(t, true, got["IsArchived"])
 }
 
@@ -99,7 +98,7 @@ func TestMCP_Template_List(t *testing.T) {
 		Items []map[string]interface{} `json:"items"`
 		Meta  map[string]interface{}   `json:"meta"`
 	}
-	require.NoError(t, json.Unmarshal([]byte(text), &env))
+	parseData(t, text, &env)
 	assert.Len(t, env.Items, 2)
 	// Brief shape uses lowercase keys.
 	assert.Contains(t, []interface{}{"a", "b"}, env.Items[0]["id"])
@@ -125,7 +124,7 @@ func TestMCP_TaskCreateFromTemplate_RoundTrip(t *testing.T) {
 	})
 	require.False(t, isErr, text)
 	var task map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &task))
+	parseData(t, text, &task)
 	assert.Equal(t, "Fix auth", task["Title"])
 	assert.Equal(t, "Fix auth-42", task["Description"])
 	assert.Equal(t, "agent", task["Kind"])

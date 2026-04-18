@@ -11,43 +11,61 @@ import (
 
 func (a *Adapter) registerSprintTools() {
 	a.server.AddTool(mcp.NewTool("clockwork_sprint_create",
-		mcp.WithDescription("Create a new sprint (requires features.sprints = true)"),
+		mcp.WithDescription(`Create a sprint (feature-flagged: requires features.sprints). Returns the SprintRecord.
+Use to scope a cohort of tasks under a common approval_mode + cost budget; prefer clockwork_epic_create for long-running multi-sprint initiatives, clockwork_project_create for infrastructure grouping.
+Response shape: data = {<SprintRecord fields>} — singleton.
+Example: {"name":"Sprint 17","goal":"Land Phase C","approval_mode":"approve_each","cost_budget":"50"}`),
 		mcp.WithString("name", mcp.Required(), mcp.Description("Sprint name")),
 		mcp.WithString("goal", mcp.Description("Sprint goal")),
-		mcp.WithString("approval_mode", mcp.Description("Approval mode: auto, approve_sprint, approve_each (default: approve_each)")),
-		mcp.WithString("cost_budget", mcp.Description("Maximum cost budget for the sprint (numeric)")),
+		mcp.WithString("approval_mode", mcp.Description("auto|approve_sprint|approve_each (default approve_each)")),
+		mcp.WithString("cost_budget", mcp.Description("Maximum cost budget (numeric)")),
 	), a.handleSprintCreate)
 
 	a.server.AddTool(mcp.NewTool("clockwork_sprint_get",
-		mcp.WithDescription("Get a sprint by ID"),
+		mcp.WithDescription(`Fetch a sprint by ID plus derived budget headroom (within_budget, cost_remaining).
+Use when you need the definition + live budget check; clockwork_sprint_list for browsing, clockwork_task_list with sprint_id filter for the sprint's tasks.
+Response shape: data = {sprint: <SprintRecord>, within_budget: bool, cost_remaining: float}.
+Example: {"id":"SP-17"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Sprint ID")),
 	), a.handleSprintGet)
 
 	a.server.AddTool(mcp.NewTool("clockwork_sprint_update",
-		mcp.WithDescription("Update sprint fields"),
+		mcp.WithDescription(`Partial update of sprint fields; pass status to transition (active<->inactive, either to completed terminal).
+Use for field edits or lifecycle moves; sibling clockwork_sprint_approve handles task approvals.
+Response shape: data = {id, updated: bool, message}.
+Example: {"id":"SP-17","status":"completed"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Sprint ID")),
 		mcp.WithString("name", mcp.Description("New name")),
 		mcp.WithString("goal", mcp.Description("New goal")),
 		mcp.WithString("approval_mode", mcp.Description("New approval mode")),
 		mcp.WithString("cost_budget", mcp.Description("New cost budget (numeric)")),
-		mcp.WithString("status", mcp.Description("Transition to new status (active|inactive|completed). active↔inactive; both can transition directly to completed (terminal)")),
+		mcp.WithString("status", mcp.Description("Transition target: active|inactive|completed")),
 	), a.handleSprintUpdate)
 
 	a.server.AddTool(mcp.NewTool("clockwork_sprint_delete",
-		mcp.WithDescription("Delete a sprint"),
+		mcp.WithDescription(`Hard-delete a sprint; tasks previously assigned have sprint_id cleared but are kept.
+Use sparingly — prefer clockwork_sprint_update status=completed for audit. Similar surfaces: clockwork_project_delete, clockwork_epic_delete.
+Response shape: data = {id, deleted: true, message}.
+Example: {"id":"SP-17"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Sprint ID")),
 	), a.handleSprintDelete)
 
 	a.server.AddTool(mcp.NewTool("clockwork_sprint_list",
-		mcp.WithDescription("List sprints"),
-		mcp.WithString("status", mcp.Description("Filter by status: active, inactive, completed")),
+		mcp.WithDescription(`List sprints, optionally filtered by status; ordered updated_at DESC.
+Use for browsing; clockwork_sprint_get when you know the ID. Default brief shape drops goal body for size; pass verbose="true" for full records.
+Response shape: data = {items: [<briefSprint or SprintRecord>...], meta: {truncated, returned, limit, hint?}}.
+Example: {"status":"active"}`),
+		mcp.WithString("status", mcp.Description("Filter: active|inactive|completed")),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleSprintList)
 
 	a.server.AddTool(mcp.NewTool("clockwork_sprint_approve",
-		mcp.WithDescription("Approve tasks in a sprint. With task_id, approves one task. Without, approves all tasks in review."),
+		mcp.WithDescription(`Approve tasks in a sprint. With task_id, approves one task; without, approves every task currently in review.
+Use for sprint-level review-gate closures; clockwork_task_transition for single-task control and clockwork_task_bulk_transition when approving outside a sprint.
+Response shape: data = {sprint_id, task_id?, approved: count, message}.
+Example: {"id":"SP-17"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Sprint ID")),
-		mcp.WithString("task_id", mcp.Description("Specific task ID to approve (omit for approve-all)")),
+		mcp.WithString("task_id", mcp.Description("Specific task ID (omit for approve-all-in-review)")),
 	), a.handleSprintApprove)
 }
 
@@ -64,19 +82,19 @@ func (a *Adapter) handleSprintCreate(ctx context.Context, req mcp.CallToolReques
 
 	sprint, err := a.svc.Sprint.Create(input)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(sprint)
+	return okResult(sprint)
 }
 
 func (a *Adapter) handleSprintGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	sprint, err := a.svc.Sprint.Get(reqStr(req, "id"))
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 
 	withinBudget, remaining := a.svc.Sprint.CheckCostBudget(sprint.ID)
-	return jsonResult(map[string]interface{}{
+	return okResult(map[string]interface{}{
 		"sprint":         sprint,
 		"within_budget":  withinBudget,
 		"cost_remaining": remaining,
@@ -89,7 +107,7 @@ func (a *Adapter) handleSprintUpdate(ctx context.Context, req mcp.CallToolReques
 	// Handle status transition separately
 	if status := reqStr(req, "status"); status != "" {
 		if err := a.svc.Sprint.Transition(id, status); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errFromService(err)
 		}
 	}
 
@@ -116,26 +134,34 @@ func (a *Adapter) handleSprintUpdate(ctx context.Context, req mcp.CallToolReques
 
 	if hasUpdate {
 		if err := a.svc.Sprint.Update(id, update); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errFromService(err)
 		}
 	}
 
-	return mcp.NewToolResultText(fmt.Sprintf("Sprint %s updated", id)), nil
+	return okResult(map[string]any{
+		"id":      id,
+		"updated": true,
+		"message": fmt.Sprintf("Sprint %s updated", id),
+	})
 }
 
 func (a *Adapter) handleSprintDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	id := reqStr(req, "id")
 	if err := a.svc.Sprint.Delete(id); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("Sprint %s deleted", id)), nil
+	return okResult(map[string]any{
+		"id":      id,
+		"deleted": true,
+		"message": fmt.Sprintf("Sprint %s deleted", id),
+	})
 }
 
 func (a *Adapter) handleSprintList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	verbose := reqStrBool(req, "verbose")
 	sprints, err := a.svc.Sprint.List(reqStr(req, "status"), reqStr(req, "project_id"))
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	limit := defaultGenericListLimit
 	items := make([]any, 0, len(sprints))
@@ -155,14 +181,23 @@ func (a *Adapter) handleSprintApprove(ctx context.Context, req mcp.CallToolReque
 
 	if taskID != "" {
 		if err := a.svc.Sprint.ApproveTask(sprintID, taskID); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errFromService(err)
 		}
-		return mcp.NewToolResultText(fmt.Sprintf("Task %s approved in sprint %s", taskID, sprintID)), nil
+		return okResult(map[string]any{
+			"sprint_id": sprintID,
+			"task_id":   taskID,
+			"approved":  1,
+			"message":   fmt.Sprintf("Task %s approved in sprint %s", taskID, sprintID),
+		})
 	}
 
 	count, err := a.svc.Sprint.ApproveAll(sprintID)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("%d tasks approved in sprint %s", count, sprintID)), nil
+	return okResult(map[string]any{
+		"sprint_id": sprintID,
+		"approved":  count,
+		"message":   fmt.Sprintf("%d tasks approved in sprint %s", count, sprintID),
+	})
 }

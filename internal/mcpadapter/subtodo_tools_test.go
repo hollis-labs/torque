@@ -1,7 +1,6 @@
 package mcpadapter_test
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,7 +19,7 @@ func TestSubtodoRoundTrip_AddListDone(t *testing.T) {
 	})
 	require.False(t, isErr, text)
 	var created map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	parseData(t, text, &created)
 	taskID, _ := created["ID"].(string)
 	require.NotEmpty(t, taskID)
 
@@ -48,7 +47,7 @@ func TestSubtodoRoundTrip_AddListDone(t *testing.T) {
 		Items []map[string]interface{} `json:"items"`
 		Meta  map[string]interface{}   `json:"meta"`
 	}
-	require.NoError(t, json.Unmarshal([]byte(listText), &env))
+	parseData(t, listText, &env)
 	require.Len(t, env.Items, 2)
 	assert.Equal(t, "item-1", env.Items[0]["id"])
 	assert.Equal(t, true, env.Items[0]["required"])
@@ -67,7 +66,7 @@ func TestSubtodoRoundTrip_AddListDone(t *testing.T) {
 		"verbose": "true",
 	})
 	env.Items = nil
-	require.NoError(t, json.Unmarshal([]byte(listText), &env))
+	parseData(t, listText, &env)
 	require.Len(t, env.Items, 2)
 	assert.Equal(t, true, env.Items[0]["done"])
 	assert.Equal(t, "commit-abc123", env.Items[0]["evidence"])
@@ -80,7 +79,7 @@ func TestSubtodoAdd_RejectsDuplicateID(t *testing.T) {
 		"title": "dup",
 	})
 	var created map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	parseData(t, text, &created)
 	taskID, _ := created["ID"].(string)
 
 	_, isErr := callTool(t, a, "clockwork_task_subtodo_add", map[string]interface{}{
