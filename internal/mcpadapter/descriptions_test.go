@@ -40,7 +40,7 @@ func TestDescriptionInventory_AssertsMinimumsAndEmitsArtifact(t *testing.T) {
 	require.NoError(t, svc.Feature.Enable("sprints"))
 	require.NoError(t, svc.Feature.Enable("projects"))
 	require.NoError(t, svc.Feature.Enable("epics"))
-	a := mcpadapter.New(svc)
+	a := mcpadapter.New(svc, nil)
 
 	tools := a.Server().ListTools()
 	require.NotEmpty(t, tools, "expected registered tools")

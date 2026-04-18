@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -12,17 +13,22 @@ import (
 // Adapter wires the service layer to an MCP server.
 type Adapter struct {
 	svc    *service.Service
+	sched  *scheduler.Scheduler
 	server *server.MCPServer
 }
 
-// New creates an Adapter, registers all tools, and returns it.
-func New(svc *service.Service) *Adapter {
+// New creates an Adapter, registers all tools, and returns it. sched may be
+// nil — scheduler tools will respond with a not-available error in that case,
+// mirroring httpserver.New's nil-sched → 503 contract. The stdio mcp
+// subcommand runs in a separate process from serve and passes nil; tests and
+// any future in-process wiring can pass a live *scheduler.Scheduler.
+func New(svc *service.Service, sched *scheduler.Scheduler) *Adapter {
 	s := server.NewMCPServer(
 		"Clockwork Manifold",
 		"0.1.0",
 		server.WithToolCapabilities(true),
 	)
-	a := &Adapter{svc: svc, server: s}
+	a := &Adapter{svc: svc, sched: sched, server: s}
 	a.registerCoreTools()
 	a.registerOptInTools()
 	return a
@@ -75,6 +81,9 @@ func (a *Adapter) handleHealth(ctx context.Context, req mcp.CallToolRequest) (*m
 
 // ---- helpers ----------------------------------------------------------------
 
+// reqStr extracts a string argument. Non-string values return "" to match
+// mcp-go's CallToolRequest.GetString behavior — callers that need
+// presence-detection should gate on req.GetArguments()[key] directly.
 func reqStr(req mcp.CallToolRequest, key string) string {
 	args := req.GetArguments()
 	if v, ok := args[key]; ok {
@@ -90,8 +99,10 @@ func reqStr(req mcp.CallToolRequest, key string) string {
 // Per CW-20260418-0011 the schema declares numeric params as strings so
 // LLM-backed clients that emit `"limit": "50"` (string-encoded numeric)
 // aren't rejected at the mcp-go schema boundary. This helper therefore
-// accepts float64, int, AND string inputs — callers passing 50 (number)
-// or "50" (string) must both resolve to 50.
+// accepts float64, int, int64, AND string inputs — callers passing 50
+// (number) or "50" (string) must both resolve to 50. int64 handling
+// (CW-20260418-0019) covers mcp-go paths that materialize schema-number
+// types as int64.
 //
 // Silent-zero policy: a malformed numeric string (e.g. "abc") returns 0,
 // the same value as a missing key. This is intentional. Every numeric
@@ -114,6 +125,8 @@ func reqInt(req mcp.CallToolRequest, key string) int {
 			return int(n)
 		case int:
 			return n
+		case int64:
+			return int(n)
 		case string:
 			if n == "" {
 				return 0
@@ -133,7 +146,7 @@ func reqInt(req mcp.CallToolRequest, key string) int {
 }
 
 // reqFloat extracts a float64 parameter from an MCP request. Mirrors reqInt:
-// accepts float64, int, and string inputs; returns 0 on missing key or
+// accepts float64, int, int64, and string inputs; returns 0 on missing key or
 // unparseable string. See reqInt for the silent-zero rationale.
 func reqFloat(req mcp.CallToolRequest, key string) float64 {
 	args := req.GetArguments()
@@ -142,6 +155,8 @@ func reqFloat(req mcp.CallToolRequest, key string) float64 {
 		case float64:
 			return n
 		case int:
+			return float64(n)
+		case int64:
 			return float64(n)
 		case string:
 			if n == "" {
@@ -156,11 +171,27 @@ func reqFloat(req mcp.CallToolRequest, key string) float64 {
 	return 0
 }
 
+// reqBool extracts a bool argument. Coerces from string ("true"/"false"/"1"/"0"),
+// int, int64, and float64 to match mcp-go's CallToolRequest.GetBool behavior.
+// Without this coercion, a caller passing "manual": "true" (string) silently
+// drops to false even though the MCP server-side tool declares a Boolean
+// field — task_update silent-drop regression tracked in CW-20260418-0019.
 func reqBool(req mcp.CallToolRequest, key string) bool {
 	args := req.GetArguments()
 	if v, ok := args[key]; ok {
-		if b, ok := v.(bool); ok {
+		switch b := v.(type) {
+		case bool:
 			return b
+		case string:
+			if parsed, err := strconv.ParseBool(b); err == nil {
+				return parsed
+			}
+		case int:
+			return b != 0
+		case int64:
+			return b != 0
+		case float64:
+			return b != 0
 		}
 	}
 	return false

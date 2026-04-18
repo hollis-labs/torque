@@ -16,6 +16,7 @@ type SprintService struct {
 // SprintCreateInput holds user-facing fields for creating a sprint.
 type SprintCreateInput struct {
 	Name         string
+	Goal         string
 	ApprovalMode string
 	CostBudget   *float64
 	ProjectID    string // optional
@@ -66,6 +67,7 @@ func (s *SprintService) Create(input SprintCreateInput) (*sqlstore.SprintRecord,
 	record := &sqlstore.SprintRecord{
 		ID:           id,
 		Name:         input.Name,
+		Goal:         input.Goal,
 		Status:       "active",
 		ApprovalMode: input.ApprovalMode,
 	}

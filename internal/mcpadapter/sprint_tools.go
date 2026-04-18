@@ -72,6 +72,7 @@ Example: {"id":"SP-17"}`),
 func (a *Adapter) handleSprintCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	input := service.SprintCreateInput{
 		Name:         reqStr(req, "name"),
+		Goal:         reqStr(req, "goal"),
 		ApprovalMode: reqStr(req, "approval_mode"),
 		ProjectID:    reqStr(req, "project_id"),
 	}

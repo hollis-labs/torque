@@ -66,6 +66,7 @@ func (s *Server) getSprint(w http.ResponseWriter, r *http.Request) {
 func (s *Server) createSprint(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name         string   `json:"name"`
+		Goal         string   `json:"goal"`
 		ApprovalMode string   `json:"approval_mode"`
 		CostBudget   *float64 `json:"cost_budget"`
 		ProjectID    string   `json:"project_id"`
@@ -77,6 +78,7 @@ func (s *Server) createSprint(w http.ResponseWriter, r *http.Request) {
 
 	sprint, err := s.svc.Sprint.Create(service.SprintCreateInput{
 		Name:         req.Name,
+		Goal:         req.Goal,
 		ApprovalMode: req.ApprovalMode,
 		CostBudget:   req.CostBudget,
 		ProjectID:    req.ProjectID,

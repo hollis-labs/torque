@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,6 +33,12 @@ type SchedulerStatus struct {
 	QueueDepth    int     `json:"queue_depth"`
 	TotalCost     float64 `json:"total_cost"`
 	Subscribers   int     `json:"subscribers"`
+	// StaleHeartbeatThresholdSeconds is the number of seconds since a
+	// worker's last heartbeat after which it is considered stale and its
+	// row is pruned by the next scheduler tick. Surfaced here so operators
+	// can verify the effective threshold without re-reading the env
+	// (CW-20260418-0018). Controlled by CLOCKWORK_SCHED_STALE, default 300.
+	StaleHeartbeatThresholdSeconds int `json:"stale_heartbeat_threshold_seconds"`
 }
 
 // Scheduler is the core orchestration loop. It picks eligible tasks,
@@ -51,11 +59,31 @@ type Scheduler struct {
 	bus               *EventBus
 	progressThrottler *progressThrottler
 	progressHeartbeat *progressHeartbeat
+	cancels           *cancelRegistry
+
+	// cancelGrace is how long the worker gives a child process to exit
+	// after SIGTERM before escalating to SIGKILL. Sourced from
+	// CLOCKWORK_SCHED_CANCEL_GRACE at New() time; defaults to 5s.
+	// (CW-20260418-0005)
+	cancelGrace time.Duration
 
 	mu      sync.RWMutex
 	enabled bool
 	results chan WorkerResult
 	stopCh  chan struct{}
+
+	// tickCounter monotonically increases each time Tick runs to completion
+	// of the pick phase. Used only for observability — the per-tick
+	// [picker] log line includes it so operators can correlate a quiet
+	// stretch to a specific tick. Access is serialized because Tick runs
+	// from a single ticker loop, but we increment under s.mu.Lock for
+	// safety against future concurrent callers of Tick (tests, drains).
+	tickCounter uint64
+
+	// pickerDebug controls whether per-task [picker] decisions are logged
+	// at debug level. Sampled once at startup from CLOCKWORK_SCHEDULER_DEBUG
+	// so test runs don't flip mid-suite based on env changes.
+	pickerDebug bool
 }
 
 // progressTokensWindow caps how often a run may emit a tokens-class
@@ -86,6 +114,13 @@ func New(
 		predicates = waitpoll.NewRegistry()
 	}
 
+	picker := NewPicker(store)
+	// DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
+	// Stopgap project-scope filter is config-driven; read once here and
+	// never mutated. An empty list leaves the picker in default
+	// all-projects mode.
+	picker.SetProjectAllowlist(cfg.ProjectAllowlist)
+
 	s := &Scheduler{
 		store:             store,
 		queue:             q,
@@ -93,19 +128,67 @@ func New(
 		predicates:        predicates,
 		cfg:               cfg,
 		pool:              pool,
-		picker:            NewPicker(store),
+		picker:            picker,
 		lifecycle:         NewLifecycleManager(store, bus),
 		cost:              NewCostTracker(store),
 		heartbeat:         NewHeartbeatMonitor(store),
 		bus:               bus,
 		progressThrottler: newProgressThrottler(progressTokensWindow),
 		progressHeartbeat: newProgressHeartbeat(bus, time.Duration(cfg.HeartbeatProgressSeconds)*time.Second),
+		cancels:           newCancelRegistry(),
+		cancelGrace:       cancelGraceFromEnv(),
 		enabled:           cfg.Enabled,
 		results:           results,
 		stopCh:            make(chan struct{}),
+		pickerDebug:       isPickerDebugEnabled(),
 	}
 
+	// Subscribe to DB-driven task transitions so that a manual / external
+	// task_transition out of "doing" cancels the in-flight worker's
+	// context within one tick. Registered once at construction; the hook
+	// lives for the life of the store (which outlives the scheduler, so
+	// never-unregister is the correct choice here — see task_hooks.go).
+	store.RegisterTaskTransitionHook(func(ev sqlstore.TaskTransitionEvent) {
+		if ev.OldStatus != "doing" || ev.NewStatus == "doing" {
+			return
+		}
+		if s.cancels.cancel(ev.TaskID) {
+			log.Printf("[scheduler] canceling in-flight worker for %s (transitioned %s -> %s)",
+				ev.TaskID, ev.OldStatus, ev.NewStatus)
+		}
+	})
+
 	return s
+}
+
+// cancelGraceFromEnv parses CLOCKWORK_SCHED_CANCEL_GRACE (duration string
+// accepted by time.ParseDuration, e.g. "5s", "500ms") and returns the
+// configured grace period. Falls back to 5s when unset or unparseable —
+// matches the ticket default and keeps shutdown latency predictable.
+func cancelGraceFromEnv() time.Duration {
+	const def = 5 * time.Second
+	v := os.Getenv("CLOCKWORK_SCHED_CANCEL_GRACE")
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		log.Printf("[scheduler] invalid CLOCKWORK_SCHED_CANCEL_GRACE=%q, using default %s", v, def)
+		return def
+	}
+	return d
+}
+
+// isPickerDebugEnabled reads the debug-level toggle for the scheduler
+// picker. Set CLOCKWORK_SCHEDULER_DEBUG=1 (or "true") to emit per-task
+// [picker] decision logs. The per-tick counter line is ALWAYS emitted at
+// info level regardless of this toggle.
+func isPickerDebugEnabled() bool {
+	switch os.Getenv("CLOCKWORK_SCHEDULER_DEBUG") {
+	case "1", "true", "TRUE", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // EventBus returns the scheduler's event bus for subscribing to events.
@@ -123,12 +206,13 @@ func (s *Scheduler) Status() SchedulerStatus {
 	total, _ := s.cost.GlobalTotal()
 
 	return SchedulerStatus{
-		Enabled:       enabled,
-		MaxWorkers:    s.cfg.Workers,
-		ActiveWorkers: s.pool.ActiveCount(),
-		QueueDepth:    depth,
-		TotalCost:     total,
-		Subscribers:   s.bus.SubscriberCount(),
+		Enabled:                        enabled,
+		MaxWorkers:                     s.cfg.Workers,
+		ActiveWorkers:                  s.pool.ActiveCount(),
+		QueueDepth:                     depth,
+		TotalCost:                      total,
+		Subscribers:                    s.bus.SubscriberCount(),
+		StaleHeartbeatThresholdSeconds: s.cfg.StaleSeconds,
 	}
 }
 
@@ -183,9 +267,30 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 		return nil
 	}
 
-	tasks, err := s.picker.Pick(available)
+	tasks, decisions, err := s.picker.Pick(available)
 	if err != nil {
 		return fmt.Errorf("scheduler: pick tasks: %w", err)
+	}
+
+	s.mu.Lock()
+	s.tickCounter++
+	tickN := s.tickCounter
+	s.mu.Unlock()
+
+	// Per-tick info log: one line per tick with full counter breakdown.
+	// Keep this line stable — it's the primary "why is the scheduler
+	// silent?" diagnostic. Format is grep-friendly:
+	//   [picker] tick=N candidates=C picked=P skipped_by_reason=map[...]
+	log.Printf("[picker] tick=%d candidates=%d picked=%d skipped_by_reason=%s",
+		tickN, decisions.Candidates, len(tasks), formatSkipCounts(decisions.Counts))
+
+	// Per-task debug log: one line per skipped candidate. Gated behind
+	// CLOCKWORK_SCHEDULER_DEBUG so steady-state operators don't drown in
+	// per-tick noise.
+	if s.pickerDebug {
+		for _, d := range decisions.Skipped {
+			log.Printf("[picker] tick=%d skip task=%s reason=%s", tickN, d.TaskID, d.Reason)
+		}
 	}
 
 	for _, task := range tasks {
@@ -232,6 +337,20 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 		} else if deleted > 0 {
 			log.Printf("[scheduler] cleaned up %d stale heartbeat row(s)", deleted)
 		}
+	}
+
+	// Per-tick heartbeat gauge (CW-20260418-0018). One info-level line per
+	// tick so operators can see zombie accumulation *before* it bites. Stays
+	// at info (not debug) because a silently-growing stale= counter is the
+	// earliest signal that a Deregister path has regressed. Counts are
+	// computed AFTER the cleanup above so stale= normally reads zero in
+	// steady-state; a persistent non-zero stale= means DeleteStale didn't
+	// keep up (e.g. threshold set too high, or an insert-after-sweep race).
+	if counts, cerr := s.heartbeat.CountHeartbeats(staleThreshold); cerr != nil {
+		log.Printf("[scheduler] heartbeat gauge error: %v", cerr)
+	} else {
+		log.Printf("[scheduler] heartbeats live=%d stale=%d threshold=%ds",
+			counts.Live, counts.Stale, s.cfg.StaleSeconds)
 	}
 
 	s.bus.Publish(SchedulerEvent{Type: "scheduler.tick"})
@@ -338,13 +457,34 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	// the worker closure defer alongside the HeartbeatMonitor deregistration.
 	s.progressHeartbeat.start(task.ID, runID, workerID, startedAt)
 
+	// Per-dispatch cancel context. Registered BEFORE pool.Submit so that a
+	// cancel arriving while the worker is still queued on the semaphore
+	// (or between submit and the goroutine's first line) is honored —
+	// addresses the "cancellation between dispatch and first tick"
+	// acceptance case in CW-20260418-0005. Parent is context.Background
+	// rather than the tick ctx because the tick ctx goes away after Tick
+	// returns and we don't want its cancellation to kill running workers;
+	// scheduler Stop explicitly calls cancelAll to drain.
+	dispatchCtx, dispatchCancel := context.WithCancel(context.Background())
+	s.cancels.register(task.ID, dispatchCancel)
+
 	// Submit to worker pool
 	capturedRunID := runID
 	capturedWorkerID := workerID
 	capturedTaskID := task.ID
 	capturedWorktree := wtPath
 	capturedRepoHint := task.WorkingDir
+	capturedDispatchCtx := dispatchCtx
+	capturedDispatchCancel := dispatchCancel
 	s.pool.Submit(task.ID, runID, func(wctx context.Context) (*executor.ExecutionResult, error) {
+		// runCtx merges pool-shutdown cancellation (wctx) and per-task
+		// cancellation (capturedDispatchCtx). Either source cancelling
+		// will propagate into exec.Run so the child process can be torn
+		// down via the executor's normal context path.
+		runCtx, runCancel := mergeContexts(wctx, capturedDispatchCtx)
+		defer runCancel()
+		defer s.cancels.deregister(capturedTaskID)
+		defer capturedDispatchCancel() // release context.Background goroutine
 		defer s.heartbeat.Deregister(capturedWorkerID)
 		defer s.progressHeartbeat.stop(capturedRunID)
 		defer s.progressThrottler.release(capturedRunID)
@@ -442,7 +582,43 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 			s.publishProgress(capturedTaskID, capturedRunID, event)
 		}
 
-		result, err := exec.Run(wctx, job, cb)
+		result, err := exec.Run(runCtx, job, cb)
+
+		// Cancellation branch. When the per-task dispatch context is
+		// cancelled (DB transition out of doing) or the pool is shutting
+		// down, the executor's Run returns either a context error or
+		// exits successfully after honoring its grace window. We detect
+		// this by checking the dispatch context FIRST — if it's been
+		// cancelled we treat the run as cancelled regardless of what err
+		// is (the executor may return a legitimate result if it finished
+		// a stream between the cancel fire and the check). Marking
+		// status=canceled with a structured reason keeps retry budgets
+		// intact and gives operators a clear signal.
+		if capturedDispatchCtx.Err() != nil {
+			reason := "task_transition_out_of_doing"
+			s.store.CompleteRun(capturedRunID, sqlstore.RunCompletion{
+				Status:       "canceled",
+				ErrorMessage: reason,
+			})
+			writeRunEvent(s.store, capturedRunID, capturedTaskID, "run_canceled", map[string]string{
+				"reason": reason,
+			})
+			s.bus.Publish(SchedulerEvent{
+				Type:   "run.canceled",
+				TaskID: capturedTaskID,
+				RunID:  capturedRunID,
+				Data:   map[string]interface{}{"reason": reason},
+			})
+			// Return a result with Status=canceled so the lifecycle
+			// manager can short-circuit: the task has already been
+			// transitioned by the external actor, and we must not
+			// retry, re-queue, or block.
+			return &executor.ExecutionResult{
+				Status: "canceled",
+				Reason: reason,
+			}, nil
+		}
+
 		if err != nil {
 			// Complete run with error
 			s.store.CompleteRun(capturedRunID, sqlstore.RunCompletion{
@@ -494,6 +670,13 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 
 		return result, nil
 	})
+
+	// Post-submit dispatch log. Emitted AFTER pool.Submit so a failure in
+	// any earlier step (transition, run create, worktree setup) never
+	// produces a misleading "dispatched" entry. Pairs with the
+	// run.completed event emitted by the worker closure on finish.
+	log.Printf("[scheduler] dispatched task=%s run=%d executor=%s profile=%s worker=%s",
+		task.ID, runID, task.Executor, task.AgentProfile, workerID)
 
 	return nil
 }
@@ -581,7 +764,8 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	log.Printf("[scheduler] started (workers=%d, interval=%s)", s.cfg.Workers, interval)
+	log.Printf("[scheduler] started (workers=%d, interval=%s, stale_heartbeat_threshold=%ds)",
+		s.cfg.Workers, interval, s.cfg.StaleSeconds)
 
 	// Best-effort sweep of orphaned per-run worktrees on startup. Requires
 	// CLOCKWORK_REPO so we know which repo's admin to prune against; if the
@@ -613,6 +797,13 @@ func (s *Scheduler) Run(ctx context.Context) error {
 // Stop gracefully shuts down the scheduler.
 func (s *Scheduler) Stop(ctx context.Context) error {
 	s.DrainResults()
+	// Cancel any registered per-task dispatch contexts before telling the
+	// pool to shut down. This keeps cancellation semantics consistent on
+	// shutdown: workers see runCtx cancelled and write status=canceled
+	// rather than leaving runs in "running" until the pool hard-cancels.
+	// Pool shutdown still follows to release the semaphore and wait on
+	// the WaitGroup.
+	s.cancels.cancelAll()
 	if err := s.pool.Shutdown(ctx); err != nil {
 		return fmt.Errorf("scheduler: shutdown workers: %w", err)
 	}
@@ -742,4 +933,30 @@ func buildJob(task sqlstore.TaskRecord, runID int64) *executor.ExecutionJob {
 	}
 
 	return job
+}
+
+// formatSkipCounts renders a PickDecisions.Counts map as a stable
+// "map[key1:N key2:M]" string matching Go's fmt default for maps but with
+// a deterministic key order so operators grepping across ticks can diff
+// cleanly. An empty map renders as "map[]" so the log line shape is
+// always parseable.
+func formatSkipCounts(counts map[string]int) string {
+	if len(counts) == 0 {
+		return "map[]"
+	}
+	keys := make([]string, 0, len(counts))
+	for k := range counts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString("map[")
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		fmt.Fprintf(&b, "%s:%d", k, counts[k])
+	}
+	b.WriteByte(']')
+	return b.String()
 }
