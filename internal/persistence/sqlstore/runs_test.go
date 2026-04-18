@@ -177,3 +177,127 @@ func TestListRunsFiltered(t *testing.T) {
 		assert.Equal(t, rB1, runs[1].ID)
 	})
 }
+
+// TestSetRunOperatorStatus covers the runs-taxonomy store helper
+// (CW-20260418-0015): operator-terminal statuses stamp the run row with
+// the caller-supplied reason and rejected statuses error without writing.
+func TestSetRunOperatorStatus(t *testing.T) {
+	store := setupTestStore(t)
+	task := sampleTask("CW-OPSTATUS-0001")
+	require.NoError(t, store.CreateTask(task))
+
+	t.Run("cancelled stamps status and reason", func(t *testing.T) {
+		id, err := store.CreateRun(&sqlstore.RunRecord{TaskID: task.ID, Executor: "cli"})
+		require.NoError(t, err)
+
+		err = store.SetRunOperatorStatus(id, sqlstore.RunStatusCancelled, "operator halted")
+		require.NoError(t, err)
+
+		got, err := store.GetRun(id)
+		require.NoError(t, err)
+		assert.Equal(t, sqlstore.RunStatusCancelled, got.Status)
+		assert.Equal(t, "operator halted", got.ErrorMessage)
+		assert.True(t, got.EndedAt.Valid, "ended_at should be stamped")
+	})
+
+	t.Run("killed stamps status", func(t *testing.T) {
+		id, err := store.CreateRun(&sqlstore.RunRecord{TaskID: task.ID, Executor: "cli"})
+		require.NoError(t, err)
+
+		err = store.SetRunOperatorStatus(id, sqlstore.RunStatusKilled, "live-validation cleanup")
+		require.NoError(t, err)
+
+		got, err := store.GetRun(id)
+		require.NoError(t, err)
+		assert.Equal(t, sqlstore.RunStatusKilled, got.Status)
+		assert.Equal(t, "live-validation cleanup", got.ErrorMessage)
+	})
+
+	t.Run("superseded stamps status", func(t *testing.T) {
+		id, err := store.CreateRun(&sqlstore.RunRecord{TaskID: task.ID, Executor: "cli"})
+		require.NoError(t, err)
+
+		err = store.SetRunOperatorStatus(id, sqlstore.RunStatusSuperseded, "accepted via run 42")
+		require.NoError(t, err)
+
+		got, err := store.GetRun(id)
+		require.NoError(t, err)
+		assert.Equal(t, sqlstore.RunStatusSuperseded, got.Status)
+	})
+
+	t.Run("rejects non-operator status", func(t *testing.T) {
+		id, err := store.CreateRun(&sqlstore.RunRecord{TaskID: task.ID, Executor: "cli"})
+		require.NoError(t, err)
+
+		err = store.SetRunOperatorStatus(id, sqlstore.RunStatusFailed, "boom")
+		require.Error(t, err, "failed is not an operator-terminal status")
+	})
+
+	t.Run("unknown id errors", func(t *testing.T) {
+		err := store.SetRunOperatorStatus(99999, sqlstore.RunStatusCancelled, "ghost")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+// TestCompleteRunGuardsOperatorTerminalStatus proves that CompleteRun will
+// NOT overwrite a run already stamped with an operator-terminal status
+// (cancelled/superseded/killed). A late-arriving executor result cannot
+// flip operator housekeeping to failed (CW-20260418-0015).
+func TestCompleteRunGuardsOperatorTerminalStatus(t *testing.T) {
+	store := setupTestStore(t)
+	task := sampleTask("CW-GUARD-0001")
+	require.NoError(t, store.CreateTask(task))
+
+	cases := []struct {
+		name    string
+		opState string
+	}{
+		{"cancelled is locked", sqlstore.RunStatusCancelled},
+		{"superseded is locked", sqlstore.RunStatusSuperseded},
+		{"killed is locked", sqlstore.RunStatusKilled},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			id, err := store.CreateRun(&sqlstore.RunRecord{TaskID: task.ID, Executor: "cli"})
+			require.NoError(t, err)
+
+			require.NoError(t, store.SetRunOperatorStatus(id, tc.opState, "operator wins"))
+
+			// Late-arriving executor result: should be a silent no-op.
+			err = store.CompleteRun(id, sqlstore.RunCompletion{
+				Status:       sqlstore.RunStatusFailed,
+				ErrorMessage: "ghost failure",
+			})
+			require.NoError(t, err, "CompleteRun must be a silent no-op when operator-terminal")
+
+			got, err := store.GetRun(id)
+			require.NoError(t, err)
+			assert.Equal(t, tc.opState, got.Status, "operator status must not be clobbered")
+			assert.Equal(t, "operator wins", got.ErrorMessage, "operator reason must not be clobbered")
+		})
+	}
+}
+
+// TestCompleteRunStillWorksOnRunning ensures the guard added in
+// CW-20260418-0015 did NOT regress the happy path — a running run still
+// transitions cleanly to failed/done.
+func TestCompleteRunStillWorksOnRunning(t *testing.T) {
+	store := setupTestStore(t)
+	task := sampleTask("CW-HAPPY-0001")
+	require.NoError(t, store.CreateTask(task))
+
+	id, err := store.CreateRun(&sqlstore.RunRecord{TaskID: task.ID, Executor: "cli"})
+	require.NoError(t, err)
+
+	err = store.CompleteRun(id, sqlstore.RunCompletion{
+		Status:       sqlstore.RunStatusFailed,
+		ErrorMessage: "real failure",
+	})
+	require.NoError(t, err)
+
+	got, err := store.GetRun(id)
+	require.NoError(t, err)
+	assert.Equal(t, sqlstore.RunStatusFailed, got.Status)
+	assert.Equal(t, "real failure", got.ErrorMessage)
+}
