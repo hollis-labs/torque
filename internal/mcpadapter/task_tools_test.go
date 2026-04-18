@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/mcpadapter"
@@ -25,7 +26,46 @@ func setupAdapter(t *testing.T) *mcpadapter.Adapter {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 	svc := service.New(store)
-	return mcpadapter.New(svc)
+	return mcpadapter.New(svc, nil)
+}
+
+// dataBytes extracts the marshaled `data` field from a Phase C
+// `{ok, data, error}` response text. Returns the raw JSON so callers can
+// unmarshal into whatever shape they expect. Fails the test if the response
+// is not ok=true.
+func dataBytes(t *testing.T, text string) []byte {
+	t.Helper()
+	var env struct {
+		OK    bool            `json:"ok"`
+		Data  json.RawMessage `json:"data"`
+		Error json.RawMessage `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(text), &env), "response must be valid JSON: %s", text)
+	require.True(t, env.OK, "expected ok=true, got: %s", text)
+	return env.Data
+}
+
+// parseData unmarshals the `data` field of a Phase C envelope into out.
+func parseData(t *testing.T, text string, out any) {
+	t.Helper()
+	require.NoError(t, json.Unmarshal(dataBytes(t, text), out), "data unmarshal: %s", text)
+}
+
+// parseError unmarshals the `error` field of a Phase C envelope. Fails the
+// test if ok=true.
+func parseError(t *testing.T, text string) (code, message, field string) {
+	t.Helper()
+	var env struct {
+		OK    bool `json:"ok"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Field   string `json:"field"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(text), &env), "response must be valid JSON: %s", text)
+	require.False(t, env.OK, "expected ok=false, got: %s", text)
+	return env.Error.Code, env.Error.Message, env.Error.Field
 }
 
 func callTool(t *testing.T, a *mcpadapter.Adapter, name string, args map[string]interface{}) (string, bool) {
@@ -98,7 +138,7 @@ func TestFullStack_CreateAndGetTask(t *testing.T) {
 
 	// Parse the task ID from the response JSON (struct fields are uppercased).
 	var created map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	parseData(t, text, &created)
 	id, ok := created["ID"].(string)
 	require.True(t, ok, "response should contain string ID")
 	require.NotEmpty(t, id)
@@ -110,7 +150,7 @@ func TestFullStack_CreateAndGetTask(t *testing.T) {
 	require.False(t, isErr, "get should not error: %s", text)
 
 	var fetched map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &fetched))
+	parseData(t, text, &fetched)
 	require.Equal(t, "Fix auth bug", fetched["Title"])
 }
 
@@ -131,7 +171,7 @@ func TestFullStack_TaskCreate_Facets(t *testing.T) {
 	require.False(t, isErr, "create should not error: %s", text)
 
 	var created map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	parseData(t, text, &created)
 	require.Equal(t, "external", created["Kind"])
 	require.Equal(t, "user", created["SourceType"])
 	ref := created["SourceRef"].(map[string]interface{})
@@ -152,7 +192,7 @@ func TestFullStack_TaskCreate_FacetDefaults(t *testing.T) {
 	require.False(t, isErr, "create should not error: %s", text)
 
 	var created map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	parseData(t, text, &created)
 	require.Equal(t, "agent", created["Kind"])
 	require.Equal(t, "user", created["SourceType"])
 	require.Equal(t, "normal", created["Trust"])
@@ -179,10 +219,16 @@ func TestFullStack_TaskList_FilterByKind(t *testing.T) {
 	})
 	require.False(t, isErr, "list should not error: %s", text)
 
-	var tasks []map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &tasks))
-	require.Len(t, tasks, 1)
-	require.Equal(t, "external", tasks[0]["Kind"])
+	var envelope struct {
+		Items []map[string]interface{} `json:"items"`
+		Meta  map[string]interface{}   `json:"meta"`
+	}
+	parseData(t, text, &envelope)
+	require.Len(t, envelope.Items, 1)
+	// Brief shape uses lowercase "kind".
+	require.Equal(t, "external", envelope.Items[0]["kind"])
+	require.Equal(t, false, envelope.Meta["truncated"])
+	require.Equal(t, float64(1), envelope.Meta["returned"])
 }
 
 func TestFullStack_TaskUpdate_Facets(t *testing.T) {
@@ -193,7 +239,7 @@ func TestFullStack_TaskUpdate_Facets(t *testing.T) {
 		"description": "x",
 	})
 	var created map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	parseData(t, text, &created)
 	id := created["ID"].(string)
 
 	text, isErr := callTool(t, a, "clockwork_task_update", map[string]interface{}{
@@ -205,7 +251,7 @@ func TestFullStack_TaskUpdate_Facets(t *testing.T) {
 	require.False(t, isErr, "update should not error: %s", text)
 
 	var updated map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &updated))
+	parseData(t, text, &updated)
 	require.Equal(t, "blocking", updated["CheckpointMode"])
 	require.Equal(t, "review", updated["OnCheckpointResponse"])
 	ref := updated["SourceRef"].(map[string]interface{})
@@ -223,7 +269,7 @@ func TestFullStack_TaskUpdate_WritableFields(t *testing.T) {
 		"description": "x",
 	})
 	var created map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	parseData(t, text, &created)
 	id := created["ID"].(string)
 
 	// Scalars / simple strings / bools / numbers.
@@ -247,7 +293,7 @@ func TestFullStack_TaskUpdate_WritableFields(t *testing.T) {
 	})
 	require.False(t, isErr, "scalar update should not error: %s", text)
 	var u1 map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &u1))
+	parseData(t, text, &u1)
 	require.Equal(t, true, u1["Manual"])
 	require.Equal(t, "cli", u1["Executor"])
 	require.Equal(t, "claude-code", u1["AgentProfile"])
@@ -277,7 +323,7 @@ func TestFullStack_TaskUpdate_WritableFields(t *testing.T) {
 		"description": "x",
 	})
 	var dep map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &dep))
+	parseData(t, text, &dep)
 	depID := dep["ID"].(string)
 
 	text, isErr = callTool(t, a, "clockwork_task_update", map[string]interface{}{
@@ -294,7 +340,7 @@ func TestFullStack_TaskUpdate_WritableFields(t *testing.T) {
 	})
 	require.False(t, isErr, "json-blob update should not error: %s", text)
 	var u2 map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &u2))
+	parseData(t, text, &u2)
 
 	// Blob fields are sql.NullString on TaskRecord: {String, Valid}.
 	expectNullStringJSON := func(key, wantJSON string) {
@@ -324,7 +370,7 @@ func TestFullStack_TaskLifecycle(t *testing.T) {
 	require.False(t, isErr, "create should not error: %s", text)
 
 	var created map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	parseData(t, text, &created)
 	id := created["ID"].(string)
 
 	// todo → doing.
@@ -386,9 +432,13 @@ func TestFullStack_SearchTasks(t *testing.T) {
 	})
 	require.False(t, isErr, "search should not error: %s", text)
 
-	var results []interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &results))
-	require.Len(t, results, 1, "search for 'login' should return exactly 1 result")
+	var envelope struct {
+		Items []map[string]interface{} `json:"items"`
+		Meta  map[string]interface{}   `json:"meta"`
+	}
+	parseData(t, text, &envelope)
+	require.Len(t, envelope.Items, 1, "search for 'login' should return exactly 1 result")
+	require.Equal(t, false, envelope.Meta["truncated"])
 }
 
 // TestFullStack_TaskCreate_ForcesManualTrue_ExplicitFalse verifies the
@@ -405,7 +455,7 @@ func TestFullStack_TaskCreate_ForcesManualTrue_ExplicitFalse(t *testing.T) {
 	require.False(t, isErr, "create should not error: %s", text)
 
 	var created map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	parseData(t, text, &created)
 	require.Equal(t, true, created["Manual"], "manual=false must be coerced to true per CW-20260417-0133")
 }
 
@@ -422,7 +472,7 @@ func TestFullStack_TaskCreate_ManualOmitted_CoercedToTrue(t *testing.T) {
 	require.False(t, isErr, "create should not error: %s", text)
 
 	var created map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	parseData(t, text, &created)
 	require.Equal(t, true, created["Manual"], "omitted manual must default to true per CW-20260417-0133")
 }
 
@@ -437,7 +487,7 @@ func TestFullStack_TaskUpdate_ManualFalse_Unchanged(t *testing.T) {
 		"description": "x",
 	})
 	var created map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	parseData(t, text, &created)
 	id := created["ID"].(string)
 	require.Equal(t, true, created["Manual"])
 
@@ -448,6 +498,114 @@ func TestFullStack_TaskUpdate_ManualFalse_Unchanged(t *testing.T) {
 	require.False(t, isErr, "update should not error: %s", text)
 
 	var updated map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &updated))
+	parseData(t, text, &updated)
 	require.Equal(t, false, updated["Manual"], "Update path must NOT coerce manual=false")
+}
+
+// TestFullStack_TaskUpdate_ManualStringCoercion reproduces CW-20260418-0019
+// Instance 1: clockwork_task_update manual=true returned success but the
+// DB column didn't flip. Root cause was the local reqBool helper silently
+// returning false for any non-bool JSON type, including strings. If a
+// caller (or a middle layer) shipped "manual": "true" as a JSON string,
+// presence-detection fired, reqBool returned false, and manual was
+// overwritten with 0. The mcp-go library's own GetBool helper coerces
+// strings via strconv.ParseBool — our local reqBool now matches that
+// behavior so the silent-drop class is closed.
+func TestFullStack_TaskUpdate_ManualStringCoercion(t *testing.T) {
+	a := setupAdapter(t)
+
+	// Create a task (forced manual=true by CW-20260417-0133 override) and
+	// flip it to manual=false with a properly-typed bool so we have a
+	// known baseline to flip back.
+	text, _ := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":       "coerce-me",
+		"description": "x",
+	})
+	var created map[string]interface{}
+	parseData(t, text, &created)
+	id := created["ID"].(string)
+
+	text, isErr := callTool(t, a, "clockwork_task_update", map[string]interface{}{
+		"id":     id,
+		"manual": false,
+	})
+	require.False(t, isErr, "baseline flip to false should succeed: %s", text)
+	var flipped map[string]interface{}
+	parseData(t, text, &flipped)
+	require.Equal(t, false, flipped["Manual"])
+
+	// The silent-drop repro: caller sends "true" as a JSON string.
+	text, isErr = callTool(t, a, "clockwork_task_update", map[string]interface{}{
+		"id":     id,
+		"manual": "true",
+	})
+	require.False(t, isErr, "string-typed manual should be accepted: %s", text)
+	var promoted map[string]interface{}
+	parseData(t, text, &promoted)
+	assert.Equal(t, true, promoted["Manual"],
+		`clockwork_task_update manual="true" (string) must coerce to bool true; silent drop was CW-20260418-0019 Instance 1`)
+
+	// Confirm the DB row agrees (not just the response echo).
+	text, _ = callTool(t, a, "clockwork_task_get", map[string]interface{}{"id": id})
+	var got map[string]interface{}
+	parseData(t, text, &got)
+	assert.Equal(t, true, got["Manual"], "task_get must reflect the coerced manual=true in DB")
+}
+
+// TestFullStack_TaskUpdate_BoolCoercionVariants exercises every JSON shape
+// a poorly-behaved client might send for a Boolean-typed MCP arg. Each
+// variant must round-trip deterministically instead of silently dropping
+// to the zero value. Mirrors mcp-go's own CallToolRequest.GetBool accepted
+// type set.
+func TestFullStack_TaskUpdate_BoolCoercionVariants(t *testing.T) {
+	cases := []struct {
+		label string
+		input interface{}
+		want  bool
+	}{
+		{"bool_true", true, true},
+		{"bool_false", false, false},
+		{"string_true", "true", true},
+		{"string_false", "false", false},
+		{"string_1", "1", true},
+		{"string_0", "0", false},
+		{"float64_1", float64(1), true},
+		{"float64_0", float64(0), false},
+		{"int_1", 1, true},
+		{"int_0", 0, false},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.label, func(t *testing.T) {
+			a := setupAdapter(t)
+			text, _ := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+				"title":       "bool-variant",
+				"description": "x",
+			})
+			var created map[string]interface{}
+			parseData(t, text, &created)
+			id := created["ID"].(string)
+
+			// Baseline: flip to the opposite of tc.want so we can detect an
+			// actual change.
+			text, _ = callTool(t, a, "clockwork_task_update", map[string]interface{}{
+				"id":     id,
+				"manual": !tc.want,
+			})
+			var baseline map[string]interface{}
+			parseData(t, text, &baseline)
+			require.Equal(t, !tc.want, baseline["Manual"])
+
+			text, isErr := callTool(t, a, "clockwork_task_update", map[string]interface{}{
+				"id":     id,
+				"manual": tc.input,
+			})
+			require.False(t, isErr, "update should succeed for %v: %s", tc.input, text)
+			var got map[string]interface{}
+			parseData(t, text, &got)
+			assert.Equal(t, tc.want, got["Manual"],
+				"manual=%v (%T) should coerce to %v", tc.input, tc.input, tc.want)
+		})
+	}
 }

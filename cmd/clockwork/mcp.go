@@ -34,7 +34,10 @@ func mcpCmd() *cobra.Command {
 			}
 
 			svc := service.New(store)
-			adapter := mcpadapter.New(svc)
+			// The stdio mcp subcommand runs in a separate process from serve and
+			// has no scheduler instance; scheduler_* tools will surface a
+			// not-running error if called here, matching the HTTP 503 contract.
+			adapter := mcpadapter.New(svc, nil)
 
 			stdio := server.NewStdioServer(adapter.Server())
 			return stdio.Listen(cmd.Context(), os.Stdin, os.Stdout)

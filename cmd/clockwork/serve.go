@@ -123,6 +123,15 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// Scheduler
 	sched := scheduler.New(store, q, registry, predicates, &cfg.Scheduler)
 
+	// DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
+	// Stopgap: advertise the active project-scope allowlist at every
+	// startup so operators can spot a stale CLOCKWORK_PROJECT_ID carried
+	// over from a prior shell session. Silent when unset to avoid noise.
+	if len(cfg.Scheduler.ProjectAllowlist) > 0 {
+		log.Printf("[serve] scheduler project-scope filter active: %v (stopgap — CW-20260417-0129 replaces this with workspaces)",
+			cfg.Scheduler.ProjectAllowlist)
+	}
+
 	// Service + HTTP handler
 	svc := service.New(store)
 	handler := httpserver.New(svc, sched)
@@ -173,8 +182,8 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	log.Printf("Clockwork HTTP server listening on %s", ln.Addr().String())
 	log.Printf("GUI available at http://%s", ln.Addr().String())
 	log.Printf("API available at http://%s/api/v1", ln.Addr().String())
-	log.Printf("Scheduler: workers=%d interval=%ds enabled=%t",
-		cfg.Scheduler.Workers, cfg.Scheduler.IntervalSeconds, cfg.Scheduler.Enabled)
+	log.Printf("Scheduler: workers=%d interval=%ds stale_heartbeat_threshold=%ds enabled=%t",
+		cfg.Scheduler.Workers, cfg.Scheduler.IntervalSeconds, cfg.Scheduler.StaleSeconds, cfg.Scheduler.Enabled)
 
 	serveErr := srv.Serve(ln)
 	// Cancel FIRST so the shutdown goroutine unblocks on <-runCtx.Done() and

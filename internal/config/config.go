@@ -1,8 +1,10 @@
 package config
 
 import (
+	"log"
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -63,6 +65,16 @@ type SchedulerConfig struct {
 	WorktreePerRun   bool
 	WorktreeRoot     string // empty means "${repoRoot}-worktrees"
 	WorktreeKeepDays int
+
+	// DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
+	// ProjectAllowlist is a stopgap for the shared-DB cross-project
+	// contamination observed 2026-04-17. When non-empty, the scheduler
+	// picker only considers tasks whose project_id is in this list; empty
+	// means no filter (current all-projects behavior). Populated at
+	// startup from CLOCKWORK_PROJECT_IDS (comma-separated, wins if set) or
+	// CLOCKWORK_PROJECT_ID (single id). Read once at Load() — there is no
+	// reload mechanism; changing the env var requires a serve restart.
+	ProjectAllowlist []string
 }
 
 func Load() (*Config, error) {
@@ -79,6 +91,15 @@ func Load() (*Config, error) {
 			CostCeiling:              envFloat("CLOCKWORK_SCHED_COST_CEILING", 0),
 			HeartbeatSeconds:         envInt("CLOCKWORK_SCHED_HEARTBEAT", 15),
 			HeartbeatProgressSeconds: envInt("CLOCKWORK_PROGRESS_HEARTBEAT_SECONDS", 30),
+			// StaleSeconds is the staleness threshold for worker heartbeats.
+			// A row in worker_heartbeats whose last_heartbeat is older than
+			// this gets logged, published on the bus as worker.stale, and
+			// deleted by the next scheduler tick (CW-20260418-0003 cleanup
+			// and CW-20260418-0018 gauge/config). Default 300s (5 min) —
+			// long enough to tolerate a slow CLI executor pause, short
+			// enough that a crashed worker doesn't linger in the table
+			// across a whole session. Tune down for faster feedback in
+			// dev/test, not recommended below ~30s in production.
 			StaleSeconds:             envInt("CLOCKWORK_SCHED_STALE", 300),
 			Enabled:                  envBool("CLOCKWORK_SCHED_ENABLED", true),
 			MaxPerProject:            envInt("CLOCKWORK_SCHED_MAX_PER_PROJECT", 2),
@@ -87,6 +108,8 @@ func Load() (*Config, error) {
 			WorktreePerRun:           envBool("CLOCKWORK_WORKTREE_PER_RUN", false),
 			WorktreeRoot:             os.Getenv("CLOCKWORK_WORKTREE_ROOT"),
 			WorktreeKeepDays:         envInt("CLOCKWORK_WORKTREE_KEEP_DAYS", 7),
+			// DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
+			ProjectAllowlist: envProjectAllowlist(),
 		},
 		Concurrency: ConcurrencyConfig{
 			MaxReadConns:     envInt("CLOCKWORK_MAX_READ_CONNS", 4),
@@ -139,4 +162,37 @@ func envBool(key string, fallback bool) bool {
 		}
 	}
 	return fallback
+}
+
+// envProjectAllowlist parses the project-scope filter env vars for the
+// scheduler. CLOCKWORK_PROJECT_IDS (comma-separated) wins if set; otherwise
+// CLOCKWORK_PROJECT_ID becomes a single-element list; otherwise nil (no
+// filter). Whitespace around tokens is trimmed and empty tokens are
+// discarded, so "PRJ-A, PRJ-B" and "PRJ-A,PRJ-B" are equivalent. A non-empty
+// allowlist is logged at startup so operators can spot a stale env var
+// carried over from a prior shell session.
+//
+// DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
+func envProjectAllowlist() []string {
+	raw := os.Getenv("CLOCKWORK_PROJECT_IDS")
+	if raw == "" {
+		if single := os.Getenv("CLOCKWORK_PROJECT_ID"); single != "" {
+			raw = single
+		}
+	}
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if v := strings.TrimSpace(p); v != "" {
+			out = append(out, v)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	log.Printf("[config] scheduler scoped to projects: %v (STOPGAP — CW-20260417-0129 will replace this with workspaces)", out)
+	return out
 }

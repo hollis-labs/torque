@@ -3,11 +3,18 @@ package sqlstore
 import (
 	"database/sql"
 	"fmt"
+	"sync"
 )
 
 type Store struct {
 	db      *sql.DB
 	dialect Dialect
+
+	// Task-transition hook fan-out (CW-20260418-0005). Added so the
+	// scheduler can observe DB-driven transitions out of "doing" and
+	// cancel the corresponding in-flight worker. See task_hooks.go.
+	hooksMu         sync.RWMutex
+	transitionHooks []TaskTransitionHook
 }
 
 func New(db *sql.DB, driver string) (*Store, error) {

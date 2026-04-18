@@ -1,0 +1,40 @@
+-- 015 run status taxonomy — distinguish operator/scheduler housekeeping
+-- from retry-exhausted failures (CW-20260418-0015).
+--
+-- Prior to this migration the runs.status column had no CHECK constraint
+-- and in practice carried five distinct semantics under a single bucket:
+-- real failure, operator cancel, operator supersede, live-validation kill,
+-- and retry-exhausted blocked. The recent 48h history showed ~380 "failed"
+-- rows where only ~376 were genuine failures; the remaining 5 were
+-- operator/scheduler housekeeping that dashboards and metrics were
+-- misattributing to pipeline bugs.
+--
+-- This migration is forward-only + idempotent and does NOT rewrite any
+-- historical rows. The free-form error_message on legacy rows is the
+-- audit trail; rewriting it would destroy that signal. Only new writes
+-- (from code paths updated in the same task) will use the expanded set.
+--
+-- Allowed runs.status values (documented here since the column carries no
+-- CHECK constraint; widening via table rebuild is deferred — future work):
+--   running     — in-flight.
+--   done        — executor reported success.
+--   failed      — executor reported non-zero / timed out / errored on its own.
+--   blocked     — lifecycle decided to block (e.g. permanent validation error,
+--                 retries exhausted).
+--   review      — task awaits human review (OnDone=review).
+--   cancelled   — operator explicitly cancelled the run.
+--   superseded  — a different run/task accepted the work; this run's result
+--                 is no longer relevant.
+--   killed      — scheduler or operator terminated the run for housekeeping
+--                 (cleanup sweep, shutdown, live-validation cull).
+--
+-- Downstream effects (enforced in code, not schema):
+--   retryOrBlock MUST short-circuit on cancelled/superseded/killed — those
+--   are not retry candidates even if task.OnFail=retry.
+--   on_fail hooks (retry|block|escalate|notify) MUST NOT fire for the new
+--   operator/scheduler statuses — operator actions are silent by design.
+--
+-- Add an index on runs.status so the Ops dashboard's status-filtered
+-- queries (newly segmentable by the expanded taxonomy) stay fast.
+
+CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);

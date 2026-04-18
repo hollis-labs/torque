@@ -30,7 +30,7 @@ func setupServiceDirect(t *testing.T) *service.Service {
 
 // adapterFromService builds an Adapter from an already-configured service.
 func adapterFromService(svc *service.Service) *mcpadapter.Adapter {
-	return mcpadapter.New(svc)
+	return mcpadapter.New(svc, nil)
 }
 
 // toolIsRegistered returns true if the tool exists (no JSON-RPC error in response).
@@ -92,8 +92,55 @@ func TestSprintToolsRegisteredWhenEnabled(t *testing.T) {
 	require.False(t, isErr, "sprint_create should succeed when feature is enabled: %s", text)
 
 	var sprint map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &sprint))
+	parseData(t, text, &sprint)
 	assert.Contains(t, sprint["ID"].(string), "SP-")
+	assert.Equal(t, "Ship it", sprint["Goal"], "sprint_create must persist the goal field (CW-20260418-0019)")
+}
+
+// TestSprintCreate_GoalRoundTrip_EdgeCaseStrings reproduces CW-20260418-0019
+// Instance 2: clockwork_sprint_create silently dropped multi-line goal
+// strings because handleSprintCreate never read goal from the request and
+// SprintCreateInput had no Goal field at all. Exercises multi-line,
+// special-char, embedded-JSON, and Unicode payloads to guard against
+// regression and any future boundary-layer string mangling.
+func TestSprintCreate_GoalRoundTrip_EdgeCaseStrings(t *testing.T) {
+	cases := map[string]string{
+		"multiline":    "Ship feature X.\n\nAcceptance:\n- item 1\n- item 2",
+		"special":      `quotes "inside" and backslash \\ and tabs\tand a comma, plus semi;colons`,
+		"jsonEmbedded": `{"nested": {"key": "value"}, "array": [1,2,3]}`,
+		"unicode":      "日本語 — 한국어 — العربية — 😀🚀",
+	}
+
+	for name, goal := range cases {
+		name, goal := name, goal
+		t.Run(name, func(t *testing.T) {
+			svc := setupServiceDirect(t)
+			require.NoError(t, svc.Feature.Enable("sprints"))
+			a := adapterFromService(svc)
+
+			text, isErr := callTool(t, a, "clockwork_sprint_create", map[string]interface{}{
+				"name": "Goal edge-case " + name,
+				"goal": goal,
+			})
+			require.False(t, isErr, "sprint_create should succeed: %s", text)
+
+			var sprint map[string]interface{}
+			parseData(t, text, &sprint)
+			assert.Equal(t, goal, sprint["Goal"], "goal must round-trip verbatim")
+
+			// Cross-check: fetch via sprint_get to confirm the DB row matches
+			// the create response (guards against the create response being
+			// populated from input while DB row silently loses the field).
+			text, isErr = callTool(t, a, "clockwork_sprint_get", map[string]interface{}{
+				"id": sprint["ID"],
+			})
+			require.False(t, isErr, "sprint_get should succeed: %s", text)
+			var resp map[string]interface{}
+			parseData(t, text, &resp)
+			got := resp["sprint"].(map[string]interface{})
+			assert.Equal(t, goal, got["Goal"], "goal must persist to DB")
+		})
+	}
 }
 
 func TestSprintFullLifecycleViaMCP(t *testing.T) {
@@ -110,7 +157,7 @@ func TestSprintFullLifecycleViaMCP(t *testing.T) {
 	require.False(t, isErr, "sprint_create should succeed: %s", text)
 
 	var sprint map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &sprint))
+	parseData(t, text, &sprint)
 	sprintID := sprint["ID"].(string)
 
 	// Get sprint
@@ -134,7 +181,7 @@ func TestSprintFullLifecycleViaMCP(t *testing.T) {
 	require.False(t, isErr, "task_create with sprint should succeed: %s", text)
 
 	var task map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &task))
+	parseData(t, text, &task)
 	taskID := task["ID"].(string)
 
 	// Move task through lifecycle
@@ -152,7 +199,7 @@ func TestSprintFullLifecycleViaMCP(t *testing.T) {
 	text, isErr = callTool(t, a, "clockwork_task_get", map[string]interface{}{"id": taskID})
 	require.False(t, isErr)
 	var updatedTask map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &updatedTask))
+	parseData(t, text, &updatedTask)
 	assert.Equal(t, "done", updatedTask["Status"])
 
 	// Transition sprint to inactive
@@ -183,17 +230,21 @@ func TestProjectToolsViaMCP(t *testing.T) {
 	require.False(t, isErr, "project_create should succeed: %s", text)
 
 	var project map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &project))
+	parseData(t, text, &project)
 	projectID := project["ID"].(string)
 	assert.Contains(t, projectID, "PRJ-")
 
-	// List projects
+	// List projects — new {items, meta} envelope shape
 	text, isErr = callTool(t, a, "clockwork_project_list", map[string]interface{}{})
 	require.False(t, isErr, "project_list should succeed: %s", text)
 
-	var listResult map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &listResult))
-	assert.Equal(t, float64(1), listResult["count"])
+	var projectEnv struct {
+		Items []map[string]interface{} `json:"items"`
+		Meta  map[string]interface{}   `json:"meta"`
+	}
+	parseData(t, text, &projectEnv)
+	assert.Len(t, projectEnv.Items, 1)
+	assert.Equal(t, float64(1), projectEnv.Meta["returned"])
 
 	// Create task in project
 	text, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{
@@ -223,7 +274,7 @@ func TestEpicToolsViaMCP(t *testing.T) {
 	require.False(t, isErr, "epic_create should succeed: %s", text)
 
 	var epic map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &epic))
+	parseData(t, text, &epic)
 	epicID := epic["ID"].(string)
 	assert.Contains(t, epicID, "EP-")
 
@@ -239,15 +290,19 @@ func TestEpicToolsViaMCP(t *testing.T) {
 	})
 	require.False(t, isErr, "epic_update should succeed: %s", text)
 
-	// List epics filtered by inactive
+	// List epics filtered by inactive — new {items, meta} envelope shape
 	text, isErr = callTool(t, a, "clockwork_epic_list", map[string]interface{}{
 		"status": "inactive",
 	})
 	require.False(t, isErr, "epic_list should succeed: %s", text)
 
-	var epicList map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &epicList))
-	assert.Equal(t, float64(1), epicList["count"])
+	var epicEnv struct {
+		Items []map[string]interface{} `json:"items"`
+		Meta  map[string]interface{}   `json:"meta"`
+	}
+	parseData(t, text, &epicEnv)
+	assert.Len(t, epicEnv.Items, 1)
+	assert.Equal(t, float64(1), epicEnv.Meta["returned"])
 
 	// Create task in epic
 	text, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{
@@ -275,7 +330,7 @@ func TestSprintApproveAllViaMCP(t *testing.T) {
 	require.False(t, isErr, "sprint_create should succeed: %s", text)
 
 	var sprint map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &sprint))
+	parseData(t, text, &sprint)
 	sprintID := sprint["ID"].(string)
 
 	// Sprint is already active by default — no transition needed
@@ -289,8 +344,8 @@ func TestSprintApproveAllViaMCP(t *testing.T) {
 	})
 
 	var t1, t2 map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text1), &t1))
-	require.NoError(t, json.Unmarshal([]byte(text2), &t2))
+	parseData(t, text1, &t1)
+	parseData(t, text2, &t2)
 	t1ID := t1["ID"].(string)
 	t2ID := t2["ID"].(string)
 
@@ -323,9 +378,9 @@ func TestTaskAssociationUpdateViaMCP(t *testing.T) {
 	require.False(t, isErr)
 
 	var sp, pr, ep map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(sprintText), &sp))
-	require.NoError(t, json.Unmarshal([]byte(projectText), &pr))
-	require.NoError(t, json.Unmarshal([]byte(epicText), &ep))
+	parseData(t, sprintText, &sp)
+	parseData(t, projectText, &pr)
+	parseData(t, epicText, &ep)
 
 	// Create unassociated task
 	taskText, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
@@ -334,7 +389,7 @@ func TestTaskAssociationUpdateViaMCP(t *testing.T) {
 	require.False(t, isErr)
 
 	var task map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(taskText), &task))
+	parseData(t, taskText, &task)
 	taskID := task["ID"].(string)
 
 	// Update task to assign to sprint, project, and epic
@@ -351,7 +406,7 @@ func TestTaskAssociationUpdateViaMCP(t *testing.T) {
 	require.False(t, isErr)
 
 	var got map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &got))
+	parseData(t, text, &got)
 
 	// SprintID is sql.NullString — check the nested structure
 	sprintField := got["SprintID"].(map[string]interface{})
@@ -369,7 +424,7 @@ func TestHealthShowsEnabledFeatures(t *testing.T) {
 	require.False(t, isErr, "health should not error: %s", text)
 
 	var health map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &health))
+	parseData(t, text, &health)
 	features := health["enabled_features"].([]interface{})
 	assert.Contains(t, features, "sprints")
 	assert.Contains(t, features, "epics")

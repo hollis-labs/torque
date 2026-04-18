@@ -12,12 +12,29 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/agentfile"
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 )
+
+// cancelGraceFromEnv parses CLOCKWORK_SCHED_CANCEL_GRACE into a duration for
+// SIGTERM→SIGKILL child-process grace. Shares the scheduler's env var so one
+// knob controls both layers; falls back to 5s (CW-20260418-0005 default).
+func cancelGraceFromEnv() time.Duration {
+	const def = 5 * time.Second
+	v := os.Getenv("CLOCKWORK_SCHED_CANCEL_GRACE")
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return def
+	}
+	return d
+}
 
 // stderrTailBytes caps how much stderr we surface in result.Reason on
 // failure. The full stream is still teed to the sidecar file — this is
@@ -69,6 +86,12 @@ func (e *CLIExecutor) Capabilities() executor.ExecutorCapabilities {
 // The scheduler treats PermanentError as block-no-retry (CW-20260418-0010).
 // TaskID-shape errors are non-permanent because nothing in this executor
 // produced them; the caller owns the taxonomy for those.
+//
+// working_dir is resolved here (CW-20260418-0014) so an unresolvable path
+// (undefined env var, ~user/ form, relative path) blocks-no-retry instead
+// of burning three retries and then giving up. The same resolution runs
+// again inside Run before cmd.Dir is set; the duplication is cheap and
+// keeps each entry point self-contained.
 func (e *CLIExecutor) Validate(job *executor.ExecutionJob) error {
 	if err := job.Validate(); err != nil {
 		return err
@@ -77,6 +100,11 @@ func (e *CLIExecutor) Validate(job *executor.ExecutionJob) error {
 	if profile.Command == "" && profile.Provider == "" {
 		return executor.NewPermanentError(
 			fmt.Errorf("profile %q has neither command nor provider set", job.AgentProfile),
+		)
+	}
+	if _, err := resolveWorkingDir(job.WorkingDir); err != nil {
+		return executor.NewPermanentError(
+			fmt.Errorf("resolve working_dir: %w", err),
 		)
 	}
 	return nil
@@ -113,8 +141,46 @@ func (e *CLIExecutor) Run(ctx context.Context, job *executor.ExecutionJob, cb ex
 	//nolint:gosec // command comes from resolved profile config
 	cmd := exec.CommandContext(runCtx, spec.Command, spec.Args...)
 
-	if job.WorkingDir != "" {
-		cmd.Dir = job.WorkingDir
+	// Graceful cancellation for the child process (CW-20260418-0005).
+	// Default behavior of exec.CommandContext is to send SIGKILL on ctx
+	// cancel; override Cancel so we send SIGTERM first, then rely on
+	// WaitDelay to escalate to SIGKILL if the child doesn't exit in time.
+	// Grace is sourced from CLOCKWORK_SCHED_CANCEL_GRACE (default 5s) —
+	// same env the scheduler reads, so operators have one knob.
+	grace := cancelGraceFromEnv()
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return os.ErrProcessDone
+		}
+		return cmd.Process.Signal(syscall.SIGTERM)
+	}
+	cmd.WaitDelay = grace
+
+	// Expand tilde + $ENV in working_dir at the executor boundary
+	// (CW-20260418-0014). os/exec.Cmd.Dir is handed verbatim to chdir(2),
+	// so a raw `~/…` from the task record would have failed with
+	// "no such file or directory" three retries in a row. Validate()
+	// already ran this check pre-dispatch and surfaced a PermanentError,
+	// but we re-resolve here defensively — if Validate's env differed
+	// (scheduler env vs executor env) we still fail cleanly rather than
+	// chdir to a literal `~/…` string. The returned error is wrapped as
+	// PermanentError so the scheduler's retry path blocks without
+	// consuming retry budget (same policy as pre-dispatch Validate).
+	resolvedWD, wdErr := resolveWorkingDir(job.WorkingDir)
+	if wdErr != nil {
+		return &executor.ExecutionResult{
+				Status: "blocked",
+				Reason: fmt.Sprintf("resolve working_dir: %v", wdErr),
+			}, executor.NewPermanentError(
+				fmt.Errorf("resolve working_dir: %w", wdErr),
+			)
+	}
+	if resolvedWD != "" {
+		cmd.Dir = resolvedWD
+		if resolvedWD != job.WorkingDir {
+			log.Printf("executor-cli: resolved working_dir %q → %q (task=%s run=%d)",
+				job.WorkingDir, resolvedWD, job.TaskID, job.RunID)
+		}
 	}
 
 	// Build env: start from OS env, filter secrets, inject task vars.

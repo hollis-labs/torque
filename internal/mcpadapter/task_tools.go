@@ -15,10 +15,13 @@ import (
 
 func (a *Adapter) registerTaskTools() {
 	a.server.AddTool(mcp.NewTool("clockwork_task_create",
-		mcp.WithDescription("Create a new task"),
+		mcp.WithDescription(`Create a new task in Clockwork; returns the full TaskRecord with its assigned ID.
+Use for ad-hoc work items — prefer clockwork_task_create_from_template when a matching template exists, and clockwork_plan_create for multi-phase work. Safety override forces manual=true on every create (CW-20260417-0133); promote to manual=false via clockwork_task_update after review.
+Response shape: data = {<TaskRecord fields>, Tags[]} — singleton, PascalCase keys.
+Example: {"title":"Fix auth bug","description":"Login returns 500","priority":"2","tags":"[\"backend\"]"}`),
 		mcp.WithString("title", mcp.Required(), mcp.Description("Task title")),
 		mcp.WithString("description", mcp.Required(), mcp.Description("Task description")),
-		mcp.WithNumber("priority", mcp.Description("Priority 1-5 (default 2)")),
+		mcp.WithString("priority", mcp.Description("Priority 1-5 (integer, default 2)")),
 		mcp.WithString("tags", mcp.Description("JSON array of tag strings")),
 		mcp.WithString("executor", mcp.Description("Executor type (default cli)")),
 		mcp.WithString("agent_profile", mcp.Description("Agent profile name")),
@@ -44,14 +47,20 @@ func (a *Adapter) registerTaskTools() {
 	), a.handleTaskCreate)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_get",
-		mcp.WithDescription("Get a task by ID"),
+		mcp.WithDescription(`Fetch the full TaskRecord for one task ID, including all facet/budget/hook columns and linked tags.
+Use when you already have the ID; prefer clockwork_task_list/search when filtering a cohort, and clockwork_task_subtodo_list for checklist-only views.
+Response shape: data = {<TaskRecord fields>, Tags[]} — singleton, PascalCase keys.
+Example: {"id":"T-123"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
 	), a.handleTaskGet)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_list",
-		mcp.WithDescription("List tasks with optional filters"),
+		mcp.WithDescription(`List tasks with optional status/priority/facet filters; ordered updated_at DESC.
+Use for browsing or filtered cohorts; prefer clockwork_task_search for free-text queries and clockwork_task_get when you already know the ID. Default returns ~150B briefTask records (lowercase JSON) so large fan-outs fit under the 100KB cap; pass verbose="true" for full TaskRecord columns.
+Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, hint?}}.
+Example: {"status":"doing","limit":"50"}`),
 		mcp.WithString("status", mcp.Description("Filter by status")),
-		mcp.WithNumber("priority", mcp.Description("Filter by priority")),
+		mcp.WithString("priority", mcp.Description("Filter by priority (integer 1-5)")),
 		mcp.WithString("executor", mcp.Description("Filter by executor")),
 		mcp.WithString("kind", mcp.Description("Filter by kind (agent|external|wait|decision|parent)")),
 		mcp.WithString("source_type", mcp.Description("Filter by source_type")),
@@ -59,15 +68,19 @@ func (a *Adapter) registerTaskTools() {
 		mcp.WithString("trust", mcp.Description("Filter by trust (trusted|normal|untrusted)")),
 		mcp.WithString("checkpoint_mode", mcp.Description("Filter by checkpoint_mode")),
 		mcp.WithString("parent_id", mcp.Description("Filter by parent_id; pass 'null' to return root tasks")),
-		mcp.WithNumber("limit", mcp.Description("Max results (default 50)")),
+		mcp.WithString("limit", mcp.Description("Max results (integer, default 50, max 200)")),
+		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleTaskList)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_update",
-		mcp.WithDescription("Update a task"),
+		mcp.WithDescription(`Partial update of a task's fields; only provided keys change (empty string clears most nullable scalars). Returns the updated TaskRecord.
+Use for field edits; prefer clockwork_task_transition for lifecycle moves and clockwork_task_bulk_transition for multi-id status changes. Numeric sentinel "-1" = unlimited for budget fields.
+Response shape: data = {<TaskRecord fields>, Tags[]} — singleton, PascalCase keys.
+Example: {"id":"T-123","priority":"1","tags":"[\"p0\",\"backend\"]"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
 		mcp.WithString("title", mcp.Description("New title")),
 		mcp.WithString("description", mcp.Description("New description")),
-		mcp.WithNumber("priority", mcp.Description("New priority")),
+		mcp.WithString("priority", mcp.Description("New priority (integer 1-5)")),
 		mcp.WithBoolean("manual", mcp.Description("Manual flag")),
 		mcp.WithString("executor", mcp.Description("Executor type")),
 		mcp.WithString("agent_profile", mcp.Description("Agent profile name")),
@@ -80,10 +93,10 @@ func (a *Adapter) registerTaskTools() {
 		mcp.WithString("on_done_merge", mcp.Description("Merge hook on done (none|auto|pr|auto-resolve)")),
 		mcp.WithString("deliverable_preset", mcp.Description("Deliverable preset name")),
 		mcp.WithString("blocked_reason", mcp.Description("Blocked reason")),
-		mcp.WithNumber("cost_budget", mcp.Description("Cost budget (-1 unlimited, 0 none, or positive)")),
-		mcp.WithNumber("max_retries", mcp.Description("Max retries (non-negative integer)")),
-		mcp.WithNumber("max_duration_ms", mcp.Description("Max duration in ms (-1 unlimited or positive)")),
-		mcp.WithNumber("token_budget", mcp.Description("Token budget (-1 unlimited or positive)")),
+		mcp.WithString("cost_budget", mcp.Description("Cost budget (numeric; -1 unlimited, 0 none, or positive)")),
+		mcp.WithString("max_retries", mcp.Description("Max retries (non-negative integer)")),
+		mcp.WithString("max_duration_ms", mcp.Description("Max duration in ms (integer; -1 unlimited or positive)")),
+		mcp.WithString("token_budget", mcp.Description("Token budget (integer; -1 unlimited or positive)")),
 		mcp.WithString("tools", mcp.Description("JSON array of tool names")),
 		mcp.WithString("files", mcp.Description("JSON array of file paths")),
 		mcp.WithString("permissions", mcp.Description("JSON object of permissions")),
@@ -107,25 +120,39 @@ func (a *Adapter) registerTaskTools() {
 	), a.handleTaskUpdate)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_delete",
-		mcp.WithDescription("Delete a task"),
+		mcp.WithDescription(`Hard-delete a task row and its linkage (runs, artifacts, comments cascade).
+Use sparingly — prefer clockwork_task_transition to "abandoned" for audit-preserving closure. For epics/sprints/projects use their respective *_delete tools.
+Response shape: data = {id, deleted: true}.
+Example: {"id":"T-123"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
 	), a.handleTaskDelete)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_transition",
-		mcp.WithDescription("Transition a task to a new status"),
+		mcp.WithDescription(`Move a task through the lifecycle FSM (todo -> doing -> review -> done, or -> blocked/abandoned). Returns the updated TaskRecord.
+Use for single-task status changes; clockwork_task_bulk_transition for batches; clockwork_sprint_approve for sprint-scoped approvals. Invalid transitions return error.code=conflict.
+Response shape: data = {<TaskRecord fields>, Tags[]} — singleton.
+Example: {"id":"T-123","status":"doing"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
-		mcp.WithString("status", mcp.Required(), mcp.Description("Target status")),
+		mcp.WithString("status", mcp.Required(), mcp.Description("Target status (todo|doing|review|done|blocked|abandoned)")),
 	), a.handleTaskTransition)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_search",
-		mcp.WithDescription("Search tasks by text query"),
-		mcp.WithString("query", mcp.Required(), mcp.Description("Search query")),
+		mcp.WithDescription(`Full-text search across task title and description; ordered relevance then recency.
+Use for free-text discovery; prefer clockwork_task_list when filtering by structured fields. Default returns ~150B briefTask records; pass verbose="true" for full TaskRecord. Limit defaults to 25, capped at 100.
+Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, hint?}}.
+Example: {"query":"auth bug","limit":"10"}`),
+		mcp.WithString("query", mcp.Required(), mcp.Description("Free-text search query")),
+		mcp.WithString("limit", mcp.Description("Max results (integer, default 25, max 100)")),
+		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleTaskSearch)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_bulk_transition",
-		mcp.WithDescription("Transition multiple tasks to a new status"),
+		mcp.WithDescription(`Transition many tasks to the same status in one call; per-task validation errors are collected, not fatal.
+Use for batch approvals or closures; prefer clockwork_sprint_approve for sprint-scoped approve-all. clockwork_task_transition for single-task moves.
+Response shape: data = {success: int, failed: int, errors?: "semicolon-joined messages"}.
+Example: {"ids":"[\"T-1\",\"T-2\",\"T-3\"]","status":"done"}`),
 		mcp.WithString("ids", mcp.Required(), mcp.Description("JSON array of task IDs")),
-		mcp.WithString("status", mcp.Required(), mcp.Description("Target status")),
+		mcp.WithString("status", mcp.Required(), mcp.Description("Target status applied to every id")),
 	), a.handleTaskBulkTransition)
 }
 
@@ -145,12 +172,12 @@ type taskWithTags struct {
 func (a *Adapter) taskResult(task *sqlstore.TaskRecord) (*mcp.CallToolResult, error) {
 	tags, err := a.svc.Task.ListTags(task.ID)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	if tags == nil {
 		tags = []sqlstore.TagRecord{}
 	}
-	return jsonResult(taskWithTags{TaskRecord: task, Tags: tags})
+	return okResult(taskWithTags{TaskRecord: task, Tags: tags})
 }
 
 func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -195,23 +222,23 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest)
 
 	if raw := reqStr(req, "tags"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &input.Tags); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid tags JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
 		}
 	}
 	if raw := reqStr(req, "depends_on"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &input.DependsOn); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid depends_on JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid depends_on JSON: %v", err), "depends_on")
 		}
 	}
 	if raw := reqStr(req, "metadata"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &input.Metadata); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid metadata JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid metadata JSON: %v", err), "metadata")
 		}
 	}
 
 	task, err := a.svc.Task.Create(input)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	return a.taskResult(task)
 }
@@ -219,16 +246,14 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest)
 func (a *Adapter) handleTaskGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	task, err := a.svc.Task.Get(reqStr(req, "id"))
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	return a.taskResult(task)
 }
 
 func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	limit := reqInt(req, "limit")
-	if limit == 0 {
-		limit = 50
-	}
+	limit := clampLimit(reqInt(req, "limit"), 50, maxTaskListLimit)
+	verbose := reqStrBool(req, "verbose")
 	filter := sqlstore.TaskFilter{
 		Status:         reqStr(req, "status"),
 		Priority:       reqInt(req, "priority"),
@@ -250,9 +275,9 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 	}
 	tasks, err := a.svc.Task.List(filter)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(tasks)
+	return a.tasksToEnvelope(tasks, limit, verbose)
 }
 
 func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -366,12 +391,12 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 	var scratchObj map[string]any
 	for _, k := range []string{"tools", "files", "escalation_chain", "quality_gates", "deliverables", "depends_on"} {
 		if err := unmarshalBlob(k, &scratchArr); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errResult(ErrCodeArgInvalid, err.Error(), k)
 		}
 	}
 	for _, k := range []string{"permissions", "environment", "metadata"} {
 		if err := unmarshalBlob(k, &scratchObj); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errResult(ErrCodeArgInvalid, err.Error(), k)
 		}
 	}
 	if ns := nullFromRaw("tools"); ns != nil {
@@ -456,52 +481,84 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 	if raw := reqStr(req, "tags"); raw != "" {
 		var slugs []string
 		if err := json.Unmarshal([]byte(raw), &slugs); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid tags JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
 		}
 		input.Tags = &slugs
 	}
 
 	if err := a.svc.Task.Update(id, input); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	task, err := a.svc.Task.Get(id)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	return a.taskResult(task)
 }
 
 func (a *Adapter) handleTaskDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if err := a.svc.Task.Delete(reqStr(req, "id")); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+	id := reqStr(req, "id")
+	if err := a.svc.Task.Delete(id); err != nil {
+		return errFromService(err)
 	}
-	return mcp.NewToolResultText("deleted"), nil
+	return okResult(map[string]any{"id": id, "deleted": true})
 }
 
 func (a *Adapter) handleTaskTransition(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if err := a.svc.Task.Transition(reqStr(req, "id"), reqStr(req, "status")); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	task, err := a.svc.Task.Get(reqStr(req, "id"))
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	return a.taskResult(task)
 }
 
 func (a *Adapter) handleTaskSearch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	limit := clampLimit(reqInt(req, "limit"), defaultTaskSearchLimit, maxTaskSearchLimit)
+	verbose := reqStrBool(req, "verbose")
 	tasks, err := a.svc.Task.Search(reqStr(req, "query"))
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(tasks)
+	// Search has no native limit param; apply limit post-query.
+	if len(tasks) > limit {
+		tasks = tasks[:limit]
+	}
+	return a.tasksToEnvelope(tasks, limit, verbose)
+}
+
+// tasksToEnvelope converts a TaskRecord slice into the {items, meta} MCP
+// response envelope. When verbose is false, each record is the ~150-byte
+// briefTask shape with tag slugs only; when true, each record is the full
+// taskWithTags structure (matching the taskResult() singleton-get shape).
+func (a *Adapter) tasksToEnvelope(tasks []sqlstore.TaskRecord, limit int, verbose bool) (*mcp.CallToolResult, error) {
+	items := make([]any, 0, len(tasks))
+	for _, t := range tasks {
+		if verbose {
+			tags, err := a.svc.Task.ListTags(t.ID)
+			if err != nil {
+				return errFromService(err)
+			}
+			if tags == nil {
+				tags = []sqlstore.TagRecord{}
+			}
+			// Copy struct to take address of a fresh local rather than loop var.
+			rec := t
+			items = append(items, taskWithTags{TaskRecord: &rec, Tags: tags})
+		} else {
+			items = append(items, toBriefTask(t, briefTagSlugs(a.svc, t.ID)))
+		}
+	}
+	return cappedJSONResult(items, limit)
 }
 
 func (a *Adapter) handleTaskBulkTransition(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	raw := reqStr(req, "ids")
 	var ids []string
 	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("invalid ids JSON: %v", err)), nil
+		return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid ids JSON: %v", err), "ids")
 	}
 	status := reqStr(req, "status")
 	success, errs := a.svc.Task.BulkTransition(ids, status)
@@ -518,5 +575,5 @@ func (a *Adapter) handleTaskBulkTransition(ctx context.Context, req mcp.CallTool
 	if len(errMsgs) > 0 {
 		result["errors"] = strings.Join(errMsgs, "; ")
 	}
-	return jsonResult(result)
+	return okResult(result)
 }

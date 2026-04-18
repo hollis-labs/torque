@@ -190,16 +190,77 @@ func (s *Store) ListRunsFiltered(f RunFilter) ([]RunRecord, error) {
 	return runs, rows.Err()
 }
 
-// CompleteRun updates a run's terminal state.
+// Run status constants covering the full taxonomy introduced in
+// migration 015. Use these rather than bare string literals so grep
+// surfaces every write site and the set stays auditable.
+const (
+	RunStatusRunning    = "running"
+	RunStatusDone       = "done"
+	RunStatusFailed     = "failed"
+	RunStatusBlocked    = "blocked"
+	RunStatusReview     = "review"
+	RunStatusCancelled  = "cancelled"
+	RunStatusSuperseded = "superseded"
+	RunStatusKilled     = "killed"
+)
+
+// IsOperatorTerminalRunStatus reports whether a run status was written by
+// operator or scheduler housekeeping rather than by the executor finishing
+// on its own. Retry paths and on_fail hooks MUST short-circuit on these —
+// operator actions are silent by design (CW-20260418-0015).
+func IsOperatorTerminalRunStatus(status string) bool {
+	switch status {
+	case RunStatusCancelled, RunStatusSuperseded, RunStatusKilled:
+		return true
+	}
+	return false
+}
+
+// SetRunOperatorStatus stamps an operator/scheduler-driven terminal status
+// onto a run row (cancelled/superseded/killed) with the provided reason
+// written to error_message and ended_at set to now. Returns an error if
+// the status is not in the operator-terminal set or the run does not
+// exist. Existing error_message/ended_at are overwritten — these statuses
+// are always authored by the operator or scheduler, not the executor.
+func (s *Store) SetRunOperatorStatus(id int64, status, reason string) error {
+	if !IsOperatorTerminalRunStatus(status) {
+		return fmt.Errorf("SetRunOperatorStatus: %q is not an operator-terminal status", status)
+	}
+	const q = `UPDATE runs SET status = ?, ended_at = ?, error_message = ? WHERE id = ?`
+	res, err := s.db.Exec(q, status, time.Now().UTC(), reason, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("run %d not found", id)
+	}
+	return nil
+}
+
+// CompleteRun updates a run's terminal state. If the run has already been
+// stamped with an operator-terminal status (cancelled/superseded/killed)
+// the write is skipped — those statuses are authoritative and must not be
+// overwritten by a late-arriving executor result (CW-20260418-0015).
+// Token/cost/exit_code updates are also skipped in that case; the
+// operator intentionally took over the run and the truncated metrics
+// would be misleading. Returns nil for the skipped case so callers treat
+// it as a successful no-op.
 func (s *Store) CompleteRun(id int64, c RunCompletion) error {
 	var exitCode sql.NullInt64
 	if c.ExitCode != nil {
 		exitCode = sql.NullInt64{Int64: int64(*c.ExitCode), Valid: true}
 	}
 
+	// WHERE-clause guard: only update if the current status is running or
+	// already matches a non-operator terminal. Operator-terminal statuses
+	// are excluded so the late-arriving executor result cannot clobber them.
 	const q = `UPDATE runs SET status = ?, ended_at = ?, prompt_tokens = ?,
 		completion_tokens = ?, cost = ?, exit_code = ?, error_message = ?
-		WHERE id = ?`
+		WHERE id = ? AND status NOT IN ('cancelled','superseded','killed')`
 
 	res, err := s.db.Exec(q,
 		c.Status, time.Now().UTC(),
@@ -215,7 +276,13 @@ func (s *Store) CompleteRun(id int64, c RunCompletion) error {
 		return err
 	}
 	if n == 0 {
-		return fmt.Errorf("run %d not found", id)
+		// Distinguish "not found" from "operator-locked". GetRun is cheap
+		// and only happens on this cold path.
+		if _, gerr := s.GetRun(id); gerr != nil {
+			return fmt.Errorf("run %d not found", id)
+		}
+		// Run exists but is operator-terminal — no-op.
+		return nil
 	}
 	return nil
 }
