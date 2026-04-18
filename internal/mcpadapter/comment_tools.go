@@ -8,14 +8,20 @@ import (
 
 func (a *Adapter) registerCommentTools() {
 	a.server.AddTool(mcp.NewTool("clockwork_comment_add",
-		mcp.WithDescription("Add a comment to a task"),
+		mcp.WithDescription(`Append a comment (freeform prose) to a task; returns the persisted CommentRecord with assigned ID.
+Use for agent-to-user channel, review notes, or blocked-reason explanation; structured audit trails should go in artifacts via clockwork_artifact_create. Comments never drive lifecycle.
+Response shape: data = {<CommentRecord fields>} — singleton.
+Example: {"task_id":"T-123","author":"reviewer","content":"Please also cover the null-parent case."}`),
 		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),
-		mcp.WithString("author", mcp.Description("Comment author")),
-		mcp.WithString("content", mcp.Required(), mcp.Description("Comment content")),
+		mcp.WithString("author", mcp.Description("Comment author slug/id")),
+		mcp.WithString("content", mcp.Required(), mcp.Description("Comment body (prose)")),
 	), a.handleCommentAdd)
 
 	a.server.AddTool(mcp.NewTool("clockwork_comment_list",
-		mcp.WithDescription("List all comments for a task"),
+		mcp.WithDescription(`List all comments on a task, newest first. Default brief shape includes a 100-char excerpt of the body; pass verbose="true" for full content.
+Use to review the discussion thread; clockwork_comment_add to append. No comment_get/delete yet — brief ID + list is the read surface.
+Response shape: data = {items: [<briefComment or CommentRecord>...], meta: {truncated, returned, limit, hint?}}.
+Example: {"task_id":"T-123"}`),
 		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleCommentList)

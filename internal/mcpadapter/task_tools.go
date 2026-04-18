@@ -15,7 +15,10 @@ import (
 
 func (a *Adapter) registerTaskTools() {
 	a.server.AddTool(mcp.NewTool("clockwork_task_create",
-		mcp.WithDescription("Create a new task"),
+		mcp.WithDescription(`Create a new task in Clockwork; returns the full TaskRecord with its assigned ID.
+Use for ad-hoc work items — prefer clockwork_task_create_from_template when a matching template exists, and clockwork_plan_create for multi-phase work. Safety override forces manual=true on every create (CW-20260417-0133); promote to manual=false via clockwork_task_update after review.
+Response shape: data = {<TaskRecord fields>, Tags[]} — singleton, PascalCase keys.
+Example: {"title":"Fix auth bug","description":"Login returns 500","priority":"2","tags":"[\"backend\"]"}`),
 		mcp.WithString("title", mcp.Required(), mcp.Description("Task title")),
 		mcp.WithString("description", mcp.Required(), mcp.Description("Task description")),
 		mcp.WithString("priority", mcp.Description("Priority 1-5 (integer, default 2)")),
@@ -44,12 +47,18 @@ func (a *Adapter) registerTaskTools() {
 	), a.handleTaskCreate)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_get",
-		mcp.WithDescription("Get a task by ID"),
+		mcp.WithDescription(`Fetch the full TaskRecord for one task ID, including all facet/budget/hook columns and linked tags.
+Use when you already have the ID; prefer clockwork_task_list/search when filtering a cohort, and clockwork_task_subtodo_list for checklist-only views.
+Response shape: data = {<TaskRecord fields>, Tags[]} — singleton, PascalCase keys.
+Example: {"id":"T-123"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
 	), a.handleTaskGet)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_list",
-		mcp.WithDescription("List tasks with optional filters"),
+		mcp.WithDescription(`List tasks with optional status/priority/facet filters; ordered updated_at DESC.
+Use for browsing or filtered cohorts; prefer clockwork_task_search for free-text queries and clockwork_task_get when you already know the ID. Default returns ~150B briefTask records (lowercase JSON) so large fan-outs fit under the 100KB cap; pass verbose="true" for full TaskRecord columns.
+Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, hint?}}.
+Example: {"status":"doing","limit":"50"}`),
 		mcp.WithString("status", mcp.Description("Filter by status")),
 		mcp.WithString("priority", mcp.Description("Filter by priority (integer 1-5)")),
 		mcp.WithString("executor", mcp.Description("Filter by executor")),
@@ -64,7 +73,10 @@ func (a *Adapter) registerTaskTools() {
 	), a.handleTaskList)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_update",
-		mcp.WithDescription("Update a task"),
+		mcp.WithDescription(`Partial update of a task's fields; only provided keys change (empty string clears most nullable scalars). Returns the updated TaskRecord.
+Use for field edits; prefer clockwork_task_transition for lifecycle moves and clockwork_task_bulk_transition for multi-id status changes. Numeric sentinel "-1" = unlimited for budget fields.
+Response shape: data = {<TaskRecord fields>, Tags[]} — singleton, PascalCase keys.
+Example: {"id":"T-123","priority":"1","tags":"[\"p0\",\"backend\"]"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
 		mcp.WithString("title", mcp.Description("New title")),
 		mcp.WithString("description", mcp.Description("New description")),
@@ -108,27 +120,39 @@ func (a *Adapter) registerTaskTools() {
 	), a.handleTaskUpdate)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_delete",
-		mcp.WithDescription("Delete a task"),
+		mcp.WithDescription(`Hard-delete a task row and its linkage (runs, artifacts, comments cascade).
+Use sparingly — prefer clockwork_task_transition to "abandoned" for audit-preserving closure. For epics/sprints/projects use their respective *_delete tools.
+Response shape: data = {id, deleted: true}.
+Example: {"id":"T-123"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
 	), a.handleTaskDelete)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_transition",
-		mcp.WithDescription("Transition a task to a new status"),
+		mcp.WithDescription(`Move a task through the lifecycle FSM (todo -> doing -> review -> done, or -> blocked/abandoned). Returns the updated TaskRecord.
+Use for single-task status changes; clockwork_task_bulk_transition for batches; clockwork_sprint_approve for sprint-scoped approvals. Invalid transitions return error.code=conflict.
+Response shape: data = {<TaskRecord fields>, Tags[]} — singleton.
+Example: {"id":"T-123","status":"doing"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
-		mcp.WithString("status", mcp.Required(), mcp.Description("Target status")),
+		mcp.WithString("status", mcp.Required(), mcp.Description("Target status (todo|doing|review|done|blocked|abandoned)")),
 	), a.handleTaskTransition)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_search",
-		mcp.WithDescription("Search tasks by text query"),
-		mcp.WithString("query", mcp.Required(), mcp.Description("Search query")),
+		mcp.WithDescription(`Full-text search across task title and description; ordered relevance then recency.
+Use for free-text discovery; prefer clockwork_task_list when filtering by structured fields. Default returns ~150B briefTask records; pass verbose="true" for full TaskRecord. Limit defaults to 25, capped at 100.
+Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, hint?}}.
+Example: {"query":"auth bug","limit":"10"}`),
+		mcp.WithString("query", mcp.Required(), mcp.Description("Free-text search query")),
 		mcp.WithString("limit", mcp.Description("Max results (integer, default 25, max 100)")),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleTaskSearch)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_bulk_transition",
-		mcp.WithDescription("Transition multiple tasks to a new status"),
+		mcp.WithDescription(`Transition many tasks to the same status in one call; per-task validation errors are collected, not fatal.
+Use for batch approvals or closures; prefer clockwork_sprint_approve for sprint-scoped approve-all. clockwork_task_transition for single-task moves.
+Response shape: data = {success: int, failed: int, errors?: "semicolon-joined messages"}.
+Example: {"ids":"[\"T-1\",\"T-2\",\"T-3\"]","status":"done"}`),
 		mcp.WithString("ids", mcp.Required(), mcp.Description("JSON array of task IDs")),
-		mcp.WithString("status", mcp.Required(), mcp.Description("Target status")),
+		mcp.WithString("status", mcp.Required(), mcp.Description("Target status applied to every id")),
 	), a.handleTaskBulkTransition)
 }
 

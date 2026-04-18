@@ -33,7 +33,10 @@ func (a *Adapter) Server() *server.MCPServer { return a.server }
 
 func (a *Adapter) registerCoreTools() {
 	a.server.AddTool(mcp.NewTool("clockwork_health",
-		mcp.WithDescription("Check Clockwork Manifold health status"),
+		mcp.WithDescription(`Liveness probe for the Clockwork MCP server.
+Use before any other tool when you need to confirm the service is reachable and discover which opt-in feature flags (sprints, projects, epics) are enabled.
+Response shape: data = {status, message, enabled_features[]}.
+Example: {}`),
 	), a.handleHealth)
 	a.registerTaskTools()
 	a.registerRunTools()
