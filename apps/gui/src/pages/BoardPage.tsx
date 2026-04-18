@@ -119,13 +119,28 @@ export default function BoardPage() {
   // skipped on the return trip — leaving storage ignored and the table
   // unfiltered until a hard reload reset the flag.
   //
-  // `location.key` is unique per history entry, so each distinct
-  // navigation arrival gets exactly one restoration attempt, whether the
-  // component remounts or stays put. The write we do via
-  // `setSearchParams({ replace: true })` keeps the same key, so we don't
-  // loop on our own URL edit. The `hydrated` state still gates downstream
-  // effects (save, fetch) so they skip the very first pre-hydrate render
-  // on a fresh mount.
+  // `location.key` is unique per history entry. The `hydrated` state gates
+  // downstream effects (save, fetch) so they skip the very first pre-
+  // hydrate render on a fresh mount.
+  //
+  // CW-20260418-0032: two complementary guards below together prevent the
+  // replaceState loop observed 2026-04-18.
+  //
+  // 1. Effect deps are ONLY `[location.key]`. Including `searchParams` or
+  //    `setSearchParams` would fire the effect on every render because
+  //    `useSearchParams` returns new object references each render.
+  //
+  // 2. The effect bails out before calling `setSearchParams` when the
+  //    computed URL matches the current URL byte-for-byte. This matters
+  //    because `setSearchParams(..., { replace: true })` commits a new
+  //    history entry (new location.key) even when the URL content is
+  //    unchanged — the old comment here claiming it "keeps the same key"
+  //    was wrong, and that wrongness was the actual loop trigger: a
+  //    no-op replace would mint a new key, the effect would re-run under
+  //    `[location.key]`, produce the same no-op URL, and repeat forever.
+  //    The common trip wire is stored filters that equal DEFAULT_ACTIVE_
+  //    STATUSES (the default case): the target URL and the current URL
+  //    are both empty, so the no-op check is load-bearing.
   const [hydrated, setHydrated] = useState(false)
   const lastHydratedKey = useRef<string | null>(null)
   useEffect(() => {
@@ -142,28 +157,36 @@ export default function BoardPage() {
       setHydrated(true)
       return
     }
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev)
-        const sameAsDefault =
-          stored.statuses.length === DEFAULT_ACTIVE_STATUSES.length &&
-          DEFAULT_ACTIVE_STATUSES.every((s) => stored.statuses.includes(s))
-        if (stored.statuses.length > 0 && !sameAsDefault) {
-          next.set('status', stored.statuses.join(','))
-        }
-        if (stored.priorities.length > 0) next.set('priority', stored.priorities.join(','))
-        if (stored.projectId) next.set('project_id', stored.projectId)
-        if (stored.sprintId) next.set('sprint_id', stored.sprintId)
-        if (stored.epicId) next.set('epic_id', stored.epicId)
-        if (stored.tagSlug) next.set('tag', stored.tagSlug)
-        if (stored.mode && stored.mode !== 'all') next.set('mode', stored.mode)
-        if (stored.manual && stored.manual !== 'all') next.set('manual', stored.manual)
-        return next
-      },
-      { replace: true }
-    )
+
+    // Compute the target params up-front so we can compare vs. the current
+    // URL and bail out on a no-op. See guard #2 in the block comment above.
+    const next = new URLSearchParams(searchParams)
+    const sameAsDefault =
+      stored.statuses.length === DEFAULT_ACTIVE_STATUSES.length &&
+      DEFAULT_ACTIVE_STATUSES.every((s) => stored.statuses.includes(s))
+    if (stored.statuses.length > 0 && !sameAsDefault) {
+      next.set('status', stored.statuses.join(','))
+    }
+    if (stored.priorities.length > 0) next.set('priority', stored.priorities.join(','))
+    if (stored.projectId) next.set('project_id', stored.projectId)
+    if (stored.sprintId) next.set('sprint_id', stored.sprintId)
+    if (stored.epicId) next.set('epic_id', stored.epicId)
+    if (stored.tagSlug) next.set('tag', stored.tagSlug)
+    if (stored.mode && stored.mode !== 'all') next.set('mode', stored.mode)
+    if (stored.manual && stored.manual !== 'all') next.set('manual', stored.manual)
+
+    if (next.toString() === searchParams.toString()) {
+      // No-op — don't call setSearchParams. A replace with unchanged URL
+      // would still mint a new location.key and re-fire the effect; the
+      // identity check on the line above is the circuit-breaker.
+      setHydrated(true)
+      return
+    }
+
+    setSearchParams(next, { replace: true })
     setHydrated(true)
-  }, [location.key, searchParams, setSearchParams])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key])
 
   // Persist current filter state to localStorage whenever it changes. Gated
   // on hydration so the initial pre-hydrate render doesn't write default

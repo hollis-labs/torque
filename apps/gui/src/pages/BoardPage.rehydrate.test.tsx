@@ -18,6 +18,7 @@ import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-rou
 import BoardPage from './BoardPage'
 import { ApiProvider } from '@/hooks/use-api'
 import { saveOpsFilters } from '@/lib/ops-filters-storage'
+import { DEFAULT_ACTIVE_STATUSES } from '@/lib/constants'
 
 // Opt into React's test-only act() environment so effect-flushing doesn't
 // spam console warnings. Vitest's jsdom env doesn't set this by default.
@@ -251,6 +252,51 @@ describe('BoardPage filter rehydration on remount', () => {
     // REGRESSION GUARD: second arrival on /operations (with the
     // BoardPage instance reused) must re-hydrate from storage.
     expect(observedSearch).toContain('status=doing')
+
+    act(() => root.unmount())
+  })
+
+  // CW-20260418-0032 regression guard: when stored filters serialize to the
+  // same URL as the current location (the common case — default statuses,
+  // everything else empty), the hydration effect must NOT call setSearchParams.
+  // A no-op replace commits a new history entry with a new location.key even
+  // when the URL content is unchanged; the effect's `[location.key]` dep
+  // would then re-fire, and with urlHasFilter still false + stored still
+  // truthy the effect would call setSearchParams again → new key → loop
+  // forever. Observed 2026-04-18 as task-row clicks flashing `/tasks/:id`
+  // then snapping back to `/operations`. Fix: compare `next.toString()` vs
+  // `searchParams.toString()` before calling setSearchParams and bail on a
+  // no-op. This test pins that bail-out: after initial hydration settles,
+  // the URL must remain empty (no spurious `status=...` write).
+  it('no-op hydration does not mint a new history entry', async () => {
+    // Stored filters are exactly the default set → target URL is empty →
+    // setSearchParams must be skipped entirely.
+    saveOpsFilters({
+      statuses: DEFAULT_ACTIVE_STATUSES,
+      priorities: [],
+      projectId: null,
+      sprintId: null,
+      epicId: null,
+      tagSlug: null,
+      mode: 'all',
+      manual: 'all',
+    })
+
+    let observedSearch = ''
+    const root = renderAppShell(container, '/operations', (s) => {
+      observedSearch = s
+    })
+    // Flush several times — if the effect were looping on replaceState, the
+    // URL would either drift or the test would time out. With the no-op
+    // guard in place, the URL stays empty and flushes are cheap.
+    for (let i = 0; i < 5; i++) {
+      await act(async () => {
+        await Promise.resolve()
+      })
+    }
+
+    // No filter params were written back — the default-state no-op.
+    expect(observedSearch).toBe('')
 
     act(() => root.unmount())
   })
