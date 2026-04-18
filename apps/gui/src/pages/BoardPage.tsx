@@ -163,7 +163,17 @@ export default function BoardPage() {
       { replace: true }
     )
     setHydrated(true)
-  }, [location.key, searchParams, setSearchParams])
+    // Depend ONLY on location.key. Including `searchParams` + `setSearchParams`
+    // in the deps caused an infinite replaceState loop (CW-20260418-0032):
+    // `useSearchParams` returns a new object reference every render AND
+    // `setSearchParams(..., { replace: true })` mints a new location.key,
+    // so the `lastHydratedKey.current === location.key` guard never matched
+    // on the following render — the effect re-fired, re-set the URL, and
+    // the cycle repeated every React commit (~1s). User-visible symptom:
+    // task-row clicks flashed `/tasks/:id` then snapped back to `/operations`
+    // because the loop continuously replaceState'd the URL back.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key])
 
   // Persist current filter state to localStorage whenever it changes. Gated
   // on hydration so the initial pre-hydrate render doesn't write default
