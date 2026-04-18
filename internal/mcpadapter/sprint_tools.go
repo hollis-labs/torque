@@ -15,7 +15,7 @@ func (a *Adapter) registerSprintTools() {
 		mcp.WithString("name", mcp.Required(), mcp.Description("Sprint name")),
 		mcp.WithString("goal", mcp.Description("Sprint goal")),
 		mcp.WithString("approval_mode", mcp.Description("Approval mode: auto, approve_sprint, approve_each (default: approve_each)")),
-		mcp.WithNumber("cost_budget", mcp.Description("Maximum cost budget for the sprint")),
+		mcp.WithString("cost_budget", mcp.Description("Maximum cost budget for the sprint (numeric)")),
 	), a.handleSprintCreate)
 
 	a.server.AddTool(mcp.NewTool("clockwork_sprint_get",
@@ -29,7 +29,7 @@ func (a *Adapter) registerSprintTools() {
 		mcp.WithString("name", mcp.Description("New name")),
 		mcp.WithString("goal", mcp.Description("New goal")),
 		mcp.WithString("approval_mode", mcp.Description("New approval mode")),
-		mcp.WithNumber("cost_budget", mcp.Description("New cost budget")),
+		mcp.WithString("cost_budget", mcp.Description("New cost budget (numeric)")),
 		mcp.WithString("status", mcp.Description("Transition to new status (active|inactive|completed). active↔inactive; both can transition directly to completed (terminal)")),
 	), a.handleSprintUpdate)
 

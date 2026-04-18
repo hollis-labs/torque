@@ -17,7 +17,7 @@ func (a *Adapter) registerPlanTools() {
 		mcp.WithDescription("Create a plan (kind=plan task) with optional initial phases"),
 		mcp.WithString("title", mcp.Required(), mcp.Description("Plan title")),
 		mcp.WithString("description", mcp.Description("Plan description (free-form)")),
-		mcp.WithNumber("priority", mcp.Description("Priority 1-5 (default 2)")),
+		mcp.WithString("priority", mcp.Description("Priority 1-5 (integer, default 2)")),
 		mcp.WithString("project_id", mcp.Description("Project ID (requires features.projects)")),
 		mcp.WithString("sprint_id", mcp.Description("Sprint ID (requires features.sprints)")),
 		mcp.WithString("epic_id", mcp.Description("Epic ID (requires features.epics)")),

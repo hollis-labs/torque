@@ -14,7 +14,7 @@ func (a *Adapter) registerRunTools() {
 
 	a.server.AddTool(mcp.NewTool("clockwork_run_get",
 		mcp.WithDescription("Get a run by ID"),
-		mcp.WithNumber("id", mcp.Required(), mcp.Description("Run ID")),
+		mcp.WithString("id", mcp.Required(), mcp.Description("Run ID (integer)")),
 	), a.handleRunGet)
 }
 
