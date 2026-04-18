@@ -24,12 +24,12 @@ func (a *Adapter) registerArtifactTools() {
 
 	a.server.AddTool(mcp.NewTool("clockwork_artifact_get",
 		mcp.WithDescription("Get a single artifact by numeric ID"),
-		mcp.WithNumber("artifact_id", mcp.Required(), mcp.Description("Artifact ID")),
+		mcp.WithString("artifact_id", mcp.Required(), mcp.Description("Artifact ID (integer)")),
 	), a.handleArtifactGet)
 
 	a.server.AddTool(mcp.NewTool("clockwork_artifact_delete",
 		mcp.WithDescription("Delete an artifact row by numeric ID. Does not remove the referenced file on disk."),
-		mcp.WithNumber("artifact_id", mcp.Required(), mcp.Description("Artifact ID")),
+		mcp.WithString("artifact_id", mcp.Required(), mcp.Description("Artifact ID (integer)")),
 	), a.handleArtifactDelete)
 }
 

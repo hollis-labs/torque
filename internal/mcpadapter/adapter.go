@@ -3,6 +3,7 @@ package mcpadapter
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -82,6 +83,27 @@ func reqStr(req mcp.CallToolRequest, key string) string {
 	return ""
 }
 
+// reqInt extracts an integer parameter from an MCP request.
+//
+// Per CW-20260418-0011 the schema declares numeric params as strings so
+// LLM-backed clients that emit `"limit": "50"` (string-encoded numeric)
+// aren't rejected at the mcp-go schema boundary. This helper therefore
+// accepts float64, int, AND string inputs — callers passing 50 (number)
+// or "50" (string) must both resolve to 50.
+//
+// Silent-zero policy: a malformed numeric string (e.g. "abc") returns 0,
+// the same value as a missing key. This is intentional. Every numeric
+// call site in the adapter already treats 0 as "not set" (see handleTaskList
+// where limit==0 rebinds to default 50, and the presence-gated
+// `if _, ok := args[key]; ok` pattern in handleTaskUpdate that only applies
+// budgets when the key is present). Degrading garbage input to "as if unset"
+// matches that convention and avoids punching a new `(int, error)` signature
+// through every tool handler. If a future caller needs to distinguish
+// "explicit zero" from "malformed" we would add a separate helper rather
+// than change this one.
+//
+// Sentinel values "-1" (unlimited) and "0" (explicit zero) must round-trip
+// exactly — see adapter_test.go for the matrix.
 func reqInt(req mcp.CallToolRequest, key string) int {
 	args := req.GetArguments()
 	if v, ok := args[key]; ok {
@@ -90,6 +112,43 @@ func reqInt(req mcp.CallToolRequest, key string) int {
 			return int(n)
 		case int:
 			return n
+		case string:
+			if n == "" {
+				return 0
+			}
+			if i, err := strconv.ParseInt(n, 10, 64); err == nil {
+				return int(i)
+			}
+			// Accept numeric-looking strings with a fractional part too
+			// (e.g. "50.0") by falling back to float parse.
+			if f, err := strconv.ParseFloat(n, 64); err == nil {
+				return int(f)
+			}
+			return 0
+		}
+	}
+	return 0
+}
+
+// reqFloat extracts a float64 parameter from an MCP request. Mirrors reqInt:
+// accepts float64, int, and string inputs; returns 0 on missing key or
+// unparseable string. See reqInt for the silent-zero rationale.
+func reqFloat(req mcp.CallToolRequest, key string) float64 {
+	args := req.GetArguments()
+	if v, ok := args[key]; ok {
+		switch n := v.(type) {
+		case float64:
+			return n
+		case int:
+			return float64(n)
+		case string:
+			if n == "" {
+				return 0
+			}
+			if f, err := strconv.ParseFloat(n, 64); err == nil {
+				return f
+			}
+			return 0
 		}
 	}
 	return 0

@@ -44,7 +44,7 @@ func (a *Adapter) registerTemplateTools() {
 	a.server.AddTool(mcp.NewTool("clockwork_template_get",
 		mcp.WithDescription("Get a template by id (and optional version — latest non-archived when omitted)"),
 		mcp.WithString("id", mcp.Required()),
-		mcp.WithNumber("version", mcp.Description("Optional; omit for latest non-archived")),
+		mcp.WithString("version", mcp.Description("Optional (integer); omit for latest non-archived")),
 	), a.handleTemplateGet)
 
 	a.server.AddTool(mcp.NewTool("clockwork_template_update",
@@ -78,7 +78,7 @@ func (a *Adapter) registerTemplateTools() {
 	a.server.AddTool(mcp.NewTool("clockwork_template_archive",
 		mcp.WithDescription("Soft-remove a template (id, version) from the live catalog"),
 		mcp.WithString("id", mcp.Required()),
-		mcp.WithNumber("version", mcp.Required()),
+		mcp.WithString("version", mcp.Required(), mcp.Description("Template version (integer)")),
 	), a.handleTemplateArchive)
 
 	a.server.AddTool(mcp.NewTool("clockwork_template_delete",
@@ -95,7 +95,7 @@ func (a *Adapter) registerTemplateTools() {
 	a.server.AddTool(mcp.NewTool("clockwork_task_create_from_template",
 		mcp.WithDescription("Instantiate a template into a new task; validates required_vars and resolves {{var}} placeholders"),
 		mcp.WithString("template_id", mcp.Required()),
-		mcp.WithNumber("template_version", mcp.Description("Optional; omit for latest non-archived")),
+		mcp.WithString("template_version", mcp.Description("Optional (integer); omit for latest non-archived")),
 		mcp.WithString("title", mcp.Required()),
 		mcp.WithString("description"),
 		mcp.WithString("vars", mcp.Description("JSON object of variable values")),
