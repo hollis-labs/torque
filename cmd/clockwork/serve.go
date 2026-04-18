@@ -123,6 +123,15 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// Scheduler
 	sched := scheduler.New(store, q, registry, predicates, &cfg.Scheduler)
 
+	// DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
+	// Stopgap: advertise the active project-scope allowlist at every
+	// startup so operators can spot a stale CLOCKWORK_PROJECT_ID carried
+	// over from a prior shell session. Silent when unset to avoid noise.
+	if len(cfg.Scheduler.ProjectAllowlist) > 0 {
+		log.Printf("[serve] scheduler project-scope filter active: %v (stopgap — CW-20260417-0129 replaces this with workspaces)",
+			cfg.Scheduler.ProjectAllowlist)
+	}
+
 	// Service + HTTP handler
 	svc := service.New(store)
 	handler := httpserver.New(svc, sched)

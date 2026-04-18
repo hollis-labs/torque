@@ -79,6 +79,61 @@ func TestPerRunWorktreeFromEnv(t *testing.T) {
 	assert.Equal(t, 14, cfg.Scheduler.WorktreeKeepDays)
 }
 
+// DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
+// Covers the CW-20260417-0130 stopgap project-scope env-var parsing.
+func TestProjectAllowlistFromEnv(t *testing.T) {
+	t.Run("unset = nil", func(t *testing.T) {
+		os.Unsetenv("CLOCKWORK_PROJECT_ID")
+		os.Unsetenv("CLOCKWORK_PROJECT_IDS")
+		cfg, err := config.Load()
+		require.NoError(t, err)
+		assert.Nil(t, cfg.Scheduler.ProjectAllowlist)
+	})
+
+	t.Run("single CLOCKWORK_PROJECT_ID", func(t *testing.T) {
+		os.Unsetenv("CLOCKWORK_PROJECT_IDS")
+		os.Setenv("CLOCKWORK_PROJECT_ID", "PRJ-A")
+		defer os.Unsetenv("CLOCKWORK_PROJECT_ID")
+
+		cfg, err := config.Load()
+		require.NoError(t, err)
+		assert.Equal(t, []string{"PRJ-A"}, cfg.Scheduler.ProjectAllowlist)
+	})
+
+	t.Run("comma-separated CLOCKWORK_PROJECT_IDS with whitespace", func(t *testing.T) {
+		os.Unsetenv("CLOCKWORK_PROJECT_ID")
+		os.Setenv("CLOCKWORK_PROJECT_IDS", "PRJ-A, PRJ-B ,PRJ-C")
+		defer os.Unsetenv("CLOCKWORK_PROJECT_IDS")
+
+		cfg, err := config.Load()
+		require.NoError(t, err)
+		assert.Equal(t, []string{"PRJ-A", "PRJ-B", "PRJ-C"}, cfg.Scheduler.ProjectAllowlist)
+	})
+
+	t.Run("CLOCKWORK_PROJECT_IDS wins over CLOCKWORK_PROJECT_ID", func(t *testing.T) {
+		os.Setenv("CLOCKWORK_PROJECT_ID", "PRJ-X")
+		os.Setenv("CLOCKWORK_PROJECT_IDS", "PRJ-A,PRJ-B")
+		defer func() {
+			os.Unsetenv("CLOCKWORK_PROJECT_ID")
+			os.Unsetenv("CLOCKWORK_PROJECT_IDS")
+		}()
+
+		cfg, err := config.Load()
+		require.NoError(t, err)
+		assert.Equal(t, []string{"PRJ-A", "PRJ-B"}, cfg.Scheduler.ProjectAllowlist)
+	})
+
+	t.Run("only-whitespace and commas collapse to nil", func(t *testing.T) {
+		os.Unsetenv("CLOCKWORK_PROJECT_ID")
+		os.Setenv("CLOCKWORK_PROJECT_IDS", " , ,  ")
+		defer os.Unsetenv("CLOCKWORK_PROJECT_IDS")
+
+		cfg, err := config.Load()
+		require.NoError(t, err)
+		assert.Nil(t, cfg.Scheduler.ProjectAllowlist)
+	})
+}
+
 func TestConfigFromEnv(t *testing.T) {
 	os.Setenv("CLOCKWORK_DB_PATH", "/tmp/test.db")
 	os.Setenv("CLOCKWORK_HTTP_PORT", "9999")
