@@ -206,7 +206,12 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 		}
 	}
 
-	// Check for stale workers
+	// Check for stale workers. Zombie heartbeat rows (from a crashed or
+	// force-killed serve where Deregister never ran) are logged, published on
+	// the bus, and then deleted in the same pass. Without the delete, each
+	// tick re-logs the same zombies indefinitely, and across sessions the
+	// table accumulates noise that obscures real staleness signals
+	// (CW-20260418-0003 secondary fix).
 	staleThreshold := time.Duration(s.cfg.StaleSeconds) * time.Second
 	stale, err := s.heartbeat.FindStale(staleThreshold)
 	if err != nil {
@@ -219,6 +224,14 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 			TaskID: w.TaskID,
 			Data:   map[string]interface{}{"worker_id": w.WorkerID},
 		})
+	}
+	if len(stale) > 0 {
+		deleted, derr := s.heartbeat.DeleteStale(staleThreshold)
+		if derr != nil {
+			log.Printf("[scheduler] stale cleanup error: %v", derr)
+		} else if deleted > 0 {
+			log.Printf("[scheduler] cleaned up %d stale heartbeat row(s)", deleted)
+		}
 	}
 
 	s.bus.Publish(SchedulerEvent{Type: "scheduler.tick"})
