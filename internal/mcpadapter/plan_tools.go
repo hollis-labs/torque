@@ -47,6 +47,7 @@ func (a *Adapter) registerPlanTools() {
 		mcp.WithDescription("List tasks whose parent_id matches the plan. Optional phase_id narrows by metadata.phase_id."),
 		mcp.WithString("plan_id", mcp.Required(), mcp.Description("Plan task ID")),
 		mcp.WithString("phase_id", mcp.Description("Optional phase_id filter")),
+		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handlePlanListChildren)
 }
 
@@ -109,9 +110,11 @@ func (a *Adapter) handlePlanRemovePhase(ctx context.Context, req mcp.CallToolReq
 }
 
 func (a *Adapter) handlePlanListChildren(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	verbose := reqStrBool(req, "verbose")
 	children, err := a.svc.Plan.ListChildren(reqStr(req, "plan_id"), reqStr(req, "phase_id"))
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return jsonResult(children)
+	// Reuse the task envelope: plan children are just tasks.
+	return a.tasksToEnvelope(children, maxTaskListLimit, verbose)
 }

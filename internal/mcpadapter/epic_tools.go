@@ -36,6 +36,7 @@ func (a *Adapter) registerEpicTools() {
 	a.server.AddTool(mcp.NewTool("clockwork_epic_list",
 		mcp.WithDescription("List epics"),
 		mcp.WithString("status", mcp.Description("Filter by status: open, closed")),
+		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleEpicList)
 }
 
@@ -97,12 +98,19 @@ func (a *Adapter) handleEpicDelete(ctx context.Context, req mcp.CallToolRequest)
 }
 
 func (a *Adapter) handleEpicList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	verbose := reqStrBool(req, "verbose")
 	epics, err := a.svc.Epic.List(reqStr(req, "status"), reqStr(req, "project_id"))
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return jsonResult(map[string]interface{}{
-		"epics": epics,
-		"count": len(epics),
-	})
+	limit := defaultGenericListLimit
+	items := make([]any, 0, len(epics))
+	for _, e := range epics {
+		if verbose {
+			items = append(items, e)
+		} else {
+			items = append(items, toBriefEpic(e))
+		}
+	}
+	return cappedJSONResult(items, limit)
 }

@@ -187,13 +187,17 @@ func TestProjectToolsViaMCP(t *testing.T) {
 	projectID := project["ID"].(string)
 	assert.Contains(t, projectID, "PRJ-")
 
-	// List projects
+	// List projects — new {items, meta} envelope shape
 	text, isErr = callTool(t, a, "clockwork_project_list", map[string]interface{}{})
 	require.False(t, isErr, "project_list should succeed: %s", text)
 
-	var listResult map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &listResult))
-	assert.Equal(t, float64(1), listResult["count"])
+	var projectEnv struct {
+		Items []map[string]interface{} `json:"items"`
+		Meta  map[string]interface{}   `json:"meta"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(text), &projectEnv))
+	assert.Len(t, projectEnv.Items, 1)
+	assert.Equal(t, float64(1), projectEnv.Meta["returned"])
 
 	// Create task in project
 	text, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{
@@ -239,15 +243,19 @@ func TestEpicToolsViaMCP(t *testing.T) {
 	})
 	require.False(t, isErr, "epic_update should succeed: %s", text)
 
-	// List epics filtered by inactive
+	// List epics filtered by inactive — new {items, meta} envelope shape
 	text, isErr = callTool(t, a, "clockwork_epic_list", map[string]interface{}{
 		"status": "inactive",
 	})
 	require.False(t, isErr, "epic_list should succeed: %s", text)
 
-	var epicList map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &epicList))
-	assert.Equal(t, float64(1), epicList["count"])
+	var epicEnv struct {
+		Items []map[string]interface{} `json:"items"`
+		Meta  map[string]interface{}   `json:"meta"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(text), &epicEnv))
+	assert.Len(t, epicEnv.Items, 1)
+	assert.Equal(t, float64(1), epicEnv.Meta["returned"])
 
 	// Create task in epic
 	text, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{

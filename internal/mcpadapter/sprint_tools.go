@@ -41,6 +41,7 @@ func (a *Adapter) registerSprintTools() {
 	a.server.AddTool(mcp.NewTool("clockwork_sprint_list",
 		mcp.WithDescription("List sprints"),
 		mcp.WithString("status", mcp.Description("Filter by status: active, inactive, completed")),
+		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleSprintList)
 
 	a.server.AddTool(mcp.NewTool("clockwork_sprint_approve",
@@ -131,14 +132,21 @@ func (a *Adapter) handleSprintDelete(ctx context.Context, req mcp.CallToolReques
 }
 
 func (a *Adapter) handleSprintList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	verbose := reqStrBool(req, "verbose")
 	sprints, err := a.svc.Sprint.List(reqStr(req, "status"), reqStr(req, "project_id"))
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return jsonResult(map[string]interface{}{
-		"sprints": sprints,
-		"count":   len(sprints),
-	})
+	limit := defaultGenericListLimit
+	items := make([]any, 0, len(sprints))
+	for _, s := range sprints {
+		if verbose {
+			items = append(items, s)
+		} else {
+			items = append(items, toBriefSprint(s))
+		}
+	}
+	return cappedJSONResult(items, limit)
 }
 
 func (a *Adapter) handleSprintApprove(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

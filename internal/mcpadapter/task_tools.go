@@ -59,7 +59,8 @@ func (a *Adapter) registerTaskTools() {
 		mcp.WithString("trust", mcp.Description("Filter by trust (trusted|normal|untrusted)")),
 		mcp.WithString("checkpoint_mode", mcp.Description("Filter by checkpoint_mode")),
 		mcp.WithString("parent_id", mcp.Description("Filter by parent_id; pass 'null' to return root tasks")),
-		mcp.WithString("limit", mcp.Description("Max results (integer, default 50)")),
+		mcp.WithString("limit", mcp.Description("Max results (integer, default 50, max 200)")),
+		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleTaskList)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_update",
@@ -120,6 +121,8 @@ func (a *Adapter) registerTaskTools() {
 	a.server.AddTool(mcp.NewTool("clockwork_task_search",
 		mcp.WithDescription("Search tasks by text query"),
 		mcp.WithString("query", mcp.Required(), mcp.Description("Search query")),
+		mcp.WithString("limit", mcp.Description("Max results (integer, default 25, max 100)")),
+		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleTaskSearch)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_bulk_transition",
@@ -225,10 +228,8 @@ func (a *Adapter) handleTaskGet(ctx context.Context, req mcp.CallToolRequest) (*
 }
 
 func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	limit := reqInt(req, "limit")
-	if limit == 0 {
-		limit = 50
-	}
+	limit := clampLimit(reqInt(req, "limit"), 50, maxTaskListLimit)
+	verbose := reqStrBool(req, "verbose")
 	filter := sqlstore.TaskFilter{
 		Status:         reqStr(req, "status"),
 		Priority:       reqInt(req, "priority"),
@@ -252,7 +253,7 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return jsonResult(tasks)
+	return a.tasksToEnvelope(tasks, limit, verbose)
 }
 
 func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -490,11 +491,42 @@ func (a *Adapter) handleTaskTransition(ctx context.Context, req mcp.CallToolRequ
 }
 
 func (a *Adapter) handleTaskSearch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	limit := clampLimit(reqInt(req, "limit"), defaultTaskSearchLimit, maxTaskSearchLimit)
+	verbose := reqStrBool(req, "verbose")
 	tasks, err := a.svc.Task.Search(reqStr(req, "query"))
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return jsonResult(tasks)
+	// Search has no native limit param; apply limit post-query.
+	if len(tasks) > limit {
+		tasks = tasks[:limit]
+	}
+	return a.tasksToEnvelope(tasks, limit, verbose)
+}
+
+// tasksToEnvelope converts a TaskRecord slice into the {items, meta} MCP
+// response envelope. When verbose is false, each record is the ~150-byte
+// briefTask shape with tag slugs only; when true, each record is the full
+// taskWithTags structure (matching the taskResult() singleton-get shape).
+func (a *Adapter) tasksToEnvelope(tasks []sqlstore.TaskRecord, limit int, verbose bool) (*mcp.CallToolResult, error) {
+	items := make([]any, 0, len(tasks))
+	for _, t := range tasks {
+		if verbose {
+			tags, err := a.svc.Task.ListTags(t.ID)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			if tags == nil {
+				tags = []sqlstore.TagRecord{}
+			}
+			// Copy struct to take address of a fresh local rather than loop var.
+			rec := t
+			items = append(items, taskWithTags{TaskRecord: &rec, Tags: tags})
+		} else {
+			items = append(items, toBriefTask(t, briefTagSlugs(a.svc, t.ID)))
+		}
+	}
+	return cappedJSONResult(items, limit)
 }
 
 func (a *Adapter) handleTaskBulkTransition(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

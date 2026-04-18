@@ -37,17 +37,23 @@ func TestFullStack_TaskList_NumericStringLimit(t *testing.T) {
 	})
 	require.False(t, isErr, "string-encoded limit must not trip schema validation: %s", text)
 
-	var listed []interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &listed))
-	require.Len(t, listed, 2, "string limit \"2\" should clamp results to 2 rows")
+	// Phase B: list tools return {items, meta} envelope.
+	var env struct {
+		Items []interface{}          `json:"items"`
+		Meta  map[string]interface{} `json:"meta"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(text), &env))
+	require.Len(t, env.Items, 2, "string limit \"2\" should clamp results to 2 rows")
+	require.Equal(t, float64(2), env.Meta["limit"])
 
 	// --- numeric-encoded limit still works (legacy shape) ---
 	text, isErr = callTool(t, a, "clockwork_task_list", map[string]interface{}{
 		"limit": float64(2),
 	})
 	require.False(t, isErr, "numeric limit should still work: %s", text)
-	require.NoError(t, json.Unmarshal([]byte(text), &listed))
-	require.Len(t, listed, 2)
+	env.Items = nil
+	require.NoError(t, json.Unmarshal([]byte(text), &env))
+	require.Len(t, env.Items, 2)
 }
 
 // TestFullStack_TaskList_StringLimit_NoArgValidationFailed is the minimal

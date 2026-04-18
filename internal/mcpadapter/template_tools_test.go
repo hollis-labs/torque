@@ -95,9 +95,14 @@ func TestMCP_Template_List(t *testing.T) {
 	}
 	text, isErr := callTool(t, a, "clockwork_template_list", map[string]interface{}{})
 	require.False(t, isErr)
-	var list []map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &list))
-	assert.Len(t, list, 2)
+	var env struct {
+		Items []map[string]interface{} `json:"items"`
+		Meta  map[string]interface{}   `json:"meta"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(text), &env))
+	assert.Len(t, env.Items, 2)
+	// Brief shape uses lowercase keys.
+	assert.Contains(t, []interface{}{"a", "b"}, env.Items[0]["id"])
 }
 
 func TestMCP_TaskCreateFromTemplate_RoundTrip(t *testing.T) {

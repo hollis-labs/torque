@@ -44,11 +44,14 @@ func TestSubtodoRoundTrip_AddListDone(t *testing.T) {
 		"task_id": taskID,
 	})
 	require.False(t, isErr, listText)
-	var items []map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(listText), &items))
-	require.Len(t, items, 2)
-	assert.Equal(t, "item-1", items[0]["id"])
-	assert.Equal(t, true, items[0]["required"])
+	var env struct {
+		Items []map[string]interface{} `json:"items"`
+		Meta  map[string]interface{}   `json:"meta"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(listText), &env))
+	require.Len(t, env.Items, 2)
+	assert.Equal(t, "item-1", env.Items[0]["id"])
+	assert.Equal(t, true, env.Items[0]["required"])
 
 	_, isErr = callTool(t, a, "clockwork_task_subtodo_done", map[string]interface{}{
 		"task_id":  taskID,
@@ -57,15 +60,18 @@ func TestSubtodoRoundTrip_AddListDone(t *testing.T) {
 	})
 	require.False(t, isErr)
 
+	// Brief shape drops evidence (no-op field when size is the priority).
+	// Use verbose=true to get the full Subtodo including evidence string.
 	listText, _ = callTool(t, a, "clockwork_task_subtodo_list", map[string]interface{}{
 		"task_id": taskID,
+		"verbose": "true",
 	})
-	items = nil
-	require.NoError(t, json.Unmarshal([]byte(listText), &items))
-	require.Len(t, items, 2)
-	assert.Equal(t, true, items[0]["done"])
-	assert.Equal(t, "commit-abc123", items[0]["evidence"])
-	assert.Equal(t, false, items[1]["done"])
+	env.Items = nil
+	require.NoError(t, json.Unmarshal([]byte(listText), &env))
+	require.Len(t, env.Items, 2)
+	assert.Equal(t, true, env.Items[0]["done"])
+	assert.Equal(t, "commit-abc123", env.Items[0]["evidence"])
+	assert.Equal(t, false, env.Items[1]["done"])
 }
 
 func TestSubtodoAdd_RejectsDuplicateID(t *testing.T) {
