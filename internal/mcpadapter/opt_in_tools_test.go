@@ -30,7 +30,7 @@ func setupServiceDirect(t *testing.T) *service.Service {
 
 // adapterFromService builds an Adapter from an already-configured service.
 func adapterFromService(svc *service.Service) *mcpadapter.Adapter {
-	return mcpadapter.New(svc)
+	return mcpadapter.New(svc, nil)
 }
 
 // toolIsRegistered returns true if the tool exists (no JSON-RPC error in response).

@@ -26,7 +26,7 @@ func setupAdapter(t *testing.T) *mcpadapter.Adapter {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 	svc := service.New(store)
-	return mcpadapter.New(svc)
+	return mcpadapter.New(svc, nil)
 }
 
 func callTool(t *testing.T, a *mcpadapter.Adapter, name string, args map[string]interface{}) (string, bool) {
