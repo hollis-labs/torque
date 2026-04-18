@@ -94,6 +94,53 @@ func TestSprintToolsRegisteredWhenEnabled(t *testing.T) {
 	var sprint map[string]interface{}
 	require.NoError(t, json.Unmarshal([]byte(text), &sprint))
 	assert.Contains(t, sprint["ID"].(string), "SP-")
+	assert.Equal(t, "Ship it", sprint["Goal"], "sprint_create must persist the goal field (CW-20260418-0019)")
+}
+
+// TestSprintCreate_GoalRoundTrip_EdgeCaseStrings reproduces CW-20260418-0019
+// Instance 2: clockwork_sprint_create silently dropped multi-line goal
+// strings because handleSprintCreate never read goal from the request and
+// SprintCreateInput had no Goal field at all. Exercises multi-line,
+// special-char, embedded-JSON, and Unicode payloads to guard against
+// regression and any future boundary-layer string mangling.
+func TestSprintCreate_GoalRoundTrip_EdgeCaseStrings(t *testing.T) {
+	cases := map[string]string{
+		"multiline":    "Ship feature X.\n\nAcceptance:\n- item 1\n- item 2",
+		"special":      `quotes "inside" and backslash \\ and tabs\tand a comma, plus semi;colons`,
+		"jsonEmbedded": `{"nested": {"key": "value"}, "array": [1,2,3]}`,
+		"unicode":      "日本語 — 한국어 — العربية — 😀🚀",
+	}
+
+	for name, goal := range cases {
+		name, goal := name, goal
+		t.Run(name, func(t *testing.T) {
+			svc := setupServiceDirect(t)
+			require.NoError(t, svc.Feature.Enable("sprints"))
+			a := adapterFromService(svc)
+
+			text, isErr := callTool(t, a, "clockwork_sprint_create", map[string]interface{}{
+				"name": "Goal edge-case " + name,
+				"goal": goal,
+			})
+			require.False(t, isErr, "sprint_create should succeed: %s", text)
+
+			var sprint map[string]interface{}
+			require.NoError(t, json.Unmarshal([]byte(text), &sprint))
+			assert.Equal(t, goal, sprint["Goal"], "goal must round-trip verbatim")
+
+			// Cross-check: fetch via sprint_get to confirm the DB row matches
+			// the create response (guards against the create response being
+			// populated from input while DB row silently loses the field).
+			text, isErr = callTool(t, a, "clockwork_sprint_get", map[string]interface{}{
+				"id": sprint["ID"],
+			})
+			require.False(t, isErr, "sprint_get should succeed: %s", text)
+			var resp map[string]interface{}
+			require.NoError(t, json.Unmarshal([]byte(text), &resp))
+			got := resp["sprint"].(map[string]interface{})
+			assert.Equal(t, goal, got["Goal"], "goal must persist to DB")
+		})
+	}
 }
 
 func TestSprintFullLifecycleViaMCP(t *testing.T) {

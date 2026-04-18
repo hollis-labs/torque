@@ -3,6 +3,7 @@ package mcpadapter
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -72,6 +73,9 @@ func (a *Adapter) handleHealth(ctx context.Context, req mcp.CallToolRequest) (*m
 
 // ---- helpers ----------------------------------------------------------------
 
+// reqStr extracts a string argument. Non-string values return "" to match
+// mcp-go's CallToolRequest.GetString behavior — callers that need
+// presence-detection should gate on req.GetArguments()[key] directly.
 func reqStr(req mcp.CallToolRequest, key string) string {
 	args := req.GetArguments()
 	if v, ok := args[key]; ok {
@@ -82,6 +86,11 @@ func reqStr(req mcp.CallToolRequest, key string) string {
 	return ""
 }
 
+// reqInt extracts an int argument. Coerces from float64, int, and numeric
+// strings to match mcp-go's CallToolRequest.GetInt behavior. Without this
+// coercion, a caller passing "priority": "2" (string) silently drops to 0
+// even though the MCP server-side tool declares a Number field.
+// See CW-20260418-0019.
 func reqInt(req mcp.CallToolRequest, key string) int {
 	args := req.GetArguments()
 	if v, ok := args[key]; ok {
@@ -90,16 +99,38 @@ func reqInt(req mcp.CallToolRequest, key string) int {
 			return int(n)
 		case int:
 			return n
+		case int64:
+			return int(n)
+		case string:
+			if i, err := strconv.Atoi(n); err == nil {
+				return i
+			}
 		}
 	}
 	return 0
 }
 
+// reqBool extracts a bool argument. Coerces from string ("true"/"false"/"1"/"0"),
+// int, and float64 to match mcp-go's CallToolRequest.GetBool behavior. Without
+// this coercion, a caller passing "manual": "true" (string) silently drops to
+// false even though the MCP server-side tool declares a Boolean field — which
+// is the task_update silent-drop regression tracked in CW-20260418-0019.
 func reqBool(req mcp.CallToolRequest, key string) bool {
 	args := req.GetArguments()
 	if v, ok := args[key]; ok {
-		if b, ok := v.(bool); ok {
+		switch b := v.(type) {
+		case bool:
 			return b
+		case string:
+			if parsed, err := strconv.ParseBool(b); err == nil {
+				return parsed
+			}
+		case int:
+			return b != 0
+		case int64:
+			return b != 0
+		case float64:
+			return b != 0
 		}
 	}
 	return false
