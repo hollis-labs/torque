@@ -58,16 +58,19 @@ func TestIntegrationFullRoundTrip(t *testing.T) {
 	// Subscribe to events
 	sub := sched.EventBus().Subscribe()
 
-	// Create a task with deliverables
+	// Create a task with deliverables. AgentProfile is set so the picker's
+	// kind=agent/empty-profile guard (CW-20260418-0010) doesn't skip it;
+	// the mock executor ignores the value.
 	store.CreateTask(&sqlstore.TaskRecord{
-		ID:          "CW-20260407-0001",
-		Title:       "Fix auth endpoint",
-		Description: "The login endpoint returns 500 on invalid tokens. Fix the validation logic.",
-		Status:      "todo",
-		Priority:    1,
-		Executor:    "mock",
-		OnDone:      "close",
-		MaxRetries:  3,
+		ID:           "CW-20260407-0001",
+		Title:        "Fix auth endpoint",
+		Description:  "The login endpoint returns 500 on invalid tokens. Fix the validation logic.",
+		Status:       "todo",
+		Priority:     1,
+		Executor:     "mock",
+		AgentProfile: "mock",
+		OnDone:       "close",
+		MaxRetries:   3,
 		Deliverables: sql.NullString{
 			String: `[{"type":"diff","required":true},{"type":"test-results","required":true}]`,
 			Valid:  true,
@@ -197,7 +200,7 @@ func TestIntegrationEscalationChain(t *testing.T) {
 		Description:     "This requires multiple attempts",
 		Status:          "todo",
 		Priority:        1,
-		Executor:        "mock",
+		Executor:        "mock", AgentProfile: "mock",
 		OnFail:          "escalate",
 		EscalationChain: sql.NullString{String: `["retry","human"]`, Valid: true},
 	})
@@ -259,7 +262,7 @@ func TestIntegrationCostCeiling(t *testing.T) {
 	// Run first task
 	store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-0001", Title: "Expensive task", Status: "todo",
-		Priority: 1, Executor: "mock", OnDone: "close",
+		Priority: 1, Executor: "mock", AgentProfile: "mock", OnDone: "close",
 	})
 
 	sched.Tick(context.Background())
@@ -269,7 +272,7 @@ func TestIntegrationCostCeiling(t *testing.T) {
 	// Create second task
 	store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-0002", Title: "Second task", Status: "todo",
-		Priority: 1, Executor: "mock", OnDone: "close",
+		Priority: 1, Executor: "mock", AgentProfile: "mock", OnDone: "close",
 	})
 
 	// Second tick should skip because cost ceiling exceeded

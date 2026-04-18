@@ -64,13 +64,20 @@ func (e *CLIExecutor) Capabilities() executor.ExecutorCapabilities {
 }
 
 // Validate checks whether a job is valid for this executor before dispatch.
+// A missing-or-unloaded agent profile is a config-permanent failure —
+// retrying can't recover it — so it's surfaced as executor.PermanentError.
+// The scheduler treats PermanentError as block-no-retry (CW-20260418-0010).
+// TaskID-shape errors are non-permanent because nothing in this executor
+// produced them; the caller owns the taxonomy for those.
 func (e *CLIExecutor) Validate(job *executor.ExecutionJob) error {
 	if err := job.Validate(); err != nil {
 		return err
 	}
 	profile := resolveProfile(e.profiles, job)
 	if profile.Command == "" && profile.Provider == "" {
-		return fmt.Errorf("profile %q has neither command nor provider set", job.AgentProfile)
+		return executor.NewPermanentError(
+			fmt.Errorf("profile %q has neither command nor provider set", job.AgentProfile),
+		)
 	}
 	return nil
 }

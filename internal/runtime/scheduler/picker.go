@@ -68,6 +68,18 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, error) {
 			continue
 		}
 
+		// Defense-in-depth for CW-20260418-0010: an agent task with no
+		// agent_profile has no actionable CLI/provider to dispatch. Even
+		// with the scheduler's pre-dispatch Validate hook in place, skip
+		// these at the picker so they don't burn a tick-worth of heartbeat
+		// noise or block other eligible tasks for the same project slot.
+		// The task stays `todo` with its current blocked_reason; an
+		// operator (or MCP update) must populate agent_profile before it
+		// becomes eligible.
+		if task.Kind == "agent" && task.AgentProfile == "" {
+			continue
+		}
+
 		// Per-project concurrency gate (no gate for project-less tasks).
 		// Only consult the gate here — do not reserve the slot yet. The
 		// reservation happens after all other eligibility checks pass so a

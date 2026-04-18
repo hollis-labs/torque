@@ -60,14 +60,15 @@ func TestDeliverablesE2ERequiredPresent(t *testing.T) {
 	}()
 
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
-		ID:          "CW-20260411-E001",
-		Title:       "Deliverables required present",
-		Description: "Mock produces the required diff",
-		Status:      "todo",
-		Priority:    1,
-		Executor:    "mock",
-		OnDone:      "close",
-		MaxRetries:  3,
+		ID:           "CW-20260411-E001",
+		Title:        "Deliverables required present",
+		Description:  "Mock produces the required diff",
+		Status:       "todo",
+		Priority:     1,
+		Executor:     "mock",
+		AgentProfile: "mock",
+		OnDone:       "close",
+		MaxRetries:   3,
 		Deliverables: sql.NullString{
 			String: `[{"type":"diff","required":true}]`,
 			Valid:  true,
@@ -124,14 +125,15 @@ func TestDeliverablesE2ERequiredMissing(t *testing.T) {
 	}()
 
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
-		ID:          "CW-20260411-E002",
-		Title:       "Deliverables required missing",
-		Description: "Mock omits the required diff",
-		Status:      "todo",
-		Priority:    1,
-		Executor:    "mock",
-		OnDone:      "close",
-		OnFail:      "block",
+		ID:           "CW-20260411-E002",
+		Title:        "Deliverables required missing",
+		Description:  "Mock omits the required diff",
+		Status:       "todo",
+		Priority:     1,
+		Executor:     "mock",
+		AgentProfile: "mock",
+		OnDone:       "close",
+		OnFail:       "block",
 		Deliverables: sql.NullString{
 			String: `[{"type":"diff","required":true}]`,
 			Valid:  true,
@@ -195,14 +197,15 @@ func TestDeliverablesE2ETwoRequiredOneMissing(t *testing.T) {
 	}()
 
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
-		ID:          "CW-20260411-E003",
-		Title:       "Two required, one missing",
-		Description: "Mock produces diff but not test-results",
-		Status:      "todo",
-		Priority:    1,
-		Executor:    "mock",
-		OnDone:      "close",
-		OnFail:      "block",
+		ID:           "CW-20260411-E003",
+		Title:        "Two required, one missing",
+		Description:  "Mock produces diff but not test-results",
+		Status:       "todo",
+		Priority:     1,
+		Executor:     "mock",
+		AgentProfile: "mock",
+		OnDone:       "close",
+		OnFail:       "block",
 		Deliverables: sql.NullString{
 			String: `[{"type":"diff","required":true},{"type":"test-results","required":true}]`,
 			Valid:  true,
@@ -266,14 +269,15 @@ func TestDeliverablesE2ERequiredAndOptional(t *testing.T) {
 	}()
 
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
-		ID:          "CW-20260411-E004",
-		Title:       "Required + optional, optional missing",
-		Description: "Mock produces diff; pr-link is optional and absent",
-		Status:      "todo",
-		Priority:    1,
-		Executor:    "mock",
-		OnDone:      "close",
-		MaxRetries:  3,
+		ID:           "CW-20260411-E004",
+		Title:        "Required + optional, optional missing",
+		Description:  "Mock produces diff; pr-link is optional and absent",
+		Status:       "todo",
+		Priority:     1,
+		Executor:     "mock",
+		AgentProfile: "mock",
+		OnDone:       "close",
+		MaxRetries:   3,
 		Deliverables: sql.NullString{
 			String: `[{"type":"diff","required":true},{"type":"pr-link","required":false}]`,
 			Valid:  true,

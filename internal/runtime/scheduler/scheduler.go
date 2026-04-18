@@ -245,6 +245,23 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		return fmt.Errorf("executor %q: %w", task.Executor, err)
 	}
 
+	// Pre-dispatch validation (CW-20260418-0010). Building the job here
+	// rather than after the doing-transition lets Validate see the same
+	// shape Run will; the runID is zero because no run has been created
+	// yet — executors must only inspect job fields during Validate, not
+	// side-effect on RunID. A PermanentError (missing agent profile,
+	// unresolvable command, etc.) blocks the task directly without
+	// consuming retry budget or spawning a worker. Non-permanent
+	// validate errors fall through to the normal dispatch path; the
+	// existing retry/lifecycle path handles them.
+	preJob := buildJob(task, 0)
+	if verr := exec.Validate(preJob); verr != nil {
+		if executor.IsPermanent(verr) {
+			return s.handlePermanentValidationError(task, verr)
+		}
+		log.Printf("[scheduler] non-permanent validate error for %s: %v", task.ID, verr)
+	}
+
 	// Transition to doing
 	if err := s.store.TransitionTask(task.ID, "doing"); err != nil {
 		return fmt.Errorf("transition to doing: %w", err)
@@ -478,6 +495,58 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		return result, nil
 	})
 
+	return nil
+}
+
+// handlePermanentValidationError blocks a task whose pre-dispatch Validate()
+// returned a PermanentError. Config-permanent failures (missing agent
+// profile, unresolvable command, etc.) cannot be recovered by retrying —
+// the task transitions straight to "blocked" with blocked_reason set to
+// the validation error text (the profile name is included by executors
+// that care). A single run row is created for audit (status=blocked,
+// error_message populated) so the run table still carries a record of the
+// attempted dispatch; retry_count is NEVER incremented. See CW-20260418-0010.
+func (s *Scheduler) handlePermanentValidationError(task sqlstore.TaskRecord, verr error) error {
+	reason := verr.Error()
+
+	// Audit: single runs row with status=blocked + error_message. If the
+	// CreateRun write fails we still proceed to block the task — the task
+	// state is the operator-facing signal, the runs row is supporting audit.
+	runID, rerr := s.store.CreateRun(&sqlstore.RunRecord{
+		TaskID:       task.ID,
+		Executor:     task.Executor,
+		Status:       "blocked",
+		ErrorMessage: reason,
+	})
+	if rerr != nil {
+		log.Printf("[scheduler] audit run create failed for %s: %v", task.ID, rerr)
+	}
+
+	if err := s.store.TransitionTaskWithReason(task.ID, "blocked", reason); err != nil {
+		return fmt.Errorf("transition to blocked: %w", err)
+	}
+
+	writeRunEvent(s.store, runID, task.ID, "task_transitioned", map[string]string{
+		"from":   "todo",
+		"to":     "blocked",
+		"reason": reason,
+	})
+	writeRunEvent(s.store, runID, task.ID, "run_blocked_permanent", map[string]string{
+		"reason": reason,
+	})
+
+	s.bus.Publish(SchedulerEvent{
+		Type:   "task.transitioned",
+		TaskID: task.ID,
+		RunID:  runID,
+		Data: map[string]interface{}{
+			"from":   "todo",
+			"to":     "blocked",
+			"reason": reason,
+		},
+	})
+
+	log.Printf("[scheduler] pre-dispatch validation blocked %s (permanent): %s", task.ID, reason)
 	return nil
 }
 

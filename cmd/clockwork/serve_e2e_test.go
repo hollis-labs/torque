@@ -56,11 +56,14 @@ func TestServeE2EMockTaskCompletes(t *testing.T) {
 	// Create a task that targets the mock executor. `on_done: "close"` makes
 	// the lifecycle transition "doing" directly to "done" on executor success,
 	// so we can observe a definitive terminal state via the HTTP API.
+	// agent_profile is set so the picker's kind=agent/empty-profile guard
+	// (CW-20260418-0010) doesn't skip the task; mock ignores the value.
 	createBody := `{
-		"title":       "e2e smoke",
-		"description": "mock execution end-to-end",
-		"executor":    "mock",
-		"on_done":     "close"
+		"title":         "e2e smoke",
+		"description":   "mock execution end-to-end",
+		"executor":      "mock",
+		"agent_profile": "mock",
+		"on_done":       "close"
 	}`
 	resp, err := http.Post(base+"/api/v1/tasks", "application/json", bytes.NewBufferString(createBody))
 	require.NoError(t, err)

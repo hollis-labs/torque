@@ -19,18 +19,18 @@ func TestPickerProjectConcurrencyGate(t *testing.T) {
 	// Project A: one doing, one todo — todo must be gated out.
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-A-DOING", Title: "A running", Status: "doing",
-		Priority: 1, Executor: "cli",
+		Priority: 1, Executor: "cli", AgentProfile: "cli-profile",
 		ProjectID: sql.NullString{String: "PRJ-A", Valid: true},
 	}))
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-A-TODO", Title: "A waiting", Status: "todo",
-		Priority: 1, Executor: "cli",
+		Priority: 1, Executor: "cli", AgentProfile: "cli-profile",
 		ProjectID: sql.NullString{String: "PRJ-A", Valid: true},
 	}))
 	// Project B: todo, no doing — eligible.
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-B-TODO", Title: "B waiting", Status: "todo",
-		Priority: 2, Executor: "cli",
+		Priority: 2, Executor: "cli", AgentProfile: "cli-profile",
 		ProjectID: sql.NullString{String: "PRJ-B", Valid: true},
 	}))
 
@@ -48,12 +48,12 @@ func TestPickerSameProjectInSingleTick(t *testing.T) {
 
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-X-1", Title: "First", Status: "todo",
-		Priority: 1, Executor: "cli",
+		Priority: 1, Executor: "cli", AgentProfile: "cli-profile",
 		ProjectID: sql.NullString{String: "PRJ-X", Valid: true},
 	}))
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-X-2", Title: "Second", Status: "todo",
-		Priority: 2, Executor: "cli",
+		Priority: 2, Executor: "cli", AgentProfile: "cli-profile",
 		ProjectID: sql.NullString{String: "PRJ-X", Valid: true},
 	}))
 
@@ -71,7 +71,7 @@ func TestPickerDifferentProjectsAllEligible(t *testing.T) {
 	for _, proj := range []string{"PRJ-1", "PRJ-2", "PRJ-3"} {
 		require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 			ID: "CW-" + proj, Title: proj, Status: "todo",
-			Priority: 1, Executor: "cli",
+			Priority: 1, Executor: "cli", AgentProfile: "cli-profile",
 			ProjectID: sql.NullString{String: proj, Valid: true},
 		}))
 	}
@@ -90,11 +90,11 @@ func TestPickerAnonymousProjectNotGated(t *testing.T) {
 
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-ANON-1", Title: "anon 1", Status: "todo",
-		Priority: 1, Executor: "cli",
+		Priority: 1, Executor: "cli", AgentProfile: "cli-profile",
 	}))
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-ANON-2", Title: "anon 2", Status: "todo",
-		Priority: 2, Executor: "cli",
+		Priority: 2, Executor: "cli", AgentProfile: "cli-profile",
 	}))
 
 	picked, err := picker.Pick(10)
@@ -117,14 +117,14 @@ func TestPickerDoesNotConsumeProjectSlotOnDepBlockedTask(t *testing.T) {
 	// the project-less-eligible case.
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-DEP", Title: "blocker", Status: "todo",
-		Priority: 1, Executor: "cli", Manual: true,
+		Priority: 1, Executor: "cli", AgentProfile: "cli-profile", Manual: true,
 	}))
 	// Higher-priority task in project P with CW-DEP as an unmet dep.
 	// Ordering (priority ASC, created_at ASC) places this first.
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-P-BLOCKED", Title: "dep-blocked", Status: "todo",
 		Priority:  1,
-		Executor:  "cli",
+		Executor:  "cli", AgentProfile: "cli-profile",
 		ProjectID: sql.NullString{String: "PRJ-P", Valid: true},
 		DependsOn: sql.NullString{String: `["CW-DEP"]`, Valid: true},
 	}))
@@ -133,7 +133,7 @@ func TestPickerDoesNotConsumeProjectSlotOnDepBlockedTask(t *testing.T) {
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-P-READY", Title: "ready", Status: "todo",
 		Priority:  2,
-		Executor:  "cli",
+		Executor:  "cli", AgentProfile: "cli-profile",
 		ProjectID: sql.NullString{String: "PRJ-P", Valid: true},
 	}))
 

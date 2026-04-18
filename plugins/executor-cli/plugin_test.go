@@ -91,6 +91,56 @@ func TestValidate_MissingCommandAndProvider(t *testing.T) {
 	assert.Contains(t, err.Error(), "neither command nor provider")
 }
 
+// TestValidate_UnknownProfileIsPermanent covers the hot path for
+// CW-20260418-0010: a task references an agent profile that isn't loaded
+// AND there's no "default" profile to fall back to. The resolved profile
+// has neither command nor provider set, Validate() must surface a
+// PermanentError so the scheduler blocks the task rather than retry-
+// exhausting it, and the profile name the user gave must appear in the
+// error so the blocked_reason is actionable.
+func TestValidate_UnknownProfileIsPermanent(t *testing.T) {
+	// profile "default" explicitly absent so GetProfileOrDefault returns zero.
+	pm := config.ProfileMap{"other": config.AgentProfile{Command: "sh"}}
+	e := New(pm)
+	j := &executor.ExecutionJob{
+		TaskID:       "CW-TEST-0001",
+		AgentProfile: "nanite-frontend", // not in pm, and no "default" either
+	}
+	err := e.Validate(j)
+	require.Error(t, err)
+	assert.True(t, executor.IsPermanent(err),
+		"unknown/unloaded profile must surface PermanentError so the scheduler blocks-no-retry")
+	assert.Contains(t, err.Error(), "nanite-frontend",
+		"error must name the user-supplied profile so blocked_reason is actionable")
+	assert.Contains(t, err.Error(), "neither command nor provider")
+}
+
+// TestValidate_EmptyProfileIsPermanent covers the agent_profile='' variant.
+// With no profile name and no "default" profile, the resolved profile is
+// the zero value — same failure shape, same PermanentError treatment.
+func TestValidate_EmptyProfileIsPermanent(t *testing.T) {
+	pm := config.ProfileMap{} // deliberately empty, no "default"
+	e := New(pm)
+	j := &executor.ExecutionJob{
+		TaskID:       "CW-TEST-0002",
+		AgentProfile: "",
+	}
+	err := e.Validate(j)
+	require.Error(t, err)
+	assert.True(t, executor.IsPermanent(err),
+		"empty agent_profile with no default profile must surface PermanentError")
+}
+
+// TestValidate_ProfilePresentNotPermanent confirms a valid profile does NOT
+// produce a PermanentError — we don't want to accidentally classify normal
+// transient failures as permanent.
+func TestValidate_ProfilePresentNotPermanent(t *testing.T) {
+	pm := profiles("default", config.AgentProfile{Command: "sh"})
+	e := New(pm)
+	j := job("default")
+	assert.NoError(t, e.Validate(j))
+}
+
 func TestRunWithEcho(t *testing.T) {
 	script := `echo "hello world"
 echo CLOCKWORK_DONE`

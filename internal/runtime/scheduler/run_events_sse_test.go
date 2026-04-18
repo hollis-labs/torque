@@ -65,7 +65,7 @@ func TestRunStartedEventCarriesPayload(t *testing.T) {
 
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-R-0001", Title: "T", Status: "todo",
-		Priority: 1, Executor: "mock", OnDone: "close",
+		Priority: 1, Executor: "mock", AgentProfile: "mock", OnDone: "close",
 	}))
 
 	require.NoError(t, sched.Tick(context.Background()))
@@ -109,7 +109,7 @@ func TestRunProgressNoteAndArtifact(t *testing.T) {
 
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-R-0002", Title: "T", Status: "todo",
-		Priority: 1, Executor: "mock", OnDone: "close",
+		Priority: 1, Executor: "mock", AgentProfile: "mock", OnDone: "close",
 	}))
 
 	require.NoError(t, sched.Tick(context.Background()))
@@ -156,7 +156,7 @@ func TestRunProgressTokensThrottled(t *testing.T) {
 
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-R-0003", Title: "T", Status: "todo",
-		Priority: 1, Executor: "mock", OnDone: "close",
+		Priority: 1, Executor: "mock", AgentProfile: "mock", OnDone: "close",
 	}))
 
 	require.NoError(t, sched.Tick(context.Background()))
@@ -192,7 +192,7 @@ func TestRunFinishedEventEmittedWithDuration(t *testing.T) {
 
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-R-0004", Title: "T", Status: "todo",
-		Priority: 1, Executor: "mock", OnDone: "close",
+		Priority: 1, Executor: "mock", AgentProfile: "mock", OnDone: "close",
 	}))
 
 	require.NoError(t, sched.Tick(context.Background()))

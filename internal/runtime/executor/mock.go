@@ -10,12 +10,16 @@ import (
 // MockExecutor is a test double that simulates execution without real LLM calls.
 // It supports configurable results, delays, errors, and event emission.
 type MockExecutor struct {
-	mu           sync.Mutex
-	result       *ExecutionResult
-	err          error
-	delay        time.Duration
-	events       []ExecutionEvent
-	recordedJobs []*ExecutionJob
+	mu            sync.Mutex
+	result        *ExecutionResult
+	err           error
+	validateErr   error
+	validateFunc  func(job *ExecutionJob) error
+	delay         time.Duration
+	events        []ExecutionEvent
+	recordedJobs  []*ExecutionJob
+	validatedJobs []*ExecutionJob
+	runCount      int
 }
 
 // NewMockExecutor creates a MockExecutor that returns success by default.
@@ -28,6 +32,7 @@ func (m *MockExecutor) Name() string { return "mock" }
 func (m *MockExecutor) Run(ctx context.Context, job *ExecutionJob, cb EventCallback) (*ExecutionResult, error) {
 	m.mu.Lock()
 	m.recordedJobs = append(m.recordedJobs, job)
+	m.runCount++
 	delay := m.delay
 	events := m.events
 	result := m.result
@@ -79,7 +84,52 @@ func (m *MockExecutor) Capabilities() ExecutorCapabilities {
 }
 
 func (m *MockExecutor) Validate(job *ExecutionJob) error {
-	return nil
+	m.mu.Lock()
+	m.validatedJobs = append(m.validatedJobs, job)
+	vf := m.validateFunc
+	verr := m.validateErr
+	m.mu.Unlock()
+	if vf != nil {
+		return vf(job)
+	}
+	return verr
+}
+
+// SetValidateError configures Validate to return this error for every call.
+// Use SetValidateFunc when a per-job decision is needed.
+func (m *MockExecutor) SetValidateError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.validateErr = err
+	m.validateFunc = nil
+}
+
+// SetValidateFunc configures Validate to invoke fn with each job so tests
+// can make per-job decisions (e.g. return PermanentError for unknown
+// profiles only). Clears any previously set SetValidateError.
+func (m *MockExecutor) SetValidateFunc(fn func(*ExecutionJob) error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.validateFunc = fn
+	m.validateErr = nil
+}
+
+// ValidatedJobs returns every job the scheduler submitted to Validate, in
+// order. Useful for asserting that the pre-dispatch hook ran.
+func (m *MockExecutor) ValidatedJobs() []*ExecutionJob {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]*ExecutionJob, len(m.validatedJobs))
+	copy(out, m.validatedJobs)
+	return out
+}
+
+// RunCount returns how many times Run was invoked. Assertions use this to
+// confirm a task that failed Validate was NEVER dispatched.
+func (m *MockExecutor) RunCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.runCount
 }
 
 // SetResult configures the result that Run will return.
@@ -125,7 +175,11 @@ func (m *MockExecutor) Reset() {
 	defer m.mu.Unlock()
 	m.result = nil
 	m.err = nil
+	m.validateErr = nil
+	m.validateFunc = nil
 	m.delay = 0
 	m.events = nil
 	m.recordedJobs = nil
+	m.validatedJobs = nil
+	m.runCount = 0
 }

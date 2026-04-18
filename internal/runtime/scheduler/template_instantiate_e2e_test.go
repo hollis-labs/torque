@@ -83,7 +83,7 @@ func TestE2E_Template_Instantiate_Scheduler_PicksUp_Executes(t *testing.T) {
 		Name:        "smoke",
 		Description: "x",
 		Kind:        "agent",
-		Executor:    "mock",
+		Executor:    "mock", AgentProfile: "mock",
 		AutoExecute: true,
 		OnDone:      "close",
 		Deliverables: []service.Deliverable{
