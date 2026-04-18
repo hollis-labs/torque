@@ -203,4 +203,40 @@ func TestMigrationsApply(t *testing.T) {
 	require.NoError(t, err, "tasks.kind should accept 'plan' after migration 014")
 	_, err = db.Exec(`INSERT INTO tasks (id, title, status, kind) VALUES ('T14-bad', 'bad', 'todo', 'still-bad')`)
 	require.Error(t, err, "tasks.kind CHECK should still reject unknown kinds after migration 014")
+
+	// Verify 015 created the runs.status index (CW-20260418-0015 taxonomy).
+	runsIdxRows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='runs'`)
+	require.NoError(t, err)
+	defer runsIdxRows.Close()
+	runsIdx := map[string]bool{}
+	for runsIdxRows.Next() {
+		var n string
+		require.NoError(t, runsIdxRows.Scan(&n))
+		runsIdx[n] = true
+	}
+	require.True(t, runsIdx["idx_runs_status"], "idx_runs_status should exist after migration 015")
+
+	// Verify 015 migration is idempotent: running migrations a second time
+	// against the same DB is a no-op (schema_migrations short-circuits) and
+	// must not error. This guards against a future rewrite of 015 that
+	// drops/recreates the index non-idempotently.
+	require.NoError(t, migrations.Run(db), "migrations must be idempotent — second run should no-op cleanly")
+
+	// Re-executing just the 015 body against the same DB must also be
+	// idempotent even if schema_migrations is bypassed — this is what the
+	// ticket calls out explicitly ("forward-only, idempotent"). The
+	// `CREATE INDEX IF NOT EXISTS` guards the single DDL operation.
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status)`)
+	require.NoError(t, err, "015 index creation must tolerate re-run")
+
+	// Verify runs.status accepts all documented taxonomy values. The column
+	// has no CHECK constraint (widening via table rebuild is deferred) so
+	// this test locks in the documented set — future code must accept all
+	// of these and dashboards must segment cleanly.
+	_, err = db.Exec(`INSERT INTO tasks (id, title, status) VALUES ('T15-ok', 't', 'todo')`)
+	require.NoError(t, err)
+	for _, s := range []string{"running", "done", "failed", "blocked", "review", "cancelled", "superseded", "killed"} {
+		_, err = db.Exec(`INSERT INTO runs (task_id, executor, status) VALUES ('T15-ok', 'cli', ?)`, s)
+		require.NoError(t, err, "runs.status must accept taxonomy value %q", s)
+	}
 }

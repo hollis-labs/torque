@@ -327,6 +327,129 @@ func TestLifecycleRunErrorsWhileTaskTerminalBlockPath(t *testing.T) {
 	assert.Empty(t, task.BlockedReason, "blocked_reason should not be set on a done task")
 }
 
+// TestLifecycleShortCircuitsOperatorTerminalRun proves the CW-20260418-0015
+// retry-path guard: if the run row has been stamped with an
+// operator-terminal status (cancelled/superseded/killed) while the
+// executor was in-flight, a late-arriving "failed" result MUST NOT
+// trigger retryOrBlock, MUST NOT increment retry_count, MUST NOT flip
+// the task out of doing, and MUST NOT fire on_fail hooks. The run's
+// operator status and reason stand unchanged.
+func TestLifecycleShortCircuitsOperatorTerminalRun(t *testing.T) {
+	cases := []struct {
+		name     string
+		opStatus string
+		opReason string
+	}{
+		{"cancelled short-circuits retry", "cancelled", "operator halted for triage"},
+		{"killed short-circuits retry", "killed", "live-validation cleanup"},
+		{"superseded short-circuits retry", "superseded", "accepted via run 42"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := setupLifecycleStore(t)
+			bus := scheduler.NewEventBus()
+			defer bus.Close()
+			lm := scheduler.NewLifecycleManager(store, bus)
+
+			require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+				ID: "CW-SHORT-0001", Title: "t", Status: "doing", Executor: "cli",
+				OnFail: "retry", MaxRetries: 3,
+			}))
+
+			runID, err := store.CreateRun(&sqlstore.RunRecord{
+				TaskID: "CW-SHORT-0001", Executor: "cli",
+			})
+			require.NoError(t, err)
+
+			// Operator stamps the run while the executor is still running.
+			require.NoError(t, store.SetRunOperatorStatus(runID, tc.opStatus, tc.opReason))
+
+			// Subscribe AFTER the operator stamp so we only see events
+			// emitted by the lifecycle path under test.
+			sub := bus.Subscribe()
+			defer bus.Unsubscribe(sub)
+
+			// Late-arriving executor result. In production this would come
+			// from the executor returning with context-cancelled or
+			// signal-killed.
+			result := &executor.ExecutionResult{
+				Status: "failed",
+				Reason: "context canceled",
+			}
+
+			require.NoError(t, lm.HandleResult("CW-SHORT-0001", runID, result))
+
+			// Run row is unchanged — operator status/reason stand.
+			got, err := store.GetRun(runID)
+			require.NoError(t, err)
+			assert.Equal(t, tc.opStatus, got.Status, "run status must stay operator-terminal")
+			assert.Equal(t, tc.opReason, got.ErrorMessage, "operator reason must not be clobbered")
+
+			// Task did NOT retry: still in doing, retry_count unchanged.
+			task, err := store.GetTask("CW-SHORT-0001")
+			require.NoError(t, err)
+			assert.Equal(t, "doing", task.Status, "task must not be re-queued via retryOrBlock")
+
+			var retryCount int
+			store.DB().QueryRow("SELECT retry_count FROM tasks WHERE id = ?", "CW-SHORT-0001").Scan(&retryCount)
+			assert.Equal(t, 0, retryCount, "retry_count must not advance on operator-terminal run")
+
+			// No task.transitioned event — the on_fail retry path would
+			// emit one (doing -> todo). run.finished is allowed (UI pulse
+			// signal) but task.transitioned MUST be absent.
+			var events []scheduler.SchedulerEvent
+		drain:
+			for {
+				select {
+				case e := <-sub:
+					events = append(events, e)
+				default:
+					break drain
+				}
+			}
+			for _, e := range events {
+				assert.NotEqual(t, "task.transitioned", e.Type, "operator actions must be silent on task FSM: saw %#v", e)
+				assert.NotEqual(t, "task.notify", e.Type, "on_fail=notify must not fire: saw %#v", e)
+			}
+		})
+	}
+}
+
+// TestLifecycleShortCircuitHonorsBlockAndEscalate confirms the guard is
+// not keyed to OnFail=retry. Regardless of OnFail mode, an operator-stamped
+// run must short-circuit every downstream lifecycle branch.
+func TestLifecycleShortCircuitHonorsBlockAndEscalate(t *testing.T) {
+	modes := []string{"retry", "block", "escalate", "notify"}
+	for _, mode := range modes {
+		t.Run("on_fail="+mode, func(t *testing.T) {
+			store := setupLifecycleStore(t)
+			bus := scheduler.NewEventBus()
+			defer bus.Close()
+			lm := scheduler.NewLifecycleManager(store, bus)
+
+			require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+				ID: "CW-MODE-0001", Title: "t", Status: "doing", Executor: "cli",
+				OnFail: mode, MaxRetries: 3,
+				EscalationChain: sql.NullString{String: `["notify_owner"]`, Valid: true},
+			}))
+
+			runID, err := store.CreateRun(&sqlstore.RunRecord{
+				TaskID: "CW-MODE-0001", Executor: "cli",
+			})
+			require.NoError(t, err)
+
+			require.NoError(t, store.SetRunOperatorStatus(runID, "cancelled", "operator halted"))
+
+			result := &executor.ExecutionResult{Status: "failed", Reason: "boom"}
+			require.NoError(t, lm.HandleResult("CW-MODE-0001", runID, result))
+
+			task, _ := store.GetTask("CW-MODE-0001")
+			assert.Equal(t, "doing", task.Status, "task must not move for OnFail=%s when run is operator-terminal", mode)
+			assert.Empty(t, task.BlockedReason, "no blocked reason stamped")
+		})
+	}
+}
+
 func TestLifecycleEmitsEvents(t *testing.T) {
 	store := setupLifecycleStore(t)
 	bus := scheduler.NewEventBus()
