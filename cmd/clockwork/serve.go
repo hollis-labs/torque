@@ -173,8 +173,8 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	log.Printf("Clockwork HTTP server listening on %s", ln.Addr().String())
 	log.Printf("GUI available at http://%s", ln.Addr().String())
 	log.Printf("API available at http://%s/api/v1", ln.Addr().String())
-	log.Printf("Scheduler: workers=%d interval=%ds enabled=%t",
-		cfg.Scheduler.Workers, cfg.Scheduler.IntervalSeconds, cfg.Scheduler.Enabled)
+	log.Printf("Scheduler: workers=%d interval=%ds stale_heartbeat_threshold=%ds enabled=%t",
+		cfg.Scheduler.Workers, cfg.Scheduler.IntervalSeconds, cfg.Scheduler.StaleSeconds, cfg.Scheduler.Enabled)
 
 	serveErr := srv.Serve(ln)
 	// Cancel FIRST so the shutdown goroutine unblocks on <-runCtx.Done() and

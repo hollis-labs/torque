@@ -79,6 +79,15 @@ func Load() (*Config, error) {
 			CostCeiling:              envFloat("CLOCKWORK_SCHED_COST_CEILING", 0),
 			HeartbeatSeconds:         envInt("CLOCKWORK_SCHED_HEARTBEAT", 15),
 			HeartbeatProgressSeconds: envInt("CLOCKWORK_PROGRESS_HEARTBEAT_SECONDS", 30),
+			// StaleSeconds is the staleness threshold for worker heartbeats.
+			// A row in worker_heartbeats whose last_heartbeat is older than
+			// this gets logged, published on the bus as worker.stale, and
+			// deleted by the next scheduler tick (CW-20260418-0003 cleanup
+			// and CW-20260418-0018 gauge/config). Default 300s (5 min) —
+			// long enough to tolerate a slow CLI executor pause, short
+			// enough that a crashed worker doesn't linger in the table
+			// across a whole session. Tune down for faster feedback in
+			// dev/test, not recommended below ~30s in production.
 			StaleSeconds:             envInt("CLOCKWORK_SCHED_STALE", 300),
 			Enabled:                  envBool("CLOCKWORK_SCHED_ENABLED", true),
 			MaxPerProject:            envInt("CLOCKWORK_SCHED_MAX_PER_PROJECT", 2),

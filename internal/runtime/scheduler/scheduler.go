@@ -33,6 +33,12 @@ type SchedulerStatus struct {
 	QueueDepth    int     `json:"queue_depth"`
 	TotalCost     float64 `json:"total_cost"`
 	Subscribers   int     `json:"subscribers"`
+	// StaleHeartbeatThresholdSeconds is the number of seconds since a
+	// worker's last heartbeat after which it is considered stale and its
+	// row is pruned by the next scheduler tick. Surfaced here so operators
+	// can verify the effective threshold without re-reading the env
+	// (CW-20260418-0018). Controlled by CLOCKWORK_SCHED_STALE, default 300.
+	StaleHeartbeatThresholdSeconds int `json:"stale_heartbeat_threshold_seconds"`
 }
 
 // Scheduler is the core orchestration loop. It picks eligible tasks,
@@ -151,12 +157,13 @@ func (s *Scheduler) Status() SchedulerStatus {
 	total, _ := s.cost.GlobalTotal()
 
 	return SchedulerStatus{
-		Enabled:       enabled,
-		MaxWorkers:    s.cfg.Workers,
-		ActiveWorkers: s.pool.ActiveCount(),
-		QueueDepth:    depth,
-		TotalCost:     total,
-		Subscribers:   s.bus.SubscriberCount(),
+		Enabled:                        enabled,
+		MaxWorkers:                     s.cfg.Workers,
+		ActiveWorkers:                  s.pool.ActiveCount(),
+		QueueDepth:                     depth,
+		TotalCost:                      total,
+		Subscribers:                    s.bus.SubscriberCount(),
+		StaleHeartbeatThresholdSeconds: s.cfg.StaleSeconds,
 	}
 }
 
@@ -281,6 +288,20 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 		} else if deleted > 0 {
 			log.Printf("[scheduler] cleaned up %d stale heartbeat row(s)", deleted)
 		}
+	}
+
+	// Per-tick heartbeat gauge (CW-20260418-0018). One info-level line per
+	// tick so operators can see zombie accumulation *before* it bites. Stays
+	// at info (not debug) because a silently-growing stale= counter is the
+	// earliest signal that a Deregister path has regressed. Counts are
+	// computed AFTER the cleanup above so stale= normally reads zero in
+	// steady-state; a persistent non-zero stale= means DeleteStale didn't
+	// keep up (e.g. threshold set too high, or an insert-after-sweep race).
+	if counts, cerr := s.heartbeat.CountHeartbeats(staleThreshold); cerr != nil {
+		log.Printf("[scheduler] heartbeat gauge error: %v", cerr)
+	} else {
+		log.Printf("[scheduler] heartbeats live=%d stale=%d threshold=%ds",
+			counts.Live, counts.Stale, s.cfg.StaleSeconds)
 	}
 
 	s.bus.Publish(SchedulerEvent{Type: "scheduler.tick"})
@@ -637,7 +658,8 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	log.Printf("[scheduler] started (workers=%d, interval=%s)", s.cfg.Workers, interval)
+	log.Printf("[scheduler] started (workers=%d, interval=%s, stale_heartbeat_threshold=%ds)",
+		s.cfg.Workers, interval, s.cfg.StaleSeconds)
 
 	// Best-effort sweep of orphaned per-run worktrees on startup. Requires
 	// CLOCKWORK_REPO so we know which repo's admin to prune against; if the

@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"database/sql"
 	"time"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
@@ -95,6 +96,44 @@ func (h *HeartbeatMonitor) DeleteStale(threshold time.Duration) (int64, error) {
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// HeartbeatCounts is the live/stale split of worker_heartbeats against a
+// given staleness threshold, used for the per-tick gauge log
+// (CW-20260418-0018). A row is counted as stale when last_heartbeat is more
+// than threshold in the past OR when last_heartbeat IS NULL (defensive —
+// Register writes CURRENT_TIMESTAMP so NULL should never occur in practice,
+// but if a future migration or direct INSERT ever produces one, we'd rather
+// surface it as stale than silently drop it from both counters).
+type HeartbeatCounts struct {
+	Live  int
+	Stale int
+}
+
+// CountHeartbeats returns the live/stale split of worker_heartbeats rows
+// against the given staleness threshold. Computed in a single query so the
+// two counters are always consistent — splitting across two SELECTs could
+// show live+stale != total during a concurrent Register/Deregister.
+func (h *HeartbeatMonitor) CountHeartbeats(threshold time.Duration) (HeartbeatCounts, error) {
+	thresholdSeconds := int(threshold.Seconds())
+	row := h.store.DB().QueryRow(
+		`SELECT
+			SUM(CASE WHEN last_heartbeat IS NOT NULL AND last_heartbeat >= datetime('now', '-' || ? || ' seconds') THEN 1 ELSE 0 END) AS live,
+			SUM(CASE WHEN last_heartbeat IS NULL OR last_heartbeat < datetime('now', '-' || ? || ' seconds') THEN 1 ELSE 0 END) AS stale
+		 FROM worker_heartbeats`,
+		thresholdSeconds, thresholdSeconds,
+	)
+	// SUM() over an empty table returns NULL; scan into nullable ints and
+	// coalesce to zero so an empty table reports {0,0} rather than a scan
+	// error.
+	var live, stale sql.NullInt64
+	if err := row.Scan(&live, &stale); err != nil {
+		return HeartbeatCounts{}, err
+	}
+	return HeartbeatCounts{
+		Live:  int(live.Int64),
+		Stale: int(stale.Int64),
+	}, nil
 }
 
 // ActiveWorkers returns all registered workers.
