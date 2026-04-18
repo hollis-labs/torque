@@ -37,12 +37,12 @@ func TestFullStack_TaskList_NumericStringLimit(t *testing.T) {
 	})
 	require.False(t, isErr, "string-encoded limit must not trip schema validation: %s", text)
 
-	// Phase B: list tools return {items, meta} envelope.
+	// Phase C: list tools return {ok, data: {items, meta}, error}.
 	var env struct {
 		Items []interface{}          `json:"items"`
 		Meta  map[string]interface{} `json:"meta"`
 	}
-	require.NoError(t, json.Unmarshal([]byte(text), &env))
+	parseData(t, text, &env)
 	require.Len(t, env.Items, 2, "string limit \"2\" should clamp results to 2 rows")
 	require.Equal(t, float64(2), env.Meta["limit"])
 
@@ -52,7 +52,7 @@ func TestFullStack_TaskList_NumericStringLimit(t *testing.T) {
 	})
 	require.False(t, isErr, "numeric limit should still work: %s", text)
 	env.Items = nil
-	require.NoError(t, json.Unmarshal([]byte(text), &env))
+	parseData(t, text, &env)
 	require.Len(t, env.Items, 2)
 }
 
@@ -119,7 +119,7 @@ func TestFullStack_TaskCreate_PriorityAcceptsString(t *testing.T) {
 	require.False(t, isErr, "string priority must not trip schema validation: %s", text)
 
 	var created map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	parseData(t, text, &created)
 	// TaskRecord has no JSON tags, so Priority comes through capitalized.
 	require.EqualValues(t, 4, created["Priority"])
 }
@@ -141,7 +141,7 @@ func TestFullStack_TaskUpdate_BudgetStringRoundTrip(t *testing.T) {
 	})
 	require.False(t, isErr, "create: %s", text)
 	var created map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	parseData(t, text, &created)
 	id := created["ID"].(string)
 
 	// Sentinel round-trip: -1 (unlimited) passed as string.
@@ -155,7 +155,7 @@ func TestFullStack_TaskUpdate_BudgetStringRoundTrip(t *testing.T) {
 	require.False(t, isErr, "update: %s", text)
 
 	var updated map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &updated))
+	parseData(t, text, &updated)
 
 	// CostBudget lives under sql.NullFloat64: {Float64: -1, Valid: true}
 	cb, ok := updated["CostBudget"].(map[string]interface{})

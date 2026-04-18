@@ -48,17 +48,17 @@ func (a *Adapter) handleEpicCreate(ctx context.Context, req mcp.CallToolRequest)
 
 	epic, err := a.svc.Epic.Create(input)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(epic)
+	return okResult(epic)
 }
 
 func (a *Adapter) handleEpicGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	epic, err := a.svc.Epic.Get(reqStr(req, "id"))
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(epic)
+	return okResult(epic)
 }
 
 func (a *Adapter) handleEpicUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -80,28 +80,40 @@ func (a *Adapter) handleEpicUpdate(ctx context.Context, req mcp.CallToolRequest)
 	}
 
 	if !hasUpdate {
-		return mcp.NewToolResultText("No changes specified"), nil
+		return okResult(map[string]any{
+			"id":      id,
+			"updated": false,
+			"message": "No changes specified",
+		})
 	}
 
 	if err := a.svc.Epic.Update(id, input); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("Epic %s updated", id)), nil
+	return okResult(map[string]any{
+		"id":      id,
+		"updated": true,
+		"message": fmt.Sprintf("Epic %s updated", id),
+	})
 }
 
 func (a *Adapter) handleEpicDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	id := reqStr(req, "id")
 	if err := a.svc.Epic.Delete(id); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("Epic %s deleted", id)), nil
+	return okResult(map[string]any{
+		"id":      id,
+		"deleted": true,
+		"message": fmt.Sprintf("Epic %s deleted", id),
+	})
 }
 
 func (a *Adapter) handleEpicList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	verbose := reqStrBool(req, "verbose")
 	epics, err := a.svc.Epic.List(reqStr(req, "status"), reqStr(req, "project_id"))
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	limit := defaultGenericListLimit
 	items := make([]any, 0, len(epics))

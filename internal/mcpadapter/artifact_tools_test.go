@@ -1,7 +1,6 @@
 package mcpadapter_test
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -21,7 +20,7 @@ func TestFullStack_ArtifactCRUD(t *testing.T) {
 	})
 	require.False(t, isErr, "task create: %s", text)
 	var task map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &task))
+	parseData(t, text, &task)
 	taskID := task["ID"].(string)
 
 	// Create an artifact.
@@ -32,7 +31,7 @@ func TestFullStack_ArtifactCRUD(t *testing.T) {
 	})
 	require.False(t, isErr, "artifact create: %s", text)
 	var created map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &created))
+	parseData(t, text, &created)
 	id, ok := created["ID"].(float64)
 	require.True(t, ok, "response should contain numeric ID: %v", created)
 
@@ -42,7 +41,7 @@ func TestFullStack_ArtifactCRUD(t *testing.T) {
 	})
 	require.False(t, isErr, "artifact get: %s", text)
 	var got map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &got))
+	parseData(t, text, &got)
 	assert.Equal(t, id, got["ID"])
 	assert.Equal(t, taskID, got["TaskID"])
 	assert.Equal(t, "/tmp/demo.log", got["FilePath"])
@@ -53,7 +52,7 @@ func TestFullStack_ArtifactCRUD(t *testing.T) {
 	})
 	require.False(t, isErr, "artifact delete: %s", text)
 	var delResp map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &delResp))
+	parseData(t, text, &delResp)
 	assert.Equal(t, true, delResp["deleted"])
 
 	// Get after delete should error.

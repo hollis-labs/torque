@@ -23,7 +23,7 @@ func (a *Adapter) handleRunList(ctx context.Context, req mcp.CallToolRequest) (*
 	verbose := reqStrBool(req, "verbose")
 	runs, err := a.svc.Run.List(reqStr(req, "task_id"))
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	limit := defaultGenericListLimit
 	items := make([]any, 0, len(runs))
@@ -41,7 +41,7 @@ func (a *Adapter) handleRunGet(ctx context.Context, req mcp.CallToolRequest) (*m
 	id := int64(reqInt(req, "id"))
 	run, err := a.svc.Run.Get(id)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(run)
+	return okResult(run)
 }

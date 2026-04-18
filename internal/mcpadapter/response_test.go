@@ -57,7 +57,7 @@ func TestBriefShapes_UnderByteLimit(t *testing.T) {
 	var env struct {
 		Items []json.RawMessage `json:"items"`
 	}
-	require.NoError(t, json.Unmarshal([]byte(text), &env))
+	parseData(t, text, &env)
 	require.Len(t, env.Items, 1)
 
 	// Re-marshal compactly and assert the tight byte bound.
@@ -105,7 +105,7 @@ func TestTaskList_500Tasks_FitsUnderCap(t *testing.T) {
 		Items []json.RawMessage      `json:"items"`
 		Meta  map[string]interface{} `json:"meta"`
 	}
-	require.NoError(t, json.Unmarshal([]byte(text), &env))
+	parseData(t, text, &env)
 	assert.Equal(t, false, env.Meta["truncated"],
 		"200 brief records on a 500-task dataset should fit without truncation")
 	assert.Equal(t, float64(200), env.Meta["returned"])
@@ -136,7 +136,7 @@ func TestTaskSearch_Default25Limit_FitsUnderCap(t *testing.T) {
 		Items []json.RawMessage      `json:"items"`
 		Meta  map[string]interface{} `json:"meta"`
 	}
-	require.NoError(t, json.Unmarshal([]byte(text), &env))
+	parseData(t, text, &env)
 	assert.Len(t, env.Items, 25, "search should default to 25 results")
 	assert.Equal(t, float64(25), env.Meta["limit"])
 }
@@ -161,7 +161,7 @@ func TestTaskSearch_MaxLimitCapped(t *testing.T) {
 		Items []json.RawMessage      `json:"items"`
 		Meta  map[string]interface{} `json:"meta"`
 	}
-	require.NoError(t, json.Unmarshal([]byte(text), &env))
+	parseData(t, text, &env)
 	assert.Equal(t, float64(100), env.Meta["limit"], "search limit must cap at 100")
 	assert.Len(t, env.Items, 100)
 }
@@ -201,7 +201,7 @@ func TestTaskList_Truncation_WhenBriefRecordsExceedCap(t *testing.T) {
 		Items []json.RawMessage      `json:"items"`
 		Meta  map[string]interface{} `json:"meta"`
 	}
-	require.NoError(t, json.Unmarshal([]byte(text), &env))
+	parseData(t, text, &env)
 	assert.Equal(t, true, env.Meta["truncated"],
 		"bloated brief records should trigger truncation")
 	assert.Less(t, int(env.Meta["returned"].(float64)), 200,
@@ -240,7 +240,7 @@ func TestTaskList_Verbose_RoundTripsFullRecord(t *testing.T) {
 		Items []map[string]interface{} `json:"items"`
 		Meta  map[string]interface{}   `json:"meta"`
 	}
-	require.NoError(t, json.Unmarshal([]byte(text), &env))
+	parseData(t, text, &env)
 	require.Len(t, env.Items, 25)
 	assert.Equal(t, false, env.Meta["truncated"], "25 verbose records should fit")
 	// Verbose uses the taskWithTags shape — TaskRecord has no json tags so
@@ -345,7 +345,7 @@ func TestSprintList_Brief_FitsUnderCap(t *testing.T) {
 		Items []map[string]interface{} `json:"items"`
 		Meta  map[string]interface{}   `json:"meta"`
 	}
-	require.NoError(t, json.Unmarshal([]byte(text), &env))
+	parseData(t, text, &env)
 	assert.Equal(t, false, env.Meta["truncated"])
 
 	// Brief sprint should NOT contain 'goal' (it's excluded to keep size down).
@@ -379,7 +379,7 @@ func TestTemplateList_Brief_ExcludesDescriptionBody(t *testing.T) {
 	var env struct {
 		Items []map[string]interface{} `json:"items"`
 	}
-	require.NoError(t, json.Unmarshal([]byte(text), &env))
+	parseData(t, text, &env)
 	require.Greater(t, len(env.Items), 0)
 	_, hasDesc := env.Items[0]["description"]
 	assert.False(t, hasDesc, "briefTemplate MUST exclude template body per ticket sharp-edge")

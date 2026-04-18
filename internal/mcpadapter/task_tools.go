@@ -148,12 +148,12 @@ type taskWithTags struct {
 func (a *Adapter) taskResult(task *sqlstore.TaskRecord) (*mcp.CallToolResult, error) {
 	tags, err := a.svc.Task.ListTags(task.ID)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	if tags == nil {
 		tags = []sqlstore.TagRecord{}
 	}
-	return jsonResult(taskWithTags{TaskRecord: task, Tags: tags})
+	return okResult(taskWithTags{TaskRecord: task, Tags: tags})
 }
 
 func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -198,23 +198,23 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest)
 
 	if raw := reqStr(req, "tags"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &input.Tags); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid tags JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
 		}
 	}
 	if raw := reqStr(req, "depends_on"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &input.DependsOn); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid depends_on JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid depends_on JSON: %v", err), "depends_on")
 		}
 	}
 	if raw := reqStr(req, "metadata"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &input.Metadata); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid metadata JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid metadata JSON: %v", err), "metadata")
 		}
 	}
 
 	task, err := a.svc.Task.Create(input)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	return a.taskResult(task)
 }
@@ -222,7 +222,7 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest)
 func (a *Adapter) handleTaskGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	task, err := a.svc.Task.Get(reqStr(req, "id"))
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	return a.taskResult(task)
 }
@@ -251,7 +251,7 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 	}
 	tasks, err := a.svc.Task.List(filter)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	return a.tasksToEnvelope(tasks, limit, verbose)
 }
@@ -367,12 +367,12 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 	var scratchObj map[string]any
 	for _, k := range []string{"tools", "files", "escalation_chain", "quality_gates", "deliverables", "depends_on"} {
 		if err := unmarshalBlob(k, &scratchArr); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errResult(ErrCodeArgInvalid, err.Error(), k)
 		}
 	}
 	for _, k := range []string{"permissions", "environment", "metadata"} {
 		if err := unmarshalBlob(k, &scratchObj); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errResult(ErrCodeArgInvalid, err.Error(), k)
 		}
 	}
 	if ns := nullFromRaw("tools"); ns != nil {
@@ -457,35 +457,36 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 	if raw := reqStr(req, "tags"); raw != "" {
 		var slugs []string
 		if err := json.Unmarshal([]byte(raw), &slugs); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid tags JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
 		}
 		input.Tags = &slugs
 	}
 
 	if err := a.svc.Task.Update(id, input); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	task, err := a.svc.Task.Get(id)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	return a.taskResult(task)
 }
 
 func (a *Adapter) handleTaskDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if err := a.svc.Task.Delete(reqStr(req, "id")); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+	id := reqStr(req, "id")
+	if err := a.svc.Task.Delete(id); err != nil {
+		return errFromService(err)
 	}
-	return mcp.NewToolResultText("deleted"), nil
+	return okResult(map[string]any{"id": id, "deleted": true})
 }
 
 func (a *Adapter) handleTaskTransition(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if err := a.svc.Task.Transition(reqStr(req, "id"), reqStr(req, "status")); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	task, err := a.svc.Task.Get(reqStr(req, "id"))
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	return a.taskResult(task)
 }
@@ -495,7 +496,7 @@ func (a *Adapter) handleTaskSearch(ctx context.Context, req mcp.CallToolRequest)
 	verbose := reqStrBool(req, "verbose")
 	tasks, err := a.svc.Task.Search(reqStr(req, "query"))
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	// Search has no native limit param; apply limit post-query.
 	if len(tasks) > limit {
@@ -514,7 +515,7 @@ func (a *Adapter) tasksToEnvelope(tasks []sqlstore.TaskRecord, limit int, verbos
 		if verbose {
 			tags, err := a.svc.Task.ListTags(t.ID)
 			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+				return errFromService(err)
 			}
 			if tags == nil {
 				tags = []sqlstore.TagRecord{}
@@ -533,7 +534,7 @@ func (a *Adapter) handleTaskBulkTransition(ctx context.Context, req mcp.CallTool
 	raw := reqStr(req, "ids")
 	var ids []string
 	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("invalid ids JSON: %v", err)), nil
+		return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid ids JSON: %v", err), "ids")
 	}
 	status := reqStr(req, "status")
 	success, errs := a.svc.Task.BulkTransition(ids, status)
@@ -550,5 +551,5 @@ func (a *Adapter) handleTaskBulkTransition(ctx context.Context, req mcp.CallTool
 	if len(errMsgs) > 0 {
 		result["errors"] = strings.Join(errMsgs, "; ")
 	}
-	return jsonResult(result)
+	return okResult(result)
 }

@@ -64,19 +64,19 @@ func (a *Adapter) handleSprintCreate(ctx context.Context, req mcp.CallToolReques
 
 	sprint, err := a.svc.Sprint.Create(input)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(sprint)
+	return okResult(sprint)
 }
 
 func (a *Adapter) handleSprintGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	sprint, err := a.svc.Sprint.Get(reqStr(req, "id"))
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 
 	withinBudget, remaining := a.svc.Sprint.CheckCostBudget(sprint.ID)
-	return jsonResult(map[string]interface{}{
+	return okResult(map[string]interface{}{
 		"sprint":         sprint,
 		"within_budget":  withinBudget,
 		"cost_remaining": remaining,
@@ -89,7 +89,7 @@ func (a *Adapter) handleSprintUpdate(ctx context.Context, req mcp.CallToolReques
 	// Handle status transition separately
 	if status := reqStr(req, "status"); status != "" {
 		if err := a.svc.Sprint.Transition(id, status); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errFromService(err)
 		}
 	}
 
@@ -116,26 +116,34 @@ func (a *Adapter) handleSprintUpdate(ctx context.Context, req mcp.CallToolReques
 
 	if hasUpdate {
 		if err := a.svc.Sprint.Update(id, update); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errFromService(err)
 		}
 	}
 
-	return mcp.NewToolResultText(fmt.Sprintf("Sprint %s updated", id)), nil
+	return okResult(map[string]any{
+		"id":      id,
+		"updated": true,
+		"message": fmt.Sprintf("Sprint %s updated", id),
+	})
 }
 
 func (a *Adapter) handleSprintDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	id := reqStr(req, "id")
 	if err := a.svc.Sprint.Delete(id); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("Sprint %s deleted", id)), nil
+	return okResult(map[string]any{
+		"id":      id,
+		"deleted": true,
+		"message": fmt.Sprintf("Sprint %s deleted", id),
+	})
 }
 
 func (a *Adapter) handleSprintList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	verbose := reqStrBool(req, "verbose")
 	sprints, err := a.svc.Sprint.List(reqStr(req, "status"), reqStr(req, "project_id"))
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	limit := defaultGenericListLimit
 	items := make([]any, 0, len(sprints))
@@ -155,14 +163,23 @@ func (a *Adapter) handleSprintApprove(ctx context.Context, req mcp.CallToolReque
 
 	if taskID != "" {
 		if err := a.svc.Sprint.ApproveTask(sprintID, taskID); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errFromService(err)
 		}
-		return mcp.NewToolResultText(fmt.Sprintf("Task %s approved in sprint %s", taskID, sprintID)), nil
+		return okResult(map[string]any{
+			"sprint_id": sprintID,
+			"task_id":   taskID,
+			"approved":  1,
+			"message":   fmt.Sprintf("Task %s approved in sprint %s", taskID, sprintID),
+		})
 	}
 
 	count, err := a.svc.Sprint.ApproveAll(sprintID)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("%d tasks approved in sprint %s", count, sprintID)), nil
+	return okResult(map[string]any{
+		"sprint_id": sprintID,
+		"approved":  count,
+		"message":   fmt.Sprintf("%d tasks approved in sprint %s", count, sprintID),
+	})
 }

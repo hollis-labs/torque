@@ -18,14 +18,14 @@ func (a *Adapter) registerSchedulerTools() {
 }
 
 func (a *Adapter) handleSchedulerStatus(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return jsonResult(map[string]string{
+	return okResult(map[string]string{
 		"status":  "not_started",
 		"message": "Scheduler not yet implemented — see Plan 2",
 	})
 }
 
 func (a *Adapter) handleSchedulerToggle(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return jsonResult(map[string]string{
+	return okResult(map[string]string{
 		"status":  "not_started",
 		"message": "Scheduler not yet implemented — see Plan 2",
 	})

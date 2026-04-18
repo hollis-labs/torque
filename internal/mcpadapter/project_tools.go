@@ -36,16 +36,16 @@ func (a *Adapter) handleProjectCreate(ctx context.Context, req mcp.CallToolReque
 
 	project, err := a.svc.Project.Create(input)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(project)
+	return okResult(project)
 }
 
 func (a *Adapter) handleProjectList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	verbose := reqStrBool(req, "verbose")
 	projects, err := a.svc.Project.List("")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	limit := defaultGenericListLimit
 	items := make([]any, 0, len(projects))
@@ -62,7 +62,11 @@ func (a *Adapter) handleProjectList(ctx context.Context, req mcp.CallToolRequest
 func (a *Adapter) handleProjectDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	id := reqStr(req, "id")
 	if err := a.svc.Project.Delete(id); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("Project %s deleted", id)), nil
+	return okResult(map[string]any{
+		"id":      id,
+		"deleted": true,
+		"message": fmt.Sprintf("Project %s deleted", id),
+	})
 }

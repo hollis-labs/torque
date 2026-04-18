@@ -62,32 +62,32 @@ func (a *Adapter) handlePlanCreate(ctx context.Context, req mcp.CallToolRequest)
 	}
 	if raw := reqStr(req, "phases"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &input.Phases); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid phases JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid phases JSON: %v", err), "phases")
 		}
 	}
 	if raw := reqStr(req, "tags"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &input.Tags); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid tags JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
 		}
 	}
 
 	task, err := a.svc.Plan.Create(input)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	detail, err := a.svc.Plan.Get(task.ID)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(detail)
+	return okResult(detail)
 }
 
 func (a *Adapter) handlePlanGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	detail, err := a.svc.Plan.Get(reqStr(req, "plan_id"))
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(detail)
+	return okResult(detail)
 }
 
 func (a *Adapter) handlePlanAddPhase(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -97,23 +97,29 @@ func (a *Adapter) handlePlanAddPhase(ctx context.Context, req mcp.CallToolReques
 		reqStr(req, "acceptance"),
 	)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(map[string]string{"phase_id": phaseID})
+	return okResult(map[string]string{"phase_id": phaseID})
 }
 
 func (a *Adapter) handlePlanRemovePhase(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if err := a.svc.Plan.RemovePhase(reqStr(req, "plan_id"), reqStr(req, "phase_id")); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+	planID := reqStr(req, "plan_id")
+	phaseID := reqStr(req, "phase_id")
+	if err := a.svc.Plan.RemovePhase(planID, phaseID); err != nil {
+		return errFromService(err)
 	}
-	return mcp.NewToolResultText("removed"), nil
+	return okResult(map[string]any{
+		"plan_id":  planID,
+		"phase_id": phaseID,
+		"removed":  true,
+	})
 }
 
 func (a *Adapter) handlePlanListChildren(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	verbose := reqStrBool(req, "verbose")
 	children, err := a.svc.Plan.ListChildren(reqStr(req, "plan_id"), reqStr(req, "phase_id"))
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	// Reuse the task envelope: plan children are just tasks.
 	return a.tasksToEnvelope(children, maxTaskListLimit, verbose)

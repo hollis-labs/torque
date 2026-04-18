@@ -23,16 +23,16 @@ func (a *Adapter) handleSettingsGet(ctx context.Context, req mcp.CallToolRequest
 	key := reqStr(req, "key")
 	val, err := a.svc.Settings.Get(key)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(map[string]string{"key": key, "value": val})
+	return okResult(map[string]string{"key": key, "value": val})
 }
 
 func (a *Adapter) handleSettingsSave(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	key := reqStr(req, "key")
 	value := reqStr(req, "value")
 	if err := a.svc.Settings.Set(key, value); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(map[string]string{"key": key, "value": value})
+	return okResult(map[string]string{"key": key, "value": value})
 }

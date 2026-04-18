@@ -3,12 +3,10 @@ package mcpadapter
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 )
 
@@ -134,55 +132,55 @@ func (a *Adapter) handleTemplateCreate(ctx context.Context, req mcp.CallToolRequ
 
 	if raw := reqStr(req, "tools"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Tools); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid tools JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tools JSON: %v", err), "tools")
 		}
 	}
 	if raw := reqStr(req, "permissions"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Permissions); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid permissions JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid permissions JSON: %v", err), "permissions")
 		}
 	}
 	if raw := reqStr(req, "environment"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Environment); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid environment JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid environment JSON: %v", err), "environment")
 		}
 	}
 	if raw := reqStr(req, "escalation_chain"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.EscalationChain); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid escalation_chain JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid escalation_chain JSON: %v", err), "escalation_chain")
 		}
 	}
 	if raw := reqStr(req, "quality_gates"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.QualityGates); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid quality_gates JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid quality_gates JSON: %v", err), "quality_gates")
 		}
 	}
 	if raw := reqStr(req, "deliverables"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Deliverables); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid deliverables JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid deliverables JSON: %v", err), "deliverables")
 		}
 	}
 	if raw := reqStr(req, "metadata_template"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.MetadataTemplate); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid metadata_template JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid metadata_template JSON: %v", err), "metadata_template")
 		}
 	}
 	if raw := reqStr(req, "required_vars"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.RequiredVars); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid required_vars JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid required_vars JSON: %v", err), "required_vars")
 		}
 	}
 	if raw := reqStr(req, "tags"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Tags); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid tags JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
 		}
 	}
 
 	tpl, err := a.svc.Template.Create(in)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(tpl)
+	return okResult(tpl)
 }
 
 func (a *Adapter) handleTemplateGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -190,12 +188,9 @@ func (a *Adapter) handleTemplateGet(ctx context.Context, req mcp.CallToolRequest
 	version := reqInt(req, "version")
 	tpl, err := a.svc.Template.Get(id, version)
 	if err != nil {
-		if errors.Is(err, sqlstore.ErrTemplateNotFound) {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(tpl)
+	return okResult(tpl)
 }
 
 func (a *Adapter) handleTemplateUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -234,69 +229,79 @@ func (a *Adapter) handleTemplateUpdate(ctx context.Context, req mcp.CallToolRequ
 	}
 	if raw := reqStr(req, "tools"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Tools); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid tools JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tools JSON: %v", err), "tools")
 		}
 	}
 	if raw := reqStr(req, "permissions"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Permissions); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid permissions JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid permissions JSON: %v", err), "permissions")
 		}
 	}
 	if raw := reqStr(req, "environment"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Environment); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid environment JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid environment JSON: %v", err), "environment")
 		}
 	}
 	if raw := reqStr(req, "escalation_chain"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.EscalationChain); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid escalation_chain JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid escalation_chain JSON: %v", err), "escalation_chain")
 		}
 	}
 	if raw := reqStr(req, "quality_gates"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.QualityGates); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid quality_gates JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid quality_gates JSON: %v", err), "quality_gates")
 		}
 	}
 	if raw := reqStr(req, "deliverables"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Deliverables); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid deliverables JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid deliverables JSON: %v", err), "deliverables")
 		}
 	}
 	if raw := reqStr(req, "metadata_template"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.MetadataTemplate); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid metadata_template JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid metadata_template JSON: %v", err), "metadata_template")
 		}
 	}
 	if raw := reqStr(req, "required_vars"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.RequiredVars); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid required_vars JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid required_vars JSON: %v", err), "required_vars")
 		}
 	}
 	if raw := reqStr(req, "tags"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Tags); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid tags JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
 		}
 	}
 
 	tpl, err := a.svc.Template.Update(id, in)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(tpl)
+	return okResult(tpl)
 }
 
 func (a *Adapter) handleTemplateArchive(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if err := a.svc.Template.Archive(reqStr(req, "id"), reqInt(req, "version")); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+	id := reqStr(req, "id")
+	version := reqInt(req, "version")
+	if err := a.svc.Template.Archive(id, version); err != nil {
+		return errFromService(err)
 	}
-	return mcp.NewToolResultText("archived"), nil
+	return okResult(map[string]any{
+		"id":       id,
+		"version":  version,
+		"archived": true,
+	})
 }
 
 func (a *Adapter) handleTemplateDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if err := a.svc.Template.Delete(reqStr(req, "id")); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+	id := reqStr(req, "id")
+	if err := a.svc.Template.Delete(id); err != nil {
+		return errFromService(err)
 	}
-	return mcp.NewToolResultText("deleted"), nil
+	return okResult(map[string]any{
+		"id":      id,
+		"deleted": true,
+	})
 }
 
 func (a *Adapter) handleTemplateList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -306,7 +311,7 @@ func (a *Adapter) handleTemplateList(ctx context.Context, req mcp.CallToolReques
 		Kind:            reqStr(req, "kind"),
 	})
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	limit := clampLimit(0, defaultTemplateListLimit, maxTemplateListLimit)
 	items := make([]any, 0, len(list))
@@ -335,23 +340,23 @@ func (a *Adapter) handleTaskCreateFromTemplate(ctx context.Context, req mcp.Call
 	}
 	if raw := reqStr(req, "vars"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Vars); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid vars JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid vars JSON: %v", err), "vars")
 		}
 	}
 	if raw := reqStr(req, "overrides"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Overrides); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid overrides JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid overrides JSON: %v", err), "overrides")
 		}
 	}
 	if raw := reqStr(req, "tags"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Tags); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid tags JSON: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
 		}
 	}
 
 	task, err := a.svc.Template.Instantiate(in)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	return a.taskResult(task)
 }

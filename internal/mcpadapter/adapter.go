@@ -2,7 +2,6 @@ package mcpadapter
 
 import (
 	"context"
-	"encoding/json"
 	"strconv"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
@@ -64,7 +63,7 @@ func (a *Adapter) registerOptInTools() {
 
 func (a *Adapter) handleHealth(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	features := a.svc.Feature.ListEnabled()
-	return jsonResult(map[string]interface{}{
+	return okResult(map[string]interface{}{
 		"status":           "running",
 		"message":          "Clockwork Manifold is running",
 		"enabled_features": features,
@@ -162,12 +161,4 @@ func reqBool(req mcp.CallToolRequest, key string) bool {
 		}
 	}
 	return false
-}
-
-func jsonResult(v interface{}) (*mcp.CallToolResult, error) {
-	b, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-	return mcp.NewToolResultText(string(b)), nil
 }

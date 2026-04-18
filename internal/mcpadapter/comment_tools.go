@@ -22,21 +22,25 @@ func (a *Adapter) registerCommentTools() {
 }
 
 func (a *Adapter) handleCommentAdd(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if _, err := a.svc.Comment.Add(
-		reqStr(req, "task_id"),
+	taskID := reqStr(req, "task_id")
+	comment, err := a.svc.Comment.Add(
+		taskID,
 		reqStr(req, "author"),
 		reqStr(req, "content"),
-	); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+	)
+	if err != nil {
+		return errFromService(err)
 	}
-	return mcp.NewToolResultText("comment added"), nil
+	// comment is typed as *sqlstore.CommentRecord — return the bare record so
+	// callers can see the assigned ID / timestamp without a second round-trip.
+	return okResult(comment)
 }
 
 func (a *Adapter) handleCommentList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	verbose := reqStrBool(req, "verbose")
 	comments, err := a.svc.Comment.List(reqStr(req, "task_id"))
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	limit := defaultGenericListLimit
 	items := make([]any, 0, len(comments))

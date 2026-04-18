@@ -34,7 +34,7 @@ func (a *Adapter) handleSubtodoList(ctx context.Context, req mcp.CallToolRequest
 	verbose := reqStrBool(req, "verbose")
 	items, err := a.svc.Task.ListSubtodos(reqStr(req, "task_id"))
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	if items == nil {
 		items = []sqlstore.Subtodo{}
@@ -61,15 +61,15 @@ func (a *Adapter) handleSubtodoAdd(ctx context.Context, req mcp.CallToolRequest)
 		Required: reqBool(req, "required"),
 	})
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(items)
+	return okResult(items)
 }
 
 func (a *Adapter) handleSubtodoDone(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	items, err := a.svc.Task.MarkSubtodoDone(reqStr(req, "task_id"), reqStr(req, "id"), reqStr(req, "evidence"))
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(items)
+	return okResult(items)
 }

@@ -315,33 +315,46 @@ func clampLimit(limit, def, max int) int {
 	return limit
 }
 
-// cappedJSONResult serializes items into the `{items, meta}` response envelope,
-// enforcing maxMCPResponseBytes. items MUST be a slice (reflected via len() on
-// a known concrete slice type at the call site). limit is the applied limit
-// (reported back in meta.limit). If the marshaled payload exceeds
-// maxMCPResponseBytes, cappedJSONResult drops tail entries one at a time until
-// the envelope fits, sets meta.truncated=true, and adds a hint. Callers pass
-// the already-sliced/limited slice; the function does NOT re-apply limit.
+// listEnvelope is the inner {items, meta} payload that rides inside the
+// Phase C Response.Data field. Pulled into a named type so the size-fit
+// search below can marshal the full `{ok, data, error}` envelope (matching
+// wire output) instead of the pre-Phase-C bare `{items, meta}`.
+type listEnvelope struct {
+	Items []any    `json:"items"`
+	Meta  listMeta `json:"meta"`
+}
+
+// cappedJSONResult serializes items into the `{ok: true, data: {items, meta}}`
+// response envelope, enforcing maxMCPResponseBytes. items MUST be a slice
+// (reflected via len() on a known concrete slice type at the call site).
+// limit is the applied limit (reported back in meta.limit). If the marshaled
+// payload exceeds maxMCPResponseBytes, cappedJSONResult drops tail entries
+// one at a time until the envelope fits, sets meta.truncated=true, and adds a
+// hint. Callers pass the already-sliced/limited slice; the function does NOT
+// re-apply limit.
 //
-// Phase C (CW-20260418-0013) will wrap the returned JSON in
-// `{ok: true, data: {items, meta}}`. Per the ticket's "critical shape
-// coordination" section, this function MUST emit a flat `{items, meta}` at the
-// top level — NO extra nesting — so Phase C can set `data` directly without
-// a double-wrap.
+// Per the Phase C ticket's "critical shape coordination" section, the wire
+// shape is strictly FLAT: top-level `{ok, data, error}` with `data` holding
+// the `{items, meta}` literal — no further nesting. The size budget accounts
+// for the JSON overhead of the outer envelope so a list that nominally fits
+// under the cap doesn't blow it once wrapped.
 func cappedJSONResult(items []any, limit int) (*mcp.CallToolResult, error) {
+	// Marshal via the envelope helper so the size we're budgeting against is
+	// the actual wire payload the caller will see.
+	marshalEnv := func(payload listEnvelope) ([]byte, error) {
+		return json.MarshalIndent(Response{OK: true, Data: payload}, "", "  ")
+	}
+
 	meta := listMeta{
 		Truncated: false,
 		Returned:  len(items),
 		Limit:     limit,
 	}
-	payload := struct {
-		Items []any    `json:"items"`
-		Meta  listMeta `json:"meta"`
-	}{Items: items, Meta: meta}
+	payload := listEnvelope{Items: items, Meta: meta}
 
-	b, err := json.MarshalIndent(payload, "", "  ")
+	b, err := marshalEnv(payload)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errResult(ErrCodeInternal, "response serialization failed", "")
 	}
 
 	// Fast path: fits in cap.
@@ -361,13 +374,10 @@ func cappedJSONResult(items []any, limit int) (*mcp.CallToolResult, error) {
 		meta.Truncated = true
 		meta.Returned = len(trimmed)
 		meta.Hint = "response too large; add filters or lower limit"
-		payload = struct {
-			Items []any    `json:"items"`
-			Meta  listMeta `json:"meta"`
-		}{Items: trimmed, Meta: meta}
-		b, err = json.MarshalIndent(payload, "", "  ")
+		payload = listEnvelope{Items: trimmed, Meta: meta}
+		b, err = marshalEnv(payload)
 		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errResult(ErrCodeInternal, "response serialization failed", "")
 		}
 	}
 
@@ -378,10 +388,7 @@ func cappedJSONResult(items []any, limit int) (*mcp.CallToolResult, error) {
 	for lo < hi {
 		mid := (lo + hi + 1) / 2
 		trial := items[:mid]
-		payloadTry := struct {
-			Items []any    `json:"items"`
-			Meta  listMeta `json:"meta"`
-		}{Items: trial, Meta: listMeta{
+		payloadTry := listEnvelope{Items: trial, Meta: listMeta{
 			Truncated: mid < len(items),
 			Returned:  mid,
 			Limit:     limit,
@@ -392,9 +399,9 @@ func cappedJSONResult(items []any, limit int) (*mcp.CallToolResult, error) {
 				return ""
 			}(),
 		}}
-		b2, err2 := json.MarshalIndent(payloadTry, "", "  ")
+		b2, err2 := marshalEnv(payloadTry)
 		if err2 != nil {
-			return mcp.NewToolResultError(err2.Error()), nil
+			return errResult(ErrCodeInternal, "response serialization failed", "")
 		}
 		if len(b2) <= maxMCPResponseBytes {
 			lo = mid
@@ -412,13 +419,10 @@ func cappedJSONResult(items []any, limit int) (*mcp.CallToolResult, error) {
 	if meta.Truncated {
 		meta.Hint = "response too large; add filters or lower limit"
 	}
-	payload = struct {
-		Items []any    `json:"items"`
-		Meta  listMeta `json:"meta"`
-	}{Items: trimmed, Meta: meta}
-	b, err = json.MarshalIndent(payload, "", "  ")
+	payload = listEnvelope{Items: trimmed, Meta: meta}
+	b, err = marshalEnv(payload)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errResult(ErrCodeInternal, "response serialization failed", "")
 	}
 	return mcp.NewToolResultText(string(b)), nil
 }

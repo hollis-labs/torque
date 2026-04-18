@@ -2,13 +2,11 @@ package mcpadapter
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 )
 
@@ -67,15 +65,15 @@ func (a *Adapter) handleCheckpointEmit(ctx context.Context, req mcp.CallToolRequ
 	if raw := reqStr(req, "timeout_at"); raw != "" {
 		t, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid timeout_at: %v", err)), nil
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid timeout_at: %v", err), "timeout_at")
 		}
 		in.TimeoutAt = &t
 	}
 	out, err := a.svc.Checkpoint.Emit(in)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(out)
+	return okResult(out)
 }
 
 func (a *Adapter) handleCheckpointRespond(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -86,7 +84,7 @@ func (a *Adapter) handleCheckpointRespond(ctx context.Context, req mcp.CallToolR
 		ResponderSourceRef:  reqStr(req, "responder_source_ref"),
 	})
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	return a.checkpointResultByCorr(reqStr(req, "correlation_id"))
 }
@@ -99,7 +97,7 @@ func (a *Adapter) handleCheckpointCancel(ctx context.Context, req mcp.CallToolRe
 		CancelerSourceRef:  reqStr(req, "canceler_source_ref"),
 	})
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	return a.checkpointResultByCorr(reqStr(req, "correlation_id"))
 }
@@ -108,7 +106,7 @@ func (a *Adapter) handleCheckpointList(ctx context.Context, req mcp.CallToolRequ
 	verbose := reqStrBool(req, "verbose")
 	list, err := a.svc.Checkpoint.ListForTask(reqStr(req, "task_id"))
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	limit := defaultGenericListLimit
 	items := make([]any, 0, len(list))
@@ -130,7 +128,7 @@ func (a *Adapter) handleCheckpointPending(ctx context.Context, req mcp.CallToolR
 	verbose := reqStrBool(req, "verbose")
 	pending, err := a.svc.Checkpoint.ListPending()
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	limit := defaultGenericListLimit
 	items := make([]any, 0, len(pending))
@@ -150,10 +148,7 @@ func (a *Adapter) handleCheckpointPending(ctx context.Context, req mcp.CallToolR
 func (a *Adapter) checkpointResultByCorr(correlationID string) (*mcp.CallToolResult, error) {
 	cp, err := a.svc.Checkpoint.Get(correlationID)
 	if err != nil {
-		if errors.Is(err, sqlstore.ErrCheckpointNotFound) {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(cp)
+	return okResult(cp)
 }

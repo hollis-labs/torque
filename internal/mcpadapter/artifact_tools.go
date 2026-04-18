@@ -43,16 +43,16 @@ func (a *Adapter) handleArtifactCreate(ctx context.Context, req mcp.CallToolRequ
 		FilePath: reqStr(req, "file_path"),
 	}
 	if err := a.svc.Artifact.Create(rec); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(rec)
+	return okResult(rec)
 }
 
 func (a *Adapter) handleArtifactList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	verbose := reqStrBool(req, "verbose")
 	artifacts, err := a.svc.Artifact.List(reqStr(req, "task_id"))
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
 	limit := defaultGenericListLimit
 	items := make([]any, 0, len(artifacts))
@@ -70,15 +70,15 @@ func (a *Adapter) handleArtifactGet(ctx context.Context, req mcp.CallToolRequest
 	id := int64(reqInt(req, "artifact_id"))
 	art, err := a.svc.Artifact.Get(id)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(art)
+	return okResult(art)
 }
 
 func (a *Adapter) handleArtifactDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	id := int64(reqInt(req, "artifact_id"))
 	if err := a.svc.Artifact.Delete(id); err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errFromService(err)
 	}
-	return jsonResult(map[string]interface{}{"id": id, "deleted": true})
+	return okResult(map[string]interface{}{"id": id, "deleted": true})
 }
