@@ -179,10 +179,16 @@ func TestFullStack_TaskList_FilterByKind(t *testing.T) {
 	})
 	require.False(t, isErr, "list should not error: %s", text)
 
-	var tasks []map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &tasks))
-	require.Len(t, tasks, 1)
-	require.Equal(t, "external", tasks[0]["Kind"])
+	var envelope struct {
+		Items []map[string]interface{} `json:"items"`
+		Meta  map[string]interface{}   `json:"meta"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(text), &envelope))
+	require.Len(t, envelope.Items, 1)
+	// Brief shape uses lowercase "kind".
+	require.Equal(t, "external", envelope.Items[0]["kind"])
+	require.Equal(t, false, envelope.Meta["truncated"])
+	require.Equal(t, float64(1), envelope.Meta["returned"])
 }
 
 func TestFullStack_TaskUpdate_Facets(t *testing.T) {
@@ -386,9 +392,13 @@ func TestFullStack_SearchTasks(t *testing.T) {
 	})
 	require.False(t, isErr, "search should not error: %s", text)
 
-	var results []interface{}
-	require.NoError(t, json.Unmarshal([]byte(text), &results))
-	require.Len(t, results, 1, "search for 'login' should return exactly 1 result")
+	var envelope struct {
+		Items []map[string]interface{} `json:"items"`
+		Meta  map[string]interface{}   `json:"meta"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(text), &envelope))
+	require.Len(t, envelope.Items, 1, "search for 'login' should return exactly 1 result")
+	require.Equal(t, false, envelope.Meta["truncated"])
 }
 
 // TestFullStack_TaskCreate_ForcesManualTrue_ExplicitFalse verifies the

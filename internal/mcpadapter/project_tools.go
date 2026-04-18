@@ -18,6 +18,7 @@ func (a *Adapter) registerProjectTools() {
 
 	a.server.AddTool(mcp.NewTool("clockwork_project_list",
 		mcp.WithDescription("List all projects"),
+		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleProjectList)
 
 	a.server.AddTool(mcp.NewTool("clockwork_project_delete",
@@ -41,14 +42,21 @@ func (a *Adapter) handleProjectCreate(ctx context.Context, req mcp.CallToolReque
 }
 
 func (a *Adapter) handleProjectList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	verbose := reqStrBool(req, "verbose")
 	projects, err := a.svc.Project.List("")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return jsonResult(map[string]interface{}{
-		"projects": projects,
-		"count":    len(projects),
-	})
+	limit := defaultGenericListLimit
+	items := make([]any, 0, len(projects))
+	for _, p := range projects {
+		if verbose {
+			items = append(items, p)
+		} else {
+			items = append(items, toBriefProject(p))
+		}
+	}
+	return cappedJSONResult(items, limit)
 }
 
 func (a *Adapter) handleProjectDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

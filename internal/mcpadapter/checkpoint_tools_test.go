@@ -65,15 +65,19 @@ func TestMCP_Checkpoint_EmitRespondGetList(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(getText), &got))
 	assert.Equal(t, "responded", got["Status"])
 
-	// List for task
+	// List for task — new {items, meta} envelope with brief default shape
 	listText, isErr := callTool(t, a, "clockwork_task_checkpoint_list", map[string]interface{}{
 		"task_id": taskID,
 	})
 	require.False(t, isErr)
-	var list []map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(listText), &list))
-	require.Len(t, list, 1)
-	assert.Equal(t, corr, list[0]["CorrelationID"])
+	var listEnv struct {
+		Items []map[string]interface{} `json:"items"`
+		Meta  map[string]interface{}   `json:"meta"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(listText), &listEnv))
+	require.Len(t, listEnv.Items, 1)
+	// Brief shape uses snake_case correlation_id.
+	assert.Equal(t, corr, listEnv.Items[0]["correlation_id"])
 }
 
 func TestMCP_Checkpoint_Cancel(t *testing.T) {
@@ -142,10 +146,14 @@ func TestMCP_Checkpoint_Pending(t *testing.T) {
 
 	pendingText, isErr := callTool(t, a, "clockwork_task_checkpoints_pending", map[string]interface{}{})
 	require.False(t, isErr)
-	var pending []map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(pendingText), &pending))
-	require.Len(t, pending, 1)
-	assert.Equal(t, "pending", pending[0]["Status"])
+	var pendingEnv struct {
+		Items []map[string]interface{} `json:"items"`
+		Meta  map[string]interface{}   `json:"meta"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(pendingText), &pendingEnv))
+	require.Len(t, pendingEnv.Items, 1)
+	// Brief shape uses lowercase "status".
+	assert.Equal(t, "pending", pendingEnv.Items[0]["status"])
 }
 
 func TestMCP_Checkpoint_EmitTimeoutAtSet(t *testing.T) {

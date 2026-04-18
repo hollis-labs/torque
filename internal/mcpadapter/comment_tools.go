@@ -17,6 +17,7 @@ func (a *Adapter) registerCommentTools() {
 	a.server.AddTool(mcp.NewTool("clockwork_comment_list",
 		mcp.WithDescription("List all comments for a task"),
 		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),
+		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleCommentList)
 }
 
@@ -32,9 +33,19 @@ func (a *Adapter) handleCommentAdd(ctx context.Context, req mcp.CallToolRequest)
 }
 
 func (a *Adapter) handleCommentList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	verbose := reqStrBool(req, "verbose")
 	comments, err := a.svc.Comment.List(reqStr(req, "task_id"))
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return jsonResult(comments)
+	limit := defaultGenericListLimit
+	items := make([]any, 0, len(comments))
+	for _, c := range comments {
+		if verbose {
+			items = append(items, c)
+		} else {
+			items = append(items, toBriefComment(c))
+		}
+	}
+	return cappedJSONResult(items, limit)
 }

@@ -11,6 +11,7 @@ func (a *Adapter) registerSubtodoTools() {
 	a.server.AddTool(mcp.NewTool("clockwork_task_subtodo_list",
 		mcp.WithDescription("List the structural checklist (subtodos) on a task"),
 		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),
+		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleSubtodoList)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_subtodo_add",
@@ -30,6 +31,7 @@ func (a *Adapter) registerSubtodoTools() {
 }
 
 func (a *Adapter) handleSubtodoList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	verbose := reqStrBool(req, "verbose")
 	items, err := a.svc.Task.ListSubtodos(reqStr(req, "task_id"))
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -37,7 +39,19 @@ func (a *Adapter) handleSubtodoList(ctx context.Context, req mcp.CallToolRequest
 	if items == nil {
 		items = []sqlstore.Subtodo{}
 	}
-	return jsonResult(items)
+	// Subtodos are cheap and always bounded by the parent task's checklist;
+	// a generous default limit keeps the envelope consistent without forcing
+	// callers to paginate a typical 5-20 item list.
+	limit := defaultGenericListLimit
+	out := make([]any, 0, len(items))
+	for _, it := range items {
+		if verbose {
+			out = append(out, it)
+		} else {
+			out = append(out, toBriefSubtodo(it))
+		}
+	}
+	return cappedJSONResult(out, limit)
 }
 
 func (a *Adapter) handleSubtodoAdd(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

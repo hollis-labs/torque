@@ -42,6 +42,7 @@ func (a *Adapter) registerCheckpointTools() {
 	a.server.AddTool(mcp.NewTool("clockwork_task_checkpoint_list",
 		mcp.WithDescription("List checkpoints emitted against a task, newest first"),
 		mcp.WithString("task_id", mcp.Required()),
+		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleCheckpointList)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_checkpoint_get",
@@ -51,6 +52,7 @@ func (a *Adapter) registerCheckpointTools() {
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_checkpoints_pending",
 		mcp.WithDescription("List every pending checkpoint across all tasks (oldest first)"),
+		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleCheckpointPending)
 }
 
@@ -103,11 +105,21 @@ func (a *Adapter) handleCheckpointCancel(ctx context.Context, req mcp.CallToolRe
 }
 
 func (a *Adapter) handleCheckpointList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	verbose := reqStrBool(req, "verbose")
 	list, err := a.svc.Checkpoint.ListForTask(reqStr(req, "task_id"))
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return jsonResult(list)
+	limit := defaultGenericListLimit
+	items := make([]any, 0, len(list))
+	for _, c := range list {
+		if verbose {
+			items = append(items, c)
+		} else {
+			items = append(items, toBriefCheckpoint(c))
+		}
+	}
+	return cappedJSONResult(items, limit)
 }
 
 func (a *Adapter) handleCheckpointGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -115,11 +127,21 @@ func (a *Adapter) handleCheckpointGet(ctx context.Context, req mcp.CallToolReque
 }
 
 func (a *Adapter) handleCheckpointPending(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	verbose := reqStrBool(req, "verbose")
 	pending, err := a.svc.Checkpoint.ListPending()
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return jsonResult(pending)
+	limit := defaultGenericListLimit
+	items := make([]any, 0, len(pending))
+	for _, c := range pending {
+		if verbose {
+			items = append(items, c)
+		} else {
+			items = append(items, toBriefCheckpoint(c))
+		}
+	}
+	return cappedJSONResult(items, limit)
 }
 
 // checkpointResultByCorr loads the current row for correlationID and returns

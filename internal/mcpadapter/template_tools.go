@@ -90,6 +90,7 @@ func (a *Adapter) registerTemplateTools() {
 		mcp.WithDescription("List templates"),
 		mcp.WithBoolean("include_archived", mcp.Description("Surface retired rows (default false)")),
 		mcp.WithString("kind", mcp.Description("Filter by kind")),
+		mcp.WithString("verbose", mcp.Description("Return full records (including description body) instead of brief (string 'true'/'false', default false)")),
 	), a.handleTemplateList)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_create_from_template",
@@ -299,6 +300,7 @@ func (a *Adapter) handleTemplateDelete(ctx context.Context, req mcp.CallToolRequ
 }
 
 func (a *Adapter) handleTemplateList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	verbose := reqStrBool(req, "verbose")
 	list, err := a.svc.Template.List(service.TemplateListOpts{
 		IncludeArchived: reqBool(req, "include_archived"),
 		Kind:            reqStr(req, "kind"),
@@ -306,7 +308,19 @@ func (a *Adapter) handleTemplateList(ctx context.Context, req mcp.CallToolReques
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return jsonResult(list)
+	limit := clampLimit(0, defaultTemplateListLimit, maxTemplateListLimit)
+	items := make([]any, 0, len(list))
+	for _, tpl := range list {
+		if verbose {
+			// Verbose includes full record with description body; template
+			// description can hold prose + {{var}} placeholders, which is
+			// the point — callers asking for verbose want it.
+			items = append(items, tpl)
+		} else {
+			items = append(items, toBriefTemplate(tpl))
+		}
+	}
+	return cappedJSONResult(items, limit)
 }
 
 func (a *Adapter) handleTaskCreateFromTemplate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

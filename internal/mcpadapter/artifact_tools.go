@@ -20,6 +20,7 @@ func (a *Adapter) registerArtifactTools() {
 	a.server.AddTool(mcp.NewTool("clockwork_artifact_list",
 		mcp.WithDescription("List all artifacts for a task"),
 		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),
+		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleArtifactList)
 
 	a.server.AddTool(mcp.NewTool("clockwork_artifact_get",
@@ -48,11 +49,21 @@ func (a *Adapter) handleArtifactCreate(ctx context.Context, req mcp.CallToolRequ
 }
 
 func (a *Adapter) handleArtifactList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	verbose := reqStrBool(req, "verbose")
 	artifacts, err := a.svc.Artifact.List(reqStr(req, "task_id"))
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return jsonResult(artifacts)
+	limit := defaultGenericListLimit
+	items := make([]any, 0, len(artifacts))
+	for _, a := range artifacts {
+		if verbose {
+			items = append(items, a)
+		} else {
+			items = append(items, toBriefArtifact(a))
+		}
+	}
+	return cappedJSONResult(items, limit)
 }
 
 func (a *Adapter) handleArtifactGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
