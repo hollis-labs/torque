@@ -62,7 +62,7 @@ func TestSchedulerPicksAndExecutesTasks(t *testing.T) {
 
 	store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-0001", Title: "Test task", Status: "todo", Priority: 1,
-		Executor: "mock", OnDone: "close",
+		Executor: "mock", AgentProfile: "mock", OnDone: "close",
 	})
 
 	mock.SetResult(&executor.ExecutionResult{
@@ -95,7 +95,7 @@ func TestSchedulerSkipsManualTasks(t *testing.T) {
 
 	store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-0001", Title: "Manual task", Status: "todo", Priority: 1,
-		Executor: "mock", Manual: true,
+		Executor: "mock", AgentProfile: "mock", Manual: true,
 	})
 
 	sched.Tick(context.Background())
@@ -112,7 +112,7 @@ func TestSchedulerHandlesFailure(t *testing.T) {
 
 	store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-0001", Title: "Failing task", Status: "todo", Priority: 1,
-		Executor: "mock", OnFail: "retry", MaxRetries: 3,
+		Executor: "mock", AgentProfile: "mock", OnFail: "retry", MaxRetries: 3,
 	})
 
 	mock.SetResult(&executor.ExecutionResult{
@@ -154,7 +154,7 @@ func TestSchedulerRespectsDisabled(t *testing.T) {
 
 	store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-0001", Title: "Task", Status: "todo", Priority: 1,
-		Executor: "mock",
+		Executor: "mock", AgentProfile: "mock",
 	})
 
 	sched.SetEnabled(false)
@@ -173,7 +173,7 @@ func TestSchedulerEventBus(t *testing.T) {
 
 	store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-0001", Title: "Task", Status: "todo", Priority: 1,
-		Executor: "mock", OnDone: "close",
+		Executor: "mock", AgentProfile: "mock", OnDone: "close",
 	})
 
 	mock.SetResult(&executor.ExecutionResult{Status: "done"})

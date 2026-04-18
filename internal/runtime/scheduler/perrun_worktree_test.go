@@ -108,7 +108,7 @@ func TestDispatchUsesPerRunWorktreeWhenEnabled(t *testing.T) {
 
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-WT-0001", Title: "wt task", Status: "todo", Priority: 1,
-		Executor: "mock", OnDone: "close", WorkingDir: repo,
+		Executor: "mock", AgentProfile: "mock", OnDone: "close", WorkingDir: repo,
 	}))
 
 	mock.SetResult(&executor.ExecutionResult{Status: "done"})
@@ -166,7 +166,7 @@ func TestDispatchPreservesWorktreeWhenAgentLeavesWork(t *testing.T) {
 
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-WT-0002", Title: "wt task w/ work", Status: "todo", Priority: 1,
-		Executor: "mock", OnDone: "close", WorkingDir: repo,
+		Executor: "mock", AgentProfile: "mock", OnDone: "close", WorkingDir: repo,
 	}))
 
 	require.NoError(t, sched.Tick(context.Background()))
@@ -191,7 +191,7 @@ func TestPerRunWorktreeDisabledByDefault(t *testing.T) {
 
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-WT-0003", Title: "no wt", Status: "todo", Priority: 1,
-		Executor: "mock", OnDone: "close", WorkingDir: repo,
+		Executor: "mock", AgentProfile: "mock", OnDone: "close", WorkingDir: repo,
 	}))
 
 	mock.SetResult(&executor.ExecutionResult{Status: "done"})
@@ -218,7 +218,7 @@ func TestConcurrentRunsGetSeparateWorktrees(t *testing.T) {
 	for i := 1; i <= 2; i++ {
 		require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 			ID: fmt.Sprintf("CW-CONCUR-%04d", i), Title: "concur", Status: "todo",
-			Priority: 1, Executor: "mock", OnDone: "close", WorkingDir: repo,
+			Priority: 1, Executor: "mock", AgentProfile: "mock", OnDone: "close", WorkingDir: repo,
 		}))
 	}
 

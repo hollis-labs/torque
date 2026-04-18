@@ -27,9 +27,9 @@ func TestPickerEligibleTasks(t *testing.T) {
 	store := setupPickerStore(t)
 	picker := scheduler.NewPicker(store)
 
-	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0001", Title: "Task A", Status: "todo", Priority: 2, Executor: "cli"})
-	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0002", Title: "Task B", Status: "todo", Priority: 1, Executor: "cli"})
-	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0003", Title: "Task C", Status: "doing", Priority: 1, Executor: "cli"})
+	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0001", Title: "Task A", Status: "todo", Priority: 2, Executor: "cli", AgentProfile: "cli-profile",})
+	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0002", Title: "Task B", Status: "todo", Priority: 1, Executor: "cli", AgentProfile: "cli-profile",})
+	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0003", Title: "Task C", Status: "doing", Priority: 1, Executor: "cli", AgentProfile: "cli-profile",})
 
 	tasks, err := picker.Pick(3)
 	require.NoError(t, err)
@@ -42,8 +42,8 @@ func TestPickerSkipsManualTasks(t *testing.T) {
 	store := setupPickerStore(t)
 	picker := scheduler.NewPicker(store)
 
-	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0001", Title: "Auto", Status: "todo", Priority: 2, Executor: "cli"})
-	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0002", Title: "Manual", Status: "todo", Priority: 1, Manual: true, Executor: "cli"})
+	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0001", Title: "Auto", Status: "todo", Priority: 2, Executor: "cli", AgentProfile: "cli-profile",})
+	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0002", Title: "Manual", Status: "todo", Priority: 1, Manual: true, Executor: "cli", AgentProfile: "cli-profile",})
 
 	tasks, err := picker.Pick(10)
 	require.NoError(t, err)
@@ -55,9 +55,9 @@ func TestPickerRespectsLimit(t *testing.T) {
 	store := setupPickerStore(t)
 	picker := scheduler.NewPicker(store)
 
-	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0001", Title: "A", Status: "todo", Priority: 1, Executor: "cli"})
-	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0002", Title: "B", Status: "todo", Priority: 1, Executor: "cli"})
-	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0003", Title: "C", Status: "todo", Priority: 1, Executor: "cli"})
+	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0001", Title: "A", Status: "todo", Priority: 1, Executor: "cli", AgentProfile: "cli-profile",})
+	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0002", Title: "B", Status: "todo", Priority: 1, Executor: "cli", AgentProfile: "cli-profile",})
+	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0003", Title: "C", Status: "todo", Priority: 1, Executor: "cli", AgentProfile: "cli-profile",})
 
 	tasks, err := picker.Pick(2)
 	require.NoError(t, err)
@@ -68,8 +68,8 @@ func TestPickerSkipsBlockedDependencies(t *testing.T) {
 	store := setupPickerStore(t)
 	picker := scheduler.NewPicker(store)
 
-	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0001", Title: "Prerequisite", Status: "todo", Priority: 1, Executor: "cli"})
-	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0002", Title: "Dependent", Status: "todo", Priority: 1, Executor: "cli",
+	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0001", Title: "Prerequisite", Status: "todo", Priority: 1, Executor: "cli", AgentProfile: "cli-profile",})
+	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0002", Title: "Dependent", Status: "todo", Priority: 1, Executor: "cli", AgentProfile: "cli-profile",
 		DependsOn: sql.NullString{String: `["CW-0001"]`, Valid: true}})
 
 	tasks, err := picker.Pick(10)
@@ -82,8 +82,8 @@ func TestPickerAllowsDependencyMet(t *testing.T) {
 	store := setupPickerStore(t)
 	picker := scheduler.NewPicker(store)
 
-	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0001", Title: "Prerequisite", Status: "done", Priority: 1, Executor: "cli"})
-	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0002", Title: "Dependent", Status: "todo", Priority: 1, Executor: "cli",
+	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0001", Title: "Prerequisite", Status: "done", Priority: 1, Executor: "cli", AgentProfile: "cli-profile",})
+	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0002", Title: "Dependent", Status: "todo", Priority: 1, Executor: "cli", AgentProfile: "cli-profile",
 		DependsOn: sql.NullString{String: `["CW-0001"]`, Valid: true}})
 
 	tasks, err := picker.Pick(10)
