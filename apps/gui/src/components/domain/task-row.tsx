@@ -78,7 +78,7 @@ export function TaskRow({ task, selected, onSelect, onTaskChange, onTaskDelete }
         </td>
       )}
       {/* Title + executor/id/tags subtitle */}
-      <td className="px-3 py-1.5 text-left align-top">
+      <td className="w-full max-w-0 px-3 py-1.5 text-left align-top">
         <div className="min-w-0">
           <Link
             to={`/tasks/${task.id}`}

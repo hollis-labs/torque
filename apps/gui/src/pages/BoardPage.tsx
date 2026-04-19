@@ -69,6 +69,7 @@ export default function BoardPage() {
   const { lastEvent } = useSSE(SSE_EVENTS)
   const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   // Filter state derived from URL (URL is source of truth for round-tripping)
   const activeStatuses = useMemo(
@@ -478,7 +479,7 @@ export default function BoardPage() {
           handleGroupChange('epic_id', e.id)
         }}
       />
-      <div className="flex-1 overflow-auto">
+      <div ref={scrollContainerRef} className="flex-1 overflow-auto">
         {loading ? (
           <TableSkeleton />
         ) : error ? (
@@ -497,6 +498,7 @@ export default function BoardPage() {
             onTaskDelete={(id) => setTasks((prev) => prev.filter((t) => t.id !== id))}
             emptyVariant={emptyVariant}
             onVisibleOrderChange={handleVisibleOrderChange}
+            scrollRootRef={scrollContainerRef}
           />
         )}
       </div>

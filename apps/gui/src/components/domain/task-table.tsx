@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { TaskRow } from './task-row'
 import { EmptyState } from './empty-state'
 import type { Task, TaskStatus } from '@/lib/types'
 
 type SortKey = 'status' | 'priority' | 'title' | 'updated_at'
 type SortDir = 'asc' | 'desc'
+
+const PAGE_SIZE = 50
 
 interface TaskTableProps {
   tasks: Task[]
@@ -15,6 +17,8 @@ interface TaskTableProps {
   emptyVariant?: 'no-tasks' | 'no-results'
   /** Fires with the current render order (post-sort) whenever it changes. */
   onVisibleOrderChange?: (orderedIds: string[]) => void
+  /** Scroll container used as the IntersectionObserver root for infinite scroll. */
+  scrollRootRef?: RefObject<HTMLElement | null>
 }
 
 function sortTasks(tasks: Task[], key: SortKey, dir: SortDir): Task[] {
@@ -41,10 +45,13 @@ export function TaskTable({
   onTaskDelete,
   emptyVariant = 'no-tasks',
   onVisibleOrderChange,
+  scrollRootRef,
 }: TaskTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>('updated_at')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
+  const sentinelRef = useRef<HTMLTableRowElement | null>(null)
 
   function handleSortClick(key: SortKey) {
     if (sortKey === key) {
@@ -66,7 +73,7 @@ export function TaskTable({
 
   function handleSelectAll(e: React.ChangeEvent<HTMLInputElement>) {
     if (e.target.checked) {
-      setSelected(new Set(sorted.map((t) => t.id)))
+      setSelected(new Set(visible.map((t) => t.id)))
     } else {
       setSelected(new Set())
     }
@@ -74,19 +81,47 @@ export function TaskTable({
 
   const sorted = useMemo(() => sortTasks(tasks, sortKey, sortDir), [tasks, sortKey, sortDir])
 
+  // Reset the window to the first page whenever the underlying list or sort
+  // changes, so filter/sort changes always show the top of the new list.
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE)
+  }, [tasks, sortKey, sortDir])
+
+  const visible = useMemo(() => sorted.slice(0, visibleCount), [sorted, visibleCount])
+  const hasMore = visibleCount < sorted.length
+
   // Publish the currently-rendered order so callers (e.g. BoardPage) can
   // persist a cursor that matches what the user is actually seeing, not
   // just the raw fetch order.
   useEffect(() => {
     if (!onVisibleOrderChange) return
-    onVisibleOrderChange(sorted.map((t) => t.id))
-  }, [sorted, onVisibleOrderChange])
+    onVisibleOrderChange(visible.map((t) => t.id))
+  }, [visible, onVisibleOrderChange])
+
+  // Infinite scroll: watch a sentinel at the end of the rendered rows and
+  // bump the window by PAGE_SIZE when it intersects the scroll root.
+  useEffect(() => {
+    if (!hasMore) return
+    const el = sentinelRef.current
+    if (!el) return
+    const root = scrollRootRef?.current ?? null
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setVisibleCount((c) => Math.min(c + PAGE_SIZE, sorted.length))
+        }
+      },
+      { root, rootMargin: '200px 0px' }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [hasMore, sorted.length, scrollRootRef])
 
   if (tasks.length === 0) {
     return <EmptyState variant={emptyVariant} />
   }
 
-  const allSelected = sorted.length > 0 && sorted.every((t) => selected.has(t.id))
+  const allSelected = visible.length > 0 && visible.every((t) => selected.has(t.id))
 
   return (
     <div className="overflow-x-auto">
@@ -140,7 +175,7 @@ export function TaskTable({
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-800/60 text-[13px] leading-4">
-          {sorted.map((task) => (
+          {visible.map((task) => (
             <TaskRow
               key={task.id}
               task={task}
@@ -151,6 +186,13 @@ export function TaskTable({
               onTaskDelete={onTaskDelete}
             />
           ))}
+          {hasMore && (
+            <tr ref={sentinelRef} aria-hidden="true">
+              <td colSpan={COLUMNS.length + 3} className="py-3 text-center text-[11px] text-zinc-600">
+                Loading more… ({visible.length} of {sorted.length})
+              </td>
+            </tr>
+          )}
         </tbody>
       </table>
     </div>
