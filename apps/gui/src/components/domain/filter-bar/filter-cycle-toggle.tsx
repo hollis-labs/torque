@@ -8,7 +8,13 @@ export interface CycleOption<T extends string> {
 }
 
 interface FilterCycleToggleProps<T extends string> {
-  options: ReadonlyArray<CycleOption<T>>
+  /**
+   * Non-empty list of options. The type enforces at least one element so the
+   * component never has to handle an empty array at runtime (no NaN indexes,
+   * no undefined `active`/`next`). Callers with a constant list should pass a
+   * tuple literal; dynamic sources should assert non-empty before rendering.
+   */
+  options: readonly [CycleOption<T>, ...CycleOption<T>[]]
   value: T
   onChange: (next: T) => void
   ariaLabel: string
@@ -31,18 +37,18 @@ export function FilterCycleToggle<T extends string>({
   return (
     <button
       type="button"
-      aria-label={`${ariaLabel}, current: ${active?.label ?? 'unset'}`}
-      title={active?.title ?? `${ariaLabel}: ${active?.label ?? ''}`}
+      aria-label={`${ariaLabel}, current: ${active.label}`}
+      title={active.title ?? `${ariaLabel}: ${active.label}`}
       onClick={() => onChange(next.value)}
       className="inline-flex items-center gap-1.5 rounded border border-zinc-800 bg-zinc-900/50 px-2 py-0.5 text-[10px] uppercase tracking-wider text-zinc-200 transition-all hover:border-zinc-600"
     >
-      {active?.dotColor && (
+      {active.dotColor && (
         <span
           data-testid="cycle-dot"
           className={`inline-block h-1.5 w-1.5 rounded-full ${active.dotColor}`}
         />
       )}
-      <span>{active?.label ?? ''}</span>
+      <span>{active.label}</span>
     </button>
   )
 }

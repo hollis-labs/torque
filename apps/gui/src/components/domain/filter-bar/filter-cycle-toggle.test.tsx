@@ -11,7 +11,9 @@ afterEach(() => {
 
 type V = 'both' | 'auto' | 'manual'
 
-const OPTIONS: ReadonlyArray<{ value: V; label: string; dotColor?: string }> = [
+type Opt = { value: V; label: string; dotColor?: string }
+
+const OPTIONS: readonly [Opt, ...Opt[]] = [
   { value: 'both', label: 'Both', dotColor: 'bg-zinc-400' },
   { value: 'auto', label: 'Auto', dotColor: 'bg-blue-400' },
   { value: 'manual', label: 'Manual', dotColor: 'bg-amber-400' },

@@ -7,7 +7,10 @@ import type { ManualFilter } from '@/lib/ops-filters-storage'
 import type { Epic, Project, Sprint, Tag, TaskStatus } from '@/lib/types'
 import { FilterCycleToggle, type CycleOption } from './filter-cycle-toggle'
 
-const MANUAL_CYCLE_OPTIONS: ReadonlyArray<CycleOption<ManualFilter>> = [
+const MANUAL_CYCLE_OPTIONS: readonly [
+  CycleOption<ManualFilter>,
+  ...CycleOption<ManualFilter>[],
+] = [
   { value: 'both', label: 'Both', dotColor: 'bg-zinc-400', title: 'All tasks (no manual filter)' },
   { value: 'auto', label: 'Auto', dotColor: 'bg-blue-400', title: 'Scheduler-eligible (manual=false)' },
   { value: 'manual', label: 'Manual', dotColor: 'bg-amber-400', title: 'Held for review (manual=true)' },
