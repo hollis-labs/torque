@@ -59,7 +59,7 @@ export function FilterEntityCombobox({
             <CommandEmpty>No results.</CommandEmpty>
             <CommandGroup>
               <CommandItem
-                value="__all__"
+                value={allLabel}
                 onSelect={() => {
                   onChange(null)
                   setOpen(false)
@@ -85,7 +85,7 @@ export function FilterEntityCombobox({
                 <CommandSeparator />
                 <CommandGroup>
                   <CommandItem
-                    value="__create__"
+                    value={createLabel ?? 'Create new'}
                     onSelect={() => {
                       onCreate()
                       setOpen(false)

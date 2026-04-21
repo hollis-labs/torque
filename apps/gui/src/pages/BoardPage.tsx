@@ -91,6 +91,11 @@ export default function BoardPage() {
   const [epics, setEpics] = useState<Epic[]>([])
   const [tags, setTags] = useState<Tag[]>([])
 
+  // Total rows matching the current filter+search from the list endpoint —
+  // authoritative for the summary's "M matches" display. Distinct from
+  // `tasks.length`, which reflects the windowed/capped payload.
+  const [totalMatchCount, setTotalMatchCount] = useState<number>(0)
+
   // Create-modal state
   const [projectCreateOpen, setProjectCreateOpen] = useState(false)
   const [epicCreateOpen, setEpicCreateOpen] = useState(false)
@@ -136,18 +141,23 @@ export default function BoardPage() {
     if (lastHydratedKey.current === location.key) return
     lastHydratedKey.current = location.key
 
+    // Read storage first. Search is storage-only (never URL-backed), so it
+    // must hydrate even when URL filters are present — otherwise navigating
+    // back to /operations with persisted URL filters would silently wipe the
+    // user's search. URL-backed fields (status, priority, etc.) still defer
+    // to the URL via the `urlHasFilter` short-circuit below.
+    const stored = readOpsFilters()
+    if (stored?.search) setSearch(stored.search)
+
     const urlHasFilter = FILTER_PARAM_KEYS.some((k) => searchParams.has(k))
     if (urlHasFilter) {
       setHydrated(true)
       return
     }
-    const stored = readOpsFilters()
     if (!stored) {
       setHydrated(true)
       return
     }
-
-    if (stored.search) setSearch(stored.search)
 
     // Compute the target params up-front so we can compare vs. the current
     // URL and bail out on a no-op. See guard #2 in the block comment above.
@@ -260,6 +270,7 @@ export default function BoardPage() {
         search: search || undefined,
       })
       setTasks(result.tasks)
+      setTotalMatchCount(result.total)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load tasks')
@@ -350,7 +361,7 @@ export default function BoardPage() {
     (epicId !== null ? 1 : 0) +
     (tagSlug !== null ? 1 : 0)
 
-  const searchMatchCount = search ? tasks.length : undefined
+  const searchMatchCount = search ? totalMatchCount : undefined
 
   const emptyVariant = activeFilterCount > 0 || search.length > 0 ? 'no-results' : 'no-tasks'
 

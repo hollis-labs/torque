@@ -98,4 +98,30 @@ describe('FilterSearchInput', () => {
     rerender(<FilterSearchInput value="new" onChange={() => {}} />)
     expect(input.value).toBe('new')
   })
+
+  it('exposes the / and Esc shortcuts via the title attribute', () => {
+    render(<FilterSearchInput value="" onChange={() => {}} />)
+    const input = screen.getByRole('searchbox') as HTMLInputElement
+    expect(input.title).toContain('/')
+    expect(input.title).toContain('Esc')
+  })
+
+  it('/ handler is a no-op when a modifier key is held', () => {
+    render(<FilterSearchInput value="" onChange={() => {}} />)
+    const input = screen.getByRole('searchbox')
+    expect(document.activeElement).not.toBe(input)
+
+    fireEvent.keyDown(window, { key: '/', ctrlKey: true })
+    expect(document.activeElement).not.toBe(input)
+
+    fireEvent.keyDown(window, { key: '/', metaKey: true })
+    expect(document.activeElement).not.toBe(input)
+
+    fireEvent.keyDown(window, { key: '/', altKey: true })
+    expect(document.activeElement).not.toBe(input)
+
+    // Unmodified / still focuses.
+    fireEvent.keyDown(window, { key: '/' })
+    expect(document.activeElement).toBe(input)
+  })
 })

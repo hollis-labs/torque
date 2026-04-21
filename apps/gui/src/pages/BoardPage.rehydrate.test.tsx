@@ -368,4 +368,39 @@ describe('BoardPage filter rehydration on remount', () => {
 
     act(() => root.unmount())
   })
+
+  // Regression guard: search is storage-only (never URL-backed), so it must
+  // hydrate from storage even when the URL already has filter params. Without
+  // this, navigating back to /operations with persisted URL filters silently
+  // wipes the user's search.
+  it('restores search from storage even when URL already has filter params', async () => {
+    saveOpsFilters({
+      statuses: ['todo'],
+      priorities: [],
+      projectId: null,
+      sprintId: null,
+      epicId: null,
+      tagSlug: null,
+      manual: 'both',
+      search: 'scheduler',
+    })
+
+    let observedSearch = ''
+    const root = renderAppShell(container, '/operations?status=todo', (s) => {
+      observedSearch = s
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    // URL's status=todo wins for the status filter.
+    expect(observedSearch).toContain('status=todo')
+
+    // Search still hydrates from storage despite urlHasFilter being true.
+    const input = container.querySelector('input[type="search"]') as HTMLInputElement | null
+    expect(input).not.toBeNull()
+    expect(input?.value).toBe('scheduler')
+
+    act(() => root.unmount())
+  })
 })

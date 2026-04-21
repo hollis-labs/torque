@@ -46,9 +46,13 @@ export function FilterSearchInput({
   }, [local, onChange])
 
   // `/` focuses the input when no other editable element holds focus.
+  // Skip when modifier keys are held so platform/editor shortcuts (Cmd+/,
+  // Ctrl+/, Alt+/) or already-handled keydowns pass through untouched.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== '/') return
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      if (e.defaultPrevented) return
       if (isEditableTarget(document.activeElement)) return
       e.preventDefault()
       inputRef.current?.focus()
@@ -64,6 +68,7 @@ export function FilterSearchInput({
         ref={inputRef}
         type="search"
         aria-label="Search tasks"
+        title="Search tasks by title or description (press / to focus, Esc to clear)"
         placeholder={placeholder}
         value={local}
         onChange={(e) => setLocal(e.target.value)}
