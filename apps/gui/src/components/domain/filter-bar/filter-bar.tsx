@@ -1,20 +1,12 @@
 import type { ReactNode } from 'react'
-import { Plus } from 'lucide-react'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Folder, Calendar, BookOpen, Hash } from 'lucide-react'
+import { FilterEntityCombobox } from './filter-entity-combobox'
 import { STATUS_COLORS, DEFAULT_STATUS_COLOR, MODE_PRESETS, PRIORITIES, TASK_STATUSES } from '@/lib/constants'
 import type { ManualFilter } from '@/lib/ops-filters-storage'
 import type { Epic, Project, Sprint, Tag, TaskStatus } from '@/lib/types'
 import { FilterCycleToggle, type CycleOption } from './filter-cycle-toggle'
 
 type ModePreset = keyof typeof MODE_PRESETS | 'all'
-
-const ALL_VALUE = '__all__'
 
 const MANUAL_CYCLE_OPTIONS: ReadonlyArray<CycleOption<ManualFilter>> = [
   { value: 'both', label: 'Both', dotColor: 'bg-zinc-400', title: 'All tasks (no manual filter)' },
@@ -181,115 +173,53 @@ export function FilterBar({
       {showGroups && (
         <div className="flex flex-wrap items-center gap-2 border-l border-zinc-800 pl-3">
           {onProjectChange && (
-            <GroupSelect
-              label="Project"
-              ariaLabel="Filter by project"
-              allLabel="All projects"
+            <FilterEntityCombobox
+              icon={<Folder className="h-3.5 w-3.5" />}
               items={projects ?? []}
               value={projectId ?? null}
               onChange={onProjectChange}
+              allLabel="All projects"
+              ariaLabel="Filter by project"
               onCreate={onProjectCreate}
               createLabel="New project"
             />
           )}
           {onSprintChange && (
-            <GroupSelect
-              label="Sprint"
-              ariaLabel="Filter by sprint"
-              allLabel="All sprints"
+            <FilterEntityCombobox
+              icon={<Calendar className="h-3.5 w-3.5" />}
               items={sprints ?? []}
               value={sprintId ?? null}
               onChange={onSprintChange}
+              allLabel="All sprints"
+              ariaLabel="Filter by sprint"
             />
           )}
           {onEpicChange && (
-            <GroupSelect
-              label="Epic"
-              ariaLabel="Filter by epic"
-              allLabel="All epics"
+            <FilterEntityCombobox
+              icon={<BookOpen className="h-3.5 w-3.5" />}
               items={epics ?? []}
               value={epicId ?? null}
               onChange={onEpicChange}
+              allLabel="All epics"
+              ariaLabel="Filter by epic"
               onCreate={onEpicCreate}
               createLabel="New epic"
             />
           )}
           {onTagChange && (
-            <GroupSelect
-              label="Tag"
-              ariaLabel="Filter by tag"
-              allLabel="All tags"
+            <FilterEntityCombobox
+              icon={<Hash className="h-3.5 w-3.5" />}
               items={(tags ?? []).map((t) => ({ id: t.slug, name: t.name }))}
               value={tagSlug ?? null}
               onChange={onTagChange}
+              allLabel="All tags"
+              ariaLabel="Filter by tag"
             />
           )}
         </div>
       )}
 
       {children && <div className="ml-auto flex items-center gap-2">{children}</div>}
-    </div>
-  )
-}
-
-interface GroupItem {
-  id: string
-  name: string
-}
-
-function GroupSelect({
-  label,
-  ariaLabel,
-  allLabel,
-  items,
-  value,
-  onChange,
-  onCreate,
-  createLabel,
-}: {
-  label: string
-  ariaLabel: string
-  allLabel: string
-  items: GroupItem[]
-  value: string | null
-  onChange: (id: string | null) => void
-  onCreate?: () => void
-  createLabel?: string
-}) {
-  return (
-    <div className="flex items-center gap-1">
-      <span className="text-[10px] uppercase tracking-wider text-zinc-500">{label}:</span>
-      <Select
-        value={value ?? ALL_VALUE}
-        onValueChange={(v) => onChange(v === ALL_VALUE ? null : v)}
-      >
-        <SelectTrigger
-          aria-label={ariaLabel}
-          size="sm"
-          className="h-7 min-w-[8.5rem] text-[11px]"
-        >
-          <SelectValue placeholder={allLabel} />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={ALL_VALUE}>{allLabel}</SelectItem>
-          {items.map((item) => (
-            <SelectItem key={item.id} value={item.id}>
-              {item.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      {onCreate && (
-        <button
-          type="button"
-          aria-label={createLabel ?? `New ${label.toLowerCase()}`}
-          title={createLabel ?? `New ${label.toLowerCase()}`}
-          onClick={onCreate}
-          className="inline-flex h-7 w-7 items-center justify-center rounded border border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200 transition-colors"
-        >
-          <Plus className="h-3.5 w-3.5" />
-        </button>
-      )}
     </div>
   )
 }
