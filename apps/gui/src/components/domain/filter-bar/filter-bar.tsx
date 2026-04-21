@@ -10,15 +10,16 @@ import {
 import { STATUS_COLORS, DEFAULT_STATUS_COLOR, MODE_PRESETS, PRIORITIES, TASK_STATUSES } from '@/lib/constants'
 import type { ManualFilter } from '@/lib/ops-filters-storage'
 import type { Epic, Project, Sprint, Tag, TaskStatus } from '@/lib/types'
+import { FilterCycleToggle, type CycleOption } from './filter-cycle-toggle'
 
 type ModePreset = keyof typeof MODE_PRESETS | 'all'
 
 const ALL_VALUE = '__all__'
 
-const MANUAL_OPTIONS: ReadonlyArray<{ value: ManualFilter; label: string; title: string }> = [
-  { value: 'both', label: 'Both', title: 'All tasks (no manual filter)' },
-  { value: 'auto', label: 'Auto', title: 'Scheduler-eligible (manual=false)' },
-  { value: 'manual', label: 'Manual', title: 'Held for review (manual=true)' },
+const MANUAL_CYCLE_OPTIONS: ReadonlyArray<CycleOption<ManualFilter>> = [
+  { value: 'both', label: 'Both', dotColor: 'bg-zinc-400', title: 'All tasks (no manual filter)' },
+  { value: 'auto', label: 'Auto', dotColor: 'bg-blue-400', title: 'Scheduler-eligible (manual=false)' },
+  { value: 'manual', label: 'Manual', dotColor: 'bg-amber-400', title: 'Held for review (manual=true)' },
 ]
 
 interface FilterBarProps {
@@ -163,34 +164,16 @@ export function FilterBar({
         </div>
       )}
 
-      {/* Manual-flag toggle: All / Auto / Manual */}
+      {/* Manual-flag cycle: Both → Auto → Manual */}
       {onManualFilterChange && (
-        <div
-          role="radiogroup"
-          aria-label="Filter by manual flag"
-          className="flex items-center gap-1 border-l border-zinc-800 pl-3"
-        >
+        <div className="flex items-center gap-1 border-l border-zinc-800 pl-3">
           <span className="mr-1 text-[10px] uppercase tracking-wider text-zinc-500">Manual:</span>
-          {MANUAL_OPTIONS.map((opt) => {
-            const active = (manualFilter ?? 'both') === opt.value
-            return (
-              <button
-                key={opt.value}
-                type="button"
-                role="radio"
-                aria-checked={active}
-                title={opt.title}
-                onClick={() => onManualFilterChange(opt.value)}
-                className={`rounded border px-2 py-0.5 text-[10px] tracking-wider transition-all ${
-                  active
-                    ? 'border-zinc-600 bg-zinc-800 text-zinc-200'
-                    : 'border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
-                }`}
-              >
-                {opt.label}
-              </button>
-            )
-          })}
+          <FilterCycleToggle
+            options={MANUAL_CYCLE_OPTIONS}
+            value={manualFilter ?? 'both'}
+            onChange={onManualFilterChange}
+            ariaLabel="Manual filter"
+          />
         </div>
       )}
 
