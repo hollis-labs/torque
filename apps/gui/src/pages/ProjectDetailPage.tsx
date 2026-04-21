@@ -12,10 +12,8 @@ import { EmptyState } from '@/components/domain/empty-state'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
 import { notifyError } from '@/lib/toast'
-import { DEFAULT_ACTIVE_STATUSES, MODE_PRESETS } from '@/lib/constants'
+import { DEFAULT_ACTIVE_STATUSES } from '@/lib/constants'
 import type { Project, Sprint, Task, TaskStatus } from '@/lib/types'
-
-type ModePreset = keyof typeof MODE_PRESETS | 'all'
 
 const SSE_EVENTS = ['project.updated', 'task.created', 'task.updated', 'task.transitioned', 'sprint.created', 'sprint.updated']
 
@@ -34,7 +32,6 @@ export default function ProjectDetailPage() {
   const [sprints, setSprints] = useState<Sprint[] | null>(null)
   const [tasks, setTasks] = useState<Task[] | null>(null)
   const [activeStatuses, setActiveStatuses] = useState<TaskStatus[]>(DEFAULT_ACTIVE_STATUSES)
-  const [mode, setMode] = useState<ModePreset>('all')
 
   useEffect(() => {
     if (!id) return
@@ -92,15 +89,6 @@ export default function ProjectDetailPage() {
     setActiveStatuses((prev) =>
       prev.includes(status) ? prev.filter((s) => s !== status) : [...prev, status]
     )
-  }
-
-  function handleModeChange(newMode: ModePreset) {
-    setMode(newMode)
-    if (newMode === 'all') {
-      setActiveStatuses(DEFAULT_ACTIVE_STATUSES)
-    } else {
-      setActiveStatuses(MODE_PRESETS[newMode])
-    }
   }
 
   async function handleTransition(taskId: string, status: TaskStatus) {
@@ -230,8 +218,6 @@ export default function ProjectDetailPage() {
             <FilterBar
               activeStatuses={activeStatuses}
               onStatusToggle={handleStatusToggle}
-              mode={mode}
-              onModeChange={handleModeChange}
             />
             <div className="mt-2">
               {tasks === null ? (

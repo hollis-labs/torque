@@ -1,12 +1,11 @@
 import type { ReactNode } from 'react'
 import { Folder, Calendar, BookOpen, Hash } from 'lucide-react'
 import { FilterEntityCombobox } from './filter-entity-combobox'
-import { STATUS_COLORS, DEFAULT_STATUS_COLOR, MODE_PRESETS, PRIORITIES, TASK_STATUSES } from '@/lib/constants'
+import { FilterSearchInput } from './filter-search-input'
+import { STATUS_COLORS, DEFAULT_STATUS_COLOR, PRIORITIES, TASK_STATUSES } from '@/lib/constants'
 import type { ManualFilter } from '@/lib/ops-filters-storage'
 import type { Epic, Project, Sprint, Tag, TaskStatus } from '@/lib/types'
 import { FilterCycleToggle, type CycleOption } from './filter-cycle-toggle'
-
-type ModePreset = keyof typeof MODE_PRESETS | 'all'
 
 const MANUAL_CYCLE_OPTIONS: ReadonlyArray<CycleOption<ManualFilter>> = [
   { value: 'both', label: 'Both', dotColor: 'bg-zinc-400', title: 'All tasks (no manual filter)' },
@@ -17,17 +16,15 @@ const MANUAL_CYCLE_OPTIONS: ReadonlyArray<CycleOption<ManualFilter>> = [
 interface FilterBarProps {
   activeStatuses: TaskStatus[]
   onStatusToggle: (status: TaskStatus) => void
-  mode?: ModePreset
-  onModeChange?: (mode: ModePreset) => void
   /** Available statuses to show — defaults to all TASK_STATUSES */
   availableStatuses?: readonly TaskStatus[]
   /** Show priority filter chips */
   activePriorities?: number[]
   onPriorityToggle?: (priority: number) => void
-  /** Manual-flag filter tri-state (All / Auto / Manual). Omit to hide the toggle. */
+  /** Manual-flag cycle (Both / Auto / Manual). Omit to hide the control. */
   manualFilter?: ManualFilter
   onManualFilterChange?: (value: ManualFilter) => void
-  /** Project / Sprint / Epic group selectors (all three are optional — omit to hide) */
+  /** Project / Sprint / Epic / Tag combobox selectors (all optional) */
   projects?: Project[]
   projectId?: string | null
   onProjectChange?: (id: string | null) => void
@@ -42,15 +39,24 @@ interface FilterBarProps {
   onTagChange?: (slug: string | null) => void
   onProjectCreate?: () => void
   onEpicCreate?: () => void
-  /** Extra controls rendered trailing the filter bar (e.g. Clear filters) */
+
+  /** When provided (both together), the two-row layout with search renders. */
+  searchQuery?: string
+  onSearchChange?: (q: string) => void
+  /** Count of rows matched by the current search (from the caller). */
+  searchMatchCount?: number
+  /** Count of non-default filter dimensions (from the caller; see design spec summary rules). */
+  activeFilterCount?: number
+  /** Invoked when the Clear button is clicked. Omit to hide the button entirely. */
+  onClear?: () => void
+
+  /** Extra trailing controls in single-row mode (backwards-compat slot). Ignored in two-row mode. */
   children?: ReactNode
 }
 
 export function FilterBar({
   activeStatuses,
   onStatusToggle,
-  mode,
-  onModeChange,
   availableStatuses = TASK_STATUSES,
   activePriorities = [],
   onPriorityToggle,
@@ -70,12 +76,18 @@ export function FilterBar({
   onTagChange,
   onProjectCreate,
   onEpicCreate,
+  searchQuery,
+  onSearchChange,
+  searchMatchCount,
+  activeFilterCount = 0,
+  onClear,
   children,
 }: FilterBarProps) {
   const showGroups = Boolean(onProjectChange || onSprintChange || onEpicChange || onTagChange)
+  const twoRow = searchQuery !== undefined && onSearchChange !== undefined
 
-  return (
-    <div className="flex flex-wrap items-center gap-3 border-b border-zinc-800/80 bg-zinc-950 px-4 py-2.5 text-xs">
+  const chipRow = (
+    <div className="flex flex-wrap items-center gap-3 text-xs">
       {/* Status chips */}
       <div className="flex flex-wrap items-center gap-1">
         <span className="mr-1 text-[10px] uppercase tracking-wider text-zinc-500">Status:</span>
@@ -123,40 +135,7 @@ export function FilterBar({
         </div>
       )}
 
-      {/* Mode presets — only rendered when the caller passes the handler.
-          (To be removed entirely in Task 8 once callers stop passing it.) */}
-      {onModeChange && (
-        <div className="flex items-center gap-1 border-l border-zinc-800 pl-3">
-          <span className="mr-1 text-[10px] uppercase tracking-wider text-zinc-500">Mode:</span>
-          {(Object.keys(MODE_PRESETS) as Array<keyof typeof MODE_PRESETS>).map((preset) => (
-            <button
-              key={preset}
-              type="button"
-              onClick={() => onModeChange(preset)}
-              className={`rounded border px-2 py-0.5 text-[10px] capitalize tracking-wider transition-all ${
-                mode === preset
-                  ? 'border-zinc-600 bg-zinc-800 text-zinc-200'
-                  : 'border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
-              }`}
-            >
-              {preset}
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={() => onModeChange('all')}
-            className={`rounded border px-2 py-0.5 text-[10px] tracking-wider transition-all ${
-              mode === 'all'
-                ? 'border-zinc-600 bg-zinc-800 text-zinc-200'
-                : 'border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
-            }`}
-          >
-            All
-          </button>
-        </div>
-      )}
-
-      {/* Manual-flag cycle: Both → Auto → Manual */}
+      {/* Manual cycle */}
       {onManualFilterChange && (
         <div className="flex items-center gap-1 border-l border-zinc-800 pl-3">
           <span className="mr-1 text-[10px] uppercase tracking-wider text-zinc-500">Manual:</span>
@@ -169,7 +148,7 @@ export function FilterBar({
         </div>
       )}
 
-      {/* Group selectors: Project / Sprint / Epic */}
+      {/* Group combobox pills */}
       {showGroups && (
         <div className="flex flex-wrap items-center gap-2 border-l border-zinc-800 pl-3">
           {onProjectChange && (
@@ -218,7 +197,53 @@ export function FilterBar({
           )}
         </div>
       )}
+    </div>
+  )
 
+  if (twoRow) {
+    const showClear = Boolean(onClear) && (activeFilterCount > 0 || (searchQuery ?? '').length > 0)
+    const showSummary = activeFilterCount > 0 || (searchQuery ?? '').length > 0
+
+    let summaryText = ''
+    if (activeFilterCount > 0 && (searchQuery ?? '').length > 0) {
+      summaryText = `${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'} · ${searchMatchCount ?? 0} match${searchMatchCount === 1 ? '' : 'es'}`
+    } else if (activeFilterCount > 0) {
+      summaryText = `${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'}`
+    } else if ((searchQuery ?? '').length > 0) {
+      summaryText = `${searchMatchCount ?? 0} match${searchMatchCount === 1 ? '' : 'es'}`
+    }
+
+    return (
+      <div className="flex flex-col border-b border-zinc-800/80 bg-zinc-950">
+        {/* Row 1: search hero + summary + clear */}
+        <div className="flex items-center gap-3 px-4 py-2">
+          <FilterSearchInput value={searchQuery ?? ''} onChange={onSearchChange!} />
+          {showSummary && (
+            <span className="whitespace-nowrap text-[10px] uppercase tracking-wider text-zinc-500">
+              {summaryText}
+            </span>
+          )}
+          {showClear && (
+            <button
+              type="button"
+              onClick={onClear}
+              aria-label="Clear all filters and search"
+              className="rounded border border-zinc-700 bg-transparent px-2 py-1 text-[10px] uppercase tracking-wider text-zinc-300 transition-colors hover:border-zinc-500 hover:text-zinc-100"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+        {/* Row 2: compact chip row */}
+        <div className="border-t border-zinc-800/80 px-4 py-2">{chipRow}</div>
+      </div>
+    )
+  }
+
+  // Single-row (legacy) layout for detail pages.
+  return (
+    <div className="flex flex-wrap items-center gap-3 border-b border-zinc-800/80 bg-zinc-950 px-4 py-2.5">
+      {chipRow}
       {children && <div className="ml-auto flex items-center gap-2">{children}</div>}
     </div>
   )
