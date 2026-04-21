@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useSearchParams, useLocation } from 'react-router-dom'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Button } from '@/components/ui/button'
 import { PageHeader } from '@/components/domain/page-header'
 import { SummaryCards } from '@/components/domain/summary-cards'
 import { FilterBar } from '@/components/domain/filter-bar'
@@ -13,7 +12,7 @@ import { RestartFrontendButton } from '@/components/domain/restart-frontend-butt
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
 import { notifyError } from '@/lib/toast'
-import { DEFAULT_ACTIVE_STATUSES, MODE_PRESETS, TASK_STATUSES } from '@/lib/constants'
+import { DEFAULT_ACTIVE_STATUSES, TASK_STATUSES } from '@/lib/constants'
 import { saveTaskListCursor } from '@/lib/task-list-cursor'
 import {
   saveOpsFilters,
@@ -24,12 +23,9 @@ import {
 } from '@/lib/ops-filters-storage'
 import type { Epic, Project, Sprint, Tag, Task, TaskStatus } from '@/lib/types'
 
-const FILTER_PARAM_KEYS = ['status', 'priority', 'project_id', 'sprint_id', 'epic_id', 'tag', 'mode', 'manual'] as const
-
-type ModePreset = keyof typeof MODE_PRESETS | 'all'
+const FILTER_PARAM_KEYS = ['status', 'priority', 'project_id', 'sprint_id', 'epic_id', 'tag', 'manual'] as const
 
 const SSE_EVENTS = ['task.created', 'task.updated', 'task.transitioned']
-const MODE_VALUES: ModePreset[] = ['all', 'planning', 'executing', 'reviewing']
 
 function parseStatusParam(raw: string | null): TaskStatus[] {
   if (raw === null) return DEFAULT_ACTIVE_STATUSES
@@ -47,11 +43,6 @@ function parsePriorityParam(raw: string | null): number[] {
     .split(',')
     .map((s) => Number.parseInt(s.trim(), 10))
     .filter((n) => Number.isInteger(n) && n >= 1 && n <= 3)
-}
-
-function parseModeParam(raw: string | null): ModePreset {
-  if (raw && MODE_VALUES.includes(raw as ModePreset)) return raw as ModePreset
-  return 'all'
 }
 
 function TableSkeleton() {
@@ -80,10 +71,6 @@ export default function BoardPage() {
     () => parsePriorityParam(searchParams.get('priority')),
     [searchParams]
   )
-  const mode = useMemo(
-    () => parseModeParam(searchParams.get('mode')),
-    [searchParams]
-  )
   const manualFilter: ManualFilter = useMemo(
     () => parseManualFilter(searchParams.get('manual')),
     [searchParams]
@@ -96,12 +83,18 @@ export default function BoardPage() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [search, setSearch] = useState<string>('')
 
   // Group picker data
   const [projects, setProjects] = useState<Project[]>([])
   const [sprints, setSprints] = useState<Sprint[]>([])
   const [epics, setEpics] = useState<Epic[]>([])
   const [tags, setTags] = useState<Tag[]>([])
+
+  // Total rows matching the current filter+search from the list endpoint —
+  // authoritative for the summary's "M matches" display. Distinct from
+  // `tasks.length`, which reflects the windowed/capped payload.
+  const [totalMatchCount, setTotalMatchCount] = useState<number>(0)
 
   // Create-modal state
   const [projectCreateOpen, setProjectCreateOpen] = useState(false)
@@ -148,12 +141,19 @@ export default function BoardPage() {
     if (lastHydratedKey.current === location.key) return
     lastHydratedKey.current = location.key
 
+    // Read storage first. Search is storage-only (never URL-backed), so it
+    // must hydrate even when URL filters are present — otherwise navigating
+    // back to /operations with persisted URL filters would silently wipe the
+    // user's search. URL-backed fields (status, priority, etc.) still defer
+    // to the URL via the `urlHasFilter` short-circuit below.
+    const stored = readOpsFilters()
+    if (stored?.search) setSearch(stored.search)
+
     const urlHasFilter = FILTER_PARAM_KEYS.some((k) => searchParams.has(k))
     if (urlHasFilter) {
       setHydrated(true)
       return
     }
-    const stored = readOpsFilters()
     if (!stored) {
       setHydrated(true)
       return
@@ -173,8 +173,7 @@ export default function BoardPage() {
     if (stored.sprintId) next.set('sprint_id', stored.sprintId)
     if (stored.epicId) next.set('epic_id', stored.epicId)
     if (stored.tagSlug) next.set('tag', stored.tagSlug)
-    if (stored.mode && stored.mode !== 'all') next.set('mode', stored.mode)
-    if (stored.manual && stored.manual !== 'all') next.set('manual', stored.manual)
+    if (stored.manual && stored.manual !== 'both') next.set('manual', stored.manual)
 
     if (next.toString() === searchParams.toString()) {
       // No-op — don't call setSearchParams. A replace with unchanged URL
@@ -201,10 +200,10 @@ export default function BoardPage() {
       sprintId,
       epicId,
       tagSlug,
-      mode,
       manual: manualFilter,
+      search,
     })
-  }, [hydrated, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, mode, manualFilter])
+  }, [hydrated, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, manualFilter, search])
 
   // Fetch pickers once on mount
   const refreshPickers = useCallback(async () => {
@@ -267,16 +266,18 @@ export default function BoardPage() {
         sprint_id: sprintId ?? undefined,
         epic_id: epicId ?? undefined,
         tags: tagSlug ? [tagSlug] : undefined,
-        manual: manualFilter === 'all' ? undefined : manualFilter === 'manual',
+        manual: manualFilter === 'both' ? undefined : manualFilter === 'manual',
+        search: search || undefined,
       })
       setTasks(result.tasks)
+      setTotalMatchCount(result.total)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load tasks')
     } finally {
       setLoading(false)
     }
-  }, [api, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, manualFilter])
+  }, [api, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, manualFilter, search])
 
   useEffect(() => {
     if (!hydrated) return
@@ -328,18 +329,6 @@ export default function BoardPage() {
     })
   }
 
-  function handleModeChange(newMode: ModePreset) {
-    updateParams((p) => {
-      if (newMode === 'all') {
-        p.delete('mode')
-        p.delete('status')
-      } else {
-        p.set('mode', newMode)
-        p.set('status', MODE_PRESETS[newMode].join(','))
-      }
-    })
-  }
-
   function handleGroupChange(key: 'project_id' | 'sprint_id' | 'epic_id' | 'tag', value: string | null) {
     updateParams((p) => {
       if (value === null) p.delete(key)
@@ -349,7 +338,7 @@ export default function BoardPage() {
 
   function handleManualFilterChange(value: ManualFilter) {
     updateParams((p) => {
-      if (value === 'all') p.delete('manual')
+      if (value === 'both') p.delete('manual')
       else p.set('manual', value)
     })
   }
@@ -363,20 +352,22 @@ export default function BoardPage() {
     }
   }
 
-  const filtersActive =
-    activeStatuses.length !== DEFAULT_ACTIVE_STATUSES.length ||
-    activePriorities.length > 0 ||
-    projectId !== null ||
-    sprintId !== null ||
-    epicId !== null ||
-    tagSlug !== null ||
-    mode !== 'all' ||
-    manualFilter !== 'all'
+  const activeFilterCount =
+    (activeStatuses.length !== DEFAULT_ACTIVE_STATUSES.length ? 1 : 0) +
+    (activePriorities.length > 0 ? 1 : 0) +
+    (manualFilter !== 'both' ? 1 : 0) +
+    (projectId !== null ? 1 : 0) +
+    (sprintId !== null ? 1 : 0) +
+    (epicId !== null ? 1 : 0) +
+    (tagSlug !== null ? 1 : 0)
 
-  const emptyVariant = filtersActive ? 'no-results' : 'no-tasks'
+  const searchMatchCount = search ? totalMatchCount : undefined
+
+  const emptyVariant = activeFilterCount > 0 || search.length > 0 ? 'no-results' : 'no-tasks'
 
   function handleClearFilters() {
     clearOpsFilters()
+    setSearch('')
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev)
@@ -395,10 +386,10 @@ export default function BoardPage() {
       sprintId,
       epicId,
       tagSlug,
-      mode,
       manual: manualFilter,
+      search,
     }),
-    [activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, mode, manualFilter]
+    [activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, manualFilter, search]
   )
 
   const handleVisibleOrderChange = useCallback(
@@ -427,8 +418,6 @@ export default function BoardPage() {
       <FilterBar
         activeStatuses={activeStatuses}
         onStatusToggle={handleStatusToggle}
-        mode={mode}
-        onModeChange={handleModeChange}
         activePriorities={activePriorities}
         onPriorityToggle={handlePriorityToggle}
         manualFilter={manualFilter}
@@ -447,19 +436,12 @@ export default function BoardPage() {
         tags={tags}
         tagSlug={tagSlug}
         onTagChange={(slug) => handleGroupChange('tag', slug)}
-      >
-        {filtersActive && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleClearFilters}
-            className="h-7 border-zinc-700 bg-zinc-900/50 px-2 text-[10px] uppercase tracking-wider text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
-          >
-            Clear filters
-          </Button>
-        )}
-      </FilterBar>
+        searchQuery={search}
+        onSearchChange={setSearch}
+        searchMatchCount={searchMatchCount}
+        activeFilterCount={activeFilterCount}
+        onClear={handleClearFilters}
+      />
 
       <ProjectCreateDialog
         open={projectCreateOpen}

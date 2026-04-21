@@ -10,8 +10,8 @@ export interface CursorFilter {
   sprintId: string | null
   epicId: string | null
   tagSlug: string | null
-  mode: string
   manual: ManualFilter
+  search: string
 }
 
 export interface TaskListCursor {
@@ -70,7 +70,7 @@ function parseFilter(raw: unknown): CursorFilter | null {
     sprintId: typeof f.sprintId === 'string' ? f.sprintId : null,
     epicId: typeof f.epicId === 'string' ? f.epicId : null,
     tagSlug: typeof f.tagSlug === 'string' ? f.tagSlug : null,
-    mode: typeof f.mode === 'string' ? f.mode : 'all',
     manual: parseManualFilter(f.manual),
+    search: typeof f.search === 'string' ? f.search : '',
   }
 }

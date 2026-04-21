@@ -20,6 +20,21 @@ import { ApiProvider } from '@/hooks/use-api'
 import { saveOpsFilters } from '@/lib/ops-filters-storage'
 import { DEFAULT_ACTIVE_STATUSES } from '@/lib/constants'
 
+// jsdom polyfills for cmdk (Command) which FilterEntityCombobox uses —
+// touches ResizeObserver + scrollIntoView on mount.
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  class ResizeObserverPolyfill {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  ;(globalThis as unknown as { ResizeObserver: typeof ResizeObserverPolyfill }).ResizeObserver =
+    ResizeObserverPolyfill
+}
+if (typeof Element !== 'undefined' && !Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = function scrollIntoView() {}
+}
+
 // Opt into React's test-only act() environment so effect-flushing doesn't
 // spam console warnings. Vitest's jsdom env doesn't set this by default.
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -134,8 +149,8 @@ describe('BoardPage filter rehydration on remount', () => {
       sprintId: null,
       epicId: null,
       tagSlug: null,
-      mode: 'all',
-      manual: 'all',
+      manual: 'both',
+      search: '',
     })
 
     let observedSearch = ''
@@ -163,8 +178,8 @@ describe('BoardPage filter rehydration on remount', () => {
       sprintId: null,
       epicId: null,
       tagSlug: null,
-      mode: 'all',
-      manual: 'all',
+      manual: 'both',
+      search: '',
     })
 
     let observedSearch = ''
@@ -216,8 +231,8 @@ describe('BoardPage filter rehydration on remount', () => {
       sprintId: null,
       epicId: null,
       tagSlug: null,
-      mode: 'all',
-      manual: 'all',
+      manual: 'both',
+      search: '',
     })
 
     // Render BoardPage directly (no Routes switch) so it stays mounted
@@ -278,8 +293,8 @@ describe('BoardPage filter rehydration on remount', () => {
       sprintId: null,
       epicId: null,
       tagSlug: null,
-      mode: 'all',
-      manual: 'all',
+      manual: 'both',
+      search: '',
     })
 
     let observedSearch = ''
@@ -309,8 +324,8 @@ describe('BoardPage filter rehydration on remount', () => {
       sprintId: null,
       epicId: null,
       tagSlug: null,
-      mode: 'all',
-      manual: 'all',
+      manual: 'both',
+      search: '',
     })
 
     let observedSearch = ''
@@ -324,6 +339,67 @@ describe('BoardPage filter rehydration on remount', () => {
     // URL said status=done; storage had status=todo — URL wins.
     expect(observedSearch).toContain('status=done')
     expect(observedSearch).not.toContain('status=todo')
+
+    act(() => root.unmount())
+  })
+
+  it('restores search from storage on fresh mount', async () => {
+    saveOpsFilters({
+      statuses: [],
+      priorities: [],
+      projectId: null,
+      sprintId: null,
+      epicId: null,
+      tagSlug: null,
+      manual: 'both',
+      search: 'scheduler',
+    })
+
+    const root = renderAppShell(container, '/operations', () => {})
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    // Search is React state, not URL — assert by rendering the search input
+    // and confirming its value.
+    const input = container.querySelector('input[type="search"]') as HTMLInputElement | null
+    expect(input).not.toBeNull()
+    expect(input?.value).toBe('scheduler')
+
+    act(() => root.unmount())
+  })
+
+  // Regression guard: search is storage-only (never URL-backed), so it must
+  // hydrate from storage even when the URL already has filter params. Without
+  // this, navigating back to /operations with persisted URL filters silently
+  // wipes the user's search.
+  it('restores search from storage even when URL already has filter params', async () => {
+    saveOpsFilters({
+      statuses: ['todo'],
+      priorities: [],
+      projectId: null,
+      sprintId: null,
+      epicId: null,
+      tagSlug: null,
+      manual: 'both',
+      search: 'scheduler',
+    })
+
+    let observedSearch = ''
+    const root = renderAppShell(container, '/operations?status=todo', (s) => {
+      observedSearch = s
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    // URL's status=todo wins for the status filter.
+    expect(observedSearch).toContain('status=todo')
+
+    // Search still hydrates from storage despite urlHasFilter being true.
+    const input = container.querySelector('input[type="search"]') as HTMLInputElement | null
+    expect(input).not.toBeNull()
+    expect(input?.value).toBe('scheduler')
 
     act(() => root.unmount())
   })
