@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useSearchParams, useLocation } from 'react-router-dom'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Button } from '@/components/ui/button'
 import { PageHeader } from '@/components/domain/page-header'
 import { SummaryCards } from '@/components/domain/summary-cards'
 import { FilterBar } from '@/components/domain/filter-bar'
@@ -84,6 +83,7 @@ export default function BoardPage() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [search, setSearch] = useState<string>('')
 
   // Group picker data
   const [projects, setProjects] = useState<Project[]>([])
@@ -147,6 +147,8 @@ export default function BoardPage() {
       return
     }
 
+    if (stored.search) setSearch(stored.search)
+
     // Compute the target params up-front so we can compare vs. the current
     // URL and bail out on a no-op. See guard #2 in the block comment above.
     const next = new URLSearchParams(searchParams)
@@ -189,9 +191,9 @@ export default function BoardPage() {
       epicId,
       tagSlug,
       manual: manualFilter,
-      search: '',
+      search,
     })
-  }, [hydrated, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, manualFilter])
+  }, [hydrated, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, manualFilter, search])
 
   // Fetch pickers once on mount
   const refreshPickers = useCallback(async () => {
@@ -255,6 +257,7 @@ export default function BoardPage() {
         epic_id: epicId ?? undefined,
         tags: tagSlug ? [tagSlug] : undefined,
         manual: manualFilter === 'both' ? undefined : manualFilter === 'manual',
+        search: search || undefined,
       })
       setTasks(result.tasks)
       setError(null)
@@ -263,7 +266,7 @@ export default function BoardPage() {
     } finally {
       setLoading(false)
     }
-  }, [api, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, manualFilter])
+  }, [api, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, manualFilter, search])
 
   useEffect(() => {
     if (!hydrated) return
@@ -338,19 +341,22 @@ export default function BoardPage() {
     }
   }
 
-  const filtersActive =
-    activeStatuses.length !== DEFAULT_ACTIVE_STATUSES.length ||
-    activePriorities.length > 0 ||
-    projectId !== null ||
-    sprintId !== null ||
-    epicId !== null ||
-    tagSlug !== null ||
-    manualFilter !== 'both'
+  const activeFilterCount =
+    (activeStatuses.length !== DEFAULT_ACTIVE_STATUSES.length ? 1 : 0) +
+    (activePriorities.length > 0 ? 1 : 0) +
+    (manualFilter !== 'both' ? 1 : 0) +
+    (projectId !== null ? 1 : 0) +
+    (sprintId !== null ? 1 : 0) +
+    (epicId !== null ? 1 : 0) +
+    (tagSlug !== null ? 1 : 0)
 
-  const emptyVariant = filtersActive ? 'no-results' : 'no-tasks'
+  const searchMatchCount = search ? tasks.length : undefined
+
+  const emptyVariant = activeFilterCount > 0 || search.length > 0 ? 'no-results' : 'no-tasks'
 
   function handleClearFilters() {
     clearOpsFilters()
+    setSearch('')
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev)
@@ -370,9 +376,9 @@ export default function BoardPage() {
       epicId,
       tagSlug,
       manual: manualFilter,
-      search: '',
+      search,
     }),
-    [activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, manualFilter]
+    [activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, manualFilter, search]
   )
 
   const handleVisibleOrderChange = useCallback(
@@ -419,19 +425,12 @@ export default function BoardPage() {
         tags={tags}
         tagSlug={tagSlug}
         onTagChange={(slug) => handleGroupChange('tag', slug)}
-      >
-        {filtersActive && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleClearFilters}
-            className="h-7 border-zinc-700 bg-zinc-900/50 px-2 text-[10px] uppercase tracking-wider text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
-          >
-            Clear filters
-          </Button>
-        )}
-      </FilterBar>
+        searchQuery={search}
+        onSearchChange={setSearch}
+        searchMatchCount={searchMatchCount}
+        activeFilterCount={activeFilterCount}
+        onClear={handleClearFilters}
+      />
 
       <ProjectCreateDialog
         open={projectCreateOpen}
