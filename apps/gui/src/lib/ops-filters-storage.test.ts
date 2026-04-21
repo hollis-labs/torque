@@ -28,7 +28,7 @@ beforeEach(() => {
 })
 
 describe('ops-filters-storage', () => {
-  it('round-trips all eight filter fields', () => {
+  it('round-trips all eight filter fields including search', () => {
     const filters: OpsFilters = {
       statuses: ['todo', 'doing'],
       priorities: [1, 2],
@@ -36,15 +36,15 @@ describe('ops-filters-storage', () => {
       sprintId: 'spr_xyz',
       epicId: 'epc_123',
       tagSlug: 'infra',
-      mode: 'executing',
       manual: 'auto',
+      search: 'scheduler',
     }
     saveOpsFilters(filters)
     const restored = readOpsFilters()
     expect(restored).toEqual(filters)
   })
 
-  it('defaults manual to "all" when the stored entry predates the field', () => {
+  it('defaults manual to "both" when the stored entry predates the field', () => {
     localStorage.setItem(
       'clockwork:ops:filters:v1',
       JSON.stringify({
@@ -54,10 +54,9 @@ describe('ops-filters-storage', () => {
         sprintId: null,
         epicId: null,
         tagSlug: null,
-        mode: 'all',
       }),
     )
-    expect(readOpsFilters()?.manual).toBe('all')
+    expect(readOpsFilters()?.manual).toBe('both')
   })
 
   it('returns null when no filters are stored', () => {
@@ -75,8 +74,8 @@ describe('ops-filters-storage', () => {
       sprintId: null,
       epicId: null,
       tagSlug: null,
-      mode: 'all',
-      manual: 'all',
+      manual: 'both',
+      search: '',
     })
     const restored = readOpsFilters()
     expect(restored?.projectId).toBe('prj_sticky')
@@ -90,8 +89,8 @@ describe('ops-filters-storage', () => {
       sprintId: null,
       epicId: null,
       tagSlug: null,
-      mode: 'all',
-      manual: 'all',
+      manual: 'both',
+      search: '',
     })
     clearOpsFilters()
     expect(readOpsFilters()).toBeNull()
@@ -119,13 +118,50 @@ describe('ops-filters-storage', () => {
       sprintId: 'spr_ok',
       epicId: null,
       tagSlug: null,
-      mode: 'all',
-      manual: 'all',
+      manual: 'both',
+      search: '',
     })
   })
 
   it('treats non-JSON storage as absent (no throw)', () => {
     localStorage.setItem('clockwork:ops:filters:v1', '{not valid json')
     expect(readOpsFilters()).toBeNull()
+  })
+
+  it('migrates legacy manual="all" to "both" on read', () => {
+    localStorage.setItem(
+      'clockwork:ops:filters:v1',
+      JSON.stringify({
+        statuses: ['todo'],
+        priorities: [],
+        projectId: null,
+        sprintId: null,
+        epicId: null,
+        tagSlug: null,
+        mode: 'all',
+        manual: 'all',
+      }),
+    )
+    expect(readOpsFilters()?.manual).toBe('both')
+  })
+
+  it('drops the legacy mode field and defaults search to "" on read', () => {
+    localStorage.setItem(
+      'clockwork:ops:filters:v1',
+      JSON.stringify({
+        statuses: ['todo'],
+        priorities: [],
+        projectId: null,
+        sprintId: null,
+        epicId: null,
+        tagSlug: null,
+        mode: 'executing',
+        manual: 'auto',
+      }),
+    )
+    const restored = readOpsFilters()
+    expect(restored).toBeTruthy()
+    expect((restored as unknown as Record<string, unknown>).mode).toBeUndefined()
+    expect(restored?.search).toBe('')
   })
 })

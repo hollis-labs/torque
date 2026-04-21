@@ -4,18 +4,19 @@ const KEY = 'clockwork:ops:filters:v1'
 
 /**
  * Manual-flag filter tri-state.
- * - `all`    = no filter (default)
+ * - `both`   = no filter (default)
  * - `auto`   = manual=false (scheduler-eligible tasks)
  * - `manual` = manual=true (held for review before dispatch)
  */
-export type ManualFilter = 'all' | 'auto' | 'manual'
+export type ManualFilter = 'both' | 'auto' | 'manual'
 
-const MANUAL_VALUES: readonly ManualFilter[] = ['all', 'auto', 'manual'] as const
+const MANUAL_VALUES: readonly ManualFilter[] = ['both', 'auto', 'manual'] as const
 
 export function parseManualFilter(raw: unknown): ManualFilter {
-  return typeof raw === 'string' && (MANUAL_VALUES as readonly string[]).includes(raw)
-    ? (raw as ManualFilter)
-    : 'all'
+  if (typeof raw !== 'string') return 'both'
+  // Legacy migration: older blobs stored the default as 'all'.
+  if (raw === 'all') return 'both'
+  return (MANUAL_VALUES as readonly string[]).includes(raw) ? (raw as ManualFilter) : 'both'
 }
 
 export interface OpsFilters {
@@ -25,8 +26,9 @@ export interface OpsFilters {
   sprintId: string | null
   epicId: string | null
   tagSlug: string | null
-  mode: string
   manual: ManualFilter
+  /** Free-text search over title + description. */
+  search: string
 }
 
 export function saveOpsFilters(filters: OpsFilters): void {
@@ -57,8 +59,8 @@ export function readOpsFilters(): OpsFilters | null {
       sprintId: typeof f.sprintId === 'string' ? f.sprintId : null,
       epicId: typeof f.epicId === 'string' ? f.epicId : null,
       tagSlug: typeof f.tagSlug === 'string' ? f.tagSlug : null,
-      mode: typeof f.mode === 'string' ? f.mode : 'all',
       manual: parseManualFilter(f.manual),
+      search: typeof f.search === 'string' ? f.search : '',
     }
   } catch {
     return null

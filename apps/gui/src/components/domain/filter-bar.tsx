@@ -16,7 +16,7 @@ type ModePreset = keyof typeof MODE_PRESETS | 'all'
 const ALL_VALUE = '__all__'
 
 const MANUAL_OPTIONS: ReadonlyArray<{ value: ManualFilter; label: string; title: string }> = [
-  { value: 'all', label: 'All', title: 'All tasks (no manual filter)' },
+  { value: 'both', label: 'Both', title: 'All tasks (no manual filter)' },
   { value: 'auto', label: 'Auto', title: 'Scheduler-eligible (manual=false)' },
   { value: 'manual', label: 'Manual', title: 'Held for review (manual=true)' },
 ]
@@ -24,8 +24,8 @@ const MANUAL_OPTIONS: ReadonlyArray<{ value: ManualFilter; label: string; title:
 interface FilterBarProps {
   activeStatuses: TaskStatus[]
   onStatusToggle: (status: TaskStatus) => void
-  mode: ModePreset
-  onModeChange: (mode: ModePreset) => void
+  mode?: ModePreset
+  onModeChange?: (mode: ModePreset) => void
   /** Available statuses to show — defaults to all TASK_STATUSES */
   availableStatuses?: readonly TaskStatus[]
   /** Show priority filter chips */
@@ -130,35 +130,38 @@ export function FilterBar({
         </div>
       )}
 
-      {/* Mode presets */}
-      <div className="flex items-center gap-1 border-l border-zinc-800 pl-3">
-        <span className="mr-1 text-[10px] uppercase tracking-wider text-zinc-500">Mode:</span>
-        {(Object.keys(MODE_PRESETS) as Array<keyof typeof MODE_PRESETS>).map((preset) => (
+      {/* Mode presets — only rendered when the caller passes the handler.
+          (To be removed entirely in Task 8 once callers stop passing it.) */}
+      {onModeChange && (
+        <div className="flex items-center gap-1 border-l border-zinc-800 pl-3">
+          <span className="mr-1 text-[10px] uppercase tracking-wider text-zinc-500">Mode:</span>
+          {(Object.keys(MODE_PRESETS) as Array<keyof typeof MODE_PRESETS>).map((preset) => (
+            <button
+              key={preset}
+              type="button"
+              onClick={() => onModeChange(preset)}
+              className={`rounded border px-2 py-0.5 text-[10px] capitalize tracking-wider transition-all ${
+                mode === preset
+                  ? 'border-zinc-600 bg-zinc-800 text-zinc-200'
+                  : 'border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
+              }`}
+            >
+              {preset}
+            </button>
+          ))}
           <button
-            key={preset}
             type="button"
-            onClick={() => onModeChange(preset)}
-            className={`rounded border px-2 py-0.5 text-[10px] capitalize tracking-wider transition-all ${
-              mode === preset
+            onClick={() => onModeChange('all')}
+            className={`rounded border px-2 py-0.5 text-[10px] tracking-wider transition-all ${
+              mode === 'all'
                 ? 'border-zinc-600 bg-zinc-800 text-zinc-200'
                 : 'border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
             }`}
           >
-            {preset}
+            All
           </button>
-        ))}
-        <button
-          type="button"
-          onClick={() => onModeChange('all')}
-          className={`rounded border px-2 py-0.5 text-[10px] tracking-wider transition-all ${
-            mode === 'all'
-              ? 'border-zinc-600 bg-zinc-800 text-zinc-200'
-              : 'border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
-          }`}
-        >
-          All
-        </button>
-      </div>
+        </div>
+      )}
 
       {/* Manual-flag toggle: All / Auto / Manual */}
       {onManualFilterChange && (
@@ -169,7 +172,7 @@ export function FilterBar({
         >
           <span className="mr-1 text-[10px] uppercase tracking-wider text-zinc-500">Manual:</span>
           {MANUAL_OPTIONS.map((opt) => {
-            const active = (manualFilter ?? 'all') === opt.value
+            const active = (manualFilter ?? 'both') === opt.value
             return (
               <button
                 key={opt.value}

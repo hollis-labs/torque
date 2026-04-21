@@ -134,8 +134,8 @@ describe('BoardPage filter rehydration on remount', () => {
       sprintId: null,
       epicId: null,
       tagSlug: null,
-      mode: 'all',
-      manual: 'all',
+      manual: 'both',
+      search: '',
     })
 
     let observedSearch = ''
@@ -163,8 +163,8 @@ describe('BoardPage filter rehydration on remount', () => {
       sprintId: null,
       epicId: null,
       tagSlug: null,
-      mode: 'all',
-      manual: 'all',
+      manual: 'both',
+      search: '',
     })
 
     let observedSearch = ''
@@ -216,8 +216,8 @@ describe('BoardPage filter rehydration on remount', () => {
       sprintId: null,
       epicId: null,
       tagSlug: null,
-      mode: 'all',
-      manual: 'all',
+      manual: 'both',
+      search: '',
     })
 
     // Render BoardPage directly (no Routes switch) so it stays mounted
@@ -278,8 +278,8 @@ describe('BoardPage filter rehydration on remount', () => {
       sprintId: null,
       epicId: null,
       tagSlug: null,
-      mode: 'all',
-      manual: 'all',
+      manual: 'both',
+      search: '',
     })
 
     let observedSearch = ''
@@ -309,8 +309,8 @@ describe('BoardPage filter rehydration on remount', () => {
       sprintId: null,
       epicId: null,
       tagSlug: null,
-      mode: 'all',
-      manual: 'all',
+      manual: 'both',
+      search: '',
     })
 
     let observedSearch = ''
