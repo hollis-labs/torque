@@ -388,6 +388,9 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	} else if v := r.URL.Query().Get("tag"); v != "" {
 		filter.TagSlugs = []string{strings.TrimSpace(v)}
 	}
+	if v := r.URL.Query().Get("search"); v != "" {
+		filter.Search = v
+	}
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			filter.Limit = n
@@ -412,7 +415,14 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"tasks": out})
+	// `total` matches the FE contract (api.ts's `listTasks` return type).
+	// While no pagination is applied from this handler, `len(out)` equals the
+	// full match count. If/when Limit/Offset get plumbed end-to-end, replace
+	// this with a separate COUNT query using the same filter.
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"tasks": out,
+		"total": len(out),
+	})
 }
 
 func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {

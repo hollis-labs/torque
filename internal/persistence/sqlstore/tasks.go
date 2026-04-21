@@ -73,6 +73,7 @@ type TaskFilter struct {
 	EpicID    string
 	Executor  string
 	TagSlugs  []string // AND-match: task must have all listed tags
+	Search    string   // case-insensitive substring match on title OR description
 	Limit     int
 	Offset    int
 
@@ -339,6 +340,12 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 			"id IN (SELECT task_id FROM task_tags WHERE tag_slug IN (%s) GROUP BY task_id HAVING COUNT(DISTINCT tag_slug) = ?)",
 			strings.Join(placeholders, ","),
 		))
+	}
+	if f.Search != "" {
+		// SQLite's LIKE is case-insensitive for ASCII by default.
+		pattern := "%" + f.Search + "%"
+		where = append(where, "(title LIKE ? OR description LIKE ?)")
+		args = append(args, pattern, pattern)
 	}
 
 	q := `SELECT ` + taskSelectCols + ` FROM tasks`
