@@ -1,6 +1,8 @@
 package sqlstore
 
 import (
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -11,6 +13,19 @@ type CommentRecord struct {
 	Author    string    `json:"author"`
 	Content   string    `json:"content"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// CommentFilter holds optional filter criteria for SearchComments.
+type CommentFilter struct {
+	TaskID string // restrict to one task
+	Author string // exact match
+	// Search is a substring match on content using SQLite's built-in LIKE
+	// operator, which is case-insensitive for ASCII characters by default.
+	// Non-ASCII case folding is not guaranteed — behavior depends on the
+	// SQLite build's ICU support. For portable case-insensitive matching
+	// across all inputs, callers should lower-case the value before passing.
+	Search string
+	Limit  int
 }
 
 // AddComment inserts a new comment and populates ID + CreatedAt from the DB.
@@ -26,6 +41,56 @@ func (s *Store) ListComments(taskID string) ([]CommentRecord, error) {
 		FROM comments WHERE task_id = ? ORDER BY created_at ASC`
 
 	rows, err := s.db.Query(q, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var comments []CommentRecord
+	for rows.Next() {
+		var c CommentRecord
+		if err := rows.Scan(&c.ID, &c.TaskID, &c.Author, &c.Content, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		comments = append(comments, c)
+	}
+	return comments, rows.Err()
+}
+
+// SearchComments returns comments matching the filter, ordered by created_at DESC.
+// Search, TaskID, and Author are all optional at the store layer; the calling
+// MCP/service layer enforces any required-field contract.
+func (s *Store) SearchComments(f CommentFilter) ([]CommentRecord, error) {
+	var where []string
+	var args []any
+
+	if f.Search != "" {
+		pattern := "%" + f.Search + "%"
+		where = append(where, "content LIKE ?")
+		args = append(args, pattern)
+	}
+	if f.TaskID != "" {
+		where = append(where, "task_id = ?")
+		args = append(args, f.TaskID)
+	}
+	if f.Author != "" {
+		where = append(where, "author = ?")
+		args = append(args, f.Author)
+	}
+
+	q := `SELECT id, task_id, author, content, created_at FROM comments`
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	// id is auto-increment and monotonically increasing within a second, so
+	// it provides a stable tie-breaker when multiple rows share the same
+	// created_at timestamp (common in tests and bulk inserts).
+	q += " ORDER BY created_at DESC, id DESC"
+	if f.Limit > 0 {
+		q += fmt.Sprintf(" LIMIT %d", f.Limit)
+	}
+
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}

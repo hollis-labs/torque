@@ -13,6 +13,30 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// parseManualFilter translates the `manual` MCP string param to a *bool for
+// TaskFilter.Manual. Input is lowercased before matching so callers sending
+// "Manual", "TRUE", etc. behave identically to their lowercase equivalents.
+// Accepted vocabularies:
+//   - UI:   "both" or "" or absent → nil (no filter)
+//   - UI:   "manual"              → true
+//   - UI:   "auto"               → false
+//   - HTTP: "true" / "1"         → true
+//   - HTTP: "false" / "0"        → false
+//
+// Unknown values return nil (no filter), matching HTTP handler behavior.
+func parseManualFilter(v string) *bool {
+	t := true
+	f := false
+	switch strings.ToLower(v) {
+	case "manual", "true", "1":
+		return &t
+	case "auto", "false", "0":
+		return &f
+	default:
+		return nil // "both", "", or unknown → no filter
+	}
+}
+
 func (a *Adapter) registerTaskTools() {
 	a.server.AddTool(mcp.NewTool("clockwork_task_create",
 		mcp.WithDescription(`Create a new task in Clockwork; returns the full TaskRecord with its assigned ID.
@@ -68,6 +92,12 @@ Example: {"status":"doing","limit":"50"}`),
 		mcp.WithString("trust", mcp.Description("Filter by trust (trusted|normal|untrusted)")),
 		mcp.WithString("checkpoint_mode", mcp.Description("Filter by checkpoint_mode")),
 		mcp.WithString("parent_id", mcp.Description("Filter by parent_id; pass 'null' to return root tasks")),
+		mcp.WithString("project_id", mcp.Description("Filter by project ID (requires features.projects)")),
+		mcp.WithString("sprint_id", mcp.Description("Filter by sprint ID (requires features.sprints)")),
+		mcp.WithString("epic_id", mcp.Description("Filter by epic ID (requires features.epics)")),
+		mcp.WithString("tags", mcp.Description("JSON array of tag slugs — AND-match; task must have all listed tags")),
+		mcp.WithString("manual", mcp.Description("Filter by manual flag: 'manual'/'true'/'1' → manual only; 'auto'/'false'/'0' → scheduled only; 'both' or omit → no filter")),
+		mcp.WithString("search", mcp.Description("Substring match on title + description (case-insensitive)")),
 		mcp.WithString("limit", mcp.Description("Max results (integer, default 50, max 200)")),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleTaskList)
@@ -137,11 +167,17 @@ Example: {"id":"T-123","status":"doing"}`),
 	), a.handleTaskTransition)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_search",
-		mcp.WithDescription(`Full-text search across task title and description; ordered relevance then recency.
+		mcp.WithDescription(`Full-text search across task title and description; ordered by priority ASC, created_at ASC.
 Use for free-text discovery; prefer clockwork_task_list when filtering by structured fields. Default returns ~150B briefTask records; pass verbose="true" for full TaskRecord. Limit defaults to 25, capped at 100.
+Filters (project_id, sprint_id, epic_id, tags, manual) combine with the query via AND — use them to narrow free-text results.
 Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, hint?}}.
 Example: {"query":"auth bug","limit":"10"}`),
 		mcp.WithString("query", mcp.Required(), mcp.Description("Free-text search query")),
+		mcp.WithString("project_id", mcp.Description("Filter by project ID (requires features.projects)")),
+		mcp.WithString("sprint_id", mcp.Description("Filter by sprint ID (requires features.sprints)")),
+		mcp.WithString("epic_id", mcp.Description("Filter by epic ID (requires features.epics)")),
+		mcp.WithString("tags", mcp.Description("JSON array of tag slugs — AND-match; task must have all listed tags")),
+		mcp.WithString("manual", mcp.Description("Filter by manual flag: 'manual'/'true'/'1' → manual only; 'auto'/'false'/'0' → scheduled only; 'both' or omit → no filter")),
 		mcp.WithString("limit", mcp.Description("Max results (integer, default 25, max 100)")),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleTaskSearch)
@@ -263,6 +299,11 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 		SourceRef:      reqStr(req, "source_ref"),
 		Trust:          reqStr(req, "trust"),
 		CheckpointMode: reqStr(req, "checkpoint_mode"),
+		ProjectID:      reqStr(req, "project_id"),
+		SprintID:       reqStr(req, "sprint_id"),
+		EpicID:         reqStr(req, "epic_id"),
+		Search:         reqStr(req, "search"),
+		Manual:         parseManualFilter(reqStr(req, "manual")),
 		Limit:          limit,
 	}
 	if _, ok := req.GetArguments()["parent_id"]; ok {
@@ -271,6 +312,11 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 			filter.ParentIDNull = true
 		} else {
 			filter.ParentID = v
+		}
+	}
+	if raw := reqStr(req, "tags"); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &filter.TagSlugs); err != nil {
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
 		}
 	}
 	tasks, err := a.svc.Task.List(filter)
@@ -516,15 +562,30 @@ func (a *Adapter) handleTaskTransition(ctx context.Context, req mcp.CallToolRequ
 }
 
 func (a *Adapter) handleTaskSearch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	query := reqStr(req, "query")
+	if query == "" {
+		return errResult(ErrCodeArgInvalid, "query is required", "query")
+	}
 	limit := clampLimit(reqInt(req, "limit"), defaultTaskSearchLimit, maxTaskSearchLimit)
 	verbose := reqStrBool(req, "verbose")
-	tasks, err := a.svc.Task.Search(reqStr(req, "query"))
+
+	filter := sqlstore.TaskFilter{
+		Search:    query,
+		ProjectID: reqStr(req, "project_id"),
+		SprintID:  reqStr(req, "sprint_id"),
+		EpicID:    reqStr(req, "epic_id"),
+		Manual:    parseManualFilter(reqStr(req, "manual")),
+		Limit:     limit,
+	}
+	if raw := reqStr(req, "tags"); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &filter.TagSlugs); err != nil {
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
+		}
+	}
+
+	tasks, err := a.svc.Task.List(filter)
 	if err != nil {
 		return errFromService(err)
-	}
-	// Search has no native limit param; apply limit post-query.
-	if len(tasks) > limit {
-		tasks = tasks[:limit]
 	}
 	return a.tasksToEnvelope(tasks, limit, verbose)
 }

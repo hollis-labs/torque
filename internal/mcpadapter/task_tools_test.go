@@ -29,6 +29,23 @@ func setupAdapter(t *testing.T) *mcpadapter.Adapter {
 	return mcpadapter.New(svc, nil)
 }
 
+// setupAdapterWithFeatures creates an adapter with projects, sprints, and epics enabled.
+// Used by tests that need to set project_id / sprint_id / epic_id on tasks via the service.
+func setupAdapterWithFeatures(t *testing.T) *mcpadapter.Adapter {
+	t.Helper()
+	db, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	require.NoError(t, migrations.Run(db))
+	store, err := sqlstore.New(db, "sqlite")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	svc := service.New(store)
+	require.NoError(t, svc.Feature.Enable("projects"))
+	require.NoError(t, svc.Feature.Enable("sprints"))
+	require.NoError(t, svc.Feature.Enable("epics"))
+	return mcpadapter.New(svc, nil)
+}
+
 // dataBytes extracts the marshaled `data` field from a Phase C
 // `{ok, data, error}` response text. Returns the raw JSON so callers can
 // unmarshal into whatever shape they expect. Fails the test if the response
@@ -439,6 +456,402 @@ func TestFullStack_SearchTasks(t *testing.T) {
 	parseData(t, text, &envelope)
 	require.Len(t, envelope.Items, 1, "search for 'login' should return exactly 1 result")
 	require.Equal(t, false, envelope.Meta["truncated"])
+}
+
+// TestFullStack_TaskList_FilterByProjectID verifies task_list filters on project_id.
+func TestFullStack_TaskList_FilterByProjectID(t *testing.T) {
+	a := setupAdapterWithFeatures(t)
+
+	// Create the projects first (features are enabled, so task_create validates existence).
+	text, isErr := callTool(t, a, "clockwork_project_create", map[string]interface{}{
+		"name": "Alpha",
+	})
+	require.False(t, isErr, "create project Alpha: %s", text)
+	var projAlpha map[string]interface{}
+	parseData(t, text, &projAlpha)
+	alphaID := projAlpha["ID"].(string)
+
+	text, isErr = callTool(t, a, "clockwork_project_create", map[string]interface{}{
+		"name": "Beta",
+	})
+	require.False(t, isErr, "create project Beta: %s", text)
+	var projBeta map[string]interface{}
+	parseData(t, text, &projBeta)
+	betaID := projBeta["ID"].(string)
+
+	_, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":       "Project Alpha task",
+		"description": "belongs to alpha",
+		"project_id":  alphaID,
+	})
+	require.False(t, isErr)
+
+	_, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":       "Project Beta task",
+		"description": "belongs to beta",
+		"project_id":  betaID,
+	})
+	require.False(t, isErr)
+
+	text, isErr = callTool(t, a, "clockwork_task_list", map[string]interface{}{
+		"project_id": alphaID,
+	})
+	require.False(t, isErr, "task_list with project_id should not error: %s", text)
+
+	var envelope struct {
+		Items []map[string]interface{} `json:"items"`
+		Meta  map[string]interface{}   `json:"meta"`
+	}
+	parseData(t, text, &envelope)
+	require.Len(t, envelope.Items, 1)
+	require.Equal(t, "Project Alpha task", envelope.Items[0]["title"])
+}
+
+// TestFullStack_TaskList_FilterByTags verifies task_list filters on tags (AND-match).
+func TestFullStack_TaskList_FilterByTags(t *testing.T) {
+	a := setupAdapter(t)
+
+	_, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":       "Backend task",
+		"description": "x",
+		"tags":        `["backend","p1"]`,
+	})
+	require.False(t, isErr)
+
+	_, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":       "Frontend task",
+		"description": "x",
+		"tags":        `["frontend"]`,
+	})
+	require.False(t, isErr)
+
+	// Filter to tasks with "backend" tag.
+	text, isErr := callTool(t, a, "clockwork_task_list", map[string]interface{}{
+		"tags": `["backend"]`,
+	})
+	require.False(t, isErr, "task_list with tags should not error: %s", text)
+
+	var envelope struct {
+		Items []map[string]interface{} `json:"items"`
+		Meta  map[string]interface{}   `json:"meta"`
+	}
+	parseData(t, text, &envelope)
+	require.Len(t, envelope.Items, 1)
+	require.Equal(t, "Backend task", envelope.Items[0]["title"])
+}
+
+// TestFullStack_TaskList_FilterByManual verifies the manual filter vocabularies.
+func TestFullStack_TaskList_FilterByManual(t *testing.T) {
+	a := setupAdapter(t)
+
+	// Create one manual and one non-manual task (update bypasses safety override).
+	text, _ := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":       "Manual task",
+		"description": "x",
+	})
+	var created1 map[string]interface{}
+	parseData(t, text, &created1)
+	id1 := created1["ID"].(string)
+	// Keep manual=true (already forced by safety override).
+
+	text, _ = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":       "Auto task",
+		"description": "x",
+	})
+	var created2 map[string]interface{}
+	parseData(t, text, &created2)
+	id2 := created2["ID"].(string)
+
+	// Flip task2 to manual=false via update.
+	_, isErr := callTool(t, a, "clockwork_task_update", map[string]interface{}{
+		"id":     id2,
+		"manual": false,
+	})
+	require.False(t, isErr)
+
+	_ = id1 // id1 stays manual=true
+
+	t.Run("manual filter returns only manual tasks", func(t *testing.T) {
+		text, isErr := callTool(t, a, "clockwork_task_list", map[string]interface{}{
+			"manual": "manual",
+		})
+		require.False(t, isErr, "should not error: %s", text)
+		var env struct {
+			Items []map[string]interface{} `json:"items"`
+		}
+		parseData(t, text, &env)
+		require.Len(t, env.Items, 1)
+		require.Equal(t, "Manual task", env.Items[0]["title"])
+	})
+
+	t.Run("auto filter returns only non-manual tasks", func(t *testing.T) {
+		text, isErr := callTool(t, a, "clockwork_task_list", map[string]interface{}{
+			"manual": "auto",
+		})
+		require.False(t, isErr, "should not error: %s", text)
+		var env struct {
+			Items []map[string]interface{} `json:"items"`
+		}
+		parseData(t, text, &env)
+		require.Len(t, env.Items, 1)
+		require.Equal(t, "Auto task", env.Items[0]["title"])
+	})
+
+	t.Run("both/omit returns all tasks", func(t *testing.T) {
+		text, isErr := callTool(t, a, "clockwork_task_list", map[string]interface{}{
+			"manual": "both",
+		})
+		require.False(t, isErr, "should not error: %s", text)
+		var env struct {
+			Items []map[string]interface{} `json:"items"`
+		}
+		parseData(t, text, &env)
+		require.Len(t, env.Items, 2)
+	})
+}
+
+// TestFullStack_TaskList_CombinedSearchAndProjectID verifies query+project_id AND combination.
+func TestFullStack_TaskList_CombinedSearchAndProjectID(t *testing.T) {
+	a := setupAdapterWithFeatures(t)
+
+	// Create projects.
+	text, isErr := callTool(t, a, "clockwork_project_create", map[string]interface{}{"name": "Alpha"})
+	require.False(t, isErr)
+	var projAlpha map[string]interface{}
+	parseData(t, text, &projAlpha)
+	alphaID := projAlpha["ID"].(string)
+
+	text, isErr = callTool(t, a, "clockwork_project_create", map[string]interface{}{"name": "Beta"})
+	require.False(t, isErr)
+	var projBeta map[string]interface{}
+	parseData(t, text, &projBeta)
+	betaID := projBeta["ID"].(string)
+
+	_, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":       "Auth bug in Alpha",
+		"description": "login broken",
+		"project_id":  alphaID,
+	})
+	require.False(t, isErr)
+
+	_, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":       "Auth bug in Beta",
+		"description": "login broken",
+		"project_id":  betaID,
+	})
+	require.False(t, isErr)
+
+	text, isErr = callTool(t, a, "clockwork_task_list", map[string]interface{}{
+		"search":     "login",
+		"project_id": alphaID,
+	})
+	require.False(t, isErr, "combined filter should not error: %s", text)
+
+	var envelope struct {
+		Items []map[string]interface{} `json:"items"`
+	}
+	parseData(t, text, &envelope)
+	require.Len(t, envelope.Items, 1)
+	require.Equal(t, "Auth bug in Alpha", envelope.Items[0]["title"])
+}
+
+// TestFullStack_TaskSearch_WithSprintID verifies task_search with sprint_id filter.
+func TestFullStack_TaskSearch_WithSprintID(t *testing.T) {
+	a := setupAdapterWithFeatures(t)
+
+	// Create sprints.
+	text, isErr := callTool(t, a, "clockwork_sprint_create", map[string]interface{}{"name": "Sprint 01"})
+	require.False(t, isErr, "create sprint 01: %s", text)
+	var sprint01 map[string]interface{}
+	parseData(t, text, &sprint01)
+	sp01ID := sprint01["ID"].(string)
+
+	text, isErr = callTool(t, a, "clockwork_sprint_create", map[string]interface{}{"name": "Sprint 02"})
+	require.False(t, isErr, "create sprint 02: %s", text)
+	var sprint02 map[string]interface{}
+	parseData(t, text, &sprint02)
+	sp02ID := sprint02["ID"].(string)
+
+	_, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":       "Sprint task refactor",
+		"description": "refactoring the auth module",
+		"sprint_id":   sp01ID,
+	})
+	require.False(t, isErr)
+
+	_, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":       "Other sprint refactor",
+		"description": "refactoring something else",
+		"sprint_id":   sp02ID,
+	})
+	require.False(t, isErr)
+
+	text, isErr = callTool(t, a, "clockwork_task_search", map[string]interface{}{
+		"query":     "refactor",
+		"sprint_id": sp01ID,
+	})
+	require.False(t, isErr, "task_search with sprint_id should not error: %s", text)
+
+	var envelope struct {
+		Items []map[string]interface{} `json:"items"`
+	}
+	parseData(t, text, &envelope)
+	require.Len(t, envelope.Items, 1)
+	require.Equal(t, "Sprint task refactor", envelope.Items[0]["title"])
+}
+
+// TestFullStack_TaskSearch_EmptyQueryReturnsError verifies that task_search
+// rejects an empty query with a structured error.
+func TestFullStack_TaskSearch_EmptyQueryReturnsError(t *testing.T) {
+	a := setupAdapter(t)
+
+	// task_search declares query as Required() so the MCP framework may reject
+	// it before the handler runs. Passing an explicit empty string instead.
+	text, isErr := callTool(t, a, "clockwork_task_search", map[string]interface{}{
+		"query": "",
+	})
+	require.True(t, isErr, "empty query should return error; got: %s", text)
+	code, _, field := parseError(t, text)
+	require.Equal(t, "arg_invalid", code)
+	require.Equal(t, "query", field)
+}
+
+// TestFullStack_CommentSearch covers 7 sub-tests for clockwork_comment_search.
+func TestFullStack_CommentSearch(t *testing.T) {
+	a := setupAdapter(t)
+
+	// Create two tasks.
+	text, _ := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title": "Task A", "description": "x",
+	})
+	var taskA map[string]interface{}
+	parseData(t, text, &taskA)
+	taskAID := taskA["ID"].(string)
+
+	text, _ = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title": "Task B", "description": "x",
+	})
+	var taskB map[string]interface{}
+	parseData(t, text, &taskB)
+	taskBID := taskB["ID"].(string)
+
+	// Add 3 comments.
+	_, isErr := callTool(t, a, "clockwork_comment_add", map[string]interface{}{
+		"task_id": taskAID,
+		"author":  "alice",
+		"content": "Fix the login handler please",
+	})
+	require.False(t, isErr)
+
+	_, isErr = callTool(t, a, "clockwork_comment_add", map[string]interface{}{
+		"task_id": taskAID,
+		"author":  "bob",
+		"content": "Agreed login is broken and needs attention",
+	})
+	require.False(t, isErr)
+
+	_, isErr = callTool(t, a, "clockwork_comment_add", map[string]interface{}{
+		"task_id": taskBID,
+		"author":  "alice",
+		"content": "Unrelated work item on task B",
+	})
+	require.False(t, isErr)
+
+	parseEnvelope := func(t *testing.T, text string) ([]map[string]interface{}, map[string]interface{}) {
+		t.Helper()
+		var env struct {
+			Items []map[string]interface{} `json:"items"`
+			Meta  map[string]interface{}   `json:"meta"`
+		}
+		parseData(t, text, &env)
+		return env.Items, env.Meta
+	}
+
+	t.Run("content match", func(t *testing.T) {
+		text, isErr := callTool(t, a, "clockwork_comment_search", map[string]interface{}{
+			"query": "login",
+		})
+		require.False(t, isErr, "should not error: %s", text)
+		items, meta := parseEnvelope(t, text)
+		require.Len(t, items, 2)
+		require.Equal(t, false, meta["truncated"])
+		// Both login comments must be present.
+		contents := []string{items[0]["content"].(string), items[1]["content"].(string)}
+		require.Contains(t, contents, "Fix the login handler please")
+		require.Contains(t, contents, "Agreed login is broken and needs attention")
+	})
+
+	t.Run("task_id scope", func(t *testing.T) {
+		text, isErr := callTool(t, a, "clockwork_comment_search", map[string]interface{}{
+			"query":   "task",
+			"task_id": taskBID,
+		})
+		require.False(t, isErr, "should not error: %s", text)
+		items, _ := parseEnvelope(t, text)
+		require.Len(t, items, 1)
+		require.Equal(t, taskBID, items[0]["task_id"])
+	})
+
+	t.Run("author filter", func(t *testing.T) {
+		text, isErr := callTool(t, a, "clockwork_comment_search", map[string]interface{}{
+			"query":  "login",
+			"author": "alice",
+		})
+		require.False(t, isErr, "should not error: %s", text)
+		items, _ := parseEnvelope(t, text)
+		require.Len(t, items, 1)
+		require.Equal(t, "alice", items[0]["author"])
+	})
+
+	t.Run("author not in content still matches when query matches", func(t *testing.T) {
+		// "alice" is an author; query "Unrelated" doesn't mention alice by name.
+		text, isErr := callTool(t, a, "clockwork_comment_search", map[string]interface{}{
+			"query":  "Unrelated",
+			"author": "alice",
+		})
+		require.False(t, isErr, "should not error: %s", text)
+		items, _ := parseEnvelope(t, text)
+		require.Len(t, items, 1)
+		require.Equal(t, "alice", items[0]["author"])
+		require.Equal(t, taskBID, items[0]["task_id"])
+	})
+
+	t.Run("combined filters", func(t *testing.T) {
+		text, isErr := callTool(t, a, "clockwork_comment_search", map[string]interface{}{
+			"query":   "login",
+			"task_id": taskAID,
+			"author":  "bob",
+		})
+		require.False(t, isErr, "should not error: %s", text)
+		items, _ := parseEnvelope(t, text)
+		require.Len(t, items, 1)
+		require.Equal(t, "bob", items[0]["author"])
+		require.Equal(t, taskAID, items[0]["task_id"])
+	})
+
+	t.Run("limit and truncated flag", func(t *testing.T) {
+		// query "login" matches 2 comments; limit to 1.
+		text, isErr := callTool(t, a, "clockwork_comment_search", map[string]interface{}{
+			"query": "login",
+			"limit": "1",
+		})
+		require.False(t, isErr, "should not error: %s", text)
+		items, meta := parseEnvelope(t, text)
+		require.Len(t, items, 1)
+		// meta.truncated reflects whether cappedJSONResult trimmed; at this scale
+		// it won't — the Limit is enforced at the store level.
+		require.Equal(t, float64(1), meta["returned"])
+	})
+
+	t.Run("empty query returns error", func(t *testing.T) {
+		text, isErr := callTool(t, a, "clockwork_comment_search", map[string]interface{}{
+			"query": "",
+		})
+		require.True(t, isErr, "empty query should error; got: %s", text)
+		code, _, field := parseError(t, text)
+		require.Equal(t, "arg_invalid", code)
+		require.Equal(t, "query", field)
+	})
 }
 
 // TestFullStack_TaskCreate_ForcesManualTrue_ExplicitFalse verifies the
