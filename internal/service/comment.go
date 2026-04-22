@@ -25,3 +25,10 @@ func (s *CommentService) Add(taskID, author, content string) (*sqlstore.CommentR
 func (s *CommentService) List(taskID string) ([]sqlstore.CommentRecord, error) {
 	return s.store.ListComments(taskID)
 }
+
+// Search returns comments matching the filter. The caller is responsible for
+// enforcing any required-field contract (e.g. non-empty Search) at the
+// MCP/HTTP layer — the store accepts an empty Search as "no content filter".
+func (s *CommentService) Search(f sqlstore.CommentFilter) ([]sqlstore.CommentRecord, error) {
+	return s.store.SearchComments(f)
+}
