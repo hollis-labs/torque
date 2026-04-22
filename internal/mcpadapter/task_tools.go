@@ -14,7 +14,9 @@ import (
 )
 
 // parseManualFilter translates the `manual` MCP string param to a *bool for
-// TaskFilter.Manual. Accepted vocabularies:
+// TaskFilter.Manual. Input is lowercased before matching so callers sending
+// "Manual", "TRUE", etc. behave identically to their lowercase equivalents.
+// Accepted vocabularies:
 //   - UI:   "both" or "" or absent → nil (no filter)
 //   - UI:   "manual"              → true
 //   - UI:   "auto"               → false
@@ -25,7 +27,7 @@ import (
 func parseManualFilter(v string) *bool {
 	t := true
 	f := false
-	switch v {
+	switch strings.ToLower(v) {
 	case "manual", "true", "1":
 		return &t
 	case "auto", "false", "0":
@@ -165,7 +167,7 @@ Example: {"id":"T-123","status":"doing"}`),
 	), a.handleTaskTransition)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_search",
-		mcp.WithDescription(`Full-text search across task title and description; ordered relevance then recency.
+		mcp.WithDescription(`Full-text search across task title and description; ordered by priority ASC, created_at ASC.
 Use for free-text discovery; prefer clockwork_task_list when filtering by structured fields. Default returns ~150B briefTask records; pass verbose="true" for full TaskRecord. Limit defaults to 25, capped at 100.
 Filters (project_id, sprint_id, epic_id, tags, manual) combine with the query via AND — use them to narrow free-text results.
 Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, hint?}}.

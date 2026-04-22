@@ -19,8 +19,8 @@ Example: {"task_id":"T-123","author":"reviewer","content":"Please also cover the
 	), a.handleCommentAdd)
 
 	a.server.AddTool(mcp.NewTool("clockwork_comment_list",
-		mcp.WithDescription(`List all comments on a task, newest first. Default brief shape includes a 100-char excerpt of the body; pass verbose="true" for full content.
-Use to review the discussion thread; clockwork_comment_add to append. No comment_get/delete yet — brief ID + list is the read surface.
+		mcp.WithDescription(`List all comments on a task, oldest first (chronological order). Default brief shape includes a 100-char excerpt of the body; pass verbose="true" for full content.
+Use to review the discussion thread; clockwork_comment_add to append. For newest-first cross-task search use clockwork_comment_search. No comment_get/delete yet — brief ID + list is the read surface.
 Response shape: data = {items: [<briefComment or CommentRecord>...], meta: {truncated, returned, limit, hint?}}.
 Example: {"task_id":"T-123"}`),
 		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),

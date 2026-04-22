@@ -19,7 +19,12 @@ type CommentRecord struct {
 type CommentFilter struct {
 	TaskID string // restrict to one task
 	Author string // exact match
-	Search string // case-insensitive substring match on content
+	// Search is a substring match on content using SQLite's built-in LIKE
+	// operator, which is case-insensitive for ASCII characters by default.
+	// Non-ASCII case folding is not guaranteed — behavior depends on the
+	// SQLite build's ICU support. For portable case-insensitive matching
+	// across all inputs, callers should lower-case the value before passing.
+	Search string
 	Limit  int
 }
 
@@ -77,7 +82,10 @@ func (s *Store) SearchComments(f CommentFilter) ([]CommentRecord, error) {
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
-	q += " ORDER BY created_at DESC"
+	// id is auto-increment and monotonically increasing within a second, so
+	// it provides a stable tie-breaker when multiple rows share the same
+	// created_at timestamp (common in tests and bulk inserts).
+	q += " ORDER BY created_at DESC, id DESC"
 	if f.Limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", f.Limit)
 	}
