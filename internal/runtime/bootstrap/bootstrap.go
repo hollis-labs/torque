@@ -5,6 +5,7 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 	executorapi "github.com/hollis-labs/clockwork-manifold/plugins/executor-api"
 	executorcli "github.com/hollis-labs/clockwork-manifold/plugins/executor-cli"
+	executoropencode "github.com/hollis-labs/clockwork-manifold/plugins/executor-opencode"
 )
 
 // Executors registers the built-in executor plugins with the registry.
@@ -18,6 +19,10 @@ func Executors(reg *executor.Registry, profiles config.ProfileMap, toolRouter in
 	// Register executor-api
 	api := executorapi.New(profiles, toolRouter)
 	reg.Register(api)
+
+	// Register executor-opencode: dispatches tasks via `opencode run`.
+	oc := executoropencode.New()
+	reg.Register(oc)
 
 	return nil
 }
