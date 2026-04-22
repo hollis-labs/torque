@@ -24,8 +24,8 @@ import (
 //     footgun when the scheduler may run from anywhere.
 //   - Result is filepath.Abs + filepath.Clean (trailing slash removed).
 //
-// Errors are returned unwrapped so callers can decide on PermanentError
-// semantics. See executor-cli plugin.go for the canonical wrap call sites.
+// Errors are returned unwrapped so callers can apply whatever
+// PermanentError semantics are appropriate at their executor boundary.
 func ResolveWorkingDir(raw string) (string, error) {
 	if raw == "" {
 		return "", nil

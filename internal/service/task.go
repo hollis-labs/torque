@@ -112,13 +112,13 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	}
 
 	// Facet validation — uses effective values (after defaulting) to match
-	// what will be stored. Executor defaults to "cli" only for kind=agent;
+	// what will be stored. Executor defaults to "opencode" only for kind=agent;
 	// other kinds leave it as the caller set it so validateTaskKind can
 	// enforce kind-specific rules (e.g. external forbids executor).
 	effectiveKind := orDefault(input.Kind, "agent")
 	effectiveExecutor := input.Executor
 	if effectiveKind == "agent" && effectiveExecutor == "" {
-		effectiveExecutor = "cli"
+		effectiveExecutor = "opencode"
 	}
 	effectiveSourceType := orDefault(input.SourceType, "user")
 	effectiveCheckpointMode := orDefault(input.CheckpointMode, "none")

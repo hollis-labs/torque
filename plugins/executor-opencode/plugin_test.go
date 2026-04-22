@@ -29,7 +29,7 @@ func fakeOpencode(t *testing.T, body string) func() {
 	require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
 
 	orig := os.Getenv("PATH")
-	t.Setenv("PATH", dir+":"+orig)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+orig)
 	return func() {
 		t.Setenv("PATH", orig)
 	}

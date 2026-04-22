@@ -234,7 +234,10 @@ func modelFromMetadata(md map[string]any) string {
 		return ""
 	}
 	s, ok := v.(string)
-	return map[bool]string{true: s, false: ""}[ok]
+	if ok {
+		return s
+	}
+	return ""
 }
 
 // resolveTimeout picks the effective run timeout in priority order:
