@@ -257,7 +257,13 @@ export default function BoardPage() {
     )
   }, [projectId, sprintId, epicId, visibleSprints, visibleEpics, sprints.length, epics.length, setSearchParams])
 
+  // Monotonic request id so a slow older fetch can't overwrite a fast newer
+  // one. The filter-change and SSE-refresh effects both call fetchTasks, so
+  // multiple responses can be in flight; only the latest should mutate state.
+  const fetchGeneration = useRef(0)
+
   const fetchTasks = useCallback(async () => {
+    const myGen = ++fetchGeneration.current
     try {
       const result = await api.listTasks({
         status: activeStatuses,
@@ -269,19 +275,27 @@ export default function BoardPage() {
         manual: manualFilter === 'both' ? undefined : manualFilter === 'manual',
         search: search || undefined,
       })
+      if (myGen !== fetchGeneration.current) return
       setTasks(result.tasks)
       setTotalMatchCount(result.total)
       setError(null)
     } catch (err) {
+      if (myGen !== fetchGeneration.current) return
       setError(err instanceof Error ? err.message : 'Failed to load tasks')
     } finally {
-      setLoading(false)
+      if (myGen === fetchGeneration.current) {
+        setLoading(false)
+      }
     }
   }, [api, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, manualFilter, search])
 
+  // Refetch when filters/search change. Intentionally does NOT setLoading(true)
+  // — the initial useState(true) covers the first-mount skeleton; subsequent
+  // fetches keep the current rows visible and swap data in place when the
+  // response lands, so filter/search changes feel instant instead of flashing
+  // the skeleton.
   useEffect(() => {
     if (!hydrated) return
-    setLoading(true)
     fetchTasks()
   }, [hydrated, fetchTasks])
 

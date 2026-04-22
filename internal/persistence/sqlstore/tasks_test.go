@@ -133,6 +133,55 @@ func TestListTasksFilterByManual(t *testing.T) {
 	assert.Equal(t, auto.ID, got[0].ID)
 }
 
+// TestListTasksFilterBySearch verifies the Search filter matches on title OR
+// description and combines (ANDs) with the other filter fields.
+func TestListTasksFilterBySearch(t *testing.T) {
+	store := setupTestStore(t)
+
+	hitTitle := sampleTask("CW-20260421-0001")
+	hitTitle.Title = "Implement scheduler idle fix"
+
+	hitDesc := sampleTask("CW-20260421-0002")
+	hitDesc.Title = "Unrelated title"
+	hitDesc.Description = "Fix the scheduler picker to avoid starvation"
+
+	miss := sampleTask("CW-20260421-0003")
+	miss.Title = "Polish the task detail page"
+
+	hitTitleDone := sampleTask("CW-20260421-0004")
+	hitTitleDone.Title = "scheduler cleanup"
+	hitTitleDone.Status = "done"
+
+	require.NoError(t, store.CreateTask(hitTitle))
+	require.NoError(t, store.CreateTask(hitDesc))
+	require.NoError(t, store.CreateTask(miss))
+	require.NoError(t, store.CreateTask(hitTitleDone))
+
+	// Search alone: three of the four match "scheduler".
+	got, err := store.ListTasks(sqlstore.TaskFilter{Search: "scheduler"})
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+	ids := []string{got[0].ID, got[1].ID, got[2].ID}
+	assert.ElementsMatch(t, []string{hitTitle.ID, hitDesc.ID, hitTitleDone.ID}, ids)
+
+	// Search combined with a status filter: only the todo-status match.
+	got, err = store.ListTasks(sqlstore.TaskFilter{Search: "scheduler", Status: "todo"})
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	ids = []string{got[0].ID, got[1].ID}
+	assert.ElementsMatch(t, []string{hitTitle.ID, hitDesc.ID}, ids)
+
+	// Empty Search is a no-op — returns all.
+	got, err = store.ListTasks(sqlstore.TaskFilter{Search: ""})
+	require.NoError(t, err)
+	require.Len(t, got, 4)
+
+	// No matches.
+	got, err = store.ListTasks(sqlstore.TaskFilter{Search: "xyzzy"})
+	require.NoError(t, err)
+	require.Len(t, got, 0)
+}
+
 // TestUpdateTask verifies partial updates apply correctly.
 func TestUpdateTask(t *testing.T) {
 	store := setupTestStore(t)
