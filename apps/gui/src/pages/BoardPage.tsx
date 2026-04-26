@@ -21,6 +21,7 @@ import {
   clearOpsFilters,
   parseManualFilter,
   type ManualFilter,
+  type OpsFilters,
 } from '@/lib/ops-filters-storage'
 import type { Epic, Project, Sprint, Tag, Task, TaskStatus } from '@/lib/types'
 
@@ -317,6 +318,27 @@ export default function BoardPage() {
     )
   }
 
+  // Sync localStorage with the user's intent BEFORE setSearchParams. The
+  // rehydrate effect (line 141) fires on the resulting location.key change
+  // and reads storage; without this synchronous write it would observe the
+  // previous save effect's stale value and undo a toggle that drops the
+  // URL back to all-defaults (e.g. re-toggling the only off-default chip).
+  // The save effect at line 195 still runs as the safety net for code paths
+  // that don't go through these handlers.
+  function persistFilters(overrides: Partial<OpsFilters>) {
+    saveOpsFilters({
+      statuses: activeStatuses,
+      priorities: activePriorities,
+      projectId,
+      sprintId,
+      epicId,
+      tagSlug,
+      manual: manualFilter,
+      search,
+      ...overrides,
+    })
+  }
+
   function setStatusList(next: TaskStatus[]) {
     updateParams((p) => {
       const sameAsDefault =
@@ -331,6 +353,7 @@ export default function BoardPage() {
     const next = activeStatuses.includes(status)
       ? activeStatuses.filter((s) => s !== status)
       : [...activeStatuses, status]
+    persistFilters({ statuses: next })
     setStatusList(next)
   }
 
@@ -338,6 +361,7 @@ export default function BoardPage() {
     const next = activePriorities.includes(priority)
       ? activePriorities.filter((p) => p !== priority)
       : [...activePriorities, priority]
+    persistFilters({ priorities: next })
     updateParams((p) => {
       if (next.length === 0) p.delete('priority')
       else p.set('priority', next.join(','))
@@ -345,6 +369,12 @@ export default function BoardPage() {
   }
 
   function handleGroupChange(key: 'project_id' | 'sprint_id' | 'epic_id' | 'tag', value: string | null) {
+    const overrides: Partial<OpsFilters> = {}
+    if (key === 'project_id') overrides.projectId = value
+    else if (key === 'sprint_id') overrides.sprintId = value
+    else if (key === 'epic_id') overrides.epicId = value
+    else if (key === 'tag') overrides.tagSlug = value
+    persistFilters(overrides)
     updateParams((p) => {
       if (value === null) p.delete(key)
       else p.set(key, value)
@@ -352,6 +382,7 @@ export default function BoardPage() {
   }
 
   function handleManualFilterChange(value: ManualFilter) {
+    persistFilters({ manual: value })
     updateParams((p) => {
       if (value === 'both') p.delete('manual')
       else p.set('manual', value)
