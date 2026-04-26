@@ -43,6 +43,18 @@ func (c *Catalog) Get(providerID, modelID string) (modelsdev.Model, bool) {
 	return c.client.Get(providerID, modelID)
 }
 
+// List returns every (provider, model) pair in the catalog, sorted by
+// provider then model id. Returns an empty slice on a cold cache.
+func (c *Catalog) List() []modelsdev.ModelRef {
+	return c.client.List()
+}
+
+// ListProviders returns every provider in the catalog, sorted by id.
+// Returns an empty slice on a cold cache.
+func (c *Catalog) ListProviders() []modelsdev.Provider {
+	return c.client.ListProviders()
+}
+
 // Pricing returns input and output USD-per-million-tokens. Returns
 // 0, 0, false when the model is unknown OR both prices are zero.
 func (c *Catalog) Pricing(providerID, modelID string) (input, output float64, ok bool) {

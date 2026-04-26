@@ -18,6 +18,7 @@ import type {
   PlanDetail,
   PlanPhaseInput,
   SchedulerStatus,
+  ModelEntry,
 } from './types'
 
 class ApiError extends Error {
@@ -442,6 +443,26 @@ export class ClockworkApiClient {
 
   async toggleScheduler(): Promise<SchedulerStatus> {
     return this.post('/scheduler/toggle', {})
+  }
+
+  // -------------------------
+  // Models (go-modelsdev catalog)
+  // -------------------------
+
+  /**
+   * Returns every (provider, model) pair the catalog knows about. Cold cache
+   * returns an empty list rather than failing — consumers should retry.
+   * Optional `provider` narrows to a single provider id.
+   */
+  async listModels(provider?: string): Promise<ModelEntry[]> {
+    const params: Record<string, string | number | boolean | undefined> = {}
+    if (provider) params['provider'] = provider
+    const res = await this.get<{ models: ModelEntry[] }>('/models', params)
+    return res.models ?? []
+  }
+
+  async getModel(provider: string, model: string): Promise<ModelEntry> {
+    return this.get<ModelEntry>(`/models/${encodeURIComponent(provider)}/${encodeURIComponent(model)}`)
   }
 
   // -------------------------

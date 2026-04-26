@@ -148,6 +148,11 @@ func (s *Server) routes() {
 		r.Get("/scheduler/status", s.schedulerStatus)
 		r.Post("/scheduler/toggle", s.schedulerToggle)
 
+		// Models — go-modelsdev catalog. Cold cache returns empty list / 404
+		// so callers can retry rather than treat absence as fatal.
+		r.Get("/models", s.listModels)
+		r.Get("/models/{provider}/{model}", s.getModel)
+
 		// Features
 		r.Get("/features", s.getFeatures)
 

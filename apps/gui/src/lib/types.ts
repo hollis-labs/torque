@@ -376,6 +376,50 @@ export interface TemplateInstantiateRequest {
   tags?: string[]
 }
 
+export interface ModelPricing {
+  input: number
+  output: number
+  cache_write?: number
+  cache_read?: number
+  reasoning?: number
+}
+
+export interface ModelLimits {
+  context_window: number
+  max_output_tokens: number
+}
+
+export interface ModelModality {
+  input: string[]
+  output: string[]
+}
+
+export interface ModelCapabilities {
+  tool_call: boolean
+  reasoning: boolean
+  attachment: boolean
+  temperature: boolean
+}
+
+/**
+ * Mirrors httpserver.modelEntry — flat ModelRef with snake_case JSON keys.
+ * Returned by GET /api/v1/models (list) and GET /api/v1/models/{provider}/{model} (get).
+ */
+export interface ModelEntry {
+  provider_id: string
+  id: string
+  name: string
+  family: string
+  open_weights: boolean
+  release_date: string
+  knowledge_cutoff: string
+  last_updated: string
+  cost: ModelPricing
+  limit: ModelLimits
+  modality: ModelModality
+  capabilities: ModelCapabilities
+}
+
 export interface SchedulerStatus {
   enabled: boolean
   max_workers: number

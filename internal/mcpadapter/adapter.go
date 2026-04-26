@@ -54,6 +54,7 @@ Example: {}`),
 	a.registerTemplateTools()
 	a.registerSubtodoTools()
 	a.registerPlanTools()
+	a.registerModelTools()
 }
 
 // registerOptInTools checks feature flags and registers tools for enabled layers.
