@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/mcpadapter"
+	"github.com/hollis-labs/clockwork-manifold/internal/modelcatalog"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/appdb"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
@@ -34,6 +35,11 @@ func mcpCmd() *cobra.Command {
 			}
 
 			svc := service.New(store)
+			// models.dev catalog: tied to the cobra command context so the
+			// background refresher stops cleanly when the stdio session ends.
+			svc.Models = modelcatalog.New()
+			svc.Models.Start(cmd.Context())
+
 			// The stdio mcp subcommand runs in a separate process from serve and
 			// has no scheduler instance; scheduler_* tools will surface a
 			// not-running error if called here, matching the HTTP 503 contract.
