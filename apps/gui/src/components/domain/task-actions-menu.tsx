@@ -5,6 +5,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
@@ -19,7 +22,8 @@ import {
 } from '@/components/ui/alert-dialog'
 import { useApi } from '@/hooks/use-api'
 import { notifyError, notifySuccess } from '@/lib/toast'
-import type { Task } from '@/lib/types'
+import { STATUS_LABEL, TASK_STATUSES } from '@/lib/constants'
+import type { Task, TaskStatus } from '@/lib/types'
 
 interface TaskActionsMenuProps {
   task: Task
@@ -46,6 +50,10 @@ export function TaskActionsMenu({
   const api = useApi()
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [forcePrompt, setForcePrompt] = useState<{
+    target: TaskStatus
+    reason: string
+  } | null>(null)
 
   const isReview = task.status === 'review'
   const isTerminal = task.status === 'done' || task.status === 'archived'
@@ -57,13 +65,39 @@ export function TaskActionsMenu({
   const showMoveToBacklog = !isTerminal && !isTodoManual
   const showPause = !isTerminal && task.status !== 'paused'
 
+  // Submenu lists every status except the current one. Force-bypass is wired
+  // up so users can disposition stuck tasks even when the FSM rejects.
+  const transitionTargets = TASK_STATUSES.filter((s) => s !== task.status)
+
   async function runTransition(status: string, successMsg: string) {
     try {
       const updated = await api.transitionTask(task.id, status)
       onChange?.(updated)
       notifySuccess(successMsg)
     } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to update status'
+      // FSM rejections come back as 422 — offer the force-bypass instead of
+      // burying the rule violation in a terse toast.
+      if (looksLikeFSMRejection(message)) {
+        setForcePrompt({ target: status as TaskStatus, reason: message })
+        return
+      }
       notifyError(err, 'Failed to update status')
+    }
+  }
+
+  async function handleForceConfirmed() {
+    if (!forcePrompt) return
+    setBusy(true)
+    try {
+      const updated = await api.transitionTask(task.id, forcePrompt.target, { force: true })
+      onChange?.(updated)
+      notifySuccess(`Forced to ${STATUS_LABEL[forcePrompt.target] ?? forcePrompt.target}`)
+      setForcePrompt(null)
+    } catch (err) {
+      notifyError(err, 'Failed to force transition')
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -135,6 +169,20 @@ export function TaskActionsMenu({
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>Transition to…</DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                {transitionTargets.map((s) => (
+                  <DropdownMenuItem
+                    key={s}
+                    onClick={() => runTransition(s, `Moved to ${STATUS_LABEL[s] ?? s}`)}
+                  >
+                    {STATUS_LABEL[s] ?? s}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuSeparator />
             <DropdownMenuItem
               variant="destructive"
               onClick={() => setConfirmOpen(true)}
@@ -167,6 +215,41 @@ export function TaskActionsMenu({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AlertDialog
+        open={forcePrompt !== null}
+        onOpenChange={(open) => !open && setForcePrompt(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Force transition?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The FSM rejected this move:{' '}
+              <span className="font-mono text-zinc-300">{forcePrompt?.reason}</span>
+              <br />
+              Forcing skips the lifecycle rules and writes{' '}
+              <span className="font-mono text-zinc-300">
+                {forcePrompt && (STATUS_LABEL[forcePrompt.target] ?? forcePrompt.target)}
+              </span>{' '}
+              directly. Use for cleanup of stuck tasks.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleForceConfirmed} disabled={busy}>
+              {busy ? 'Forcing…' : 'Force anyway'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   )
+}
+
+// looksLikeFSMRejection inspects an error string for the conflict markers the
+// service.TransitionError produces. Conservative — only triggers the force
+// prompt for transition-rule errors, not network or unrelated 422s.
+function looksLikeFSMRejection(message: string): boolean {
+  const m = message.toLowerCase()
+  return m.includes('transition not permitted') || m.includes('unknown source status')
 }

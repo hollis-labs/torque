@@ -376,6 +376,16 @@ export interface TemplateInstantiateRequest {
   tags?: string[]
 }
 
+export interface SchedulerStatus {
+  enabled: boolean
+  max_workers: number
+  active_workers: number
+  queue_depth: number
+  total_cost: number
+  subscribers: number
+  stale_heartbeat_threshold_seconds: number
+}
+
 export type CheckpointStatus = 'pending' | 'responded' | 'canceled' | 'timed_out'
 
 export interface Checkpoint {

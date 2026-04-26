@@ -9,6 +9,7 @@ import { EmptyState } from '@/components/domain/empty-state'
 import { ProjectCreateDialog } from '@/components/domain/project-create-dialog'
 import { EpicCreateDialog } from '@/components/domain/epic-create-dialog'
 import { RestartFrontendButton } from '@/components/domain/restart-frontend-button'
+import { SchedulerToggleButton } from '@/components/domain/scheduler-toggle-button'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
 import { notifyError } from '@/lib/toast'
@@ -426,6 +427,7 @@ export default function BoardPage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader title="Operations">
+        <SchedulerToggleButton />
         <RestartFrontendButton />
       </PageHeader>
       {!loading && !error && <SummaryCards cards={summaryCards} />}
@@ -488,9 +490,14 @@ export default function BoardPage() {
           <TaskTable
             tasks={tasks}
             onTransition={handleTransition}
-            onTaskChange={(updated) =>
+            onTaskChange={(updated) => {
+              // Optimistic in-place patch keeps the row visible during the
+              // round-trip; fetchTasks() then reconciles with the active
+              // filter so a row pushed outside the filter (e.g. transitioned
+              // to done while filtering on todo) drops out of the list.
               setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)))
-            }
+              fetchTasks()
+            }}
             onTaskDelete={(id) => setTasks((prev) => prev.filter((t) => t.id !== id))}
             emptyVariant={emptyVariant}
             onVisibleOrderChange={handleVisibleOrderChange}

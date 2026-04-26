@@ -693,13 +693,18 @@ func (s *Server) transitionTask(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var req struct {
 		Status string `json:"status"`
+		Force  bool   `json:"force"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 
-	if err := s.svc.Task.Transition(id, req.Status); err != nil {
+	transition := s.svc.Task.Transition
+	if req.Force {
+		transition = s.svc.Task.ForceTransition
+	}
+	if err := transition(id, req.Status); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}

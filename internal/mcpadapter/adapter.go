@@ -81,9 +81,17 @@ func (a *Adapter) handleHealth(ctx context.Context, req mcp.CallToolRequest) (*m
 
 // ---- helpers ----------------------------------------------------------------
 
+// reqHasArg reports whether the caller supplied the named argument. Use to
+// distinguish "omitted" from "explicit zero / empty string / false" when a
+// handler treats the two cases differently (e.g. partial-update PATCH calls).
+func reqHasArg(req mcp.CallToolRequest, key string) bool {
+	_, ok := req.GetArguments()[key]
+	return ok
+}
+
 // reqStr extracts a string argument. Non-string values return "" to match
 // mcp-go's CallToolRequest.GetString behavior — callers that need
-// presence-detection should gate on req.GetArguments()[key] directly.
+// presence-detection should use reqHasArg.
 func reqStr(req mcp.CallToolRequest, key string) string {
 	args := req.GetArguments()
 	if v, ok := args[key]; ok {

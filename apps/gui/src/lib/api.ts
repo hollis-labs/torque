@@ -17,6 +17,7 @@ import type {
   Subtodo,
   PlanDetail,
   PlanPhaseInput,
+  SchedulerStatus,
 } from './types'
 
 class ApiError extends Error {
@@ -242,8 +243,10 @@ export class ClockworkApiClient {
     return this.delete<void>(`/tasks/${id}`)
   }
 
-  async transitionTask(id: string, status: string): Promise<Task> {
-    return this.post<Task>(`/tasks/${id}/transition`, { status })
+  async transitionTask(id: string, status: string, options?: { force?: boolean }): Promise<Task> {
+    const body: { status: string; force?: boolean } = { status }
+    if (options?.force) body.force = true
+    return this.post<Task>(`/tasks/${id}/transition`, body)
   }
 
   async bulkTransition(ids: string[], status: string): Promise<void> {
@@ -375,6 +378,43 @@ export class ClockworkApiClient {
     return res.subtodos ?? []
   }
 
+  /**
+   * Append a new subtodo. The id must be unique within the task. Returns the
+   * full updated checklist.
+   */
+  async addSubtodo(
+    taskId: string,
+    item: { id: string; text: string; required?: boolean },
+  ): Promise<Subtodo[]> {
+    const res = await this.post<{ subtodos: Subtodo[] }>(
+      `/tasks/${taskId}/subtodos`,
+      item,
+    )
+    return res.subtodos ?? []
+  }
+
+  /**
+   * Edit text and/or required flag. Omit fields to leave them unchanged.
+   */
+  async updateSubtodo(
+    taskId: string,
+    itemId: string,
+    patch: { text?: string; required?: boolean },
+  ): Promise<Subtodo[]> {
+    const res = await this.patch<{ subtodos: Subtodo[] }>(
+      `/tasks/${taskId}/subtodos/${itemId}`,
+      patch,
+    )
+    return res.subtodos ?? []
+  }
+
+  async deleteSubtodo(taskId: string, itemId: string): Promise<Subtodo[]> {
+    const res = await this.delete<{ subtodos: Subtodo[] }>(
+      `/tasks/${taskId}/subtodos/${itemId}`,
+    )
+    return res.subtodos ?? []
+  }
+
   // -------------------------
   // Settings
   // -------------------------
@@ -390,6 +430,18 @@ export class ClockworkApiClient {
 
   async getFeatureFlags(): Promise<FeatureFlags> {
     return this.get<FeatureFlags>('/settings/feature-flags')
+  }
+
+  // -------------------------
+  // Scheduler
+  // -------------------------
+
+  async getSchedulerStatus(): Promise<SchedulerStatus> {
+    return this.get('/scheduler/status')
+  }
+
+  async toggleScheduler(): Promise<SchedulerStatus> {
+    return this.post('/scheduler/toggle', {})
   }
 
   // -------------------------

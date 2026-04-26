@@ -64,7 +64,10 @@ func (s *Server) routes() {
 		r.Post("/tasks/{id}/comments", s.addComment)
 		r.Get("/tasks/{id}/artifacts", s.listArtifacts)
 		r.Get("/tasks/{id}/subtodos", s.listSubtodos)
+		r.Post("/tasks/{id}/subtodos", s.addSubtodo)
 		r.Post("/tasks/{id}/subtodos/{item_id}/done", s.markSubtodoDone)
+		r.Patch("/tasks/{id}/subtodos/{item_id}", s.updateSubtodo)
+		r.Delete("/tasks/{id}/subtodos/{item_id}", s.deleteSubtodo)
 
 		// Checkpoints — emit/respond/cancel keyed on correlation_id.
 		r.Post("/checkpoints", s.emitCheckpoint)

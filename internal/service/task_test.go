@@ -160,6 +160,20 @@ func TestTaskTransitionInvalid(t *testing.T) {
 	require.ErrorAs(t, err, &te)
 }
 
+func TestTaskForceTransition(t *testing.T) {
+	svc := setupService(t)
+
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "Force transition test"})
+	require.NoError(t, err)
+
+	// todo → done is FSM-invalid; ForceTransition bypasses the rules.
+	require.NoError(t, svc.Task.ForceTransition(task.ID, "done"))
+
+	updated, err := svc.Task.Get(task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "done", updated.Status)
+}
+
 func TestTaskSearch(t *testing.T) {
 	svc := setupService(t)
 
