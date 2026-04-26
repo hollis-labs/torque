@@ -73,7 +73,7 @@ type TaskFilter struct {
 	EpicID    string
 	Executor  string
 	TagSlugs  []string // AND-match: task must have all listed tags
-	Search    string   // case-insensitive substring match on title OR description
+	Search    string   // case-insensitive substring match on id, title, or description
 	Limit     int
 	Offset    int
 
@@ -344,8 +344,8 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 	if f.Search != "" {
 		// SQLite's LIKE is case-insensitive for ASCII by default.
 		pattern := "%" + f.Search + "%"
-		where = append(where, "(title LIKE ? OR description LIKE ?)")
-		args = append(args, pattern, pattern)
+		where = append(where, "(id LIKE ? OR title LIKE ? OR description LIKE ?)")
+		args = append(args, pattern, pattern, pattern)
 	}
 
 	q := `SELECT ` + taskSelectCols + ` FROM tasks`
@@ -701,11 +701,11 @@ func (s *Store) DeleteTask(id string) error {
 	return nil
 }
 
-// SearchTasks does a LIKE search on title and description.
+// SearchTasks does a LIKE search on id, title, and description.
 func (s *Store) SearchTasks(query string) ([]TaskRecord, error) {
 	pattern := "%" + query + "%"
-	q := `SELECT ` + taskSelectCols + ` FROM tasks WHERE title LIKE ? OR description LIKE ? ORDER BY priority ASC, created_at ASC`
-	rows, err := s.db.Query(q, pattern, pattern)
+	q := `SELECT ` + taskSelectCols + ` FROM tasks WHERE id LIKE ? OR title LIKE ? OR description LIKE ? ORDER BY priority ASC, created_at ASC`
+	rows, err := s.db.Query(q, pattern, pattern, pattern)
 	if err != nil {
 		return nil, err
 	}
