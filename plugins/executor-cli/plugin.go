@@ -75,7 +75,7 @@ func (e *CLIExecutor) Capabilities() executor.ExecutorCapabilities {
 	return executor.ExecutorCapabilities{
 		SupportsStreaming:   true,
 		SupportsTools:       false,
-		SupportsSandbox:     true,
+		SupportsSandbox:     false,
 		SupportsPermissions: false,
 	}
 }

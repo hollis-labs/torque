@@ -62,7 +62,7 @@ func TestCapabilities(t *testing.T) {
 	caps := e.Capabilities()
 	assert.True(t, caps.SupportsStreaming)
 	assert.False(t, caps.SupportsTools)
-	assert.True(t, caps.SupportsSandbox)
+	assert.False(t, caps.SupportsSandbox)
 	assert.False(t, caps.SupportsPermissions)
 }
 
