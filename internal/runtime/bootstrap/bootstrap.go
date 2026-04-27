@@ -2,9 +2,9 @@ package bootstrap
 
 import (
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/cliexec"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 	executorapi "github.com/hollis-labs/clockwork-manifold/plugins/executor-api"
-	executorcli "github.com/hollis-labs/clockwork-manifold/plugins/executor-cli"
 	executoropencode "github.com/hollis-labs/clockwork-manifold/plugins/executor-opencode"
 )
 
@@ -12,8 +12,10 @@ import (
 // toolRouter is the core tool router interface (nil until Plan 4).
 // Additional executors can be registered via the plugin host after bootstrap.
 func Executors(reg *executor.Registry, profiles config.ProfileMap, toolRouter interface{}) error {
-	// Register executor-cli
-	cli := executorcli.New(profiles)
+	// Register cliexec (CW-20260427-0040 Phase B): wrapper-driven CLI
+	// executor composing go-providers + go-sandbox + go-runner +
+	// go-agent-sessions. Replaces the legacy executor-cli plugin.
+	cli := cliexec.New(profiles)
 	reg.Register(cli)
 
 	// Register executor-api
