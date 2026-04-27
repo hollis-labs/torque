@@ -11,10 +11,17 @@ import (
 )
 
 // Adapter wires the service layer to an MCP server.
+//
+// loopbackTaskID is non-empty only for adapters built via NewLoopback. It
+// pins every interpretive tool call (summary, blocked, review, comment_add,
+// artifact_create, subtodo_*) to a specific task, so the spawned agent can
+// only act on its own task. Regular adapters (built via New) leave it empty
+// and do not register the loopback tool subset.
 type Adapter struct {
-	svc    *service.Service
-	sched  *scheduler.Scheduler
-	server *server.MCPServer
+	svc            *service.Service
+	sched          *scheduler.Scheduler
+	server         *server.MCPServer
+	loopbackTaskID string
 }
 
 // New creates an Adapter, registers all tools, and returns it. sched may be
