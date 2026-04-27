@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
+	"github.com/hollis-labs/clockwork-manifold/internal/modelcatalog"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/queue"
@@ -84,6 +85,21 @@ type Scheduler struct {
 	// at debug level. Sampled once at startup from CLOCKWORK_SCHEDULER_DEBUG
 	// so test runs don't flip mid-suite based on env changes.
 	pickerDebug bool
+
+	// Models + Profiles support cost backfill (Phase 2 of the modelcatalog
+	// integration). Optional — set by serve.go after New(); when either is
+	// nil the backfill code paths bail and cost is recorded as-reported.
+	// Tests that don't exercise cost paths can leave them unset.
+	Models   *modelcatalog.Catalog
+	Profiles config.ProfileMap
+	// CostBackfillEnabled gates the catalog-based estimate even when Models
+	// + Profiles are wired. False during initial rollout so we can A/B against
+	// executor-reported cost without lighting up the new code path.
+	CostBackfillEnabled bool
+
+	// Precheck holds Phase 4 dispatch-time guardrail config. Zero value =
+	// no checks (safe default). Set by serve.go from settings.
+	Precheck PrecheckOptions
 }
 
 // progressTokensWindow caps how often a run may emit a tokens-class
@@ -381,6 +397,19 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		log.Printf("[scheduler] non-permanent validate error for %s: %v", task.ID, verr)
 	}
 
+	// Phase 4 model precheck (CW-20260426-0036). Both context-window and
+	// capability gates are opt-in via PrecheckOptions; the helper bails
+	// silently when Models or the dispatched profile aren't wired, so
+	// disabled configs see no overhead. A non-empty BlockReason routes
+	// to the same blocked-with-reason path as a permanent Validate error.
+	if pre := s.precheckDispatch(task, s.Precheck); pre.BlockReason != "" {
+		return s.handlePermanentValidationError(task, fmt.Errorf("%s", pre.BlockReason))
+	} else if len(pre.Warnings) > 0 {
+		for _, w := range pre.Warnings {
+			log.Printf("[scheduler] precheck warning for %s: %s", task.ID, w)
+		}
+	}
+
 	// Transition to doing
 	if err := s.store.TransitionTask(task.ID, "doing"); err != nil {
 		return fmt.Errorf("transition to doing: %w", err)
@@ -639,18 +668,23 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 			Cost:             result.Cost,
 		})
 
-		// Record cost
+		// Record cost. resolveCost decides whether the executor's reported
+		// figure is authoritative or whether to backfill from the models.dev
+		// catalog when result.Cost is 0 but tokens > 0 (Phase 2 of the
+		// modelcatalog series).
 		sprintID := ""
 		if task.SprintID.Valid {
 			sprintID = task.SprintID.String
 		}
+		cost, source := s.resolveCost(task.AgentProfile, result)
 		s.cost.Record(CostEntry{
 			TaskID:           capturedTaskID,
 			RunID:            capturedRunID,
 			SprintID:         sprintID,
-			Cost:             result.Cost,
+			Cost:             cost,
 			PromptTokens:     result.Tokens.PromptTokens,
 			CompletionTokens: result.Tokens.CompletionTokens,
+			Source:           source,
 		})
 
 		writeRunEvent(s.store, capturedRunID, capturedTaskID, "run_completed", map[string]interface{}{

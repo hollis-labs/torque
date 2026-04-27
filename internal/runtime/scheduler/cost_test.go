@@ -6,6 +6,7 @@ import (
 
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -111,4 +112,116 @@ func TestCostTrackerWithinBudget(t *testing.T) {
 	ok, err = tracker.WithinGlobalBudget(0)
 	require.NoError(t, err)
 	assert.True(t, ok)
+}
+
+// TestResolveCost covers the four branches of the cost-decision policy.
+// Lifted out of scheduler.Scheduler so we can exercise it without standing
+// up a full scheduler — the policy is the interesting part, the wiring is
+// the trivial part.
+func TestResolveCost(t *testing.T) {
+	estimateOK := func(p, m string, in, out int) (float64, bool) {
+		// 1k tokens at 3/M + 1k at 15/M = 0.003 + 0.015 = 0.018 (for symmetry).
+		return float64(in)*3/1_000_000 + float64(out)*15/1_000_000, true
+	}
+	estimateMiss := func(string, string, int, int) (float64, bool) { return 0, false }
+	resolveProfile := func(name string) (string, string, bool) {
+		if name == "claude" {
+			return "anthropic", "claude-sonnet-4-6", true
+		}
+		return "", "", false
+	}
+
+	t.Run("executor reported wins", func(t *testing.T) {
+		cost, src := scheduler.ResolveCost("claude",
+			&executor.ExecutionResult{Cost: 0.42, Tokens: executor.TokenUsage{PromptTokens: 1000, CompletionTokens: 500}},
+			estimateOK, resolveProfile, true)
+		assert.Equal(t, 0.42, cost)
+		assert.Equal(t, scheduler.CostSourceExecutor, src)
+	})
+
+	t.Run("backfill when executor reports zero with positive tokens", func(t *testing.T) {
+		cost, src := scheduler.ResolveCost("claude",
+			&executor.ExecutionResult{Cost: 0, Tokens: executor.TokenUsage{PromptTokens: 1000, CompletionTokens: 500}},
+			estimateOK, resolveProfile, true)
+		assert.InDelta(t, 0.0105, cost, 0.0001)
+		assert.Equal(t, scheduler.CostSourceModelsDev, src)
+	})
+
+	t.Run("flag off skips backfill", func(t *testing.T) {
+		cost, src := scheduler.ResolveCost("claude",
+			&executor.ExecutionResult{Cost: 0, Tokens: executor.TokenUsage{PromptTokens: 1000, CompletionTokens: 500}},
+			estimateOK, resolveProfile, false)
+		assert.Equal(t, 0.0, cost)
+		assert.Equal(t, scheduler.CostSourceUnknown, src)
+	})
+
+	t.Run("zero tokens skips backfill", func(t *testing.T) {
+		cost, src := scheduler.ResolveCost("claude",
+			&executor.ExecutionResult{Cost: 0, Tokens: executor.TokenUsage{}},
+			estimateOK, resolveProfile, true)
+		assert.Equal(t, 0.0, cost)
+		assert.Equal(t, scheduler.CostSourceUnknown, src)
+	})
+
+	t.Run("unknown profile skips backfill", func(t *testing.T) {
+		cost, src := scheduler.ResolveCost("not-a-profile",
+			&executor.ExecutionResult{Cost: 0, Tokens: executor.TokenUsage{PromptTokens: 1000}},
+			estimateOK, resolveProfile, true)
+		assert.Equal(t, 0.0, cost)
+		assert.Equal(t, scheduler.CostSourceUnknown, src)
+	})
+
+	t.Run("catalog miss falls through", func(t *testing.T) {
+		cost, src := scheduler.ResolveCost("claude",
+			&executor.ExecutionResult{Cost: 0, Tokens: executor.TokenUsage{PromptTokens: 1000}},
+			estimateMiss, resolveProfile, true)
+		assert.Equal(t, 0.0, cost)
+		assert.Equal(t, scheduler.CostSourceUnknown, src)
+	})
+
+	t.Run("nil estimate fn skips backfill", func(t *testing.T) {
+		cost, src := scheduler.ResolveCost("claude",
+			&executor.ExecutionResult{Cost: 0, Tokens: executor.TokenUsage{PromptTokens: 1000}},
+			nil, resolveProfile, true)
+		assert.Equal(t, 0.0, cost)
+		assert.Equal(t, scheduler.CostSourceUnknown, src)
+	})
+}
+
+// TestCostTracker_RecordsSource verifies the cost_source column round-trips.
+// The Source field on CostEntry is the only handle the UI / ops have for
+// distinguishing measured cost from a models.dev estimate, so a regression
+// here would silently degrade audit accuracy.
+func TestCostTracker_RecordsSource(t *testing.T) {
+	store := setupCostStore(t)
+	tracker := scheduler.NewCostTracker(store)
+
+	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-S-001", Title: "T", Executor: "cli"})
+	store.CreateRun(&sqlstore.RunRecord{TaskID: "CW-S-001", Executor: "cli", Status: "running"})
+
+	require.NoError(t, tracker.Record(scheduler.CostEntry{
+		TaskID: "CW-S-001",
+		RunID:  1,
+		Cost:   0.42,
+		Source: scheduler.CostSourceModelsDev,
+	}))
+
+	var src string
+	require.NoError(t, store.DB().QueryRow(
+		`SELECT cost_source FROM cost_ledger WHERE task_id = ?`, "CW-S-001",
+	).Scan(&src))
+	assert.Equal(t, "models_dev", src)
+
+	// Empty Source defaults to 'unknown' so the column constraint is always met.
+	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-S-002", Title: "T2", Executor: "cli"})
+	store.CreateRun(&sqlstore.RunRecord{TaskID: "CW-S-002", Executor: "cli", Status: "running"})
+	require.NoError(t, tracker.Record(scheduler.CostEntry{
+		TaskID: "CW-S-002",
+		RunID:  2,
+		Cost:   0,
+	}))
+	require.NoError(t, store.DB().QueryRow(
+		`SELECT cost_source FROM cost_ledger WHERE task_id = ?`, "CW-S-002",
+	).Scan(&src))
+	assert.Equal(t, "unknown", src)
 }

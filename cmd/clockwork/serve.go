@@ -150,6 +150,37 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	svc.Models = modelcatalog.New()
 	svc.Models.Start(runCtx)
 
+	// Scheduler cost backfill (Phase 2): wire the catalog + profiles so the
+	// cost-record block can fall back to models.dev pricing when the executor
+	// stream doesn't emit cost_usd. Gated on the scheduler.cost_backfill_enabled
+	// setting so we can A/B against executor-reported cost during rollout.
+	sched.Models = svc.Models
+	sched.Profiles = profiles
+	if v, _ := svc.Settings.Get("scheduler.cost_backfill_enabled"); v == "true" {
+		sched.CostBackfillEnabled = true
+		log.Printf("[serve] scheduler cost backfill enabled (models.dev pricing fills cost when executor reports 0)")
+	}
+
+	// Phase 4 dispatch guardrails (CW-20260426-0036). Both gates are opt-in.
+	// The window threshold defaults to 0.8 (warn at 80% of context window);
+	// the hard block at 100% always applies when WindowEnabled is true.
+	if v, _ := svc.Settings.Get("scheduler.precheck_window_enabled"); v == "true" {
+		sched.Precheck.WindowEnabled = true
+		sched.Precheck.WindowThreshold = 0.8
+		if raw, _ := svc.Settings.Get("scheduler.precheck_window_threshold"); raw != "" {
+			var f float64
+			if _, err := fmt.Sscanf(raw, "%f", &f); err == nil && f > 0 && f < 1 {
+				sched.Precheck.WindowThreshold = f
+			}
+		}
+		log.Printf("[serve] scheduler precheck: context-window enabled (warn @ %.0f%%, block @ 100%%)",
+			sched.Precheck.WindowThreshold*100)
+	}
+	if v, _ := svc.Settings.Get("scheduler.precheck_capabilities_enabled"); v == "true" {
+		sched.Precheck.CapabilitiesEnabled = true
+		log.Printf("[serve] scheduler precheck: capability gate enabled (refuse tool tasks on tool_call=false models)")
+	}
+
 	// SSE bridge: scheduler.EventBus → httpserver.SSEHub
 	bridge := httpserver.NewSchedulerBridge(handler.SSEHub(), sched.EventBus())
 
