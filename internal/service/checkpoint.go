@@ -60,9 +60,9 @@ type CheckpointCancelInput struct {
 // Emit creates a pending checkpoint. Generates a ULID correlation_id, applies
 // source defaults, persists the row, and — when the task is actively running
 // (status=doing) and its checkpoint_mode is "blocking" — parks it in review
-// with BlockedReason="awaiting checkpoint <corr>" so MCP/HTTP emits behave
-// the same as an in-run CLOCKWORK_CHECKPOINT signal handled by the scheduler
-// (spec §4.2).
+// with BlockedReason="awaiting checkpoint <corr>". This is the sole code path
+// for checkpoint emission (the legacy in-run CLOCKWORK_CHECKPOINT stdout
+// signal protocol was retired in Phase E / CW-20260427-0043; spec §4.2).
 //
 // The park is conditional at the SQL level via store.ParkTaskOnCheckpoint:
 // a single UPDATE with "WHERE status='doing' AND checkpoint_mode='blocking'",

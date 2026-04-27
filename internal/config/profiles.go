@@ -30,6 +30,7 @@ type AgentProfile struct {
 	SystemPrompt string   `yaml:"system_prompt,omitempty"`
 	Tools        []string `yaml:"tools,omitempty"`
 	BaseURL      string   `yaml:"base_url,omitempty"`
+	APIKey       string   `yaml:"api_key,omitempty"`
 }
 
 // ProfileMap is a named collection of agent profiles.

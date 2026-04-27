@@ -2,7 +2,6 @@ package scheduler_test
 
 import (
 	"database/sql"
-	"encoding/base64"
 	"testing"
 	"time"
 
@@ -13,9 +12,19 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
+	"github.com/hollis-labs/clockwork-manifold/internal/service"
 )
 
-func setupCheckpointStore(t *testing.T) *sqlstore.Store {
+// CLOCKWORK_CHECKPOINT signal-protocol tests retired with Phase E
+// (CW-20260427-0043) — agents now emit checkpoints via the
+// clockwork_task_checkpoint_emit MCP tool, which calls
+// service.CheckpointService.Emit. Coverage of the parking/no-parking/malformed
+// branches lives in internal/service/checkpoint_test.go.
+//
+// What stays here: SweepCheckpointTimeouts tests, which exercise the
+// scheduler-package timeout sweeper that's independent of the emission path.
+
+func setupCheckpointStack(t *testing.T) (*sqlstore.Store, *service.Service) {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
@@ -23,26 +32,22 @@ func setupCheckpointStore(t *testing.T) *sqlstore.Store {
 	store, err := sqlstore.New(db, "sqlite")
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
-	return store
+	return store, service.New(store)
 }
 
-func createDecisionTaskDoing(t *testing.T, store *sqlstore.Store, id string) {
+func createDecisionTaskDoing(t *testing.T, svc *service.Service) string {
 	t.Helper()
-	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
-		ID:                   id,
+	rec, err := svc.Task.Create(service.TaskCreateInput{
 		Title:                "decision",
-		Status:               "doing",
+		Description:          "x",
 		Kind:                 "decision",
-		SourceType:           "user",
-		Trust:                "normal",
 		CheckpointMode:       "blocking",
 		OnCheckpointResponse: "resume",
-		OnDone:               "review",
-		OnFail:               "retry",
-		OnReview:             "pause",
-		OnDoneMerge:          "none",
 		Manual:               true,
-	}))
+	})
+	require.NoError(t, err)
+	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
+	return rec.ID
 }
 
 func createAgentTaskDoing(t *testing.T, store *sqlstore.Store, id, checkpointMode string) {
@@ -64,83 +69,18 @@ func createAgentTaskDoing(t *testing.T, store *sqlstore.Store, id, checkpointMod
 	}))
 }
 
-func encodeCheckpointContent(correlationID, typ, payload string) string {
-	return correlationID + " " + typ + " " + base64.StdEncoding.EncodeToString([]byte(payload))
-}
+func TestSweepCheckpointTimeouts_TransitionsParkedTask(t *testing.T) {
+	store, svc := setupCheckpointStack(t)
+	taskID := createDecisionTaskDoing(t, svc)
 
-func createRunForTask(t *testing.T, store *sqlstore.Store, taskID string) int64 {
-	t.Helper()
-	runID, err := store.CreateRun(&sqlstore.RunRecord{
-		TaskID:   taskID,
-		Executor: "cli",
-		Status:   "running",
+	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID:      taskID,
+		Type:        "collect_data",
+		PayloadJSON: `{}`,
 	})
 	require.NoError(t, err)
-	return runID
-}
-
-func TestHandleCheckpointSignal_Blocking_ParksTask(t *testing.T) {
-	store := setupCheckpointStore(t)
-	createDecisionTaskDoing(t, store, "CW-CHK-1")
-	runID := createRunForTask(t, store, "CW-CHK-1")
-
-	content := encodeCheckpointContent("CORR-1", "collect_data", `{"q":"hide"}`)
-	out, err := scheduler.HandleCheckpointSignal(store, "CW-CHK-1", runID, content, time.Now().UTC())
-	require.NoError(t, err)
-	assert.Equal(t, "CORR-1", out.CorrelationID)
-	assert.True(t, out.ParkTask)
-	assert.Contains(t, out.Reason, "CORR-1")
-
-	task, err := store.GetTask("CW-CHK-1")
-	require.NoError(t, err)
-	assert.Equal(t, "review", task.Status)
-	assert.Contains(t, task.BlockedReason, "CORR-1")
-
-	cp, err := store.GetCheckpointByCorrelation("CORR-1")
-	require.NoError(t, err)
-	assert.Equal(t, "pending", cp.Status)
-	assert.Equal(t, `{"q":"hide"}`, cp.PayloadJSON)
-	assert.Equal(t, "system", cp.EmitterSourceType)
-	assert.True(t, cp.RunID.Valid)
-	assert.Equal(t, runID, cp.RunID.Int64)
-}
-
-func TestHandleCheckpointSignal_NonBlocking_DoesNotPark(t *testing.T) {
-	store := setupCheckpointStore(t)
-	createAgentTaskDoing(t, store, "CW-CHK-2", "non_blocking")
-	runID := createRunForTask(t, store, "CW-CHK-2")
-
-	content := encodeCheckpointContent("CORR-2", "status_update", `{"progress":0.5}`)
-	out, err := scheduler.HandleCheckpointSignal(store, "CW-CHK-2", runID, content, time.Now().UTC())
-	require.NoError(t, err)
-	assert.False(t, out.ParkTask)
-
-	task, err := store.GetTask("CW-CHK-2")
-	require.NoError(t, err)
-	assert.Equal(t, "doing", task.Status, "non-blocking checkpoint should not transition")
-
-	cp, err := store.GetCheckpointByCorrelation("CORR-2")
-	require.NoError(t, err)
-	assert.Equal(t, "pending", cp.Status)
-}
-
-func TestHandleCheckpointSignal_MalformedPayload(t *testing.T) {
-	store := setupCheckpointStore(t)
-	createDecisionTaskDoing(t, store, "CW-CHK-3")
-
-	_, err := scheduler.HandleCheckpointSignal(store, "CW-CHK-3", 0, "too few parts", time.Now().UTC())
-	require.Error(t, err)
-}
-
-func TestSweepCheckpointTimeouts_TransitionsParkedTask(t *testing.T) {
-	store := setupCheckpointStore(t)
-	createDecisionTaskDoing(t, store, "CW-TO-1")
-
-	// Emit and park
-	content := encodeCheckpointContent("CORR-TO", "collect_data", `{}`)
-	_, err := scheduler.HandleCheckpointSignal(store, "CW-TO-1", 0, content, time.Now().UTC())
-	require.NoError(t, err)
-	require.NoError(t, store.SetCheckpointTimeout("CORR-TO", time.Now().UTC().Add(-1*time.Minute)))
+	corr := out.CorrelationID
+	require.NoError(t, store.SetCheckpointTimeout(corr, time.Now().UTC().Add(-1*time.Minute)))
 
 	bus := scheduler.NewEventBus()
 	defer bus.Close()
@@ -149,42 +89,48 @@ func TestSweepCheckpointTimeouts_TransitionsParkedTask(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
 
-	cp, err := store.GetCheckpointByCorrelation("CORR-TO")
+	cp, err := store.GetCheckpointByCorrelation(corr)
 	require.NoError(t, err)
 	assert.Equal(t, "timed_out", cp.Status)
 
-	task, err := store.GetTask("CW-TO-1")
+	task, err := store.GetTask(taskID)
 	require.NoError(t, err)
 	assert.Equal(t, "blocked", task.Status)
 	assert.Contains(t, task.BlockedReason, "timed out")
 }
 
 func TestSweepCheckpointTimeouts_IgnoresFutureDeadlines(t *testing.T) {
-	store := setupCheckpointStore(t)
-	createDecisionTaskDoing(t, store, "CW-TO-2")
+	store, svc := setupCheckpointStack(t)
+	taskID := createDecisionTaskDoing(t, svc)
 
-	content := encodeCheckpointContent("CORR-F", "x", `{}`)
-	_, err := scheduler.HandleCheckpointSignal(store, "CW-TO-2", 0, content, time.Now().UTC())
+	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID:      taskID,
+		Type:        "x",
+		PayloadJSON: `{}`,
+	})
 	require.NoError(t, err)
-	require.NoError(t, store.SetCheckpointTimeout("CORR-F", time.Now().UTC().Add(1*time.Hour)))
+	require.NoError(t, store.SetCheckpointTimeout(out.CorrelationID, time.Now().UTC().Add(1*time.Hour)))
 
 	n, err := scheduler.SweepCheckpointTimeouts(store, nil, time.Now().UTC())
 	require.NoError(t, err)
 	assert.Equal(t, 0, n)
 
-	task, err := store.GetTask("CW-TO-2")
+	task, err := store.GetTask(taskID)
 	require.NoError(t, err)
 	assert.Equal(t, "review", task.Status, "task should stay parked when deadline is in the future")
 }
 
 func TestSweepCheckpointTimeouts_IgnoresUnparkedTask(t *testing.T) {
-	store := setupCheckpointStore(t)
+	store, svc := setupCheckpointStack(t)
 	createAgentTaskDoing(t, store, "CW-TO-3", "non_blocking")
 
-	content := encodeCheckpointContent("CORR-NB", "x", `{}`)
-	_, err := scheduler.HandleCheckpointSignal(store, "CW-TO-3", 0, content, time.Now().UTC())
+	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID:      "CW-TO-3",
+		Type:        "x",
+		PayloadJSON: `{}`,
+	})
 	require.NoError(t, err)
-	require.NoError(t, store.SetCheckpointTimeout("CORR-NB", time.Now().UTC().Add(-1*time.Minute)))
+	require.NoError(t, store.SetCheckpointTimeout(out.CorrelationID, time.Now().UTC().Add(-1*time.Minute)))
 
 	n, err := scheduler.SweepCheckpointTimeouts(store, nil, time.Now().UTC())
 	require.NoError(t, err)

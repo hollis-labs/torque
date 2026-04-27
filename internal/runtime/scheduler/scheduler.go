@@ -557,50 +557,14 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 				})
 			}
 
-			// CLOCKWORK_SUBTODO_DONE: mark the named subtodo as done and
-			// record the agent's evidence token. Parse failures and unknown
-			// item-ids are logged but non-fatal — the gate at lifecycle
-			// time will block the task if required items stay unchecked.
-			if event.Type == executor.EventSignal && event.Signal == "CLOCKWORK_SUBTODO_DONE" {
-				itemID, evidence, perr := executor.ParseSubtodoDonePayload(event.Content)
-				if perr != nil {
-					log.Printf("[scheduler] subtodo signal parse error for %s: %v", capturedTaskID, perr)
-				} else if err := s.store.SetSubtodoDone(capturedTaskID, itemID, evidence); err != nil {
-					log.Printf("[scheduler] subtodo done write error for %s/%s: %v", capturedTaskID, itemID, err)
-				} else {
-					s.bus.Publish(SchedulerEvent{
-						Type:   "subtodo.done",
-						TaskID: capturedTaskID,
-						RunID:  capturedRunID,
-						Data: map[string]interface{}{
-							"item_id":  itemID,
-							"evidence": evidence,
-						},
-					})
-				}
-			}
-
-			// Inline-form CLOCKWORK_CHECKPOINT emits are routed to the
-			// checkpoint handler which creates the row and parks the task
-			// if its checkpoint_mode is "blocking". JSON-form checkpoints
-			// (event.Signal == "CLOCKWORK_CHECKPOINT" with a JSON payload)
-			// are left for later work — MVP emits via the inline form.
-			if event.Type == executor.EventSignal && event.Signal == "CLOCKWORK_CHECKPOINT" {
-				if out, err := HandleCheckpointSignal(s.store, capturedTaskID, capturedRunID, event.Content, time.Now().UTC()); err != nil {
-					log.Printf("[scheduler] checkpoint emit error for %s: %v", capturedTaskID, err)
-				} else {
-					s.bus.Publish(SchedulerEvent{
-						Type:   "checkpoint.emitted",
-						TaskID: capturedTaskID,
-						RunID:  capturedRunID,
-						Data: map[string]interface{}{
-							"correlation_id": out.CorrelationID,
-							"type":           out.Type,
-							"park":           out.ParkTask,
-						},
-					})
-				}
-			}
+			// Subtodo + checkpoint emission previously rode the CLOCKWORK_*
+			// stdout signal protocol (subtodo via CLOCKWORK_SUBTODO_DONE,
+			// checkpoint via inline CLOCKWORK_CHECKPOINT). Phase E retired
+			// that channel — agents now use the MCP tools
+			// (clockwork_task_subtodo_done, clockwork_task_checkpoint_emit)
+			// against the global clockwork mcp server with explicit task_id.
+			// The scheduler no longer parses inline signal text; the MCP
+			// handlers in internal/mcpadapter own those code paths.
 
 			writeRunEvent(s.store, capturedRunID, capturedTaskID, runEventType(event), runEventPayload(event))
 
@@ -848,25 +812,15 @@ func (s *Scheduler) Stop(ctx context.Context) error {
 	return nil
 }
 
-// publishProgress emits a run.progress SSE event for user-visible signals
-// (notes, artifacts, tokens). Log lines and internal signals (CLOCKWORK_DONE,
-// CLOCKWORK_BLOCKED, CLOCKWORK_CHECKPOINT, etc.) are intentionally skipped —
-// those drive lifecycle transitions and are not activity-feed content.
+// publishProgress emits a run.progress SSE event for user-visible streaming
+// signal (artifacts, tool-use, tokens). CLOCKWORK_* stdout signaling (notes,
+// inline-tokens) was retired in Phase E along with executor.EventSignal —
+// agents emit notes via clockwork_comment_add over MCP, and token events
+// arrive as typed EventTokenUsage from the executor adapters directly.
 // Tokens-class emissions are rate-limited via progressThrottler to keep the
 // SSE stream readable during chatty streaming runs.
 func (s *Scheduler) publishProgress(taskID string, runID int64, event executor.ExecutionEvent) {
 	switch {
-	case event.Type == executor.EventSignal && event.Signal == "CLOCKWORK_NOTE":
-		s.bus.Publish(SchedulerEvent{
-			Type:   "run.progress",
-			TaskID: taskID,
-			RunID:  runID,
-			Data: map[string]interface{}{
-				"kind": "note",
-				"text": event.Content,
-			},
-		})
-
 	case event.Type == executor.EventArtifact && event.Artifact != nil:
 		s.bus.Publish(SchedulerEvent{
 			Type:   "run.progress",
@@ -893,8 +847,7 @@ func (s *Scheduler) publishProgress(taskID string, runID int64, event executor.E
 			},
 		})
 
-	case event.Type == executor.EventTokenUsage,
-		event.Type == executor.EventSignal && event.Signal == "CLOCKWORK_TOKENS":
+	case event.Type == executor.EventTokenUsage:
 		if !s.progressThrottler.allow(runID, time.Now()) {
 			return
 		}
@@ -903,11 +856,6 @@ func (s *Scheduler) publishProgress(taskID string, runID int64, event executor.E
 			data["prompt"] = event.Tokens.PromptTokens
 			data["completion"] = event.Tokens.CompletionTokens
 			data["cost"] = event.Tokens.Cost
-		} else if event.Type == executor.EventSignal && event.Content != "" {
-			p, c, cost := executor.ParseTokenPayload(event.Content)
-			data["prompt"] = p
-			data["completion"] = c
-			data["cost"] = cost
 		}
 		s.bus.Publish(SchedulerEvent{
 			Type:   "run.progress",

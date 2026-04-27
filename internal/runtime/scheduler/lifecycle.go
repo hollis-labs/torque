@@ -106,9 +106,9 @@ func (lm *LifecycleManager) handleDone(task *sqlstore.TaskRecord, runID int64, r
 	}
 
 	// Structural acceptance gate: required subtodos must be ticked off. Unlike
-	// deliverables this is keyed by item_id + executor-provided evidence, so a
-	// simple emission of CLOCKWORK_SUBTODO_DONE during the run is the only way
-	// to clear it. Non-required items are ignored.
+	// deliverables this is keyed by item_id + agent-provided evidence; agents
+	// tick items off via the clockwork_task_subtodo_done MCP tool during the
+	// run. Non-required items are ignored.
 	if missing, err := lm.missingRequiredSubtodos(task.ID); err != nil {
 		log.Printf("[lifecycle] subtodo check error for %s: %v", task.ID, err)
 	} else if len(missing) > 0 {

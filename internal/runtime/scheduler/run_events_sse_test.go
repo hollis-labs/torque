@@ -92,13 +92,15 @@ func TestRunStartedEventCarriesPayload(t *testing.T) {
 	assert.NotEmpty(t, data["started_at"], "started_at should be an RFC3339 string")
 }
 
-// TestRunProgressNoteAndArtifact verifies that note and artifact executor
-// events each surface as a run.progress SSE event with the right kind.
-func TestRunProgressNoteAndArtifact(t *testing.T) {
+// TestRunProgressArtifact verifies that an artifact executor event surfaces
+// as a run.progress SSE event with kind=artifact. Note progress (CLOCKWORK_NOTE
+// stdout signal) was retired in Phase E along with the rest of the
+// CLOCKWORK_* protocol — agents now post notes via clockwork_comment_add over
+// MCP, which doesn't ride the run.progress SSE channel.
+func TestRunProgressArtifact(t *testing.T) {
 	mock := executor.NewMockExecutor()
 	mock.SetResult(&executor.ExecutionResult{Status: "done"})
 	mock.SetEvents([]executor.ExecutionEvent{
-		executor.SignalEvent("CLOCKWORK_NOTE", "picked up task"),
 		executor.ArtifactEvent(executor.Artifact{Type: "diff", Content: "patch"}),
 	})
 
@@ -118,23 +120,18 @@ func TestRunProgressNoteAndArtifact(t *testing.T) {
 
 	events := drainEvents(sub, 200*time.Millisecond)
 
-	var sawNote, sawArtifact bool
+	var sawArtifact bool
 	for _, e := range events {
 		if e.Type != "run.progress" {
 			continue
 		}
 		data, _ := e.Data.(map[string]interface{})
-		switch data["kind"] {
-		case "note":
-			assert.Equal(t, "picked up task", data["text"])
-			sawNote = true
-		case "artifact":
+		if data["kind"] == "artifact" {
 			assert.Equal(t, "diff", data["artifact_type"])
 			assert.Equal(t, "patch", data["content"])
 			sawArtifact = true
 		}
 	}
-	assert.True(t, sawNote, "expected a run.progress kind=note event")
 	assert.True(t, sawArtifact, "expected a run.progress kind=artifact event")
 }
 

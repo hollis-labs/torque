@@ -2,7 +2,6 @@ package scheduler_test
 
 import (
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"testing"
 	"time"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 )
@@ -33,20 +31,21 @@ func setupE2EStack(t *testing.T) (*sqlstore.Store, *service.Service) {
 	return store, service.New(store)
 }
 
-// TestE2E_Checkpoint_EmitSignal_RespondService_TaskResumes exercises the full
-// Phase B pipeline end-to-end:
+// TestE2E_Checkpoint_Emit_RespondService_TaskResumes exercises the full
+// pipeline end-to-end (Phase E shape — CLOCKWORK_CHECKPOINT signal protocol
+// retired; emission now goes through service.Checkpoint.Emit, which is the
+// same path the MCP tool clockwork_task_checkpoint_emit invokes):
 //  1. A decision task with checkpoint_mode=blocking exists and is "doing".
-//  2. An executor emits CLOCKWORK_CHECKPOINT — the scheduler handler parses
-//     it, persists a pending checkpoint, and parks the task in review.
+//  2. The agent emits via the service-layer Emit (was: inline CLOCKWORK_CHECKPOINT).
+//     The service persists a pending checkpoint and parks the task in review.
 //  3. A responder (mirroring MCP/HTTP) calls CheckpointService.Respond with
 //     a JSON answer.
 //  4. The task transitions review → todo, BlockedReason clears, and the
 //     response is attached under metadata.checkpoint_responses[corr].
 //  5. The checkpoint row becomes "responded" with the responder identity.
-func TestE2E_Checkpoint_EmitSignal_RespondService_TaskResumes(t *testing.T) {
+func TestE2E_Checkpoint_Emit_RespondService_TaskResumes(t *testing.T) {
 	store, svc := setupE2EStack(t)
 
-	// 1. Create a decision/blocking task and move it to doing (dispatch sim).
 	rec, err := svc.Task.Create(service.TaskCreateInput{
 		Title:          "e2e decision",
 		Description:    "x",
@@ -57,7 +56,6 @@ func TestE2E_Checkpoint_EmitSignal_RespondService_TaskResumes(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
 
-	// A run row must exist for the checkpoint FK.
 	runID, err := store.CreateRun(&sqlstore.RunRecord{
 		TaskID:   rec.ID,
 		Executor: "cli",
@@ -65,47 +63,40 @@ func TestE2E_Checkpoint_EmitSignal_RespondService_TaskResumes(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// 2. Executor emits an inline CLOCKWORK_CHECKPOINT signal.
-	payload := `{"q":"pick one"}`
-	content := "CORR-E2E collect_data " + base64.StdEncoding.EncodeToString([]byte(payload))
-	sig := executor.ParseLine("CLOCKWORK_CHECKPOINT " + content)
-	require.Equal(t, executor.SignalCheckpoint, sig.Type,
-		"parser should classify as SignalCheckpoint")
-
-	out, err := scheduler.HandleCheckpointSignal(store, rec.ID, runID, sig.Payload, time.Now().UTC())
+	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID:      rec.ID,
+		RunID:       &runID,
+		Type:        "collect_data",
+		PayloadJSON: `{"q":"pick one"}`,
+	})
 	require.NoError(t, err)
-	assert.True(t, out.ParkTask, "blocking checkpoint should request parking")
+	corr := out.CorrelationID
 
-	// Task should be parked.
 	parked, err := svc.Task.Get(rec.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "review", parked.Status)
-	assert.Contains(t, parked.BlockedReason, "CORR-E2E")
+	assert.Contains(t, parked.BlockedReason, corr)
 
-	// 3. Respond via the service layer (equivalent to the MCP/HTTP tool).
 	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
-		CorrelationID:       "CORR-E2E",
+		CorrelationID:       corr,
 		ResponseJSON:        `{"pick":"a"}`,
 		ResponderSourceType: "user",
 		ResponderSourceRef:  "chrispian",
 	}))
 
-	// 4. Task transitions to todo with BlockedReason cleared.
 	resumed, err := svc.Task.Get(rec.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "todo", resumed.Status)
 	assert.Equal(t, "", resumed.BlockedReason)
 
-	// Response attached under metadata.checkpoint_responses.
 	require.True(t, resumed.Metadata.Valid)
 	var md map[string]any
 	require.NoError(t, json.Unmarshal([]byte(resumed.Metadata.String), &md))
 	responses := md["checkpoint_responses"].(map[string]any)
-	stored := responses["CORR-E2E"].(map[string]any)
+	stored := responses[corr].(map[string]any)
 	assert.Equal(t, "a", stored["pick"])
 
-	// 5. Checkpoint row is "responded" with responder identity.
-	cp, err := svc.Checkpoint.Get("CORR-E2E")
+	cp, err := svc.Checkpoint.Get(corr)
 	require.NoError(t, err)
 	assert.Equal(t, "responded", cp.Status)
 	assert.Equal(t, "user", cp.ResponderSourceType.String)
@@ -133,13 +124,17 @@ func TestE2E_Checkpoint_TimeoutSweep_ParkedTaskBlocks(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	content := "CORR-TO-E2E collect_data " + base64.StdEncoding.EncodeToString([]byte(`{}`))
-	out, err := scheduler.HandleCheckpointSignal(store, rec.ID, runID, content, time.Now().UTC())
+	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID:      rec.ID,
+		RunID:       &runID,
+		Type:        "collect_data",
+		PayloadJSON: `{}`,
+	})
 	require.NoError(t, err)
-	require.True(t, out.ParkTask)
+	corr := out.CorrelationID
 
 	// Set a deadline that's already past.
-	require.NoError(t, store.SetCheckpointTimeout("CORR-TO-E2E", time.Now().UTC().Add(-1*time.Minute)))
+	require.NoError(t, store.SetCheckpointTimeout(corr, time.Now().UTC().Add(-1*time.Minute)))
 
 	bus := scheduler.NewEventBus()
 	defer bus.Close()
@@ -147,7 +142,7 @@ func TestE2E_Checkpoint_TimeoutSweep_ParkedTaskBlocks(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
 
-	cp, err := svc.Checkpoint.Get("CORR-TO-E2E")
+	cp, err := svc.Checkpoint.Get(corr)
 	require.NoError(t, err)
 	assert.Equal(t, "timed_out", cp.Status)
 
@@ -157,13 +152,9 @@ func TestE2E_Checkpoint_TimeoutSweep_ParkedTaskBlocks(t *testing.T) {
 	assert.Contains(t, task.BlockedReason, "timed out")
 }
 
-// TestE2E_Checkpoint_Cancel_BlocksTask exercises the cancel path: emit →
-// park → cancel via service → checkpoint canceled, task stays in review
+// TestE2E_Checkpoint_Cancel_TaskStaysInReview exercises the cancel path: emit
+// → park → cancel via service → checkpoint canceled, task stays in review
 // with a canceled BlockedReason (human-driven follow-up per spec §4.5).
-//
-// Note: MVP spec §4.5 says "Task stays in review" after cancel; the
-// CheckpointService does not transition to blocked on cancel (only on
-// timeout). Verify that semantic here.
 func TestE2E_Checkpoint_Cancel_TaskStaysInReview(t *testing.T) {
 	store, svc := setupE2EStack(t)
 
@@ -182,18 +173,23 @@ func TestE2E_Checkpoint_Cancel_TaskStaysInReview(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	content := "CORR-CANCEL collect_data " + base64.StdEncoding.EncodeToString([]byte(`{}`))
-	_, err = scheduler.HandleCheckpointSignal(store, rec.ID, runID, content, time.Now().UTC())
+	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID:      rec.ID,
+		RunID:       &runID,
+		Type:        "collect_data",
+		PayloadJSON: `{}`,
+	})
 	require.NoError(t, err)
+	corr := out.CorrelationID
 
 	require.NoError(t, svc.Checkpoint.Cancel(service.CheckpointCancelInput{
-		CorrelationID:      "CORR-CANCEL",
+		CorrelationID:      corr,
 		Reason:             "no longer relevant",
 		CancelerSourceType: "user",
 		CancelerSourceRef:  "chrispian",
 	}))
 
-	cp, err := svc.Checkpoint.Get("CORR-CANCEL")
+	cp, err := svc.Checkpoint.Get(corr)
 	require.NoError(t, err)
 	assert.Equal(t, "canceled", cp.Status)
 	assert.Contains(t, cp.ResponseJSON.String, "no longer relevant")
@@ -201,5 +197,5 @@ func TestE2E_Checkpoint_Cancel_TaskStaysInReview(t *testing.T) {
 	task, err := svc.Task.Get(rec.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "review", task.Status, "canceled checkpoint leaves task in review (human drives next step)")
-	assert.Contains(t, task.BlockedReason, "CORR-CANCEL")
+	assert.Contains(t, task.BlockedReason, corr)
 }

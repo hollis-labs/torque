@@ -249,7 +249,7 @@ func (r *Resolver) buildResolutionSystemPrompt(req *ResolutionRequest) string {
 	sb.WriteString("- Report confidence as a float between 0.0 and 1.0\n")
 	sb.WriteString(fmt.Sprintf("- Confidence must be >= %.2f for auto-acceptance\n", req.ConfidenceThreshold))
 	sb.WriteString("- If you cannot confidently resolve, report low confidence so a human can review\n")
-	sb.WriteString("\nUse CLOCKWORK_DONE signal when complete, including confidence in the signal payload.\n")
+	sb.WriteString("\nWhen complete, post your resolution summary + confidence via the clockwork_task_summary MCP tool.\n")
 
 	return sb.String()
 }

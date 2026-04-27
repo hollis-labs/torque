@@ -44,8 +44,6 @@ func runEventType(event executor.ExecutionEvent) string {
 	switch event.Type {
 	case executor.EventLog:
 		return "log"
-	case executor.EventSignal:
-		return "signal"
 	case executor.EventArtifact:
 		return "artifact"
 	case executor.EventTokenUsage:
@@ -65,8 +63,6 @@ func runEventPayload(event executor.ExecutionEvent) interface{} {
 	switch event.Type {
 	case executor.EventLog:
 		return map[string]string{"line": event.Content}
-	case executor.EventSignal:
-		return map[string]string{"signal": event.Signal, "payload": event.Content}
 	case executor.EventArtifact:
 		if event.Artifact == nil {
 			return nil

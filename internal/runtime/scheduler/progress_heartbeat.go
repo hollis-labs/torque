@@ -9,7 +9,8 @@ import (
 // progressHeartbeat emits synthetic run.progress {kind:heartbeat} events at a
 // fixed interval while a run is active. It backstops the Activity panel so
 // consumers see liveness even when an executor isn't producing mid-stream
-// signals (e.g. claude --json-schema suppresses freeform CLOCKWORK_NOTE).
+// events (e.g. an agent that streams nothing user-visible until the final
+// turn, or a quiet long-running tool call).
 //
 // One goroutine is started per active run on start() and torn down on stop().
 // start/stop are idempotent and safe to call concurrently.
