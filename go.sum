@@ -31,8 +31,8 @@ github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
 github.com/hollis-labs/go-agent-sessions v0.3.0 h1:PcASR7HLmu1eEh7TkcF7TLXE/hMbT7eWr2LT+PyYm4Q=
 github.com/hollis-labs/go-agent-sessions v0.3.0/go.mod h1:8QHh4j8qM0IiKvPWxeQBOj0L8+YfDf/3HPsDp5NSQq4=
-github.com/hollis-labs/go-providers v0.5.1 h1:Ssz3aQkXpKSRk71squ1SAMqLTKeBbCZsHvJ25fygJr0=
-github.com/hollis-labs/go-providers v0.5.1/go.mod h1:7S6zvE5didBoY5cA0JY/rtB0pzy8s9dltuqWMtUPwK0=
+github.com/hollis-labs/go-providers v0.6.0 h1:rQ39J0U564f8T4IR4EqIm6JcGti5EDpeOXtG+G6JTTQ=
+github.com/hollis-labs/go-providers v0.6.0/go.mod h1:7S6zvE5didBoY5cA0JY/rtB0pzy8s9dltuqWMtUPwK0=
 github.com/hollis-labs/go-queue v0.1.1 h1:dJ8i4XB0DtUznzI4Kh6RkUBzHYOV4VCa4SYNfZq/+d8=
 github.com/hollis-labs/go-queue v0.1.1/go.mod h1:wAP95gDz9kxAhcCWaR4e07Jz54OvFpiNEq+5ERgt2/E=
 github.com/hollis-labs/go-runner v0.2.0 h1:9sOSaKm5YuSTRhFiMdz8JOIvw4NgfGTDUgzVkBCsBuQ=

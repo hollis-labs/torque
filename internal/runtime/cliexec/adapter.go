@@ -13,7 +13,12 @@ import (
 // an error for unknown providers; pre-launch we accept a clean break and
 // require profiles to name a known go-providers adapter rather than wedging a
 // generic raw-command path through the new substrate.
-func adapterFor(profile config.AgentProfile) (provider.CLIAdapter, agentsessions.Capabilities, error) {
+//
+// profileName is the clockwork agent-profile lookup key (job.AgentProfile).
+// Most adapters ignore it; OpencodeAdapter requires it because `opencode run`
+// dispatches via --agent <name>, and by convention the clockwork profile name
+// is the opencode agent name (matches the legacy executor-opencode plugin).
+func adapterFor(profile config.AgentProfile, profileName string) (provider.CLIAdapter, agentsessions.Capabilities, error) {
 	switch profile.Provider {
 	case "claude":
 		caps := agentsessions.Capabilities{
@@ -43,18 +48,29 @@ func adapterFor(profile config.AgentProfile) (provider.CLIAdapter, agentsessions
 			BinaryRequired: true,
 		}, nil
 
-	// Note: opencode is dispatched by the dedicated executor-opencode plugin
-	// today. Phase D (CW-20260427-0042) will fold it into cliexec once
-	// go-providers cuts a tag containing the OpencodeAdapter (currently on
-	// main past v0.5.1, commit 8b6e673).
+	case "opencode":
+		if profileName == "" {
+			return nil, agentsessions.Capabilities{}, fmt.Errorf(
+				"opencode provider requires task.agent_profile to be set (maps to opencode --agent)")
+		}
+		adapter := provider.NewOpencodeAdapter()
+		adapter.Agent = profileName
+		// OpencodeAdapter ParseLine emits only EventDelta (no EventSessionID),
+		// and `opencode run` has no --resume flag — so ProviderSessionID and
+		// CheckpointResume both stay false. --model is appended by the cliexec
+		// BuildArgs wrapper from profile.Model (uniform across adapters);
+		// OpencodeAdapter.Model is left zero to avoid a duplicate flag.
+		return adapter, agentsessions.Capabilities{
+			BinaryRequired: true,
+		}, nil
 
 	case "":
 		return nil, agentsessions.Capabilities{}, fmt.Errorf(
-			"profile has empty provider; cliexec requires a go-providers-known provider name (claude|codex|gemini|copilot)")
+			"profile has empty provider; cliexec requires a go-providers-known provider name (claude|codex|gemini|copilot|opencode)")
 
 	default:
 		return nil, agentsessions.Capabilities{}, fmt.Errorf(
-			"unknown provider %q; cliexec accepts: claude, codex, gemini, copilot",
+			"unknown provider %q; cliexec accepts: claude, codex, gemini, copilot, opencode",
 			profile.Provider)
 	}
 }

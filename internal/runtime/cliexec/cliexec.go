@@ -68,7 +68,7 @@ func (e *CLIExecutor) Validate(job *executor.ExecutionJob) error {
 		return err
 	}
 	profile := config.GetProfileOrDefault(e.profiles, job.AgentProfile)
-	if _, _, err := adapterFor(profile); err != nil {
+	if _, _, err := adapterFor(profile, job.AgentProfile); err != nil {
 		return executor.NewPermanentError(err)
 	}
 	if _, err := executor.ResolveWorkingDir(job.WorkingDir); err != nil {
@@ -92,7 +92,7 @@ func (e *CLIExecutor) Run(ctx context.Context, job *executor.ExecutionJob, cb ex
 		log.Printf("cliexec: agent file declares tools=%v (advisory only; no enforcement) task=%s", agent.Tools, job.TaskID)
 	}
 
-	cliAdapter, caps, err := adapterFor(profile)
+	cliAdapter, caps, err := adapterFor(profile, job.AgentProfile)
 	if err != nil {
 		return &executor.ExecutionResult{Status: "failed", Reason: err.Error()}, nil
 	}

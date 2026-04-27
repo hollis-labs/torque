@@ -296,10 +296,10 @@ func TestCliexec_ProviderErrorEventCapturedAsReason(t *testing.T) {
 }
 
 func TestAdapterFor_KnownProvidersResolve(t *testing.T) {
-	cases := []string{"claude", "codex", "gemini", "copilot"}
+	cases := []string{"claude", "codex", "gemini", "copilot", "opencode"}
 	for _, name := range cases {
 		t.Run(name, func(t *testing.T) {
-			a, caps, err := adapterFor(config.AgentProfile{Provider: name})
+			a, caps, err := adapterFor(config.AgentProfile{Provider: name}, "test-profile")
 			require.NoError(t, err)
 			require.NotNil(t, a)
 			assert.Equal(t, name, a.Name())
@@ -309,28 +309,43 @@ func TestAdapterFor_KnownProvidersResolve(t *testing.T) {
 }
 
 func TestAdapterFor_RejectsUnknown(t *testing.T) {
-	_, _, err := adapterFor(config.AgentProfile{Provider: "made-up"})
+	_, _, err := adapterFor(config.AgentProfile{Provider: "made-up"}, "test-profile")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown provider")
 
-	_, _, err = adapterFor(config.AgentProfile{Provider: ""})
+	_, _, err = adapterFor(config.AgentProfile{Provider: ""}, "test-profile")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "empty provider")
+}
 
-	// Opencode is dispatched by executor-opencode plugin today; cliexec
-	// folds it in during Phase D (CW-20260427-0042).
-	_, _, err = adapterFor(config.AgentProfile{Provider: "opencode"})
-	require.Error(t, err, "opencode is reserved for Phase D folding")
+func TestAdapterFor_OpencodeRequiresProfileName(t *testing.T) {
+	// opencode --agent value defaults to the clockwork profile lookup name;
+	// an empty profile name is a permanent config error.
+	_, _, err := adapterFor(config.AgentProfile{Provider: "opencode"}, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "opencode provider requires task.agent_profile")
+}
+
+func TestAdapterFor_OpencodeAgentSetFromProfileName(t *testing.T) {
+	a, _, err := adapterFor(config.AgentProfile{Provider: "opencode"}, "clockwork-backend")
+	require.NoError(t, err)
+	oc, ok := a.(*provider.OpencodeAdapter)
+	require.True(t, ok, "expected *provider.OpencodeAdapter, got %T", a)
+	assert.Equal(t, "clockwork-backend", oc.Agent,
+		"OpencodeAdapter.Agent should be populated from the clockwork profile name")
+	// Model is left zero — cliexec wrapper appends --model from profile.Model
+	// uniformly across adapters; setting it here would duplicate the flag.
+	assert.Empty(t, oc.Model, "Model should be left for the cliexec wrapper to append")
 }
 
 func TestAdapterFor_ClaudeSkipPermissionsHonored(t *testing.T) {
-	plain, _, err := adapterFor(config.AgentProfile{Provider: "claude"})
+	plain, _, err := adapterFor(config.AgentProfile{Provider: "claude"}, "test-profile")
 	require.NoError(t, err)
 
 	dev, _, err := adapterFor(config.AgentProfile{
 		Provider: "claude",
 		Args:     []string{"--dangerously-skip-permissions"},
-	})
+	}, "test-profile")
 	require.NoError(t, err)
 
 	// Both are ClaudeAdapter; one has SkipPermissions=true. The skip flag is
