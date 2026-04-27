@@ -27,7 +27,7 @@ func TestBootstrapExecutors(t *testing.T) {
 
 	reg := executor.NewRegistry()
 
-	err := bootstrap.Executors(reg, profiles, nil)
+	err := bootstrap.Executors(reg, profiles, nil, nil)
 	require.NoError(t, err)
 
 	// CLI executor should be registered
@@ -52,7 +52,7 @@ func TestBootstrapExecutorsListAll(t *testing.T) {
 	}
 
 	reg := executor.NewRegistry()
-	err := bootstrap.Executors(reg, profiles, nil)
+	err := bootstrap.Executors(reg, profiles, nil, nil)
 	require.NoError(t, err)
 
 	list := reg.List()

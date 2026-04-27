@@ -3,9 +3,10 @@ module github.com/hollis-labs/clockwork-manifold
 go 1.26.1
 
 require (
+	github.com/anthropics/anthropic-sdk-go v1.38.0
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/google/uuid v1.6.0
-	github.com/hollis-labs/go-agent-sessions v0.3.0
+	github.com/hollis-labs/go-agent-sessions v0.4.0
 	github.com/hollis-labs/go-modelsdev v0.0.0-00010101000000-000000000000
 	github.com/hollis-labs/go-providers v0.6.0
 	github.com/hollis-labs/go-queue v0.1.1
@@ -14,6 +15,7 @@ require (
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/mark3labs/mcp-go v0.47.0
 	github.com/oklog/ulid/v2 v2.1.1
+	github.com/openai/openai-go v1.12.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/goleak v1.3.0
@@ -22,7 +24,6 @@ require (
 )
 
 require (
-	github.com/anthropics/anthropic-sdk-go v1.38.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
@@ -33,7 +34,7 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
-	github.com/hollis-labs/go-runner v0.2.0 // indirect
+	github.com/hollis-labs/go-runner v0.3.0 // indirect
 	github.com/hollis-labs/go-sandbox v0.1.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
@@ -43,7 +44,6 @@ require (
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
-	github.com/openai/openai-go v1.12.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/spf13/cast v1.7.1 // indirect

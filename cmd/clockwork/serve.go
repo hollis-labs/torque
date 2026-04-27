@@ -111,7 +111,12 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// Load profiles (optional — missing file is OK for mock-only runs).
 	profiles := loadProfilesOrEmpty()
 
-	if err := bootstrap.Executors(registry, profiles, nil); err != nil {
+	// Service constructed early so cliexec can claim it for per-task MCP
+	// loopback wiring (CW-20260427-0059). Same handle reused by httpserver
+	// below.
+	svc := service.New(store)
+
+	if err := bootstrap.Executors(registry, profiles, svc, nil); err != nil {
 		return fmt.Errorf("bootstrap executors: %w", err)
 	}
 
@@ -133,8 +138,8 @@ func runServe(ctx context.Context, ln net.Listener) error {
 			cfg.Scheduler.ProjectAllowlist)
 	}
 
-	// Service + HTTP handler
-	svc := service.New(store)
+	// HTTP handler — svc was constructed earlier (above bootstrap.Executors)
+	// so cliexec could claim it for per-task MCP loopback wiring.
 	handler := httpserver.New(svc, sched)
 
 	// Background goroutines share a derived context so cancelling the parent

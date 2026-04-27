@@ -19,38 +19,53 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
+	"github.com/hollis-labs/clockwork-manifold/internal/service"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 	"github.com/hollis-labs/go-providers/provider"
 )
 
 // CLIExecutor is the cliexec implementation of executor.Executor. One
 // instance is shared across all CLI tasks; goroutine-safe.
+//
+// svc is the service-layer handle used to construct per-task MCP loopback
+// adapters (CW-20260427-0059). When nil, the loopback wiring is skipped and
+// agents fall back to the global `clockwork mcp` server with explicit task_id
+// — same posture as Phase B's Path C landing. Production callsites supply a
+// non-nil service via bootstrap.Executors.
 type CLIExecutor struct {
 	profiles config.ProfileMap
+	svc      *service.Service
 }
 
 // Compile-time check that CLIExecutor satisfies the Executor interface.
 var _ executor.Executor = (*CLIExecutor)(nil)
 
-// New constructs a CLIExecutor with the given agent-profile registry.
-func New(profiles config.ProfileMap) *CLIExecutor {
-	return &CLIExecutor{profiles: profiles}
+// New constructs a CLIExecutor with the given agent-profile registry and
+// service handle. svc may be nil for tests that don't exercise the loopback;
+// production callers (bootstrap.Executors) supply a real *service.Service so
+// every task gets its own ephemeral MCP loopback.
+func New(profiles config.ProfileMap, svc *service.Service) *CLIExecutor {
+	return &CLIExecutor{profiles: profiles, svc: svc}
 }
 
 // Name returns the executor's registered name. The legacy executor-cli plugin
 // occupied "cli"; cliexec inherits the slot since it replaces it wholesale.
 func (e *CLIExecutor) Name() string { return "cli" }
 
-// Capabilities reports what cliexec supports. SupportsSandbox is currently
-// false: per-task sandbox wiring lands with the loopback FD plumbing
-// (CW-20260427-0059), at which point go-sandbox profiles will be threaded via
-// agentsessions.StartOptions.Profile.
+// Capabilities reports what cliexec supports. SupportsSandbox stays false in
+// CW-20260427-0059: go-sandbox's macOS SBPL builder maps Net=false to a
+// blanket `(deny network*)` that blocks loopback (127.0.0.1) too, which would
+// strand the per-task MCP loopback HTTP server. Sandbox restoration moves to
+// a follow-up Phase F that depends on a go-sandbox AllowLoopback knob (or
+// Net=true profiles, accepting FS-only scoping). Tracked in the impl-report
+// known-limitations.
 func (e *CLIExecutor) Capabilities() executor.ExecutorCapabilities {
 	return executor.ExecutorCapabilities{
 		SupportsStreaming:   true,
@@ -114,14 +129,60 @@ func (e *CLIExecutor) Run(ctx context.Context, job *executor.ExecutionJob, cb ex
 	systemPrompt := composeSystemPrompt(job, agent)
 	prompt := composePrompt(job)
 
+	// CW-20260427-0059: per-task MCP loopback + boot dir.
+	//
+	// setupLoopback returns (nil, nil) when e.svc is nil (test path). When
+	// non-nil, the listener is bound and the serve goroutine is running before
+	// we touch the boot dir; defer Shutdown drains the goroutine and closes
+	// the listener after the spawned agent exits.
+	loopback, err := setupLoopback(e.svc, job.TaskID)
+	if err != nil {
+		return &executor.ExecutionResult{Status: "failed", Reason: fmt.Sprintf("loopback setup: %v", err)}, nil
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer shutdownCancel()
+		if err := loopback.Shutdown(shutdownCtx); err != nil {
+			log.Printf("cliexec: loopback shutdown task=%s run=%d: %v", job.TaskID, job.RunID, err)
+		}
+	}()
+
+	// Boot dir is the spawned agent's cwd. The project dir (resolvedWD) is
+	// reachable via --add-dir for adapters that support it (currently claude).
+	// When loopback is nil (test path), fall back to spawning in resolvedWD —
+	// matches Phase B's pre-loopback behavior so unit tests don't have to
+	// mock a service.
+	spawnWD := resolvedWD
+	var bootDir string
+	if loopback != nil {
+		bootDir, err = setupBootDir(job.TaskID, job.RunID, systemPrompt, resolvedWD, loopback.Port())
+		if err != nil {
+			return &executor.ExecutionResult{Status: "failed", Reason: fmt.Sprintf("boot dir setup: %v", err)}, nil
+		}
+		spawnWD = bootDir
+		defer func() {
+			if err := os.RemoveAll(bootDir); err != nil {
+				log.Printf("cliexec: boot dir cleanup task=%s run=%d path=%s: %v", job.TaskID, job.RunID, bootDir, err)
+			}
+		}()
+	}
+
 	// Override BuildArgs so we can prepend profile.Args (e.g.
 	// --dangerously-skip-permissions) and append --model when set. Adapters
 	// that don't accept --model silently fail at run-time; profiles SHOULD
 	// avoid setting Model for those providers.
+	//
+	// When the boot dir pattern is active, the agent's cwd is bootDir and
+	// the project root is reachable only via the adapter's "additional dir"
+	// flag (--add-dir for claude). Other adapters' equivalents are per-CLI
+	// follow-ups; without them the agent has no project access.
 	buildArgs := func(turnPrompt, sessionID string) []string {
 		args := cliAdapter.BuildArgs(turnPrompt, systemPrompt, sessionID)
 		if profile.Model != "" {
 			args = append(args, "--model", profile.Model)
+		}
+		if bootDir != "" && cliAdapter.Name() == "claude" {
+			args = append(args, "--add-dir", resolvedWD)
 		}
 		if filtered := profileArgsExcludingDevFlag(profile); len(filtered) > 0 {
 			args = append(filtered, args...)
@@ -162,11 +223,16 @@ func (e *CLIExecutor) Run(ctx context.Context, job *executor.ExecutionJob, cb ex
 		ID:      sessID,
 		Runtime: rt,
 		Options: agentsessions.StartOptions{
-			Workdir:     resolvedWD,
+			// CW-20260427-0059: spawnWD is the per-task boot dir when the
+			// loopback is wired (production path). Falls back to resolvedWD
+			// when e.svc is nil (test path) — matches Phase B behavior.
+			Workdir:     spawnWD,
 			Env:         env,
 			Stderr:      stderrWriter,
 			EventFanout: eventFanout,
-			// Profile: zero-value (sandbox wiring lands with CW-20260427-0059).
+			// Profile: zero-value. Sandbox restoration deferred to Phase F —
+			// go-sandbox's Net=false denies loopback (127.0.0.1), needs an
+			// AllowLoopback knob lib-side before we can populate this.
 		},
 	})
 	if startErr != nil {
