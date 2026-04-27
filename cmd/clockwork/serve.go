@@ -156,30 +156,37 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// setting so we can A/B against executor-reported cost during rollout.
 	sched.Models = svc.Models
 	sched.Profiles = profiles
-	if v, _ := svc.Settings.Get("scheduler.cost_backfill_enabled"); v == "true" {
-		sched.CostBackfillEnabled = true
-		log.Printf("[serve] scheduler cost backfill enabled (models.dev pricing fills cost when executor reports 0)")
+	// Cost backfill is on by default — the natural pre-conditions (Models +
+	// Profiles wired, executor reports cost=0, profile has provider+model)
+	// already gate it. Set scheduler.cost_backfill_disabled=true as an
+	// emergency off-switch if the catalog produces wildly wrong numbers.
+	if v, _ := svc.Settings.Get("scheduler.cost_backfill_disabled"); v == "true" {
+		sched.CostBackfillDisabled = true
+		log.Printf("[serve] scheduler cost backfill DISABLED via setting")
 	}
 
-	// Phase 4 dispatch guardrails (CW-20260426-0036). Both gates are opt-in.
-	// The window threshold defaults to 0.8 (warn at 80% of context window);
-	// the hard block at 100% always applies when WindowEnabled is true.
-	if v, _ := svc.Settings.Get("scheduler.precheck_window_enabled"); v == "true" {
-		sched.Precheck.WindowEnabled = true
-		sched.Precheck.WindowThreshold = 0.8
-		if raw, _ := svc.Settings.Get("scheduler.precheck_window_threshold"); raw != "" {
-			var f float64
-			if _, err := fmt.Sscanf(raw, "%f", &f); err == nil && f > 0 && f < 1 {
-				sched.Precheck.WindowThreshold = f
-			}
+	// Phase 4 dispatch guardrails (CW-20260426-0036). Tri-state per gate:
+	// off / warn / block. Default is warn-on-both so problems show up in
+	// logs against real traffic without active risk; promote to block when
+	// the estimator has a track record. Settings:
+	//   scheduler.precheck_window         = off|warn|block (default warn)
+	//   scheduler.precheck_window_threshold = 0..1         (default 0.8)
+	//   scheduler.precheck_capabilities   = off|warn|block (default warn)
+	sched.Precheck = scheduler.DefaultPrecheckOptions()
+	if raw, _ := svc.Settings.Get("scheduler.precheck_window"); raw != "" {
+		sched.Precheck.Window = scheduler.PrecheckMode(raw)
+	}
+	if raw, _ := svc.Settings.Get("scheduler.precheck_window_threshold"); raw != "" {
+		var f float64
+		if _, err := fmt.Sscanf(raw, "%f", &f); err == nil && f > 0 && f < 1 {
+			sched.Precheck.WindowThreshold = f
 		}
-		log.Printf("[serve] scheduler precheck: context-window enabled (warn @ %.0f%%, block @ 100%%)",
-			sched.Precheck.WindowThreshold*100)
 	}
-	if v, _ := svc.Settings.Get("scheduler.precheck_capabilities_enabled"); v == "true" {
-		sched.Precheck.CapabilitiesEnabled = true
-		log.Printf("[serve] scheduler precheck: capability gate enabled (refuse tool tasks on tool_call=false models)")
+	if raw, _ := svc.Settings.Get("scheduler.precheck_capabilities"); raw != "" {
+		sched.Precheck.Capabilities = scheduler.PrecheckMode(raw)
 	}
+	log.Printf("[serve] scheduler precheck: window=%s (threshold %.0f%%) capabilities=%s",
+		sched.Precheck.Window, sched.Precheck.WindowThreshold*100, sched.Precheck.Capabilities)
 
 	// SSE bridge: scheduler.EventBus → httpserver.SSEHub
 	bridge := httpserver.NewSchedulerBridge(handler.SSEHub(), sched.EventBus())

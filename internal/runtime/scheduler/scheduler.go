@@ -92,10 +92,13 @@ type Scheduler struct {
 	// Tests that don't exercise cost paths can leave them unset.
 	Models   *modelcatalog.Catalog
 	Profiles config.ProfileMap
-	// CostBackfillEnabled gates the catalog-based estimate even when Models
-	// + Profiles are wired. False during initial rollout so we can A/B against
-	// executor-reported cost without lighting up the new code path.
-	CostBackfillEnabled bool
+	// CostBackfillDisabled is the emergency off-switch for the models.dev
+	// cost backfill. Default zero-value (false) means backfill runs whenever
+	// the natural pre-conditions are met: Models + Profiles wired, executor
+	// reports cost=0, profile has (provider, model). Set true via
+	// scheduler.cost_backfill_disabled=true to suppress even when wired —
+	// useful if the catalog produces wildly wrong numbers.
+	CostBackfillDisabled bool
 
 	// Precheck holds Phase 4 dispatch-time guardrail config. Zero value =
 	// no checks (safe default). Set by serve.go from settings.

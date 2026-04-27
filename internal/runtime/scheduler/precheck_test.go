@@ -22,11 +22,18 @@ func TestEstimatePromptTokens(t *testing.T) {
 	))
 }
 
+func TestDefaultPrecheckOptions(t *testing.T) {
+	opts := scheduler.DefaultPrecheckOptions()
+	assert.Equal(t, scheduler.PrecheckWarn, opts.Window)
+	assert.Equal(t, scheduler.PrecheckWarn, opts.Capabilities)
+	assert.InDelta(t, 0.8, opts.WindowThreshold, 0.0001)
+}
+
 func TestPrecheck_ColdCacheNoOps(t *testing.T) {
 	task := sqlstore.TaskRecord{Title: "t", Description: "d"}
 	res := scheduler.Precheck(task, scheduler.NewProfileForPrecheck("anthropic", "claude-sonnet-4-6", ""), "",
 		func(string, string) (modelsdev.Model, bool) { return modelsdev.Model{}, false },
-		scheduler.PrecheckOptions{WindowEnabled: true, CapabilitiesEnabled: true})
+		scheduler.PrecheckOptions{Window: scheduler.PrecheckBlock, Capabilities: scheduler.PrecheckBlock})
 	assert.Empty(t, res.BlockReason)
 	assert.Empty(t, res.Warnings)
 }
@@ -37,7 +44,7 @@ func TestPrecheck_NoOpWhenProfileMissingProviderModel(t *testing.T) {
 		func(string, string) (modelsdev.Model, bool) {
 			return modelsdev.Model{Limit: modelsdev.Limits{ContextWindow: 100}}, true
 		},
-		scheduler.PrecheckOptions{WindowEnabled: true})
+		scheduler.PrecheckOptions{Window: scheduler.PrecheckBlock})
 	assert.Empty(t, res.BlockReason)
 }
 
@@ -51,12 +58,31 @@ func TestPrecheck_WindowBlock(t *testing.T) {
 	}
 	res := scheduler.Precheck(task,
 		scheduler.NewProfileForPrecheck("anthropic", "claude-sonnet-4-6", ""), "", lookup,
-		scheduler.PrecheckOptions{WindowEnabled: true, WindowThreshold: 0.8})
+		scheduler.PrecheckOptions{Window: scheduler.PrecheckBlock, WindowThreshold: 0.8})
 	assert.Contains(t, res.BlockReason, "exceeds")
 	assert.Contains(t, res.BlockReason, "context window")
 }
 
-func TestPrecheck_WindowWarn(t *testing.T) {
+func TestPrecheck_WindowWarn_OverLimit(t *testing.T) {
+	// In warn mode, an over-window estimate logs a warning but does NOT block.
+	task := sqlstore.TaskRecord{
+		Title:       "t",
+		Description: strings.Repeat("x", 5000), // ~1250 tokens, over 1000-window
+	}
+	lookup := func(string, string) (modelsdev.Model, bool) {
+		return modelsdev.Model{Limit: modelsdev.Limits{ContextWindow: 1000}}, true
+	}
+	res := scheduler.Precheck(task,
+		scheduler.NewProfileForPrecheck("anthropic", "claude-sonnet-4-6", ""), "", lookup,
+		scheduler.PrecheckOptions{Window: scheduler.PrecheckWarn, WindowThreshold: 0.8})
+	assert.Empty(t, res.BlockReason, "warn mode should never block")
+	assert.Len(t, res.Warnings, 1)
+	assert.Contains(t, res.Warnings[0], "exceeds")
+}
+
+func TestPrecheck_WindowWarn_ThresholdBand(t *testing.T) {
+	// Below the hard limit but above the warn threshold — emits warning,
+	// no block in either warn or block mode.
 	task := sqlstore.TaskRecord{
 		Title:       "t",
 		Description: strings.Repeat("x", 4000), // ~1000 tokens, above 80% of 1024
@@ -66,13 +92,13 @@ func TestPrecheck_WindowWarn(t *testing.T) {
 	}
 	res := scheduler.Precheck(task,
 		scheduler.NewProfileForPrecheck("anthropic", "claude-sonnet-4-6", ""), "", lookup,
-		scheduler.PrecheckOptions{WindowEnabled: true, WindowThreshold: 0.8})
-	assert.Empty(t, res.BlockReason, "should warn but not block")
+		scheduler.PrecheckOptions{Window: scheduler.PrecheckBlock, WindowThreshold: 0.8})
+	assert.Empty(t, res.BlockReason, "below limit, threshold-band warns only")
 	assert.Len(t, res.Warnings, 1)
 	assert.Contains(t, res.Warnings[0], "above 80%")
 }
 
-func TestPrecheck_WindowDisabledNoCheck(t *testing.T) {
+func TestPrecheck_WindowOff(t *testing.T) {
 	task := sqlstore.TaskRecord{
 		Title:       "t",
 		Description: strings.Repeat("x", 1_000_000),
@@ -80,16 +106,17 @@ func TestPrecheck_WindowDisabledNoCheck(t *testing.T) {
 	lookup := func(string, string) (modelsdev.Model, bool) {
 		return modelsdev.Model{Limit: modelsdev.Limits{ContextWindow: 100}}, true
 	}
+	// Zero-value PrecheckOptions has Window=PrecheckOff (empty string).
 	res := scheduler.Precheck(task,
 		scheduler.NewProfileForPrecheck("anthropic", "claude-sonnet-4-6", ""), "", lookup,
-		scheduler.PrecheckOptions{}) // both disabled
+		scheduler.PrecheckOptions{})
 	assert.Empty(t, res.BlockReason)
+	assert.Empty(t, res.Warnings)
 }
 
 func TestPrecheck_CapabilityBlock(t *testing.T) {
 	task := sqlstore.TaskRecord{
 		Title: "t",
-		// Tools field signals the task needs tool-call support.
 		Tools: sql.NullString{String: `["bash","edit"]`, Valid: true},
 	}
 	lookup := func(string, string) (modelsdev.Model, bool) {
@@ -100,8 +127,28 @@ func TestPrecheck_CapabilityBlock(t *testing.T) {
 	}
 	res := scheduler.Precheck(task,
 		scheduler.NewProfileForPrecheck("openai", "no-tools-model", ""), "", lookup,
-		scheduler.PrecheckOptions{CapabilitiesEnabled: true})
+		scheduler.PrecheckOptions{Capabilities: scheduler.PrecheckBlock})
 	assert.Contains(t, res.BlockReason, "tool-call")
+}
+
+func TestPrecheck_CapabilityWarn(t *testing.T) {
+	// Warn mode logs but doesn't block tool-incapable dispatches.
+	task := sqlstore.TaskRecord{
+		Title: "t",
+		Tools: sql.NullString{String: `["bash"]`, Valid: true},
+	}
+	lookup := func(string, string) (modelsdev.Model, bool) {
+		return modelsdev.Model{
+			Limit:        modelsdev.Limits{ContextWindow: 100000},
+			Capabilities: modelsdev.Capabilities{ToolCall: false},
+		}, true
+	}
+	res := scheduler.Precheck(task,
+		scheduler.NewProfileForPrecheck("openai", "no-tools-model", ""), "", lookup,
+		scheduler.PrecheckOptions{Capabilities: scheduler.PrecheckWarn})
+	assert.Empty(t, res.BlockReason)
+	assert.Len(t, res.Warnings, 1)
+	assert.Contains(t, res.Warnings[0], "tool-call")
 }
 
 func TestPrecheck_CapabilityPassesWhenSupported(t *testing.T) {
@@ -117,8 +164,9 @@ func TestPrecheck_CapabilityPassesWhenSupported(t *testing.T) {
 	}
 	res := scheduler.Precheck(task,
 		scheduler.NewProfileForPrecheck("anthropic", "claude-sonnet-4-6", ""), "", lookup,
-		scheduler.PrecheckOptions{CapabilitiesEnabled: true})
+		scheduler.PrecheckOptions{Capabilities: scheduler.PrecheckBlock})
 	assert.Empty(t, res.BlockReason)
+	assert.Empty(t, res.Warnings)
 }
 
 func TestPrecheck_CapabilitySkipsWhenTaskHasNoTools(t *testing.T) {
@@ -131,6 +179,6 @@ func TestPrecheck_CapabilitySkipsWhenTaskHasNoTools(t *testing.T) {
 	}
 	res := scheduler.Precheck(task,
 		scheduler.NewProfileForPrecheck("openai", "no-tools-model", ""), "", lookup,
-		scheduler.PrecheckOptions{CapabilitiesEnabled: true})
+		scheduler.PrecheckOptions{Capabilities: scheduler.PrecheckBlock})
 	assert.Empty(t, res.BlockReason, "no tools requested = no capability check needed")
 }

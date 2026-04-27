@@ -9,21 +9,53 @@ import (
 	"github.com/hollis-labs/go-modelsdev/modelsdev"
 )
 
-// PrecheckOptions configures the pre-dispatch model checks. All fields default
-// to "off" so the guardrails stay opt-in until ops trust them.
+// PrecheckMode is the per-check enforcement level. Tri-state by design — a
+// boolean off/on hides the most useful middle ground (collect signal in logs
+// before promoting to a hard block). Zero value is PrecheckOff so an
+// unconfigured PrecheckOptions is a strict no-op.
+type PrecheckMode string
+
+const (
+	// PrecheckOff disables the check entirely. No estimate, no log line.
+	PrecheckOff PrecheckMode = "off"
+	// PrecheckWarn runs the check and emits a warning (logged at the
+	// scheduler level) but always proceeds with dispatch. Use to gather
+	// signal against real traffic before promoting to block.
+	PrecheckWarn PrecheckMode = "warn"
+	// PrecheckBlock runs the check and refuses dispatch on failure,
+	// transitioning the task to blocked with a reason.
+	PrecheckBlock PrecheckMode = "block"
+)
+
+// DefaultPrecheckOptions returns the recommended starting point: warn-only
+// on both gates, with the window threshold at 80%. Warn mode is harmless to
+// real traffic while still surfacing problems in logs, so flipping it on by
+// default is safer than off-by-default (which gives ops nothing to trust).
+func DefaultPrecheckOptions() PrecheckOptions {
+	return PrecheckOptions{
+		Window:          PrecheckWarn,
+		WindowThreshold: 0.8,
+		Capabilities:    PrecheckWarn,
+	}
+}
+
+// PrecheckOptions configures the pre-dispatch model checks. Both gates are
+// tri-state (off / warn / block). Defaults to all-off zero value; serve.go
+// calls DefaultPrecheckOptions to override before reading settings.
 type PrecheckOptions struct {
-	// WindowEnabled gates the context-window estimate. When true, an estimate
-	// over the model's context_window blocks dispatch; an estimate over
-	// WindowThreshold * context_window emits a warning but still dispatches.
-	WindowEnabled bool
+	// Window controls the context-window estimate. In warn mode an over-window
+	// estimate just logs; in block mode it refuses dispatch (transitions task
+	// to blocked with reason). The threshold-band warning fires in both warn
+	// and block modes whenever the estimate exceeds WindowThreshold * window.
+	Window PrecheckMode
 	// WindowThreshold is the warning fraction (0.0-1.0). 0.8 means warn at
-	// 80% of the context window. Values <=0 or >1 disable the warning band
-	// entirely; the hard block at 100% still applies.
+	// 80% of the context window. Values <=0 or >=1 disable the warning band;
+	// the over-window check still applies.
 	WindowThreshold float64
-	// CapabilitiesEnabled gates the capability check. When true, dispatches
-	// to a model whose Capabilities.ToolCall is false are blocked when the
-	// task declares tool requirements.
-	CapabilitiesEnabled bool
+	// Capabilities controls the tool-call gate. In warn mode a tool-requesting
+	// task dispatched to a tool-incapable model logs but proceeds; in block
+	// mode it refuses.
+	Capabilities PrecheckMode
 }
 
 // PrecheckResult is the policy decision. BlockReason non-empty means refuse
@@ -72,7 +104,7 @@ func Precheck(
 		return res
 	}
 
-	if opts.WindowEnabled && model.Limit.ContextWindow > 0 {
+	if modeEnforced(opts.Window) && model.Limit.ContextWindow > 0 {
 		est := EstimatePromptTokens(
 			task.Title,
 			task.Description,
@@ -82,13 +114,16 @@ func Precheck(
 		)
 		window := model.Limit.ContextWindow
 		if est > window {
-			res.BlockReason = fmt.Sprintf(
+			msg := fmt.Sprintf(
 				"prompt estimate %d tokens exceeds %s/%s context window %d",
 				est, profile.Provider, profile.Model, window,
 			)
-			return res
-		}
-		if opts.WindowThreshold > 0 && opts.WindowThreshold < 1 {
+			if opts.Window == PrecheckBlock {
+				res.BlockReason = msg
+				return res
+			}
+			res.Warnings = append(res.Warnings, msg)
+		} else if opts.WindowThreshold > 0 && opts.WindowThreshold < 1 {
 			warnAt := int(float64(window) * opts.WindowThreshold)
 			if est > warnAt {
 				res.Warnings = append(res.Warnings, fmt.Sprintf(
@@ -99,12 +134,16 @@ func Precheck(
 		}
 	}
 
-	if opts.CapabilitiesEnabled && taskRequiresTools(task) && !model.Capabilities.ToolCall {
-		res.BlockReason = fmt.Sprintf(
+	if modeEnforced(opts.Capabilities) && taskRequiresTools(task) && !model.Capabilities.ToolCall {
+		msg := fmt.Sprintf(
 			"task requires tool-call but %s/%s does not support it",
 			profile.Provider, profile.Model,
 		)
-		return res
+		if opts.Capabilities == PrecheckBlock {
+			res.BlockReason = msg
+			return res
+		}
+		res.Warnings = append(res.Warnings, msg)
 	}
 
 	return res
@@ -135,6 +174,12 @@ func taskRequiresTools(task sqlstore.TaskRecord) bool {
 	}
 	s := strings.TrimSpace(task.Tools.String)
 	return s != "" && s != "[]" && s != "null"
+}
+
+// modeEnforced reports whether the mode actively runs the check. Both the
+// zero value (empty string) and explicit "off" disable; warn and block enforce.
+func modeEnforced(m PrecheckMode) bool {
+	return m == PrecheckWarn || m == PrecheckBlock
 }
 
 // readAgentFile loads the agent_file referenced by the task, or returns ""

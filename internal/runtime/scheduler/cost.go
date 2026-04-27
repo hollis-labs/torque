@@ -162,7 +162,8 @@ func ResolveCost(
 
 // resolveCost adapts the Scheduler's instance fields into ResolveCost's
 // function-typed inputs. Each closure returns nil when its source is unwired
-// so the policy short-circuits cleanly.
+// so the policy short-circuits cleanly. Backfill is on by default — the
+// CostBackfillDisabled flag inverts the gate when set.
 func (s *Scheduler) resolveCost(profileName string, result *executor.ExecutionResult) (float64, CostSource) {
 	var estimate EstimateCostFn
 	if s.Models != nil {
@@ -178,5 +179,5 @@ func (s *Scheduler) resolveCost(profileName string, result *executor.ExecutionRe
 			return p.Provider, p.Model, true
 		}
 	}
-	return ResolveCost(profileName, result, estimate, resolveProfile, s.CostBackfillEnabled)
+	return ResolveCost(profileName, result, estimate, resolveProfile, !s.CostBackfillDisabled)
 }
