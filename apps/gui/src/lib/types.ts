@@ -238,8 +238,30 @@ export interface Project {
   name: string
   description: string
   repo_path: string
+  agent_path: string
+  read_paths: string[]
+  write_paths: string[]
+  context_paths: string[]
+  permissions: Record<string, string>
+  rules: string[]
   status: ContainerStatus
   icon: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ProjectArtifact {
+  id: number
+  project_id: string
+  entry_type: 'document' | 'folder' | string
+  title: string
+  description: string
+  file_path: string
+  url: string
+  content: string
+  permissions: Record<string, string>
+  rules: string[]
+  metadata: Record<string, unknown>
   created_at: string
   updated_at: string
 }
@@ -247,6 +269,7 @@ export interface Project {
 export interface Sprint {
   id: string
   name: string
+  goal: string
   status: ContainerStatus
   approval_mode: string
   cost_budget: number | null
@@ -374,6 +397,60 @@ export interface TemplateInstantiateRequest {
   project_id?: string
   epic_id?: string
   tags?: string[]
+}
+
+export interface ModelPricing {
+  input: number
+  output: number
+  cache_write?: number
+  cache_read?: number
+  reasoning?: number
+}
+
+export interface ModelLimits {
+  context_window: number
+  max_output_tokens: number
+}
+
+export interface ModelModality {
+  input: string[]
+  output: string[]
+}
+
+export interface ModelCapabilities {
+  tool_call: boolean
+  reasoning: boolean
+  attachment: boolean
+  temperature: boolean
+}
+
+/**
+ * Mirrors httpserver.modelEntry — flat ModelRef with snake_case JSON keys.
+ * Returned by GET /api/v1/models (list) and GET /api/v1/models/{provider}/{model} (get).
+ */
+export interface ModelEntry {
+  provider_id: string
+  id: string
+  name: string
+  family: string
+  open_weights: boolean
+  release_date: string
+  knowledge_cutoff: string
+  last_updated: string
+  cost: ModelPricing
+  limit: ModelLimits
+  modality: ModelModality
+  capabilities: ModelCapabilities
+}
+
+export interface SchedulerStatus {
+  enabled: boolean
+  max_workers: number
+  active_workers: number
+  queue_depth: number
+  total_cost: number
+  subscribers: number
+  stale_heartbeat_threshold_seconds: number
 }
 
 export type CheckpointStatus = 'pending' | 'responded' | 'canceled' | 'timed_out'

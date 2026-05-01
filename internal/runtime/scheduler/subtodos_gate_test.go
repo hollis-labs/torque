@@ -37,9 +37,9 @@ func TestLifecycleBlocksOnMissingRequiredSubtodos(t *testing.T) {
 	assert.Contains(t, task.BlockedReason, "item-1")
 }
 
-// TestLifecycleAllowsDoneWhenRequiredSubtodosTicked: once the agent emits
-// CLOCKWORK_SUBTODO_DONE for every required item, the task transitions
-// through the normal OnDone path.
+// TestLifecycleAllowsDoneWhenRequiredSubtodosTicked: once the agent ticks
+// every required item via the clockwork_task_subtodo_done MCP tool, the
+// task transitions through the normal OnDone path.
 func TestLifecycleAllowsDoneWhenRequiredSubtodosTicked(t *testing.T) {
 	store := setupLifecycleStore(t)
 	bus := scheduler.NewEventBus()

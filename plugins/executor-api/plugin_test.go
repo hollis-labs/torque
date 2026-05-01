@@ -1,8 +1,9 @@
-package executorapi_test
+package executorapi
 
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,40 +11,34 @@ import (
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
-	executorapi "github.com/hollis-labs/clockwork-manifold/plugins/executor-api"
 )
 
-// MockProvider is a test double for the Provider interface.
-type MockProvider struct {
-	response string
-	tokens   executor.TokenUsage
-	err      error
+// fakeVendorClient is the test seam for plugin-level tests. Per-vendor SDK
+// behavior (anthropic.go / openai.go) is not exercised here — those need
+// HTTP-transport mocking and are best covered by manual e2e against real keys.
+type fakeVendorClient struct {
+	usage   *executor.TokenUsage
+	err     error
+	logEcho string
 }
 
-func (m *MockProvider) Complete(ctx context.Context, req executorapi.CompletionRequest) (*executorapi.CompletionResponse, error) {
-	if m.err != nil {
-		return nil, m.err
+func (f *fakeVendorClient) RunTurn(ctx context.Context, profile config.AgentProfile, prompt, systemPrompt string, cb executor.EventCallback) (*executor.TokenUsage, error) {
+	if cb != nil && f.logEcho != "" {
+		cb(executor.LogEvent(f.logEcho))
 	}
-	return &executorapi.CompletionResponse{
-		Content:    m.response,
-		StopReason: "end_turn",
-		Tokens:     m.tokens,
-	}, nil
+	return f.usage, f.err
 }
 
-// testProfiles returns a ProfileMap with a standard test profile.
 func testProfiles() config.ProfileMap {
 	return config.ProfileMap{
 		"default": {
-			Executor:  "api",
-			Provider:  "mock",
-			Model:     "test-model",
-			MaxTokens: 1024,
+			Executor: "api",
+			Provider: "anthropic",
+			Model:    "claude-sonnet-4-6",
 		},
 	}
 }
 
-// testJob returns a minimal valid ExecutionJob.
 func testJob() *executor.ExecutionJob {
 	return &executor.ExecutionJob{
 		TaskID:       "task-1",
@@ -52,28 +47,31 @@ func testJob() *executor.ExecutionJob {
 	}
 }
 
+func newWithFake(profiles config.ProfileMap, fake *fakeVendorClient) *APIExecutor {
+	return New(profiles, nil, WithClientFactory(func(p config.AgentProfile) (vendorClient, error) {
+		return fake, nil
+	}))
+}
+
 func TestName(t *testing.T) {
-	e := executorapi.New(testProfiles(), nil)
-	assert.Equal(t, "api", e.Name())
+	assert.Equal(t, "api", New(testProfiles(), nil).Name())
 }
 
 func TestCapabilities(t *testing.T) {
-	e := executorapi.New(testProfiles(), nil)
-	caps := e.Capabilities()
+	caps := New(testProfiles(), nil).Capabilities()
 	assert.True(t, caps.SupportsStreaming)
-	assert.True(t, caps.SupportsTools)
-	assert.False(t, caps.SupportsSandbox)
+	assert.False(t, caps.SupportsTools, "tools are Plan 4")
+	assert.False(t, caps.SupportsSandbox, "Phase B/D inheritance; restored with CW-20260427-0059")
 	assert.True(t, caps.SupportsPermissions)
 }
 
 func TestValidate_Valid(t *testing.T) {
-	e := executorapi.New(testProfiles(), nil)
-	err := e.Validate(testJob())
-	assert.NoError(t, err)
+	e := newWithFake(testProfiles(), &fakeVendorClient{})
+	require.NoError(t, e.Validate(testJob()))
 }
 
 func TestValidate_MissingTaskID(t *testing.T) {
-	e := executorapi.New(testProfiles(), nil)
+	e := newWithFake(testProfiles(), &fakeVendorClient{})
 	job := testJob()
 	job.TaskID = ""
 	err := e.Validate(job)
@@ -82,26 +80,31 @@ func TestValidate_MissingTaskID(t *testing.T) {
 }
 
 func TestValidate_NoProvider(t *testing.T) {
-	profiles := config.ProfileMap{
-		"default": {
-			Executor: "api",
-			// Provider intentionally omitted
-			Model: "test-model",
-		},
-	}
-	e := executorapi.New(profiles, nil)
+	profiles := config.ProfileMap{"default": {Executor: "api", Model: "claude-sonnet-4-6"}}
+	e := New(profiles, nil)
 	err := e.Validate(testJob())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "provider")
+	var pe *executor.PermanentError
+	assert.True(t, errors.As(err, &pe), "missing provider must be permanent")
 }
 
-func TestRunWithMockProvider_Done(t *testing.T) {
-	mock := &MockProvider{
-		response: "CLOCKWORK_DONE",
-		tokens:   executor.TokenUsage{PromptTokens: 100, CompletionTokens: 50, Cost: 0.005},
-	}
+func TestValidate_NoModel(t *testing.T) {
+	profiles := config.ProfileMap{"default": {Executor: "api", Provider: "anthropic"}}
+	e := New(profiles, nil)
+	err := e.Validate(testJob())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "model")
+	var pe *executor.PermanentError
+	assert.True(t, errors.As(err, &pe), "missing model must be permanent")
+}
 
-	e := executorapi.New(testProfiles(), nil, executorapi.WithProvider("mock", mock))
+func TestRun_SuccessCapturesTokens(t *testing.T) {
+	fake := &fakeVendorClient{
+		usage:   &executor.TokenUsage{PromptTokens: 100, CompletionTokens: 50},
+		logEcho: "hello world",
+	}
+	e := newWithFake(testProfiles(), fake)
 
 	var events []executor.ExecutionEvent
 	cb := func(ev executor.ExecutionEvent) { events = append(events, ev) }
@@ -111,45 +114,116 @@ func TestRunWithMockProvider_Done(t *testing.T) {
 	assert.Equal(t, "done", result.Status)
 	assert.Equal(t, 100, result.Tokens.PromptTokens)
 	assert.Equal(t, 50, result.Tokens.CompletionTokens)
-	assert.InDelta(t, 0.005, result.Tokens.Cost, 1e-9)
+
+	var sawLog, sawTokens bool
+	for _, ev := range events {
+		if ev.Type == executor.EventLog {
+			sawLog = true
+		}
+		if ev.Type == executor.EventTokenUsage {
+			sawTokens = true
+		}
+	}
+	assert.True(t, sawLog, "delta event should reach callback")
+	assert.True(t, sawTokens, "token-usage event should reach callback")
 }
 
-func TestRunBlocked(t *testing.T) {
-	mock := &MockProvider{
-		response: "CLOCKWORK_BLOCKED: waiting on dependency",
-		tokens:   executor.TokenUsage{PromptTokens: 20, CompletionTokens: 10},
-	}
-
-	e := executorapi.New(testProfiles(), nil, executorapi.WithProvider("mock", mock))
+func TestRun_PermanentErrorPropagates(t *testing.T) {
+	fake := &fakeVendorClient{err: executor.NewPermanentError(errors.New("invalid api key"))}
+	e := newWithFake(testProfiles(), fake)
 
 	result, err := e.Run(context.Background(), testJob(), nil)
-	require.NoError(t, err)
-	assert.Equal(t, "blocked", result.Status)
-	assert.Equal(t, "waiting on dependency", result.Reason)
-}
-
-func TestRunReview(t *testing.T) {
-	mock := &MockProvider{
-		response: "CLOCKWORK_REVIEW",
-		tokens:   executor.TokenUsage{},
-	}
-
-	e := executorapi.New(testProfiles(), nil, executorapi.WithProvider("mock", mock))
-
-	result, err := e.Run(context.Background(), testJob(), nil)
-	require.NoError(t, err)
-	assert.Equal(t, "review", result.Status)
-}
-
-func TestRunProviderError(t *testing.T) {
-	mock := &MockProvider{
-		err: errors.New("connection refused"),
-	}
-
-	e := executorapi.New(testProfiles(), nil, executorapi.WithProvider("mock", mock))
-
-	result, err := e.Run(context.Background(), testJob(), nil)
-	require.NoError(t, err) // Go error is nil; failure is in result
+	require.Error(t, err, "permanent errors must surface so the scheduler stops retrying")
 	assert.Equal(t, "failed", result.Status)
-	assert.Contains(t, result.Reason, "connection refused")
+	var pe *executor.PermanentError
+	assert.True(t, errors.As(err, &pe))
+}
+
+func TestRun_TransientErrorDoesNotPropagate(t *testing.T) {
+	fake := &fakeVendorClient{err: errors.New("temporary network blip")}
+	e := newWithFake(testProfiles(), fake)
+
+	result, err := e.Run(context.Background(), testJob(), nil)
+	require.NoError(t, err, "transient errors should land in result.Reason; the scheduler retry policy decides")
+	assert.Equal(t, "failed", result.Status)
+	assert.Contains(t, result.Reason, "temporary network blip")
+}
+
+func TestRun_RedactsAPIKeyFromReason(t *testing.T) {
+	fake := &fakeVendorClient{err: errors.New("auth failed: key sk-ant-abc123XYZ-toolongstring is invalid")}
+	e := newWithFake(testProfiles(), fake)
+
+	result, _ := e.Run(context.Background(), testJob(), nil)
+	assert.NotContains(t, result.Reason, "abc123XYZ")
+	assert.Contains(t, result.Reason, "REDACTED")
+}
+
+func TestClientFor_KnownProviders(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+	t.Setenv("OPENAI_API_KEY", "sk-test")
+
+	for _, prov := range []string{"anthropic", "openai", "ANTHROPIC", " openai "} {
+		t.Run(prov, func(t *testing.T) {
+			c, err := clientFor(config.AgentProfile{Provider: prov, Model: "x"})
+			require.NoError(t, err)
+			assert.NotNil(t, c)
+		})
+	}
+}
+
+func TestClientFor_GeminiDeferred(t *testing.T) {
+	_, err := clientFor(config.AgentProfile{Provider: "gemini", Model: "x"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "deferred")
+	var pe *executor.PermanentError
+	assert.True(t, errors.As(err, &pe))
+}
+
+func TestClientFor_UnknownProvider(t *testing.T) {
+	_, err := clientFor(config.AgentProfile{Provider: "bogus", Model: "x"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown provider")
+	var pe *executor.PermanentError
+	assert.True(t, errors.As(err, &pe))
+}
+
+func TestAPIKeyFor_ProfileWinsOverEnv(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "from-env")
+	key, err := apiKeyFor(config.AgentProfile{Provider: "anthropic", APIKey: "from-profile"}, "ANTHROPIC_API_KEY")
+	require.NoError(t, err)
+	assert.Equal(t, "from-profile", key)
+}
+
+func TestAPIKeyFor_EnvFallback(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "from-env")
+	key, err := apiKeyFor(config.AgentProfile{Provider: "anthropic"}, "ANTHROPIC_API_KEY")
+	require.NoError(t, err)
+	assert.Equal(t, "from-env", key)
+}
+
+func TestAPIKeyFor_NeitherSet(t *testing.T) {
+	os.Unsetenv("ANTHROPIC_API_KEY")
+	_, err := apiKeyFor(config.AgentProfile{Provider: "anthropic"}, "ANTHROPIC_API_KEY")
+	require.Error(t, err)
+	var pe *executor.PermanentError
+	assert.True(t, errors.As(err, &pe), "missing key must be permanent — retry won't help")
+}
+
+func TestRedactSecrets(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"anthropic key", "auth: sk-ant-abc123xyz failed", "auth: sk-ant-REDACTED failed"},
+		{"openai project key", "bearer sk-proj-deadbeef-cafe denied", "bearer sk-proj-REDACTED denied"},
+		{"openai user key", "key sk-livedeadbeef rejected", "key sk-REDACTED rejected"},
+		{"no secret", "connection refused", "connection refused"},
+		{"empty", "", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, redactSecrets(tc.in))
+		})
+	}
 }

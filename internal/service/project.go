@@ -1,6 +1,10 @@
 package service
 
-import "github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+import (
+	"database/sql"
+
+	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+)
 
 // ProjectService provides business logic for projects.
 type ProjectService struct {
@@ -10,10 +14,28 @@ type ProjectService struct {
 
 // ProjectCreateInput holds user-facing fields for creating a project.
 type ProjectCreateInput struct {
-	Name        string
+	Name         string
+	Description  string
+	RepoPath     string
+	AgentPath    string
+	ReadPaths    []string
+	WritePaths   []string
+	ContextPaths []string
+	Permissions  map[string]string
+	Rules        []string
+	Icon         string
+}
+
+type ProjectArtifactCreateInput struct {
+	EntryType   string
+	Title       string
 	Description string
-	RepoPath    string
-	Icon        string
+	FilePath    string
+	URL         string
+	Content     string
+	Permissions map[string]string
+	Rules       []string
+	Metadata    map[string]any
 }
 
 // Create validates and creates a new project.
@@ -23,6 +45,9 @@ func (s *ProjectService) Create(input ProjectCreateInput) (*sqlstore.ProjectReco
 	}
 	if input.Name == "" {
 		return nil, &ValidationError{Field: "name", Message: "name is required"}
+	}
+	if input.RepoPath == "" {
+		return nil, &ValidationError{Field: "repo_path", Message: "repo_path is required"}
 	}
 
 	id, err := s.store.NextProjectID()
@@ -35,8 +60,24 @@ func (s *ProjectService) Create(input ProjectCreateInput) (*sqlstore.ProjectReco
 		Name:        input.Name,
 		Description: input.Description,
 		RepoPath:    input.RepoPath,
+		AgentPath:   input.AgentPath,
 		Icon:        input.Icon,
 		Status:      "active",
+	}
+	if len(input.ReadPaths) > 0 {
+		record.ReadPaths = sql.NullString{String: marshalJSON(input.ReadPaths), Valid: true}
+	}
+	if len(input.WritePaths) > 0 {
+		record.WritePaths = sql.NullString{String: marshalJSON(input.WritePaths), Valid: true}
+	}
+	if len(input.ContextPaths) > 0 {
+		record.ContextPaths = sql.NullString{String: marshalJSON(input.ContextPaths), Valid: true}
+	}
+	if len(input.Permissions) > 0 {
+		record.Permissions = sql.NullString{String: marshalJSON(input.Permissions), Valid: true}
+	}
+	if len(input.Rules) > 0 {
+		record.Rules = sql.NullString{String: marshalJSON(input.Rules), Valid: true}
 	}
 
 	if err := s.store.CreateProject(record); err != nil {
@@ -75,6 +116,9 @@ func (s *ProjectService) Update(id string, update sqlstore.ProjectUpdate) error 
 			}
 		}
 	}
+	if update.RepoPath != nil && *update.RepoPath == "" {
+		return &ValidationError{Field: "repo_path", Message: "repo_path is required"}
+	}
 	return s.store.UpdateProject(id, update)
 }
 
@@ -84,4 +128,72 @@ func (s *ProjectService) Delete(id string) error {
 		return err
 	}
 	return s.store.DeleteProject(id)
+}
+
+func (s *ProjectService) ListArtifacts(projectID string) ([]sqlstore.ProjectArtifactRecord, error) {
+	if err := s.feature.Require("projects"); err != nil {
+		return nil, err
+	}
+	if _, err := s.store.GetProject(projectID); err != nil {
+		return nil, err
+	}
+	return s.store.ListProjectArtifacts(projectID)
+}
+
+func (s *ProjectService) CreateArtifact(projectID string, input ProjectArtifactCreateInput) (*sqlstore.ProjectArtifactRecord, error) {
+	if err := s.feature.Require("projects"); err != nil {
+		return nil, err
+	}
+	if _, err := s.store.GetProject(projectID); err != nil {
+		return nil, err
+	}
+	if input.FilePath == "" {
+		return nil, &ValidationError{Field: "file_path", Message: "file_path is required"}
+	}
+	record := &sqlstore.ProjectArtifactRecord{
+		ProjectID:   projectID,
+		EntryType:   input.EntryType,
+		Title:       input.Title,
+		Description: input.Description,
+		FilePath:    input.FilePath,
+		URL:         input.URL,
+		Content:     input.Content,
+	}
+	if len(input.Permissions) > 0 {
+		record.Permissions = sql.NullString{String: marshalJSON(input.Permissions), Valid: true}
+	}
+	if len(input.Rules) > 0 {
+		record.Rules = sql.NullString{String: marshalJSON(input.Rules), Valid: true}
+	}
+	if len(input.Metadata) > 0 {
+		record.Metadata = sql.NullString{String: marshalJSON(input.Metadata), Valid: true}
+	}
+	if err := s.store.CreateProjectArtifact(record); err != nil {
+		return nil, err
+	}
+	return s.store.GetProjectArtifact(record.ID)
+}
+
+func (s *ProjectService) GetArtifact(id int64) (*sqlstore.ProjectArtifactRecord, error) {
+	if err := s.feature.Require("projects"); err != nil {
+		return nil, err
+	}
+	return s.store.GetProjectArtifact(id)
+}
+
+func (s *ProjectService) UpdateArtifact(id int64, update sqlstore.ProjectArtifactUpdate) error {
+	if err := s.feature.Require("projects"); err != nil {
+		return err
+	}
+	if update.FilePath != nil && *update.FilePath == "" {
+		return &ValidationError{Field: "file_path", Message: "file_path is required"}
+	}
+	return s.store.UpdateProjectArtifact(id, update)
+}
+
+func (s *ProjectService) DeleteArtifact(id int64) error {
+	if err := s.feature.Require("projects"); err != nil {
+		return err
+	}
+	return s.store.DeleteProjectArtifact(id)
 }

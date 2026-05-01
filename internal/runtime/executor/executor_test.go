@@ -48,10 +48,10 @@ func TestExecutionResultFields(t *testing.T) {
 func TestEventTypes(t *testing.T) {
 	events := []executor.EventType{
 		executor.EventLog,
-		executor.EventSignal,
 		executor.EventArtifact,
 		executor.EventProgress,
 		executor.EventTokenUsage,
+		executor.EventToolUse,
 	}
 	for _, et := range events {
 		assert.NotEmpty(t, et.String())

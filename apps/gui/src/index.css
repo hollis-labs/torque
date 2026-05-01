@@ -100,33 +100,6 @@
     box-shadow: none !important;
   }
 
-  /* Custom scrollbars */
-  * {
-    scrollbar-width: thin;
-    scrollbar-color: #3f3f46 #09090b;
-  }
-
-  *::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-
-  *::-webkit-scrollbar-track {
-    background: #09090b;
-  }
-
-  *::-webkit-scrollbar-thumb {
-    background: #3f3f46;
-    border-radius: 3px;
-  }
-
-  *::-webkit-scrollbar-thumb:hover {
-    background: #52525b;
-  }
-
-  *::-webkit-scrollbar-corner {
-    background: #09090b;
-  }
 }
 
 @layer components {
@@ -176,6 +149,17 @@
   .hud-table-container td,
   table td {
     @apply whitespace-nowrap;
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
   }
 
   .hud-modal-overlay {

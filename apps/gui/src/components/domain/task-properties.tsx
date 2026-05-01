@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { BookOpen, Calendar, Folder } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import {
@@ -9,6 +10,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { DetailSection } from './detail-section'
+import { FilterEntityCombobox } from './filter-bar/filter-entity-combobox'
 import { formatCostBudget } from '@/lib/sentinel-display'
 import { UNLIMITED, type Task, type Project, type Sprint, type Epic } from '@/lib/types'
 
@@ -112,12 +114,13 @@ export function TaskProperties({
 
         <Field label="Project">
           {editing ? (
-            <ContainerPicker
+            <FilterEntityCombobox
+              icon={<Folder className="h-3.5 w-3.5" />}
+              items={projects.map((p) => ({ id: p.id, name: p.name }))}
               value={source.project_id}
               onChange={(v) => onDraftChange('project_id', v)}
-              options={projects.map((p) => ({ id: p.id, label: p.name }))}
-              loading={pickersLoading}
-              placeholder="none"
+              allLabel={pickersLoading ? 'loading…' : 'none'}
+              ariaLabel="Project"
             />
           ) : source.project_id ? (
             <LinkedValue to={`/projects/${source.project_id}`}>
@@ -130,12 +133,13 @@ export function TaskProperties({
 
         <Field label="Sprint">
           {editing ? (
-            <ContainerPicker
+            <FilterEntityCombobox
+              icon={<Calendar className="h-3.5 w-3.5" />}
+              items={sprints.map((s) => ({ id: s.id, name: s.name }))}
               value={source.sprint_id}
               onChange={(v) => onDraftChange('sprint_id', v)}
-              options={sprints.map((s) => ({ id: s.id, label: s.name }))}
-              loading={pickersLoading}
-              placeholder="none"
+              allLabel={pickersLoading ? 'loading…' : 'none'}
+              ariaLabel="Sprint"
             />
           ) : source.sprint_id ? (
             <LinkedValue to={`/sprints/${source.sprint_id}`}>
@@ -148,12 +152,13 @@ export function TaskProperties({
 
         <Field label="Epic">
           {editing ? (
-            <ContainerPicker
+            <FilterEntityCombobox
+              icon={<BookOpen className="h-3.5 w-3.5" />}
+              items={epics.map((e) => ({ id: e.id, name: e.name }))}
               value={source.epic_id}
               onChange={(v) => onDraftChange('epic_id', v)}
-              options={epics.map((e) => ({ id: e.id, label: e.name }))}
-              loading={pickersLoading}
-              placeholder="none"
+              allLabel={pickersLoading ? 'loading…' : 'none'}
+              ariaLabel="Epic"
             />
           ) : source.epic_id ? (
             <LinkedValue to={`/epics/${source.epic_id}`}>
@@ -252,37 +257,3 @@ function SentinelInput({
   )
 }
 
-function ContainerPicker({
-  value,
-  onChange,
-  options,
-  loading,
-  placeholder,
-}: {
-  value: string | null
-  onChange: (v: string | null) => void
-  options: { id: string; label: string }[]
-  loading: boolean
-  placeholder: string
-}) {
-  const NONE_VALUE = '__none__'
-  return (
-    <Select
-      value={value ?? NONE_VALUE}
-      onValueChange={(v) => onChange(v === NONE_VALUE ? null : v)}
-      disabled={loading}
-    >
-      <SelectTrigger className="h-7 text-[12px]">
-        <SelectValue placeholder={loading ? 'loading...' : placeholder} />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value={NONE_VALUE}>{placeholder}</SelectItem>
-        {options.map((o) => (
-          <SelectItem key={o.id} value={o.id}>
-            {o.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  )
-}

@@ -9,7 +9,7 @@ import (
 
 // Subtodo is one checklist entry on a task. See migration 011.
 // evidence is free-form — typically an artifact id, commit SHA, or URL
-// the executor cites when it emits CLOCKWORK_SUBTODO_DONE.
+// the agent cites when it ticks the item via clockwork_task_subtodo_done.
 type Subtodo struct {
 	ID       string `json:"id"`
 	Text     string `json:"text"`

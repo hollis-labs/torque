@@ -133,8 +133,8 @@ func TestListTasksFilterByManual(t *testing.T) {
 	assert.Equal(t, auto.ID, got[0].ID)
 }
 
-// TestListTasksFilterBySearch verifies the Search filter matches on title OR
-// description and combines (ANDs) with the other filter fields.
+// TestListTasksFilterBySearch verifies the Search filter matches on id, title,
+// or description and combines (ANDs) with the other filter fields.
 func TestListTasksFilterBySearch(t *testing.T) {
 	store := setupTestStore(t)
 
@@ -180,6 +180,17 @@ func TestListTasksFilterBySearch(t *testing.T) {
 	got, err = store.ListTasks(sqlstore.TaskFilter{Search: "xyzzy"})
 	require.NoError(t, err)
 	require.Len(t, got, 0)
+
+	// Search by ID substring matches that one task.
+	got, err = store.ListTasks(sqlstore.TaskFilter{Search: "0421-0003"})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, miss.ID, got[0].ID)
+
+	// Search by ID prefix matches all four.
+	got, err = store.ListTasks(sqlstore.TaskFilter{Search: "CW-20260421"})
+	require.NoError(t, err)
+	require.Len(t, got, 4)
 }
 
 // TestUpdateTask verifies partial updates apply correctly.
@@ -252,7 +263,7 @@ func TestDeleteTask(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
-// TestSearchTasks verifies LIKE search on title and description.
+// TestSearchTasks verifies LIKE search on id, title, and description.
 func TestSearchTasks(t *testing.T) {
 	store := setupTestStore(t)
 
@@ -288,6 +299,17 @@ func TestSearchTasks(t *testing.T) {
 	empty, err := store.SearchTasks("zzznomatch")
 	require.NoError(t, err)
 	assert.Empty(t, empty)
+
+	// ID substring matches the right task.
+	byID, err := store.SearchTasks("0407-0002")
+	require.NoError(t, err)
+	require.Len(t, byID, 1)
+	assert.Equal(t, "CW-20260407-0002", byID[0].ID)
+
+	// ID prefix matches all three.
+	byPrefix, err := store.SearchTasks("CW-20260407")
+	require.NoError(t, err)
+	require.Len(t, byPrefix, 3)
 }
 
 // TestTaskRecord_FacetsRoundTrip verifies facet fields (migration 007) persist.

@@ -45,8 +45,8 @@ func TestProjectList(t *testing.T) {
 	svc := setupService(t)
 	svc.Feature.Enable("projects")
 
-	svc.Project.Create(service.ProjectCreateInput{Name: "Project A"})
-	svc.Project.Create(service.ProjectCreateInput{Name: "Project B"})
+	svc.Project.Create(service.ProjectCreateInput{Name: "Project A", RepoPath: "/tmp/project-a"})
+	svc.Project.Create(service.ProjectCreateInput{Name: "Project B", RepoPath: "/tmp/project-b"})
 
 	projects, err := svc.Project.List("")
 	require.NoError(t, err)
@@ -58,8 +58,9 @@ func TestProjectCreateWithIcon(t *testing.T) {
 	svc.Feature.Enable("projects")
 
 	proj, err := svc.Project.Create(service.ProjectCreateInput{
-		Name: "Iconic Project",
-		Icon: "rocket",
+		Name:     "Iconic Project",
+		RepoPath: "/tmp/iconic-project",
+		Icon:     "rocket",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "rocket", proj.Icon)
@@ -70,7 +71,7 @@ func TestProjectUpdate(t *testing.T) {
 	svc := setupService(t)
 	svc.Feature.Enable("projects")
 
-	proj, _ := svc.Project.Create(service.ProjectCreateInput{Name: "Project 1"})
+	proj, _ := svc.Project.Create(service.ProjectCreateInput{Name: "Project 1", RepoPath: "/tmp/project-1"})
 
 	inactive := "inactive"
 	err := svc.Project.Update(proj.ID, sqlstore.ProjectUpdate{Status: &inactive})
@@ -84,7 +85,7 @@ func TestProjectUpdateInvalidStatus(t *testing.T) {
 	svc := setupService(t)
 	svc.Feature.Enable("projects")
 
-	proj, _ := svc.Project.Create(service.ProjectCreateInput{Name: "Project 1"})
+	proj, _ := svc.Project.Create(service.ProjectCreateInput{Name: "Project 1", RepoPath: "/tmp/project-1"})
 
 	bad := "deleted"
 	err := svc.Project.Update(proj.ID, sqlstore.ProjectUpdate{Status: &bad})
@@ -96,7 +97,7 @@ func TestProjectDelete(t *testing.T) {
 	svc := setupService(t)
 	svc.Feature.Enable("projects")
 
-	proj, _ := svc.Project.Create(service.ProjectCreateInput{Name: "Project 1"})
+	proj, _ := svc.Project.Create(service.ProjectCreateInput{Name: "Project 1", RepoPath: "/tmp/project-1"})
 
 	err := svc.Project.Delete(proj.ID)
 	require.NoError(t, err)

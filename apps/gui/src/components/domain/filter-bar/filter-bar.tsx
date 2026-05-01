@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Folder, Calendar, BookOpen, Hash } from 'lucide-react'
+import { Folder, Calendar, BookOpen, Hash, SlidersHorizontal } from 'lucide-react'
 import { FilterEntityCombobox } from './filter-entity-combobox'
 import { FilterSearchInput } from './filter-search-input'
 import { STATUS_COLORS, DEFAULT_STATUS_COLOR, PRIORITIES, TASK_STATUSES } from '@/lib/constants'
@@ -34,6 +34,7 @@ interface FilterBarProps {
   sprints?: Sprint[]
   sprintId?: string | null
   onSprintChange?: (id: string | null) => void
+  onSprintCreate?: () => void
   epics?: Epic[]
   epicId?: string | null
   onEpicChange?: (id: string | null) => void
@@ -42,6 +43,7 @@ interface FilterBarProps {
   onTagChange?: (slug: string | null) => void
   onProjectCreate?: () => void
   onEpicCreate?: () => void
+  onTagCreate?: () => void
 
   /** When provided (both together), the two-row layout with search renders. */
   searchQuery?: string
@@ -71,6 +73,7 @@ export function FilterBar({
   sprints,
   sprintId,
   onSprintChange,
+  onSprintCreate,
   epics,
   epicId,
   onEpicChange,
@@ -79,6 +82,7 @@ export function FilterBar({
   onTagChange,
   onProjectCreate,
   onEpicCreate,
+  onTagCreate,
   searchQuery,
   onSearchChange,
   searchMatchCount,
@@ -164,16 +168,7 @@ export function FilterBar({
               ariaLabel="Filter by project"
               onCreate={onProjectCreate}
               createLabel="New project"
-            />
-          )}
-          {onSprintChange && (
-            <FilterEntityCombobox
-              icon={<Calendar className="h-3.5 w-3.5" />}
-              items={sprints ?? []}
-              value={sprintId ?? null}
-              onChange={onSprintChange}
-              allLabel="All sprints"
-              ariaLabel="Filter by sprint"
+              showStateControls
             />
           )}
           {onEpicChange && (
@@ -186,6 +181,20 @@ export function FilterBar({
               ariaLabel="Filter by epic"
               onCreate={onEpicCreate}
               createLabel="New epic"
+              showStateControls
+            />
+          )}
+          {onSprintChange && (
+            <FilterEntityCombobox
+              icon={<Calendar className="h-3.5 w-3.5" />}
+              items={sprints ?? []}
+              value={sprintId ?? null}
+              onChange={onSprintChange}
+              allLabel="All sprints"
+              ariaLabel="Filter by sprint"
+              onCreate={onSprintCreate}
+              createLabel="New sprint"
+              showStateControls
             />
           )}
           {onTagChange && (
@@ -196,6 +205,8 @@ export function FilterBar({
               onChange={onTagChange}
               allLabel="All tags"
               ariaLabel="Filter by tag"
+              onCreate={onTagCreate}
+              createLabel="New tag"
             />
           )}
         </div>
@@ -221,6 +232,10 @@ export function FilterBar({
         {/* Row 1: search hero + summary + clear */}
         <div className="flex items-center gap-3 px-4 py-2">
           <FilterSearchInput value={searchQuery ?? ''} onChange={onSearchChange!} />
+          <div className="inline-flex h-8 items-center gap-1.5 rounded border border-zinc-800 bg-zinc-900/50 px-2 text-[10px] uppercase tracking-wider text-zinc-400">
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            {activeFilterCount}
+          </div>
           {showSummary && (
             <span className="whitespace-nowrap text-[10px] uppercase tracking-wider text-zinc-500">
               {summaryText}

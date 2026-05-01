@@ -21,7 +21,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"path/filepath"
 	"testing"
@@ -227,16 +226,19 @@ func TestSmoke_Criterion3_DecisionCheckpoint_RespondAndCancel(t *testing.T) {
 			TaskID: task.ID, Executor: "cli", Status: "running",
 		})
 		require.NoError(t, err)
-		payload := base64.StdEncoding.EncodeToString([]byte(`{"q":"option?"}`))
-		_, err = scheduler.HandleCheckpointSignal(stack.store, task.ID, runID,
-			"CORR-R1 collect_data "+payload, time.Now().UTC())
+		emitOut, err := stack.svc.Checkpoint.Emit(service.CheckpointEmitInput{
+			TaskID:      task.ID,
+			RunID:       &runID,
+			Type:        "collect_data",
+			PayloadJSON: `{"q":"option?"}`,
+		})
 		require.NoError(t, err)
 
 		got, _ := stack.store.GetTask(task.ID)
 		assert.Equal(t, "review", got.Status, "blocking checkpoint parks task in review")
 
 		require.NoError(t, stack.svc.Checkpoint.Respond(service.CheckpointRespondInput{
-			CorrelationID:       "CORR-R1",
+			CorrelationID:       emitOut.CorrelationID,
 			ResponseJSON:        `{"pick":"a"}`,
 			ResponderSourceType: "user",
 		}))
@@ -255,17 +257,20 @@ func TestSmoke_Criterion3_DecisionCheckpoint_RespondAndCancel(t *testing.T) {
 			TaskID: task.ID, Executor: "cli", Status: "running",
 		})
 		require.NoError(t, err)
-		_, err = scheduler.HandleCheckpointSignal(stack.store, task.ID, runID,
-			"CORR-C1 collect_data "+base64.StdEncoding.EncodeToString([]byte(`{}`)),
-			time.Now().UTC())
+		emitOut, err := stack.svc.Checkpoint.Emit(service.CheckpointEmitInput{
+			TaskID:      task.ID,
+			RunID:       &runID,
+			Type:        "collect_data",
+			PayloadJSON: `{}`,
+		})
 		require.NoError(t, err)
 
 		require.NoError(t, stack.svc.Checkpoint.Cancel(service.CheckpointCancelInput{
-			CorrelationID: "CORR-C1", Reason: "no longer relevant",
+			CorrelationID: emitOut.CorrelationID, Reason: "no longer relevant",
 			CancelerSourceType: "user",
 		}))
 
-		cp, err := stack.svc.Checkpoint.Get("CORR-C1")
+		cp, err := stack.svc.Checkpoint.Get(emitOut.CorrelationID)
 		require.NoError(t, err)
 		assert.Equal(t, "canceled", cp.Status)
 	})

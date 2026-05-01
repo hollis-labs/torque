@@ -16,6 +16,7 @@ import (
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/httpserver"
+	"github.com/hollis-labs/clockwork-manifold/internal/modelcatalog"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/appdb"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
@@ -110,7 +111,12 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// Load profiles (optional — missing file is OK for mock-only runs).
 	profiles := loadProfilesOrEmpty()
 
-	if err := bootstrap.Executors(registry, profiles, nil); err != nil {
+	// Service constructed early so cliexec can claim it for per-task MCP
+	// loopback wiring (CW-20260427-0059). Same handle reused by httpserver
+	// below.
+	svc := service.New(store)
+
+	if err := bootstrap.Executors(registry, profiles, svc, nil); err != nil {
 		return fmt.Errorf("bootstrap executors: %w", err)
 	}
 
@@ -132,17 +138,63 @@ func runServe(ctx context.Context, ln net.Listener) error {
 			cfg.Scheduler.ProjectAllowlist)
 	}
 
-	// Service + HTTP handler
-	svc := service.New(store)
+	// HTTP handler — svc was constructed earlier (above bootstrap.Executors)
+	// so cliexec could claim it for per-task MCP loopback wiring.
 	handler := httpserver.New(svc, sched)
+
+	// Background goroutines share a derived context so cancelling the parent
+	// ctx tears down the scheduler loop, the SSE bridge, and the models.dev
+	// refresher together. Declared here so the catalog can attach to runCtx
+	// before any handler-served request can land.
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// models.dev catalog: background-refreshes pricing/limits/capabilities so
+	// model-aware code paths (cost backfill, context-window guardrails, etc.)
+	// can resolve metadata without threading a client through every layer.
+	svc.Models = modelcatalog.New()
+	svc.Models.Start(runCtx)
+
+	// Scheduler cost backfill (Phase 2): wire the catalog + profiles so the
+	// cost-record block can fall back to models.dev pricing when the executor
+	// stream doesn't emit cost_usd. Gated on the scheduler.cost_backfill_enabled
+	// setting so we can A/B against executor-reported cost during rollout.
+	sched.Models = svc.Models
+	sched.Profiles = profiles
+	// Cost backfill is on by default — the natural pre-conditions (Models +
+	// Profiles wired, executor reports cost=0, profile has provider+model)
+	// already gate it. Set scheduler.cost_backfill_disabled=true as an
+	// emergency off-switch if the catalog produces wildly wrong numbers.
+	if v, _ := svc.Settings.Get("scheduler.cost_backfill_disabled"); v == "true" {
+		sched.CostBackfillDisabled = true
+		log.Printf("[serve] scheduler cost backfill DISABLED via setting")
+	}
+
+	// Phase 4 dispatch guardrails (CW-20260426-0036). Tri-state per gate:
+	// off / warn / block. Default is warn-on-both so problems show up in
+	// logs against real traffic without active risk; promote to block when
+	// the estimator has a track record. Settings:
+	//   scheduler.precheck_window         = off|warn|block (default warn)
+	//   scheduler.precheck_window_threshold = 0..1         (default 0.8)
+	//   scheduler.precheck_capabilities   = off|warn|block (default warn)
+	sched.Precheck = scheduler.DefaultPrecheckOptions()
+	if raw, _ := svc.Settings.Get("scheduler.precheck_window"); raw != "" {
+		sched.Precheck.Window = scheduler.PrecheckMode(raw)
+	}
+	if raw, _ := svc.Settings.Get("scheduler.precheck_window_threshold"); raw != "" {
+		var f float64
+		if _, err := fmt.Sscanf(raw, "%f", &f); err == nil && f > 0 && f < 1 {
+			sched.Precheck.WindowThreshold = f
+		}
+	}
+	if raw, _ := svc.Settings.Get("scheduler.precheck_capabilities"); raw != "" {
+		sched.Precheck.Capabilities = scheduler.PrecheckMode(raw)
+	}
+	log.Printf("[serve] scheduler precheck: window=%s (threshold %.0f%%) capabilities=%s",
+		sched.Precheck.Window, sched.Precheck.WindowThreshold*100, sched.Precheck.Capabilities)
 
 	// SSE bridge: scheduler.EventBus → httpserver.SSEHub
 	bridge := httpserver.NewSchedulerBridge(handler.SSEHub(), sched.EventBus())
-
-	// Background goroutines share a derived context so cancelling the parent
-	// ctx tears down the scheduler loop and the SSE bridge together.
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
 
 	var wg sync.WaitGroup
 	wg.Add(2)

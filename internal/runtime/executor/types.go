@@ -64,8 +64,7 @@ func (l ExecutionLimits) EffectiveTimeout() time.Duration {
 // ExecutionEvent is a single event emitted during execution.
 type ExecutionEvent struct {
 	Type     EventType
-	Signal   string    // CLOCKWORK_DONE, CLOCKWORK_BLOCKED, etc. (when Type == EventSignal)
-	Content  string    // Log line or signal payload
+	Content  string    // Log line content
 	Artifact *Artifact // When Type == EventArtifact
 	Tokens   *TokenUsage
 	Progress *float64 // 0.0-1.0 (when Type == EventProgress)
@@ -112,11 +111,6 @@ type ExecutorCapabilities struct {
 	SupportsTools       bool
 	SupportsSandbox     bool
 	SupportsPermissions bool
-}
-
-// SignalEvent creates an ExecutionEvent for a CLOCKWORK_* signal.
-func SignalEvent(signal, payload string) ExecutionEvent {
-	return ExecutionEvent{Type: EventSignal, Signal: signal, Content: payload}
 }
 
 // LogEvent creates an ExecutionEvent for a log line.

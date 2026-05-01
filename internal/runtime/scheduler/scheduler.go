@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
+	"github.com/hollis-labs/clockwork-manifold/internal/modelcatalog"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/queue"
@@ -84,6 +85,24 @@ type Scheduler struct {
 	// at debug level. Sampled once at startup from CLOCKWORK_SCHEDULER_DEBUG
 	// so test runs don't flip mid-suite based on env changes.
 	pickerDebug bool
+
+	// Models + Profiles support cost backfill (Phase 2 of the modelcatalog
+	// integration). Optional — set by serve.go after New(); when either is
+	// nil the backfill code paths bail and cost is recorded as-reported.
+	// Tests that don't exercise cost paths can leave them unset.
+	Models   *modelcatalog.Catalog
+	Profiles config.ProfileMap
+	// CostBackfillDisabled is the emergency off-switch for the models.dev
+	// cost backfill. Default zero-value (false) means backfill runs whenever
+	// the natural pre-conditions are met: Models + Profiles wired, executor
+	// reports cost=0, profile has (provider, model). Set true via
+	// scheduler.cost_backfill_disabled=true to suppress even when wired —
+	// useful if the catalog produces wildly wrong numbers.
+	CostBackfillDisabled bool
+
+	// Precheck holds Phase 4 dispatch-time guardrail config. Zero value =
+	// no checks (safe default). Set by serve.go from settings.
+	Precheck PrecheckOptions
 }
 
 // progressTokensWindow caps how often a run may emit a tokens-class
@@ -373,12 +392,25 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	// consuming retry budget or spawning a worker. Non-permanent
 	// validate errors fall through to the normal dispatch path; the
 	// existing retry/lifecycle path handles them.
-	preJob := buildJob(task, 0)
+	preJob := s.buildJob(task, 0)
 	if verr := exec.Validate(preJob); verr != nil {
 		if executor.IsPermanent(verr) {
 			return s.handlePermanentValidationError(task, verr)
 		}
 		log.Printf("[scheduler] non-permanent validate error for %s: %v", task.ID, verr)
+	}
+
+	// Phase 4 model precheck (CW-20260426-0036). Both context-window and
+	// capability gates are opt-in via PrecheckOptions; the helper bails
+	// silently when Models or the dispatched profile aren't wired, so
+	// disabled configs see no overhead. A non-empty BlockReason routes
+	// to the same blocked-with-reason path as a permanent Validate error.
+	if pre := s.precheckDispatch(task, s.Precheck); pre.BlockReason != "" {
+		return s.handlePermanentValidationError(task, fmt.Errorf("%s", pre.BlockReason))
+	} else if len(pre.Warnings) > 0 {
+		for _, w := range pre.Warnings {
+			log.Printf("[scheduler] precheck warning for %s: %s", task.ID, w)
+		}
 	}
 
 	// Transition to doing
@@ -399,7 +431,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	// Build execution job. RunID must be the DB-issued runs.id so the
 	// executor can key stderr sidecars, the CLOCKWORK_RUN_ID env var, and
 	// log messages on the same id observers see in runs table.
-	job := buildJob(task, runID)
+	job := s.buildJob(task, runID)
 
 	// If per-run worktrees are enabled and the task has a working dir, try
 	// to create an ephemeral worktree branched from origin/main and route
@@ -407,14 +439,14 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	// running in task.working_dir so a stale remote or git issue can't block
 	// dispatch.
 	wtPath := ""
-	if s.cfg.WorktreePerRun && task.WorkingDir != "" {
+	if s.cfg.WorktreePerRun && job.WorkingDir != "" {
 		path, err := worktree.SetupPerRun(worktree.PerRunOptions{
 			Enabled:  true,
 			Root:     s.cfg.WorktreeRoot,
 			KeepDays: s.cfg.WorktreeKeepDays,
-		}, task.WorkingDir, runID)
+		}, job.WorkingDir, runID)
 		if err != nil {
-			log.Printf("[scheduler] per-run worktree setup failed for %s run %d: %v (falling back to %s)", task.ID, runID, err, task.WorkingDir)
+			log.Printf("[scheduler] per-run worktree setup failed for %s run %d: %v (falling back to %s)", task.ID, runID, err, job.WorkingDir)
 		} else {
 			wtPath = path
 			job.WorkingDir = path
@@ -525,50 +557,14 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 				})
 			}
 
-			// CLOCKWORK_SUBTODO_DONE: mark the named subtodo as done and
-			// record the agent's evidence token. Parse failures and unknown
-			// item-ids are logged but non-fatal — the gate at lifecycle
-			// time will block the task if required items stay unchecked.
-			if event.Type == executor.EventSignal && event.Signal == "CLOCKWORK_SUBTODO_DONE" {
-				itemID, evidence, perr := executor.ParseSubtodoDonePayload(event.Content)
-				if perr != nil {
-					log.Printf("[scheduler] subtodo signal parse error for %s: %v", capturedTaskID, perr)
-				} else if err := s.store.SetSubtodoDone(capturedTaskID, itemID, evidence); err != nil {
-					log.Printf("[scheduler] subtodo done write error for %s/%s: %v", capturedTaskID, itemID, err)
-				} else {
-					s.bus.Publish(SchedulerEvent{
-						Type:   "subtodo.done",
-						TaskID: capturedTaskID,
-						RunID:  capturedRunID,
-						Data: map[string]interface{}{
-							"item_id":  itemID,
-							"evidence": evidence,
-						},
-					})
-				}
-			}
-
-			// Inline-form CLOCKWORK_CHECKPOINT emits are routed to the
-			// checkpoint handler which creates the row and parks the task
-			// if its checkpoint_mode is "blocking". JSON-form checkpoints
-			// (event.Signal == "CLOCKWORK_CHECKPOINT" with a JSON payload)
-			// are left for later work — MVP emits via the inline form.
-			if event.Type == executor.EventSignal && event.Signal == "CLOCKWORK_CHECKPOINT" {
-				if out, err := HandleCheckpointSignal(s.store, capturedTaskID, capturedRunID, event.Content, time.Now().UTC()); err != nil {
-					log.Printf("[scheduler] checkpoint emit error for %s: %v", capturedTaskID, err)
-				} else {
-					s.bus.Publish(SchedulerEvent{
-						Type:   "checkpoint.emitted",
-						TaskID: capturedTaskID,
-						RunID:  capturedRunID,
-						Data: map[string]interface{}{
-							"correlation_id": out.CorrelationID,
-							"type":           out.Type,
-							"park":           out.ParkTask,
-						},
-					})
-				}
-			}
+			// Subtodo + checkpoint emission previously rode the CLOCKWORK_*
+			// stdout signal protocol (subtodo via CLOCKWORK_SUBTODO_DONE,
+			// checkpoint via inline CLOCKWORK_CHECKPOINT). Phase E retired
+			// that channel — agents now use the MCP tools
+			// (clockwork_task_subtodo_done, clockwork_task_checkpoint_emit)
+			// against the global clockwork mcp server with explicit task_id.
+			// The scheduler no longer parses inline signal text; the MCP
+			// handlers in internal/mcpadapter own those code paths.
 
 			writeRunEvent(s.store, capturedRunID, capturedTaskID, runEventType(event), runEventPayload(event))
 
@@ -639,18 +635,23 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 			Cost:             result.Cost,
 		})
 
-		// Record cost
+		// Record cost. resolveCost decides whether the executor's reported
+		// figure is authoritative or whether to backfill from the models.dev
+		// catalog when result.Cost is 0 but tokens > 0 (Phase 2 of the
+		// modelcatalog series).
 		sprintID := ""
 		if task.SprintID.Valid {
 			sprintID = task.SprintID.String
 		}
+		cost, source := s.resolveCost(task.AgentProfile, result)
 		s.cost.Record(CostEntry{
 			TaskID:           capturedTaskID,
 			RunID:            capturedRunID,
 			SprintID:         sprintID,
-			Cost:             result.Cost,
+			Cost:             cost,
 			PromptTokens:     result.Tokens.PromptTokens,
 			CompletionTokens: result.Tokens.CompletionTokens,
+			Source:           source,
 		})
 
 		writeRunEvent(s.store, capturedRunID, capturedTaskID, "run_completed", map[string]interface{}{
@@ -811,25 +812,15 @@ func (s *Scheduler) Stop(ctx context.Context) error {
 	return nil
 }
 
-// publishProgress emits a run.progress SSE event for user-visible signals
-// (notes, artifacts, tokens). Log lines and internal signals (CLOCKWORK_DONE,
-// CLOCKWORK_BLOCKED, CLOCKWORK_CHECKPOINT, etc.) are intentionally skipped —
-// those drive lifecycle transitions and are not activity-feed content.
+// publishProgress emits a run.progress SSE event for user-visible streaming
+// signal (artifacts, tool-use, tokens). CLOCKWORK_* stdout signaling (notes,
+// inline-tokens) was retired in Phase E along with executor.EventSignal —
+// agents emit notes via clockwork_comment_add over MCP, and token events
+// arrive as typed EventTokenUsage from the executor adapters directly.
 // Tokens-class emissions are rate-limited via progressThrottler to keep the
 // SSE stream readable during chatty streaming runs.
 func (s *Scheduler) publishProgress(taskID string, runID int64, event executor.ExecutionEvent) {
 	switch {
-	case event.Type == executor.EventSignal && event.Signal == "CLOCKWORK_NOTE":
-		s.bus.Publish(SchedulerEvent{
-			Type:   "run.progress",
-			TaskID: taskID,
-			RunID:  runID,
-			Data: map[string]interface{}{
-				"kind": "note",
-				"text": event.Content,
-			},
-		})
-
 	case event.Type == executor.EventArtifact && event.Artifact != nil:
 		s.bus.Publish(SchedulerEvent{
 			Type:   "run.progress",
@@ -856,8 +847,7 @@ func (s *Scheduler) publishProgress(taskID string, runID int64, event executor.E
 			},
 		})
 
-	case event.Type == executor.EventTokenUsage,
-		event.Type == executor.EventSignal && event.Signal == "CLOCKWORK_TOKENS":
+	case event.Type == executor.EventTokenUsage:
 		if !s.progressThrottler.allow(runID, time.Now()) {
 			return
 		}
@@ -866,11 +856,6 @@ func (s *Scheduler) publishProgress(taskID string, runID int64, event executor.E
 			data["prompt"] = event.Tokens.PromptTokens
 			data["completion"] = event.Tokens.CompletionTokens
 			data["cost"] = event.Tokens.Cost
-		} else if event.Type == executor.EventSignal && event.Content != "" {
-			p, c, cost := executor.ParseTokenPayload(event.Content)
-			data["prompt"] = p
-			data["completion"] = c
-			data["cost"] = cost
 		}
 		s.bus.Publish(SchedulerEvent{
 			Type:   "run.progress",
@@ -881,7 +866,7 @@ func (s *Scheduler) publishProgress(taskID string, runID int64, event executor.E
 	}
 }
 
-func buildJob(task sqlstore.TaskRecord, runID int64) *executor.ExecutionJob {
+func (s *Scheduler) buildJob(task sqlstore.TaskRecord, runID int64) *executor.ExecutionJob {
 	job := &executor.ExecutionJob{
 		TaskID:       task.ID,
 		RunID:        runID,
@@ -917,6 +902,7 @@ func buildJob(task sqlstore.TaskRecord, runID int64) *executor.ExecutionJob {
 			job.Metadata = md
 		}
 	}
+	s.applyProjectContext(&task, job)
 
 	// Parse limits
 	if task.CostBudget.Valid {
@@ -933,6 +919,147 @@ func buildJob(task sqlstore.TaskRecord, runID int64) *executor.ExecutionJob {
 	}
 
 	return job
+}
+
+func (s *Scheduler) applyProjectContext(task *sqlstore.TaskRecord, job *executor.ExecutionJob) {
+	if !task.ProjectID.Valid || task.ProjectID.String == "" {
+		return
+	}
+	project, err := s.store.GetProject(task.ProjectID.String)
+	if err != nil {
+		return
+	}
+	artifacts, err := s.store.ListProjectArtifacts(project.ID)
+	if err != nil {
+		artifacts = nil
+	}
+
+	readPaths := decodeStringSlice(project.ReadPaths)
+	writePaths := decodeStringSlice(project.WritePaths)
+	contextPaths := decodeStringSlice(project.ContextPaths)
+	rules := decodeStringSlice(project.Rules)
+	permissions := decodeStringMap(project.Permissions)
+
+	if job.WorkingDir == "" && project.RepoPath != "" {
+		job.WorkingDir = project.RepoPath
+	}
+	if job.AgentFile == "" && project.AgentPath != "" {
+		job.AgentFile = project.AgentPath
+	}
+	job.Files = mergeStringSlices(job.Files, contextPaths)
+	job.Permissions = mergeStringMaps(permissions, job.Permissions)
+
+	artifactPayload := make([]map[string]any, 0, len(artifacts))
+	artifactPaths := make([]string, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		artifactPayload = append(artifactPayload, map[string]any{
+			"id":          artifact.ID,
+			"entry_type":  artifact.EntryType,
+			"title":       artifact.Title,
+			"description": artifact.Description,
+			"file_path":   artifact.FilePath,
+			"url":         artifact.URL,
+			"permissions": decodeStringMap(artifact.Permissions),
+			"rules":       decodeStringSlice(artifact.Rules),
+			"metadata":    decodeFreeMap(artifact.Metadata),
+		})
+		if artifact.FilePath != "" {
+			artifactPaths = append(artifactPaths, artifact.FilePath)
+		}
+	}
+	job.Files = mergeStringSlices(job.Files, artifactPaths)
+
+	if job.Metadata == nil {
+		job.Metadata = map[string]any{}
+	}
+	job.Metadata["project_context"] = map[string]any{
+		"project_id":    project.ID,
+		"name":          project.Name,
+		"repo_path":     project.RepoPath,
+		"agent_path":    project.AgentPath,
+		"read_paths":    readPaths,
+		"write_paths":   writePaths,
+		"context_paths": contextPaths,
+		"permissions":   permissions,
+		"rules":         rules,
+		"artifacts":     artifactPayload,
+	}
+}
+
+func decodeStringSlice(ns sql.NullString) []string {
+	if !ns.Valid || ns.String == "" {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(ns.String), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+func decodeStringMap(ns sql.NullString) map[string]string {
+	if !ns.Valid || ns.String == "" {
+		return nil
+	}
+	var out map[string]string
+	if err := json.Unmarshal([]byte(ns.String), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+func decodeFreeMap(ns sql.NullString) map[string]any {
+	if !ns.Valid || ns.String == "" {
+		return nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(ns.String), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+func mergeStringSlices(base []string, extras []string) []string {
+	if len(extras) == 0 {
+		return base
+	}
+	seen := make(map[string]struct{}, len(base)+len(extras))
+	out := make([]string, 0, len(base)+len(extras))
+	for _, item := range base {
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		out = append(out, item)
+	}
+	for _, item := range extras {
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		out = append(out, item)
+	}
+	return out
+}
+
+func mergeStringMaps(base map[string]string, overlay map[string]string) map[string]string {
+	if len(base) == 0 && len(overlay) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(base)+len(overlay))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range overlay {
+		out[k] = v
+	}
+	return out
 }
 
 // formatSkipCounts renders a PickDecisions.Counts map as a stable

@@ -1,6 +1,9 @@
 package service
 
-import "github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+import (
+	"github.com/hollis-labs/clockwork-manifold/internal/modelcatalog"
+	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+)
 
 // Service is the root service dispatcher that aggregates all domain services.
 type Service struct {
@@ -17,6 +20,11 @@ type Service struct {
 	Checkpoint *CheckpointService
 	Template   *TemplateService
 	Plan       *PlanService
+
+	// Models is the shared models.dev catalog. nil in test wiring; populated
+	// by serve / mcp entry points. Callers that depend on model metadata
+	// must nil-check before use.
+	Models *modelcatalog.Catalog
 }
 
 // New constructs a Service wired to the provided store.

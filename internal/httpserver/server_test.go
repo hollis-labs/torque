@@ -322,6 +322,28 @@ func TestSettingsGetSet(t *testing.T) {
 	assert.Equal(t, "true", result["value"])
 }
 
+func TestSettingsFeatureFlagsAlias(t *testing.T) {
+	ts := setupTestServer(t)
+
+	for _, key := range []string{"features.projects", "features.epics", "features.sprints"} {
+		req, err := http.NewRequest("PUT", ts.URL+"/api/v1/settings/"+key, bytes.NewBufferString(`{"value":"true"}`))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		resp.Body.Close()
+	}
+
+	resp, err := http.Get(ts.URL + "/api/v1/settings/feature-flags")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var flags map[string]bool
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&flags))
+	resp.Body.Close()
+	assert.Equal(t, map[string]bool{"projects": true, "epics": true, "sprints": true}, flags)
+}
+
 func TestCreateAndGetTag(t *testing.T) {
 	ts := setupTestServer(t)
 

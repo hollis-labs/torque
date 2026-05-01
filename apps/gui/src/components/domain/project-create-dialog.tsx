@@ -29,6 +29,7 @@ export function ProjectCreateDialog({
   const api = useApi()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  const [repoPath, setRepoPath] = useState('')
   const [icon, setIcon] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -36,12 +37,14 @@ export function ProjectCreateDialog({
     if (open) {
       setName('')
       setDescription('')
+      setRepoPath('')
       setIcon('')
     }
   }, [open])
 
   const trimmedName = name.trim()
-  const canSubmit = trimmedName.length > 0
+  const trimmedRepoPath = repoPath.trim()
+  const canSubmit = trimmedName.length > 0 && trimmedRepoPath.length > 0
 
   async function handleSubmit() {
     if (!canSubmit) return
@@ -50,6 +53,7 @@ export function ProjectCreateDialog({
       const project = await api.createProject({
         name: trimmedName,
         description: description.trim(),
+        repo_path: trimmedRepoPath,
         icon: icon.trim(),
       })
       notifySuccess(`Created project ${project.name}`)
@@ -91,6 +95,15 @@ export function ProjectCreateDialog({
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Optional description"
               rows={3}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="proj-repo-path">Project path *</Label>
+            <Input
+              id="proj-repo-path"
+              value={repoPath}
+              onChange={(e) => setRepoPath(e.target.value)}
+              placeholder="/Users/you/Projects/my-app"
             />
           </div>
           <div className="flex flex-col gap-1.5">

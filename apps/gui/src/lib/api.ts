@@ -7,6 +7,7 @@ import type {
   SSEEvent,
   FeatureFlags,
   Project,
+  ProjectArtifact,
   Sprint,
   Epic,
   Tag,
@@ -17,15 +18,39 @@ import type {
   Subtodo,
   PlanDetail,
   PlanPhaseInput,
+  SchedulerStatus,
+  ModelEntry,
 } from './types'
 
-class ApiError extends Error {
+export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  url?: string
+  constructor(status: number, message: string, url?: string) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.url = url
   }
+}
+
+function isHtmlResponse(res: Response, text: string): boolean {
+  const contentType = res.headers.get('Content-Type')?.toLowerCase() ?? ''
+  return contentType.includes('text/html') || /^\s*<!doctype html/i.test(text) || /^\s*<html/i.test(text)
+}
+
+function htmlRouteMessage(res: Response): string {
+  const path = (() => {
+    try {
+      return new URL(res.url).pathname
+    } catch {
+      return res.url || 'unknown route'
+    }
+  })()
+  return `API returned HTML instead of JSON for ${path}. This usually means the backend route is missing or the SPA/dev server handled the request.`
+}
+
+export function isHtmlApiFallbackError(err: unknown): err is ApiError {
+  return err instanceof ApiError && /returned HTML instead of JSON/i.test(err.message)
 }
 
 /**
@@ -131,18 +156,36 @@ function normalizeRun(raw: ApiRunRecord): Run {
 }
 
 async function parseResponse<T>(res: Response): Promise<T> {
+  if (res.status === 204) return undefined as unknown as T
+  const text = await res.text()
+
   if (!res.ok) {
     let message = `HTTP ${res.status}`
-    try {
-      const body = await res.json() as { error?: string; message?: string }
-      message = body.error ?? body.message ?? message
-    } catch {
-      // ignore parse errors
+    if (text.trim()) {
+      if (isHtmlResponse(res, text)) {
+        message = htmlRouteMessage(res)
+      } else {
+        try {
+          const body = JSON.parse(text) as { error?: string; message?: string }
+          message = body.error ?? body.message ?? message
+        } catch {
+          message = text.trim() || message
+        }
+      }
     }
-    throw new ApiError(res.status, message)
+    throw new ApiError(res.status, message, res.url)
   }
-  if (res.status === 204) return undefined as unknown as T
-  return res.json() as Promise<T>
+
+  if (!text.trim()) return undefined as unknown as T
+  if (isHtmlResponse(res, text)) {
+    throw new ApiError(res.status, htmlRouteMessage(res), res.url)
+  }
+
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    throw new ApiError(res.status, `API returned non-JSON for ${res.url || 'request'}.`, res.url)
+  }
 }
 
 export class ClockworkApiClient {
@@ -242,8 +285,10 @@ export class ClockworkApiClient {
     return this.delete<void>(`/tasks/${id}`)
   }
 
-  async transitionTask(id: string, status: string): Promise<Task> {
-    return this.post<Task>(`/tasks/${id}/transition`, { status })
+  async transitionTask(id: string, status: string, options?: { force?: boolean }): Promise<Task> {
+    const body: { status: string; force?: boolean } = { status }
+    if (options?.force) body.force = true
+    return this.post<Task>(`/tasks/${id}/transition`, body)
   }
 
   async bulkTransition(ids: string[], status: string): Promise<void> {
@@ -375,6 +420,43 @@ export class ClockworkApiClient {
     return res.subtodos ?? []
   }
 
+  /**
+   * Append a new subtodo. The id must be unique within the task. Returns the
+   * full updated checklist.
+   */
+  async addSubtodo(
+    taskId: string,
+    item: { id: string; text: string; required?: boolean },
+  ): Promise<Subtodo[]> {
+    const res = await this.post<{ subtodos: Subtodo[] }>(
+      `/tasks/${taskId}/subtodos`,
+      item,
+    )
+    return res.subtodos ?? []
+  }
+
+  /**
+   * Edit text and/or required flag. Omit fields to leave them unchanged.
+   */
+  async updateSubtodo(
+    taskId: string,
+    itemId: string,
+    patch: { text?: string; required?: boolean },
+  ): Promise<Subtodo[]> {
+    const res = await this.patch<{ subtodos: Subtodo[] }>(
+      `/tasks/${taskId}/subtodos/${itemId}`,
+      patch,
+    )
+    return res.subtodos ?? []
+  }
+
+  async deleteSubtodo(taskId: string, itemId: string): Promise<Subtodo[]> {
+    const res = await this.delete<{ subtodos: Subtodo[] }>(
+      `/tasks/${taskId}/subtodos/${itemId}`,
+    )
+    return res.subtodos ?? []
+  }
+
   // -------------------------
   // Settings
   // -------------------------
@@ -385,11 +467,53 @@ export class ClockworkApiClient {
   }
 
   async setSetting(key: string, value: string): Promise<void> {
-    return this.post<void>(`/settings/${key}`, { value })
+    return this.put<void>(`/settings/${key}`, { value })
   }
 
   async getFeatureFlags(): Promise<FeatureFlags> {
-    return this.get<FeatureFlags>('/settings/feature-flags')
+    const primary = await this.get<unknown>('/settings/feature-flags').catch(() => null)
+    if (
+      primary &&
+      typeof primary === 'object' &&
+      typeof (primary as { projects?: unknown }).projects === 'boolean' &&
+      typeof (primary as { epics?: unknown }).epics === 'boolean' &&
+      typeof (primary as { sprints?: unknown }).sprints === 'boolean'
+    ) {
+      return primary as FeatureFlags
+    }
+    return this.get<FeatureFlags>('/features')
+  }
+
+  // -------------------------
+  // Scheduler
+  // -------------------------
+
+  async getSchedulerStatus(): Promise<SchedulerStatus> {
+    return this.get('/scheduler/status')
+  }
+
+  async toggleScheduler(): Promise<SchedulerStatus> {
+    return this.post('/scheduler/toggle', {})
+  }
+
+  // -------------------------
+  // Models (go-modelsdev catalog)
+  // -------------------------
+
+  /**
+   * Returns every (provider, model) pair the catalog knows about. Cold cache
+   * returns an empty list rather than failing — consumers should retry.
+   * Optional `provider` narrows to a single provider id.
+   */
+  async listModels(provider?: string): Promise<ModelEntry[]> {
+    const params: Record<string, string | number | boolean | undefined> = {}
+    if (provider) params['provider'] = provider
+    const res = await this.get<{ models: ModelEntry[] }>('/models', params)
+    return res.models ?? []
+  }
+
+  async getModel(provider: string, model: string): Promise<ModelEntry> {
+    return this.get<ModelEntry>(`/models/${encodeURIComponent(provider)}/${encodeURIComponent(model)}`)
   }
 
   // -------------------------
@@ -416,6 +540,29 @@ export class ClockworkApiClient {
 
   async deleteProject(id: string): Promise<void> {
     return this.delete<void>(`/projects/${id}`)
+  }
+
+  async listProjectArtifacts(projectId: string): Promise<{ artifacts: ProjectArtifact[] }> {
+    return this.get<{ artifacts: ProjectArtifact[] }>(`/projects/${projectId}/artifacts`)
+  }
+
+  async createProjectArtifact(
+    projectId: string,
+    data: Partial<ProjectArtifact> & { file_path: string }
+  ): Promise<ProjectArtifact> {
+    return this.post<ProjectArtifact>(`/projects/${projectId}/artifacts`, data)
+  }
+
+  async updateProjectArtifact(
+    projectId: string,
+    artifactId: number,
+    data: Partial<ProjectArtifact>
+  ): Promise<ProjectArtifact> {
+    return this.put<ProjectArtifact>(`/projects/${projectId}/artifacts/${artifactId}`, data)
+  }
+
+  async deleteProjectArtifact(projectId: string, artifactId: number): Promise<void> {
+    return this.delete<void>(`/projects/${projectId}/artifacts/${artifactId}`)
   }
 
   // -------------------------

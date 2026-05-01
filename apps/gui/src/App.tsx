@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom'
-import { LayoutList, Play, BarChart3, Settings, Cog, FileText, Inbox, FolderTree } from 'lucide-react'
+import { LayoutList, Play, BarChart3, Settings, Cog, FileText, Inbox, FolderTree, Sparkles } from 'lucide-react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster } from '@/components/ui/sonner'
 import { ApiProvider } from '@/hooks/use-api'
@@ -18,6 +18,7 @@ import TemplateDetailPage from '@/pages/TemplateDetailPage'
 import CheckpointsPage from '@/pages/CheckpointsPage'
 import PlansPage from '@/pages/PlansPage'
 import PlanDetailPage from '@/pages/PlanDetailPage'
+import ModelsPage from '@/pages/ModelsPage'
 import { cn } from '@/lib/utils'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined
@@ -82,6 +83,9 @@ function AppShell() {
         <NavItem to="/dashboard" label="Dashboard">
           <BarChart3 className="h-4 w-4" />
         </NavItem>
+        <NavItem to="/models" label="Models">
+          <Sparkles className="h-4 w-4" />
+        </NavItem>
 
         <div className="mt-auto" />
 
@@ -107,6 +111,7 @@ function AppShell() {
           <Route path="/runs" element={<RunsPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/dashboard/_widget-preview" element={<WidgetPreviewPage />} />
+          <Route path="/models" element={<ModelsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </main>

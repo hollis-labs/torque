@@ -30,13 +30,33 @@ Example: {"task_id":"T-123","id":"check-1","text":"write regression test","requi
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_subtodo_done",
 		mcp.WithDescription(`Mark a subtodo done with an evidence string (artifact id, commit SHA, URL, or note).
-Use to unblock required subtodos; clockwork_task_subtodo_add to create, clockwork_task_subtodo_list to inspect. No separate subtodo_delete — items are forever-tracked.
+Use to unblock required subtodos; clockwork_task_subtodo_add to create, clockwork_task_subtodo_list to inspect, clockwork_task_subtodo_update to edit, clockwork_task_subtodo_delete to remove.
 Response shape: data = [<Subtodo>...] — returns the updated full checklist.
 Example: {"task_id":"T-123","id":"check-1","evidence":"abc123 / PR #42"}`),
 		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Item id to mark done")),
 		mcp.WithString("evidence", mcp.Description("Optional evidence pointer (artifact id, commit, URL, or note)")),
 	), a.handleSubtodoDone)
+
+	a.server.AddTool(mcp.NewTool("clockwork_task_subtodo_update",
+		mcp.WithDescription(`Edit the text and/or required flag on an existing subtodo. Omitted fields are left unchanged.
+Use for typo fixes or required-flag adjustments; clockwork_task_subtodo_done to tick off, clockwork_task_subtodo_delete to remove entirely.
+Response shape: data = [<Subtodo>...] — returns the updated full checklist.
+Example: {"task_id":"T-123","id":"check-1","text":"write integration test","required":true}`),
+		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),
+		mcp.WithString("id", mcp.Required(), mcp.Description("Item id to edit")),
+		mcp.WithString("text", mcp.Description("New text (omit to leave unchanged)")),
+		mcp.WithBoolean("required", mcp.Description("New required flag (omit to leave unchanged)")),
+	), a.handleSubtodoUpdate)
+
+	a.server.AddTool(mcp.NewTool("clockwork_task_subtodo_delete",
+		mcp.WithDescription(`Remove a subtodo item from a task's checklist. Returns the updated checklist (which may be empty).
+Use sparingly — prefer clockwork_task_subtodo_done with evidence for closure that preserves the audit trail. Delete is for items that should not have been added in the first place.
+Response shape: data = [<Subtodo>...] — returns the updated full checklist.
+Example: {"task_id":"T-123","id":"check-1"}`),
+		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),
+		mcp.WithString("id", mcp.Required(), mcp.Description("Item id to remove")),
+	), a.handleSubtodoDelete)
 }
 
 func (a *Adapter) handleSubtodoList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -77,6 +97,35 @@ func (a *Adapter) handleSubtodoAdd(ctx context.Context, req mcp.CallToolRequest)
 
 func (a *Adapter) handleSubtodoDone(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	items, err := a.svc.Task.MarkSubtodoDone(reqStr(req, "task_id"), reqStr(req, "id"), reqStr(req, "evidence"))
+	if err != nil {
+		return errFromService(err)
+	}
+	return okResult(items)
+}
+
+func (a *Adapter) handleSubtodoUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Optional fields use pointer-or-nil to distinguish "omitted" from "set to
+	// empty/false". reqHasArg checks presence; the typed reader fills the
+	// pointer only when the caller actually supplied the field.
+	var text *string
+	if reqHasArg(req, "text") {
+		v := reqStr(req, "text")
+		text = &v
+	}
+	var required *bool
+	if reqHasArg(req, "required") {
+		v := reqBool(req, "required")
+		required = &v
+	}
+	items, err := a.svc.Task.UpdateSubtodo(reqStr(req, "task_id"), reqStr(req, "id"), text, required)
+	if err != nil {
+		return errFromService(err)
+	}
+	return okResult(items)
+}
+
+func (a *Adapter) handleSubtodoDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	items, err := a.svc.Task.DeleteSubtodo(reqStr(req, "task_id"), reqStr(req, "id"))
 	if err != nil {
 		return errFromService(err)
 	}

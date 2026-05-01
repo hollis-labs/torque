@@ -1,14 +1,7 @@
 import { Link } from 'react-router-dom'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Flag } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { StatusBadge } from './status-badge'
 import { PriorityBadge } from './priority-badge'
 import { TagChip } from './tag-chip'
@@ -16,6 +9,7 @@ import { CopyableId } from './copyable-id'
 import { TaskActionsMenu } from './task-actions-menu'
 import { QueueToggleButton } from './queue-toggle-button'
 import { TaskStatsStrip } from './task-stats'
+import { FilterEntityCombobox } from './filter-bar/filter-entity-combobox'
 import { TASK_STATUSES, PRIORITIES } from '@/lib/constants'
 import { hasBlockedReason, truncateBlockedReason } from '@/lib/blocked-reason'
 import type { Task, TaskStatus, Tag } from '@/lib/types'
@@ -121,23 +115,19 @@ export function TaskDetailHeader({
               </>
             )}
             {editing ? (
-              <Select
+              <FilterEntityCombobox
+                icon={<Flag className="h-3.5 w-3.5" />}
+                items={PRIORITIES.map((p) => ({
+                  id: String(p.value),
+                  name: `${p.label} — ${p.description}`,
+                }))}
                 value={String(source.priority)}
-                onValueChange={(v) => {
+                onChange={(v) => {
                   if (v !== null) onDraftChange('priority', Number(v))
                 }}
-              >
-                <SelectTrigger className="h-6 w-20 text-[11px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PRIORITIES.map((p) => (
-                    <SelectItem key={p.value} value={String(p.value)}>
-                      {p.label} ({p.description})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                allLabel="Priority"
+                ariaLabel="Priority"
+              />
             ) : (
               <PriorityBadge priority={task.priority} />
             )}

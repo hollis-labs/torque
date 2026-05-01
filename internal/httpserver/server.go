@@ -64,7 +64,10 @@ func (s *Server) routes() {
 		r.Post("/tasks/{id}/comments", s.addComment)
 		r.Get("/tasks/{id}/artifacts", s.listArtifacts)
 		r.Get("/tasks/{id}/subtodos", s.listSubtodos)
+		r.Post("/tasks/{id}/subtodos", s.addSubtodo)
 		r.Post("/tasks/{id}/subtodos/{item_id}/done", s.markSubtodoDone)
+		r.Patch("/tasks/{id}/subtodos/{item_id}", s.updateSubtodo)
+		r.Delete("/tasks/{id}/subtodos/{item_id}", s.deleteSubtodo)
 
 		// Checkpoints — emit/respond/cancel keyed on correlation_id.
 		r.Post("/checkpoints", s.emitCheckpoint)
@@ -88,6 +91,10 @@ func (s *Server) routes() {
 		r.Get("/projects/{id}", s.getProject)
 		r.Put("/projects/{id}", s.updateProject)
 		r.Delete("/projects/{id}", s.deleteProject)
+		r.Get("/projects/{id}/artifacts", s.listProjectArtifacts)
+		r.Post("/projects/{id}/artifacts", s.createProjectArtifact)
+		r.Put("/projects/{id}/artifacts/{artifactID}", s.updateProjectArtifact)
+		r.Delete("/projects/{id}/artifacts/{artifactID}", s.deleteProjectArtifact)
 
 		// Sprints
 		r.Get("/sprints", s.listSprints)
@@ -138,12 +145,18 @@ func (s *Server) routes() {
 		// Settings
 		r.Get("/settings", s.getAllSettings)
 		r.Put("/settings", s.saveAllSettings)
+		r.Get("/settings/feature-flags", s.getFeatures)
 		r.Get("/settings/{key}", s.getSetting)
 		r.Put("/settings/{key}", s.saveSetting)
 
 		// Scheduler
 		r.Get("/scheduler/status", s.schedulerStatus)
 		r.Post("/scheduler/toggle", s.schedulerToggle)
+
+		// Models — go-modelsdev catalog. Cold cache returns empty list / 404
+		// so callers can retry rather than treat absence as fatal.
+		r.Get("/models", s.listModels)
+		r.Get("/models/{provider}/{model}", s.getModel)
 
 		// Features
 		r.Get("/features", s.getFeatures)

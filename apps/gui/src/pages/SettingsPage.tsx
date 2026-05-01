@@ -29,7 +29,7 @@ export default function SettingsPage() {
     const updated = { ...flags, [key]: value }
     setFlags(updated) // optimistic
     try {
-      await api.setSetting(`feature-flags.${key}`, String(value))
+      await api.setSetting(`features.${key}`, String(value))
     } catch (err) {
       setFlags(flags) // revert on error
       notifyError(err, 'Failed to update setting')
@@ -78,13 +78,6 @@ export default function SettingsPage() {
                 ) : flags ? (
                   <>
                     <FlagRow
-                      label="Sprints"
-                      description="Organize tasks into time-boxed sprints."
-                      checked={flags.sprints}
-                      disabled={saving === 'sprints'}
-                      onCheckedChange={(v) => handleToggle('sprints', v)}
-                    />
-                    <FlagRow
                       label="Projects"
                       description="Group tasks under named projects."
                       checked={flags.projects}
@@ -97,6 +90,13 @@ export default function SettingsPage() {
                       checked={flags.epics}
                       disabled={saving === 'epics'}
                       onCheckedChange={(v) => handleToggle('epics', v)}
+                    />
+                    <FlagRow
+                      label="Sprints"
+                      description="Organize tasks into time-boxed sprints."
+                      checked={flags.sprints}
+                      disabled={saving === 'sprints'}
+                      onCheckedChange={(v) => handleToggle('sprints', v)}
                     />
                   </>
                 ) : null}

@@ -27,7 +27,7 @@ func TestBootstrapExecutors(t *testing.T) {
 
 	reg := executor.NewRegistry()
 
-	err := bootstrap.Executors(reg, profiles, nil)
+	err := bootstrap.Executors(reg, profiles, nil, nil)
 	require.NoError(t, err)
 
 	// CLI executor should be registered
@@ -36,11 +36,14 @@ func TestBootstrapExecutors(t *testing.T) {
 	assert.Equal(t, "cli", cli.Name())
 	assert.True(t, cli.Capabilities().SupportsStreaming)
 
-	// API executor should be registered
+	// API executor should be registered. Phase E (CW-20260427-0043) wired the
+	// vendor-SDK executor and honestly reports tools=false until Plan 4 lands;
+	// the legacy stub claimed SupportsTools=true with no actual plumbing.
 	api, err := reg.Get("api")
 	require.NoError(t, err)
 	assert.Equal(t, "api", api.Name())
-	assert.True(t, api.Capabilities().SupportsTools)
+	assert.True(t, api.Capabilities().SupportsStreaming)
+	assert.False(t, api.Capabilities().SupportsTools, "tools support deferred to Plan 4")
 }
 
 func TestBootstrapExecutorsListAll(t *testing.T) {
@@ -49,7 +52,7 @@ func TestBootstrapExecutorsListAll(t *testing.T) {
 	}
 
 	reg := executor.NewRegistry()
-	err := bootstrap.Executors(reg, profiles, nil)
+	err := bootstrap.Executors(reg, profiles, nil, nil)
 	require.NoError(t, err)
 
 	list := reg.List()

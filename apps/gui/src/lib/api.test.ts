@@ -134,3 +134,83 @@ describe('ClockworkApiClient.listArtifacts', () => {
     expect(out).toHaveLength(1)
   })
 })
+
+describe('ClockworkApiClient.setSetting', () => {
+  const client = new ClockworkApiClient('/api/v1')
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('uses PUT against the keyed settings route', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ key: 'features.projects', value: 'true' }))
+
+    await client.setSetting('features.projects', 'true')
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/settings/features.projects', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ value: 'true' }),
+    })
+  })
+})
+
+describe('ClockworkApiClient.getFeatureFlags', () => {
+  const client = new ClockworkApiClient('/api/v1')
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('accepts the modern /settings/feature-flags response shape', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ projects: true, epics: false, sprints: true }))
+    await expect(client.getFeatureFlags()).resolves.toEqual({ projects: true, epics: false, sprints: true })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to /features when the old backend returns a keyed setting record', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ key: 'feature-flags', value: '' }))
+      .mockResolvedValueOnce(jsonResponse({ projects: true, epics: true, sprints: false }))
+    await expect(client.getFeatureFlags()).resolves.toEqual({ projects: true, epics: true, sprints: false })
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/settings/feature-flags')
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/v1/features')
+  })
+})
+
+describe('ClockworkApiClient HTML fallback errors', () => {
+  const client = new ClockworkApiClient('/api/v1')
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('throws a route-focused error when a JSON endpoint returns HTML with 200', async () => {
+    fetchMock.mockResolvedValueOnce(htmlResponse())
+    const promise = client.getProject('PR-1')
+    await expect(promise).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 200,
+    })
+    await expect(promise).rejects.toThrow(/returned HTML instead of JSON/i)
+  })
+})

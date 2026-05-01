@@ -159,11 +159,12 @@ Example: {"id":"T-123"}`),
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_transition",
 		mcp.WithDescription(`Move a task through the lifecycle FSM (todo -> doing -> review -> done, or -> blocked/abandoned). Returns the updated TaskRecord.
-Use for single-task status changes; clockwork_task_bulk_transition for batches; clockwork_sprint_approve for sprint-scoped approvals. Invalid transitions return error.code=conflict.
+Use for single-task status changes; clockwork_task_bulk_transition for batches; clockwork_sprint_approve for sprint-scoped approvals. Invalid transitions return error.code=conflict — set force=true to bypass the FSM (user-initiated cleanup only; agents should respect the FSM).
 Response shape: data = {<TaskRecord fields>, Tags[]} — singleton.
 Example: {"id":"T-123","status":"doing"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
 		mcp.WithString("status", mcp.Required(), mcp.Description("Target status (todo|doing|review|done|blocked|abandoned)")),
+		mcp.WithBoolean("force", mcp.Description("Bypass FSM rules; for user-initiated dispositioning only (default false)")),
 	), a.handleTaskTransition)
 
 	a.server.AddTool(mcp.NewTool("clockwork_task_search",
@@ -551,10 +552,16 @@ func (a *Adapter) handleTaskDelete(ctx context.Context, req mcp.CallToolRequest)
 }
 
 func (a *Adapter) handleTaskTransition(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if err := a.svc.Task.Transition(reqStr(req, "id"), reqStr(req, "status")); err != nil {
+	id := reqStr(req, "id")
+	status := reqStr(req, "status")
+	transition := a.svc.Task.Transition
+	if reqBool(req, "force") {
+		transition = a.svc.Task.ForceTransition
+	}
+	if err := transition(id, status); err != nil {
 		return errFromService(err)
 	}
-	task, err := a.svc.Task.Get(reqStr(req, "id"))
+	task, err := a.svc.Task.Get(id)
 	if err != nil {
 		return errFromService(err)
 	}

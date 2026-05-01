@@ -502,6 +502,17 @@ func (s *TaskService) Transition(id, newStatus string) error {
 	}
 }
 
+// ForceTransition writes the new status without consulting the FSM. Use only
+// for explicit user-initiated cleanup (e.g., dispositioning a stuck task that
+// an agent left mid-flight); programmatic callers must use Transition. The
+// store still validates that the status string is a recognized value.
+func (s *TaskService) ForceTransition(id, newStatus string) error {
+	if _, err := s.store.GetTask(id); err != nil {
+		return err
+	}
+	return s.store.TransitionTask(id, newStatus)
+}
+
 // Search performs a text search over tasks.
 func (s *TaskService) Search(query string) ([]sqlstore.TaskRecord, error) {
 	return s.store.SearchTasks(query)
@@ -544,6 +555,54 @@ func (s *TaskService) MarkSubtodoDone(taskID, itemID, evidence string) ([]sqlsto
 		return nil, err
 	}
 	return s.store.GetSubtodos(taskID)
+}
+
+// UpdateSubtodo edits the text and/or required flag on an existing item.
+// nil-valued fields leave their current value untouched. Returns the full
+// updated checklist.
+func (s *TaskService) UpdateSubtodo(taskID, itemID string, text *string, required *bool) ([]sqlstore.Subtodo, error) {
+	items, err := s.store.GetSubtodos(taskID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		if items[i].ID != itemID {
+			continue
+		}
+		if text != nil {
+			if *text == "" {
+				return nil, &ValidationError{Field: "text", Message: "text cannot be empty"}
+			}
+			items[i].Text = *text
+		}
+		if required != nil {
+			items[i].Required = *required
+		}
+		if err := s.store.SetSubtodos(taskID, items); err != nil {
+			return nil, err
+		}
+		return items, nil
+	}
+	return nil, &ValidationError{Field: "id", Message: "subtodo not found: " + itemID}
+}
+
+// DeleteSubtodo removes a checklist item by id. Returns the full updated
+// checklist (which may be empty).
+func (s *TaskService) DeleteSubtodo(taskID, itemID string) ([]sqlstore.Subtodo, error) {
+	items, err := s.store.GetSubtodos(taskID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		if items[i].ID == itemID {
+			items = append(items[:i], items[i+1:]...)
+			if err := s.store.SetSubtodos(taskID, items); err != nil {
+				return nil, err
+			}
+			return items, nil
+		}
+	}
+	return nil, &ValidationError{Field: "id", Message: "subtodo not found: " + itemID}
 }
 
 // BulkTransition applies the same status transition to multiple tasks.

@@ -11,10 +11,17 @@ import (
 )
 
 // Adapter wires the service layer to an MCP server.
+//
+// loopbackTaskID is non-empty only for adapters built via NewLoopback. It
+// pins every interpretive tool call (summary, blocked, review, comment_add,
+// artifact_create, subtodo_*) to a specific task, so the spawned agent can
+// only act on its own task. Regular adapters (built via New) leave it empty
+// and do not register the loopback tool subset.
 type Adapter struct {
-	svc    *service.Service
-	sched  *scheduler.Scheduler
-	server *server.MCPServer
+	svc            *service.Service
+	sched          *scheduler.Scheduler
+	server         *server.MCPServer
+	loopbackTaskID string
 }
 
 // New creates an Adapter, registers all tools, and returns it. sched may be
@@ -54,6 +61,7 @@ Example: {}`),
 	a.registerTemplateTools()
 	a.registerSubtodoTools()
 	a.registerPlanTools()
+	a.registerModelTools()
 }
 
 // registerOptInTools checks feature flags and registers tools for enabled layers.
@@ -81,9 +89,17 @@ func (a *Adapter) handleHealth(ctx context.Context, req mcp.CallToolRequest) (*m
 
 // ---- helpers ----------------------------------------------------------------
 
+// reqHasArg reports whether the caller supplied the named argument. Use to
+// distinguish "omitted" from "explicit zero / empty string / false" when a
+// handler treats the two cases differently (e.g. partial-update PATCH calls).
+func reqHasArg(req mcp.CallToolRequest, key string) bool {
+	_, ok := req.GetArguments()[key]
+	return ok
+}
+
 // reqStr extracts a string argument. Non-string values return "" to match
 // mcp-go's CallToolRequest.GetString behavior — callers that need
-// presence-detection should gate on req.GetArguments()[key] directly.
+// presence-detection should use reqHasArg.
 func reqStr(req mcp.CallToolRequest, key string) string {
 	args := req.GetArguments()
 	if v, ok := args[key]; ok {

@@ -1,75 +1,110 @@
-import { useState, useEffect, useCallback } from 'react'
-import { useParams } from 'react-router-dom'
+import { useState, useEffect, type ReactNode } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import { ExternalLink, Pencil, Save, X } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { DetailHeader } from '@/components/domain/detail-header'
 import { PriorityBadge } from '@/components/domain/priority-badge'
-import { FilterBar } from '@/components/domain/filter-bar'
-import { TaskTable } from '@/components/domain/task-table'
 import { EmptyState } from '@/components/domain/empty-state'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
-import { notifyError } from '@/lib/toast'
-import { DEFAULT_ACTIVE_STATUSES } from '@/lib/constants'
-import type { Epic, Task, TaskStatus } from '@/lib/types'
+import { notifyError, notifySuccess } from '@/lib/toast'
+import type { ContainerStatus, Epic, Project } from '@/lib/types'
 
-const SSE_EVENTS = ['epic.updated', 'task.created', 'task.updated', 'task.transitioned']
+const SSE_EVENTS = ['epic.updated', 'epic.created', 'epic.deleted']
 
 export default function EpicDetailPage() {
   const { id } = useParams<{ id: string }>()
   const api = useApi()
+  const navigate = useNavigate()
   const { lastEvent } = useSSE(SSE_EVENTS)
 
   const [epic, setEpic] = useState<Epic | null>(null)
+  const [projectName, setProjectName] = useState<string | null>(null)
+  const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-
-  // Task state
-  const [tasks, setTasks] = useState<Task[] | null>(null)
-  const [activeStatuses, setActiveStatuses] = useState<TaskStatus[]>(DEFAULT_ACTIVE_STATUSES)
+  const [editing, setEditing] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [draft, setDraft] = useState<{
+    name: string
+    description: string
+    priority: string
+    project_id: string
+    status: ContainerStatus
+  }>({
+    name: '',
+    description: '',
+    priority: '',
+    project_id: '',
+    status: 'active',
+  })
 
   useEffect(() => {
     if (!id) return
+    let cancelled = false
     setLoading(true)
-    api.getEpic(id)
-      .then((e) => { setEpic(e); setError(null) })
-      .catch((err: Error) => setError(err.message))
-      .finally(() => setLoading(false))
+    void api.getEpic(id)
+      .then(async (next) => {
+        if (cancelled) return
+        setEpic(next)
+        setError(null)
+        if (next.project_id) {
+          const project = await api.getProject(next.project_id).catch(() => null)
+          if (!cancelled) setProjectName(project?.name ?? null)
+        } else {
+          setProjectName(null)
+        }
+        if (!cancelled) {
+          setDraft({
+            name: next.name,
+            description: next.description ?? '',
+            priority: next.priority === null || next.priority === undefined ? '' : String(next.priority),
+            project_id: next.project_id ?? '',
+            status: next.status,
+          })
+        }
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setError(err.message)
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [api, id])
 
-  const fetchTasks = useCallback(async () => {
-    if (!id) return
-    try {
-      const result = await api.listTasks({ epic_id: id, status: activeStatuses })
-      setTasks(result.tasks)
-    } catch {
-      setTasks([])
-    }
-  }, [api, id, activeStatuses])
-
-  // Fetch tasks when epic is loaded and when filter changes
-  useEffect(() => {
-    if (epic) fetchTasks()
-  }, [epic, fetchTasks])
-
-  // SSE refresh
   useEffect(() => {
     if (!lastEvent || !id) return
-    api.getEpic(id).then(setEpic).catch(() => {})
-    if (tasks !== null) fetchTasks()
-  }, [lastEvent]) // eslint-disable-line react-hooks/exhaustive-deps
+    void api.getEpic(id).then(setEpic).catch(() => {})
+  }, [api, id, lastEvent])
 
-  function handleStatusToggle(status: TaskStatus) {
-    setActiveStatuses((prev) =>
-      prev.includes(status) ? prev.filter((s) => s !== status) : [...prev, status]
-    )
-  }
+  useEffect(() => {
+    void api.listProjects().then((res) => setProjects(res.projects)).catch(() => {})
+  }, [api])
 
-  async function handleTransition(taskId: string, status: TaskStatus) {
+  async function saveDraft() {
+    if (!id) return
+    setSaving(true)
     try {
-      await api.transitionTask(taskId, status)
-      fetchTasks()
+      const updated = await api.updateEpic(id, {
+        name: draft.name.trim(),
+        description: draft.description.trim(),
+        priority: draft.priority.trim() ? Number(draft.priority.trim()) : null,
+        project_id: draft.project_id || null,
+        status: draft.status,
+      })
+      setEpic(updated)
+      setEditing(false)
+      notifySuccess(`Updated ${updated.name}`)
     } catch (err) {
-      notifyError(err, 'Failed to update task status')
+      notifyError(err, 'Failed to update epic')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -77,8 +112,7 @@ export default function EpicDetailPage() {
     return (
       <div className="p-6 flex flex-col gap-4">
         <Skeleton className="h-8 w-64" />
-        <Skeleton className="h-5 w-96" />
-        <Skeleton className="h-40 w-full rounded-lg" />
+        <Skeleton className="h-32 w-full rounded-lg" />
       </div>
     )
   }
@@ -93,54 +127,74 @@ export default function EpicDetailPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <DetailHeader
-        title={epic.name}
-        backTo="/operations"
-        backLabel="Operations"
-        id={epic.id}
-        status={epic.status}
-      >
-        {epic.priority !== null && epic.priority !== undefined && (
-          <PriorityBadge priority={epic.priority} />
-        )}
+      <DetailHeader title={epic.name} backTo="/operations" backLabel="Operations" id={epic.id} status={epic.status}>
+        {epic.priority !== null && epic.priority !== undefined && <PriorityBadge priority={epic.priority} />}
+        <Button variant="outline" size="sm" onClick={() => setEditing((prev) => !prev)}>
+          {editing ? <X className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
+          {editing ? 'Cancel' : 'Edit'}
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => navigate(`/operations?epic_id=${epic.id}`)}>
+          <ExternalLink className="h-3.5 w-3.5" />
+          Open in Operations
+        </Button>
       </DetailHeader>
 
-      {/* Description */}
-      {epic.description && (
-        <div className="px-6 py-3 border-b border-zinc-800/80">
-          <span className="text-xs text-zinc-500 block mb-1">Description</span>
-          <p className="text-sm text-zinc-300 whitespace-pre-wrap">{epic.description}</p>
-        </div>
-      )}
-
-      {/* Tasks */}
-      <div className="flex-1 overflow-auto">
-        <FilterBar
-          activeStatuses={activeStatuses}
-          onStatusToggle={handleStatusToggle}
-        />
-        <div>
-          {tasks === null ? (
-            <div className="flex flex-col gap-2 p-4">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <Skeleton key={i} className="h-10 w-full rounded-md" />
-              ))}
+      <div className="flex-1 overflow-auto p-6">
+        {editing ? (
+          <div className="grid gap-4 md:grid-cols-2">
+            <EditField label="Name">
+              <Input value={draft.name} onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))} />
+            </EditField>
+            <EditField label="Status">
+              <select className="h-9 rounded-md border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-100" value={draft.status} onChange={(e) => setDraft((prev) => ({ ...prev, status: e.target.value as ContainerStatus }))}>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </EditField>
+            <EditField label="Description" className="md:col-span-2">
+              <Textarea value={draft.description} onChange={(e) => setDraft((prev) => ({ ...prev, description: e.target.value }))} rows={4} />
+            </EditField>
+            <EditField label="Project">
+              <select className="h-9 rounded-md border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-100" value={draft.project_id} onChange={(e) => setDraft((prev) => ({ ...prev, project_id: e.target.value }))}>
+                <option value="">None</option>
+                {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+              </select>
+            </EditField>
+            <EditField label="Priority">
+              <Input value={draft.priority} onChange={(e) => setDraft((prev) => ({ ...prev, priority: e.target.value }))} placeholder="Optional integer" />
+            </EditField>
+            <div className="md:col-span-2 flex items-center gap-2">
+              <Button onClick={saveDraft} disabled={saving || !draft.name.trim()}>
+                <Save className="h-3.5 w-3.5" />
+                {saving ? 'Saving…' : 'Save'}
+              </Button>
             </div>
-          ) : (
-            <TaskTable
-              tasks={tasks}
-              onTransition={handleTransition}
-              onTaskChange={(updated) =>
-                setTasks((prev) => prev?.map((t) => (t.id === updated.id ? updated : t)) ?? prev)
-              }
-              onTaskDelete={(deletedId) =>
-                setTasks((prev) => prev?.filter((t) => t.id !== deletedId) ?? prev)
-              }
-              emptyVariant="no-results"
-            />
-          )}
-        </div>
+          </div>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2">
+            <InfoCard label="Description" value={epic.description || 'No description'} />
+            <InfoCard label="Project" value={projectName || 'None'} />
+          </div>
+        )}
       </div>
+    </div>
+  )
+}
+
+function InfoCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-4">
+      <div className="mb-1 text-[11px] uppercase tracking-[0.18em] text-zinc-500">{label}</div>
+      <div className="whitespace-pre-wrap text-sm text-zinc-200">{value}</div>
+    </div>
+  )
+}
+
+function EditField({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
+  return (
+    <div className={className}>
+      <div className="mb-1 text-[11px] uppercase tracking-[0.18em] text-zinc-500">{label}</div>
+      {children}
     </div>
   )
 }
