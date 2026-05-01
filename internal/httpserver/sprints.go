@@ -12,6 +12,7 @@ func sprintJSON(sp *sqlstore.SprintRecord) map[string]interface{} {
 	return map[string]interface{}{
 		"id":            sp.ID,
 		"name":          sp.Name,
+		"goal":          sp.Goal,
 		"status":        sp.Status,
 		"approval_mode": sp.ApprovalMode,
 		"cost_budget":   nullFloat(sp.CostBudget),

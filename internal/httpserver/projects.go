@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
@@ -10,15 +11,47 @@ import (
 
 func projectJSON(p *sqlstore.ProjectRecord) map[string]interface{} {
 	return map[string]interface{}{
-		"id":          p.ID,
-		"name":        p.Name,
-		"description": p.Description,
-		"repo_path":   p.RepoPath,
-		"status":      p.Status,
-		"icon":        p.Icon,
-		"created_at":  p.CreatedAt,
-		"updated_at":  p.UpdatedAt,
+		"id":            p.ID,
+		"name":          p.Name,
+		"description":   p.Description,
+		"repo_path":     p.RepoPath,
+		"agent_path":    p.AgentPath,
+		"read_paths":    parseStringArray(p.ReadPaths),
+		"write_paths":   parseStringArray(p.WritePaths),
+		"context_paths": parseStringArray(p.ContextPaths),
+		"permissions":   parseStringMap(p.Permissions),
+		"rules":         parseStringArray(p.Rules),
+		"status":        p.Status,
+		"icon":          p.Icon,
+		"created_at":    p.CreatedAt,
+		"updated_at":    p.UpdatedAt,
 	}
+}
+
+func projectArtifactJSON(a *sqlstore.ProjectArtifactRecord) map[string]interface{} {
+	return map[string]interface{}{
+		"id":          a.ID,
+		"project_id":  a.ProjectID,
+		"entry_type":  a.EntryType,
+		"title":       a.Title,
+		"description": a.Description,
+		"file_path":   a.FilePath,
+		"url":         a.URL,
+		"content":     a.Content,
+		"permissions": parseStringMap(a.Permissions),
+		"rules":       parseStringArray(a.Rules),
+		"metadata":    parseFreeMap(a.Metadata),
+		"created_at":  a.CreatedAt,
+		"updated_at":  a.UpdatedAt,
+	}
+}
+
+func projectArtifactsJSON(items []sqlstore.ProjectArtifactRecord) []map[string]interface{} {
+	out := make([]map[string]interface{}, len(items))
+	for i := range items {
+		out[i] = projectArtifactJSON(&items[i])
+	}
+	return out
 }
 
 func projectsJSON(projects []sqlstore.ProjectRecord) []map[string]interface{} {
@@ -62,10 +95,16 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		RepoPath    string `json:"repo_path"`
-		Icon        string `json:"icon"`
+		Name         string            `json:"name"`
+		Description  string            `json:"description"`
+		RepoPath     string            `json:"repo_path"`
+		AgentPath    string            `json:"agent_path"`
+		ReadPaths    []string          `json:"read_paths"`
+		WritePaths   []string          `json:"write_paths"`
+		ContextPaths []string          `json:"context_paths"`
+		Permissions  map[string]string `json:"permissions"`
+		Rules        []string          `json:"rules"`
+		Icon         string            `json:"icon"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -73,10 +112,16 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	project, err := s.svc.Project.Create(service.ProjectCreateInput{
-		Name:        req.Name,
-		Description: req.Description,
-		RepoPath:    req.RepoPath,
-		Icon:        req.Icon,
+		Name:         req.Name,
+		Description:  req.Description,
+		RepoPath:     req.RepoPath,
+		AgentPath:    req.AgentPath,
+		ReadPaths:    req.ReadPaths,
+		WritePaths:   req.WritePaths,
+		ContextPaths: req.ContextPaths,
+		Permissions:  req.Permissions,
+		Rules:        req.Rules,
+		Icon:         req.Icon,
 	})
 	if err != nil {
 		if _, ok := err.(*service.ValidationError); ok {
@@ -97,27 +142,45 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	var req map[string]interface{}
+	var req struct {
+		Name         *string            `json:"name,omitempty"`
+		Description  *string            `json:"description,omitempty"`
+		RepoPath     *string            `json:"repo_path,omitempty"`
+		AgentPath    *string            `json:"agent_path,omitempty"`
+		ReadPaths    *[]string          `json:"read_paths,omitempty"`
+		WritePaths   *[]string          `json:"write_paths,omitempty"`
+		ContextPaths *[]string          `json:"context_paths,omitempty"`
+		Permissions  *map[string]string `json:"permissions,omitempty"`
+		Rules        *[]string          `json:"rules,omitempty"`
+		Status       *string            `json:"status,omitempty"`
+		Icon         *string            `json:"icon,omitempty"`
+	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
 
 	update := sqlstore.ProjectUpdate{}
-	if v, ok := req["name"].(string); ok {
-		update.Name = &v
+	update.Name = req.Name
+	update.Description = req.Description
+	update.RepoPath = req.RepoPath
+	update.AgentPath = req.AgentPath
+	update.Status = req.Status
+	update.Icon = req.Icon
+	if req.ReadPaths != nil {
+		update.ReadPaths = nullJSONString(*req.ReadPaths)
 	}
-	if v, ok := req["description"].(string); ok {
-		update.Description = &v
+	if req.WritePaths != nil {
+		update.WritePaths = nullJSONString(*req.WritePaths)
 	}
-	if v, ok := req["repo_path"].(string); ok {
-		update.RepoPath = &v
+	if req.ContextPaths != nil {
+		update.ContextPaths = nullJSONString(*req.ContextPaths)
 	}
-	if v, ok := req["status"].(string); ok {
-		update.Status = &v
+	if req.Permissions != nil {
+		update.Permissions = nullJSONString(*req.Permissions)
 	}
-	if v, ok := req["icon"].(string); ok {
-		update.Icon = &v
+	if req.Rules != nil {
+		update.Rules = nullJSONString(*req.Rules)
 	}
 
 	if err := s.svc.Project.Update(id, update); err != nil {
@@ -154,5 +217,131 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.sse.Broadcast("project.deleted", map[string]interface{}{"project_id": id})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) listProjectArtifacts(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "id")
+	items, err := s.svc.Project.ListArtifacts(projectID)
+	if err != nil {
+		if _, ok := err.(*service.FeatureDisabledError); ok {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"artifacts": projectArtifactsJSON(items)})
+}
+
+func (s *Server) createProjectArtifact(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "id")
+	var req struct {
+		EntryType   string            `json:"entry_type"`
+		Title       string            `json:"title"`
+		Description string            `json:"description"`
+		FilePath    string            `json:"file_path"`
+		URL         string            `json:"url"`
+		Content     string            `json:"content"`
+		Permissions map[string]string `json:"permissions"`
+		Rules       []string          `json:"rules"`
+		Metadata    map[string]any    `json:"metadata"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	item, err := s.svc.Project.CreateArtifact(projectID, service.ProjectArtifactCreateInput{
+		EntryType:   req.EntryType,
+		Title:       req.Title,
+		Description: req.Description,
+		FilePath:    req.FilePath,
+		URL:         req.URL,
+		Content:     req.Content,
+		Permissions: req.Permissions,
+		Rules:       req.Rules,
+		Metadata:    req.Metadata,
+	})
+	if err != nil {
+		if _, ok := err.(*service.ValidationError); ok {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.sse.Broadcast("project.updated", map[string]interface{}{"project_id": projectID})
+	writeJSON(w, http.StatusCreated, projectArtifactJSON(item))
+}
+
+func (s *Server) updateProjectArtifact(w http.ResponseWriter, r *http.Request) {
+	rawID := chi.URLParam(r, "artifactID")
+	id, err := strconv.ParseInt(rawID, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid artifact id")
+		return
+	}
+	var req struct {
+		EntryType   *string            `json:"entry_type,omitempty"`
+		Title       *string            `json:"title,omitempty"`
+		Description *string            `json:"description,omitempty"`
+		FilePath    *string            `json:"file_path,omitempty"`
+		URL         *string            `json:"url,omitempty"`
+		Content     *string            `json:"content,omitempty"`
+		Permissions *map[string]string `json:"permissions,omitempty"`
+		Rules       *[]string          `json:"rules,omitempty"`
+		Metadata    *map[string]any    `json:"metadata,omitempty"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	update := sqlstore.ProjectArtifactUpdate{
+		EntryType:   req.EntryType,
+		Title:       req.Title,
+		Description: req.Description,
+		FilePath:    req.FilePath,
+		URL:         req.URL,
+		Content:     req.Content,
+	}
+	if req.Permissions != nil {
+		update.Permissions = nullJSONString(*req.Permissions)
+	}
+	if req.Rules != nil {
+		update.Rules = nullJSONString(*req.Rules)
+	}
+	if req.Metadata != nil {
+		update.Metadata = nullJSONString(*req.Metadata)
+	}
+	if err := s.svc.Project.UpdateArtifact(id, update); err != nil {
+		if _, ok := err.(*service.ValidationError); ok {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	item, err := s.svc.Project.GetArtifact(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.sse.Broadcast("project.updated", map[string]interface{}{"project_id": item.ProjectID})
+	writeJSON(w, http.StatusOK, projectArtifactJSON(item))
+}
+
+func (s *Server) deleteProjectArtifact(w http.ResponseWriter, r *http.Request) {
+	rawID := chi.URLParam(r, "artifactID")
+	id, err := strconv.ParseInt(rawID, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid artifact id")
+		return
+	}
+	projectID := chi.URLParam(r, "id")
+	if err := s.svc.Project.DeleteArtifact(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.sse.Broadcast("project.updated", map[string]interface{}{"project_id": projectID})
 	w.WriteHeader(http.StatusNoContent)
 }

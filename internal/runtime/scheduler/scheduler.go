@@ -392,7 +392,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	// consuming retry budget or spawning a worker. Non-permanent
 	// validate errors fall through to the normal dispatch path; the
 	// existing retry/lifecycle path handles them.
-	preJob := buildJob(task, 0)
+	preJob := s.buildJob(task, 0)
 	if verr := exec.Validate(preJob); verr != nil {
 		if executor.IsPermanent(verr) {
 			return s.handlePermanentValidationError(task, verr)
@@ -431,7 +431,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	// Build execution job. RunID must be the DB-issued runs.id so the
 	// executor can key stderr sidecars, the CLOCKWORK_RUN_ID env var, and
 	// log messages on the same id observers see in runs table.
-	job := buildJob(task, runID)
+	job := s.buildJob(task, runID)
 
 	// If per-run worktrees are enabled and the task has a working dir, try
 	// to create an ephemeral worktree branched from origin/main and route
@@ -439,14 +439,14 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	// running in task.working_dir so a stale remote or git issue can't block
 	// dispatch.
 	wtPath := ""
-	if s.cfg.WorktreePerRun && task.WorkingDir != "" {
+	if s.cfg.WorktreePerRun && job.WorkingDir != "" {
 		path, err := worktree.SetupPerRun(worktree.PerRunOptions{
 			Enabled:  true,
 			Root:     s.cfg.WorktreeRoot,
 			KeepDays: s.cfg.WorktreeKeepDays,
-		}, task.WorkingDir, runID)
+		}, job.WorkingDir, runID)
 		if err != nil {
-			log.Printf("[scheduler] per-run worktree setup failed for %s run %d: %v (falling back to %s)", task.ID, runID, err, task.WorkingDir)
+			log.Printf("[scheduler] per-run worktree setup failed for %s run %d: %v (falling back to %s)", task.ID, runID, err, job.WorkingDir)
 		} else {
 			wtPath = path
 			job.WorkingDir = path
@@ -866,7 +866,7 @@ func (s *Scheduler) publishProgress(taskID string, runID int64, event executor.E
 	}
 }
 
-func buildJob(task sqlstore.TaskRecord, runID int64) *executor.ExecutionJob {
+func (s *Scheduler) buildJob(task sqlstore.TaskRecord, runID int64) *executor.ExecutionJob {
 	job := &executor.ExecutionJob{
 		TaskID:       task.ID,
 		RunID:        runID,
@@ -902,6 +902,7 @@ func buildJob(task sqlstore.TaskRecord, runID int64) *executor.ExecutionJob {
 			job.Metadata = md
 		}
 	}
+	s.applyProjectContext(&task, job)
 
 	// Parse limits
 	if task.CostBudget.Valid {
@@ -918,6 +919,147 @@ func buildJob(task sqlstore.TaskRecord, runID int64) *executor.ExecutionJob {
 	}
 
 	return job
+}
+
+func (s *Scheduler) applyProjectContext(task *sqlstore.TaskRecord, job *executor.ExecutionJob) {
+	if !task.ProjectID.Valid || task.ProjectID.String == "" {
+		return
+	}
+	project, err := s.store.GetProject(task.ProjectID.String)
+	if err != nil {
+		return
+	}
+	artifacts, err := s.store.ListProjectArtifacts(project.ID)
+	if err != nil {
+		artifacts = nil
+	}
+
+	readPaths := decodeStringSlice(project.ReadPaths)
+	writePaths := decodeStringSlice(project.WritePaths)
+	contextPaths := decodeStringSlice(project.ContextPaths)
+	rules := decodeStringSlice(project.Rules)
+	permissions := decodeStringMap(project.Permissions)
+
+	if job.WorkingDir == "" && project.RepoPath != "" {
+		job.WorkingDir = project.RepoPath
+	}
+	if job.AgentFile == "" && project.AgentPath != "" {
+		job.AgentFile = project.AgentPath
+	}
+	job.Files = mergeStringSlices(job.Files, contextPaths)
+	job.Permissions = mergeStringMaps(permissions, job.Permissions)
+
+	artifactPayload := make([]map[string]any, 0, len(artifacts))
+	artifactPaths := make([]string, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		artifactPayload = append(artifactPayload, map[string]any{
+			"id":          artifact.ID,
+			"entry_type":  artifact.EntryType,
+			"title":       artifact.Title,
+			"description": artifact.Description,
+			"file_path":   artifact.FilePath,
+			"url":         artifact.URL,
+			"permissions": decodeStringMap(artifact.Permissions),
+			"rules":       decodeStringSlice(artifact.Rules),
+			"metadata":    decodeFreeMap(artifact.Metadata),
+		})
+		if artifact.FilePath != "" {
+			artifactPaths = append(artifactPaths, artifact.FilePath)
+		}
+	}
+	job.Files = mergeStringSlices(job.Files, artifactPaths)
+
+	if job.Metadata == nil {
+		job.Metadata = map[string]any{}
+	}
+	job.Metadata["project_context"] = map[string]any{
+		"project_id":    project.ID,
+		"name":          project.Name,
+		"repo_path":     project.RepoPath,
+		"agent_path":    project.AgentPath,
+		"read_paths":    readPaths,
+		"write_paths":   writePaths,
+		"context_paths": contextPaths,
+		"permissions":   permissions,
+		"rules":         rules,
+		"artifacts":     artifactPayload,
+	}
+}
+
+func decodeStringSlice(ns sql.NullString) []string {
+	if !ns.Valid || ns.String == "" {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(ns.String), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+func decodeStringMap(ns sql.NullString) map[string]string {
+	if !ns.Valid || ns.String == "" {
+		return nil
+	}
+	var out map[string]string
+	if err := json.Unmarshal([]byte(ns.String), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+func decodeFreeMap(ns sql.NullString) map[string]any {
+	if !ns.Valid || ns.String == "" {
+		return nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(ns.String), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+func mergeStringSlices(base []string, extras []string) []string {
+	if len(extras) == 0 {
+		return base
+	}
+	seen := make(map[string]struct{}, len(base)+len(extras))
+	out := make([]string, 0, len(base)+len(extras))
+	for _, item := range base {
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		out = append(out, item)
+	}
+	for _, item := range extras {
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		out = append(out, item)
+	}
+	return out
+}
+
+func mergeStringMaps(base map[string]string, overlay map[string]string) map[string]string {
+	if len(base) == 0 && len(overlay) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(base)+len(overlay))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range overlay {
+		out[k] = v
+	}
+	return out
 }
 
 // formatSkipCounts renders a PickDecisions.Counts map as a stable

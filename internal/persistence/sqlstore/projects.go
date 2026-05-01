@@ -9,14 +9,20 @@ import (
 
 // ProjectRecord mirrors the projects table row.
 type ProjectRecord struct {
-	ID          string
-	Name        string
-	Description string
-	RepoPath    string
-	Status      string
-	Icon        string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID           string
+	Name         string
+	Description  string
+	RepoPath     string
+	AgentPath    string
+	ReadPaths    sql.NullString
+	WritePaths   sql.NullString
+	ContextPaths sql.NullString
+	Permissions  sql.NullString
+	Rules        sql.NullString
+	Status       string
+	Icon         string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // ProjectFilter holds optional filter criteria for ListProjects.
@@ -28,11 +34,17 @@ type ProjectFilter struct {
 
 // ProjectUpdate holds optional fields to update; nil pointer = no change.
 type ProjectUpdate struct {
-	Name        *string
-	Description *string
-	RepoPath    *string
-	Status      *string
-	Icon        *string
+	Name         *string
+	Description  *string
+	RepoPath     *string
+	AgentPath    *string
+	ReadPaths    *sql.NullString
+	WritePaths   *sql.NullString
+	ContextPaths *sql.NullString
+	Permissions  *sql.NullString
+	Rules        *sql.NullString
+	Status       *string
+	Icon         *string
 }
 
 // CreateProject inserts a new project.
@@ -40,8 +52,10 @@ func (s *Store) CreateProject(p *ProjectRecord) error {
 	if p.Status == "" {
 		p.Status = "active"
 	}
-	_, err := s.db.Exec(`INSERT INTO projects (id, name, description, repo_path, status, icon) VALUES (?, ?, ?, ?, ?, ?)`,
-		p.ID, p.Name, p.Description, p.RepoPath, p.Status, p.Icon,
+	_, err := s.db.Exec(`INSERT INTO projects (
+		id, name, description, repo_path, agent_path, read_paths, write_paths, context_paths, permissions, rules, status, icon
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.ID, p.Name, p.Description, p.RepoPath, p.AgentPath, p.ReadPaths, p.WritePaths, p.ContextPaths, p.Permissions, p.Rules, p.Status, p.Icon,
 	)
 	return err
 }
@@ -49,8 +63,8 @@ func (s *Store) CreateProject(p *ProjectRecord) error {
 // GetProject fetches a single project by ID.
 func (s *Store) GetProject(id string) (*ProjectRecord, error) {
 	p := &ProjectRecord{}
-	err := s.db.QueryRow(`SELECT id, name, description, repo_path, status, icon, created_at, updated_at FROM projects WHERE id = ?`, id).Scan(
-		&p.ID, &p.Name, &p.Description, &p.RepoPath, &p.Status, &p.Icon, &p.CreatedAt, &p.UpdatedAt,
+	err := s.db.QueryRow(`SELECT id, name, description, repo_path, agent_path, read_paths, write_paths, context_paths, permissions, rules, status, icon, created_at, updated_at FROM projects WHERE id = ?`, id).Scan(
+		&p.ID, &p.Name, &p.Description, &p.RepoPath, &p.AgentPath, &p.ReadPaths, &p.WritePaths, &p.ContextPaths, &p.Permissions, &p.Rules, &p.Status, &p.Icon, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("project %s not found", id)
@@ -60,7 +74,7 @@ func (s *Store) GetProject(id string) (*ProjectRecord, error) {
 
 // ListProjects returns projects matching the filter, ordered by name.
 func (s *Store) ListProjects(f ProjectFilter) ([]ProjectRecord, error) {
-	query := `SELECT id, name, description, repo_path, status, icon, created_at, updated_at FROM projects`
+	query := `SELECT id, name, description, repo_path, agent_path, read_paths, write_paths, context_paths, permissions, rules, status, icon, created_at, updated_at FROM projects`
 
 	var conditions []string
 	var args []interface{}
@@ -91,7 +105,7 @@ func (s *Store) ListProjects(f ProjectFilter) ([]ProjectRecord, error) {
 	var projects []ProjectRecord
 	for rows.Next() {
 		var p ProjectRecord
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.RepoPath, &p.Status, &p.Icon, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.RepoPath, &p.AgentPath, &p.ReadPaths, &p.WritePaths, &p.ContextPaths, &p.Permissions, &p.Rules, &p.Status, &p.Icon, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		projects = append(projects, p)
@@ -115,6 +129,30 @@ func (s *Store) UpdateProject(id string, u ProjectUpdate) error {
 	if u.RepoPath != nil {
 		sets = append(sets, "repo_path = ?")
 		args = append(args, *u.RepoPath)
+	}
+	if u.AgentPath != nil {
+		sets = append(sets, "agent_path = ?")
+		args = append(args, *u.AgentPath)
+	}
+	if u.ReadPaths != nil {
+		sets = append(sets, "read_paths = ?")
+		args = append(args, *u.ReadPaths)
+	}
+	if u.WritePaths != nil {
+		sets = append(sets, "write_paths = ?")
+		args = append(args, *u.WritePaths)
+	}
+	if u.ContextPaths != nil {
+		sets = append(sets, "context_paths = ?")
+		args = append(args, *u.ContextPaths)
+	}
+	if u.Permissions != nil {
+		sets = append(sets, "permissions = ?")
+		args = append(args, *u.Permissions)
+	}
+	if u.Rules != nil {
+		sets = append(sets, "rules = ?")
+		args = append(args, *u.Rules)
 	}
 	if u.Status != nil {
 		sets = append(sets, "status = ?")
@@ -152,6 +190,8 @@ func (s *Store) DeleteProject(id string) error {
 	s.db.Exec("UPDATE sprints SET project_id = NULL WHERE project_id = ?", id)
 	// Clear project_id on any epics referencing this project
 	s.db.Exec("UPDATE epics SET project_id = NULL WHERE project_id = ?", id)
+	// Remove project-scoped context artifacts
+	s.db.Exec("DELETE FROM project_artifacts WHERE project_id = ?", id)
 
 	result, err := s.db.Exec("DELETE FROM projects WHERE id = ?", id)
 	if err != nil {

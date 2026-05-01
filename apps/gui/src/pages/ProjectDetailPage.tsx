@@ -1,21 +1,30 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { ExternalLink, FileText, FolderOpen } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Button } from '@/components/ui/button'
 import { DetailHeader } from '@/components/domain/detail-header'
-import { ProgressBar } from '@/components/domain/progress-bar'
-import { FilterBar } from '@/components/domain/filter-bar'
-import { TaskTable } from '@/components/domain/task-table'
-import { StatusBadge } from '@/components/domain/status-badge'
-import { CopyableId } from '@/components/domain/copyable-id'
 import { EmptyState } from '@/components/domain/empty-state'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
-import { notifyError } from '@/lib/toast'
-import { DEFAULT_ACTIVE_STATUSES } from '@/lib/constants'
-import type { Project, Sprint, Task, TaskStatus } from '@/lib/types'
+import { isHtmlApiFallbackError } from '@/lib/api'
+import type { Project, ProjectArtifact } from '@/lib/types'
 
-const SSE_EVENTS = ['project.updated', 'task.created', 'task.updated', 'task.transitioned', 'sprint.created', 'sprint.updated']
+const SSE_EVENTS = ['project.updated', 'project.created', 'project.deleted']
+
+function MetaBlock({ label, value }: { label: string; value: string | string[] | Record<string, string> }) {
+  let content: string
+  if (Array.isArray(value)) content = value.join('\n')
+  else if (typeof value === 'object') content = Object.entries(value).map(([key, val]) => `${key}=${val}`).join('\n')
+  else content = value
+  if (!content.trim()) return null
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3">
+      <div className="mb-1 text-[11px] uppercase tracking-[0.18em] text-zinc-500">{label}</div>
+      <pre className="whitespace-pre-wrap break-words text-sm text-zinc-200">{content}</pre>
+    </div>
+  )
+}
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -24,89 +33,59 @@ export default function ProjectDetailPage() {
   const { lastEvent } = useSSE(SSE_EVENTS)
 
   const [project, setProject] = useState<Project | null>(null)
+  const [artifacts, setArtifacts] = useState<ProjectArtifact[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-
-  // Tab state
-  const [activeTab, setActiveTab] = useState('sprints')
-  const [sprints, setSprints] = useState<Sprint[] | null>(null)
-  const [tasks, setTasks] = useState<Task[] | null>(null)
-  const [activeStatuses, setActiveStatuses] = useState<TaskStatus[]>(DEFAULT_ACTIVE_STATUSES)
+  const [artifactWarning, setArtifactWarning] = useState<string | null>(null)
 
   useEffect(() => {
     if (!id) return
+    let cancelled = false
     setLoading(true)
-    api.getProject(id)
-      .then((p) => { setProject(p); setError(null) })
-      .catch((err: Error) => setError(err.message))
-      .finally(() => setLoading(false))
+    void Promise.all([
+      api.getProject(id),
+      api.listProjectArtifacts(id).catch(() => ({ artifacts: [] as ProjectArtifact[] })),
+    ])
+      .then(([nextProject, artifactRes]) => {
+        if (cancelled) return
+        setProject(nextProject)
+        setArtifacts(artifactRes.artifacts)
+        setArtifactWarning(null)
+        setError(null)
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setError(err.message)
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [api, id])
 
-  const fetchTasks = useCallback(async () => {
-    if (!id) return
-    try {
-      const result = await api.listTasks({ project_id: id, status: activeStatuses })
-      setTasks(result.tasks)
-    } catch {
-      setTasks([])
-    }
-  }, [api, id, activeStatuses])
-
-  // Lazy load tab data
-  useEffect(() => {
-    if (!id || !project) return
-    if (activeTab === 'sprints' && sprints === null) {
-      api.listSprints({ project_id: id })
-        .then((r) => setSprints(r.sprints))
-        .catch(() => setSprints([]))
-    }
-    if (activeTab === 'tasks' && tasks === null) {
-      fetchTasks()
-    }
-  }, [activeTab, id, project, sprints, tasks, api, fetchTasks])
-
-  // Refetch tasks when status filter changes
-  useEffect(() => {
-    if (activeTab === 'tasks' && tasks !== null) {
-      fetchTasks()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeStatuses])
-
-  // SSE refresh
   useEffect(() => {
     if (!lastEvent || !id) return
-    api.getProject(id).then(setProject).catch(() => {})
-    if (sprints !== null) {
-      api.listSprints({ project_id: id }).then((r) => setSprints(r.sprints)).catch(() => {})
-    }
-    if (tasks !== null) {
-      fetchTasks()
-    }
-  }, [lastEvent]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  function handleStatusToggle(status: TaskStatus) {
-    setActiveStatuses((prev) =>
-      prev.includes(status) ? prev.filter((s) => s !== status) : [...prev, status]
-    )
-  }
-
-  async function handleTransition(taskId: string, status: TaskStatus) {
-    try {
-      await api.transitionTask(taskId, status)
-      fetchTasks()
-    } catch (err) {
-      notifyError(err, 'Failed to update task status')
-    }
-  }
+    void api.getProject(id).then(setProject).catch(() => {})
+    void api.listProjectArtifacts(id)
+      .then((res) => {
+        setArtifacts(res.artifacts)
+        setArtifactWarning(null)
+      })
+      .catch((err) => {
+        if (isHtmlApiFallbackError(err) || (err instanceof Error && /HTTP 404|not found/i.test(err.message))) {
+          setArtifacts([])
+          setArtifactWarning('Project artifacts are unavailable from the current backend runtime. The API route is missing or stale.')
+        }
+      })
+  }, [api, id, lastEvent])
 
   if (loading) {
     return (
       <div className="p-6 flex flex-col gap-4">
         <Skeleton className="h-8 w-64" />
-        <Skeleton className="h-5 w-96" />
-        <Skeleton className="h-1 w-full rounded-full" />
-        <Skeleton className="h-40 w-full rounded-lg" />
+        <Skeleton className="h-32 w-full rounded-lg" />
+        <Skeleton className="h-48 w-full rounded-lg" />
       </div>
     )
   }
@@ -119,129 +98,68 @@ export default function ProjectDetailPage() {
     )
   }
 
-  // Calculate progress from all tasks (need to fetch all statuses for this)
-  const allTasks = tasks ?? []
-  const doneTasks = allTasks.filter((t) => t.status === 'done').length
-  const totalTasks = allTasks.length
-  const progress = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0
-
   return (
     <div className="flex h-full flex-col">
-      <DetailHeader
-        title={project.name}
-        backTo="/operations"
-        backLabel="Operations"
-        id={project.id}
-        status={project.status}
-      />
+      <DetailHeader title={project.name} backTo="/operations" backLabel="Operations" id={project.id} status={project.status}>
+        <Button variant="outline" size="sm" onClick={() => navigate(`/operations?project_id=${project.id}`)}>
+          <ExternalLink className="h-3.5 w-3.5" />
+          Open in Operations
+        </Button>
+      </DetailHeader>
 
-      {/* Progress bar */}
-      <div className="px-6 py-3 border-b border-zinc-800/80">
-        <div className="flex items-center justify-between text-xs text-zinc-400 mb-1.5">
-          <span>Progress</span>
-          <span>{doneTasks} / {totalTasks} tasks done ({progress}%)</span>
-        </div>
-        <ProgressBar value={progress} />
-      </div>
-
-      {/* Metadata */}
-      <div className="px-6 py-3 border-b border-zinc-800/80 flex flex-wrap gap-6 text-sm">
-        {project.repo_path && (
-          <div>
-            <span className="text-xs text-zinc-500 block mb-0.5">Repo</span>
-            <span className="font-mono text-xs text-zinc-300">{project.repo_path}</span>
-          </div>
-        )}
-        {project.description && (
-          <div>
-            <span className="text-xs text-zinc-500 block mb-0.5">Description</span>
-            <span className="text-xs text-zinc-300">{project.description}</span>
-          </div>
-        )}
-      </div>
-
-      {/* Tabs */}
       <div className="flex-1 overflow-auto p-6">
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="mb-4">
-            <TabsTrigger value="sprints">Sprints</TabsTrigger>
-            <TabsTrigger value="tasks">Tasks</TabsTrigger>
-          </TabsList>
+        <div className="grid gap-4 md:grid-cols-2">
+          <MetaBlock label="Description" value={project.description} />
+          <MetaBlock label="Project Path" value={project.repo_path} />
+          <MetaBlock label="Agent Path" value={project.agent_path} />
+          <MetaBlock label="Read Paths" value={project.read_paths} />
+          <MetaBlock label="Write Paths" value={project.write_paths} />
+          <MetaBlock label="Additional Context Dirs" value={project.context_paths} />
+          <MetaBlock label="Permissions" value={project.permissions} />
+          <MetaBlock label="Rules" value={project.rules} />
+        </div>
 
-          <TabsContent value="sprints">
-            {sprints === null ? (
-              <div className="flex flex-col gap-2">
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <Skeleton key={i} className="h-10 w-full rounded-md" />
-                ))}
-              </div>
-            ) : sprints.length === 0 ? (
-              <EmptyState variant="no-results" title="No sprints" description="No sprints linked to this project." />
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full">
-                  <thead className="text-[10px] uppercase tracking-[.28em] text-zinc-500">
-                    <tr className="border-b border-zinc-800/80">
-                      <th className="px-3 py-2 text-left font-medium">Sprint</th>
-                      <th className="w-px whitespace-nowrap px-2 py-2 text-right font-medium">Status</th>
-                      <th className="w-px whitespace-nowrap px-2 py-2 text-right font-medium">Updated</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-800/60 text-[13px] leading-4">
-                    {sprints.map((sprint) => (
-                      <tr
-                        key={sprint.id}
-                        className="cursor-pointer hover:bg-zinc-900/50 transition-colors"
-                        onClick={() => navigate(`/sprints/${sprint.id}`)}
-                      >
-                        <td className="px-3 py-2.5">
-                          <div className="flex flex-col gap-0.5">
-                            <span className="font-medium text-zinc-100">{sprint.name}</span>
-                            <CopyableId id={sprint.id} />
-                          </div>
-                        </td>
-                        <td className="px-2 py-2.5 text-right">
-                          <StatusBadge status={sprint.status} />
-                        </td>
-                        <td className="px-2 py-2.5 text-right whitespace-nowrap text-zinc-400">
-                          {new Date(sprint.updated_at).toLocaleDateString()}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </TabsContent>
-
-          <TabsContent value="tasks">
-            <FilterBar
-              activeStatuses={activeStatuses}
-              onStatusToggle={handleStatusToggle}
-            />
-            <div className="mt-2">
-              {tasks === null ? (
-                <div className="flex flex-col gap-2">
-                  {Array.from({ length: 4 }).map((_, i) => (
-                    <Skeleton key={i} className="h-10 w-full rounded-md" />
-                  ))}
-                </div>
-              ) : (
-                <TaskTable
-                  tasks={tasks}
-                  onTransition={handleTransition}
-                  onTaskChange={(updated) =>
-                    setTasks((prev) => prev?.map((t) => (t.id === updated.id ? updated : t)) ?? prev)
-                  }
-                  onTaskDelete={(deletedId) =>
-                    setTasks((prev) => prev?.filter((t) => t.id !== deletedId) ?? prev)
-                  }
-                  emptyVariant="no-results"
-                />
-              )}
+        <div className="mt-8 rounded-xl border border-zinc-800 bg-zinc-950/60">
+          <div className="border-b border-zinc-800 px-4 py-3">
+            <h2 className="text-sm font-semibold text-zinc-100">Artifacts</h2>
+            <p className="mt-1 text-sm text-zinc-500">Authoritative project documents, folders, and references inherited by tasks at run time.</p>
+          </div>
+          {artifactWarning && (
+            <div className="border-b border-amber-700/40 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
+              {artifactWarning}
             </div>
-          </TabsContent>
-        </Tabs>
+          )}
+          {artifacts.length === 0 ? (
+            <div className="px-4 py-6 text-sm text-zinc-500">No project artifacts registered yet.</div>
+          ) : (
+            <div className="divide-y divide-zinc-800">
+              {artifacts.map((artifact) => (
+                <div key={artifact.id} className="grid gap-2 px-4 py-3 md:grid-cols-[1fr,160px,220px]">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-zinc-100">
+                      {artifact.entry_type === 'folder' ? <FolderOpen className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
+                      <span className="font-medium">{artifact.title || artifact.file_path}</span>
+                    </div>
+                    <div className="mt-1 font-mono text-xs text-zinc-400">{artifact.file_path}</div>
+                    {artifact.description && <p className="mt-2 text-sm text-zinc-300">{artifact.description}</p>}
+                  </div>
+                  <div className="text-sm text-zinc-400">
+                    <div className="mb-1 text-[11px] uppercase tracking-[0.18em] text-zinc-500">Rules</div>
+                    <div>{artifact.rules.length > 0 ? artifact.rules.join(', ') : 'None'}</div>
+                  </div>
+                  <div className="text-sm text-zinc-400">
+                    <div className="mb-1 text-[11px] uppercase tracking-[0.18em] text-zinc-500">Permissions</div>
+                    <div>
+                      {Object.keys(artifact.permissions).length > 0
+                        ? Object.entries(artifact.permissions).map(([key, val]) => `${key}=${val}`).join(', ')
+                        : 'None'}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

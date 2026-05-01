@@ -238,8 +238,30 @@ export interface Project {
   name: string
   description: string
   repo_path: string
+  agent_path: string
+  read_paths: string[]
+  write_paths: string[]
+  context_paths: string[]
+  permissions: Record<string, string>
+  rules: string[]
   status: ContainerStatus
   icon: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ProjectArtifact {
+  id: number
+  project_id: string
+  entry_type: 'document' | 'folder' | string
+  title: string
+  description: string
+  file_path: string
+  url: string
+  content: string
+  permissions: Record<string, string>
+  rules: string[]
+  metadata: Record<string, unknown>
   created_at: string
   updated_at: string
 }
@@ -247,6 +269,7 @@ export interface Project {
 export interface Sprint {
   id: string
   name: string
+  goal: string
   status: ContainerStatus
   approval_mode: string
   cost_budget: number | null

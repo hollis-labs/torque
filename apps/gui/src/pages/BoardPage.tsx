@@ -8,8 +8,12 @@ import { TaskTable } from '@/components/domain/task-table'
 import { EmptyState } from '@/components/domain/empty-state'
 import { ProjectCreateDialog } from '@/components/domain/project-create-dialog'
 import { EpicCreateDialog } from '@/components/domain/epic-create-dialog'
+import { SprintCreateDialog } from '@/components/domain/sprint-create-dialog'
+import { TagCreateDialog } from '@/components/domain/tag-create-dialog'
 import { RestartFrontendButton } from '@/components/domain/restart-frontend-button'
 import { SchedulerToggleButton } from '@/components/domain/scheduler-toggle-button'
+import { ScopeManagerDialog } from '@/components/domain/scope-manager-dialog'
+import { Button } from '@/components/ui/button'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
 import { notifyError } from '@/lib/toast'
@@ -23,7 +27,8 @@ import {
   type ManualFilter,
   type OpsFilters,
 } from '@/lib/ops-filters-storage'
-import type { Epic, Project, Sprint, Tag, Task, TaskStatus } from '@/lib/types'
+import { FolderTree } from 'lucide-react'
+import type { Epic, FeatureFlags, Project, Sprint, Tag, Task, TaskStatus } from '@/lib/types'
 
 const FILTER_PARAM_KEYS = ['status', 'priority', 'project_id', 'sprint_id', 'epic_id', 'tag', 'manual'] as const
 
@@ -92,6 +97,7 @@ export default function BoardPage() {
   const [sprints, setSprints] = useState<Sprint[]>([])
   const [epics, setEpics] = useState<Epic[]>([])
   const [tags, setTags] = useState<Tag[]>([])
+  const [flags, setFlags] = useState<FeatureFlags>({ projects: false, epics: false, sprints: false })
 
   // Total rows matching the current filter+search from the list endpoint —
   // authoritative for the summary's "M matches" display. Distinct from
@@ -101,6 +107,9 @@ export default function BoardPage() {
   // Create-modal state
   const [projectCreateOpen, setProjectCreateOpen] = useState(false)
   const [epicCreateOpen, setEpicCreateOpen] = useState(false)
+  const [sprintCreateOpen, setSprintCreateOpen] = useState(false)
+  const [tagCreateOpen, setTagCreateOpen] = useState(false)
+  const [scopeManagerOpen, setScopeManagerOpen] = useState(false)
 
   // Hydrate filter state from localStorage each time we arrive at this
   // route. URL params win: if any filter-relevant param is present, we
@@ -230,6 +239,18 @@ export default function BoardPage() {
       cancelled = true
     }
   }, [refreshPickers])
+
+  useEffect(() => {
+    let cancelled = false
+    void api.getFeatureFlags()
+      .then((next) => {
+        if (!cancelled) setFlags(next)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [api])
 
   // Cascade sprint/epic options by selected project (client-side filter)
   const visibleSprints = useMemo(
@@ -458,6 +479,12 @@ export default function BoardPage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader title="Operations">
+        {(flags.projects || flags.epics || flags.sprints) && (
+          <Button variant="outline" size="sm" onClick={() => setScopeManagerOpen(true)}>
+            <FolderTree className="h-3.5 w-3.5" />
+            Scope
+          </Button>
+        )}
         <SchedulerToggleButton />
         <RestartFrontendButton />
       </PageHeader>
@@ -476,6 +503,7 @@ export default function BoardPage() {
         sprints={visibleSprints}
         sprintId={sprintId}
         onSprintChange={(id) => handleGroupChange('sprint_id', id)}
+        onSprintCreate={() => setSprintCreateOpen(true)}
         epics={visibleEpics}
         epicId={epicId}
         onEpicChange={(id) => handleGroupChange('epic_id', id)}
@@ -483,6 +511,7 @@ export default function BoardPage() {
         tags={tags}
         tagSlug={tagSlug}
         onTagChange={(slug) => handleGroupChange('tag', slug)}
+        onTagCreate={() => setTagCreateOpen(true)}
         searchQuery={search}
         onSearchChange={setSearch}
         searchMatchCount={searchMatchCount}
@@ -506,6 +535,33 @@ export default function BoardPage() {
         onCreated={(e) => {
           refreshPickers()
           handleGroupChange('epic_id', e.id)
+        }}
+      />
+      <SprintCreateDialog
+        open={sprintCreateOpen}
+        onOpenChange={setSprintCreateOpen}
+        projects={projects}
+        defaultProjectId={projectId}
+        onCreated={(sprint) => {
+          refreshPickers()
+          handleGroupChange('sprint_id', sprint.id)
+        }}
+      />
+      <TagCreateDialog
+        open={tagCreateOpen}
+        onOpenChange={setTagCreateOpen}
+        onCreated={(tag) => {
+          refreshPickers()
+          handleGroupChange('tag', tag.slug)
+        }}
+      />
+      <ScopeManagerDialog
+        open={scopeManagerOpen}
+        onOpenChange={setScopeManagerOpen}
+        flags={flags}
+        onDataChange={() => {
+          refreshPickers()
+          fetchTasks()
         }}
       />
       <div ref={scrollContainerRef} className="flex-1 overflow-auto">

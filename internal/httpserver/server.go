@@ -91,6 +91,10 @@ func (s *Server) routes() {
 		r.Get("/projects/{id}", s.getProject)
 		r.Put("/projects/{id}", s.updateProject)
 		r.Delete("/projects/{id}", s.deleteProject)
+		r.Get("/projects/{id}/artifacts", s.listProjectArtifacts)
+		r.Post("/projects/{id}/artifacts", s.createProjectArtifact)
+		r.Put("/projects/{id}/artifacts/{artifactID}", s.updateProjectArtifact)
+		r.Delete("/projects/{id}/artifacts/{artifactID}", s.deleteProjectArtifact)
 
 		// Sprints
 		r.Get("/sprints", s.listSprints)
@@ -141,6 +145,7 @@ func (s *Server) routes() {
 		// Settings
 		r.Get("/settings", s.getAllSettings)
 		r.Put("/settings", s.saveAllSettings)
+		r.Get("/settings/feature-flags", s.getFeatures)
 		r.Get("/settings/{key}", s.getSetting)
 		r.Put("/settings/{key}", s.saveSetting)
 
