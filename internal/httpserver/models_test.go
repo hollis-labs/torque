@@ -111,6 +111,8 @@ func TestHTTP_GetModel(t *testing.T) {
 	var body map[string]interface{}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	assert.Equal(t, "Claude Sonnet 4.6", body["name"])
+	assert.Equal(t, "anthropic", body["provider_id"])
+	assert.Equal(t, "claude-sonnet-4-6", body["id"])
 }
 
 func TestHTTP_GetModel_NotFound(t *testing.T) {

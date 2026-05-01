@@ -3,7 +3,6 @@ package executorapi
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
@@ -66,7 +65,6 @@ func (c *openaiClient) RunTurn(ctx context.Context, profile config.AgentProfile,
 	stream := c.client.Chat.Completions.NewStreaming(ctx, params)
 
 	usage := &executor.TokenUsage{}
-	var deltaBuf strings.Builder
 
 	for stream.Next() {
 		chunk := stream.Current()
@@ -78,7 +76,6 @@ func (c *openaiClient) RunTurn(ctx context.Context, profile config.AgentProfile,
 		}
 		for _, choice := range chunk.Choices {
 			if choice.Delta.Content != "" {
-				deltaBuf.WriteString(choice.Delta.Content)
 				if cb != nil {
 					cb(executor.LogEvent(choice.Delta.Content))
 				}

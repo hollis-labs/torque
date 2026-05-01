@@ -14,7 +14,6 @@
 package cliexec
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -409,7 +408,7 @@ func profileArgsExcludingDevFlag(profile config.AgentProfile) []string {
 // failureReason picks the most informative diagnostic available for a failed
 // run: stderr tail if present, else a stream-level error, else the wait
 // error's text. Empty string only when all sources are silent.
-func failureReason(stderrTail *bytes.Buffer, waitErr, streamErr error) string {
+func failureReason(stderrTail *tailBuffer, waitErr, streamErr error) string {
 	if tail := tailString(stderrTail, stderrTailBytes); tail != "" {
 		return tail
 	}

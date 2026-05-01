@@ -3,7 +3,6 @@ package executorapi
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -63,7 +62,6 @@ func (c *anthropicClient) RunTurn(ctx context.Context, profile config.AgentProfi
 	stream := c.client.Messages.NewStreaming(ctx, params)
 
 	usage := &executor.TokenUsage{}
-	var deltaBuf strings.Builder
 
 	for stream.Next() {
 		event := stream.Current()
@@ -71,7 +69,6 @@ func (c *anthropicClient) RunTurn(ctx context.Context, profile config.AgentProfi
 		case "content_block_delta":
 			delta := event.AsContentBlockDelta()
 			if td := delta.Delta.AsTextDelta(); td.Text != "" {
-				deltaBuf.WriteString(td.Text)
 				if cb != nil {
 					cb(executor.LogEvent(td.Text))
 				}

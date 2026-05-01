@@ -44,6 +44,23 @@ func toModelEntry(m modelsdev.ModelRef) modelEntry {
 	}
 }
 
+func toModelEntryFromModel(providerID string, m modelsdev.Model) modelEntry {
+	return modelEntry{
+		ProviderID:      providerID,
+		ID:              m.ID,
+		Name:            m.Name,
+		Family:          m.Family,
+		OpenWeights:     m.OpenWeights,
+		ReleaseDate:     m.ReleaseDate,
+		KnowledgeCutoff: m.KnowledgeCutoff,
+		LastUpdated:     m.LastUpdated,
+		Cost:            m.Cost,
+		Limit:           m.Limit,
+		Modality:        m.Modality,
+		Capabilities:    m.Capabilities,
+	}
+}
+
 // listModels returns every (provider, model) pair currently known to the
 // catalog. Optional query filter `provider=<id>` narrows to a single provider.
 // On a cold cache (refresher hasn't fetched yet) the response is `{models: []}`
@@ -80,5 +97,5 @@ func (s *Server) getModel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "model not found (cold cache or unknown id)")
 		return
 	}
-	writeJSON(w, http.StatusOK, m)
+	writeJSON(w, http.StatusOK, toModelEntryFromModel(provider, m))
 }

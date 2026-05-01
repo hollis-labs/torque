@@ -90,12 +90,15 @@ func setupBuildJobScheduler(t *testing.T) (*Scheduler, *sqlstore.Store) {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
 	require.NoError(t, migrations.Run(db))
 	store, err := sqlstore.New(db, "sqlite")
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
 	reg := executor.NewRegistry()
 	q, err := queue.Open(filepath.Join(t.TempDir(), "queue.db"))
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = q.Close() })
 	sched := New(store, q, reg, nil, &config.SchedulerConfig{Workers: 1, Enabled: true, StaleSeconds: 300})
 	return sched, store
 }

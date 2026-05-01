@@ -13,6 +13,35 @@ import (
 // Full stream still flows to the sidecar file; this is the inline tail.
 const stderrTailBytes = 8 * 1024
 
+type tailBuffer struct {
+	buf []byte
+	max int
+}
+
+func newTailBuffer(max int) *tailBuffer {
+	return &tailBuffer{max: max}
+}
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	if t.max <= 0 {
+		return len(p), nil
+	}
+	if len(p) >= t.max {
+		t.buf = append(t.buf[:0], p[len(p)-t.max:]...)
+		return len(p), nil
+	}
+	need := len(t.buf) + len(p) - t.max
+	if need > 0 {
+		t.buf = append([]byte(nil), t.buf[need:]...)
+	}
+	t.buf = append(t.buf, p...)
+	return len(p), nil
+}
+
+func (t *tailBuffer) Bytes() []byte {
+	return t.buf
+}
+
 // openStderrSidecar returns an io.Writer that fans the spawned process's
 // stderr into both an in-memory tail buffer and a per-run sidecar log at
 // $CLOCKWORK_DATA_DIR/runs/<run_id>.stderr.log (preserving CW-20260417-0024).
@@ -21,8 +50,8 @@ const stderrTailBytes = 8 * 1024
 //
 // The returned closer must be invoked after the process exits to flush + close
 // the sidecar file.
-func openStderrSidecar(runID int64) (writer io.Writer, tail *bytes.Buffer, closer func()) {
-	tail = &bytes.Buffer{}
+func openStderrSidecar(runID int64) (writer io.Writer, tail *tailBuffer, closer func()) {
+	tail = newTailBuffer(stderrTailBytes)
 	closer = func() {}
 
 	dataDir := os.Getenv("CLOCKWORK_DATA_DIR")
@@ -50,7 +79,7 @@ func openStderrSidecar(runID int64) (writer io.Writer, tail *bytes.Buffer, close
 
 // tailString returns the trailing up-to-max bytes of buf, trimmed of
 // surrounding whitespace.
-func tailString(buf *bytes.Buffer, max int) string {
+func tailString(buf *tailBuffer, max int) string {
 	if buf == nil {
 		return ""
 	}
