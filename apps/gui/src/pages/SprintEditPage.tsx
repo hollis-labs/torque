@@ -27,7 +27,7 @@ export default function SprintEditPage() {
     approval_mode: 'approve_each',
     cost_budget: '',
     project_id: '',
-    status: 'active' as ContainerStatus | 'completed',
+    status: 'active' as ContainerStatus,
   })
 
   useEffect(() => {
@@ -109,7 +109,7 @@ export default function SprintEditPage() {
             <Input value={draft.name} onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))} />
           </ScopeFormField>
           <ScopeFormField label="Status">
-            <select className="h-9 rounded-md border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-100" value={draft.status} onChange={(e) => setDraft((prev) => ({ ...prev, status: e.target.value as ContainerStatus | 'completed' }))}>
+            <select className="h-9 rounded-md border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-100" value={draft.status} onChange={(e) => setDraft((prev) => ({ ...prev, status: e.target.value as ContainerStatus }))}>
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
               <option value="completed">Completed</option>

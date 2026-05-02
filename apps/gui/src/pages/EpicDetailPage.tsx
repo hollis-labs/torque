@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ExternalLink, Pencil } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -25,33 +25,42 @@ export default function EpicDetailPage() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const loadGeneration = useRef(0)
 
-  async function load() {
+  const load = useCallback(async () => {
     if (!id) return
+    const myGen = ++loadGeneration.current
+    setLoading(true)
+    setError(null)
     try {
       const [nextEpic, taskRes] = await Promise.all([
         api.getEpic(id),
         api.listTasks({ epic_id: id }),
       ])
+      if (myGen !== loadGeneration.current) return
+      const nextProject = nextEpic.project_id
+        ? await api.getProject(nextEpic.project_id).catch(() => null)
+        : null
+      if (myGen !== loadGeneration.current) return
       setEpic(nextEpic)
       setTasks(taskRes.tasks)
-      setProject(nextEpic.project_id ? await api.getProject(nextEpic.project_id).catch(() => null) : null)
-      setError(null)
+      setProject(nextProject)
     } catch (err) {
+      if (myGen !== loadGeneration.current) return
       setError(err instanceof Error ? err.message : 'Failed to load epic')
     } finally {
-      setLoading(false)
+      if (myGen === loadGeneration.current) setLoading(false)
     }
-  }
+  }, [api, id])
 
   useEffect(() => {
     void load()
-  }, [id])
+  }, [load])
 
   useEffect(() => {
     if (!lastEvent) return
     void load()
-  }, [lastEvent, id])
+  }, [lastEvent, load])
 
   const rollup = useMemo(() => buildTaskRollup(tasks), [tasks])
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ExternalLink, Pencil, Plus } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -10,7 +10,7 @@ import { ProjectCreateDialog } from '@/components/domain/project-create-dialog'
 import { ScopeOverviewCard } from '@/components/domain/scope-overview-card'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
-import { buildTaskRollup } from '@/lib/scope-metrics'
+import { buildTaskRollup, groupTasksByScope } from '@/lib/scope-metrics'
 import type { Epic, Project, Sprint, Task } from '@/lib/types'
 
 const SSE_EVENTS = ['project.updated', 'project.created', 'project.deleted', 'task.updated', 'task.created', 'task.transitioned']
@@ -35,8 +35,12 @@ export default function ProjectsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
+  const loadGeneration = useRef(0)
 
-  async function load() {
+  const load = useCallback(async () => {
+    const myGen = ++loadGeneration.current
+    setLoading(true)
+    setError(null)
     try {
       const [projectRes, taskRes, sprintRes, epicRes] = await Promise.all([
         api.listProjects(),
@@ -44,27 +48,29 @@ export default function ProjectsPage() {
         api.listSprints(),
         api.listEpics(),
       ])
+      if (myGen !== loadGeneration.current) return
       setProjects(projectRes.projects)
       setTasks(taskRes.tasks)
       setSprints(sprintRes.sprints)
       setEpics(epicRes.epics)
-      setError(null)
     } catch (err) {
+      if (myGen !== loadGeneration.current) return
       setError(err instanceof Error ? err.message : 'Failed to load projects')
     } finally {
-      setLoading(false)
+      if (myGen === loadGeneration.current) setLoading(false)
     }
-  }
+  }, [api])
 
   useEffect(() => {
     void load()
-  }, [])
+  }, [load])
 
   useEffect(() => {
     if (!lastEvent) return
     void load()
-  }, [lastEvent])
+  }, [lastEvent, load])
 
+  const projectTasks = useMemo(() => groupTasksByScope(tasks, 'project_id'), [tasks])
   const activeCount = projects.filter((project) => project.status === 'active').length
   const scopedTaskCount = tasks.filter((task) => task.project_id).length
 
@@ -78,13 +84,12 @@ export default function ProjectsPage() {
 
   const projectCards = useMemo(() => {
     return projects.map((project) => {
-      const projectTasks = tasks.filter((task) => task.project_id === project.id)
-      const rollup = buildTaskRollup(projectTasks)
+      const rollup = buildTaskRollup(projectTasks.get(project.id) ?? [])
       const projectSprintCount = sprints.filter((sprint) => sprint.project_id === project.id).length
       const projectEpicCount = epics.filter((epic) => epic.project_id === project.id).length
       return { project, rollup, projectSprintCount, projectEpicCount }
     })
-  }, [projects, tasks, sprints, epics])
+  }, [projects, projectTasks, sprints, epics])
 
   return (
     <div className="flex h-full flex-col">

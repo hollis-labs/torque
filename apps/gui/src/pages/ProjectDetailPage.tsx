@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ExternalLink, FileText, FolderOpen, Pencil } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -12,7 +12,7 @@ import { ScopeTaskPanel } from '@/components/domain/scope-task-panel'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
 import { isHtmlApiFallbackError } from '@/lib/api'
-import { buildTaskRollup } from '@/lib/scope-metrics'
+import { buildTaskRollup, groupTasksByScope } from '@/lib/scope-metrics'
 import type { Epic, Project, ProjectArtifact, Sprint, Task } from '@/lib/types'
 
 const SSE_EVENTS = ['project.updated', 'project.created', 'project.deleted', 'task.updated', 'task.created', 'task.transitioned']
@@ -39,9 +39,13 @@ export default function ProjectDetailPage() {
   const [artifactWarning, setArtifactWarning] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const loadGeneration = useRef(0)
 
-  async function load() {
+  const load = useCallback(async () => {
     if (!id) return
+    const myGen = ++loadGeneration.current
+    setLoading(true)
+    setError(null)
     try {
       const [nextProject, taskRes, sprintRes, epicRes] = await Promise.all([
         api.getProject(id),
@@ -49,17 +53,19 @@ export default function ProjectDetailPage() {
         api.listSprints({ project_id: id }),
         api.listEpics({ project_id: id }),
       ])
+      if (myGen !== loadGeneration.current) return
       setProject(nextProject)
       setTasks(taskRes.tasks)
       setSprints(sprintRes.sprints)
       setEpics(epicRes.epics)
-      setError(null)
 
       try {
         const artifactRes = await api.listProjectArtifacts(id)
+        if (myGen !== loadGeneration.current) return
         setArtifacts(artifactRes.artifacts)
         setArtifactWarning(null)
       } catch (err) {
+        if (myGen !== loadGeneration.current) return
         if (isHtmlApiFallbackError(err) || (err instanceof Error && /HTTP 404|not found/i.test(err.message))) {
           setArtifacts([])
           setArtifactWarning('Project artifacts are unavailable from the current backend runtime. The API route is missing or stale.')
@@ -68,21 +74,24 @@ export default function ProjectDetailPage() {
         }
       }
     } catch (err) {
+      if (myGen !== loadGeneration.current) return
       setError(err instanceof Error ? err.message : 'Failed to load project')
     } finally {
-      setLoading(false)
+      if (myGen === loadGeneration.current) setLoading(false)
     }
-  }
+  }, [api, id])
 
   useEffect(() => {
     void load()
-  }, [id])
+  }, [load])
 
   useEffect(() => {
     if (!lastEvent) return
     void load()
-  }, [lastEvent, id])
+  }, [lastEvent, load])
 
+  const tasksBySprint = useMemo(() => groupTasksByScope(tasks, 'sprint_id'), [tasks])
+  const tasksByEpic = useMemo(() => groupTasksByScope(tasks, 'epic_id'), [tasks])
   const rollup = useMemo(() => buildTaskRollup(tasks), [tasks])
 
   if (loading) {
@@ -150,7 +159,7 @@ export default function ProjectDetailPage() {
                 to: `/sprints/${sprint.id}`,
                 status: sprint.status,
                 subtitle: sprint.goal || 'No goal set.',
-                progress: buildTaskRollup(tasks.filter((task) => task.sprint_id === sprint.id)),
+                progress: buildTaskRollup(tasksBySprint.get(sprint.id) ?? []),
               }))}
               emptyMessage="No sprints are attached to this project yet."
             />
@@ -162,7 +171,7 @@ export default function ProjectDetailPage() {
                 to: `/epics/${epic.id}`,
                 status: epic.status,
                 subtitle: epic.description || 'No description set.',
-                progress: buildTaskRollup(tasks.filter((task) => task.epic_id === epic.id)),
+                progress: buildTaskRollup(tasksByEpic.get(epic.id) ?? []),
               }))}
               emptyMessage="No epics are attached to this project yet."
             />

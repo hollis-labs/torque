@@ -160,6 +160,10 @@ function linesToPermissions(value: string): Record<string, string> {
   return out
 }
 
+function normalizeScopeRecordStatus(status: ContainerStatus): ScopeRecordStatus {
+  return status === 'inactive' ? 'inactive' : 'active'
+}
+
 function projectToDraft(project: Project): ProjectDraft {
   return {
     id: project.id,
@@ -172,7 +176,7 @@ function projectToDraft(project: Project): ProjectDraft {
     contextPaths: listToLines(project.context_paths),
     permissions: permissionsToLines(project.permissions),
     rules: listToLines(project.rules),
-    status: project.status as ScopeRecordStatus,
+    status: normalizeScopeRecordStatus(project.status),
     icon: project.icon,
   }
 }
@@ -196,7 +200,7 @@ function epicToDraft(epic: Epic): EpicDraft {
     id: epic.id,
     name: epic.name,
     description: epic.description,
-    status: epic.status as ScopeRecordStatus,
+    status: normalizeScopeRecordStatus(epic.status),
     projectId: epic.project_id ?? NONE,
     priority: epic.priority === null || epic.priority === undefined ? '' : String(epic.priority),
   }
