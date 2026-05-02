@@ -1,118 +1,75 @@
-import { useState, useEffect, type ReactNode } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
-import { ExternalLink, Pencil, Save, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+import { ExternalLink, Pencil } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
 import { DetailHeader } from '@/components/domain/detail-header'
-import { PriorityBadge } from '@/components/domain/priority-badge'
 import { EmptyState } from '@/components/domain/empty-state'
+import { ScopeDetailHero } from '@/components/domain/scope-detail-hero'
+import { ScopeMetaCard } from '@/components/domain/scope-meta-card'
+import { ScopeTaskPanel } from '@/components/domain/scope-task-panel'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
-import { notifyError, notifySuccess } from '@/lib/toast'
-import type { ContainerStatus, Epic, Project } from '@/lib/types'
+import { buildTaskRollup } from '@/lib/scope-metrics'
+import type { Epic, Project, Task } from '@/lib/types'
 
-const SSE_EVENTS = ['epic.updated', 'epic.created', 'epic.deleted']
+const SSE_EVENTS = ['epic.updated', 'epic.created', 'epic.deleted', 'task.updated', 'task.created', 'task.transitioned']
 
 export default function EpicDetailPage() {
   const { id } = useParams<{ id: string }>()
   const api = useApi()
   const navigate = useNavigate()
   const { lastEvent } = useSSE(SSE_EVENTS)
-
   const [epic, setEpic] = useState<Epic | null>(null)
-  const [projectName, setProjectName] = useState<string | null>(null)
-  const [projects, setProjects] = useState<Project[]>([])
+  const [project, setProject] = useState<Project | null>(null)
+  const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [editing, setEditing] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [draft, setDraft] = useState<{
-    name: string
-    description: string
-    priority: string
-    project_id: string
-    status: ContainerStatus
-  }>({
-    name: '',
-    description: '',
-    priority: '',
-    project_id: '',
-    status: 'active',
-  })
+  const loadGeneration = useRef(0)
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     if (!id) return
-    let cancelled = false
+    const myGen = ++loadGeneration.current
     setLoading(true)
-    void api.getEpic(id)
-      .then(async (next) => {
-        if (cancelled) return
-        setEpic(next)
-        setError(null)
-        if (next.project_id) {
-          const project = await api.getProject(next.project_id).catch(() => null)
-          if (!cancelled) setProjectName(project?.name ?? null)
-        } else {
-          setProjectName(null)
-        }
-        if (!cancelled) {
-          setDraft({
-            name: next.name,
-            description: next.description ?? '',
-            priority: next.priority === null || next.priority === undefined ? '' : String(next.priority),
-            project_id: next.project_id ?? '',
-            status: next.status,
-          })
-        }
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setError(err.message)
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
+    setError(null)
+    try {
+      const [nextEpic, taskRes] = await Promise.all([
+        api.getEpic(id),
+        api.listTasks({ epic_id: id }),
+      ])
+      if (myGen !== loadGeneration.current) return
+      const nextProject = nextEpic.project_id
+        ? await api.getProject(nextEpic.project_id).catch(() => null)
+        : null
+      if (myGen !== loadGeneration.current) return
+      setEpic(nextEpic)
+      setTasks(taskRes.tasks)
+      setProject(nextProject)
+    } catch (err) {
+      if (myGen !== loadGeneration.current) return
+      setError(err instanceof Error ? err.message : 'Failed to load epic')
+    } finally {
+      if (myGen === loadGeneration.current) setLoading(false)
     }
   }, [api, id])
 
   useEffect(() => {
-    if (!lastEvent || !id) return
-    void api.getEpic(id).then(setEpic).catch(() => {})
-  }, [api, id, lastEvent])
+    void load()
+  }, [load])
 
   useEffect(() => {
-    void api.listProjects().then((res) => setProjects(res.projects)).catch(() => {})
-  }, [api])
+    if (!lastEvent) return
+    void load()
+  }, [lastEvent, load])
 
-  async function saveDraft() {
-    if (!id) return
-    setSaving(true)
-    try {
-      const updated = await api.updateEpic(id, {
-        name: draft.name.trim(),
-        description: draft.description.trim(),
-        priority: draft.priority.trim() ? Number(draft.priority.trim()) : null,
-        project_id: draft.project_id || null,
-        status: draft.status,
-      })
-      setEpic(updated)
-      setEditing(false)
-      notifySuccess(`Updated ${updated.name}`)
-    } catch (err) {
-      notifyError(err, 'Failed to update epic')
-    } finally {
-      setSaving(false)
-    }
-  }
+  const rollup = useMemo(() => buildTaskRollup(tasks), [tasks])
 
   if (loading) {
     return (
       <div className="p-6 flex flex-col gap-4">
         <Skeleton className="h-8 w-64" />
-        <Skeleton className="h-32 w-full rounded-lg" />
+        <Skeleton className="h-48 w-full rounded-2xl" />
+        <Skeleton className="h-64 w-full rounded-2xl" />
       </div>
     )
   }
@@ -127,74 +84,48 @@ export default function EpicDetailPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <DetailHeader title={epic.name} backTo="/operations" backLabel="Operations" id={epic.id} status={epic.status}>
-        {epic.priority !== null && epic.priority !== undefined && <PriorityBadge priority={epic.priority} />}
-        <Button variant="outline" size="sm" onClick={() => setEditing((prev) => !prev)}>
-          {editing ? <X className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
-          {editing ? 'Cancel' : 'Edit'}
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => navigate(`/operations?epic_id=${epic.id}`)}>
-          <ExternalLink className="h-3.5 w-3.5" />
-          Open in Operations
-        </Button>
-      </DetailHeader>
-
+      <DetailHeader title={epic.name} backTo="/epics" backLabel="Epics" id={epic.id} status={epic.status} />
       <div className="flex-1 overflow-auto p-6">
-        {editing ? (
-          <div className="grid gap-4 md:grid-cols-2">
-            <EditField label="Name">
-              <Input value={draft.name} onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))} />
-            </EditField>
-            <EditField label="Status">
-              <select className="h-9 rounded-md border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-100" value={draft.status} onChange={(e) => setDraft((prev) => ({ ...prev, status: e.target.value as ContainerStatus }))}>
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-              </select>
-            </EditField>
-            <EditField label="Description" className="md:col-span-2">
-              <Textarea value={draft.description} onChange={(e) => setDraft((prev) => ({ ...prev, description: e.target.value }))} rows={4} />
-            </EditField>
-            <EditField label="Project">
-              <select className="h-9 rounded-md border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-100" value={draft.project_id} onChange={(e) => setDraft((prev) => ({ ...prev, project_id: e.target.value }))}>
-                <option value="">None</option>
-                {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-              </select>
-            </EditField>
-            <EditField label="Priority">
-              <Input value={draft.priority} onChange={(e) => setDraft((prev) => ({ ...prev, priority: e.target.value }))} placeholder="Optional integer" />
-            </EditField>
-            <div className="md:col-span-2 flex items-center gap-2">
-              <Button onClick={saveDraft} disabled={saving || !draft.name.trim()}>
-                <Save className="h-3.5 w-3.5" />
-                {saving ? 'Saving…' : 'Save'}
-              </Button>
-            </div>
+        <div className="flex flex-col gap-6">
+          <ScopeDetailHero
+            kindLabel="Epic"
+            title={epic.name}
+            id={epic.id}
+            status={epic.status}
+            description={epic.description}
+            progress={rollup}
+            metrics={[
+              { label: 'Open', value: rollup.open },
+              { label: 'Doing', value: rollup.doing, accentColor: '#60a5fa' },
+              { label: 'Blocked', value: rollup.blocked, accentColor: '#f87171' },
+              { label: 'Done', value: rollup.done, accentColor: '#34d399' },
+            ]}
+            meta={[
+              { label: 'Project', value: project?.name ?? 'None' },
+              { label: 'Priority', value: epic.priority === null ? 'None' : `P${epic.priority}` },
+              { label: 'Updated', value: new Date(epic.updated_at).toLocaleString() },
+            ]}
+            actions={
+              <>
+                <Button variant="outline" size="sm" onClick={() => navigate(`/epics/${epic.id}/edit`)}>
+                  <Pencil className="h-3.5 w-3.5" />
+                  Edit
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => navigate(`/operations?epic_id=${epic.id}`)}>
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Open in Operations
+                </Button>
+              </>
+            }
+          />
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <ScopeMetaCard label="Description" value={epic.description || 'No description set.'} className="md:col-span-2 xl:col-span-4" />
           </div>
-        ) : (
-          <div className="grid gap-4 md:grid-cols-2">
-            <InfoCard label="Description" value={epic.description || 'No description'} />
-            <InfoCard label="Project" value={projectName || 'None'} />
-          </div>
-        )}
+
+          <ScopeTaskPanel tasks={tasks} />
+        </div>
       </div>
-    </div>
-  )
-}
-
-function InfoCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-4">
-      <div className="mb-1 text-[11px] uppercase tracking-[0.18em] text-zinc-500">{label}</div>
-      <div className="whitespace-pre-wrap text-sm text-zinc-200">{value}</div>
-    </div>
-  )
-}
-
-function EditField({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
-  return (
-    <div className={className}>
-      <div className="mb-1 text-[11px] uppercase tracking-[0.18em] text-zinc-500">{label}</div>
-      {children}
     </div>
   )
 }

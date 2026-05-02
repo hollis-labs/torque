@@ -16,7 +16,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useApi } from '@/hooks/use-api'
 import { isHtmlApiFallbackError } from '@/lib/api'
 import { notifyError, notifySuccess } from '@/lib/toast'
-import type { Epic, FeatureFlags, Project, ProjectArtifact, Sprint } from '@/lib/types'
+import type { ContainerStatus, Epic, FeatureFlags, Project, ProjectArtifact, Sprint } from '@/lib/types'
 
 interface ScopeManagerDialogProps {
   open: boolean
@@ -26,6 +26,7 @@ interface ScopeManagerDialogProps {
 }
 
 type ScopeTab = 'projects' | 'epics' | 'sprints'
+type ScopeRecordStatus = Exclude<ContainerStatus, 'completed'>
 
 type ProjectDraft = {
   id?: string
@@ -38,7 +39,7 @@ type ProjectDraft = {
   contextPaths: string
   permissions: string
   rules: string
-  status: 'active' | 'inactive'
+  status: ScopeRecordStatus
   icon: string
 }
 
@@ -58,7 +59,7 @@ type EpicDraft = {
   id?: string
   name: string
   description: string
-  status: 'active' | 'inactive'
+  status: ScopeRecordStatus
   projectId: string
   priority: string
 }
@@ -67,7 +68,7 @@ type SprintDraft = {
   id?: string
   name: string
   goal: string
-  status: 'active' | 'inactive'
+  status: ContainerStatus
   projectId: string
   approvalMode: string
   costBudget: string
@@ -159,6 +160,10 @@ function linesToPermissions(value: string): Record<string, string> {
   return out
 }
 
+function normalizeScopeRecordStatus(status: ContainerStatus): ScopeRecordStatus {
+  return status === 'inactive' ? 'inactive' : 'active'
+}
+
 function projectToDraft(project: Project): ProjectDraft {
   return {
     id: project.id,
@@ -171,7 +176,7 @@ function projectToDraft(project: Project): ProjectDraft {
     contextPaths: listToLines(project.context_paths),
     permissions: permissionsToLines(project.permissions),
     rules: listToLines(project.rules),
-    status: project.status,
+    status: normalizeScopeRecordStatus(project.status),
     icon: project.icon,
   }
 }
@@ -195,7 +200,7 @@ function epicToDraft(epic: Epic): EpicDraft {
     id: epic.id,
     name: epic.name,
     description: epic.description,
-    status: epic.status,
+    status: normalizeScopeRecordStatus(epic.status),
     projectId: epic.project_id ?? NONE,
     priority: epic.priority === null || epic.priority === undefined ? '' : String(epic.priority),
   }
@@ -639,7 +644,7 @@ export function ScopeManagerDialog({ open, onOpenChange, flags, onDataChange }: 
                     <select
                       className="h-8 rounded-md border border-zinc-800 bg-zinc-950 px-2 text-sm text-zinc-100"
                       value={projectDraft.status}
-                      onChange={(e) => setProjectDraft((prev) => ({ ...prev, status: e.target.value as 'active' | 'inactive' }))}
+                      onChange={(e) => setProjectDraft((prev) => ({ ...prev, status: e.target.value as ScopeRecordStatus }))}
                     >
                       <option value="active">Active</option>
                       <option value="inactive">Inactive</option>
@@ -799,7 +804,7 @@ export function ScopeManagerDialog({ open, onOpenChange, flags, onDataChange }: 
                   <Input value={epicDraft.name} onChange={(e) => setEpicDraft((prev) => ({ ...prev, name: e.target.value }))} />
                 </Field>
                 <Field label="Status">
-                  <select className="h-8 rounded-md border border-zinc-800 bg-zinc-950 px-2 text-sm text-zinc-100" value={epicDraft.status} onChange={(e) => setEpicDraft((prev) => ({ ...prev, status: e.target.value as 'active' | 'inactive' }))}>
+                  <select className="h-8 rounded-md border border-zinc-800 bg-zinc-950 px-2 text-sm text-zinc-100" value={epicDraft.status} onChange={(e) => setEpicDraft((prev) => ({ ...prev, status: e.target.value as ScopeRecordStatus }))}>
                     <option value="active">Active</option>
                     <option value="inactive">Inactive</option>
                   </select>
@@ -850,9 +855,10 @@ export function ScopeManagerDialog({ open, onOpenChange, flags, onDataChange }: 
                   <Input value={sprintDraft.name} onChange={(e) => setSprintDraft((prev) => ({ ...prev, name: e.target.value }))} />
                 </Field>
                 <Field label="Status">
-                  <select className="h-8 rounded-md border border-zinc-800 bg-zinc-950 px-2 text-sm text-zinc-100" value={sprintDraft.status} onChange={(e) => setSprintDraft((prev) => ({ ...prev, status: e.target.value as 'active' | 'inactive' }))}>
+                  <select className="h-8 rounded-md border border-zinc-800 bg-zinc-950 px-2 text-sm text-zinc-100" value={sprintDraft.status} onChange={(e) => setSprintDraft((prev) => ({ ...prev, status: e.target.value as ContainerStatus }))}>
                     <option value="active">Active</option>
                     <option value="inactive">Inactive</option>
+                    <option value="completed">Completed</option>
                   </select>
                 </Field>
                 <Field label="Project">

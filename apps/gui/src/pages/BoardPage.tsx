@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { useSearchParams, useLocation } from 'react-router-dom'
+import { useSearchParams, useLocation, useNavigate } from 'react-router-dom'
 import { Skeleton } from '@/components/ui/skeleton'
 import { PageHeader } from '@/components/domain/page-header'
 import { SummaryCards } from '@/components/domain/summary-cards'
@@ -67,6 +67,7 @@ export default function BoardPage() {
   const { lastEvent } = useSSE(SSE_EVENTS)
   const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
+  const navigate = useNavigate()
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   // Filter state derived from URL (URL is source of truth for round-tripping)
@@ -479,6 +480,21 @@ export default function BoardPage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader title="Operations">
+        {flags.projects && (
+          <Button variant="outline" size="sm" onClick={() => navigate('/projects')}>
+            Projects
+          </Button>
+        )}
+        {flags.sprints && (
+          <Button variant="outline" size="sm" onClick={() => navigate('/sprints')}>
+            Sprints
+          </Button>
+        )}
+        {flags.epics && (
+          <Button variant="outline" size="sm" onClick={() => navigate('/epics')}>
+            Epics
+          </Button>
+        )}
         {(flags.projects || flags.epics || flags.sprints) && (
           <Button variant="outline" size="sm" onClick={() => setScopeManagerOpen(true)}>
             <FolderTree className="h-3.5 w-3.5" />
