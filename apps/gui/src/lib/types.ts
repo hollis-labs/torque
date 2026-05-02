@@ -231,7 +231,7 @@ export interface FeatureFlags {
   epics: boolean
 }
 
-export type ContainerStatus = 'active' | 'inactive'
+export type ContainerStatus = 'active' | 'inactive' | 'completed'
 
 export interface Project {
   id: string

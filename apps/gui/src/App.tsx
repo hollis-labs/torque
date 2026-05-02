@@ -11,8 +11,14 @@ import DashboardPage from '@/pages/DashboardPage'
 import WidgetPreviewPage from '@/pages/WidgetPreviewPage'
 import SettingsPage from '@/pages/SettingsPage'
 import ProjectDetailPage from '@/pages/ProjectDetailPage'
+import ProjectsPage from '@/pages/ProjectsPage'
 import SprintDetailPage from '@/pages/SprintDetailPage'
+import SprintsPage from '@/pages/SprintsPage'
 import EpicDetailPage from '@/pages/EpicDetailPage'
+import EpicsPage from '@/pages/EpicsPage'
+import ProjectEditPage from '@/pages/ProjectEditPage'
+import SprintEditPage from '@/pages/SprintEditPage'
+import EpicEditPage from '@/pages/EpicEditPage'
 import TemplatesPage from '@/pages/TemplatesPage'
 import TemplateDetailPage from '@/pages/TemplateDetailPage'
 import CheckpointsPage from '@/pages/CheckpointsPage'
@@ -100,9 +106,15 @@ function AppShell() {
           <Route path="/" element={<Navigate to="/operations" replace />} />
           <Route path="/operations" element={<BoardPage />} />
           <Route path="/tasks/:id" element={<TaskDetailPage />} />
+          <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/:id" element={<ProjectDetailPage />} />
+          <Route path="/projects/:id/edit" element={<ProjectEditPage />} />
+          <Route path="/sprints" element={<SprintsPage />} />
           <Route path="/sprints/:id" element={<SprintDetailPage />} />
+          <Route path="/sprints/:id/edit" element={<SprintEditPage />} />
+          <Route path="/epics" element={<EpicsPage />} />
           <Route path="/epics/:id" element={<EpicDetailPage />} />
+          <Route path="/epics/:id/edit" element={<EpicEditPage />} />
           <Route path="/plans" element={<PlansPage />} />
           <Route path="/plans/:id" element={<PlanDetailPage />} />
           <Route path="/templates" element={<TemplatesPage />} />

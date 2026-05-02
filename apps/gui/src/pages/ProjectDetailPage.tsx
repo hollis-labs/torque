@@ -1,29 +1,29 @@
-import { useState, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
-import { ExternalLink, FileText, FolderOpen } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+import { ExternalLink, FileText, FolderOpen, Pencil } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { DetailHeader } from '@/components/domain/detail-header'
 import { EmptyState } from '@/components/domain/empty-state'
+import { ScopeDetailHero } from '@/components/domain/scope-detail-hero'
+import { ScopeMetaCard } from '@/components/domain/scope-meta-card'
+import { ScopeCollectionPanel } from '@/components/domain/scope-collection-panel'
+import { ScopeTaskPanel } from '@/components/domain/scope-task-panel'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
 import { isHtmlApiFallbackError } from '@/lib/api'
-import type { Project, ProjectArtifact } from '@/lib/types'
+import { buildTaskRollup } from '@/lib/scope-metrics'
+import type { Epic, Project, ProjectArtifact, Sprint, Task } from '@/lib/types'
 
-const SSE_EVENTS = ['project.updated', 'project.created', 'project.deleted']
+const SSE_EVENTS = ['project.updated', 'project.created', 'project.deleted', 'task.updated', 'task.created', 'task.transitioned']
 
-function MetaBlock({ label, value }: { label: string; value: string | string[] | Record<string, string> }) {
-  let content: string
-  if (Array.isArray(value)) content = value.join('\n')
-  else if (typeof value === 'object') content = Object.entries(value).map(([key, val]) => `${key}=${val}`).join('\n')
-  else content = value
-  if (!content.trim()) return null
-  return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3">
-      <div className="mb-1 text-[11px] uppercase tracking-[0.18em] text-zinc-500">{label}</div>
-      <pre className="whitespace-pre-wrap break-words text-sm text-zinc-200">{content}</pre>
-    </div>
-  )
+function preformatted(value: string[] | Record<string, string> | string) {
+  if (Array.isArray(value)) return value.length > 0 ? value.join('\n') : 'None'
+  if (typeof value === 'object') {
+    const entries = Object.entries(value)
+    return entries.length > 0 ? entries.map(([key, val]) => `${key}=${val}`).join('\n') : 'None'
+  }
+  return value || 'None'
 }
 
 export default function ProjectDetailPage() {
@@ -31,61 +31,66 @@ export default function ProjectDetailPage() {
   const api = useApi()
   const navigate = useNavigate()
   const { lastEvent } = useSSE(SSE_EVENTS)
-
   const [project, setProject] = useState<Project | null>(null)
+  const [tasks, setTasks] = useState<Task[]>([])
+  const [sprints, setSprints] = useState<Sprint[]>([])
+  const [epics, setEpics] = useState<Epic[]>([])
   const [artifacts, setArtifacts] = useState<ProjectArtifact[]>([])
+  const [artifactWarning, setArtifactWarning] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [artifactWarning, setArtifactWarning] = useState<string | null>(null)
 
-  useEffect(() => {
+  async function load() {
     if (!id) return
-    let cancelled = false
-    setLoading(true)
-    void Promise.all([
-      api.getProject(id),
-      api.listProjectArtifacts(id).catch(() => ({ artifacts: [] as ProjectArtifact[] })),
-    ])
-      .then(([nextProject, artifactRes]) => {
-        if (cancelled) return
-        setProject(nextProject)
+    try {
+      const [nextProject, taskRes, sprintRes, epicRes] = await Promise.all([
+        api.getProject(id),
+        api.listTasks({ project_id: id }),
+        api.listSprints({ project_id: id }),
+        api.listEpics({ project_id: id }),
+      ])
+      setProject(nextProject)
+      setTasks(taskRes.tasks)
+      setSprints(sprintRes.sprints)
+      setEpics(epicRes.epics)
+      setError(null)
+
+      try {
+        const artifactRes = await api.listProjectArtifacts(id)
         setArtifacts(artifactRes.artifacts)
         setArtifactWarning(null)
-        setError(null)
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setError(err.message)
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [api, id])
-
-  useEffect(() => {
-    if (!lastEvent || !id) return
-    void api.getProject(id).then(setProject).catch(() => {})
-    void api.listProjectArtifacts(id)
-      .then((res) => {
-        setArtifacts(res.artifacts)
-        setArtifactWarning(null)
-      })
-      .catch((err) => {
+      } catch (err) {
         if (isHtmlApiFallbackError(err) || (err instanceof Error && /HTTP 404|not found/i.test(err.message))) {
           setArtifacts([])
           setArtifactWarning('Project artifacts are unavailable from the current backend runtime. The API route is missing or stale.')
+        } else {
+          throw err
         }
-      })
-  }, [api, id, lastEvent])
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load project')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void load()
+  }, [id])
+
+  useEffect(() => {
+    if (!lastEvent) return
+    void load()
+  }, [lastEvent, id])
+
+  const rollup = useMemo(() => buildTaskRollup(tasks), [tasks])
 
   if (loading) {
     return (
       <div className="p-6 flex flex-col gap-4">
         <Skeleton className="h-8 w-64" />
-        <Skeleton className="h-32 w-full rounded-lg" />
-        <Skeleton className="h-48 w-full rounded-lg" />
+        <Skeleton className="h-48 w-full rounded-2xl" />
+        <Skeleton className="h-64 w-full rounded-2xl" />
       </div>
     )
   }
@@ -100,65 +105,116 @@ export default function ProjectDetailPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <DetailHeader title={project.name} backTo="/operations" backLabel="Operations" id={project.id} status={project.status}>
-        <Button variant="outline" size="sm" onClick={() => navigate(`/operations?project_id=${project.id}`)}>
-          <ExternalLink className="h-3.5 w-3.5" />
-          Open in Operations
-        </Button>
-      </DetailHeader>
-
+      <DetailHeader title={project.name} backTo="/projects" backLabel="Projects" id={project.id} status={project.status} />
       <div className="flex-1 overflow-auto p-6">
-        <div className="grid gap-4 md:grid-cols-2">
-          <MetaBlock label="Description" value={project.description} />
-          <MetaBlock label="Project Path" value={project.repo_path} />
-          <MetaBlock label="Agent Path" value={project.agent_path} />
-          <MetaBlock label="Read Paths" value={project.read_paths} />
-          <MetaBlock label="Write Paths" value={project.write_paths} />
-          <MetaBlock label="Additional Context Dirs" value={project.context_paths} />
-          <MetaBlock label="Permissions" value={project.permissions} />
-          <MetaBlock label="Rules" value={project.rules} />
-        </div>
+        <div className="flex flex-col gap-6">
+          <ScopeDetailHero
+            kindLabel="Project"
+            title={project.name}
+            id={project.id}
+            status={project.status}
+            description={project.description}
+            progress={rollup}
+            metrics={[
+              { label: 'Open', value: rollup.open },
+              { label: 'Doing', value: rollup.doing, accentColor: '#60a5fa' },
+              { label: 'Blocked', value: rollup.blocked, accentColor: '#f87171' },
+              { label: 'Done', value: rollup.done, accentColor: '#34d399' },
+            ]}
+            meta={[
+              { label: 'Repo Path', value: <span className="font-mono text-xs text-zinc-300">{project.repo_path || 'Not set'}</span> },
+              { label: 'Agent Path', value: <span className="font-mono text-xs text-zinc-300">{project.agent_path || 'Not set'}</span> },
+              { label: 'Sprints', value: sprints.length },
+              { label: 'Epics', value: epics.length },
+            ]}
+            actions={
+              <>
+                <Button variant="outline" size="sm" onClick={() => navigate(`/projects/${project.id}/edit`)}>
+                  <Pencil className="h-3.5 w-3.5" />
+                  Edit
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => navigate(`/operations?project_id=${project.id}`)}>
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Open in Operations
+                </Button>
+              </>
+            }
+          />
 
-        <div className="mt-8 rounded-xl border border-zinc-800 bg-zinc-950/60">
-          <div className="border-b border-zinc-800 px-4 py-3">
-            <h2 className="text-sm font-semibold text-zinc-100">Artifacts</h2>
-            <p className="mt-1 text-sm text-zinc-500">Authoritative project documents, folders, and references inherited by tasks at run time.</p>
+          <div className="grid gap-6 xl:grid-cols-2">
+            <ScopeCollectionPanel
+              title="Sprints"
+              items={sprints.map((sprint) => ({
+                id: sprint.id,
+                title: sprint.name,
+                to: `/sprints/${sprint.id}`,
+                status: sprint.status,
+                subtitle: sprint.goal || 'No goal set.',
+                progress: buildTaskRollup(tasks.filter((task) => task.sprint_id === sprint.id)),
+              }))}
+              emptyMessage="No sprints are attached to this project yet."
+            />
+            <ScopeCollectionPanel
+              title="Epics"
+              items={epics.map((epic) => ({
+                id: epic.id,
+                title: epic.name,
+                to: `/epics/${epic.id}`,
+                status: epic.status,
+                subtitle: epic.description || 'No description set.',
+                progress: buildTaskRollup(tasks.filter((task) => task.epic_id === epic.id)),
+              }))}
+              emptyMessage="No epics are attached to this project yet."
+            />
           </div>
-          {artifactWarning && (
-            <div className="border-b border-amber-700/40 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
-              {artifactWarning}
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <ScopeMetaCard label="Read Paths" value={<pre className="whitespace-pre-wrap break-words text-sm text-zinc-200">{preformatted(project.read_paths)}</pre>} />
+            <ScopeMetaCard label="Write Paths" value={<pre className="whitespace-pre-wrap break-words text-sm text-zinc-200">{preformatted(project.write_paths)}</pre>} />
+            <ScopeMetaCard label="Context Paths" value={<pre className="whitespace-pre-wrap break-words text-sm text-zinc-200">{preformatted(project.context_paths)}</pre>} />
+            <ScopeMetaCard label="Permissions" value={<pre className="whitespace-pre-wrap break-words text-sm text-zinc-200">{preformatted(project.permissions)}</pre>} />
+            <ScopeMetaCard label="Rules" value={<pre className="whitespace-pre-wrap break-words text-sm text-zinc-200">{preformatted(project.rules)}</pre>} className="md:col-span-2 xl:col-span-4" />
+          </div>
+
+          <section className="rounded-2xl border border-zinc-800/80 bg-zinc-950/70">
+            <div className="border-b border-zinc-800/80 px-5 py-4">
+              <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-400">Artifacts</h2>
+              <p className="mt-1 text-sm text-zinc-500">Authoritative project documents and folders inherited by tasks.</p>
             </div>
-          )}
-          {artifacts.length === 0 ? (
-            <div className="px-4 py-6 text-sm text-zinc-500">No project artifacts registered yet.</div>
-          ) : (
-            <div className="divide-y divide-zinc-800">
-              {artifacts.map((artifact) => (
-                <div key={artifact.id} className="grid gap-2 px-4 py-3 md:grid-cols-[1fr,160px,220px]">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-zinc-100">
-                      {artifact.entry_type === 'folder' ? <FolderOpen className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
-                      <span className="font-medium">{artifact.title || artifact.file_path}</span>
+            {artifactWarning && (
+              <div className="border-b border-amber-700/40 bg-amber-950/30 px-5 py-3 text-sm text-amber-200">
+                {artifactWarning}
+              </div>
+            )}
+            {artifacts.length === 0 ? (
+              <div className="px-5 py-8 text-sm text-zinc-500">No project artifacts registered yet.</div>
+            ) : (
+              <div className="divide-y divide-zinc-800/70">
+                {artifacts.map((artifact) => (
+                  <div key={artifact.id} className="grid gap-3 px-5 py-4 xl:grid-cols-[minmax(0,1fr)_220px_220px]">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 text-zinc-100">
+                        {artifact.entry_type === 'folder' ? <FolderOpen className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
+                        <span className="font-medium">{artifact.title || artifact.file_path}</span>
+                      </div>
+                      <div className="mt-1 font-mono text-xs text-zinc-400">{artifact.file_path}</div>
+                      {artifact.description && <p className="mt-2 text-sm text-zinc-300">{artifact.description}</p>}
                     </div>
-                    <div className="mt-1 font-mono text-xs text-zinc-400">{artifact.file_path}</div>
-                    {artifact.description && <p className="mt-2 text-sm text-zinc-300">{artifact.description}</p>}
-                  </div>
-                  <div className="text-sm text-zinc-400">
-                    <div className="mb-1 text-[11px] uppercase tracking-[0.18em] text-zinc-500">Rules</div>
-                    <div>{artifact.rules.length > 0 ? artifact.rules.join(', ') : 'None'}</div>
-                  </div>
-                  <div className="text-sm text-zinc-400">
-                    <div className="mb-1 text-[11px] uppercase tracking-[0.18em] text-zinc-500">Permissions</div>
-                    <div>
-                      {Object.keys(artifact.permissions).length > 0
-                        ? Object.entries(artifact.permissions).map(([key, val]) => `${key}=${val}`).join(', ')
-                        : 'None'}
+                    <div className="text-sm text-zinc-400">
+                      <div className="mb-1 text-[11px] uppercase tracking-[0.18em] text-zinc-500">Rules</div>
+                      <div>{artifact.rules.length > 0 ? artifact.rules.join(', ') : 'None'}</div>
+                    </div>
+                    <div className="text-sm text-zinc-400">
+                      <div className="mb-1 text-[11px] uppercase tracking-[0.18em] text-zinc-500">Permissions</div>
+                      <div>{Object.keys(artifact.permissions).length > 0 ? Object.entries(artifact.permissions).map(([key, val]) => `${key}=${val}`).join(', ') : 'None'}</div>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )}
+          </section>
+
+          <ScopeTaskPanel tasks={tasks} />
         </div>
       </div>
     </div>
