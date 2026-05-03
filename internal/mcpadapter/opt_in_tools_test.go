@@ -369,10 +369,15 @@ func TestTaskAssociationUpdateViaMCP(t *testing.T) {
 	require.NoError(t, svc.Feature.Enable("epics"))
 	a := adapterFromService(svc)
 
-	// Create entities
+	// Create entities. project_create requires repo_path (real-shape project — repo_path is
+	// load-bearing for production callers; supplying a value here matches the project_create
+	// contract rather than papering over scope drift).
 	sprintText, isErr := callTool(t, a, "clockwork_sprint_create", map[string]interface{}{"name": "Sprint"})
 	require.False(t, isErr)
-	projectText, isErr := callTool(t, a, "clockwork_project_create", map[string]interface{}{"name": "Project"})
+	projectText, isErr := callTool(t, a, "clockwork_project_create", map[string]interface{}{
+		"name":      "Project",
+		"repo_path": "/tmp/clockwork-test/task-association",
+	})
 	require.False(t, isErr)
 	epicText, isErr := callTool(t, a, "clockwork_epic_create", map[string]interface{}{"name": "Epic"})
 	require.False(t, isErr)
