@@ -119,13 +119,14 @@ func TestHTTP_NestedComments_EmptyContentIs400(t *testing.T) {
 	resp.Body.Close()
 }
 
-// Regression guard: the flat /api/v1/comments endpoints must still accept the
-// legacy task_id shape used by existing callers (MCP-equivalent HTTP clients,
-// curl) — server-side it normalizes to entity_type="task".
-func TestHTTP_FlatComments_LegacyTaskIDShapeStillWorks(t *testing.T) {
+// CW-20260503-0007: the legacy task_id alias on the flat /comments endpoint
+// has been removed. Both POST body and GET query forms must now be rejected
+// with a clear 400 that names the new entity_type + entity_id shape.
+func TestHTTP_FlatComments_LegacyTaskIDShapeRejected(t *testing.T) {
 	ts := setupTestServer(t)
 	taskID := createCommentsTestTask(t, ts.URL)
 
+	// POST body {"task_id": ...} must 400.
 	body := `{"task_id":"` + taskID + `","author":"carol","content":"flat style"}`
 	postResp, err := http.Post(
 		ts.URL+"/api/v1/comments",
@@ -133,15 +134,22 @@ func TestHTTP_FlatComments_LegacyTaskIDShapeStillWorks(t *testing.T) {
 		bytes.NewBufferString(body),
 	)
 	require.NoError(t, err)
-	require.Equal(t, http.StatusCreated, postResp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, postResp.StatusCode)
+	postRaw, _ := io.ReadAll(postResp.Body)
 	postResp.Body.Close()
+	assert.Contains(t, string(postRaw), "task_id is no longer accepted",
+		"error should explain the alias removal; got %s", string(postRaw))
+	assert.Contains(t, string(postRaw), "entity_type",
+		"error should name the new shape; got %s", string(postRaw))
 
+	// GET ?task_id=... must 400 too.
 	getResp, err := http.Get(ts.URL + "/api/v1/comments?task_id=" + taskID)
 	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, getResp.StatusCode)
-	raw, _ := io.ReadAll(getResp.Body)
+	assert.Equal(t, http.StatusBadRequest, getResp.StatusCode)
+	getRaw, _ := io.ReadAll(getResp.Body)
 	getResp.Body.Close()
-	assert.True(t, strings.Contains(string(raw), `"carol"`), "response should include posted author; got %s", string(raw))
+	assert.Contains(t, string(getRaw), "task_id is no longer accepted",
+		"error should explain the alias removal; got %s", string(getRaw))
 }
 
 // TestHTTP_FlatComments_PolymorphicShape exercises the new entity_type +
