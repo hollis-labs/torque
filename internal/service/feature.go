@@ -4,9 +4,10 @@ import "github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 
 // knownFeatures lists all valid opt-in feature names.
 var knownFeatures = map[string]bool{
-	"sprints":  true,
-	"projects": true,
-	"epics":    true,
+	"sprints":     true,
+	"projects":    true,
+	"epics":       true,
+	"collections": true,
 }
 
 // FeatureService controls opt-in feature flags stored in the settings table.
