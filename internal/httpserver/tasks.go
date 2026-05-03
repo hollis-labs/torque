@@ -82,6 +82,15 @@ func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, agg *sqlstore.T
 
 		"parent_id": nullStr(t.ParentID),
 
+		// Collections (migration 020). NULL collection_id with non-NULL
+		// added_to_collections_at means "in the inbox" (touched by collection
+		// flow but currently unassigned); both NULL means "fresh, never
+		// touched by collections". collection_position is included for
+		// completeness but the GUI doesn't currently consume it.
+		"collection_id":            nullStr(t.CollectionID),
+		"collection_position":      nullInt(t.CollectionPosition),
+		"added_to_collections_at":  nullTime(t.AddedToCollectionsAt),
+
 		// Run roll-up — prompt/completion/cost summed across all recorded
 		// runs for this task, plus a turn count. Nil aggregate renders
 		// zeroes so clients can rely on the keys always being present.
