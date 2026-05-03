@@ -144,7 +144,15 @@ export function TaskActionsMenu({
           >
             {triggerContent}
           </DropdownMenuTrigger>
-          <DropdownMenuContent align={align} className="min-w-44">
+          {/* data-row-interactive on the portaled content too — synthetic event
+              bubbling from menu items reaches the parent <tr> in BoardPage,
+              and its row-click handler checks via DOM closest(). Without this,
+              clicking any item that opens a dialog fires row navigation first. */}
+          <DropdownMenuContent
+            align={align}
+            className="min-w-44"
+            data-row-interactive="true"
+          >
             {showApprove && (
               <DropdownMenuItem onClick={() => runTransition('done', 'Approved')}>
                 Approve
