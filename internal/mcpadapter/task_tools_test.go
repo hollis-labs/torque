@@ -463,8 +463,11 @@ func TestFullStack_TaskList_FilterByProjectID(t *testing.T) {
 	a := setupAdapterWithFeatures(t)
 
 	// Create the projects first (features are enabled, so task_create validates existence).
+	// repo_path supplied because project_create requires it for real-shape projects;
+	// distinct paths keep the two projects unambiguously separate fixtures.
 	text, isErr := callTool(t, a, "clockwork_project_create", map[string]interface{}{
-		"name": "Alpha",
+		"name":      "Alpha",
+		"repo_path": "/tmp/clockwork-test/alpha",
 	})
 	require.False(t, isErr, "create project Alpha: %s", text)
 	var projAlpha map[string]interface{}
@@ -472,7 +475,8 @@ func TestFullStack_TaskList_FilterByProjectID(t *testing.T) {
 	alphaID := projAlpha["ID"].(string)
 
 	text, isErr = callTool(t, a, "clockwork_project_create", map[string]interface{}{
-		"name": "Beta",
+		"name":      "Beta",
+		"repo_path": "/tmp/clockwork-test/beta",
 	})
 	require.False(t, isErr, "create project Beta: %s", text)
 	var projBeta map[string]interface{}
@@ -614,14 +618,21 @@ func TestFullStack_TaskList_FilterByManual(t *testing.T) {
 func TestFullStack_TaskList_CombinedSearchAndProjectID(t *testing.T) {
 	a := setupAdapterWithFeatures(t)
 
-	// Create projects.
-	text, isErr := callTool(t, a, "clockwork_project_create", map[string]interface{}{"name": "Alpha"})
+	// Create projects. repo_path supplied because project_create requires it for real-shape
+	// projects; the test exercises combined search+project_id filtering, not validation edges.
+	text, isErr := callTool(t, a, "clockwork_project_create", map[string]interface{}{
+		"name":      "Alpha",
+		"repo_path": "/tmp/clockwork-test/alpha",
+	})
 	require.False(t, isErr)
 	var projAlpha map[string]interface{}
 	parseData(t, text, &projAlpha)
 	alphaID := projAlpha["ID"].(string)
 
-	text, isErr = callTool(t, a, "clockwork_project_create", map[string]interface{}{"name": "Beta"})
+	text, isErr = callTool(t, a, "clockwork_project_create", map[string]interface{}{
+		"name":      "Beta",
+		"repo_path": "/tmp/clockwork-test/beta",
+	})
 	require.False(t, isErr)
 	var projBeta map[string]interface{}
 	parseData(t, text, &projBeta)
