@@ -448,9 +448,9 @@ export default function CollectionsPage() {
       const sameContainer = source.collectionId === target.collectionId
 
       // Compute target index in the destination list. When dropping on
-      // a row, place AFTER it (matches the dnd-kit sortable convention
-      // where releasing on a row swaps positions). When dropping on a
-      // container with no row target, append.
+      // a row, place AT that row's index — splice(index, 0, moved) puts
+      // the moved task BEFORE the target row, pushing it down by one.
+      // When dropping on a container with no row target, append.
       const destList: Task[] =
         target.collectionId === null
           ? inboxTasks
