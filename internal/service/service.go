@@ -16,6 +16,7 @@ type Service struct {
 	Sprint     *SprintService
 	Project    *ProjectService
 	Epic       *EpicService
+	Collection *CollectionService
 	Tag        *TagService
 	Checkpoint *CheckpointService
 	Template   *TemplateService
@@ -42,6 +43,7 @@ func New(store *sqlstore.Store) *Service {
 		Sprint:     &SprintService{store: store, feature: feature, task: task},
 		Project:    &ProjectService{store: store, feature: feature},
 		Epic:       &EpicService{store: store, feature: feature},
+		Collection: &CollectionService{store: store, feature: feature},
 		Tag:        tag,
 		Checkpoint: &CheckpointService{store: store},
 		Template:   &TemplateService{store: store, tasks: task},

@@ -45,7 +45,8 @@ func TestHTTP_NestedComments_PostAndList(t *testing.T) {
 	require.NoError(t, json.NewDecoder(postResp.Body).Decode(&created))
 	postResp.Body.Close()
 	assert.Equal(t, "hello from composer", created["content"])
-	assert.Equal(t, taskID, created["task_id"])
+	assert.Equal(t, "task", created["entity_type"])
+	assert.Equal(t, taskID, created["entity_id"])
 	assert.Equal(t, "user", created["author"])
 	assert.NotEmpty(t, created["created_at"])
 
@@ -60,7 +61,8 @@ func TestHTTP_NestedComments_PostAndList(t *testing.T) {
 	require.Len(t, listed, 1)
 	assert.Equal(t, "hello from composer", listed[0]["content"])
 	assert.Equal(t, "user", listed[0]["author"])
-	assert.Equal(t, taskID, listed[0]["task_id"])
+	assert.Equal(t, "task", listed[0]["entity_type"])
+	assert.Equal(t, taskID, listed[0]["entity_id"])
 }
 
 func TestHTTP_NestedComments_XUserHeaderOverridesAuthor(t *testing.T) {
@@ -117,12 +119,14 @@ func TestHTTP_NestedComments_EmptyContentIs400(t *testing.T) {
 	resp.Body.Close()
 }
 
-// Regression guard: the flat /api/v1/comments endpoints must still accept the
-// original shape used by existing callers (MCP-equivalent HTTP clients, curl).
-func TestHTTP_FlatComments_RegressionGuard(t *testing.T) {
+// CW-20260503-0007: the legacy task_id alias on the flat /comments endpoint
+// has been removed. Both POST body and GET query forms must now be rejected
+// with a clear 400 that names the new entity_type + entity_id shape.
+func TestHTTP_FlatComments_LegacyTaskIDShapeRejected(t *testing.T) {
 	ts := setupTestServer(t)
 	taskID := createCommentsTestTask(t, ts.URL)
 
+	// POST body {"task_id": ...} must 400.
 	body := `{"task_id":"` + taskID + `","author":"carol","content":"flat style"}`
 	postResp, err := http.Post(
 		ts.URL+"/api/v1/comments",
@@ -130,29 +134,67 @@ func TestHTTP_FlatComments_RegressionGuard(t *testing.T) {
 		bytes.NewBufferString(body),
 	)
 	require.NoError(t, err)
-	require.Equal(t, http.StatusCreated, postResp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, postResp.StatusCode)
+	postRaw, _ := io.ReadAll(postResp.Body)
 	postResp.Body.Close()
+	assert.Contains(t, string(postRaw), "task_id is no longer accepted",
+		"error should explain the alias removal; got %s", string(postRaw))
+	assert.Contains(t, string(postRaw), "entity_type",
+		"error should name the new shape; got %s", string(postRaw))
 
+	// GET ?task_id=... must 400 too.
 	getResp, err := http.Get(ts.URL + "/api/v1/comments?task_id=" + taskID)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, getResp.StatusCode)
+	getRaw, _ := io.ReadAll(getResp.Body)
+	getResp.Body.Close()
+	assert.Contains(t, string(getRaw), "task_id is no longer accepted",
+		"error should explain the alias removal; got %s", string(getRaw))
+}
+
+// TestHTTP_FlatComments_PolymorphicShape exercises the new entity_type +
+// entity_id query/body shape on the flat endpoint, validating that the
+// polymorphism is fully usable from HTTP without going through the
+// task-nested route.
+func TestHTTP_FlatComments_PolymorphicShape(t *testing.T) {
+	ts := setupTestServer(t)
+	taskID := createCommentsTestTask(t, ts.URL)
+
+	body := `{"entity_type":"task","entity_id":"` + taskID + `","author":"dan","content":"polymorphic style"}`
+	postResp, err := http.Post(
+		ts.URL+"/api/v1/comments",
+		"application/json",
+		bytes.NewBufferString(body),
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, postResp.StatusCode)
+	var created map[string]interface{}
+	require.NoError(t, json.NewDecoder(postResp.Body).Decode(&created))
+	postResp.Body.Close()
+	assert.Equal(t, "task", created["entity_type"])
+	assert.Equal(t, taskID, created["entity_id"])
+
+	getResp, err := http.Get(ts.URL + "/api/v1/comments?entity_type=task&entity_id=" + taskID)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, getResp.StatusCode)
 	raw, _ := io.ReadAll(getResp.Body)
 	getResp.Body.Close()
-	// Accept either the legacy {"comments":[...]} wrapper or a direct array,
-	// but must include the author we just posted.
-	assert.True(t, strings.Contains(string(raw), `"carol"`), "response should include posted author; got %s", string(raw))
+	assert.True(t, strings.Contains(string(raw), `"dan"`), "response should include posted author; got %s", string(raw))
 }
 
 func TestHTTP_NestedComments_MissingTaskReturns500OrError(t *testing.T) {
 	ts := setupTestServer(t)
 
-	// task_id that doesn't exist — FK violation surfaces as 500.
+	// FK is dropped in migration 019, so an "orphan" task_id (no matching
+	// task row) is now allowed at the persistence layer — comments are
+	// polymorphic and don't need their target entity to exist as a FK.
 	resp, err := http.Post(
 		ts.URL+"/api/v1/tasks/CW-NOPE/comments",
 		"application/json",
 		bytes.NewBufferString(`{"content":"orphan"}`),
 	)
 	require.NoError(t, err)
-	assert.GreaterOrEqual(t, resp.StatusCode, 400)
+	assert.Equal(t, http.StatusCreated, resp.StatusCode,
+		"comments are no longer FK-bound to tasks; orphan inserts succeed")
 	resp.Body.Close()
 }

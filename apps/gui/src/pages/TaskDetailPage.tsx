@@ -213,7 +213,7 @@ export default function TaskDetailPage() {
   useEffect(() => {
     if (!id || !taskLoaded || editing) return
     if (activeTab === 'comments' && comments === null) {
-      api.listComments(id).then(setComments).catch(() => setComments([]))
+      api.listComments('task', id).then(setComments).catch(() => setComments([]))
     }
     if (activeTab === 'logs') {
       // Timeline unions runs, comments, and artifacts — load any that are
@@ -222,7 +222,7 @@ export default function TaskDetailPage() {
         api.listRuns(id).then(setRuns).catch(() => setRuns([]))
       }
       if (comments === null) {
-        api.listComments(id).then(setComments).catch(() => setComments([]))
+        api.listComments('task', id).then(setComments).catch(() => setComments([]))
       }
       if (artifacts === null) {
         api.listArtifacts(id).then(setArtifacts).catch(() => setArtifacts([]))
@@ -250,7 +250,7 @@ export default function TaskDetailPage() {
   async function handleAddComment(content: string) {
     if (!id) return
     try {
-      const comment = await api.addComment(id, content)
+      const comment = await api.addComment('task', id, content)
       setComments((prev) => [...(prev ?? []), comment])
     } catch (err) {
       notifyError(err, 'Failed to add comment')
@@ -314,7 +314,7 @@ export default function TaskDetailPage() {
   async function handleSendBack(feedback: string) {
     if (!id || !task) return
     const content = `[user feedback]\n\n${feedback}`
-    const comment = await api.addComment(id, content, 'user')
+    const comment = await api.addComment('task', id, content, 'user')
     if (task.blocked_reason) {
       try {
         await api.updateTask(id, { blocked_reason: '' })

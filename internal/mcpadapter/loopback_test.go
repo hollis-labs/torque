@@ -157,7 +157,8 @@ func TestLoopback_SummaryPostsCommentWithAgentAuthor(t *testing.T) {
 
 	var comment map[string]interface{}
 	parseData(t, text, &comment)
-	assert.Equal(t, fix.taskID, comment["task_id"])
+	assert.Equal(t, "task", comment["entity_type"])
+	assert.Equal(t, fix.taskID, comment["entity_id"])
 	assert.Equal(t, "agent", comment["author"])
 	content, _ := comment["content"].(string)
 	assert.Contains(t, content, "Summary: ")
@@ -224,7 +225,8 @@ func TestLoopback_ReviewTransitionsAndPostsCommentWhenReasonGiven(t *testing.T) 
 
 	// Confirm a comment with author=agent + the reason was posted.
 	text, isErr = callTool(t, fix.global, "clockwork_comment_list", map[string]interface{}{
-		"task_id": fix.taskID,
+		"entity_type": "task",
+		"entity_id":   fix.taskID,
 	})
 	require.False(t, isErr)
 	var listResp map[string]interface{}
@@ -251,7 +253,8 @@ func TestLoopback_ReviewWithoutReasonOnlyTransitions(t *testing.T) {
 
 	// No comment should have been posted (reason was empty).
 	text, isErr = callTool(t, fix.global, "clockwork_comment_list", map[string]interface{}{
-		"task_id": fix.taskID,
+		"entity_type": "task",
+		"entity_id":   fix.taskID,
 	})
 	require.False(t, isErr)
 	var listResp map[string]interface{}
@@ -296,7 +299,8 @@ func TestLoopback_CommentAddBindsTaskIDAndAuthorImplicitly(t *testing.T) {
 
 	var rec map[string]interface{}
 	parseData(t, text, &rec)
-	assert.Equal(t, fix.taskID, rec["task_id"])
+	assert.Equal(t, "task", rec["entity_type"])
+	assert.Equal(t, fix.taskID, rec["entity_id"])
 	assert.Equal(t, "agent", rec["author"])
 	assert.Equal(t, "Mid-task observation about file Y.", rec["content"])
 }

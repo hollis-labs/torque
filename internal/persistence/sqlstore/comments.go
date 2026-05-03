@@ -6,19 +6,31 @@ import (
 	"time"
 )
 
+// EntityTypeTask is the entity_type value for task comments. Defined as a
+// constant so call sites don't fork on string literals as new entity types
+// land (collection, epic, sprint, project, ...).
+const EntityTypeTask = "task"
+
 // CommentRecord mirrors the comments table row.
+//
+// As of migration 019 the comments table is polymorphic: a comment is keyed
+// by (entity_type, entity_id) rather than tied to a task. The legacy task_id
+// column has been removed; for task comments use entity_type="task" and
+// entity_id=<task id>.
 type CommentRecord struct {
-	ID        int64     `json:"id"`
-	TaskID    string    `json:"task_id"`
-	Author    string    `json:"author"`
-	Content   string    `json:"content"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         int64     `json:"id"`
+	EntityType string    `json:"entity_type"`
+	EntityID   string    `json:"entity_id"`
+	Author     string    `json:"author"`
+	Content    string    `json:"content"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // CommentFilter holds optional filter criteria for SearchComments.
 type CommentFilter struct {
-	TaskID string // restrict to one task
-	Author string // exact match
+	EntityType string // restrict to one entity type (e.g. "task")
+	EntityID   string // restrict to one entity (paired with EntityType)
+	Author     string // exact match
 	// Search is a substring match on content using SQLite's built-in LIKE
 	// operator, which is case-insensitive for ASCII characters by default.
 	// Non-ASCII case folding is not guaranteed — behavior depends on the
@@ -30,17 +42,21 @@ type CommentFilter struct {
 
 // AddComment inserts a new comment and populates ID + CreatedAt from the DB.
 func (s *Store) AddComment(c *CommentRecord) error {
-	const q = `INSERT INTO comments (task_id, author, content) VALUES (?, ?, ?)
+	if c.EntityType == "" {
+		c.EntityType = EntityTypeTask
+	}
+	const q = `INSERT INTO comments (entity_type, entity_id, author, content) VALUES (?, ?, ?, ?)
 		RETURNING id, created_at`
-	return s.db.QueryRow(q, c.TaskID, c.Author, c.Content).Scan(&c.ID, &c.CreatedAt)
+	return s.db.QueryRow(q, c.EntityType, c.EntityID, c.Author, c.Content).Scan(&c.ID, &c.CreatedAt)
 }
 
-// ListComments returns all comments for a task, oldest first.
-func (s *Store) ListComments(taskID string) ([]CommentRecord, error) {
-	const q = `SELECT id, task_id, author, content, created_at
-		FROM comments WHERE task_id = ? ORDER BY created_at ASC`
+// ListCommentsForEntity returns all comments for the given (entity_type,
+// entity_id), oldest first.
+func (s *Store) ListCommentsForEntity(entityType, entityID string) ([]CommentRecord, error) {
+	const q = `SELECT id, entity_type, entity_id, author, content, created_at
+		FROM comments WHERE entity_type = ? AND entity_id = ? ORDER BY created_at ASC`
 
-	rows, err := s.db.Query(q, taskID)
+	rows, err := s.db.Query(q, entityType, entityID)
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +65,7 @@ func (s *Store) ListComments(taskID string) ([]CommentRecord, error) {
 	var comments []CommentRecord
 	for rows.Next() {
 		var c CommentRecord
-		if err := rows.Scan(&c.ID, &c.TaskID, &c.Author, &c.Content, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.EntityType, &c.EntityID, &c.Author, &c.Content, &c.CreatedAt); err != nil {
 			return nil, err
 		}
 		comments = append(comments, c)
@@ -57,9 +73,16 @@ func (s *Store) ListComments(taskID string) ([]CommentRecord, error) {
 	return comments, rows.Err()
 }
 
+// ListComments is a thin wrapper over ListCommentsForEntity for the common
+// task-comment case. Kept to avoid cluttering call sites that only ever
+// operate on task comments.
+func (s *Store) ListComments(taskID string) ([]CommentRecord, error) {
+	return s.ListCommentsForEntity(EntityTypeTask, taskID)
+}
+
 // SearchComments returns comments matching the filter, ordered by created_at DESC.
-// Search, TaskID, and Author are all optional at the store layer; the calling
-// MCP/service layer enforces any required-field contract.
+// Search, EntityType/EntityID, and Author are all optional at the store layer;
+// the calling MCP/service layer enforces any required-field contract.
 func (s *Store) SearchComments(f CommentFilter) ([]CommentRecord, error) {
 	var where []string
 	var args []any
@@ -69,16 +92,20 @@ func (s *Store) SearchComments(f CommentFilter) ([]CommentRecord, error) {
 		where = append(where, "content LIKE ?")
 		args = append(args, pattern)
 	}
-	if f.TaskID != "" {
-		where = append(where, "task_id = ?")
-		args = append(args, f.TaskID)
+	if f.EntityType != "" {
+		where = append(where, "entity_type = ?")
+		args = append(args, f.EntityType)
+	}
+	if f.EntityID != "" {
+		where = append(where, "entity_id = ?")
+		args = append(args, f.EntityID)
 	}
 	if f.Author != "" {
 		where = append(where, "author = ?")
 		args = append(args, f.Author)
 	}
 
-	q := `SELECT id, task_id, author, content, created_at FROM comments`
+	q := `SELECT id, entity_type, entity_id, author, content, created_at FROM comments`
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
@@ -99,7 +126,7 @@ func (s *Store) SearchComments(f CommentFilter) ([]CommentRecord, error) {
 	var comments []CommentRecord
 	for rows.Next() {
 		var c CommentRecord
-		if err := rows.Scan(&c.ID, &c.TaskID, &c.Author, &c.Content, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.EntityType, &c.EntityID, &c.Author, &c.Content, &c.CreatedAt); err != nil {
 			return nil, err
 		}
 		comments = append(comments, c)

@@ -15,11 +15,13 @@ import (
 
 // taskJSON converts a TaskRecord to a JSON-friendly map with snake_case keys
 // and proper null handling for sql.Null* types. Tags, the run aggregate,
-// and subtodos are passed in so the caller can batch-load them rather than
-// requiring a store handle here. When agg is nil, stats render as zeroes.
-// Nil subtodos is serialized as an empty array so the client can always
-// rely on the key being present.
-func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, agg *sqlstore.TaskRunAggregate, subtodos []sqlstore.Subtodo) map[string]interface{} {
+// subtodos, and collectionName are passed in so the caller can batch-load
+// them rather than requiring a store handle here. When agg is nil, stats
+// render as zeroes. Nil subtodos is serialized as an empty array so the
+// client can always rely on the key being present. collectionName is
+// surfaced as null when the task has no collection_id or the lookup
+// missed (e.g. archived collection still referenced by a task).
+func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, agg *sqlstore.TaskRunAggregate, subtodos []sqlstore.Subtodo, collectionName string) map[string]interface{} {
 	stats := map[string]interface{}{
 		"run_count":         0,
 		"prompt_tokens":     0,
@@ -82,6 +84,16 @@ func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, agg *sqlstore.T
 
 		"parent_id": nullStr(t.ParentID),
 
+		// Collections (migration 020). NULL collection_id with non-NULL
+		// added_to_collections_at means "in the inbox" (touched by collection
+		// flow but currently unassigned); both NULL means "fresh, never
+		// touched by collections". collection_position is included for
+		// completeness but the GUI doesn't currently consume it.
+		"collection_id":            nullStr(t.CollectionID),
+		"collection_name":          nullableString(collectionName),
+		"collection_position":      nullInt(t.CollectionPosition),
+		"added_to_collections_at":  nullTime(t.AddedToCollectionsAt),
+
 		// Run roll-up — prompt/completion/cost summed across all recorded
 		// runs for this task, plus a turn count. Nil aggregate renders
 		// zeroes so clients can rely on the keys always being present.
@@ -96,9 +108,12 @@ func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, agg *sqlstore.T
 
 // tasksJSON converts a slice of TaskRecord to a JSON-friendly slice.
 // Loads linked tags, run aggregates, and subtodos per-task (N+1 — acceptable
-// at current scale; each is an indexed single-row read per task).
+// at current scale; each is an indexed single-row read per task). Collection
+// names are resolved in ONE batch query for all unique collection_ids in
+// the slice — saves an N+1 on the lookup that the GUI uses for the badge.
 func (s *Server) tasksJSON(tasks []sqlstore.TaskRecord) ([]map[string]interface{}, error) {
 	out := make([]map[string]interface{}, len(tasks))
+	collectionNames := s.collectionNamesForTasks(tasks)
 	for i := range tasks {
 		tags, err := s.svc.Task.ListTags(tasks[i].ID)
 		if err != nil {
@@ -112,9 +127,62 @@ func (s *Server) tasksJSON(tasks []sqlstore.TaskRecord) ([]map[string]interface{
 		if err != nil {
 			return nil, err
 		}
-		out[i] = taskJSON(&tasks[i], tags, agg, subs)
+		out[i] = taskJSON(&tasks[i], tags, agg, subs, collectionNames[tasks[i].CollectionID.String])
 	}
 	return out, nil
+}
+
+// collectionNamesForTasks batch-resolves collection names for the unique
+// non-NULL collection_ids in the slice. Returns an empty map (not nil) on
+// any failure — surfacing collection_name is best-effort and shouldn't
+// fail the whole task list response.
+func (s *Server) collectionNamesForTasks(tasks []sqlstore.TaskRecord) map[string]string {
+	seen := make(map[string]struct{})
+	ids := make([]string, 0, len(tasks))
+	for i := range tasks {
+		if !tasks[i].CollectionID.Valid || tasks[i].CollectionID.String == "" {
+			continue
+		}
+		id := tasks[i].CollectionID.String
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return map[string]string{}
+	}
+	names, err := s.svc.Collection.LookupNames(ids)
+	if err != nil {
+		log.Printf("collection name lookup failed (continuing without names): %v", err)
+		return map[string]string{}
+	}
+	return names
+}
+
+// collectionNameForTask resolves the collection name for a single task.
+// Returns an empty string when the task has no collection_id or the
+// lookup fails — best-effort, never blocks the response.
+func (s *Server) collectionNameForTask(t *sqlstore.TaskRecord) string {
+	if t == nil || !t.CollectionID.Valid || t.CollectionID.String == "" {
+		return ""
+	}
+	names, err := s.svc.Collection.LookupNames([]string{t.CollectionID.String})
+	if err != nil {
+		return ""
+	}
+	return names[t.CollectionID.String]
+}
+
+// nullableString is the JSON-friendly equivalent of nullStr for plain
+// Go strings — empty becomes JSON null, non-empty becomes the string.
+// Used for batch-resolved fields like collection_name.
+func nullableString(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func nullStr(ns sql.NullString) interface{} {
@@ -447,7 +515,7 @@ func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, taskJSON(task, tags, agg, subs))
+	writeJSON(w, http.StatusOK, taskJSON(task, tags, agg, subs, s.collectionNameForTask(task)))
 }
 
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
@@ -541,7 +609,8 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.sse.Broadcast("task.created", map[string]interface{}{"task_id": task.ID, "title": task.Title})
-	writeJSON(w, http.StatusCreated, taskJSON(task, tags, nil, subs))
+	// Freshly created task has no collection_id yet, so pass empty name.
+	writeJSON(w, http.StatusCreated, taskJSON(task, tags, nil, subs, ""))
 }
 
 func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
@@ -677,7 +746,7 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.sse.Broadcast("task.updated", map[string]interface{}{"task_id": id})
-	writeJSON(w, http.StatusOK, taskJSON(task, tags, agg, subs))
+	writeJSON(w, http.StatusOK, taskJSON(task, tags, agg, subs, s.collectionNameForTask(task)))
 }
 
 func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
@@ -732,7 +801,7 @@ func (s *Server) transitionTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.sse.Broadcast("task.transitioned", map[string]interface{}{"task_id": id, "status": req.Status})
-	writeJSON(w, http.StatusOK, taskJSON(task, tags, agg, subs))
+	writeJSON(w, http.StatusOK, taskJSON(task, tags, agg, subs, s.collectionNameForTask(task)))
 }
 
 func (s *Server) bulkTransitionTasks(w http.ResponseWriter, r *http.Request) {

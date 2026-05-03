@@ -76,6 +76,9 @@ func (a *Adapter) registerOptInTools() {
 	if a.svc.Feature.IsEnabled("epics") {
 		a.registerEpicTools()
 	}
+	if a.svc.Feature.IsEnabled("collections") {
+		a.registerCollectionTools()
+	}
 }
 
 func (a *Adapter) handleHealth(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

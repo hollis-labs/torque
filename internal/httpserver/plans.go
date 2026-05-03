@@ -76,7 +76,7 @@ func (s *Server) planDetailJSON(detail *service.PlanDetail) (map[string]interfac
 		return nil, err
 	}
 	return map[string]interface{}{
-		"task":     taskJSON(detail.Task, tags, agg, subs),
+		"task":     taskJSON(detail.Task, tags, agg, subs, s.collectionNameForTask(detail.Task)),
 		"plan":     detail.Plan,
 		"progress": detail.Progress,
 	}, nil

@@ -20,6 +20,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { QuickAddDialog } from '@/components/collections/QuickAddDialog'
 import { useApi } from '@/hooks/use-api'
 import { notifyError, notifySuccess } from '@/lib/toast'
 import { STATUS_LABEL, TASK_STATUSES } from '@/lib/constants'
@@ -49,6 +50,7 @@ export function TaskActionsMenu({
 }: TaskActionsMenuProps) {
   const api = useApi()
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [quickAddOpen, setQuickAddOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [forcePrompt, setForcePrompt] = useState<{
     target: TaskStatus
@@ -142,7 +144,15 @@ export function TaskActionsMenu({
           >
             {triggerContent}
           </DropdownMenuTrigger>
-          <DropdownMenuContent align={align} className="min-w-44">
+          {/* data-row-interactive on the portaled content too — synthetic event
+              bubbling from menu items reaches the parent <tr> in BoardPage,
+              and its row-click handler checks via DOM closest(). Without this,
+              clicking any item that opens a dialog fires row navigation first. */}
+          <DropdownMenuContent
+            align={align}
+            className="min-w-44"
+            data-row-interactive="true"
+          >
             {showApprove && (
               <DropdownMenuItem onClick={() => runTransition('done', 'Approved')}>
                 Approve
@@ -168,6 +178,10 @@ export function TaskActionsMenu({
                 Pause
               </DropdownMenuItem>
             )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => setQuickAddOpen(true)}>
+              Add to collection…
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>Transition to…</DropdownMenuSubTrigger>
@@ -215,6 +229,13 @@ export function TaskActionsMenu({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <QuickAddDialog
+        task={task}
+        open={quickAddOpen}
+        onOpenChange={setQuickAddOpen}
+        onAssigned={(updated) => onChange?.(updated)}
+      />
 
       <AlertDialog
         open={forcePrompt !== null}

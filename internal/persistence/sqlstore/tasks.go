@@ -61,6 +61,16 @@ type TaskRecord struct {
 
 	// Parent linkage (migration 013). NULL = top of lineage.
 	ParentID sql.NullString
+
+	// Collection columns (migration 020). All three are managed by the
+	// Collections store (collections.go) — task-layer code reads these but
+	// does not write them through TaskUpdate. CollectionID NULL means the
+	// task is not in a collection (could still be in inbox via
+	// AddedToCollectionsAt). AddedToCollectionsAt is write-once on first
+	// entry into the collections world.
+	CollectionID            sql.NullString
+	CollectionPosition      sql.NullInt64
+	AddedToCollectionsAt    sql.NullTime
 }
 
 // TaskFilter holds optional filter criteria for ListTasks.
@@ -178,7 +188,7 @@ func applyDefaults(t *TaskRecord) {
 	}
 }
 
-// The 41-column SELECT list used by GetTask, ListTasks, and SearchTasks.
+// The 44-column SELECT list used by GetTask, ListTasks, and SearchTasks.
 const taskSelectCols = `id, title, description, status, priority, manual,
 	executor, agent_profile, working_dir, tools, permissions, environment,
 	system_prompt, agent_file, files, cost_budget, max_retries, max_duration_ms, token_budget,
@@ -186,7 +196,8 @@ const taskSelectCols = `id, title, description, status, priority, manual,
 	deliverable_preset, on_done_merge, depends_on, blocked_reason, metadata,
 	sprint_id, project_id, epic_id, created_at, updated_at,
 	kind, source_type, source_ref, trust, checkpoint_mode, on_checkpoint_response,
-	parent_id`
+	parent_id,
+	collection_id, collection_position, added_to_collections_at`
 
 // scanTask scans a single row into a TaskRecord.
 func scanTask(row interface {
@@ -203,6 +214,7 @@ func scanTask(row interface {
 		&t.SprintID, &t.ProjectID, &t.EpicID, &t.CreatedAt, &t.UpdatedAt,
 		&t.Kind, &t.SourceType, &t.SourceRef, &t.Trust, &t.CheckpointMode, &t.OnCheckpointResponse,
 		&t.ParentID,
+		&t.CollectionID, &t.CollectionPosition, &t.AddedToCollectionsAt,
 	)
 	if err != nil {
 		return nil, err
