@@ -145,6 +145,17 @@ export interface Task {
   // Parent linkage (migration 013). null = top of lineage.
   parent_id?: string | null
 
+  // Collections (migration 020). Optional on task responses — the
+  // backend does NOT currently surface these fields on /tasks; the
+  // collections page reads membership via the dedicated
+  // /collections/{id}/tasks and /collections/inbox/tasks endpoints.
+  // Kept here so callers that hydrate tasks from a collection-aware
+  // source (or a future tasks-endpoint expansion) can still reference
+  // them without additional casts.
+  collection_id?: string | null
+  collection_position?: number | null
+  added_to_collections_at?: string | null
+
   // Audit
   created_at: string
   updated_at: string
@@ -454,6 +465,23 @@ export interface SchedulerStatus {
   total_cost: number
   subscribers: number
   stale_heartbeat_threshold_seconds: number
+}
+
+/**
+ * Collections — kanban-style task containers (migration 020).
+ *
+ * `archived_at` is the soft-delete cursor; null = active. The backend
+ * exposes both an "active" and "archived" listing; v1 GUI only surfaces
+ * the active set and lets the user archive but not unarchive (no
+ * "show archived" toggle).
+ */
+export interface Collection {
+  id: string
+  name: string
+  description: string
+  archived_at: string | null
+  created_at: string
+  updated_at: string
 }
 
 export type CheckpointStatus = 'pending' | 'responded' | 'canceled' | 'timed_out'

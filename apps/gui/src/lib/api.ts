@@ -3,6 +3,7 @@ import type {
   TaskFilter,
   Run,
   Artifact,
+  Collection,
   Comment,
   SSEEvent,
   FeatureFlags,
@@ -755,6 +756,96 @@ export class ClockworkApiClient {
     const params: Record<string, string | number | boolean | undefined> = {}
     if (phaseId) params['phase_id'] = phaseId
     return this.get<{ tasks: Task[] }>(`/plans/${planId}/children`, params)
+  }
+
+  // -------------------------
+  // Collections
+  // -------------------------
+
+  async listCollections(status?: 'active' | 'archived' | 'all'): Promise<Collection[]> {
+    const params: Record<string, string | number | boolean | undefined> = {}
+    if (status) params['status'] = status
+    const res = await this.get<{ collections: Collection[] }>('/collections', params)
+    return res.collections ?? []
+  }
+
+  async getCollection(id: string): Promise<Collection> {
+    return this.get<Collection>(`/collections/${id}`)
+  }
+
+  async createCollection(name: string, description?: string): Promise<Collection> {
+    return this.post<Collection>('/collections', {
+      name,
+      description: description ?? '',
+    })
+  }
+
+  async updateCollection(
+    id: string,
+    fields: { name?: string; description?: string },
+  ): Promise<Collection> {
+    return this.put<Collection>(`/collections/${id}`, fields)
+  }
+
+  async archiveCollection(id: string): Promise<Collection> {
+    return this.post<Collection>(`/collections/${id}/archive`)
+  }
+
+  async unarchiveCollection(id: string): Promise<Collection> {
+    return this.post<Collection>(`/collections/${id}/unarchive`)
+  }
+
+  async listCollectionTasks(collectionId: string): Promise<Task[]> {
+    const res = await this.get<{ tasks: Task[] }>(`/collections/${collectionId}/tasks`)
+    return res.tasks ?? []
+  }
+
+  async addTaskToCollection(
+    collectionId: string,
+    taskId: string,
+    position?: number,
+  ): Promise<void> {
+    const body: { task_id: string; position?: number } = { task_id: taskId }
+    if (position !== undefined) body.position = position
+    return this.post<void>(`/collections/${collectionId}/tasks`, body)
+  }
+
+  async removeTaskFromCollection(collectionId: string, taskId: string): Promise<void> {
+    return this.delete<void>(`/collections/${collectionId}/tasks/${taskId}`)
+  }
+
+  async reorderCollectionTasks(collectionId: string, taskIds: string[]): Promise<void> {
+    return this.put<void>(`/collections/${collectionId}/tasks/order`, {
+      task_ids: taskIds,
+    })
+  }
+
+  /**
+   * Cross-collection move. `targetCollectionId` is required by the
+   * backend; pass an empty string to clear membership (returns the task
+   * to the inbox) — but prefer `addTaskToInbox` for clarity, which the
+   * backend treats as the canonical inbox path.
+   */
+  async moveTask(
+    taskId: string,
+    targetCollectionId: string,
+    position?: number,
+  ): Promise<void> {
+    const body: { task_id: string; target_collection_id: string; position?: number } = {
+      task_id: taskId,
+      target_collection_id: targetCollectionId,
+    }
+    if (position !== undefined) body.position = position
+    return this.post<void>('/collections/tasks/move', body)
+  }
+
+  async listInboxTasks(): Promise<Task[]> {
+    const res = await this.get<{ tasks: Task[] }>('/collections/inbox/tasks')
+    return res.tasks ?? []
+  }
+
+  async addTaskToInbox(taskId: string): Promise<void> {
+    return this.post<void>('/collections/inbox/tasks', { task_id: taskId })
   }
 
   // -------------------------
