@@ -208,7 +208,7 @@ export function TaskActionsMenu({
       </span>
 
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <AlertDialogContent>
+        <AlertDialogContent data-row-interactive="true">
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this task?</AlertDialogTitle>
             <AlertDialogDescription>
@@ -241,7 +241,7 @@ export function TaskActionsMenu({
         open={forcePrompt !== null}
         onOpenChange={(open) => !open && setForcePrompt(null)}
       >
-        <AlertDialogContent>
+        <AlertDialogContent data-row-interactive="true">
           <AlertDialogHeader>
             <AlertDialogTitle>Force transition?</AlertDialogTitle>
             <AlertDialogDescription>
