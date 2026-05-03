@@ -132,7 +132,7 @@ export function TaskDetailHeader({
             ) : (
               <PriorityBadge priority={task.priority} />
             )}
-            {!editing && <CollectionBadge task={task} variant="header" />}
+            {!editing && <CollectionBadge task={task} variant="header" onChange={onTaskChange} />}
             {editing ? (
               <TagsInput
                 value={source.tags}
