@@ -171,7 +171,7 @@ export function TaskActionsMenu({
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => setQuickAddOpen(true)}>
+            <DropdownMenuItem onClick={() => setQuickAddOpen(true)}>
               Add to collection…
             </DropdownMenuItem>
             <DropdownMenuSeparator />
