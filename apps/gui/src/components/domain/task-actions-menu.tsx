@@ -20,6 +20,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { QuickAddDialog } from '@/components/collections/QuickAddDialog'
 import { useApi } from '@/hooks/use-api'
 import { notifyError, notifySuccess } from '@/lib/toast'
 import { STATUS_LABEL, TASK_STATUSES } from '@/lib/constants'
@@ -49,6 +50,7 @@ export function TaskActionsMenu({
 }: TaskActionsMenuProps) {
   const api = useApi()
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [quickAddOpen, setQuickAddOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [forcePrompt, setForcePrompt] = useState<{
     target: TaskStatus
@@ -169,6 +171,10 @@ export function TaskActionsMenu({
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => setQuickAddOpen(true)}>
+              Add to collection…
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>Transition to…</DropdownMenuSubTrigger>
               <DropdownMenuSubContent>
@@ -215,6 +221,13 @@ export function TaskActionsMenu({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <QuickAddDialog
+        task={task}
+        open={quickAddOpen}
+        onOpenChange={setQuickAddOpen}
+        onAssigned={(updated) => onChange?.(updated)}
+      />
 
       <AlertDialog
         open={forcePrompt !== null}
