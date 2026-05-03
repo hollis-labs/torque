@@ -214,7 +214,10 @@ export interface Artifact {
 
 export interface Comment {
   id: number
-  task_id: string
+  /** Polymorphic entity kind. Currently: "task". Future: "collection", "epic", "sprint", "project". */
+  entity_type: string
+  /** ID of the entity the comment is attached to. */
+  entity_id: string
   author: string
   content: string
   created_at: string

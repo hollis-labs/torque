@@ -382,17 +382,44 @@ export class ClockworkApiClient {
   }
 
   // -------------------------
-  // Comments
+  // Comments (polymorphic — entity_type + entity_id)
   // -------------------------
 
-  async listComments(taskId: string): Promise<Comment[]> {
-    return this.get<Comment[]>(`/tasks/${taskId}/comments`)
+  /**
+   * List comments for an entity (task / collection / epic / etc).
+   *
+   * The HTTP layer keeps the nested /tasks/{id}/comments route alive for
+   * task comments specifically; passing entity_type="task" routes through
+   * that endpoint so existing nested tests / clients keep working. All
+   * other entity types use the flat /comments?entity_type=…&entity_id=…
+   * shape.
+   */
+  async listComments(entityType: string, entityID: string): Promise<Comment[]> {
+    if (entityType === 'task') {
+      return this.get<Comment[]>(`/tasks/${entityID}/comments`)
+    }
+    const qs = new URLSearchParams({ entity_type: entityType, entity_id: entityID })
+    return this.get<Comment[]>(`/comments?${qs.toString()}`)
   }
 
-  async addComment(taskId: string, content: string, author?: string): Promise<Comment> {
-    const body: { content: string; author?: string } = { content }
+  async addComment(
+    entityType: string,
+    entityID: string,
+    content: string,
+    author?: string,
+  ): Promise<Comment> {
+    if (entityType === 'task') {
+      const body: { content: string; author?: string } = { content }
+      if (author) body.author = author
+      return this.post<Comment>(`/tasks/${entityID}/comments`, body)
+    }
+    const body: { entity_type: string; entity_id: string; content: string; author?: string } = {
+      entity_type: entityType,
+      entity_id: entityID,
+      content,
+    }
     if (author) body.author = author
-    return this.post<Comment>(`/tasks/${taskId}/comments`, body)
+    return this.post<Comment>(`/comments`, body)
   }
 
   // -------------------------
