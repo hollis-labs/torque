@@ -1,5 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Archive, Plus } from 'lucide-react'
+import {
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  pointerWithin,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type CollisionDetection,
+  type DragEndEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -34,14 +53,23 @@ const SSE_EVENTS = [
   'collection.inbox_added',
 ]
 
-/** MIME-ish key passed through dataTransfer. We stash a JSON blob keyed
- * by this so other drag sources on the page (e.g. browser file drops)
- * are easy to disambiguate. */
-const DRAG_MIME = 'application/x-clockwork-task'
+/** Synthetic droppable ID for the inbox container (so dropping on empty
+ * inbox space hits a target without needing a row to overlap). */
+const INBOX_CONTAINER_ID = 'container:inbox'
 
-interface DragPayload {
-  taskId: string
-  sourceCollectionId: string | null // null = inbox
+/** Prefix for per-collection container droppables. The id encodes the
+ * collection id so onDragEnd can recover it without a separate map. */
+function collectionContainerID(collectionId: string): string {
+  return `container:${collectionId}`
+}
+
+/** Inverse of collectionContainerID. Returns null if the id isn't a
+ * container token. Returns the synthetic "inbox" sentinel for the
+ * inbox. */
+function parseContainerID(id: string): { kind: 'container'; collectionId: string | null } | null {
+  if (id === INBOX_CONTAINER_ID) return { kind: 'container', collectionId: null }
+  if (id.startsWith('container:')) return { kind: 'container', collectionId: id.slice('container:'.length) }
+  return null
 }
 
 function PageSkeleton() {
@@ -189,154 +217,49 @@ function CollectionHeader({ collection, taskCount, onUpdate, onArchive }: Collec
   )
 }
 
-interface DropIndicatorState {
-  rowTaskId: string
-  position: 'before' | 'after'
-}
-
 interface CollectionTaskTableProps {
-  /** null = inbox; string = collection id. */
+  /** null = inbox; string = collection id. Used to construct the
+   * container droppable id and (via the page-level lookups) recover
+   * which container a drop landed in. */
   collectionKey: string | null
   tasks: Task[]
   emptyHint: string
-  onDropTask: (
-    payload: DragPayload,
-    target: { collectionId: string | null; relTaskId: string | null; position: 'before' | 'after' | 'end' },
-  ) => void
 }
 
 /**
- * Owns the drag/drop wiring for one container (inbox or a single
- * collection). Empty containers still need to be drop targets so the
- * user can drop a task into a blank collection — handled by an
- * always-rendered "empty drop zone" footer row.
+ * Renders one container's rows inside a SortableContext. The whole
+ * container (rounded box) is registered as a droppable too — this is
+ * what makes empty containers accept drops, and what gives a "drop at
+ * end" target when the user releases over blank space inside a
+ * non-empty container.
+ *
+ * Drag/drop intent is owned by the page; this component only renders.
  */
-function CollectionTaskTable({
-  collectionKey,
-  tasks,
-  emptyHint,
-  onDropTask,
-}: CollectionTaskTableProps) {
-  const [dropIndicator, setDropIndicator] = useState<DropIndicatorState | null>(null)
-  const [containerHover, setContainerHover] = useState(false)
-
-  function readPayload(e: React.DragEvent): DragPayload | null {
-    try {
-      const raw = e.dataTransfer.getData(DRAG_MIME)
-      if (!raw) return null
-      return JSON.parse(raw) as DragPayload
-    } catch {
-      return null
-    }
-  }
-
-  function handleDragStart(e: React.DragEvent<HTMLTableRowElement>, taskId: string) {
-    const payload: DragPayload = {
-      taskId,
-      sourceCollectionId: collectionKey,
-    }
-    e.dataTransfer.setData(DRAG_MIME, JSON.stringify(payload))
-    e.dataTransfer.effectAllowed = 'move'
-  }
-
-  function handleRowDragOver(e: React.DragEvent<HTMLTableRowElement>, taskId: string) {
-    if (!e.dataTransfer.types.includes(DRAG_MIME)) return
-    e.preventDefault()
-    e.dataTransfer.dropEffect = 'move'
-    const rect = e.currentTarget.getBoundingClientRect()
-    const midpoint = rect.top + rect.height / 2
-    const position: 'before' | 'after' = e.clientY < midpoint ? 'before' : 'after'
-    setDropIndicator((prev) =>
-      prev?.rowTaskId === taskId && prev.position === position ? prev : { rowTaskId: taskId, position }
-    )
-  }
-
-  function handleRowDrop(e: React.DragEvent<HTMLTableRowElement>, taskId: string) {
-    if (!e.dataTransfer.types.includes(DRAG_MIME)) return
-    e.preventDefault()
-    e.stopPropagation()
-    const payload = readPayload(e)
-    setDropIndicator(null)
-    setContainerHover(false)
-    if (!payload) return
-    const rect = e.currentTarget.getBoundingClientRect()
-    const midpoint = rect.top + rect.height / 2
-    const position: 'before' | 'after' = e.clientY < midpoint ? 'before' : 'after'
-    onDropTask(payload, {
-      collectionId: collectionKey,
-      relTaskId: taskId,
-      position,
-    })
-  }
-
-  function handleContainerDragOver(e: React.DragEvent<HTMLDivElement>) {
-    if (!e.dataTransfer.types.includes(DRAG_MIME)) return
-    e.preventDefault()
-    e.dataTransfer.dropEffect = 'move'
-    setContainerHover(true)
-  }
-
-  function handleContainerDragLeave(e: React.DragEvent<HTMLDivElement>) {
-    // Only clear when leaving the container itself, not its children.
-    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
-    setContainerHover(false)
-  }
-
-  function handleContainerDrop(e: React.DragEvent<HTMLDivElement>) {
-    if (!e.dataTransfer.types.includes(DRAG_MIME)) return
-    e.preventDefault()
-    setContainerHover(false)
-    setDropIndicator(null)
-    const payload = readPayload(e)
-    if (!payload) return
-    // No row target → drop at end.
-    onDropTask(payload, {
-      collectionId: collectionKey,
-      relTaskId: null,
-      position: 'end',
-    })
-  }
-
-  function handleRowDragLeave() {
-    // Cleared on next dragover; no-op here keeps the indicator stable
-    // while moving across rows.
-  }
-
-  function handleRowDragEnd() {
-    setDropIndicator(null)
-  }
+function CollectionTaskTable({ collectionKey, tasks, emptyHint }: CollectionTaskTableProps) {
+  const containerId = collectionKey === null ? INBOX_CONTAINER_ID : collectionContainerID(collectionKey)
+  const { setNodeRef, isOver } = useDroppable({ id: containerId })
 
   return (
     <div
-      className={`mx-4 mb-4 rounded-md border ${containerHover ? 'border-zinc-500 bg-zinc-900/30' : 'border-zinc-800/80 bg-zinc-950'}`}
-      onDragOver={handleContainerDragOver}
-      onDragLeave={handleContainerDragLeave}
-      onDrop={handleContainerDrop}
+      ref={setNodeRef}
+      className={`mx-4 mb-4 rounded-md border ${isOver ? 'border-zinc-500 bg-zinc-900/30' : 'border-zinc-800/80 bg-zinc-950'}`}
+      data-container-id={containerId}
     >
-      {tasks.length === 0 ? (
-        <div className="px-4 py-6 text-center text-[12px] text-zinc-600 italic">
-          {emptyHint}
-        </div>
-      ) : (
-        <table className="min-w-full">
-          <tbody className="divide-y divide-zinc-800/60">
-            {tasks.map((task) => (
-              <CollectionTaskRow
-                key={task.id}
-                task={task}
-                onDragStart={handleDragStart}
-                onDragOver={handleRowDragOver}
-                onDragLeave={handleRowDragLeave}
-                onDrop={handleRowDrop}
-                onDragEnd={handleRowDragEnd}
-                dropIndicator={
-                  dropIndicator?.rowTaskId === task.id ? dropIndicator.position : null
-                }
-              />
-            ))}
-          </tbody>
-        </table>
-      )}
+      <SortableContext items={tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
+        {tasks.length === 0 ? (
+          <div className="px-4 py-6 text-center text-[12px] text-zinc-600 italic">
+            {emptyHint}
+          </div>
+        ) : (
+          <table className="min-w-full">
+            <tbody className="divide-y divide-zinc-800/60">
+              {tasks.map((task) => (
+                <CollectionTaskRow key={task.id} task={task} />
+              ))}
+            </tbody>
+          </table>
+        )}
+      </SortableContext>
     </div>
   )
 }
@@ -353,6 +276,16 @@ export default function CollectionsPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [archiveTarget, setArchiveTarget] = useState<Collection | null>(null)
   const [archiving, setArchiving] = useState(false)
+  /** id of the task currently mid-drag, used to render the DragOverlay
+   * clone. null when no drag is in flight. */
+  const [activeDragTaskId, setActiveDragTaskId] = useState<string | null>(null)
+
+  const sensors = useSensors(
+    // 5px activation distance — prevents click-on-row from registering
+    // as a drag, which would block the title <Link> from navigating.
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
 
   const load = useCallback(async () => {
     const myGen = ++loadGeneration.current
@@ -434,38 +367,101 @@ export default function CollectionsPage() {
     }
   }
 
+  /** Resolve which container ("inbox" or a collection id) holds the
+   * given task right now. Returns undefined if the task isn't in any
+   * tracked container — shouldn't happen in normal flow. */
+  const findContainerForTask = useCallback(
+    (taskId: string): { collectionId: string | null } | undefined => {
+      if (inboxTasks.some((t) => t.id === taskId)) return { collectionId: null }
+      for (const [colId, tasks] of Object.entries(tasksByCollection)) {
+        if (tasks.some((t) => t.id === taskId)) return { collectionId: colId }
+      }
+      return undefined
+    },
+    [inboxTasks, tasksByCollection],
+  )
+
+  /** Resolve a `over.id` (either a task id or a `container:` token)
+   * down to a target container + relative task id. The container is
+   * always known; the relTaskId is non-null only when the user
+   * released over a specific row. */
+  const resolveDropTarget = useCallback(
+    (overId: string): { collectionId: string | null; relTaskId: string | null } | null => {
+      const asContainer = parseContainerID(overId)
+      if (asContainer) {
+        return { collectionId: asContainer.collectionId, relTaskId: null }
+      }
+      // overId is a task id — find which container holds it.
+      const where = findContainerForTask(overId)
+      if (!where) return null
+      return { collectionId: where.collectionId, relTaskId: overId }
+    },
+    [findContainerForTask],
+  )
+
+  /**
+   * Custom collision detection: prefer pointer-within (so the user's
+   * cursor position decides), fall back to closest-center for keyboard
+   * sensor (which lacks a pointer). Without this, dropping on the
+   * empty space of a container can match an unrelated row above it.
+   */
+  const collisionDetection: CollisionDetection = useCallback(
+    (args) => {
+      const pointerCollisions = pointerWithin(args)
+      if (pointerCollisions.length > 0) return pointerCollisions
+      return closestCenter(args)
+    },
+    [],
+  )
+
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    setActiveDragTaskId(String(event.active.id))
+  }, [])
+
   /**
    * The single drop dispatcher. Translates a (source, target) pair into
    * the smallest-correct API call:
    *
    *   - reorder within the same collection → reorderCollectionTasks
-   *   - source inbox → target collection   → addTaskToCollection
+   *   - source inbox → target collection   → moveTask
    *   - source collection → target inbox   → removeTaskFromCollection
    *   - source A → target B (both real)    → moveTask
    *
    * Optimistic update on the local state; refetch on error so the user
    * sees the canonical order from the server.
    */
-  const handleDropTask = useCallback(
-    (
-      payload: DragPayload,
-      target: { collectionId: string | null; relTaskId: string | null; position: 'before' | 'after' | 'end' },
-    ) => {
-      const { taskId, sourceCollectionId } = payload
-      const sameContainer = sourceCollectionId === target.collectionId
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      setActiveDragTaskId(null)
+      const { active, over } = event
+      if (!over) return
 
-      // ---- helper: compute target index in the destination list ------
+      const taskId = String(active.id)
+      const overId = String(over.id)
+
+      const source = findContainerForTask(taskId)
+      if (!source) return
+
+      const target = resolveDropTarget(overId)
+      if (!target) return
+
+      const sameContainer = source.collectionId === target.collectionId
+
+      // Compute target index in the destination list. When dropping on
+      // a row, place AFTER it (matches the dnd-kit sortable convention
+      // where releasing on a row swaps positions). When dropping on a
+      // container with no row target, append.
       const destList: Task[] =
         target.collectionId === null
           ? inboxTasks
           : (tasksByCollection[target.collectionId] ?? [])
+
       let destIndex: number
-      if (target.position === 'end' || target.relTaskId === null) {
+      if (target.relTaskId === null) {
         destIndex = destList.length
       } else {
         const i = destList.findIndex((t) => t.id === target.relTaskId)
-        if (i < 0) destIndex = destList.length
-        else destIndex = target.position === 'before' ? i : i + 1
+        destIndex = i < 0 ? destList.length : i
       }
 
       // ---- 1. same container reorder --------------------------------
@@ -479,9 +475,9 @@ export default function CollectionsPage() {
         const list = [...destList]
         const fromIdx = list.findIndex((t) => t.id === taskId)
         if (fromIdx < 0) return
+        let to = destIndex
         // When dragging downward, removing the source first shifts the
         // target index down by one — adjust before splicing back in.
-        let to = destIndex
         if (fromIdx < to) to -= 1
         if (fromIdx === to) return
         const [moved] = list.splice(fromIdx, 1)
@@ -497,11 +493,10 @@ export default function CollectionsPage() {
       }
 
       // ---- 2. cross-container moves ---------------------------------
-      // Optimistic source removal:
       const sourceList: Task[] =
-        sourceCollectionId === null
+        source.collectionId === null
           ? inboxTasks
-          : (tasksByCollection[sourceCollectionId] ?? [])
+          : (tasksByCollection[source.collectionId] ?? [])
       const moved = sourceList.find((t) => t.id === taskId)
       if (!moved) return
 
@@ -510,10 +505,10 @@ export default function CollectionsPage() {
       newDest.splice(destIndex, 0, moved)
 
       // Apply optimistic state.
-      if (sourceCollectionId === null) {
+      if (source.collectionId === null) {
         setInboxTasks(newSource)
       } else {
-        setTasksByCollection((prev) => ({ ...prev, [sourceCollectionId]: newSource }))
+        setTasksByCollection((prev) => ({ ...prev, [source.collectionId as string]: newSource }))
       }
       if (target.collectionId === null) {
         setInboxTasks(newDest)
@@ -527,111 +522,145 @@ export default function CollectionsPage() {
         void load()
       }
 
-      if (sourceCollectionId !== null && target.collectionId === null) {
+      if (source.collectionId !== null && target.collectionId === null) {
         // collection → inbox
-        api.removeTaskFromCollection(sourceCollectionId, taskId).catch(onError)
-      } else if (sourceCollectionId === null && target.collectionId !== null) {
-        // inbox → collection
-        api.moveTask(taskId, target.collectionId, destIndex).catch(onError)
+        api.removeTaskFromCollection(source.collectionId, taskId).catch(onError)
       } else if (target.collectionId !== null) {
-        // collection A → collection B
+        // inbox → collection OR collection A → collection B
         api.moveTask(taskId, target.collectionId, destIndex).catch(onError)
       }
     },
-    [api, inboxTasks, tasksByCollection, load],
+    [api, inboxTasks, tasksByCollection, load, findContainerForTask, resolveDropTarget],
   )
+
+  const handleDragCancel = useCallback(() => {
+    setActiveDragTaskId(null)
+  }, [])
 
   const sortedCollections = useMemo(
     () => [...collections].sort((a, b) => a.created_at.localeCompare(b.created_at)),
     [collections],
   )
 
+  const activeDragTask = useMemo<Task | null>(() => {
+    if (!activeDragTaskId) return null
+    if (inboxTasks) {
+      const inboxHit = inboxTasks.find((t) => t.id === activeDragTaskId)
+      if (inboxHit) return inboxHit
+    }
+    for (const tasks of Object.values(tasksByCollection)) {
+      const hit = tasks.find((t) => t.id === activeDragTaskId)
+      if (hit) return hit
+    }
+    return null
+  }, [activeDragTaskId, inboxTasks, tasksByCollection])
+
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <PageHeader title="Collections">
-        <Button size="sm" onClick={() => setCreateOpen(true)}>
-          <Plus className="mr-1 h-3.5 w-3.5" />
-          New collection
-        </Button>
-      </PageHeader>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={collisionDetection}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onDragCancel={handleDragCancel}
+    >
+      <div className="flex h-full min-h-0 flex-col">
+        <PageHeader title="Collections">
+          <Button size="sm" onClick={() => setCreateOpen(true)}>
+            <Plus className="mr-1 h-3.5 w-3.5" />
+            New collection
+          </Button>
+        </PageHeader>
 
-      {loading && collections.length === 0 ? (
-        <PageSkeleton />
-      ) : error ? (
-        <div className="m-6 rounded-md border border-rose-900/60 bg-rose-950/30 p-4 text-[13px] text-rose-300">
-          {error}
-        </div>
-      ) : (
-        <div className="flex-1 overflow-auto">
-          <section className="pb-2 pt-4">
-            <div className="flex items-baseline justify-between gap-3 px-4 pb-2">
-              <div>
-                <h2 className="text-base font-semibold text-zinc-100">Inbox</h2>
-                <p className="text-[12px] text-zinc-500">tasks awaiting organization</p>
+        {loading && collections.length === 0 ? (
+          <PageSkeleton />
+        ) : error ? (
+          <div className="m-6 rounded-md border border-rose-900/60 bg-rose-950/30 p-4 text-[13px] text-rose-300">
+            {error}
+          </div>
+        ) : (
+          <div className="flex-1 overflow-auto">
+            <section className="pb-2 pt-4">
+              <div className="flex items-baseline justify-between gap-3 px-4 pb-2">
+                <div>
+                  <h2 className="text-base font-semibold text-zinc-100">Inbox</h2>
+                  <p className="text-[12px] text-zinc-500">tasks awaiting organization</p>
+                </div>
+                <span className="text-[11px] text-zinc-500">
+                  {inboxTasks.length} {inboxTasks.length === 1 ? 'task' : 'tasks'}
+                </span>
               </div>
-              <span className="text-[11px] text-zinc-500">
-                {inboxTasks.length} {inboxTasks.length === 1 ? 'task' : 'tasks'}
-              </span>
-            </div>
-            <CollectionTaskTable
-              collectionKey={null}
-              tasks={inboxTasks}
-              emptyHint="Inbox is empty. Drop tasks here to clear collection assignment."
-              onDropTask={handleDropTask}
-            />
-          </section>
-
-          {sortedCollections.map((collection) => (
-            <section key={collection.id} className="border-t border-zinc-800/60">
-              <CollectionHeader
-                collection={collection}
-                taskCount={tasksByCollection[collection.id]?.length ?? 0}
-                onUpdate={handleUpdateCollection}
-                onArchive={requestArchive}
-              />
               <CollectionTaskTable
-                collectionKey={collection.id}
-                tasks={tasksByCollection[collection.id] ?? []}
-                emptyHint="Drop tasks here to add them to this collection."
-                onDropTask={handleDropTask}
+                collectionKey={null}
+                tasks={inboxTasks}
+                emptyHint="Inbox is empty. Drop tasks here to clear collection assignment."
               />
             </section>
-          ))}
 
-          {sortedCollections.length === 0 && (
-            <div className="mx-4 my-6 rounded-md border border-dashed border-zinc-800 px-6 py-10 text-center text-[13px] text-zinc-500">
-              No active collections yet. Create one to start organizing tasks.
-            </div>
-          )}
-        </div>
-      )}
+            {sortedCollections.map((collection) => (
+              <section key={collection.id} className="border-t border-zinc-800/60">
+                <CollectionHeader
+                  collection={collection}
+                  taskCount={tasksByCollection[collection.id]?.length ?? 0}
+                  onUpdate={handleUpdateCollection}
+                  onArchive={requestArchive}
+                />
+                <CollectionTaskTable
+                  collectionKey={collection.id}
+                  tasks={tasksByCollection[collection.id] ?? []}
+                  emptyHint="Drop tasks here to add them to this collection."
+                />
+              </section>
+            ))}
 
-      <CollectionCreateDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        onCreated={() => void load()}
-      />
+            {sortedCollections.length === 0 && (
+              <div className="mx-4 my-6 rounded-md border border-dashed border-zinc-800 px-6 py-10 text-center text-[13px] text-zinc-500">
+                No active collections yet. Create one to start organizing tasks.
+              </div>
+            )}
+          </div>
+        )}
 
-      <AlertDialog open={archiveTarget !== null} onOpenChange={(open) => !open && setArchiveTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Archive this collection?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Archiving{' '}
-              <span className="font-mono text-zinc-300">{archiveTarget?.name}</span>{' '}
-              hides it from the active list. Tasks already in it stay assigned;
-              you can unarchive later via the API if needed.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={archiving}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmArchive} disabled={archiving}>
-              {archiving ? 'Archiving…' : 'Archive'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
+        <CollectionCreateDialog
+          open={createOpen}
+          onOpenChange={setCreateOpen}
+          onCreated={() => void load()}
+        />
+
+        <AlertDialog open={archiveTarget !== null} onOpenChange={(open) => !open && setArchiveTarget(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Archive this collection?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Archiving{' '}
+                <span className="font-mono text-zinc-300">{archiveTarget?.name}</span>{' '}
+                hides it from the active list. Tasks already in it stay assigned;
+                you can unarchive later via the API if needed.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={archiving}>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={confirmArchive} disabled={archiving}>
+                {archiving ? 'Archiving…' : 'Archive'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+
+      {/* DragOverlay renders the drag preview as a positioned clone
+          following the pointer. Wrapping the row clone in a table is
+          required because <tr> can't be a top-level child outside a
+          table — without this the browser unwraps the row and the
+          overlay is blank. */}
+      <DragOverlay>
+        {activeDragTask ? (
+          <table className="min-w-full">
+            <tbody>
+              <CollectionTaskRow task={activeDragTask} asOverlay />
+            </tbody>
+          </table>
+        ) : null}
+      </DragOverlay>
+    </DndContext>
   )
 }
-
