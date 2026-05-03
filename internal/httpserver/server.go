@@ -104,6 +104,24 @@ func (s *Server) routes() {
 		r.Delete("/sprints/{id}", s.deleteSprint)
 		r.Post("/sprints/{id}/transition", s.transitionSprint)
 
+		// Collections — kanban-style task containers + an inbox view.
+		// Task move/inbox sub-routes are intentionally registered before
+		// the parameterized {id} routes so the chi router doesn't try to
+		// pattern-match "tasks" or "inbox" as a collection ID.
+		r.Get("/collections/inbox/tasks", s.listInboxTasks)
+		r.Post("/collections/inbox/tasks", s.addTaskToInbox)
+		r.Post("/collections/tasks/move", s.moveTaskToCollection)
+		r.Get("/collections", s.listCollections)
+		r.Post("/collections", s.createCollection)
+		r.Get("/collections/{id}", s.getCollection)
+		r.Put("/collections/{id}", s.updateCollection)
+		r.Post("/collections/{id}/archive", s.archiveCollection)
+		r.Post("/collections/{id}/unarchive", s.unarchiveCollection)
+		r.Get("/collections/{id}/tasks", s.listCollectionTasks)
+		r.Post("/collections/{id}/tasks", s.addTaskToCollection)
+		r.Delete("/collections/{id}/tasks/{task_id}", s.removeTaskFromCollection)
+		r.Put("/collections/{id}/tasks/order", s.reorderCollectionTasks)
+
 		// Epics
 		r.Get("/epics", s.listEpics)
 		r.Post("/epics", s.createEpic)
