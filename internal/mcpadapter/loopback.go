@@ -121,7 +121,7 @@ func (a *Adapter) handleLoopbackSummary(ctx context.Context, req mcp.CallToolReq
 	if text == "" {
 		return errResult(ErrCodeArgInvalid, "text is required", "text")
 	}
-	comment, err := a.svc.Comment.Add(a.loopbackTaskID, "agent", "Summary: "+text)
+	comment, err := a.svc.Comment.AddForTask(a.loopbackTaskID, "agent", "Summary: "+text)
 	if err != nil {
 		return errFromService(err)
 	}
@@ -154,7 +154,7 @@ func (a *Adapter) handleLoopbackBlocked(ctx context.Context, req mcp.CallToolReq
 func (a *Adapter) handleLoopbackReview(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	reason := reqStr(req, "reason")
 	if reason != "" {
-		if _, err := a.svc.Comment.Add(a.loopbackTaskID, "agent", "Review note: "+reason); err != nil {
+		if _, err := a.svc.Comment.AddForTask(a.loopbackTaskID, "agent", "Review note: "+reason); err != nil {
 			return errFromService(err)
 		}
 	}
@@ -189,7 +189,7 @@ func (a *Adapter) handleLoopbackCommentAdd(ctx context.Context, req mcp.CallTool
 	if content == "" {
 		return errResult(ErrCodeArgInvalid, "content is required", "content")
 	}
-	comment, err := a.svc.Comment.Add(a.loopbackTaskID, "agent", content)
+	comment, err := a.svc.Comment.AddForTask(a.loopbackTaskID, "agent", content)
 	if err != nil {
 		return errFromService(err)
 	}

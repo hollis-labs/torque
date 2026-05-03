@@ -737,23 +737,26 @@ func TestFullStack_CommentSearch(t *testing.T) {
 
 	// Add 3 comments.
 	_, isErr := callTool(t, a, "clockwork_comment_add", map[string]interface{}{
-		"task_id": taskAID,
-		"author":  "alice",
-		"content": "Fix the login handler please",
+		"entity_type": "task",
+		"entity_id":   taskAID,
+		"author":      "alice",
+		"content":     "Fix the login handler please",
 	})
 	require.False(t, isErr)
 
 	_, isErr = callTool(t, a, "clockwork_comment_add", map[string]interface{}{
-		"task_id": taskAID,
-		"author":  "bob",
-		"content": "Agreed login is broken and needs attention",
+		"entity_type": "task",
+		"entity_id":   taskAID,
+		"author":      "bob",
+		"content":     "Agreed login is broken and needs attention",
 	})
 	require.False(t, isErr)
 
 	_, isErr = callTool(t, a, "clockwork_comment_add", map[string]interface{}{
-		"task_id": taskBID,
-		"author":  "alice",
-		"content": "Unrelated work item on task B",
+		"entity_type": "task",
+		"entity_id":   taskBID,
+		"author":      "alice",
+		"content":     "Unrelated work item on task B",
 	})
 	require.False(t, isErr)
 
@@ -781,15 +784,17 @@ func TestFullStack_CommentSearch(t *testing.T) {
 		require.Contains(t, contents, "Agreed login is broken and needs attention")
 	})
 
-	t.Run("task_id scope", func(t *testing.T) {
+	t.Run("entity_id scope", func(t *testing.T) {
 		text, isErr := callTool(t, a, "clockwork_comment_search", map[string]interface{}{
-			"query":   "task",
-			"task_id": taskBID,
+			"query":       "task",
+			"entity_type": "task",
+			"entity_id":   taskBID,
 		})
 		require.False(t, isErr, "should not error: %s", text)
 		items, _ := parseEnvelope(t, text)
 		require.Len(t, items, 1)
-		require.Equal(t, taskBID, items[0]["task_id"])
+		require.Equal(t, taskBID, items[0]["entity_id"])
+		require.Equal(t, "task", items[0]["entity_type"])
 	})
 
 	t.Run("author filter", func(t *testing.T) {
@@ -813,20 +818,21 @@ func TestFullStack_CommentSearch(t *testing.T) {
 		items, _ := parseEnvelope(t, text)
 		require.Len(t, items, 1)
 		require.Equal(t, "alice", items[0]["author"])
-		require.Equal(t, taskBID, items[0]["task_id"])
+		require.Equal(t, taskBID, items[0]["entity_id"])
 	})
 
 	t.Run("combined filters", func(t *testing.T) {
 		text, isErr := callTool(t, a, "clockwork_comment_search", map[string]interface{}{
-			"query":   "login",
-			"task_id": taskAID,
-			"author":  "bob",
+			"query":       "login",
+			"entity_type": "task",
+			"entity_id":   taskAID,
+			"author":      "bob",
 		})
 		require.False(t, isErr, "should not error: %s", text)
 		items, _ := parseEnvelope(t, text)
 		require.Len(t, items, 1)
 		require.Equal(t, "bob", items[0]["author"])
-		require.Equal(t, taskAID, items[0]["task_id"])
+		require.Equal(t, taskAID, items[0]["entity_id"])
 	})
 
 	t.Run("limit and truncated flag", func(t *testing.T) {

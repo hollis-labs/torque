@@ -110,10 +110,11 @@ type briefTemplate struct {
 }
 
 type briefComment struct {
-	ID        int64  `json:"id"`
-	TaskID    string `json:"task_id"`
-	Author    string `json:"author,omitempty"`
-	CreatedAt string `json:"created_at"`
+	ID         int64  `json:"id"`
+	EntityType string `json:"entity_type"`
+	EntityID   string `json:"entity_id"`
+	Author     string `json:"author,omitempty"`
+	CreatedAt  string `json:"created_at"`
 	// First 100 chars of the comment body for context without bloat.
 	Excerpt string `json:"excerpt,omitempty"`
 }
@@ -238,11 +239,12 @@ func toBriefComment(c sqlstore.CommentRecord) briefComment {
 		excerpt = excerpt[:100]
 	}
 	return briefComment{
-		ID:        c.ID,
-		TaskID:    c.TaskID,
-		Author:    c.Author,
-		CreatedAt: c.CreatedAt.UTC().Format(time.RFC3339),
-		Excerpt:   excerpt,
+		ID:         c.ID,
+		EntityType: c.EntityType,
+		EntityID:   c.EntityID,
+		Author:     c.Author,
+		CreatedAt:  c.CreatedAt.UTC().Format(time.RFC3339),
+		Excerpt:    excerpt,
 	}
 }
 
