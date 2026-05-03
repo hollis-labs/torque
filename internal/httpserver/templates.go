@@ -318,7 +318,8 @@ func (s *Server) instantiateTemplate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, taskJSON(task, tags, nil, subs))
+	// Template-generated task is freshly created — no collection yet.
+	writeJSON(w, http.StatusCreated, taskJSON(task, tags, nil, subs, ""))
 }
 
 // writeTemplateError maps template-related service errors to HTTP codes.

@@ -7,6 +7,7 @@ import { PriorityBadge } from './priority-badge'
 import { TagChip } from './tag-chip'
 import { CopyableId } from './copyable-id'
 import { TaskActionsMenu } from './task-actions-menu'
+import { CollectionBadge } from './collection-badge'
 import { QueueToggleButton } from './queue-toggle-button'
 import { TaskStatsStrip } from './task-stats'
 import { FilterEntityCombobox } from './filter-bar/filter-entity-combobox'
@@ -131,6 +132,7 @@ export function TaskDetailHeader({
             ) : (
               <PriorityBadge priority={task.priority} />
             )}
+            {!editing && <CollectionBadge task={task} variant="header" />}
             {editing ? (
               <TagsInput
                 value={source.tags}

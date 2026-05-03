@@ -63,6 +63,38 @@ func (s *Store) GetCollection(id string) (*CollectionRecord, error) {
 	return c, err
 }
 
+// GetCollectionNames returns a map of collection_id → name for the given
+// IDs in a single query. Unknown IDs are simply absent from the result map.
+// Empty input returns an empty map without hitting the DB.
+func (s *Store) GetCollectionNames(ids []string) (map[string]string, error) {
+	out := make(map[string]string, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := s.db.Query(
+		`SELECT id, name FROM collections WHERE id IN (`+placeholders+`)`,
+		args...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		out[id] = name
+	}
+	return out, rows.Err()
+}
+
 // ListCollections returns collections matching the filter, ordered by
 // created_at DESC. Status: "active" (archived_at IS NULL), "archived"
 // (archived_at IS NOT NULL), or "" / "all" (no filter).

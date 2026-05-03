@@ -153,6 +153,7 @@ export interface Task {
   // source (or a future tasks-endpoint expansion) can still reference
   // them without additional casts.
   collection_id?: string | null
+  collection_name?: string | null
   collection_position?: number | null
   added_to_collections_at?: string | null
 

@@ -66,6 +66,14 @@ func (s *CollectionService) Get(id string) (*sqlstore.CollectionRecord, error) {
 	return s.store.GetCollection(id)
 }
 
+// LookupNames returns a map of collection_id → name for the given IDs in
+// a single query. Used by task list/get handlers to surface collection
+// names alongside collection_id without per-task lookups. Bypasses the
+// feature gate intentionally — the read is cheap and not feature-bearing.
+func (s *CollectionService) LookupNames(ids []string) (map[string]string, error) {
+	return s.store.GetCollectionNames(ids)
+}
+
 // List returns collections optionally filtered by status (active|archived|all).
 // Default is "active" (per ticket); empty string is treated as "active" too.
 func (s *CollectionService) List(status string) ([]sqlstore.CollectionRecord, error) {

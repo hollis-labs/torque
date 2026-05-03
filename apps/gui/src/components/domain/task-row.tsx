@@ -3,6 +3,7 @@ import { StatusBadge } from './status-badge'
 import { PriorityBadge } from './priority-badge'
 import { CopyableId } from './copyable-id'
 import { TaskActionsMenu } from './task-actions-menu'
+import { CollectionBadge } from './collection-badge'
 import { ActiveRunPulse } from './active-run-pulse'
 import { TaskStatsCompact } from './task-stats'
 import { SubtodosBadge } from './subtodos-panel'
@@ -95,6 +96,7 @@ export function TaskRow({ task, selected, onSelect, onTaskChange, onTaskDelete }
             <span className="text-[10px] font-mono text-zinc-600">id:</span>
             <CopyableId id={task.id} />
             <SubtodosBadge subtodos={task.subtodos} />
+            <CollectionBadge task={task} />
             {task.tags && task.tags.length > 0 && (
               <>
                 <span className="text-[10px] font-mono text-zinc-600">tags:</span>
