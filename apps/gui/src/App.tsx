@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom'
-import { LayoutList, Play, BarChart3, Settings, Cog, FileText, Inbox, FolderTree, Sparkles } from 'lucide-react'
+import { LayoutList, Play, BarChart3, Settings, Cog, FileText, Inbox, FolderTree, Sparkles, FolderKanban } from 'lucide-react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster } from '@/components/ui/sonner'
 import { ApiProvider } from '@/hooks/use-api'
@@ -25,6 +25,7 @@ import CheckpointsPage from '@/pages/CheckpointsPage'
 import PlansPage from '@/pages/PlansPage'
 import PlanDetailPage from '@/pages/PlanDetailPage'
 import ModelsPage from '@/pages/ModelsPage'
+import CollectionsPage from '@/pages/CollectionsPage'
 import { cn } from '@/lib/utils'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined
@@ -74,6 +75,9 @@ function AppShell() {
         <NavItem to="/operations" label="Operations">
           <LayoutList className="h-4 w-4" />
         </NavItem>
+        <NavItem to="/collections" label="Collections">
+          <FolderKanban className="h-4 w-4" />
+        </NavItem>
         <NavItem to="/plans" label="Plans">
           <FolderTree className="h-4 w-4" />
         </NavItem>
@@ -105,6 +109,7 @@ function AppShell() {
         <Routes>
           <Route path="/" element={<Navigate to="/operations" replace />} />
           <Route path="/operations" element={<BoardPage />} />
+          <Route path="/collections" element={<CollectionsPage />} />
           <Route path="/tasks/:id" element={<TaskDetailPage />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/:id" element={<ProjectDetailPage />} />
