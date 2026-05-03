@@ -212,7 +212,11 @@ func (a *Adapter) handleCollectionTaskAdd(ctx context.Context, req mcp.CallToolR
 
 func (a *Adapter) handleCollectionTaskRemove(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	taskID := reqStr(req, "task_id")
-	if err := a.svc.Collection.RemoveTask(taskID); err != nil {
+	// MCP tool intentionally unscoped ("remove from whatever collection it's
+	// in" semantics, matching the tool description). The HTTP DELETE route
+	// scopes by collection_id; agents that need scoped removal should call
+	// that endpoint instead.
+	if err := a.svc.Collection.RemoveTask(taskID, ""); err != nil {
 		return errFromService(err)
 	}
 	return okResult(map[string]any{

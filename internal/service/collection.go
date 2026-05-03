@@ -137,14 +137,21 @@ func (s *CollectionService) AddTask(collectionID, taskID string, position int) e
 
 // RemoveTask returns a task to inbox (clears collection_id and
 // collection_position; preserves added_to_collections_at).
-func (s *CollectionService) RemoveTask(taskID string) error {
+//
+// expectedCollectionID is enforced if non-empty: the operation only succeeds
+// if the task is currently a member of that collection. Use this from
+// scoped routes (DELETE /collections/{id}/tasks/{task_id}) so the route id
+// is authoritative and a stale or wrong id is rejected rather than
+// silently detaching the task from whatever collection it sits in. Pass
+// "" to skip the scope check.
+func (s *CollectionService) RemoveTask(taskID, expectedCollectionID string) error {
 	if err := s.feature.Require("collections"); err != nil {
 		return err
 	}
 	if taskID == "" {
 		return &ValidationError{Field: "task_id", Message: "task_id is required"}
 	}
-	return s.store.RemoveTaskFromCollection(taskID)
+	return s.store.RemoveTaskFromCollection(taskID, expectedCollectionID)
 }
 
 // ReorderTasks rewrites collection_position for each supplied task in the

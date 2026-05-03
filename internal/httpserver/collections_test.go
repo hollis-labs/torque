@@ -170,3 +170,75 @@ func TestHTTP_CollectionByID_StillWorksAfterLiteralRoutes(t *testing.T) {
 	require.True(t, ok)
 	assert.Empty(t, tasks)
 }
+
+// TestHTTP_DeleteTaskFromCollection_ScopeMismatchReturns409 guards the
+// scoped DELETE /collections/{id}/tasks/{task_id} route. Calling it with
+// a collection_id that doesn't match the task's actual membership must
+// return 409 (not silently detach + emit a wrong-collection SSE event).
+func TestHTTP_DeleteTaskFromCollection_ScopeMismatchReturns409(t *testing.T) {
+	ts := setupTestServer(t)
+	enableCollectionsFeature(t, ts.URL)
+
+	// Create two collections and a task assigned to the first one.
+	colA := postCollection(t, ts.URL, "scope-A")
+	colB := postCollection(t, ts.URL, "scope-B")
+	taskID := postTask(t, ts.URL, "scope mismatch task")
+
+	addBody := `{"task_id":"` + taskID + `"}`
+	addResp, err := http.Post(ts.URL+"/api/v1/collections/"+colA+"/tasks",
+		"application/json", bytes.NewBufferString(addBody))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, addResp.StatusCode)
+	addResp.Body.Close()
+
+	// Try to remove via the WRONG collection's scoped DELETE — must 409.
+	delReq, err := http.NewRequest(http.MethodDelete,
+		ts.URL+"/api/v1/collections/"+colB+"/tasks/"+taskID, nil)
+	require.NoError(t, err)
+	delResp, err := http.DefaultClient.Do(delReq)
+	require.NoError(t, err)
+	assertJSONResponse(t, delResp, http.StatusConflict)
+
+	// Confirm the task is still in colA — no silent detach.
+	listResp, err := http.Get(ts.URL + "/api/v1/collections/" + colA + "/tasks")
+	require.NoError(t, err)
+	listBody := assertJSONResponse(t, listResp, http.StatusOK)
+	tasks2, ok := listBody["tasks"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, tasks2, 1, "task must still be in colA after the rejected scope-mismatch DELETE")
+
+	// And the correct scoped DELETE succeeds.
+	delReqOK, err := http.NewRequest(http.MethodDelete,
+		ts.URL+"/api/v1/collections/"+colA+"/tasks/"+taskID, nil)
+	require.NoError(t, err)
+	delRespOK, err := http.DefaultClient.Do(delReqOK)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNoContent, delRespOK.StatusCode)
+	delRespOK.Body.Close()
+}
+
+// postCollection is a small helper for tests that need a real collection ID.
+func postCollection(t *testing.T, baseURL, name string) string {
+	t.Helper()
+	resp, err := http.Post(baseURL+"/api/v1/collections", "application/json",
+		bytes.NewBufferString(`{"name":"`+name+`","description":""}`))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	var got map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	resp.Body.Close()
+	return got["id"].(string)
+}
+
+// postTask creates a minimal task and returns its ID.
+func postTask(t *testing.T, baseURL, title string) string {
+	t.Helper()
+	resp, err := http.Post(baseURL+"/api/v1/tasks", "application/json",
+		bytes.NewBufferString(`{"title":"`+title+`","description":"x","executor":"cli"}`))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	var got map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	resp.Body.Close()
+	return got["id"].(string)
+}

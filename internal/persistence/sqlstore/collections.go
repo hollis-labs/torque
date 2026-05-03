@@ -269,22 +269,55 @@ func (s *Store) AddTaskToCollection(taskID, collectionID string, position int) e
 	return tx.Commit()
 }
 
+// ErrTaskNotInCollection is returned wrapped when a scoped remove is called
+// with a collection_id that doesn't match the task's current membership.
+// Use errors.Is(err, ErrTaskNotInCollection).
+var ErrTaskNotInCollection = errors.New("task is not in the specified collection")
+
 // RemoveTaskFromCollection clears collection_id and collection_position,
 // returning the task to inbox. added_to_collections_at is preserved (the task
 // stays visible to the collections view).
-func (s *Store) RemoveTaskFromCollection(taskID string) error {
-	res, err := s.db.Exec(`UPDATE tasks
-		SET collection_id = NULL,
-		    collection_position = NULL,
-		    updated_at = ?
-		WHERE id = ?`,
-		time.Now().UTC(), taskID,
-	)
+//
+// expectedCollectionID is enforced: the WHERE clause requires the task to
+// currently be in that collection. Pass "" to skip the scope check (used by
+// MoveTaskToCollection, which is its own atomic move). When the scope check
+// fails, returns ErrTaskNotInCollection so the HTTP layer can surface 409
+// rather than silently detaching the task from whatever collection it sits in.
+func (s *Store) RemoveTaskFromCollection(taskID, expectedCollectionID string) error {
+	var res sql.Result
+	var err error
+	now := time.Now().UTC()
+	if expectedCollectionID == "" {
+		res, err = s.db.Exec(`UPDATE tasks
+			SET collection_id = NULL,
+			    collection_position = NULL,
+			    updated_at = ?
+			WHERE id = ?`,
+			now, taskID,
+		)
+	} else {
+		res, err = s.db.Exec(`UPDATE tasks
+			SET collection_id = NULL,
+			    collection_position = NULL,
+			    updated_at = ?
+			WHERE id = ? AND collection_id = ?`,
+			now, taskID, expectedCollectionID,
+		)
+	}
 	if err != nil {
 		return err
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
+		// Distinguish "task doesn't exist" from "task exists but not in this
+		// collection" so the HTTP layer can return 404 vs 409 appropriately.
+		var taskExists int
+		if scanErr := s.db.QueryRow("SELECT 1 FROM tasks WHERE id = ?", taskID).Scan(&taskExists); scanErr == sql.ErrNoRows {
+			return fmt.Errorf("task %s: %w", taskID, ErrTaskNotFound)
+		}
+		if expectedCollectionID != "" {
+			return fmt.Errorf("task %s not in collection %s: %w", taskID, expectedCollectionID, ErrTaskNotInCollection)
+		}
 		return fmt.Errorf("task %s: %w", taskID, ErrTaskNotFound)
 	}
 	return nil

@@ -44,6 +44,14 @@ func writeCollectionError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	if errors.Is(err, sqlstore.ErrTaskNotInCollection) {
+		// Scope-mismatch on a scoped route (e.g. DELETE
+		// /collections/{id}/tasks/{task_id} where the task isn't in
+		// {id}). 409 distinguishes "exists, but the relationship the
+		// caller asserted is wrong" from a true 404.
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
 	writeError(w, http.StatusInternalServerError, err.Error())
 }
 
@@ -209,7 +217,11 @@ func (s *Server) addTaskToCollection(w http.ResponseWriter, r *http.Request) {
 func (s *Server) removeTaskFromCollection(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	taskID := chi.URLParam(r, "task_id")
-	if err := s.svc.Collection.RemoveTask(taskID); err != nil {
+	// Pass id so the route is authoritative — silently detaching from
+	// whatever collection the task happens to be in would let stale
+	// callers cause invisible cross-collection moves and emit SSE events
+	// pointing at the wrong collection.
+	if err := s.svc.Collection.RemoveTask(taskID, id); err != nil {
 		writeCollectionError(w, err)
 		return
 	}

@@ -168,13 +168,42 @@ func TestRemoveTaskFromCollectionPreservesInbox(t *testing.T) {
 	collTestTask(t, store, "T-A")
 	require.NoError(t, store.AddTaskToCollection("T-A", colID, 0))
 
-	require.NoError(t, store.RemoveTaskFromCollection("T-A"))
+	// Unscoped removal (legacy/internal callers): empty expected ID.
+	require.NoError(t, store.RemoveTaskFromCollection("T-A", ""))
 
 	tA, err := store.GetTask("T-A")
 	require.NoError(t, err)
 	assert.False(t, tA.CollectionID.Valid, "collection_id should be cleared")
 	assert.False(t, tA.CollectionPosition.Valid, "collection_position should be cleared")
 	assert.True(t, tA.AddedToCollectionsAt.Valid, "added_to_collections_at must be preserved (write-once)")
+}
+
+func TestRemoveTaskFromCollectionScopedRejectsMismatch(t *testing.T) {
+	store := setupTestStore(t)
+
+	// Two collections; task lives in colA. Calling scoped remove with
+	// colB must fail with ErrTaskNotInCollection and leave the task
+	// where it was — no silent detach.
+	colA, _ := store.NextCollectionID()
+	require.NoError(t, store.CreateCollection(&sqlstore.CollectionRecord{ID: colA, Name: "A"}))
+	colB, _ := store.NextCollectionID()
+	require.NoError(t, store.CreateCollection(&sqlstore.CollectionRecord{ID: colB, Name: "B"}))
+	collTestTask(t, store, "T-S")
+	require.NoError(t, store.AddTaskToCollection("T-S", colA, 0))
+
+	err := store.RemoveTaskFromCollection("T-S", colB)
+	require.ErrorIs(t, err, sqlstore.ErrTaskNotInCollection)
+
+	tS, err := store.GetTask("T-S")
+	require.NoError(t, err)
+	require.True(t, tS.CollectionID.Valid)
+	assert.Equal(t, colA, tS.CollectionID.String, "task must still be in colA")
+
+	// Scoped remove with the correct id succeeds.
+	require.NoError(t, store.RemoveTaskFromCollection("T-S", colA))
+	tS, err = store.GetTask("T-S")
+	require.NoError(t, err)
+	assert.False(t, tS.CollectionID.Valid)
 }
 
 func TestReorderCollectionTasks(t *testing.T) {
@@ -297,7 +326,7 @@ func TestRemoveFromCollectionReturnsToInbox(t *testing.T) {
 	assert.Empty(t, inbox)
 
 	// After removal, it returns to inbox.
-	require.NoError(t, store.RemoveTaskFromCollection("T-RT"))
+	require.NoError(t, store.RemoveTaskFromCollection("T-RT", ""))
 	inbox, err = store.ListInboxTasks()
 	require.NoError(t, err)
 	require.Len(t, inbox, 1)
