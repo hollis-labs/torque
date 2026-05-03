@@ -9,7 +9,9 @@
 --     collection.
 --   * tasks.added_to_collections_at is the inbox sentinel: NULL = legacy /
 --     untouched (invisible to the collections view), non-NULL = participates
---     in the collections world. NULL + NULL collection_id ⇒ inbox.
+--     in the collections world. Inbox view is
+--     `added_to_collections_at IS NOT NULL AND collection_id IS NULL`;
+--     both NULL means legacy/untouched (NOT inbox).
 --     Write-once: callers set it on first add to inbox or to a collection and
 --     never clear it; remove-from-collection returns the task to inbox by
 --     clearing collection_id only.
