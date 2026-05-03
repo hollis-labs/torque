@@ -20,9 +20,8 @@ const defaultCommentAuthor = "user"
 // comment request.
 //
 // The nested route `/tasks/{id}/comments` always implies entity_type="task";
-// the URL param is the entity id. The flat `/comments` endpoint accepts the
-// pair via query string (`?entity_type=…&entity_id=…`) or the legacy
-// `?task_id=…` shape, which is normalized to entity_type="task".
+// the URL param is the entity id. The flat `/comments` endpoint requires the
+// pair via query string (`?entity_type=…&entity_id=…`).
 func commentEntityFromRequest(r *http.Request) (entityType, entityID string) {
 	if id := chi.URLParam(r, "id"); id != "" {
 		return sqlstore.EntityTypeTask, id
@@ -30,19 +29,23 @@ func commentEntityFromRequest(r *http.Request) (entityType, entityID string) {
 	q := r.URL.Query()
 	entityType = q.Get("entity_type")
 	entityID = q.Get("entity_id")
-	if entityType == "" && entityID == "" {
-		// Legacy ?task_id= shape — preserved for curl/scripts.
-		if tid := q.Get("task_id"); tid != "" {
-			return sqlstore.EntityTypeTask, tid
-		}
-	}
 	if entityType == "" {
 		entityType = sqlstore.EntityTypeTask
 	}
 	return entityType, entityID
 }
 
+// legacyTaskIDError is the rejection message for the legacy task_id alias on
+// the flat /comments endpoint. The alias was removed in CW-20260503-0007;
+// callers must use entity_type + entity_id directly.
+const legacyTaskIDError = "task_id is no longer accepted on /comments; use entity_type=task&entity_id=<id> (or POST {\"entity_type\":\"task\",\"entity_id\":\"<id>\"})"
+
 func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
+	// Nested route resolves via URL param; flat route never accepts task_id.
+	if chi.URLParam(r, "id") == "" && r.URL.Query().Get("task_id") != "" {
+		writeError(w, http.StatusBadRequest, legacyTaskIDError)
+		return
+	}
 	entityType, entityID := commentEntityFromRequest(r)
 	if entityID == "" {
 		writeError(w, http.StatusBadRequest, "entity_id is required")
@@ -60,12 +63,19 @@ func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) addComment(w http.ResponseWriter, r *http.Request) {
+	// Reject the legacy task_id query alias on the flat endpoint up front so
+	// the error message is consistent with listComments.
+	isNested := chi.URLParam(r, "id") != ""
+	if !isNested && r.URL.Query().Get("task_id") != "" {
+		writeError(w, http.StatusBadRequest, legacyTaskIDError)
+		return
+	}
+
 	var req struct {
 		EntityType string `json:"entity_type"`
 		EntityID   string `json:"entity_id"`
-		// TaskID is accepted on the flat endpoint as a legacy alias so curl /
-		// scripts that POST {"task_id":...} keep working; nested-route callers
-		// don't need it. Server-side it normalizes to entity_type="task".
+		// TaskID is decoded only to detect and reject legacy {"task_id":...}
+		// bodies on the flat endpoint with a clear error.
 		TaskID  string `json:"task_id"`
 		Author  string `json:"author"`
 		Content string `json:"content"`
@@ -80,14 +90,16 @@ func (s *Server) addComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject legacy {"task_id":...} bodies on the flat endpoint.
+	if !isNested && req.TaskID != "" {
+		writeError(w, http.StatusBadRequest, legacyTaskIDError)
+		return
+	}
+
 	// Nested route /tasks/{id}/comments — URL param wins and implies type=task.
-	if id := chi.URLParam(r, "id"); id != "" {
+	if isNested {
 		req.EntityType = sqlstore.EntityTypeTask
-		req.EntityID = id
-	} else if req.EntityType == "" && req.EntityID == "" && req.TaskID != "" {
-		// Legacy {"task_id":...} body on the flat endpoint.
-		req.EntityType = sqlstore.EntityTypeTask
-		req.EntityID = req.TaskID
+		req.EntityID = chi.URLParam(r, "id")
 	}
 
 	if req.EntityType == "" {
