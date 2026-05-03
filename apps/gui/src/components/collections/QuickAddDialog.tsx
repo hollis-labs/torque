@@ -205,7 +205,12 @@ export function QuickAddDialog({
   }
 
   const isLoading = collections === null
-  const showInbox = task.collection_id !== null && task.collection_id !== undefined
+  // Always pin "Send to inbox" at the top — cmdk auto-highlights the first
+  // item, which makes Enter-without-picking land the task in inbox per spec.
+  // Hide only when the task already lives in inbox (no-op + clutter).
+  const isCurrentlyInInbox =
+    !task.collection_id && task.added_to_collections_at != null
+  const showInbox = !isCurrentlyInInbox
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
