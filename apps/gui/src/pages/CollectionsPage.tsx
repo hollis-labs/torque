@@ -523,11 +523,37 @@ export default function CollectionsPage() {
       }
 
       if (source.collectionId !== null && target.collectionId === null) {
-        // collection → inbox
+        // collection → inbox: scoped DELETE so the route is authoritative
+        // (rejects 409 if the task isn't actually in source.collectionId).
         api.removeTaskFromCollection(source.collectionId, taskId).catch(onError)
       } else if (target.collectionId !== null) {
-        // inbox → collection OR collection A → collection B
-        api.moveTask(taskId, target.collectionId, destIndex).catch(onError)
+        // inbox → collection OR collection A → collection B.
+        //
+        // Two-step to keep server-side ordering bulletproof:
+        //   1. moveTask with no explicit position → backend appends
+        //      (max(collection_position)+1 in the target collection).
+        //   2. reorderCollectionTasks with the full destination order
+        //      atomically rewrites collection_position 1..N matching
+        //      the optimistic UI.
+        //
+        // Why not pass `destIndex` directly to moveTask? Two reasons:
+        //   - destIndex is 0-based; the backend's `position` field is
+        //     1-based with `<=0` meaning append. The math mismatch alone
+        //     would silently land tasks in the wrong slot.
+        //   - MoveTaskToCollection SETs the position without shifting
+        //     other rows, so even with correct math, an explicit
+        //     position would collide with an existing task at that
+        //     slot. ORDER BY tie-broke on created_at, and the visual
+        //     order drifted on the next refetch. The reorder step
+        //     rewrites the whole collection's positions atomically.
+        const targetCollectionID = target.collectionId
+        const orderedIDs = newDest.map((t) => t.id)
+        api
+          .moveTask(taskId, targetCollectionID)
+          .then(() =>
+            api.reorderCollectionTasks(targetCollectionID, orderedIDs),
+          )
+          .catch(onError)
       }
     },
     [api, inboxTasks, tasksByCollection, load, findContainerForTask, resolveDropTarget],
