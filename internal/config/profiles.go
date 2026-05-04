@@ -114,4 +114,16 @@ var builtinProfiles = ProfileMap{
 		Provider:       "opencode",
 		TimeoutSeconds: 600,
 	},
+
+	// Orchestrator (CW-20260503-0018, S2.2, V0). Long-lived session
+	// per plan — walks phases sequentially, dispatches children one at
+	// a time, waits for the substrate-spawned reviewer to clear each.
+	// Larger timeout because the session lifetime spans the entire
+	// plan; cliexec / sessionmgr's own per-tick budget enforcement
+	// applies inside.
+	"orchestrator": {
+		Executor:       "cli",
+		Provider:       "opencode",
+		TimeoutSeconds: 1800,
+	},
 }
