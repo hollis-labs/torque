@@ -147,6 +147,20 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// so cliexec could claim it for per-task MCP loopback wiring.
 	handler := httpserver.New(svc, sched)
 
+	// Long-lived agent session manager (CW-20260503-0014, S1.4).
+	// Sweep+register here so /api/v1/sessions/* + clockwork_session_* are
+	// live alongside the rest of the runtime stack. NOTE for S1.5
+	// (CW-20260503-0015 / cmd/clockwork/bootstrap.go split): this block
+	// is the canonical sessionmgr construction point. When bootstrap.go
+	// lands, move this into bootstrap.SessionMgr's caller and pass the
+	// constructed Manager into both httpserver.WithSessionMgr and the
+	// MCP adapter (per the in-process mcp host, when wired).
+	sessions, err := bootstrap.SessionMgr(store, profiles, sched.EventBus())
+	if err != nil {
+		return fmt.Errorf("bootstrap sessionmgr: %w", err)
+	}
+	handler.WithSessionMgr(sessions)
+
 	// Background goroutines share a derived context so cancelling the parent
 	// ctx tears down the scheduler loop, the SSE bridge, and the models.dev
 	// refresher together. Declared here so the catalog can attach to runCtx

@@ -239,4 +239,23 @@ func TestMigrationsApply(t *testing.T) {
 		_, err = db.Exec(`INSERT INTO runs (task_id, executor, status) VALUES ('T15-ok', 'cli', ?)`, s)
 		require.NoError(t, err, "runs.status must accept taxonomy value %q", s)
 	}
+
+	// Verify 023 created sessions + session_checkpoints with the expected
+	// columns and CHECK on state.
+	_, err = db.Exec(`SELECT id, agent_profile, provider, runtime_id, runtime_kind,
+		workdir, project_id, task_id, state, pid, exit_code, resume_hint, meta,
+		created_at, updated_at, last_activity, ended_at FROM sessions LIMIT 0`)
+	require.NoError(t, err, "sessions schema should be present after 023")
+
+	_, err = db.Exec(`SELECT id, session_id, payload, resume_hint, note, created_at
+		FROM session_checkpoints LIMIT 0`)
+	require.NoError(t, err, "session_checkpoints schema should be present after 023")
+
+	_, err = db.Exec(`INSERT INTO sessions (id, state) VALUES ('S23-bad', 'nonsense')`)
+	require.Error(t, err, "sessions.state CHECK should reject unknown values")
+
+	for _, st := range []string{"launching", "running", "done", "failed", "crashed"} {
+		_, err = db.Exec(`INSERT INTO sessions (id, state) VALUES (?, ?)`, "S23-"+st, st)
+		require.NoError(t, err, "sessions.state should accept %q", st)
+	}
 }
