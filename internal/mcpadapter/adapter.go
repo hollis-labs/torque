@@ -4,7 +4,9 @@ import (
 	"context"
 	"strconv"
 
+	"github.com/hollis-labs/clockwork-manifold/internal/broker"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/sessionmgr"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -22,6 +24,13 @@ type Adapter struct {
 	sched          *scheduler.Scheduler
 	server         *server.MCPServer
 	loopbackTaskID string
+	// sessions wires the long-lived agent session manager (CW-20260503-0014).
+	// Nil disables clockwork_session_* tools — they reply with a domain error
+	// rather than panicking. Mirrors the sched=nil contract.
+	sessions *sessionmgr.Manager
+	// broker wires the typed envelope dispatcher (CW-20260503-0013, S1.3).
+	// Nil disables clockwork_broker_* tools the same way.
+	broker *broker.Broker
 }
 
 // New creates an Adapter, registers all tools, and returns it. sched may be
@@ -44,10 +53,25 @@ func New(svc *service.Service, sched *scheduler.Scheduler) *Adapter {
 // Server returns the underlying MCPServer.
 func (a *Adapter) Server() *server.MCPServer { return a.server }
 
+// WithSessionMgr attaches the long-lived agent session manager so the
+// clockwork_session_* tools surface real data. Must be called before any
+// MCP requests are served (not goroutine-safe with respect to live calls).
+func (a *Adapter) WithSessionMgr(mgr *sessionmgr.Manager) *Adapter {
+	a.sessions = mgr
+	return a
+}
+
+// WithBroker attaches the typed envelope broker so the clockwork_broker_*
+// tools surface real data. Same pre-flight contract as WithSessionMgr.
+func (a *Adapter) WithBroker(b *broker.Broker) *Adapter {
+	a.broker = b
+	return a
+}
+
 func (a *Adapter) registerCoreTools() {
 	a.server.AddTool(mcp.NewTool("clockwork_health",
 		mcp.WithDescription(`Liveness probe for the Clockwork MCP server.
-Use before any other tool when you need to confirm the service is reachable and discover which opt-in feature flags (sprints, projects, epics) are enabled.
+Use before any other tool when you need to confirm the service is reachable and discover which opt-in feature flags (sprints, projects, epics, collections) are enabled.
 Response shape: data = {status, message, enabled_features[]}.
 Example: {}`),
 	), a.handleHealth)
@@ -62,6 +86,8 @@ Example: {}`),
 	a.registerSubtodoTools()
 	a.registerPlanTools()
 	a.registerModelTools()
+	a.registerSessionTools()
+	a.registerBrokerTools()
 }
 
 // registerOptInTools checks feature flags and registers tools for enabled layers.

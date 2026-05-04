@@ -30,20 +30,25 @@ func TestBootstrapExecutors(t *testing.T) {
 	err := bootstrap.Executors(reg, profiles, nil, nil)
 	require.NoError(t, err)
 
-	// CLI executor should be registered
+	// CLI executor should be registered. CW-20260503-0015 (Plan 4) flipped
+	// SupportsTools=true on cliexec — a real ToolRouter is now threaded in
+	// (NewDefault when bootstrap is called with nil), so calls flow through
+	// the permission engine + audit log instead of escaping unfettered.
 	cli, err := reg.Get("cli")
 	require.NoError(t, err)
 	assert.Equal(t, "cli", cli.Name())
 	assert.True(t, cli.Capabilities().SupportsStreaming)
+	assert.True(t, cli.Capabilities().SupportsTools, "Plan 4: tool-broker wired")
 
 	// API executor should be registered. Phase E (CW-20260427-0043) wired the
-	// vendor-SDK executor and honestly reports tools=false until Plan 4 lands;
-	// the legacy stub claimed SupportsTools=true with no actual plumbing.
+	// vendor-SDK executor; CW-20260503-0015 flipped SupportsTools=true once
+	// the tool-broker landed (the legacy stub claimed tools=true with no
+	// plumbing; Phase E reverted it pending Plan 4; this is Plan 4).
 	api, err := reg.Get("api")
 	require.NoError(t, err)
 	assert.Equal(t, "api", api.Name())
 	assert.True(t, api.Capabilities().SupportsStreaming)
-	assert.False(t, api.Capabilities().SupportsTools, "tools support deferred to Plan 4")
+	assert.True(t, api.Capabilities().SupportsTools, "Plan 4: tool-broker wired")
 }
 
 func TestBootstrapExecutorsListAll(t *testing.T) {

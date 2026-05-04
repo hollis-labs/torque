@@ -172,6 +172,49 @@ func TestHTTP_TaskList_FilterByKind(t *testing.T) {
 	assert.Equal(t, "external", tasks[0].(map[string]interface{})["kind"])
 }
 
+// CW-20260503-0011 (S1.1): list endpoints default-exclude kind=internal so
+// automation/system tasks (Reviewer end-agents etc.) don't pollute the
+// user-facing task list. Three opt-in shapes surface them: ?include_internal=1,
+// ?include_internal=true, or an explicit ?kind=internal filter.
+func TestHTTP_TaskList_DefaultExcludesInternal(t *testing.T) {
+	ts := setupTestServer(t)
+
+	http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(
+		`{"title":"agent task","kind":"agent","executor":"cli","agent_profile":"cli","description":"x"}`))
+	http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(
+		`{"title":"reviewer","kind":"internal","executor":"cli","agent_profile":"reviewer","description":"x"}`))
+
+	idsFrom := func(url string) []string {
+		resp, err := http.Get(url)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		var result map[string]interface{}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+		resp.Body.Close()
+		raw := result["tasks"].([]interface{})
+		out := make([]string, 0, len(raw))
+		for _, t := range raw {
+			out = append(out, t.(map[string]interface{})["id"].(string))
+		}
+		return out
+	}
+
+	defaultIDs := idsFrom(ts.URL + "/api/v1/tasks")
+	require.Len(t, defaultIDs, 1, "internal task hidden from default list")
+
+	// Opt-in via include_internal=true surfaces both rows.
+	allIDs := idsFrom(ts.URL + "/api/v1/tasks?include_internal=true")
+	assert.Len(t, allIDs, 2)
+
+	// Numeric truthy alias.
+	allIDsNumeric := idsFrom(ts.URL + "/api/v1/tasks?include_internal=1")
+	assert.Len(t, allIDsNumeric, 2)
+
+	// Explicit kind=internal filter wins regardless of include_internal absence.
+	internalOnly := idsFrom(ts.URL + "/api/v1/tasks?kind=internal")
+	require.Len(t, internalOnly, 1)
+}
+
 // TestIntegration_TaskWithFacets_ThroughAllLayers is the Phase A exit-gate
 // integration check: create → get → update → list filter, all via HTTP,
 // exercising the facet pipeline through service + store layers.

@@ -92,6 +92,11 @@ export default function BoardPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState<string>('')
+  // System (kind=internal) toggle — storage-only, default off. Surfacing
+  // automation tasks (Reviewer end-agents etc.) is an admin/diagnostic
+  // workflow, not a routine deep-link target, so we don't URL-back it.
+  // CW-20260503-0011.
+  const [includeInternal, setIncludeInternal] = useState<boolean>(false)
 
   // Group picker data
   const [projects, setProjects] = useState<Project[]>([])
@@ -160,6 +165,7 @@ export default function BoardPage() {
     // to the URL via the `urlHasFilter` short-circuit below.
     const stored = readOpsFilters()
     if (stored?.search) setSearch(stored.search)
+    if (stored?.includeInternal) setIncludeInternal(true)
 
     const urlHasFilter = FILTER_PARAM_KEYS.some((k) => searchParams.has(k))
     if (urlHasFilter) {
@@ -214,8 +220,9 @@ export default function BoardPage() {
       tagSlug,
       manual: manualFilter,
       search,
+      includeInternal,
     })
-  }, [hydrated, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, manualFilter, search])
+  }, [hydrated, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, manualFilter, search, includeInternal])
 
   // Fetch pickers once on mount
   const refreshPickers = useCallback(async () => {
@@ -298,6 +305,7 @@ export default function BoardPage() {
         tags: tagSlug ? [tagSlug] : undefined,
         manual: manualFilter === 'both' ? undefined : manualFilter === 'manual',
         search: search || undefined,
+        include_internal: includeInternal || undefined,
       })
       if (myGen !== fetchGeneration.current) return
       setTasks(result.tasks)
@@ -311,7 +319,7 @@ export default function BoardPage() {
         setLoading(false)
       }
     }
-  }, [api, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, manualFilter, search])
+  }, [api, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, manualFilter, search, includeInternal])
 
   // Refetch when filters/search change. Intentionally does NOT setLoading(true)
   // — the initial useState(true) covers the first-mount skeleton; subsequent
@@ -357,6 +365,7 @@ export default function BoardPage() {
       tagSlug,
       manual: manualFilter,
       search,
+      includeInternal,
       ...overrides,
     })
   }
@@ -411,6 +420,11 @@ export default function BoardPage() {
     })
   }
 
+  function handleIncludeInternalChange(value: boolean) {
+    setIncludeInternal(value)
+    persistFilters({ includeInternal: value })
+  }
+
   async function handleTransition(id: string, status: TaskStatus) {
     try {
       await api.transitionTask(id, status)
@@ -424,6 +438,7 @@ export default function BoardPage() {
     (activeStatuses.length !== DEFAULT_ACTIVE_STATUSES.length ? 1 : 0) +
     (activePriorities.length > 0 ? 1 : 0) +
     (manualFilter !== 'both' ? 1 : 0) +
+    (includeInternal ? 1 : 0) +
     (projectId !== null ? 1 : 0) +
     (sprintId !== null ? 1 : 0) +
     (epicId !== null ? 1 : 0) +
@@ -436,6 +451,7 @@ export default function BoardPage() {
   function handleClearFilters() {
     clearOpsFilters()
     setSearch('')
+    setIncludeInternal(false)
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev)
@@ -512,6 +528,8 @@ export default function BoardPage() {
         onPriorityToggle={handlePriorityToggle}
         manualFilter={manualFilter}
         onManualFilterChange={handleManualFilterChange}
+        includeInternal={includeInternal}
+        onIncludeInternalChange={handleIncludeInternalChange}
         projects={projects}
         projectId={projectId}
         onProjectChange={(id) => handleGroupChange('project_id', id)}

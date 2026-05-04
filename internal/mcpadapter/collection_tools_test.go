@@ -1,6 +1,7 @@
 package mcpadapter_test
 
 import (
+	"sort"
 	"testing"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/mcpadapter"
@@ -37,6 +38,37 @@ func TestCollectionToolsRegisteredWhenEnabled(t *testing.T) {
 	parseData(t, text, &collection)
 	assert.Contains(t, collection["ID"].(string), "COL-")
 	assert.Equal(t, "Roadmap", collection["Name"])
+}
+
+func TestCollectionToolsSurfacedInListToolsWhenEnabled(t *testing.T) {
+	a := setupCollectionsAdapter(t)
+
+	tools := a.Server().ListTools()
+	require.NotEmpty(t, tools)
+
+	var names []string
+	for name := range tools {
+		if len(name) >= len("clockwork_collection_") && name[:len("clockwork_collection_")] == "clockwork_collection_" {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+
+	assert.Equal(t, []string{
+		"clockwork_collection_archive",
+		"clockwork_collection_create",
+		"clockwork_collection_get",
+		"clockwork_collection_inbox_add",
+		"clockwork_collection_inbox_list",
+		"clockwork_collection_list",
+		"clockwork_collection_task_add",
+		"clockwork_collection_task_move",
+		"clockwork_collection_task_remove",
+		"clockwork_collection_task_reorder",
+		"clockwork_collection_tasks_list",
+		"clockwork_collection_unarchive",
+		"clockwork_collection_update",
+	}, names)
 }
 
 func TestCollectionFullLifecycleViaMCP(t *testing.T) {

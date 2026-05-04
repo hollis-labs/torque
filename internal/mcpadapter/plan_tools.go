@@ -3,10 +3,13 @@ package mcpadapter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
 	"github.com/mark3labs/mcp-go/mcp"
+
+	"github.com/hollis-labs/clockwork-manifold/internal/planstart"
+	"github.com/hollis-labs/clockwork-manifold/internal/service"
 )
 
 // registerPlanTools exposes the PlanService convenience operations over MCP.
@@ -64,6 +67,16 @@ Example: {"plan_id":"T-999","phase_id":"ph-1"}`),
 		mcp.WithString("phase_id", mcp.Description("Optional phase_id filter")),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handlePlanListChildren)
+
+	a.server.AddTool(mcp.NewTool("clockwork_plan_start",
+		mcp.WithDescription(`Boot an Orchestrator session for a kind=plan task and transition the plan to doing. Returns {session_id, plan_id, started_at}.
+Idempotent: if an Orchestrator session is already running for this plan, returns the existing session_id with error.code=conflict so callers can route to the live session view rather than retry.
+Plan must be kind=plan and status in {todo, review} — done/blocked/abandoned plans are not re-runnable in V0. Workdir defaults to the plan task's WorkingDir column when omitted.
+Response shape: data = {session_id, plan_id, started_at}. On 409: error contains the existing session_id token.
+Example: {"plan_id":"T-PLAN-1","workdir":"/tmp/plan"}`),
+		mcp.WithString("plan_id", mcp.Required(), mcp.Description("Plan task ID (kind=plan)")),
+		mcp.WithString("workdir", mcp.Description("Orchestrator session workdir; defaults to plan.WorkingDir")),
+	), a.handlePlanStart)
 }
 
 func (a *Adapter) handlePlanCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -138,4 +151,47 @@ func (a *Adapter) handlePlanListChildren(ctx context.Context, req mcp.CallToolRe
 	}
 	// Reuse the task envelope: plan children are just tasks.
 	return a.tasksToEnvelope(children, maxTaskListLimit, verbose)
+}
+
+// handlePlanStart boots an Orchestrator session for a kind=plan task
+// (CW-20260503-0017, S2.1). Errors map to dual-surface MCP results:
+//   - ErrAlreadyOrchestrating → conflict (existing session_id surfaced)
+//   - ErrPlanNotFound / ErrPlanWrongStatus → arg_invalid
+//   - ErrSessionMgrMissing → domain (substrate not wired in this host)
+func (a *Adapter) handlePlanStart(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if a.sessions == nil {
+		return errResult(ErrCodeDomain, planstart.ErrSessionMgrMissing.Error(), "")
+	}
+	planID := reqStr(req, "plan_id")
+	if planID == "" {
+		return errResult(ErrCodeArgInvalid, "plan_id is required", "plan_id")
+	}
+	res, err := planstart.Start(ctx, a.svc.Store(), a.sessions, planID, planstart.Options{
+		Workdir: reqStr(req, "workdir"),
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, planstart.ErrAlreadyOrchestrating):
+			// AC5 idempotency: surface as code=conflict (matches the
+			// tool's documented contract) and embed the live session id
+			// in the message so callers can route to the running view.
+			// errResult's envelope doesn't carry structured details, so
+			// the session_id rides in the message text — agents grep
+			// for "session_id=" to pull it out, GUI shows it verbatim.
+			msg := err.Error()
+			if res != nil && res.SessionID != "" {
+				msg = msg + " (session_id=" + res.SessionID + ")"
+			}
+			return errResult(ErrCodeConflict, msg, "")
+		case errors.Is(err, planstart.ErrPlanNotFound), errors.Is(err, planstart.ErrPlanWrongStatus):
+			return errResult(ErrCodeArgInvalid, err.Error(), "plan_id")
+		case errors.Is(err, planstart.ErrWorkdirRequired):
+			return errResult(ErrCodeArgInvalid, err.Error(), "workdir")
+		case errors.Is(err, planstart.ErrSessionMgrMissing):
+			return errResult(ErrCodeDomain, err.Error(), "")
+		default:
+			return errResult(ErrCodeDomain, err.Error(), "")
+		}
+	}
+	return okResult(res)
 }

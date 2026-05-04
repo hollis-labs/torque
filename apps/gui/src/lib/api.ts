@@ -267,6 +267,7 @@ export class ClockworkApiClient {
     if (filter?.kind) params['kind'] = filter.kind
     if (filter?.parent_id !== undefined) params['parent_id'] = filter.parent_id
     if (filter?.manual !== undefined) params['manual'] = filter.manual ? 'true' : 'false'
+    if (filter?.include_internal) params['include_internal'] = 'true'
     return this.get<{ tasks: Task[]; total: number }>('/tasks', params)
   }
 
@@ -756,6 +757,21 @@ export class ClockworkApiClient {
     const params: Record<string, string | number | boolean | undefined> = {}
     if (phaseId) params['phase_id'] = phaseId
     return this.get<{ tasks: Task[] }>(`/plans/${planId}/children`, params)
+  }
+
+  /**
+   * Boot an Orchestrator session for the named plan and transition the
+   * plan task to `doing`. Returns `{session_id, plan_id, started_at}`.
+   * On 409 (already orchestrating) the existing session_id is surfaced
+   * so callers can route to the live session view rather than retry.
+   * CW-20260503-0017 (S2.1).
+   */
+  async startPlan(planId: string, opts?: { workdir?: string; env?: string[] }): Promise<{
+    session_id: string
+    plan_id: string
+    started_at: string
+  }> {
+    return this.post(`/plans/${planId}/start`, opts ?? {})
   }
 
   // -------------------------

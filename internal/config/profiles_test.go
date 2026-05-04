@@ -153,3 +153,24 @@ func TestGetProfileOrDefault(t *testing.T) {
 	p = config.GetProfileOrDefault(empty, "anything")
 	assert.Equal(t, "", p.Executor)
 }
+
+// CW-20260503-0019 (S2.3) — substrate builtins fill in for internal-
+// task agent profiles when the user's profiles.yaml hasn't named them.
+// User entries always win; the builtin fallback is the safety net for
+// fresh installs.
+func TestGetProfileOrDefault_BuiltinReviewer(t *testing.T) {
+	// Empty user config — builtin reviewer-end-agent should resolve.
+	p := config.GetProfileOrDefault(config.ProfileMap{}, "reviewer-end-agent")
+	assert.Equal(t, "cli", p.Executor, "builtin reviewer profile must resolve")
+	assert.NotEmpty(t, p.Provider)
+	assert.Greater(t, p.TimeoutSeconds, 0)
+
+	// User override beats the builtin.
+	user := config.ProfileMap{
+		"reviewer-end-agent": {Executor: "api", Provider: "anthropic", TimeoutSeconds: 1200},
+	}
+	p = config.GetProfileOrDefault(user, "reviewer-end-agent")
+	assert.Equal(t, "api", p.Executor, "user profile must override builtin")
+	assert.Equal(t, "anthropic", p.Provider)
+	assert.Equal(t, 1200, p.TimeoutSeconds)
+}

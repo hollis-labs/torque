@@ -66,7 +66,10 @@ var validOnDoneMerge = map[string]bool{
 	"auto-resolve": true,
 }
 
-// Facet enum value sets (migration 007; migration 014 adds "plan").
+// Facet enum value sets (migration 007; migration 014 adds "plan";
+// migration 021 adds "internal" for automation/system substrate tasks
+// that participate in scheduling but stay out of user-facing list views
+// and per-project concurrency accounting).
 var validKinds = map[string]bool{
 	"agent":    true,
 	"external": true,
@@ -74,6 +77,7 @@ var validKinds = map[string]bool{
 	"decision": true,
 	"parent":   true,
 	"plan":     true,
+	"internal": true,
 }
 
 var validSourceTypes = map[string]bool{
@@ -132,7 +136,7 @@ func validateTaskKind(
 	if !validKinds[kind] {
 		return &ValidationError{
 			Field:   "kind",
-			Message: "invalid kind: got '" + kind + "', expected one of: agent, external, wait, decision, parent, plan",
+			Message: "invalid kind: got '" + kind + "', expected one of: agent, external, wait, decision, parent, plan, internal",
 		}
 	}
 	if !validSourceTypes[sourceType] {
@@ -163,11 +167,15 @@ func validateTaskKind(
 	autoExecute := !manual
 
 	switch kind {
-	case "agent":
+	case "agent", "internal":
+		// kind=internal is the automation/system primitive (Reviewer,
+		// future System / Project Manager agents). Same constraint
+		// shape as agent — executor required; agent_profile enforcement
+		// lives at the picker as a defense-in-depth gate.
 		if executor == "" {
 			return &ValidationError{
 				Field:   "executor",
-				Message: "executor required for kind=agent",
+				Message: "executor required for kind=" + kind,
 			}
 		}
 	case "external":

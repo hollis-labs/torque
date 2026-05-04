@@ -7,10 +7,12 @@ require (
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/google/uuid v1.6.0
 	github.com/hollis-labs/go-agent-sessions v0.4.0
+	github.com/hollis-labs/go-messaging v0.2.0
 	github.com/hollis-labs/go-modelsdev v0.1.0
 	github.com/hollis-labs/go-providers v0.6.0
 	github.com/hollis-labs/go-queue v0.1.1
 	github.com/hollis-labs/go-strutil v0.0.0-20260409170855-ca5f29e8b1db
+	github.com/hollis-labs/go-toolbroker v0.1.0
 	github.com/hollis-labs/plugin v0.0.0-20260410030617-741878c627b2
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/mark3labs/mcp-go v0.47.0

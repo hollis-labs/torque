@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Plus, ArrowLeft, Trash2 } from 'lucide-react'
+import { Plus, ArrowLeft, Play, Trash2 } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -22,6 +22,14 @@ import { useApi } from '@/hooks/use-api'
 import { notifyError, notifySuccess } from '@/lib/toast'
 import type { PhaseRollup, PlanDetail, PlanPhase, Task } from '@/lib/types'
 
+// canExecute reports whether the Execute Plan button is enabled for a
+// plan in the named status. Mirrors planstart.startableStatus on the
+// backend — todo and review only. doing/done/blocked/abandoned are
+// handled out-of-band (idempotency check; terminal-not-rerunnable in V0).
+function canExecute(status: string): boolean {
+  return status === 'todo' || status === 'review'
+}
+
 // PlanDetailPage renders a plan as a header strip + Kanban-ish phase columns.
 // Columns are indexed by PlanPhase.id; children are bucketed via
 // metadata.phase_id (see docs/plans-v1.md). Adding a task opens the local
@@ -38,6 +46,10 @@ export default function PlanDetailPage() {
 
   const [addPhaseOpen, setAddPhaseOpen] = useState(false)
   const [addTaskOpen, setAddTaskOpen] = useState<PlanPhase | null>(null)
+  // CW-20260503-0017 (S2.1) — Execute Plan button. busy disables the
+  // button while the request is in flight; otherwise enabled state is
+  // derived from plan.task.status (todo / review eligible).
+  const [executing, setExecuting] = useState(false)
 
   const load = useCallback(async () => {
     if (!id) return
@@ -78,6 +90,24 @@ export default function PlanDetailPage() {
       return pid === ''
     })
   }
+
+  const handleExecute = useCallback(async () => {
+    if (!id || executing) return
+    setExecuting(true)
+    try {
+      const res = await api.startPlan(id)
+      notifySuccess(`Orchestrator session ${res.session_id} started.`)
+      // The orchestrator session view lives at /sessions/{id} in the
+      // long-running view; for V0 we just reload the plan to surface
+      // the new metadata.plan.orchestrator_session_id and the doing
+      // status badge. A dedicated session view is post-MVP.
+      load()
+    } catch (err) {
+      notifyError(err, 'Failed to start plan')
+    } finally {
+      setExecuting(false)
+    }
+  }, [api, executing, id, load])
 
   if (loading) {
     return (
@@ -120,10 +150,27 @@ export default function PlanDetailPage() {
               <StatusBadge status={plan.task.status} />
             </div>
           </div>
-          <Button size="sm" onClick={() => setAddPhaseOpen(true)} className="gap-1">
-            <Plus className="h-3.5 w-3.5" />
-            Add phase
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="default"
+              disabled={executing || !canExecute(plan.task.status)}
+              title={
+                canExecute(plan.task.status)
+                  ? 'Boot an orchestrator session and walk this plan'
+                  : `Cannot execute a plan in status=${plan.task.status}`
+              }
+              onClick={() => void handleExecute()}
+              className="gap-1"
+            >
+              <Play className="h-3.5 w-3.5" />
+              {executing ? 'Starting…' : 'Execute Plan'}
+            </Button>
+            <Button size="sm" onClick={() => setAddPhaseOpen(true)} className="gap-1">
+              <Plus className="h-3.5 w-3.5" />
+              Add phase
+            </Button>
+          </div>
         </div>
         {plan.task.description ? (
           <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-400">{plan.task.description}</p>

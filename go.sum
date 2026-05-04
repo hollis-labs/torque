@@ -39,6 +39,8 @@ github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
 github.com/hollis-labs/go-agent-sessions v0.4.0 h1:Mi35WYvt3dhr/qNPcz5S0/b3DSNSGgyhGb0RrEOp0dw=
 github.com/hollis-labs/go-agent-sessions v0.4.0/go.mod h1:MSckGLt/5NRMxxQLTWrqCAQfdlXwqTTspe+kZNs09ic=
+github.com/hollis-labs/go-messaging v0.2.0 h1:JypqjXMcgyFBbLmX+NlwTxJuwIAAjKd/3Qbm4+I84JE=
+github.com/hollis-labs/go-messaging v0.2.0/go.mod h1:tMiHRx7QHV1GWw5pZ1khnursbIQuzikScSRXWVdP8nk=
 github.com/hollis-labs/go-modelsdev v0.1.0 h1:z2w23Si1Oquv/MzgXdefL6p4NxGVNROj97tbsLXiQNU=
 github.com/hollis-labs/go-modelsdev v0.1.0/go.mod h1:NIdXwrU1i/vq8dnKCbI2SQ7FfnH2jKSYpC8nhK0QVaM=
 github.com/hollis-labs/go-providers v0.6.0 h1:rQ39J0U564f8T4IR4EqIm6JcGti5EDpeOXtG+G6JTTQ=
@@ -51,6 +53,8 @@ github.com/hollis-labs/go-sandbox v0.1.0 h1:OESqWfu5OPq7s9bsu5BoGfOTf/m6EOig3/MK
 github.com/hollis-labs/go-sandbox v0.1.0/go.mod h1:SY3Io7cTHnMahfN1zkQzHvVkcevXzus8mo9ZmtaaHPg=
 github.com/hollis-labs/go-strutil v0.0.0-20260409170855-ca5f29e8b1db h1:UJdnMYbmwAFRbap60LQwvlFqEzQIu+cN6mzQxGVz5HI=
 github.com/hollis-labs/go-strutil v0.0.0-20260409170855-ca5f29e8b1db/go.mod h1:oDJ1HAXVi3vDk4tz59mwNdPlY1p/+xlF6oUrFlTL67M=
+github.com/hollis-labs/go-toolbroker v0.1.0 h1:2b2c3gcjLRphxbj4NC95OZ/eH1EGw3HOYCr+7QrKF2s=
+github.com/hollis-labs/go-toolbroker v0.1.0/go.mod h1:OWsxhIzSjtbVRDXANuyfLQ/NjaQt9jSWEGxBLtAKD4U=
 github.com/hollis-labs/plugin v0.0.0-20260410030617-741878c627b2 h1:Sz8MvbS5qTb2ne68y+Unt5BeHrdEQBpst5+r+MkA7vk=
 github.com/hollis-labs/plugin v0.0.0-20260410030617-741878c627b2/go.mod h1:8ARBj4TqDetUzb2cMGZ/8lemDQZrEZfuTRUOtP6LFTk=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=

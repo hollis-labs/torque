@@ -27,6 +27,13 @@ interface FilterBarProps {
   /** Manual-flag cycle (Both / Auto / Manual). Omit to hide the control. */
   manualFilter?: ManualFilter
   onManualFilterChange?: (value: ManualFilter) => void
+  /**
+   * System (kind=internal) toggle. When provided, renders a chip that
+   * controls whether kind=internal automation tasks (Reviewer end-agents
+   * etc.) are surfaced in the list. Default off (CW-20260503-0011).
+   */
+  includeInternal?: boolean
+  onIncludeInternalChange?: (value: boolean) => void
   /** Project / Sprint / Epic / Tag combobox selectors (all optional) */
   projects?: Project[]
   projectId?: string | null
@@ -67,6 +74,8 @@ export function FilterBar({
   onPriorityToggle,
   manualFilter,
   onManualFilterChange,
+  includeInternal = false,
+  onIncludeInternalChange,
   projects,
   projectId,
   onProjectChange,
@@ -152,6 +161,30 @@ export function FilterBar({
             onChange={onManualFilterChange}
             ariaLabel="Manual filter"
           />
+        </div>
+      )}
+
+      {/* System toggle (kind=internal) — CW-20260503-0011 */}
+      {onIncludeInternalChange && (
+        <div className="flex items-center gap-1 border-l border-zinc-800 pl-3">
+          <span className="mr-1 text-[10px] uppercase tracking-wider text-zinc-500">System:</span>
+          <button
+            type="button"
+            onClick={() => onIncludeInternalChange(!includeInternal)}
+            aria-pressed={includeInternal}
+            title={
+              includeInternal
+                ? 'Hide kind=internal automation tasks (Reviewer end-agents, etc.)'
+                : 'Show kind=internal automation tasks (Reviewer end-agents, etc.)'
+            }
+            className={`rounded border px-2 py-0.5 text-[10px] uppercase tracking-wider transition-all ${
+              includeInternal
+                ? 'border-violet-500/40 bg-violet-500/10 text-violet-200 ring-1 ring-white/20'
+                : 'border-zinc-800 bg-zinc-900/50 text-zinc-600 hover:text-zinc-400'
+            }`}
+          >
+            {includeInternal ? 'Shown' : 'Hidden'}
+          </button>
         </div>
       )}
 

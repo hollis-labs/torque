@@ -133,6 +133,50 @@ func TestListTasksFilterByManual(t *testing.T) {
 	assert.Equal(t, auto.ID, got[0].ID)
 }
 
+// CW-20260503-0011 (S1.1): kind=internal is the substrate primitive for
+// automation/system tasks. It must round-trip through the SQLite CHECK
+// constraint widened in migration 021, and the ExcludeInternal filter
+// flag must hide internal rows by default while leaving an explicit
+// Kind="internal" filter intact.
+func TestListTasksExcludeInternal(t *testing.T) {
+	store := setupTestStore(t)
+
+	agent := sampleTask("CW-20260503-1001")
+	agent.Kind = "agent"
+	agent.Executor = "cli"
+	agent.AgentProfile = "cli-profile"
+
+	internal := sampleTask("CW-20260503-1002")
+	internal.Kind = "internal"
+	internal.Executor = "cli"
+	internal.AgentProfile = "reviewer"
+
+	require.NoError(t, store.CreateTask(agent))
+	require.NoError(t, store.CreateTask(internal))
+
+	// Default behaviour (ExcludeInternal=false) preserves prior semantics:
+	// callers see every kind. Picker / scheduler internals depend on this.
+	all, err := store.ListTasks(sqlstore.TaskFilter{})
+	require.NoError(t, err)
+	require.Len(t, all, 2)
+
+	// ExcludeInternal=true hides the internal row.
+	visible, err := store.ListTasks(sqlstore.TaskFilter{ExcludeInternal: true})
+	require.NoError(t, err)
+	require.Len(t, visible, 1)
+	assert.Equal(t, agent.ID, visible[0].ID)
+
+	// Explicit Kind filter wins over the exclusion — operators can still
+	// surface internal rows by asking for them specifically.
+	onlyInternal, err := store.ListTasks(sqlstore.TaskFilter{
+		Kind:            "internal",
+		ExcludeInternal: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, onlyInternal, 1)
+	assert.Equal(t, internal.ID, onlyInternal[0].ID)
+}
+
 // TestListTasksFilterBySearch verifies the Search filter matches on id, title,
 // or description and combines (ANDs) with the other filter fields.
 func TestListTasksFilterBySearch(t *testing.T) {

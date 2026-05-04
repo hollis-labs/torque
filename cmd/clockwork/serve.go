@@ -14,8 +14,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hollis-labs/clockwork-manifold/internal/broker"
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/httpserver"
+	clockmsg "github.com/hollis-labs/clockwork-manifold/internal/messaging"
 	"github.com/hollis-labs/clockwork-manifold/internal/modelcatalog"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/appdb"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
@@ -26,6 +28,7 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/waitpoll"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/clockwork-manifold/internal/toolbroker"
 	"github.com/spf13/cobra"
 )
 
@@ -116,7 +119,11 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// below.
 	svc := service.New(store)
 
-	if err := bootstrap.Executors(registry, profiles, svc, nil); err != nil {
+	// Tool-broker (CW-20260503-0015 / Plan 4): go-toolbroker selection +
+	// permission engine + audit log, threaded into both executors below.
+	tools := toolbroker.NewDefault()
+
+	if err := bootstrap.Executors(registry, profiles, svc, tools); err != nil {
 		return fmt.Errorf("bootstrap executors: %w", err)
 	}
 
@@ -141,6 +148,27 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// HTTP handler — svc was constructed earlier (above bootstrap.Executors)
 	// so cliexec could claim it for per-task MCP loopback wiring.
 	handler := httpserver.New(svc, sched)
+
+	// Long-lived agent session manager (CW-20260503-0014, S1.4).
+	// Sweep+register here so /api/v1/sessions/* + clockwork_session_* are
+	// live alongside the rest of the runtime stack.
+	sessions, err := bootstrap.SessionMgr(store, profiles, sched.EventBus())
+	if err != nil {
+		return fmt.Errorf("bootstrap sessionmgr: %w", err)
+	}
+	handler.WithSessionMgr(sessions)
+
+	// Durable messaging substrate (CW-20260503-0012, S1.2). Same SQLite DB
+	// the rest of the runtime uses; migration 022_messages.sql created the
+	// tables. Broker layer (S1.3) sits on top of this Store.
+	msgStore := clockmsg.NewStore(db)
+	handler.SetMessaging(msgStore)
+
+	// Typed envelope broker (CW-20260503-0013, S1.3) — Clockwork-specific
+	// validation + envelope.* SSE publishing on top of the Store. Distinct
+	// from internal/toolbroker (S1.5); package layout deliberately split
+	// to avoid the name collision flagged in the boot prompt.
+	handler.SetBroker(broker.New(msgStore, handler.SSEHub()))
 
 	// Background goroutines share a derived context so cancelling the parent
 	// ctx tears down the scheduler loop, the SSE bridge, and the models.dev

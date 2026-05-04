@@ -29,6 +29,12 @@ export interface OpsFilters {
   manual: ManualFilter
   /** Free-text search over title + description. */
   search: string
+  /**
+   * Surface kind=internal automation tasks (Reviewer end-agents etc.) in
+   * the list view. Default false; the user opts in via the FilterBar's
+   * System toggle (CW-20260503-0011).
+   */
+  includeInternal: boolean
 }
 
 export function saveOpsFilters(filters: OpsFilters): void {
@@ -61,6 +67,9 @@ export function readOpsFilters(): OpsFilters | null {
       tagSlug: typeof f.tagSlug === 'string' ? f.tagSlug : null,
       manual: parseManualFilter(f.manual),
       search: typeof f.search === 'string' ? f.search : '',
+      // Default false on parse so legacy blobs (pre-CW-20260503-0011)
+      // surface internal=hidden, matching the backend default.
+      includeInternal: f.includeInternal === true,
     }
   } catch {
     return null

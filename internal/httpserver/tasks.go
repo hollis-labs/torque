@@ -410,6 +410,19 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	if v := r.URL.Query().Get("kind"); v != "" {
 		filter.Kind = v
 	}
+	// kind=internal default-exclude (CW-20260503-0011): user-facing list
+	// queries hide internal automation tasks unless include_internal is
+	// truthy or an explicit kind=internal filter is supplied (the latter
+	// is short-circuited inside ListTasks). Accepted truthy values mirror
+	// the manual filter: "1", "true", "yes".
+	if filter.Kind == "" {
+		switch strings.ToLower(r.URL.Query().Get("include_internal")) {
+		case "1", "true", "yes":
+			// keep ExcludeInternal=false
+		default:
+			filter.ExcludeInternal = true
+		}
+	}
 	if v := r.URL.Query().Get("source_type"); v != "" {
 		filter.SourceType = v
 	}

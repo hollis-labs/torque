@@ -28,7 +28,7 @@ beforeEach(() => {
 })
 
 describe('ops-filters-storage', () => {
-  it('round-trips all eight filter fields including search', () => {
+  it('round-trips all filter fields including search and includeInternal', () => {
     const filters: OpsFilters = {
       statuses: ['todo', 'doing'],
       priorities: [1, 2],
@@ -38,10 +38,31 @@ describe('ops-filters-storage', () => {
       tagSlug: 'infra',
       manual: 'auto',
       search: 'scheduler',
+      includeInternal: true,
     }
     saveOpsFilters(filters)
     const restored = readOpsFilters()
     expect(restored).toEqual(filters)
+  })
+
+  // CW-20260503-0011: pre-existing storage blobs (without includeInternal)
+  // must read back with includeInternal=false so legacy users see the same
+  // hidden-by-default behavior as the backend.
+  it('defaults includeInternal to false when the stored entry predates the field', () => {
+    localStorage.setItem(
+      'clockwork:ops:filters:v1',
+      JSON.stringify({
+        statuses: ['todo'],
+        priorities: [],
+        projectId: null,
+        sprintId: null,
+        epicId: null,
+        tagSlug: null,
+        manual: 'both',
+        search: '',
+      }),
+    )
+    expect(readOpsFilters()?.includeInternal).toBe(false)
   })
 
   it('defaults manual to "both" when the stored entry predates the field', () => {
@@ -76,6 +97,7 @@ describe('ops-filters-storage', () => {
       tagSlug: null,
       manual: 'both',
       search: '',
+      includeInternal: false,
     })
     const restored = readOpsFilters()
     expect(restored?.projectId).toBe('prj_sticky')
@@ -91,6 +113,7 @@ describe('ops-filters-storage', () => {
       tagSlug: null,
       manual: 'both',
       search: '',
+      includeInternal: false,
     })
     clearOpsFilters()
     expect(readOpsFilters()).toBeNull()
@@ -120,6 +143,7 @@ describe('ops-filters-storage', () => {
       tagSlug: null,
       manual: 'both',
       search: '',
+      includeInternal: false,
     })
   })
 

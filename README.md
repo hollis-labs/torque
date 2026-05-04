@@ -9,7 +9,7 @@ Today it provides:
 - An MCP server via `clockwork mcp`
 - A scheduler that dispatches runnable tasks to registered executors
 - First-class support for artifacts, comments, subtodos, checkpoints, templates, and plans
-- Optional project, sprint, and epic entities behind feature flags
+- Optional project, sprint, epic, and collection entities behind feature flags
 
 Clockwork is still early. The docs in this repo are intentionally light and only cover the surfaces that currently exist in code.
 
@@ -29,6 +29,7 @@ clockwork version
 `clockwork serve` starts the HTTP API, scheduler, and GUI on the configured HTTP port.
 
 `clockwork mcp` starts the MCP server over stdio. In that mode there is no in-process scheduler instance, so scheduler MCP tools report that the scheduler is not running in that process.
+Opt-in MCP tool groups are registered when the MCP process starts, based on persisted `features.*` settings in the backing DB. If you enable a new feature such as `features.collections`, restart the MCP process so `tools/list` picks up the new `clockwork_collection_*` tools.
 
 ## Configuration
 

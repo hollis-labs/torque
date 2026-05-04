@@ -195,3 +195,75 @@ func TestPickerDecisionsMultiStateTick(t *testing.T) {
 		"Counts map and Skipped slice must agree")
 	assert.Equal(t, 8, len(decisions.Skipped), "3 empty + 2 dep_unmet + 3 manual skipped")
 }
+
+// CW-20260503-0011 (S1.1): kind=internal tasks (Reviewer end-agents and
+// other automation primitives) participate in scheduling but bypass the
+// per-project concurrency gate — they are meta-work that should always
+// flow alongside agent dispatches without holding or being held by
+// project slots. Five internal todos plus one agent todo, all in the
+// same project, must all become eligible in a single tick.
+func TestPickerKindInternalBypassesProjectConcurrency(t *testing.T) {
+	store := setupPickerStore(t)
+	picker := scheduler.NewPicker(store)
+
+	for i := 1; i <= 5; i++ {
+		require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+			ID: "CW-INTERNAL-" + string(rune('0'+i)), Title: "review", Status: "todo",
+			Priority: 2, Kind: "internal", Executor: "cli", AgentProfile: "reviewer",
+			ProjectID: sql.NullString{String: "PRJ-A", Valid: true},
+		}))
+	}
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-AGENT-1", Title: "agent", Status: "todo",
+		Priority: 2, Kind: "agent", Executor: "cli", AgentProfile: "cli-profile",
+		ProjectID: sql.NullString{String: "PRJ-A", Valid: true},
+	}))
+
+	picked, decisions, err := picker.Pick(10)
+	require.NoError(t, err)
+	assert.Len(t, picked, 6, "5 internal + 1 agent all dispatch despite project max=1")
+	assert.Zero(t, decisions.Counts[scheduler.SkipReasonProjectBusy])
+	assert.Zero(t, decisions.Counts[scheduler.SkipReasonProjectContention])
+}
+
+// A kind=internal task already in `doing` for a project must NOT block
+// an agent task from the same project from being picked.
+func TestPickerDoingInternalDoesNotBlockProject(t *testing.T) {
+	store := setupPickerStore(t)
+	picker := scheduler.NewPicker(store)
+
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-INTERNAL-DOING", Title: "review running", Status: "doing",
+		Priority: 2, Kind: "internal", Executor: "cli", AgentProfile: "reviewer",
+		ProjectID: sql.NullString{String: "PRJ-A", Valid: true},
+	}))
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-AGENT-WAIT", Title: "agent ready", Status: "todo",
+		Priority: 2, Kind: "agent", Executor: "cli", AgentProfile: "cli-profile",
+		ProjectID: sql.NullString{String: "PRJ-A", Valid: true},
+	}))
+
+	picked, _, err := picker.Pick(10)
+	require.NoError(t, err)
+	require.Len(t, picked, 1)
+	assert.Equal(t, "CW-AGENT-WAIT", picked[0].ID)
+}
+
+// kind=internal tasks need an agent_profile too — the empty-profile
+// guard applies symmetrically to agent and internal so Reviewer / future
+// System / PM agents that lack a profile are skipped at the picker
+// (CW-20260418-0010 defense-in-depth extended in CW-20260503-0011).
+func TestPickerInternalRequiresAgentProfile(t *testing.T) {
+	store := setupPickerStore(t)
+	picker := scheduler.NewPicker(store)
+
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-INTERNAL-NOPROF", Title: "no profile", Status: "todo",
+		Priority: 2, Kind: "internal", Executor: "cli", AgentProfile: "",
+	}))
+
+	picked, decisions, err := picker.Pick(10)
+	require.NoError(t, err)
+	assert.Len(t, picked, 0)
+	assert.Equal(t, 1, decisions.Counts[scheduler.SkipReasonEmptyProfile])
+}

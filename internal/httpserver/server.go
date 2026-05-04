@@ -6,7 +6,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	gomsg "github.com/hollis-labs/go-messaging"
+
+	"github.com/hollis-labs/clockwork-manifold/internal/broker"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/sessionmgr"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 )
 
@@ -14,8 +18,16 @@ import (
 type Server struct {
 	svc    *service.Service
 	sched  *scheduler.Scheduler
+	msg    gomsg.Store // optional; routes 503 when nil. Set via SetMessaging.
 	router chi.Router
 	sse    *SSEHub
+	// sessions is the long-lived agent session manager (CW-20260503-0014).
+	// Nil disables /api/v1/sessions/* — the routes return 503 in that mode
+	// rather than panic, mirroring sched=nil behavior.
+	sessions *sessionmgr.Manager
+	// broker is the typed envelope dispatcher (CW-20260503-0013, S1.3).
+	// Wired via SetBroker; /api/v1/broker/* routes 503 when nil.
+	broker *broker.Broker
 }
 
 // New constructs an HTTP server with routes registered.
@@ -40,6 +52,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // at startup to forward bus events to connected SSE clients.
 func (s *Server) SSEHub() *SSEHub {
 	return s.sse
+}
+
+// WithSessionMgr attaches the long-lived agent session manager so the
+// /api/v1/sessions/* routes serve real data. Safe to call before the
+// listener accepts connections; goroutine-unsafe under live traffic.
+func (s *Server) WithSessionMgr(mgr *sessionmgr.Manager) *Server {
+	s.sessions = mgr
+	return s
 }
 
 func (s *Server) routes() {
@@ -136,6 +156,7 @@ func (s *Server) routes() {
 		r.Post("/plans/{id}/phases", s.addPlanPhase)
 		r.Delete("/plans/{id}/phases/{phase_id}", s.removePlanPhase)
 		r.Get("/plans/{id}/children", s.listPlanChildren)
+		r.Post("/plans/{id}/start", s.startPlan)
 
 		// Tags
 		r.Get("/tags", s.listTags)
@@ -171,6 +192,17 @@ func (s *Server) routes() {
 		r.Get("/scheduler/status", s.schedulerStatus)
 		r.Post("/scheduler/toggle", s.schedulerToggle)
 
+		// Sessions — long-lived agent sessions (sessionmgr).
+		r.Get("/sessions", s.listSessions)
+		r.Post("/sessions/launch", s.launchSession)
+		r.Get("/sessions/{id}", s.getSession)
+		r.Post("/sessions/{id}/stop", s.stopSession)
+		r.Post("/sessions/{id}/wait", s.waitSession)
+		r.Post("/sessions/{id}/resize", s.resizeSession)
+		r.Post("/sessions/{id}/checkpoint", s.checkpointSession)
+		r.Get("/sessions/{id}/checkpoints", s.listSessionCheckpoints)
+		r.Post("/sessions/{id}/resume", s.resumeSession)
+
 		// Models — go-modelsdev catalog. Cold cache returns empty list / 404
 		// so callers can retry rather than treat absence as fatal.
 		r.Get("/models", s.listModels)
@@ -186,6 +218,23 @@ func (s *Server) routes() {
 
 		// Plugin UI (stub)
 		r.Get("/plugins/ui", s.getPluginUI)
+
+		// Messages — go-messaging Store contract over SQLite (S1.2). Routes
+		// always register; handlers 503 when no Store has been wired via
+		// Server.SetMessaging.
+		r.Post("/messages", s.sendMessage)
+		r.Get("/messages/inbox", s.listInbox)
+		r.Get("/messages/subscribe", s.subscribeMessages)
+		r.Get("/messages/thread/{thread_id}", s.listThread)
+		r.Get("/messages/{id}", s.getMessage)
+		r.Post("/messages/{id}/cancel", s.cancelMessage)
+		r.Post("/messages/{id}/consume", s.consumeMessage)
+
+		// Broker — typed envelope dispatcher (S1.3). 503 when no broker is
+		// wired via Server.SetBroker.
+		r.Post("/broker/send", s.brokerSend)
+		r.Post("/broker/request", s.brokerRequest)
+		r.Get("/broker/inbox", s.brokerInbox)
 
 		// SSE
 		r.Get("/events", s.sse.ServeHTTP)

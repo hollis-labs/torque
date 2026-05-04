@@ -1,10 +1,12 @@
 package httpserver
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/clockwork-manifold/internal/planstart"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 )
 
@@ -153,6 +155,78 @@ func (s *Server) removePlanPhase(w http.ResponseWriter, r *http.Request) {
 	}
 	s.sse.Broadcast("plan.phase.removed", map[string]interface{}{"plan_id": id, "phase_id": phaseID})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// PlanStartRequest is the optional body for POST /api/v1/plans/{id}/start.
+// Both fields are optional — workdir defaults to the plan task's
+// WorkingDir column when empty (CW-20260503-0017, S2.1).
+type PlanStartRequest struct {
+	Workdir string   `json:"workdir,omitempty"`
+	Env     []string `json:"env,omitempty"`
+}
+
+// startPlan boots an Orchestrator session for the named plan and
+// transitions the plan task to `doing`. Returns
+// `{session_id, plan_id, started_at}` on success. Idempotency: when
+// an orchestrator session is already running, responds 409 with the
+// existing session_id surfaced in the body so the client can route
+// to the live session view rather than show an error.
+func (s *Server) startPlan(w http.ResponseWriter, r *http.Request) {
+	if s.sessions == nil {
+		writeError(w, http.StatusServiceUnavailable, "session manager not configured")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing id")
+		return
+	}
+	var req PlanStartRequest
+	// Body is optional — empty bodies are fine.
+	if r.ContentLength > 0 {
+		if err := readJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+			return
+		}
+	}
+	res, err := planstart.Start(r.Context(), s.svc.Store(), s.sessions, id, planstart.Options{
+		Workdir: req.Workdir,
+		Env:     req.Env,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, planstart.ErrAlreadyOrchestrating):
+			// Surface the existing session_id alongside the 409 so the
+			// GUI can route to its detail view.
+			payload := map[string]interface{}{
+				"error":      err.Error(),
+				"session_id": "",
+				"plan_id":    id,
+			}
+			if res != nil {
+				payload["session_id"] = res.SessionID
+				payload["started_at"] = res.StartedAt.Format("2006-01-02T15:04:05Z07:00")
+			}
+			writeJSON(w, http.StatusConflict, payload)
+			return
+		case errors.Is(err, planstart.ErrPlanNotFound),
+			errors.Is(err, planstart.ErrPlanWrongStatus),
+			errors.Is(err, planstart.ErrWorkdirRequired):
+			writeError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		case errors.Is(err, planstart.ErrSessionMgrMissing):
+			writeError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		default:
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	s.sse.Broadcast("plan.started", map[string]interface{}{
+		"plan_id":    res.PlanID,
+		"session_id": res.SessionID,
+	})
+	writeJSON(w, http.StatusOK, res)
 }
 
 func (s *Server) listPlanChildren(w http.ResponseWriter, r *http.Request) {
