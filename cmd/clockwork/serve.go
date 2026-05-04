@@ -16,6 +16,7 @@ import (
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/httpserver"
+	clockmsg "github.com/hollis-labs/clockwork-manifold/internal/messaging"
 	"github.com/hollis-labs/clockwork-manifold/internal/modelcatalog"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/appdb"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
@@ -141,6 +142,11 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// HTTP handler — svc was constructed earlier (above bootstrap.Executors)
 	// so cliexec could claim it for per-task MCP loopback wiring.
 	handler := httpserver.New(svc, sched)
+
+	// S1.2: durable messaging substrate (CW-20260503-0012). Same SQLite DB
+	// the rest of the runtime uses; migration 022_messages.sql created the
+	// tables. Broker layer (S1.3) sits on top of this Store.
+	handler.SetMessaging(clockmsg.NewStore(db))
 
 	// Background goroutines share a derived context so cancelling the parent
 	// ctx tears down the scheduler loop, the SSE bridge, and the models.dev

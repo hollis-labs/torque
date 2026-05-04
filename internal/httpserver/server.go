@@ -6,6 +6,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	gomsg "github.com/hollis-labs/go-messaging"
+
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 )
@@ -14,6 +16,7 @@ import (
 type Server struct {
 	svc    *service.Service
 	sched  *scheduler.Scheduler
+	msg    gomsg.Store // optional; routes 503 when nil. Set via SetMessaging.
 	router chi.Router
 	sse    *SSEHub
 }
@@ -186,6 +189,17 @@ func (s *Server) routes() {
 
 		// Plugin UI (stub)
 		r.Get("/plugins/ui", s.getPluginUI)
+
+		// Messages — go-messaging Store contract over SQLite (S1.2). Routes
+		// always register; handlers 503 when no Store has been wired via
+		// Server.SetMessaging.
+		r.Post("/messages", s.sendMessage)
+		r.Get("/messages/inbox", s.listInbox)
+		r.Get("/messages/subscribe", s.subscribeMessages)
+		r.Get("/messages/thread/{thread_id}", s.listThread)
+		r.Get("/messages/{id}", s.getMessage)
+		r.Post("/messages/{id}/cancel", s.cancelMessage)
+		r.Post("/messages/{id}/consume", s.consumeMessage)
 
 		// SSE
 		r.Get("/events", s.sse.ServeHTTP)

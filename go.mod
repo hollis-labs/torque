@@ -34,6 +34,7 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
+	github.com/hollis-labs/go-messaging v0.2.0 // indirect
 	github.com/hollis-labs/go-runner v0.3.0 // indirect
 	github.com/hollis-labs/go-sandbox v0.1.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
