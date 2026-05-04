@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hollis-labs/clockwork-manifold/internal/broker"
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/httpserver"
 	clockmsg "github.com/hollis-labs/clockwork-manifold/internal/messaging"
@@ -160,7 +161,14 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// Durable messaging substrate (CW-20260503-0012, S1.2). Same SQLite DB
 	// the rest of the runtime uses; migration 022_messages.sql created the
 	// tables. Broker layer (S1.3) sits on top of this Store.
-	handler.SetMessaging(clockmsg.NewStore(db))
+	msgStore := clockmsg.NewStore(db)
+	handler.SetMessaging(msgStore)
+
+	// Typed envelope broker (CW-20260503-0013, S1.3) — Clockwork-specific
+	// validation + envelope.* SSE publishing on top of the Store. Distinct
+	// from internal/toolbroker (S1.5); package layout deliberately split
+	// to avoid the name collision flagged in the boot prompt.
+	handler.SetBroker(broker.New(msgStore, handler.SSEHub()))
 
 	// Background goroutines share a derived context so cancelling the parent
 	// ctx tears down the scheduler loop, the SSE bridge, and the models.dev

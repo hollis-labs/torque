@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 
+	"github.com/hollis-labs/clockwork-manifold/internal/broker"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/sessionmgr"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
@@ -27,6 +28,9 @@ type Adapter struct {
 	// Nil disables clockwork_session_* tools — they reply with a domain error
 	// rather than panicking. Mirrors the sched=nil contract.
 	sessions *sessionmgr.Manager
+	// broker wires the typed envelope dispatcher (CW-20260503-0013, S1.3).
+	// Nil disables clockwork_broker_* tools the same way.
+	broker *broker.Broker
 }
 
 // New creates an Adapter, registers all tools, and returns it. sched may be
@@ -57,6 +61,13 @@ func (a *Adapter) WithSessionMgr(mgr *sessionmgr.Manager) *Adapter {
 	return a
 }
 
+// WithBroker attaches the typed envelope broker so the clockwork_broker_*
+// tools surface real data. Same pre-flight contract as WithSessionMgr.
+func (a *Adapter) WithBroker(b *broker.Broker) *Adapter {
+	a.broker = b
+	return a
+}
+
 func (a *Adapter) registerCoreTools() {
 	a.server.AddTool(mcp.NewTool("clockwork_health",
 		mcp.WithDescription(`Liveness probe for the Clockwork MCP server.
@@ -76,6 +87,7 @@ Example: {}`),
 	a.registerPlanTools()
 	a.registerModelTools()
 	a.registerSessionTools()
+	a.registerBrokerTools()
 }
 
 // registerOptInTools checks feature flags and registers tools for enabled layers.

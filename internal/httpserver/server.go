@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	gomsg "github.com/hollis-labs/go-messaging"
 
+	"github.com/hollis-labs/clockwork-manifold/internal/broker"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/sessionmgr"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
@@ -24,6 +25,9 @@ type Server struct {
 	// Nil disables /api/v1/sessions/* — the routes return 503 in that mode
 	// rather than panic, mirroring sched=nil behavior.
 	sessions *sessionmgr.Manager
+	// broker is the typed envelope dispatcher (CW-20260503-0013, S1.3).
+	// Wired via SetBroker; /api/v1/broker/* routes 503 when nil.
+	broker *broker.Broker
 }
 
 // New constructs an HTTP server with routes registered.
@@ -224,6 +228,12 @@ func (s *Server) routes() {
 		r.Get("/messages/{id}", s.getMessage)
 		r.Post("/messages/{id}/cancel", s.cancelMessage)
 		r.Post("/messages/{id}/consume", s.consumeMessage)
+
+		// Broker — typed envelope dispatcher (S1.3). 503 when no broker is
+		// wired via Server.SetBroker.
+		r.Post("/broker/send", s.brokerSend)
+		r.Post("/broker/request", s.brokerRequest)
+		r.Get("/broker/inbox", s.brokerInbox)
 
 		// SSE
 		r.Get("/events", s.sse.ServeHTTP)
