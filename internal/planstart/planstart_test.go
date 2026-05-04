@@ -229,6 +229,22 @@ func TestPlanstart_NilManager(t *testing.T) {
 	assert.ErrorIs(t, err, planstart.ErrSessionMgrMissing)
 }
 
+// Missing workdir (Options.Workdir empty AND plan.WorkingDir empty)
+// surfaces the dedicated ErrWorkdirRequired sentinel — handlers map
+// it to 422 with field=workdir rather than mis-attributing to plan_id
+// (PR #18 review feedback).
+func TestPlanstart_WorkdirRequired(t *testing.T) {
+	store := newStubStore()
+	store.tasks["CW-PLAN-NOWORKDIR"] = &sqlstore.TaskRecord{
+		ID: "CW-PLAN-NOWORKDIR", Kind: "plan", Status: "todo",
+		// Note: no WorkingDir set.
+	}
+	_, err := planstart.Start(context.Background(), store, &stubMgr{}, "CW-PLAN-NOWORKDIR", planstart.Options{})
+	assert.ErrorIs(t, err, planstart.ErrWorkdirRequired)
+	// Must NOT be misclassified as ErrPlanNotFound.
+	assert.NotErrorIs(t, err, planstart.ErrPlanNotFound)
+}
+
 // Workdir resolution: explicit Options.Workdir wins; otherwise
 // plan.WorkingDir; otherwise an error.
 func TestPlanstart_WorkdirOverride(t *testing.T) {

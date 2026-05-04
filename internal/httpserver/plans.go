@@ -209,7 +209,9 @@ func (s *Server) startPlan(w http.ResponseWriter, r *http.Request) {
 			}
 			writeJSON(w, http.StatusConflict, payload)
 			return
-		case errors.Is(err, planstart.ErrPlanNotFound), errors.Is(err, planstart.ErrPlanWrongStatus):
+		case errors.Is(err, planstart.ErrPlanNotFound),
+			errors.Is(err, planstart.ErrPlanWrongStatus),
+			errors.Is(err, planstart.ErrWorkdirRequired):
 			writeError(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		case errors.Is(err, planstart.ErrSessionMgrMissing):

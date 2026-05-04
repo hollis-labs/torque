@@ -21,13 +21,13 @@ func (s *Server) SetMessaging(store gomsg.Store) {
 }
 
 // /api/v1/messages
-//   POST  /                       — Send (200/400/422/503)
-//   GET   /{id}                   — Get
-//   POST  /{id}/cancel            — Cancel
-//   POST  /{id}/consume           — Consume (body: {recipient: <urn>})
-//   GET   /inbox?to=<urn>...      — Inbox (drains, marks delivered)
-//   GET   /thread/{thread_id}     — Thread (read-only)
-//   GET   /subscribe?to=<urn>...  — SSE live stream
+//   POST  /                       — Send (201 Created / 400 / 422 / 503)
+//   GET   /{id}                   — Get (200 / 404 / 503)
+//   POST  /{id}/cancel            — Cancel (204 No Content / 404 / 503)
+//   POST  /{id}/consume           — Consume (204 No Content / 404 / 422 / 503; body: {recipient: <urn>})
+//   GET   /inbox?to=<urn>...      — Inbox; drains, marks delivered (200 / 422 / 503)
+//   GET   /thread/{thread_id}     — Thread; read-only (200 / 422 / 503)
+//   GET   /subscribe?to=<urn>...  — SSE live stream (200 / 422 / 503)
 
 type sendMessageRequest struct {
 	Kind        gomsg.Kind        `json:"kind"`

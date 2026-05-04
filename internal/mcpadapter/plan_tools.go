@@ -172,15 +172,21 @@ func (a *Adapter) handlePlanStart(ctx context.Context, req mcp.CallToolRequest) 
 	if err != nil {
 		switch {
 		case errors.Is(err, planstart.ErrAlreadyOrchestrating):
-			payload := map[string]any{"plan_id": planID}
-			if res != nil {
-				payload["session_id"] = res.SessionID
-				payload["started_at"] = res.StartedAt
+			// AC5 idempotency: surface as code=conflict (matches the
+			// tool's documented contract) and embed the live session id
+			// in the message so callers can route to the running view.
+			// errResult's envelope doesn't carry structured details, so
+			// the session_id rides in the message text — agents grep
+			// for "session_id=" to pull it out, GUI shows it verbatim.
+			msg := err.Error()
+			if res != nil && res.SessionID != "" {
+				msg = msg + " (session_id=" + res.SessionID + ")"
 			}
-			payload["error"] = err.Error()
-			return okResult(payload)
+			return errResult(ErrCodeConflict, msg, "")
 		case errors.Is(err, planstart.ErrPlanNotFound), errors.Is(err, planstart.ErrPlanWrongStatus):
 			return errResult(ErrCodeArgInvalid, err.Error(), "plan_id")
+		case errors.Is(err, planstart.ErrWorkdirRequired):
+			return errResult(ErrCodeArgInvalid, err.Error(), "workdir")
 		case errors.Is(err, planstart.ErrSessionMgrMissing):
 			return errResult(ErrCodeDomain, err.Error(), "")
 		default:

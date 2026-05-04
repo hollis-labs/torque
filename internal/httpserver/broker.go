@@ -23,9 +23,11 @@ func (s *Server) SetBroker(b *broker.Broker) {
 }
 
 // /api/v1/broker
-//   POST  /send                 — Send a typed envelope (200/422/413/503)
+//   POST  /send                 — Send a typed envelope (201 Created / 400 / 413 / 422 / 503)
 //   POST  /request              — Send kind=request, block until response
+//                                 (200 / 400 / 413 / 422 / 503 / 504 on timeout)
 //   GET   /inbox?to=<urn>...    — Drain inbox; publishes envelope.delivered
+//                                 (200 / 422 / 503)
 
 type brokerSendRequest struct {
 	Kind        gomsg.Kind        `json:"kind"`

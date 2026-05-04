@@ -25,12 +25,14 @@ import (
 //   - ErrPlanNotFound      → 422 (plan id is not a kind=plan task)
 //   - ErrPlanWrongStatus   → 422 (plan in done/blocked/abandoned)
 //   - ErrAlreadyOrchestrating → 409 (an orchestrator session is live)
+//   - ErrWorkdirRequired   → 422 (Options.Workdir empty AND plan.WorkingDir empty)
 //   - ErrSessionMgrMissing → 503 (substrate not wired into this host)
 var (
-	ErrPlanNotFound          = errors.New("planstart: plan not found or not a kind=plan task")
-	ErrPlanWrongStatus       = errors.New("planstart: plan must be in todo or review status to start")
-	ErrAlreadyOrchestrating  = errors.New("planstart: orchestrator session is already running for this plan")
-	ErrSessionMgrMissing     = errors.New("planstart: session manager not configured in this host")
+	ErrPlanNotFound         = errors.New("planstart: plan not found or not a kind=plan task")
+	ErrPlanWrongStatus      = errors.New("planstart: plan must be in todo or review status to start")
+	ErrAlreadyOrchestrating = errors.New("planstart: orchestrator session is already running for this plan")
+	ErrWorkdirRequired      = errors.New("planstart: workdir required (Options.Workdir empty and plan has no WorkingDir)")
+	ErrSessionMgrMissing    = errors.New("planstart: session manager not configured in this host")
 )
 
 // Options configures Start. Workdir defaults to the plan task's
@@ -114,7 +116,7 @@ func Start(ctx context.Context, store Store, mgr SessionManager, planID string, 
 		workdir = plan.WorkingDir
 	}
 	if workdir == "" {
-		return nil, fmt.Errorf("%w: workdir required (plan has none and Options.Workdir empty)", ErrPlanNotFound)
+		return nil, ErrWorkdirRequired
 	}
 
 	launchReq, err := orchestrator.BuildLaunchRequest(orchestrator.LaunchOptions{
