@@ -242,6 +242,16 @@ func (lm *LifecycleManager) transition(task *sqlstore.TaskRecord, runID int64, n
 		},
 	})
 
+	// CW-20260503-0019 (S2.3) — Reviewer end-agent hooks. The substrate
+	// fires AFTER the transition is committed so observers see the
+	// task's new state before any audit-driven side-effects show up.
+	if shouldEnqueueEndAgent(task, newStatus) {
+		lm.enqueueEndAgent(task)
+	}
+	if shouldCommentEndAgentFailure(task, newStatus) {
+		lm.commentEndAgentFailure(task, blockedReason)
+	}
+
 	return nil
 }
 
