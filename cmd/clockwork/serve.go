@@ -26,6 +26,7 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/waitpoll"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/clockwork-manifold/internal/toolbroker"
 	"github.com/spf13/cobra"
 )
 
@@ -116,7 +117,11 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// below.
 	svc := service.New(store)
 
-	if err := bootstrap.Executors(registry, profiles, svc, nil); err != nil {
+	// Tool-broker (CW-20260503-0015 / Plan 4): go-toolbroker selection +
+	// permission engine + audit log, threaded into both executors below.
+	tools := toolbroker.NewDefault()
+
+	if err := bootstrap.Executors(registry, profiles, svc, tools); err != nil {
 		return fmt.Errorf("bootstrap executors: %w", err)
 	}
 

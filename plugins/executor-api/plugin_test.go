@@ -60,7 +60,7 @@ func TestName(t *testing.T) {
 func TestCapabilities(t *testing.T) {
 	caps := New(testProfiles(), nil).Capabilities()
 	assert.True(t, caps.SupportsStreaming)
-	assert.False(t, caps.SupportsTools, "tools are Plan 4")
+	assert.True(t, caps.SupportsTools, "Plan 4 (CW-20260503-0015) wired the tool-broker")
 	assert.False(t, caps.SupportsSandbox, "Phase B/D inheritance; restored with CW-20260427-0059")
 	assert.True(t, caps.SupportsPermissions)
 }

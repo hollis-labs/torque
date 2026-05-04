@@ -26,6 +26,7 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/clockwork-manifold/internal/toolbroker"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 	"github.com/hollis-labs/go-providers/provider"
 )
@@ -38,21 +39,33 @@ import (
 // agents fall back to the global `clockwork mcp` server with explicit task_id
 // — same posture as Phase B's Path C landing. Production callsites supply a
 // non-nil service via bootstrap.Executors.
+//
+// tools is the unified tool-broker (CW-20260503-0015 / Plan 4): go-toolbroker
+// selection composed with the local permission engine + audit log. Threaded
+// in by bootstrap.Executors; the loopback adapter and per-turn tool-payload
+// composition consult it for permission checks and intent-aware tool curation.
 type CLIExecutor struct {
 	profiles config.ProfileMap
 	svc      *service.Service
+	tools    *toolbroker.ToolRouter
 }
 
 // Compile-time check that CLIExecutor satisfies the Executor interface.
 var _ executor.Executor = (*CLIExecutor)(nil)
 
-// New constructs a CLIExecutor with the given agent-profile registry and
-// service handle. svc may be nil for tests that don't exercise the loopback;
-// production callers (bootstrap.Executors) supply a real *service.Service so
-// every task gets its own ephemeral MCP loopback.
-func New(profiles config.ProfileMap, svc *service.Service) *CLIExecutor {
-	return &CLIExecutor{profiles: profiles, svc: svc}
+// New constructs a CLIExecutor with the given agent-profile registry,
+// service handle, and tool-broker. svc may be nil for tests that don't
+// exercise the loopback; tools may be nil for tests that don't exercise
+// permission-gated tool calls. Production callers (bootstrap.Executors)
+// supply both — a real *service.Service so every task gets its own
+// ephemeral MCP loopback, and a real *toolbroker.ToolRouter so per-task
+// tool calls flow through the permission engine + audit log.
+func New(profiles config.ProfileMap, svc *service.Service, tools *toolbroker.ToolRouter) *CLIExecutor {
+	return &CLIExecutor{profiles: profiles, svc: svc, tools: tools}
 }
+
+// Tools returns the tool-broker. May be nil in test wiring.
+func (e *CLIExecutor) Tools() *toolbroker.ToolRouter { return e.tools }
 
 // Name returns the executor's registered name. The legacy executor-cli plugin
 // occupied "cli"; cliexec inherits the slot since it replaces it wholesale.
@@ -67,8 +80,15 @@ func (e *CLIExecutor) Name() string { return "cli" }
 // known-limitations.
 func (e *CLIExecutor) Capabilities() executor.ExecutorCapabilities {
 	return executor.ExecutorCapabilities{
-		SupportsStreaming:   true,
-		SupportsTools:       false,
+		SupportsStreaming: true,
+		// CW-20260503-0015 (Plan 4) flipped this from false → true once the
+		// tool-broker landed: cliexec now threads a *toolbroker.ToolRouter
+		// through the per-task MCP loopback so tool calls go through the
+		// permission engine + audit log instead of the legacy unfettered
+		// path. SupportsTools remains true even when e.tools is nil
+		// (test wiring) — the executor reports the architectural
+		// capability, not the per-instance configuration.
+		SupportsTools:       true,
 		SupportsSandbox:     false,
 		SupportsPermissions: false,
 	}
@@ -247,9 +267,9 @@ func (e *CLIExecutor) Run(ctx context.Context, job *executor.ExecutionJob, cb ex
 	// (cost_source=executor) for runs that emit Usage.
 	result := &executor.ExecutionResult{}
 	var (
-		fanoutWG       sync.WaitGroup
-		streamErr      error
-		streamErrOnce  sync.Once
+		fanoutWG      sync.WaitGroup
+		streamErr     error
+		streamErrOnce sync.Once
 	)
 	fanoutWG.Add(1)
 	go func() {

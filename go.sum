@@ -51,6 +51,8 @@ github.com/hollis-labs/go-sandbox v0.1.0 h1:OESqWfu5OPq7s9bsu5BoGfOTf/m6EOig3/MK
 github.com/hollis-labs/go-sandbox v0.1.0/go.mod h1:SY3Io7cTHnMahfN1zkQzHvVkcevXzus8mo9ZmtaaHPg=
 github.com/hollis-labs/go-strutil v0.0.0-20260409170855-ca5f29e8b1db h1:UJdnMYbmwAFRbap60LQwvlFqEzQIu+cN6mzQxGVz5HI=
 github.com/hollis-labs/go-strutil v0.0.0-20260409170855-ca5f29e8b1db/go.mod h1:oDJ1HAXVi3vDk4tz59mwNdPlY1p/+xlF6oUrFlTL67M=
+github.com/hollis-labs/go-toolbroker v0.1.0 h1:2b2c3gcjLRphxbj4NC95OZ/eH1EGw3HOYCr+7QrKF2s=
+github.com/hollis-labs/go-toolbroker v0.1.0/go.mod h1:OWsxhIzSjtbVRDXANuyfLQ/NjaQt9jSWEGxBLtAKD4U=
 github.com/hollis-labs/plugin v0.0.0-20260410030617-741878c627b2 h1:Sz8MvbS5qTb2ne68y+Unt5BeHrdEQBpst5+r+MkA7vk=
 github.com/hollis-labs/plugin v0.0.0-20260410030617-741878c627b2/go.mod h1:8ARBj4TqDetUzb2cMGZ/8lemDQZrEZfuTRUOtP6LFTk=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
