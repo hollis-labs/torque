@@ -104,4 +104,14 @@ var builtinProfiles = ProfileMap{
 		Provider:       "opencode",
 		TimeoutSeconds: 600,
 	},
+
+	// Planner (CW-20260503-0020, S2.4, V0). Spawned by the Orchestrator
+	// at plan-execute boot to refine a kind=plan task before phase
+	// walk. Short timeout — V0 is a single read-then-write pass over
+	// the plan + child tasks, no iterative loops.
+	"planner": {
+		Executor:       "cli",
+		Provider:       "opencode",
+		TimeoutSeconds: 600,
+	},
 }
