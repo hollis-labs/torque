@@ -759,6 +759,21 @@ export class ClockworkApiClient {
     return this.get<{ tasks: Task[] }>(`/plans/${planId}/children`, params)
   }
 
+  /**
+   * Boot an Orchestrator session for the named plan and transition the
+   * plan task to `doing`. Returns `{session_id, plan_id, started_at}`.
+   * On 409 (already orchestrating) the existing session_id is surfaced
+   * so callers can route to the live session view rather than retry.
+   * CW-20260503-0017 (S2.1).
+   */
+  async startPlan(planId: string, opts?: { workdir?: string; env?: string[] }): Promise<{
+    session_id: string
+    plan_id: string
+    started_at: string
+  }> {
+    return this.post(`/plans/${planId}/start`, opts ?? {})
+  }
+
   // -------------------------
   // Collections
   // -------------------------

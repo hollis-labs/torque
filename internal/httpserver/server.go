@@ -156,6 +156,7 @@ func (s *Server) routes() {
 		r.Post("/plans/{id}/phases", s.addPlanPhase)
 		r.Delete("/plans/{id}/phases/{phase_id}", s.removePlanPhase)
 		r.Get("/plans/{id}/children", s.listPlanChildren)
+		r.Post("/plans/{id}/start", s.startPlan)
 
 		// Tags
 		r.Get("/tags", s.listTags)

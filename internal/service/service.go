@@ -7,6 +7,13 @@ import (
 
 // Service is the root service dispatcher that aggregates all domain services.
 type Service struct {
+	// store is the underlying SQLite store. Not exported as a field so
+	// every caller funnels through the domain services where business
+	// rules apply; the Store() accessor is the explicit escape hatch
+	// for application-service code (planstart, etc.) that composes
+	// across multiple domain services and needs the raw store handle.
+	store      *sqlstore.Store
+
 	Task       *TaskService
 	Run        *RunService
 	Artifact   *ArtifactService
@@ -28,12 +35,17 @@ type Service struct {
 	Models *modelcatalog.Catalog
 }
 
+// Store returns the underlying SQLite store. Used by application-
+// service code that composes across multiple domain services.
+func (s *Service) Store() *sqlstore.Store { return s.store }
+
 // New constructs a Service wired to the provided store.
 func New(store *sqlstore.Store) *Service {
 	feature := &FeatureService{store: store}
 	tag := &TagService{store: store}
 	task := &TaskService{store: store, feature: feature, tags: tag}
 	return &Service{
+		store:      store,
 		Task:       task,
 		Run:        &RunService{store: store},
 		Artifact:   &ArtifactService{store: store},
