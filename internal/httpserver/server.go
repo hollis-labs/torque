@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/sessionmgr"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 )
 
@@ -16,6 +17,10 @@ type Server struct {
 	sched  *scheduler.Scheduler
 	router chi.Router
 	sse    *SSEHub
+	// sessions is the long-lived agent session manager (CW-20260503-0014).
+	// Nil disables /api/v1/sessions/* — the routes return 503 in that mode
+	// rather than panic, mirroring sched=nil behavior.
+	sessions *sessionmgr.Manager
 }
 
 // New constructs an HTTP server with routes registered.
@@ -40,6 +45,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // at startup to forward bus events to connected SSE clients.
 func (s *Server) SSEHub() *SSEHub {
 	return s.sse
+}
+
+// WithSessionMgr attaches the long-lived agent session manager so the
+// /api/v1/sessions/* routes serve real data. Safe to call before the
+// listener accepts connections; goroutine-unsafe under live traffic.
+func (s *Server) WithSessionMgr(mgr *sessionmgr.Manager) *Server {
+	s.sessions = mgr
+	return s
 }
 
 func (s *Server) routes() {
@@ -170,6 +183,17 @@ func (s *Server) routes() {
 		// Scheduler
 		r.Get("/scheduler/status", s.schedulerStatus)
 		r.Post("/scheduler/toggle", s.schedulerToggle)
+
+		// Sessions — long-lived agent sessions (sessionmgr).
+		r.Get("/sessions", s.listSessions)
+		r.Post("/sessions/launch", s.launchSession)
+		r.Get("/sessions/{id}", s.getSession)
+		r.Post("/sessions/{id}/stop", s.stopSession)
+		r.Post("/sessions/{id}/wait", s.waitSession)
+		r.Post("/sessions/{id}/resize", s.resizeSession)
+		r.Post("/sessions/{id}/checkpoint", s.checkpointSession)
+		r.Get("/sessions/{id}/checkpoints", s.listSessionCheckpoints)
+		r.Post("/sessions/{id}/resume", s.resumeSession)
 
 		// Models — go-modelsdev catalog. Cold cache returns empty list / 404
 		// so callers can retry rather than treat absence as fatal.

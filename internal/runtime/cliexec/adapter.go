@@ -79,6 +79,13 @@ func adapterFor(profile config.AgentProfile, profileName string) (provider.CLIAd
 // developer-mode flag. The flag was historically set via profile.args; we
 // honor that until profiles migrate to a typed dev-mode field.
 func devModeEnabled(profile config.AgentProfile) bool {
+	return ProfileIsDevMode(profile)
+}
+
+// ProfileIsDevMode is the exported variant of devModeEnabled. The
+// sessionmgr bootstrap re-derives adapter resolution and reuses this
+// predicate so the dev-mode contract stays single-sourced.
+func ProfileIsDevMode(profile config.AgentProfile) bool {
 	for _, a := range profile.Args {
 		if a == "--dangerously-skip-permissions" {
 			return true
