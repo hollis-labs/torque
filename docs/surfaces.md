@@ -48,6 +48,7 @@ Feature-flagged MCP areas:
 - Projects
 - Sprints
 - Epics
+- Collections
 
 The MCP adapter is thin over the service layer. The code under `internal/mcpadapter/` is the authoritative place to inspect current tool names and descriptions.
 
