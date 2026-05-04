@@ -127,12 +127,20 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, PickDecisions, error) {
 	// project-max-1 rule. Tasks without a project_id are not gated
 	// (project-scoped concurrency only applies when a task declares a
 	// project); those serialize via worker count instead.
+	//
+	// kind=internal tasks (Reviewer end-agents and other automation
+	// primitives, CW-20260503-0011) are deliberately skipped here — they
+	// are meta-work that should always flow alongside agent dispatches
+	// without holding project slots.
 	busy, err := p.store.ListTasks(sqlstore.TaskFilter{Status: "doing"})
 	if err != nil {
 		return nil, decisions, err
 	}
 	busyProjects := make(map[string]struct{}, len(busy))
 	for _, t := range busy {
+		if t.Kind == "internal" {
+			continue
+		}
 		if pk := projectKey(t); pk != "" {
 			busyProjects[pk] = struct{}{}
 		}
@@ -167,15 +175,17 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, PickDecisions, error) {
 			continue
 		}
 
-		// Defense-in-depth for CW-20260418-0010: an agent task with no
-		// agent_profile has no actionable CLI/provider to dispatch. Even
-		// with the scheduler's pre-dispatch Validate hook in place, skip
-		// these at the picker so they don't burn a tick-worth of heartbeat
-		// noise or block other eligible tasks for the same project slot.
-		// The task stays `todo` with its current blocked_reason; an
-		// operator (or MCP update) must populate agent_profile before it
-		// becomes eligible.
-		if task.Kind == "agent" && task.AgentProfile == "" {
+		// Defense-in-depth for CW-20260418-0010: an agent or internal
+		// task with no agent_profile has no actionable CLI/provider to
+		// dispatch. Even with the scheduler's pre-dispatch Validate hook
+		// in place, skip these at the picker so they don't burn a tick-
+		// worth of heartbeat noise or block other eligible tasks for the
+		// same project slot. The task stays `todo` with its current
+		// blocked_reason; an operator (or MCP update) must populate
+		// agent_profile before it becomes eligible. (CW-20260503-0011
+		// extends this guard to kind=internal — the Reviewer / future
+		// System / PM agents need profiles too.)
+		if (task.Kind == "agent" || task.Kind == "internal") && task.AgentProfile == "" {
 			record(task.ID, SkipReasonEmptyProfile)
 			continue
 		}
@@ -201,12 +211,15 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, PickDecisions, error) {
 			}
 		}
 
-		// Per-project concurrency gate (no gate for project-less tasks).
+		// Per-project concurrency gate (no gate for project-less tasks
+		// or for kind=internal — Reviewer end-agents and other automation
+		// primitives must flow alongside agent dispatches without holding
+		// or being held by project slots, CW-20260503-0011).
 		// Only consult the gate here — do not reserve the slot yet. The
 		// reservation happens after all other eligibility checks pass so a
 		// dep-blocked task cannot silently starve other same-project
 		// siblings (CW-20260418-0003).
-		if pk != "" {
+		if pk != "" && task.Kind != "internal" {
 			if _, inflight := busyProjects[pk]; inflight {
 				record(task.ID, SkipReasonProjectBusy)
 				continue
@@ -243,8 +256,9 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, PickDecisions, error) {
 			}
 		}
 
-		// All checks passed — now reserve the per-project slot for this tick.
-		if pk != "" {
+		// All checks passed — now reserve the per-project slot for this
+		// tick (skipping kind=internal so it never claims a slot).
+		if pk != "" && task.Kind != "internal" {
 			allocated[pk] = struct{}{}
 		}
 

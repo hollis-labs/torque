@@ -151,6 +151,7 @@ describe('BoardPage filter rehydration on remount', () => {
       tagSlug: null,
       manual: 'both',
       search: '',
+      includeInternal: false,
     })
 
     let observedSearch = ''
@@ -180,6 +181,7 @@ describe('BoardPage filter rehydration on remount', () => {
       tagSlug: null,
       manual: 'both',
       search: '',
+      includeInternal: false,
     })
 
     let observedSearch = ''
@@ -233,6 +235,7 @@ describe('BoardPage filter rehydration on remount', () => {
       tagSlug: null,
       manual: 'both',
       search: '',
+      includeInternal: false,
     })
 
     // Render BoardPage directly (no Routes switch) so it stays mounted
@@ -295,6 +298,7 @@ describe('BoardPage filter rehydration on remount', () => {
       tagSlug: null,
       manual: 'both',
       search: '',
+      includeInternal: false,
     })
 
     let observedSearch = ''
@@ -326,6 +330,7 @@ describe('BoardPage filter rehydration on remount', () => {
       tagSlug: null,
       manual: 'both',
       search: '',
+      includeInternal: false,
     })
 
     let observedSearch = ''
@@ -353,6 +358,7 @@ describe('BoardPage filter rehydration on remount', () => {
       tagSlug: null,
       manual: 'both',
       search: 'scheduler',
+      includeInternal: false,
     })
 
     const root = renderAppShell(container, '/operations', () => {})
@@ -383,6 +389,7 @@ describe('BoardPage filter rehydration on remount', () => {
       tagSlug: null,
       manual: 'both',
       search: 'scheduler',
+      includeInternal: false,
     })
 
     let observedSearch = ''

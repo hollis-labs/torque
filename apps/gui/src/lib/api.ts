@@ -267,6 +267,7 @@ export class ClockworkApiClient {
     if (filter?.kind) params['kind'] = filter.kind
     if (filter?.parent_id !== undefined) params['parent_id'] = filter.parent_id
     if (filter?.manual !== undefined) params['manual'] = filter.manual ? 'true' : 'false'
+    if (filter?.include_internal) params['include_internal'] = 'true'
     return this.get<{ tasks: Task[]; total: number }>('/tasks', params)
   }
 

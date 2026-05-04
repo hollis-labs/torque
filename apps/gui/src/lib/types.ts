@@ -53,7 +53,7 @@ export interface Deliverable {
  */
 export const UNLIMITED = -1 as const
 
-export type TaskKind = 'agent' | 'external' | 'wait' | 'decision' | 'parent' | 'plan'
+export type TaskKind = 'agent' | 'external' | 'wait' | 'decision' | 'parent' | 'plan' | 'internal'
 export type TaskSourceType = 'agent' | 'user' | 'api' | 'system' | 'webhook' | 'import'
 export type TaskTrust = 'trusted' | 'normal' | 'untrusted'
 export type TaskCheckpointMode = 'none' | 'blocking' | 'non_blocking'
@@ -325,6 +325,13 @@ export interface TaskFilter {
   parent_id?: string | 'null'
   /** Manual-flag filter. `true` = manual-hold only, `false` = auto-eligible only. */
   manual?: boolean
+  /**
+   * Surface kind=internal automation tasks (Reviewer end-agents and other
+   * substrate primitives, CW-20260503-0011). Default false: the backend's
+   * /api/v1/tasks endpoint hides them so user-facing views aren't polluted.
+   * An explicit `kind=internal` filter takes precedence at the SQL layer.
+   */
+  include_internal?: boolean
 }
 
 /**

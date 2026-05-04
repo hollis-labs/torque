@@ -101,6 +101,17 @@ type TaskFilter struct {
 
 	// Manual-flag filter. Nil = no filter; otherwise matches manual=0/1.
 	Manual *bool
+
+	// ExcludeInternal, when true, suppresses kind='internal' rows from
+	// the result. Default zero-value (false) preserves prior behavior:
+	// no exclusion. Internal-call sites (picker, scheduler internals)
+	// leave it false so they continue to see all kinds; user-facing
+	// boundaries (HTTP /api/v1/tasks, MCP clockwork_task_list /
+	// clockwork_task_search) flip it to true unless the caller passes
+	// include_internal=true (CW-20260503-0011, S1.1). When the caller
+	// supplies an explicit Kind filter, that exact-match takes precedence
+	// over the exclusion.
+	ExcludeInternal bool
 }
 
 // TaskUpdate holds optional fields to update; nil pointer = no change.
@@ -308,8 +319,12 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 		args = append(args, f.Executor)
 	}
 	if f.Kind != "" {
+		// Explicit kind filter wins; exclusion is a no-op when an exact
+		// match is requested.
 		where = append(where, "kind = ?")
 		args = append(args, f.Kind)
+	} else if f.ExcludeInternal {
+		where = append(where, "kind != 'internal'")
 	}
 	if f.SourceType != "" {
 		where = append(where, "source_type = ?")

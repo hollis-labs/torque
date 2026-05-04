@@ -505,6 +505,34 @@ func TestValidateTaskKind_UnknownKindRejected(t *testing.T) {
 	assert.Equal(t, "kind", verr.Field)
 }
 
+// CW-20260503-0011 (S1.1): kind=internal is the substrate primitive for
+// automation/system tasks. Same constraint shape as kind=agent — executor
+// is required. The Create path does NOT auto-default executor for
+// kind=internal (only kind=agent), so omitting it must fail loud.
+func TestValidateTaskKind_InternalRequiresExecutor(t *testing.T) {
+	svc := setupTaskValidationTest(t)
+	_, err := svc.Task.Create(service.TaskCreateInput{
+		Title: "x",
+		Kind:  "internal",
+	})
+	var verr *service.ValidationError
+	require.ErrorAs(t, err, &verr)
+	assert.Equal(t, "executor", verr.Field)
+}
+
+func TestValidateTaskKind_InternalValid(t *testing.T) {
+	svc := setupTaskValidationTest(t)
+	rec, err := svc.Task.Create(service.TaskCreateInput{
+		Title:        "internal ok",
+		Kind:         "internal",
+		Executor:     "cli",
+		AgentProfile: "reviewer",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "internal", rec.Kind)
+	assert.Equal(t, "cli", rec.Executor)
+}
+
 func TestValidateTaskKind_UnknownSourceTypeRejected(t *testing.T) {
 	svc := setupTaskValidationTest(t)
 	_, err := svc.Task.Create(service.TaskCreateInput{Title: "x", SourceType: "bogus"})

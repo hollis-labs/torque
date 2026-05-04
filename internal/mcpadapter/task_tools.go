@@ -86,7 +86,7 @@ Example: {"status":"doing","limit":"50"}`),
 		mcp.WithString("status", mcp.Description("Filter by status")),
 		mcp.WithString("priority", mcp.Description("Filter by priority (integer 1-5)")),
 		mcp.WithString("executor", mcp.Description("Filter by executor")),
-		mcp.WithString("kind", mcp.Description("Filter by kind (agent|external|wait|decision|parent)")),
+		mcp.WithString("kind", mcp.Description("Filter by kind (agent|external|wait|decision|parent|plan|internal)")),
 		mcp.WithString("source_type", mcp.Description("Filter by source_type")),
 		mcp.WithString("source_ref", mcp.Description("Filter by source_ref")),
 		mcp.WithString("trust", mcp.Description("Filter by trust (trusted|normal|untrusted)")),
@@ -97,6 +97,7 @@ Example: {"status":"doing","limit":"50"}`),
 		mcp.WithString("epic_id", mcp.Description("Filter by epic ID (requires features.epics)")),
 		mcp.WithString("tags", mcp.Description("JSON array of tag slugs — AND-match; task must have all listed tags")),
 		mcp.WithString("manual", mcp.Description("Filter by manual flag: 'manual'/'true'/'1' → manual only; 'auto'/'false'/'0' → scheduled only; 'both' or omit → no filter")),
+		mcp.WithString("include_internal", mcp.Description("Include kind=internal automation tasks (Reviewer end-agents etc.). Default false: internal rows are suppressed unless kind='internal' is requested explicitly. Accepts 'true'/'1'/'yes'.")),
 		mcp.WithString("search", mcp.Description("Substring match on title + description (case-insensitive)")),
 		mcp.WithString("limit", mcp.Description("Max results (integer, default 50, max 200)")),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
@@ -179,6 +180,7 @@ Example: {"query":"auth bug","limit":"10"}`),
 		mcp.WithString("epic_id", mcp.Description("Filter by epic ID (requires features.epics)")),
 		mcp.WithString("tags", mcp.Description("JSON array of tag slugs — AND-match; task must have all listed tags")),
 		mcp.WithString("manual", mcp.Description("Filter by manual flag: 'manual'/'true'/'1' → manual only; 'auto'/'false'/'0' → scheduled only; 'both' or omit → no filter")),
+		mcp.WithString("include_internal", mcp.Description("Include kind=internal automation tasks. Default false: internal rows are suppressed. Accepts 'true'/'1'/'yes'.")),
 		mcp.WithString("limit", mcp.Description("Max results (integer, default 25, max 100)")),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleTaskSearch)
@@ -306,6 +308,11 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 		Search:         reqStr(req, "search"),
 		Manual:         parseManualFilter(reqStr(req, "manual")),
 		Limit:          limit,
+		// kind=internal default-exclude (CW-20260503-0011): user-facing
+		// list calls hide internal automation tasks unless include_internal
+		// is truthy. An explicit kind filter takes precedence at the SQL
+		// layer, so this flip is safe to set unconditionally.
+		ExcludeInternal: !reqStrBool(req, "include_internal"),
 	}
 	if _, ok := req.GetArguments()["parent_id"]; ok {
 		v := reqStr(req, "parent_id")
@@ -583,6 +590,9 @@ func (a *Adapter) handleTaskSearch(ctx context.Context, req mcp.CallToolRequest)
 		EpicID:    reqStr(req, "epic_id"),
 		Manual:    parseManualFilter(reqStr(req, "manual")),
 		Limit:     limit,
+		// kind=internal default-exclude (CW-20260503-0011); see
+		// handleTaskList for the rationale.
+		ExcludeInternal: !reqStrBool(req, "include_internal"),
 	}
 	if raw := reqStr(req, "tags"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &filter.TagSlugs); err != nil {

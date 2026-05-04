@@ -248,6 +248,70 @@ func TestFullStack_TaskList_FilterByKind(t *testing.T) {
 	require.Equal(t, float64(1), envelope.Meta["returned"])
 }
 
+// CW-20260503-0011 (S1.1): MCP list/search tools default-exclude
+// kind=internal so spawned agents and operator queries don't surface
+// Reviewer end-agents and other automation primitives by accident.
+// include_internal="true" / explicit kind="internal" both opt-in.
+func TestFullStack_TaskList_DefaultExcludesInternal(t *testing.T) {
+	a := setupAdapter(t)
+
+	_, _ = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":         "agent one",
+		"description":   "x",
+		"kind":          "agent",
+		"executor":      "cli",
+		"agent_profile": "cli",
+	})
+	_, _ = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		"title":         "internal end-agent",
+		"description":   "x",
+		"kind":          "internal",
+		"executor":      "cli",
+		"agent_profile": "reviewer",
+	})
+
+	parseList := func(text string) []map[string]interface{} {
+		var envelope struct {
+			Items []map[string]interface{} `json:"items"`
+		}
+		parseData(t, text, &envelope)
+		return envelope.Items
+	}
+
+	// Default — no include_internal — hides the internal row.
+	text, isErr := callTool(t, a, "clockwork_task_list", map[string]interface{}{})
+	require.False(t, isErr, "list should not error: %s", text)
+	items := parseList(text)
+	require.Len(t, items, 1)
+	require.Equal(t, "agent", items[0]["kind"])
+
+	// include_internal=true surfaces both.
+	text, _ = callTool(t, a, "clockwork_task_list", map[string]interface{}{
+		"include_internal": "true",
+	})
+	require.Len(t, parseList(text), 2)
+
+	// Explicit kind=internal filter — internal-only.
+	text, _ = callTool(t, a, "clockwork_task_list", map[string]interface{}{
+		"kind": "internal",
+	})
+	internalOnly := parseList(text)
+	require.Len(t, internalOnly, 1)
+	require.Equal(t, "internal", internalOnly[0]["kind"])
+
+	// clockwork_task_search mirrors the same default-exclude.
+	text, _ = callTool(t, a, "clockwork_task_search", map[string]interface{}{
+		"query": "x",
+	})
+	require.Len(t, parseList(text), 1, "search default-excludes internal")
+
+	text, _ = callTool(t, a, "clockwork_task_search", map[string]interface{}{
+		"query":            "x",
+		"include_internal": "1",
+	})
+	require.Len(t, parseList(text), 2, "search opt-in surfaces internal")
+}
+
 func TestFullStack_TaskUpdate_Facets(t *testing.T) {
 	a := setupAdapter(t)
 
