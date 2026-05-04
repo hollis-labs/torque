@@ -14,14 +14,15 @@ import (
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
+	"github.com/hollis-labs/clockwork-manifold/internal/toolbroker"
 )
 
 // APIExecutor implements executor.Executor by dispatching to a per-provider
 // vendorClient. The executor is the registry's `api` slot; per-vendor logic
 // lives behind clientFor(profile).
 type APIExecutor struct {
-	profiles   config.ProfileMap
-	toolRouter interface{}
+	profiles config.ProfileMap
+	tools    *toolbroker.ToolRouter
 	// clientFactory is overridable for tests; production path uses clientFor.
 	clientFactory func(profile config.AgentProfile) (vendorClient, error)
 }
@@ -37,12 +38,15 @@ func WithClientFactory(f func(profile config.AgentProfile) (vendorClient, error)
 	}
 }
 
-// New creates a new APIExecutor. toolRouter is reserved for the Plan 4 tool
-// integration and currently unused.
-func New(profiles config.ProfileMap, toolRouter interface{}, opts ...Option) *APIExecutor {
+// New creates a new APIExecutor. tools is the unified tool-broker
+// (CW-20260503-0015 / Plan 4) — go-toolbroker selection composed with the
+// local permission engine + audit log. Production callers (bootstrap.Executors)
+// supply a real router; tests may pass nil when they don't exercise tool
+// calls.
+func New(profiles config.ProfileMap, tools *toolbroker.ToolRouter, opts ...Option) *APIExecutor {
 	e := &APIExecutor{
 		profiles:      profiles,
-		toolRouter:    toolRouter,
+		tools:         tools,
 		clientFactory: clientFor,
 	}
 	for _, opt := range opts {
@@ -50,6 +54,9 @@ func New(profiles config.ProfileMap, toolRouter interface{}, opts ...Option) *AP
 	}
 	return e
 }
+
+// Tools returns the tool-broker. May be nil in test wiring.
+func (e *APIExecutor) Tools() *toolbroker.ToolRouter { return e.tools }
 
 // Compile-time interface check.
 var _ executor.Executor = (*APIExecutor)(nil)
@@ -60,10 +67,15 @@ func (e *APIExecutor) Name() string { return "api" }
 // Capabilities reports what this executor supports. Streaming is exercised via
 // the per-vendor SDK stream APIs. Sandbox is false (Phase B/D inheritance —
 // restoration is bundled with CW-20260427-0059's loopback wiring).
+//
+// CW-20260503-0015 (Plan 4) flipped SupportsTools from false → true once the
+// tool-broker landed: per-turn tool calls flow through the permission engine
+// and audit log via *toolbroker.ToolRouter. The flag reports the
+// architectural capability; per-instance e.tools may be nil in test wiring.
 func (e *APIExecutor) Capabilities() executor.ExecutorCapabilities {
 	return executor.ExecutorCapabilities{
 		SupportsStreaming:   true,
-		SupportsTools:       false, // Plan 4
+		SupportsTools:       true,
 		SupportsSandbox:     false,
 		SupportsPermissions: true,
 	}

@@ -36,6 +36,7 @@ require (
 	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/hollis-labs/go-runner v0.3.0 // indirect
 	github.com/hollis-labs/go-sandbox v0.1.0 // indirect
+	github.com/hollis-labs/go-toolbroker v0.1.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
