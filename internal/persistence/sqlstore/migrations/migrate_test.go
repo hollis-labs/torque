@@ -240,8 +240,32 @@ func TestMigrationsApply(t *testing.T) {
 		require.NoError(t, err, "runs.status must accept taxonomy value %q", s)
 	}
 
-	// Verify 023 created sessions + session_checkpoints with the expected
-	// columns and CHECK on state.
+	// Verify 022 created the messages substrate (CW-20260503-0012, S1.2).
+	_, err = db.Exec(`SELECT id, kind, channel, thread_id, in_reply_to,
+		from_kind, from_authority, from_id, from_subid, from_urn,
+		to_kind, to_authority, to_id, to_subid, to_urn,
+		payload, content_type, metadata_json, created_at, canceled_at
+		FROM messages LIMIT 0`)
+	require.NoError(t, err, "messages table should exist after migration 022")
+
+	_, err = db.Exec(`SELECT message_id, recipient_urn, delivered_at, consumed_at
+		FROM message_deliveries LIMIT 0`)
+	require.NoError(t, err, "message_deliveries table should exist after migration 022")
+
+	msgIdxRows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='messages'`)
+	require.NoError(t, err)
+	defer msgIdxRows.Close()
+	msgIdx := map[string]bool{}
+	for msgIdxRows.Next() {
+		var n string
+		require.NoError(t, msgIdxRows.Scan(&n))
+		msgIdx[n] = true
+	}
+	require.True(t, msgIdx["idx_messages_to_urn_created"], "idx_messages_to_urn_created should exist")
+	require.True(t, msgIdx["idx_messages_thread"], "idx_messages_thread should exist")
+	require.True(t, msgIdx["idx_messages_kind"], "idx_messages_kind should exist")
+
+	// Verify 023 created sessions + session_checkpoints (CW-20260503-0014, S1.4).
 	_, err = db.Exec(`SELECT id, agent_profile, provider, runtime_id, runtime_kind,
 		workdir, project_id, task_id, state, pid, exit_code, resume_hint, meta,
 		created_at, updated_at, last_activity, ended_at FROM sessions LIMIT 0`)

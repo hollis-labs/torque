@@ -16,6 +16,7 @@ import (
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/httpserver"
+	clockmsg "github.com/hollis-labs/clockwork-manifold/internal/messaging"
 	"github.com/hollis-labs/clockwork-manifold/internal/modelcatalog"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/appdb"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
@@ -149,17 +150,17 @@ func runServe(ctx context.Context, ln net.Listener) error {
 
 	// Long-lived agent session manager (CW-20260503-0014, S1.4).
 	// Sweep+register here so /api/v1/sessions/* + clockwork_session_* are
-	// live alongside the rest of the runtime stack. NOTE for S1.5
-	// (CW-20260503-0015 / cmd/clockwork/bootstrap.go split): this block
-	// is the canonical sessionmgr construction point. When bootstrap.go
-	// lands, move this into bootstrap.SessionMgr's caller and pass the
-	// constructed Manager into both httpserver.WithSessionMgr and the
-	// MCP adapter (per the in-process mcp host, when wired).
+	// live alongside the rest of the runtime stack.
 	sessions, err := bootstrap.SessionMgr(store, profiles, sched.EventBus())
 	if err != nil {
 		return fmt.Errorf("bootstrap sessionmgr: %w", err)
 	}
 	handler.WithSessionMgr(sessions)
+
+	// Durable messaging substrate (CW-20260503-0012, S1.2). Same SQLite DB
+	// the rest of the runtime uses; migration 022_messages.sql created the
+	// tables. Broker layer (S1.3) sits on top of this Store.
+	handler.SetMessaging(clockmsg.NewStore(db))
 
 	// Background goroutines share a derived context so cancelling the parent
 	// ctx tears down the scheduler loop, the SSE bridge, and the models.dev
