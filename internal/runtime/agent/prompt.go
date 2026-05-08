@@ -1,51 +1,54 @@
-package cliexec
+package agent
 
 import (
 	"fmt"
 	"strings"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/agentfile"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 )
 
-// composeSystemPrompt merges the agent_file's system_prompt with the task's
-// system_prompt into a single string passed to the adapter's BuildArgs. Stack
-// order matches the legacy executor-cli behavior: agent persona framing first,
-// task-specific preamble second, separated by a blank line.
+// composeSystemPrompt assembles the system prompt for the spawned agent.
+// Stack order: agent-file persona first, options-supplied task framing
+// second, inherited project context last (when present in opts.Metadata).
 //
-// go-providers' adapters take a single systemPrompt string; agents that
-// previously consumed two separate --append-system-prompt flags now receive
-// the concatenation. Adapters that don't accept a system-prompt flag silently
-// ignore the argument (per their per-adapter contract).
-func composeSystemPrompt(job *executor.ExecutionJob, agent *agentfile.AgentFile) string {
-	parts := make([]string, 0, 2)
+// Forked from internal/runtime/cliexec/prompt.go's composeSystemPrompt.
+// Behavior change: source is now Options instead of executor.ExecutionJob,
+// so ModeLongLived callers (orchestrator / planner / reviewer-end-agent)
+// thread their template content through Options.SystemPrompt instead of
+// LaunchRequest.SystemPrompt.
+func composeSystemPrompt(opts Options, agent *agentfile.AgentFile) string {
+	parts := make([]string, 0, 3)
 	if agent != nil && strings.TrimSpace(agent.SystemPrompt) != "" {
 		parts = append(parts, strings.TrimSpace(agent.SystemPrompt))
 	}
-	if strings.TrimSpace(job.SystemPrompt) != "" {
-		parts = append(parts, strings.TrimSpace(job.SystemPrompt))
+	if strings.TrimSpace(opts.SystemPrompt) != "" {
+		parts = append(parts, strings.TrimSpace(opts.SystemPrompt))
 	}
-	if inherited := inheritedProjectContextPrompt(job); inherited != "" {
+	if inherited := inheritedProjectContextPrompt(opts.Metadata); inherited != "" {
 		parts = append(parts, inherited)
 	}
 	return strings.Join(parts, "\n\n")
 }
 
-// composePrompt returns the prompt body fed to the agent. Currently this is
-// the task description verbatim; system framing rides on systemPrompt instead
-// of being prepended in-line. Adapters that lack a system-prompt flag (codex,
-// copilot) accept this as-is — operators can encode persona framing in the
-// agent_file and rely on adapter-level conventions (AGENTS.md for codex,
-// GEMINI_SYSTEM_MD for gemini) where supported.
-func composePrompt(job *executor.ExecutionJob) string {
-	return job.Description
+// composeUserPrompt returns the prompt body fed to the agent for ModeOneShot.
+// Currently this is the OneShotPrompt (when set) or Description verbatim;
+// system framing rides on the planted boot.md / system prompt instead of
+// being prepended in-line.
+func composeUserPrompt(opts Options) string {
+	if opts.OneShotPrompt != "" {
+		return opts.OneShotPrompt
+	}
+	return opts.Description
 }
 
-func inheritedProjectContextPrompt(job *executor.ExecutionJob) string {
-	if job.Metadata == nil {
+// inheritedProjectContextPrompt extracts project-context hints stamped by
+// the orchestrator at executor enqueue time. Forked from cliexec/prompt.go;
+// shape unchanged.
+func inheritedProjectContextPrompt(metadata map[string]any) string {
+	if metadata == nil {
 		return ""
 	}
-	raw, ok := job.Metadata["project_context"]
+	raw, ok := metadata["project_context"]
 	if !ok {
 		return ""
 	}

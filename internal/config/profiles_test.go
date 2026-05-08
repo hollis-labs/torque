@@ -68,7 +68,8 @@ agent_profiles:
 	assert.Equal(t, "stream-json", def.OutputFormat)
 	assert.Equal(t, 600, def.TimeoutSeconds)
 	assert.Equal(t, 3, def.MaxAgentDepth)
-	assert.False(t, def.PTY)
+	require.NotNil(t, def.PTY, "fixture has pty: false explicit")
+	assert.False(t, *def.PTY)
 
 	// Codex profile
 	codex := profiles["codex"]

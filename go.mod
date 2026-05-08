@@ -6,10 +6,10 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.38.0
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/google/uuid v1.6.0
-	github.com/hollis-labs/go-agent-sessions v0.4.0
+	github.com/hollis-labs/go-agent-sessions v0.6.0
 	github.com/hollis-labs/go-messaging v0.2.0
 	github.com/hollis-labs/go-modelsdev v0.1.0
-	github.com/hollis-labs/go-providers v0.6.0
+	github.com/hollis-labs/go-providers v0.8.0
 	github.com/hollis-labs/go-queue v0.1.1
 	github.com/hollis-labs/go-strutil v0.0.0-20260409170855-ca5f29e8b1db
 	github.com/hollis-labs/go-toolbroker v0.1.0
@@ -37,7 +37,7 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/hollis-labs/go-runner v0.3.0 // indirect
-	github.com/hollis-labs/go-sandbox v0.1.0 // indirect
+	github.com/hollis-labs/go-sandbox v0.2.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect

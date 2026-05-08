@@ -4,20 +4,20 @@ import (
 	"context"
 	"errors"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/sessionmgr"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// registerSessionTools surfaces the long-lived agent session manager
-// (CW-20260503-0014) over MCP. Tools are no-ops when the adapter has no
-// SessionMgr handle wired (mcp-only stdio path); each handler returns a
+// registerSessionTools surfaces the unified agent session manager
+// (CW-20260508-0001) over MCP. Tools are no-ops when the adapter has no
+// agent.Manager handle wired (mcp-only stdio path); each handler returns a
 // `domain` envelope explaining the missing wiring rather than panicking.
 func (a *Adapter) registerSessionTools() {
 	a.server.AddTool(mcp.NewTool("clockwork_session_create",
-		mcp.WithDescription(`Create AND launch a long-lived agent session (sessionmgr).
-Use to spawn an agent (Reviewer end-agent, Orchestrator, planner, etc.) whose lifetime exceeds a single task — distinct from per-task cliexec sessions which spawn-and-die.
+		mcp.WithDescription(`Boot a long-lived agent session via the unified agent.Manager.Boot path.
+Use to spawn an agent (Reviewer end-agent, Orchestrator, planner, etc.) whose lifetime exceeds a single task — Mode=ModeLongLived. Per-task scheduler-dispatched (one-turn) executions go through the kind=agent task path, not this tool.
 Pair with clockwork_session_checkpoint mid-run and clockwork_session_resume to seed a fresh session from prior checkpoint state.
-Response shape: data = <Session> singleton — ID, status, runtime descriptors, project/task soft-FKs.
+Response shape: data = <Session> singleton — ID, status, runtime descriptors, project/task soft-FKs, Mode, BootDir, WorkspaceDir, ParentSessionID.
 Example: {"agent_profile":"default","workdir":"/tmp/sess","task_id":"T-123"}`),
 		mcp.WithString("agent_profile", mcp.Required(), mcp.Description("Clockwork agent profile name")),
 		mcp.WithString("workdir", mcp.Required(), mcp.Description("Spawned process working directory (boot dir for claude)")),
@@ -30,9 +30,8 @@ Example: {"agent_profile":"default","workdir":"/tmp/sess","task_id":"T-123"}`),
 	// distinct registrations so MCP descriptions can diverge later if
 	// create-then-launch splits into two phases.
 	a.server.AddTool(mcp.NewTool("clockwork_session_launch",
-		mcp.WithDescription(`Alias for clockwork_session_create — same args, same response.
+		mcp.WithDescription(`Alias for clockwork_session_create — boots a Mode=ModeLongLived agent session via agent.Manager.Boot. Same args, same response.
 Kept distinct in the registry so create-then-launch can split into two phases without a breaking rename. Today both names route to the same handler.
-Use either; agents picking from the tool catalog should treat them as identical surfaces.
 Response shape: data = <Session> singleton.
 Example: {"agent_profile":"default","workdir":"/tmp/sess"}`),
 		mcp.WithString("agent_profile", mcp.Required()),
@@ -106,7 +105,7 @@ Example: {"id":"SES-...","checkpoint_id":"SCP-..."}`),
 	), a.handleSessionResume)
 }
 
-func (a *Adapter) requireSessionMgr() (*sessionmgr.Manager, error) {
+func (a *Adapter) requireSessionMgr() (*agent.Manager, error) {
 	if a.sessions == nil {
 		return nil, errors.New("session manager not wired in this MCP host")
 	}
@@ -118,7 +117,8 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req mcp.CallToolReque
 	if err != nil {
 		return errResult(ErrCodeDomain, err.Error(), "")
 	}
-	id, err := mgr.Launch(ctx, sessionmgr.LaunchRequest{
+	sess, err := mgr.Boot(ctx, agent.Options{
+		Mode:         agent.ModeLongLived,
 		AgentProfile: reqStr(req, "agent_profile"),
 		Workdir:      reqStr(req, "workdir"),
 		ProjectID:    reqStr(req, "project_id"),
@@ -127,10 +127,6 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req mcp.CallToolReque
 	})
 	if err != nil {
 		return errResult(ErrCodeDomain, err.Error(), "")
-	}
-	sess, err := mgr.Get(id)
-	if err != nil {
-		return errFromService(err)
 	}
 	return okResult(sess)
 }
@@ -142,7 +138,7 @@ func (a *Adapter) handleSessionGet(ctx context.Context, req mcp.CallToolRequest)
 	}
 	sess, err := mgr.Get(reqStr(req, "id"))
 	if err != nil {
-		if errors.Is(err, sessionmgr.ErrSessionNotFound) {
+		if errors.Is(err, agent.ErrSessionNotFound) {
 			return errResult(ErrCodeNotFound, err.Error(), "")
 		}
 		return errFromService(err)
@@ -157,7 +153,7 @@ func (a *Adapter) handleSessionList(ctx context.Context, req mcp.CallToolRequest
 	}
 	limit := reqInt(req, "limit")
 	out, err := mgr.List(
-		sessionmgr.Status(reqStr(req, "state")),
+		agent.Status(reqStr(req, "state")),
 		reqStr(req, "task_id"),
 		reqStr(req, "project_id"),
 		limit,
@@ -179,7 +175,7 @@ func (a *Adapter) handleSessionStop(ctx context.Context, req mcp.CallToolRequest
 	}
 	id := reqStr(req, "id")
 	if err := mgr.Stop(ctx, id); err != nil {
-		if errors.Is(err, sessionmgr.ErrSessionNotRunning) {
+		if errors.Is(err, agent.ErrSessionNotRunning) {
 			return okResult(map[string]interface{}{"stopped": false, "reason": err.Error(), "id": id})
 		}
 		return errFromService(err)
@@ -194,7 +190,7 @@ func (a *Adapter) handleSessionAttach(ctx context.Context, req mcp.CallToolReque
 	}
 	sess, err := mgr.Get(reqStr(req, "id"))
 	if err != nil {
-		if errors.Is(err, sessionmgr.ErrSessionNotFound) {
+		if errors.Is(err, agent.ErrSessionNotFound) {
 			return errResult(ErrCodeNotFound, err.Error(), "")
 		}
 		return errFromService(err)
@@ -210,13 +206,13 @@ func (a *Adapter) handleSessionCheckpoint(ctx context.Context, req mcp.CallToolR
 	if err != nil {
 		return errResult(ErrCodeDomain, err.Error(), "")
 	}
-	cp, err := mgr.Checkpoint(sessionmgr.CheckpointRequest{
+	cp, err := mgr.Checkpoint(agent.CheckpointRequest{
 		SessionID: reqStr(req, "id"),
 		Payload:   reqStr(req, "payload"),
 		Note:      reqStr(req, "note"),
 	})
 	if err != nil {
-		if errors.Is(err, sessionmgr.ErrSessionNotFound) {
+		if errors.Is(err, agent.ErrSessionNotFound) {
 			return errResult(ErrCodeNotFound, err.Error(), "")
 		}
 		return errFromService(err)
@@ -229,7 +225,7 @@ func (a *Adapter) handleSessionResume(ctx context.Context, req mcp.CallToolReque
 	if err != nil {
 		return errResult(ErrCodeDomain, err.Error(), "")
 	}
-	newID, err := mgr.Resume(ctx, sessionmgr.ResumeRequest{
+	newID, err := mgr.Resume(ctx, agent.ResumeRequest{
 		SessionID:    reqStr(req, "id"),
 		CheckpointID: reqStr(req, "checkpoint_id"),
 		AgentProfile: reqStr(req, "agent_profile"),
@@ -238,9 +234,9 @@ func (a *Adapter) handleSessionResume(ctx context.Context, req mcp.CallToolReque
 	})
 	if err != nil {
 		switch {
-		case errors.Is(err, sessionmgr.ErrSessionNotFound):
+		case errors.Is(err, agent.ErrSessionNotFound):
 			return errResult(ErrCodeNotFound, err.Error(), "")
-		case errors.Is(err, sessionmgr.ErrNoCheckpoint):
+		case errors.Is(err, agent.ErrNoCheckpoint):
 			return errResult(ErrCodeArgInvalid, err.Error(), "checkpoint_id")
 		}
 		return errFromService(err)

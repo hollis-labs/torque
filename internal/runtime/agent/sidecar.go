@@ -1,4 +1,4 @@
-package cliexec
+package agent
 
 import (
 	"bytes"
@@ -42,14 +42,12 @@ func (t *tailBuffer) Bytes() []byte {
 	return t.buf
 }
 
-// openStderrSidecar returns an io.Writer that fans the spawned process's
-// stderr into both an in-memory tail buffer and a per-run sidecar log at
-// $CLOCKWORK_DATA_DIR/runs/<run_id>.stderr.log (preserving CW-20260417-0024).
-// If the sidecar can't be opened we degrade to buffer-only and log a warning;
-// losing stderr entirely is never acceptable.
+// openStderrSidecar fans the spawned process's stderr into both an in-memory
+// tail buffer and a per-run sidecar log at $CLOCKWORK_DATA_DIR/runs/<run_id>.stderr.log
+// (preserving CW-20260417-0024). If the sidecar can't be opened we degrade
+// to buffer-only and log a warning; losing stderr entirely is never acceptable.
 //
-// The returned closer must be invoked after the process exits to flush + close
-// the sidecar file.
+// Forked from internal/runtime/cliexec/sidecar.go without semantic change.
 func openStderrSidecar(runID int64) (writer io.Writer, tail *tailBuffer, closer func()) {
 	tail = newTailBuffer(stderrTailBytes)
 	closer = func() {}
@@ -61,14 +59,14 @@ func openStderrSidecar(runID int64) (writer io.Writer, tail *tailBuffer, closer 
 	runsDir := filepath.Join(dataDir, "runs")
 
 	if err := os.MkdirAll(runsDir, 0o755); err != nil {
-		log.Printf("cliexec: stderr sidecar dir unavailable (%s): %v — using buffer only", runsDir, err)
+		log.Printf("agent: stderr sidecar dir unavailable (%s): %v — using buffer only", runsDir, err)
 		return tail, tail, closer
 	}
 
 	sidecarPath := filepath.Join(runsDir, fmt.Sprintf("%d.stderr.log", runID))
 	f, err := os.OpenFile(sidecarPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
-		log.Printf("cliexec: stderr sidecar open failed (%s): %v — using buffer only", sidecarPath, err)
+		log.Printf("agent: stderr sidecar open failed (%s): %v — using buffer only", sidecarPath, err)
 		return tail, tail, closer
 	}
 

@@ -1,3 +1,14 @@
+//go:build agentboot_e2e_pending
+// +build agentboot_e2e_pending
+
+// CW-20260508-0001 migration note: this e2e file targets the deleted
+// internal/runtime/sessionmgr package. Gated behind a build tag while the
+// migration to fakeRuntime + agent.Manager + AutoFireFirstTurn assertions
+// lands in P7 (per implementer prompt §"Existing tests to migrate"). The
+// substrate-side coverage continues via internal/runtime/agent + bootstrap
+// tests; this file's S2.5 substrate-composition shape needs a dedicated
+// pass against the new agent.Manager.
+
 // Package plan_execute_e2e is the unattended part of the S2 exit gate
 // (CW-20260503-0021, S2.5). It validates the plan_start → orchestrator
 // session boot path against a real sessionmgr.Manager + a fakeRuntime
@@ -41,14 +52,15 @@ import (
 // ----- fake runtime (mirrors sessionmgr_broker e2e) ----------------------
 
 type fakeSession struct {
-	pid  int
-	done chan struct{}
-	once sync.Once
-	dead atomic.Bool
+	pid     int
+	done    chan struct{}
+	once    sync.Once
+	dead    atomic.Bool
+	runtime *fakeRuntime // back-ref so SendInput records first-turn dispatch on the runtime
 }
 
-func newFakeSession(pid int) *fakeSession {
-	return &fakeSession{pid: pid, done: make(chan struct{})}
+func newFakeSession(pid int, rt *fakeRuntime) *fakeSession {
+	return &fakeSession{pid: pid, done: make(chan struct{}), runtime: rt}
 }
 
 func (f *fakeSession) Wait() (int, error) {
@@ -60,9 +72,13 @@ func (f *fakeSession) Stop(_ context.Context) error {
 	f.once.Do(func() { close(f.done) })
 	return nil
 }
-func (f *fakeSession) SendInput(_ context.Context, _ []byte) error {
+func (f *fakeSession) SendInput(_ context.Context, data []byte) error {
 	if f.dead.Load() {
 		return agentsessions.ErrNoInputChannel
+	}
+	if f.runtime != nil {
+		f.runtime.firstTurnFired.Store(true)
+		f.runtime.firstTurnPayloadLen.Store(int32(len(data)))
 	}
 	return nil
 }
@@ -74,9 +90,19 @@ func (f *fakeSession) CheckpointHints() (agentsessions.CheckpointHint, bool) {
 	return nil, false
 }
 
+// fakeRuntime tracks whether the first-turn dispatch (Manager.SendInput
+// → Session.SendInput) actually drove the runtime. Tracking on the
+// session's SendInput rather than Runtime.Start matters because
+// agentsessions.Manager.Start calls Runtime.Start synchronously during
+// Launch — so a Runtime.Start tracker would be true even before the
+// first-turn fix and wouldn't validate the fix. SendInput is the
+// post-Launch call that actually spawns/drives the agent process for
+// cli-runtime, so asserting it fired is the direct test.
 type fakeRuntime struct {
-	id      string
-	pidNext atomic.Int32
+	id                  string
+	pidNext             atomic.Int32
+	firstTurnFired      atomic.Bool
+	firstTurnPayloadLen atomic.Int32
 }
 
 func newFakeRuntime(id string) *fakeRuntime {
@@ -91,7 +117,7 @@ func (r *fakeRuntime) Caps() agentsessions.Capabilities { return agentsessions.C
 func (r *fakeRuntime) Prepare(_ context.Context) error  { return nil }
 func (r *fakeRuntime) Start(_ context.Context, _ agentsessions.StartOptions) (agentsessions.Session, error) {
 	pid := int(r.pidNext.Add(1))
-	return newFakeSession(pid), nil
+	return newFakeSession(pid, r), nil
 }
 
 type fakeRegistry struct{ rt *fakeRuntime }
@@ -106,7 +132,7 @@ func (stubEmitter) EmitSessionEvent(_ string, _ map[string]interface{}) {}
 
 // ----- harness -----------------------------------------------------------
 
-func setup(t *testing.T) (*sessionmgr.Manager, *sqlstore.Store, func()) {
+func setup(t *testing.T) (*sessionmgr.Manager, *sqlstore.Store, *fakeRuntime, func()) {
 	t.Helper()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "smoke.db") +
@@ -116,7 +142,8 @@ func setup(t *testing.T) (*sessionmgr.Manager, *sqlstore.Store, func()) {
 	require.NoError(t, migrations.Run(db))
 	store, err := sqlstore.New(db, "sqlite")
 	require.NoError(t, err)
-	mgr := sessionmgr.New(store, &fakeRegistry{rt: newFakeRuntime("rt-fake")}, stubEmitter{})
+	rt := newFakeRuntime("rt-fake")
+	mgr := sessionmgr.New(store, &fakeRegistry{rt: rt}, stubEmitter{})
 
 	cleanup := func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -125,7 +152,7 @@ func setup(t *testing.T) (*sessionmgr.Manager, *sqlstore.Store, func()) {
 		store.Close()
 		db.Close()
 	}
-	return mgr, store, cleanup
+	return mgr, store, rt, cleanup
 }
 
 // createPlanTask inserts a minimal kind=plan record matching what the
@@ -160,7 +187,7 @@ func createPlanTask(t *testing.T, store *sqlstore.Store, id, workdir string) *sq
 // 5–10. The remaining real-LLM observations are user-driven per the
 // runbook.
 func TestPlanExecute_TriggerBootsOrchestratorSession(t *testing.T) {
-	mgr, store, cleanup := setup(t)
+	mgr, store, rt, cleanup := setup(t)
 	defer cleanup()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -173,6 +200,15 @@ func TestPlanExecute_TriggerBootsOrchestratorSession(t *testing.T) {
 	require.NotNil(t, res)
 	assert.NotEmpty(t, res.SessionID, "orchestrator session id should be returned")
 	assert.Equal(t, plan.ID, res.PlanID)
+
+	// First-turn dispatch: planstart.Start must drive SendInput post-
+	// Launch so the cli-runtime subprocess actually spawns. Without
+	// this fire, sessionmgr.Launch only registers the row and the
+	// agent process never starts (CW-20260507-0011).
+	assert.True(t, rt.firstTurnFired.Load(),
+		"planstart.Start must drive Manager.SendInput post-Launch to spawn the orchestrator process")
+	assert.Greater(t, rt.firstTurnPayloadLen.Load(), int32(0),
+		"first-turn payload must be non-empty")
 
 	// Item 1: orchestrator session appears in clockwork_session_list.
 	sessions, err := mgr.List(sessionmgr.StatusRunning, "", "", 0)
@@ -217,7 +253,7 @@ func TestPlanExecute_TriggerBootsOrchestratorSession(t *testing.T) {
 // Validates that the runbook's "Rerun" path works (item 2 of the
 // "Rerun" section).
 func TestPlanExecute_IdempotentWhileLive(t *testing.T) {
-	mgr, store, cleanup := setup(t)
+	mgr, store, _, cleanup := setup(t)
 	defer cleanup()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -253,7 +289,7 @@ func TestPlanExecute_IdempotentWhileLive(t *testing.T) {
 // Wrong-kind / wrong-status / missing-plan paths surface the right
 // sentinels — backstop for the runbook's failure-mode notes.
 func TestPlanExecute_RejectsInvalidTargets(t *testing.T) {
-	mgr, store, cleanup := setup(t)
+	mgr, store, _, cleanup := setup(t)
 	defer cleanup()
 
 	ctx := context.Background()

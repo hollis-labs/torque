@@ -21,7 +21,13 @@ type AgentProfile struct {
 	OutputFormat     string   `yaml:"output_format,omitempty"` // "stream-json" or "print"
 	TimeoutSeconds   int      `yaml:"timeout_seconds,omitempty"`
 	MaxAgentDepth    int      `yaml:"max_agent_depth,omitempty"`
-	PTY              bool     `yaml:"pty,omitempty"`
+	// PTY is the operator-side PTY override. nil (yaml absent) → the agent
+	// substrate's per-Mode + per-provider matrix decides. Explicit `true`
+	// forces PTY (still subject to ModeOneShot's subprocess-only constraint).
+	// Explicit `false` forces subprocess-per-turn even on providers/Modes
+	// the matrix would PTY-enable. *bool gives the ternary semantics yaml
+	// otherwise can't express against a `bool` field.
+	PTY              *bool    `yaml:"pty,omitempty"`
 	EnvStripPrefixes []string `yaml:"env_strip_prefixes,omitempty"`
 
 	// API-specific fields

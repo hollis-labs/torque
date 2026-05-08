@@ -344,6 +344,25 @@ func (s *Store) ListSessionCheckpoints(sessionID string, limit int) ([]*SessionC
 	return out, rows.Err()
 }
 
+// GetSessionCheckpoint returns the checkpoint with the given ID, or
+// (nil, nil) when not found. Used by ModeResume's per-checkpoint lookup
+// path (CW-20260508-0001) — replaces the prior 1:N walk over recent
+// sessions which silently broke once the session list grew past the page
+// limit.
+func (s *Store) GetSessionCheckpoint(checkpointID string) (*SessionCheckpointRecord, error) {
+	row := s.db.QueryRow(`SELECT id, session_id, payload, resume_hint, note, created_at
+		FROM session_checkpoints WHERE id = ?`, checkpointID)
+	rec := &SessionCheckpointRecord{}
+	err := row.Scan(&rec.ID, &rec.SessionID, &rec.Payload, &rec.ResumeHint, &rec.Note, &rec.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("scan session checkpoint: %w", err)
+	}
+	return rec, nil
+}
+
 // LatestSessionCheckpoint returns the most recent checkpoint for the
 // session, or (nil, nil) when none exist.
 func (s *Store) LatestSessionCheckpoint(sessionID string) (*SessionCheckpointRecord, error) {

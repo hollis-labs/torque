@@ -6,6 +6,12 @@
 // V0 wires the trigger as a hardcoded MCP tool + HTTP route. Refactor
 // onto Plans v2 lifecycle hooks (phase_start / plan_complete) is
 // deferred to CW-20260417-0135.
+//
+// Post-CW-20260508-0001: Start is a thin wrapper around agent.Manager.Boot.
+// The first-turn-fire that previously had to follow Launch (the gap
+// CW-20260507-0011 patched with a manual SendInput) now lives natively
+// inside Boot via go-agent-sessions v0.6.0's AutoFireFirstTurn — there is
+// no separate kickoff step. The package shrunk from ~260 LOC to ~140 LOC.
 package planstart
 
 import (
@@ -18,7 +24,7 @@ import (
 
 	"github.com/hollis-labs/clockwork-manifold/internal/orchestrator"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/sessionmgr"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
 )
 
 // Sentinel errors for the trigger. Handlers map them to HTTP status:
@@ -27,6 +33,11 @@ import (
 //   - ErrAlreadyOrchestrating → 409 (an orchestrator session is live)
 //   - ErrWorkdirRequired   → 422 (Options.Workdir empty AND plan.WorkingDir empty)
 //   - ErrSessionMgrMissing → 503 (substrate not wired into this host)
+//
+// ErrFirstTurnFailed (the prior 502 mapping) is gone — agent.Boot owns the
+// first-turn drive natively via AutoFireFirstTurn, so a partial-launch
+// failure is just an ErrBootFailed wrapping the underlying cause; handlers
+// map it to 500 like any other Boot failure.
 var (
 	ErrPlanNotFound         = errors.New("planstart: plan not found or not a kind=plan task")
 	ErrPlanWrongStatus      = errors.New("planstart: plan must be in todo or review status to start")
@@ -47,9 +58,9 @@ type Options struct {
 	Env []string
 }
 
-// Result is what Start returns on success. It mirrors the documented
-// HTTP/MCP response: session_id + plan_id + an RFC3339 started_at
-// stamp the GUI/CLI shows in the "Execute Plan" toast.
+// Result is what Start returns on success. Mirrors the documented HTTP/MCP
+// response: session_id + plan_id + an RFC3339 started_at stamp the GUI/CLI
+// shows in the "Execute Plan" toast.
 type Result struct {
 	SessionID string    `json:"session_id"`
 	PlanID    string    `json:"plan_id"`
@@ -57,8 +68,8 @@ type Result struct {
 }
 
 // Store is the narrowed dependency surface Start uses. Defined as an
-// interface so tests can substitute an in-memory fake without dragging
-// the full sqlstore.Store into the test harness. Production passes
+// interface so tests can substitute an in-memory fake without dragging the
+// full sqlstore.Store into the test harness. Production passes
 // *sqlstore.Store directly — it satisfies this contract.
 type Store interface {
 	GetTask(id string) (*sqlstore.TaskRecord, error)
@@ -67,10 +78,11 @@ type Store interface {
 	GetSession(id string) (*sqlstore.SessionRecord, error)
 }
 
-// SessionManager is the narrowed sessionmgr surface. The real
-// *sessionmgr.Manager implements it; tests pass a stub.
+// SessionManager is the narrowed agent.Manager surface. The real
+// *agent.Manager implements it; tests pass a stub. Boot drives the
+// orchestrator session — no separate SendInput kickoff step.
 type SessionManager interface {
-	Launch(ctx context.Context, req sessionmgr.LaunchRequest) (string, error)
+	Boot(ctx context.Context, opts agent.Options) (*agent.Session, error)
 }
 
 // Start validates a plan, idempotency-checks any existing orchestrator
@@ -107,7 +119,7 @@ func Start(ctx context.Context, store Store, mgr SessionManager, planID string, 
 			}, fmt.Errorf("%w: session=%s", ErrAlreadyOrchestrating, existing)
 		}
 		// Stale or missing session row — drop the metadata and proceed
-		// with a fresh launch. Avoids leaving the plan stuck on a
+		// with a fresh boot. Avoids leaving the plan stuck on a
 		// crashed/orphaned session id forever.
 	}
 
@@ -119,28 +131,39 @@ func Start(ctx context.Context, store Store, mgr SessionManager, planID string, 
 		return nil, ErrWorkdirRequired
 	}
 
-	launchReq, err := orchestrator.BuildLaunchRequest(orchestrator.LaunchOptions{
-		PlanID:    planID,
-		Workdir:   workdir,
-		ProjectID: nullStr(plan.ProjectID),
-		TaskID:    planID,
-		Env:       opts.Env,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("planstart: build launch request: %w", err)
+	bootOpts := agent.Options{
+		Mode:         agent.ModeLongLived,
+		AgentProfile: orchestrator.Profile,
+		Role:         orchestrator.SessionMetaRoleValue,
+		Workdir:      workdir,
+		ProjectID:    nullStr(plan.ProjectID),
+		TaskID:       planID,
+		SystemPrompt: orchestrator.SystemPromptForPlan(planID, ""),
+		Env:          envSliceToMap(opts.Env),
+		SessionMeta: map[string]string{
+			orchestrator.SessionMetaRole:   orchestrator.SessionMetaRoleValue,
+			orchestrator.SessionMetaPlanID: planID,
+		},
 	}
 
-	sessionID, err := mgr.Launch(ctx, launchReq)
+	// Boot drives Manager.Start with AutoFireFirstTurn=true for ModeLongLived,
+	// so the orchestrator's first turn (the kickoff "Boot @./boot.md") is
+	// in flight by the time Boot returns. No separate SendInput call needed.
+	sess, err := mgr.Boot(ctx, bootOpts)
 	if err != nil {
-		return nil, fmt.Errorf("planstart: launch orchestrator: %w", err)
+		// agent.Boot wraps with ErrBootFailed for any setup failure
+		// (loopback, boot dir, runtime, Start). Surface verbatim — the
+		// session row was rolled back inside Boot, so nothing to clean up
+		// here. The plan stays in todo and the caller can retry.
+		return nil, fmt.Errorf("planstart: boot orchestrator: %w", err)
 	}
 
 	// Stamp orchestrator_session_id into metadata.plan and transition
 	// plan → doing. Both writes are best-effort cleanup if the second
 	// fails: the session is already running and visible via
-	// clockwork_session_list; the plan's status will catch up next
-	// time the orchestrator polls / the user re-views the plan.
-	if err := writeOrchestratorSessionID(store, plan, sessionID); err != nil {
+	// clockwork_session_list; the plan's status will catch up next time
+	// the orchestrator polls / the user re-views the plan.
+	if err := writeOrchestratorSessionID(store, plan, sess.ID); err != nil {
 		// Don't roll back the launched session — log via the error
 		// chain and let the caller surface it.
 		return nil, fmt.Errorf("planstart: stamp session_id on plan %s: %w", planID, err)
@@ -151,18 +174,25 @@ func Start(ctx context.Context, store Store, mgr SessionManager, planID string, 
 		}
 	}
 
+	// Use the persisted session row's CreatedAt so the trigger's response
+	// matches the idempotency path (which surfaces rec.CreatedAt) and avoids
+	// a clock-skew between time.Now() here and the session row's stamp. Per
+	// Copilot review feedback on PR #19.
+	startedAt := sess.CreatedAt
+	if startedAt.IsZero() {
+		startedAt = time.Now().UTC()
+	}
 	return &Result{
-		SessionID: sessionID,
+		SessionID: sess.ID,
 		PlanID:    planID,
-		StartedAt: time.Now().UTC(),
+		StartedAt: startedAt,
 	}, nil
 }
 
-// startableStatus is the closed set of plan statuses that permit a
-// fresh orchestrator launch. `doing` is excluded because that's the
-// idempotency case (handled separately upstream); `done` / `blocked`
-// / `abandoned` are terminal — re-running a finished plan is a V1.1
-// concern.
+// startableStatus is the closed set of plan statuses that permit a fresh
+// orchestrator boot. `doing` is excluded because that's the idempotency
+// case (handled separately upstream); `done` / `blocked` / `abandoned` are
+// terminal — re-running a finished plan is a V1.1 concern.
 func startableStatus(s string) bool {
 	switch s {
 	case "todo", "review":
@@ -171,10 +201,9 @@ func startableStatus(s string) bool {
 	return false
 }
 
-// sessionTerminal reports whether a session row's state is a sink in
-// the sessionmgr lifecycle. Mirrors sessionmgr.Status.Terminal but
-// avoids importing the package's exported Status type into a string-
-// comparison hot path.
+// sessionTerminal reports whether a session row's state is a sink in the
+// agent lifecycle. Mirrors agent.Status.Terminal but avoids importing the
+// package's exported Status type into a string-comparison hot path.
 func sessionTerminal(state string) bool {
 	switch state {
 	case "done", "failed", "crashed":
@@ -199,8 +228,8 @@ func readOrchestratorSessionID(plan *sqlstore.TaskRecord) (string, bool) {
 }
 
 // writeOrchestratorSessionID merges the session id into the plan's
-// metadata.plan namespace without clobbering pre-existing keys
-// (phases, planner_refinement, etc.).
+// metadata.plan namespace without clobbering pre-existing keys (phases,
+// planner_refinement, etc.).
 func writeOrchestratorSessionID(store Store, plan *sqlstore.TaskRecord, sessionID string) error {
 	root := map[string]any{}
 	if plan.Metadata.Valid && plan.Metadata.String != "" {
@@ -226,4 +255,23 @@ func nullStr(s sql.NullString) string {
 		return ""
 	}
 	return s.String
+}
+
+// envSliceToMap converts the legacy []string "K=V" env shape (carried by
+// the HTTP/MCP API for back-compat) into the map[string]string shape
+// agent.Options expects. Malformed entries (no '=') are silently skipped.
+func envSliceToMap(env []string) map[string]string {
+	if len(env) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(env))
+	for _, kv := range env {
+		for i := 0; i < len(kv); i++ {
+			if kv[i] == '=' {
+				out[kv[:i]] = kv[i+1:]
+				break
+			}
+		}
+	}
+	return out
 }
