@@ -4,7 +4,6 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
 	"github.com/hollis-labs/clockwork-manifold/internal/toolbroker"
 )
 
@@ -31,10 +30,13 @@ type Dependencies struct {
 	// args, model, env policy, ...).
 	Profiles config.ProfileMap
 
-	// Service backs the per-task MCP loopback adapter (closure-bound to
-	// the booted task — no task_id parameter required or accepted by tools).
-	// nil disables the loopback (test path).
-	Service *service.Service
+	// Loopback constructs the per-task MCP loopback handle (closure-bound
+	// to the booted task — no task_id parameter required or accepted by
+	// tools). nil disables the loopback (test path; mirrors the legacy
+	// cliexec.New(svc=nil) shape). The concrete factory lives in
+	// bootstrap/loopback.go to keep the agent package import-graph free
+	// of mcpadapter (which imports planstart, which imports agent).
+	Loopback LoopbackBuilder
 
 	// Tools is the unified tool-broker (selection + permission engine +
 	// audit log). nil → toolbroker.NewDefault() preserved for tests.

@@ -114,18 +114,15 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// Load profiles (optional — missing file is OK for mock-only runs).
 	profiles := loadProfilesOrEmpty()
 
-	// Service constructed early so cliexec can claim it for per-task MCP
-	// loopback wiring (CW-20260427-0059). Same handle reused by httpserver
-	// below.
+	// Service constructed early so the agent.Executor / agent.Boot path can
+	// claim it for per-task MCP loopback wiring (CW-20260427-0059). Same
+	// handle reused by httpserver below.
 	svc := service.New(store)
 
 	// Tool-broker (CW-20260503-0015 / Plan 4): go-toolbroker selection +
-	// permission engine + audit log, threaded into both executors below.
+	// permission engine + audit log, threaded into the unified agent
+	// substrate via agent.Dependencies.
 	tools := toolbroker.NewDefault()
-
-	if err := bootstrap.Executors(registry, profiles, svc, tools); err != nil {
-		return fmt.Errorf("bootstrap executors: %w", err)
-	}
 
 	// Waitpoll predicate registry (kind=wait dispatch).
 	predicates := waitpoll.NewRegistry()
@@ -133,30 +130,37 @@ func runServe(ctx context.Context, ln net.Listener) error {
 		return fmt.Errorf("bootstrap waitpoll: %w", err)
 	}
 
-	// Scheduler
+	// Scheduler — constructed before AgentDeps so deps can capture
+	// sched.EventBus() for session.state_changed lifecycle SSE.
 	sched := scheduler.New(store, q, registry, predicates, &cfg.Scheduler)
 
 	// DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
-	// Stopgap: advertise the active project-scope allowlist at every
-	// startup so operators can spot a stale CLOCKWORK_PROJECT_ID carried
-	// over from a prior shell session. Silent when unset to avoid noise.
 	if len(cfg.Scheduler.ProjectAllowlist) > 0 {
 		log.Printf("[serve] scheduler project-scope filter active: %v (stopgap — CW-20260417-0129 replaces this with workspaces)",
 			cfg.Scheduler.ProjectAllowlist)
 	}
 
-	// HTTP handler — svc was constructed earlier (above bootstrap.Executors)
-	// so cliexec could claim it for per-task MCP loopback wiring.
-	handler := httpserver.New(svc, sched)
-
-	// Long-lived agent session manager (CW-20260503-0014, S1.4).
-	// Sweep+register here so /api/v1/sessions/* + clockwork_session_* are
-	// live alongside the rest of the runtime stack.
-	sessions, err := bootstrap.SessionMgr(store, profiles, sched.EventBus())
+	// Unified agent substrate (CW-20260508-0001 — replaces cliexec + sessionmgr).
+	// Constructs Dependencies + Manager, runs the orphan sweep, and is the
+	// single root every Boot caller (planstart, scheduler dispatch, end-agent,
+	// HTTP/MCP) reaches into.
+	agentDeps, err := bootstrap.AgentDeps(store, profiles, svc, tools, sched.EventBus())
 	if err != nil {
-		return fmt.Errorf("bootstrap sessionmgr: %w", err)
+		return fmt.Errorf("bootstrap agent deps: %w", err)
 	}
-	handler.WithSessionMgr(sessions)
+
+	// Register executors against the unified deps. agent.NewExecutor occupies
+	// the "cli" slot the legacy cliexec.CLIExecutor previously held; the
+	// scheduler's worker pool dispatches kind=agent / kind=internal tasks
+	// through it transparently.
+	if err := bootstrap.Executors(registry, agentDeps); err != nil {
+		return fmt.Errorf("bootstrap executors: %w", err)
+	}
+
+	// HTTP handler — svc was constructed earlier so the executor path can
+	// claim it for per-task MCP loopback wiring.
+	handler := httpserver.New(svc, sched)
+	handler.WithSessions(agentDeps.Sessions)
 
 	// Durable messaging substrate (CW-20260503-0012, S1.2). Same SQLite DB
 	// the rest of the runtime uses; migration 022_messages.sql created the

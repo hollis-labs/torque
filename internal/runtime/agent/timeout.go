@@ -17,6 +17,10 @@ const (
 	// (5 min) so ModeOneShot dispatches without an explicit Limits block fall
 	// back to the same window cliexec used.
 	defaultExecutionTimeout = 5 * time.Minute
+
+	// loopbackShutdownGrace bounds the per-session loopback teardown call.
+	// Matches the legacy cliexec convention (2s defer in cliexec.Run).
+	loopbackShutdownGrace = 2 * time.Second
 )
 
 // resolveTimeout picks the effective run timeout for ModeOneShot, in priority

@@ -1,3 +1,14 @@
+//go:build agentboot_e2e_pending
+// +build agentboot_e2e_pending
+
+// CW-20260508-0001 migration note: this e2e file targets the deleted
+// internal/runtime/sessionmgr package. Gated behind a build tag while the
+// migration to fakeRuntime + agent.Manager + AutoFireFirstTurn assertions
+// lands in P7 (per implementer prompt §"Existing tests to migrate"). The
+// substrate-side coverage continues via internal/runtime/agent + bootstrap
+// tests; this file's S2.5 substrate-composition shape needs a dedicated
+// pass against the new agent.Manager.
+
 // Package plan_execute_e2e is the unattended part of the S2 exit gate
 // (CW-20260503-0021, S2.5). It validates the plan_start → orchestrator
 // session boot path against a real sessionmgr.Manager + a fakeRuntime

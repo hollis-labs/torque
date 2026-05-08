@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/sessionmgr"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -106,7 +106,7 @@ Example: {"id":"SES-...","checkpoint_id":"SCP-..."}`),
 	), a.handleSessionResume)
 }
 
-func (a *Adapter) requireSessionMgr() (*sessionmgr.Manager, error) {
+func (a *Adapter) requireSessionMgr() (*agent.Manager, error) {
 	if a.sessions == nil {
 		return nil, errors.New("session manager not wired in this MCP host")
 	}
@@ -118,7 +118,8 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req mcp.CallToolReque
 	if err != nil {
 		return errResult(ErrCodeDomain, err.Error(), "")
 	}
-	id, err := mgr.Launch(ctx, sessionmgr.LaunchRequest{
+	sess, err := mgr.Boot(ctx, agent.Options{
+		Mode:         agent.ModeLongLived,
 		AgentProfile: reqStr(req, "agent_profile"),
 		Workdir:      reqStr(req, "workdir"),
 		ProjectID:    reqStr(req, "project_id"),
@@ -127,10 +128,6 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req mcp.CallToolReque
 	})
 	if err != nil {
 		return errResult(ErrCodeDomain, err.Error(), "")
-	}
-	sess, err := mgr.Get(id)
-	if err != nil {
-		return errFromService(err)
 	}
 	return okResult(sess)
 }
@@ -142,7 +139,7 @@ func (a *Adapter) handleSessionGet(ctx context.Context, req mcp.CallToolRequest)
 	}
 	sess, err := mgr.Get(reqStr(req, "id"))
 	if err != nil {
-		if errors.Is(err, sessionmgr.ErrSessionNotFound) {
+		if errors.Is(err, agent.ErrSessionNotFound) {
 			return errResult(ErrCodeNotFound, err.Error(), "")
 		}
 		return errFromService(err)
@@ -157,7 +154,7 @@ func (a *Adapter) handleSessionList(ctx context.Context, req mcp.CallToolRequest
 	}
 	limit := reqInt(req, "limit")
 	out, err := mgr.List(
-		sessionmgr.Status(reqStr(req, "state")),
+		agent.Status(reqStr(req, "state")),
 		reqStr(req, "task_id"),
 		reqStr(req, "project_id"),
 		limit,
@@ -179,7 +176,7 @@ func (a *Adapter) handleSessionStop(ctx context.Context, req mcp.CallToolRequest
 	}
 	id := reqStr(req, "id")
 	if err := mgr.Stop(ctx, id); err != nil {
-		if errors.Is(err, sessionmgr.ErrSessionNotRunning) {
+		if errors.Is(err, agent.ErrSessionNotRunning) {
 			return okResult(map[string]interface{}{"stopped": false, "reason": err.Error(), "id": id})
 		}
 		return errFromService(err)
@@ -194,7 +191,7 @@ func (a *Adapter) handleSessionAttach(ctx context.Context, req mcp.CallToolReque
 	}
 	sess, err := mgr.Get(reqStr(req, "id"))
 	if err != nil {
-		if errors.Is(err, sessionmgr.ErrSessionNotFound) {
+		if errors.Is(err, agent.ErrSessionNotFound) {
 			return errResult(ErrCodeNotFound, err.Error(), "")
 		}
 		return errFromService(err)
@@ -210,13 +207,13 @@ func (a *Adapter) handleSessionCheckpoint(ctx context.Context, req mcp.CallToolR
 	if err != nil {
 		return errResult(ErrCodeDomain, err.Error(), "")
 	}
-	cp, err := mgr.Checkpoint(sessionmgr.CheckpointRequest{
+	cp, err := mgr.Checkpoint(agent.CheckpointRequest{
 		SessionID: reqStr(req, "id"),
 		Payload:   reqStr(req, "payload"),
 		Note:      reqStr(req, "note"),
 	})
 	if err != nil {
-		if errors.Is(err, sessionmgr.ErrSessionNotFound) {
+		if errors.Is(err, agent.ErrSessionNotFound) {
 			return errResult(ErrCodeNotFound, err.Error(), "")
 		}
 		return errFromService(err)
@@ -229,7 +226,7 @@ func (a *Adapter) handleSessionResume(ctx context.Context, req mcp.CallToolReque
 	if err != nil {
 		return errResult(ErrCodeDomain, err.Error(), "")
 	}
-	newID, err := mgr.Resume(ctx, sessionmgr.ResumeRequest{
+	newID, err := mgr.Resume(ctx, agent.ResumeRequest{
 		SessionID:    reqStr(req, "id"),
 		CheckpointID: reqStr(req, "checkpoint_id"),
 		AgentProfile: reqStr(req, "agent_profile"),
@@ -238,9 +235,9 @@ func (a *Adapter) handleSessionResume(ctx context.Context, req mcp.CallToolReque
 	})
 	if err != nil {
 		switch {
-		case errors.Is(err, sessionmgr.ErrSessionNotFound):
+		case errors.Is(err, agent.ErrSessionNotFound):
 			return errResult(ErrCodeNotFound, err.Error(), "")
-		case errors.Is(err, sessionmgr.ErrNoCheckpoint):
+		case errors.Is(err, agent.ErrNoCheckpoint):
 			return errResult(ErrCodeArgInvalid, err.Error(), "checkpoint_id")
 		}
 		return errFromService(err)

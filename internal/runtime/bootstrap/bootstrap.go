@@ -1,41 +1,27 @@
 package bootstrap
 
 import (
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/cliexec"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
-	"github.com/hollis-labs/clockwork-manifold/internal/toolbroker"
 	executorapi "github.com/hollis-labs/clockwork-manifold/plugins/executor-api"
 )
 
 // Executors registers the built-in executor plugins with the registry.
-// svc is the service-layer handle threaded into cliexec for per-task MCP
-// loopback adapters (CW-20260427-0059). tools is the unified tool-broker
-// facade (go-toolbroker selection + permission-gated dispatch) introduced by
-// CW-20260503-0015 / Plan 4. When tools is nil, NewDefault is used so the
-// executors still see a non-nil router (no-op-on-empty registries) — keeps
-// `cliexec` and `executor-api` honest about reporting SupportsTools=true
-// even when no MCP tools have been registered yet. Additional executors can
-// be registered via the plugin host after bootstrap.
-func Executors(reg *executor.Registry, profiles config.ProfileMap, svc *service.Service, tools *toolbroker.ToolRouter) error {
-	if tools == nil {
-		tools = toolbroker.NewDefault()
-	}
+// deps is the unified agent.Dependencies (constructed by AgentDeps); the
+// agent.Executor satisfies executor.Executor and is registered as the "cli"
+// slot the legacy cliexec.CLIExecutor occupied.
+//
+// The executor-api plugin shares the same tool-broker via deps.Tools so
+// per-task tool calls flow through the permission engine + audit log
+// regardless of which executor handles the dispatch.
+func Executors(reg *executor.Registry, deps *agent.Dependencies) error {
+	// Register the unified agent.Executor at "cli" — same slot cliexec
+	// occupied. agent.Executor.Run wraps agent.Boot(Mode=ModeOneShot)
+	// for scheduler-dispatched tasks.
+	reg.Register(agent.NewExecutor(deps))
 
-	// Register cliexec (Phase B CW-20260427-0040): wrapper-driven CLI executor
-	// composing go-providers + go-sandbox + go-runner + go-agent-sessions.
-	// Phase D (CW-20260427-0042) folded the opencode adapter in; the `cli`
-	// slot now serves claude/codex/gemini/copilot/opencode via go-providers.
-	// CW-20260427-0059 threads svc for per-task MCP loopback. CW-20260503-0015
-	// threads the tool-broker (Plan 4) so per-task tool calls flow through
-	// the permission engine and audit log.
-	cli := cliexec.New(profiles, svc, tools)
-	reg.Register(cli)
-
-	// Register executor-api. Same Plan-4 wiring: tool-broker is the canonical
-	// permission/audit pipeline shared with cliexec.
-	api := executorapi.New(profiles, tools)
+	// executor-api: HTTP/SDK executor with the same tool-broker pipeline.
+	api := executorapi.New(deps.Profiles, deps.Tools)
 	reg.Register(api)
 
 	return nil

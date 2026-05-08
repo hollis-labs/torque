@@ -6,7 +6,7 @@ import (
 
 	"github.com/hollis-labs/clockwork-manifold/internal/broker"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/sessionmgr"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -27,7 +27,7 @@ type Adapter struct {
 	// sessions wires the long-lived agent session manager (CW-20260503-0014).
 	// Nil disables clockwork_session_* tools — they reply with a domain error
 	// rather than panicking. Mirrors the sched=nil contract.
-	sessions *sessionmgr.Manager
+	sessions *agent.Manager
 	// broker wires the typed envelope dispatcher (CW-20260503-0013, S1.3).
 	// Nil disables clockwork_broker_* tools the same way.
 	broker *broker.Broker
@@ -53,10 +53,13 @@ func New(svc *service.Service, sched *scheduler.Scheduler) *Adapter {
 // Server returns the underlying MCPServer.
 func (a *Adapter) Server() *server.MCPServer { return a.server }
 
-// WithSessionMgr attaches the long-lived agent session manager so the
+// WithSessions attaches the unified agent session manager so the
 // clockwork_session_* tools surface real data. Must be called before any
 // MCP requests are served (not goroutine-safe with respect to live calls).
-func (a *Adapter) WithSessionMgr(mgr *sessionmgr.Manager) *Adapter {
+//
+// Renamed from WithSessionMgr (CW-20260508-0001) when sessionmgr was folded
+// into the agent package.
+func (a *Adapter) WithSessions(mgr *agent.Manager) *Adapter {
 	a.sessions = mgr
 	return a
 }

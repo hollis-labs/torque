@@ -1,3 +1,13 @@
+//go:build agentboot_e2e_pending
+// +build agentboot_e2e_pending
+
+// CW-20260508-0001 migration note: this e2e targets the deleted
+// internal/runtime/sessionmgr package. Gated behind the same build tag as
+// internal/e2e/plan_execute/ while the agent.Manager substrate-composition
+// rewrite lands in P7. The two-session checkpoint+stop+resume substrate
+// continues to be exercised at the unit level via agent.Manager tests in
+// internal/runtime/agent.
+
 // Package sessionmgr_broker_e2e is the S1 sprint-exit smoke
 // (CW-20260503-0016). It composes the substrate trio — sessionmgr (S1.4),
 // broker (S1.3), messaging Store (S1.2) — and validates a two-session

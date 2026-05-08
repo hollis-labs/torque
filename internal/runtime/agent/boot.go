@@ -72,8 +72,8 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	// via the lib's BootDirSpec; the LLM sees it on cwd-load.
 	systemPrompt := composeSystemPrompt(opts, agentFile)
 
-	// MCP loopback (closure-bound to taskID). nil disables (test path).
-	loopback, err := setupLoopback(deps.Service, opts.TaskID)
+	// MCP loopback (closure-bound to taskID). nil-builder disables (test path).
+	loopback, err := setupLoopback(deps.Loopback, opts.TaskID)
 	if err != nil {
 		return nil, fmt.Errorf("%w: setup loopback: %v", ErrBootFailed, err)
 	}
@@ -99,7 +99,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		MCPLoopbackURL: loopbackURL,
 	})
 	if err != nil {
-		shutdownLoopback(loopback)
+		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: plant boot dir: %v", ErrBootFailed, err)
 	}
 
@@ -107,7 +107,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	ws, err := workspaceCreate(deps.WorkspacesRoot, opts.ProjectID, sessID)
 	if err != nil {
 		_ = os.RemoveAll(layout.BootDir)
-		shutdownLoopback(loopback)
+		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: workspace: %v", ErrBootFailed, err)
 	}
 
@@ -143,12 +143,12 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	})
 	if err != nil {
 		_ = os.RemoveAll(layout.BootDir)
-		shutdownLoopback(loopback)
+		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: NewFromAdapter: %v", ErrBootFailed, err)
 	}
 	if err := runtime.Prepare(ctx); err != nil {
 		_ = os.RemoveAll(layout.BootDir)
-		shutdownLoopback(loopback)
+		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: prepare runtime: %v", ErrBootFailed, err)
 	}
 
@@ -160,7 +160,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		cp, err := findCheckpoint(deps.Store, opts.ResumeFromCheckpoint)
 		if err != nil {
 			_ = os.RemoveAll(layout.BootDir)
-			shutdownLoopback(loopback)
+			shutdownLoopbackHandle(loopback)
 			return nil, fmt.Errorf("%w: %v", ErrBootFailed, err)
 		}
 		if len(cp.ResumeHint) > 0 {
@@ -184,7 +184,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	metaJSON, err := encodeMeta(opts.SessionMeta)
 	if err != nil {
 		_ = os.RemoveAll(layout.BootDir)
-		shutdownLoopback(loopback)
+		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: encode session meta: %v", ErrBootFailed, err)
 	}
 	rec := &sqlstore.SessionRecord{
@@ -202,7 +202,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	}
 	if err := deps.Store.CreateSession(rec); err != nil {
 		_ = os.RemoveAll(layout.BootDir)
-		shutdownLoopback(loopback)
+		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: create session row: %v", ErrBootFailed, err)
 	}
 
@@ -271,7 +271,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	if err := mgr.inner.Start(ctx, startReq); err != nil {
 		closeStderr()
 		_ = os.RemoveAll(layout.BootDir)
-		shutdownLoopback(loopback)
+		shutdownLoopbackHandle(loopback)
 		// Inner.Start records StateFailed via StateSink on its own; no extra
 		// row update needed here.
 		return nil, fmt.Errorf("%w: %v", ErrBootFailed, err)
@@ -306,7 +306,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	// kickoff, Stop tears down, Wait surfaces the exit code.
 	if opts.Mode == ModeOneShot {
 		defer closeStderr()
-		defer shutdownLoopback(loopback)
+		defer shutdownLoopbackHandle(loopback)
 		defer func() {
 			if err := os.RemoveAll(layout.BootDir); err != nil {
 				// Cleanup failure is non-fatal; the boot dir lives in
@@ -341,17 +341,6 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	}
 
 	return sess, nil
-}
-
-// shutdownLoopback closes a loopback handle within a bounded deadline. Safe
-// on nil handles (no-op).
-func shutdownLoopback(h *loopbackHandle) {
-	if h == nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	_ = h.Shutdown(ctx)
 }
 
 // findCheckpoint locates a checkpoint by ID across all sessions. The

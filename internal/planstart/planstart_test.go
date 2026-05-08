@@ -9,20 +9,20 @@ import (
 
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/planstart"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/sessionmgr"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// stubStore is the in-memory Store impl planstart's tests use. Tracks
-// only the fields the trigger touches (GetTask / UpdateTask /
-// TransitionTask / GetSession) so the test harness stays under 60
-// lines without dragging the SQLite migrations through every test.
+// stubStore is the in-memory Store impl planstart's tests use. Tracks only
+// the fields the trigger touches (GetTask / UpdateTask / TransitionTask /
+// GetSession) so the test harness stays under 60 lines without dragging
+// the SQLite migrations through every test.
 type stubStore struct {
-	tasks    map[string]*sqlstore.TaskRecord
-	sessions map[string]*sqlstore.SessionRecord
-	updates  []sqlstore.TaskUpdate // for assertions
-	transitions []string             // newStatus values, in order
+	tasks       map[string]*sqlstore.TaskRecord
+	sessions    map[string]*sqlstore.SessionRecord
+	updates     []sqlstore.TaskUpdate
+	transitions []string
 }
 
 func newStubStore() *stubStore {
@@ -70,44 +70,25 @@ func (s *stubStore) GetSession(id string) (*sqlstore.SessionRecord, error) {
 	return rec, nil
 }
 
-// stubMgr captures Launch / SendInput / Stop invocations and lets tests
-// dictate what each returns. Mirrors the sessionmgr.Manager surface
-// planstart depends on without dragging the real manager + go-agent-
-// sessions pile in.
+// stubMgr captures Boot invocations and lets tests dictate what each
+// returns. Mirrors the agent.Manager surface planstart depends on
+// (Boot → *agent.Session) without dragging the real manager + go-agent-
+// sessions pile in. Replaces the prior sessionmgr.Manager-shaped stub
+// after CW-20260508-0001 collapsed Launch + SendInput into Boot.
 type stubMgr struct {
-	launchID    string
-	launchErr   error
-	lastRequest sessionmgr.LaunchRequest
-
-	sendInputErr     error
-	lastInputSession string
-	lastInputData    []byte
-	sendInputCalls   int
-
-	stopErr        error
-	lastStopSession string
-	stopCalls       int
+	bootSession *agent.Session
+	bootErr     error
+	lastOpts    agent.Options
+	bootCalls   int
 }
 
-func (s *stubMgr) Launch(_ context.Context, req sessionmgr.LaunchRequest) (string, error) {
-	s.lastRequest = req
-	if s.launchErr != nil {
-		return "", s.launchErr
+func (s *stubMgr) Boot(_ context.Context, opts agent.Options) (*agent.Session, error) {
+	s.bootCalls++
+	s.lastOpts = opts
+	if s.bootErr != nil {
+		return nil, s.bootErr
 	}
-	return s.launchID, nil
-}
-
-func (s *stubMgr) SendInput(sessionID string, data []byte) error {
-	s.sendInputCalls++
-	s.lastInputSession = sessionID
-	s.lastInputData = append([]byte(nil), data...)
-	return s.sendInputErr
-}
-
-func (s *stubMgr) Stop(_ context.Context, sessionID string) error {
-	s.stopCalls++
-	s.lastStopSession = sessionID
-	return s.stopErr
+	return s.bootSession, nil
 }
 
 // AC1+AC4: happy path — plan validates, orchestrator session boots,
@@ -121,7 +102,7 @@ func TestPlanstart_HappyPath(t *testing.T) {
 		WorkingDir: "/tmp/plan",
 		ProjectID:  sql.NullString{String: "PRJ-1", Valid: true},
 	}
-	mgr := &stubMgr{launchID: "SES-ABC"}
+	mgr := &stubMgr{bootSession: &agent.Session{ID: "SES-ABC"}}
 
 	res, err := planstart.Start(context.Background(), store, mgr, "CW-PLAN-001", planstart.Options{})
 	require.NoError(t, err)
@@ -130,18 +111,17 @@ func TestPlanstart_HappyPath(t *testing.T) {
 	assert.Equal(t, "CW-PLAN-001", res.PlanID)
 	assert.False(t, res.StartedAt.IsZero())
 
-	// LaunchRequest stamps from the orchestrator package's contract.
-	assert.Equal(t, "/tmp/plan", mgr.lastRequest.Workdir)
-	assert.Equal(t, "PRJ-1", mgr.lastRequest.ProjectID)
-	assert.Equal(t, "CW-PLAN-001", mgr.lastRequest.TaskID)
-	assert.NotEmpty(t, mgr.lastRequest.SystemPrompt)
-	assert.Equal(t, "CW-PLAN-001", mgr.lastRequest.SessionMeta["plan_id"])
+	// agent.Options assembly stamps the orchestrator-package contract.
+	assert.Equal(t, agent.ModeLongLived, mgr.lastOpts.Mode)
+	assert.Equal(t, "/tmp/plan", mgr.lastOpts.Workdir)
+	assert.Equal(t, "PRJ-1", mgr.lastOpts.ProjectID)
+	assert.Equal(t, "CW-PLAN-001", mgr.lastOpts.TaskID)
+	assert.NotEmpty(t, mgr.lastOpts.SystemPrompt)
+	assert.Equal(t, "CW-PLAN-001", mgr.lastOpts.SessionMeta["plan_id"])
 
-	// SendInput drove the first turn against the launched session id.
-	assert.Equal(t, 1, mgr.sendInputCalls, "SendInput must fire post-Launch to spawn the agent process")
-	assert.Equal(t, "SES-ABC", mgr.lastInputSession)
-	assert.NotEmpty(t, mgr.lastInputData, "kickoff payload must be non-empty")
-	assert.Zero(t, mgr.stopCalls, "Stop should not fire on the happy path")
+	// Boot fires exactly once — no separate SendInput call.
+	// AutoFireFirstTurn drives the kickoff inside agent.Boot.
+	assert.Equal(t, 1, mgr.bootCalls, "Boot must fire exactly once")
 
 	// Plan transitioned + metadata stamped.
 	require.Len(t, store.transitions, 1)
@@ -151,11 +131,13 @@ func TestPlanstart_HappyPath(t *testing.T) {
 	assert.Contains(t, post.Metadata.String, "orchestrator_session_id")
 }
 
-// First-turn rollback: SendInput failure after a successful Launch must
-// surface ErrFirstTurnFailed, leave the plan untouched (status=todo,
-// no orchestrator_session_id metadata), and best-effort stop the
-// orphaned session row so a retry from todo is the obvious next step.
-func TestPlanstart_FirstTurnFailRollsBack(t *testing.T) {
+// Boot rollback: agent.Boot failure (Manager.Start failure, boot dir
+// failure, etc) leaves the plan untouched (status=todo, no
+// orchestrator_session_id metadata) so a retry from todo is the obvious
+// next step. Replaces the prior "first-turn rollback" test — the
+// AutoFireFirstTurn path bundles the failure into a single Boot error
+// rather than the legacy Launch-then-SendInput two-step.
+func TestPlanstart_BootFailureRollsBack(t *testing.T) {
 	store := newStubStore()
 	store.tasks["CW-PLAN-FIRSTTURN"] = &sqlstore.TaskRecord{
 		ID:         "CW-PLAN-FIRSTTURN",
@@ -163,27 +145,20 @@ func TestPlanstart_FirstTurnFailRollsBack(t *testing.T) {
 		Status:     "todo",
 		WorkingDir: "/tmp/plan",
 	}
-	mgr := &stubMgr{
-		launchID:     "SES-ORPHAN",
-		sendInputErr: errors.New("boom: first-turn dispatch failed"),
-	}
+	mgr := &stubMgr{bootErr: errors.New("boom: agent.Boot failed")}
 
 	res, err := planstart.Start(context.Background(), store, mgr, "CW-PLAN-FIRSTTURN", planstart.Options{})
 	assert.Nil(t, res)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, planstart.ErrFirstTurnFailed)
+	assert.Contains(t, err.Error(), "boot orchestrator")
 
 	// Plan must remain in todo with NO orchestrator metadata stamped.
 	post, _ := store.GetTask("CW-PLAN-FIRSTTURN")
-	assert.Equal(t, "todo", post.Status, "plan must NOT transition out of todo on first-turn failure")
+	assert.Equal(t, "todo", post.Status, "plan must NOT transition out of todo on Boot failure")
 	assert.False(t, post.Metadata.Valid && post.Metadata.String != "" && post.Metadata.String != "{}",
-		"orchestrator metadata must NOT be stamped on first-turn failure; got %q", post.Metadata.String)
-	assert.Empty(t, store.transitions, "no FSM transitions on first-turn failure")
-	assert.Empty(t, store.updates, "no metadata writes on first-turn failure")
-
-	// Best-effort cleanup: Stop fired on the orphaned session id.
-	assert.Equal(t, 1, mgr.stopCalls, "Stop must run once to close the orphan session row")
-	assert.Equal(t, "SES-ORPHAN", mgr.lastStopSession)
+		"orchestrator metadata must NOT be stamped on Boot failure; got %q", post.Metadata.String)
+	assert.Empty(t, store.transitions, "no FSM transitions on Boot failure")
+	assert.Empty(t, store.updates, "no metadata writes on Boot failure")
 }
 
 // AC2: starting from `review` is allowed (re-running a plan after the
@@ -194,7 +169,7 @@ func TestPlanstart_FromReview(t *testing.T) {
 	store.tasks["CW-PLAN-002"] = &sqlstore.TaskRecord{
 		ID: "CW-PLAN-002", Kind: "plan", Status: "review", WorkingDir: "/tmp/plan",
 	}
-	mgr := &stubMgr{launchID: "SES-XYZ"}
+	mgr := &stubMgr{bootSession: &agent.Session{ID: "SES-XYZ"}}
 
 	_, err := planstart.Start(context.Background(), store, mgr, "CW-PLAN-002", planstart.Options{})
 	require.NoError(t, err)
@@ -232,13 +207,9 @@ func TestPlanstart_BadStatus(t *testing.T) {
 	}
 }
 
-// AC5: idempotency — already-running session returns
-// ErrAlreadyOrchestrating wrapped, and the existing session id
-// surfaces in Result so handlers can redirect to the live session
-// view rather than show a hard error. Test uses status=todo so the
-// idempotency check is reachable (status=doing fails the startable
-// gate first, which is correct domain behavior — re-running a plan
-// that's already executing must round-trip through review).
+// AC5: idempotency — already-running session returns ErrAlreadyOrchestrating
+// wrapped, and the existing session id surfaces in Result so handlers can
+// redirect to the live session view rather than show a hard error.
 func TestPlanstart_IdempotentBeforeNewLaunch(t *testing.T) {
 	store := newStubStore()
 	store.tasks["CW-PLAN-004"] = &sqlstore.TaskRecord{
@@ -251,18 +222,18 @@ func TestPlanstart_IdempotentBeforeNewLaunch(t *testing.T) {
 	store.sessions["SES-LIVE"] = &sqlstore.SessionRecord{
 		ID: "SES-LIVE", State: "running", CreatedAt: time.Now().Add(-time.Minute),
 	}
-	mgr := &stubMgr{launchID: "SES-NEW"}
+	mgr := &stubMgr{bootSession: &agent.Session{ID: "SES-NEW"}}
 
 	res, err := planstart.Start(context.Background(), store, mgr, "CW-PLAN-004", planstart.Options{})
 	assert.ErrorIs(t, err, planstart.ErrAlreadyOrchestrating)
 	require.NotNil(t, res)
 	assert.Equal(t, "SES-LIVE", res.SessionID)
-	assert.Empty(t, mgr.lastRequest.AgentProfile, "no fresh launch fires while live session exists")
+	assert.Zero(t, mgr.bootCalls, "no fresh boot fires while live session exists")
 	assert.Empty(t, store.transitions, "no transition fires on idempotent path")
 }
 
-// When the recorded session is stale (terminal state), drop the
-// metadata reference and proceed with a fresh launch.
+// When the recorded session is stale (terminal state), drop the metadata
+// reference and proceed with a fresh boot.
 func TestPlanstart_StaleSessionRefires(t *testing.T) {
 	store := newStubStore()
 	store.tasks["CW-PLAN-005"] = &sqlstore.TaskRecord{
@@ -275,12 +246,12 @@ func TestPlanstart_StaleSessionRefires(t *testing.T) {
 	store.sessions["SES-CRASHED"] = &sqlstore.SessionRecord{
 		ID: "SES-CRASHED", State: "crashed",
 	}
-	mgr := &stubMgr{launchID: "SES-FRESH"}
+	mgr := &stubMgr{bootSession: &agent.Session{ID: "SES-FRESH"}}
 
 	res, err := planstart.Start(context.Background(), store, mgr, "CW-PLAN-005", planstart.Options{})
 	require.NoError(t, err)
 	assert.Equal(t, "SES-FRESH", res.SessionID)
-	assert.Equal(t, "CW-PLAN-005", mgr.lastRequest.TaskID, "fresh launch should fire")
+	assert.Equal(t, "CW-PLAN-005", mgr.lastOpts.TaskID, "fresh boot should fire")
 }
 
 // Nil session manager → ErrSessionMgrMissing.
@@ -293,35 +264,31 @@ func TestPlanstart_NilManager(t *testing.T) {
 	assert.ErrorIs(t, err, planstart.ErrSessionMgrMissing)
 }
 
-// Missing workdir (Options.Workdir empty AND plan.WorkingDir empty)
-// surfaces the dedicated ErrWorkdirRequired sentinel — handlers map
-// it to 422 with field=workdir rather than mis-attributing to plan_id
-// (PR #18 review feedback).
+// Missing workdir (Options.Workdir empty AND plan.WorkingDir empty) surfaces
+// the dedicated ErrWorkdirRequired sentinel — handlers map it to 422 with
+// field=workdir rather than mis-attributing to plan_id.
 func TestPlanstart_WorkdirRequired(t *testing.T) {
 	store := newStubStore()
 	store.tasks["CW-PLAN-NOWORKDIR"] = &sqlstore.TaskRecord{
 		ID: "CW-PLAN-NOWORKDIR", Kind: "plan", Status: "todo",
-		// Note: no WorkingDir set.
 	}
 	_, err := planstart.Start(context.Background(), store, &stubMgr{}, "CW-PLAN-NOWORKDIR", planstart.Options{})
 	assert.ErrorIs(t, err, planstart.ErrWorkdirRequired)
-	// Must NOT be misclassified as ErrPlanNotFound.
 	assert.NotErrorIs(t, err, planstart.ErrPlanNotFound)
 }
 
-// Workdir resolution: explicit Options.Workdir wins; otherwise
-// plan.WorkingDir; otherwise an error.
+// Workdir resolution: explicit Options.Workdir wins; otherwise plan.WorkingDir.
 func TestPlanstart_WorkdirOverride(t *testing.T) {
 	store := newStubStore()
 	store.tasks["CW-PLAN-007"] = &sqlstore.TaskRecord{
 		ID: "CW-PLAN-007", Kind: "plan", Status: "todo",
 		WorkingDir: "/tmp/plan-default",
 	}
-	mgr := &stubMgr{launchID: "SES-1"}
+	mgr := &stubMgr{bootSession: &agent.Session{ID: "SES-1"}}
 
 	_, err := planstart.Start(context.Background(), store, mgr, "CW-PLAN-007", planstart.Options{
 		Workdir: "/tmp/override",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "/tmp/override", mgr.lastRequest.Workdir)
+	assert.Equal(t, "/tmp/override", mgr.lastOpts.Workdir)
 }

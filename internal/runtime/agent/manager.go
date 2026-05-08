@@ -42,8 +42,8 @@ type Manager struct {
 	mu        sync.RWMutex
 	stopped   bool
 	inner     *agentsessions.Manager
-	loopbacks map[string]*loopbackHandle // sessID → handle; shut down in Stop
-	stderrs   map[string]func()          // sessID → close() for the per-session sidecar
+	loopbacks map[string]LoopbackHandle // sessID → handle; shut down in Stop
+	stderrs   map[string]func()         // sessID → close() for the per-session sidecar
 }
 
 // NewManager constructs a Manager bound to deps. Caller invokes Sweep()
@@ -59,7 +59,7 @@ func NewManager(deps *Dependencies) *Manager {
 		deps:      deps,
 		idFn:      defaultSessionID,
 		nowFn:     time.Now,
-		loopbacks: make(map[string]*loopbackHandle),
+		loopbacks: make(map[string]LoopbackHandle),
 		stderrs:   make(map[string]func()),
 	}
 	emitter := NewSchedulerEmitter(deps.Bus)
@@ -99,7 +99,7 @@ func (m *Manager) innerManager() *agentsessions.Manager {
 // completion can shut it down deterministically. Caller takes ownership of
 // the lifetime when registerLoopback returns; Boot for ModeOneShot bypasses
 // this registration and shuts the handle down inline (synchronous lifecycle).
-func (m *Manager) registerLoopback(sessID string, h *loopbackHandle) {
+func (m *Manager) registerLoopback(sessID string, h LoopbackHandle) {
 	if h == nil {
 		return
 	}
@@ -130,11 +130,7 @@ func (m *Manager) teardownSession(sessID string) {
 	closer := m.stderrs[sessID]
 	delete(m.stderrs, sessID)
 	m.mu.Unlock()
-	if loopback != nil {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		_ = loopback.Shutdown(shutdownCtx)
-		cancel()
-	}
+	shutdownLoopbackHandle(loopback)
 	if closer != nil {
 		closer()
 	}
@@ -378,6 +374,93 @@ func (m *Manager) LivePID(id string) int {
 		return 0
 	}
 	return info.PID
+}
+
+// Boot is the convenience that drives package-level Boot with this
+// Manager's bound Dependencies. HTTP handlers, MCP tools, and planstart
+// call this to avoid threading *Dependencies separately. Equivalent to
+// agent.Boot(ctx, m.deps, opts).
+func (m *Manager) Boot(ctx context.Context, opts Options) (*Session, error) {
+	return Boot(ctx, m.deps, opts)
+}
+
+// Resume re-launches a session against a previous checkpoint. Wraps Boot
+// with Mode=ModeResume; the SessionID/CheckpointID lookup happens inside
+// findCheckpoint. Replaces sessionmgr.Manager.Resume.
+func (m *Manager) Resume(ctx context.Context, req ResumeRequest) (string, error) {
+	if req.SessionID == "" {
+		return "", fmt.Errorf("agent.Manager.Resume: SessionID required")
+	}
+	if m.deps.Store == nil {
+		return "", fmt.Errorf("agent.Manager.Resume: nil store")
+	}
+	src, err := m.deps.Store.GetSession(req.SessionID)
+	if err != nil {
+		if errors.Is(err, sqlstore.ErrSessionNotFound) {
+			return "", ErrSessionNotFound
+		}
+		return "", err
+	}
+	// Resolve the checkpoint to thread through Boot. Latest when CheckpointID
+	// is empty.
+	var cp *sqlstore.SessionCheckpointRecord
+	if req.CheckpointID != "" {
+		all, err := m.deps.Store.ListSessionCheckpoints(req.SessionID, 0)
+		if err != nil {
+			return "", err
+		}
+		for _, c := range all {
+			if c.ID == req.CheckpointID {
+				cp = c
+				break
+			}
+		}
+		if cp == nil {
+			return "", ErrNoCheckpoint
+		}
+	} else {
+		cp, err = m.deps.Store.LatestSessionCheckpoint(req.SessionID)
+		if err != nil {
+			return "", err
+		}
+		if cp == nil {
+			return "", ErrNoCheckpoint
+		}
+	}
+
+	profile := req.AgentProfile
+	if profile == "" {
+		profile = src.AgentProfile
+	}
+	workdir := req.Workdir
+	if workdir == "" {
+		workdir = src.Workdir
+	}
+
+	envMap := make(map[string]string, len(req.Env))
+	for _, kv := range req.Env {
+		// req.Env is []string of "K=V"; split into the map shape Options
+		// expects. Skip malformed entries.
+		for i := 0; i < len(kv); i++ {
+			if kv[i] == '=' {
+				envMap[kv[:i]] = kv[i+1:]
+				break
+			}
+		}
+	}
+
+	sess, err := Boot(ctx, m.deps, Options{
+		Mode:                 ModeResume,
+		AgentProfile:         profile,
+		Workdir:              workdir,
+		ResumeFromCheckpoint: cp.ID,
+		SystemPrompt:         req.SystemPrompt,
+		Env:                  envMap,
+	})
+	if err != nil {
+		return "", err
+	}
+	return sess.ID, nil
 }
 
 // providerFromRuntime extracts a stable provider token from a Runtime ID

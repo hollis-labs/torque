@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/sessionmgr"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
 )
 
 // requireSessions writes a 503 envelope when the session manager is not
@@ -28,7 +28,7 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	out, err := s.sessions.List(
-		sessionmgr.Status(q.Get("state")),
+		agent.Status(q.Get("state")),
 		q.Get("task_id"),
 		q.Get("project_id"),
 		limit,
@@ -59,25 +59,42 @@ func (s *Server) launchSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	id, err := s.sessions.Launch(r.Context(), sessionmgr.LaunchRequest{
+	envMap := envSliceToMap(body.Env)
+	sess, err := s.sessions.Boot(r.Context(), agent.Options{
+		Mode:         agent.ModeLongLived,
 		AgentProfile: body.AgentProfile,
 		Workdir:      body.Workdir,
 		ProjectID:    body.ProjectID,
 		TaskID:       body.TaskID,
 		SystemPrompt: body.SystemPrompt,
-		Env:          body.Env,
+		Env:          envMap,
 		SessionMeta:  body.Meta,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	sess, err := s.sessions.Get(id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
 	writeJSON(w, http.StatusCreated, sess)
+}
+
+// envSliceToMap converts the legacy []string "K=V" env shape (carried by
+// the HTTP API for back-compat with the old sessionmgr.LaunchRequest) into
+// the map[string]string shape agent.Options expects. Malformed entries
+// (no '=') are silently skipped.
+func envSliceToMap(env []string) map[string]string {
+	if len(env) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(env))
+	for _, kv := range env {
+		for i := 0; i < len(kv); i++ {
+			if kv[i] == '=' {
+				out[kv[:i]] = kv[i+1:]
+				break
+			}
+		}
+	}
+	return out
 }
 
 func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
@@ -87,7 +104,7 @@ func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	sess, err := s.sessions.Get(id)
 	if err != nil {
-		if errors.Is(err, sessionmgr.ErrSessionNotFound) {
+		if errors.Is(err, agent.ErrSessionNotFound) {
 			writeError(w, http.StatusNotFound, err.Error())
 			return
 		}
@@ -105,7 +122,7 @@ func (s *Server) stopSession(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	if err := s.sessions.Stop(ctx, id); err != nil {
-		if errors.Is(err, sessionmgr.ErrSessionNotRunning) {
+		if errors.Is(err, agent.ErrSessionNotRunning) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"stopped": false, "reason": err.Error()})
 			return
 		}
@@ -134,7 +151,7 @@ func (s *Server) waitSession(w http.ResponseWriter, r *http.Request) {
 	}
 	code, err := s.sessions.Wait(ctx, id)
 	if err != nil {
-		if errors.Is(err, sessionmgr.ErrSessionNotRunning) {
+		if errors.Is(err, agent.ErrSessionNotRunning) {
 			writeError(w, http.StatusNotFound, err.Error())
 			return
 		}
@@ -160,7 +177,7 @@ func (s *Server) resizeSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.sessions.Resize(id, body.Rows, body.Cols); err != nil {
-		if errors.Is(err, sessionmgr.ErrSessionNotRunning) {
+		if errors.Is(err, agent.ErrSessionNotRunning) {
 			writeError(w, http.StatusNotFound, err.Error())
 			return
 		}
@@ -185,13 +202,13 @@ func (s *Server) checkpointSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	cp, err := s.sessions.Checkpoint(sessionmgr.CheckpointRequest{
+	cp, err := s.sessions.Checkpoint(agent.CheckpointRequest{
 		SessionID: id,
 		Payload:   body.Payload,
 		Note:      body.Note,
 	})
 	if err != nil {
-		if errors.Is(err, sessionmgr.ErrSessionNotFound) {
+		if errors.Is(err, agent.ErrSessionNotFound) {
 			writeError(w, http.StatusNotFound, err.Error())
 			return
 		}
@@ -233,7 +250,7 @@ func (s *Server) resumeSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	newID, err := s.sessions.Resume(r.Context(), sessionmgr.ResumeRequest{
+	newID, err := s.sessions.Resume(r.Context(), agent.ResumeRequest{
 		SessionID:    id,
 		CheckpointID: body.CheckpointID,
 		AgentProfile: body.AgentProfile,
@@ -243,9 +260,9 @@ func (s *Server) resumeSession(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		switch {
-		case errors.Is(err, sessionmgr.ErrSessionNotFound):
+		case errors.Is(err, agent.ErrSessionNotFound):
 			writeError(w, http.StatusNotFound, err.Error())
-		case errors.Is(err, sessionmgr.ErrNoCheckpoint):
+		case errors.Is(err, agent.ErrNoCheckpoint):
 			writeError(w, http.StatusBadRequest, err.Error())
 		default:
 			writeError(w, http.StatusInternalServerError, err.Error())

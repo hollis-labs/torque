@@ -10,7 +10,7 @@ import (
 
 	"github.com/hollis-labs/clockwork-manifold/internal/broker"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/sessionmgr"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 )
 
@@ -21,10 +21,11 @@ type Server struct {
 	msg    gomsg.Store // optional; routes 503 when nil. Set via SetMessaging.
 	router chi.Router
 	sse    *SSEHub
-	// sessions is the long-lived agent session manager (CW-20260503-0014).
-	// Nil disables /api/v1/sessions/* — the routes return 503 in that mode
-	// rather than panic, mirroring sched=nil behavior.
-	sessions *sessionmgr.Manager
+	// sessions is the unified agent session manager (CW-20260508-0001 —
+	// replaces sessionmgr.Manager). Nil disables /api/v1/sessions/* — the
+	// routes return 503 in that mode rather than panic, mirroring sched=nil
+	// behavior.
+	sessions *agent.Manager
 	// broker is the typed envelope dispatcher (CW-20260503-0013, S1.3).
 	// Wired via SetBroker; /api/v1/broker/* routes 503 when nil.
 	broker *broker.Broker
@@ -54,10 +55,10 @@ func (s *Server) SSEHub() *SSEHub {
 	return s.sse
 }
 
-// WithSessionMgr attaches the long-lived agent session manager so the
+// WithSessions attaches the unified agent session manager so the
 // /api/v1/sessions/* routes serve real data. Safe to call before the
 // listener accepts connections; goroutine-unsafe under live traffic.
-func (s *Server) WithSessionMgr(mgr *sessionmgr.Manager) *Server {
+func (s *Server) WithSessions(mgr *agent.Manager) *Server {
 	s.sessions = mgr
 	return s
 }
