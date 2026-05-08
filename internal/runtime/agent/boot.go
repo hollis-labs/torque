@@ -133,7 +133,13 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		return args
 	}
 
-	runtime, err := agentsessions.NewFromAdapter(agentsessions.AdapterRuntimeConfig{
+	runtimeFactory := agentsessions.NewFromAdapter
+	if deps.RuntimeFactory != nil {
+		runtimeFactory = func(cfg agentsessions.AdapterRuntimeConfig) (agentsessions.Runtime, error) {
+			return deps.RuntimeFactory(cfg)
+		}
+	}
+	runtime, err := runtimeFactory(agentsessions.AdapterRuntimeConfig{
 		ID:        "clockwork-cli/" + cliAdapter.Name(),
 		Kind:      "cli",
 		Adapter:   cliAdapter,
@@ -144,7 +150,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	if err != nil {
 		_ = os.RemoveAll(layout.BootDir)
 		shutdownLoopbackHandle(loopback)
-		return nil, fmt.Errorf("%w: NewFromAdapter: %v", ErrBootFailed, err)
+		return nil, fmt.Errorf("%w: construct runtime: %v", ErrBootFailed, err)
 	}
 	if err := runtime.Prepare(ctx); err != nil {
 		_ = os.RemoveAll(layout.BootDir)
@@ -253,33 +259,37 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		closeStderr = closer
 	}
 
-	// PTY-path Supervisor + ResourceLimits — go-agent-sessions v0.6.0 wires
-	// these natively on the PTY runtime. Adapter-path forwarding is blocked
-	// on go-runner publishing a v0.3.x with the supervision API exported
-	// (the v0.3.0 tag points at a pre-supervision commit). For now we only
-	// populate the fields when caps.PTY=true; the lib silently ignores them
-	// on the adapter path.
+	// Supervisor + ResourceLimits resolution.
+	// PTY runtime (go-agent-sessions v0.6.0) enforces these natively. Adapter
+	// runtime forwards the fields but the lib silently ignores them pending
+	// go-runner v0.3.x publishing the supervision API. profileSupervision
+	// honors Options-supplied values regardless of PTY (so callers can set
+	// them once; adapter-path enforcement lights up automatically when the
+	// lib unblocks). Profile-config widening for default Supervisor +
+	// ResourceLimits is a follow-up — today the profile branch returns
+	// nil/nil unless explicitly overridden via Options.
 	supervisor, limits := profileSupervision(profile, opts, caps.PTY)
 
 	startReq := agentsessions.StartRequest{
 		ID:      sessID,
 		Runtime: runtime,
 		Options: agentsessions.StartOptions{
-			Workdir:           layout.SpawnCwd,
-			WorkspaceDir:      ws.Root,
-			LogPath:           ws.LogPath,
-			BootPrompt:        systemPrompt,
-			Env:               env,
-			Stderr:            stderrWriter,
-			Profile:           sandboxProfile,
-			AttachEnabled:     true,
-			AutoFireFirstTurn: autoFire,
-			FirstTurnPayload:  firstTurnPayload,
-			SessionIDPreset:   sessionIDPreset,
-			OnSessionID:       onSessionID,
-			Supervisor:        supervisor,
-			ResourceLimits:    limits,
-			EventFanout:       opts.eventFanout,
+			Workdir:            layout.SpawnCwd,
+			WorkspaceDir:       ws.Root,
+			LogPath:            ws.LogPath,
+			BootPrompt:         systemPrompt,
+			Env:                env,
+			Stderr:             stderrWriter,
+			Profile:            sandboxProfile,
+			AttachEnabled:      true,
+			AutoFireFirstTurn:  autoFire,
+			FirstTurnPayload:   firstTurnPayload,
+			SessionIDPreset:    sessionIDPreset,
+			OnSessionID:        onSessionID,
+			Supervisor:         supervisor,
+			ResourceLimits:     limits,
+			EventFanout:        opts.eventFanout,
+			TypedEventCallback: opts.TypedEventCallback,
 		},
 		SessionMeta: opts.SessionMeta,
 	}
@@ -385,29 +395,23 @@ func findCheckpoint(store *sqlstore.Store, checkpointID string) (*sqlstore.Sessi
 }
 
 // profileSupervision derives Supervisor + ResourceLimits from the profile
-// + opts. Returns nil/nil when the profile doesn't request supervision OR
-// when the runtime is on the adapter path (where the v0.6.0 lib doesn't
-// consume them yet).
+// + opts. Honors Options-supplied values regardless of ptyEnabled — the
+// adapter path silently ignores them today (v0.6.0 lib gap pending
+// go-runner v0.3.x publishing the supervision API), but callers can set
+// them now and pickup is automatic when the lib unblocks. Pass-through
+// keeps the API uniform across PTY / adapter Modes.
 //
-// Profile shape today doesn't have explicit Supervisor / ResourceLimits
-// fields — those are a follow-up to widen the AgentProfile struct. For
-// V1 we honor profile.TimeoutSeconds → SupervisorOptions.IdleKill on PTY
-// to give long-lived sessions a default ghost-kill window. Callers that
-// want explicit values can subclass via opts.SessionMeta until the typed
-// fields land.
+// Profile-config widening for default Supervisor / ResourceLimits is a
+// separate follow-up — today the profile branch returns nil/nil unless
+// the caller explicitly overrides via Options.Supervisor / Options.ResourceLimits.
 func profileSupervision(profile config.AgentProfile, opts Options, ptyEnabled bool) (*agentsessions.SupervisorOptions, *agentsessions.ResourceLimits) {
-	if !ptyEnabled {
-		// v0.6.0 lib note: adapter-path forwarding is blocked on
-		// go-runner v0.3.x publishing supervision; this branch returns
-		// nil/nil to avoid stamping fields the lib will silently ignore.
-		return nil, nil
-	}
-	// Honor only opts-supplied values for V1. Profile-config widening is
-	// a follow-up. Today this returns nil/nil unless a future caller
-	// stamps SessionMeta hints we'd interpret here — explicit no-op so
-	// the wiring is in place for incremental expansion.
+	supervisor := opts.Supervisor
+	limits := opts.ResourceLimits
+	// Profile-config widening hook — currently a no-op. When the profile
+	// shape grows Supervisor/ResourceLimits fields, default-fill here when
+	// the caller didn't override.
 	_ = profile
-	_ = opts
-	return nil, nil
+	_ = ptyEnabled
+	return supervisor, limits
 }
 

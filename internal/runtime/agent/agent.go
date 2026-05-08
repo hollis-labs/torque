@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 	"github.com/hollis-labs/go-providers/provider"
 	"github.com/hollis-labs/go-sandbox/sandbox"
 )
@@ -86,6 +87,27 @@ type Options struct {
 	// path can reuse Options without a parallel struct. Most ModeLongLived
 	// callers leave them zero.
 	Metadata map[string]any
+
+	// TypedEventCallback, when non-nil, is forwarded to
+	// StartOptions.TypedEventCallback. PTY runtime fires per-line via the
+	// adapter's provider.EventParser interface; adapter runtime ignores it
+	// (typed events on the subprocess-per-turn path is a lib-side follow-up
+	// per go-agent-sessions v0.6.0 changelog). Callers that want token-usage
+	// tracking on ModeOneShot should keep using the legacy eventFanout
+	// channel routed through Executor.Run.
+	TypedEventCallback provider.EventsCallback
+
+	// Supervisor, when non-nil, is forwarded to StartOptions.Supervisor.
+	// PTY path enforces it natively (idle-kill, restart-on-crash, watchdog).
+	// Adapter path forwards the field but the lib silently ignores it
+	// pending go-runner v0.3.x publishing the supervision API; callers can
+	// set it now and pickup is automatic when the lib unblocks.
+	Supervisor *agentsessions.SupervisorOptions
+
+	// ResourceLimits, when non-nil and non-zero, is forwarded to
+	// StartOptions.ResourceLimits. Same PTY-vs-adapter forwarding contract
+	// as Supervisor.
+	ResourceLimits *agentsessions.ResourceLimits
 
 	// IDFn lets tests pin session IDs. Production wires defaultSessionID().
 	IDFn func() string
