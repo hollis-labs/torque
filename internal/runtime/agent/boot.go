@@ -150,7 +150,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	if err != nil {
 		_ = os.RemoveAll(layout.BootDir)
 		shutdownLoopbackHandle(loopback)
-		return nil, fmt.Errorf("%w: NewFromAdapter: %v", ErrBootFailed, err)
+		return nil, fmt.Errorf("%w: construct runtime: %v", ErrBootFailed, err)
 	}
 	if err := runtime.Prepare(ctx); err != nil {
 		_ = os.RemoveAll(layout.BootDir)

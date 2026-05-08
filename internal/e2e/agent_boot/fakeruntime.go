@@ -11,9 +11,11 @@ import (
 )
 
 // fakeRuntimeConfig parametrizes the fakeRuntime constructor. PTY toggles
-// the declared Caps.PTY (which agent.Boot uses to decide whether to wire
-// Supervisor/ResourceLimits via profileSupervision); StartErr / WaitExitErr
-// drive failure injection.
+// the declared Caps.PTY (which agent.Boot uses to drive shouldUsePTY's
+// per-Mode + per-provider matrix); StartErr / WaitExitErr drive failure
+// injection. Note Supervisor / ResourceLimits flow regardless of PTY —
+// profileSupervision pass-through is unconditional (see
+// decisions.clockwork_manifold.supervisor_passthrough_on_adapter_path).
 type fakeRuntimeConfig struct {
 	// PTY becomes Caps.PTY. Tests pick true for ModeLongLived/Subagent/
 	// Background/Resume coverage and false for OneShot.
@@ -85,11 +87,13 @@ type fakeRuntime struct {
 	resourceLimitsPresent  atomic.Bool
 	typedEventCallbackSet  atomic.Bool
 
-	// liveSession is the most-recent fakeSession returned by Start. Tests
-	// that need to drive lifecycle (simulate typed events, force exit
-	// errors) reach for it via lastSession().
-	mu          sync.Mutex
-	liveSession *fakeSession
+	// sessions tracks every fakeSession returned by Start. Tests that need
+	// to drive lifecycle (simulate typed events, force exit errors) reach
+	// for the most-recent via lastSession(); cleanup walks the full slice
+	// so multi-session tests (e.g. broker hello-world) drain every session
+	// before Manager.Shutdown.
+	mu       sync.Mutex
+	sessions []*fakeSession
 }
 
 func (r *fakeRuntime) ID() string                       { return r.id }
@@ -135,7 +139,7 @@ func (r *fakeRuntime) Start(_ context.Context, opts agentsessions.StartOptions) 
 	sess := newFakeSession(pid, opts.TypedEventCallback, opts.OnSessionID, r.waitExitErr)
 
 	r.mu.Lock()
-	r.liveSession = sess
+	r.sessions = append(r.sessions, sess)
 	r.mu.Unlock()
 	return sess, nil
 }
@@ -145,7 +149,24 @@ func (r *fakeRuntime) Start(_ context.Context, opts agentsessions.StartOptions) 
 func (r *fakeRuntime) lastSession() *fakeSession {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.liveSession
+	if len(r.sessions) == 0 {
+		return nil
+	}
+	return r.sessions[len(r.sessions)-1]
+}
+
+// allSessions returns a snapshot of every fakeSession Start has returned,
+// in spawn order. Cleanup walks this so tests that boot more than one
+// session (e.g. TestSubstrate_HelloWorld's two long-lived sessions plus
+// their resumed counterparts) drain each fakeSession.done before
+// Manager.Shutdown — without this, only the most-recent session's watch
+// goroutine would unblock.
+func (r *fakeRuntime) allSessions() []*fakeSession {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]*fakeSession, len(r.sessions))
+	copy(out, r.sessions)
+	return out
 }
 
 // simulateTypedEvent fires the captured TypedEventCallback against the

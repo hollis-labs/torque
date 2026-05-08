@@ -78,15 +78,19 @@ func composeDeps(t *testing.T, cfg fakeRuntimeConfig, profileProvider string) *c
 	deps.Sessions = agent.NewManager(deps)
 
 	t.Cleanup(func() {
-		// Stop any live fakeSession before Shutdown so the watch goroutine
+		// Stop every fakeSession before Shutdown so each watch goroutine
 		// can drain. fakeSession.Wait blocks on a done chan that only Stop
-		// closes — without this the bounded Shutdown below would surface as
-		// a fail rather than hanging the test.
-		if sess := rt.lastSession(); sess != nil {
+		// closes — without this the bounded Shutdown below would either
+		// fail (best case) or, on tests that booted more than one session,
+		// leak goroutines from the un-stopped sessions across iterations
+		// (count=10 / -race amplifies the leak into a flake).
+		for _, sess := range rt.allSessions() {
 			_ = sess.Stop(context.Background())
 		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = deps.Sessions.Shutdown(shutdownCtx)
+		if err := deps.Sessions.Shutdown(shutdownCtx); err != nil {
+			t.Errorf("agent.Manager.Shutdown returned error: %v", err)
+		}
 		cancel()
 		store.Close()
 		_ = db.Close()
