@@ -27,13 +27,24 @@ import (
 //   - ErrAlreadyOrchestrating → 409 (an orchestrator session is live)
 //   - ErrWorkdirRequired   → 422 (Options.Workdir empty AND plan.WorkingDir empty)
 //   - ErrSessionMgrMissing → 503 (substrate not wired into this host)
+//   - ErrFirstTurnFailed   → 502 (orchestrator session launched but first
+//     turn dispatch failed; the plan stays in todo and the orphaned
+//     session is best-effort stopped so the caller can retry cleanly)
 var (
 	ErrPlanNotFound         = errors.New("planstart: plan not found or not a kind=plan task")
 	ErrPlanWrongStatus      = errors.New("planstart: plan must be in todo or review status to start")
 	ErrAlreadyOrchestrating = errors.New("planstart: orchestrator session is already running for this plan")
 	ErrWorkdirRequired      = errors.New("planstart: workdir required (Options.Workdir empty and plan has no WorkingDir)")
 	ErrSessionMgrMissing    = errors.New("planstart: session manager not configured in this host")
+	ErrFirstTurnFailed      = errors.New("planstart: orchestrator session launched but first-turn dispatch failed")
 )
+
+// orchestratorKickoff is the user-message payload SendInput delivers to
+// drive the orchestrator's first turn. The actual behavior is governed
+// by the orchestrator's system prompt (LaunchRequest.SystemPrompt /
+// agentsessions.StartOptions.BootPrompt), so this string is intentionally
+// generic — it just unblocks the agent's input channel.
+const orchestratorKickoff = "Begin orchestration."
 
 // Options configures Start. Workdir defaults to the plan task's
 // WorkingDir column when empty; explicit override wins.
@@ -68,9 +79,16 @@ type Store interface {
 }
 
 // SessionManager is the narrowed sessionmgr surface. The real
-// *sessionmgr.Manager implements it; tests pass a stub.
+// *sessionmgr.Manager implements it; tests pass a stub. SendInput is
+// what actually drives the cli-runtime subprocess into running state —
+// Launch only registers the session row and prepares the runtime, so
+// the trigger must fire SendInput post-Launch to spawn the agent
+// process. Stop is used for best-effort cleanup when the first-turn
+// dispatch fails so the orphaned session row is closed.
 type SessionManager interface {
 	Launch(ctx context.Context, req sessionmgr.LaunchRequest) (string, error)
+	SendInput(sessionID string, data []byte) error
+	Stop(ctx context.Context, sessionID string) error
 }
 
 // Start validates a plan, idempotency-checks any existing orchestrator
@@ -133,6 +151,21 @@ func Start(ctx context.Context, store Store, mgr SessionManager, planID string, 
 	sessionID, err := mgr.Launch(ctx, launchReq)
 	if err != nil {
 		return nil, fmt.Errorf("planstart: launch orchestrator: %w", err)
+	}
+
+	// Drive the orchestrator's first turn. sessionmgr.Launch only
+	// registers the session row + prepares the runtime; for cli-runtime
+	// the subprocess does not actually spawn until SendInput delivers
+	// a payload. If this fails the launch is half-done: the session
+	// row exists but the agent never started. Roll back transactionally
+	// — do NOT stamp metadata, do NOT transition the plan — so a retry
+	// from todo is the obvious next step. Best-effort Stop closes the
+	// orphaned session row.
+	if err := mgr.SendInput(sessionID, []byte(orchestratorKickoff)); err != nil {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = mgr.Stop(stopCtx, sessionID)
+		cancel()
+		return nil, fmt.Errorf("%w: session=%s: %v", ErrFirstTurnFailed, sessionID, err)
 	}
 
 	// Stamp orchestrator_session_id into metadata.plan and transition

@@ -70,13 +70,23 @@ func (s *stubStore) GetSession(id string) (*sqlstore.SessionRecord, error) {
 	return rec, nil
 }
 
-// stubMgr captures Launch invocations and lets tests dictate what
-// Launch returns. Mirrors the sessionmgr.Manager.Launch signature
-// without dragging the real manager + go-agent-sessions pile in.
+// stubMgr captures Launch / SendInput / Stop invocations and lets tests
+// dictate what each returns. Mirrors the sessionmgr.Manager surface
+// planstart depends on without dragging the real manager + go-agent-
+// sessions pile in.
 type stubMgr struct {
 	launchID    string
 	launchErr   error
 	lastRequest sessionmgr.LaunchRequest
+
+	sendInputErr     error
+	lastInputSession string
+	lastInputData    []byte
+	sendInputCalls   int
+
+	stopErr        error
+	lastStopSession string
+	stopCalls       int
 }
 
 func (s *stubMgr) Launch(_ context.Context, req sessionmgr.LaunchRequest) (string, error) {
@@ -85,6 +95,19 @@ func (s *stubMgr) Launch(_ context.Context, req sessionmgr.LaunchRequest) (strin
 		return "", s.launchErr
 	}
 	return s.launchID, nil
+}
+
+func (s *stubMgr) SendInput(sessionID string, data []byte) error {
+	s.sendInputCalls++
+	s.lastInputSession = sessionID
+	s.lastInputData = append([]byte(nil), data...)
+	return s.sendInputErr
+}
+
+func (s *stubMgr) Stop(_ context.Context, sessionID string) error {
+	s.stopCalls++
+	s.lastStopSession = sessionID
+	return s.stopErr
 }
 
 // AC1+AC4: happy path — plan validates, orchestrator session boots,
@@ -114,12 +137,53 @@ func TestPlanstart_HappyPath(t *testing.T) {
 	assert.NotEmpty(t, mgr.lastRequest.SystemPrompt)
 	assert.Equal(t, "CW-PLAN-001", mgr.lastRequest.SessionMeta["plan_id"])
 
+	// SendInput drove the first turn against the launched session id.
+	assert.Equal(t, 1, mgr.sendInputCalls, "SendInput must fire post-Launch to spawn the agent process")
+	assert.Equal(t, "SES-ABC", mgr.lastInputSession)
+	assert.NotEmpty(t, mgr.lastInputData, "kickoff payload must be non-empty")
+	assert.Zero(t, mgr.stopCalls, "Stop should not fire on the happy path")
+
 	// Plan transitioned + metadata stamped.
 	require.Len(t, store.transitions, 1)
 	assert.Equal(t, "doing", store.transitions[0])
 	post, _ := store.GetTask("CW-PLAN-001")
 	assert.Contains(t, post.Metadata.String, "SES-ABC")
 	assert.Contains(t, post.Metadata.String, "orchestrator_session_id")
+}
+
+// First-turn rollback: SendInput failure after a successful Launch must
+// surface ErrFirstTurnFailed, leave the plan untouched (status=todo,
+// no orchestrator_session_id metadata), and best-effort stop the
+// orphaned session row so a retry from todo is the obvious next step.
+func TestPlanstart_FirstTurnFailRollsBack(t *testing.T) {
+	store := newStubStore()
+	store.tasks["CW-PLAN-FIRSTTURN"] = &sqlstore.TaskRecord{
+		ID:         "CW-PLAN-FIRSTTURN",
+		Kind:       "plan",
+		Status:     "todo",
+		WorkingDir: "/tmp/plan",
+	}
+	mgr := &stubMgr{
+		launchID:     "SES-ORPHAN",
+		sendInputErr: errors.New("boom: first-turn dispatch failed"),
+	}
+
+	res, err := planstart.Start(context.Background(), store, mgr, "CW-PLAN-FIRSTTURN", planstart.Options{})
+	assert.Nil(t, res)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, planstart.ErrFirstTurnFailed)
+
+	// Plan must remain in todo with NO orchestrator metadata stamped.
+	post, _ := store.GetTask("CW-PLAN-FIRSTTURN")
+	assert.Equal(t, "todo", post.Status, "plan must NOT transition out of todo on first-turn failure")
+	assert.False(t, post.Metadata.Valid && post.Metadata.String != "" && post.Metadata.String != "{}",
+		"orchestrator metadata must NOT be stamped on first-turn failure; got %q", post.Metadata.String)
+	assert.Empty(t, store.transitions, "no FSM transitions on first-turn failure")
+	assert.Empty(t, store.updates, "no metadata writes on first-turn failure")
+
+	// Best-effort cleanup: Stop fired on the orphaned session id.
+	assert.Equal(t, 1, mgr.stopCalls, "Stop must run once to close the orphan session row")
+	assert.Equal(t, "SES-ORPHAN", mgr.lastStopSession)
 }
 
 // AC2: starting from `review` is allowed (re-running a plan after the
