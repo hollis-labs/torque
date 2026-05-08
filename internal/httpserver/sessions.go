@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
+	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 )
 
 // requireSessions writes a 503 envelope when the session manager is not
@@ -167,12 +168,42 @@ func (s *Server) waitSession(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 	}
 	code, err := s.sessions.Wait(ctx, id)
+	writeWaitResponse(w, id, code, err)
+}
+
+// writeWaitResponse encodes the (code, err) result from a session-wait
+// operation into the HTTP response. Termination errors (*ExitError,
+// *exec.ExitError) are the SUCCESS path of a wait — the session ended;
+// here's how. Surface them as 200 OK with structured cause/signal/killed
+// fields in the body. Reserve 5xx for wait-operation failures only
+// (context cancellation maps to 408, ErrSessionNotRunning to 404).
+//
+// Per go-agent-sessions v0.7.0: Wait propagates Session.Wait's error
+// verbatim instead of swallowing it. Consumers errors.As-classify
+// supervised terminations via xe.Cause without string-matching.
+func writeWaitResponse(w http.ResponseWriter, id string, code int, err error) {
 	if err != nil {
 		if errors.Is(err, agent.ErrSessionNotRunning) {
 			writeError(w, http.StatusNotFound, err.Error())
 			return
 		}
-		writeError(w, http.StatusInternalServerError, err.Error())
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			writeError(w, http.StatusRequestTimeout, err.Error())
+			return
+		}
+		// Termination error — extract structured ExitError fields when present
+		// so consumers can classify watchdog_kill vs idle_timeout vs ordinary
+		// non-zero exits without string-matching err.Error().
+		resp := map[string]interface{}{"id": id, "exit_code": code}
+		var xe *agentsessions.ExitError
+		if errors.As(err, &xe) {
+			resp["cause"] = xe.Cause
+			resp["signal"] = xe.Signal
+			resp["killed"] = xe.Killed
+		} else {
+			resp["error"] = err.Error()
+		}
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"id": id, "exit_code": code})
