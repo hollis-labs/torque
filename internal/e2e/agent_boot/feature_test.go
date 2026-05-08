@@ -167,19 +167,15 @@ func TestBoot_SupervisorPassesThroughOnAdapterPath(t *testing.T) {
 	assert.Equal(t, 2, got.Supervisor.RestartOnCrash)
 }
 
-// TestBoot_ExitErrorCausePropagation validates that the exit code from a
-// structured *ExitError returned by Session.Wait reaches consumers via
-// agent.Manager.Wait + persists into the session row's state column.
+// TestBoot_ExitErrorCausePropagation validates that a structured *ExitError
+// returned by Session.Wait propagates through agent.Manager.Wait so consumers
+// can classify supervised terminations via errors.As. The exit code reaches
+// callers, the session row transitions to state=failed via storeStateSink,
+// and the *ExitError surfaces from Manager.Wait carrying .Cause / .Signal /
+// .Killed for recovery-broker / post-mortem hook classification.
 //
-// What this DOES NOT cover: structured-Cause propagation (errors.As against
-// *agentsessions.ExitError). The go-agent-sessions v0.6.0 watch goroutine
-// discards Session.Wait's error (`code, _ := sess.Wait()`) and only the
-// exit code threads through Manager.WaitSession. Surfacing .Cause /
-// .Killed / .Signal to consumers requires a lib-side change to stash the
-// *ExitError on sessionResult + return it wrapped from WaitSession.
-// Captured as a pending follow-up — recovery broker / post-mortem hooks
-// will need that wiring before they can classify watchdog_kill vs
-// idle_timeout vs restart_exhausted etc.
+// Per go-agent-sessions v0.7.0: Manager.WaitSession propagates Session.Wait's
+// error verbatim instead of discarding it; *ExitError is errors.As-extractable.
 func TestBoot_ExitErrorCausePropagation(t *testing.T) {
 	xe := &agentsessions.ExitError{
 		Code:   137,
@@ -207,8 +203,20 @@ func TestBoot_ExitErrorCausePropagation(t *testing.T) {
 	// Drive natural termination (NOT Manager.Stop — that sets killing=true
 	// which forces state=done regardless of exit code, defeating the test).
 	cd.Runtime.lastSession().simulateExit()
-	code, _ := cd.Manager.Wait(ctx, sess.ID)
+	code, waitErr := cd.Manager.Wait(ctx, sess.ID)
+
+	// v0.7.0: Manager.Wait propagates the structured ExitError. Both the
+	// exit code and the structured error reach the caller verbatim.
 	assert.Equal(t, 137, code, "ExitError.Code must reach consumers via Manager.Wait")
+	require.Error(t, waitErr, "supervised termination must surface a non-nil error")
+	var got *agentsessions.ExitError
+	require.True(t, errors.As(waitErr, &got),
+		"Manager.Wait error must errors.As to *ExitError for supervised terminations")
+	assert.Equal(t, agentsessions.CauseWatchdogKill, got.Cause,
+		"ExitError.Cause must classify the supervisor-driven termination")
+	assert.Equal(t, 9, got.Signal, "ExitError.Signal must round-trip")
+	assert.True(t, got.Killed, "ExitError.Killed must round-trip")
+	assert.Equal(t, 137, got.Code, "ExitError.Code must round-trip")
 
 	// Code 137 → state=failed via the lib's watch + storeStateSink.
 	require.Eventually(t, func() bool {
@@ -216,12 +224,6 @@ func TestBoot_ExitErrorCausePropagation(t *testing.T) {
 		return err == nil && rec.State == "failed"
 	}, time.Second, 10*time.Millisecond,
 		"non-zero exit must transition the session row to state=failed")
-
-	// Sentinel: the underlying ExitError still implements error correctly,
-	// so a future lib-side change that propagates it through WaitSession
-	// won't need to alter consumer code that already does errors.As.
-	var probe *agentsessions.ExitError
-	assert.True(t, errors.As(error(xe), &probe), "*ExitError must satisfy errors.As")
 }
 
 // TestBoot_SandboxAllowLoopback validates that Boot force-sets

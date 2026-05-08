@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
+	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 )
 
 // requireSessions writes a 503 envelope when the session manager is not
@@ -167,12 +168,33 @@ func (s *Server) waitSession(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 	}
 	code, err := s.sessions.Wait(ctx, id)
+	// Per go-agent-sessions v0.7.0, Wait propagates Session.Wait's error
+	// verbatim. Termination errors (*ExitError, *exec.ExitError) are the
+	// SUCCESS path of a wait — the session ended; here's how. Surface them
+	// as 200 OK with structured cause/signal/killed in the body. Reserve
+	// 5xx for actual wait-operation failures (context cancellation, etc.).
 	if err != nil {
 		if errors.Is(err, agent.ErrSessionNotRunning) {
 			writeError(w, http.StatusNotFound, err.Error())
 			return
 		}
-		writeError(w, http.StatusInternalServerError, err.Error())
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			writeError(w, http.StatusRequestTimeout, err.Error())
+			return
+		}
+		// Termination error — extract structured ExitError fields when present
+		// so consumers can classify watchdog_kill vs idle_timeout vs ordinary
+		// non-zero exits without string-matching err.Error().
+		body := map[string]interface{}{"id": id, "exit_code": code}
+		var xe *agentsessions.ExitError
+		if errors.As(err, &xe) {
+			body["cause"] = xe.Cause
+			body["signal"] = xe.Signal
+			body["killed"] = xe.Killed
+		} else {
+			body["error"] = err.Error()
+		}
+		writeJSON(w, http.StatusOK, body)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"id": id, "exit_code": code})

@@ -276,16 +276,36 @@ func (m *Manager) Stop(ctx context.Context, id string) error {
 	return nil
 }
 
-// Wait blocks until the session terminates. Returns the exit code.
+// Wait blocks until the session terminates and surfaces the lib's
+// termination signal. Returns:
+//
+//   - (code, nil) on clean exit (code=0 typically)
+//   - (code, *agentsessions.ExitError) on supervised termination — extract via
+//     errors.As to read .Cause (idle_timeout / watchdog_kill / restart_exhausted
+//     / oom_kill / resource_limit) and other structured fields. The exit code
+//     is preserved; consumers handling termination should branch on errors.As.
+//   - (code, *exec.ExitError) for non-zero exits on non-supervised sessions.
+//   - (0, ErrSessionNotRunning) when the session id is unknown / pre-launch.
+//   - (0, ctx.Err()) on context cancellation / deadline — code is meaningless
+//     because the wait operation itself was interrupted before termination.
+//
+// Per go-agent-sessions v0.7.0: WaitSession propagates Session.Wait's error
+// verbatim. The previous behavior of returning nil on all terminal states
+// hid termination causes from consumers; this is the correct shape.
 func (m *Manager) Wait(ctx context.Context, id string) (int, error) {
 	code, err := m.inner.WaitSession(ctx, id)
-	if err != nil {
-		if errors.Is(err, agentsessions.ErrSessionNotRunning) {
-			return 0, ErrSessionNotRunning
-		}
+	if err == nil {
+		return code, nil
+	}
+	if errors.Is(err, agentsessions.ErrSessionNotRunning) {
+		return 0, ErrSessionNotRunning
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return 0, err
 	}
-	return code, nil
+	// Termination error (*ExitError, *exec.ExitError, etc.) — preserve both
+	// the exit code and the structured error so consumers can errors.As-classify.
+	return code, err
 }
 
 // Checkpoint persists a checkpoint snapshot for the session.
