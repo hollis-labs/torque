@@ -5,7 +5,16 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
 	"github.com/hollis-labs/clockwork-manifold/internal/toolbroker"
+	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 )
+
+// RuntimeFactory constructs the agentsessions.Runtime Boot uses to spawn the
+// session. Production leaves Dependencies.RuntimeFactory nil — Boot falls
+// back to agentsessions.NewFromAdapter against the resolved
+// AdapterRuntimeConfig. Tests inject a closure that returns a fakeRuntime
+// recording StartOptions without spawning a binary; this is the only
+// injection seam between Boot and the lib's runtime constructor.
+type RuntimeFactory func(cfg agentsessions.AdapterRuntimeConfig) (agentsessions.Runtime, error)
 
 // Dependencies bundles every collaborator agent.Boot and Manager need.
 // Constructed once at composition root (cmd/clockwork/serve.go) and passed
@@ -50,6 +59,11 @@ type Dependencies struct {
 	// dirs are materialized. Default $HOME/.clockwork/workspaces; tests
 	// override to a tempdir.
 	WorkspacesRoot string
+
+	// RuntimeFactory, when non-nil, overrides the default
+	// agentsessions.NewFromAdapter call in Boot. See the RuntimeFactory
+	// godoc above. nil = production default.
+	RuntimeFactory RuntimeFactory
 
 	// Sessions is the long-lived agent Manager. Boot() drives Start through
 	// it; lifecycle methods (SendInput / Stop / Wait / Attach / Checkpoint /
