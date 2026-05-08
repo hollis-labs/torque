@@ -1,0 +1,186 @@
+package agent
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/hollis-labs/go-providers/provider"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// TestPlantBootDir_Claude verifies that the lib's BootDirSpec for claude
+// produces the expected file shape inside the per-task tempdir, and that
+// clockwork-side wiring (PlantContext, MCP loopback URL) lands in the
+// rendered files.
+func TestPlantBootDir_Claude(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+
+	res, err := plantBootDir(plantParams{
+		Provider:       "claude",
+		Adapter:        provider.NewClaudeAdapter(),
+		TaskID:         "CW-20260508-0001",
+		RunID:          7,
+		AgentName:      "default",
+		SystemPrompt:   "You are an orchestrator.",
+		KickoffContent: "# Boot\n\nDo the work.",
+		ProjectDir:     "/tmp/repo",
+		MCPLoopbackURL: "http://127.0.0.1:54321/mcp",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	defer func() { _ = os.RemoveAll(res.BootDir) }()
+
+	// Naming convention.
+	assert.Contains(t, res.BootDir, "clockwork-boot-claude-CW-20260508-0001-r7-")
+
+	// Lib's BootDirSpec planted: CLAUDE.md + boot.md + .claude/settings.json + .mcp.json.
+	for _, rel := range []string{"CLAUDE.md", "boot.md", ".claude/settings.json", ".mcp.json"} {
+		_, err := os.Stat(filepath.Join(res.BootDir, rel))
+		assert.NoError(t, err, "expected %s under bootDir", rel)
+	}
+
+	// PlantContext threaded through: SystemPrompt + KickoffContent + URL.
+	claudeMD, _ := os.ReadFile(filepath.Join(res.BootDir, "CLAUDE.md"))
+	assert.Contains(t, string(claudeMD), "You are an orchestrator.")
+	assert.Contains(t, string(claudeMD), "http://127.0.0.1:54321/mcp")
+
+	bootMD, _ := os.ReadFile(filepath.Join(res.BootDir, "boot.md"))
+	assert.Equal(t, "# Boot\n\nDo the work.", string(bootMD))
+
+	mcpJSON, _ := os.ReadFile(filepath.Join(res.BootDir, ".mcp.json"))
+	assert.Contains(t, string(mcpJSON), "127.0.0.1:54321")
+
+	// Spawn cwd = bootDir for claude (CwdBootDir).
+	assert.Equal(t, res.BootDir, res.SpawnCwd)
+
+	// ProjectDirArg pre-tokenized: --add-dir <projectDir>.
+	assert.Equal(t, []string{"--add-dir", "/tmp/repo"}, res.ProjectDirArg)
+}
+
+// TestPlantBootDir_Codex covers the codex spec (AGENTS.md + .mcp.json + boot.md).
+func TestPlantBootDir_Codex(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+
+	res, err := plantBootDir(plantParams{
+		Provider:       "codex",
+		Adapter:        provider.NewCodexAdapter(),
+		TaskID:         "CW-CODEX-1",
+		RunID:          0,
+		AgentName:      "codex-agent",
+		SystemPrompt:   "Codex persona.",
+		KickoffContent: "kickoff",
+		ProjectDir:     "/tmp/codex-repo",
+		MCPLoopbackURL: "http://127.0.0.1:1/mcp",
+	})
+	require.NoError(t, err)
+	defer func() { _ = os.RemoveAll(res.BootDir) }()
+
+	// AGENTS.md (codex auto-load convention) + boot.md + .mcp.json.
+	for _, rel := range []string{"AGENTS.md", "boot.md", ".mcp.json"} {
+		_, err := os.Stat(filepath.Join(res.BootDir, rel))
+		assert.NoError(t, err, "expected %s under bootDir", rel)
+	}
+
+	// Codex's project-dir flag is --cd per the lib spec.
+	assert.Equal(t, []string{"--cd", "/tmp/codex-repo"}, res.ProjectDirArg)
+}
+
+// TestPlantBootDir_Opencode covers the opencode spec — the only spec where
+// CwdPreference=CwdProjectDir (boot dir is the *config* dir, cwd is
+// project dir) AND EnvAmendments carries OPENCODE_CONFIG_DIR.
+func TestPlantBootDir_Opencode(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+
+	adapter := provider.NewOpencodeAdapter()
+	adapter.Agent = "my-agent"
+
+	res, err := plantBootDir(plantParams{
+		Provider:       "opencode",
+		Adapter:        adapter,
+		TaskID:         "CW-OPENCODE-1",
+		RunID:          1,
+		AgentName:      "my-agent",
+		SystemPrompt:   "Opencode persona.",
+		KickoffContent: "kickoff",
+		ProjectDir:     "/tmp/oc-repo",
+		MCPLoopbackURL: "http://127.0.0.1:2/mcp",
+	})
+	require.NoError(t, err)
+	defer func() { _ = os.RemoveAll(res.BootDir) }()
+
+	// Opencode plants agents/<name>.md + agents.json + opencode.json + boot.md + .mcp.json.
+	for _, rel := range []string{
+		"agents/my-agent.md", "agents.json", "opencode.json", "boot.md", ".mcp.json",
+	} {
+		_, err := os.Stat(filepath.Join(res.BootDir, rel))
+		assert.NoError(t, err, "expected %s under bootDir", rel)
+	}
+
+	// Spawn cwd = projectDir (CwdProjectDir).
+	assert.Equal(t, "/tmp/oc-repo", res.SpawnCwd)
+
+	// EnvAmendments expanded with the booted dir.
+	require.NotEmpty(t, res.EnvAmendments)
+	assert.Equal(t, "OPENCODE_CONFIG_DIR="+res.BootDir, res.EnvAmendments[0])
+
+	// Project-dir flag is --dir per the lib spec.
+	assert.Equal(t, []string{"--dir", "/tmp/oc-repo"}, res.ProjectDirArg)
+}
+
+// TestPlantBootDir_Gemini_StubErrs locks the bespoke-stub behavior for
+// gemini: the lib's BootDirSpec is a stub (Notes != ""), so the dispatcher
+// routes to plantGeminiBootDir which returns ErrBootDirNotImplemented with
+// the lib's Notes message embedded for forensic clarity.
+func TestPlantBootDir_Gemini_StubErrs(t *testing.T) {
+	res, err := plantBootDir(plantParams{
+		Provider: "gemini",
+		Adapter:  provider.NewGeminiAdapter(),
+		TaskID:   "CW-GEMINI-1",
+	})
+	assert.Nil(t, res)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrBootDirNotImplemented)
+	assert.Contains(t, err.Error(), "gemini")
+	// The lib's Notes flow through so the operator sees what to probe.
+	assert.Contains(t, err.Error(), "TBD")
+}
+
+// TestPlantBootDir_Copilot_StubErrs same shape for copilot.
+func TestPlantBootDir_Copilot_StubErrs(t *testing.T) {
+	res, err := plantBootDir(plantParams{
+		Provider: "copilot",
+		Adapter:  provider.NewCopilotAdapter(),
+		TaskID:   "CW-COPILOT-1",
+	})
+	assert.Nil(t, res)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrBootDirNotImplemented)
+	assert.Contains(t, err.Error(), "copilot")
+}
+
+// TestPlantBootDir_TwoDirSeparation verifies that the boot dir lives under
+// $TMPDIR (ephemeral) and is distinct from the workspace dir convention.
+// The cross-app design's two-dir model is the architectural invariant
+// being locked here.
+func TestPlantBootDir_TwoDirSeparation(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+
+	res, err := plantBootDir(plantParams{
+		Provider: "claude",
+		Adapter:  provider.NewClaudeAdapter(),
+		TaskID:   "CW-TWO-DIR-1",
+		RunID:    0,
+	})
+	require.NoError(t, err)
+	defer func() { _ = os.RemoveAll(res.BootDir) }()
+
+	// Boot dir lives under $TMPDIR (ephemeral on the test rig).
+	assert.True(t, len(res.BootDir) > len(tmp), "bootDir under $TMPDIR")
+
+	// Workspace dir is a separate concern — workspaceCreate puts it under
+	// $HOME/.clockwork/workspaces/... The two-dir contract is enforced at
+	// the Boot() seam, not here. This test verifies the bootDir-only side.
+}
