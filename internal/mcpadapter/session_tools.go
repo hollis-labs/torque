@@ -8,16 +8,16 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// registerSessionTools surfaces the long-lived agent session manager
-// (CW-20260503-0014) over MCP. Tools are no-ops when the adapter has no
-// SessionMgr handle wired (mcp-only stdio path); each handler returns a
+// registerSessionTools surfaces the unified agent session manager
+// (CW-20260508-0001) over MCP. Tools are no-ops when the adapter has no
+// agent.Manager handle wired (mcp-only stdio path); each handler returns a
 // `domain` envelope explaining the missing wiring rather than panicking.
 func (a *Adapter) registerSessionTools() {
 	a.server.AddTool(mcp.NewTool("clockwork_session_create",
-		mcp.WithDescription(`Create AND launch a long-lived agent session (sessionmgr).
-Use to spawn an agent (Reviewer end-agent, Orchestrator, planner, etc.) whose lifetime exceeds a single task — distinct from per-task cliexec sessions which spawn-and-die.
+		mcp.WithDescription(`Boot a long-lived agent session via the unified agent.Manager.Boot path.
+Use to spawn an agent (Reviewer end-agent, Orchestrator, planner, etc.) whose lifetime exceeds a single task — Mode=ModeLongLived. Per-task scheduler-dispatched (one-turn) executions go through the kind=agent task path, not this tool.
 Pair with clockwork_session_checkpoint mid-run and clockwork_session_resume to seed a fresh session from prior checkpoint state.
-Response shape: data = <Session> singleton — ID, status, runtime descriptors, project/task soft-FKs.
+Response shape: data = <Session> singleton — ID, status, runtime descriptors, project/task soft-FKs, Mode, BootDir, WorkspaceDir, ParentSessionID.
 Example: {"agent_profile":"default","workdir":"/tmp/sess","task_id":"T-123"}`),
 		mcp.WithString("agent_profile", mcp.Required(), mcp.Description("Clockwork agent profile name")),
 		mcp.WithString("workdir", mcp.Required(), mcp.Description("Spawned process working directory (boot dir for claude)")),
@@ -30,9 +30,8 @@ Example: {"agent_profile":"default","workdir":"/tmp/sess","task_id":"T-123"}`),
 	// distinct registrations so MCP descriptions can diverge later if
 	// create-then-launch splits into two phases.
 	a.server.AddTool(mcp.NewTool("clockwork_session_launch",
-		mcp.WithDescription(`Alias for clockwork_session_create — same args, same response.
+		mcp.WithDescription(`Alias for clockwork_session_create — boots a Mode=ModeLongLived agent session via agent.Manager.Boot. Same args, same response.
 Kept distinct in the registry so create-then-launch can split into two phases without a breaking rename. Today both names route to the same handler.
-Use either; agents picking from the tool catalog should treat them as identical surfaces.
 Response shape: data = <Session> singleton.
 Example: {"agent_profile":"default","workdir":"/tmp/sess"}`),
 		mcp.WithString("agent_profile", mcp.Required()),

@@ -44,6 +44,7 @@ type Manager struct {
 	inner     *agentsessions.Manager
 	loopbacks map[string]LoopbackHandle // sessID → handle; shut down in Stop
 	stderrs   map[string]func()         // sessID → close() for the per-session sidecar
+	bootDirs  map[string]string         // sessID → ephemeral boot dir; os.RemoveAll in Stop
 }
 
 // NewManager constructs a Manager bound to deps. Caller invokes Sweep()
@@ -61,6 +62,7 @@ func NewManager(deps *Dependencies) *Manager {
 		nowFn:     time.Now,
 		loopbacks: make(map[string]LoopbackHandle),
 		stderrs:   make(map[string]func()),
+		bootDirs:  make(map[string]string),
 	}
 	emitter := NewSchedulerEmitter(deps.Bus)
 	stateSink := &storeStateSink{store: deps.Store}
@@ -120,19 +122,42 @@ func (m *Manager) registerStderrCloser(sessID string, closer func()) {
 	m.stderrs[sessID] = closer
 }
 
+// registerBootDir associates the per-task ephemeral tempdir with the session
+// so terminal-state observation + explicit Stop can os.RemoveAll it. Without
+// this, non-OneShot Modes (LongLived / Subagent / Background / Resume) would
+// leak $TMPDIR/clockwork-boot-* directories (with .mcp.json carrying the
+// loopback URL) until OS-level housekeeping reclaimed them. ModeOneShot
+// continues to clean inline via Boot's defer.
+func (m *Manager) registerBootDir(sessID, bootDir string) {
+	if bootDir == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.bootDirs[sessID] = bootDir
+}
+
 // teardownSession runs the per-session cleanups (loopback shutdown, stderr
-// sidecar close). Idempotent. Called from Stop and from the watch goroutine
-// when the session reaches a terminal state.
+// sidecar close, ephemeral boot dir removal). Idempotent. Called from Stop
+// and from the watch goroutine's terminal-state observation in busEventSink.
 func (m *Manager) teardownSession(sessID string) {
 	m.mu.Lock()
 	loopback := m.loopbacks[sessID]
 	delete(m.loopbacks, sessID)
 	closer := m.stderrs[sessID]
 	delete(m.stderrs, sessID)
+	bootDir := m.bootDirs[sessID]
+	delete(m.bootDirs, sessID)
 	m.mu.Unlock()
 	shutdownLoopbackHandle(loopback)
 	if closer != nil {
 		closer()
+	}
+	if bootDir != "" {
+		// Cleanup failure is non-fatal — the dir lives in $TMPDIR and OS
+		// housekeeping reclaims it eventually. Log via the runtime is also
+		// non-fatal; we silently swallow.
+		_ = os.RemoveAll(bootDir)
 	}
 }
 
@@ -503,8 +528,24 @@ func nullableString(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: true}
 }
 
+// Reserved keys stamped into SessionMeta by Boot so Get/List can recover the
+// fields that don't have dedicated DB columns. The `clockwork.` prefix marks
+// them as substrate-internal so caller-supplied SessionMeta keys won't
+// collide.
+const (
+	metaKeyMode            = "clockwork.mode"
+	metaKeyBootDir         = "clockwork.boot_dir"
+	metaKeyWorkspaceDir    = "clockwork.workspace_dir"
+	metaKeyParentSessionID = "clockwork.parent_session_id"
+)
+
 // sessionFromRecord projects a sqlstore row onto the public Session shape.
+// Decodes the substrate-stamped MetaJSON keys (clockwork.mode, .boot_dir,
+// .workspace_dir, .parent_session_id) so Get/List return the same fields
+// Boot returns — addresses Copilot review feedback on PR #19 about API
+// surface inconsistency.
 func sessionFromRecord(rec *sqlstore.SessionRecord) *Session {
+	meta := decodeMeta(rec.MetaJSON)
 	s := &Session{
 		ID:           rec.ID,
 		AgentProfile: rec.AgentProfile,
@@ -515,10 +556,16 @@ func sessionFromRecord(rec *sqlstore.SessionRecord) *Session {
 		Status:       Status(rec.State),
 		PID:          rec.PID,
 		ResumeHint:   rec.ResumeHint,
-		Meta:         decodeMeta(rec.MetaJSON),
+		Meta:         meta,
 		CreatedAt:    rec.CreatedAt,
 		UpdatedAt:    rec.UpdatedAt,
 		LastActivity: rec.LastActivity,
+	}
+	if meta != nil {
+		s.Mode = parseModeString(meta[metaKeyMode])
+		s.BootDir = meta[metaKeyBootDir]
+		s.WorkspaceDir = meta[metaKeyWorkspaceDir]
+		s.ParentSessionID = meta[metaKeyParentSessionID]
 	}
 	if rec.ProjectID.Valid {
 		s.ProjectID = rec.ProjectID.String

@@ -113,32 +113,45 @@ func TestStatus_Terminal(t *testing.T) {
 	}
 }
 
-// TestShouldUsePTY locks the per-Mode + per-provider Caps.PTY decision
-// matrix. Today only claude on long-lived modes opts into PTY; everything
-// else stays subprocess-per-turn until probed. ModeOneShot is always
-// subprocess regardless of provider (single-turn semantics).
+// TestShouldUsePTY locks the per-Mode + per-provider + per-profile Caps.PTY
+// decision matrix. Default (profile.PTY=nil) falls back to the matrix:
+// claude on long-lived modes opts into PTY; everything else stays subprocess-
+// per-turn. ModeOneShot is always subprocess. profile.PTY explicit overrides
+// the matrix in either direction (subject to ModeOneShot still forcing
+// subprocess). opts.SubprocessPerTurnOverride is a hard escape hatch.
 func TestShouldUsePTY(t *testing.T) {
+	bptr := func(b bool) *bool { return &b }
 	cases := []struct {
-		name     string
-		mode     Mode
-		provider string
-		override bool
-		want     bool
+		name       string
+		mode       Mode
+		provider   string
+		profilePTY *bool
+		override   bool
+		want       bool
 	}{
-		{"claude long-lived → PTY", ModeLongLived, "claude", false, true},
-		{"claude subagent → PTY", ModeSubagent, "claude", false, true},
-		{"claude resume → PTY", ModeResume, "claude", false, true},
-		{"claude background → PTY", ModeBackground, "claude", false, true},
-		{"claude OneShot → no PTY (single turn)", ModeOneShot, "claude", false, false},
-		{"override forces no PTY even on claude long-lived", ModeLongLived, "claude", true, false},
-		{"codex long-lived → no PTY (not yet probed)", ModeLongLived, "codex", false, false},
-		{"opencode long-lived → no PTY", ModeLongLived, "opencode", false, false},
-		{"gemini long-lived → no PTY", ModeLongLived, "gemini", false, false},
-		{"copilot long-lived → no PTY", ModeLongLived, "copilot", false, false},
+		// Matrix defaults (profile.PTY=nil).
+		{"claude long-lived → PTY", ModeLongLived, "claude", nil, false, true},
+		{"claude subagent → PTY", ModeSubagent, "claude", nil, false, true},
+		{"claude resume → PTY", ModeResume, "claude", nil, false, true},
+		{"claude background → PTY", ModeBackground, "claude", nil, false, true},
+		{"claude OneShot → no PTY (single turn)", ModeOneShot, "claude", nil, false, false},
+		{"codex long-lived → no PTY (not yet probed)", ModeLongLived, "codex", nil, false, false},
+		{"opencode long-lived → no PTY", ModeLongLived, "opencode", nil, false, false},
+		{"gemini long-lived → no PTY", ModeLongLived, "gemini", nil, false, false},
+		{"copilot long-lived → no PTY", ModeLongLived, "copilot", nil, false, false},
+
+		// opts.SubprocessPerTurnOverride beats everything.
+		{"override forces no PTY even on claude long-lived", ModeLongLived, "claude", nil, true, false},
+		{"override beats explicit profile.PTY=true", ModeLongLived, "claude", bptr(true), true, false},
+
+		// Explicit profile.PTY override.
+		{"profile.PTY=true forces PTY on codex long-lived", ModeLongLived, "codex", bptr(true), false, true},
+		{"profile.PTY=false forces subprocess on claude long-lived", ModeLongLived, "claude", bptr(false), false, false},
+		{"profile.PTY=true on OneShot still subprocess (single-turn constraint)", ModeOneShot, "claude", bptr(true), false, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := shouldUsePTY(tc.mode, tc.provider, tc.override)
+			got := shouldUsePTY(tc.mode, tc.provider, tc.profilePTY, tc.override)
 			assert.Equal(t, tc.want, got)
 		})
 	}

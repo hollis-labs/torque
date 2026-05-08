@@ -72,22 +72,33 @@ func adapterFor(profile config.AgentProfile, profileName string) (provider.CLIAd
 	}
 }
 
-// shouldUsePTY returns true when the Mode + provider combination should opt
-// into Caps.PTY=true (long-lived PTY runtime) on go-agent-sessions v0.6.0.
+// shouldUsePTY returns true when the Mode + provider + profile combination
+// should opt into Caps.PTY=true (long-lived PTY runtime) on go-agent-sessions
+// v0.6.0.
 //
-// Today only claude has its long-lived PTY shape verified across the portfolio
-// (mux's claudecode is the reference). Other providers stay subprocess-per-
-// turn until each adapter's PTY interactions are probed.
+// Decision priority (highest first):
+//  1. opts.SubprocessPerTurnOverride forces subprocess-per-turn (escape hatch).
+//  2. ModeOneShot is always subprocess-per-turn (single turn, auto-stop;
+//     PTY would force the lib to keep the process alive across turns).
+//  3. profile.PTY (when non-nil) is the explicit operator override:
+//     `true` forces PTY (subject to #1/#2 above); `false` forces subprocess.
+//  4. Per-provider matrix decides when profile.PTY is nil. Today only claude
+//     has its long-lived PTY shape verified across the portfolio (mux's
+//     claudecode is the reference). Other providers stay subprocess-per-turn
+//     until each adapter's PTY interactions are probed.
 //
-// ModeOneShot always uses subprocess-per-turn (single turn, auto-stop). PTY
-// would force the lib to keep the process alive across turns, which is the
-// wrong shape for the scheduler executor lifecycle.
-func shouldUsePTY(mode Mode, provider string, override bool) bool {
+// profile.PTY is *bool so yaml can distinguish "absent" (nil → matrix) from
+// "explicitly false" (force subprocess) — see the AgentProfile.PTY godoc for
+// the schema rationale.
+func shouldUsePTY(mode Mode, provider string, profilePTY *bool, override bool) bool {
 	if override {
 		return false
 	}
 	if mode == ModeOneShot {
 		return false
+	}
+	if profilePTY != nil {
+		return *profilePTY
 	}
 	switch provider {
 	case "claude":

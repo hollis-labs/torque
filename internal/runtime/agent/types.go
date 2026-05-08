@@ -5,10 +5,14 @@
 // spawn, regardless of lifecycle, gets:
 //
 //   - Per-task ephemeral boot dir (planted CLAUDE.md / AGENTS.md / .mcp.json)
-//   - Persistent workspace dir (logs, state, plan)
+//   - Persistent workspace dir (root + prompts/ state/ logs/ scaffolded; the
+//     lib writes session.log when LogPath is unset, but clockwork doesn't
+//     mirror prompts/state into it today — see workspace.go for the
+//     fence on what the substrate does vs. what's reserved)
 //   - Composed system prompt (role + agent-file + project context)
 //   - MCP loopback (closure-bound, no task_id parameter)
-//   - Composed env (CLOCKWORK_TASK_ID, CLOCKWORK_RUN_ID, profile.Environment, ...)
+//   - Composed env (filtered OS env + CLOCKWORK_TASK_ID + CLOCKWORK_RUN_ID +
+//     agent_file.environment + opts.Env + per-provider amendments)
 //   - Sandbox profile (zero-value preserves "no sandbox" today)
 //
 // The lifecycle policy is captured by Mode (LongLived / OneShot / Resume /
@@ -73,6 +77,27 @@ func (m Mode) String() string {
 		return "background"
 	default:
 		return "unknown"
+	}
+}
+
+// parseModeString is the inverse of Mode.String — used by sessionFromRecord
+// to recover Mode from the SessionMeta `clockwork.mode` key. Unknown / empty
+// strings round-trip to ModeLongLived (the zero value), matching the default
+// for any session whose meta predates the stamping convention.
+func parseModeString(s string) Mode {
+	switch s {
+	case "long_lived":
+		return ModeLongLived
+	case "one_shot":
+		return ModeOneShot
+	case "resume":
+		return ModeResume
+	case "subagent":
+		return ModeSubagent
+	case "background":
+		return ModeBackground
+	default:
+		return ModeLongLived
 	}
 }
 

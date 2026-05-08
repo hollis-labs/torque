@@ -71,7 +71,24 @@ func (s *Server) launchSession(w http.ResponseWriter, r *http.Request) {
 		SessionMeta:  body.Meta,
 	})
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		// Distinguish caller-fault validation (400) from server-side Boot
+		// failures (loopback bind, bootdir/workspace creation, runtime
+		// prepare, Manager.Start). agent.Boot wraps server-side failures
+		// with ErrBootFailed; validation errors (Validate(), bad workdir,
+		// missing ParentSessionID, etc.) propagate as plain errors.
+		// Per Copilot review feedback on PR #19.
+		switch {
+		case errors.Is(err, agent.ErrBootFailed):
+			writeError(w, http.StatusInternalServerError, err.Error())
+		case errors.Is(err, agent.ErrAdapterNotFound):
+			writeError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, agent.ErrWorkdirRequired),
+			errors.Is(err, agent.ErrParentSessionRequired),
+			errors.Is(err, agent.ErrResumeCheckpointRequired):
+			writeError(w, http.StatusBadRequest, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 	writeJSON(w, http.StatusCreated, sess)

@@ -9,18 +9,24 @@ import (
 // workspace describes the persistent per-session dir tree:
 //
 //	<WorkspacesRoot>/<projectKey>/<sessID>/
-//	├── prompts/         (boot.md mirrored here for post-mortem)
-//	├── state/           (resume hint, plan snapshot)
+//	├── prompts/         (reserved — clockwork does not yet mirror boot.md
+//	│                     here; planted-file lifetime is the boot dir)
+//	├── state/           (reserved — resume hint + plan snapshot mirroring
+//	│                     deferred to a follow-up; today resume hints live
+//	│                     on the sessions row's resume_hint column)
 //	└── logs/
-//	    ├── session.log  (PTY runtime writes here when LogPath empty)
-//	    └── events.jsonl
+//	    └── session.log  (PTY runtime writes here when LogPath unset on
+//	                      StartOptions; we set LogPath explicitly so the
+//	                      file path is deterministic for forensic tooling)
 //
 // projectKey is opts.ProjectID when non-empty, else "unscoped". sessID is the
 // generated session ID. Caller passes these in via workspaceCreate.
 //
 // Two-dir model rationale (see cross-app design §5): the boot dir is
 // ephemeral (cleaned on session done); the workspace dir is durable so logs
-// survive post-mortem and resume state lives on disk after the agent exits.
+// survive post-mortem. Future increments mirror prompts/state into here so
+// resume + post-mortem work without the boot dir; today the prompts/ + state/
+// dirs are scaffolded but empty — see Copilot review feedback on PR #19.
 type workspace struct {
 	Root      string // ~/.clockwork/workspaces/<projectKey>/<sessID>
 	PromptDir string // <root>/prompts
@@ -55,8 +61,13 @@ func workspaceCreate(workspacesRoot, projectID, sessID string) (*workspace, erro
 		filepath.Join(root, "state"),
 		filepath.Join(root, "logs"),
 	}
+	// 0o700 (user-private) for the workspace tree — these dirs hold logs
+	// and reserved state with potentially sensitive content (planted prompts,
+	// tool payloads, resume hints). Per Copilot review feedback on PR #19;
+	// downgraded from 0o755 since there's no use case for group/world reads
+	// today.
 	for _, d := range dirs {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		if err := os.MkdirAll(d, 0o700); err != nil {
 			return nil, fmt.Errorf("mkdir workspace %s: %w", d, err)
 		}
 	}

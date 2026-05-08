@@ -174,10 +174,18 @@ func Start(ctx context.Context, store Store, mgr SessionManager, planID string, 
 		}
 	}
 
+	// Use the persisted session row's CreatedAt so the trigger's response
+	// matches the idempotency path (which surfaces rec.CreatedAt) and avoids
+	// a clock-skew between time.Now() here and the session row's stamp. Per
+	// Copilot review feedback on PR #19.
+	startedAt := sess.CreatedAt
+	if startedAt.IsZero() {
+		startedAt = time.Now().UTC()
+	}
 	return &Result{
 		SessionID: sess.ID,
 		PlanID:    planID,
-		StartedAt: time.Now().UTC(),
+		StartedAt: startedAt,
 	}, nil
 }
 

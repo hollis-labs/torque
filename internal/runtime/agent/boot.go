@@ -48,7 +48,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		return nil, fmt.Errorf("%w: adapter: %v", ErrAdapterNotFound, err)
 	}
 	caps := baseCaps
-	caps.PTY = shouldUsePTY(opts.Mode, profile.Provider, opts.SubprocessPerTurnOverride)
+	caps.PTY = shouldUsePTY(opts.Mode, profile.Provider, profile.PTY, opts.SubprocessPerTurnOverride)
 
 	// Session ID + role (used for SessionMeta + boot.md content).
 	idFn := opts.IDFn
@@ -181,7 +181,23 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	// Persist DB row in `launching` state. The lib's StateSink transitions
 	// it through running → done/failed asynchronously via the watch
 	// goroutine.
-	metaJSON, err := encodeMeta(opts.SessionMeta)
+	//
+	// Stamp substrate-internal keys into SessionMeta so Get/List can later
+	// reconstitute Mode/BootDir/WorkspaceDir/ParentSessionID — fields that
+	// don't have dedicated DB columns yet. Caller-supplied keys are merged
+	// over the substrate values via the loop below; collisions favor the
+	// substrate (caller can't override the locked Mode/BootDir/etc).
+	persistedMeta := make(map[string]string, len(opts.SessionMeta)+4)
+	for k, v := range opts.SessionMeta {
+		persistedMeta[k] = v
+	}
+	persistedMeta[metaKeyMode] = opts.Mode.String()
+	persistedMeta[metaKeyBootDir] = layout.BootDir
+	persistedMeta[metaKeyWorkspaceDir] = ws.Root
+	if opts.ParentSessionID != "" {
+		persistedMeta[metaKeyParentSessionID] = opts.ParentSessionID
+	}
+	metaJSON, err := encodeMeta(persistedMeta)
 	if err != nil {
 		_ = os.RemoveAll(layout.BootDir)
 		shutdownLoopbackHandle(loopback)
@@ -279,9 +295,13 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 
 	// Register per-session teardown hooks for non-OneShot modes. OneShot
 	// runs synchronously below and drives its own teardown via Stop.
+	// Without bootDir registration, long-lived/background/subagent/resume
+	// sessions would leak $TMPDIR/clockwork-boot-* directories (carrying
+	// .mcp.json with the loopback URL) until OS-level housekeeping ran.
 	if opts.Mode != ModeOneShot {
 		mgr.registerLoopback(sessID, loopback)
 		mgr.registerStderrCloser(sessID, closeStderr)
+		mgr.registerBootDir(sessID, layout.BootDir)
 	}
 
 	sess := &Session{
@@ -343,11 +363,10 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	return sess, nil
 }
 
-// findCheckpoint locates a checkpoint by ID across all sessions. The
-// implementer prompt's pseudocode used a single-call helper; the underlying
-// store's ListSessionCheckpoints is keyed by session ID, so we look up the
-// checkpoint via a 1:N scan unless the caller can supply both IDs. For V1
-// we accept that limitation and document it.
+// findCheckpoint locates a checkpoint by ID via the store's direct lookup
+// (sqlstore.Store.GetSessionCheckpoint). Replaces the prior 1:N scan over
+// the most-recent 200 sessions which silently broke once the session list
+// grew past the page limit (Copilot review feedback on PR #19).
 func findCheckpoint(store *sqlstore.Store, checkpointID string) (*sqlstore.SessionCheckpointRecord, error) {
 	if store == nil {
 		return nil, fmt.Errorf("nil store")
@@ -355,25 +374,14 @@ func findCheckpoint(store *sqlstore.Store, checkpointID string) (*sqlstore.Sessi
 	if checkpointID == "" {
 		return nil, ErrNoCheckpoint
 	}
-	// The checkpoint ID encodes the source session indirectly; we walk
-	// sessions newest-first and look for a matching ID. Bounded by the
-	// session list page size; realistic boot times keep this cheap.
-	sessions, err := store.ListSessions(sqlstore.SessionFilter{Limit: 200})
+	cp, err := store.GetSessionCheckpoint(checkpointID)
 	if err != nil {
-		return nil, fmt.Errorf("list sessions for checkpoint lookup: %w", err)
+		return nil, fmt.Errorf("get session checkpoint: %w", err)
 	}
-	for _, s := range sessions {
-		cps, err := store.ListSessionCheckpoints(s.ID, 0)
-		if err != nil {
-			continue
-		}
-		for _, cp := range cps {
-			if cp.ID == checkpointID {
-				return cp, nil
-			}
-		}
+	if cp == nil {
+		return nil, fmt.Errorf("%w: id=%s", ErrNoCheckpoint, checkpointID)
 	}
-	return nil, fmt.Errorf("%w: id=%s", ErrNoCheckpoint, checkpointID)
+	return cp, nil
 }
 
 // profileSupervision derives Supervisor + ResourceLimits from the profile
