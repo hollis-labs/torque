@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // stderrTailBytes caps how much stderr we surface in result.Reason on failure.
@@ -112,10 +113,19 @@ func openStderrSidecar(runID int64, workspaceLogPath string) (writer io.Writer, 
 	default:
 		writer = io.MultiWriter(writers...)
 	}
+	// Idempotent close (sync.Once): callers commonly use both `defer closer()`
+	// for crash safety AND an explicit `closer()` before reading the files
+	// back. Today the closer is naturally tolerant of double-call (each
+	// inner Close just returns an "already closed" error that we discard),
+	// but if this ever grows flush/rename/finalize logic the double-call
+	// would become flaky. Wrap with sync.Once now to lock the invariant in.
+	var once sync.Once
 	closer = func() {
-		for _, c := range closers {
-			c()
-		}
+		once.Do(func() {
+			for _, c := range closers {
+				c()
+			}
+		})
 	}
 	return writer, tail, closer
 }

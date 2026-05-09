@@ -19,10 +19,14 @@ import (
 // pty signals which ClaudeAdapter constructor to pick: PTY-mode emits
 // interactive args (no -p / --print / --output-format / --verbose / --system-
 // prompt) per go-providers v0.8.1; subprocess-per-turn emits the print-mode
-// args. Other providers ignore pty (their PTY shape is unverified across the
-// portfolio — they stay subprocess-only). Caps.PTY itself is set by the
-// caller via shouldUsePTY; this argument keeps the adapter wiring in lockstep
-// with that decision.
+// args. Non-claude providers (codex / opencode / gemini / copilot) ignore the
+// argument for *adapter constructor selection* — they expose a single
+// adapter type today and don't need a PTY-vs-print-mode constructor split.
+// Their runtime mode is still controlled by Caps.PTY (which shouldUsePTY can
+// flip per-profile via profile.PTY=true), so an operator can opt them into
+// PTY runtime even though the adapter doesn't change shape. Caps.PTY itself
+// is set by the caller via shouldUsePTY; this argument keeps claude's adapter
+// wiring in lockstep with that decision.
 //
 // Subprocess-per-turn (non-PTY) claude paths use v0.9.1+ bare-mode
 // constructors. Bare mode emits --bare plus four explicit-injection flags
