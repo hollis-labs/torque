@@ -207,9 +207,22 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	// Parent linkage (migration 013). Cycle check uses the existing task graph;
 	// since the candidate task has no ID yet, self-reference only applies at
 	// Update time. Here we just require the parent to exist.
+	//
+	// working_dir inheritance: when the caller leaves WorkingDir empty AND
+	// parent_id is set AND the parent has a non-empty working_dir, inherit
+	// it. Surfaced 2026-05-08 in S2.5 smoke (CW-20260508-0004): orchestrator
+	// agent created kind=internal planner sub-task via clockwork_task_create
+	// without working_dir; scheduler dispatched via cliexec → agent.Executor
+	// rejected with "working_dir is required" → 3 retries → blocked. Auto-
+	// inheritance from parent makes child sub-task creation work without
+	// requiring every caller (LLM-driven or otherwise) to know to pass it.
 	if input.ParentID != "" {
-		if _, err := s.store.GetTask(input.ParentID); err != nil {
+		parent, err := s.store.GetTask(input.ParentID)
+		if err != nil {
 			return nil, &ValidationError{Field: "parent_id", Message: "parent task not found: " + input.ParentID}
+		}
+		if input.WorkingDir == "" && parent.WorkingDir != "" {
+			input.WorkingDir = parent.WorkingDir
 		}
 	}
 
