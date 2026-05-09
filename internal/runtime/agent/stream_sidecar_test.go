@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/hollis-labs/go-providers/provider"
 	"github.com/stretchr/testify/assert"
@@ -182,8 +181,8 @@ func TestStartStreamFanout_DownstreamClosedNoPanic(t *testing.T) {
 	close(downstream)
 
 	in <- provider.StreamEvent{Type: provider.EventDelta, Content: "downstream-closed"}
-	// Give the drain goroutine a moment to process before closing.
-	time.Sleep(50 * time.Millisecond)
+	// closer() closes `in` and waits for the drain goroutine to flush+exit;
+	// no need for an arbitrary sleep here.
 	closer()
 
 	data, err := os.ReadFile(filepath.Join(logDir, "stream.jsonl"))

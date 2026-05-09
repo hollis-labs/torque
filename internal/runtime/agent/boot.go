@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
@@ -342,16 +341,27 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	//   - session.log captures stderr (signals, panics, MCP debug, "not
 	//     logged in"-style claude-side bail messages).
 	//
-	// The stream fanout owns EventFanout in StartOptions: the drain
-	// goroutine consumes everything the lib writes to it and persists each
-	// event as JSONL. When opts.eventFanout is non-nil (executor's ModeOneShot
-	// path), we also forward each event to it non-blockingly so the executor's
+	// The stream fanout owns EventFanout in StartOptions for the adapter
+	// (subprocess-per-turn) path: the drain goroutine consumes everything
+	// the lib writes to it and persists each event as JSONL. When
+	// opts.eventFanout is non-nil (executor's ModeOneShot path), we also
+	// forward each event to it non-blockingly so the executor's
 	// translateStreamEvent loop still gets its token-accounting + callback
-	// fan-out. PTY mode skips this — events flow through the typed-event
-	// callback (TypedEventCallback) directly, not through StreamEvent fanout.
+	// fan-out.
+	//
+	// Guarded behind !caps.PTY for the same reason the stderr sidecar is:
+	// the PTY runtime merges stream output into the tty stream at the kernel
+	// level and routes events through the typed-event callback
+	// (TypedEventCallback), not through the StreamEvent fanout. Wiring a
+	// stream fanout for PTY would just produce an empty file and waste a
+	// goroutine + fd. If the lib's PTY runtime starts emitting StreamEvent
+	// values into EventFanout in the future, drop the !caps.PTY guard.
 	const streamFanoutDepth = 64
-	streamLogDir := filepath.Join(ws.Root, "logs")
-	streamFanout, closeStreamFanout := startStreamFanout(streamLogDir, streamFanoutDepth, opts.eventFanout)
+	var streamFanout chan provider.StreamEvent
+	closeStreamFanout := func() {}
+	if !caps.PTY {
+		streamFanout, closeStreamFanout = startStreamFanout(ws.LogDir, streamFanoutDepth, opts.eventFanout)
+	}
 
 	// Supervisor + ResourceLimits resolution.
 	// PTY runtime (go-agent-sessions v0.6.0) enforces these natively. Adapter
