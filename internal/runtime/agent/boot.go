@@ -329,6 +329,40 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		closeStderr = closer
 	}
 
+	// Stream sidecar (CW-20260509-0001): persist provider.StreamEvent values
+	// (delta / tool_use / usage / error / done / session_id / thinking) to
+	// <workspace>/logs/stream.jsonl. Pairs with the stderr→session.log tee
+	// from CW-20260508-0006 — together they're the full forensic surface for
+	// claude subprocess-per-turn sessions:
+	//   - stream.jsonl captures the typed event stream (claude's stdout
+	//     stream-json, projected through the lib's StreamEvent type). Error
+	//     events that go to stdout in stream-json mode (and so don't land in
+	//     session.log's stderr capture) show up here.
+	//   - session.log captures stderr (signals, panics, MCP debug, "not
+	//     logged in"-style claude-side bail messages).
+	//
+	// The stream fanout owns EventFanout in StartOptions for the adapter
+	// (subprocess-per-turn) path: the drain goroutine consumes everything
+	// the lib writes to it and persists each event as JSONL. When
+	// opts.eventFanout is non-nil (executor's ModeOneShot path), we also
+	// forward each event to it non-blockingly so the executor's
+	// translateStreamEvent loop still gets its token-accounting + callback
+	// fan-out.
+	//
+	// Guarded behind !caps.PTY for the same reason the stderr sidecar is:
+	// the PTY runtime merges stream output into the tty stream at the kernel
+	// level and routes events through the typed-event callback
+	// (TypedEventCallback), not through the StreamEvent fanout. Wiring a
+	// stream fanout for PTY would just produce an empty file and waste a
+	// goroutine + fd. If the lib's PTY runtime starts emitting StreamEvent
+	// values into EventFanout in the future, drop the !caps.PTY guard.
+	const streamFanoutDepth = 64
+	var streamFanout chan provider.StreamEvent
+	closeStreamFanout := func() {}
+	if !caps.PTY {
+		streamFanout, closeStreamFanout = startStreamFanout(ws.LogDir, streamFanoutDepth, opts.eventFanout)
+	}
+
 	// Supervisor + ResourceLimits resolution.
 	// PTY runtime (go-agent-sessions v0.6.0) enforces these natively. Adapter
 	// runtime forwards the fields but the lib silently ignores them pending
@@ -358,7 +392,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 			OnSessionID:        onSessionID,
 			Supervisor:         supervisor,
 			ResourceLimits:     limits,
-			EventFanout:        opts.eventFanout,
+			EventFanout:        streamFanout,
 			TypedEventCallback: opts.TypedEventCallback,
 		},
 		SessionMeta: opts.SessionMeta,
@@ -382,6 +416,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	}
 	if err := mgr.inner.Start(startCtx, startReq); err != nil {
 		closeStderr()
+		closeStreamFanout()
 		_ = os.RemoveAll(layout.BootDir)
 		shutdownLoopbackHandle(loopback)
 		// Inner.Start records StateFailed via StateSink on its own; no extra
@@ -397,6 +432,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	if opts.Mode != ModeOneShot {
 		mgr.registerLoopback(sessID, loopback)
 		mgr.registerStderrCloser(sessID, closeStderr)
+		mgr.registerStreamCloser(sessID, closeStreamFanout)
 		mgr.registerBootDir(sessID, layout.BootDir)
 	}
 
@@ -441,6 +477,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	// kickoff, Stop tears down, Wait surfaces the exit code.
 	if opts.Mode == ModeOneShot {
 		defer closeStderr()
+		defer closeStreamFanout()
 		defer shutdownLoopbackHandle(loopback)
 		defer func() {
 			if err := os.RemoveAll(layout.BootDir); err != nil {
