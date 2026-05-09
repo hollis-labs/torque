@@ -43,7 +43,8 @@ type Manager struct {
 	stopped   bool
 	inner     *agentsessions.Manager
 	loopbacks map[string]LoopbackHandle // sessID → handle; shut down in Stop
-	stderrs   map[string]func()         // sessID → close() for the per-session sidecar
+	stderrs   map[string]func()         // sessID → close() for the per-session stderr sidecar
+	streams   map[string]func()         // sessID → close() for the per-session stream sidecar (CW-20260509-0001)
 	bootDirs  map[string]string         // sessID → ephemeral boot dir; os.RemoveAll in Stop
 }
 
@@ -62,6 +63,7 @@ func NewManager(deps *Dependencies) *Manager {
 		nowFn:     time.Now,
 		loopbacks: make(map[string]LoopbackHandle),
 		stderrs:   make(map[string]func()),
+		streams:   make(map[string]func()),
 		bootDirs:  make(map[string]string),
 	}
 	emitter := NewSchedulerEmitter(deps.Bus)
@@ -122,6 +124,19 @@ func (m *Manager) registerStderrCloser(sessID string, closer func()) {
 	m.stderrs[sessID] = closer
 }
 
+// registerStreamCloser associates a per-session stream-sidecar closer (the
+// CW-20260509-0001 stream.jsonl writer) so Stop / sweep can flush the
+// drain goroutine + close the file. Same lifetime contract as
+// registerStderrCloser.
+func (m *Manager) registerStreamCloser(sessID string, closer func()) {
+	if closer == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.streams[sessID] = closer
+}
+
 // registerBootDir associates the per-task ephemeral tempdir with the session
 // so terminal-state observation + explicit Stop can os.RemoveAll it. Without
 // this, non-OneShot Modes (LongLived / Subagent / Background / Resume) would
@@ -138,20 +153,26 @@ func (m *Manager) registerBootDir(sessID, bootDir string) {
 }
 
 // teardownSession runs the per-session cleanups (loopback shutdown, stderr
-// sidecar close, ephemeral boot dir removal). Idempotent. Called from Stop
-// and from the watch goroutine's terminal-state observation in busEventSink.
+// sidecar close, stream sidecar close, ephemeral boot dir removal).
+// Idempotent. Called from Stop and from the watch goroutine's terminal-state
+// observation in busEventSink.
 func (m *Manager) teardownSession(sessID string) {
 	m.mu.Lock()
 	loopback := m.loopbacks[sessID]
 	delete(m.loopbacks, sessID)
-	closer := m.stderrs[sessID]
+	stderrCloser := m.stderrs[sessID]
 	delete(m.stderrs, sessID)
+	streamCloser := m.streams[sessID]
+	delete(m.streams, sessID)
 	bootDir := m.bootDirs[sessID]
 	delete(m.bootDirs, sessID)
 	m.mu.Unlock()
 	shutdownLoopbackHandle(loopback)
-	if closer != nil {
-		closer()
+	if stderrCloser != nil {
+		stderrCloser()
+	}
+	if streamCloser != nil {
+		streamCloser()
 	}
 	if bootDir != "" {
 		// Cleanup failure is non-fatal — the dir lives in $TMPDIR and OS
