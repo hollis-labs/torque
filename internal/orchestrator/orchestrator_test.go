@@ -42,3 +42,38 @@ func TestOrchestrator_LoadTemplateEmbeddedFallback(t *testing.T) {
 	assert.Contains(t, content, "Orchestrator")
 	assert.Equal(t, "<embedded>", path)
 }
+
+// Polling protocol must explicitly forbid bash/curl/raw-HTTP loops
+// against the per-task MCP loopback (CW-20260509-0036). The orchestrator
+// agent has been observed reaching for `while curl ...` loops with the
+// loopback port from `.mcp.json`; that path returns `Invalid session ID`
+// because the MCP endpoint requires session negotiation, hanging the
+// orchestrator. The fix is loud, explicit anti-bash language in the
+// template — guard it with a test so it doesn't silently regress.
+func TestOrchestrator_TemplateForbidsBashPolling(t *testing.T) {
+	t.Setenv(orchestrator.TemplateEnvVar, "/nonexistent/path")
+	t.Setenv("HOME", "/nonexistent/home")
+
+	content, _ := orchestrator.LoadTemplate()
+
+	assert.Contains(t, content, "Polling protocol",
+		"template must contain a Polling protocol section")
+	assert.Contains(t, content, "clockwork_task_get",
+		"template must name the MCP tool to use for polling")
+	assert.Contains(t, content, "curl",
+		"template must explicitly mention `curl` to forbid it")
+	assert.Contains(t, content, "wget",
+		"template must explicitly mention `wget` to forbid it")
+	assert.Contains(t, content, "raw HTTP",
+		"template must call out raw HTTP as a forbidden polling shape")
+	assert.Contains(t, content, "bash",
+		"template must explicitly forbid `bash` polling loops")
+	assert.Contains(t, content, "while",
+		"template must explicitly forbid bash `while` polling loops")
+	assert.Contains(t, content, "until",
+		"template must explicitly forbid bash `until` polling loops")
+	assert.Contains(t, content, "Invalid session ID",
+		"template must explain WHY raw HTTP fails against loopback")
+	assert.Contains(t, content, "127.0.0.1",
+		"template must call out the loopback address pattern as forbidden")
+}
