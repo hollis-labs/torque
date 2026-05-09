@@ -211,6 +211,124 @@ func TestSessionLifecycleHook_StopErrorSwallowed(t *testing.T) {
 	// error propagation"; both are exercised by the test reaching this line.
 }
 
+// --- Layer 2 (CW-20260509-0028) — session-complete marker observer ---
+
+// TestSessionLifecycleHook_ObserveComment_StopsLinkedSession covers PR-B
+// acceptance criterion 1: marker content + orchestrator author + linked
+// running session triggers Stop.
+func TestSessionLifecycleHook_ObserveComment_StopsLinkedSession(t *testing.T) {
+	store := newHookTestStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	stopper := &stubStopper{getStatus: StatusRunning}
+	hook := NewSessionLifecycleHook(bus, store, stopper)
+
+	writePlanWithSession(t, store, "CW-PLAN-L2-1", "doing", "SES-MARKER")
+
+	hook.ObserveComment(context.Background(), &sqlstore.CommentRecord{
+		EntityType: sqlstore.EntityTypeTask,
+		EntityID:   "CW-PLAN-L2-1",
+		Author:     "[system/orchestrator/foo]",
+		Content:    "[system/orchestrator/session-complete] plan delegated cleanly",
+	})
+
+	require.Eventually(t, func() bool {
+		return stopper.StopCount() == 1
+	}, time.Second, 10*time.Millisecond)
+	assert.Equal(t, []string{"SES-MARKER"}, stopper.stopCalled)
+}
+
+// TestSessionLifecycleHook_ObserveComment_NonOrchestratorAuthorIgnored
+// covers PR-B acceptance criterion 2: same content + plain `agent` author
+// must NOT trigger Stop.
+func TestSessionLifecycleHook_ObserveComment_NonOrchestratorAuthorIgnored(t *testing.T) {
+	store := newHookTestStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	stopper := &stubStopper{getStatus: StatusRunning}
+	hook := NewSessionLifecycleHook(bus, store, stopper)
+
+	writePlanWithSession(t, store, "CW-PLAN-L2-2", "doing", "SES-X")
+
+	hook.ObserveComment(context.Background(), &sqlstore.CommentRecord{
+		EntityType: sqlstore.EntityTypeTask,
+		EntityID:   "CW-PLAN-L2-2",
+		Author:     "agent",
+		Content:    "[system/orchestrator/session-complete] spoofed",
+	})
+
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, int32(0), stopper.StopCount())
+}
+
+// TestSessionLifecycleHook_ObserveComment_NoSessionLinkageIgnored covers
+// PR-B acceptance criterion 3: marker on a task with no orchestrator
+// session linkage must NOT trigger Stop.
+func TestSessionLifecycleHook_ObserveComment_NoSessionLinkageIgnored(t *testing.T) {
+	store := newHookTestStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	stopper := &stubStopper{getStatus: StatusRunning}
+	hook := NewSessionLifecycleHook(bus, store, stopper)
+
+	writePlanNoSession(t, store, "CW-PLAN-L2-3", "doing")
+
+	hook.ObserveComment(context.Background(), &sqlstore.CommentRecord{
+		EntityType: sqlstore.EntityTypeTask,
+		EntityID:   "CW-PLAN-L2-3",
+		Author:     "[system/orchestrator/x]",
+		Content:    "[system/orchestrator/session-complete] orphaned marker",
+	})
+
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, int32(0), stopper.StopCount())
+}
+
+// TestSessionLifecycleHook_ObserveComment_MarkerOnLaterLineIgnored covers
+// the strict-prefix-on-first-line discipline from the plan: marker text
+// embedded later in a longer comment must NOT fire.
+func TestSessionLifecycleHook_ObserveComment_MarkerOnLaterLineIgnored(t *testing.T) {
+	store := newHookTestStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	stopper := &stubStopper{getStatus: StatusRunning}
+	hook := NewSessionLifecycleHook(bus, store, stopper)
+
+	writePlanWithSession(t, store, "CW-PLAN-L2-4", "doing", "SES-EMBEDDED")
+
+	content := "Plan summary line 1\nLine 2\nLine 3\nLine 4\n[system/orchestrator/session-complete] embedded"
+	hook.ObserveComment(context.Background(), &sqlstore.CommentRecord{
+		EntityType: sqlstore.EntityTypeTask,
+		EntityID:   "CW-PLAN-L2-4",
+		Author:     "[system/orchestrator/x]",
+		Content:    content,
+	})
+
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, int32(0), stopper.StopCount())
+}
+
+// TestSessionLifecycleHook_ObserveComment_NonTaskEntityIgnored guards the
+// (entity_type, entity_id) filter — collection/epic/sprint comments must
+// not be treated as orchestrator markers.
+func TestSessionLifecycleHook_ObserveComment_NonTaskEntityIgnored(t *testing.T) {
+	store := newHookTestStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	stopper := &stubStopper{getStatus: StatusRunning}
+	hook := NewSessionLifecycleHook(bus, store, stopper)
+
+	hook.ObserveComment(context.Background(), &sqlstore.CommentRecord{
+		EntityType: "collection",
+		EntityID:   "COLL-1",
+		Author:     "[system/orchestrator/x]",
+		Content:    "[system/orchestrator/session-complete] wrong entity",
+	})
+
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, int32(0), stopper.StopCount())
+}
+
 // TestSessionLifecycleHook_NoGoroutineLeak covers PR-A acceptance criterion 6.
 // The dispatcher goroutine must drain when Close is invoked.
 func TestSessionLifecycleHook_NoGoroutineLeak(t *testing.T) {

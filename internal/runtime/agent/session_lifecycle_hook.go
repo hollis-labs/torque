@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,9 +23,22 @@ const stopGraceWindow = 5 * time.Second
 // the cost of a brief window where a redundant transition could fire.
 const planTransitionStopDelay = 2 * time.Second
 
+// orchestratorAuthorPrefix is the literal author marker the substrate
+// matches when scanning comments for the layer-2 session-complete signal.
+// Strict prefix to avoid false positives from unrelated authors. The full
+// marker contract is documented in the orchestrator template runbook.
+const orchestratorAuthorPrefix = "[system/orchestrator/"
+
+// orchestratorCompleteMarker is the literal first-line content prefix the
+// orchestrator emits via clockwork_comment_add as its self-stop signal.
+// Strict prefix matching: any deviation (extra whitespace before, different
+// author prefix, marker on line 2+) is treated as a non-marker comment.
+const orchestratorCompleteMarker = "[system/orchestrator/session-complete]"
+
 // SessionLifecycleHook subscribes to scheduler events and stops orchestrator
-// sessions when their owning plan reaches a terminal status. Implements
-// CW-20260509-0028 layer 1 (deterministic plan-terminal hook).
+// sessions when their owning plan reaches a terminal status (layer 1) or
+// when the orchestrator emits a session-complete marker comment (layer 2).
+// Implements CW-20260509-0028.
 type SessionLifecycleHook struct {
 	bus      *scheduler.EventBus
 	store    *sqlstore.Store
@@ -149,6 +163,36 @@ func (h *SessionLifecycleHook) HandlePlanTransition(ctx context.Context, taskID 
 	h.stopSessionAfterDelay(ctx, sessID, planTransitionStopDelay)
 }
 
+// ObserveComment is the layer-2 entry point invoked by the service-layer
+// after a comment is persisted. Filters on the orchestrator author prefix
+// + session-complete first-line marker, then stops the linked session.
+// Implements service.CommentObserver.
+func (h *SessionLifecycleHook) ObserveComment(ctx context.Context, c *sqlstore.CommentRecord) {
+	if c == nil {
+		return
+	}
+	if c.EntityType != sqlstore.EntityTypeTask || c.EntityID == "" {
+		return
+	}
+	if !strings.HasPrefix(c.Author, orchestratorAuthorPrefix) {
+		return
+	}
+	if !hasSessionCompleteMarker(c.Content) {
+		return
+	}
+	task, err := h.store.GetTask(c.EntityID)
+	if err != nil || task == nil {
+		return
+	}
+	sessID, ok := orchestratorSessionID(task)
+	if !ok {
+		return
+	}
+	// Layer 2 fires AFTER the orchestrator wrote its final comment, so no
+	// extra grace delay is needed — the orchestrator has already flushed.
+	h.stopSession(ctx, sessID)
+}
+
 func (h *SessionLifecycleHook) stopSessionAfterDelay(ctx context.Context, sessID string, delay time.Duration) {
 	if delay <= 0 {
 		h.stopSession(ctx, sessID)
@@ -198,6 +242,20 @@ func planTerminalStatus(s string) bool {
 		return true
 	}
 	return false
+}
+
+// hasSessionCompleteMarker reports whether the comment's first line begins
+// with the literal session-complete marker. First-line-only by design; a
+// later mention in a long comment is not the orchestrator's exit signal.
+func hasSessionCompleteMarker(content string) bool {
+	if content == "" {
+		return false
+	}
+	first := content
+	if i := strings.IndexByte(content, '\n'); i >= 0 {
+		first = content[:i]
+	}
+	return strings.HasPrefix(first, orchestratorCompleteMarker)
 }
 
 // orchestratorSessionID extracts metadata.plan.orchestrator_session_id from

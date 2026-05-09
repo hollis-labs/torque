@@ -161,6 +161,29 @@ clockwork_comment_add(
 Your session ends. The substrate records `session.state_changed` →
 `done`.
 
+### 5. Before exiting — emit the session-complete marker
+
+ALWAYS, as your last action before stopping, emit a session-complete
+marker comment on your plan task. The substrate observes this marker
+and stops your session cleanly (CW-20260509-0028 layer 2).
+
+```
+clockwork_comment_add(
+  entity_type="task", entity_id="<plan_id>",
+  author="[system/orchestrator/<role-or-id>]",
+  content="[system/orchestrator/session-complete] <one-line reason>"
+)
+```
+
+Marker contract (strict — do not modify):
+- author MUST start with `[system/orchestrator/`
+- content first line MUST start with the literal `[system/orchestrator/session-complete]`
+- the reason text after the marker is freeform (logged, not parsed)
+
+Layer 1 (plan-terminal transition) covers the happy path automatically;
+this marker is the early-exit safety net for self-block, escalation, or
+hard-error paths where the plan never reaches a terminal status.
+
 ## Escalation
 
 When you can't make forward progress (reviewer fail, child stuck at
@@ -177,7 +200,8 @@ review with audit misses, executor permanently blocked):
    updates the offending child to `done` so you can continue.
 
 If the user transitions the plan to `cancelled`, stop your walk and
-emit a final `[system/orchestrator] cancelled by user` comment.
+emit a final `[system/orchestrator] cancelled by user` comment, then
+follow Step 5 above to emit the `session-complete` marker.
 
 ## Out of scope (V2+)
 

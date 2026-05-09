@@ -77,14 +77,21 @@ func AgentDeps(
 		})
 	}
 
-	// CW-20260509-0028 layer 1 — orchestrator self-stop on plan-terminal
-	// transition. Returns nil if any required collaborator is nil; the
-	// closer is a no-op in that case so callers can call it unconditionally.
+	// CW-20260509-0028 layer 1 + 2 — orchestrator self-stop. Layer 1
+	// observes plan-terminal transitions on the bus; layer 2 observes
+	// session-complete marker comments via the service-layer post-add
+	// hook. Returns nil if any required collaborator is nil; the closer
+	// is a no-op in that case so callers can call it unconditionally.
 	hook := agent.NewSessionLifecycleHook(bus, store, deps.Sessions)
 	closer := func() {}
 	if hook != nil {
 		hook.Start()
 		closer = hook.Close
+		// Layer 2 wiring — only meaningful when svc is set (mcp stdio's
+		// nil-svc test paths skip it).
+		if svc != nil && svc.Comment != nil {
+			svc.Comment.SetObserver(hook)
+		}
 	}
 	return deps, closer, nil
 }
