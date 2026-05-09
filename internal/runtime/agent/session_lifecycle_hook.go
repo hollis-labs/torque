@@ -39,15 +39,29 @@ const orchestratorCompleteMarker = "[system/orchestrator/session-complete]"
 // sessions when their owning plan reaches a terminal status (layer 1) or
 // when the orchestrator emits a session-complete marker comment (layer 2).
 // Implements CW-20260509-0028.
+//
+// Observer methods (ObserveTaskTransition, ObserveComment) are non-blocking:
+// they spawn a tracked goroutine and return immediately, so the upstream
+// service-layer Add/Transition request path never waits on a session stop.
+// Spawned work uses an internal context bound to the hook lifetime; Close
+// cancels that context and drains all in-flight goroutines before returning.
 type SessionLifecycleHook struct {
 	bus      *scheduler.EventBus
 	store    *sqlstore.Store
 	sessions sessionStopper
 
+	// internalCtx scopes all observer-spawned goroutines to the hook's
+	// lifetime. Created in NewSessionLifecycleHook so observers fired before
+	// Start (or after Close) still get a non-nil ctx; Close cancels it.
+	internalCtx    context.Context
+	internalCancel context.CancelFunc
+	wg             sync.WaitGroup
+
 	mu     sync.Mutex
 	sub    <-chan scheduler.SchedulerEvent
 	cancel context.CancelFunc
 	done   chan struct{}
+	closed bool
 }
 
 // sessionStopper is the slice of *Manager the hook needs. Narrow interface
@@ -65,10 +79,13 @@ func NewSessionLifecycleHook(bus *scheduler.EventBus, store *sqlstore.Store, ses
 	if bus == nil || store == nil || sessions == nil {
 		return nil
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	return &SessionLifecycleHook{
-		bus:      bus,
-		store:    store,
-		sessions: sessions,
+		bus:            bus,
+		store:          store,
+		sessions:       sessions,
+		internalCtx:    ctx,
+		internalCancel: cancel,
 	}
 }
 
@@ -91,10 +108,17 @@ func (h *SessionLifecycleHook) Start() {
 	go h.run(ctx, sub, done)
 }
 
-// Close unsubscribes and waits for the dispatcher goroutine to exit.
-// Idempotent. Safe to call from a process-shutdown path.
+// Close unsubscribes from the bus, cancels in-flight observer goroutines,
+// and waits for everything to drain. Idempotent; safe to call from a
+// process-shutdown path. After Close, observer methods are no-ops (the
+// closed flag short-circuits new spawns).
 func (h *SessionLifecycleHook) Close() {
 	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		return
+	}
+	h.closed = true
 	sub := h.sub
 	cancel := h.cancel
 	done := h.done
@@ -103,9 +127,13 @@ func (h *SessionLifecycleHook) Close() {
 	h.done = nil
 	h.mu.Unlock()
 
+	// Cancel bus-subscriber ctx + internal ctx so any in-flight goroutines
+	// (delayed Stop timers, observer-spawned work) abort their wait.
 	if cancel != nil {
 		cancel()
 	}
+	h.internalCancel()
+
 	if sub != nil {
 		// Unsubscribe closes the channel — that unblocks the range loop in run().
 		h.bus.Unsubscribe(sub)
@@ -113,6 +141,10 @@ func (h *SessionLifecycleHook) Close() {
 	if done != nil {
 		<-done
 	}
+	// Drain after the bus subscriber exits so any final dispatch-spawned
+	// goroutines have been added to the wg. wg.Wait blocks until all
+	// observer + delayed-stop goroutines complete.
+	h.wg.Wait()
 }
 
 func (h *SessionLifecycleHook) run(ctx context.Context, sub <-chan scheduler.SchedulerEvent, done chan struct{}) {
@@ -169,18 +201,34 @@ func (h *SessionLifecycleHook) HandlePlanTransition(ctx context.Context, taskID 
 // scheduler.EventBus — the service-layer observer fires from inside that
 // call path so the hook reliably sees plan-terminal transitions regardless
 // of whether the trigger was MCP, HTTP, or scheduler-internal.
-func (h *SessionLifecycleHook) ObserveTaskTransition(ctx context.Context, taskID, _ /* fromStatus */, toStatus string) {
+//
+// Non-blocking: spawns a tracked goroutine using the hook's internal ctx
+// (NOT the caller's ctx, which is typically context.Background() from the
+// service layer and would not honor daemon shutdown). The caller-supplied
+// ctx is intentionally ignored — the service layer's Add/Transition request
+// path must not be coupled to this hook's stop latency.
+func (h *SessionLifecycleHook) ObserveTaskTransition(_ context.Context, taskID, _ /* fromStatus */, toStatus string) {
 	if !planTerminalStatus(toStatus) {
 		return
 	}
-	h.HandlePlanTransition(ctx, taskID)
+	if !h.spawnObserver(func(ctx context.Context) {
+		h.HandlePlanTransition(ctx, taskID)
+	}) {
+		return
+	}
 }
 
 // ObserveComment is the layer-2 entry point invoked by the service-layer
 // after a comment is persisted. Filters on the orchestrator author prefix
 // + session-complete first-line marker, then stops the linked session.
 // Implements service.CommentObserver.
-func (h *SessionLifecycleHook) ObserveComment(ctx context.Context, c *sqlstore.CommentRecord) {
+//
+// Non-blocking: filter checks on the freely-available c fields run inline so
+// the common no-match case has zero goroutine cost. On match, the DB lookup
+// + session stop are dispatched to a tracked goroutine bound to the hook's
+// internal ctx. The caller-supplied ctx is ignored for the same reason as
+// ObserveTaskTransition.
+func (h *SessionLifecycleHook) ObserveComment(_ context.Context, c *sqlstore.CommentRecord) {
 	if c == nil {
 		return
 	}
@@ -193,17 +241,42 @@ func (h *SessionLifecycleHook) ObserveComment(ctx context.Context, c *sqlstore.C
 	if !hasSessionCompleteMarker(c.Content) {
 		return
 	}
-	task, err := h.store.GetTask(c.EntityID)
-	if err != nil || task == nil {
+	entityID := c.EntityID
+	if !h.spawnObserver(func(ctx context.Context) {
+		task, err := h.store.GetTask(entityID)
+		if err != nil || task == nil {
+			return
+		}
+		sessID, ok := orchestratorSessionID(task)
+		if !ok {
+			return
+		}
+		// Layer 2 fires AFTER the orchestrator wrote its final comment, so no
+		// extra grace delay is needed — the orchestrator has already flushed.
+		h.stopSession(ctx, sessID)
+	}) {
 		return
 	}
-	sessID, ok := orchestratorSessionID(task)
-	if !ok {
-		return
+}
+
+// spawnObserver runs fn in a tracked goroutine using the hook's internal ctx.
+// Returns false (and does not spawn) when the hook has been Closed; the
+// caller treats that as a no-op. The wg increment happens before goroutine
+// launch so Close's wg.Wait correctly accounts for in-flight work.
+func (h *SessionLifecycleHook) spawnObserver(fn func(context.Context)) bool {
+	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		return false
 	}
-	// Layer 2 fires AFTER the orchestrator wrote its final comment, so no
-	// extra grace delay is needed — the orchestrator has already flushed.
-	h.stopSession(ctx, sessID)
+	h.wg.Add(1)
+	h.mu.Unlock()
+
+	go func() {
+		defer h.wg.Done()
+		fn(h.internalCtx)
+	}()
+	return true
 }
 
 func (h *SessionLifecycleHook) stopSessionAfterDelay(ctx context.Context, sessID string, delay time.Duration) {
@@ -211,16 +284,22 @@ func (h *SessionLifecycleHook) stopSessionAfterDelay(ctx context.Context, sessID
 		h.stopSession(ctx, sessID)
 		return
 	}
-	go func() {
+	// Track via wg so Close drains the delayed goroutine. Use the hook's
+	// internal ctx instead of the caller's ctx so the timer survives the
+	// caller-supplied ctx (commonly request-scoped) finishing first; Close
+	// cancels the internal ctx to cut the wait short.
+	if !h.spawnObserver(func(internalCtx context.Context) {
 		t := time.NewTimer(delay)
 		defer t.Stop()
 		select {
-		case <-ctx.Done():
+		case <-internalCtx.Done():
 			return
 		case <-t.C:
 		}
-		h.stopSession(ctx, sessID)
-	}()
+		h.stopSession(internalCtx, sessID)
+	}) {
+		return
+	}
 }
 
 func (h *SessionLifecycleHook) stopSession(ctx context.Context, sessID string) {

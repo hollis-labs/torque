@@ -27,10 +27,11 @@ import (
 // the returned manager into HTTP/MCP handlers (server.WithSessions,
 // adapter.WithSessions).
 //
-// closer, when non-nil, must be invoked at daemon shutdown to drain the
-// session lifecycle hook goroutine (CW-20260509-0028 layer 1). nil when
-// any of (bus, store, sessions) is nil — i.e. test wirings that opt out
-// of the hook.
+// closer is always non-nil — invoke at daemon shutdown to drain the session
+// lifecycle hook goroutine + any in-flight observer-spawned stop work
+// (CW-20260509-0028 layers 1 + 2). When the hook is opted out (any of bus,
+// store, sessions nil — e.g. test wirings), closer is a safe no-op so
+// callers can call it unconditionally without nil-checking.
 func AgentDeps(
 	store *sqlstore.Store,
 	profiles config.ProfileMap,
