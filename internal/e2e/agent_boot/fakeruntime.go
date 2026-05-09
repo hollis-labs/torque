@@ -184,10 +184,11 @@ func (r *fakeRuntime) simulateTypedEvent(ev events.Event) {
 
 // fakeSession is the inert agentsessions.Session returned by fakeRuntime.
 // It records SendInput calls + delivers TypedEventCallback events on demand
-// + reports a stable PID via PIDReporter. Lifecycle is driven directly by
-// tests (Stop closes the done chan; Wait surfaces waitExitErr).
+// + reports a (mutable) PID via PIDReporter. Lifecycle is driven directly by
+// tests (Stop closes the done chan; Wait surfaces waitExitErr; setPID flips
+// the live PID mid-session so the PID poller has something to observe).
 type fakeSession struct {
-	pid          int
+	pid          atomic.Int32
 	typedEventCB provider.EventsCallback
 	onSessionID  func(string)
 	waitExitErr  *agentsessions.ExitError
@@ -204,14 +205,21 @@ type fakeSession struct {
 }
 
 func newFakeSession(pid int, cb provider.EventsCallback, onSessionID func(string), waitErr *agentsessions.ExitError) *fakeSession {
-	return &fakeSession{
-		pid:          pid,
+	s := &fakeSession{
 		typedEventCB: cb,
 		onSessionID:  onSessionID,
 		waitExitErr:  waitErr,
 		done:         make(chan struct{}),
 	}
+	s.pid.Store(int32(pid))
+	return s
 }
+
+// setPID flips the reported live PID. Mirrors the lib's adapterSession
+// behavior where runner.EventProcessStarted bumps s.pid mid-turn and
+// runner.EventProcessExited resets it to 0. Used by PID-poller tests to
+// drive observable transitions.
+func (s *fakeSession) setPID(pid int) { s.pid.Store(int32(pid)) }
 
 // Wait blocks until Stop is called. Returns the captured ExitError (when
 // set) wrapped as a Go error so callers can extract Cause via errors.As.
@@ -250,7 +258,7 @@ func (s *fakeSession) Health() agentsessions.HealthStatus {
 	}
 	return agentsessions.HealthStatus{
 		Alive: !s.dead.Load(),
-		PID:   s.pid,
+		PID:   int(s.pid.Load()),
 		State: state,
 	}
 }
@@ -266,10 +274,10 @@ func (s *fakeSession) LivePID() int {
 	if s.dead.Load() {
 		return 0
 	}
-	return s.pid
+	return int(s.pid.Load())
 }
 
-func (s *fakeSession) LastPID() int { return s.pid }
+func (s *fakeSession) LastPID() int { return int(s.pid.Load()) }
 
 // recordedSendInputs returns a copy of the SendInput payloads observed so
 // far. Test-side accessor — fakeSession.mu is the synchronization point.
