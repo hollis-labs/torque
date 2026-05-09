@@ -22,10 +22,11 @@ import (
 func TestPlanStart_NoSessionsWired_ReturnsDomainError(t *testing.T) {
 	a := setupAdapter(t) // mcpadapter.New(svc, nil) without .WithSessions
 
-	text, _ := callTool(t, a, "clockwork_plan_start", map[string]interface{}{
+	text, isErr := callTool(t, a, "clockwork_plan_start", map[string]interface{}{
 		"plan_id": "CW-DOES-NOT-MATTER",
 	})
 
+	assert.True(t, isErr, "MCP result.isError must be set for the dual-surface error contract")
 	code, msg, _ := parseError(t, text)
 	assert.Equal(t, "domain", code)
 	assert.Contains(t, msg, "session manager not configured",
@@ -52,10 +53,11 @@ func TestPlanStart_SessionsWired_PassesNilCheck(t *testing.T) {
 
 	a := mcpadapter.New(svc, nil).WithSessions(deps.Sessions)
 
-	text, _ := callTool(t, a, "clockwork_plan_start", map[string]interface{}{
+	text, isErr := callTool(t, a, "clockwork_plan_start", map[string]interface{}{
 		"plan_id": "CW-DOES-NOT-EXIST-IN-DB",
 	})
 
+	assert.True(t, isErr, "MCP result.isError must be set for the dual-surface error contract")
 	code, msg, _ := parseError(t, text)
 	// We expect arg_invalid (ErrPlanNotFound), NOT domain (ErrSessionMgrMissing).
 	assert.Equal(t, "arg_invalid", code,
@@ -81,10 +83,11 @@ func TestPlanStart_SessionsWired_MissingPlanID(t *testing.T) {
 
 	a := mcpadapter.New(svc, nil).WithSessions(deps.Sessions)
 
-	text, _ := callTool(t, a, "clockwork_plan_start", map[string]interface{}{
+	text, isErr := callTool(t, a, "clockwork_plan_start", map[string]interface{}{
 		// no plan_id
 	})
 
+	assert.True(t, isErr, "MCP result.isError must be set for the dual-surface error contract")
 	code, msg, field := parseError(t, text)
 	assert.Equal(t, "arg_invalid", code)
 	assert.Equal(t, "plan_id", field)

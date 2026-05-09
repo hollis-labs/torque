@@ -82,8 +82,8 @@ func mcpCmd() *cobra.Command {
 			// NOT dispatch kind=agent / kind=internal tasks (that's the
 			// `clockwork serve` daemon's role). MCP scheduler_* tools will
 			// surface a `not running` error when called against this stdio
-			// instance, matching the HTTP 503 contract documented on
-			// mcpadapter.New (line 38: "sched may be nil").
+			// instance, matching the HTTP 503 contract documented in
+			// mcpadapter.New's nil-sched godoc.
 			agentDeps, err := bootstrap.AgentDeps(store, profiles, svc, nil, nil)
 			if err != nil {
 				return fmt.Errorf("bootstrap agent deps: %w", err)
