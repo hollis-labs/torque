@@ -61,7 +61,10 @@ func (e *Executor) Validate(job *executor.ExecutionJob) error {
 		return err
 	}
 	profile := config.GetProfileOrDefault(e.deps.Profiles, job.AgentProfile)
-	if _, _, err := adapterFor(profile, job.AgentProfile); err != nil {
+	// Validate is provider-existence only — PTY argument doesn't affect
+	// which providers are accepted, so pass false. The actual PTY decision
+	// is re-made at Boot time per the Mode + profile + override matrix.
+	if _, _, err := adapterFor(profile, job.AgentProfile, false); err != nil {
 		return executor.NewPermanentError(err)
 	}
 	if _, err := executor.ResolveWorkingDir(job.WorkingDir); err != nil {

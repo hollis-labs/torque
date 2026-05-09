@@ -9,8 +9,9 @@ require (
 	github.com/hollis-labs/go-agent-sessions v0.7.0
 	github.com/hollis-labs/go-messaging v0.2.0
 	github.com/hollis-labs/go-modelsdev v0.1.0
-	github.com/hollis-labs/go-providers v0.8.0
+	github.com/hollis-labs/go-providers v0.9.1
 	github.com/hollis-labs/go-queue v0.1.1
+	github.com/hollis-labs/go-runner v0.3.0
 	github.com/hollis-labs/go-sandbox v0.2.0
 	github.com/hollis-labs/go-strutil v0.0.0-20260409170855-ca5f29e8b1db
 	github.com/hollis-labs/go-toolbroker v0.1.0
@@ -37,7 +38,6 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
-	github.com/hollis-labs/go-runner v0.3.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect

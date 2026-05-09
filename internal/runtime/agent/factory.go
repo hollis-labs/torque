@@ -16,11 +16,33 @@ import (
 // `--agent <name>`, and by convention the clockwork profile name is the
 // opencode agent name.
 //
-// Caps.PTY is NOT set here — Boot picks it per-Mode (claude long-lived modes
-// opt into PTY=true; everything else stays subprocess-per-turn until per-
-// adapter PTY shape is verified). Forked from internal/runtime/cliexec/adapter.go
-// with the Caps.PTY decision moved to the call site.
-func adapterFor(profile config.AgentProfile, profileName string) (provider.CLIAdapter, agentsessions.Capabilities, error) {
+// pty signals which ClaudeAdapter constructor to pick: PTY-mode emits
+// interactive args (no -p / --print / --output-format / --verbose / --system-
+// prompt) per go-providers v0.8.1; subprocess-per-turn emits the print-mode
+// args. Other providers ignore pty (their PTY shape is unverified across the
+// portfolio — they stay subprocess-only). Caps.PTY itself is set by the
+// caller via shouldUsePTY; this argument keeps the adapter wiring in lockstep
+// with that decision.
+//
+// Subprocess-per-turn (non-PTY) claude paths use v0.9.1+ bare-mode
+// constructors. Bare mode emits --bare plus four explicit-injection flags
+// (--mcp-config / --append-system-prompt-file / --settings / --add-dir) and
+// skips the CLI's auto-discovery of operator config (~/.claude/settings.json,
+// ~/.claude.json, hooks, plugins, MCP, OAuth, keychain, CLAUDE.md auto-find).
+// This obsoletes the operator-config-bleed-through class for bare consumers
+// (CW-20260508-0019). PTY paths stay non-bare — bare mode is print-mode-
+// focused per Anthropic's docs and the PTY/TUI shape doesn't accept --bare.
+//
+// v0.9.1 fixed the .mcp.json HTTP-loopback shape (CW-20260509-0003): the
+// loopback entry now emits `{"type": "http", "url": "..."}` which bare-mode
+// strict validation accepts.
+//
+// Bare-mode adapters returned here are NOT yet ready to spawn — the four
+// injection-path fields (MCPConfigPath / AppendSystemPromptFile / SettingsPath
+// / ProjectDir) must be populated post-plantBootDir via
+// (*provider.ClaudeAdapter).BareInjectionPaths(layout.BootDir, opts.Workdir).
+// See agent.Boot for the field-population call site.
+func adapterFor(profile config.AgentProfile, profileName string, pty bool) (provider.CLIAdapter, agentsessions.Capabilities, error) {
 	switch profile.Provider {
 	case "claude":
 		caps := agentsessions.Capabilities{
@@ -28,10 +50,17 @@ func adapterFor(profile config.AgentProfile, profileName string) (provider.CLIAd
 			ProviderSessionID: true,
 			CheckpointResume:  true,
 		}
-		if profileIsDevMode(profile) {
-			return provider.NewClaudeAdapterDev(), caps, nil
+		dev := profileIsDevMode(profile)
+		switch {
+		case pty && dev:
+			return provider.NewClaudeAdapterDevPTY(), caps, nil
+		case pty:
+			return provider.NewClaudeAdapterPTY(), caps, nil
+		case dev:
+			return provider.NewClaudeAdapterDevBare(), caps, nil
+		default:
+			return provider.NewClaudeAdapterBare(), caps, nil
 		}
-		return provider.NewClaudeAdapter(), caps, nil
 
 	case "codex":
 		return provider.NewCodexAdapter(), agentsessions.Capabilities{
@@ -82,10 +111,16 @@ func adapterFor(profile config.AgentProfile, profileName string) (provider.CLIAd
 //     PTY would force the lib to keep the process alive across turns).
 //  3. profile.PTY (when non-nil) is the explicit operator override:
 //     `true` forces PTY (subject to #1/#2 above); `false` forces subprocess.
-//  4. Per-provider matrix decides when profile.PTY is nil. Today only claude
-//     has its long-lived PTY shape verified across the portfolio (mux's
-//     claudecode is the reference). Other providers stay subprocess-per-turn
-//     until each adapter's PTY interactions are probed.
+//  4. Per-provider matrix decides when profile.PTY is nil. All providers
+//     default to subprocess-per-turn today — claude's long-lived
+//     "session" semantics are delivered via `--resume <session_id>` chaining
+//     across subprocess turns, NOT via PTY/TUI. Programmatic auto-fire
+//     against the claude TUI is unproven (mux's claudecode is human-driven
+//     with empty bootstrap.prompt_prefix; the lib's AutoFireFirstTurn
+//     SendInput lands in the TUI's input box but doesn't submit, and the
+//     stdin-pipe BootMode pre-write similarly stalls because claude's TUI
+//     reads its raw-mode input AFTER initialization). Operators can flip
+//     `pty: true` per-profile to experiment.
 //
 // profile.PTY is *bool so yaml can distinguish "absent" (nil → matrix) from
 // "explicitly false" (force subprocess) — see the AgentProfile.PTY godoc for
@@ -100,14 +135,10 @@ func shouldUsePTY(mode Mode, provider string, profilePTY *bool, override bool) b
 	if profilePTY != nil {
 		return *profilePTY
 	}
-	switch provider {
-	case "claude":
-		return true
-	default:
-		// codex/opencode/gemini/copilot: subprocess-per-turn until per-
-		// adapter PTY shape is verified.
-		return false
-	}
+	// All providers (claude / codex / opencode / gemini / copilot):
+	// subprocess-per-turn by default until programmatic TUI driving is solved.
+	_ = provider
+	return false
 }
 
 // profileIsDevMode reports whether the profile opts into Claude's
