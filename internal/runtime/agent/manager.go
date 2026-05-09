@@ -35,17 +35,19 @@ func defaultSessionID() string {
 // Manager keeps everything Boot doesn't (lifecycle proxy, checkpoint /
 // resume, orphan sweep on startup, per-session loopback teardown).
 type Manager struct {
-	deps  *Dependencies
-	idFn  IDFunc
-	nowFn func() time.Time
+	deps            *Dependencies
+	idFn            IDFunc
+	nowFn           func() time.Time
+	pidPollInterval time.Duration
 
-	mu        sync.RWMutex
-	stopped   bool
-	inner     *agentsessions.Manager
-	loopbacks map[string]LoopbackHandle // sessID → handle; shut down in Stop
-	stderrs   map[string]func()         // sessID → close() for the per-session stderr sidecar
-	streams   map[string]func()         // sessID → close() for the per-session stream sidecar (CW-20260509-0001)
-	bootDirs  map[string]string         // sessID → ephemeral boot dir; os.RemoveAll in Stop
+	mu         sync.RWMutex
+	stopped    bool
+	inner      *agentsessions.Manager
+	loopbacks  map[string]LoopbackHandle // sessID → handle; shut down in Stop
+	stderrs    map[string]func()         // sessID → close() for the per-session stderr sidecar
+	streams    map[string]func()         // sessID → close() for the per-session stream sidecar (CW-20260509-0001)
+	bootDirs   map[string]string         // sessID → ephemeral boot dir; os.RemoveAll in Stop
+	pidPollers map[string]func()         // sessID → close() for the per-session PID poller (CW-20260509-0008)
 }
 
 // NewManager constructs a Manager bound to deps. Caller invokes Sweep()
@@ -58,13 +60,15 @@ func NewManager(deps *Dependencies) *Manager {
 		deps = &Dependencies{}
 	}
 	m := &Manager{
-		deps:      deps,
-		idFn:      defaultSessionID,
-		nowFn:     time.Now,
-		loopbacks: make(map[string]LoopbackHandle),
-		stderrs:   make(map[string]func()),
-		streams:   make(map[string]func()),
-		bootDirs:  make(map[string]string),
+		deps:            deps,
+		idFn:            defaultSessionID,
+		nowFn:           time.Now,
+		pidPollInterval: defaultPidPollInterval,
+		loopbacks:       make(map[string]LoopbackHandle),
+		stderrs:         make(map[string]func()),
+		streams:         make(map[string]func()),
+		bootDirs:        make(map[string]string),
+		pidPollers:      make(map[string]func()),
 	}
 	emitter := NewSchedulerEmitter(deps.Bus)
 	stateSink := &storeStateSink{store: deps.Store}
@@ -89,6 +93,16 @@ func (m *Manager) WithIDFunc(fn IDFunc) *Manager {
 func (m *Manager) WithNowFunc(fn func() time.Time) *Manager {
 	if fn != nil {
 		m.nowFn = fn
+	}
+	return m
+}
+
+// WithPidPollInterval overrides the per-session PID poller cadence. Must be
+// called before any Boot. Tests use a tight interval (e.g. 10ms) to keep
+// assertions fast; production keeps the default.
+func (m *Manager) WithPidPollInterval(d time.Duration) *Manager {
+	if d > 0 {
+		m.pidPollInterval = d
 	}
 	return m
 }
@@ -152,12 +166,26 @@ func (m *Manager) registerBootDir(sessID, bootDir string) {
 	m.bootDirs[sessID] = bootDir
 }
 
-// teardownSession runs the per-session cleanups (loopback shutdown, stderr
-// sidecar close, stream sidecar close, ephemeral boot dir removal).
-// Idempotent. Called from Stop and from the watch goroutine's terminal-state
-// observation in busEventSink.
+// registerPidPoller associates the per-session PID-poller closer (CW-20260509-0008)
+// so Stop / sweep can stop the goroutine. Same lifetime contract as the other
+// per-session registrations.
+func (m *Manager) registerPidPoller(sessID string, closer func()) {
+	if closer == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pidPollers[sessID] = closer
+}
+
+// teardownSession runs the per-session cleanups (PID poller shutdown, loopback
+// shutdown, stderr sidecar close, stream sidecar close, ephemeral boot dir
+// removal). Idempotent. Called from Stop and from the watch goroutine's
+// terminal-state observation in busEventSink.
 func (m *Manager) teardownSession(sessID string) {
 	m.mu.Lock()
+	pidCloser := m.pidPollers[sessID]
+	delete(m.pidPollers, sessID)
 	loopback := m.loopbacks[sessID]
 	delete(m.loopbacks, sessID)
 	stderrCloser := m.stderrs[sessID]
@@ -167,6 +195,13 @@ func (m *Manager) teardownSession(sessID string) {
 	bootDir := m.bootDirs[sessID]
 	delete(m.bootDirs, sessID)
 	m.mu.Unlock()
+	// Stop the poller first so it doesn't race with the watch goroutine's
+	// terminal-state write (a final Touch landing after StateSink wrote done
+	// would re-bump last_activity but leave state correct — harmless, but
+	// the ordering keeps the row write sequence clean).
+	if pidCloser != nil {
+		pidCloser()
+	}
 	shutdownLoopbackHandle(loopback)
 	if stderrCloser != nil {
 		stderrCloser()
@@ -196,8 +231,10 @@ func (m *Manager) Get(id string) (*Session, error) {
 		return nil, err
 	}
 	sess := sessionFromRecord(rec)
-	if info, ok := m.inner.Get(id); ok {
-		sess.PID = info.PID
+	// Live PID via Health() — inner.Get's PID is the launch-time snapshot
+	// (always 0 for adapter-mode sessions per CW-20260509-0008 forensic).
+	if snap, ok := m.inner.Health(id); ok {
+		sess.PID = snap.Health.PID
 	}
 	return sess, nil
 }
@@ -434,12 +471,15 @@ func (m *Manager) checkStopped() error {
 
 // LivePID reports the current PID of the named session's running process.
 // Returns 0 between turns (subprocess-per-turn) or for terminated sessions.
+// Reads the lib's live Health() — inner.Get's PID is the launch-time snapshot
+// and stays 0 for the entire lifetime of adapter-mode sessions
+// (CW-20260509-0008).
 func (m *Manager) LivePID(id string) int {
-	info, ok := m.inner.Get(id)
+	snap, ok := m.inner.Health(id)
 	if !ok {
 		return 0
 	}
-	return info.PID
+	return snap.Health.PID
 }
 
 // Boot is the convenience that drives package-level Boot with this

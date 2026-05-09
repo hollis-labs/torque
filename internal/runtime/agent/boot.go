@@ -438,6 +438,13 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		mgr.registerStderrCloser(sessID, closeStderr)
 		mgr.registerStreamCloser(sessID, closeStreamFanout)
 		mgr.registerBootDir(sessID, layout.BootDir)
+		// Per-session PID poller (CW-20260509-0008): the lib records pid only
+		// at launch (always 0 for adapter-mode) and never refreshes the row's
+		// last_activity between turns. The poller bridges that gap and drives
+		// a clean Stop the moment Health.Alive flips false so orchestrators
+		// finish in state=done instead of waiting for the next daemon-restart
+		// sweep to mark the row crashed.
+		mgr.registerPidPoller(sessID, startPidPoller(mgr, sessID, mgr.pidPollInterval))
 	}
 
 	// Fire the deferred kickoff in a goroutine so agent.Boot can return now
