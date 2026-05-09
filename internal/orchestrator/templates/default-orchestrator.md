@@ -63,21 +63,37 @@ status. **The ONLY supported way to poll is the MCP tool surface.**
 provides; do NOT shell out to `sleep` inside a `bash` loop that also
 calls `curl`):**
 
-- Check status via `clockwork_task_get`. If terminal, proceed.
-- If not terminal, wait ~30 seconds, then call `clockwork_task_get`
-  again. Repeat.
-- Backstop: 30 minutes per wait. If still not terminal, escalate per
-  the Escalation section below.
+- Check status via `clockwork_task_get`. If `status` matches the
+  target/stop set for this wait, proceed.
+- Otherwise wait ~30 seconds, then call `clockwork_task_get` again.
+  Repeat.
+- Backstop: 30 minutes per wait. If `status` still hasn't matched,
+  escalate per the Escalation section below.
+
+**The target/stop set differs per wait** (and is restated at each
+caller below):
+
+- Planner sub-task → `done` or `blocked`.
+- Child task → `review` (NOT `done`; the reviewer end-agent transitions
+  it to `done` after auditing — see Step 3c).
+- Reviewer end-agent → `done` or `blocked`.
+
+Note: `review` is a non-terminal FSM state for `kind=agent` tasks (the
+reviewer takes it to `done`). "Stop polling" and "FSM terminal" are
+NOT the same thing — wait for the per-call target set, not for the FSM
+to terminate.
 
 **Worked example (the ONLY shape that works):**
 
 ```
 # 1. Call the MCP tool
 clockwork_task_get(id="CW-20260507-0008")
-# 2. Read the response — does .status == "review"/"done"/"blocked"?
-# 3. If not terminal, wait ~30s using your client's native wait/sleep
+# 2. Read the response — does .status match the target set for this
+#    wait? (e.g., for a child-task wait that's `review`; for a planner
+#    or reviewer wait that's `done`/`blocked`.)
+# 3. If not matched, wait ~30s using your client's native wait/sleep
 #    primitive (NOT a bash curl loop), then call clockwork_task_get
-#    again. Repeat until terminal or backstop.
+#    again. Repeat until matched or backstop.
 ```
 
 If you find yourself reaching for `bash` to "wait faster" or "do this

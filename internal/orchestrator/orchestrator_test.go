@@ -62,6 +62,16 @@ func TestOrchestrator_TemplateForbidsBashPolling(t *testing.T) {
 		"template must name the MCP tool to use for polling")
 	assert.Contains(t, content, "curl",
 		"template must explicitly mention `curl` to forbid it")
+	assert.Contains(t, content, "wget",
+		"template must explicitly mention `wget` to forbid it")
+	assert.Contains(t, content, "raw HTTP",
+		"template must call out raw HTTP as a forbidden polling shape")
+	assert.Contains(t, content, "bash",
+		"template must explicitly forbid `bash` polling loops")
+	assert.Contains(t, content, "while",
+		"template must explicitly forbid bash `while` polling loops")
+	assert.Contains(t, content, "until",
+		"template must explicitly forbid bash `until` polling loops")
 	assert.Contains(t, content, "Invalid session ID",
 		"template must explain WHY raw HTTP fails against loopback")
 	assert.Contains(t, content, "127.0.0.1",
