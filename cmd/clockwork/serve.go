@@ -144,10 +144,11 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// Constructs Dependencies + Manager, runs the orphan sweep, and is the
 	// single root every Boot caller (planstart, scheduler dispatch, end-agent,
 	// HTTP/MCP) reaches into.
-	agentDeps, err := bootstrap.AgentDeps(store, profiles, svc, tools, sched.EventBus())
+	agentDeps, agentDepsClose, err := bootstrap.AgentDeps(store, profiles, svc, tools, sched.EventBus())
 	if err != nil {
 		return fmt.Errorf("bootstrap agent deps: %w", err)
 	}
+	defer agentDepsClose()
 
 	// Register executors against the unified deps. agent.NewExecutor occupies
 	// the "cli" slot the legacy cliexec.CLIExecutor previously held; the

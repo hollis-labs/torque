@@ -26,15 +26,20 @@ import (
 // Returns deps with deps.Sessions populated and Sweep run; caller binds
 // the returned manager into HTTP/MCP handlers (server.WithSessions,
 // adapter.WithSessions).
+//
+// closer, when non-nil, must be invoked at daemon shutdown to drain the
+// session lifecycle hook goroutine (CW-20260509-0028 layer 1). nil when
+// any of (bus, store, sessions) is nil — i.e. test wirings that opt out
+// of the hook.
 func AgentDeps(
 	store *sqlstore.Store,
 	profiles config.ProfileMap,
 	svc *service.Service,
 	tools *toolbroker.ToolRouter,
 	bus *scheduler.EventBus,
-) (*agent.Dependencies, error) {
+) (*agent.Dependencies, func(), error) {
 	if store == nil {
-		return nil, fmt.Errorf("agent deps bootstrap: store is nil")
+		return nil, nil, fmt.Errorf("agent deps bootstrap: store is nil")
 	}
 	if tools == nil {
 		tools = toolbroker.NewDefault()
@@ -61,7 +66,7 @@ func AgentDeps(
 	// restart get marked `crashed` so dashboards reflect reality.
 	swept, err := deps.Sessions.Sweep()
 	if err != nil {
-		return nil, fmt.Errorf("agent orphan sweep: %w", err)
+		return nil, nil, fmt.Errorf("agent orphan sweep: %w", err)
 	}
 	if swept > 0 {
 		// Surface the sweep count via a top-level lifecycle event so
@@ -71,5 +76,15 @@ func AgentDeps(
 			"swept": swept,
 		})
 	}
-	return deps, nil
+
+	// CW-20260509-0028 layer 1 — orchestrator self-stop on plan-terminal
+	// transition. Returns nil if any required collaborator is nil; the
+	// closer is a no-op in that case so callers can call it unconditionally.
+	hook := agent.NewSessionLifecycleHook(bus, store, deps.Sessions)
+	closer := func() {}
+	if hook != nil {
+		hook.Start()
+		closer = hook.Close
+	}
+	return deps, closer, nil
 }
