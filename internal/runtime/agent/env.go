@@ -15,8 +15,8 @@ import (
 //  1. Filtered OS environment (secrets stripped per profile.EnvStripPrefixes)
 //  2. CLOCKWORK_TASK_ID + CLOCKWORK_RUN_ID (always present, even when zero)
 //  3. agent_file.environment (skipped for keys the caller overrides; secrets
-//     filtered via LooksLikeSecret)
-//  4. opts.Env (secrets filtered)
+//     filtered via executor.ShouldStripEnvVar — provider-auth allowlist applied)
+//  4. opts.Env (secrets filtered, same allowlist semantics)
 //
 // Forked from internal/runtime/cliexec/env.go without semantic change. The
 // addition over cliexec is the per-provider amendment hook (e.g.
@@ -40,7 +40,7 @@ func composeEnv(profile config.AgentProfile, opts Options, agent *agentfile.Agen
 			if _, overridden := opts.Env[k]; overridden {
 				continue
 			}
-			if !executor.LooksLikeSecret(k) {
+			if !executor.ShouldStripEnvVar(k) {
 				extras = append(extras, k+"="+agent.Environment[k])
 			}
 		}
@@ -53,7 +53,7 @@ func composeEnv(profile config.AgentProfile, opts Options, agent *agentfile.Agen
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		if !executor.LooksLikeSecret(k) {
+		if !executor.ShouldStripEnvVar(k) {
 			extras = append(extras, k+"="+opts.Env[k])
 		}
 	}

@@ -98,8 +98,9 @@ func FilterEnv(env []string, opts FilterEnvOpts) (filtered []string, stripped []
 			continue
 		}
 
-		// Strip secrets
-		if LooksLikeSecret(key) {
+		// Strip secrets (with provider-auth allowlist applied — see
+		// ShouldStripEnvVar godoc for the env-strip-vs-log-redact split).
+		if ShouldStripEnvVar(key) {
 			stripped = append(stripped, key)
 			continue
 		}
@@ -123,32 +124,25 @@ func FilterEnv(env []string, opts FilterEnvOpts) (filtered []string, stripped []
 }
 
 // LooksLikeSecret returns true if the env var key looks like it contains a
-// secret AND should be stripped from the spawned subprocess's environment.
+// secret. This is a "redact-worthy" predicate — used by both env stripping
+// AND log/UX sanitization (e.g. agent.summarizeToolInput hides keys for
+// which LooksLikeSecret returns true so a tool-call payload that happens to
+// include ANTHROPIC_API_KEY doesn't leak into operator-visible summaries).
 //
-// Two escape hatches override the secret-pattern match:
+// `safeTokenVars` overrides the pattern match for false positives (terminal
+// metadata that contains "TOKEN" as a substring but isn't a secret).
 //
-//  1. safeTokenVars — names that contain a secret-pattern substring as a
-//     false positive (e.g. COLORTERM, TERM_PROGRAM contain "TOKEN" but
-//     aren't secrets).
-//
-//  2. providerAuthEnvVars — names that ARE secrets but the spawned
-//     subprocess REQUIRES (because it IS the LLM provider CLI and the
-//     variable is its documented auth mechanism). Without this allowlist,
-//     bare-mode claude can't authenticate (CW-20260509-0011). The
-//     allowlist is portfolio-wide; misuse risk (leaking ANTHROPIC_API_KEY
-//     to a non-claude subprocess) is mitigated because the value is only
-//     ever set in the daemon's environment by the operator, who controls
-//     where the daemon spawns subprocesses.
+// IMPORTANT: provider-auth env vars (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
+// ARE secrets and MUST still return true here — log redaction is a separate
+// concern from env stripping. The env-passthrough requirement that
+// CW-20260509-0011 satisfies is implemented by `ShouldStripEnvVar`, which
+// wraps LooksLikeSecret + an allowlist; FilterEnv uses ShouldStripEnvVar,
+// while log/UX paths continue to use LooksLikeSecret.
 func LooksLikeSecret(key string) bool {
 	upper := strings.ToUpper(key)
 
 	// Check safe list first (vars that match patterns but aren't secrets)
 	if safeTokenVars[upper] {
-		return false
-	}
-	// Provider auth vars are secrets BUT must pass through to the spawned
-	// LLM provider CLI. See providerAuthEnvVars godoc for rationale.
-	if providerAuthEnvVars[upper] {
 		return false
 	}
 
@@ -158,6 +152,28 @@ func LooksLikeSecret(key string) bool {
 		}
 	}
 	return false
+}
+
+// ShouldStripEnvVar reports whether `key` should be stripped from the
+// environment passed to a spawned subprocess. Wraps LooksLikeSecret with an
+// allowlist for provider-auth env vars that the spawned LLM provider CLI
+// requires (CW-20260509-0011): bare-mode claude needs ANTHROPIC_API_KEY in
+// env per its documented `--bare` contract; without the allowlist,
+// LooksLikeSecret strips it and bare claude fails with "Not logged in".
+//
+// Use ShouldStripEnvVar in env-filter paths (FilterEnv, composeEnv's
+// per-key filters). Use LooksLikeSecret in log/UX redaction paths
+// (summarizeToolInput, future telemetry redactors) — provider-auth vars
+// are still secrets and should be hidden from operator-visible logs even
+// though they pass through to the subprocess.
+func ShouldStripEnvVar(key string) bool {
+	if !LooksLikeSecret(key) {
+		return false
+	}
+	if providerAuthEnvVars[strings.ToUpper(key)] {
+		return false
+	}
+	return true
 }
 
 // envKey extracts the key portion of a KEY=VALUE environment variable string.
