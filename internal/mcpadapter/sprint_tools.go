@@ -10,7 +10,7 @@ import (
 )
 
 func (a *Adapter) registerSprintTools() {
-	a.server.AddTool(mcp.NewTool("clockwork_sprint_create",
+	a.addTool(mcp.NewTool("clockwork_sprint_create",
 		mcp.WithDescription(`Create a sprint (feature-flagged: requires features.sprints). Returns the SprintRecord.
 Use to scope a cohort of tasks under a common approval_mode + cost budget; prefer clockwork_epic_create for long-running multi-sprint initiatives, clockwork_project_create for infrastructure grouping.
 Response shape: data = {<SprintRecord fields>} — singleton.
@@ -21,7 +21,7 @@ Example: {"name":"Sprint 17","goal":"Land Phase C","approval_mode":"approve_each
 		mcp.WithString("cost_budget", mcp.Description("Maximum cost budget (numeric)")),
 	), a.handleSprintCreate)
 
-	a.server.AddTool(mcp.NewTool("clockwork_sprint_get",
+	a.addTool(mcp.NewTool("clockwork_sprint_get",
 		mcp.WithDescription(`Fetch a sprint by ID plus derived budget headroom (within_budget, cost_remaining).
 Use when you need the definition + live budget check; clockwork_sprint_list for browsing, clockwork_task_list with sprint_id filter for the sprint's tasks.
 Response shape: data = {sprint: <SprintRecord>, within_budget: bool, cost_remaining: float}.
@@ -29,7 +29,7 @@ Example: {"id":"SP-17"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Sprint ID")),
 	), a.handleSprintGet)
 
-	a.server.AddTool(mcp.NewTool("clockwork_sprint_update",
+	a.addTool(mcp.NewTool("clockwork_sprint_update",
 		mcp.WithDescription(`Partial update of sprint fields; pass status to transition (active<->inactive, either to completed terminal).
 Use for field edits or lifecycle moves; sibling clockwork_sprint_approve handles task approvals.
 Response shape: data = {id, updated: bool, message}.
@@ -42,7 +42,7 @@ Example: {"id":"SP-17","status":"completed"}`),
 		mcp.WithString("status", mcp.Description("Transition target: active|inactive|completed")),
 	), a.handleSprintUpdate)
 
-	a.server.AddTool(mcp.NewTool("clockwork_sprint_delete",
+	a.addTool(mcp.NewTool("clockwork_sprint_delete",
 		mcp.WithDescription(`Hard-delete a sprint; tasks previously assigned have sprint_id cleared but are kept.
 Use sparingly — prefer clockwork_sprint_update status=completed for audit. Similar surfaces: clockwork_project_delete, clockwork_epic_delete.
 Response shape: data = {id, deleted: true, message}.
@@ -50,7 +50,7 @@ Example: {"id":"SP-17"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Sprint ID")),
 	), a.handleSprintDelete)
 
-	a.server.AddTool(mcp.NewTool("clockwork_sprint_list",
+	a.addTool(mcp.NewTool("clockwork_sprint_list",
 		mcp.WithDescription(`List sprints, optionally filtered by status; ordered updated_at DESC.
 Use for browsing; clockwork_sprint_get when you know the ID. Default brief shape drops goal body for size; pass verbose="true" for full records.
 Response shape: data = {items: [<briefSprint or SprintRecord>...], meta: {truncated, returned, limit, hint?}}.
@@ -59,7 +59,7 @@ Example: {"status":"active"}`),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleSprintList)
 
-	a.server.AddTool(mcp.NewTool("clockwork_sprint_approve",
+	a.addTool(mcp.NewTool("clockwork_sprint_approve",
 		mcp.WithDescription(`Approve tasks in a sprint. With task_id, approves one task; without, approves every task currently in review.
 Use for sprint-level review-gate closures; clockwork_task_transition for single-task control and clockwork_task_bulk_transition when approving outside a sprint.
 Response shape: data = {sprint_id, task_id?, approved: count, message}.

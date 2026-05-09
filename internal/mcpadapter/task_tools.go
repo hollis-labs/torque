@@ -38,7 +38,7 @@ func parseManualFilter(v string) *bool {
 }
 
 func (a *Adapter) registerTaskTools() {
-	a.server.AddTool(mcp.NewTool("clockwork_task_create",
+	a.addTool(mcp.NewTool("clockwork_task_create",
 		mcp.WithDescription(`Create a new task in Clockwork; returns the full TaskRecord with its assigned ID.
 Use for ad-hoc work items — prefer clockwork_task_create_from_template when a matching template exists, and clockwork_plan_create for multi-phase work. Safety override forces manual=true on every create (CW-20260417-0133); promote to manual=false via clockwork_task_update after review.
 Response shape: data = {<TaskRecord fields>, Tags[]} — singleton, PascalCase keys.
@@ -70,7 +70,7 @@ Example: {"title":"Fix auth bug","description":"Login returns 500","priority":"2
 		mcp.WithString("parent_id", mcp.Description("Optional parent task ID (migration 013). Empty = top of lineage.")),
 	), a.handleTaskCreate)
 
-	a.server.AddTool(mcp.NewTool("clockwork_task_get",
+	a.addTool(mcp.NewTool("clockwork_task_get",
 		mcp.WithDescription(`Fetch the full TaskRecord for one task ID, including all facet/budget/hook columns and linked tags.
 Use when you already have the ID; prefer clockwork_task_list/search when filtering a cohort, and clockwork_task_subtodo_list for checklist-only views.
 Response shape: data = {<TaskRecord fields>, Tags[]} — singleton, PascalCase keys.
@@ -78,7 +78,7 @@ Example: {"id":"T-123"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
 	), a.handleTaskGet)
 
-	a.server.AddTool(mcp.NewTool("clockwork_task_list",
+	a.addTool(mcp.NewTool("clockwork_task_list",
 		mcp.WithDescription(`List tasks with optional status/priority/facet filters; ordered updated_at DESC.
 Use for browsing or filtered cohorts; prefer clockwork_task_search for free-text queries and clockwork_task_get when you already know the ID. Default returns ~150B briefTask records (lowercase JSON) so large fan-outs fit under the 100KB cap; pass verbose="true" for full TaskRecord columns.
 Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, hint?}}.
@@ -103,7 +103,7 @@ Example: {"status":"doing","limit":"50"}`),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleTaskList)
 
-	a.server.AddTool(mcp.NewTool("clockwork_task_update",
+	a.addTool(mcp.NewTool("clockwork_task_update",
 		mcp.WithDescription(`Partial update of a task's fields; only provided keys change (empty string clears most nullable scalars). Returns the updated TaskRecord.
 Use for field edits; prefer clockwork_task_transition for lifecycle moves and clockwork_task_bulk_transition for multi-id status changes. Numeric sentinel "-1" = unlimited for budget fields.
 Response shape: data = {<TaskRecord fields>, Tags[]} — singleton, PascalCase keys.
@@ -150,7 +150,7 @@ Example: {"id":"T-123","priority":"1","tags":"[\"p0\",\"backend\"]"}`),
 		mcp.WithString("parent_id", mcp.Description("New parent_id (migration 013; empty string clears the parent)")),
 	), a.handleTaskUpdate)
 
-	a.server.AddTool(mcp.NewTool("clockwork_task_delete",
+	a.addTool(mcp.NewTool("clockwork_task_delete",
 		mcp.WithDescription(`Hard-delete a task row and its linkage (runs, artifacts, comments cascade).
 Use sparingly — prefer clockwork_task_transition to "abandoned" for audit-preserving closure. For epics/sprints/projects use their respective *_delete tools.
 Response shape: data = {id, deleted: true}.
@@ -158,7 +158,7 @@ Example: {"id":"T-123"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
 	), a.handleTaskDelete)
 
-	a.server.AddTool(mcp.NewTool("clockwork_task_transition",
+	a.addTool(mcp.NewTool("clockwork_task_transition",
 		mcp.WithDescription(`Move a task through the lifecycle FSM (todo -> doing -> review -> done, or -> blocked/abandoned). Returns the updated TaskRecord.
 Use for single-task status changes; clockwork_task_bulk_transition for batches; clockwork_sprint_approve for sprint-scoped approvals. Invalid transitions return error.code=conflict — set force=true to bypass the FSM (user-initiated cleanup only; agents should respect the FSM).
 Response shape: data = {<TaskRecord fields>, Tags[]} — singleton.
@@ -168,7 +168,7 @@ Example: {"id":"T-123","status":"doing"}`),
 		mcp.WithBoolean("force", mcp.Description("Bypass FSM rules; for user-initiated dispositioning only (default false)")),
 	), a.handleTaskTransition)
 
-	a.server.AddTool(mcp.NewTool("clockwork_task_search",
+	a.addTool(mcp.NewTool("clockwork_task_search",
 		mcp.WithDescription(`Full-text search across task title and description; ordered by priority ASC, created_at ASC.
 Use for free-text discovery; prefer clockwork_task_list when filtering by structured fields. Default returns ~150B briefTask records; pass verbose="true" for full TaskRecord. Limit defaults to 25, capped at 100.
 Filters (project_id, sprint_id, epic_id, tags, manual) combine with the query via AND — use them to narrow free-text results.
@@ -185,7 +185,7 @@ Example: {"query":"auth bug","limit":"10"}`),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleTaskSearch)
 
-	a.server.AddTool(mcp.NewTool("clockwork_task_bulk_transition",
+	a.addTool(mcp.NewTool("clockwork_task_bulk_transition",
 		mcp.WithDescription(`Transition many tasks to the same status in one call; per-task validation errors are collected, not fatal.
 Use for batch approvals or closures; prefer clockwork_sprint_approve for sprint-scoped approve-all. clockwork_task_transition for single-task moves.
 Response shape: data = {success: int, failed: int, errors?: "semicolon-joined messages"}.
@@ -259,10 +259,10 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest)
 		ParentID: reqStr(req, "parent_id"),
 	}
 
-	if raw := reqStr(req, "tags"); raw != "" {
-		if err := json.Unmarshal([]byte(raw), &input.Tags); err != nil {
-			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
-		}
+	if tags, err := reqStrSlice(req, "tags"); err != nil {
+		return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
+	} else if tags != nil {
+		input.Tags = tags
 	}
 	if raw := reqStr(req, "depends_on"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &input.DependsOn); err != nil {
@@ -322,10 +322,10 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 			filter.ParentID = v
 		}
 	}
-	if raw := reqStr(req, "tags"); raw != "" {
-		if err := json.Unmarshal([]byte(raw), &filter.TagSlugs); err != nil {
-			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
-		}
+	if tags, err := reqStrSlice(req, "tags"); err != nil {
+		return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
+	} else if tags != nil {
+		filter.TagSlugs = tags
 	}
 	tasks, err := a.svc.Task.List(filter)
 	if err != nil {
@@ -532,12 +532,17 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 	}
 
 	input := service.TaskUpdateInput{TaskUpdate: update}
-	if raw := reqStr(req, "tags"); raw != "" {
-		var slugs []string
-		if err := json.Unmarshal([]byte(raw), &slugs); err != nil {
+	// task_update treats tags presence-sensitively: only set Tags when the
+	// caller actually supplied a value (post-sanitize: nil from absent or
+	// empty-string; non-nil slice from a real value).
+	if reqHasArg(req, "tags") {
+		slugs, err := reqStrSlice(req, "tags")
+		if err != nil {
 			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
 		}
-		input.Tags = &slugs
+		if slugs != nil {
+			input.Tags = &slugs
+		}
 	}
 
 	if err := a.svc.Task.Update(id, input); err != nil {
@@ -594,10 +599,10 @@ func (a *Adapter) handleTaskSearch(ctx context.Context, req mcp.CallToolRequest)
 		// handleTaskList for the rationale.
 		ExcludeInternal: !reqStrBool(req, "include_internal"),
 	}
-	if raw := reqStr(req, "tags"); raw != "" {
-		if err := json.Unmarshal([]byte(raw), &filter.TagSlugs); err != nil {
-			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
-		}
+	if tags, err := reqStrSlice(req, "tags"); err != nil {
+		return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
+	} else if tags != nil {
+		filter.TagSlugs = tags
 	}
 
 	tasks, err := a.svc.Task.List(filter)

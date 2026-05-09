@@ -39,6 +39,8 @@ github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
 github.com/hollis-labs/go-agent-sessions v0.7.0 h1:wxyTKqvyiRNYK7bFnP3d0yQujXQ/ZCFxpjp14QgIPIA=
 github.com/hollis-labs/go-agent-sessions v0.7.0/go.mod h1:Ql01UeYic51g1tqX1rNbs+q7AyHHRTQSg2u9K89waIc=
+github.com/hollis-labs/go-mcp-sanitize v0.1.0 h1:g+c4UOukPRl0W8T4XH3u+rrejk3ysBquzIsyqmQOP7Q=
+github.com/hollis-labs/go-mcp-sanitize v0.1.0/go.mod h1:2rQLhj9u6P5kPirTNqfd9jYrp2Wfj3fEluOr96+Dd+c=
 github.com/hollis-labs/go-messaging v0.2.0 h1:JypqjXMcgyFBbLmX+NlwTxJuwIAAjKd/3Qbm4+I84JE=
 github.com/hollis-labs/go-messaging v0.2.0/go.mod h1:tMiHRx7QHV1GWw5pZ1khnursbIQuzikScSRXWVdP8nk=
 github.com/hollis-labs/go-modelsdev v0.1.0 h1:z2w23Si1Oquv/MzgXdefL6p4NxGVNROj97tbsLXiQNU=

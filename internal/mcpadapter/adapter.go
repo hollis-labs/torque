@@ -2,7 +2,12 @@ package mcpadapter
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
 	"strconv"
+
+	mcpsanitize "github.com/hollis-labs/go-mcp-sanitize"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/broker"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
@@ -31,6 +36,13 @@ type Adapter struct {
 	// broker wires the typed envelope dispatcher (CW-20260503-0013, S1.3).
 	// Nil disables clockwork_broker_* tools the same way.
 	broker *broker.Broker
+	// Logger receives go-mcp-sanitize warn telemetry when the middleware
+	// auto-cleans malformed agent tool-call XML in free-text params (see
+	// CW-20260509-0033, mirrors vanta-conduit's Pattern A install). Nil
+	// falls back to slog.Default(); production wiring routes this to stderr
+	// in cmd/clockwork/mcp.go because stdio MCP reserves stdout for the
+	// JSON-RPC protocol stream.
+	Logger *slog.Logger
 }
 
 // New creates an Adapter, registers all tools, and returns it. sched may be
@@ -71,8 +83,31 @@ func (a *Adapter) WithBroker(b *broker.Broker) *Adapter {
 	return a
 }
 
+// WithLogger attaches a slog.Logger for go-mcp-sanitize warn telemetry. Same
+// pre-flight contract as WithSessions / WithBroker (must be set before any
+// MCP requests are served; not goroutine-safe with respect to live calls).
+// Optional — leaving Logger nil falls back to slog.Default() in addTool.
+func (a *Adapter) WithLogger(l *slog.Logger) *Adapter {
+	a.Logger = l
+	return a
+}
+
+// addTool wraps every MCP tool handler with the go-mcp-sanitize middleware,
+// which auto-cleans malformed agent tool-call XML in free-text params before
+// the handler runs. Clean calls are silent; cleaned calls emit one warn-level
+// slog line (see github.com/hollis-labs/go-mcp-sanitize). All registerXxx
+// helpers (and NewLoopback's registerLoopbackTools) must call a.addTool(...)
+// instead of a.server.AddTool(...) directly so the protection stays uniform.
+func (a *Adapter) addTool(t mcp.Tool, h server.ToolHandlerFunc) {
+	logger := a.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	a.server.AddTool(t, mcpsanitize.Middleware(logger)(h))
+}
+
 func (a *Adapter) registerCoreTools() {
-	a.server.AddTool(mcp.NewTool("clockwork_health",
+	a.addTool(mcp.NewTool("clockwork_health",
 		mcp.WithDescription(`Liveness probe for the Clockwork MCP server.
 Use before any other tool when you need to confirm the service is reachable and discover which opt-in feature flags (sprints, projects, epics, collections) are enabled.
 Response shape: data = {status, message, enabled_features[]}.
@@ -140,6 +175,64 @@ func reqStr(req mcp.CallToolRequest, key string) string {
 		}
 	}
 	return ""
+}
+
+// reqStrSlice extracts a list-of-strings argument tolerant of both the legacy
+// JSON-encoded-string shape and the post-sanitize []any shape.
+//
+// Background: clockwork-manifold's MCP schema declares list-shaped params
+// (notably `tags` and `depends_on`) as a JSON-encoded string so LLM-backed
+// clients that emit the array as a literal can round-trip through mcp-go's
+// schema-string boundary. Per CW-20260509-0033, the go-mcp-sanitize middleware
+// (Pattern 4) auto-recovers `tags` from a JSON-encoded string into a real
+// []any of strings before the handler runs. This helper keeps both shapes
+// working uniformly so the handler call sites don't have to branch.
+//
+// Return contract:
+//   - present, []any of strings    → ([]string, nil)   (post-sanitize shape)
+//   - present, []string            → ([]string, nil)
+//   - present, non-empty JSON str  → unmarshal to []string; err if bad JSON
+//   - present, empty string        → (nil, nil) — caller treats as absent
+//   - absent                       → (nil, nil)
+//   - present but unsupported type → (nil, error)
+//
+// Use in place of `if raw := reqStr(req, "tags"); raw != "" { json.Unmarshal... }`
+// at every list-of-strings argument site.
+func reqStrSlice(req mcp.CallToolRequest, key string) ([]string, error) {
+	args := req.GetArguments()
+	v, ok := args[key]
+	if !ok {
+		return nil, nil
+	}
+	switch t := v.(type) {
+	case nil:
+		return nil, nil
+	case []string:
+		out := make([]string, 0, len(t))
+		out = append(out, t...)
+		return out, nil
+	case []any:
+		out := make([]string, 0, len(t))
+		for i, e := range t {
+			s, ok := e.(string)
+			if !ok {
+				return nil, fmt.Errorf("element %d is not a string (got %T)", i, e)
+			}
+			out = append(out, s)
+		}
+		return out, nil
+	case string:
+		if t == "" {
+			return nil, nil
+		}
+		var out []string
+		if err := json.Unmarshal([]byte(t), &out); err != nil {
+			return nil, err
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("unsupported type %T", v)
+	}
 }
 
 // reqInt extracts an integer parameter from an MCP request.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/mcpadapter"
@@ -90,7 +91,13 @@ func mcpCmd() *cobra.Command {
 			}
 			defer agentDepsClose()
 
-			adapter := mcpadapter.New(svc, nil).WithSessions(agentDeps.Sessions)
+			// stdio MCP reserves stdout for the JSON-RPC protocol stream;
+			// route go-mcp-sanitize warn telemetry to stderr (CW-20260509-0033,
+			// mirrors vanta-conduit v0.6.1).
+			sanitizeLogger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+			adapter := mcpadapter.New(svc, nil).
+				WithSessions(agentDeps.Sessions).
+				WithLogger(sanitizeLogger)
 
 			stdio := server.NewStdioServer(adapter.Server())
 			return stdio.Listen(cmd.Context(), os.Stdin, os.Stdout)

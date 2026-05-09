@@ -22,11 +22,11 @@ Response shape: data = {enabled, max_workers, active_workers, queue_depth, total
 Example: {"enabled":"false"}`
 
 func (a *Adapter) registerSchedulerTools() {
-	a.server.AddTool(mcp.NewTool("clockwork_scheduler_status",
+	a.addTool(mcp.NewTool("clockwork_scheduler_status",
 		mcp.WithDescription(schedulerStatusDescription),
 	), a.handleSchedulerStatus)
 
-	a.server.AddTool(mcp.NewTool("clockwork_scheduler_toggle",
+	a.addTool(mcp.NewTool("clockwork_scheduler_toggle",
 		mcp.WithDescription(schedulerToggleDescription),
 		mcp.WithString("enabled", mcp.Required(), mcp.Description("true to enable dispatch, false to pause. Session-scoped — no effect on config. (boolean, accepts \"true\"/\"false\" strings).")),
 	), a.handleSchedulerToggle)

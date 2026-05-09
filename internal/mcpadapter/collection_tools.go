@@ -10,7 +10,7 @@ import (
 )
 
 func (a *Adapter) registerCollectionTools() {
-	a.server.AddTool(mcp.NewTool("clockwork_collection_create",
+	a.addTool(mcp.NewTool("clockwork_collection_create",
 		mcp.WithDescription(`Create a collection (feature-flagged: requires features.collections).
 Use to group tasks under a kanban-style container; sibling clockwork_sprint_create scopes a time-bounded approval cohort, clockwork_collection_create is an open-ended container without lifecycle.
 Response shape: data = {<CollectionRecord fields>} — singleton.
@@ -19,7 +19,7 @@ Example: {"name":"Roadmap","description":"Quarterly themes"}`),
 		mcp.WithString("description", mcp.Description("Collection description")),
 	), a.handleCollectionCreate)
 
-	a.server.AddTool(mcp.NewTool("clockwork_collection_list",
+	a.addTool(mcp.NewTool("clockwork_collection_list",
 		mcp.WithDescription(`List collections, optionally filtered by archive status; ordered created_at DESC.
 Default status="active". Use status="archived" for the trash bin, "all" for both.
 Response shape: data = {items: [<CollectionRecord>...], meta: {truncated, returned, limit, hint?}}.
@@ -27,7 +27,7 @@ Example: {"status":"active"}`),
 		mcp.WithString("status", mcp.Description("Filter: active|archived|all (default active)")),
 	), a.handleCollectionList)
 
-	a.server.AddTool(mcp.NewTool("clockwork_collection_get",
+	a.addTool(mcp.NewTool("clockwork_collection_get",
 		mcp.WithDescription(`Fetch a collection by ID.
 Use when you know the ID; clockwork_collection_list for browsing, clockwork_collection_tasks_list for the collection's tasks.
 Response shape: data = {<CollectionRecord fields>} — singleton.
@@ -35,7 +35,7 @@ Example: {"id":"COL-20260503-0001"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Collection ID")),
 	), a.handleCollectionGet)
 
-	a.server.AddTool(mcp.NewTool("clockwork_collection_update",
+	a.addTool(mcp.NewTool("clockwork_collection_update",
 		mcp.WithDescription(`Partial update of collection fields (name, description). Use clockwork_collection_archive for soft-delete.
 Response shape: data = {id, updated: bool, message}.
 Example: {"id":"COL-20260503-0001","name":"Roadmap (renamed)"}`),
@@ -44,21 +44,21 @@ Example: {"id":"COL-20260503-0001","name":"Roadmap (renamed)"}`),
 		mcp.WithString("description", mcp.Description("New description")),
 	), a.handleCollectionUpdate)
 
-	a.server.AddTool(mcp.NewTool("clockwork_collection_archive",
+	a.addTool(mcp.NewTool("clockwork_collection_archive",
 		mcp.WithDescription(`Archive a collection (soft-delete; preserves audit trail).
 Response shape: data = {id, archived: true, message}.
 Example: {"id":"COL-20260503-0001"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Collection ID")),
 	), a.handleCollectionArchive)
 
-	a.server.AddTool(mcp.NewTool("clockwork_collection_unarchive",
+	a.addTool(mcp.NewTool("clockwork_collection_unarchive",
 		mcp.WithDescription(`Restore an archived collection back to active.
 Response shape: data = {id, unarchived: true, message}.
 Example: {"id":"COL-20260503-0001"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Collection ID")),
 	), a.handleCollectionUnarchive)
 
-	a.server.AddTool(mcp.NewTool("clockwork_collection_task_add",
+	a.addTool(mcp.NewTool("clockwork_collection_task_add",
 		mcp.WithDescription(`Add a task to a collection at the given position. position omitted/<=0 means append.
 Sets task.added_to_collections_at on first add (write-once). Sibling clockwork_collection_inbox_add for inbox-only entry.
 Response shape: data = {collection_id, task_id, added: true}.
@@ -68,14 +68,14 @@ Example: {"collection_id":"COL-20260503-0001","task_id":"T-1"}`),
 		mcp.WithString("position", mcp.Description("1-based position; omit or <=0 to append")),
 	), a.handleCollectionTaskAdd)
 
-	a.server.AddTool(mcp.NewTool("clockwork_collection_task_remove",
+	a.addTool(mcp.NewTool("clockwork_collection_task_remove",
 		mcp.WithDescription(`Remove a task from its collection, returning it to inbox. Preserves added_to_collections_at.
 Response shape: data = {task_id, removed: true}.
 Example: {"task_id":"T-1"}`),
 		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),
 	), a.handleCollectionTaskRemove)
 
-	a.server.AddTool(mcp.NewTool("clockwork_collection_task_reorder",
+	a.addTool(mcp.NewTool("clockwork_collection_task_reorder",
 		mcp.WithDescription(`Bulk-rewrite collection_position for tasks within a single collection. All task_ids must currently belong to collection_id; positions assigned 1..N in supplied order.
 Response shape: data = {collection_id, reordered: <count>}.
 Example: {"collection_id":"COL-20260503-0001","task_ids":["T-3","T-1","T-2"]}`),
@@ -83,7 +83,7 @@ Example: {"collection_id":"COL-20260503-0001","task_ids":["T-3","T-1","T-2"]}`),
 		mcp.WithString("task_ids", mcp.Required(), mcp.Description("Ordered list of task IDs as JSON array string (must all belong to collection_id)")),
 	), a.handleCollectionTaskReorder)
 
-	a.server.AddTool(mcp.NewTool("clockwork_collection_task_move",
+	a.addTool(mcp.NewTool("clockwork_collection_task_move",
 		mcp.WithDescription(`Atomic cross-collection move. Equivalent to remove+add but no intermediate inbox state.
 Response shape: data = {task_id, target_collection_id, moved: true}.
 Example: {"task_id":"T-1","target_collection_id":"COL-20260503-0002"}`),
@@ -92,20 +92,20 @@ Example: {"task_id":"T-1","target_collection_id":"COL-20260503-0002"}`),
 		mcp.WithString("position", mcp.Description("1-based position in target; omit or <=0 to append")),
 	), a.handleCollectionTaskMove)
 
-	a.server.AddTool(mcp.NewTool("clockwork_collection_inbox_add",
+	a.addTool(mcp.NewTool("clockwork_collection_inbox_add",
 		mcp.WithDescription(`Mark a task as participating in the collections world without assigning it to a collection. Idempotent (write-once on first call).
 Response shape: data = {task_id, in_inbox: true}.
 Example: {"task_id":"T-1"}`),
 		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),
 	), a.handleCollectionInboxAdd)
 
-	a.server.AddTool(mcp.NewTool("clockwork_collection_inbox_list",
+	a.addTool(mcp.NewTool("clockwork_collection_inbox_list",
 		mcp.WithDescription(`List inbox tasks (added_to_collections_at NOT NULL AND collection_id IS NULL). Ordered by added_to_collections_at DESC.
 Response shape: data = {items: [<briefTask>...], meta: {truncated, returned, limit, hint?}}.
 Example: {}`),
 	), a.handleCollectionInboxList)
 
-	a.server.AddTool(mcp.NewTool("clockwork_collection_tasks_list",
+	a.addTool(mcp.NewTool("clockwork_collection_tasks_list",
 		mcp.WithDescription(`List the tasks in a collection, ordered by collection_position.
 Response shape: data = {items: [<briefTask>...], meta: {truncated, returned, limit, hint?}}.
 Example: {"collection_id":"COL-20260503-0001"}`),

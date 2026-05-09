@@ -11,7 +11,7 @@ import (
 )
 
 func (a *Adapter) registerCheckpointTools() {
-	a.server.AddTool(mcp.NewTool("clockwork_task_checkpoint_emit",
+	a.addTool(mcp.NewTool("clockwork_task_checkpoint_emit",
 		mcp.WithDescription(`Emit a pending checkpoint on a task. If the task's checkpoint_mode is "blocking", the task parks until respond/cancel.
 Use for mid-run user-interaction gates or data-collection stops; sibling clockwork_task_checkpoint_respond to resolve, clockwork_task_checkpoint_cancel to abandon. clockwork_task_checkpoint_list/pending for discovery.
 Response shape: data = {<CheckpointRecord fields>} — singleton with correlation_id, status="pending".
@@ -24,7 +24,7 @@ Example: {"task_id":"T-123","type":"collect_data","payload_json":"{\"q\":\"?\"}"
 		mcp.WithString("timeout_at", mcp.Description("Optional RFC3339 timestamp for the timeout sweeper")),
 	), a.handleCheckpointEmit)
 
-	a.server.AddTool(mcp.NewTool("clockwork_task_checkpoint_respond",
+	a.addTool(mcp.NewTool("clockwork_task_checkpoint_respond",
 		mcp.WithDescription(`Resolve a pending checkpoint with a JSON response; applies the task's on_checkpoint_response rule (resume|review|custom).
 Use to unpark a blocking task; clockwork_task_checkpoint_cancel to abandon without resolution. Responding to a terminal checkpoint returns error.code=conflict.
 Response shape: data = {<CheckpointRecord fields>} — singleton, status="responded".
@@ -35,7 +35,7 @@ Example: {"correlation_id":"01HK...","response_json":"{\"decision\":\"ship\"}","
 		mcp.WithString("responder_source_ref", mcp.Description("Responder slug/id")),
 	), a.handleCheckpointRespond)
 
-	a.server.AddTool(mcp.NewTool("clockwork_task_checkpoint_cancel",
+	a.addTool(mcp.NewTool("clockwork_task_checkpoint_cancel",
 		mcp.WithDescription(`Cancel a pending checkpoint without a response; the task stays in review with the canceled reason logged.
 Use when the checkpoint became obsolete; clockwork_task_checkpoint_respond when you have a real answer. Canceling a terminal checkpoint returns error.code=conflict.
 Response shape: data = {<CheckpointRecord fields>} — singleton, status="canceled".
@@ -46,7 +46,7 @@ Example: {"correlation_id":"01HK...","reason":"superseded","canceler_source_type
 		mcp.WithString("canceler_source_ref", mcp.Description("Canceler slug/id")),
 	), a.handleCheckpointCancel)
 
-	a.server.AddTool(mcp.NewTool("clockwork_task_checkpoint_list",
+	a.addTool(mcp.NewTool("clockwork_task_checkpoint_list",
 		mcp.WithDescription(`List checkpoints emitted against one task, newest first. Brief shape drops payload/response bodies; pass verbose="true" for full records.
 Use to inspect one task's checkpoint history; clockwork_task_checkpoints_pending for cross-task pending-only view.
 Response shape: data = {items: [<briefCheckpoint or CheckpointRecord>...], meta: {truncated, returned, limit, hint?}}.
@@ -55,7 +55,7 @@ Example: {"task_id":"T-123"}`),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleCheckpointList)
 
-	a.server.AddTool(mcp.NewTool("clockwork_task_checkpoint_get",
+	a.addTool(mcp.NewTool("clockwork_task_checkpoint_get",
 		mcp.WithDescription(`Fetch one checkpoint's full record by correlation_id (ULID).
 Use when you have the correlation_id; clockwork_task_checkpoint_list for a task's history, clockwork_task_checkpoints_pending for cross-task pending.
 Response shape: data = {<CheckpointRecord fields>} — singleton.
@@ -63,7 +63,7 @@ Example: {"correlation_id":"01HK..."}`),
 		mcp.WithString("correlation_id", mcp.Required(), mcp.Description("Checkpoint correlation_id (ULID)")),
 	), a.handleCheckpointGet)
 
-	a.server.AddTool(mcp.NewTool("clockwork_task_checkpoints_pending",
+	a.addTool(mcp.NewTool("clockwork_task_checkpoints_pending",
 		mcp.WithDescription(`List every pending (unresolved) checkpoint across all tasks, oldest first — the global response queue.
 Use for agent/user dashboards that need to triage outstanding decision gates; clockwork_task_checkpoint_list for single-task scope.
 Response shape: data = {items: [<briefCheckpoint or CheckpointRecord>...], meta: {truncated, returned, limit, hint?}}.

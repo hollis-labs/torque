@@ -7,6 +7,7 @@ require (
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/google/uuid v1.6.0
 	github.com/hollis-labs/go-agent-sessions v0.7.0
+	github.com/hollis-labs/go-mcp-sanitize v0.1.0
 	github.com/hollis-labs/go-messaging v0.2.0
 	github.com/hollis-labs/go-modelsdev v0.1.0
 	github.com/hollis-labs/go-providers v0.9.1
