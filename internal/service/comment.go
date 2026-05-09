@@ -1,6 +1,27 @@
 package service
 
-import "github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+import (
+	"context"
+
+	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+)
+
+// CommentObserver is invoked synchronously after a comment is persisted.
+// Implementations must be non-blocking — observers run on the call path of
+// every clockwork_comment_add. Used by CW-20260509-0028 layer 2 to spot the
+// orchestrator's session-complete marker.
+type CommentObserver interface {
+	ObserveComment(ctx context.Context, c *sqlstore.CommentRecord)
+}
+
+// TaskTransitionObserver is invoked synchronously after Task.Transition or
+// Task.ForceTransition successfully writes a new status. Implementations
+// must be non-blocking. Used by CW-20260509-0028 layer 1 to detect plan-
+// terminal transitions (which don't ride the scheduler.EventBus because
+// plan FSM moves are agent-driven, not worker-driven).
+type TaskTransitionObserver interface {
+	ObserveTaskTransition(ctx context.Context, taskID, fromStatus, toStatus string)
+}
 
 // CommentService provides business logic for entity comments.
 //
@@ -9,7 +30,15 @@ import "github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 // List helpers here mirror that shape; AddForTask / ListForTask remain as
 // task-specific sugar where the call site only ever operates on tasks.
 type CommentService struct {
-	store *sqlstore.Store
+	store    *sqlstore.Store
+	observer CommentObserver // optional; nil disables the observer hook
+}
+
+// SetObserver installs a CommentObserver that runs after every successful Add.
+// nil clears the observer. Not goroutine-safe with concurrent Add calls;
+// install once at bootstrap before serving traffic.
+func (s *CommentService) SetObserver(o CommentObserver) {
+	s.observer = o
 }
 
 // Add inserts a new comment on an arbitrary entity and returns the persisted
@@ -23,6 +52,9 @@ func (s *CommentService) Add(entityType, entityID, author, content string) (*sql
 	}
 	if err := s.store.AddComment(rec); err != nil {
 		return nil, err
+	}
+	if s.observer != nil {
+		s.observer.ObserveComment(context.Background(), rec)
 	}
 	return rec, nil
 }

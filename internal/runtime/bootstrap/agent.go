@@ -26,15 +26,21 @@ import (
 // Returns deps with deps.Sessions populated and Sweep run; caller binds
 // the returned manager into HTTP/MCP handlers (server.WithSessions,
 // adapter.WithSessions).
+//
+// closer is always non-nil — invoke at daemon shutdown to drain the session
+// lifecycle hook goroutine + any in-flight observer-spawned stop work
+// (CW-20260509-0028 layers 1 + 2). When the hook is opted out (any of bus,
+// store, sessions nil — e.g. test wirings), closer is a safe no-op so
+// callers can call it unconditionally without nil-checking.
 func AgentDeps(
 	store *sqlstore.Store,
 	profiles config.ProfileMap,
 	svc *service.Service,
 	tools *toolbroker.ToolRouter,
 	bus *scheduler.EventBus,
-) (*agent.Dependencies, error) {
+) (*agent.Dependencies, func(), error) {
 	if store == nil {
-		return nil, fmt.Errorf("agent deps bootstrap: store is nil")
+		return nil, nil, fmt.Errorf("agent deps bootstrap: store is nil")
 	}
 	if tools == nil {
 		tools = toolbroker.NewDefault()
@@ -61,7 +67,7 @@ func AgentDeps(
 	// restart get marked `crashed` so dashboards reflect reality.
 	swept, err := deps.Sessions.Sweep()
 	if err != nil {
-		return nil, fmt.Errorf("agent orphan sweep: %w", err)
+		return nil, nil, fmt.Errorf("agent orphan sweep: %w", err)
 	}
 	if swept > 0 {
 		// Surface the sweep count via a top-level lifecycle event so
@@ -71,5 +77,29 @@ func AgentDeps(
 			"swept": swept,
 		})
 	}
-	return deps, nil
+
+	// CW-20260509-0028 layer 1 + 2 — orchestrator self-stop.
+	// Layer 1: plan-terminal transitions, observed via the service-layer
+	// TaskTransitionObserver hook (primary; covers MCP/HTTP/scheduler
+	// callsites uniformly) AND via the scheduler EventBus subscription
+	// (defense-in-depth for any future scheduler path that publishes
+	// task.transitioned for plan tasks).
+	// Layer 2: session-complete marker comments via CommentObserver.
+	// Returns nil if any required collaborator is nil; the closer is a
+	// no-op in that case so callers can call it unconditionally.
+	hook := agent.NewSessionLifecycleHook(bus, store, deps.Sessions)
+	closer := func() {}
+	if hook != nil {
+		hook.Start()
+		closer = hook.Close
+		if svc != nil {
+			if svc.Task != nil {
+				svc.Task.SetTransitionObserver(hook)
+			}
+			if svc.Comment != nil {
+				svc.Comment.SetObserver(hook)
+			}
+		}
+	}
+	return deps, closer, nil
 }
