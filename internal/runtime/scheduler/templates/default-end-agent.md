@@ -66,26 +66,31 @@ severity: `Audit miss (check N — ...)` for **miss**-severity checks,
 `Audit advisory (check N — ...)` for **advisory**-severity checks.
 End with a summary comment:
 
-"Audit complete — N verified, M patched, K advisory, L need human follow-up."
+"Audit complete — N verified, M patched, K advisory, L needs-human-follow-up."
 
 The four counters break down as:
 - **verified** — check passed.
 - **patched** — check failed but you fixed it inline (e.g. cleared a
   stale `blocked_reason`).
 - **advisory** — check failed but is non-gating; informational only.
-- **needs human follow-up** — check failed, miss-severity, you didn't
+- **needs-human-follow-up** — check failed, miss-severity, you didn't
   patch it. Closeout is blocked.
+
+The label `needs-human-follow-up` is canonical: use it verbatim in both
+the summary line counter and any free-form references in your comments.
+Older agent prose used `need human follow-up` / `needs human follow-up`
+interchangeably; the hyphenated form is the single agreed spelling.
 
 ## Closing out
 
-The closeout decision is keyed on **needs human follow-up** count only.
-Advisory items are NEVER part of the gate.
+The closeout decision is keyed on the **needs-human-follow-up** count
+only. Advisory items are NEVER part of the gate.
 
-- **`needs human follow-up` count is zero (regardless of advisory count):**
+- **`needs-human-follow-up` count is zero (regardless of advisory count):**
   call `clockwork_task_transition(id="<target>", status="done")`. The
   target moves to its terminal state. Advisory comments stand on the
   task as informational signal for the next dispatch.
-- **`needs human follow-up` count is ≥ 1:** leave the target at `review`.
+- **`needs-human-follow-up` count is ≥ 1:** leave the target at `review`.
   Your summary comment is the alert. Do NOT transition it.
 
 ## Failure mode (yours)
