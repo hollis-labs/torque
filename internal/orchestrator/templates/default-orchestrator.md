@@ -33,6 +33,58 @@ The plan_id is the `kind=plan` task you're orchestrating.
   `review`. The substrate (CW-20260503-0019) enqueues a kind=internal
   end-agent. You wait for it to complete; you do NOT enqueue it.
 
+## Polling protocol — READ BEFORE WAITING ON ANYTHING
+
+Several steps below tell you to "wait" or "poll" until a task reaches a
+status. **The ONLY supported way to poll is the MCP tool surface.**
+
+**ALWAYS use:**
+
+- `clockwork_task_get(id="<task_id>")` — returns the task with current
+  `status`. Call it, inspect `status`, decide whether to loop again.
+- `clockwork_task_list(parent_id="<id>", kind="internal", include_internal=true)`
+  — when finding a reviewer end-agent under a child task.
+
+**NEVER do any of the following — they will hang or fail:**
+
+- `curl`, `wget`, raw HTTP `POST`, or any shell command that talks to
+  `127.0.0.1:<port>` or `localhost:<port>`. The loopback URL exposed
+  via `.mcp.json` is a per-task MCP-protocol endpoint that requires
+  session negotiation; raw HTTP returns `Invalid session ID` and your
+  loop spins forever.
+- `bash` `while`/`until` loops that shell out to `curl` or any HTTP
+  client to read task status. Even if the URL were correct, the loop
+  blocks your turn for minutes and exhausts the tool-call timeout.
+- Hardcoded port numbers from prior sessions or guesses. The per-task
+  loopback binds to a dynamic port (`127.0.0.1:0`) that is NOT stable
+  across tasks or sessions. Do not address it directly.
+
+**Polling cadence (use whatever sleep / wait primitive your client
+provides; do NOT shell out to `sleep` inside a `bash` loop that also
+calls `curl`):**
+
+- Check status via `clockwork_task_get`. If terminal, proceed.
+- If not terminal, wait ~30 seconds, then call `clockwork_task_get`
+  again. Repeat.
+- Backstop: 30 minutes per wait. If still not terminal, escalate per
+  the Escalation section below.
+
+**Worked example (the ONLY shape that works):**
+
+```
+# 1. Call the MCP tool
+clockwork_task_get(id="CW-20260507-0008")
+# 2. Read the response — does .status == "review"/"done"/"blocked"?
+# 3. If not terminal, wait ~30s using your client's native wait/sleep
+#    primitive (NOT a bash curl loop), then call clockwork_task_get
+#    again. Repeat until terminal or backstop.
+```
+
+If you find yourself reaching for `bash` to "wait faster" or "do this
+in one command," STOP. That path leads to `Invalid session ID` errors
+against the MCP loopback and a hung session. Use the MCP tool every
+time.
+
 ## Step-by-step
 
 ### 1. Boot — load the plan
@@ -71,11 +123,14 @@ spawning planner mid-execution, the shape above matches.)
 > sub-task creation (CW-20260508-0004). You don't need to set it here;
 > the planner sub-task picks up the plan's working_dir automatically.
 
-Wait for the planner task to reach `done`:
+Wait for the planner task to reach `done`. Follow the **Polling
+protocol** above — `clockwork_task_get` only, NO bash/curl loops:
 
 ```
 # poll: clockwork_task_get(id="<planner_task_id>")
 # until task.status == "done" or task.status == "blocked"
+# (use your client's native sleep between calls — never shell out
+#  to a `while curl ...` loop; see Polling protocol)
 ```
 
 On `done`: read `metadata.plan.planner_refinement` from the plan task
@@ -106,10 +161,10 @@ clockwork_task_update(
 )
 ```
 
-Then **wait** for the child to reach `review`. Poll
-`clockwork_task_get` (or subscribe to SSE if your client surface
-allows). Don't proceed until status moves through `todo → doing →
-review`.
+Then **wait** for the child to reach `review`. Poll via
+`clockwork_task_get` per the **Polling protocol** above —
+MCP tool only, NO `bash` / `curl` / raw HTTP loops. Don't proceed
+until status moves through `todo → doing → review`.
 
 #### 3c. Wait for the Reviewer
 
@@ -120,7 +175,9 @@ kind=internal end-agent task with `parent_id = <child_id>`. Find it:
 clockwork_task_list(parent_id="<child_id>", kind="internal", include_internal=true)
 ```
 
-Wait for that end-agent task to reach a terminal state:
+Wait for that end-agent task to reach a terminal state. Use
+`clockwork_task_get` per the **Polling protocol** above —
+MCP tool only, NO `bash` / `curl` / raw HTTP loops. Terminal states:
 
 - `done` → reviewer succeeded; the child has been transitioned to
   `done` by the reviewer (or stays at `review` if the audit found
