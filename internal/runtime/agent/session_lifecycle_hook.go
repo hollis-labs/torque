@@ -163,6 +163,19 @@ func (h *SessionLifecycleHook) HandlePlanTransition(ctx context.Context, taskID 
 	h.stopSessionAfterDelay(ctx, sessID, planTransitionStopDelay)
 }
 
+// ObserveTaskTransition is the primary layer-1 entry point in production.
+// Implements service.TaskTransitionObserver. Plan FSM moves are agent-driven
+// via Task.Transition / Task.ForceTransition, which don't ride the
+// scheduler.EventBus — the service-layer observer fires from inside that
+// call path so the hook reliably sees plan-terminal transitions regardless
+// of whether the trigger was MCP, HTTP, or scheduler-internal.
+func (h *SessionLifecycleHook) ObserveTaskTransition(ctx context.Context, taskID, _ /* fromStatus */, toStatus string) {
+	if !planTerminalStatus(toStatus) {
+		return
+	}
+	h.HandlePlanTransition(ctx, taskID)
+}
+
 // ObserveComment is the layer-2 entry point invoked by the service-layer
 // after a comment is persisted. Filters on the orchestrator author prefix
 // + session-complete first-line marker, then stops the linked session.

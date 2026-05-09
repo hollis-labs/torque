@@ -211,6 +211,44 @@ func TestSessionLifecycleHook_StopErrorSwallowed(t *testing.T) {
 	// error propagation"; both are exercised by the test reaching this line.
 }
 
+// TestSessionLifecycleHook_ObserveTaskTransition_FiresOnPlanTerminal verifies
+// the service-layer TaskTransitionObserver path fires Stop when a plan task
+// transitions to a terminal status. This is the primary production path
+// (MCP/HTTP-driven transitions don't ride the scheduler EventBus).
+func TestSessionLifecycleHook_ObserveTaskTransition_FiresOnPlanTerminal(t *testing.T) {
+	store := newHookTestStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	stopper := &stubStopper{getStatus: StatusRunning}
+	hook := NewSessionLifecycleHook(bus, store, stopper)
+
+	writePlanWithSession(t, store, "CW-PLAN-OBS-1", "doing", "SES-OBS")
+
+	hook.ObserveTaskTransition(context.Background(), "CW-PLAN-OBS-1", "doing", "review")
+
+	require.Eventually(t, func() bool {
+		return stopper.StopCount() == 1
+	}, 3*time.Second, 10*time.Millisecond)
+	assert.Equal(t, []string{"SES-OBS"}, stopper.stopCalled)
+}
+
+// TestSessionLifecycleHook_ObserveTaskTransition_NonTerminalIgnored guards
+// the to-status filter at the observer entry point.
+func TestSessionLifecycleHook_ObserveTaskTransition_NonTerminalIgnored(t *testing.T) {
+	store := newHookTestStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	stopper := &stubStopper{getStatus: StatusRunning}
+	hook := NewSessionLifecycleHook(bus, store, stopper)
+
+	writePlanWithSession(t, store, "CW-PLAN-OBS-2", "todo", "SES-OBS-2")
+
+	hook.ObserveTaskTransition(context.Background(), "CW-PLAN-OBS-2", "todo", "doing")
+
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, int32(0), stopper.StopCount())
+}
+
 // --- Layer 2 (CW-20260509-0028) — session-complete marker observer ---
 
 // TestSessionLifecycleHook_ObserveComment_StopsLinkedSession covers PR-B

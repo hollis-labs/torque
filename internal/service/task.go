@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"log"
 
@@ -76,9 +77,18 @@ type TaskCreateInput struct {
 
 // TaskService provides business logic for tasks.
 type TaskService struct {
-	store   *sqlstore.Store
-	feature *FeatureService
-	tags    *TagService
+	store              *sqlstore.Store
+	feature            *FeatureService
+	tags               *TagService
+	transitionObserver TaskTransitionObserver // optional; nil disables the observer hook
+}
+
+// SetTransitionObserver installs a TaskTransitionObserver that runs after
+// every successful Transition / ForceTransition. nil clears the observer.
+// Not goroutine-safe with concurrent Transition calls; install once at
+// bootstrap before serving traffic.
+func (s *TaskService) SetTransitionObserver(o TaskTransitionObserver) {
+	s.transitionObserver = o
 }
 
 // Create validates and creates a new task.
@@ -515,7 +525,11 @@ func (s *TaskService) Transition(id, newStatus string) error {
 	}
 	for _, a := range allowed {
 		if a == newStatus {
-			return s.store.TransitionTask(id, newStatus)
+			if err := s.store.TransitionTask(id, newStatus); err != nil {
+				return err
+			}
+			s.notifyTransition(id, task.Status, newStatus)
+			return nil
 		}
 	}
 	return &TransitionError{
@@ -530,10 +544,22 @@ func (s *TaskService) Transition(id, newStatus string) error {
 // an agent left mid-flight); programmatic callers must use Transition. The
 // store still validates that the status string is a recognized value.
 func (s *TaskService) ForceTransition(id, newStatus string) error {
-	if _, err := s.store.GetTask(id); err != nil {
+	task, err := s.store.GetTask(id)
+	if err != nil {
 		return err
 	}
-	return s.store.TransitionTask(id, newStatus)
+	if err := s.store.TransitionTask(id, newStatus); err != nil {
+		return err
+	}
+	s.notifyTransition(id, task.Status, newStatus)
+	return nil
+}
+
+func (s *TaskService) notifyTransition(id, from, to string) {
+	if s.transitionObserver == nil {
+		return
+	}
+	s.transitionObserver.ObserveTaskTransition(context.Background(), id, from, to)
 }
 
 // Search performs a text search over tasks.

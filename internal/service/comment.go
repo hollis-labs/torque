@@ -14,6 +14,15 @@ type CommentObserver interface {
 	ObserveComment(ctx context.Context, c *sqlstore.CommentRecord)
 }
 
+// TaskTransitionObserver is invoked synchronously after Task.Transition or
+// Task.ForceTransition successfully writes a new status. Implementations
+// must be non-blocking. Used by CW-20260509-0028 layer 1 to detect plan-
+// terminal transitions (which don't ride the scheduler.EventBus because
+// plan FSM moves are agent-driven, not worker-driven).
+type TaskTransitionObserver interface {
+	ObserveTaskTransition(ctx context.Context, taskID, fromStatus, toStatus string)
+}
+
 // CommentService provides business logic for entity comments.
 //
 // As of CW-20260503-0003 the comments table is polymorphic — comments are
