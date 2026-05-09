@@ -68,12 +68,42 @@ func (h *loopbackHandle) Shutdown(ctx context.Context) error {
 // service handle the loopback adapter needs for closure-bound task
 // operations; nil yields a builder that returns (nil, nil) so test code
 // paths see "no loopback" identical to the legacy cliexec(svc=nil) shape.
-func loopbackBuilder(svc *service.Service) agent.LoopbackBuilder {
+//
+// `sessionsRef` is a late-bound accessor for the agent.Manager that the
+// orchestrator-class loopback adapter wires via WithSessions. The accessor
+// pattern resolves a construction-order cycle: agent.Dependencies.Loopback
+// is set BEFORE agent.NewManager creates Sessions; the closure reads
+// deps.Sessions at handle-construction time (later, when sessions is set).
+// May be nil for callers that don't need orchestrator support; orchestrator-
+// role loopbacks then fall back to NewLoopback (restricted subset) and the
+// orchestrator will self-block per CW-20260509-0018.
+func loopbackBuilder(svc *service.Service, sessionsRef func() *agent.Manager) agent.LoopbackBuilder {
 	if svc == nil {
 		return nil
 	}
-	return func(taskID string) (agent.LoopbackHandle, error) {
-		loopback := mcpadapter.NewLoopback(svc, taskID)
+	return func(taskID, role string) (agent.LoopbackHandle, error) {
+		// Per CW-20260509-0018: orchestrator-class roles drive plan walks
+		// and need cross-task tools (clockwork_plan_get, clockwork_task_*,
+		// clockwork_session_get, etc.). The legacy NewLoopback(taskID)
+		// adapter exposes only the self-task subset (artifact_create,
+		// comment_add, task_summary/blocked/review, task_subtodo_*) which
+		// is correct for kind=agent worker tasks but insufficient for the
+		// orchestrator. Dispatch on role:
+		//   - orchestrator/planner/reviewer-end-agent → full surface
+		//     (mcpadapter.New + WithSessions). The orchestrator template
+		//     already calls these tools by their full-surface names.
+		//   - everything else (including empty role from kind=agent
+		//     workers) → restricted self-task subset (legacy behavior).
+		var loopback *mcpadapter.Adapter
+		if isOrchestratorClassRole(role) && sessionsRef != nil {
+			// Pinned to taskID for parity with the loopback contract
+			// (the orchestrator's task is the plan task), but exposes the
+			// full clockwork tool surface. Sessions wired so
+			// clockwork_session_* + clockwork_plan_start work.
+			loopback = mcpadapter.New(svc, nil).WithSessions(sessionsRef())
+		} else {
+			loopback = mcpadapter.NewLoopback(svc, taskID)
+		}
 
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
@@ -105,4 +135,25 @@ func loopbackBuilder(svc *service.Service) agent.LoopbackBuilder {
 
 		return h, nil
 	}
+}
+
+// isOrchestratorClassRole reports whether `role` (from agent.Options.Role,
+// canonically the SessionMetaRoleValue stamped by planstart for
+// orchestrators or the AgentProfile name for scheduler-dispatched
+// kind=internal tasks) is one of the documented orchestrator-class roles
+// that drive plan walks and need the full cross-task MCP tool surface
+// (CW-20260509-0018).
+//
+// Reserved profile names: callers MUST NOT use these as kind=agent worker
+// profiles, since doing so would silently widen the worker's MCP surface
+// to the cross-task set. V1 trusts the operator to reserve the names; V2
+// can add stricter validation at task-create time.
+func isOrchestratorClassRole(role string) bool {
+	switch role {
+	case "orchestrator",
+		"planner",
+		"reviewer-end-agent":
+		return true
+	}
+	return false
 }

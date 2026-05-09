@@ -28,15 +28,24 @@ type LoopbackHandle interface {
 // LoopbackBuilder is the factory injected into Dependencies. nil = loopback
 // disabled (matches the legacy cliexec.New(svc=nil) test path); non-nil
 // constructs a fresh per-task handle for each Boot call.
-type LoopbackBuilder func(taskID string) (LoopbackHandle, error)
+//
+// `role` (CW-20260509-0018) lets the builder pick the appropriate MCP tool
+// surface for the session: kind=agent worker tasks get the restricted
+// self-task subset (the legacy loopback contract); orchestrator-class roles
+// — "orchestrator" / "planner" / "reviewer-end-agent" — get the full
+// cross-task tool surface so they can drive plan walks, create planner
+// sub-tasks, transition children, etc. See bootstrap.loopbackBuilder for
+// the dispatch. Empty role = treat as worker (restricted subset);
+// forward-compatible for callers that don't set Options.Role.
+type LoopbackBuilder func(taskID, role string) (LoopbackHandle, error)
 
 // setupLoopback materializes a handle when the deps factory is non-nil.
 // Returns (nil, nil) when nil — the test path.
-func setupLoopback(builder LoopbackBuilder, taskID string) (LoopbackHandle, error) {
+func setupLoopback(builder LoopbackBuilder, taskID, role string) (LoopbackHandle, error) {
 	if builder == nil {
 		return nil, nil
 	}
-	return builder(taskID)
+	return builder(taskID, role)
 }
 
 // shutdownLoopbackHandle is the package-internal teardown helper used by
