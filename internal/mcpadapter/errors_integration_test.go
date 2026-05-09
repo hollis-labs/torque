@@ -12,20 +12,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestError_ArgInvalid_BadJSON — passing malformed JSON to the `tags`
-// arg on clockwork_task_create should surface as arg_invalid with
-// field="tags", not as a generic internal error.
+// TestError_ArgInvalid_BadJSON — passing malformed JSON to a JSON-string
+// arg on clockwork_task_create should surface as arg_invalid with the
+// offending field name pinpointed, not as a generic internal error.
+//
+// Uses `depends_on` rather than `tags`: per CW-20260509-0033, the
+// go-mcp-sanitize middleware (Pattern 4) auto-recovers `tags` from a
+// JSON-encoded string into a real []any, swallowing malformed JSON before
+// the handler sees it (intentional lib behavior). `depends_on` is a sibling
+// JSON-string field with the same handler-side validation but no
+// pattern-4 auto-recovery, so it still exercises the arg_invalid path.
 func TestError_ArgInvalid_BadJSON(t *testing.T) {
 	a := setupAdapter(t)
 	text, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
-		"title":       "bad tags",
+		"title":       "bad depends_on",
 		"description": "x",
-		"tags":        "not-json-at-all",
+		"depends_on":  "not-json-at-all",
 	})
 	require.True(t, isErr, "malformed JSON must be an error: %s", text)
 	code, _, field := parseError(t, text)
 	assert.Equal(t, "arg_invalid", code)
-	assert.Equal(t, "tags", field, "arg_invalid must pinpoint the offending field")
+	assert.Equal(t, "depends_on", field, "arg_invalid must pinpoint the offending field")
 }
 
 // TestError_NotFound_UnknownTask — clockwork_task_get on a nonexistent ID

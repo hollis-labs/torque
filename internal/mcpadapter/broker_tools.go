@@ -16,7 +16,7 @@ import (
 // over MCP. Tools reply with a domain error when the adapter has no broker
 // wired (mcp-only stdio path), mirroring the sessionmgr contract.
 func (a *Adapter) registerBrokerTools() {
-	a.server.AddTool(mcp.NewTool("clockwork_broker_send",
+	a.addTool(mcp.NewTool("clockwork_broker_send",
 		mcp.WithDescription(`Send a typed envelope through the Clockwork broker (notice|status_update|handoff|escalation|response).
 Use for fire-and-forget envelopes (notice, status_update, handoff) and one-shot escalations. For request/reply with a blocking wait, use clockwork_broker_request.
 Validation: kind must be a known envelope type; from/to must be canonical msg:// URNs; payload size capped per MaxPayloadBytes; escalation requires severity in {info,warn,error,critical} and a non-empty reason.
@@ -33,7 +33,7 @@ Example: {"kind":"notice","from":"msg://agent/test/alice","to":"msg://agent/test
 		mcp.WithString("metadata", mcp.Description("JSON object of string→string metadata")),
 	), a.handleBrokerSend)
 
-	a.server.AddTool(mcp.NewTool("clockwork_broker_request",
+	a.addTool(mcp.NewTool("clockwork_broker_request",
 		mcp.WithDescription(`Send a kind=request envelope and BLOCK until a correlated response arrives or the timeout expires.
 Use for synchronous agent-to-agent calls (orchestrator asks reviewer for disposition; planner asks orchestrator for context). Pair with clockwork_broker_send (kind=response) on the responder side, or use the dispatcher's Reply helper.
 timeout_seconds clamps to [1, 600]; defaults to 30. On timeout the call returns a domain error and the request envelope persists — issue clockwork_broker_send for a follow-up Cancel-equivalent if the request is no longer meaningful.
@@ -49,7 +49,7 @@ Example: {"from":"msg://agent/test/alice","to":"msg://agent/test/bob","payload":
 		mcp.WithString("timeout_seconds", mcp.Description("Block timeout in seconds; default 30, range [1,600]")),
 	), a.handleBrokerRequest)
 
-	a.server.AddTool(mcp.NewTool("clockwork_broker_inbox",
+	a.addTool(mcp.NewTool("clockwork_broker_inbox",
 		mcp.WithDescription(`Drain undelivered envelopes addressed to a recipient URN. Atomically marks returned rows DeliveredAt=now and emits envelope.delivered SSE events.
 Use to poll for incoming envelopes when not running a Subscribe stream (HTTP /api/v1/messages/subscribe is the SSE alternative).
 kind / channel / thread_id filter values combine via AND; within a slice values OR. Limit caps the page (0 = unlimited).
