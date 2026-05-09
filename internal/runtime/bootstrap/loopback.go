@@ -66,8 +66,9 @@ func (h *loopbackHandle) Shutdown(ctx context.Context) error {
 
 // loopbackBuilder constructs the agent.LoopbackBuilder factory. svc is the
 // service handle the loopback adapter needs for closure-bound task
-// operations; nil yields a builder that returns (nil, nil) so test code
-// paths see "no loopback" identical to the legacy cliexec(svc=nil) shape.
+// operations; nil returns a nil builder (which agent.setupLoopback then
+// short-circuits to (nil, nil) — "no loopback") to match the legacy
+// cliexec(svc=nil) test path.
 //
 // `sessionsRef` is a late-bound accessor for the agent.Manager that the
 // orchestrator-class loopback adapter wires via WithSessions. The accessor
@@ -96,9 +97,13 @@ func loopbackBuilder(svc *service.Service, sessionsRef func() *agent.Manager) ag
 		//     workers) → restricted self-task subset (legacy behavior).
 		var loopback *mcpadapter.Adapter
 		if isOrchestratorClassRole(role) && sessionsRef != nil {
-			// Pinned to taskID for parity with the loopback contract
-			// (the orchestrator's task is the plan task), but exposes the
-			// full clockwork tool surface. Sessions wired so
+			// Full clockwork tool surface — NOT pinned to taskID. Unlike
+			// NewLoopback, mcpadapter.New requires explicit task IDs on
+			// every call (clockwork_task_get(id="..."), etc.). That
+			// matches the orchestrator's actual usage pattern: it acts on
+			// many task IDs (the plan task, planner sub-task, child
+			// tasks), not just its own. The orchestrator template already
+			// uses the explicit-id forms verbatim. Sessions wired so
 			// clockwork_session_* + clockwork_plan_start work.
 			loopback = mcpadapter.New(svc, nil).WithSessions(sessionsRef())
 		} else {
