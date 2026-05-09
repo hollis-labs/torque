@@ -128,17 +128,31 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, PickDecisions, error) {
 	// (project-scoped concurrency only applies when a task declares a
 	// project); those serialize via worker count instead.
 	//
-	// kind=internal tasks (Reviewer end-agents and other automation
-	// primitives, CW-20260503-0011) are deliberately skipped here — they
-	// are meta-work that should always flow alongside agent dispatches
-	// without holding project slots.
+	// Coordination-role tasks are deliberately skipped here — they are
+	// meta-work that should always flow alongside agent dispatches without
+	// holding project slots:
+	//
+	//   - kind=internal: Reviewer end-agents and other automation primitives
+	//     (CW-20260503-0011), e.g. planner / reviewer-end-agent.
+	//   - kind=plan: orchestrator session's host task (CW-20260509-0002).
+	//     The orchestrator drives plan execution by promoting child tasks to
+	//     manual=false and waiting for the scheduler to dispatch them; if its
+	//     own kind=plan task is in `doing` and counts as busy, the children
+	//     it just promoted get filtered with project_busy and the orchestrator
+	//     deadlocks waiting forever. The plan task is itself never dispatched
+	//     (SkipReasonPlanKind below) — it's pure coordination.
+	//   - kind=parent: status-derived by ParentRollupTick from its children.
+	//     Parents are never dispatched (SkipReasonParentKind below); a parent
+	//     stuck in `doing` (e.g. legacy row, manual transition) shouldn't
+	//     gate dispatch of its own children — same shape as the plan-task
+	//     deadlock above.
 	busy, err := p.store.ListTasks(sqlstore.TaskFilter{Status: "doing"})
 	if err != nil {
 		return nil, decisions, err
 	}
 	busyProjects := make(map[string]struct{}, len(busy))
 	for _, t := range busy {
-		if t.Kind == "internal" {
+		if t.Kind == "internal" || t.Kind == "plan" || t.Kind == "parent" {
 			continue
 		}
 		if pk := projectKey(t); pk != "" {
