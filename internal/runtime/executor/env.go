@@ -20,11 +20,46 @@ var secretPatterns = []string{
 	"AUTH_KEY",
 }
 
-// safeTokenVars are env var names that contain "TOKEN" but are not secrets.
+// safeTokenVars are env var names that contain "TOKEN" but are not secrets
+// (false positives — terminal/shell metadata that happens to contain the
+// substring).
 var safeTokenVars = map[string]bool{
 	"COLORTERM":     true,
 	"TERM_PROGRAM":  true,
 	"ITERM_SESSION": true,
+}
+
+// providerAuthEnvVars are env var names that ARE secrets but MUST pass through
+// to the spawned subprocess, because the subprocess IS the LLM provider CLI
+// (claude / codex / opencode / gemini / copilot) and the variable is the
+// provider's documented authentication mechanism.
+//
+// CW-20260509-0011: bare-mode claude (--bare) explicitly documents:
+//
+//	"Anthropic auth is strictly ANTHROPIC_API_KEY or apiKeyHelper via
+//	 --settings (OAuth and keychain are never read)."
+//
+// Without ANTHROPIC_API_KEY surviving FilterEnv, bare-mode claude in the
+// daemon-spawned subprocess fails with "Not logged in · Please run /login |
+// exit 1" — surfaced 2026-05-09 in S2.5 smoke retry, blocked the
+// re-trigger. The passthrough also covers the analogous variables for the
+// other providers in the portfolio so this same gap doesn't bite when
+// other adapters move to bare-equivalent modes.
+//
+// Subscription/OAuth users (no ANTHROPIC_API_KEY in env, authenticated via
+// claude.ai login → macOS keychain) should run `claude setup-token` once to
+// generate a long-lived API token and place it in the daemon's environment
+// (e.g. cerberus launchd plist). Bare mode then honors it via this
+// passthrough. Auto-extracting the OAuth credential at run time is tracked
+// as a follow-up (apiKeyHelper-automation) and out of scope here.
+var providerAuthEnvVars = map[string]bool{
+	"ANTHROPIC_API_KEY":    true, // claude (--bare requires this or apiKeyHelper)
+	"ANTHROPIC_AUTH_TOKEN": true, // claude (alternative auth surface)
+	"OPENAI_API_KEY":       true, // codex
+	"GEMINI_API_KEY":       true, // gemini
+	"GOOGLE_API_KEY":       true, // gemini (alternative)
+	"GITHUB_TOKEN":         true, // copilot
+	"GH_TOKEN":             true, // copilot (alternative)
 }
 
 // FilterEnvOpts controls how environment variables are filtered.
@@ -87,12 +122,33 @@ func FilterEnv(env []string, opts FilterEnvOpts) (filtered []string, stripped []
 	return filtered, stripped
 }
 
-// LooksLikeSecret returns true if the env var key looks like it contains a secret.
+// LooksLikeSecret returns true if the env var key looks like it contains a
+// secret AND should be stripped from the spawned subprocess's environment.
+//
+// Two escape hatches override the secret-pattern match:
+//
+//  1. safeTokenVars — names that contain a secret-pattern substring as a
+//     false positive (e.g. COLORTERM, TERM_PROGRAM contain "TOKEN" but
+//     aren't secrets).
+//
+//  2. providerAuthEnvVars — names that ARE secrets but the spawned
+//     subprocess REQUIRES (because it IS the LLM provider CLI and the
+//     variable is its documented auth mechanism). Without this allowlist,
+//     bare-mode claude can't authenticate (CW-20260509-0011). The
+//     allowlist is portfolio-wide; misuse risk (leaking ANTHROPIC_API_KEY
+//     to a non-claude subprocess) is mitigated because the value is only
+//     ever set in the daemon's environment by the operator, who controls
+//     where the daemon spawns subprocesses.
 func LooksLikeSecret(key string) bool {
 	upper := strings.ToUpper(key)
 
 	// Check safe list first (vars that match patterns but aren't secrets)
 	if safeTokenVars[upper] {
+		return false
+	}
+	// Provider auth vars are secrets BUT must pass through to the spawned
+	// LLM provider CLI. See providerAuthEnvVars godoc for rationale.
+	if providerAuthEnvVars[upper] {
 		return false
 	}
 

@@ -383,6 +383,13 @@ func TestProfileArgsExcludingDevFlag(t *testing.T) {
 // TestComposeEnv exercises the env composition order: filtered OS env →
 // CLOCKWORK_TASK_ID/RUN_ID → opts.Env. Agent-file env was dropped from the
 // per-call surface for V1 (caller can stamp via opts.Env directly).
+//
+// Also asserts the CW-20260509-0011 provider-auth-passthrough contract:
+// ANTHROPIC_API_KEY (and the other portfolio provider auth env vars listed
+// in providerAuthEnvVars) MUST survive composeEnv. Pre-fix, they were
+// stripped by LooksLikeSecret because their names contain "API_KEY" /
+// "TOKEN" — bare-mode claude in the daemon-spawned subprocess then failed
+// with "Not logged in".
 func TestComposeEnv(t *testing.T) {
 	t.Setenv("CLOCKWORK_TEST_MARKER", "yes")
 	t.Setenv("ANTHROPIC_API_KEY", "secret-should-survive")
@@ -407,6 +414,8 @@ func TestComposeEnv(t *testing.T) {
 	assert.Equal(t, "42", asMap["CLOCKWORK_RUN_ID"])
 	assert.Equal(t, "bar", asMap["FOO"])
 	assert.Equal(t, "yes", asMap["CLOCKWORK_TEST_MARKER"])
+	assert.Equal(t, "secret-should-survive", asMap["ANTHROPIC_API_KEY"],
+		"ANTHROPIC_API_KEY must survive composeEnv per CW-20260509-0011 (provider-auth passthrough)")
 }
 
 // TestResolveTimeout exercises the priority chain: metadata override →
