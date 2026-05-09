@@ -9,6 +9,7 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/appdb"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/bootstrap"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"
@@ -40,10 +41,55 @@ func mcpCmd() *cobra.Command {
 			svc.Models = modelcatalog.New()
 			svc.Models.Start(cmd.Context())
 
-			// The stdio mcp subcommand runs in a separate process from serve and
-			// has no scheduler instance; scheduler_* tools will surface a
-			// not-running error if called here, matching the HTTP 503 contract.
-			adapter := mcpadapter.New(svc, nil)
+			// Profile config (CLOCKWORK_PROFILES_PATH or ./profiles.yaml) —
+			// required by agent.Boot to resolve provider + adapter selection
+			// when session-creating tools (clockwork_plan_start,
+			// clockwork_session_create) are invoked. Empty map is fine; per-
+			// task Validate will surface "profile not found" at dispatch.
+			profiles := loadProfilesOrEmpty()
+
+			// Agent substrate (CW-20260509-0013): wire agent.Manager into the
+			// stdio MCP adapter so session-manager-dependent tools
+			// (clockwork_plan_start, clockwork_session_*) work over MCP stdio
+			// the same way they do over HTTP. Before this fix, calling
+			// clockwork_plan_start over the stdio transport returned
+			// `ErrSessionMgrMissing` because mcpadapter.New(svc, nil) wasn't
+			// chained with .WithSessions(...).
+			//
+			// Lifecycle caveat — sessions spawned via stdio mcp are owned by
+			// THIS process. When stdio mcp exits (typical shape: closed by
+			// the IDE / orchestration host that invoked it), in-memory
+			// session state goes away. The orchestrator subprocess survives
+			// (reparented to launchd/init under Unix) and continues running
+			// autonomously via its own MCP loopback HTTP server, but the
+			// per-session teardown that registerStderrCloser /
+			// registerStreamCloser / registerLoopback / registerBootDir
+			// drives doesn't fire — workspace artifacts and the ephemeral
+			// boot dir persist on disk. The next manager startup's orphan
+			// sweep (Sweep() — syscall.Kill(pid, 0)) correctly identifies
+			// the still-live process and spares its DB row, but no manager
+			// can SendInput to it directly because that requires the
+			// in-memory inner runtime registration this process is dropping.
+			//
+			// Bus is nil — the stdio mcp host has no SSE consumer, so
+			// emitting session.state_changed events would just discard them.
+			// The agent.Manager honors nil bus per its NewManager contract.
+			//
+			// Tools is nil — defaults to toolbroker.NewDefault() inside
+			// AgentDeps, fine for the no-tool-broker path.
+			//
+			// Scheduler is intentionally NOT wired here. The stdio mcp does
+			// NOT dispatch kind=agent / kind=internal tasks (that's the
+			// `clockwork serve` daemon's role). MCP scheduler_* tools will
+			// surface a `not running` error when called against this stdio
+			// instance, matching the HTTP 503 contract documented in
+			// mcpadapter.New's nil-sched godoc.
+			agentDeps, err := bootstrap.AgentDeps(store, profiles, svc, nil, nil)
+			if err != nil {
+				return fmt.Errorf("bootstrap agent deps: %w", err)
+			}
+
+			adapter := mcpadapter.New(svc, nil).WithSessions(agentDeps.Sessions)
 
 			stdio := server.NewStdioServer(adapter.Server())
 			return stdio.Listen(cmd.Context(), os.Stdin, os.Stdout)
