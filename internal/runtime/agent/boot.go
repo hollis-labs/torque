@@ -80,7 +80,11 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	systemPrompt := composeSystemPrompt(opts, agentFile)
 
 	// MCP loopback (closure-bound to taskID). nil-builder disables (test path).
-	loopback, err := setupLoopback(deps.Loopback, opts.TaskID)
+	// Role flows in so the builder can pick the appropriate MCP tool surface:
+	// kind=agent workers get the restricted self-task subset; orchestrator-
+	// class roles (orchestrator / planner / reviewer-end-agent) get the full
+	// cross-task surface (CW-20260509-0018).
+	loopback, err := setupLoopback(deps.Loopback, opts.TaskID, role)
 	if err != nil {
 		return nil, fmt.Errorf("%w: setup loopback: %v", ErrBootFailed, err)
 	}

@@ -42,12 +42,18 @@ func AgentDeps(
 	deps := &agent.Dependencies{
 		Store:    store,
 		Profiles: profiles,
-		Loopback: loopbackBuilder(svc),
 		Tools:    tools,
 		Bus:      bus,
 		// WorkspacesRoot defaults to $HOME/.clockwork/workspaces inside
 		// agent.workspaceCreate when left empty.
 	}
+	// loopbackBuilder needs a reference to deps.Sessions, but Sessions is
+	// constructed by agent.NewManager(deps) BELOW (and NewManager itself
+	// reads deps fields at construction time). The closure captures `deps`
+	// by reference; deps.Sessions is read at handle-construction time
+	// (per-Boot call), which always happens AFTER NewManager has set it.
+	// This breaks the cycle without a two-phase construction.
+	deps.Loopback = loopbackBuilder(svc, func() *agent.Manager { return deps.Sessions })
 	deps.Sessions = agent.NewManager(deps)
 
 	// Orphan sweep: mirror the prior sessionmgr.Sweep behavior. Any
