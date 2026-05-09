@@ -91,6 +91,26 @@ func (lm *LifecycleManager) HandleResult(taskID string, runID int64, result *exe
 }
 
 func (lm *LifecycleManager) handleDone(task *sqlstore.TaskRecord, runID int64, result *executor.ExecutionResult) error {
+	// CW-20260509-0006: normalize task to 'doing' before applying OnDone.
+	// scheduler.dispatchTask transitions todo -> doing before run-start, but
+	// an external actor (operator force-reset, manual task_transition) can
+	// flip the task back to a non-doing status while the run is in flight.
+	// In that case task.Status as loaded by HandleResult is whatever the
+	// reset left behind (todo / blocked / paused). The OnDone transition
+	// below still commits via direct DB write, but the emitted
+	// task_transitioned event's `from` field would carry the wrong state
+	// and downstream consumers that key on the `doing -> X` edge (the
+	// scheduler's own cancel-on-transition hook is a notable example)
+	// would misinterpret the transition. Normalize first so the on_done
+	// edge fires from the canonical source state.
+	if task.Status != "doing" {
+		if err := lm.store.TransitionTask(task.ID, "doing"); err != nil {
+			log.Printf("[lifecycle] CW-20260509-0006 normalize %s -> doing failed: %v (proceeding with on_done from %s)", task.ID, err, task.Status)
+		} else {
+			task.Status = "doing"
+		}
+	}
+
 	// Check deliverables before accepting "done"
 	if task.Deliverables.Valid && task.Deliverables.String != "" {
 		var required []executor.Deliverable
