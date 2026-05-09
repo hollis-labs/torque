@@ -142,3 +142,128 @@ func TestPickerDoesNotConsumeProjectSlotOnDepBlockedTask(t *testing.T) {
 	require.Len(t, picked, 1, "dep-blocked task must not starve same-project siblings")
 	assert.Equal(t, "CW-P-READY", picked[0].ID)
 }
+
+// CW-20260509-0002: a doing kind=plan task (orchestrator's host) must NOT
+// block dispatch of agent children in the same project. The orchestrator
+// drives plan execution by promoting children to manual=false and waiting
+// for the scheduler to pick them up; if its own kind=plan task counted as
+// busy, the children would skip with project_busy and the orchestrator
+// would deadlock forever (the smoke-blocker observed 2026-05-08).
+func TestPickerKindPlanDoesNotBlockSameProjectChildren(t *testing.T) {
+	store := setupPickerStore(t)
+	picker := scheduler.NewPicker(store)
+
+	// Orchestrator's host: kind=plan, status=doing on project P.
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-PLAN-DOING", Title: "orchestrator host", Status: "doing",
+		Kind: "plan", Priority: 1,
+		ProjectID: sql.NullString{String: "PRJ-COORD", Valid: true},
+	}))
+	// Agent child the orchestrator just promoted: same project, todo,
+	// manual=false. Must be eligible despite the plan task being doing.
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-CHILD-1", Title: "promoted child", Status: "todo",
+		Kind: "agent", Priority: 1,
+		Executor: "cli", AgentProfile: "cli-profile",
+		ProjectID: sql.NullString{String: "PRJ-COORD", Valid: true},
+	}))
+
+	picked, decisions, err := picker.Pick(10)
+	require.NoError(t, err)
+	require.Len(t, picked, 1, "kind=plan task must not block same-project agent children")
+	assert.Equal(t, "CW-CHILD-1", picked[0].ID)
+	assert.Equal(t, 0, decisions.Counts[scheduler.SkipReasonProjectBusy],
+		"no candidate should be skipped with project_busy when only a kind=plan task is in flight")
+}
+
+// Sister case: a doing kind=agent worker task DOES block same-project
+// children (busy semantics preserved for actual workers). Guards against
+// over-broadening the coordination-role exclusion.
+func TestPickerKindAgentDoingStillBlocksSameProject(t *testing.T) {
+	store := setupPickerStore(t)
+	picker := scheduler.NewPicker(store)
+
+	// Real worker: kind=agent, status=doing.
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-WORKER-DOING", Title: "active worker", Status: "doing",
+		Kind: "agent", Priority: 1,
+		Executor: "cli", AgentProfile: "cli-profile",
+		ProjectID: sql.NullString{String: "PRJ-WORKER", Valid: true},
+	}))
+	// Same-project sibling — must be gated by project_busy.
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-SIBLING", Title: "waiting sibling", Status: "todo",
+		Kind: "agent", Priority: 1,
+		Executor: "cli", AgentProfile: "cli-profile",
+		ProjectID: sql.NullString{String: "PRJ-WORKER", Valid: true},
+	}))
+
+	picked, decisions, err := picker.Pick(10)
+	require.NoError(t, err)
+	assert.Len(t, picked, 0, "same-project sibling must be gated while a worker is doing")
+	assert.Equal(t, 1, decisions.Counts[scheduler.SkipReasonProjectBusy])
+}
+
+// Mixed case: a kind=plan coordinator AND a kind=agent worker both running
+// in the same project. The worker still triggers the busy gate; the plan
+// task alone does not. Confirms the exclusion is additive, not subtractive.
+func TestPickerMixedCoordinatorAndWorkerBlocks(t *testing.T) {
+	store := setupPickerStore(t)
+	picker := scheduler.NewPicker(store)
+
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-PLAN-MIX", Title: "orchestrator", Status: "doing",
+		Kind: "plan", Priority: 1,
+		ProjectID: sql.NullString{String: "PRJ-MIX", Valid: true},
+	}))
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-WORKER-MIX", Title: "active worker", Status: "doing",
+		Kind: "agent", Priority: 1,
+		Executor: "cli", AgentProfile: "cli-profile",
+		ProjectID: sql.NullString{String: "PRJ-MIX", Valid: true},
+	}))
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-PENDING-MIX", Title: "queued sibling", Status: "todo",
+		Kind: "agent", Priority: 1,
+		Executor: "cli", AgentProfile: "cli-profile",
+		ProjectID: sql.NullString{String: "PRJ-MIX", Valid: true},
+	}))
+
+	picked, decisions, err := picker.Pick(10)
+	require.NoError(t, err)
+	assert.Len(t, picked, 0, "worker doing still gates the project regardless of plan presence")
+	assert.Equal(t, 1, decisions.Counts[scheduler.SkipReasonProjectBusy])
+}
+
+// Same shape as TestPickerKindPlanDoesNotBlockSameProjectChildren, but for
+// kind=parent. Parents are status-derived by ParentRollupTick (never
+// dispatched by the picker — SkipReasonParentKind), so a parent stuck in
+// `doing` (legacy row, manual transition, or transient rollup state)
+// shouldn't gate dispatch of its own children. Mirrors the plan-task
+// exclusion in the busyProjects accumulator.
+func TestPickerKindParentDoesNotBlockSameProjectChildren(t *testing.T) {
+	store := setupPickerStore(t)
+	picker := scheduler.NewPicker(store)
+
+	// Parent task: kind=parent, status=doing on project P.
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-PARENT-DOING", Title: "parent host", Status: "doing",
+		Kind: "parent", Priority: 1,
+		ProjectID: sql.NullString{String: "PRJ-PARENT", Valid: true},
+	}))
+	// Agent child of that parent: same project, todo, manual=false.
+	// Must be eligible despite the parent being doing.
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-PARENT-CHILD", Title: "child of parent", Status: "todo",
+		Kind: "agent", Priority: 1,
+		Executor: "cli", AgentProfile: "cli-profile",
+		ProjectID: sql.NullString{String: "PRJ-PARENT", Valid: true},
+	}))
+
+	picked, decisions, err := picker.Pick(10)
+	require.NoError(t, err)
+	require.Len(t, picked, 1, "kind=parent task must not block same-project agent children")
+	assert.Equal(t, "CW-PARENT-CHILD", picked[0].ID)
+	assert.Equal(t, 0, decisions.Counts[scheduler.SkipReasonProjectBusy],
+		"no candidate should be skipped with project_busy when only a kind=parent task is in flight")
+}
