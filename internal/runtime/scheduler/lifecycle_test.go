@@ -488,3 +488,60 @@ done:
 	}
 	assert.True(t, found, "should emit task.transitioned event")
 }
+
+// TestLifecycleDoneNormalizesNonDoingStatus is the regression test for
+// CW-20260509-0006. When the task is at a non-`doing` status at HandleResult
+// time (operator force-reset, external manual transition, scheduler race),
+// handleDone must normalize to `doing` first so the on_done transition fires
+// from the canonical source state and the task lands at its declared on_done
+// disposition rather than staying at the leftover non-doing status.
+//
+// Surfaced 2026-05-09 in S2.5 plan-execute smoke (CW-20260507-0007). Run 545
+// completed status=done, but the task was at status=todo 10s after run end —
+// the on_done=review hook left the task at todo because some other actor had
+// reset the task while the run was in flight.
+func TestLifecycleDoneNormalizesNonDoingStatus(t *testing.T) {
+	cases := []string{"todo", "blocked", "paused", "review"}
+	for _, startStatus := range cases {
+		t.Run("from_"+startStatus, func(t *testing.T) {
+			store := setupLifecycleStore(t)
+			bus := scheduler.NewEventBus()
+			defer bus.Close()
+			lm := scheduler.NewLifecycleManager(store, bus)
+
+			store.CreateTask(&sqlstore.TaskRecord{
+				ID: "CW-0001", Title: "Task", Status: startStatus, Executor: "cli",
+				OnDone: "review",
+			})
+
+			result := &executor.ExecutionResult{Status: "done"}
+			require.NoError(t, lm.HandleResult("CW-0001", 1, result))
+
+			task, _ := store.GetTask("CW-0001")
+			assert.Equal(t, "review", task.Status,
+				"on_done=review must transition to review even when starting from %s", startStatus)
+		})
+	}
+}
+
+// TestLifecycleDoneNormalizesThenAppliesClose is the on_done=close variant of
+// the CW-20260509-0006 regression — verifies the normalize is OnDone-mode-
+// independent (close goes to done, not stuck at the pre-normalize status).
+func TestLifecycleDoneNormalizesThenAppliesClose(t *testing.T) {
+	store := setupLifecycleStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	lm := scheduler.NewLifecycleManager(store, bus)
+
+	store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-0001", Title: "Task", Status: "todo", Executor: "cli",
+		OnDone: "close",
+	})
+
+	result := &executor.ExecutionResult{Status: "done"}
+	require.NoError(t, lm.HandleResult("CW-0001", 1, result))
+
+	task, _ := store.GetTask("CW-0001")
+	assert.Equal(t, "done", task.Status,
+		"on_done=close must transition to done even when starting from todo")
+}
