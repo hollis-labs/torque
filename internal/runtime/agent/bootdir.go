@@ -87,6 +87,12 @@ func plantBootDir(p plantParams) (*bootDirResult, error) {
 		AgentName:      p.AgentName,
 		MCPLoopbackURL: p.MCPLoopbackURL,
 		ProjectDir:     p.ProjectDir,
+		// BootDir is the gate for go-providers v0.8.2's per-bootdir trust
+		// seeding (CW-20260508-0007): the claude .claude/settings.json
+		// Render closure side-effects on ~/.claude.json's projects map
+		// only when BootDir != "". Without this, PTY-mode claude stalls
+		// on the first-run workspace trust dialog.
+		BootDir: bootDir,
 	}
 
 	for _, pf := range spec.PlantedFiles {

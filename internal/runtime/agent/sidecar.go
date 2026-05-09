@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // stderrTailBytes caps how much stderr we surface in result.Reason on failure.
@@ -42,15 +43,36 @@ func (t *tailBuffer) Bytes() []byte {
 	return t.buf
 }
 
-// openStderrSidecar fans the spawned process's stderr into both an in-memory
-// tail buffer and a per-run sidecar log at $CLOCKWORK_DATA_DIR/runs/<run_id>.stderr.log
-// (preserving CW-20260417-0024). If the sidecar can't be opened we degrade
-// to buffer-only and log a warning; losing stderr entirely is never acceptable.
+// openStderrSidecar fans the spawned process's stderr into:
 //
-// Forked from internal/runtime/cliexec/sidecar.go without semantic change.
-func openStderrSidecar(runID int64) (writer io.Writer, tail *tailBuffer, closer func()) {
+//  1. An in-memory tail buffer (used by the executor to surface the trailing
+//     few KB on the result reason when a turn fails).
+//  2. A per-run sidecar log at $CLOCKWORK_DATA_DIR/runs/<run_id>.stderr.log
+//     (preserving CW-20260417-0024 — RunID-scoped, useful for executor
+//     ModeOneShot turns where each run has a unique RunID).
+//  3. The per-session log at <workspaceLogPath> (typically
+//     ~/.clockwork/workspaces/<proj>/<sess>/logs/session.log) when non-empty.
+//     This is the path forensic tooling reaches for first when a session
+//     fails, and the long-lived session boot path uses RunID=0 for every
+//     spawn (because RunID is a scheduler-side concept), so without this tee
+//     the session-scoped log stays empty and stderr would only be findable
+//     in the (overwritten) 0.stderr.log file.
+//
+// All three sinks are best-effort: if any one fails to open we log a warning
+// and continue with the rest. Losing stderr entirely is never acceptable; the
+// tail buffer is always populated so the executor can still surface a tail
+// in the failure reason.
+//
+// CW-20260508-0006: tee subprocess stderr into the session log so daemon-spawned
+// claude (subprocess-per-turn) failures are visible in <workspace>/logs/session.log.
+// Was: the runner only piped stderr to the per-run sidecar, leaving session.log
+// empty for any RunID=0 boot (long-lived orchestrator/session-create paths).
+//
+// Forked from internal/runtime/cliexec/sidecar.go.
+func openStderrSidecar(runID int64, workspaceLogPath string) (writer io.Writer, tail *tailBuffer, closer func()) {
 	tail = newTailBuffer(stderrTailBytes)
-	closer = func() {}
+	closers := make([]func(), 0, 2)
+	writers := []io.Writer{tail}
 
 	dataDir := os.Getenv("CLOCKWORK_DATA_DIR")
 	if dataDir == "" {
@@ -59,19 +81,52 @@ func openStderrSidecar(runID int64) (writer io.Writer, tail *tailBuffer, closer 
 	runsDir := filepath.Join(dataDir, "runs")
 
 	if err := os.MkdirAll(runsDir, 0o755); err != nil {
-		log.Printf("agent: stderr sidecar dir unavailable (%s): %v — using buffer only", runsDir, err)
-		return tail, tail, closer
+		log.Printf("agent: stderr sidecar dir unavailable (%s): %v — degrading run-sidecar to buffer only", runsDir, err)
+	} else {
+		sidecarPath := filepath.Join(runsDir, fmt.Sprintf("%d.stderr.log", runID))
+		f, err := os.OpenFile(sidecarPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			log.Printf("agent: stderr sidecar open failed (%s): %v — degrading run-sidecar to buffer only", sidecarPath, err)
+		} else {
+			writers = append(writers, f)
+			closers = append(closers, func() { _ = f.Close() })
+		}
 	}
 
-	sidecarPath := filepath.Join(runsDir, fmt.Sprintf("%d.stderr.log", runID))
-	f, err := os.OpenFile(sidecarPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		log.Printf("agent: stderr sidecar open failed (%s): %v — using buffer only", sidecarPath, err)
-		return tail, tail, closer
+	if workspaceLogPath != "" {
+		if err := os.MkdirAll(filepath.Dir(workspaceLogPath), 0o700); err != nil {
+			log.Printf("agent: session-log dir unavailable (%s): %v — stderr will not be teed to session.log", filepath.Dir(workspaceLogPath), err)
+		} else {
+			f, err := os.OpenFile(workspaceLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+			if err != nil {
+				log.Printf("agent: session-log open failed (%s): %v — stderr will not be teed to session.log", workspaceLogPath, err)
+			} else {
+				writers = append(writers, f)
+				closers = append(closers, func() { _ = f.Close() })
+			}
+		}
 	}
 
-	writer = io.MultiWriter(tail, f)
-	closer = func() { _ = f.Close() }
+	switch len(writers) {
+	case 1:
+		writer = tail
+	default:
+		writer = io.MultiWriter(writers...)
+	}
+	// Idempotent close (sync.Once): callers commonly use both `defer closer()`
+	// for crash safety AND an explicit `closer()` before reading the files
+	// back. Today the closer is naturally tolerant of double-call (each
+	// inner Close just returns an "already closed" error that we discard),
+	// but if this ever grows flush/rename/finalize logic the double-call
+	// would become flaky. Wrap with sync.Once now to lock the invariant in.
+	var once sync.Once
+	closer = func() {
+		once.Do(func() {
+			for _, c := range closers {
+				c()
+			}
+		})
+	}
 	return writer, tail, closer
 }
 

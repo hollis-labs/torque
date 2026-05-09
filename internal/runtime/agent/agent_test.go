@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
+	"github.com/hollis-labs/go-providers/provider"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -114,11 +115,13 @@ func TestStatus_Terminal(t *testing.T) {
 }
 
 // TestShouldUsePTY locks the per-Mode + per-provider + per-profile Caps.PTY
-// decision matrix. Default (profile.PTY=nil) falls back to the matrix:
-// claude on long-lived modes opts into PTY; everything else stays subprocess-
-// per-turn. ModeOneShot is always subprocess. profile.PTY explicit overrides
-// the matrix in either direction (subject to ModeOneShot still forcing
-// subprocess). opts.SubprocessPerTurnOverride is a hard escape hatch.
+// decision matrix. Default (profile.PTY=nil) is subprocess-per-turn for all
+// providers — programmatic auto-fire against PTY/TUI claude is unproven (the
+// kickoff lands in the TUI input box but doesn't submit; mux's claudecode is
+// human-driven), so long-lived state goes through claude's `--resume` chain
+// across subprocess turns instead. profile.PTY=true is the experiment escape
+// hatch. ModeOneShot is always subprocess. opts.SubprocessPerTurnOverride is
+// a hard override.
 func TestShouldUsePTY(t *testing.T) {
 	bptr := func(b bool) *bool { return &b }
 	cases := []struct {
@@ -129,11 +132,11 @@ func TestShouldUsePTY(t *testing.T) {
 		override   bool
 		want       bool
 	}{
-		// Matrix defaults (profile.PTY=nil).
-		{"claude long-lived → PTY", ModeLongLived, "claude", nil, false, true},
-		{"claude subagent → PTY", ModeSubagent, "claude", nil, false, true},
-		{"claude resume → PTY", ModeResume, "claude", nil, false, true},
-		{"claude background → PTY", ModeBackground, "claude", nil, false, true},
+		// Matrix defaults (profile.PTY=nil) — subprocess-per-turn everywhere.
+		{"claude long-lived → no PTY (TUI auto-fire unproven)", ModeLongLived, "claude", nil, false, false},
+		{"claude subagent → no PTY", ModeSubagent, "claude", nil, false, false},
+		{"claude resume → no PTY", ModeResume, "claude", nil, false, false},
+		{"claude background → no PTY", ModeBackground, "claude", nil, false, false},
 		{"claude OneShot → no PTY (single turn)", ModeOneShot, "claude", nil, false, false},
 		{"codex long-lived → no PTY (not yet probed)", ModeLongLived, "codex", nil, false, false},
 		{"opencode long-lived → no PTY", ModeLongLived, "opencode", nil, false, false},
@@ -141,12 +144,12 @@ func TestShouldUsePTY(t *testing.T) {
 		{"copilot long-lived → no PTY", ModeLongLived, "copilot", nil, false, false},
 
 		// opts.SubprocessPerTurnOverride beats everything.
-		{"override forces no PTY even on claude long-lived", ModeLongLived, "claude", nil, true, false},
-		{"override beats explicit profile.PTY=true", ModeLongLived, "claude", bptr(true), true, false},
+		{"override forces no PTY even when profile.PTY=true", ModeLongLived, "claude", bptr(true), true, false},
 
-		// Explicit profile.PTY override.
+		// Explicit profile.PTY override (experiment escape hatch).
+		{"profile.PTY=true forces PTY on claude long-lived", ModeLongLived, "claude", bptr(true), false, true},
 		{"profile.PTY=true forces PTY on codex long-lived", ModeLongLived, "codex", bptr(true), false, true},
-		{"profile.PTY=false forces subprocess on claude long-lived", ModeLongLived, "claude", bptr(false), false, false},
+		{"profile.PTY=false explicit (matches default)", ModeLongLived, "claude", bptr(false), false, false},
 		{"profile.PTY=true on OneShot still subprocess (single-turn constraint)", ModeOneShot, "claude", bptr(true), false, false},
 	}
 	for _, tc := range cases {
@@ -255,9 +258,116 @@ func TestProfileIsDevMode(t *testing.T) {
 	assert.False(t, ProfileIsDevMode(config.AgentProfile{}))
 }
 
+// TestAdapterFor_ClaudeMatrix locks the dev × pty constructor-selection
+// matrix for the claude provider. Subprocess-per-turn (non-PTY) paths use
+// the v0.9.1 bare-mode constructors (Bare=true) — bare mode skips
+// auto-discovery of operator config (~/.claude/settings.json, ~/.claude.json,
+// hooks/plugins/MCP/OAuth/keychain/CLAUDE.md auto-find) and obsoletes the
+// operator-config-bleed-through class for bare consumers (CW-20260508-0019).
+// PTY paths stay non-bare (the TUI shape doesn't accept --bare; bare is
+// print-mode-focused per Anthropic's docs).
+func TestAdapterFor_ClaudeMatrix(t *testing.T) {
+	cases := []struct {
+		name              string
+		args              []string // profile.Args (drives dev-mode detection)
+		pty               bool
+		wantBare          bool
+		wantPTY           bool
+		wantSkipPermsTrue bool
+	}{
+		{
+			name:              "non-dev + non-pty → bare (subprocess-per-turn)",
+			args:              nil,
+			pty:               false,
+			wantBare:          true,
+			wantPTY:           false,
+			wantSkipPermsTrue: false,
+		},
+		{
+			name:              "dev + non-pty → dev-bare (subprocess-per-turn)",
+			args:              []string{"--dangerously-skip-permissions"},
+			pty:               false,
+			wantBare:          true,
+			wantPTY:           false,
+			wantSkipPermsTrue: true,
+		},
+		{
+			name:              "non-dev + pty → pty (non-bare)",
+			args:              nil,
+			pty:               true,
+			wantBare:          false,
+			wantPTY:           true,
+			wantSkipPermsTrue: false,
+		},
+		{
+			name:              "dev + pty → dev-pty (non-bare)",
+			args:              []string{"--dangerously-skip-permissions"},
+			pty:               true,
+			wantBare:          false,
+			wantPTY:           true,
+			wantSkipPermsTrue: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			profile := config.AgentProfile{Provider: "claude", Args: tc.args}
+			adapter, caps, err := adapterFor(profile, "claude", tc.pty)
+			require.NoError(t, err)
+			assert.True(t, caps.BinaryRequired)
+			assert.True(t, caps.ProviderSessionID)
+			assert.True(t, caps.CheckpointResume)
+
+			ca, ok := adapter.(*provider.ClaudeAdapter)
+			require.True(t, ok, "adapter should be *provider.ClaudeAdapter, got %T", adapter)
+			assert.Equal(t, tc.wantBare, ca.Bare, "Bare")
+			assert.Equal(t, tc.wantPTY, ca.PTY, "PTY")
+			assert.Equal(t, tc.wantSkipPermsTrue, ca.SkipPermissions, "SkipPermissions")
+
+			// Bare-mode adapters returned by adapterFor are pre-injection:
+			// the four explicit-injection fields are populated post-plant
+			// in agent.Boot, not by the constructor.
+			if tc.wantBare {
+				assert.Empty(t, ca.MCPConfigPath, "MCPConfigPath must be empty pre-plant")
+				assert.Empty(t, ca.AppendSystemPromptFile, "AppendSystemPromptFile must be empty pre-plant")
+				assert.Empty(t, ca.SettingsPath, "SettingsPath must be empty pre-plant")
+				assert.Empty(t, ca.ProjectDir, "ProjectDir must be empty pre-plant")
+			}
+		})
+	}
+}
+
+// TestClaudeBareAdapter_AddDirSingleEmit verifies that a bare-mode claude
+// adapter populated via BareInjectionPaths emits exactly one `--add-dir`
+// in BuildArgs. Combined with the buildArgs closure in boot.go skipping
+// layout.ProjectDirArg for bare-mode claude (skipProjectDirArg=true), the
+// final spawn argv contains a single `--add-dir <projectDir>`.
+func TestClaudeBareAdapter_AddDirSingleEmit(t *testing.T) {
+	a := provider.NewClaudeAdapterDevBare()
+	inj := a.BareInjectionPaths("/tmp/boot", "/repo/x")
+	a.MCPConfigPath = inj.MCPConfigPath
+	a.AppendSystemPromptFile = inj.AppendSystemPromptFile
+	a.SettingsPath = inj.SettingsPath
+	a.ProjectDir = inj.ProjectDir
+
+	args := a.BuildArgs("hello", "ignored-in-bare", "")
+
+	addDirCount := 0
+	for _, arg := range args {
+		if arg == "--add-dir" {
+			addDirCount++
+		}
+	}
+	assert.Equal(t, 1, addDirCount, "bare-mode BuildArgs should emit --add-dir exactly once; argv=%v", args)
+	assert.Contains(t, args, "/repo/x", "argv should carry projectDir as the --add-dir value")
+	assert.Contains(t, args, "--bare")
+	assert.Contains(t, args, "--mcp-config")
+	assert.Contains(t, args, "--append-system-prompt-file")
+	assert.Contains(t, args, "--settings")
+}
+
 // TestProfileArgsExcludingDevFlag verifies the dev flag is stripped before
 // re-prepending profile.Args (the flag is consumed by adapterFor →
-// NewClaudeAdapterDev; passing it through profile.Args would double-add).
+// NewClaudeAdapterDev*; passing it through profile.Args would double-add).
 func TestProfileArgsExcludingDevFlag(t *testing.T) {
 	out := profileArgsExcludingDevFlag(config.AgentProfile{
 		Args: []string{"--dangerously-skip-permissions", "--debug", "--verbose"},

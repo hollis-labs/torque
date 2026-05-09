@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"time"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/go-providers/provider"
 	"github.com/hollis-labs/go-sandbox/sandbox"
 )
 
@@ -42,13 +44,18 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 
 	profile := config.GetProfileOrDefault(deps.Profiles, opts.AgentProfile)
 
-	// Adapter + capability set. Caps.PTY is decided per-Mode + provider.
-	cliAdapter, baseCaps, err := adapterFor(profile, opts.AgentProfile)
+	// PTY decision drives BOTH Caps.PTY and the adapter constructor — claude
+	// has different arg shapes per mode (go-providers v0.8.1 PTY-aware
+	// ClaudeAdapter), so adapterFor needs to know the decision. Computing
+	// PTY first keeps the adapter wiring in lockstep with the runtime caps.
+	pty := shouldUsePTY(opts.Mode, profile.Provider, profile.PTY, opts.SubprocessPerTurnOverride)
+
+	cliAdapter, baseCaps, err := adapterFor(profile, opts.AgentProfile, pty)
 	if err != nil {
 		return nil, fmt.Errorf("%w: adapter: %v", ErrAdapterNotFound, err)
 	}
 	caps := baseCaps
-	caps.PTY = shouldUsePTY(opts.Mode, profile.Provider, profile.PTY, opts.SubprocessPerTurnOverride)
+	caps.PTY = pty
 
 	// Session ID + role (used for SessionMeta + boot.md content).
 	idFn := opts.IDFn
@@ -103,6 +110,30 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		return nil, fmt.Errorf("%w: plant boot dir: %v", ErrBootFailed, err)
 	}
 
+	// Bare-mode claude (go-providers v0.9.0): populate the four explicit-
+	// injection paths from the planted layout. BuildArgs reads these fields
+	// to emit --mcp-config / --append-system-prompt-file / --settings /
+	// --add-dir; without this step the spawn omits those flags and falls
+	// back to auto-discovery (which bare mode disables — the agent then has
+	// no MCP, no system prompt file, no settings).
+	//
+	// Why bare mode: Anthropic's recommended shape for scripted/SDK calls;
+	// skips auto-discovery of ~/.claude/settings.json, ~/.claude.json,
+	// hooks/plugins/MCP/OAuth/keychain/CLAUDE.md auto-find. Obsoletes the
+	// operator-config-bleed-through class (CW-20260508-0019) for bare
+	// consumers. Non-claude / non-bare adapters fall through silently via
+	// the type-assertion check.
+	claudeBareAdapter, claudeIsBare := cliAdapter.(*provider.ClaudeAdapter)
+	if claudeIsBare && claudeBareAdapter.Bare {
+		inj := claudeBareAdapter.BareInjectionPaths(layout.BootDir, opts.Workdir)
+		claudeBareAdapter.MCPConfigPath = inj.MCPConfigPath
+		claudeBareAdapter.AppendSystemPromptFile = inj.AppendSystemPromptFile
+		claudeBareAdapter.SettingsPath = inj.SettingsPath
+		claudeBareAdapter.ProjectDir = inj.ProjectDir
+	} else {
+		claudeIsBare = false
+	}
+
 	// Workspace dir (persistent state + logs). Independent of boot dir.
 	ws, err := workspaceCreate(deps.WorkspacesRoot, opts.ProjectID, sessID)
 	if err != nil {
@@ -117,14 +148,25 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	env = append(env, layout.EnvAmendments...)
 
 	// BuildArgs wrapper: prepends profile.Args (minus dev-mode flag, which
-	// is consumed by adapterFor → NewClaudeAdapterDev), appends --model when
+	// is consumed by adapterFor → NewClaudeAdapterDev*), appends --model when
 	// set, appends the lib's ProjectDirArg (e.g. --add-dir <projectDir>).
+	//
+	// Bare-mode claude exception: the lib's BuildArgs already emits
+	// `--add-dir <projectDir>` from a.ProjectDir (populated above from
+	// BareInjectionPaths), and the lib does NOT de-dupe args. Appending
+	// layout.ProjectDirArg here would emit `--add-dir <projectDir>` twice.
+	// Claude tolerates the double-add (later wins / both append to the
+	// allow-list), but we skip the second emit to keep the argv clean and
+	// consistent with the lib's bare-mode contract: in bare mode all four
+	// explicit-injection flags flow through the adapter fields, not the
+	// closure's spec-driven append.
+	skipProjectDirArg := claudeIsBare
 	buildArgs := func(turnPrompt, sessionID string) []string {
 		args := cliAdapter.BuildArgs(turnPrompt, systemPrompt, sessionID)
 		if profile.Model != "" {
 			args = append(args, "--model", profile.Model)
 		}
-		if len(layout.ProjectDirArg) > 0 {
+		if !skipProjectDirArg && len(layout.ProjectDirArg) > 0 {
 			args = append(args, layout.ProjectDirArg...)
 		}
 		if filtered := profileArgsExcludingDevFlag(profile); len(filtered) > 0 {
@@ -248,13 +290,41 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		firstTurnPayload = []byte(kickoffPayload(layout.KickoffFile))
 	}
 
-	// Stderr sidecar: forward to per-run sidecar log + tail buffer (matches
-	// CW-20260417-0024). PTY runtime merges stderr into the tty stream at
-	// the kernel level, so the sidecar only fires on the adapter path.
+	// Deferred-kickoff path for subprocess-per-turn long-lived modes. The lib's
+	// AutoFireFirstTurn for adapter-mode runs the entire first turn
+	// SYNCHRONOUSLY inside Manager.Start (per from_adapter.go:127-138 — the
+	// race-elimination cost). For an HTTP-triggered orchestrator that's a
+	// blown caller contract: planstart's POST /plans/<id>/start would hold
+	// the request open for the duration of the orchestrator's first turn
+	// (minutes — orchestrators spawn planner sub-tasks, audit, walk phases).
+	// Surfaced 2026-05-08 in S2.5 smoke. Defer the kickoff to a goroutine so
+	// agent.Boot returns immediately after the session is registered; the
+	// subprocess runs detached. PTY mode doesn't need this — its SendInput
+	// is non-blocking and the kickoff lands via the BootMode/AutoFireFirstTurn
+	// path in microseconds.
+	deferKickoff := autoFire && !caps.PTY && len(firstTurnPayload) > 0
+	libAutoFire := autoFire
+	if deferKickoff {
+		libAutoFire = false
+	}
+
+	// Stderr sidecar: forward to per-run sidecar log + tail buffer + the
+	// session-scoped session.log (matches CW-20260417-0024 + CW-20260508-0006).
+	// PTY runtime merges stderr into the tty stream at the kernel level, so
+	// the sidecar only fires on the adapter (subprocess-per-turn) path.
+	//
+	// session.log tee (CW-20260508-0006) makes daemon-spawned subprocess
+	// failures visible in the per-session workspace logs/session.log, where
+	// forensic tooling looks first. Without this, RunID=0 boot paths (which
+	// is every long-lived orchestrator session created via the MCP
+	// session_create handler) wrote stderr to a per-run-id 0.stderr.log file
+	// shared with every other RunID=0 spawn — easy to miss / overwrite, and
+	// not where ops looks. session.log was previously only written by the
+	// PTY runtime; the adapter (subprocess) path has its own tee here.
 	var stderrWriter io.Writer = io.Discard
 	closeStderr := func() {}
 	if !caps.PTY {
-		w, _, closer := openStderrSidecar(opts.RunID)
+		w, _, closer := openStderrSidecar(opts.RunID, ws.LogPath)
 		stderrWriter = w
 		closeStderr = closer
 	}
@@ -282,7 +352,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 			Stderr:             stderrWriter,
 			Profile:            sandboxProfile,
 			AttachEnabled:      true,
-			AutoFireFirstTurn:  autoFire,
+			AutoFireFirstTurn:  libAutoFire,
 			FirstTurnPayload:   firstTurnPayload,
 			SessionIDPreset:    sessionIDPreset,
 			OnSessionID:        onSessionID,
@@ -294,7 +364,23 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		SessionMeta: opts.SessionMeta,
 	}
 
-	if err := mgr.inner.Start(ctx, startReq); err != nil {
+	// Context detachment for non-OneShot modes: long-lived sessions
+	// (orchestrator/subagent/background/resume) must outlive the caller's
+	// context. Without this, an HTTP request that triggers plan_start
+	// has its r.Context() govern the orchestrator's first-turn subprocess —
+	// when the client disconnects or times out (curl -m 60, browser nav,
+	// SSE close, …), the cancellation propagates through Manager.Start →
+	// adapterRuntime.Start → SendInput's synchronous AutoFireFirstTurn run
+	// (from_adapter.go:127-138) → SIGTERM → 5s grace → SIGKILL. Surfaced
+	// 2026-05-08 in S2.5 smoke as exit=1 in 60s flat with no stderr (signal
+	// kill). ModeOneShot keeps the caller ctx because the executor wraps it
+	// in context.WithTimeout(ctx, profile.timeout) and needs the cancel to
+	// propagate for timeout enforcement.
+	startCtx := ctx
+	if opts.Mode != ModeOneShot {
+		startCtx = context.WithoutCancel(ctx)
+	}
+	if err := mgr.inner.Start(startCtx, startReq); err != nil {
 		closeStderr()
 		_ = os.RemoveAll(layout.BootDir)
 		shutdownLoopbackHandle(loopback)
@@ -312,6 +398,25 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		mgr.registerLoopback(sessID, loopback)
 		mgr.registerStderrCloser(sessID, closeStderr)
 		mgr.registerBootDir(sessID, layout.BootDir)
+	}
+
+	// Fire the deferred kickoff in a goroutine so agent.Boot can return now
+	// (HTTP-triggered planstart no longer waits for the entire first turn).
+	// The lib's adapter SendInput is synchronous (runner.Run waits for the
+	// subprocess to exit) but we don't care here — the goroutine outlives
+	// the caller via the detached context model the lib's manager already
+	// applies on SendInput. Errors surface via session state transitions
+	// (the lib's StateSink writes failed/done into the DB row); a logged
+	// warning here is forensic-only.
+	if deferKickoff {
+		payload := append([]byte(nil), firstTurnPayload...)
+		go func() {
+			if err := mgr.SendInput(sessID, payload); err != nil {
+				// Don't tear down — the session row reflects the failure
+				// via StateSink. Log for forensic value only.
+				log.Printf("agent.Boot: deferred kickoff send failed for sess=%s: %v", sessID, err)
+			}
+		}()
 	}
 
 	sess := &Session{
