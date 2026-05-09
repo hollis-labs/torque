@@ -67,6 +67,10 @@ clockwork_task_create(
 the trigger calls before handing you the session — but if you're
 spawning planner mid-execution, the shape above matches.)
 
+> Note: `working_dir` auto-inherits from `parent_id` when omitted on
+> sub-task creation (CW-20260508-0004). You don't need to set it here;
+> the planner sub-task picks up the plan's working_dir automatically.
+
 Wait for the planner task to reach `done`:
 
 ```

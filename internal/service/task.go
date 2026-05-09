@@ -104,6 +104,35 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		return nil, err
 	}
 
+	// Parent linkage + working_dir auto-inheritance (CW-20260508-0004).
+	// Must run BEFORE agentfile.Validate because that check resolves
+	// `input.AgentFile` against `input.WorkingDir`; if the caller passed a
+	// relative agent_file expecting working_dir to inherit from the parent,
+	// an empty WorkingDir would fail validation here even though the
+	// inherit would have populated it.
+	//
+	// Cycle check uses the existing task graph; since the candidate task
+	// has no ID yet, self-reference only applies at Update time. Here we
+	// just require the parent to exist.
+	if input.ParentID != "" {
+		parent, err := s.store.GetTask(input.ParentID)
+		if err != nil {
+			return nil, &ValidationError{Field: "parent_id", Message: "parent task not found: " + input.ParentID}
+		}
+		// working_dir inheritance: when the caller leaves WorkingDir empty
+		// AND the parent has a non-empty working_dir, inherit it. Surfaced
+		// 2026-05-08 in S2.5 smoke (CW-20260508-0004): orchestrator agent
+		// created kind=internal planner sub-task via clockwork_task_create
+		// without working_dir; scheduler dispatched via cliexec ->
+		// agent.Executor rejected with "working_dir is required" -> 3
+		// retries -> blocked. Auto-inheritance from parent makes child
+		// sub-task creation work without requiring every caller (LLM-
+		// driven or otherwise) to know to pass it.
+		if input.WorkingDir == "" && parent.WorkingDir != "" {
+			input.WorkingDir = parent.WorkingDir
+		}
+	}
+
 	// Agent file existence check (CW-20260417-0082). Contents are not read
 	// here — only the path is validated so stale/deleted files surface at
 	// dispatch as a blocked run, not as a task-creation error.
@@ -204,14 +233,8 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		}
 	}
 
-	// Parent linkage (migration 013). Cycle check uses the existing task graph;
-	// since the candidate task has no ID yet, self-reference only applies at
-	// Update time. Here we just require the parent to exist.
-	if input.ParentID != "" {
-		if _, err := s.store.GetTask(input.ParentID); err != nil {
-			return nil, &ValidationError{Field: "parent_id", Message: "parent task not found: " + input.ParentID}
-		}
-	}
+	// Parent existence check + working_dir auto-inheritance happens earlier
+	// in the flow (before agentfile.Validate); see the parent_id block above.
 
 	id, err := s.store.NextTaskID()
 	if err != nil {

@@ -130,6 +130,18 @@ func Start(ctx context.Context, store Store, mgr SessionManager, planID string, 
 	if workdir == "" {
 		return nil, ErrWorkdirRequired
 	}
+	// Persist the resolved workdir back to the plan task when it diverges
+	// from the stored value. Future child sub-task creations (planner /
+	// reviewer / orchestrator-spawned kind=internal tasks) inherit
+	// working_dir from parent_id (CW-20260508-0004); the plan task IS the
+	// parent for the planner sub-task, so its WorkingDir column must be
+	// the resolved value or inheritance falls back to empty and the
+	// scheduler rejects child dispatch with "working_dir is required".
+	if plan.WorkingDir != workdir {
+		if err := store.UpdateTask(planID, sqlstore.TaskUpdate{WorkingDir: &workdir}); err != nil {
+			return nil, fmt.Errorf("planstart: persist workdir on plan %s: %w", planID, err)
+		}
+	}
 
 	bootOpts := agent.Options{
 		Mode:         agent.ModeLongLived,

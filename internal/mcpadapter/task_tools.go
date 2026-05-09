@@ -49,7 +49,7 @@ Example: {"title":"Fix auth bug","description":"Login returns 500","priority":"2
 		mcp.WithString("tags", mcp.Description("JSON array of tag strings")),
 		mcp.WithString("executor", mcp.Description("Executor type (default cli)")),
 		mcp.WithString("agent_profile", mcp.Description("Agent profile name")),
-		mcp.WithString("working_dir", mcp.Description("Working directory")),
+		mcp.WithString("working_dir", mcp.Description("Working directory. Auto-inherits from parent_id when omitted (CW-20260508-0004); pass explicitly only to override the parent's value.")),
 		mcp.WithString("system_prompt", mcp.Description("System prompt override")),
 		mcp.WithString("agent_file", mcp.Description("Absolute or working_dir-relative path to a YAML agent spec; loaded at dispatch")),
 		mcp.WithString("on_done", mcp.Description("Hook on done")),

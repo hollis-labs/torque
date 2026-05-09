@@ -108,6 +108,91 @@ func TestTaskUpdate_ParentIDClear(t *testing.T) {
 	require.False(t, refreshed.ParentID.Valid)
 }
 
+// TestTaskCreate_WorkingDirInheritsFromParent verifies CW-20260508-0004:
+// a child task created without WorkingDir inherits from the parent when
+// the parent has a non-empty WorkingDir. Surfaced in S2.5 plan-execute
+// smoke (2026-05-08): orchestrator created kind=internal planner sub-task
+// via clockwork_task_create without working_dir; scheduler dispatch then
+// failed with "agent.Executor: working_dir is required". Auto-inheritance
+// makes the common case (LLM-driven sub-task creation) work without
+// every caller knowing to pass the field.
+func TestTaskCreate_WorkingDirInheritsFromParent(t *testing.T) {
+	svc := setupService(t)
+
+	parent, err := svc.Task.Create(service.TaskCreateInput{
+		Title:      "parent",
+		WorkingDir: "/Users/test/projects/widget",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "/Users/test/projects/widget", parent.WorkingDir)
+
+	child, err := svc.Task.Create(service.TaskCreateInput{
+		Title:    "child",
+		ParentID: parent.ID,
+		// WorkingDir intentionally omitted — should inherit
+	})
+	require.NoError(t, err)
+	require.Equal(t, "/Users/test/projects/widget", child.WorkingDir,
+		"child should inherit working_dir from parent")
+}
+
+// TestTaskCreate_WorkingDirExplicitWinsOverParent verifies that a caller-
+// provided WorkingDir is NOT overwritten by the parent's value. Inheritance
+// is a fallback for the empty case only.
+func TestTaskCreate_WorkingDirExplicitWinsOverParent(t *testing.T) {
+	svc := setupService(t)
+
+	parent, err := svc.Task.Create(service.TaskCreateInput{
+		Title:      "parent",
+		WorkingDir: "/Users/test/projects/parent-dir",
+	})
+	require.NoError(t, err)
+
+	child, err := svc.Task.Create(service.TaskCreateInput{
+		Title:      "child",
+		ParentID:   parent.ID,
+		WorkingDir: "/Users/test/projects/child-dir",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "/Users/test/projects/child-dir", child.WorkingDir,
+		"explicit child WorkingDir must NOT be overwritten by parent")
+}
+
+// TestTaskCreate_WorkingDirNoParentNoInheritance verifies that a root task
+// (no parent_id) with empty WorkingDir is unchanged — the executor will
+// reject at dispatch if the task is kind=agent or kind=internal, but Create
+// itself doesn't enforce non-empty here. (See agent.Executor for dispatch-
+// time validation.)
+func TestTaskCreate_WorkingDirNoParentNoInheritance(t *testing.T) {
+	svc := setupService(t)
+
+	task, err := svc.Task.Create(service.TaskCreateInput{
+		Title: "root-no-workdir",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "", task.WorkingDir,
+		"root task without WorkingDir stays empty — executor catches at dispatch")
+}
+
+// TestTaskCreate_WorkingDirParentEmptyNoInheritance verifies that when the
+// parent has an empty WorkingDir, no inheritance happens — child.WorkingDir
+// stays empty. (Both columns are plain strings, not sql.NullString — the
+// inherit guard is just `parent.WorkingDir != ""`.)
+func TestTaskCreate_WorkingDirParentEmptyNoInheritance(t *testing.T) {
+	svc := setupService(t)
+
+	parent, err := svc.Task.Create(service.TaskCreateInput{Title: "parent-no-workdir"})
+	require.NoError(t, err)
+	require.Equal(t, "", parent.WorkingDir)
+
+	child, err := svc.Task.Create(service.TaskCreateInput{
+		Title:    "child",
+		ParentID: parent.ID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "", child.WorkingDir)
+}
+
 // TestTaskList_ParentIDFilter verifies that filtering by parent_id returns
 // only the children of a plan, and the ParentIDNull variant returns roots.
 func TestTaskList_ParentIDFilter(t *testing.T) {
