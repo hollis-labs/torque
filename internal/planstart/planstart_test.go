@@ -49,6 +49,9 @@ func (s *stubStore) UpdateTask(id string, u sqlstore.TaskUpdate) error {
 	if u.Metadata != nil {
 		t.Metadata = *u.Metadata
 	}
+	if u.WorkingDir != nil {
+		t.WorkingDir = *u.WorkingDir
+	}
 	return nil
 }
 
@@ -291,4 +294,86 @@ func TestPlanstart_WorkdirOverride(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "/tmp/override", mgr.lastOpts.Workdir)
+}
+
+// CW-20260508-0004 persist-back: when the resolved workdir diverges from
+// the stored plan.WorkingDir, planstart writes the resolved value back so
+// child sub-tasks created mid-orchestration (planner / reviewer) inherit
+// the correct value via the service-layer parent->child WorkingDir
+// inheritance.
+func TestPlanstart_PersistsResolvedWorkdirOnOverride(t *testing.T) {
+	store := newStubStore()
+	store.tasks["CW-PLAN-PERSIST"] = &sqlstore.TaskRecord{
+		ID: "CW-PLAN-PERSIST", Kind: "plan", Status: "todo",
+		WorkingDir: "/tmp/plan-default",
+	}
+	mgr := &stubMgr{bootSession: &agent.Session{ID: "SES-1"}}
+
+	_, err := planstart.Start(context.Background(), store, mgr, "CW-PLAN-PERSIST", planstart.Options{
+		Workdir: "/tmp/override",
+	})
+	require.NoError(t, err)
+
+	// Find the WorkingDir UpdateTask call (there's also a metadata update;
+	// they may arrive in either order).
+	var workdirUpdate *string
+	for _, u := range store.updates {
+		if u.WorkingDir != nil {
+			workdirUpdate = u.WorkingDir
+			break
+		}
+	}
+	require.NotNil(t, workdirUpdate, "expected an UpdateTask with WorkingDir set")
+	assert.Equal(t, "/tmp/override", *workdirUpdate)
+
+	post, _ := store.GetTask("CW-PLAN-PERSIST")
+	assert.Equal(t, "/tmp/override", post.WorkingDir,
+		"plan.WorkingDir must be persisted back to the resolved value")
+}
+
+// When the resolved workdir matches the stored plan.WorkingDir (caller
+// passes no override or passes the same value), no WorkingDir UpdateTask
+// fires — the persist is conditional on divergence.
+func TestPlanstart_NoPersistWhenWorkdirMatches(t *testing.T) {
+	store := newStubStore()
+	store.tasks["CW-PLAN-MATCH"] = &sqlstore.TaskRecord{
+		ID: "CW-PLAN-MATCH", Kind: "plan", Status: "todo",
+		WorkingDir: "/tmp/plan-default",
+	}
+	mgr := &stubMgr{bootSession: &agent.Session{ID: "SES-1"}}
+
+	_, err := planstart.Start(context.Background(), store, mgr, "CW-PLAN-MATCH", planstart.Options{})
+	require.NoError(t, err)
+
+	for _, u := range store.updates {
+		assert.Nil(t, u.WorkingDir,
+			"no WorkingDir UpdateTask should fire when resolved workdir matches plan.WorkingDir")
+	}
+}
+
+// Plan with empty stored WorkingDir + caller-provided Options.Workdir:
+// resolved workdir comes from Options, persist fires (the empty stored
+// value diverges from the caller-provided one).
+func TestPlanstart_PersistsWhenStoredWorkdirEmpty(t *testing.T) {
+	store := newStubStore()
+	store.tasks["CW-PLAN-EMPTY"] = &sqlstore.TaskRecord{
+		ID: "CW-PLAN-EMPTY", Kind: "plan", Status: "todo",
+		WorkingDir: "", // empty — caller must supply Options.Workdir
+	}
+	mgr := &stubMgr{bootSession: &agent.Session{ID: "SES-1"}}
+
+	_, err := planstart.Start(context.Background(), store, mgr, "CW-PLAN-EMPTY", planstart.Options{
+		Workdir: "/tmp/from-options",
+	})
+	require.NoError(t, err)
+
+	var workdirUpdate *string
+	for _, u := range store.updates {
+		if u.WorkingDir != nil {
+			workdirUpdate = u.WorkingDir
+			break
+		}
+	}
+	require.NotNil(t, workdirUpdate, "expected an UpdateTask with WorkingDir set")
+	assert.Equal(t, "/tmp/from-options", *workdirUpdate)
 }

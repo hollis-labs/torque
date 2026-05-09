@@ -175,9 +175,9 @@ func TestTaskCreate_WorkingDirNoParentNoInheritance(t *testing.T) {
 }
 
 // TestTaskCreate_WorkingDirParentEmptyNoInheritance verifies that when the
-// parent has an empty WorkingDir, no inheritance happens (we don't set
-// child.WorkingDir to "" — it stays empty either way, but the explicit
-// branch must not panic / write a Valid=false NullString incorrectly).
+// parent has an empty WorkingDir, no inheritance happens — child.WorkingDir
+// stays empty. (Both columns are plain strings, not sql.NullString — the
+// inherit guard is just `parent.WorkingDir != ""`.)
 func TestTaskCreate_WorkingDirParentEmptyNoInheritance(t *testing.T) {
 	svc := setupService(t)
 
