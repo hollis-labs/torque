@@ -89,6 +89,24 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		return nil, fmt.Errorf("%w: setup loopback: %v", ErrBootFailed, err)
 	}
 
+	// Bare-mode apiKeyHelper (CW-20260509-0016, go-providers v0.9.2):
+	// thread Dependencies.ApiKeyHelperPath onto the adapter BEFORE
+	// plantBootDir runs, because the .claude/settings.json Render
+	// closure captures the receiver at render time and emits
+	// `apiKeyHelper: <path>` only when the field is non-empty. Setting
+	// it post-plant would leave the planted file with no helper field
+	// and bare mode would fall back to ANTHROPIC_API_KEY only — which
+	// is exactly the gap this closes for subscription users (no env
+	// key, authenticated via `claude` interactive → keychain).
+	//
+	// Non-claude / non-bare adapters skip this branch via the type-
+	// assertion + Bare check; the adapter type-assert is repeated below
+	// for the four spawn-arg-injection fields, which legitimately need
+	// the post-plant layout paths.
+	if claudeAdapter, ok := cliAdapter.(*provider.ClaudeAdapter); ok && claudeAdapter.Bare && deps.ApiKeyHelperPath != "" {
+		claudeAdapter.ApiKeyHelperPath = deps.ApiKeyHelperPath
+	}
+
 	// Boot dir layout via per-provider plant. The lib's BootDirSpec covers
 	// claude/codex/opencode end-to-end; gemini/copilot dispatch to the
 	// bespoke planters in bootdir_<provider>.go (which currently fail with

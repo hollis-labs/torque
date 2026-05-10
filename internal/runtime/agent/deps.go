@@ -72,4 +72,19 @@ type Dependencies struct {
 	// the partially-populated struct (it captures the pointer, not the
 	// snapshot).
 	Sessions *Manager
+
+	// ApiKeyHelperPath, when non-empty, is threaded into bare-mode
+	// claude's planted .claude/settings.json as `apiKeyHelper: <path>`.
+	// Bare-mode claude invokes the helper per request and consumes its
+	// first line of stdout as the bearer token used for the API call.
+	// Closes CW-20260509-0016: bare mode disables OAuth/keychain
+	// auto-resolution, so subscription users (no ANTHROPIC_API_KEY in
+	// env) need an explicit hook. The composition root resolves this
+	// path at startup (typically `<dir(os.Executable())>/clockwork-
+	// apikey-helper`) and falls back to the empty string when the
+	// helper is absent — bare mode then requires ANTHROPIC_API_KEY in
+	// env (the existing CW-20260509-0011 contract). Empty here is
+	// safe; non-empty MUST point at an executable file (the path is
+	// validated at Boot time, not on every dispatch).
+	ApiKeyHelperPath string
 }
