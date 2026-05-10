@@ -136,6 +136,111 @@ func TestPlantBootDir_Opencode(t *testing.T) {
 // providers; if either adapter is restored upstream, the corresponding
 // unit tests should be re-added.
 
+// TestPlantBootDir_Claude_WithMux verifies that Mux config flows from
+// plantParams through PlantContext into the rendered .mcp.json, emitting
+// a second `mux` MCP server entry alongside the loopback (CW-20260510-0110).
+// Spawned task agents then have access to Vanta + the portfolio-wide
+// Mux-aggregated tool surface, not just the per-task loopback.
+func TestPlantBootDir_Claude_WithMux(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+
+	res, err := plantBootDir(plantParams{
+		Provider:       "claude",
+		Adapter:        provider.NewClaudeAdapter(),
+		TaskID:         "CW-MUX-CLAUDE",
+		RunID:          0,
+		AgentName:      "default",
+		SystemPrompt:   "you are an orchestrator",
+		KickoffContent: "boot",
+		ProjectDir:     "/tmp/repo",
+		MCPLoopbackURL: "http://127.0.0.1:54321/mcp",
+		MuxCommand:     "/usr/local/bin/mux",
+		MuxArgs: []string{
+			"mcp", "--proxy",
+			"--servers", "vanta,clockwork,cerberus",
+			"--token", "local-dev",
+			"--scopes", "session.write,message.write",
+		},
+	})
+	require.NoError(t, err)
+	defer func() { _ = os.RemoveAll(res.BootDir) }()
+
+	// .mcp.json carries BOTH loopback and mux entries.
+	mcpRaw, err := os.ReadFile(filepath.Join(res.BootDir, ".mcp.json"))
+	require.NoError(t, err)
+	mcp := string(mcpRaw)
+
+	assert.Contains(t, mcp, `"loopback"`, "loopback entry preserved")
+	assert.Contains(t, mcp, `"http://127.0.0.1:54321/mcp"`, "loopback URL preserved")
+	assert.Contains(t, mcp, `"mux"`, "mux entry added")
+	assert.Contains(t, mcp, `"type": "stdio"`, "mux uses stdio transport")
+	assert.Contains(t, mcp, `"command": "/usr/local/bin/mux"`, "mux command threaded through")
+	assert.Contains(t, mcp, `"vanta,clockwork,cerberus"`, "mux args threaded through")
+}
+
+// TestPlantBootDir_Claude_NoMux_BackCompat pins that empty Mux fields in
+// plantParams produce the same .mcp.json shape as before CW-20260510-0110.
+// Existing callers that don't populate the new fields must see no behavior
+// change.
+func TestPlantBootDir_Claude_NoMux_BackCompat(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+
+	res, err := plantBootDir(plantParams{
+		Provider:       "claude",
+		Adapter:        provider.NewClaudeAdapter(),
+		TaskID:         "CW-NOMUX",
+		RunID:          0,
+		MCPLoopbackURL: "http://127.0.0.1:9000/mcp",
+		// MuxCommand left empty.
+	})
+	require.NoError(t, err)
+	defer func() { _ = os.RemoveAll(res.BootDir) }()
+
+	mcpRaw, err := os.ReadFile(filepath.Join(res.BootDir, ".mcp.json"))
+	require.NoError(t, err)
+	mcp := string(mcpRaw)
+
+	assert.Contains(t, mcp, `"loopback"`)
+	assert.NotContains(t, mcp, `"mux"`, "no mux entry when MuxCommand empty")
+}
+
+// TestPlantBootDir_Opencode_WithMux verifies Mux threading into
+// opencode.json's `mcp` block (separate from the .mcp.json sanity
+// mirror). Pins the opencode-specific stdio shape: type:"local",
+// command-as-array.
+func TestPlantBootDir_Opencode_WithMux(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+
+	adapter := provider.NewOpencodeAdapter()
+	adapter.Agent = "executor"
+
+	res, err := plantBootDir(plantParams{
+		Provider:       "opencode",
+		Adapter:        adapter,
+		TaskID:         "CW-MUX-OPENCODE",
+		RunID:          0,
+		AgentName:      "executor",
+		SystemPrompt:   "you orchestrate",
+		KickoffContent: "boot",
+		ProjectDir:     "/tmp/oc-repo",
+		MCPLoopbackURL: "http://127.0.0.1:65500/mcp",
+		MuxCommand:     "/usr/local/bin/mux",
+		MuxArgs:        []string{"mcp", "--proxy"},
+	})
+	require.NoError(t, err)
+	defer func() { _ = os.RemoveAll(res.BootDir) }()
+
+	opencodeRaw, err := os.ReadFile(filepath.Join(res.BootDir, "opencode.json"))
+	require.NoError(t, err)
+	oc := string(opencodeRaw)
+
+	assert.Contains(t, oc, `"loopback"`)
+	assert.Contains(t, oc, `"type": "remote"`, "loopback uses remote transport (opencode)")
+	assert.Contains(t, oc, `"mux"`)
+	assert.Contains(t, oc, `"type": "local"`, "mux uses local transport (opencode's stdio keyword)")
+	assert.Contains(t, oc, `"/usr/local/bin/mux"`, "mux command embedded in array")
+}
+
 // TestPlantBootDir_TwoDirSeparation verifies that the boot dir lives under
 // $TMPDIR (ephemeral) and is distinct from the workspace dir convention.
 // The cross-app design's two-dir model is the architectural invariant

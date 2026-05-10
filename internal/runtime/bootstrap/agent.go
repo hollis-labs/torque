@@ -49,12 +49,24 @@ func AgentDeps(
 	if tools == nil {
 		tools = toolbroker.NewDefault()
 	}
+
+	// CW-20260510-0110: resolve Mux binary + args at startup. Empty
+	// Command → per-task bootdir plants carry only the clockwork
+	// loopback (existing behavior). Non-empty Command → plants gain
+	// a parallel `mux` MCP server entry that spawns Mux as an stdio
+	// child, exposing Vanta + cross-task clockwork + cerberus to the
+	// spawned agent.
+	muxCfg := resolveMuxConfig()
+
 	deps := &agent.Dependencies{
 		Store:            store,
 		Profiles:         profiles,
 		Tools:            tools,
 		Bus:              bus,
 		ApiKeyHelperPath: resolveApiKeyHelperPath(),
+		MuxCommand:       muxCfg.Command,
+		MuxArgs:          muxCfg.Args,
+		MuxEnv:           muxCfg.Env,
 		// WorkspacesRoot defaults to $HOME/.clockwork/workspaces inside
 		// agent.workspaceCreate when left empty.
 	}

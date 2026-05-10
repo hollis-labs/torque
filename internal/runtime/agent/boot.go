@@ -140,6 +140,13 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		KickoffContent: kickoffMD,
 		ProjectDir:     opts.Workdir,
 		MCPLoopbackURL: loopbackURL,
+		// CW-20260510-0110: thread daemon-scoped Mux config from
+		// Dependencies onto every Boot. Empty MuxCommand (Mux not
+		// resolved at startup) → bootdir plant emits no `mux` MCP
+		// entry (existing pre-CW-20260510-0110 behavior preserved).
+		MuxCommand: deps.MuxCommand,
+		MuxArgs:    deps.MuxArgs,
+		MuxEnv:     deps.MuxEnv,
 	})
 	if err != nil {
 		shutdownLoopbackHandle(loopback)
