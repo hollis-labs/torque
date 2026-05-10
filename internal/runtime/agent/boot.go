@@ -89,6 +89,37 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		return nil, fmt.Errorf("%w: setup loopback: %v", ErrBootFailed, err)
 	}
 
+	// Bare-mode apiKeyHelper (CW-20260509-0016, go-providers v0.9.2):
+	// thread Dependencies.ApiKeyHelperPath onto the adapter BEFORE
+	// plantBootDir runs, because the .claude/settings.json Render
+	// closure captures the receiver at render time and emits
+	// `apiKeyHelper: <path>` only when the field is non-empty. Setting
+	// it post-plant would leave the planted file with no helper field
+	// and bare mode would fall back to ANTHROPIC_API_KEY only — which
+	// is exactly the gap this closes for subscription users (no env
+	// key, authenticated via `claude` interactive → keychain).
+	//
+	// Non-claude / non-bare adapters skip this branch via the type-
+	// assertion + Bare check; the adapter type-assert is repeated below
+	// for the four spawn-arg-injection fields, which legitimately need
+	// the post-plant layout paths.
+	if claudeAdapter, ok := cliAdapter.(*provider.ClaudeAdapter); ok && claudeAdapter.Bare && deps.ApiKeyHelperPath != "" {
+		// Validate the resolved path is still an executable file at the
+		// moment we're about to thread it into the adapter. Catches the
+		// race where the helper was removed between resolveApiKeyHelperPath
+		// at startup and the first dispatch (rare but recoverable). Invalid
+		// path → log + skip the adapter set; bare mode falls back to
+		// ANTHROPIC_API_KEY in env (existing CW-20260509-0011 contract).
+		// Failing fast vs. degrading gracefully: degrade. A missing helper
+		// shouldn't block a dispatch on systems where the env-key path
+		// works fine — operators will see the misconfig in the log line.
+		if isApiKeyHelperExecutable(deps.ApiKeyHelperPath) {
+			claudeAdapter.ApiKeyHelperPath = deps.ApiKeyHelperPath
+		} else {
+			log.Printf("agent.Boot: deps.ApiKeyHelperPath=%q no longer points at an executable file; skipping (bare-mode claude will rely on ANTHROPIC_API_KEY)", deps.ApiKeyHelperPath)
+		}
+	}
+
 	// Boot dir layout via per-provider plant. The lib's BootDirSpec covers
 	// claude/codex/opencode end-to-end; gemini/copilot dispatch to the
 	// bespoke planters in bootdir_<provider>.go (which currently fail with
@@ -566,5 +597,24 @@ func profileSupervision(profile config.AgentProfile, opts Options, ptyEnabled bo
 	_ = profile
 	_ = ptyEnabled
 	return supervisor, limits
+}
+
+// isApiKeyHelperExecutable mirrors bootstrap.isExecutableFile for the
+// at-Boot revalidation path — same predicate, scoped here so the agent
+// package doesn't import bootstrap (would close a cycle: bootstrap
+// already imports agent).
+func isApiKeyHelperExecutable(path string) bool {
+	if path == "" {
+		return false
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	if !st.Mode().IsRegular() {
+		return false
+	}
+	// At least one execute bit (owner / group / other).
+	return st.Mode().Perm()&0o111 != 0
 }
 

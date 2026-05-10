@@ -2,6 +2,10 @@ package bootstrap
 
 import (
 	"fmt"
+	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
@@ -46,10 +50,11 @@ func AgentDeps(
 		tools = toolbroker.NewDefault()
 	}
 	deps := &agent.Dependencies{
-		Store:    store,
-		Profiles: profiles,
-		Tools:    tools,
-		Bus:      bus,
+		Store:            store,
+		Profiles:         profiles,
+		Tools:            tools,
+		Bus:              bus,
+		ApiKeyHelperPath: resolveApiKeyHelperPath(),
 		// WorkspacesRoot defaults to $HOME/.clockwork/workspaces inside
 		// agent.workspaceCreate when left empty.
 	}
@@ -102,4 +107,96 @@ func AgentDeps(
 		}
 	}
 	return deps, closer, nil
+}
+
+// resolveApiKeyHelperPath returns the absolute path to the
+// clockwork-apikey-helper binary that ships next to the daemon, or an
+// empty string when the helper is absent.
+//
+// Resolution order:
+//
+//  1. CLOCKWORK_APIKEY_HELPER env var (operator override; useful for
+//     dev sessions where the helper was built into a separate dir).
+//  2. <dir(os.Executable())>/clockwork-apikey-helper — the production
+//     deployment shape: cerberus_resource_apply syncs both binaries
+//     into the same artifact dir.
+//  3. exec.LookPath equivalent against the daemon's PATH — fallback
+//     for non-cerberus deployments where the helper is on PATH.
+//
+// Returns "" (empty path) when none of the above resolve. Boot then
+// skips the apiKeyHelper field in .claude/settings.json and bare-mode
+// claude falls back to ANTHROPIC_API_KEY in env (the existing
+// CW-20260509-0011 contract). A clear `log.Printf` notes the
+// resolution outcome at startup so operators can correlate auth
+// failures with helper availability.
+//
+// CW-20260509-0016. Closes the auth gap for subscription users
+// dispatching bare-mode claude without an API key in the daemon env.
+func resolveApiKeyHelperPath() string {
+	if override := os.Getenv("CLOCKWORK_APIKEY_HELPER"); override != "" {
+		// Normalize to absolute + symlink-resolved so the doc-promised
+		// "absolute path" contract holds even when an operator sets a
+		// relative path or routes through a symlink. Failures fall back to
+		// the unresolved override; the executable-file check below catches
+		// outright bogus paths regardless.
+		resolved := override
+		if abs, err := filepath.Abs(resolved); err == nil {
+			resolved = abs
+		}
+		if eval, err := filepath.EvalSymlinks(resolved); err == nil {
+			resolved = eval
+		}
+		if isExecutableFile(resolved) {
+			log.Printf("[bootstrap] apiKeyHelper resolved via CLOCKWORK_APIKEY_HELPER=%s", resolved)
+			return resolved
+		}
+		log.Printf("[bootstrap] CLOCKWORK_APIKEY_HELPER=%s (resolved=%s) set but path is not an executable file; ignoring", override, resolved)
+	}
+
+	exe, err := os.Executable()
+	if err == nil {
+		// Resolve symlinks so an artifact-dir helper is found even when the
+		// daemon was launched via a symlink. EvalSymlinks errors fall back
+		// to the unresolved path.
+		if resolved, rerr := filepath.EvalSymlinks(exe); rerr == nil {
+			exe = resolved
+		}
+		candidate := filepath.Join(filepath.Dir(exe), "clockwork-apikey-helper")
+		if isExecutableFile(candidate) {
+			log.Printf("[bootstrap] apiKeyHelper resolved next to daemon binary at %s", candidate)
+			return candidate
+		}
+	}
+
+	// PATH lookup as a last resort — homebrew installs, dev `go install`
+	// targets, etc. Match the helper binary name.
+	if path, lookErr := lookExecOnPath("clockwork-apikey-helper"); lookErr == nil {
+		log.Printf("[bootstrap] apiKeyHelper resolved on PATH at %s", path)
+		return path
+	}
+
+	log.Printf("[bootstrap] apiKeyHelper NOT resolved (no CLOCKWORK_APIKEY_HELPER override, no sibling binary, no PATH match) — bare-mode claude will require ANTHROPIC_API_KEY in env")
+	return ""
+}
+
+// isExecutableFile reports whether path is a regular file with at
+// least one execute bit set. Tests this via os.Stat — fast and
+// avoids the false-positive of "directory we have +x on".
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	if !info.Mode().IsRegular() {
+		return false
+	}
+	return info.Mode().Perm()&0o111 != 0
+}
+
+// lookExecOnPath is a thin wrapper around exec.LookPath to keep
+// resolveApiKeyHelperPath compact. Splits responsibility for "the
+// helper happened to be installed on PATH" from the daemon-adjacent
+// resolution.
+func lookExecOnPath(name string) (string, error) {
+	return exec.LookPath(name)
 }

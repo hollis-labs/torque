@@ -10,7 +10,7 @@ require (
 	github.com/hollis-labs/go-mcp-sanitize v0.1.0
 	github.com/hollis-labs/go-messaging v0.2.0
 	github.com/hollis-labs/go-modelsdev v0.1.0
-	github.com/hollis-labs/go-providers v0.9.1
+	github.com/hollis-labs/go-providers v0.9.2-0.20260509235455-6cbdc2173d5e
 	github.com/hollis-labs/go-queue v0.1.1
 	github.com/hollis-labs/go-runner v0.3.0
 	github.com/hollis-labs/go-sandbox v0.2.0
