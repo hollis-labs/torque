@@ -31,8 +31,9 @@ type muxResolution struct {
 // `mcpServers.mux` shape — verified against the user's actual config
 // at the time of CW-20260510-0110. The token + scopes here are the
 // project-default development values; operators with hardened
-// deployments override via CLOCKWORK_MUX_ARGS (json or shell-quoted)
-// or via direct config plumbing in the future.
+// deployments override via CLOCKWORK_MUX_ARGS (whitespace-split tokens)
+// or via direct config plumbing in the future. (A JSON-array variant —
+// CLOCKWORK_MUX_ARGS_JSON — is a deferred follow-up; not wired yet.)
 //
 // Spelling these out as a single source of truth prevents drift between
 // the per-task plant shape and the user's interactive shell shape —
@@ -70,10 +71,16 @@ var defaultMuxArgs = []string{
 // Args resolution: defaults to the canonical interactive shape
 // (defaultMuxArgs). CLOCKWORK_MUX_ARGS env var, when set, overrides
 // the default. The value is parsed as whitespace-split tokens with no
-// quoting — operators with values containing spaces should use
-// CLOCKWORK_MUX_ARGS_JSON (JSON-array shape) instead. Both env vars
-// are surfaced as follow-ups; the immediate scope of CW-20260510-0110
-// is just getting the canonical shape into the per-task plant.
+// quoting; operators with values containing spaces will need to wait
+// for the deferred CLOCKWORK_MUX_ARGS_JSON follow-up or for structured
+// config plumbing.
+//
+// Whitespace-only override behavior: if CLOCKWORK_MUX_ARGS is set but
+// strings.Fields() returns an empty slice (whitespace-only value), we
+// log a WARN and fall back to defaultMuxArgs rather than emitting a
+// "mux with no args" invocation. Empty-after-Fields is much more likely
+// a misconfiguration than a deliberate "run mux bare" request, so the
+// safer default is to keep the canonical shape.
 //
 // Env passthrough is left at zero today: spawned agents inherit the
 // daemon's env (which already carries auth tokens, $HOME, $PATH).
@@ -81,7 +88,10 @@ var defaultMuxArgs = []string{
 // and is filed as a follow-up.
 //
 // Returns a clearly-logged result regardless of outcome so operators
-// can correlate auth/MCP behavior with whether Mux is wired in.
+// can correlate auth/MCP behavior with whether Mux is wired in. The
+// override-log line redacts the raw env-var value (it can carry
+// secrets — `--token <real>`, `--api-key <real>`, etc.) and surfaces
+// only the parsed token count.
 func resolveMuxConfig() muxResolution {
 	command := resolveMuxCommand()
 	if command == "" {
@@ -89,13 +99,32 @@ func resolveMuxConfig() muxResolution {
 		return muxResolution{}
 	}
 
-	args := defaultMuxArgs
+	// Defensive copy of the package-level defaultMuxArgs so consumers
+	// downstream (Dependencies → plantParams → go-providers renderers)
+	// can't mutate the shared backing slice via append/aliasing. Cheap
+	// (small, fixed slice) and prevents an entire class of "why did the
+	// args list grow across tasks?" footguns.
+	args := append([]string(nil), defaultMuxArgs...)
 	if override := os.Getenv("CLOCKWORK_MUX_ARGS"); override != "" {
 		// Whitespace-split with no quoting. Operators needing values
-		// with spaces (rare for Mux args) should set
-		// CLOCKWORK_MUX_ARGS_JSON or the future structured config.
-		args = strings.Fields(override)
-		log.Printf("[bootstrap] mux args overridden via CLOCKWORK_MUX_ARGS=%q", override)
+		// with spaces (rare for Mux args) will need the deferred
+		// CLOCKWORK_MUX_ARGS_JSON path or future structured config.
+		parsed := strings.Fields(override)
+		if len(parsed) == 0 {
+			// Whitespace-only override → fall back to defaults (safer
+			// than emitting a bare-`mux` invocation; empty-after-Fields
+			// is far more likely a misconfiguration than intent). Log a
+			// WARN so operators can spot the bad value.
+			log.Printf("[bootstrap] WARN: CLOCKWORK_MUX_ARGS is set but parses to zero tokens (whitespace-only?); falling back to default args")
+		} else {
+			args = parsed
+			// Redacted log: never echo the raw value — it routinely
+			// carries secrets (`--token <real>`, `--api-key <real>`,
+			// etc.). Operators who need to debug already have the env
+			// var on hand; the daemon log is not the right channel for
+			// the verbatim value.
+			log.Printf("[bootstrap] mux args overridden via CLOCKWORK_MUX_ARGS (%d tokens; values redacted)", len(parsed))
+		}
 	}
 
 	return muxResolution{

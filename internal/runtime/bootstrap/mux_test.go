@@ -143,3 +143,49 @@ func TestResolveMuxConfig_NoMuxReturnsZero(t *testing.T) {
 	assert.Empty(t, got.Args)
 	assert.Empty(t, got.Env)
 }
+
+// TestResolveMuxConfig_DefaultArgsAreDefensiveCopy pins that the args
+// returned in the default branch do NOT alias defaultMuxArgs's backing
+// array. Without the defensive copy a downstream consumer could
+// `append(args, ...)` and silently mutate the package-level default for
+// every subsequent task.
+func TestResolveMuxConfig_DefaultArgsAreDefensiveCopy(t *testing.T) {
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "fake-mux")
+	require.NoError(t, os.WriteFile(fake, []byte("#!/bin/sh\n"), 0o755))
+
+	t.Setenv("CLOCKWORK_MUX_COMMAND", fake)
+	t.Setenv("CLOCKWORK_MUX_ARGS", "")
+
+	got := resolveMuxConfig()
+	require.NotEmpty(t, got.Args)
+
+	// Snapshot the default args so we can assert they're untouched after
+	// a downstream-style mutation on the returned slice.
+	want := append([]string(nil), defaultMuxArgs...)
+
+	// Mutate the returned slice in place — this would mutate
+	// defaultMuxArgs's backing array if the slice were a direct reference.
+	got.Args[0] = "MUTATED"
+
+	assert.Equal(t, want, defaultMuxArgs,
+		"defaultMuxArgs must not be mutated by changes to resolveMuxConfig's returned slice (defensive copy is load-bearing)")
+}
+
+// TestResolveMuxConfig_WhitespaceOnlyOverrideFallsBackToDefaults pins
+// the whitespace-only override behavior: if CLOCKWORK_MUX_ARGS parses
+// to zero tokens, fall back to defaultMuxArgs rather than emit a bare
+// `mux` invocation. Empty-after-Fields is far more likely a
+// misconfiguration than a deliberate "run mux bare" request.
+func TestResolveMuxConfig_WhitespaceOnlyOverrideFallsBackToDefaults(t *testing.T) {
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "fake-mux")
+	require.NoError(t, os.WriteFile(fake, []byte("#!/bin/sh\n"), 0o755))
+
+	t.Setenv("CLOCKWORK_MUX_COMMAND", fake)
+	t.Setenv("CLOCKWORK_MUX_ARGS", "   \t  \n  ")
+
+	got := resolveMuxConfig()
+	assert.True(t, reflect.DeepEqual(got.Args, defaultMuxArgs),
+		"whitespace-only CLOCKWORK_MUX_ARGS should fall back to defaultMuxArgs, not emit zero args; got %v", got.Args)
+}
