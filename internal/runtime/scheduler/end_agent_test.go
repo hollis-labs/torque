@@ -212,6 +212,108 @@ func TestEndAgent_SuccessLeavesNoFailureComment(t *testing.T) {
 	assert.Empty(t, comments, "no system-failure comment on success path")
 }
 
+// CW-20260510-0109: the embedded V1 template must include a 6th audit
+// check that gates `review→done` on PR-merge state for PR-gated tasks.
+// Without it, cleanup-implementer T1s auto-promote to `done` before the
+// human merges the PR (anomaly A1 in 2026-05-10 overnight log).
+//
+// This is a template-content assertion only. The end-agent is an LLM
+// driven by the template at runtime; Go-side hooks (enqueue,
+// failure-comment, retry-suppression) don't change behaviorally.
+func TestEndAgent_TemplateIncludesPRMergeCheck(t *testing.T) {
+	store := setupEndAgentStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	lm := scheduler.NewLifecycleManager(store, bus)
+
+	target := &sqlstore.TaskRecord{
+		ID: "CW-TARGET-PR-001", Title: "executor task", Status: "doing",
+		Executor: "cli", AgentProfile: "clockwork-backend",
+		Kind: "agent", OnDone: "review",
+	}
+	require.NoError(t, store.CreateTask(target))
+
+	require.NoError(t, lm.HandleResult(target.ID, 1, &executor.ExecutionResult{
+		Status: "done",
+	}))
+
+	internals, err := store.ListTasks(sqlstore.TaskFilter{
+		Kind:     "internal",
+		ParentID: target.ID,
+	})
+	require.NoError(t, err)
+	require.Len(t, internals, 1)
+	prompt := internals[0].SystemPrompt
+
+	// Check 6 must be enumerated as a miss-severity audit step. The exact
+	// wording can drift, but the key contract elements must be present.
+	assert.Contains(t, prompt, "6. **PR-gated tasks:",
+		"check 6 (PR-merge gate) must be present in the audit checklist")
+	assert.Contains(t, prompt, "*(severity: miss)*",
+		"PR-merge check must be miss-severity (gates closeout)")
+
+	// Detection signal: artifact-shape, not agent_profile name. The ticket
+	// confirmed real-world data uses generic profiles for PR-producing
+	// roles, so name-matching would silently miss most cases.
+	assert.Contains(t, prompt, "clockwork_artifact_list",
+		"template must point the agent at the artifact list MCP tool")
+	assert.Contains(t, prompt, "/pull/",
+		"template must describe GitHub PR URL shape for detection")
+	assert.Contains(t, prompt, "agent_profile",
+		"template must explicitly note that profile-name is unreliable")
+
+	// Verification mechanism: gh pr view --json state,mergedAt.
+	assert.Contains(t, prompt, "gh pr view",
+		"template must specify the gh CLI verification command")
+	assert.Contains(t, prompt, "state,mergedAt",
+		"template must request both state + mergedAt fields")
+	assert.Contains(t, prompt, "MERGED",
+		"template must define the merged-state pass condition")
+
+	// Closeout: PR-gated tasks must not auto-transition while OPEN.
+	assert.Contains(t, prompt, "PR-gated tasks (check 6) are a hard short-circuit",
+		"closeout section must call out the PR-merge short-circuit")
+	assert.Contains(t, prompt, "Never auto-transition a PR-gated task",
+		"closeout must explicitly forbid auto-promote on unmerged PR")
+}
+
+// CW-20260510-0109: the original 5 disposition checks must continue to
+// be enumerated — check 6 is additive, not a replacement. Regression
+// guard against accidental rewrite.
+func TestEndAgent_TemplatePreservesOriginalFiveChecks(t *testing.T) {
+	store := setupEndAgentStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	lm := scheduler.NewLifecycleManager(store, bus)
+
+	target := &sqlstore.TaskRecord{
+		ID: "CW-TARGET-PR-002", Title: "executor task", Status: "doing",
+		Executor: "cli", AgentProfile: "clockwork-backend",
+		Kind: "agent", OnDone: "review",
+	}
+	require.NoError(t, store.CreateTask(target))
+
+	require.NoError(t, lm.HandleResult(target.ID, 1, &executor.ExecutionResult{
+		Status: "done",
+	}))
+
+	internals, err := store.ListTasks(sqlstore.TaskFilter{
+		Kind:     "internal",
+		ParentID: target.ID,
+	})
+	require.NoError(t, err)
+	require.Len(t, internals, 1)
+	prompt := internals[0].SystemPrompt
+
+	// Numbered enumeration markers — drift-detection only. If someone
+	// renumbers, this test fails loudly and the renumbering is reviewed.
+	assert.Contains(t, prompt, "1. **Status matches declared `on_done` mode.**")
+	assert.Contains(t, prompt, "2. **`blocked_reason` is empty unless status=`blocked`.**")
+	assert.Contains(t, prompt, "3. **If kind=agent and the executor succeeded: at least one artifact.**")
+	assert.Contains(t, prompt, "4. **`agent_profile` is set.**")
+	assert.Contains(t, prompt, "5. **`updated_at` post-dates the executor's last run.**")
+}
+
 // Re-firing: when an executor task re-enters `review` (e.g. after the
 // user re-opens it to todo and it runs again), a fresh end-agent fires.
 // Two transitions = two end-agent tasks. Documented as the V1 contract.
