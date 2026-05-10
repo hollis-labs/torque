@@ -55,8 +55,11 @@ type TaskRunAggregate struct {
 }
 
 // GetTaskRunAggregate returns the run count / token / cost roll-up for a task.
-// Tasks that have never been executed yield a zero-valued aggregate, not an
-// error — callers render this as "0 runs / $0.00 / 0 tokens".
+// Tasks that have never been executed yield a zero-valued aggregate (Count=0,
+// Cost=0, CostSource=""), not an error. Callers distinguish "never ran" from
+// "ran with no measured cost" via CostSource: empty string → render cost as
+// "—" (no ledger rows); "measured"/"estimated" → render the dollar figure
+// (with `~` prefix for estimates) per apps/gui/src/lib/utils.ts:formatCost.
 //
 // Implementation: two queries — tokens/count from `runs` (canonical for
 // turn-count + token totals), cost from `cost_ledger` (canonical for cost

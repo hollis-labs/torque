@@ -199,8 +199,15 @@ export interface TaskStats {
    * GetTaskRunAggregate picks the highest-priority source across the
    * task's ledger rows (measured > estimated > unknown).
    */
-  cost_source: 'measured' | 'estimated' | 'unknown' | ''
+  cost_source: TaskCostSource
 }
+
+/**
+ * Possible values for {@link TaskStats.cost_source}. Exported so
+ * formatters in utils.ts can type-check against the same union without
+ * duplicating it.
+ */
+export type TaskCostSource = 'measured' | 'estimated' | 'unknown' | ''
 
 export interface Subtodo {
   id: string

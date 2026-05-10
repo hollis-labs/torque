@@ -1,6 +1,8 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
 
+import type { TaskCostSource } from './types'
+
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
@@ -43,12 +45,9 @@ export function formatCost(cost: number, source?: TaskCostSource): string {
   return `${prefix}${cost.toFixed(2)}`
 }
 
-/**
- * Possible values for TaskStats.cost_source — duplicated here so utils.ts
- * stays free of a types.ts import cycle. Keep in sync with the
- * `TaskStats['cost_source']` declaration in `./types.ts`.
- */
-export type TaskCostSource = 'measured' | 'estimated' | 'unknown' | ''
+// Re-export so callers that already import TaskCostSource from this
+// module continue to work without a path change.
+export type { TaskCostSource }
 
 /**
  * Format a duration in milliseconds as human-readable (e.g. "1m 23s", "45s", "2h 3m")

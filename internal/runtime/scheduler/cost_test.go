@@ -207,12 +207,20 @@ func TestScheduler_ResolveCost_NormalizesProviderAlias(t *testing.T) {
 		return 0.018, true
 	}
 	resolveProfile := func(name string) (string, string, bool) {
-		// Mimic the closure in scheduler.resolveCost: normalize the CLI
-		// brand to the catalog provider id BEFORE handing to estimate.
-		// (The package-level ResolveCost is the hot path — this test
-		// exercises the same shape.)
+		// Returns the already-normalized catalog provider id. The
+		// package-level ResolveCost trusts its resolveProfile callback
+		// to hand back canonical ids; the actual CLI-brand →
+		// catalog-id normalization happens upstream in
+		// (*Scheduler).resolveCost via config.CatalogProviderID.
+		// This test exercises the package-level cost-shape contract
+		// (estimate receives whatever the closure returns and the
+		// CostSourceModelsDev tag flows correctly).
+		// TODO(follow-up): add a sibling test in package scheduler
+		// that constructs a real *Scheduler and calls resolveCost
+		// with Profile{Provider: "claude"} to lock the
+		// CatalogProviderID call site against regression.
 		if name == "clockwork-backend" {
-			return "anthropic", "claude-sonnet-4-5", true // already-normalized
+			return "anthropic", "claude-sonnet-4-5", true
 		}
 		return "", "", false
 	}

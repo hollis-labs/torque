@@ -11,8 +11,12 @@ import (
 // profile-style provider name. CLI brands ("claude", "codex") don't match
 // the upstream catalog's vendor namespacing ("anthropic", "openai") so
 // callers that hand the profile's Provider straight to a catalog lookup
-// silently miss every time. This helper centralizes the alias map so the
-// cost resolver and the precheck capability gate normalize identically.
+// silently miss every time.
+//
+// Currently used by the scheduler's cost resolver (see
+// internal/runtime/scheduler/cost.go). The capability/precheck path
+// today passes the raw `Provider` field through without normalization;
+// when that gate is wired to use this helper, update this comment.
 //
 // Returns the input unchanged when no alias is known — callers that want
 // strict matching can compare result == input to detect aliasing.
