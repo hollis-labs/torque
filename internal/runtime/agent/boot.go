@@ -628,9 +628,11 @@ type buildArgsParams struct {
 
 // composeBuildArgs assembles the per-turn argv. It calls the
 // adapter's BuildArgs for the provider-shape baseline, then optionally
-// appends the generic --model suffix and --project-dir flag, and
-// finally prepends profile.Args (minus the dev-mode flag, which is
-// consumed by adapterFor → NewClaudeAdapterDev*).
+// appends the generic --model suffix and the project-directory args
+// (which are provider-specific: --add-dir for claude, --cd for codex,
+// --dir for opencode — supplied by layout.ProjectDirArg), and finally
+// prepends profile.Args (minus the dev-mode flag, which is consumed
+// by adapterFor → NewClaudeAdapterDev*).
 //
 // Per-provider exceptions:
 //
@@ -670,8 +672,8 @@ func composeBuildArgs(p buildArgsParams) []string {
 // Adding a new provider here is a deliberate compatibility decision —
 // most providers tolerate trailing --model and don't need the
 // exception.
-func skipModelSuffixForProvider(provider string) bool {
-	return provider == "opencode"
+func skipModelSuffixForProvider(providerName string) bool {
+	return providerName == "opencode"
 }
 
 // isApiKeyHelperExecutable mirrors bootstrap.isExecutableFile for the
