@@ -6,21 +6,14 @@ import (
 	"testing"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/clockwork-manifold/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	_ "modernc.org/sqlite"
 )
 
 func setupTestStore(t *testing.T) *sqlstore.Store {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	require.NoError(t, err)
-	require.NoError(t, migrations.Run(db))
-	store, err := sqlstore.New(db, "sqlite")
-	require.NoError(t, err)
-	t.Cleanup(func() { store.Close() })
-	return store
+	return sqlitetest.OpenStore(t)
 }
 
 func strPtr(s string) *string { return &s }

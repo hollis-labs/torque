@@ -2,7 +2,6 @@ package scheduler_test
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,13 +13,12 @@ import (
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/queue"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
+	"github.com/hollis-labs/clockwork-manifold/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	_ "modernc.org/sqlite"
 )
 
 // makeOriginAndClone seeds a bare origin repo with one commit on main and
@@ -64,12 +62,7 @@ func makeOriginAndClone(t *testing.T) string {
 func setupSchedulerForWorktree(t *testing.T, cfg *config.SchedulerConfig) (*scheduler.Scheduler, *sqlstore.Store, *executor.MockExecutor) {
 	t.Helper()
 
-	db, err := sql.Open("sqlite", ":memory:")
-	require.NoError(t, err)
-	db.SetMaxOpenConns(1)
-	require.NoError(t, migrations.Run(db))
-	store, err := sqlstore.New(db, "sqlite")
-	require.NoError(t, err)
+	store := sqlitetest.OpenStore(t)
 
 	dir := t.TempDir()
 	q, err := queue.Open(filepath.Join(dir, "queue.db"))
@@ -139,12 +132,7 @@ func TestDispatchPreservesWorktreeWhenAgentLeavesWork(t *testing.T) {
 	// worktree before returning — simulating an agent that exited
 	// mid-edit. We use a wrapper around MockExecutor so the existing mock
 	// machinery still applies for results and validation.
-	db, err := sql.Open("sqlite", ":memory:")
-	require.NoError(t, err)
-	db.SetMaxOpenConns(1)
-	require.NoError(t, migrations.Run(db))
-	store, err := sqlstore.New(db, "sqlite")
-	require.NoError(t, err)
+	store := sqlitetest.OpenStore(t)
 	defer store.Close()
 
 	q, err := queue.Open(filepath.Join(t.TempDir(), "queue.db"))

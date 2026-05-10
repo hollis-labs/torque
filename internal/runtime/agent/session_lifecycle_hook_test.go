@@ -12,12 +12,11 @@ import (
 	"time"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
+	"github.com/hollis-labs/clockwork-manifold/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
-	_ "modernc.org/sqlite"
 )
 
 // stubStopper records every (Get, Stop) call so the unit tests can assert
@@ -54,14 +53,7 @@ func (s *stubStopper) StopCount() int32 { return s.stopCalls.Load() }
 
 func newHookTestStore(t *testing.T) *sqlstore.Store {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	require.NoError(t, err)
-	db.SetMaxOpenConns(1)
-	require.NoError(t, migrations.Run(db))
-	store, err := sqlstore.New(db, "sqlite")
-	require.NoError(t, err)
-	t.Cleanup(func() { store.Close() })
-	return store
+	return sqlitetest.OpenStore(t)
 }
 
 func writePlanWithSession(t *testing.T, store *sqlstore.Store, planID, status, sessID string) {

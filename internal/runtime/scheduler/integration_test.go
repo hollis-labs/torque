@@ -9,23 +9,17 @@ import (
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/queue"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
+	"github.com/hollis-labs/clockwork-manifold/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	_ "modernc.org/sqlite"
 )
 
 func TestIntegrationFullRoundTrip(t *testing.T) {
 	// Setup
-	db, err := sql.Open("sqlite", ":memory:")
-	require.NoError(t, err)
-	db.SetMaxOpenConns(1) // in-memory SQLite is per-connection; force single conn
-	require.NoError(t, migrations.Run(db))
-	store, err := sqlstore.New(db, "sqlite")
-	require.NoError(t, err)
+	store := sqlitetest.OpenStore(t)
 
 	dir := t.TempDir()
 	q, err := queue.Open(filepath.Join(dir, "queue.db"))
@@ -163,12 +157,7 @@ checkEvents:
 }
 
 func TestIntegrationEscalationChain(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	require.NoError(t, err)
-	db.SetMaxOpenConns(1) // in-memory SQLite is per-connection; force single conn
-	require.NoError(t, migrations.Run(db))
-	store, err := sqlstore.New(db, "sqlite")
-	require.NoError(t, err)
+	store := sqlitetest.OpenStore(t)
 
 	dir := t.TempDir()
 	q, err := queue.Open(filepath.Join(dir, "queue.db"))
@@ -195,12 +184,12 @@ func TestIntegrationEscalationChain(t *testing.T) {
 
 	// Create task with escalation chain
 	store.CreateTask(&sqlstore.TaskRecord{
-		ID:              "CW-20260407-0001",
-		Title:           "Hard problem",
-		Description:     "This requires multiple attempts",
-		Status:          "todo",
-		Priority:        1,
-		Executor:        "mock", AgentProfile: "mock",
+		ID:          "CW-20260407-0001",
+		Title:       "Hard problem",
+		Description: "This requires multiple attempts",
+		Status:      "todo",
+		Priority:    1,
+		Executor:    "mock", AgentProfile: "mock",
 		OnFail:          "escalate",
 		EscalationChain: sql.NullString{String: `["retry","human"]`, Valid: true},
 	})
@@ -228,12 +217,7 @@ func TestIntegrationEscalationChain(t *testing.T) {
 }
 
 func TestIntegrationCostCeiling(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	require.NoError(t, err)
-	db.SetMaxOpenConns(1) // in-memory SQLite is per-connection; force single conn
-	require.NoError(t, migrations.Run(db))
-	store, err := sqlstore.New(db, "sqlite")
-	require.NoError(t, err)
+	store := sqlitetest.OpenStore(t)
 
 	dir := t.TempDir()
 	q, err := queue.Open(filepath.Join(dir, "queue.db"))

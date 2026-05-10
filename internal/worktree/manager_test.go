@@ -2,7 +2,6 @@ package worktree_test
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,11 +9,10 @@ import (
 	"testing"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/clockwork-manifold/internal/testutil/sqlitetest"
 	"github.com/hollis-labs/clockwork-manifold/internal/worktree"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	_ "modernc.org/sqlite"
 )
 
 // setupTestRepo creates a temporary git repo with an initial commit.
@@ -43,14 +41,7 @@ func setupTestRepo(t *testing.T) string {
 
 func setupTestStore2(t *testing.T) *sqlstore.Store {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	require.NoError(t, err)
-	db.SetMaxOpenConns(1) // in-memory SQLite is per-connection; force single conn
-	require.NoError(t, migrations.Run(db))
-	store, err := sqlstore.New(db, "sqlite")
-	require.NoError(t, err)
-	t.Cleanup(func() { store.Close() })
-	return store
+	return sqlitetest.OpenStore(t)
 }
 
 func TestWorktreeCreate(t *testing.T) {

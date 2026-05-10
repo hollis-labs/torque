@@ -3,7 +3,6 @@ package scheduler_test
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"log"
 	"path/filepath"
 	"regexp"
@@ -12,24 +11,18 @@ import (
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/queue"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
+	"github.com/hollis-labs/clockwork-manifold/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	_ "modernc.org/sqlite"
 )
 
 func setupScheduler(t *testing.T) (*scheduler.Scheduler, *sqlstore.Store, *executor.MockExecutor) {
 	t.Helper()
 
-	db, err := sql.Open("sqlite", ":memory:")
-	require.NoError(t, err)
-	db.SetMaxOpenConns(1) // in-memory SQLite is per-connection; force single conn
-	require.NoError(t, migrations.Run(db))
-	store, err := sqlstore.New(db, "sqlite")
-	require.NoError(t, err)
+	store := sqlitetest.OpenStore(t)
 
 	dir := t.TempDir()
 	q, err := queue.Open(filepath.Join(dir, "queue.db"))
@@ -218,12 +211,7 @@ func TestSchedulerTickCleansStaleHeartbeatAndReclaimsSlot(t *testing.T) {
 	// Build a scheduler with a very short stale threshold so "backdated
 	// by 2 seconds" is already stale. Using a sub-second threshold risks
 	// flake under -race; 1s is the floor that stays deterministic.
-	db, err := sql.Open("sqlite", ":memory:")
-	require.NoError(t, err)
-	db.SetMaxOpenConns(1)
-	require.NoError(t, migrations.Run(db))
-	store, err := sqlstore.New(db, "sqlite")
-	require.NoError(t, err)
+	store := sqlitetest.OpenStore(t)
 
 	dir := t.TempDir()
 	q, err := queue.Open(filepath.Join(dir, "queue.db"))
