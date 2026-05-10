@@ -77,3 +77,57 @@ func TestOrchestrator_TemplateForbidsBashPolling(t *testing.T) {
 	assert.Contains(t, content, "127.0.0.1",
 		"template must call out the loopback address pattern as forbidden")
 }
+
+// TestOrchestrator_TemplateForbidsSessionListForChildMonitoring guards the
+// CW-20260510-0064 fix: the orchestrator must NEVER poll child liveness via
+// clockwork_session_list / clockwork_session_get — those tools surface
+// substrate process state (PID=0, ExitCode=null for live adapter-mode
+// sessions), and an LLM reading them as "crashed" produces false-negative
+// child-crash diagnoses that abort the plan. Lock the deny-list in.
+func TestOrchestrator_TemplateForbidsSessionListForChildMonitoring(t *testing.T) {
+	t.Setenv(orchestrator.TemplateEnvVar, "/nonexistent/path")
+	t.Setenv("HOME", "/nonexistent/home")
+
+	content, _ := orchestrator.LoadTemplate()
+
+	assert.Contains(t, content, "clockwork_session_list",
+		"template must explicitly name clockwork_session_list in the deny-list")
+	assert.Contains(t, content, "clockwork_session_get",
+		"template must explicitly name clockwork_session_get in the deny-list")
+	// Sanity: the deny-list rationale must teach the wire shape the daemon
+	// produces post-PR-#41 — ExitCode/EndedAt are OMITTED (absent) from the
+	// JSON for live adapter-mode sessions, not present-as-null. The agent
+	// must resist hallucinating a crash from "missing" fields the way the
+	// pre-fix template warned against null-as-crash.
+	assert.Contains(t, content, "PID",
+		"template must mention PID as a substrate-internal field (may be 0 between turns)")
+	assert.Contains(t, content, "absent (omitted)",
+		"template must teach that ExitCode/EndedAt are omitted (not null) on the wire for live sessions")
+	assert.Contains(t, content, "Terminal=false",
+		"template must point to Terminal=false as the authoritative still-alive signal")
+}
+
+// TestOrchestrator_TemplateEscalationPreconditionTaskStatusGate guards the
+// CW-20260510-0064 fix to the Escalation section: before declaring a child
+// crashed, the orchestrator MUST verify task.status ∈
+// {failed, blocked, cancelled} via clockwork_task_get. A child with
+// status=doing and a recent updated_at is NOT crashed regardless of session-
+// shaped signals.
+func TestOrchestrator_TemplateEscalationPreconditionTaskStatusGate(t *testing.T) {
+	t.Setenv(orchestrator.TemplateEnvVar, "/nonexistent/path")
+	t.Setenv("HOME", "/nonexistent/home")
+
+	content, _ := orchestrator.LoadTemplate()
+
+	// Anchor the precondition wording so it can't silently drift.
+	assert.Contains(t, content, "Hard precondition",
+		"escalation must announce the precondition as Hard")
+	assert.Contains(t, content, "failed, blocked, cancelled",
+		"escalation must enumerate the canonical failure-state set the task FSM must reach before escalating")
+	assert.Contains(t, content, "is NOT crashed",
+		"escalation must explicitly assert that doing+recent updated_at means NOT crashed")
+	assert.Contains(t, content, "FORBIDDEN",
+		"escalation must mark inferring crash from session_list/session_get as FORBIDDEN")
+	assert.Contains(t, content, "[system/end-agent]",
+		"escalation must reference the [system/end-agent] failed comment as the corroborating crash signal")
+}
