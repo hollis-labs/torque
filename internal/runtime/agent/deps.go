@@ -89,4 +89,41 @@ type Dependencies struct {
 	// since been removed/replaced, Boot logs the misconfig and falls
 	// back to the env-key path rather than failing the dispatch.
 	ApiKeyHelperPath string
+
+	// MuxCommand, when non-empty, is the absolute path to the Mux
+	// binary the per-task bootdir plant should expose to spawned
+	// agents as a second MCP server entry (alongside the per-task
+	// clockwork loopback). The agent then has access to Vanta + the
+	// portfolio-wide Mux-aggregated tool surface, not just the
+	// task-restricted loopback. Empty disables the entry (back-compat
+	// fence — pre-CW-20260510-0110 behavior preserved byte-for-byte).
+	//
+	// Companion fields MuxArgs / MuxEnv carry the stdio-child argv +
+	// env. The composition root resolves all three at startup (env
+	// var + sibling-binary + PATH probe; mirrors ApiKeyHelperPath's
+	// resolveApiKeyHelperPath shape) and threads them onto Boot's
+	// PlantContext via plantBootDir. Per-Boot overrides are filed as a
+	// follow-up; today the configuration is daemon-scoped.
+	//
+	// CW-20260510-0110.
+	MuxCommand string
+
+	// MuxArgs is the argv passed to MuxCommand by the planted MCP
+	// stdio entry. Default mirrors the user's interactive
+	// ~/.claude.json `mcpServers.mux` shape:
+	// `["mcp", "--proxy", "--servers", "vanta,clockwork,cerberus",
+	//  "--token", "local-dev", "--scopes", "session.write,message.write"]`.
+	//
+	// Daemon-scoped today; CLOCKWORK_MUX_ARGS env var override is
+	// supported at startup. Per-Boot per-task scoping (e.g. read-only
+	// token for some workers) is filed as a follow-up.
+	MuxArgs []string
+
+	// MuxEnv carries optional KEY=VALUE pairs the planted Mux entry
+	// should set when claude/opencode/codex spawn the stdio child.
+	// Today empty — spawned agents inherit the daemon's env, which
+	// carries the auth tokens and PATH that Mux needs. Provided for
+	// the rare future case where an isolated env (e.g. a per-Mux
+	// scoped API key) is required.
+	MuxEnv []string
 }

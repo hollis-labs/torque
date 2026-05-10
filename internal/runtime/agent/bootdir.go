@@ -40,6 +40,14 @@ type plantParams struct {
 	KickoffContent string
 	ProjectDir     string
 	MCPLoopbackURL string
+
+	// MuxCommand / MuxArgs / MuxEnv flow through to PlantContext so the
+	// go-providers renderers emit a second `mux` MCP server entry next
+	// to the per-task loopback (CW-20260510-0110). Empty MuxCommand
+	// preserves the pre-existing planted shape (loopback only).
+	MuxCommand string
+	MuxArgs    []string
+	MuxEnv     []string
 }
 
 // plantBootDir materializes the per-task boot dir for the spawn. Returns
@@ -93,6 +101,13 @@ func plantBootDir(p plantParams) (*bootDirResult, error) {
 		// only when BootDir != "". Without this, PTY-mode claude stalls
 		// on the first-run workspace trust dialog.
 		BootDir: bootDir,
+
+		// CW-20260510-0110: thread Mux config so the renderers emit a
+		// second MCP server entry alongside the loopback. Empty
+		// MuxCommand → no Mux entry (back-compat).
+		MuxCommand: p.MuxCommand,
+		MuxArgs:    p.MuxArgs,
+		MuxEnv:     p.MuxEnv,
 	}
 
 	for _, pf := range spec.PlantedFiles {
