@@ -22,6 +22,16 @@ type config struct {
 
 type Option func(*config)
 
+func newConfig(opts ...Option) config {
+	cfg := config{
+		busyTimeoutMs: defaultBusyTimeoutMs,
+	}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	return cfg
+}
+
 // WithBusyTimeout overrides the per-connection SQLite busy_timeout used by the
 // temp-file-backed test database.
 func WithBusyTimeout(ms int) Option {
@@ -48,7 +58,8 @@ func WithMaxOpenConns(n int) Option {
 func OpenDB(t *testing.T, opts ...Option) *sql.DB {
 	t.Helper()
 
-	db := openDB(t, opts...)
+	cfg := newConfig(opts...)
+	db := openDB(t, cfg)
 	t.Cleanup(func() { _ = db.Close() })
 	return db
 }
@@ -56,7 +67,9 @@ func OpenDB(t *testing.T, opts ...Option) *sql.DB {
 func OpenStore(t *testing.T, opts ...Option) *sqlstore.Store {
 	t.Helper()
 
-	db := openDB(t, opts...)
+	cfg := newConfig(opts...)
+	db := openDB(t, cfg)
+	db.SetMaxOpenConns(1)
 	requireMigrations(t, db)
 
 	store, err := sqlstore.New(db, "sqlite")
@@ -64,20 +77,19 @@ func OpenStore(t *testing.T, opts ...Option) *sqlstore.Store {
 		_ = db.Close()
 		t.Fatalf("create sqlite test store: %v", err)
 	}
+	requireBusyTimeout(t, db, cfg.busyTimeoutMs)
+	if cfg.setMaxOpenConns {
+		db.SetMaxOpenConns(cfg.maxOpenConns)
+	} else {
+		db.SetMaxOpenConns(0)
+	}
 
 	t.Cleanup(func() { _ = store.Close() })
 	return store
 }
 
-func openDB(t *testing.T, opts ...Option) *sql.DB {
+func openDB(t *testing.T, cfg config) *sql.DB {
 	t.Helper()
-
-	cfg := config{
-		busyTimeoutMs: defaultBusyTimeoutMs,
-	}
-	for _, opt := range opts {
-		opt(&cfg)
-	}
 
 	dbPath := filepath.Join(t.TempDir(), sanitizeName(t.Name())+".db")
 	dsn := fmt.Sprintf(
@@ -90,9 +102,6 @@ func openDB(t *testing.T, opts ...Option) *sql.DB {
 	if err != nil {
 		t.Fatalf("open sqlite test db: %v", err)
 	}
-	if cfg.setMaxOpenConns {
-		db.SetMaxOpenConns(cfg.maxOpenConns)
-	}
 	return db
 }
 
@@ -101,6 +110,14 @@ func requireMigrations(t *testing.T, db *sql.DB) {
 	if err := migrations.Run(db); err != nil {
 		_ = db.Close()
 		t.Fatalf("run sqlite test migrations: %v", err)
+	}
+}
+
+func requireBusyTimeout(t *testing.T, db *sql.DB, ms int) {
+	t.Helper()
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d", ms)); err != nil {
+		_ = db.Close()
+		t.Fatalf("set sqlite test busy_timeout: %v", err)
 	}
 }
 

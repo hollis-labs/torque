@@ -160,7 +160,7 @@ func TestSchedulerTransientValidateErrorDoesNotBlock(t *testing.T) {
 
 // TestPickerSkipsAgentTaskWithEmptyProfile is the defense-in-depth guard:
 // even with the pre-dispatch validation hook in place, a task with
-// kind='agent' AND agent_profile=” must not be selected as a candidate.
+// kind='agent' AND agent_profile='' must not be selected as a candidate.
 // Repeated ticks must leave the task status=todo, never transitioned,
 // with zero active_workers — the scheduler simply never sees it.
 func TestPickerSkipsAgentTaskWithEmptyProfile(t *testing.T) {
