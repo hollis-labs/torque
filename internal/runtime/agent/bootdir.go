@@ -116,12 +116,14 @@ func plantBootDir(p plantParams) (*bootDirResult, error) {
 			_ = os.RemoveAll(bootDir)
 			return nil, fmt.Errorf("plant %s: render: %w", pf.RelPath, err)
 		}
-		mode := os.FileMode(0o644)
-		if pf.RelPath == ".mcp.json" {
-			// Loopback URL is per-task secret-ish (any process that can
-			// read it could impersonate the agent against the loopback).
-			// Match cliexec's convention.
-			mode = 0o600
+		// Mode comes from the lib spec (PlantedFile.Mode). Zero falls back
+		// to 0o644. The lib owns the per-file sensitivity policy now —
+		// secret-ish files (.mcp.json, codex auth.json/config.toml) carry
+		// 0o600 in their PlantedFile entries — and consumers honor what's
+		// declared without a parallel filename switch on this side.
+		mode := pf.Mode
+		if mode == 0 {
+			mode = 0o644
 		}
 		if err := os.WriteFile(path, []byte(content), mode); err != nil {
 			_ = os.RemoveAll(bootDir)
