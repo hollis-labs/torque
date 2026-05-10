@@ -59,9 +59,16 @@ func TestPlantBootDir_Claude(t *testing.T) {
 	assert.Equal(t, []string{"--add-dir", "/tmp/repo"}, res.ProjectDirArg)
 }
 
-// TestPlantBootDir_Codex covers the codex spec (AGENTS.md + .mcp.json + boot.md).
+// TestPlantBootDir_Codex covers the codex spec (AGENTS.md + boot.md +
+// config.toml + auth.json + .mcp.json sidecar) and verifies the
+// CODEX_HOME env amendment + 0o600 perms on auth.json/.mcp.json.
 func TestPlantBootDir_Codex(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
+	// Isolate codex auth source so the test doesn't depend on the dev's
+	// ~/.codex/auth.json. CODEX_HOME points at an empty dir → the lib's
+	// readCodexAuthSource returns "" silently (the "user not logged in"
+	// branch), which is what we want to assert against.
+	t.Setenv("CODEX_HOME", t.TempDir())
 
 	res, err := plantBootDir(plantParams{
 		Provider:       "codex",
@@ -77,11 +84,30 @@ func TestPlantBootDir_Codex(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = os.RemoveAll(res.BootDir) }()
 
-	// AGENTS.md (codex auto-load convention) + boot.md + .mcp.json.
-	for _, rel := range []string{"AGENTS.md", "boot.md", ".mcp.json"} {
+	// AGENTS.md (codex auto-load) + boot.md + config.toml (load-bearing
+	// MCP config) + auth.json (placeholder when not logged in) + .mcp.json
+	// (legacy claude-shape sidecar, not read by codex).
+	for _, rel := range []string{"AGENTS.md", "boot.md", "config.toml", "auth.json", ".mcp.json"} {
 		_, err := os.Stat(filepath.Join(res.BootDir, rel))
 		assert.NoError(t, err, "expected %s under bootDir", rel)
 	}
+
+	// config.toml carries the load-bearing [mcp_servers.loopback] block.
+	configTOML, err := os.ReadFile(filepath.Join(res.BootDir, "config.toml"))
+	require.NoError(t, err)
+	assert.Contains(t, string(configTOML), "[mcp_servers.loopback]")
+	assert.Contains(t, string(configTOML), "127.0.0.1:1")
+
+	// Sensitive files chmod'd to 0o600.
+	for _, rel := range []string{"auth.json", ".mcp.json"} {
+		st, err := os.Stat(filepath.Join(res.BootDir, rel))
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), st.Mode().Perm(), "%s should be 0o600", rel)
+	}
+
+	// CODEX_HOME env amendment substituted to the real boot dir.
+	require.NotEmpty(t, res.EnvAmendments)
+	assert.Equal(t, "CODEX_HOME="+res.BootDir, res.EnvAmendments[0])
 
 	// Codex's project-dir flag is --cd per the lib spec.
 	assert.Equal(t, []string{"--cd", "/tmp/codex-repo"}, res.ProjectDirArg)

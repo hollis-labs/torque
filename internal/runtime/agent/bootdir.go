@@ -117,10 +117,15 @@ func plantBootDir(p plantParams) (*bootDirResult, error) {
 			return nil, fmt.Errorf("plant %s: render: %w", pf.RelPath, err)
 		}
 		mode := os.FileMode(0o644)
-		if pf.RelPath == ".mcp.json" {
+		switch pf.RelPath {
+		case ".mcp.json":
 			// Loopback URL is per-task secret-ish (any process that can
 			// read it could impersonate the agent against the loopback).
 			// Match cliexec's convention.
+			mode = 0o600
+		case "auth.json":
+			// Codex's auth.json carries OAuth tokens / API keys copied
+			// from the user's ~/.codex/auth.json. Treat as secret.
 			mode = 0o600
 		}
 		if err := os.WriteFile(path, []byte(content), mode); err != nil {
