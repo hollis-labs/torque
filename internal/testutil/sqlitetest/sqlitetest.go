@@ -78,6 +78,13 @@ func OpenStore(t *testing.T, opts ...Option) *sqlstore.Store {
 		t.Fatalf("create sqlite test store: %v", err)
 	}
 	requireBusyTimeout(t, store.DB(), cfg.busyTimeoutMs)
+	if store.ReadDB() != store.DB() {
+		requireBusyTimeout(t, store.ReadDB(), cfg.busyTimeoutMs)
+	}
+	if cfg.setMaxOpenConns {
+		store.ReadDB().SetMaxOpenConns(cfg.maxOpenConns)
+		store.ReadDB().SetMaxIdleConns(cfg.maxOpenConns)
+	}
 
 	t.Cleanup(func() { _ = store.Close() })
 	return store

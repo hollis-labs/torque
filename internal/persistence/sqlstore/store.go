@@ -3,9 +3,8 @@ package sqlstore
 import (
 	"database/sql"
 	"fmt"
-	"net/url"
+	"github.com/hollis-labs/clockwork-manifold/internal/persistence/appdb"
 	"os"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,6 +13,7 @@ import (
 type Store struct {
 	db      *sql.DB
 	read    *sql.DB
+	owned   *sql.DB
 	dialect Dialect
 
 	// Task-transition hook fan-out (CW-20260418-0005). Added so the
@@ -26,22 +26,33 @@ type Store struct {
 func New(db *sql.DB, driver string) (*Store, error) {
 	var d Dialect
 	readDB := db
+	ownedDB := db
 	switch driver {
 	case "sqlite", "sqlite3":
 		d = sqliteDialect{}
-		db.SetMaxOpenConns(1)
-		db.SetMaxIdleConns(1)
-		if err := applySQLiteWritePragmas(db); err != nil {
-			return nil, err
-		}
-
 		path, err := sqliteMainDBPath(db)
 		if err != nil {
 			return nil, err
 		}
+		busyTimeoutMs, err := sqliteBusyTimeout(db)
+		if err != nil {
+			return nil, err
+		}
 		if path != "" {
-			readDB, err = openSQLiteReadPool(path)
+			writerDB, err := openSQLiteWritePool(path, busyTimeoutMs)
 			if err != nil {
+				return nil, err
+			}
+			readDB, err = openSQLiteReadPool(path, busyTimeoutMs)
+			if err != nil {
+				_ = writerDB.Close()
+				return nil, err
+			}
+			db = writerDB
+		} else {
+			db.SetMaxOpenConns(1)
+			db.SetMaxIdleConns(1)
+			if err := applySQLiteWritePragmas(db, busyTimeoutMs); err != nil {
 				return nil, err
 			}
 		}
@@ -50,7 +61,7 @@ func New(db *sql.DB, driver string) (*Store, error) {
 	default:
 		return nil, fmt.Errorf("unsupported driver: %s", driver)
 	}
-	return &Store{db: db, read: readDB, dialect: d}, nil
+	return &Store{db: db, read: readDB, owned: ownedDB, dialect: d}, nil
 }
 
 func (s *Store) DB() *sql.DB { return s.db }
@@ -73,17 +84,25 @@ func (s *Store) Close() error {
 	if err := s.db.Close(); err != nil && firstErr == nil {
 		firstErr = err
 	}
+	if s.owned != nil && s.owned != s.db && s.owned != s.read {
+		if err := s.owned.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
 	return firstErr
 }
 
-func applySQLiteWritePragmas(db *sql.DB) error {
-	return applySQLitePragmas(db, true)
+func applySQLiteWritePragmas(db *sql.DB, busyTimeoutMs int) error {
+	return applySQLitePragmas(db, true, busyTimeoutMs)
 }
 
-func applySQLitePragmas(db *sql.DB, includeCacheSize bool) error {
+func applySQLitePragmas(db *sql.DB, includeCacheSize bool, busyTimeoutMs int) error {
+	if busyTimeoutMs <= 0 {
+		busyTimeoutMs = appdb.DefaultSQLiteBusyTimeoutMs
+	}
 	pragmas := []string{
 		"PRAGMA journal_mode=WAL",
-		"PRAGMA busy_timeout=5000",
+		fmt.Sprintf("PRAGMA busy_timeout=%d", busyTimeoutMs),
 		"PRAGMA foreign_keys=ON",
 		"PRAGMA synchronous=NORMAL",
 		"PRAGMA temp_store=memory",
@@ -128,8 +147,41 @@ func sqliteMainDBPath(db *sql.DB) (string, error) {
 	return "", nil
 }
 
-func openSQLiteReadPool(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", sqliteReadDSN(path))
+func sqliteBusyTimeout(db *sql.DB) (int, error) {
+	var ms int
+	if err := db.QueryRow("PRAGMA busy_timeout").Scan(&ms); err != nil {
+		return 0, fmt.Errorf("query sqlite busy_timeout: %w", err)
+	}
+	if ms <= 0 {
+		ms = appdb.DefaultSQLiteBusyTimeoutMs
+	}
+	return ms, nil
+}
+
+func openSQLiteWritePool(path string, busyTimeoutMs int) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", appdb.SQLiteDSN(path, appdb.SQLiteDSNOptions{
+		BusyTimeoutMs:    busyTimeoutMs,
+		IncludeCacheSize: true,
+		TxLock:           "immediate",
+	}))
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite write pool: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if err := applySQLiteWritePragmas(db, busyTimeoutMs); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("ping sqlite write pool: %w", err)
+	}
+	return db, nil
+}
+
+func openSQLiteReadPool(path string, busyTimeoutMs int) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", sqliteReadDSN(path, busyTimeoutMs))
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite read pool: %w", err)
 	}
@@ -149,22 +201,11 @@ func sqliteReadMaxOpenConns() int {
 			return n
 		}
 	}
-	n := runtime.NumCPU() * 2
-	if n < 10 {
-		return 10
-	}
-	return n
+	return appdb.DefaultSQLiteMaxReadConns
 }
 
-func sqliteReadDSN(path string) string {
-	q := url.Values{}
-	q.Add("_pragma", "journal_mode(WAL)")
-	q.Add("_pragma", "busy_timeout(5000)")
-	q.Add("_pragma", "foreign_keys(1)")
-	q.Add("_pragma", "synchronous(NORMAL)")
-	q.Add("_pragma", "temp_store(memory)")
-	q.Add("_pragma", "mmap_size(30000000000)")
-	q.Add("_pragma", "journal_size_limit(67108864)")
-	u := &url.URL{Scheme: "file", Path: path, RawQuery: q.Encode()}
-	return u.String()
+func sqliteReadDSN(path string, busyTimeoutMs int) string {
+	return appdb.SQLiteDSN(path, appdb.SQLiteDSNOptions{
+		BusyTimeoutMs: busyTimeoutMs,
+	})
 }

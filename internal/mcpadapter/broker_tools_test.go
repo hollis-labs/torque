@@ -13,6 +13,7 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/broker"
 	"github.com/hollis-labs/clockwork-manifold/internal/mcpadapter"
 	clockmsg "github.com/hollis-labs/clockwork-manifold/internal/messaging"
+	"github.com/hollis-labs/clockwork-manifold/internal/persistence/appdb"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
@@ -24,7 +25,11 @@ import (
 func setupAdapterWithBroker(t *testing.T) *mcpadapter.Adapter {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "broker.db") + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)&_pragma=temp_store(memory)&_pragma=mmap_size(30000000000)&_pragma=journal_size_limit(67108864)&_pragma=cache_size(-64000)&_txlock=immediate"
+	dsn := appdb.SQLiteDSN(filepath.Join(dir, "broker.db"), appdb.SQLiteDSNOptions{
+		BusyTimeoutMs:    appdb.DefaultSQLiteBusyTimeoutMs,
+		IncludeCacheSize: true,
+		TxLock:           "immediate",
+	})
 	db, err := sql.Open("sqlite", dsn)
 	require.NoError(t, err)
 	require.NoError(t, migrations.Run(db))

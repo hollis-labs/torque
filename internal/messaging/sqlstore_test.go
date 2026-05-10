@@ -15,13 +15,18 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/messaging"
+	"github.com/hollis-labs/clockwork-manifold/internal/persistence/appdb"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
 )
 
 func newDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "msg.db") + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)&_pragma=temp_store(memory)&_pragma=mmap_size(30000000000)&_pragma=journal_size_limit(67108864)&_pragma=cache_size(-64000)&_txlock=immediate"
+	dsn := appdb.SQLiteDSN(filepath.Join(dir, "msg.db"), appdb.SQLiteDSNOptions{
+		BusyTimeoutMs:    appdb.DefaultSQLiteBusyTimeoutMs,
+		IncludeCacheSize: true,
+		TxLock:           "immediate",
+	})
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		t.Fatalf("open: %v", err)
