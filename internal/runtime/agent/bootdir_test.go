@@ -60,14 +60,18 @@ func TestPlantBootDir_Claude(t *testing.T) {
 }
 
 // TestPlantBootDir_Codex covers the codex spec (AGENTS.md + boot.md +
-// config.toml + auth.json + .mcp.json sidecar) and verifies the
-// CODEX_HOME env amendment + 0o600 perms on auth.json/.mcp.json.
+// config.toml + auth.json + .mcp.json sidecar) and verifies:
+//   - CODEX_HOME env amendment substituted to the bootdir
+//   - 0o600 perms on auth.json / config.toml / .mcp.json (via PlantedFile.Mode)
+//   - 0o644 fallback on AGENTS.md / boot.md (Mode unset)
+//   - auth.json planted empty when the user isn't logged in (isolation:
+//     the dev's real ~/.codex/auth.json must never leak into the bootdir)
 func TestPlantBootDir_Codex(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	// Isolate codex auth source so the test doesn't depend on the dev's
 	// ~/.codex/auth.json. CODEX_HOME points at an empty dir → the lib's
-	// readCodexAuthSource returns "" silently (the "user not logged in"
-	// branch), which is what we want to assert against.
+	// readCodexAuthSource returns ("", false, nil) silently (the "user not
+	// logged in" branch), which is what we want to assert against.
 	t.Setenv("CODEX_HOME", t.TempDir())
 
 	res, err := plantBootDir(plantParams{
@@ -98,12 +102,30 @@ func TestPlantBootDir_Codex(t *testing.T) {
 	assert.Contains(t, string(configTOML), "[mcp_servers.loopback]")
 	assert.Contains(t, string(configTOML), "127.0.0.1:1")
 
-	// Sensitive files chmod'd to 0o600.
-	for _, rel := range []string{"auth.json", ".mcp.json"} {
+	// Sensitive files chmod'd to 0o600 via PlantedFile.Mode in the lib
+	// spec (auth.json carries OAuth tokens; config.toml + .mcp.json carry
+	// the per-task loopback URL — same secret-ish policy).
+	for _, rel := range []string{"auth.json", ".mcp.json", "config.toml"} {
 		st, err := os.Stat(filepath.Join(res.BootDir, rel))
 		require.NoError(t, err)
 		assert.Equal(t, os.FileMode(0o600), st.Mode().Perm(), "%s should be 0o600", rel)
 	}
+
+	// AGENTS.md / boot.md leave PlantedFile.Mode unset → 0o644 fallback.
+	for _, rel := range []string{"AGENTS.md", "boot.md"} {
+		st, err := os.Stat(filepath.Join(res.BootDir, rel))
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o644), st.Mode().Perm(), "%s should be 0o644 (Mode unset → fallback)", rel)
+	}
+
+	// auth.json carries an empty placeholder when the user isn't logged in
+	// (CODEX_HOME points at an empty dir → readCodexAuthSource returns
+	// ("", false, nil) and the closure plants empty content). Asserting
+	// the empty state pins the isolation contract: the test must never
+	// leak the developer's real ~/.codex/auth.json into the bootdir.
+	authBytes, err := os.ReadFile(filepath.Join(res.BootDir, "auth.json"))
+	require.NoError(t, err)
+	assert.Empty(t, authBytes, "auth.json should be empty when CODEX_HOME has no auth.json")
 
 	// CODEX_HOME env amendment substituted to the real boot dir.
 	require.NotEmpty(t, res.EnvAmendments)
