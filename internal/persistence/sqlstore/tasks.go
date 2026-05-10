@@ -68,9 +68,9 @@ type TaskRecord struct {
 	// task is not in a collection (could still be in inbox via
 	// AddedToCollectionsAt). AddedToCollectionsAt is write-once on first
 	// entry into the collections world.
-	CollectionID            sql.NullString
-	CollectionPosition      sql.NullInt64
-	AddedToCollectionsAt    sql.NullTime
+	CollectionID         sql.NullString
+	CollectionPosition   sql.NullInt64
+	AddedToCollectionsAt sql.NullTime
 }
 
 // TaskFilter holds optional filter criteria for ListTasks.
@@ -274,7 +274,7 @@ func (s *Store) CreateTask(t *TaskRecord) error {
 // ErrTaskNotFound if no row matches; callers can use errors.Is to detect.
 func (s *Store) GetTask(id string) (*TaskRecord, error) {
 	q := `SELECT ` + taskSelectCols + ` FROM tasks WHERE id = ?`
-	row := s.db.QueryRow(q, id)
+	row := s.ReadDB().QueryRow(q, id)
 	t, err := scanTask(row)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("task %s: %w", id, ErrTaskNotFound)
@@ -387,7 +387,7 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 		q += fmt.Sprintf(" OFFSET %d", f.Offset)
 	}
 
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.ReadDB().Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -632,7 +632,7 @@ func (s *Store) TransitionTaskWithReason(id, newStatus, reason string) error {
 // the old status we hand to the transition hook is the exact value the
 // UPDATE replaced. Pass reason=nil to skip the blocked_reason column.
 func (s *Store) transitionTaskTx(id, newStatus string, reason *string) (string, error) {
-	tx, err := s.db.Begin()
+	tx, err := s.beginWriteTx()
 	if err != nil {
 		return "", err
 	}
@@ -732,7 +732,7 @@ func (s *Store) DeleteTask(id string) error {
 func (s *Store) SearchTasks(query string) ([]TaskRecord, error) {
 	pattern := "%" + query + "%"
 	q := `SELECT ` + taskSelectCols + ` FROM tasks WHERE id LIKE ? OR title LIKE ? OR description LIKE ? ORDER BY priority ASC, created_at ASC`
-	rows, err := s.db.Query(q, pattern, pattern, pattern)
+	rows, err := s.ReadDB().Query(q, pattern, pattern, pattern)
 	if err != nil {
 		return nil, err
 	}

@@ -546,7 +546,7 @@ func TestSessionLifecycleHook_HasInProgressChild_DBErrorIsConservative(t *testin
 	// Close, all subsequent queries return sql.ErrConnDone (or similar);
 	// hasInProgressChild's err branch fires, and the conservative-false
 	// rule applies.
-	require.NoError(t, store.DB().Close())
+	require.NoError(t, store.Close())
 
 	assert.False(t, hook.hasInProgressChild("CW-PLAN-CW0064-5"),
 		"DB error must produce false (conservative): we don't know if a child is in-progress, so the SIGTERM proceeds rather than hangs on uncertainty")

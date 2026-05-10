@@ -3,6 +3,7 @@ package sqlitetest
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -69,7 +70,6 @@ func OpenStore(t *testing.T, opts ...Option) *sqlstore.Store {
 
 	cfg := newConfig(opts...)
 	db := openDB(t, cfg)
-	db.SetMaxOpenConns(1)
 	requireMigrations(t, db)
 
 	store, err := sqlstore.New(db, "sqlite")
@@ -77,12 +77,7 @@ func OpenStore(t *testing.T, opts ...Option) *sqlstore.Store {
 		_ = db.Close()
 		t.Fatalf("create sqlite test store: %v", err)
 	}
-	requireBusyTimeout(t, db, cfg.busyTimeoutMs)
-	if cfg.setMaxOpenConns {
-		db.SetMaxOpenConns(cfg.maxOpenConns)
-	} else {
-		db.SetMaxOpenConns(0)
-	}
+	requireBusyTimeout(t, store.DB(), cfg.busyTimeoutMs)
 
 	t.Cleanup(func() { _ = store.Close() })
 	return store
@@ -92,11 +87,17 @@ func openDB(t *testing.T, cfg config) *sql.DB {
 	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), sanitizeName(t.Name())+".db")
-	dsn := fmt.Sprintf(
-		"file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(%d)&_pragma=foreign_keys(1)",
-		dbPath,
-		cfg.busyTimeoutMs,
-	)
+	q := url.Values{}
+	q.Add("_pragma", "journal_mode(WAL)")
+	q.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", cfg.busyTimeoutMs))
+	q.Add("_pragma", "foreign_keys(1)")
+	q.Add("_pragma", "synchronous(NORMAL)")
+	q.Add("_pragma", "temp_store(memory)")
+	q.Add("_pragma", "mmap_size(30000000000)")
+	q.Add("_pragma", "journal_size_limit(67108864)")
+	q.Add("_pragma", "cache_size(-64000)")
+	q.Set("_txlock", "immediate")
+	dsn := (&url.URL{Scheme: "file", Path: dbPath, RawQuery: q.Encode()}).String()
 
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {

@@ -63,7 +63,7 @@ func (s *Store) CreateProject(p *ProjectRecord) error {
 // GetProject fetches a single project by ID.
 func (s *Store) GetProject(id string) (*ProjectRecord, error) {
 	p := &ProjectRecord{}
-	err := s.db.QueryRow(`SELECT id, name, description, repo_path, agent_path, read_paths, write_paths, context_paths, permissions, rules, status, icon, created_at, updated_at FROM projects WHERE id = ?`, id).Scan(
+	err := s.ReadDB().QueryRow(`SELECT id, name, description, repo_path, agent_path, read_paths, write_paths, context_paths, permissions, rules, status, icon, created_at, updated_at FROM projects WHERE id = ?`, id).Scan(
 		&p.ID, &p.Name, &p.Description, &p.RepoPath, &p.AgentPath, &p.ReadPaths, &p.WritePaths, &p.ContextPaths, &p.Permissions, &p.Rules, &p.Status, &p.Icon, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -96,7 +96,7 @@ func (s *Store) ListProjects(f ProjectFilter) ([]ProjectRecord, error) {
 		}
 	}
 
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.ReadDB().Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +210,7 @@ func (s *Store) NextProjectID() (string, error) {
 	prefix := "PRJ-" + date + "-"
 
 	var maxSeq int
-	err := s.db.QueryRow(
+	err := s.ReadDB().QueryRow(
 		"SELECT COALESCE(MAX(CAST(SUBSTR(id, ?) AS INTEGER)), 0) FROM projects WHERE id LIKE ?",
 		len(prefix)+1, prefix+"%",
 	).Scan(&maxSeq)

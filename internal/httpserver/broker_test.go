@@ -28,7 +28,7 @@ import (
 func setupBrokerServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "broker.db") + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+	dsn := "file:" + filepath.Join(dir, "broker.db") + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)&_pragma=temp_store(memory)&_pragma=mmap_size(30000000000)&_pragma=journal_size_limit(67108864)&_pragma=cache_size(-64000)&_txlock=immediate"
 	db, err := sql.Open("sqlite", dsn)
 	require.NoError(t, err)
 	require.NoError(t, migrations.Run(db))
@@ -48,7 +48,7 @@ func setupBrokerServer(t *testing.T) *httptest.Server {
 func noBrokerServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "broker.db") + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	dsn := "file:" + filepath.Join(dir, "broker.db") + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)&_pragma=temp_store(memory)&_pragma=mmap_size(30000000000)&_pragma=journal_size_limit(67108864)&_pragma=cache_size(-64000)&_txlock=immediate"
 	db, err := sql.Open("sqlite", dsn)
 	require.NoError(t, err)
 	require.NoError(t, migrations.Run(db))

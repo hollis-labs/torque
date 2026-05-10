@@ -13,7 +13,7 @@ type SettingRecord struct {
 // GetSetting returns the value for a key, or "" if not found.
 func (s *Store) GetSetting(key string) (string, error) {
 	var value string
-	err := s.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, key).Scan(&value)
+	err := s.ReadDB().QueryRow(`SELECT value FROM settings WHERE key = ?`, key).Scan(&value)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}
@@ -33,7 +33,7 @@ func (s *Store) SetSetting(key, value string) error {
 
 // ListSettings returns all settings ordered by key.
 func (s *Store) ListSettings() ([]SettingRecord, error) {
-	rows, err := s.db.Query(`SELECT key, value FROM settings ORDER BY key`)
+	rows, err := s.ReadDB().Query(`SELECT key, value FROM settings ORDER BY key`)
 	if err != nil {
 		return nil, err
 	}

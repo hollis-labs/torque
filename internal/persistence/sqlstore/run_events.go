@@ -97,7 +97,7 @@ func (s *Store) ListRunEvents(f RunEventFilter) ([]RunEventRecord, error) {
 		where + " ORDER BY id ASC LIMIT ?"
 	args = append(args, limit)
 
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.ReadDB().Query(q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list run events: %w", err)
 	}

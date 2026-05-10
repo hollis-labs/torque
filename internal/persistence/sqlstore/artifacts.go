@@ -13,14 +13,14 @@ var ErrArtifactNotFound = errors.New("artifact not found")
 
 // ArtifactRecord mirrors the artifacts table row.
 type ArtifactRecord struct {
-	ID       int64
-	TaskID   string
-	RunID    sql.NullInt64
-	Type     string
-	Content  string
-	URL      string
-	FilePath string
-	Metadata sql.NullString
+	ID        int64
+	TaskID    string
+	RunID     sql.NullInt64
+	Type      string
+	Content   string
+	URL       string
+	FilePath  string
+	Metadata  sql.NullString
 	CreatedAt time.Time
 }
 
@@ -48,7 +48,7 @@ func (s *Store) CreateArtifact(a *ArtifactRecord) error {
 // GetArtifact returns a single artifact by ID, or ErrArtifactNotFound.
 func (s *Store) GetArtifact(id int64) (*ArtifactRecord, error) {
 	q := `SELECT ` + artifactSelectCols + ` FROM artifacts WHERE id = ?`
-	row := s.db.QueryRow(q, id)
+	row := s.ReadDB().QueryRow(q, id)
 
 	var a ArtifactRecord
 	if err := row.Scan(
@@ -67,7 +67,7 @@ func (s *Store) ListArtifacts(taskID string) ([]ArtifactRecord, error) {
 	q := `SELECT ` + artifactSelectCols + `
 		FROM artifacts WHERE task_id = ? ORDER BY created_at ASC`
 
-	rows, err := s.db.Query(q, taskID)
+	rows, err := s.ReadDB().Query(q, taskID)
 	if err != nil {
 		return nil, err
 	}

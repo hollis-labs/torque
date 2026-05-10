@@ -46,7 +46,7 @@ func DecodeSubtodos(s sql.NullString) ([]Subtodo, error) {
 // GetSubtodos returns the subtodo list for a task, or nil when unset.
 func (s *Store) GetSubtodos(taskID string) ([]Subtodo, error) {
 	var raw sql.NullString
-	err := s.db.QueryRow(`SELECT subtodos FROM tasks WHERE id = ?`, taskID).Scan(&raw)
+	err := s.ReadDB().QueryRow(`SELECT subtodos FROM tasks WHERE id = ?`, taskID).Scan(&raw)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("task %s: %w", taskID, ErrTaskNotFound)
 	}
