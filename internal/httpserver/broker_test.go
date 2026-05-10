@@ -17,6 +17,7 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/broker"
 	"github.com/hollis-labs/clockwork-manifold/internal/httpserver"
 	clockmsg "github.com/hollis-labs/clockwork-manifold/internal/messaging"
+	"github.com/hollis-labs/clockwork-manifold/internal/persistence/appdb"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
@@ -28,7 +29,11 @@ import (
 func setupBrokerServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "broker.db") + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+	dsn := appdb.SQLiteDSN(filepath.Join(dir, "broker.db"), appdb.SQLiteDSNOptions{
+		BusyTimeoutMs:    appdb.DefaultSQLiteBusyTimeoutMs,
+		IncludeCacheSize: true,
+		TxLock:           "immediate",
+	})
 	db, err := sql.Open("sqlite", dsn)
 	require.NoError(t, err)
 	require.NoError(t, migrations.Run(db))
@@ -48,7 +53,11 @@ func setupBrokerServer(t *testing.T) *httptest.Server {
 func noBrokerServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "broker.db") + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	dsn := appdb.SQLiteDSN(filepath.Join(dir, "broker.db"), appdb.SQLiteDSNOptions{
+		BusyTimeoutMs:    appdb.DefaultSQLiteBusyTimeoutMs,
+		IncludeCacheSize: true,
+		TxLock:           "immediate",
+	})
 	db, err := sql.Open("sqlite", dsn)
 	require.NoError(t, err)
 	require.NoError(t, migrations.Run(db))

@@ -12,6 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
+	"github.com/hollis-labs/clockwork-manifold/internal/persistence/appdb"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
@@ -45,8 +46,11 @@ type composedDeps struct {
 func composeDeps(t *testing.T, cfg fakeRuntimeConfig, profileProvider string) *composedDeps {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "agent_boot.db") +
-		"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+	dsn := appdb.SQLiteDSN(filepath.Join(dir, "agent_boot.db"), appdb.SQLiteDSNOptions{
+		BusyTimeoutMs:    appdb.DefaultSQLiteBusyTimeoutMs,
+		IncludeCacheSize: true,
+		TxLock:           "immediate",
+	})
 	db, err := sql.Open("sqlite", dsn)
 	require.NoError(t, err)
 	require.NoError(t, migrations.Run(db))

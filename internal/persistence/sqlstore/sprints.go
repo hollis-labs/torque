@@ -60,7 +60,7 @@ func (s *Store) CreateSprint(sp *SprintRecord) error {
 // GetSprint fetches a single sprint by ID.
 func (s *Store) GetSprint(id string) (*SprintRecord, error) {
 	sp := &SprintRecord{}
-	err := s.db.QueryRow(`SELECT
+	err := s.ReadDB().QueryRow(`SELECT
 		id, name, goal, status, approval_mode, cost_budget, project_id,
 		started_at, ended_at, created_at, updated_at
 	FROM sprints WHERE id = ?`, id).Scan(
@@ -103,7 +103,7 @@ func (s *Store) ListSprints(f SprintFilter) ([]SprintRecord, error) {
 		}
 	}
 
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.ReadDB().Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +207,7 @@ func (s *Store) NextSprintID() (string, error) {
 	prefix := "SP-" + date + "-"
 
 	var maxSeq int
-	err := s.db.QueryRow(
+	err := s.ReadDB().QueryRow(
 		"SELECT COALESCE(MAX(CAST(SUBSTR(id, ?) AS INTEGER)), 0) FROM sprints WHERE id LIKE ?",
 		len(prefix)+1, prefix+"%",
 	).Scan(&maxSeq)
@@ -220,7 +220,7 @@ func (s *Store) NextSprintID() (string, error) {
 // SprintCostUsed calculates the total cost of all runs for tasks in a sprint.
 func (s *Store) SprintCostUsed(sprintID string) (float64, error) {
 	var total sql.NullFloat64
-	err := s.db.QueryRow(`
+	err := s.ReadDB().QueryRow(`
 		SELECT COALESCE(SUM(r.cost), 0)
 		FROM runs r
 		INNER JOIN tasks t ON r.task_id = t.id

@@ -15,23 +15,23 @@ var ErrSessionNotFound = errors.New("session not found")
 // Soft-FK fields (ProjectID, TaskID) are stored as nullable strings since
 // SQLite does not enforce foreign keys by default in this codebase.
 type SessionRecord struct {
-	ID            string
-	AgentProfile  string
-	Provider      string
-	RuntimeID     string
-	RuntimeKind   string
-	Workdir       string
-	ProjectID     sql.NullString
-	TaskID        sql.NullString
-	State         string
-	PID           int
-	ExitCode      sql.NullInt64
-	ResumeHint    []byte
-	MetaJSON      string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	LastActivity  time.Time
-	EndedAt       sql.NullTime
+	ID           string
+	AgentProfile string
+	Provider     string
+	RuntimeID    string
+	RuntimeKind  string
+	Workdir      string
+	ProjectID    sql.NullString
+	TaskID       sql.NullString
+	State        string
+	PID          int
+	ExitCode     sql.NullInt64
+	ResumeHint   []byte
+	MetaJSON     string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	LastActivity time.Time
+	EndedAt      sql.NullTime
 }
 
 const sessionSelectCols = `id, agent_profile, provider, runtime_id, runtime_kind,
@@ -87,7 +87,7 @@ func (s *Store) CreateSession(rec *SessionRecord) error {
 
 // GetSession returns the session with the given ID, or ErrSessionNotFound.
 func (s *Store) GetSession(id string) (*SessionRecord, error) {
-	row := s.db.QueryRow(`SELECT `+sessionSelectCols+` FROM sessions WHERE id = ?`, id)
+	row := s.ReadDB().QueryRow(`SELECT `+sessionSelectCols+` FROM sessions WHERE id = ?`, id)
 	rec, err := scanSession(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrSessionNotFound
@@ -134,7 +134,7 @@ func (s *Store) ListSessions(f SessionFilter) ([]*SessionRecord, error) {
 	if f.Limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", f.Limit)
 	}
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.ReadDB().Query(q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)
 	}
@@ -248,7 +248,7 @@ func (s *Store) UpdateSessionResumeHint(id string, hint []byte) error {
 // (e.g. a session whose PID is still alive on a process check). When the
 // callback is nil, every running/launching row is swept unconditionally.
 func (s *Store) SweepStaleSessions(spare func(rec *SessionRecord) bool) (int, error) {
-	rows, err := s.db.Query(`SELECT ` + sessionSelectCols + ` FROM sessions WHERE state IN ('launching','running')`)
+	rows, err := s.ReadDB().Query(`SELECT ` + sessionSelectCols + ` FROM sessions WHERE state IN ('launching','running')`)
 	if err != nil {
 		return 0, fmt.Errorf("sweep query: %w", err)
 	}
@@ -328,7 +328,7 @@ func (s *Store) ListSessionCheckpoints(sessionID string, limit int) ([]*SessionC
 	if limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", limit)
 	}
-	rows, err := s.db.Query(q, sessionID)
+	rows, err := s.ReadDB().Query(q, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("list session checkpoints: %w", err)
 	}
@@ -350,7 +350,7 @@ func (s *Store) ListSessionCheckpoints(sessionID string, limit int) ([]*SessionC
 // sessions which silently broke once the session list grew past the page
 // limit.
 func (s *Store) GetSessionCheckpoint(checkpointID string) (*SessionCheckpointRecord, error) {
-	row := s.db.QueryRow(`SELECT id, session_id, payload, resume_hint, note, created_at
+	row := s.ReadDB().QueryRow(`SELECT id, session_id, payload, resume_hint, note, created_at
 		FROM session_checkpoints WHERE id = ?`, checkpointID)
 	rec := &SessionCheckpointRecord{}
 	err := row.Scan(&rec.ID, &rec.SessionID, &rec.Payload, &rec.ResumeHint, &rec.Note, &rec.CreatedAt)
@@ -366,7 +366,7 @@ func (s *Store) GetSessionCheckpoint(checkpointID string) (*SessionCheckpointRec
 // LatestSessionCheckpoint returns the most recent checkpoint for the
 // session, or (nil, nil) when none exist.
 func (s *Store) LatestSessionCheckpoint(sessionID string) (*SessionCheckpointRecord, error) {
-	row := s.db.QueryRow(`SELECT id, session_id, payload, resume_hint, note, created_at
+	row := s.ReadDB().QueryRow(`SELECT id, session_id, payload, resume_hint, note, created_at
 		FROM session_checkpoints WHERE session_id = ? ORDER BY created_at DESC LIMIT 1`, sessionID)
 	rec := &SessionCheckpointRecord{}
 	err := row.Scan(&rec.ID, &rec.SessionID, &rec.Payload, &rec.ResumeHint, &rec.Note, &rec.CreatedAt)

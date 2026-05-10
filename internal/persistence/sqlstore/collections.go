@@ -53,7 +53,7 @@ func (s *Store) CreateCollection(c *CollectionRecord) error {
 // ErrCollectionNotFound when no row matches.
 func (s *Store) GetCollection(id string) (*CollectionRecord, error) {
 	c := &CollectionRecord{}
-	err := s.db.QueryRow(`SELECT id, name, description, archived_at, created_at, updated_at
+	err := s.ReadDB().QueryRow(`SELECT id, name, description, archived_at, created_at, updated_at
 		FROM collections WHERE id = ?`, id).Scan(
 		&c.ID, &c.Name, &c.Description, &c.ArchivedAt, &c.CreatedAt, &c.UpdatedAt,
 	)
@@ -77,7 +77,7 @@ func (s *Store) GetCollectionNames(ids []string) (map[string]string, error) {
 	for i, id := range ids {
 		args[i] = id
 	}
-	rows, err := s.db.Query(
+	rows, err := s.ReadDB().Query(
 		`SELECT id, name FROM collections WHERE id IN (`+placeholders+`)`,
 		args...,
 	)
@@ -126,7 +126,7 @@ func (s *Store) ListCollections(f CollectionFilter) ([]CollectionRecord, error) 
 		}
 	}
 
-	rows, err := s.db.Query(query)
+	rows, err := s.ReadDB().Query(query)
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +237,7 @@ func (s *Store) NextCollectionID() (string, error) {
 // All updates run in a single transaction so the task can never end up in a
 // half-assigned state.
 func (s *Store) AddTaskToCollection(taskID, collectionID string, position int) error {
-	tx, err := s.db.Begin()
+	tx, err := s.beginWriteTx()
 	if err != nil {
 		return err
 	}
@@ -332,7 +332,7 @@ func (s *Store) ReorderCollectionTasks(collectionID string, orderedTaskIDs []str
 		return nil
 	}
 
-	tx, err := s.db.Begin()
+	tx, err := s.beginWriteTx()
 	if err != nil {
 		return err
 	}
@@ -391,7 +391,7 @@ func (s *Store) ReorderCollectionTasks(collectionID string, orderedTaskIDs []str
 // Equivalent to RemoveTaskFromCollection + AddTaskToCollection but without
 // the intermediate inbox state.
 func (s *Store) MoveTaskToCollection(taskID, targetCollectionID string, position int) error {
-	tx, err := s.db.Begin()
+	tx, err := s.beginWriteTx()
 	if err != nil {
 		return err
 	}
@@ -448,7 +448,7 @@ func (s *Store) ListInboxTasks() ([]TaskRecord, error) {
 	q := `SELECT ` + taskSelectCols + ` FROM tasks
 		WHERE added_to_collections_at IS NOT NULL AND collection_id IS NULL
 		ORDER BY added_to_collections_at DESC`
-	rows, err := s.db.Query(q)
+	rows, err := s.ReadDB().Query(q)
 	if err != nil {
 		return nil, err
 	}
@@ -471,7 +471,7 @@ func (s *Store) ListCollectionTasks(collectionID string) ([]TaskRecord, error) {
 	q := `SELECT ` + taskSelectCols + ` FROM tasks
 		WHERE collection_id = ?
 		ORDER BY collection_position IS NULL, collection_position ASC, created_at ASC`
-	rows, err := s.db.Query(q, collectionID)
+	rows, err := s.ReadDB().Query(q, collectionID)
 	if err != nil {
 		return nil, err
 	}

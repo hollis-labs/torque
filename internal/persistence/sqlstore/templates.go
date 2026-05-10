@@ -172,7 +172,7 @@ func (s *Store) CreateTemplate(t *TemplateRecord) error {
 // GetTemplate returns the specific (id, version). Returns ErrTemplateNotFound
 // wrapped when no row matches.
 func (s *Store) GetTemplate(id string, version int) (*TemplateRecord, error) {
-	row := s.db.QueryRow(`SELECT `+templateSelectCols+` FROM task_templates WHERE id = ? AND version = ?`, id, version)
+	row := s.ReadDB().QueryRow(`SELECT `+templateSelectCols+` FROM task_templates WHERE id = ? AND version = ?`, id, version)
 	t, err := scanTemplate(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%s@%d: %w", id, version, ErrTemplateNotFound)
@@ -183,7 +183,7 @@ func (s *Store) GetTemplate(id string, version int) (*TemplateRecord, error) {
 // GetLatestTemplate returns the highest-version, non-archived row for the
 // given id — the row you instantiate when no version is specified.
 func (s *Store) GetLatestTemplate(id string) (*TemplateRecord, error) {
-	row := s.db.QueryRow(`SELECT `+templateSelectCols+` FROM task_templates
+	row := s.ReadDB().QueryRow(`SELECT `+templateSelectCols+` FROM task_templates
 		WHERE id = ? AND is_archived = 0 ORDER BY version DESC LIMIT 1`, id)
 	t, err := scanTemplate(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -196,7 +196,7 @@ func (s *Store) GetLatestTemplate(id string) (*TemplateRecord, error) {
 // exist. Used by the service layer's Create/Update to append a new version.
 func (s *Store) NextTemplateVersion(id string) (int, error) {
 	var maxV sql.NullInt64
-	err := s.db.QueryRow(`SELECT MAX(version) FROM task_templates WHERE id = ?`, id).Scan(&maxV)
+	err := s.ReadDB().QueryRow(`SELECT MAX(version) FROM task_templates WHERE id = ?`, id).Scan(&maxV)
 	if err != nil {
 		return 0, err
 	}
@@ -226,7 +226,7 @@ func (s *Store) ArchiveTemplate(id string, version int) error {
 // metadata.template_ref — callers should archive instead.
 func (s *Store) DeleteTemplate(id string) error {
 	var n int
-	err := s.db.QueryRow(
+	err := s.ReadDB().QueryRow(
 		`SELECT COUNT(*) FROM tasks WHERE metadata LIKE ?`,
 		`%"template_ref":{"id":"`+id+`"%`,
 	).Scan(&n)
@@ -261,7 +261,7 @@ func (s *Store) ListTemplates(includeArchived bool, kindFilter string) ([]Templa
 	}
 	q += ` ORDER BY id ASC, version DESC`
 
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.ReadDB().Query(q, args...)
 	if err != nil {
 		return nil, err
 	}

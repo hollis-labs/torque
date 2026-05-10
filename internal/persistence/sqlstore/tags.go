@@ -86,7 +86,7 @@ func (s *Store) CreateTagIfNotExists(t *TagRecord) error {
 // GetTag fetches a single tag by slug. Returns an error wrapping
 // ErrTagNotFound if no row matches; callers can use errors.Is to detect.
 func (s *Store) GetTag(slug string) (*TagRecord, error) {
-	row := s.db.QueryRow(`SELECT `+tagSelectCols+` FROM tags WHERE slug = ?`, slug)
+	row := s.ReadDB().QueryRow(`SELECT `+tagSelectCols+` FROM tags WHERE slug = ?`, slug)
 	t, err := scanTag(row)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("tag %s: %w", slug, ErrTagNotFound)
@@ -96,7 +96,7 @@ func (s *Store) GetTag(slug string) (*TagRecord, error) {
 
 // ListTags returns all tags ordered by name ASC (case-insensitive).
 func (s *Store) ListTags() ([]TagRecord, error) {
-	rows, err := s.db.Query(`SELECT ` + tagSelectCols + ` FROM tags ORDER BY name COLLATE NOCASE ASC`)
+	rows, err := s.ReadDB().Query(`SELECT ` + tagSelectCols + ` FROM tags ORDER BY name COLLATE NOCASE ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +176,7 @@ func (s *Store) DeleteTag(slug string) error {
 // Preserves input order via explicit sort_order (0-indexed). An empty slugs slice
 // clears all tags on the task.
 func (s *Store) SetTaskTags(taskID string, slugs []string) error {
-	tx, err := s.db.Begin()
+	tx, err := s.beginWriteTx()
 	if err != nil {
 		return err
 	}
@@ -204,7 +204,7 @@ func (s *Store) SetTaskTags(taskID string, slugs []string) error {
 // ListTaskTags returns all tags linked to a task, ordered by the user's
 // assignment order (sort_order ASC).
 func (s *Store) ListTaskTags(taskID string) ([]TagRecord, error) {
-	rows, err := s.db.Query(
+	rows, err := s.ReadDB().Query(
 		`SELECT `+prefixCols("t.", tagSelectCols)+`
 		 FROM tags t
 		 JOIN task_tags tt ON tt.tag_slug = t.slug
@@ -245,7 +245,7 @@ func (s *Store) MergeTags(sourceSlug, destSlug string) error {
 		return err
 	}
 
-	tx, err := s.db.Begin()
+	tx, err := s.beginWriteTx()
 	if err != nil {
 		return err
 	}

@@ -51,7 +51,7 @@ func (s *Store) CreateEpic(e *EpicRecord) error {
 // GetEpic fetches a single epic by ID.
 func (s *Store) GetEpic(id string) (*EpicRecord, error) {
 	e := &EpicRecord{}
-	err := s.db.QueryRow(`SELECT id, name, description, status, priority, project_id, created_at, updated_at FROM epics WHERE id = ?`, id).Scan(
+	err := s.ReadDB().QueryRow(`SELECT id, name, description, status, priority, project_id, created_at, updated_at FROM epics WHERE id = ?`, id).Scan(
 		&e.ID, &e.Name, &e.Description, &e.Status, &e.Priority, &e.ProjectID, &e.CreatedAt, &e.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -88,7 +88,7 @@ func (s *Store) ListEpics(f EpicFilter) ([]EpicRecord, error) {
 		}
 	}
 
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.ReadDB().Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +172,7 @@ func (s *Store) NextEpicID() (string, error) {
 	prefix := "EP-" + date + "-"
 
 	var maxSeq int
-	err := s.db.QueryRow(
+	err := s.ReadDB().QueryRow(
 		"SELECT COALESCE(MAX(CAST(SUBSTR(id, ?) AS INTEGER)), 0) FROM epics WHERE id LIKE ?",
 		len(prefix)+1, prefix+"%",
 	).Scan(&maxSeq)

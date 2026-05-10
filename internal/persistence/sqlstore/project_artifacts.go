@@ -61,7 +61,7 @@ func (s *Store) CreateProjectArtifact(a *ProjectArtifactRecord) error {
 }
 
 func (s *Store) GetProjectArtifact(id int64) (*ProjectArtifactRecord, error) {
-	row := s.db.QueryRow(`SELECT `+projectArtifactSelectCols+` FROM project_artifacts WHERE id = ?`, id)
+	row := s.ReadDB().QueryRow(`SELECT `+projectArtifactSelectCols+` FROM project_artifacts WHERE id = ?`, id)
 	var a ProjectArtifactRecord
 	if err := row.Scan(
 		&a.ID, &a.ProjectID, &a.EntryType, &a.Title, &a.Description, &a.FilePath, &a.URL, &a.Content,
@@ -76,7 +76,7 @@ func (s *Store) GetProjectArtifact(id int64) (*ProjectArtifactRecord, error) {
 }
 
 func (s *Store) ListProjectArtifacts(projectID string) ([]ProjectArtifactRecord, error) {
-	rows, err := s.db.Query(`SELECT `+projectArtifactSelectCols+` FROM project_artifacts WHERE project_id = ? ORDER BY file_path ASC, created_at ASC`, projectID)
+	rows, err := s.ReadDB().Query(`SELECT `+projectArtifactSelectCols+` FROM project_artifacts WHERE project_id = ? ORDER BY file_path ASC, created_at ASC`, projectID)
 	if err != nil {
 		return nil, err
 	}

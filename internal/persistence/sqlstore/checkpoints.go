@@ -85,7 +85,7 @@ func (s *Store) CreateCheckpoint(cp *CheckpointRecord) error {
 // GetCheckpointByCorrelation fetches a checkpoint by its correlation_id.
 // Returns ErrCheckpointNotFound wrapped if no row matches.
 func (s *Store) GetCheckpointByCorrelation(correlationID string) (*CheckpointRecord, error) {
-	row := s.db.QueryRow(`SELECT `+checkpointSelectCols+` FROM checkpoints WHERE correlation_id = ?`, correlationID)
+	row := s.ReadDB().QueryRow(`SELECT `+checkpointSelectCols+` FROM checkpoints WHERE correlation_id = ?`, correlationID)
 	cp, err := scanCheckpoint(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%s: %w", correlationID, ErrCheckpointNotFound)
@@ -99,7 +99,7 @@ func (s *Store) GetCheckpointByCorrelation(correlationID string) (*CheckpointRec
 // ListCheckpointsForTask returns all checkpoints associated with a task,
 // ordered newest-first by emitted_at.
 func (s *Store) ListCheckpointsForTask(taskID string) ([]CheckpointRecord, error) {
-	rows, err := s.db.Query(`SELECT `+checkpointSelectCols+` FROM checkpoints WHERE task_id = ? ORDER BY emitted_at DESC, id DESC`, taskID)
+	rows, err := s.ReadDB().Query(`SELECT `+checkpointSelectCols+` FROM checkpoints WHERE task_id = ? ORDER BY emitted_at DESC, id DESC`, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +118,7 @@ func (s *Store) ListCheckpointsForTask(taskID string) ([]CheckpointRecord, error
 // ListPendingCheckpoints returns every pending checkpoint across all tasks,
 // oldest-first (so the scheduler can process them in emission order).
 func (s *Store) ListPendingCheckpoints() ([]CheckpointRecord, error) {
-	rows, err := s.db.Query(`SELECT ` + checkpointSelectCols + ` FROM checkpoints WHERE status = 'pending' ORDER BY emitted_at ASC, id ASC`)
+	rows, err := s.ReadDB().Query(`SELECT ` + checkpointSelectCols + ` FROM checkpoints WHERE status = 'pending' ORDER BY emitted_at ASC, id ASC`)
 	if err != nil {
 		return nil, err
 	}

@@ -56,7 +56,7 @@ func (s *Store) ListCommentsForEntity(entityType, entityID string) ([]CommentRec
 	const q = `SELECT id, entity_type, entity_id, author, content, created_at
 		FROM comments WHERE entity_type = ? AND entity_id = ? ORDER BY created_at ASC`
 
-	rows, err := s.db.Query(q, entityType, entityID)
+	rows, err := s.ReadDB().Query(q, entityType, entityID)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +117,7 @@ func (s *Store) SearchComments(f CommentFilter) ([]CommentRecord, error) {
 		q += fmt.Sprintf(" LIMIT %d", f.Limit)
 	}
 
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.ReadDB().Query(q, args...)
 	if err != nil {
 		return nil, err
 	}

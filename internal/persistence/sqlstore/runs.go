@@ -74,7 +74,7 @@ func (s *Store) GetTaskRunAggregate(taskID string) (*TaskRunAggregate, error) {
 		COALESCE(SUM(completion_tokens), 0)
 		FROM runs WHERE task_id = ?`
 	agg := TaskRunAggregate{TaskID: taskID}
-	if err := s.db.QueryRow(runsQ, taskID).Scan(
+	if err := s.ReadDB().QueryRow(runsQ, taskID).Scan(
 		&agg.Count, &agg.PromptTokens, &agg.CompletionTokens,
 	); err != nil {
 		return nil, err
@@ -94,7 +94,7 @@ func (s *Store) GetTaskRunAggregate(taskID string) (*TaskRunAggregate, error) {
 		END)
 		FROM cost_ledger WHERE task_id = ?`
 	var rank sql.NullInt64
-	if err := s.db.QueryRow(ledgerQ, taskID).Scan(&agg.Cost, &rank); err != nil {
+	if err := s.ReadDB().QueryRow(ledgerQ, taskID).Scan(&agg.Cost, &rank); err != nil {
 		return nil, err
 	}
 	if rank.Valid {
@@ -144,7 +144,7 @@ func (s *Store) GetRun(id int64) (*RunRecord, error) {
 		FROM runs WHERE id = ?`
 
 	var r RunRecord
-	err := s.db.QueryRow(q, id).Scan(
+	err := s.ReadDB().QueryRow(q, id).Scan(
 		&r.ID, &r.TaskID, &r.Executor, &r.Status, &r.StartedAt, &r.EndedAt,
 		&r.PromptTokens, &r.CompletionTokens, &r.Cost, &r.ExitCode, &r.ErrorMessage, &r.Metadata,
 	)
@@ -219,7 +219,7 @@ func (s *Store) ListRunsFiltered(f RunFilter) ([]RunRecord, error) {
 		args = append(args, f.Limit)
 	}
 
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.ReadDB().Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
