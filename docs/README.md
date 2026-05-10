@@ -8,5 +8,6 @@ Start with:
 - [getting-started.md](getting-started.md) — how to run the server and MCP locally
 - [runtime.md](runtime.md) — storage, scheduler, executors, and feature flags
 - [surfaces.md](surfaces.md) — the current HTTP and MCP surfaces at a high level
+- [architecture/sqlite-test-infra.md](architecture/sqlite-test-infra.md) — why shared SQLite fixtures default to pooled temp-file databases
 
 Older files under `docs/architecture/` and `docs/superpowers/` are historical design notes, working specs, or prior-art research. They are not the canonical source for current behavior unless a fresh doc links to them explicitly.

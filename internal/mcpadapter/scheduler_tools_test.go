@@ -1,7 +1,6 @@
 package mcpadapter_test
 
 import (
-	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -10,15 +9,12 @@ import (
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/mcpadapter"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/queue"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/waitpoll"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
-
-	_ "modernc.org/sqlite"
+	"github.com/hollis-labs/clockwork-manifold/internal/testutil/sqlitetest"
 )
 
 // setupAdapterWithScheduler builds a scheduler instance and wires it into a
@@ -26,13 +22,7 @@ import (
 // SetEnabled/Status which are safe to call on an un-started scheduler.
 func setupAdapterWithScheduler(t *testing.T, initialEnabled bool) (*mcpadapter.Adapter, *scheduler.Scheduler) {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	require.NoError(t, err)
-	db.SetMaxOpenConns(1)
-	require.NoError(t, migrations.Run(db))
-	store, err := sqlstore.New(db, "sqlite")
-	require.NoError(t, err)
-	t.Cleanup(func() { store.Close() })
+	store := sqlitetest.OpenStore(t)
 
 	q, err := queue.Open(filepath.Join(t.TempDir(), "queue.db"))
 	require.NoError(t, err)

@@ -2,20 +2,18 @@ package scheduler_test
 
 import (
 	"context"
-	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/queue"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
+	"github.com/hollis-labs/clockwork-manifold/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	_ "modernc.org/sqlite"
 )
 
 // TestCancel_OnDBTransitionOutOfDoing verifies the end-to-end wiring of the
@@ -189,12 +187,7 @@ func TestCancel_CompletionBeforeCancelIsNoop(t *testing.T) {
 func newCancelTestHarness(t *testing.T) (*scheduler.Scheduler, *sqlstore.Store, *executor.MockExecutor, func()) {
 	t.Helper()
 
-	db, err := sql.Open("sqlite", ":memory:")
-	require.NoError(t, err)
-	db.SetMaxOpenConns(1)
-	require.NoError(t, migrations.Run(db))
-	store, err := sqlstore.New(db, "sqlite")
-	require.NoError(t, err)
+	store := sqlitetest.OpenStore(t)
 
 	dir := t.TempDir()
 	q, err := queue.Open(filepath.Join(dir, "queue.db"))

@@ -2,7 +2,6 @@ package scheduler_test
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"path/filepath"
 	"testing"
@@ -10,15 +9,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	_ "modernc.org/sqlite"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/queue"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/clockwork-manifold/internal/testutil/sqlitetest"
 )
 
 // setupE2ESchedulerStack builds the full stack needed to exercise a template
@@ -27,12 +25,7 @@ import (
 func setupE2ESchedulerStack(t *testing.T) (*scheduler.Scheduler, *sqlstore.Store, *service.Service, *executor.MockExecutor) {
 	t.Helper()
 
-	db, err := sql.Open("sqlite", ":memory:")
-	require.NoError(t, err)
-	db.SetMaxOpenConns(1)
-	require.NoError(t, migrations.Run(db))
-	store, err := sqlstore.New(db, "sqlite")
-	require.NoError(t, err)
+	store := sqlitetest.OpenStore(t)
 
 	dir := t.TempDir()
 	q, err := queue.Open(filepath.Join(dir, "queue.db"))

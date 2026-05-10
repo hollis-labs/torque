@@ -2,20 +2,18 @@ package scheduler_test
 
 import (
 	"context"
-	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/queue"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
+	"github.com/hollis-labs/clockwork-manifold/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
-	_ "modernc.org/sqlite"
 )
 
 // TestWorkerPoolNoGoroutineLeak is a regression guard for the original ticket
@@ -81,12 +79,7 @@ func TestWorkerPoolNoGoroutineLeak(t *testing.T) {
 func TestSchedulerNoGoroutineLeak(t *testing.T) {
 	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
 
-	db, err := sql.Open("sqlite", ":memory:")
-	require.NoError(t, err)
-	db.SetMaxOpenConns(1)
-	require.NoError(t, migrations.Run(db))
-	store, err := sqlstore.New(db, "sqlite")
-	require.NoError(t, err)
+	store := sqlitetest.OpenStore(t)
 	defer store.Close()
 
 	dir := t.TempDir()
