@@ -8,11 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hollis-labs/go-providers/provider"
+	llmtypes "github.com/hollis-labs/go-llm-types"
 )
 
 // streamEventLine is the JSONL shape clockwork persists to
-// <workspace>/logs/stream.jsonl. Re-serialized from provider.StreamEvent —
+// <workspace>/logs/stream.jsonl. Re-serialized from llmtypes.StreamEvent —
 // this is a clockwork-internal projection, NOT raw claude stream-json (the
 // lib parses claude's stdout into typed StreamEvent values before the
 // EventFanout consumer sees them; the original stream-json bytes are lost in
@@ -30,12 +30,12 @@ type streamEventLine struct {
 	Content       string                  `json:"content,omitempty"`
 	Error         string                  `json:"error,omitempty"`
 	SessionID     string                  `json:"session_id,omitempty"`
-	ToolUse       *provider.ToolUseBlock  `json:"tool_use,omitempty"`
-	Usage         *provider.Usage         `json:"usage,omitempty"`
-	ThinkingBlock *provider.ThinkingBlock `json:"thinking_block,omitempty"`
+	ToolUse       *llmtypes.ToolUseBlock  `json:"tool_use,omitempty"`
+	Usage         *llmtypes.Usage         `json:"usage,omitempty"`
+	ThinkingBlock *llmtypes.ThinkingBlock `json:"thinking_block,omitempty"`
 }
 
-// streamSidecar persists provider.StreamEvent values as JSONL to a per-session
+// streamSidecar persists llmtypes.StreamEvent values as JSONL to a per-session
 // stream.jsonl file. Best-effort: a file-open failure degrades to a no-op,
 // never blocks the producer.
 type streamSidecar struct {
@@ -70,7 +70,7 @@ func openStreamSidecar(workspaceLogDir string) *streamSidecar {
 // are silently swallowed — the executor's other observability paths
 // (translateStreamEvent → callback, lib's StateSink → DB row) are the
 // authoritative surfaces; stream.jsonl is forensic-only.
-func (s *streamSidecar) Write(ev provider.StreamEvent) {
+func (s *streamSidecar) Write(ev llmtypes.StreamEvent) {
 	if s == nil || s.f == nil {
 		return
 	}
@@ -111,7 +111,7 @@ func (s *streamSidecar) Close() {
 // forwarding it to the downstream channel non-blockingly.
 //
 // The returned `in` channel is intended to be used as
-// agentsessions.StartOptions.EventFanout. The lib writes provider.StreamEvent
+// agentsessions.StartOptions.EventFanout. The lib writes llmtypes.StreamEvent
 // values into it; this drain absorbs them.
 //
 // `downstream` is the executor's existing per-call fanout (currently set by
@@ -129,9 +129,9 @@ func (s *streamSidecar) Close() {
 // closed by its owner (executor.Run's `close(fanout)` after Boot returns) —
 // dropped events are still recorded in the sidecar, so forensic visibility
 // is preserved.
-func startStreamFanout(workspaceLogDir string, depth int, downstream chan<- provider.StreamEvent) (in chan provider.StreamEvent, closer func()) {
+func startStreamFanout(workspaceLogDir string, depth int, downstream chan<- llmtypes.StreamEvent) (in chan llmtypes.StreamEvent, closer func()) {
 	sidecar := openStreamSidecar(workspaceLogDir)
-	in = make(chan provider.StreamEvent, depth)
+	in = make(chan llmtypes.StreamEvent, depth)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -162,7 +162,7 @@ func startStreamFanout(workspaceLogDir string, depth int, downstream chan<- prov
 // In both drop cases, the sidecar file already has the event recorded —
 // forensic visibility is preserved even when the downstream consumer is
 // detached.
-func forwardEventNonBlocking(downstream chan<- provider.StreamEvent, ev provider.StreamEvent) {
+func forwardEventNonBlocking(downstream chan<- llmtypes.StreamEvent, ev llmtypes.StreamEvent) {
 	defer func() {
 		_ = recover() // send-on-closed-chan; downstream consumer is gone
 	}()

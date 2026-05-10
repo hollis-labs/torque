@@ -129,36 +129,12 @@ func TestPlantBootDir_Opencode(t *testing.T) {
 	assert.Equal(t, []string{"--dir", "/tmp/oc-repo"}, res.ProjectDirArg)
 }
 
-// TestPlantBootDir_Gemini_StubErrs locks the bespoke-stub behavior for
-// gemini: the lib's BootDirSpec is a stub (Notes != ""), so the dispatcher
-// routes to plantGeminiBootDir which returns ErrBootDirNotImplemented with
-// the lib's Notes message embedded for forensic clarity.
-func TestPlantBootDir_Gemini_StubErrs(t *testing.T) {
-	res, err := plantBootDir(plantParams{
-		Provider: "gemini",
-		Adapter:  provider.NewGeminiAdapter(),
-		TaskID:   "CW-GEMINI-1",
-	})
-	assert.Nil(t, res)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrBootDirNotImplemented)
-	assert.Contains(t, err.Error(), "gemini")
-	// The lib's Notes flow through so the operator sees what to probe.
-	assert.Contains(t, err.Error(), "TBD")
-}
-
-// TestPlantBootDir_Copilot_StubErrs same shape for copilot.
-func TestPlantBootDir_Copilot_StubErrs(t *testing.T) {
-	res, err := plantBootDir(plantParams{
-		Provider: "copilot",
-		Adapter:  provider.NewCopilotAdapter(),
-		TaskID:   "CW-COPILOT-1",
-	})
-	assert.Nil(t, res)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrBootDirNotImplemented)
-	assert.Contains(t, err.Error(), "copilot")
-}
+// gemini/copilot bespoke-stub tests removed alongside the underlying
+// provider.NewGeminiAdapter / provider.NewCopilotAdapter constructors,
+// which were dropped in go-providers v0.12.0 (unused PTY adapter
+// cleanup). factory.go now returns a permanent error for those
+// providers; if either adapter is restored upstream, the corresponding
+// unit tests should be re-added.
 
 // TestPlantBootDir_TwoDirSeparation verifies that the boot dir lives under
 // $TMPDIR (ephemeral) and is distinct from the workspace dir convention.

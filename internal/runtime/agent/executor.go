@@ -10,7 +10,7 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 	"github.com/hollis-labs/clockwork-manifold/internal/toolbroker"
-	"github.com/hollis-labs/go-providers/provider"
+	llmtypes "github.com/hollis-labs/go-llm-types"
 )
 
 // Executor adapts agent.Boot(Mode=ModeOneShot) to the executor.Executor
@@ -99,7 +99,7 @@ func (e *Executor) Run(ctx context.Context, job *executor.ExecutionJob, cb execu
 	// 64 deep; preserve. The drain goroutine accumulates token usage on the
 	// result and forwards LogEvent / ToolUseEvent / TokenEvent through cb.
 	const fanoutDepth = 64
-	fanout := make(chan provider.StreamEvent, fanoutDepth)
+	fanout := make(chan llmtypes.StreamEvent, fanoutDepth)
 
 	result := &executor.ExecutionResult{}
 	var (
@@ -203,7 +203,7 @@ func optsFromJob(job *executor.ExecutionJob, resolvedWD string) Options {
 	}
 }
 
-// translateStreamEvent maps a single provider.StreamEvent onto:
+// translateStreamEvent maps a single llmtypes.StreamEvent onto:
 //   - the ExecutionEvent callback (delta → log, tool_use, usage → token-event)
 //   - the result accumulator (tokens, cost — clockwork-side cost computation
 //     happens in the scheduler from these tokens; the executor just reports raw)
@@ -211,21 +211,21 @@ func optsFromJob(job *executor.ExecutionJob, resolvedWD string) Options {
 //
 // Forked verbatim from cliexec/cliexec.go's translateStreamEvent.
 func translateStreamEvent(
-	ev provider.StreamEvent,
+	ev llmtypes.StreamEvent,
 	result *executor.ExecutionResult,
 	cb executor.EventCallback,
 	onError func(string),
 ) {
 	switch ev.Type {
-	case provider.EventDelta:
+	case llmtypes.EventDelta:
 		if cb != nil && ev.Content != "" {
 			cb(executor.LogEvent(ev.Content))
 		}
-	case provider.EventToolUse:
+	case llmtypes.EventToolUse:
 		if ev.ToolUse != nil && cb != nil {
 			cb(executor.ToolUseEvent(ev.ToolUse.Name, summarizeToolInput(ev.ToolUse)))
 		}
-	case provider.EventUsage:
+	case llmtypes.EventUsage:
 		if ev.Usage == nil {
 			return
 		}
@@ -234,7 +234,7 @@ func translateStreamEvent(
 		if cb != nil {
 			cb(executor.TokenEvent(ev.Usage.InputTokens, ev.Usage.OutputTokens, 0))
 		}
-	case provider.EventError:
+	case llmtypes.EventError:
 		if ev.Error != "" && onError != nil {
 			onError(ev.Error)
 		}
@@ -246,7 +246,7 @@ func translateStreamEvent(
 
 // summarizeToolInput renders a short, secret-sanitized preview of a tool
 // invocation's args for the UI. Forked verbatim from cliexec.
-func summarizeToolInput(tu *provider.ToolUseBlock) string {
+func summarizeToolInput(tu *llmtypes.ToolUseBlock) string {
 	if tu == nil || len(tu.Input) == 0 {
 		return ""
 	}

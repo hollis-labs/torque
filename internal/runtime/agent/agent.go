@@ -2,6 +2,7 @@ package agent
 
 import (
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	llmtypes "github.com/hollis-labs/go-llm-types"
 	"github.com/hollis-labs/go-providers/provider"
 	"github.com/hollis-labs/go-sandbox/sandbox"
 )
@@ -112,17 +113,17 @@ type Options struct {
 	// IDFn lets tests pin session IDs. Production wires defaultSessionID().
 	IDFn func() string
 
-	// eventFanout is the legacy provider.StreamEvent channel used by the
+	// eventFanout is the legacy llmtypes.StreamEvent channel used by the
 	// scheduler-dispatched ModeOneShot path to accumulate token usage. Lower-
 	// case so external callers route through the executor wrapper rather
 	// than constructing it themselves; the wrapper allocates the chan,
 	// reads from it in a goroutine, and closes it after Boot returns.
-	eventFanout chan<- provider.StreamEvent
+	eventFanout chan<- llmtypes.StreamEvent
 }
 
 // withEventFanout sets the unexported eventFanout field. Used by the
 // Executor.Run wrapper to thread the OneShot token-usage chan into Boot.
-func (o Options) withEventFanout(c chan<- provider.StreamEvent) Options {
+func (o Options) withEventFanout(c chan<- llmtypes.StreamEvent) Options {
 	o.eventFanout = c
 	return o
 }
