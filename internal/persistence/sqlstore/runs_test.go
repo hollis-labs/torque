@@ -301,3 +301,156 @@ func TestCompleteRunStillWorksOnRunning(t *testing.T) {
 	assert.Equal(t, sqlstore.RunStatusFailed, got.Status)
 	assert.Equal(t, "real failure", got.ErrorMessage)
 }
+
+// TestGetTaskRunAggregate_NoRuns verifies the empty-task case returns a
+// zero-valued aggregate with empty CostSource (NOT 'unknown') so the GUI
+// can distinguish "task hasn't run yet" from "ledger row exists but has
+// unknown source." CW-20260510-0100.
+func TestGetTaskRunAggregate_NoRuns(t *testing.T) {
+	store := setupTestStore(t)
+
+	task := sampleTask("CW-NORUNS-0001")
+	require.NoError(t, store.CreateTask(task))
+
+	agg, err := store.GetTaskRunAggregate(task.ID)
+	require.NoError(t, err)
+
+	assert.Equal(t, task.ID, agg.TaskID)
+	assert.Equal(t, 0, agg.Count)
+	assert.Equal(t, 0, agg.PromptTokens)
+	assert.Equal(t, 0, agg.CompletionTokens)
+	assert.Equal(t, 0.0, agg.Cost)
+	assert.Equal(t, "", agg.CostSource, "no ledger rows → empty source, not 'unknown'")
+}
+
+// TestGetTaskRunAggregate_TokensFromRunsCostFromLedger verifies the split-
+// query design: tokens/count come from `runs`, cost comes from `cost_ledger`.
+// Setup: writes a run with prompt/completion tokens but cost=0 in `runs`
+// (mimics the post-CW-20260510-0100 reality), then writes a separate
+// cost_ledger row with the real cost. The aggregate should show the run's
+// tokens AND the ledger's cost. CW-20260510-0100.
+func TestGetTaskRunAggregate_TokensFromRunsCostFromLedger(t *testing.T) {
+	store := setupTestStore(t)
+
+	task := sampleTask("CW-SPLIT-0001")
+	require.NoError(t, store.CreateTask(task))
+
+	// runs: 2 runs, tokens captured, cost=0 (subscription-billing reality)
+	runID1, err := store.CreateRun(&sqlstore.RunRecord{
+		TaskID:           task.ID,
+		Executor:         "cli",
+		Status:           "running",
+		PromptTokens:     1000,
+		CompletionTokens: 500,
+		Cost:             0.0,
+	})
+	require.NoError(t, err)
+	runID2, err := store.CreateRun(&sqlstore.RunRecord{
+		TaskID:           task.ID,
+		Executor:         "cli",
+		Status:           "running",
+		PromptTokens:     2000,
+		CompletionTokens: 1500,
+		Cost:             0.0,
+	})
+	require.NoError(t, err)
+
+	// cost_ledger: backfilled estimates, both 'models_dev'
+	_, err = store.DB().Exec(
+		`INSERT INTO cost_ledger (task_id, run_id, cost, prompt_tokens, completion_tokens, cost_source)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		task.ID, runID1, 0.018, 1000, 500, "models_dev",
+	)
+	require.NoError(t, err)
+	_, err = store.DB().Exec(
+		`INSERT INTO cost_ledger (task_id, run_id, cost, prompt_tokens, completion_tokens, cost_source)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		task.ID, runID2, 0.045, 2000, 1500, "models_dev",
+	)
+	require.NoError(t, err)
+
+	agg, err := store.GetTaskRunAggregate(task.ID)
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, agg.Count, "count from runs")
+	assert.Equal(t, 3000, agg.PromptTokens, "prompt tokens from runs")
+	assert.Equal(t, 2000, agg.CompletionTokens, "completion tokens from runs")
+	assert.InDelta(t, 0.063, agg.Cost, 0.0001, "cost from cost_ledger, not runs")
+	assert.Equal(t, "estimated", agg.CostSource)
+}
+
+// TestGetTaskRunAggregate_CostSourcePriority verifies the highest-priority-
+// source aggregation: when a task has mixed `executor` / `models_dev` /
+// `unknown` ledger rows, the aggregate reports the most authoritative
+// source seen (executor > models_dev > unknown). Lets the dashboard show
+// "measured" if ANY run's cost was real even when others were estimated.
+func TestGetTaskRunAggregate_CostSourcePriority(t *testing.T) {
+	tests := []struct {
+		name    string
+		sources []string
+		want    string
+	}{
+		{"all measured", []string{"executor", "executor"}, "measured"},
+		{"all estimated", []string{"models_dev", "models_dev"}, "estimated"},
+		{"all unknown", []string{"unknown", "unknown"}, "unknown"},
+		{"measured wins over estimated", []string{"models_dev", "executor"}, "measured"},
+		{"measured wins over unknown", []string{"unknown", "executor"}, "measured"},
+		{"estimated wins over unknown", []string{"unknown", "models_dev"}, "estimated"},
+		{"three-way mix → measured", []string{"unknown", "models_dev", "executor"}, "measured"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := setupTestStore(t)
+			task := sampleTask("CW-PRI-001")
+			require.NoError(t, store.CreateTask(task))
+
+			for _, src := range tc.sources {
+				runID, err := store.CreateRun(&sqlstore.RunRecord{
+					TaskID:   task.ID,
+					Executor: "cli",
+					Status:   "running",
+				})
+				require.NoError(t, err)
+				_, err = store.DB().Exec(
+					`INSERT INTO cost_ledger (task_id, run_id, cost, cost_source) VALUES (?, ?, ?, ?)`,
+					task.ID, runID, 0.01, src,
+				)
+				require.NoError(t, err)
+			}
+
+			agg, err := store.GetTaskRunAggregate(task.ID)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, agg.CostSource)
+		})
+	}
+}
+
+// TestGetTaskRunAggregate_RunsButNoLedger covers the boundary where runs
+// exist (tokens captured) but the cost_ledger has no rows for the task —
+// can happen between the run-create and the cost.Record call, or if a
+// migration backfill is incomplete. Aggregate should report tokens but
+// empty CostSource so the GUI renders "—" not "$0.00".
+func TestGetTaskRunAggregate_RunsButNoLedger(t *testing.T) {
+	store := setupTestStore(t)
+
+	task := sampleTask("CW-NOLEDGER-0001")
+	require.NoError(t, store.CreateTask(task))
+
+	_, err := store.CreateRun(&sqlstore.RunRecord{
+		TaskID:           task.ID,
+		Executor:         "cli",
+		Status:           "done",
+		PromptTokens:     500,
+		CompletionTokens: 300,
+	})
+	require.NoError(t, err)
+
+	agg, err := store.GetTaskRunAggregate(task.ID)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, agg.Count)
+	assert.Equal(t, 500, agg.PromptTokens)
+	assert.Equal(t, 300, agg.CompletionTokens)
+	assert.Equal(t, 0.0, agg.Cost)
+	assert.Equal(t, "", agg.CostSource, "no ledger rows → empty source")
+}

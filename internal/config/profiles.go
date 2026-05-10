@@ -7,6 +7,33 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// CatalogProviderID returns the models.dev catalog provider id for a
+// profile-style provider name. CLI brands ("claude", "codex") don't match
+// the upstream catalog's vendor namespacing ("anthropic", "openai") so
+// callers that hand the profile's Provider straight to a catalog lookup
+// silently miss every time.
+//
+// Currently used by the scheduler's cost resolver (see
+// internal/runtime/scheduler/cost.go). The capability/precheck path
+// today passes the raw `Provider` field through without normalization;
+// when that gate is wired to use this helper, update this comment.
+//
+// Returns the input unchanged when no alias is known — callers that want
+// strict matching can compare result == input to detect aliasing.
+//
+// Verified against https://models.dev/api.json on 2026-05-10. Extend
+// this map when adding new CLI providers.
+func CatalogProviderID(provider string) string {
+	switch provider {
+	case "claude":
+		return "anthropic"
+	case "codex":
+		return "openai"
+	default:
+		return provider
+	}
+}
+
 // AgentProfile defines the configuration for an executor agent.
 // It supports both CLI and API executors with a unified structure.
 type AgentProfile struct {
@@ -99,6 +126,18 @@ func GetProfileOrDefault(profiles ProfileMap, name string) AgentProfile {
 //
 // Add an entry here when shipping a new substrate-spawned internal-task
 // role; users can still override by naming the same key in profiles.yaml.
+// builtinProfiles defaults assume opencode provider — the open-question
+// "what model id should the cost-backfill resolver see?" only matters when
+// the provider is in the models.dev catalog (anthropic, openai, google,
+// ...). opencode fronts multiple providers and the catalog has no
+// `opencode` entry, so the backfill gate at cost.go:152 short-circuits on
+// these regardless of whether Model is populated. Real user installs
+// override these in profiles.yaml — those overrides set provider=claude
+// AND model=claude-sonnet-4-5 (or similar), which IS in the catalog and
+// hits the backfill. CW-20260510-0100 fixed the dogfood profiles.yaml;
+// the builtin fallback stays opencode so a fresh-install user without a
+// configured profiles.yaml still gets a working substrate-spawned agent
+// (cost stays cost_source='unknown' for them, which is honest).
 var builtinProfiles = ProfileMap{
 	// Reviewer end-agent (CW-20260503-0019, S2.3, V1). Stamped on the
 	// kind=internal task the lifecycle hook creates when a kind=agent

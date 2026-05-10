@@ -27,12 +27,19 @@ func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, agg *sqlstore.T
 		"prompt_tokens":     0,
 		"completion_tokens": 0,
 		"cost":              0.0,
+		// cost_source surfaces the canonical "where did this number come from?"
+		// signal (measured | estimated | unknown | "" for no-runs) so the GUI
+		// can render a badge alongside the dollar figure. Empty string means
+		// there are no cost_ledger rows yet — the dashboard renders "—" in
+		// that case rather than the misleading "$0.00".
+		"cost_source": "",
 	}
 	if agg != nil {
 		stats["run_count"] = agg.Count
 		stats["prompt_tokens"] = agg.PromptTokens
 		stats["completion_tokens"] = agg.CompletionTokens
 		stats["cost"] = agg.Cost
+		stats["cost_source"] = agg.CostSource
 	}
 	if subtodos == nil {
 		subtodos = []sqlstore.Subtodo{}

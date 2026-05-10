@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 )
@@ -176,7 +177,11 @@ func (s *Scheduler) resolveCost(profileName string, result *executor.ExecutionRe
 			if !ok {
 				return "", "", false
 			}
-			return p.Provider, p.Model, true
+			// CLI provider brands ("claude") don't match the models.dev
+			// catalog's vendor namespacing ("anthropic"). Normalize here
+			// so a profiles.yaml with `provider: claude` actually hits the
+			// pricing entry. CW-20260510-0100.
+			return config.CatalogProviderID(p.Provider), p.Model, true
 		}
 	}
 	return ResolveCost(profileName, result, estimate, resolveProfile, !s.CostBackfillDisabled)
