@@ -11,6 +11,7 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	llmtypes "github.com/hollis-labs/go-llm-types"
 	"github.com/hollis-labs/go-providers/provider"
 	"github.com/hollis-labs/go-sandbox/sandbox"
 )
@@ -364,7 +365,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		closeStderr = closer
 	}
 
-	// Stream sidecar (CW-20260509-0001): persist provider.StreamEvent values
+	// Stream sidecar (CW-20260509-0001): persist llmtypes.StreamEvent values
 	// (delta / tool_use / usage / error / done / session_id / thinking) to
 	// <workspace>/logs/stream.jsonl. Pairs with the stderr→session.log tee
 	// from CW-20260508-0006 — together they're the full forensic surface for
@@ -392,7 +393,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	// goroutine + fd. If the lib's PTY runtime starts emitting StreamEvent
 	// values into EventFanout in the future, drop the !caps.PTY guard.
 	const streamFanoutDepth = 64
-	var streamFanout chan provider.StreamEvent
+	var streamFanout chan llmtypes.StreamEvent
 	closeStreamFanout := func() {}
 	if !caps.PTY {
 		streamFanout, closeStreamFanout = startStreamFanout(ws.LogDir, streamFanoutDepth, opts.eventFanout)

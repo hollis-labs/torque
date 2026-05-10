@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/hollis-labs/go-providers/provider"
+	llmtypes "github.com/hollis-labs/go-llm-types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,18 +24,18 @@ func TestOpenStreamSidecar_WritesJSONL(t *testing.T) {
 	require.NotNil(t, s)
 	require.NotNil(t, s.f, "expected file to be open")
 
-	s.Write(provider.StreamEvent{Type: provider.EventDelta, Content: "hello"})
-	s.Write(provider.StreamEvent{Type: provider.EventToolUse, ToolUse: &provider.ToolUseBlock{
+	s.Write(llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "hello"})
+	s.Write(llmtypes.StreamEvent{Type: llmtypes.EventToolUse, ToolUse: &llmtypes.ToolUseBlock{
 		ID:    "tu-1",
 		Name:  "search",
 		Input: map[string]any{"q": "go"},
 	}})
-	s.Write(provider.StreamEvent{Type: provider.EventUsage, Usage: &provider.Usage{
+	s.Write(llmtypes.StreamEvent{Type: llmtypes.EventUsage, Usage: &llmtypes.Usage{
 		InputTokens:  100,
 		OutputTokens: 200,
 	}})
-	s.Write(provider.StreamEvent{Type: provider.EventError, Error: "boom"})
-	s.Write(provider.StreamEvent{Type: provider.EventDone})
+	s.Write(llmtypes.StreamEvent{Type: llmtypes.EventError, Error: "boom"})
+	s.Write(llmtypes.StreamEvent{Type: llmtypes.EventDone})
 	s.Close()
 
 	path := filepath.Join(logDir, "stream.jsonl")
@@ -85,7 +85,7 @@ func TestOpenStreamSidecar_DegradesOnEmptyDir(t *testing.T) {
 	require.Nil(t, s.f, "expected no file when dir is empty")
 
 	// Write should not panic, not create any file.
-	s.Write(provider.StreamEvent{Type: provider.EventDelta, Content: "ignored"})
+	s.Write(llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "ignored"})
 	s.Close()
 }
 
@@ -103,7 +103,7 @@ func TestOpenStreamSidecar_DegradesOnUnopenableDir(t *testing.T) {
 	require.NotNil(t, s)
 	require.Nil(t, s.f, "expected no file when MkdirAll fails")
 
-	s.Write(provider.StreamEvent{Type: provider.EventDelta, Content: "ignored"})
+	s.Write(llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "ignored"})
 	s.Close()
 }
 
@@ -125,12 +125,12 @@ func TestStartStreamFanout_DrainAndForward(t *testing.T) {
 	dir := t.TempDir()
 	logDir := filepath.Join(dir, "logs")
 
-	downstream := make(chan provider.StreamEvent, 8)
+	downstream := make(chan llmtypes.StreamEvent, 8)
 	in, closer := startStreamFanout(logDir, 8, downstream)
 
-	in <- provider.StreamEvent{Type: provider.EventDelta, Content: "first"}
-	in <- provider.StreamEvent{Type: provider.EventDelta, Content: "second"}
-	in <- provider.StreamEvent{Type: provider.EventDone}
+	in <- llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "first"}
+	in <- llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "second"}
+	in <- llmtypes.StreamEvent{Type: llmtypes.EventDone}
 
 	closer()
 	close(downstream)
@@ -142,14 +142,14 @@ func TestStartStreamFanout_DrainAndForward(t *testing.T) {
 	require.Len(t, lines, 3)
 
 	// Downstream should have received 3 events.
-	var received []provider.StreamEvent
+	var received []llmtypes.StreamEvent
 	for ev := range downstream {
 		received = append(received, ev)
 	}
 	require.Len(t, received, 3)
 	assert.Equal(t, "first", received[0].Content)
 	assert.Equal(t, "second", received[1].Content)
-	assert.Equal(t, provider.EventDone, received[2].Type)
+	assert.Equal(t, llmtypes.EventDone, received[2].Type)
 }
 
 // TestStartStreamFanout_NilDownstream verifies the drain works when the
@@ -159,7 +159,7 @@ func TestStartStreamFanout_NilDownstream(t *testing.T) {
 	logDir := filepath.Join(dir, "logs")
 
 	in, closer := startStreamFanout(logDir, 4, nil)
-	in <- provider.StreamEvent{Type: provider.EventDelta, Content: "only-sidecar"}
+	in <- llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "only-sidecar"}
 	closer()
 
 	data, err := os.ReadFile(filepath.Join(logDir, "stream.jsonl"))
@@ -173,14 +173,14 @@ func TestStartStreamFanout_DownstreamClosedNoPanic(t *testing.T) {
 	dir := t.TempDir()
 	logDir := filepath.Join(dir, "logs")
 
-	downstream := make(chan provider.StreamEvent, 4)
+	downstream := make(chan llmtypes.StreamEvent, 4)
 	in, closer := startStreamFanout(logDir, 4, downstream)
 
 	// Close downstream BEFORE feeding events. The drain goroutine's
 	// forwardEventNonBlocking should recover the send-on-closed-chan panic.
 	close(downstream)
 
-	in <- provider.StreamEvent{Type: provider.EventDelta, Content: "downstream-closed"}
+	in <- llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "downstream-closed"}
 	// closer() closes `in` and waits for the drain goroutine to flush+exit;
 	// no need for an arbitrary sleep here.
 	closer()
@@ -198,14 +198,14 @@ func TestStartStreamFanout_DownstreamFullDrops(t *testing.T) {
 	logDir := filepath.Join(dir, "logs")
 
 	// 1-deep downstream; we fill it to capacity, then send extras.
-	downstream := make(chan provider.StreamEvent, 1)
-	downstream <- provider.StreamEvent{Type: provider.EventDelta, Content: "filler"}
+	downstream := make(chan llmtypes.StreamEvent, 1)
+	downstream <- llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "filler"}
 
 	in, closer := startStreamFanout(logDir, 4, downstream)
 
 	const extra = 5
 	for i := 0; i < extra; i++ {
-		in <- provider.StreamEvent{Type: provider.EventDelta, Content: "extra"}
+		in <- llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "extra"}
 	}
 	closer()
 
@@ -231,7 +231,7 @@ func TestStartStreamFanout_CloserIdempotent(t *testing.T) {
 	logDir := filepath.Join(dir, "logs")
 
 	in, closer := startStreamFanout(logDir, 4, nil)
-	in <- provider.StreamEvent{Type: provider.EventDone}
+	in <- llmtypes.StreamEvent{Type: llmtypes.EventDone}
 
 	closer()
 	closer() // second close should not panic
@@ -254,7 +254,7 @@ func TestStartStreamFanout_ConcurrentWriters(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			for j := 0; j < perWriter; j++ {
-				in <- provider.StreamEvent{Type: provider.EventDelta, Content: "w"}
+				in <- llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "w"}
 			}
 		}(i)
 	}

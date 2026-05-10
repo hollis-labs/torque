@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/go-providers/provider"
+	llmtypes "github.com/hollis-labs/go-llm-types"
 	"github.com/hollis-labs/go-runner/runner"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -171,7 +171,7 @@ type echoStderrAdapter struct{ binPath string }
 func (a *echoStderrAdapter) Name() string                      { return "echo-stderr" }
 func (a *echoStderrAdapter) BuildArgs(_, _, _ string) []string { return nil }
 func (a *echoStderrAdapter) Detect() (string, bool)            { return a.binPath, true }
-func (a *echoStderrAdapter) ParseLine(_ []byte) ([]provider.StreamEvent, error) {
+func (a *echoStderrAdapter) ParseLine(_ []byte) ([]llmtypes.StreamEvent, error) {
 	return nil, nil
 }
 

@@ -72,16 +72,18 @@ func adapterFor(profile config.AgentProfile, profileName string, pty bool) (prov
 		}, nil
 
 	case "gemini":
-		return provider.NewGeminiAdapter(), agentsessions.Capabilities{
-			BinaryRequired:    true,
-			ProviderSessionID: true,
-			CheckpointResume:  true,
-		}, nil
+		// gemini PTY adapter dropped in go-providers v0.12.0 (unused PTY-only
+		// adapter cleanup). Profiles wired to "gemini" must migrate to a
+		// supported provider or restore the adapter in a future go-providers
+		// release. Treated here as a permanent-error provider.
+		return nil, agentsessions.Capabilities{}, fmt.Errorf(
+			"gemini provider not supported (PTY adapter removed in go-providers v0.12.0); migrate the profile to a supported provider")
 
 	case "copilot":
-		return provider.NewCopilotAdapter(), agentsessions.Capabilities{
-			BinaryRequired: true,
-		}, nil
+		// copilot PTY adapter dropped in go-providers v0.12.0 (same as
+		// gemini). See comment above.
+		return nil, agentsessions.Capabilities{}, fmt.Errorf(
+			"copilot provider not supported (PTY adapter removed in go-providers v0.12.0); migrate the profile to a supported provider")
 
 	case "opencode":
 		if profileName == "" {
