@@ -3,6 +3,7 @@ package scheduler_test
 import (
 	"database/sql"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -249,8 +250,15 @@ func TestEndAgent_TemplateIncludesPRMergeCheck(t *testing.T) {
 	// wording can drift, but the key contract elements must be present.
 	assert.Contains(t, prompt, "6. **PR-gated tasks:",
 		"check 6 (PR-merge gate) must be present in the audit checklist")
-	assert.Contains(t, prompt, "*(severity: miss)*",
-		"PR-merge check must be miss-severity (gates closeout)")
+
+	// Tighten: ensure severity:miss is specifically attached to check 6's
+	// section heading, not just present somewhere in the template (checks
+	// 1/2/4/5 are also miss-severity, so a bare Contains on
+	// "*(severity: miss)*" would pass even if check 6 were rewritten as
+	// advisory or stripped of severity entirely).
+	check6MissRE := regexp.MustCompile(`(?s)6\.\s+\*\*PR-gated tasks:.*?\*\(severity: miss\)\*`)
+	assert.Regexp(t, check6MissRE, prompt,
+		"check 6 must carry severity:miss in its own section heading")
 
 	// Detection signal: artifact-shape, not agent_profile name. The ticket
 	// confirmed real-world data uses generic profiles for PR-producing

@@ -63,8 +63,11 @@ Advisory items are informational and never gate the transition.
    substrate uses generic profiles (e.g. `clockwork-backend`) for many
    PR-producing roles, so profile-name is unreliable. Instead:
    - Call `clockwork_artifact_list(task_id="<target>")` and inspect items
-     where `type == "url"`.
-   - A URL artifact is a GitHub PR if it matches the shape
+     where `Type == "url"`. (The tool returns Go-style field names —
+     `Type`, `URL`, `FilePath`, `TaskID`, etc. — when verbose; the brief
+     shape uses the same lowercase names as JSON tags. Match on the
+     **value** `"url"` regardless of which shape the response uses.)
+   - A URL artifact is a GitHub PR if its `URL` field matches the shape
      `https://github.com/<owner>/<repo>/pull/<num>` (path segment
      `/pull/<digits>`).
    - If zero PR artifacts: this check is **N/A** — record as verified and
