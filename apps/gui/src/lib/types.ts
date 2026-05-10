@@ -182,6 +182,24 @@ export interface TaskStats {
   prompt_tokens: number
   completion_tokens: number
   cost: number
+  /**
+   * Where the `cost` figure came from. Drives the dashboard's measured-vs-
+   * estimated badge alongside the dollar value.
+   * - `'measured'`: executor reported a real `cost_usd` (rare under
+   *   subscription billing — Claude on Pro/Max strips total_cost_usd).
+   * - `'estimated'`: backfilled from models.dev pricing using token counts.
+   *   Render with a `~` prefix or `est` badge to flag it as approximate.
+   * - `'unknown'`: ledger row exists but neither path produced a number;
+   *   render as `—` rather than `$0.00` so users don't read it as
+   *   "this run cost zero dollars."
+   * - `''` (empty): no cost_ledger rows yet (task hasn't run, or pre-
+   *   migration-017 ledger). Same render as `'unknown'`.
+   *
+   * Backend source: `internal/persistence/sqlstore/runs.go` —
+   * GetTaskRunAggregate picks the highest-priority source across the
+   * task's ledger rows (measured > estimated > unknown).
+   */
+  cost_source: 'measured' | 'estimated' | 'unknown' | ''
 }
 
 export interface Subtodo {

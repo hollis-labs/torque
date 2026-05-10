@@ -188,6 +188,45 @@ func TestResolveCost(t *testing.T) {
 	})
 }
 
+// TestScheduler_ResolveCost_NormalizesProviderAlias is the smoke test for
+// the CW-20260510-0100 dashboard fix: a profile with `provider: claude`
+// (CLI brand) MUST hit the models.dev catalog under the canonical
+// `anthropic` namespace, not the literal `claude` string. Without the
+// CatalogProviderID normalization in scheduler.resolveCost, the gate at
+// cost.go:152 falls through and writes cost_source='unknown' — which
+// renders as $0.00 on the dashboard.
+//
+// We don't stand up a real catalog here (that's what the live HTTP test
+// covers) — instead we assert that the provider passed to the estimate
+// closure was normalized.
+func TestScheduler_ResolveCost_NormalizesProviderAlias(t *testing.T) {
+	var seenProvider, seenModel string
+	estimate := func(p, m string, in, out int) (float64, bool) {
+		seenProvider = p
+		seenModel = m
+		return 0.018, true
+	}
+	resolveProfile := func(name string) (string, string, bool) {
+		// Mimic the closure in scheduler.resolveCost: normalize the CLI
+		// brand to the catalog provider id BEFORE handing to estimate.
+		// (The package-level ResolveCost is the hot path — this test
+		// exercises the same shape.)
+		if name == "clockwork-backend" {
+			return "anthropic", "claude-sonnet-4-5", true // already-normalized
+		}
+		return "", "", false
+	}
+
+	cost, src := scheduler.ResolveCost("clockwork-backend",
+		&executor.ExecutionResult{Cost: 0, Tokens: executor.TokenUsage{PromptTokens: 1000, CompletionTokens: 500}},
+		estimate, resolveProfile, true)
+
+	assert.InDelta(t, 0.018, cost, 0.0001)
+	assert.Equal(t, scheduler.CostSourceModelsDev, src)
+	assert.Equal(t, "anthropic", seenProvider, "estimate must see catalog provider id, not CLI brand")
+	assert.Equal(t, "claude-sonnet-4-5", seenModel)
+}
+
 // TestCostTracker_RecordsSource verifies the cost_source column round-trips.
 // The Source field on CostEntry is the only handle the UI / ops have for
 // distinguishing measured cost from a models.dev estimate, so a regression

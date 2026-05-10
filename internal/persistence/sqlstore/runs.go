@@ -35,28 +35,74 @@ type RunCompletion struct {
 
 // TaskRunAggregate is the per-task roll-up of run counts, token usage, and
 // cost across every run recorded for the task (any status).
+//
+// Cost is sourced from cost_ledger (the canonical cost store per migration
+// 017), NOT from runs.cost — the runs.cost column receives the executor's
+// reported figure which is always 0 under subscription billing where Claude
+// strips total_cost_usd. cost_ledger holds executor-reported AND models.dev-
+// backfilled estimates and tags each row with cost_source so the GUI can
+// render a "measured" vs "estimated" badge.
+//
+// CostSource is the highest-priority source across the task's ledger rows
+// (`measured` > `estimated` > `unknown`); empty string when no rows exist.
 type TaskRunAggregate struct {
 	TaskID           string
 	Count            int
 	PromptTokens     int
 	CompletionTokens int
 	Cost             float64
+	CostSource       string
 }
 
 // GetTaskRunAggregate returns the run count / token / cost roll-up for a task.
 // Tasks that have never been executed yield a zero-valued aggregate, not an
 // error — callers render this as "0 runs / $0.00 / 0 tokens".
+//
+// Implementation: two queries — tokens/count from `runs` (canonical for
+// turn-count + token totals), cost from `cost_ledger` (canonical for cost
+// per migration 017). Splitting the query is cleaner than a JOIN because
+// cost_ledger may have multiple rows per run in pathological cases and a
+// JOIN would multiply the token sums; the FK-constrained ledger has at
+// most one row per run today but the split future-proofs against either
+// table growing additional per-run rows.
 func (s *Store) GetTaskRunAggregate(taskID string) (*TaskRunAggregate, error) {
-	const q = `SELECT COUNT(*),
+	const runsQ = `SELECT COUNT(*),
 		COALESCE(SUM(prompt_tokens), 0),
-		COALESCE(SUM(completion_tokens), 0),
-		COALESCE(SUM(cost), 0)
+		COALESCE(SUM(completion_tokens), 0)
 		FROM runs WHERE task_id = ?`
 	agg := TaskRunAggregate{TaskID: taskID}
-	if err := s.db.QueryRow(q, taskID).Scan(
-		&agg.Count, &agg.PromptTokens, &agg.CompletionTokens, &agg.Cost,
+	if err := s.db.QueryRow(runsQ, taskID).Scan(
+		&agg.Count, &agg.PromptTokens, &agg.CompletionTokens,
 	); err != nil {
 		return nil, err
+	}
+
+	// cost_ledger lookup. Aggregates SUM(cost) and picks the highest-
+	// priority cost_source via MIN() over a CASE — `executor` (measured) is
+	// rank 1, `models_dev` (estimated) is rank 2, `unknown` is rank 3, so
+	// MIN selects the most authoritative source seen across the task's
+	// ledger rows. NULL CostSource (no rows) leaves the field empty so the
+	// GUI can decide between "—" (no data) and "$0.00" (measured-and-zero).
+	const ledgerQ = `SELECT COALESCE(SUM(cost), 0),
+		MIN(CASE cost_source
+			WHEN 'executor' THEN 1
+			WHEN 'models_dev' THEN 2
+			ELSE 3
+		END)
+		FROM cost_ledger WHERE task_id = ?`
+	var rank sql.NullInt64
+	if err := s.db.QueryRow(ledgerQ, taskID).Scan(&agg.Cost, &rank); err != nil {
+		return nil, err
+	}
+	if rank.Valid {
+		switch rank.Int64 {
+		case 1:
+			agg.CostSource = "measured"
+		case 2:
+			agg.CostSource = "estimated"
+		default:
+			agg.CostSource = "unknown"
+		}
 	}
 	return &agg, nil
 }

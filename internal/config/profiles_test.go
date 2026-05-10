@@ -155,6 +155,35 @@ func TestGetProfileOrDefault(t *testing.T) {
 	assert.Equal(t, "", p.Executor)
 }
 
+// TestCatalogProviderID verifies the CLI-brand → catalog-provider alias
+// map (CW-20260510-0100). profiles.yaml uses "claude" / "codex" because
+// that's what the CLI invocation expects, but the models.dev catalog
+// indexes by vendor namespace ("anthropic" / "openai"). Without this
+// normalization the cost-backfill resolver silently misses every
+// lookup. Verified against https://models.dev/api.json on 2026-05-10.
+func TestCatalogProviderID(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"claude", "anthropic"},
+		{"codex", "openai"},
+		// Already-canonical provider ids pass through.
+		{"anthropic", "anthropic"},
+		{"openai", "openai"},
+		{"google", "google"},
+		// Unknown providers pass through (callers can detect aliasing
+		// by checking input == output).
+		{"opencode", "opencode"},
+		{"copilot", "copilot"},
+		{"", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.in, func(t *testing.T) {
+			assert.Equal(t, tc.want, config.CatalogProviderID(tc.in))
+		})
+	}
+}
+
 // CW-20260503-0019 (S2.3) — substrate builtins fill in for internal-
 // task agent profiles when the user's profiles.yaml hasn't named them.
 // User entries always win; the builtin fallback is the safety net for

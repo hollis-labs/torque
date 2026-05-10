@@ -25,13 +25,30 @@ export function formatRelativeTime(dateStr: string): string {
 }
 
 /**
- * Format a cost value in dollars (e.g. "$0.0042")
+ * Format a cost value in dollars (e.g. "$0.0042"). Source-aware: when the
+ * caller knows the cost came from `unknown` or no ledger rows exist
+ * (`''`), pass `source` so the function can render `—` instead of a
+ * misleading `$0.00`. Measured-and-zero is a legitimate result and still
+ * renders `$0.00` — the badge is what disambiguates.
+ *
+ * `estimated` cost prepends `~` so the figure reads as approximate at a
+ * glance even without the surrounding badge — useful in dense table rows
+ * where the badge gets stripped for space.
  */
-export function formatCost(cost: number): string {
-  if (cost === 0) return '$0.00'
-  if (cost < 0.01) return `$${cost.toFixed(4)}`
-  return `$${cost.toFixed(2)}`
+export function formatCost(cost: number, source?: TaskCostSource): string {
+  if (source === 'unknown' || source === '') return '—'
+  const prefix = source === 'estimated' ? '~$' : '$'
+  if (cost === 0) return `${prefix}0.00`
+  if (cost < 0.01) return `${prefix}${cost.toFixed(4)}`
+  return `${prefix}${cost.toFixed(2)}`
 }
+
+/**
+ * Possible values for TaskStats.cost_source — duplicated here so utils.ts
+ * stays free of a types.ts import cycle. Keep in sync with the
+ * `TaskStats['cost_source']` declaration in `./types.ts`.
+ */
+export type TaskCostSource = 'measured' | 'estimated' | 'unknown' | ''
 
 /**
  * Format a duration in milliseconds as human-readable (e.g. "1m 23s", "45s", "2h 3m")

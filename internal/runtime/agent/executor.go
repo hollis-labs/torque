@@ -135,10 +135,14 @@ func (e *Executor) Run(ctx context.Context, job *executor.ExecutionJob, cb execu
 	close(fanout)
 	fanoutWG.Wait()
 
-	// Token accounting: the drain goroutine populates result.Tokens. Cost
-	// stays zero — scheduler.cost.ResolveCostFromResult computes it via the
-	// modelcatalog (same convention as cliexec).
-	result.Cost = result.Tokens.Cost
+	// Token accounting: the drain goroutine populates result.Tokens.
+	// PromptTokens / CompletionTokens. The TokenUsage struct also has a
+	// Cost field but nothing in the bare-mode pipeline ever assigns to it
+	// (the lib's stream events don't expose a per-event cost), so the
+	// previous `result.Cost = result.Tokens.Cost` line was a no-op that
+	// implied otherwise. Removed in CW-20260510-0100; the canonical cost
+	// figure is computed downstream via scheduler.resolveCost using the
+	// models.dev catalog.
 
 	switch {
 	case errors.Is(runCtx.Err(), context.DeadlineExceeded):
