@@ -51,6 +51,54 @@ Advisory items are informational and never gate the transition.
    Sanity check: the run-event timestamps should precede the task's
    `updated_at`. A stale `updated_at` suggests the task was touched
    externally during execution.
+6. **PR-gated tasks: every GitHub PR artifact is merged.** *(severity: miss)*
+   Some `kind=agent` tasks deliver a GitHub Pull Request as their primary
+   output (cleanup-implementer, public-release prep, library extraction,
+   etc.). For those tasks, `done` is gated on **human PR review + merge**,
+   not on the agent's run completion. The 5 disposition checks above
+   verify "the agent did its job"; this check verifies "the human accepted
+   that job's output". **Both are required** before lifecycle progresses.
+
+   **Detect PR-gated by artifact shape, not agent_profile.** The current
+   substrate uses generic profiles (e.g. `clockwork-backend`) for many
+   PR-producing roles, so profile-name is unreliable. Instead:
+   - Call `clockwork_artifact_list(task_id="<target>")` and inspect items
+     where `Type == "url"`. (The tool returns Go-style field names —
+     `Type`, `URL`, `FilePath`, `TaskID`, etc. — when verbose; the brief
+     shape uses the same lowercase names as JSON tags. Match on the
+     **value** `"url"` regardless of which shape the response uses.)
+   - A URL artifact is a GitHub PR if its `URL` field matches the shape
+     `https://github.com/<owner>/<repo>/pull/<num>` (path segment
+     `/pull/<digits>`).
+   - If zero PR artifacts: this check is **N/A** — record as verified and
+     move on. The task is not PR-gated.
+   - If one or more PR artifacts: each one must be verified merged.
+
+   **For each PR artifact, run:**
+   ```
+   gh pr view <num> --repo <owner>/<repo> --json state,mergedAt,url
+   ```
+   The check passes for that PR iff `state == "MERGED"` AND
+   `mergedAt != null`. Any other state — `OPEN`, or `CLOSED` without a
+   `mergedAt` — is a **miss** and blocks closeout.
+
+   **On miss:** post a `[system/end-agent]` comment naming each unmerged
+   PR by URL and state, e.g.:
+   > Audit miss (check 6 — PR-merge gate). PR
+   > https://github.com/foo/bar/pull/42 is OPEN; awaiting human review +
+   > merge. Will re-check on next end-agent invocation. Leaving target at
+   > `review`.
+
+   Then **leave the target at `review`** and exit cleanly. A human merging
+   the PR + re-triggering the end-agent (or a future re-review cycle) will
+   re-run this check; the target promotes to `done` only when every PR
+   artifact reaches `MERGED`.
+
+   **Why this is its own check, not folded into check 3 (artifacts):**
+   check 3 is advisory — it asks "did you emit any artifact?". Check 6 is
+   miss-severity and asks a different question: "if your artifact is a PR,
+   has the human accepted it?". The two checks have different gating
+   semantics on purpose.
 
 ## How to comment
 
@@ -92,6 +140,14 @@ only. Advisory items are NEVER part of the gate.
   task as informational signal for the next dispatch.
 - **`needs-human-follow-up` count is ≥ 1:** leave the target at `review`.
   Your summary comment is the alert. Do NOT transition it.
+
+**PR-gated tasks (check 6) are a hard short-circuit.** If the target has
+one or more GitHub PR URL artifacts and any of them is not yet `MERGED`,
+check 6 fails as a miss → `needs-human-follow-up` ≥ 1 → leave at
+`review` and exit. **Never auto-transition a PR-gated task to `done`
+while a PR is still `OPEN` or unmerged.** This holds regardless of how
+clean the other 5 checks are. The contract is: agent run completion
+satisfies checks 1-5; human merge satisfies check 6; both are required.
 
 ## Failure mode (yours)
 
