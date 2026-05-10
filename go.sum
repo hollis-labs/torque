@@ -42,8 +42,8 @@ github.com/hollis-labs/go-messaging v0.2.0 h1:JypqjXMcgyFBbLmX+NlwTxJuwIAAjKd/3Q
 github.com/hollis-labs/go-messaging v0.2.0/go.mod h1:tMiHRx7QHV1GWw5pZ1khnursbIQuzikScSRXWVdP8nk=
 github.com/hollis-labs/go-modelsdev v0.1.0 h1:z2w23Si1Oquv/MzgXdefL6p4NxGVNROj97tbsLXiQNU=
 github.com/hollis-labs/go-modelsdev v0.1.0/go.mod h1:NIdXwrU1i/vq8dnKCbI2SQ7FfnH2jKSYpC8nhK0QVaM=
-github.com/hollis-labs/go-providers v0.14.1-0.20260510173308-42bd9bd9a731 h1:5s5wyzOby+/sA9Ekwk3ZZ/4WT2pyWE/hBNEfWouZIYc=
-github.com/hollis-labs/go-providers v0.14.1-0.20260510173308-42bd9bd9a731/go.mod h1:Y0WQHyW7gIj0ooxyvq2uDqnEHAyOOqVhB2miNiajZ2Q=
+github.com/hollis-labs/go-providers v0.16.0 h1:wsoO+q5Z2A2KA7YYrFQ0zm74PmleDUVpahKisdIhzw8=
+github.com/hollis-labs/go-providers v0.16.0/go.mod h1:Y0WQHyW7gIj0ooxyvq2uDqnEHAyOOqVhB2miNiajZ2Q=
 github.com/hollis-labs/go-queue v0.1.1 h1:dJ8i4XB0DtUznzI4Kh6RkUBzHYOV4VCa4SYNfZq/+d8=
 github.com/hollis-labs/go-queue v0.1.1/go.mod h1:wAP95gDz9kxAhcCWaR4e07Jz54OvFpiNEq+5ERgt2/E=
 github.com/hollis-labs/go-runner v0.4.0 h1:NtfdvcugeOtCBzKnjIPNq7oMWhvcaQ3nWveyHWqX+CA=

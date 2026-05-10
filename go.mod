@@ -12,7 +12,7 @@ require (
 	github.com/hollis-labs/go-messaging v0.2.0
 	github.com/hollis-labs/go-modelsdev v0.1.0
 	// TODO: post-merge of hollis-labs/go-providers#20 (CW-20260510-0110), bump to the tagged v0.15.0 release.
-	github.com/hollis-labs/go-providers v0.14.1-0.20260510173308-42bd9bd9a731
+	github.com/hollis-labs/go-providers v0.16.0
 	github.com/hollis-labs/go-queue v0.1.1
 	github.com/hollis-labs/go-runner v0.4.0
 	github.com/hollis-labs/go-sandbox v0.2.0
