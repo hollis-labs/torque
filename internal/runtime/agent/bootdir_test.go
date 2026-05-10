@@ -289,6 +289,73 @@ func TestPlantBootDir_Opencode_WithMux(t *testing.T) {
 	assert.Contains(t, oc, `"/usr/local/bin/mux"`, "mux command embedded in array")
 }
 
+// TestPlantBootDir_Codex_WithMux pins the codex regression for go-providers
+// v0.16.1 (#21): mux must land in the LOAD-BEARING config.toml (the file
+// codex actually reads via $CODEX_HOME), not just the legacy .mcp.json
+// sidecar.
+//
+// Pre-v0.16.1, only the .mcp.json sidecar carried the mux entry. Codex
+// itself reads $CODEX_HOME/config.toml for MCP servers, so a partial
+// config.toml (loopback-only) caused codex to fall back to global
+// ~/.codex/config.toml — which leaked the user's globally-registered
+// servers (mux, Tangent) into per-task isolated sessions. The fix in
+// v0.16.1 emits both [mcp_servers.loopback] and [mcp_servers.mux] in
+// the planted config.toml so codex never falls back.
+//
+// This test pins the load-bearing path; the existing TestPlantBootDir_Codex
+// continues to cover the no-mux baseline (config.toml with loopback-only).
+func TestPlantBootDir_Codex_WithMux(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	// Isolate codex auth source so the test doesn't depend on the dev's
+	// real ~/.codex/auth.json.
+	t.Setenv("CODEX_HOME", t.TempDir())
+
+	res, err := plantBootDir(plantParams{
+		Provider:       "codex",
+		Adapter:        provider.NewCodexAdapter(),
+		TaskID:         "CW-MUX-CODEX",
+		RunID:          0,
+		AgentName:      "codex-exec",
+		SystemPrompt:   "you orchestrate",
+		KickoffContent: "boot",
+		ProjectDir:     "/tmp/codex-repo",
+		MCPLoopbackURL: "http://127.0.0.1:65501/mcp",
+		MuxCommand:     "/usr/local/bin/mux",
+		MuxArgs: []string{
+			"mcp", "--proxy",
+			"--servers", "vanta,clockwork,cerberus",
+		},
+	})
+	require.NoError(t, err)
+	defer func() { _ = os.RemoveAll(res.BootDir) }()
+
+	// config.toml is the load-bearing path for codex. Both servers must
+	// be present so codex with CODEX_HOME=<bootDir> sees the per-task
+	// surface and does NOT fall back to ~/.codex/config.toml.
+	configRaw, err := os.ReadFile(filepath.Join(res.BootDir, "config.toml"))
+	require.NoError(t, err)
+	cfg := string(configRaw)
+
+	assert.Contains(t, cfg, "[mcp_servers.loopback]", "loopback block present")
+	assert.Contains(t, cfg, `url = "http://127.0.0.1:65501/mcp"`, "loopback URL preserved")
+	assert.Contains(t, cfg, "[mcp_servers.mux]", "mux block present in load-bearing config.toml (v0.16.1 fix)")
+	assert.Contains(t, cfg, `command = "/usr/local/bin/mux"`, "mux command threaded through")
+	assert.Contains(t, cfg, `"--servers"`, "mux args threaded through")
+	assert.Contains(t, cfg, `"vanta,clockwork,cerberus"`, "mux args threaded through")
+
+	// CODEX_HOME amendment substituted to bootdir.
+	require.NotEmpty(t, res.EnvAmendments)
+	assert.Equal(t, "CODEX_HOME="+res.BootDir, res.EnvAmendments[0])
+
+	// .mcp.json sidecar parity — secondary check; load-bearing assertion
+	// is config.toml above.
+	mcpRaw, err := os.ReadFile(filepath.Join(res.BootDir, ".mcp.json"))
+	require.NoError(t, err)
+	mcp := string(mcpRaw)
+	assert.Contains(t, mcp, `"loopback"`, "sidecar carries loopback")
+	assert.Contains(t, mcp, `"mux"`, "sidecar carries mux for cross-tool inspection")
+}
+
 // TestPlantBootDir_TwoDirSeparation verifies that the boot dir lives under
 // $TMPDIR (ephemeral) and is distinct from the workspace dir convention.
 // The cross-app design's two-dir model is the architectural invariant
