@@ -92,6 +92,15 @@ func adapterFor(profile config.AgentProfile, profileName string, pty bool) (prov
 		}
 		adapter := provider.NewOpencodeAdapter()
 		adapter.Agent = profileName
+		// Thread profile.Model through so OpencodeAdapter.BuildArgs emits
+		// `--model <X>` BEFORE the positional prompt — opencode requires
+		// the model flag to precede the message arg. The generic
+		// `--model` suffix in agent.Boot's BuildArgs wrapper is suppressed
+		// for opencode (see boot.go's skipModelSuffix branch); without
+		// this assignment opencode would launch with whatever default
+		// the agent's opencode.json declares, ignoring the profile's
+		// Model field entirely.
+		adapter.Model = profile.Model
 		return adapter, agentsessions.Capabilities{
 			BinaryRequired: true,
 		}, nil

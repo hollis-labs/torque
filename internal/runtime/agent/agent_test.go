@@ -365,6 +365,182 @@ func TestClaudeBareAdapter_AddDirSingleEmit(t *testing.T) {
 	assert.Contains(t, args, "--settings")
 }
 
+// TestAdapterFor_OpencodeWiring verifies that adapterFor populates
+// OpencodeAdapter.Agent + Model from the AgentProfile.
+//
+// Agent: opencode `run` requires `--agent <name>`; the profile name
+// is by convention the opencode agent name. Without this wiring the
+// adapter would emit `--agent ""` and opencode would error out.
+//
+// Model: opencode requires `--model <X>` to precede the positional
+// prompt arg in argv. The adapter places it correctly only when its
+// Model field is populated. The generic `--model` suffix in
+// agent.Boot's BuildArgs wrapper is skipped for opencode (see the
+// skipModelSuffix branch in boot.go) — it would otherwise land
+// `--model` AFTER the prompt and corrupt the argv.
+func TestAdapterFor_OpencodeWiring(t *testing.T) {
+	cases := []struct {
+		name        string
+		profileName string
+		model       string
+		wantErr     bool
+	}{
+		{
+			name:        "agent + model both populated",
+			profileName: "executor",
+			model:       "opencode/big-pickle",
+			wantErr:     false,
+		},
+		{
+			name:        "agent populated, model empty (default model used)",
+			profileName: "executor",
+			model:       "",
+			wantErr:     false,
+		},
+		{
+			name:        "missing profile name → error",
+			profileName: "",
+			model:       "opencode/big-pickle",
+			wantErr:     true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			profile := config.AgentProfile{Provider: "opencode", Model: tc.model}
+			adapter, caps, err := adapterFor(profile, tc.profileName, false)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.True(t, caps.BinaryRequired)
+			assert.False(t, caps.ProviderSessionID, "opencode lacks --resume")
+			assert.False(t, caps.CheckpointResume, "opencode lacks --resume")
+
+			oa, ok := adapter.(*provider.OpencodeAdapter)
+			require.True(t, ok, "adapter should be *provider.OpencodeAdapter, got %T", adapter)
+			assert.Equal(t, tc.profileName, oa.Agent, "Agent should be set from profileName")
+			assert.Equal(t, tc.model, oa.Model, "Model should be threaded from profile.Model")
+		})
+	}
+}
+
+// TestComposeBuildArgs_OpencodeModelOrder pins the per-provider
+// --model placement contract.
+//
+// opencode requires `--model <X>` BEFORE the positional prompt, so:
+//  1. OpencodeAdapter.BuildArgs emits `--model` in the correct
+//     position when adapter.Model is set (factory.go threads
+//     profile.Model onto adapter.Model — covered by
+//     TestAdapterFor_OpencodeWiring above).
+//  2. composeBuildArgs MUST NOT append the generic trailing
+//     `--model` — that would either land it after the positional
+//     prompt (argv corruption) or duplicate the flag.
+//
+// Claude tolerates the trailing --model and is the baseline.
+func TestComposeBuildArgs_OpencodeModelOrder(t *testing.T) {
+	t.Run("opencode: --model is BEFORE prompt, no trailing duplicate", func(t *testing.T) {
+		oa := provider.NewOpencodeAdapter()
+		oa.Agent = "executor"
+		oa.Model = "opencode/big-pickle"
+
+		profile := config.AgentProfile{Provider: "opencode", Model: "opencode/big-pickle"}
+		args := composeBuildArgs(buildArgsParams{
+			Adapter:         oa,
+			Profile:         profile,
+			TurnPrompt:      "do the thing",
+			SkipModelSuffix: skipModelSuffixForProvider(profile.Provider),
+		})
+
+		// Exactly one --model flag.
+		modelCount := 0
+		for _, a := range args {
+			if a == "--model" {
+				modelCount++
+			}
+		}
+		assert.Equal(t, 1, modelCount, "opencode argv should carry --model exactly once; argv=%v", args)
+
+		// --model must precede the positional prompt.
+		var modelIdx, promptIdx int = -1, -1
+		for i, a := range args {
+			if a == "--model" && modelIdx == -1 {
+				modelIdx = i
+			}
+			if a == "do the thing" {
+				promptIdx = i
+			}
+		}
+		require.NotEqual(t, -1, modelIdx, "argv missing --model: %v", args)
+		require.NotEqual(t, -1, promptIdx, "argv missing prompt: %v", args)
+		assert.Less(t, modelIdx, promptIdx,
+			"opencode argv: --model must precede positional prompt; argv=%v", args)
+	})
+
+	t.Run("opencode with empty Model: no --model flag at all", func(t *testing.T) {
+		oa := provider.NewOpencodeAdapter()
+		oa.Agent = "executor"
+		// adapter.Model intentionally left empty (profile.Model="")
+
+		profile := config.AgentProfile{Provider: "opencode", Model: ""}
+		args := composeBuildArgs(buildArgsParams{
+			Adapter:         oa,
+			Profile:         profile,
+			TurnPrompt:      "hello",
+			SkipModelSuffix: skipModelSuffixForProvider(profile.Provider),
+		})
+
+		for _, a := range args {
+			assert.NotEqual(t, "--model", a,
+				"opencode argv should NOT carry --model when profile.Model is empty; argv=%v", args)
+		}
+	})
+
+	t.Run("claude: trailing --model still emitted (baseline)", func(t *testing.T) {
+		ca := provider.NewClaudeAdapterPTY()
+		profile := config.AgentProfile{Provider: "claude", Model: "claude-sonnet-4-5"}
+		args := composeBuildArgs(buildArgsParams{
+			Adapter:         ca,
+			Profile:         profile,
+			TurnPrompt:      "hello",
+			SkipModelSuffix: skipModelSuffixForProvider(profile.Provider),
+		})
+
+		// claude path: --model is appended as the trailing suffix
+		// (skipModelSuffix=false for claude).
+		modelIdx := -1
+		for i, a := range args {
+			if a == "--model" {
+				modelIdx = i
+			}
+		}
+		require.NotEqual(t, -1, modelIdx, "claude argv should carry --model; argv=%v", args)
+		assert.Equal(t, "claude-sonnet-4-5", args[modelIdx+1])
+	})
+}
+
+// TestSkipModelSuffixForProvider locks the provider→skip-model-suffix
+// table. Adding new providers is a deliberate compatibility decision
+// since most providers tolerate trailing --model.
+func TestSkipModelSuffixForProvider(t *testing.T) {
+	cases := []struct {
+		provider string
+		want     bool
+	}{
+		{"claude", false},
+		{"codex", false},
+		{"opencode", true},
+		{"gemini", false},
+		{"copilot", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.provider, func(t *testing.T) {
+			assert.Equal(t, tc.want, skipModelSuffixForProvider(tc.provider))
+		})
+	}
+}
+
 // TestProfileArgsExcludingDevFlag verifies the dev flag is stripped before
 // re-prepending profile.Args (the flag is consumed by adapterFor →
 // NewClaudeAdapterDev*; passing it through profile.Args would double-add).

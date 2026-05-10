@@ -197,18 +197,29 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	// explicit-injection flags flow through the adapter fields, not the
 	// closure's spec-driven append.
 	skipProjectDirArg := claudeIsBare
+
+	// opencode's argv shape requires `--model <X>` BEFORE the positional
+	// prompt arg (`opencode run --agent <A> --model <M> "<prompt>"`).
+	// OpencodeAdapter.BuildArgs already emits the flag in that position
+	// when adapter.Model is populated (factory.go threads profile.Model
+	// onto the adapter). Appending the generic `--model` suffix here
+	// would either land it AFTER the positional prompt (corrupt argv,
+	// since opencode parses anything past the prompt as additional
+	// message args) or duplicate the flag. Per-provider opt-out keeps
+	// claude's existing trailing `--model` tolerant behavior intact.
+	skipModelSuffix := skipModelSuffixForProvider(profile.Provider)
+
 	buildArgs := func(turnPrompt, sessionID string) []string {
-		args := cliAdapter.BuildArgs(turnPrompt, systemPrompt, sessionID)
-		if profile.Model != "" {
-			args = append(args, "--model", profile.Model)
-		}
-		if !skipProjectDirArg && len(layout.ProjectDirArg) > 0 {
-			args = append(args, layout.ProjectDirArg...)
-		}
-		if filtered := profileArgsExcludingDevFlag(profile); len(filtered) > 0 {
-			args = append(filtered, args...)
-		}
-		return args
+		return composeBuildArgs(buildArgsParams{
+			Adapter:           cliAdapter,
+			Profile:           profile,
+			SystemPrompt:      systemPrompt,
+			TurnPrompt:        turnPrompt,
+			SessionID:         sessionID,
+			ProjectDirArg:     layout.ProjectDirArg,
+			SkipProjectDirArg: skipProjectDirArg,
+			SkipModelSuffix:   skipModelSuffix,
+		})
 	}
 
 	runtimeFactory := agentsessions.NewFromAdapter
@@ -598,6 +609,69 @@ func profileSupervision(profile config.AgentProfile, opts Options, ptyEnabled bo
 	_ = profile
 	_ = ptyEnabled
 	return supervisor, limits
+}
+
+// buildArgsParams captures every input composeBuildArgs needs to
+// assemble the per-turn argv for the lib's adapter Runtime. Extracted
+// out of the buildArgs closure in Boot so the per-provider switches
+// (skipModelSuffix, skipProjectDirArg) can be unit-tested directly.
+type buildArgsParams struct {
+	Adapter           provider.CLIAdapter
+	Profile           config.AgentProfile
+	SystemPrompt      string
+	TurnPrompt        string
+	SessionID         string
+	ProjectDirArg     []string
+	SkipProjectDirArg bool
+	SkipModelSuffix   bool
+}
+
+// composeBuildArgs assembles the per-turn argv. It calls the
+// adapter's BuildArgs for the provider-shape baseline, then optionally
+// appends the generic --model suffix and --project-dir flag, and
+// finally prepends profile.Args (minus the dev-mode flag, which is
+// consumed by adapterFor → NewClaudeAdapterDev*).
+//
+// Per-provider exceptions:
+//
+//   - skipModelSuffix=true: opencode's argv requires --model BEFORE
+//     the positional prompt, which OpencodeAdapter.BuildArgs already
+//     emits when adapter.Model is set (factory.go threads it). The
+//     trailing-suffix path would either land --model AFTER the
+//     prompt (argv corruption) or duplicate the flag.
+//   - skipProjectDirArg=true: bare-mode claude already emits
+//     --add-dir <projectDir> via a.ProjectDir; the lib doesn't
+//     de-dupe, so appending layout.ProjectDirArg would double the
+//     flag. Claude tolerates the duplicate but the cleaner path is
+//     to suppress the second emit.
+func composeBuildArgs(p buildArgsParams) []string {
+	args := p.Adapter.BuildArgs(p.TurnPrompt, p.SystemPrompt, p.SessionID)
+	if !p.SkipModelSuffix && p.Profile.Model != "" {
+		args = append(args, "--model", p.Profile.Model)
+	}
+	if !p.SkipProjectDirArg && len(p.ProjectDirArg) > 0 {
+		args = append(args, p.ProjectDirArg...)
+	}
+	if filtered := profileArgsExcludingDevFlag(p.Profile); len(filtered) > 0 {
+		args = append(filtered, args...)
+	}
+	return args
+}
+
+// skipModelSuffixForProvider reports whether the generic --model
+// suffix in composeBuildArgs should be suppressed for this provider.
+//
+// opencode is the lone case today: its argv requires --model BEFORE
+// the positional prompt, and OpencodeAdapter.BuildArgs already emits
+// the flag in the correct position when adapter.Model is populated
+// (factory.go threads profile.Model onto the adapter). Claude / codex
+// tolerate the trailing --model so they leave the suffix on.
+//
+// Adding a new provider here is a deliberate compatibility decision —
+// most providers tolerate trailing --model and don't need the
+// exception.
+func skipModelSuffixForProvider(provider string) bool {
+	return provider == "opencode"
 }
 
 // isApiKeyHelperExecutable mirrors bootstrap.isExecutableFile for the
