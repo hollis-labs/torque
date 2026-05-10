@@ -134,11 +134,23 @@ func AgentDeps(
 // dispatching bare-mode claude without an API key in the daemon env.
 func resolveApiKeyHelperPath() string {
 	if override := os.Getenv("CLOCKWORK_APIKEY_HELPER"); override != "" {
-		if isExecutableFile(override) {
-			log.Printf("[bootstrap] apiKeyHelper resolved via CLOCKWORK_APIKEY_HELPER=%s", override)
-			return override
+		// Normalize to absolute + symlink-resolved so the doc-promised
+		// "absolute path" contract holds even when an operator sets a
+		// relative path or routes through a symlink. Failures fall back to
+		// the unresolved override; the executable-file check below catches
+		// outright bogus paths regardless.
+		resolved := override
+		if abs, err := filepath.Abs(resolved); err == nil {
+			resolved = abs
 		}
-		log.Printf("[bootstrap] CLOCKWORK_APIKEY_HELPER=%s set but path is not an executable file; ignoring", override)
+		if eval, err := filepath.EvalSymlinks(resolved); err == nil {
+			resolved = eval
+		}
+		if isExecutableFile(resolved) {
+			log.Printf("[bootstrap] apiKeyHelper resolved via CLOCKWORK_APIKEY_HELPER=%s", resolved)
+			return resolved
+		}
+		log.Printf("[bootstrap] CLOCKWORK_APIKEY_HELPER=%s (resolved=%s) set but path is not an executable file; ignoring", override, resolved)
 	}
 
 	exe, err := os.Executable()

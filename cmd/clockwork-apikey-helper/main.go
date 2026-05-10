@@ -37,7 +37,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -92,11 +94,32 @@ func resolveFromKeychain() (string, error) {
 		"-a", user,
 		"-w",
 	)
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
 	out, err := cmd.Output()
 	if err != nil {
+		// Provide a usable error: capture security's stderr (the meaningful
+		// part — `cmd.Output` would discard it) and special-case the
+		// "binary not found" case so a misconfigured PATH gets a clearer
+		// hint than "exit status N".
+		stderrText := strings.TrimSpace(stderrBuf.String())
+		if errors.Is(err, exec.ErrNotFound) {
+			return "", fmt.Errorf(
+				"`security` binary not on PATH: %w; this helper relies on "+
+					"macOS keychain extraction. Set ANTHROPIC_API_KEY in env, "+
+					"or ensure /usr/bin is on the daemon's PATH",
+				err)
+		}
 		// security exits non-zero when the entry doesn't exist — surface that
 		// distinctly so operators know they need to run `claude` once
 		// interactively to seed the keychain (or set ANTHROPIC_API_KEY).
+		if stderrText != "" {
+			return "", fmt.Errorf(
+				"security find-generic-password (Claude Code-credentials, account=%s): %w (stderr: %s); "+
+					"set ANTHROPIC_API_KEY in env, run `claude setup-token`, or "+
+					"sign in via `claude` interactively first",
+				user, err, stderrText)
+		}
 		return "", fmt.Errorf(
 			"security find-generic-password (Claude Code-credentials, account=%s): %w; "+
 				"set ANTHROPIC_API_KEY in env, run `claude setup-token`, or "+

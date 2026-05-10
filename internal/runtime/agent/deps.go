@@ -84,7 +84,9 @@ type Dependencies struct {
 	// apikey-helper`) and falls back to the empty string when the
 	// helper is absent — bare mode then requires ANTHROPIC_API_KEY in
 	// env (the existing CW-20260509-0011 contract). Empty here is
-	// safe; non-empty MUST point at an executable file (the path is
-	// validated at Boot time, not on every dispatch).
+	// safe; non-empty paths are re-validated at Boot time (executable-
+	// regular-file check). If the path was valid at startup but has
+	// since been removed/replaced, Boot logs the misconfig and falls
+	// back to the env-key path rather than failing the dispatch.
 	ApiKeyHelperPath string
 }

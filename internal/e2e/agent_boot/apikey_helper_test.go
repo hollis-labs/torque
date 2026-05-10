@@ -2,9 +2,9 @@ package agent_boot
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -29,7 +29,14 @@ import (
 // the planted file, but the helper field lives inside that file.
 func TestBoot_ApiKeyHelperPath_ThreadsIntoSettings(t *testing.T) {
 	cd := composeDeps(t, fakeRuntimeConfig{}, "claude")
-	cd.Deps.ApiKeyHelperPath = "/usr/local/bin/clockwork-apikey-helper"
+
+	// Boot revalidates ApiKeyHelperPath at dispatch time (executable-
+	// regular-file check). Use a real fake helper file so the validation
+	// succeeds and the field threads through to the planted settings.json.
+	helperDir := t.TempDir()
+	helperPath := filepath.Join(helperDir, "clockwork-apikey-helper")
+	require.NoError(t, os.WriteFile(helperPath, []byte("#!/bin/sh\necho fake\n"), 0o755))
+	cd.Deps.ApiKeyHelperPath = helperPath
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -71,13 +78,18 @@ func TestBoot_ApiKeyHelperPath_ThreadsIntoSettings(t *testing.T) {
 
 	raw, err := os.ReadFile(settingsPath)
 	require.NoError(t, err, "planted settings.json must exist at %s", settingsPath)
-	got := string(raw)
 
-	assert.Contains(t, got, `"apiKeyHelper": "/usr/local/bin/clockwork-apikey-helper"`,
-		"planted settings.json should contain the apiKeyHelper field; got:\n%s", got)
+	// Parse the JSON instead of substring-matching so the assertion
+	// survives formatting/order changes in go-providers' settings.json
+	// renderer (whitespace, key order, future additions).
+	var settings map[string]any
+	require.NoError(t, json.Unmarshal(raw, &settings),
+		"planted settings.json must be valid JSON; got:\n%s", string(raw))
+	assert.Equal(t, helperPath, settings["apiKeyHelper"],
+		"planted settings.json apiKeyHelper field should match Deps.ApiKeyHelperPath; got:\n%s", string(raw))
 	// Sanity: the existing stub keys still ride along.
-	assert.Contains(t, got, `"mcpServers"`)
-	assert.Contains(t, got, `"approvedTools"`)
+	assert.Contains(t, settings, "mcpServers")
+	assert.Contains(t, settings, "approvedTools")
 }
 
 // TestBoot_ApiKeyHelperPath_AbsentWhenDepsEmpty pins the negative case:
@@ -105,7 +117,11 @@ func TestBoot_ApiKeyHelperPath_AbsentWhenDepsEmpty(t *testing.T) {
 
 	raw, err := os.ReadFile(filepath.Join(sess.BootDir, ".claude", "settings.json"))
 	require.NoError(t, err)
-	got := string(raw)
-	assert.False(t, strings.Contains(got, "apiKeyHelper"),
-		"planted settings.json must NOT contain apiKeyHelper when Deps.ApiKeyHelperPath is empty; got:\n%s", got)
+
+	var settings map[string]any
+	require.NoError(t, json.Unmarshal(raw, &settings),
+		"planted settings.json must be valid JSON; got:\n%s", string(raw))
+	_, hasHelper := settings["apiKeyHelper"]
+	assert.False(t, hasHelper,
+		"planted settings.json must NOT contain apiKeyHelper when Deps.ApiKeyHelperPath is empty; got:\n%s", string(raw))
 }

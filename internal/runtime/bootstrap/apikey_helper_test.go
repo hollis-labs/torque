@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestResolveApiKeyHelperPath_Override pins that the
@@ -18,8 +21,16 @@ func TestResolveApiKeyHelperPath_Override(t *testing.T) {
 	}
 	t.Setenv("CLOCKWORK_APIKEY_HELPER", path)
 	got := resolveApiKeyHelperPath()
-	if got != path {
-		t.Errorf("resolveApiKeyHelperPath = %q, want %q", got, path)
+	// resolveApiKeyHelperPath normalizes via filepath.Abs +
+	// filepath.EvalSymlinks for the doc-promised "absolute path"
+	// contract. macOS resolves /var → /private/var; mirror the same
+	// transform on the expected value.
+	want := path
+	if eval, err := filepath.EvalSymlinks(want); err == nil {
+		want = eval
+	}
+	if got != want {
+		t.Errorf("resolveApiKeyHelperPath = %q, want %q", got, want)
 	}
 }
 
@@ -56,16 +67,34 @@ func TestResolveApiKeyHelperPath_Override_NonExecutable(t *testing.T) {
 // graceful-fallback contract: when no resolution path hits, return ""
 // so Boot skips the apiKeyHelper field. This is the existing
 // contract for ANTHROPIC_API_KEY-only deployments.
+//
+// Sibling-binary resolution is tested separately
+// (TestResolveApiKeyHelperPath_SiblingBinary). Here we want to assert
+// the negative-path: env override empty, sibling absent, PATH lookup
+// fails. To make the sibling-binary check fail we need the test
+// binary's directory to NOT contain a `clockwork-apikey-helper` file —
+// `go test` runs against a tempdir-built binary, so that's the default
+// and we can assert directly.
 func TestResolveApiKeyHelperPath_NoHelperReturnsEmpty(t *testing.T) {
 	t.Setenv("CLOCKWORK_APIKEY_HELPER", "")
 	t.Setenv("PATH", "/this/path/does/not/exist")
-	got := resolveApiKeyHelperPath()
-	// Sibling-binary path may resolve if the test was run from a dir
-	// containing clockwork-apikey-helper; tolerate either outcome
-	// but log when it happens for visibility.
-	if got != "" {
-		t.Logf("resolveApiKeyHelperPath = %q (test sibling-binary resolution hit — env presumed clean)", got)
+
+	// Defensive: confirm the test binary's sibling-dir genuinely lacks a
+	// clockwork-apikey-helper. If a developer happens to drop the binary
+	// into the test tempdir, the assertion below would erroneously fail.
+	exe, exeErr := os.Executable()
+	require.NoError(t, exeErr, "os.Executable should resolve in tests")
+	if eval, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = eval
 	}
+	siblingCandidate := filepath.Join(filepath.Dir(exe), "clockwork-apikey-helper")
+	if isExecutableFile(siblingCandidate) {
+		t.Skipf("sibling clockwork-apikey-helper exists at %s; skipping the negative-path assertion (env-clean precondition fails)", siblingCandidate)
+	}
+
+	got := resolveApiKeyHelperPath()
+	assert.Empty(t, got,
+		"resolveApiKeyHelperPath must return \"\" when no resolution path hits; got %q", got)
 }
 
 // TestIsExecutableFile pins the predicate's behavior: regular file +
