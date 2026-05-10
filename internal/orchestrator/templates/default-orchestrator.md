@@ -50,10 +50,15 @@ status. **The ONLY supported way to poll is the MCP tool surface.**
 - `clockwork_session_get` / `clockwork_session_list` for child-task
   liveness checks. **The session lifecycle is private to the substrate
   — its row state is NOT a child-status signal.** A live, mid-tool-call
-  child reads as `Status="running", PID=0, ExitCode=null, EndedAt=null`
-  for adapter-mode providers (claude/codex). PID=0 and ExitCode=null are
-  NORMAL for live adapter-mode sessions; treating them as "crashed" is a
-  false-negative that aborts the plan. The only authorized use of
+  adapter-mode child (claude/codex) reads on the wire as
+  `Status="running"` with **`ExitCode` and `EndedAt` absent (omitted)
+  from the JSON entirely** — not present-as-null. This omission is the
+  fix for CW-20260510-0064: the wire shape is now `{"Status":"running",
+  "Terminal":false, ...}` with no `ExitCode`/`EndedAt` keys at all while
+  the child is still running. `PID` may also be `0` between turns.
+  **Absence of `ExitCode`/`EndedAt`, plus `Terminal=false`, is the
+  authoritative "still alive" signal — do NOT infer crash from PID=0
+  or from any field you don't see.** The only authorized use of
   `clockwork_session_get` is at boot to look up your OWN session
   metadata (Step 1) — never to infer whether a child is alive.
 - `curl`, `wget`, raw HTTP `POST`, or any shell command that talks to

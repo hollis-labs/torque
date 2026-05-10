@@ -94,13 +94,17 @@ func TestOrchestrator_TemplateForbidsSessionListForChildMonitoring(t *testing.T)
 		"template must explicitly name clockwork_session_list in the deny-list")
 	assert.Contains(t, content, "clockwork_session_get",
 		"template must explicitly name clockwork_session_get in the deny-list")
-	// Sanity: the deny-list rationale (PID=0, ExitCode=null are NORMAL for
-	// live adapter-mode sessions) must be present so the agent can resist
-	// hallucinating a crash from those signals.
-	assert.Contains(t, content, "PID=0",
-		"template must explain that PID=0 is a normal mid-run state")
-	assert.Contains(t, content, "ExitCode=null",
-		"template must explain that ExitCode=null is a normal mid-run state")
+	// Sanity: the deny-list rationale must teach the wire shape the daemon
+	// produces post-PR-#41 — ExitCode/EndedAt are OMITTED (absent) from the
+	// JSON for live adapter-mode sessions, not present-as-null. The agent
+	// must resist hallucinating a crash from "missing" fields the way the
+	// pre-fix template warned against null-as-crash.
+	assert.Contains(t, content, "PID",
+		"template must mention PID as a substrate-internal field (may be 0 between turns)")
+	assert.Contains(t, content, "absent (omitted)",
+		"template must teach that ExitCode/EndedAt are omitted (not null) on the wire for live sessions")
+	assert.Contains(t, content, "Terminal=false",
+		"template must point to Terminal=false as the authoritative still-alive signal")
 }
 
 // TestOrchestrator_TemplateEscalationPreconditionTaskStatusGate guards the

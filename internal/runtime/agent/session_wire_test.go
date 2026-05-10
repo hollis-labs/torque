@@ -19,7 +19,7 @@ func TestSession_MarshalJSON_LiveSessionOmitsExitAndEnded(t *testing.T) {
 	sess := Session{
 		ID:       "SES-LIVE",
 		Status:   StatusRunning,
-		PID:      0, // adapter-mode (claude) — PID stays 0 for the session lifetime
+		PID:      0, // adapter-mode (claude): PID may be 0 (especially before the first turn / between turns); the per-session PID poller records non-zero live PIDs and preserves last-known across turns when a child is up
 		ExitCode: nil,
 		EndedAt:  nil,
 	}

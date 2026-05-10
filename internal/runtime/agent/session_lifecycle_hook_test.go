@@ -533,7 +533,10 @@ func TestSessionLifecycleHook_ObserveComment_AllowedWhenChildrenAreOnlyTodo(t *t
 // TestSessionLifecycleHook_HasInProgressChild_DBErrorIsConservative
 // pins the conservative-on-error behavior: if the children-list query
 // fails, the suppression returns false (i.e. the stop proceeds). Better
-// a false-positive stop than a silently-wedged orchestrator.
+// a false-positive stop than a silently-wedged orchestrator. The whole
+// point: an error means "we don't know if there's an in-progress child",
+// so we MUST NOT suppress the SIGTERM — the orchestrator's stop path
+// should proceed rather than hang on uncertain state.
 func TestSessionLifecycleHook_HasInProgressChild_DBErrorIsConservative(t *testing.T) {
 	store := newHookTestStore(t)
 	bus := scheduler.NewEventBus()
@@ -541,16 +544,25 @@ func TestSessionLifecycleHook_HasInProgressChild_DBErrorIsConservative(t *testin
 	stopper := &stubStopper{getStatus: StatusRunning}
 	hook := NewSessionLifecycleHook(bus, store, stopper)
 
-	// Empty plan ID — the helper's empty-id guard returns false (no
-	// suppression). This also covers the "no children" case which is the
-	// shape an orphaned-marker plan would present.
-	assert.False(t, hook.hasInProgressChild(""),
-		"empty planID must not trigger suppression")
-
-	// Plan with no children — also no suppression.
+	// Seed a plan + child so that, in the absence of a DB error, the
+	// helper would normally return true. After we close the DB the same
+	// query must error and the helper must still return false.
 	writePlanWithSession(t, store, "CW-PLAN-CW0064-5", "doing", "SES-CW0064-5")
+	writeChildTask(t, store, "CW-CHILD-CW0064-5a", "CW-PLAN-CW0064-5", "doing")
+
+	// Force ListTasks to fail by closing the underlying *sql.DB. After
+	// Close, all subsequent queries return sql.ErrConnDone (or similar);
+	// hasInProgressChild's err branch fires, and the conservative-false
+	// rule applies.
+	require.NoError(t, store.DB().Close())
+
 	assert.False(t, hook.hasInProgressChild("CW-PLAN-CW0064-5"),
-		"plan with no children must not trigger suppression")
+		"DB error must produce false (conservative): we don't know if a child is in-progress, so the SIGTERM proceeds rather than hangs on uncertainty")
+
+	// Sanity-only: the empty-plan-id guard short-circuits before any DB
+	// touch, so it remains false even with a closed DB.
+	assert.False(t, hook.hasInProgressChild(""),
+		"empty planID must not trigger suppression (independent of DB state)")
 
 	// Tag this assertion onto strings for stable greppability.
 	const inProgressMarker = "child task still in progress"

@@ -162,9 +162,13 @@ type Session struct {
 }
 
 // sessionWire is the marshal-time projection that adds the derived Terminal
-// field. Defined as a type alias so we can re-use the struct's JSON tags
-// without recursing into Session.MarshalJSON. The alias drops the method
-// set, which is exactly what we want.
+// field. The missing `=` is load-bearing: `type sessionWire Session`
+// (without `=`) creates a new *defined type* that re-uses Session's struct
+// layout/tags but DROPS its method set — which is exactly what we want, so
+// that `json.Marshal(sessionWire(s))` does not recurse into
+// Session.MarshalJSON. A true alias (`type sessionWire = Session`) keeps
+// the method set and would reintroduce the infinite recursion. Do not
+// "simplify" this to an alias.
 type sessionWire Session
 
 // sessionWireWithTerminal embeds the wire alias and tacks the derived
