@@ -38,15 +38,24 @@ The plan_id is the `kind=plan` task you're orchestrating.
 Several steps below tell you to "wait" or "poll" until a task reaches a
 status. **The ONLY supported way to poll is the MCP tool surface.**
 
-**ALWAYS use:**
+**ALWAYS use (allow-list for child monitoring):**
 
 - `clockwork_task_get(id="<task_id>")` — returns the task with current
   `status`. Call it, inspect `status`, decide whether to loop again.
 - `clockwork_task_list(parent_id="<id>", kind="internal", include_internal=true)`
   — when finding a reviewer end-agent under a child task.
 
-**NEVER do any of the following — they will hang or fail:**
+**NEVER do any of the following — they will hang, fail, or mislead:**
 
+- `clockwork_session_get` / `clockwork_session_list` for child-task
+  liveness checks. **The session lifecycle is private to the substrate
+  — its row state is NOT a child-status signal.** A live, mid-tool-call
+  child reads as `Status="running", PID=0, ExitCode=null, EndedAt=null`
+  for adapter-mode providers (claude/codex). PID=0 and ExitCode=null are
+  NORMAL for live adapter-mode sessions; treating them as "crashed" is a
+  false-negative that aborts the plan. The only authorized use of
+  `clockwork_session_get` is at boot to look up your OWN session
+  metadata (Step 1) — never to infer whether a child is alive.
 - `curl`, `wget`, raw HTTP `POST`, or any shell command that talks to
   `127.0.0.1:<port>` or `localhost:<port>`. The loopback URL exposed
   via `.mcp.json` is a per-task MCP-protocol endpoint that requires
@@ -58,6 +67,17 @@ status. **The ONLY supported way to poll is the MCP tool surface.**
 - Hardcoded port numbers from prior sessions or guesses. The per-task
   loopback binds to a dynamic port (`127.0.0.1:0`) that is NOT stable
   across tasks or sessions. Do not address it directly.
+
+**Why the allow-list is narrow.** Session-row state is bookkeeping for
+the substrate's process supervisor; it can transiently look terminal
+(or simply ambiguous — `null` exit_code, `0` PID) while the agent is
+mid-`Bash`/`Edit`/`gh`/`go test` tool-call. Long-running tool turns
+(PR creation, govulncheck, `go test -race`) routinely take 5–10
+minutes. The **task FSM** (`task.status`) is the canonical signal for
+"is this child still progressing" — an agent that's working keeps the
+task at `doing` and bumps `updated_at` via tool calls; a real crash
+flips the task to `failed`/`blocked`/`cancelled` via the substrate's
+end-agent comment hook. Read the task, not the session.
 
 **Polling cadence (use whatever sleep / wait primitive your client
 provides; do NOT shell out to `sleep` inside a `bash` loop that also
@@ -261,6 +281,29 @@ hard-error paths where the plan never reaches a terminal status.
 
 When you can't make forward progress (reviewer fail, child stuck at
 review with audit misses, executor permanently blocked):
+
+**Hard precondition before declaring a child "crashed" or escalating
+on a child-liveness diagnosis.** You MUST verify, via
+`clockwork_task_get(id="<child_id>")`, that the child's
+`task.status ∈ {failed, blocked, cancelled}`. A child with
+`task.status=doing` and a recent `updated_at` is NOT crashed — it is
+working, regardless of any session-shaped signal you may have observed
+(PID=0, ExitCode=null, EndedAt=null are all normal for a live
+adapter-mode session mid-tool-call; see the Polling protocol's
+"Why the allow-list is narrow" rationale above). Inferring a child
+crash from `clockwork_session_list` / `clockwork_session_get` output
+is FORBIDDEN — those tools describe substrate process state, not task
+progress. A real child failure also leaves a `[system/end-agent]
+failed` comment on the child task; absence of that comment is
+corroborating evidence the child is still alive.
+
+If `task.status` is still `doing`/`review`, **do not escalate**.
+Re-poll on the cadence defined in the Polling protocol (~30s, 30min
+backstop). Only after the task FSM has moved to a failure/blocked
+state, or the 30-minute backstop has elapsed AND the task's
+`updated_at` is also stale by ≥30 minutes, may you proceed below.
+
+Escalation steps (only after the precondition is satisfied):
 
 1. Add a `[system/orchestrator]` comment on the plan task naming the
    blocker.

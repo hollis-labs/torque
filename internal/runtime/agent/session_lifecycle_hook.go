@@ -251,12 +251,56 @@ func (h *SessionLifecycleHook) ObserveComment(_ context.Context, c *sqlstore.Com
 		if !ok {
 			return
 		}
+		// CW-20260510-0064: belt-and-suspenders against a hallucinated
+		// session-complete marker. If the orchestrator emits the marker
+		// while one of its children is still progressing (task.status ∈
+		// {doing, review}), suppress the stop and log a WARN. The template
+		// fix is the primary guard; this is the substrate-side safety net
+		// against future LLM behavior drift.
+		if h.hasInProgressChild(entityID) {
+			log.Printf("[lifecycle] WARN: suppressing layer-2 stop for plan=%s sess=%s — child task still in progress (doing/review). marker likely false-positive.",
+				entityID, sessID)
+			return
+		}
 		// Layer 2 fires AFTER the orchestrator wrote its final comment, so no
 		// extra grace delay is needed — the orchestrator has already flushed.
 		h.stopSession(ctx, sessID)
 	}) {
 		return
 	}
+}
+
+// hasInProgressChild returns true when the plan task has at least one
+// direct child whose status indicates active work (doing or review). Used
+// by the layer-2 marker observer to guard against premature self-stop in
+// the face of a hallucinated session-complete signal — see
+// CW-20260510-0064 for the incident that motivated the check.
+//
+// The status set is deliberately narrow: `doing` (executor active) and
+// `review` (reviewer end-agent will close it). `todo` is intentionally
+// EXCLUDED — a child still at todo means the orchestrator hasn't
+// dispatched it yet, and the orchestrator emitting session-complete with
+// pending todos is a legitimate "I'm done with this slice" signal (e.g.
+// orchestrator self-block / cancelled-by-user paths). The guard fires
+// only when work is actively in flight.
+func (h *SessionLifecycleHook) hasInProgressChild(planID string) bool {
+	if planID == "" {
+		return false
+	}
+	children, err := h.store.ListTasks(sqlstore.TaskFilter{ParentID: planID})
+	if err != nil {
+		// Conservative on error: don't suppress. The original (pre-CW-0064)
+		// behavior is the fallback — better a false-positive stop than a
+		// silently-wedged orchestrator.
+		return false
+	}
+	for i := range children {
+		switch children[i].Status {
+		case "doing", "review":
+			return true
+		}
+	}
+	return false
 }
 
 // spawnObserver runs fn in a tracked goroutine using the hook's internal ctx.

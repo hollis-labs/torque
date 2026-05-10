@@ -25,6 +25,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -125,28 +126,69 @@ func (s Status) Terminal() bool {
 
 // Session is the public snapshot of a registered session. Manager.Get / List
 // returns these; raw go-agent-sessions handles stay internal.
+//
+// JSON shape note (CW-20260510-0064): pointer fields ExitCode + EndedAt use
+// `omitempty` so a still-running session emits NO field at all rather than
+// `null`. This is defense-in-depth against an LLM (the orchestrator) reading
+// a `null` value as "0" or "-1" and concluding the child crashed. The
+// Terminal field is a derived boolean computed by MarshalJSON — it gives
+// callers an unambiguous "is this session stopped?" signal without having
+// to reason about Status+ExitCode combinations. Field names stay PascalCase
+// for backward compatibility with any operator scripts already shaping
+// against the wire format; the safety win comes from omitempty + Terminal,
+// not from a casing change.
 type Session struct {
-	ID              string
-	Mode            Mode
-	AgentProfile    string
-	Provider        string
-	RuntimeID       string
-	RuntimeKind     string
-	Workdir         string // spawned process cwd (boot dir for claude/codex; project dir for opencode)
-	BootDir         string // ephemeral per-task tempdir
-	WorkspaceDir    string // persistent ~/.clockwork/workspaces/<project>/<sessID>/
-	ProjectID       string
-	TaskID          string
-	ParentSessionID string // ModeSubagent
-	Status          Status
-	PID             int
-	ExitCode        *int
-	ResumeHint      []byte
-	Meta            map[string]string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	LastActivity    time.Time
-	EndedAt         *time.Time
+	ID              string            `json:"ID"`
+	Mode            Mode              `json:"Mode"`
+	AgentProfile    string            `json:"AgentProfile"`
+	Provider        string            `json:"Provider"`
+	RuntimeID       string            `json:"RuntimeID"`
+	RuntimeKind     string            `json:"RuntimeKind"`
+	Workdir         string            `json:"Workdir"`      // spawned process cwd (boot dir for claude/codex; project dir for opencode)
+	BootDir         string            `json:"BootDir"`      // ephemeral per-task tempdir
+	WorkspaceDir    string            `json:"WorkspaceDir"` // persistent ~/.clockwork/workspaces/<project>/<sessID>/
+	ProjectID       string            `json:"ProjectID"`
+	TaskID          string            `json:"TaskID"`
+	ParentSessionID string            `json:"ParentSessionID,omitempty"` // ModeSubagent
+	Status          Status            `json:"Status"`
+	PID             int               `json:"PID"`
+	ExitCode        *int              `json:"ExitCode,omitempty"`
+	ResumeHint      []byte            `json:"ResumeHint,omitempty"`
+	Meta            map[string]string `json:"Meta,omitempty"`
+	CreatedAt       time.Time         `json:"CreatedAt"`
+	UpdatedAt       time.Time         `json:"UpdatedAt"`
+	LastActivity    time.Time         `json:"LastActivity"`
+	EndedAt         *time.Time        `json:"EndedAt,omitempty"`
+}
+
+// sessionWire is the marshal-time projection that adds the derived Terminal
+// field. Defined as a type alias so we can re-use the struct's JSON tags
+// without recursing into Session.MarshalJSON. The alias drops the method
+// set, which is exactly what we want.
+type sessionWire Session
+
+// sessionWireWithTerminal embeds the wire alias and tacks the derived
+// Terminal flag on as the canonical "is this session stopped?" signal. The
+// flag is true only when Status is in the terminal set AND ExitCode has
+// been recorded — both conditions guard against partial-shutdown windows
+// where Status flips ahead of the exit-code persistence (see manager.go's
+// stop path).
+type sessionWireWithTerminal struct {
+	sessionWire
+	Terminal bool `json:"Terminal"`
+}
+
+// MarshalJSON projects Session onto sessionWireWithTerminal so callers see
+// a Terminal boolean. Without this, the orchestrator template would have
+// to reason about the Status+ExitCode product to decide "is the child
+// stopped?" — which is exactly the ambiguity that produced the
+// CW-20260510-0064 false-negative crash diagnosis.
+func (s Session) MarshalJSON() ([]byte, error) {
+	terminal := s.Status.Terminal() && s.ExitCode != nil
+	return json.Marshal(sessionWireWithTerminal{
+		sessionWire: sessionWire(s),
+		Terminal:    terminal,
+	})
 }
 
 // Checkpoint is the public snapshot of a session_checkpoints row.
