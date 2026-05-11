@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/clockwork-manifold/internal/persistence/writequeue"
 )
 
 // CommentObserver is invoked synchronously after a comment is persisted.
@@ -31,7 +32,21 @@ type TaskTransitionObserver interface {
 // task-specific sugar where the call site only ever operates on tasks.
 type CommentService struct {
 	store    *sqlstore.Store
+	writer   writequeue.TelemetryWriter
 	observer CommentObserver // optional; nil disables the observer hook
+}
+
+// SetTelemetryWriter installs an optional telemetry sink for persisted
+// comments. Nil restores direct-write behavior.
+func (s *CommentService) SetTelemetryWriter(w writequeue.TelemetryWriter) {
+	s.writer = w
+}
+
+func (s *CommentService) telemetryWriter() writequeue.TelemetryWriter {
+	if s.writer != nil {
+		return s.writer
+	}
+	return writequeue.NewDirect(s.store)
 }
 
 // SetObserver installs a CommentObserver that runs after every successful Add.
@@ -50,7 +65,7 @@ func (s *CommentService) Add(entityType, entityID, author, content string) (*sql
 		Author:     author,
 		Content:    content,
 	}
-	if err := s.store.AddComment(rec); err != nil {
+	if err := s.telemetryWriter().AddComment(context.Background(), rec); err != nil {
 		return nil, err
 	}
 	if s.observer != nil {

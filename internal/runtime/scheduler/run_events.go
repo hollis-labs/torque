@@ -1,11 +1,13 @@
 package scheduler
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"log"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/clockwork-manifold/internal/persistence/writequeue"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 )
 
@@ -14,7 +16,10 @@ import (
 // of the lifecycle's correctness contract. A failed write never fails a task.
 //
 // runID may be 0 (mapped to NULL) for transitions that pre-date the run record.
-func writeRunEvent(store *sqlstore.Store, runID int64, taskID, eventType string, payload interface{}) {
+func writeRunEvent(ctx context.Context, writer writequeue.TelemetryWriter, runID int64, taskID, eventType string, payload interface{}) {
+	if writer == nil {
+		return
+	}
 	var payloadStr string
 	if payload != nil {
 		b, err := json.Marshal(payload)
@@ -34,7 +39,10 @@ func writeRunEvent(store *sqlstore.Store, runID int64, taskID, eventType string,
 		rec.RunID = sql.NullInt64{Int64: runID, Valid: true}
 	}
 
-	if _, err := store.AppendRunEvent(rec); err != nil {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := writer.AppendRunEvent(ctx, rec); err != nil {
 		log.Printf("[scheduler] run_event append failed (task=%s type=%s): %v", taskID, eventType, err)
 	}
 }

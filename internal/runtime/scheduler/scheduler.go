@@ -15,9 +15,11 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/modelcatalog"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/clockwork-manifold/internal/persistence/writequeue"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/queue"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/waitpoll"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/writeq"
 	"github.com/hollis-labs/clockwork-manifold/internal/worktree"
 )
 
@@ -28,12 +30,13 @@ func envRepoRoot() string { return os.Getenv("CLOCKWORK_REPO") }
 
 // SchedulerStatus reports the current state of the scheduler.
 type SchedulerStatus struct {
-	Enabled       bool    `json:"enabled"`
-	MaxWorkers    int     `json:"max_workers"`
-	ActiveWorkers int     `json:"active_workers"`
-	QueueDepth    int     `json:"queue_depth"`
-	TotalCost     float64 `json:"total_cost"`
-	Subscribers   int     `json:"subscribers"`
+	Enabled             bool    `json:"enabled"`
+	MaxWorkers          int     `json:"max_workers"`
+	ActiveWorkers       int     `json:"active_workers"`
+	QueueDepth          int     `json:"queue_depth"`
+	TelemetryQueueDepth int     `json:"telemetry_queue_depth"`
+	TotalCost           float64 `json:"total_cost"`
+	Subscribers         int     `json:"subscribers"`
 	// StaleHeartbeatThresholdSeconds is the number of seconds since a
 	// worker's last heartbeat after which it is considered stale and its
 	// row is pruned by the next scheduler tick. Surfaced here so operators
@@ -61,6 +64,8 @@ type Scheduler struct {
 	progressThrottler *progressThrottler
 	progressHeartbeat *progressHeartbeat
 	cancels           *cancelRegistry
+	telemetryWriter   writequeue.TelemetryWriter
+	stateWriter       writeq.Writer
 
 	// cancelGrace is how long the worker gives a child process to exit
 	// after SIGTERM before escalating to SIGKILL. Sourced from
@@ -155,12 +160,17 @@ func New(
 		progressThrottler: newProgressThrottler(progressTokensWindow),
 		progressHeartbeat: newProgressHeartbeat(bus, time.Duration(cfg.HeartbeatProgressSeconds)*time.Second),
 		cancels:           newCancelRegistry(),
+		telemetryWriter:   writequeue.NewDirect(store),
+		stateWriter:       writeq.NewDirect(store),
 		cancelGrace:       cancelGraceFromEnv(),
 		enabled:           cfg.Enabled,
 		results:           results,
 		stopCh:            make(chan struct{}),
 		pickerDebug:       isPickerDebugEnabled(),
 	}
+	s.lifecycle.SetTelemetryWriter(s.telemetryWriter)
+	s.cost.SetTelemetryWriter(s.telemetryWriter)
+	s.lifecycle.SetStateWriter(s.stateWriter)
 
 	// Subscribe to DB-driven task transitions so that a manual / external
 	// task_transition out of "doing" cancels the in-flight worker's
@@ -178,6 +188,29 @@ func New(
 	})
 
 	return s
+}
+
+// SetTelemetryWriter swaps the queue/direct sink used for telemetry-class
+// writes such as run_events and cost_ledger. Nil is ignored.
+func (s *Scheduler) SetTelemetryWriter(w writequeue.TelemetryWriter) {
+	if w == nil {
+		return
+	}
+	s.telemetryWriter = w
+	s.lifecycle.SetTelemetryWriter(w)
+	s.cost.SetTelemetryWriter(w)
+}
+
+// SetStateWriter swaps the serialized state writer used by dispatch and
+// lifecycle paths. Nil is ignored.
+func (s *Scheduler) SetStateWriter(w writeq.Writer) {
+	if w == nil {
+		return
+	}
+	s.stateWriter = w
+	if s.lifecycle != nil {
+		s.lifecycle.SetStateWriter(w)
+	}
 }
 
 // cancelGraceFromEnv parses CLOCKWORK_SCHED_CANCEL_GRACE (duration string
@@ -222,6 +255,10 @@ func (s *Scheduler) Status() SchedulerStatus {
 	s.mu.RUnlock()
 
 	depth, _ := s.queue.Depth(context.Background())
+	telemetryDepth := 0
+	if s.telemetryWriter != nil {
+		telemetryDepth, _ = s.telemetryWriter.Depth(context.Background())
+	}
 	total, _ := s.cost.GlobalTotal()
 
 	return SchedulerStatus{
@@ -229,6 +266,7 @@ func (s *Scheduler) Status() SchedulerStatus {
 		MaxWorkers:                     s.cfg.Workers,
 		ActiveWorkers:                  s.pool.ActiveCount(),
 		QueueDepth:                     depth,
+		TelemetryQueueDepth:            telemetryDepth,
 		TotalCost:                      total,
 		Subscribers:                    s.bus.SubscriberCount(),
 		StaleHeartbeatThresholdSeconds: s.cfg.StaleSeconds,
@@ -413,19 +451,39 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		}
 	}
 
-	// Transition to doing
-	if err := s.store.TransitionTask(task.ID, "doing"); err != nil {
-		return fmt.Errorf("transition to doing: %w", err)
-	}
-
-	// Create run record
-	runID, err := s.store.CreateRun(&sqlstore.RunRecord{
-		TaskID:   task.ID,
-		Executor: task.Executor,
-		Status:   "running",
-	})
-	if err != nil {
-		return fmt.Errorf("create run: %w", err)
+	var runID int64
+	if err := s.stateWriter.Submit(ctx, "scheduler_dispatch", func(tx *sqlstore.WriteTx) error {
+		if err := tx.TransitionTask(task.ID, "doing"); err != nil {
+			return fmt.Errorf("transition to doing: %w", err)
+		}
+		var err error
+		runID, err = tx.CreateRun(&sqlstore.RunRecord{
+			TaskID:   task.ID,
+			Executor: task.Executor,
+			Status:   "running",
+		})
+		if err != nil {
+			return fmt.Errorf("create run: %w", err)
+		}
+		if _, err := tx.AppendRunEvent(&sqlstore.RunEventRecord{
+			RunID:   sql.NullInt64{Int64: runID, Valid: true},
+			TaskID:  task.ID,
+			Type:    "task_transitioned",
+			Payload: `{"from":"todo","to":"doing"}`,
+		}); err != nil {
+			return err
+		}
+		if _, err := tx.AppendRunEvent(&sqlstore.RunEventRecord{
+			RunID:   sql.NullInt64{Int64: runID, Valid: true},
+			TaskID:  task.ID,
+			Type:    "run_started",
+			Payload: fmt.Sprintf(`{"executor":%q}`, task.Executor),
+		}); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	// Build execution job. RunID must be the DB-issued runs.id so the
@@ -457,14 +515,6 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	// Register heartbeat
 	workerID := fmt.Sprintf("worker-%s-%d", task.ID, runID)
 	s.heartbeat.Register(workerID, task.ID, runID, task.Executor)
-
-	writeRunEvent(s.store, runID, task.ID, "task_transitioned", map[string]string{
-		"from": "todo",
-		"to":   "doing",
-	})
-	writeRunEvent(s.store, runID, task.ID, "run_started", map[string]string{
-		"executor": task.Executor,
-	})
 
 	s.bus.Publish(SchedulerEvent{
 		Type:   "task.transitioned",
@@ -566,7 +616,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 			// The scheduler no longer parses inline signal text; the MCP
 			// handlers in internal/mcpadapter own those code paths.
 
-			writeRunEvent(s.store, capturedRunID, capturedTaskID, runEventType(event), runEventPayload(event))
+			writeRunEvent(context.Background(), s.telemetryWriter, capturedRunID, capturedTaskID, runEventType(event), runEventPayload(event))
 
 			s.bus.Publish(SchedulerEvent{
 				Type:   "run.event",
@@ -592,13 +642,23 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		// intact and gives operators a clear signal.
 		if capturedDispatchCtx.Err() != nil {
 			reason := "task_transition_out_of_doing"
-			s.store.CompleteRun(capturedRunID, sqlstore.RunCompletion{
-				Status:       "canceled",
-				ErrorMessage: reason,
-			})
-			writeRunEvent(s.store, capturedRunID, capturedTaskID, "run_canceled", map[string]string{
-				"reason": reason,
-			})
+			if err := s.stateWriter.Submit(context.Background(), "scheduler_run_canceled", func(tx *sqlstore.WriteTx) error {
+				if err := tx.CompleteRun(capturedRunID, sqlstore.RunCompletion{
+					Status:       "canceled",
+					ErrorMessage: reason,
+				}); err != nil {
+					return err
+				}
+				_, err := tx.AppendRunEvent(&sqlstore.RunEventRecord{
+					RunID:   sql.NullInt64{Int64: capturedRunID, Valid: true},
+					TaskID:  capturedTaskID,
+					Type:    "run_canceled",
+					Payload: fmt.Sprintf(`{"reason":%q}`, reason),
+				})
+				return err
+			}); err != nil {
+				log.Printf("[scheduler] run cancel write failed for %s (run %d): %v", capturedTaskID, capturedRunID, err)
+			}
 			s.bus.Publish(SchedulerEvent{
 				Type:   "run.canceled",
 				TaskID: capturedTaskID,
@@ -616,24 +676,39 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		}
 
 		if err != nil {
-			// Complete run with error
-			s.store.CompleteRun(capturedRunID, sqlstore.RunCompletion{
-				Status:       "failed",
-				ErrorMessage: err.Error(),
-			})
+			if werr := s.stateWriter.Submit(context.Background(), "scheduler_run_failed", func(tx *sqlstore.WriteTx) error {
+				return tx.CompleteRun(capturedRunID, sqlstore.RunCompletion{
+					Status:       "failed",
+					ErrorMessage: err.Error(),
+				})
+			}); werr != nil {
+				log.Printf("[scheduler] run failure write failed for %s (run %d): %v", capturedTaskID, capturedRunID, werr)
+			}
 			// TODO(path-b): write run_completed run_event here too so failed-run observability
 			// doesn't require cross-referencing task_transitioned. Success path writes it at
 			// line ~287; failure path transitions via lifecycle which writes task_transitioned.
 			return nil, err
 		}
 
-		// Complete run with result
-		s.store.CompleteRun(capturedRunID, sqlstore.RunCompletion{
-			Status:           result.Status,
-			PromptTokens:     result.Tokens.PromptTokens,
-			CompletionTokens: result.Tokens.CompletionTokens,
-			Cost:             result.Cost,
-		})
+		if err := s.stateWriter.Submit(context.Background(), "scheduler_run_completed", func(tx *sqlstore.WriteTx) error {
+			if err := tx.CompleteRun(capturedRunID, sqlstore.RunCompletion{
+				Status:           result.Status,
+				PromptTokens:     result.Tokens.PromptTokens,
+				CompletionTokens: result.Tokens.CompletionTokens,
+				Cost:             result.Cost,
+			}); err != nil {
+				return err
+			}
+			_, err := tx.AppendRunEvent(&sqlstore.RunEventRecord{
+				RunID:   sql.NullInt64{Int64: capturedRunID, Valid: true},
+				TaskID:  capturedTaskID,
+				Type:    "run_completed",
+				Payload: fmt.Sprintf(`{"status":%q,"cost":%v}`, result.Status, result.Cost),
+			})
+			return err
+		}); err != nil {
+			log.Printf("[scheduler] run completion write failed for %s (run %d): %v", capturedTaskID, capturedRunID, err)
+		}
 
 		// Record cost. resolveCost decides whether the executor's reported
 		// figure is authoritative or whether to backfill from the models.dev
@@ -652,11 +727,6 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 			PromptTokens:     result.Tokens.PromptTokens,
 			CompletionTokens: result.Tokens.CompletionTokens,
 			Source:           source,
-		})
-
-		writeRunEvent(s.store, capturedRunID, capturedTaskID, "run_completed", map[string]interface{}{
-			"status": result.Status,
-			"cost":   result.Cost,
 		})
 
 		s.bus.Publish(SchedulerEvent{
@@ -696,28 +766,41 @@ func (s *Scheduler) handlePermanentValidationError(task sqlstore.TaskRecord, ver
 	// Audit: single runs row with status=blocked + error_message. If the
 	// CreateRun write fails we still proceed to block the task — the task
 	// state is the operator-facing signal, the runs row is supporting audit.
-	runID, rerr := s.store.CreateRun(&sqlstore.RunRecord{
-		TaskID:       task.ID,
-		Executor:     task.Executor,
-		Status:       "blocked",
-		ErrorMessage: reason,
-	})
-	if rerr != nil {
-		log.Printf("[scheduler] audit run create failed for %s: %v", task.ID, rerr)
-	}
-
-	if err := s.store.TransitionTaskWithReason(task.ID, "blocked", reason); err != nil {
+	var runID int64
+	if err := s.stateWriter.Submit(context.Background(), "scheduler_permanent_validation", func(tx *sqlstore.WriteTx) error {
+		var err error
+		runID, err = tx.CreateRun(&sqlstore.RunRecord{
+			TaskID:       task.ID,
+			Executor:     task.Executor,
+			Status:       "blocked",
+			ErrorMessage: reason,
+		})
+		if err != nil {
+			return err
+		}
+		if err := tx.TransitionTaskWithReason(task.ID, "blocked", reason); err != nil {
+			return err
+		}
+		if _, err := tx.AppendRunEvent(&sqlstore.RunEventRecord{
+			RunID:   sql.NullInt64{Int64: runID, Valid: true},
+			TaskID:  task.ID,
+			Type:    "task_transitioned",
+			Payload: fmt.Sprintf(`{"from":"todo","to":"blocked","reason":%q}`, reason),
+		}); err != nil {
+			return err
+		}
+		if _, err := tx.AppendRunEvent(&sqlstore.RunEventRecord{
+			RunID:   sql.NullInt64{Int64: runID, Valid: true},
+			TaskID:  task.ID,
+			Type:    "run_blocked_permanent",
+			Payload: fmt.Sprintf(`{"reason":%q}`, reason),
+		}); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
 		return fmt.Errorf("transition to blocked: %w", err)
 	}
-
-	writeRunEvent(s.store, runID, task.ID, "task_transitioned", map[string]string{
-		"from":   "todo",
-		"to":     "blocked",
-		"reason": reason,
-	})
-	writeRunEvent(s.store, runID, task.ID, "run_blocked_permanent", map[string]string{
-		"reason": reason,
-	})
 
 	s.bus.Publish(SchedulerEvent{
 		Type:   "task.transitioned",

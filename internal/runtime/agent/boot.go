@@ -276,7 +276,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	var onSessionID func(string)
 	if caps.ProviderSessionID && deps.Store != nil {
 		onSessionID = func(id string) {
-			_ = deps.Store.UpdateSessionResumeHint(sessID, []byte(id))
+			_ = deps.UpdateSessionResumeHint(context.Background(), sessID, []byte(id))
 		}
 	}
 
@@ -318,7 +318,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		ResumeHint:   resumeHint,
 		MetaJSON:     metaJSON,
 	}
-	if err := deps.Store.CreateSession(rec); err != nil {
+	if err := deps.CreateSession(context.Background(), rec); err != nil {
 		_ = os.RemoveAll(layout.BootDir)
 		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: create session row: %v", ErrBootFailed, err)
@@ -701,4 +701,3 @@ func isApiKeyHelperExecutable(path string) bool {
 	// At least one execute bit (owner / group / other).
 	return st.Mode().Perm()&0o111 != 0
 }
-

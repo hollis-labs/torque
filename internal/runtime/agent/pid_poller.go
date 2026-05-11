@@ -88,7 +88,7 @@ func pollPid(mgr *Manager, sessID string, interval time.Duration, stop <-chan st
 			// New subprocess (turn started). Write running+pid; this is the
 			// only path that records the actual claude pid for the orphan
 			// sweep's syscall.Kill(pid, 0) liveness check.
-			if err := mgr.deps.Store.UpdateSessionState(sessID, string(agentsessions.StateRunning), pid, nil); err == nil {
+			if err := mgr.deps.UpdateSessionState(context.Background(), sessID, string(agentsessions.StateRunning), pid, nil); err == nil {
 				lastPID = pid
 			}
 			continue
@@ -97,6 +97,6 @@ func pollPid(mgr *Manager, sessID string, interval time.Duration, stop <-chan st
 		// so dashboards see the row is alive. UpdateSessionState with pid=0
 		// does not overwrite the stored pid (sqlstore COALESCE behavior), so
 		// the most-recent live pid is preserved for the sweep liveness check.
-		_ = mgr.deps.Store.TouchSession(sessID)
+		_ = mgr.deps.TouchSession(context.Background(), sessID)
 	}
 }

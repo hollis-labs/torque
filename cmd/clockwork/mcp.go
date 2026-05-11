@@ -85,7 +85,7 @@ func mcpCmd() *cobra.Command {
 			// surface a `not running` error when called against this stdio
 			// instance, matching the HTTP 503 contract documented in
 			// mcpadapter.New's nil-sched godoc.
-			agentDeps, agentDepsClose, err := bootstrap.AgentDeps(store, profiles, svc, nil, nil)
+			agentDeps, agentDepsClose, err := bootstrap.AgentDeps(store, profiles, svc, nil, nil, nil)
 			if err != nil {
 				return fmt.Errorf("bootstrap agent deps: %w", err)
 			}

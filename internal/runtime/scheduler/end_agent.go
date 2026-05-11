@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"database/sql"
 	_ "embed"
 	"encoding/json"
@@ -182,7 +183,7 @@ func (lm *LifecycleManager) commentEndAgentFailure(internal *sqlstore.TaskRecord
 		content += ": " + reason
 	}
 	content += " — target stays at `review`; human follow-up required."
-	if err := lm.store.AddComment(&sqlstore.CommentRecord{
+	if err := lm.telemetry.AddComment(context.Background(), &sqlstore.CommentRecord{
 		EntityType: sqlstore.EntityTypeTask,
 		EntityID:   internal.ParentID.String,
 		Author:     EndAgentAuthor,
@@ -210,4 +211,3 @@ func shouldCommentEndAgentFailure(task *sqlstore.TaskRecord, newStatus string) b
 	}
 	return false
 }
-

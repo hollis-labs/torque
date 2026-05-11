@@ -11,6 +11,7 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/writeq"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 	"github.com/hollis-labs/clockwork-manifold/internal/toolbroker"
 )
@@ -42,6 +43,7 @@ func AgentDeps(
 	svc *service.Service,
 	tools *toolbroker.ToolRouter,
 	bus *scheduler.EventBus,
+	stateWriter writeq.Writer,
 ) (*agent.Dependencies, func(), error) {
 	if store == nil {
 		return nil, nil, fmt.Errorf("agent deps bootstrap: store is nil")
@@ -60,6 +62,7 @@ func AgentDeps(
 
 	deps := &agent.Dependencies{
 		Store:            store,
+		StateWriter:      stateWriter,
 		Profiles:         profiles,
 		Tools:            tools,
 		Bus:              bus,
