@@ -135,7 +135,8 @@ func (a *Adapter) handleSprintUpdate(ctx context.Context, req mcp.CallToolReques
 		update.CostBudget = &v
 		hasUpdate = true
 	}
-	if v := reqStr(req, "project_id"); v != "" {
+	if reqHasArg(req, "project_id") {
+		v := reqStr(req, "project_id")
 		update.ProjectID = &v
 		hasUpdate = true
 	}
