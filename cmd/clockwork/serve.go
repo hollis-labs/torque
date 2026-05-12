@@ -116,7 +116,7 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	if !filepath.IsAbs(telemetryQueuePath) {
 		telemetryQueuePath = filepath.Join(cfg.DataDir, telemetryQueuePath)
 	}
-	telemetryDB, err := writequeue.OpenDB(telemetryQueuePath)
+	telemetryDB, err := writequeue.OpenDB(ctx, telemetryQueuePath)
 	if err != nil {
 		return fmt.Errorf("open telemetry queue: %w", err)
 	}

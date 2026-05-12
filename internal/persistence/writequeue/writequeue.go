@@ -11,10 +11,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	queue "github.com/hollis-labs/go-queue"
 	qsqlite "github.com/hollis-labs/go-queue/driver/sqlite"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/appdb"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/go-sqlite/sqlitekit"
 )
 
 const (
@@ -57,32 +57,18 @@ func DefaultConfig() Config {
 }
 
 // OpenDB opens the dedicated queue.db connection used by the write queue.
-func OpenDB(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", appdb.SQLiteDSN(path, appdb.SQLiteDSNOptions{
-		BusyTimeoutMs:    appdb.DefaultSQLiteBusyTimeoutMs,
-		IncludeCacheSize: true,
-	}))
+//
+// The handle is a single-connection writer pool: SQLite serializes writes and
+// pinning to one conn makes SQLITE_BUSY impossible from within this process.
+// WAL, busy_timeout, synchronous=NORMAL, and temp_store=memory are applied via
+// the DSN by sqlitekit so every (re)connection inherits them.
+func OpenDB(ctx context.Context, path string) (*sql.DB, error) {
+	db, err := sqlitekit.OpenSingle(ctx, path, sqlitekit.OpenOptions{
+		Options:         sqlitekit.WriterOptions(),
+		CreateParentDir: true,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("open writequeue db: %w", err)
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-
-	pragmas := []string{
-		"PRAGMA journal_mode=WAL",
-		fmt.Sprintf("PRAGMA busy_timeout=%d", appdb.DefaultSQLiteBusyTimeoutMs),
-		"PRAGMA synchronous=NORMAL",
-		"PRAGMA temp_store=memory",
-	}
-	for _, pragma := range pragmas {
-		if _, err := db.Exec(pragma); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("apply %q: %w", pragma, err)
-		}
-	}
-	if err := db.Ping(); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("ping writequeue db: %w", err)
 	}
 	return db, nil
 }
