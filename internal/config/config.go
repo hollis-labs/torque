@@ -16,6 +16,28 @@ type Config struct {
 	Scheduler   SchedulerConfig
 	Concurrency ConcurrencyConfig
 	Merge       MergeConfig
+	Stuck       StuckConfig
+}
+
+// StuckConfig holds tunables for the agentic-execution stuck-task recovery
+// probe (CW-20260512-0063, sprint α.5). The probe state machine lives in
+// internal/runtime/stuck; this struct just exposes the operator knobs.
+//
+// Trigger wireup status: no upstream "stuck signal" exists today — the
+// probe is callable but unwired. When that wireup lands (separate ticket),
+// this is where its tuning lives.
+type StuckConfig struct {
+	// WaitSeconds is the WAIT-phase timeout. The probe sends the
+	// "are you stuck?" user-turn input and then waits up to this many
+	// seconds for a status_update envelope tagged with the task's id.
+	// On timeout the probe falls through to checkpoint+resume.
+	//
+	// Default 90 (the midpoint of the sprint-α α.5 60–120s range). Set
+	// CLOCKWORK_STUCK_WAIT_SECONDS to override. The stuck package also
+	// exports a DefaultWaitTimeout that callers passing a zero
+	// ProbeInput.WaitTimeout inherit directly; this config field is for
+	// the production trigger wireup once that lands.
+	WaitSeconds int
 }
 
 type ConcurrencyConfig struct {
@@ -125,6 +147,11 @@ func Load() (*Config, error) {
 			ConfidenceThreshold:   envFloat("CLOCKWORK_MERGE_CONFIDENCE", 0.8),
 			MaxResolutionAttempts: envInt("CLOCKWORK_MERGE_MAX_ATTEMPTS", 1),
 			NotifyOnConflict:      envBool("CLOCKWORK_MERGE_NOTIFY", true),
+		},
+		Stuck: StuckConfig{
+			// 90s = midpoint of the sprint-α α.5 60–120s range. Tuning
+			// notes on StuckConfig.WaitSeconds.
+			WaitSeconds: envInt("CLOCKWORK_STUCK_WAIT_SECONDS", 90),
 		},
 	}
 	return cfg, nil
