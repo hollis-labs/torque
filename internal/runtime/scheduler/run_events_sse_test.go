@@ -20,7 +20,7 @@ func setupRunEventsScheduler(t *testing.T, mock *executor.MockExecutor) (*schedu
 	t.Helper()
 	store := sqlitetest.OpenStore(t)
 
-	q, err := queue.Open(filepath.Join(t.TempDir(), "queue.db"))
+	q, err := queue.Open(context.Background(), filepath.Join(t.TempDir(), "queue.db"))
 	require.NoError(t, err)
 
 	registry := executor.NewRegistry()

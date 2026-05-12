@@ -2,7 +2,6 @@ package broker_test
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"path/filepath"
 	"strings"
@@ -13,9 +12,9 @@ import (
 
 	"github.com/hollis-labs/clockwork-manifold/internal/broker"
 	clockmsg "github.com/hollis-labs/clockwork-manifold/internal/messaging"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/appdb"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
 	gomsg "github.com/hollis-labs/go-messaging"
+	"github.com/hollis-labs/go-sqlite/sqlitekit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
@@ -56,12 +55,7 @@ func setupBroker(t *testing.T) (*broker.Broker, *memoryHub, gomsg.Store) {
 	// data when the pool opens a second connection mid-test (concurrent
 	// fan-in tripped over this), mirroring messaging/sqlstore_test.
 	dir := t.TempDir()
-	dsn := appdb.SQLiteDSN(filepath.Join(dir, "broker.db"), appdb.SQLiteDSNOptions{
-		BusyTimeoutMs:    appdb.DefaultSQLiteBusyTimeoutMs,
-		IncludeCacheSize: true,
-		TxLock:           "immediate",
-	})
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sqlitekit.OpenWriter(context.Background(), filepath.Join(dir, "broker.db"), sqlitekit.OpenOptions{Options: sqlitekit.WriterOptions()})
 	require.NoError(t, err)
 	require.NoError(t, migrations.Run(db))
 	t.Cleanup(func() { db.Close() })
@@ -347,12 +341,7 @@ func TestBroker_Validation(t *testing.T) {
 // New(store, nil) doesn't crash on Send.
 func TestBroker_NilHubIsSafe(t *testing.T) {
 	dir := t.TempDir()
-	dsn := appdb.SQLiteDSN(filepath.Join(dir, "broker.db"), appdb.SQLiteDSNOptions{
-		BusyTimeoutMs:    appdb.DefaultSQLiteBusyTimeoutMs,
-		IncludeCacheSize: true,
-		TxLock:           "immediate",
-	})
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sqlitekit.OpenWriter(context.Background(), filepath.Join(dir, "broker.db"), sqlitekit.OpenOptions{Options: sqlitekit.WriterOptions()})
 	require.NoError(t, err)
 	require.NoError(t, migrations.Run(db))
 	defer db.Close()

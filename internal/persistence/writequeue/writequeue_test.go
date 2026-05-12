@@ -36,7 +36,7 @@ func setupWriter(t *testing.T, cfg writequeue.Config) (*sqlstore.Store, *writequ
 	require.NoError(t, store.CreateTask(task))
 
 	queuePath := filepath.Join(dir, "queue.db")
-	queueDB, err := writequeue.OpenDB(queuePath)
+	queueDB, err := writequeue.OpenDB(context.Background(), queuePath)
 	require.NoError(t, err)
 
 	writer, err := writequeue.New(store, queueDB, cfg)

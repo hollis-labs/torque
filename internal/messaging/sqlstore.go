@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hollis-labs/go-messaging"
+	"github.com/hollis-labs/go-sqlite/txutil"
 )
 
 // Compile-time assertion: *Store satisfies messaging.Store.
@@ -107,78 +108,61 @@ func (s *Store) Get(ctx context.Context, id string) (messaging.Envelope, error) 
 // Inbox returns undelivered envelopes for `to`, chronologically. Atomically
 // marks the returned envelopes as DeliveredAt=now for `to`.
 //
-// Implementation note: we serialize Inbox calls behind a write transaction
-// pinned to a single connection (via sql.Conn) and explicit BEGIN IMMEDIATE.
-// SQLite's default DEFERRED tx upgrades on the first write; under
-// concurrent readers the upgrade fails with SQLITE_BUSY (517) and the
-// busy_timeout PRAGMA does not retry mid-tx upgrades. IMMEDIATE acquires
-// the RESERVED lock up front, so concurrent Inbox calls queue on
-// busy_timeout rather than racing on the upgrade.
+// txutil.WithImmediate acquires the writer lock at BEGIN time so concurrent
+// Inbox calls queue on busy_timeout rather than racing on a mid-tx
+// upgrade. This depends on the underlying *sql.DB having
+// _txlock=immediate on its DSN — Clockwork's writer pool is opened via
+// sqlitekit.OpenWriter (see internal/persistence/appdb/open.go), which
+// sets that.
 func (s *Store) Inbox(ctx context.Context, to messaging.Address, f messaging.Filter) ([]messaging.Envelope, error) {
 	toURN := to.URN()
 	now := time.Now().UTC()
 
-	conn, err := s.db.Conn(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("acquire conn: %w", err)
-	}
-	defer conn.Close()
-
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return nil, fmt.Errorf("begin immediate: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
-		}
-	}()
-
-	q := baseSelectFromTx + `
-        WHERE m.to_urn = ?
-          AND m.id NOT IN (SELECT message_id FROM message_deliveries WHERE recipient_urn = ?)
-          AND m.canceled_at IS NULL`
-	args := []any{toURN, toURN}
-	q, args = applyFilter(q, args, f)
-	q += ` ORDER BY m.created_at ASC, m.id ASC`
-	if f.Limit > 0 {
-		q += fmt.Sprintf(` LIMIT %d`, f.Limit)
-	}
-
-	rows, err := conn.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("query inbox: %w", err)
-	}
-
 	var envs []messaging.Envelope
-	for rows.Next() {
-		env, err := scanEnvelope(rows)
-		if err != nil {
-			rows.Close()
-			return nil, fmt.Errorf("scan inbox row: %w", err)
+	err := txutil.WithImmediate(ctx, s.db, func(tx *sql.Tx) error {
+		q := baseSelectFromTx + `
+            WHERE m.to_urn = ?
+              AND m.id NOT IN (SELECT message_id FROM message_deliveries WHERE recipient_urn = ?)
+              AND m.canceled_at IS NULL`
+		args := []any{toURN, toURN}
+		q, args = applyFilter(q, args, f)
+		q += ` ORDER BY m.created_at ASC, m.id ASC`
+		if f.Limit > 0 {
+			q += fmt.Sprintf(` LIMIT %d`, f.Limit)
 		}
-		envs = append(envs, env)
-	}
-	rowsErr := rows.Err()
-	rows.Close()
-	if rowsErr != nil {
-		return nil, fmt.Errorf("iterate inbox: %w", rowsErr)
-	}
 
-	for i := range envs {
-		_, err := conn.ExecContext(ctx,
-			`INSERT INTO message_deliveries (message_id, recipient_urn, delivered_at) VALUES (?, ?, ?)`,
-			envs[i].ID, toURN, now)
+		rows, err := tx.QueryContext(ctx, q, args...)
 		if err != nil {
-			return nil, fmt.Errorf("mark delivered %s: %w", envs[i].ID, err)
+			return fmt.Errorf("query inbox: %w", err)
 		}
-		t := now
-		envs[i].DeliveredAt = &t
+		for rows.Next() {
+			env, scanErr := scanEnvelope(rows)
+			if scanErr != nil {
+				rows.Close()
+				return fmt.Errorf("scan inbox row: %w", scanErr)
+			}
+			envs = append(envs, env)
+		}
+		rowsErr := rows.Err()
+		rows.Close()
+		if rowsErr != nil {
+			return fmt.Errorf("iterate inbox: %w", rowsErr)
+		}
+
+		for i := range envs {
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO message_deliveries (message_id, recipient_urn, delivered_at) VALUES (?, ?, ?)`,
+				envs[i].ID, toURN, now); err != nil {
+				return fmt.Errorf("mark delivered %s: %w", envs[i].ID, err)
+			}
+			t := now
+			envs[i].DeliveredAt = &t
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return nil, fmt.Errorf("commit inbox tx: %w", err)
-	}
-	committed = true
 	return envs, nil
 }
 

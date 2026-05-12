@@ -6,11 +6,24 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/hollis-labs/go-sqlite/txutil"
 )
 
 // WriteTx is a transaction-scoped helper for serialized runtime state writes.
 // Callers may queue multiple logical ops into one SQL transaction and defer
 // transition-hook fanout until the transaction commits.
+//
+// The store's writer handle is opened with _txlock=immediate (via
+// sqlitekit.OpenWriter), so BEGIN issued by BeginWriteTx is a BEGIN IMMEDIATE:
+// the writer lock is acquired at transaction start, eliminating the
+// upgrade-mid-tx → SQLITE_BUSY race. txutil.BeginImmediate is used here as the
+// contract marker for that requirement.
+//
+// txutil.WithImmediate (the closure-shaped helper) is not used because
+// WriteTx is intentionally a stateful handle: callers chain multiple
+// Exec/QueryRow ops, accumulate afterCommit hooks, and decide whether to
+// Commit or Rollback based on state outside the transaction.
 type WriteTx struct {
 	store       *Store
 	tx          *sql.Tx
@@ -18,11 +31,12 @@ type WriteTx struct {
 }
 
 // BeginWriteTx opens a write transaction against the store's writer handle.
+// See WriteTx for the immediate-lock contract.
 func (s *Store) BeginWriteTx(ctx context.Context) (*WriteTx, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := txutil.BeginImmediate(ctx, s.db)
 	if err != nil {
 		return nil, err
 	}

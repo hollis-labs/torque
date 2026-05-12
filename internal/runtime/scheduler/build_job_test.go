@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"database/sql"
 	"path/filepath"
 	"testing"
@@ -96,7 +97,7 @@ func setupBuildJobScheduler(t *testing.T) (*Scheduler, *sqlstore.Store) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	reg := executor.NewRegistry()
-	q, err := queue.Open(filepath.Join(t.TempDir(), "queue.db"))
+	q, err := queue.Open(context.Background(), filepath.Join(t.TempDir(), "queue.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = q.Close() })
 	sched := New(store, q, reg, nil, &config.SchedulerConfig{Workers: 1, Enabled: true, StaleSeconds: 300})

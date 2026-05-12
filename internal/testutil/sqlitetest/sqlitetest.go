@@ -1,22 +1,23 @@
 package sqlitetest
 
 import (
+	"context"
 	"database/sql"
-	"fmt"
-	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/go-sqlite/sqlitekit"
 	_ "modernc.org/sqlite"
 )
 
-const defaultBusyTimeoutMs = 5000
+const defaultBusyTimeout = 5 * time.Second
 
 type config struct {
-	busyTimeoutMs   int
+	busyTimeout     time.Duration
 	maxOpenConns    int
 	setMaxOpenConns bool
 }
@@ -25,7 +26,7 @@ type Option func(*config)
 
 func newConfig(opts ...Option) config {
 	cfg := config{
-		busyTimeoutMs: defaultBusyTimeoutMs,
+		busyTimeout: defaultBusyTimeout,
 	}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -40,7 +41,7 @@ func WithBusyTimeout(ms int) Option {
 		if ms <= 0 {
 			panic("sqlitetest.WithBusyTimeout requires ms > 0")
 		}
-		cfg.busyTimeoutMs = ms
+		cfg.busyTimeout = time.Duration(ms) * time.Millisecond
 	}
 }
 
@@ -77,10 +78,8 @@ func OpenStore(t *testing.T, opts ...Option) *sqlstore.Store {
 		_ = db.Close()
 		t.Fatalf("create sqlite test store: %v", err)
 	}
-	requireBusyTimeout(t, store.DB(), cfg.busyTimeoutMs)
-	if store.ReadDB() != store.DB() {
-		requireBusyTimeout(t, store.ReadDB(), cfg.busyTimeoutMs)
-	}
+	// sqlitekit applies busy_timeout via the DSN to every connection in both
+	// the writer and reader pools, so no explicit PRAGMA exec is needed.
 	if cfg.setMaxOpenConns {
 		store.ReadDB().SetMaxOpenConns(cfg.maxOpenConns)
 		store.ReadDB().SetMaxIdleConns(cfg.maxOpenConns)
@@ -94,19 +93,10 @@ func openDB(t *testing.T, cfg config) *sql.DB {
 	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), sanitizeName(t.Name())+".db")
-	q := url.Values{}
-	q.Add("_pragma", "journal_mode(WAL)")
-	q.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", cfg.busyTimeoutMs))
-	q.Add("_pragma", "foreign_keys(1)")
-	q.Add("_pragma", "synchronous(NORMAL)")
-	q.Add("_pragma", "temp_store(memory)")
-	q.Add("_pragma", "mmap_size(30000000000)")
-	q.Add("_pragma", "journal_size_limit(67108864)")
-	q.Add("_pragma", "cache_size(-64000)")
-	q.Set("_txlock", "immediate")
-	dsn := (&url.URL{Scheme: "file", Path: dbPath, RawQuery: q.Encode()}).String()
+	writerOpts := sqlitekit.WriterOptions()
+	writerOpts.BusyTimeout = cfg.busyTimeout
 
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sqlitekit.OpenWriter(context.Background(), dbPath, sqlitekit.OpenOptions{Options: writerOpts})
 	if err != nil {
 		t.Fatalf("open sqlite test db: %v", err)
 	}
@@ -118,14 +108,6 @@ func requireMigrations(t *testing.T, db *sql.DB) {
 	if err := migrations.Run(db); err != nil {
 		_ = db.Close()
 		t.Fatalf("run sqlite test migrations: %v", err)
-	}
-}
-
-func requireBusyTimeout(t *testing.T, db *sql.DB, ms int) {
-	t.Helper()
-	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d", ms)); err != nil {
-		_ = db.Close()
-		t.Fatalf("set sqlite test busy_timeout: %v", err)
 	}
 }
 

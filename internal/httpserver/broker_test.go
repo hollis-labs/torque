@@ -1,7 +1,7 @@
 package httpserver_test
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	gomsg "github.com/hollis-labs/go-messaging"
+	"github.com/hollis-labs/go-sqlite/sqlitekit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
@@ -17,7 +18,6 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/broker"
 	"github.com/hollis-labs/clockwork-manifold/internal/httpserver"
 	clockmsg "github.com/hollis-labs/clockwork-manifold/internal/messaging"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/appdb"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
@@ -29,12 +29,7 @@ import (
 func setupBrokerServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := appdb.SQLiteDSN(filepath.Join(dir, "broker.db"), appdb.SQLiteDSNOptions{
-		BusyTimeoutMs:    appdb.DefaultSQLiteBusyTimeoutMs,
-		IncludeCacheSize: true,
-		TxLock:           "immediate",
-	})
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sqlitekit.OpenWriter(context.Background(), filepath.Join(dir, "broker.db"), sqlitekit.OpenOptions{Options: sqlitekit.WriterOptions()})
 	require.NoError(t, err)
 	require.NoError(t, migrations.Run(db))
 	t.Cleanup(func() { db.Close() })
@@ -53,12 +48,7 @@ func setupBrokerServer(t *testing.T) *httptest.Server {
 func noBrokerServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := appdb.SQLiteDSN(filepath.Join(dir, "broker.db"), appdb.SQLiteDSNOptions{
-		BusyTimeoutMs:    appdb.DefaultSQLiteBusyTimeoutMs,
-		IncludeCacheSize: true,
-		TxLock:           "immediate",
-	})
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sqlitekit.OpenWriter(context.Background(), filepath.Join(dir, "broker.db"), sqlitekit.OpenOptions{Options: sqlitekit.WriterOptions()})
 	require.NoError(t, err)
 	require.NoError(t, migrations.Run(db))
 	t.Cleanup(func() { db.Close() })

@@ -1,11 +1,12 @@
 package mcpadapter_test
 
 import (
-	"database/sql"
+	"context"
 	"path/filepath"
 	"testing"
 
 	gomsg "github.com/hollis-labs/go-messaging"
+	"github.com/hollis-labs/go-sqlite/sqlitekit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
@@ -13,7 +14,6 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/broker"
 	"github.com/hollis-labs/clockwork-manifold/internal/mcpadapter"
 	clockmsg "github.com/hollis-labs/clockwork-manifold/internal/messaging"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/appdb"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
@@ -25,12 +25,7 @@ import (
 func setupAdapterWithBroker(t *testing.T) *mcpadapter.Adapter {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := appdb.SQLiteDSN(filepath.Join(dir, "broker.db"), appdb.SQLiteDSNOptions{
-		BusyTimeoutMs:    appdb.DefaultSQLiteBusyTimeoutMs,
-		IncludeCacheSize: true,
-		TxLock:           "immediate",
-	})
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sqlitekit.OpenWriter(context.Background(), filepath.Join(dir, "broker.db"), sqlitekit.OpenOptions{Options: sqlitekit.WriterOptions()})
 	require.NoError(t, err)
 	require.NoError(t, migrations.Run(db))
 	store, err := sqlstore.New(db, "sqlite")

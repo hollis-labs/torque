@@ -1,9 +1,11 @@
 package concurrency
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
+	"github.com/hollis-labs/go-sqlite/sqlitekit"
 	_ "modernc.org/sqlite"
 )
 
@@ -23,33 +25,38 @@ type DBPool struct {
 // - writeDB: single connection (max_open=1) for the write serializer
 // - readDB: multiple connections (max_open=MaxReadConns) for concurrent reads
 // - queueDB: separate SQLite file for go-queue hot tier
-// All connections have WAL mode, busy_timeout, and foreign keys enabled.
-func NewDBPool(cfg DBPoolConfig) (*DBPool, error) {
+// All connections have WAL mode, busy_timeout, and foreign keys enabled
+// via sqlitekit DSN parameters. The writer pool (writeDB/queueDB) carries
+// _txlock=immediate so explicit BEGIN IMMEDIATE transactions acquire the
+// writer lock at begin time.
+func NewDBPool(ctx context.Context, cfg DBPoolConfig) (*DBPool, error) {
 	if cfg.MaxReadConns <= 0 {
 		cfg.MaxReadConns = 4
-	}
-	if cfg.BusyTimeoutMs <= 0 {
-		cfg.BusyTimeoutMs = 5000
 	}
 	if cfg.WriteChannelSize <= 0 {
 		cfg.WriteChannelSize = 256
 	}
 
-	// Open write connection — single connection, no pooling.
-	writeDB, err := openSQLite(cfg.DBPath, cfg.BusyTimeoutMs, 1)
+	// Open write connection — single-connection writer pool with
+	// _txlock=immediate baked into the DSN.
+	writeDB, err := sqlitekit.OpenWriter(ctx, cfg.DBPath, sqlitekit.OpenOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("open write db: %w", err)
 	}
 
-	// Open read connection pool — multiple connections for concurrent reads.
-	readDB, err := openSQLite(cfg.DBPath, cfg.BusyTimeoutMs, cfg.MaxReadConns)
+	// Open read connection pool — bounded pool for concurrent reads.
+	readDB, err := sqlitekit.OpenReader(ctx, cfg.DBPath, sqlitekit.OpenOptions{MaxOpenConns: cfg.MaxReadConns})
 	if err != nil {
 		writeDB.Close()
 		return nil, fmt.Errorf("open read db: %w", err)
 	}
 
-	// Open queue database — separate file for hot writes.
-	queueDB, err := openSQLite(cfg.QueueDBPath, cfg.BusyTimeoutMs, 1)
+	// Open queue database — separate file, single-conn pool with writer
+	// options (so explicit BEGIN IMMEDIATE works).
+	queueDB, err := sqlitekit.OpenSingle(ctx, cfg.QueueDBPath, sqlitekit.OpenOptions{
+		Options:         sqlitekit.WriterOptions(),
+		CreateParentDir: true,
+	})
 	if err != nil {
 		writeDB.Close()
 		readDB.Close()
@@ -99,41 +106,4 @@ func (p *DBPool) Close() error {
 		firstErr = err
 	}
 	return firstErr
-}
-
-// openSQLite opens a SQLite connection with WAL mode, busy_timeout,
-// foreign keys, and the specified max open connections.
-func openSQLite(path string, busyTimeoutMs int, maxOpenConns int) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		return nil, err
-	}
-
-	db.SetMaxOpenConns(maxOpenConns)
-
-	// Enable WAL mode — allows concurrent reads while writing.
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("enable WAL: %w", err)
-	}
-
-	// Set busy timeout — wait instead of returning SQLITE_BUSY immediately.
-	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d", busyTimeoutMs)); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("set busy_timeout: %w", err)
-	}
-
-	// Enable foreign key enforcement.
-	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("enable foreign keys: %w", err)
-	}
-
-	// Verify connection is working.
-	if err := db.Ping(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("ping: %w", err)
-	}
-
-	return db, nil
 }

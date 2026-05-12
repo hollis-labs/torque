@@ -82,7 +82,7 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	}
 
 	// DB + migrations + store
-	db, driver, err := appdb.Open()
+	db, driver, err := appdb.Open(ctx)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
@@ -103,7 +103,7 @@ func runServe(ctx context.Context, ln net.Listener) error {
 		return fmt.Errorf("ensure data dir: %w", err)
 	}
 	queuePath := filepath.Join(cfg.DataDir, "queue.db")
-	q, err := queue.Open(queuePath)
+	q, err := queue.Open(ctx, queuePath)
 	if err != nil {
 		return fmt.Errorf("open queue: %w", err)
 	}
@@ -116,7 +116,7 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	if !filepath.IsAbs(telemetryQueuePath) {
 		telemetryQueuePath = filepath.Join(cfg.DataDir, telemetryQueuePath)
 	}
-	telemetryDB, err := writequeue.OpenDB(telemetryQueuePath)
+	telemetryDB, err := writequeue.OpenDB(ctx, telemetryQueuePath)
 	if err != nil {
 		return fmt.Errorf("open telemetry queue: %w", err)
 	}
