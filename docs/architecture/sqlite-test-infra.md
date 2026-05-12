@@ -1,5 +1,9 @@
 # SQLite Test Infra
 
+For the production concurrency pattern, see
+[sqlite-concurrency-pattern.md](sqlite-concurrency-pattern.md). This note is
+only about the test fixture change that made SQLite contention visible.
+
 This note records the Phase 0 test-infra change for `CW-20260510-0111`.
 
 ## Problem
@@ -28,12 +32,16 @@ The Phase 0 audit moved the old blanket single-conn fixtures in:
 
 No audited call site still needs a forced single-connection pool today. The opt-in remains for future migration/admin-only tests where exclusive access is the behavior under test.
 
-## Phase 1 Gate
+## Concurrency Gate
 
-`internal/persistence/sqlstore/concurrency_test.go` is intentionally tagged out of the default test run until `CW-20260510-0112` lands:
+`internal/persistence/sqlstore/concurrency_test.go` is tagged out of the
+default test run because it is a targeted stress gate:
 
 ```sh
 go test -tags=sqlite_concurrency ./internal/persistence/sqlstore -run TestConcurrentWritePaths_NoSQLITEBusy -count=1
 ```
 
-That test hammers `AppendRunEvent` and `CreateSession` concurrently on a pooled SQLite handle. On current main it fails with `SQLITE_BUSY`; after the single-writer/read-pool split it should become a required green gate.
+That test hammers `AppendRunEvent` and `CreateSession` concurrently on a pooled
+SQLite handle. It should stay green after the single-writer/read-pool split and
+should fail loudly if a future write path bypasses the serializer and reopens
+the old `SQLITE_BUSY` failure mode.
