@@ -63,6 +63,7 @@ func TestCapabilities(t *testing.T) {
 	assert.True(t, caps.SupportsTools, "Plan 4 (CW-20260503-0015) wired the tool-broker")
 	assert.False(t, caps.SupportsSandbox, "Phase B/D inheritance; restored with CW-20260427-0059")
 	assert.True(t, caps.SupportsPermissions)
+	assert.False(t, caps.SupportsResume, "CW-20260512-0059: API executor has no native conversation-resume; reactor falls back to fresh-boot")
 }
 
 func TestValidate_Valid(t *testing.T) {

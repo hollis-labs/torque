@@ -72,12 +72,20 @@ func (e *APIExecutor) Name() string { return "api" }
 // tool-broker landed: per-turn tool calls flow through the permission engine
 // and audit log via *toolbroker.ToolRouter. The flag reports the
 // architectural capability; per-instance e.tools may be nil in test wiring.
+//
+// SupportsResume is false. Native vendor-API conversation resume isn't
+// supported in this executor — anthropic/openai SDKs don't expose a
+// `--resume <session-id>` analog; resuming a vendor-API conversation requires
+// caller-side history replay, which the harness reactor doesn't perform in
+// sprint α. The reactor falls back to fresh-boot for API-executor tasks
+// (CW-20260512-0059, sprint α decision D4).
 func (e *APIExecutor) Capabilities() executor.ExecutorCapabilities {
 	return executor.ExecutorCapabilities{
 		SupportsStreaming:   true,
 		SupportsTools:       true,
 		SupportsSandbox:     false,
 		SupportsPermissions: true,
+		SupportsResume:      false,
 	}
 }
 

@@ -106,11 +106,25 @@ type ExecutionResult struct {
 }
 
 // ExecutorCapabilities declares what features an executor supports.
+//
+// SupportsResume signals whether the executor (or, for multi-provider executors
+// like cli, the underlying adapter for a given provider) can resume a prior
+// session via a native CLI/API resume primitive (e.g. `claude --resume <id>`,
+// `codex resume <id>`). This is the canonical capability flag used by the
+// reactor harness to decide between ResumeSession + send_input vs fresh-boot
+// (CW-20260512-0059, sprint α decision D4 — no per-call probes, no try-resume-
+// then-fallback runtime detection; declare once per adapter and route).
+//
+// For multi-provider executors the executor-level Capabilities() reports
+// SupportsResume=true when ANY supported provider supports resume; per-task
+// dispatch uses agent.ProviderCapabilities(provider) for the per-adapter
+// answer.
 type ExecutorCapabilities struct {
 	SupportsStreaming   bool
 	SupportsTools       bool
 	SupportsSandbox     bool
 	SupportsPermissions bool
+	SupportsResume      bool
 }
 
 // LogEvent creates an ExecutionEvent for a log line.

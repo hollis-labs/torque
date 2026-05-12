@@ -105,11 +105,17 @@ type ExecutionResult struct {
 }
 
 // ExecutorCapabilities declares what features an executor supports.
+//
+// SupportsResume mirrors executor.ExecutorCapabilities.SupportsResume — the
+// canonical resume-capability flag added by CW-20260512-0059 (sprint α
+// decision D4). Plugin-SDK consumers see the same surface as in-process
+// executors.
 type ExecutorCapabilities struct {
 	SupportsStreaming    bool
 	SupportsTools       bool
 	SupportsSandbox     bool
 	SupportsPermissions bool
+	SupportsResume      bool
 }
 
 // FilterFunc transforms data through a pipeline.

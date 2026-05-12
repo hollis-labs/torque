@@ -44,12 +44,19 @@ func (e *Executor) Name() string { return "cli" }
 // Capabilities reports what this Executor supports. Mirrors the legacy
 // cliexec capabilities; SupportsSandbox stays false until Phase F (per-task
 // sandbox profile via go-sandbox v0.2.0's AllowLoopback) lands.
+//
+// SupportsResume is true at the executor level because the cli executor
+// dispatches to multiple providers and at least one (claude, codex) supports
+// native resume. Per-task dispatch — which provider is actually used for a
+// given job — must consult ProviderCapabilities(profile.Provider) for the
+// accurate per-adapter answer (CW-20260512-0059, sprint α decision D4).
 func (e *Executor) Capabilities() executor.ExecutorCapabilities {
 	return executor.ExecutorCapabilities{
 		SupportsStreaming:   true,
 		SupportsTools:       true,
 		SupportsSandbox:     false,
 		SupportsPermissions: false,
+		SupportsResume:      true,
 	}
 }
 
