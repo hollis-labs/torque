@@ -51,6 +51,18 @@ func TestListCanonicalWorkflows(t *testing.T) {
 	})
 }
 
+func TestLookupClonesWorkflowDefinitionSlices(t *testing.T) {
+	def := hitl.Lookup(hitl.TypeApproval)
+	def.TaskMetadata.Requirements.AllowedResponderSourceTypes[0] = "mutated"
+	def.TaskMetadata.DeterministicEnforcement[0] = "mutated"
+	def.TaskMetadata.ProcessLevelEnforcement[0] = "mutated"
+
+	next := hitl.Lookup(hitl.TypeApproval)
+	assert.Equal(t, "user", next.TaskMetadata.Requirements.AllowedResponderSourceTypes[0])
+	assert.Equal(t, "metadata policy parsing", next.TaskMetadata.DeterministicEnforcement[0])
+	assert.Equal(t, "emitting the checkpoint before a sensitive step", next.TaskMetadata.ProcessLevelEnforcement[0])
+}
+
 func TestTypedPRReviewRoundTrip(t *testing.T) {
 	payload := hitl.PRReviewPayload{
 		PRURL:     "https://github.com/acme/app/pull/42",

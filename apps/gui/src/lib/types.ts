@@ -584,7 +584,7 @@ export interface Checkpoint {
 
 export interface CheckpointEmitRequest {
   task_id: string
-  type: HITLWorkflowPreset
+  type: string
   payload_json: string
   emitter_source_type?: string
   emitter_source_ref?: string

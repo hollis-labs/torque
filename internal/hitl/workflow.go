@@ -196,11 +196,18 @@ func rawSchema(s string) json.RawMessage {
 func cloneDefinition(def WorkflowDefinition) WorkflowDefinition {
 	def.PayloadSchema = cloneRaw(def.PayloadSchema)
 	def.ResponseSchema = cloneRaw(def.ResponseSchema)
-	def.TaskMetadata.Requirements.AllowedResponderSourceTypes = append(
-		[]string(nil),
-		def.TaskMetadata.Requirements.AllowedResponderSourceTypes...,
-	)
+	def.TaskMetadata = cloneTaskMetadataContract(def.TaskMetadata)
 	return def
+}
+
+func cloneTaskMetadataContract(contract TaskMetadataContract) TaskMetadataContract {
+	contract.Requirements.AllowedResponderSourceTypes = append(
+		[]string(nil),
+		contract.Requirements.AllowedResponderSourceTypes...,
+	)
+	contract.DeterministicEnforcement = append([]string(nil), contract.DeterministicEnforcement...)
+	contract.ProcessLevelEnforcement = append([]string(nil), contract.ProcessLevelEnforcement...)
+	return contract
 }
 
 func cloneRaw(in json.RawMessage) json.RawMessage {

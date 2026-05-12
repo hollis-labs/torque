@@ -13,11 +13,16 @@ import (
 
 func (a *Adapter) registerCheckpointTools() {
 	a.addTool(mcp.NewTool("clockwork_task_checkpoint_emit",
-		mcp.WithDescription(`Emit a pending checkpoint on a task. If the task's checkpoint_mode is "blocking", the task parks until respond/cancel.
+		mcp.WithDescription(fmt.Sprintf(`Emit a pending checkpoint on a task. If the task's checkpoint_mode is "blocking", the task parks until respond/cancel.
 Use for mid-run user-interaction gates or data-collection stops; sibling clockwork_task_checkpoint_respond to resolve, clockwork_task_checkpoint_cancel to abandon. clockwork_task_checkpoint_list/pending for discovery.
 Response shape: data = {<CheckpointRecord fields>} — singleton with correlation_id, status="pending".
-Canonical HITL types: `+hitl.TypePRReview+`, `+hitl.TypeApproval+`, `+hitl.TypeMessage+`. Payload contracts: pr_review={pr_url,title?,summary?,branch?,checklist?}; approval={title,prompt,context?,options?}; message={subject?,message,severity?,context?}. Unknown types are allowed and should be treated as opaque JSON.
-Example: {"task_id":"T-123","type":"`+hitl.TypePRReview+`","payload_json":"{\"pr_url\":\"https://github.com/acme/app/pull/42\",\"title\":\"Review checkout fix\",\"summary\":\"Awaiting human review and merge.\"}","emitter_source_type":"agent"}`),
+Canonical HITL types: %s, %s, %s. Payload contracts: pr_review={pr_url,title?,summary?,branch?,checklist?}; approval={title,prompt,context?,options?}; message={subject?,message,severity?,context?}. Unknown types are allowed and should be treated as opaque JSON.
+Example: {"task_id":"T-123","type":"%s","payload_json":"{\"pr_url\":\"https://github.com/acme/app/pull/42\",\"title\":\"Review checkout fix\",\"summary\":\"Awaiting human review and merge.\"}","emitter_source_type":"agent"}`,
+			hitl.TypePRReview,
+			hitl.TypeApproval,
+			hitl.TypeMessage,
+			hitl.TypePRReview,
+		)),
 		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID to attach the checkpoint to")),
 		mcp.WithString("type", mcp.Required(), mcp.Description("Workflow type. Canonical: pr_review|approval|message. Unknown types are accepted as opaque JSON.")),
 		mcp.WithString("payload_json", mcp.Required(), mcp.Description("JSON payload matching the type's HITL workflow schema when known; opaque JSON object for unknown types")),

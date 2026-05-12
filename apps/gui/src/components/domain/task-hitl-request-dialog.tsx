@@ -40,7 +40,8 @@ function formatPayload(preset: HITLWorkflowPreset, task: Task, artifacts: Artifa
 
 function isValidJsonObject(value: string): boolean {
   try {
-    return JSON.parse(value.trim()) !== null
+    const parsed = JSON.parse(value.trim())
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
   } catch {
     return false
   }

@@ -163,4 +163,22 @@ describe('TaskHITLRequestDialog', () => {
     })
     expect(onRequested).toHaveBeenCalledWith(expect.objectContaining({ correlation_id: 'corr-1' }))
   })
+
+  it('requires payload JSON to be an object', async () => {
+    render(
+      <ApiProvider baseUrl="/api/v1">
+        <TaskHITLRequestDialog
+          task={makeTask()}
+          artifacts={[makeArtifact()]}
+          open
+          onOpenChange={() => {}}
+        />
+      </ApiProvider>,
+    )
+
+    const payload = screen.getByLabelText('Payload JSON') as HTMLTextAreaElement
+    fireEvent.change(payload, { target: { value: '[]' } })
+
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Request checkpoint' }).disabled).toBe(true)
+  })
 })

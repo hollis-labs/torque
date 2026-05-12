@@ -176,8 +176,9 @@ func (s *Server) listTaskCheckpoints(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := make([]map[string]interface{}, len(list))
+	policy := s.requiredWorkflowPolicyForTask(taskID)
 	for i := range list {
-		out[i] = checkpointJSON(&list[i], s.requiredWorkflowPolicyForTask(list[i].TaskID))
+		out[i] = checkpointJSON(&list[i], policy)
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"checkpoints": out})
 }
@@ -189,8 +190,9 @@ func (s *Server) listPendingCheckpoints(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	out := make([]map[string]interface{}, len(list))
+	policies := s.requiredWorkflowPoliciesForCheckpoints(list)
 	for i := range list {
-		out[i] = checkpointJSON(&list[i], s.requiredWorkflowPolicyForTask(list[i].TaskID))
+		out[i] = checkpointJSON(&list[i], policies[list[i].TaskID])
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"checkpoints": out})
 }
@@ -205,6 +207,18 @@ func (s *Server) requiredWorkflowPolicyForTask(taskID string) *hitl.RequiredWork
 		return nil
 	}
 	return &policy
+}
+
+func (s *Server) requiredWorkflowPoliciesForCheckpoints(list []sqlstore.CheckpointRecord) map[string]*hitl.RequiredWorkflowPolicy {
+	policies := make(map[string]*hitl.RequiredWorkflowPolicy)
+	for i := range list {
+		taskID := list[i].TaskID
+		if _, seen := policies[taskID]; seen {
+			continue
+		}
+		policies[taskID] = s.requiredWorkflowPolicyForTask(taskID)
+	}
+	return policies
 }
 
 // writeCheckpointError maps service-layer errors to the canonical HTTP codes.
