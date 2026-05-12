@@ -28,6 +28,7 @@ import { DeliverablesAndDeps } from '@/components/domain/deliverables-deps'
 import { SendBackDialog } from '@/components/domain/send-back-dialog'
 import { ActivityPanel } from '@/components/domain/activity-panel'
 import { TaskCheckpointsBanner } from '@/components/domain/task-checkpoints-banner'
+import { TaskHITLRequestDialog } from '@/components/domain/task-hitl-request-dialog'
 import { useApi } from '@/hooks/use-api'
 import { useArrowNav } from '@/hooks/use-arrow-nav'
 import { hasBlockedReason } from '@/lib/blocked-reason'
@@ -63,6 +64,9 @@ export default function TaskDetailPage() {
   const [queueBusy, setQueueBusy] = useState(false)
   const [sendBackOpen, setSendBackOpen] = useState(false)
   const [attachOpen, setAttachOpen] = useState(false)
+  const [hitlRequestOpen, setHitlRequestOpen] = useState(false)
+  const [hitlRequestBusy, setHitlRequestBusy] = useState(false)
+  const [checkpointBannerKey, setCheckpointBannerKey] = useState(0)
 
   // Tab data — lazy loaded
   const [comments, setComments] = useState<Comment[] | null>(null)
@@ -267,6 +271,31 @@ export default function TaskDetailPage() {
     notifySuccess('Artifact attached')
   }
 
+  async function handleOpenHITLRequest() {
+    if (!id) return
+    if (artifacts !== null) {
+      setHitlRequestOpen(true)
+      return
+    }
+
+    setHitlRequestBusy(true)
+    try {
+      setArtifacts(await api.listArtifacts(id))
+    } catch (err) {
+      notifyError(err, 'Failed to load artifacts for checkpoint prefill')
+    } finally {
+      setHitlRequestBusy(false)
+      setHitlRequestOpen(true)
+    }
+  }
+
+  function handleCheckpointRequested() {
+    setCheckpointBannerKey((key) => key + 1)
+    if (id) {
+      api.getTask(id).then(setTask).catch(() => {})
+    }
+  }
+
   async function handleDeleteArtifact(artifactId: number) {
     try {
       await api.deleteArtifact(artifactId)
@@ -394,9 +423,11 @@ export default function TaskDetailPage() {
         draft={displayDraft}
         saving={saving}
         queueBusy={queueBusy}
+        checkpointRequestBusy={hitlRequestBusy}
         onDraftChange={updateDraft}
         onTransition={handleTransition}
         onQueueToggle={handleQueueToggle}
+        onRequestCheckpoint={handleOpenHITLRequest}
         onEdit={handleEdit}
         onSave={handleSave}
         onCancel={handleCancel}
@@ -426,6 +457,14 @@ export default function TaskDetailPage() {
         onSubmit={handleAttachArtifact}
       />
 
+      <TaskHITLRequestDialog
+        task={task}
+        artifacts={artifacts ?? []}
+        open={hitlRequestOpen}
+        onOpenChange={setHitlRequestOpen}
+        onRequested={handleCheckpointRequested}
+      />
+
       {/* Blocked / paused reason — agent's last word before the wheels stopped */}
       {!editing && hasBlockedReason(task) && (
         <BlockedReasonAlert
@@ -436,7 +475,7 @@ export default function TaskDetailPage() {
       )}
 
       {/* Pending checkpoints banner — inline respond/cancel */}
-      {!editing && id && <TaskCheckpointsBanner taskId={id} />}
+      {!editing && id && <TaskCheckpointsBanner key={checkpointBannerKey} taskId={id} />}
 
       {/* Live activity panel — visible while the task has an active run. */}
       {!editing && id && <ActivityPanel taskId={id} />}

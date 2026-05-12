@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/hollis-labs/clockwork-manifold/internal/hitl"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
@@ -457,6 +458,26 @@ func TestValidateTaskKind_WaitWithPredicateValid(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "wait", rec.Kind)
+}
+
+func TestValidateRequiredWorkflowRejectsRequiredMultiResponder(t *testing.T) {
+	svc := setupTaskValidationTest(t)
+	_, err := svc.Task.Create(service.TaskCreateInput{
+		Title: "multi-party approval",
+		Metadata: map[string]any{
+			"hitl": map[string]any{
+				"required_workflow": map[string]any{
+					"workflow_type":    hitl.TypeApproval,
+					"enforcement_mode": hitl.EnforcementRequired,
+					"requirements":     map[string]any{"response_required": true, "min_responders": 2},
+				},
+			},
+		},
+	})
+	var verr *service.ValidationError
+	require.ErrorAs(t, err, &verr)
+	assert.Equal(t, "metadata.hitl.required_workflow", verr.Field)
+	assert.Contains(t, verr.Message, "process-level")
 }
 
 func TestValidateTaskKind_DecisionRequiresBlockingCheckpoint(t *testing.T) {

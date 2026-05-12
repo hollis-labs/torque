@@ -9,8 +9,8 @@ import (
 	gomsg "github.com/hollis-labs/go-messaging"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/broker"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 )
 
@@ -91,6 +91,8 @@ func (s *Server) routes() {
 		r.Delete("/tasks/{id}/subtodos/{item_id}", s.deleteSubtodo)
 
 		// Checkpoints — emit/respond/cancel keyed on correlation_id.
+		r.Get("/checkpoint-workflows", s.listHITLWorkflows)
+		r.Get("/checkpoint-workflows/{type}", s.getHITLWorkflow)
 		r.Post("/checkpoints", s.emitCheckpoint)
 		r.Get("/checkpoints/pending", s.listPendingCheckpoints)
 		r.Get("/checkpoints/{correlation_id}", s.getCheckpoint)

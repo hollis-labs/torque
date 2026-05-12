@@ -7,14 +7,15 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/hollis-labs/clockwork-manifold/internal/hitl"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 )
 
 // checkpointJSON projects a CheckpointRecord into the HTTP response shape —
 // lowercase snake_case keys with proper null handling for nullable fields.
-func checkpointJSON(cp *sqlstore.CheckpointRecord) map[string]interface{} {
-	return map[string]interface{}{
+func checkpointJSON(cp *sqlstore.CheckpointRecord, policy *hitl.RequiredWorkflowPolicy) map[string]interface{} {
+	body := map[string]interface{}{
 		"id":                    cp.ID,
 		"task_id":               cp.TaskID,
 		"run_id":                nullInt(cp.RunID),
@@ -31,6 +32,19 @@ func checkpointJSON(cp *sqlstore.CheckpointRecord) map[string]interface{} {
 		"timeout_at":            nullTime(cp.TimeoutAt),
 		"status":                cp.Status,
 	}
+	if policy != nil {
+		responderSourceType := ""
+		if cp.ResponderSourceType.Valid {
+			responderSourceType = cp.ResponderSourceType.String
+		}
+		body["required_workflow_policy"] = *policy
+		body["required_workflow_satisfaction"] = hitl.CheckpointSatisfiesRequiredWorkflow(*policy, hitl.CheckpointState{
+			Type:                cp.Type,
+			Status:              cp.Status,
+			ResponderSourceType: responderSourceType,
+		})
+	}
+	return body
 }
 
 func (s *Server) emitCheckpoint(w http.ResponseWriter, r *http.Request) {
@@ -77,7 +91,7 @@ func (s *Server) emitCheckpoint(w http.ResponseWriter, r *http.Request) {
 		"correlation_id": out.CorrelationID,
 		"task_id":        req.TaskID,
 	})
-	writeJSON(w, http.StatusCreated, checkpointJSON(cp))
+	writeJSON(w, http.StatusCreated, checkpointJSON(cp, s.requiredWorkflowPolicyForTask(cp.TaskID)))
 }
 
 func (s *Server) respondCheckpoint(w http.ResponseWriter, r *http.Request) {
@@ -109,7 +123,7 @@ func (s *Server) respondCheckpoint(w http.ResponseWriter, r *http.Request) {
 		"correlation_id": corr,
 		"task_id":        cp.TaskID,
 	})
-	writeJSON(w, http.StatusOK, checkpointJSON(cp))
+	writeJSON(w, http.StatusOK, checkpointJSON(cp, s.requiredWorkflowPolicyForTask(cp.TaskID)))
 }
 
 func (s *Server) cancelCheckpoint(w http.ResponseWriter, r *http.Request) {
@@ -141,7 +155,7 @@ func (s *Server) cancelCheckpoint(w http.ResponseWriter, r *http.Request) {
 		"correlation_id": corr,
 		"task_id":        cp.TaskID,
 	})
-	writeJSON(w, http.StatusOK, checkpointJSON(cp))
+	writeJSON(w, http.StatusOK, checkpointJSON(cp, s.requiredWorkflowPolicyForTask(cp.TaskID)))
 }
 
 func (s *Server) getCheckpoint(w http.ResponseWriter, r *http.Request) {
@@ -151,7 +165,7 @@ func (s *Server) getCheckpoint(w http.ResponseWriter, r *http.Request) {
 		s.writeCheckpointError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, checkpointJSON(cp))
+	writeJSON(w, http.StatusOK, checkpointJSON(cp, s.requiredWorkflowPolicyForTask(cp.TaskID)))
 }
 
 func (s *Server) listTaskCheckpoints(w http.ResponseWriter, r *http.Request) {
@@ -162,8 +176,9 @@ func (s *Server) listTaskCheckpoints(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := make([]map[string]interface{}, len(list))
+	policy := s.requiredWorkflowPolicyForTask(taskID)
 	for i := range list {
-		out[i] = checkpointJSON(&list[i])
+		out[i] = checkpointJSON(&list[i], policy)
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"checkpoints": out})
 }
@@ -175,10 +190,35 @@ func (s *Server) listPendingCheckpoints(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	out := make([]map[string]interface{}, len(list))
+	policies := s.requiredWorkflowPoliciesForCheckpoints(list)
 	for i := range list {
-		out[i] = checkpointJSON(&list[i])
+		out[i] = checkpointJSON(&list[i], policies[list[i].TaskID])
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"checkpoints": out})
+}
+
+func (s *Server) requiredWorkflowPolicyForTask(taskID string) *hitl.RequiredWorkflowPolicy {
+	task, err := s.svc.Task.Get(taskID)
+	if err != nil {
+		return nil
+	}
+	policy, ok := requiredWorkflowPolicyFromTask(task)
+	if !ok {
+		return nil
+	}
+	return &policy
+}
+
+func (s *Server) requiredWorkflowPoliciesForCheckpoints(list []sqlstore.CheckpointRecord) map[string]*hitl.RequiredWorkflowPolicy {
+	policies := make(map[string]*hitl.RequiredWorkflowPolicy)
+	for i := range list {
+		taskID := list[i].TaskID
+		if _, seen := policies[taskID]; seen {
+			continue
+		}
+		policies[taskID] = s.requiredWorkflowPolicyForTask(taskID)
+	}
+	return policies
 }
 
 // writeCheckpointError maps service-layer errors to the canonical HTTP codes.

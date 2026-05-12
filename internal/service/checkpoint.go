@@ -9,6 +9,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
+	"github.com/hollis-labs/clockwork-manifold/internal/hitl"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 )
 
@@ -158,6 +159,13 @@ func (s *CheckpointService) Respond(in CheckpointRespondInput) error {
 	if cp.Status != "pending" {
 		return &ConflictError{Message: "checkpoint " + cp.Status}
 	}
+	task, err := s.store.GetTask(cp.TaskID)
+	if err != nil {
+		return err
+	}
+	if err := validateRequiredWorkflowResponse(task, cp, in.ResponderSourceType); err != nil {
+		return err
+	}
 	if err := s.store.RespondCheckpoint(
 		in.CorrelationID, in.ResponseJSON,
 		in.ResponderSourceType, in.ResponderSourceRef,
@@ -166,6 +174,56 @@ func (s *CheckpointService) Respond(in CheckpointRespondInput) error {
 		return err
 	}
 	return s.applyOnCheckpointResponse(cp, in.ResponseJSON)
+}
+
+func validateRequiredWorkflowResponse(task *sqlstore.TaskRecord, cp *sqlstore.CheckpointRecord, responderSourceType string) error {
+	policy, ok, err := requiredWorkflowPolicyForTask(task)
+	if err != nil {
+		return err
+	}
+	if !ok || policy.EnforcementMode != hitl.EnforcementRequired {
+		return nil
+	}
+
+	parked := task.Status == "review" && strings.Contains(task.BlockedReason, cp.CorrelationID)
+	if cp.Type != policy.WorkflowType && !parked {
+		return nil
+	}
+
+	eval := hitl.CheckpointSatisfiesRequiredWorkflow(policy, hitl.CheckpointState{
+		Type:                cp.Type,
+		Status:              "responded",
+		ResponderSourceType: responderSourceType,
+	})
+	if eval.Satisfied {
+		return nil
+	}
+	msg := strings.Join(eval.Reasons, "; ")
+	if msg == "" {
+		msg = "checkpoint response does not satisfy required workflow"
+	}
+	return &ValidationError{Field: "required_workflow", Message: msg}
+}
+
+func requiredWorkflowPolicyForTask(task *sqlstore.TaskRecord) (hitl.RequiredWorkflowPolicy, bool, error) {
+	if !task.Metadata.Valid || task.Metadata.String == "" {
+		return hitl.RequiredWorkflowPolicy{}, false, nil
+	}
+	md := map[string]any{}
+	if err := unmarshalJSON([]byte(task.Metadata.String), &md); err != nil {
+		return hitl.RequiredWorkflowPolicy{}, false, &ValidationError{
+			Field:   "metadata",
+			Message: "invalid task metadata: " + err.Error(),
+		}
+	}
+	policy, ok, err := hitl.ParseRequiredWorkflowFromMetadata(md)
+	if err != nil {
+		return hitl.RequiredWorkflowPolicy{}, false, &ValidationError{
+			Field:   "metadata.hitl.required_workflow",
+			Message: err.Error(),
+		}
+	}
+	return policy, ok, nil
 }
 
 // applyOnCheckpointResponse enforces the task's on_checkpoint_response rule

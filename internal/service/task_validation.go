@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 
+	"github.com/hollis-labs/clockwork-manifold/internal/hitl"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 )
 
@@ -118,9 +119,9 @@ var validOnCheckpointResponse = map[string]bool{
 // Rules:
 //   - kind / source_type / trust / checkpoint_mode / on_checkpoint_response
 //     must each be non-empty and in their respective allowed sets.
-	//   - kind=agent + executor=""                         → 422 (defensive; the
-	//     service layer applies an "opencode" default for agent, so this is structurally
-	//     unreachable in normal flow but guards hand-crafted callers).
+//   - kind=agent + executor=""                         → 422 (defensive; the
+//     service layer applies an "opencode" default for agent, so this is structurally
+//     unreachable in normal flow but guards hand-crafted callers).
 //   - kind=external + executor!=""                     → 422
 //   - kind=external + auto_execute=true                → 422
 //   - kind=wait + no metadata.wait.predicate_type      → 422
@@ -349,6 +350,16 @@ func (s *TaskService) validateTaskWrites(fields taskWriteFields) error {
 		}
 	}
 
+	return nil
+}
+
+func validateRequiredWorkflowMetadata(metadata map[string]any) error {
+	if _, _, err := hitl.ParseRequiredWorkflowFromMetadata(metadata); err != nil {
+		return &ValidationError{
+			Field:   "metadata.hitl.required_workflow",
+			Message: err.Error(),
+		}
+	}
 	return nil
 }
 

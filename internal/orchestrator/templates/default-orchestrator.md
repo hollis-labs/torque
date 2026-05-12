@@ -33,6 +33,27 @@ The plan_id is the `kind=plan` task you're orchestrating.
   `review`. The substrate (CW-20260503-0019) enqueues a kind=internal
   end-agent. You wait for it to complete; you do NOT enqueue it.
 
+## HITL checkpoint protocol
+
+Typed human-in-the-loop checkpoints are the durable user interaction
+surface. Use `clockwork_task_checkpoint_emit` when a review or approval
+flow needs a human response before you exit, pause, or hand control back:
+
+- `pr_review` — use for pull request review/merge decisions. Payload:
+  `{"pr_url":"https://github.com/org/repo/pull/42","title":"...","summary":"...","checklist":["..."]}`.
+- `approval` — use for explicit non-PR approval gates such as release,
+  destructive cleanup, or plan/readiness approval. Payload:
+  `{"title":"...","prompt":"...","context":{...},"options":["approved","rejected","needs_info"]}`.
+- `message` — use for FYI/acknowledgement flows when no decision is
+  required but a durable user-facing checkpoint is useful. Payload:
+  `{"subject":"...","message":"...","severity":"info|warning|urgent","context":{...}}`.
+
+Emit the checkpoint against the task whose lifecycle is waiting for the
+answer. For blocking behavior the task must already be configured with
+`checkpoint_mode=blocking`; otherwise the checkpoint is still a durable
+request but does not enforce lifecycle. Do not invent UI/backend
+enforcement rules in your prompt behavior.
+
 ## Polling protocol — READ BEFORE WAITING ON ANYTHING
 
 Several steps below tell you to "wait" or "poll" until a task reaches a
@@ -135,6 +156,14 @@ clockwork_plan_get(id="<plan_id>")
 clockwork_task_get(id="<plan_id>")
 ```
 
+Redispatch preflight: before spawning the Planner or walking phases,
+inspect `task.metadata.checkpoint_responses` on the plan task. Handle
+any response you have not already incorporated before other work. The
+map is keyed by checkpoint correlation_id; response bodies follow the
+typed workflow contracts (`pr_review`, `approval`, `message`) when the
+checkpoint type is known. Record what you handled in a comment or
+metadata so a later redispatch does not repeat the same response.
+
 Read `metadata.plan.phases` to know your phase + child layout.
 
 ### 2. Run the Planner (advisory)
@@ -230,7 +259,10 @@ After the reviewer terminates: re-check the child's status.
 
 - `done` → child is closed; move to the next child.
 - `review` (still) → audit had misses requiring human follow-up.
-  Escalate; pause and wait for user to resolve.
+  Emit a typed HITL checkpoint on the child before you exit or pause:
+  use `pr_review` if the blocker is an unmerged PR, otherwise use
+  `approval` for a decision gate or `message` for informational
+  follow-up. Then escalate and wait for user to resolve.
 
 #### 3d. Mark phase done
 
@@ -239,8 +271,13 @@ metadata to flip `phases[i].status = "done"`. Move to the next phase.
 
 ### 4. Plan completion
 
-When every phase is `done`, transition the plan task to `review`
-(the plan default per Plans v1):
+When every phase is `done`, prepare the plan handoff. If plan closeout
+requires human acknowledgement or approval, emit the typed checkpoint
+first on the plan task (`approval` for a decision, `message` for
+completion acknowledgement). Do not rely on comments alone for a
+review/approval handoff.
+
+Then transition the plan task to `review` (the plan default per Plans v1):
 
 ```
 clockwork_task_transition(id="<plan_id>", status="review")

@@ -7,18 +7,25 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
+	"github.com/hollis-labs/clockwork-manifold/internal/hitl"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 )
 
 func (a *Adapter) registerCheckpointTools() {
 	a.addTool(mcp.NewTool("clockwork_task_checkpoint_emit",
-		mcp.WithDescription(`Emit a pending checkpoint on a task. If the task's checkpoint_mode is "blocking", the task parks until respond/cancel.
+		mcp.WithDescription(fmt.Sprintf(`Emit a pending checkpoint on a task. If the task's checkpoint_mode is "blocking", the task parks until respond/cancel.
 Use for mid-run user-interaction gates or data-collection stops; sibling clockwork_task_checkpoint_respond to resolve, clockwork_task_checkpoint_cancel to abandon. clockwork_task_checkpoint_list/pending for discovery.
 Response shape: data = {<CheckpointRecord fields>} — singleton with correlation_id, status="pending".
-Example: {"task_id":"T-123","type":"collect_data","payload_json":"{\"q\":\"?\"}","emitter_source_type":"system"}`),
+Canonical HITL types: %s, %s, %s. Payload contracts: pr_review={pr_url,title?,summary?,branch?,checklist?}; approval={title,prompt,context?,options?}; message={subject?,message,severity?,context?}. Unknown types are allowed and should be treated as opaque JSON.
+Example: {"task_id":"T-123","type":"%s","payload_json":"{\"pr_url\":\"https://github.com/acme/app/pull/42\",\"title\":\"Review checkout fix\",\"summary\":\"Awaiting human review and merge.\"}","emitter_source_type":"agent"}`,
+			hitl.TypePRReview,
+			hitl.TypeApproval,
+			hitl.TypeMessage,
+			hitl.TypePRReview,
+		)),
 		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID to attach the checkpoint to")),
-		mcp.WithString("type", mcp.Required(), mcp.Description("Free-form checkpoint type (e.g. collect_data)")),
-		mcp.WithString("payload_json", mcp.Required(), mcp.Description("Opaque JSON payload — schema owned by go-envelope (deferred)")),
+		mcp.WithString("type", mcp.Required(), mcp.Description("Workflow type. Canonical: pr_review|approval|message. Unknown types are accepted as opaque JSON.")),
+		mcp.WithString("payload_json", mcp.Required(), mcp.Description("JSON payload matching the type's HITL workflow schema when known; opaque JSON object for unknown types")),
 		mcp.WithString("emitter_source_type", mcp.Description("agent|user|api|system|webhook|import (default system)")),
 		mcp.WithString("emitter_source_ref", mcp.Description("Originating slug/id")),
 		mcp.WithString("timeout_at", mcp.Description("Optional RFC3339 timestamp for the timeout sweeper")),
@@ -28,9 +35,10 @@ Example: {"task_id":"T-123","type":"collect_data","payload_json":"{\"q\":\"?\"}"
 		mcp.WithDescription(`Resolve a pending checkpoint with a JSON response; applies the task's on_checkpoint_response rule (resume|review|custom).
 Use to unpark a blocking task; clockwork_task_checkpoint_cancel to abandon without resolution. Responding to a terminal checkpoint returns error.code=conflict.
 Response shape: data = {<CheckpointRecord fields>} — singleton, status="responded".
-Example: {"correlation_id":"01HK...","response_json":"{\"decision\":\"ship\"}","responder_source_type":"user"}`),
+Typed response contracts: pr_review={decision:"approve|request_changes|comment",summary?,comments?,required_changes?}; approval={decision:"approved|rejected|needs_info",comment?}; message={acknowledged:boolean,reply?}. Responses are also attached to task.metadata.checkpoint_responses[correlation_id].
+Example: {"correlation_id":"01HK...","response_json":"{\"decision\":\"approved\",\"comment\":\"Ship it.\"}","responder_source_type":"user"}`),
 		mcp.WithString("correlation_id", mcp.Required(), mcp.Description("Checkpoint correlation_id (ULID)")),
-		mcp.WithString("response_json", mcp.Required(), mcp.Description("Opaque JSON response body")),
+		mcp.WithString("response_json", mcp.Required(), mcp.Description("JSON response matching the checkpoint type's HITL response schema when known; opaque JSON object for unknown types")),
 		mcp.WithString("responder_source_type", mcp.Required(), mcp.Description("agent|user|api|system|webhook|import")),
 		mcp.WithString("responder_source_ref", mcp.Description("Responder slug/id")),
 	), a.handleCheckpointRespond)

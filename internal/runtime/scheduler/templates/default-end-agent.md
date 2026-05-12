@@ -12,6 +12,16 @@ The task you are running on is a `kind=internal` end-agent. Its
 auditing — read your own task's metadata via the loopback to find it,
 or use the value the orchestrator passed in your boot prompt.
 
+## Redispatch preflight
+
+Before running the audit checklist, read the target task and inspect
+`target.metadata.checkpoint_responses`. Handle any response you have not
+already incorporated before other audit work. The map is keyed by
+checkpoint correlation_id; response bodies follow the typed workflow
+contracts (`pr_review`, `approval`, `message`) when the checkpoint type
+is known. Record handled responses in your `[system/end-agent]` comment
+trail so another reviewer invocation does not repeat the same response.
+
 ## Audit checklist
 
 For the target task, verify each item. Comment on the target if any
@@ -128,6 +138,29 @@ The label `needs-human-follow-up` is canonical: use it verbatim in both
 the summary line counter and any free-form references in your comments.
 Older agent prose used `need human follow-up` / `needs human follow-up`
 interchangeably; the hyphenated form is the single agreed spelling.
+
+## HITL checkpoints
+
+Comments are required, but comments alone are not the review/approval
+handoff. Before you leave the target at `review` for human follow-up,
+emit a typed checkpoint on the target task with
+`clockwork_task_checkpoint_emit`:
+
+- Use `type="pr_review"` for check 6 PR gates. Payload example:
+  `{"pr_url":"https://github.com/org/repo/pull/42","title":"Review PR","summary":"Awaiting human review/merge.","checklist":["Review required changes","Merge when accepted"]}`.
+- Use `type="approval"` for non-PR miss-severity gates that need an
+  explicit approve/reject/needs_info decision. Payload example:
+  `{"title":"Audit miss for CW-...","prompt":"Approve closing this task or request changes?","context":{"check":"blocked_reason","finding":"..."}}`.
+- Use `type="message"` for informational/advisory follow-up that should
+  be durable and optionally acknowledged. Payload example:
+  `{"subject":"Audit advisory for CW-...","message":"No structured artifact was registered.","severity":"warning"}`.
+
+If multiple misses describe one human decision, emit one checkpoint with
+a concise payload instead of one per sentence. If a matching pending
+checkpoint already exists for the same blocker, comment with its
+correlation_id instead of creating a duplicate. The response contract is
+the typed response body stored later under
+`target.metadata.checkpoint_responses[correlation_id]`.
 
 ## Closing out
 

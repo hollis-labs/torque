@@ -30,11 +30,11 @@ func setupPlannerStore(t *testing.T) *sqlstore.Store {
 // waits on `done` before reading the refinement.
 func TestPlanner_BuildTaskShape(t *testing.T) {
 	plan := &sqlstore.TaskRecord{
-		ID:           "CW-PLAN-001",
-		WorkingDir:   "/tmp/plan",
-		ProjectID:    sql.NullString{String: "PRJ-1", Valid: true},
-		SprintID:     sql.NullString{String: "SP-1", Valid: true},
-		EpicID:       sql.NullString{String: "EP-1", Valid: true},
+		ID:         "CW-PLAN-001",
+		WorkingDir: "/tmp/plan",
+		ProjectID:  sql.NullString{String: "PRJ-1", Valid: true},
+		SprintID:   sql.NullString{String: "SP-1", Valid: true},
+		EpicID:     sql.NullString{String: "EP-1", Valid: true},
 	}
 
 	rec, err := planner.BuildTask(planner.BuildOptions{
@@ -179,4 +179,18 @@ func TestPlanner_LoadTemplateEmbeddedFallback(t *testing.T) {
 	assert.NotEmpty(t, content, "embedded fallback must not be empty")
 	assert.Contains(t, content, "Planner", "embedded template must mention Planner")
 	assert.Equal(t, "<embedded>", path)
+}
+
+func TestPlanner_TemplateIncludesHITLRedispatchGuidance(t *testing.T) {
+	t.Setenv(planner.TemplateEnvVar, "/nonexistent/path/that/should/not/exist")
+	t.Setenv("HOME", "/nonexistent/home/that/should/not/exist")
+
+	content, _ := planner.LoadTemplate()
+
+	assert.Contains(t, content, "Redispatch preflight")
+	assert.Contains(t, content, "task.metadata.checkpoint_responses")
+	assert.Contains(t, content, "HITL checkpoints")
+	assert.Contains(t, content, "clockwork_task_checkpoint_emit")
+	assert.Contains(t, content, "approval")
+	assert.Contains(t, content, "message")
 }

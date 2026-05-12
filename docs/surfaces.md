@@ -10,6 +10,7 @@ Main route groups:
 
 - `/tasks`
 - `/checkpoints`
+- `/checkpoint-workflows` for HITL checkpoint schema lookup
 - `/templates`
 - `/projects`
 - `/sprints`

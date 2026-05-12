@@ -322,6 +322,40 @@ func TestEndAgent_TemplatePreservesOriginalFiveChecks(t *testing.T) {
 	assert.Contains(t, prompt, "5. **`updated_at` post-dates the executor's last run.**")
 }
 
+func TestEndAgent_TemplateIncludesHITLCheckpointProtocol(t *testing.T) {
+	store := setupEndAgentStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	lm := scheduler.NewLifecycleManager(store, bus)
+
+	target := &sqlstore.TaskRecord{
+		ID: "CW-TARGET-HITL-001", Title: "executor task", Status: "doing",
+		Executor: "cli", AgentProfile: "clockwork-backend",
+		Kind: "agent", OnDone: "review",
+	}
+	require.NoError(t, store.CreateTask(target))
+
+	require.NoError(t, lm.HandleResult(target.ID, 1, &executor.ExecutionResult{
+		Status: "done",
+	}))
+
+	internals, err := store.ListTasks(sqlstore.TaskFilter{
+		Kind:     "internal",
+		ParentID: target.ID,
+	})
+	require.NoError(t, err)
+	require.Len(t, internals, 1)
+	prompt := internals[0].SystemPrompt
+
+	assert.Contains(t, prompt, "Redispatch preflight")
+	assert.Contains(t, prompt, "target.metadata.checkpoint_responses")
+	assert.Contains(t, prompt, "HITL checkpoints")
+	assert.Contains(t, prompt, "clockwork_task_checkpoint_emit")
+	assert.Contains(t, prompt, "type=\"pr_review\"")
+	assert.Contains(t, prompt, "type=\"approval\"")
+	assert.Contains(t, prompt, "type=\"message\"")
+}
+
 // Re-firing: when an executor task re-enters `review` (e.g. after the
 // user re-opens it to todo and it runs again), a fresh end-agent fires.
 // Two transitions = two end-agent tasks. Documented as the V1 contract.

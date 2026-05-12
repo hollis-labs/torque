@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { ArrowLeft, Flag } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Flag } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from './status-badge'
@@ -36,9 +36,11 @@ interface TaskDetailHeaderProps {
   draft: Task
   saving: boolean
   queueBusy?: boolean
+  checkpointRequestBusy?: boolean
   onDraftChange: <K extends keyof Task>(field: K, value: Task[K]) => void
   onTransition: (status: TaskStatus) => void
   onQueueToggle: () => void
+  onRequestCheckpoint?: () => void
   onEdit: () => void
   onSave: () => void
   onCancel: () => void
@@ -53,9 +55,11 @@ export function TaskDetailHeader({
   draft,
   saving,
   queueBusy,
+  checkpointRequestBusy,
   onDraftChange,
   onTransition,
   onQueueToggle,
+  onRequestCheckpoint,
   onEdit,
   onSave,
   onCancel,
@@ -184,6 +188,18 @@ export function TaskDetailHeader({
                 busy={queueBusy}
                 onToggle={onQueueToggle}
               />
+              {onRequestCheckpoint && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onRequestCheckpoint}
+                  disabled={checkpointRequestBusy}
+                  className="h-7 gap-1.5 text-[11px] uppercase tracking-[.18em]"
+                >
+                  <AlertCircle className="h-3 w-3" aria-hidden />
+                  {checkpointRequestBusy ? 'Loading...' : 'Request HITL'}
+                </Button>
+              )}
               {nextStatuses.map((s) => (
                 <Button
                   key={s}
