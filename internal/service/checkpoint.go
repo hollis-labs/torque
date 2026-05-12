@@ -325,6 +325,14 @@ func (s *CheckpointService) applyOnCheckpointResponse(ctx context.Context, cp *s
 	return nil
 }
 
+// checkpointDispatchTimeout bounds the resume+send_input dispatch path so a
+// hung ResumeSession/SendInput can't keep the HTTP/MCP respond handler open
+// indefinitely. On deadline the catch-all error branch below falls back to
+// the legacy todo redispatch so the task progresses on the scheduler's next
+// tick. 30s covers a Boot+Start on a cold adapter with margin; well-behaved
+// resumes return in <2s.
+const checkpointDispatchTimeout = 30 * time.Second
+
 // dispatchResumeOrFallback is the sprint α.4 fork point: with a dispatcher
 // wired, hand off to the in-process resume+send_input path; without one
 // (or on ErrNoLiveSessionForTask), run the pre-α.4 legacy transition
@@ -339,7 +347,9 @@ func (s *CheckpointService) dispatchResumeOrFallback(ctx context.Context, cp *sq
 		// Legacy: hand off to the scheduler via the todo queue.
 		return s.store.TransitionTaskWithReason(cp.TaskID, "todo", "")
 	}
-	err := s.responseDispatcher.DispatchResponse(ctx, CheckpointResponseDispatch{
+	dispatchCtx, cancel := context.WithTimeout(ctx, checkpointDispatchTimeout)
+	defer cancel()
+	err := s.responseDispatcher.DispatchResponse(dispatchCtx, CheckpointResponseDispatch{
 		TaskID:        cp.TaskID,
 		CorrelationID: cp.CorrelationID,
 		ResponseJSON:  responseJSON,

@@ -10,11 +10,12 @@ import (
 // (the per-adapter answer the cli Executor.Capabilities() can't give because
 // it's whole-executor scope).
 //
-// Consumers: the reactor harness (S3α: ResumeSession dispatch, HITL response
-// inject, stuck-task recovery) checks ProviderCapabilities(profile.Provider).
-// SupportsResume before calling sessionmgr.ResumeSession; on false it falls
-// back to fresh-boot. No per-call probe, no try-resume-then-fallback — the
-// declaration here is the canonical answer (sprint α decision D4).
+// Consumers: Manager.ResumeSession reads ProviderCapabilities(profile.Provider).
+// SupportsResume internally to pick the resume-vs-fresh-boot branch. Callers of
+// ResumeSession therefore do NOT need to consult this surface — the branch is
+// encapsulated. The capability is read once per resume, never per turn, and is
+// the canonical answer (sprint α decision D4: no per-call probes, no
+// try-resume-then-fallback runtime detection).
 //
 // Resume support matrix (sprint α — CW-20260512-0059):
 //

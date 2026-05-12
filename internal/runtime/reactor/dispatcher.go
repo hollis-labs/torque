@@ -234,6 +234,16 @@ func (d *Dispatcher) handleStatusUpdate(ctx context.Context, env gomsg.Envelope,
 		return res
 	}
 	res.TaskID = taskID
+
+	// Per the Deps contract: a nil required surface degrades that one action
+	// to ActionNoop. TaskBlocker is the load-bearing surface for pause+block
+	// (the task transition is what "blocked" means at the substrate). Without
+	// it, neither stopping the session nor notifying makes the task blocked,
+	// so we degrade rather than mis-report.
+	if d.deps.Blocker == nil {
+		logNoop(env, "status_update:blocked surface (TaskBlocker) not wired")
+		return res
+	}
 	res.Action = ActionPauseAndBlock
 
 	reason := p.Note
@@ -241,12 +251,8 @@ func (d *Dispatcher) handleStatusUpdate(ctx context.Context, env gomsg.Envelope,
 		reason = "agent reported blocked state via status_update envelope"
 	}
 
-	if d.deps.Blocker != nil {
-		if err := d.deps.Blocker.TransitionTaskWithReason(taskID, "blocked", reason); err != nil && res.Err == nil {
-			res.Err = err
-		}
-	} else {
-		logNoop(env, "status_update:blocked surface (TaskBlocker) not wired")
+	if err := d.deps.Blocker.TransitionTaskWithReason(taskID, "blocked", reason); err != nil && res.Err == nil {
+		res.Err = err
 	}
 
 	if sessionID := metadataString(env, "session_id"); sessionID != "" && d.deps.Sessions != nil {
