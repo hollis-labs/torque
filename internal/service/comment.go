@@ -2,10 +2,13 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/writequeue"
 )
+
+const commentPersistTimeout = 5 * time.Second
 
 // CommentObserver is invoked synchronously after a comment is persisted.
 // Implementations must be non-blocking — observers run on the call path of
@@ -65,7 +68,9 @@ func (s *CommentService) Add(entityType, entityID, author, content string) (*sql
 		Author:     author,
 		Content:    content,
 	}
-	if err := s.telemetryWriter().AddComment(context.Background(), rec); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), commentPersistTimeout)
+	defer cancel()
+	if err := s.telemetryWriter().AddComment(ctx, rec); err != nil {
 		return nil, err
 	}
 	if s.observer != nil {

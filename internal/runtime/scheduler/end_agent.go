@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 )
@@ -49,6 +50,11 @@ const (
 	// enqueued end-agent. Separate from the target task's budget so
 	// reviewer cost can't starve the executor's allotment (AC6).
 	endAgentDefaultBudget = 0.50
+
+	// endAgentFailureCommentTimeout bounds the best-effort failure comment path
+	// so lifecycle processing cannot hang indefinitely on a stuck telemetry
+	// worker.
+	endAgentFailureCommentTimeout = 5 * time.Second
 )
 
 //go:embed templates/default-end-agent.md
@@ -183,7 +189,9 @@ func (lm *LifecycleManager) commentEndAgentFailure(internal *sqlstore.TaskRecord
 		content += ": " + reason
 	}
 	content += " — target stays at `review`; human follow-up required."
-	if err := lm.telemetry.AddComment(context.Background(), &sqlstore.CommentRecord{
+	ctx, cancel := context.WithTimeout(context.Background(), endAgentFailureCommentTimeout)
+	defer cancel()
+	if err := lm.telemetry.AddComment(ctx, &sqlstore.CommentRecord{
 		EntityType: sqlstore.EntityTypeTask,
 		EntityID:   internal.ParentID.String,
 		Author:     EndAgentAuthor,
