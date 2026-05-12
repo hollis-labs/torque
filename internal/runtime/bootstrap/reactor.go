@@ -39,6 +39,17 @@ func Reactor(
 		return func() {}, fmt.Errorf("reactor bootstrap: store, broker, and service are required")
 	}
 
+	// Sprint α.4 (CW-20260512-0062): wire the in-process checkpoint
+	// response dispatcher so an operator's respond on a parked task drives
+	// ResumeSession + SendInput instead of the legacy fresh-boot
+	// redispatch. The dispatcher needs both store + sessions; if sessions
+	// is nil (test composition root that didn't stand up the agent
+	// manager), leave the service in its legacy path so existing tests
+	// keep their behavior.
+	if sessions != nil {
+		svc.Checkpoint.WithResponseDispatcher(NewCheckpointResponseDispatcher(store, sessions))
+	}
+
 	deps := reactor.Deps{
 		Checkpoints: &checkpointAdapter{svc: svc.Checkpoint},
 		Blocker:     &storeBlockerAdapter{store: store},

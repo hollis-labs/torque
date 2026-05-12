@@ -1,9 +1,11 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -13,11 +15,68 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 )
 
+// ErrNoLiveSessionForTask is the sentinel a CheckpointResponseDispatcher
+// returns when it can't find an existing session to resume for the parked
+// task. Respond treats this as "fall through to the legacy fresh-boot path":
+// transition the parked task review → todo so the scheduler picks it up on
+// the next tick. Any other dispatcher error is logged + the task still goes
+// review → todo (no-op fallback) so an operator-side observability problem
+// can't strand a task in review.
+var ErrNoLiveSessionForTask = errors.New("checkpoint dispatcher: no resumable session bound to task")
+
+// CheckpointResponseDispatcher is the narrow surface CheckpointService.Respond
+// calls when a parked task with OnCheckpointResponse="resume" receives a
+// response. Production wiring (bootstrap.Reactor) supplies an adapter that
+// looks up the task's most recent session and drives
+// agent.Manager.ResumeSession + agent.Manager.SendInput so the operator
+// answer lands as a USER turn on the resumed transcript (sprint α.4, D3
+// reframe of CW-20260510-0122).
+//
+// The dispatcher OWNS the task's lifecycle transition when it takes
+// ownership: on success Respond transitions review → doing (because the
+// resumed session is the new live worker for this task, mirroring the
+// scheduler's todo→doing dispatch). On ErrNoLiveSessionForTask Respond
+// falls back to review → todo so the scheduler's fresh-boot path picks up
+// the task — the same path the pre-α.4 redispatch used. Per sprint-α D4
+// the dispatcher does NOT inspect provider capability itself; it always
+// calls ResumeSession which encapsulates the SupportsResume branch
+// internally (resume for claude/codex, fresh-boot for gemini/copilot/opencode).
+//
+// nil dispatcher (default; legacy callers): Respond keeps the pre-α.4 path
+// — review → todo for "resume" mode, leaving redispatch to the scheduler.
+type CheckpointResponseDispatcher interface {
+	DispatchResponse(ctx context.Context, in CheckpointResponseDispatch) error
+}
+
+// CheckpointResponseDispatch is the payload CheckpointService.Respond hands
+// to the dispatcher. Everything the resume path needs is here: the parked
+// task ID, the original checkpoint correlation, and the operator's response
+// JSON to deliver as a user-turn input on the resumed session.
+type CheckpointResponseDispatch struct {
+	TaskID        string
+	CorrelationID string
+	ResponseJSON  string
+}
+
 // CheckpointService owns the emit/respond/cancel/list flows for checkpoints.
 // Scheduler and lifecycle wiring (parking on blocking emit, resume on respond)
 // live in their own packages and consume CheckpointService.
+//
+// responseDispatcher (sprint α.4): optional; when wired the Respond path
+// drives an in-process resume+send_input dispatch instead of the legacy
+// review→todo handoff to the scheduler. See CheckpointResponseDispatcher.
 type CheckpointService struct {
-	store *sqlstore.Store
+	store              *sqlstore.Store
+	responseDispatcher CheckpointResponseDispatcher
+}
+
+// WithResponseDispatcher wires a CheckpointResponseDispatcher into the
+// service. Returns s so the bootstrap composition root can chain. Calling
+// with nil clears the dispatcher (and reverts to the legacy behavior).
+// Not goroutine-safe with concurrent Respond calls; wire once at startup.
+func (s *CheckpointService) WithResponseDispatcher(d CheckpointResponseDispatcher) *CheckpointService {
+	s.responseDispatcher = d
+	return s
 }
 
 // CheckpointEmitInput is the service-level input for recording a new
@@ -173,7 +232,7 @@ func (s *CheckpointService) Respond(in CheckpointRespondInput) error {
 	); err != nil {
 		return err
 	}
-	return s.applyOnCheckpointResponse(cp, in.ResponseJSON)
+	return s.applyOnCheckpointResponse(context.Background(), cp, in.ResponseJSON)
 }
 
 func validateRequiredWorkflowResponse(task *sqlstore.TaskRecord, cp *sqlstore.CheckpointRecord, responderSourceType string) error {
@@ -229,13 +288,22 @@ func requiredWorkflowPolicyForTask(task *sqlstore.TaskRecord) (hitl.RequiredWork
 // applyOnCheckpointResponse enforces the task's on_checkpoint_response rule
 // after a successful Respond. If the task is parked on this correlation_id
 // (status=review AND blocked_reason mentions it):
-//   - resume: transition review → todo, clear BlockedReason, attach response
+//   - resume: sprint α.4 — if a CheckpointResponseDispatcher is wired, hand
+//     off (taskID, corr, responseJSON) to it; on success the dispatcher has
+//     called agent.Manager.ResumeSession + agent.Manager.SendInput, the
+//     resumed session owns the work, and the task transitions review →
+//     doing (mirroring the scheduler's todo→doing dispatch). On
+//     ErrNoLiveSessionForTask (or any other dispatcher error) fall back to
+//     the legacy path: transition review → todo and let the scheduler
+//     fresh-boot on the next tick. If no dispatcher is wired (legacy
+//     callers / test harnesses), the legacy review → todo path runs
+//     unconditionally.
 //   - review: stay in review, keep BlockedReason, attach response
 //   - custom: plugin hook hand-off (MVP: attach response + stay)
 //
 // If the task isn't parked on this correlation (e.g. non_blocking mode, or a
 // responder racing the executor), only the metadata is attached.
-func (s *CheckpointService) applyOnCheckpointResponse(cp *sqlstore.CheckpointRecord, responseJSON string) error {
+func (s *CheckpointService) applyOnCheckpointResponse(ctx context.Context, cp *sqlstore.CheckpointRecord, responseJSON string) error {
 	task, err := s.store.GetTask(cp.TaskID)
 	if err != nil {
 		return err
@@ -249,12 +317,53 @@ func (s *CheckpointService) applyOnCheckpointResponse(cp *sqlstore.CheckpointRec
 	}
 	switch task.OnCheckpointResponse {
 	case "resume":
-		return s.store.TransitionTaskWithReason(cp.TaskID, "todo", "")
+		return s.dispatchResumeOrFallback(ctx, cp, responseJSON)
 	case "review", "custom":
 		// Stay parked. Human (or plugin hook) resolves.
 		return nil
 	}
 	return nil
+}
+
+// dispatchResumeOrFallback is the sprint α.4 fork point: with a dispatcher
+// wired, hand off to the in-process resume+send_input path; without one
+// (or on ErrNoLiveSessionForTask), run the pre-α.4 legacy transition
+// review → todo and let the scheduler's next tick fresh-boot the task.
+//
+// Dispatcher errors other than ErrNoLiveSessionForTask are also treated as
+// "fall back to the legacy path" — a transient inject failure on the
+// resumed-session side must not strand the task in review. The error is
+// logged so postmortem queries see the path mismatch.
+func (s *CheckpointService) dispatchResumeOrFallback(ctx context.Context, cp *sqlstore.CheckpointRecord, responseJSON string) error {
+	if s.responseDispatcher == nil {
+		// Legacy: hand off to the scheduler via the todo queue.
+		return s.store.TransitionTaskWithReason(cp.TaskID, "todo", "")
+	}
+	err := s.responseDispatcher.DispatchResponse(ctx, CheckpointResponseDispatch{
+		TaskID:        cp.TaskID,
+		CorrelationID: cp.CorrelationID,
+		ResponseJSON:  responseJSON,
+	})
+	if err == nil {
+		// Dispatcher owns the resumed session; the task is now in flight
+		// again on an in-process worker. Mirror the scheduler's
+		// todo→doing transition so picker.go won't redispatch and the
+		// task's blocked_reason clears.
+		return s.store.TransitionTaskWithReason(cp.TaskID, "doing", "")
+	}
+	if errors.Is(err, ErrNoLiveSessionForTask) {
+		// No session row to resume — fall through to the legacy fresh-boot
+		// path via the scheduler. This is the expected branch for tasks
+		// whose worker never registered with the long-lived session
+		// manager (one-shot executor tasks, recovered-from-crash flows).
+		return s.store.TransitionTaskWithReason(cp.TaskID, "todo", "")
+	}
+	// Any other error: log and fall back to the legacy path so the task
+	// progresses. The dispatcher will have observability of its own
+	// failures; Respond's job is to not strand the task.
+	log.Printf("[checkpoint] respond dispatcher error for task=%s corr=%s: %v — falling back to legacy todo redispatch",
+		cp.TaskID, cp.CorrelationID, err)
+	return s.store.TransitionTaskWithReason(cp.TaskID, "todo", "")
 }
 
 // attachCheckpointResponseToMetadata writes the response into
