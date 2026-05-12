@@ -10,6 +10,7 @@ package modelcatalog
 
 import (
 	"context"
+	"time"
 
 	"github.com/hollis-labs/go-modelsdev/modelsdev"
 )
@@ -35,6 +36,12 @@ func (c *Catalog) Start(ctx context.Context) {
 // Refresh fetches the catalog synchronously. Mainly for cold-start tests.
 func (c *Catalog) Refresh(ctx context.Context) error {
 	return c.client.Refresh(ctx)
+}
+
+// LastFetchedAt returns the timestamp of the last successful catalog refresh
+// or cache load. Zero means the catalog has never been warmed.
+func (c *Catalog) LastFetchedAt() time.Time {
+	return c.client.LastFetchedAt()
 }
 
 // Get returns the underlying Model for (providerID, modelID), or false if
