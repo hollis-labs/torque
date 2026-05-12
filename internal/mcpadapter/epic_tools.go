@@ -16,6 +16,7 @@ Response shape: data = {<EpicRecord fields>} — singleton.
 Example: {"name":"Auth Overhaul","description":"Replace entire auth stack"}`),
 		mcp.WithString("name", mcp.Required(), mcp.Description("Epic name")),
 		mcp.WithString("description", mcp.Description("Epic description")),
+		mcp.WithString("project_id", mcp.Description("Project ID to associate this epic with (requires features.projects)")),
 	), a.handleEpicCreate)
 
 	a.addTool(mcp.NewTool("clockwork_epic_get",
@@ -35,6 +36,7 @@ Example: {"id":"EP-4","status":"closed"}`),
 		mcp.WithString("name", mcp.Description("New name")),
 		mcp.WithString("description", mcp.Description("New description")),
 		mcp.WithString("status", mcp.Description("New status: open|closed|inactive")),
+		mcp.WithString("project_id", mcp.Description("Project ID to associate this epic with (requires features.projects); pass empty string to clear")),
 	), a.handleEpicUpdate)
 
 	a.addTool(mcp.NewTool("clockwork_epic_delete",
@@ -51,6 +53,7 @@ Use for browsing; clockwork_epic_get when you know the ID. Default brief shape; 
 Response shape: data = {items: [<briefEpic or EpicRecord>...], meta: {truncated, returned, limit, hint?}}.
 Example: {"status":"open"}`),
 		mcp.WithString("status", mcp.Description("Filter: open|closed|inactive")),
+		mcp.WithString("project_id", mcp.Description("Filter by project ID (requires features.projects)")),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleEpicList)
 }
@@ -59,6 +62,7 @@ func (a *Adapter) handleEpicCreate(ctx context.Context, req mcp.CallToolRequest)
 	input := service.EpicCreateInput{
 		Name:        reqStr(req, "name"),
 		Description: reqStr(req, "description"),
+		ProjectID:   reqStr(req, "project_id"),
 	}
 
 	epic, err := a.svc.Epic.Create(input)
@@ -91,6 +95,11 @@ func (a *Adapter) handleEpicUpdate(ctx context.Context, req mcp.CallToolRequest)
 	}
 	if v := reqStr(req, "status"); v != "" {
 		input.Status = &v
+		hasUpdate = true
+	}
+	if reqHasArg(req, "project_id") {
+		v := reqStr(req, "project_id")
+		input.ProjectID = &v
 		hasUpdate = true
 	}
 
