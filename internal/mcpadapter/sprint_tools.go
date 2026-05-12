@@ -19,6 +19,7 @@ Example: {"name":"Sprint 17","goal":"Land Phase C","approval_mode":"approve_each
 		mcp.WithString("goal", mcp.Description("Sprint goal")),
 		mcp.WithString("approval_mode", mcp.Description("auto|approve_sprint|approve_each (default approve_each)")),
 		mcp.WithString("cost_budget", mcp.Description("Maximum cost budget (numeric)")),
+		mcp.WithString("project_id", mcp.Description("Project ID to associate this sprint with (requires features.projects)")),
 	), a.handleSprintCreate)
 
 	a.addTool(mcp.NewTool("clockwork_sprint_get",
@@ -39,6 +40,7 @@ Example: {"id":"SP-17","status":"completed"}`),
 		mcp.WithString("goal", mcp.Description("New goal")),
 		mcp.WithString("approval_mode", mcp.Description("New approval mode")),
 		mcp.WithString("cost_budget", mcp.Description("New cost budget (numeric)")),
+		mcp.WithString("project_id", mcp.Description("Project ID to associate this sprint with (requires features.projects); pass empty string to clear")),
 		mcp.WithString("status", mcp.Description("Transition target: active|inactive|completed")),
 	), a.handleSprintUpdate)
 
@@ -56,6 +58,7 @@ Use for browsing; clockwork_sprint_get when you know the ID. Default brief shape
 Response shape: data = {items: [<briefSprint or SprintRecord>...], meta: {truncated, returned, limit, hint?}}.
 Example: {"status":"active"}`),
 		mcp.WithString("status", mcp.Description("Filter: active|inactive|completed")),
+		mcp.WithString("project_id", mcp.Description("Filter by project ID (requires features.projects)")),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleSprintList)
 
@@ -130,6 +133,11 @@ func (a *Adapter) handleSprintUpdate(ctx context.Context, req mcp.CallToolReques
 	}
 	if v := reqFloat(req, "cost_budget"); v > 0 {
 		update.CostBudget = &v
+		hasUpdate = true
+	}
+	if reqHasArg(req, "project_id") {
+		v := reqStr(req, "project_id")
+		update.ProjectID = &v
 		hasUpdate = true
 	}
 

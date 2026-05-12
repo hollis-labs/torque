@@ -147,7 +147,11 @@ func (s *Store) UpdateSprint(id string, u SprintUpdate) error {
 	}
 	if u.ProjectID != nil {
 		sets = append(sets, "project_id = ?")
-		args = append(args, *u.ProjectID)
+		if *u.ProjectID == "" {
+			args = append(args, nil)
+		} else {
+			args = append(args, *u.ProjectID)
+		}
 	}
 
 	if len(sets) == 0 {

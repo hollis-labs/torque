@@ -419,6 +419,258 @@ func TestTaskAssociationUpdateViaMCP(t *testing.T) {
 	assert.Equal(t, sp["ID"], sprintField["String"])
 }
 
+// TestSprintCreateProjectIDViaMCP verifies project_id is exposed and persisted on
+// the clockwork_sprint_create tool. Closes the audit gap surfaced 2026-05-12 where
+// the underlying store accepted project_id but the MCP tool schema didn't declare
+// it, causing the parameter to be invisible to clients.
+func TestSprintCreateProjectIDViaMCP(t *testing.T) {
+	svc := setupServiceDirect(t)
+	require.NoError(t, svc.Feature.Enable("sprints"))
+	require.NoError(t, svc.Feature.Enable("projects"))
+	a := adapterFromService(svc)
+
+	// Create project to associate with
+	projectText, isErr := callTool(t, a, "clockwork_project_create", map[string]interface{}{
+		"name":      "Project for sprint",
+		"repo_path": "/tmp/clockwork-test/sprint-project-id",
+	})
+	require.False(t, isErr)
+	var pr map[string]interface{}
+	parseData(t, projectText, &pr)
+	projectID := pr["ID"].(string)
+
+	// Create sprint with project_id
+	text, isErr := callTool(t, a, "clockwork_sprint_create", map[string]interface{}{
+		"name":       "Sprint with project",
+		"project_id": projectID,
+	})
+	require.False(t, isErr, "sprint_create with project_id should succeed: %s", text)
+
+	var sprint map[string]interface{}
+	parseData(t, text, &sprint)
+	sprintID := sprint["ID"].(string)
+
+	// Read back via sprint_get to confirm DB persistence
+	text, isErr = callTool(t, a, "clockwork_sprint_get", map[string]interface{}{"id": sprintID})
+	require.False(t, isErr, "sprint_get should succeed: %s", text)
+	var resp map[string]interface{}
+	parseData(t, text, &resp)
+	got := resp["sprint"].(map[string]interface{})
+	projectField := got["ProjectID"].(map[string]interface{})
+	assert.True(t, projectField["Valid"].(bool), "project_id must persist with Valid=true")
+	assert.Equal(t, projectID, projectField["String"])
+}
+
+// TestSprintUpdateProjectIDViaMCP verifies project_id can be set on an existing
+// sprint via clockwork_sprint_update (the backfill path for the 3 sprints created
+// 2026-05-12 prior to this fix).
+func TestSprintUpdateProjectIDViaMCP(t *testing.T) {
+	svc := setupServiceDirect(t)
+	require.NoError(t, svc.Feature.Enable("sprints"))
+	require.NoError(t, svc.Feature.Enable("projects"))
+	a := adapterFromService(svc)
+
+	projectText, isErr := callTool(t, a, "clockwork_project_create", map[string]interface{}{
+		"name":      "Project for update",
+		"repo_path": "/tmp/clockwork-test/sprint-update-project",
+	})
+	require.False(t, isErr)
+	var pr map[string]interface{}
+	parseData(t, projectText, &pr)
+	projectID := pr["ID"].(string)
+
+	// Create sprint without project_id
+	sprintText, isErr := callTool(t, a, "clockwork_sprint_create", map[string]interface{}{
+		"name": "Orphan sprint",
+	})
+	require.False(t, isErr)
+	var sprint map[string]interface{}
+	parseData(t, sprintText, &sprint)
+	sprintID := sprint["ID"].(string)
+
+	// Update to attach project_id
+	text, isErr := callTool(t, a, "clockwork_sprint_update", map[string]interface{}{
+		"id":         sprintID,
+		"project_id": projectID,
+	})
+	require.False(t, isErr, "sprint_update with project_id should succeed: %s", text)
+
+	// Read back
+	text, isErr = callTool(t, a, "clockwork_sprint_get", map[string]interface{}{"id": sprintID})
+	require.False(t, isErr)
+	var resp map[string]interface{}
+	parseData(t, text, &resp)
+	got := resp["sprint"].(map[string]interface{})
+	projectField := got["ProjectID"].(map[string]interface{})
+	assert.True(t, projectField["Valid"].(bool))
+	assert.Equal(t, projectID, projectField["String"])
+}
+
+// TestSprintUpdateProjectIDClearViaMCP verifies an existing project_id can be
+// cleared via clockwork_sprint_update by passing an empty string. Closes Copilot
+// review feedback on PR #51: the documented clear behavior must actually persist
+// as SQL NULL (ProjectID.Valid=false), not as project_id = '' (Valid=true).
+func TestSprintUpdateProjectIDClearViaMCP(t *testing.T) {
+	svc := setupServiceDirect(t)
+	require.NoError(t, svc.Feature.Enable("sprints"))
+	require.NoError(t, svc.Feature.Enable("projects"))
+	a := adapterFromService(svc)
+
+	projectText, isErr := callTool(t, a, "clockwork_project_create", map[string]interface{}{
+		"name":      "Project for sprint clear",
+		"repo_path": "/tmp/clockwork-test/sprint-clear-project",
+	})
+	require.False(t, isErr)
+	var pr map[string]interface{}
+	parseData(t, projectText, &pr)
+	projectID := pr["ID"].(string)
+
+	// Create sprint with project_id set
+	sprintText, isErr := callTool(t, a, "clockwork_sprint_create", map[string]interface{}{
+		"name":       "Sprint to clear",
+		"project_id": projectID,
+	})
+	require.False(t, isErr)
+	var sprint map[string]interface{}
+	parseData(t, sprintText, &sprint)
+	sprintID := sprint["ID"].(string)
+
+	// Clear project_id via empty string
+	_, isErr = callTool(t, a, "clockwork_sprint_update", map[string]interface{}{
+		"id":         sprintID,
+		"project_id": "",
+	})
+	require.False(t, isErr, "sprint_update with empty project_id should succeed")
+
+	// Read back: ProjectID.Valid must be false (SQL NULL semantics)
+	text, isErr := callTool(t, a, "clockwork_sprint_get", map[string]interface{}{"id": sprintID})
+	require.False(t, isErr)
+	var resp map[string]interface{}
+	parseData(t, text, &resp)
+	got := resp["sprint"].(map[string]interface{})
+	projectField := got["ProjectID"].(map[string]interface{})
+	assert.False(t, projectField["Valid"].(bool), "project_id must clear to NULL (Valid=false), not empty string")
+}
+
+// TestEpicCreateProjectIDViaMCP verifies project_id is exposed and persisted on
+// the clockwork_epic_create tool. Same audit-gap class as the sprint fix above.
+func TestEpicCreateProjectIDViaMCP(t *testing.T) {
+	svc := setupServiceDirect(t)
+	require.NoError(t, svc.Feature.Enable("epics"))
+	require.NoError(t, svc.Feature.Enable("projects"))
+	a := adapterFromService(svc)
+
+	projectText, isErr := callTool(t, a, "clockwork_project_create", map[string]interface{}{
+		"name":      "Project for epic",
+		"repo_path": "/tmp/clockwork-test/epic-project-id",
+	})
+	require.False(t, isErr)
+	var pr map[string]interface{}
+	parseData(t, projectText, &pr)
+	projectID := pr["ID"].(string)
+
+	// Create epic with project_id
+	text, isErr := callTool(t, a, "clockwork_epic_create", map[string]interface{}{
+		"name":       "Epic with project",
+		"project_id": projectID,
+	})
+	require.False(t, isErr, "epic_create with project_id should succeed: %s", text)
+
+	var epic map[string]interface{}
+	parseData(t, text, &epic)
+	epicID := epic["ID"].(string)
+
+	// Read back via epic_get
+	text, isErr = callTool(t, a, "clockwork_epic_get", map[string]interface{}{"id": epicID})
+	require.False(t, isErr)
+	var got map[string]interface{}
+	parseData(t, text, &got)
+	projectField := got["ProjectID"].(map[string]interface{})
+	assert.True(t, projectField["Valid"].(bool), "project_id must persist with Valid=true")
+	assert.Equal(t, projectID, projectField["String"])
+}
+
+// TestEpicUpdateProjectIDViaMCP verifies project_id can be set on an existing
+// epic via clockwork_epic_update.
+func TestEpicUpdateProjectIDViaMCP(t *testing.T) {
+	svc := setupServiceDirect(t)
+	require.NoError(t, svc.Feature.Enable("epics"))
+	require.NoError(t, svc.Feature.Enable("projects"))
+	a := adapterFromService(svc)
+
+	projectText, isErr := callTool(t, a, "clockwork_project_create", map[string]interface{}{
+		"name":      "Project for epic update",
+		"repo_path": "/tmp/clockwork-test/epic-update-project",
+	})
+	require.False(t, isErr)
+	var pr map[string]interface{}
+	parseData(t, projectText, &pr)
+	projectID := pr["ID"].(string)
+
+	epicText, isErr := callTool(t, a, "clockwork_epic_create", map[string]interface{}{
+		"name": "Orphan epic",
+	})
+	require.False(t, isErr)
+	var epic map[string]interface{}
+	parseData(t, epicText, &epic)
+	epicID := epic["ID"].(string)
+
+	text, isErr := callTool(t, a, "clockwork_epic_update", map[string]interface{}{
+		"id":         epicID,
+		"project_id": projectID,
+	})
+	require.False(t, isErr, "epic_update with project_id should succeed: %s", text)
+
+	text, isErr = callTool(t, a, "clockwork_epic_get", map[string]interface{}{"id": epicID})
+	require.False(t, isErr)
+	var got map[string]interface{}
+	parseData(t, text, &got)
+	projectField := got["ProjectID"].(map[string]interface{})
+	assert.True(t, projectField["Valid"].(bool))
+	assert.Equal(t, projectID, projectField["String"])
+}
+
+// TestEpicUpdateProjectIDClearViaMCP verifies an existing project_id can be
+// cleared via clockwork_epic_update by passing an empty string. Closes Copilot
+// review feedback on PR #51: clearing must persist as SQL NULL, not as empty string.
+func TestEpicUpdateProjectIDClearViaMCP(t *testing.T) {
+	svc := setupServiceDirect(t)
+	require.NoError(t, svc.Feature.Enable("epics"))
+	require.NoError(t, svc.Feature.Enable("projects"))
+	a := adapterFromService(svc)
+
+	projectText, isErr := callTool(t, a, "clockwork_project_create", map[string]interface{}{
+		"name":      "Project for epic clear",
+		"repo_path": "/tmp/clockwork-test/epic-clear-project",
+	})
+	require.False(t, isErr)
+	var pr map[string]interface{}
+	parseData(t, projectText, &pr)
+	projectID := pr["ID"].(string)
+
+	epicText, isErr := callTool(t, a, "clockwork_epic_create", map[string]interface{}{
+		"name":       "Epic to clear",
+		"project_id": projectID,
+	})
+	require.False(t, isErr)
+	var epic map[string]interface{}
+	parseData(t, epicText, &epic)
+	epicID := epic["ID"].(string)
+
+	_, isErr = callTool(t, a, "clockwork_epic_update", map[string]interface{}{
+		"id":         epicID,
+		"project_id": "",
+	})
+	require.False(t, isErr, "epic_update with empty project_id should succeed")
+
+	text, isErr := callTool(t, a, "clockwork_epic_get", map[string]interface{}{"id": epicID})
+	require.False(t, isErr)
+	var got map[string]interface{}
+	parseData(t, text, &got)
+	projectField := got["ProjectID"].(map[string]interface{})
+	assert.False(t, projectField["Valid"].(bool), "project_id must clear to NULL (Valid=false), not empty string")
+}
+
 func TestHealthShowsEnabledFeatures(t *testing.T) {
 	svc := setupServiceDirect(t)
 	require.NoError(t, svc.Feature.Enable("sprints"))
