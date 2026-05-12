@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
@@ -42,7 +43,14 @@ func SQLiteDSN(path string, opts SQLiteDSNOptions) string {
 		q.Set("_txlock", opts.TxLock)
 	}
 
-	return (&url.URL{Scheme: "file", Path: path, RawQuery: q.Encode()}).String()
+	if filepath.IsAbs(path) {
+		return (&url.URL{Scheme: "file", Path: path, RawQuery: q.Encode()}).String()
+	}
+
+	// Relative SQLite paths must use the "file:foo.db" URI form. Encoding
+	// them as "file://foo.db" makes the driver treat the path as an authority-
+	// shaped URI and modernc/sqlite fails on first write against real DBs.
+	return "file:" + (&url.URL{Path: path}).EscapedPath() + "?" + q.Encode()
 }
 
 func Open() (*sql.DB, string, error) {
