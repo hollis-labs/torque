@@ -75,12 +75,13 @@ func runCostBackfill(ctx context.Context, since time.Duration, includePositiveUn
 
 	profiles := loadProfilesOrEmpty()
 	catalog := modelcatalog.New()
-	if err := catalog.Refresh(ctx); err != nil && catalog.LastFetchedAt().IsZero() {
-		return fmt.Errorf("models.dev refresh: %w", err)
+	refreshErr := catalog.Refresh(ctx)
+	if refreshErr != nil && catalog.LastFetchedAt().IsZero() {
+		return fmt.Errorf("models.dev refresh: %w", refreshErr)
 	}
-	if err != nil {
+	if refreshErr != nil {
 		log.Printf("[cost-backfill] models.dev refresh failed; continuing with cached catalog from %s: %v",
-			catalog.LastFetchedAt().Format(time.RFC3339), err)
+			catalog.LastFetchedAt().Format(time.RFC3339), refreshErr)
 	}
 
 	sinceTime := time.Now().Add(-since).UTC()
@@ -102,6 +103,7 @@ func runCostBackfill(ctx context.Context, since time.Duration, includePositiveUn
 		skippedNoModel     int
 		skippedNoEstimate  int
 		skippedPositive    int
+		skippedNoUpdate    int
 		relabelledPositive int
 		usedAssumedModel   int
 	}
@@ -157,13 +159,19 @@ func runCostBackfill(ctx context.Context, since time.Duration, includePositiveUn
 			continue
 		}
 
-		if _, err := tx.Exec(
+		result, err := tx.Exec(
 			`UPDATE cost_ledger
 			 SET cost = ?, cost_source = 'models_dev'
 			 WHERE task_id = ? AND run_id = ? AND cost_source = 'unknown'`,
 			estimated, row.TaskID, row.RunID,
-		); err != nil {
+		)
+		if err != nil {
 			return fmt.Errorf("update cost_ledger run=%d: %w", row.RunID, err)
+		}
+		affected, _ := result.RowsAffected()
+		if affected == 0 {
+			counts.skippedNoUpdate++
+			continue
 		}
 
 		if row.Cost > 0 {
@@ -176,10 +184,10 @@ func runCostBackfill(ctx context.Context, since time.Duration, includePositiveUn
 		return fmt.Errorf("commit tx: %w", err)
 	}
 
-	log.Printf("[cost-backfill] since=%s considered=%d updated=%d relabelled_positive=%d skipped_no_session=%d skipped_no_profile=%d skipped_provider=%d skipped_no_model=%d skipped_no_estimate=%d skipped_positive=%d",
+	log.Printf("[cost-backfill] since=%s considered=%d updated=%d relabelled_positive=%d skipped_no_session=%d skipped_no_profile=%d skipped_provider=%d skipped_no_model=%d skipped_no_estimate=%d skipped_positive=%d skipped_no_update=%d",
 		since, counts.considered, counts.updated, counts.relabelledPositive, counts.skippedNoSession,
 		counts.skippedNoProfile, counts.skippedProvider, counts.skippedNoModel, counts.skippedNoEstimate,
-		counts.skippedPositive)
+		counts.skippedPositive, counts.skippedNoUpdate)
 	log.Printf("[cost-backfill] used_assumed_model=%d assumed_models=%v", counts.usedAssumedModel, assumedModels)
 	return nil
 }
