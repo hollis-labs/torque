@@ -45,6 +45,27 @@ type Options struct {
 	// ResumeFromCheckpoint — required when Mode == ModeResume.
 	ResumeFromCheckpoint string
 
+	// ProviderSessionIDOverride, when non-empty, threads the supplied
+	// provider session-id directly to StartOptions.SessionIDPreset,
+	// bypassing the checkpoint lookup that ModeResume requires. Used by
+	// Manager.ResumeSession (CW-20260512-0060, sprint α.2) — state-based
+	// resume reads the previously captured provider session-id off the
+	// sessions row's resume_hint column (populated automatically by the
+	// OnSessionID callback during the original boot) and threads it via
+	// this field, while keeping Mode=ModeLongLived for the standard
+	// long-lived lifecycle policy. ModeResume's checkpoint-based path is
+	// orthogonal and still preferred when callers have an explicit
+	// checkpoint to re-anchor against.
+	//
+	// Honored across all Modes — but it only changes adapter argv on
+	// providers whose Capabilities.ProviderSessionID is true (claude
+	// today; codex's CodexAdapter ignores cliSessionID in BuildArgs per
+	// go-providers v0.16.1's "Resume is interactive-only" note). For
+	// providers that don't thread it into argv, the field is a no-op
+	// (the SessionIDPreset is stored on the lib-side session struct but
+	// never consumed by BuildArgs).
+	ProviderSessionIDOverride string
+
 	// OneShotPrompt is the user-message body for ModeOneShot. When empty,
 	// the kickoff defaults to "Boot @./boot.md" and the boot.md content
 	// drives the turn (matches ModeLongLived's framing). Most callers leave

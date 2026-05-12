@@ -224,6 +224,29 @@ type ResumeRequest struct {
 	Env          []string
 }
 
+// ResumeOptions parametrizes Manager.ResumeSession (CW-20260512-0060,
+// sprint α.2). State-based resume — distinct from ResumeRequest's
+// checkpoint-based path: ResumeSession looks up the persisted per-session
+// state (AgentProfile + Workdir + ProjectID + TaskID + provider session-id
+// from the sessions row) and re-boots, threading `--resume <id>` into the
+// adapter argv when ProviderCapabilities(provider).SupportsResume is true,
+// or fresh-booting (no --resume flag) when it is not. Capability check is
+// the single decision point — no per-call probing.
+//
+// Designed for the reactor harness's α.4 (HITL response → ResumeSession +
+// send_input) and α.5 (stuck-task recovery → checkpoint, then resume with
+// a diagnostic note) flows.
+type ResumeOptions struct {
+	// DiagnosticNote, when non-empty, is prepended to the resumed session's
+	// composed system prompt. Used by α.5 stuck-task recovery to inject a
+	// "the previous turn went silent; please proceed by …" framing into
+	// the resumed transcript so the LLM sees operator context on first
+	// turn after the resume. Leave empty for plain HITL resumes (α.4) —
+	// the operator response itself flows through send_input after this
+	// returns.
+	DiagnosticNote string
+}
+
 // Sentinel errors. Wrap with errors.Is at call sites.
 var (
 	// ErrSessionNotFound — the named session has no row in the store.

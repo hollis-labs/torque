@@ -255,7 +255,11 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	}
 
 	// Resume preset: ModeResume threads the provider's session ID via
-	// SessionIDPreset. Lookup goes through the named checkpoint.
+	// SessionIDPreset. Lookup goes through the named checkpoint. The
+	// state-based resume path (Manager.ResumeSession, sprint α.2) skips
+	// the checkpoint lookup and threads the persisted-on-row session-id
+	// directly via Options.ProviderSessionIDOverride; that path stays on
+	// ModeLongLived but still feeds SessionIDPreset.
 	var sessionIDPreset string
 	var resumeHint []byte
 	if opts.Mode == ModeResume {
@@ -269,6 +273,17 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 			sessionIDPreset = string(cp.ResumeHint)
 			resumeHint = cp.ResumeHint
 		}
+	}
+	if opts.ProviderSessionIDOverride != "" {
+		// Explicit override wins over the checkpoint-derived preset above
+		// — ResumeSession threads the canonical state-based preset here
+		// and the caller picked the override deliberately. resumeHint is
+		// updated in lockstep so the freshly-rebooted session row carries
+		// the same provider session-id forward (otherwise the row's
+		// resume_hint column would briefly diverge from SessionIDPreset
+		// until the next OnSessionID callback fires).
+		sessionIDPreset = opts.ProviderSessionIDOverride
+		resumeHint = []byte(opts.ProviderSessionIDOverride)
 	}
 
 	// OnSessionID persists the provider's first observed session ID so
