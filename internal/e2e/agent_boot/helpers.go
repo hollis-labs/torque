@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/go-sqlite/sqlitekit"
 	"github.com/oklog/ulid/v2"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/appdb"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
@@ -46,12 +46,7 @@ type composedDeps struct {
 func composeDeps(t *testing.T, cfg fakeRuntimeConfig, profileProvider string) *composedDeps {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := appdb.SQLiteDSN(filepath.Join(dir, "agent_boot.db"), appdb.SQLiteDSNOptions{
-		BusyTimeoutMs:    appdb.DefaultSQLiteBusyTimeoutMs,
-		IncludeCacheSize: true,
-		TxLock:           "immediate",
-	})
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sqlitekit.OpenWriter(context.Background(), filepath.Join(dir, "agent_boot.db"), sqlitekit.OpenOptions{Options: sqlitekit.WriterOptions()})
 	require.NoError(t, err)
 	require.NoError(t, migrations.Run(db))
 	store, err := sqlstore.New(db, "sqlite")

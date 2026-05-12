@@ -21,7 +21,7 @@ func mcpCmd() *cobra.Command {
 		Use:   "mcp",
 		Short: "Start Clockwork MCP server (stdio transport)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			db, driver, err := appdb.Open()
+			db, driver, err := appdb.Open(cmd.Context())
 			if err != nil {
 				return fmt.Errorf("open database: %w", err)
 			}

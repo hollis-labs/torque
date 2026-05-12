@@ -83,7 +83,7 @@ func TestSchedulerNoGoroutineLeak(t *testing.T) {
 	defer store.Close()
 
 	dir := t.TempDir()
-	q, err := queue.Open(filepath.Join(dir, "queue.db"))
+	q, err := queue.Open(context.Background(), filepath.Join(dir, "queue.db"))
 	require.NoError(t, err)
 	defer q.Close()
 

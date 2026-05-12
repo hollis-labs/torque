@@ -1,6 +1,7 @@
 package mcpadapter_test
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -24,7 +25,7 @@ func setupAdapterWithScheduler(t *testing.T, initialEnabled bool) (*mcpadapter.A
 	t.Helper()
 	store := sqlitetest.OpenStore(t)
 
-	q, err := queue.Open(filepath.Join(t.TempDir(), "queue.db"))
+	q, err := queue.Open(context.Background(), filepath.Join(t.TempDir(), "queue.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { q.Close() })
 

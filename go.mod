@@ -15,6 +15,7 @@ require (
 	github.com/hollis-labs/go-queue v0.1.1
 	github.com/hollis-labs/go-runner v0.4.0
 	github.com/hollis-labs/go-sandbox v0.2.0
+	github.com/hollis-labs/go-sqlite v0.1.0
 	github.com/hollis-labs/go-strutil v0.0.0-20260409170855-ca5f29e8b1db
 	github.com/hollis-labs/go-toolbroker v0.1.0
 	github.com/hollis-labs/plugin v0.0.0-20260410030617-741878c627b2

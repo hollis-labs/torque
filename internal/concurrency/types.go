@@ -57,9 +57,6 @@ type DBPoolConfig struct {
 	// MaxReadConns is the maximum number of read connections. Default: 4.
 	MaxReadConns int
 
-	// BusyTimeoutMs is the SQLite busy_timeout PRAGMA value. Default: 5000.
-	BusyTimeoutMs int
-
 	// WriteChannelSize is the buffer size for the write serializer channel. Default: 256.
 	WriteChannelSize int
 }
@@ -70,7 +67,6 @@ func DefaultDBPoolConfig(dbPath string) DBPoolConfig {
 		DBPath:           dbPath,
 		QueueDBPath:      "queue.db",
 		MaxReadConns:     4,
-		BusyTimeoutMs:    5000,
 		WriteChannelSize: 256,
 	}
 }

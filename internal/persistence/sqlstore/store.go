@@ -1,13 +1,15 @@
 package sqlstore
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/appdb"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/hollis-labs/go-sqlite/sqlitekit"
 )
 
 type Store struct {
@@ -23,6 +25,16 @@ type Store struct {
 	transitionHooks []TaskTransitionHook
 }
 
+// New constructs a Store on top of the provided *sql.DB. When the driver is
+// sqlite and the input handle has a file path (i.e. not :memory:), New
+// re-opens dedicated writer + reader pools via sqlitekit so writers serialize
+// on a single connection (TxLock=immediate) while reads scale on a bounded
+// pool. The original handle is retained as `owned` so Close honors the
+// caller's expectation of ownership.
+//
+// For :memory: callers (test fixtures), the input handle is used as-is for
+// both reads and writes, with FK enforcement enabled — these sites bypass the
+// DSN path entirely.
 func New(db *sql.DB, driver string) (*Store, error) {
 	var d Dialect
 	readDB := db
@@ -34,26 +46,32 @@ func New(db *sql.DB, driver string) (*Store, error) {
 		if err != nil {
 			return nil, err
 		}
-		busyTimeoutMs, err := sqliteBusyTimeout(db)
-		if err != nil {
-			return nil, err
-		}
 		if path != "" {
-			writerDB, err := openSQLiteWritePool(path, busyTimeoutMs)
+			ctx := context.Background()
+			writerDB, err := sqlitekit.OpenWriter(ctx, path, sqlitekit.OpenOptions{
+				Options: sqlitekit.WriterOptions(),
+			})
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("open sqlite write pool: %w", err)
 			}
-			readDB, err = openSQLiteReadPool(path, busyTimeoutMs)
+			readerDB, err := sqlitekit.OpenReader(ctx, path, sqlitekit.OpenOptions{
+				Options:      sqlitekit.ReaderOptions(),
+				MaxOpenConns: sqliteReadMaxOpenConns(),
+			})
 			if err != nil {
 				_ = writerDB.Close()
-				return nil, err
+				return nil, fmt.Errorf("open sqlite read pool: %w", err)
 			}
 			db = writerDB
+			readDB = readerDB
 		} else {
+			// :memory: (or empty path) — caller's handle is the writer and
+			// reader. Force single-connection semantics, and turn on FKs since
+			// the DSN path was bypassed.
 			db.SetMaxOpenConns(1)
 			db.SetMaxIdleConns(1)
-			if err := applySQLiteWritePragmas(db, busyTimeoutMs); err != nil {
-				return nil, err
+			if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
+				return nil, fmt.Errorf("enable foreign keys: %w", err)
 			}
 		}
 	case "postgres", "pgx":
@@ -92,34 +110,9 @@ func (s *Store) Close() error {
 	return firstErr
 }
 
-func applySQLiteWritePragmas(db *sql.DB, busyTimeoutMs int) error {
-	return applySQLitePragmas(db, true, busyTimeoutMs)
-}
-
-func applySQLitePragmas(db *sql.DB, includeCacheSize bool, busyTimeoutMs int) error {
-	if busyTimeoutMs <= 0 {
-		busyTimeoutMs = appdb.DefaultSQLiteBusyTimeoutMs
-	}
-	pragmas := []string{
-		"PRAGMA journal_mode=WAL",
-		fmt.Sprintf("PRAGMA busy_timeout=%d", busyTimeoutMs),
-		"PRAGMA foreign_keys=ON",
-		"PRAGMA synchronous=NORMAL",
-		"PRAGMA temp_store=memory",
-		"PRAGMA mmap_size=30000000000",
-		"PRAGMA journal_size_limit=67108864",
-	}
-	if includeCacheSize {
-		pragmas = append(pragmas, "PRAGMA cache_size=-64000")
-	}
-	for _, pragma := range pragmas {
-		if _, err := db.Exec(pragma); err != nil {
-			return fmt.Errorf("apply %q: %w", pragma, err)
-		}
-	}
-	return nil
-}
-
+// sqliteMainDBPath returns the on-disk file backing the "main" SQLite
+// database for db, or "" when the database is :memory:. Used by New to
+// decide whether to spin up dedicated writer/reader pools.
 func sqliteMainDBPath(db *sql.DB) (string, error) {
 	rows, err := db.Query(`PRAGMA database_list`)
 	if err != nil {
@@ -147,65 +140,15 @@ func sqliteMainDBPath(db *sql.DB) (string, error) {
 	return "", nil
 }
 
-func sqliteBusyTimeout(db *sql.DB) (int, error) {
-	var ms int
-	if err := db.QueryRow("PRAGMA busy_timeout").Scan(&ms); err != nil {
-		return 0, fmt.Errorf("query sqlite busy_timeout: %w", err)
-	}
-	if ms <= 0 {
-		ms = appdb.DefaultSQLiteBusyTimeoutMs
-	}
-	return ms, nil
-}
-
-func openSQLiteWritePool(path string, busyTimeoutMs int) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", appdb.SQLiteDSN(path, appdb.SQLiteDSNOptions{
-		BusyTimeoutMs:    busyTimeoutMs,
-		IncludeCacheSize: true,
-		TxLock:           "immediate",
-	}))
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite write pool: %w", err)
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	if err := applySQLiteWritePragmas(db, busyTimeoutMs); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	if err := db.Ping(); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("ping sqlite write pool: %w", err)
-	}
-	return db, nil
-}
-
-func openSQLiteReadPool(path string, busyTimeoutMs int) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", sqliteReadDSN(path, busyTimeoutMs))
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite read pool: %w", err)
-	}
-	maxOpen := sqliteReadMaxOpenConns()
-	db.SetMaxOpenConns(maxOpen)
-	db.SetMaxIdleConns(maxOpen)
-	if err := db.Ping(); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("ping sqlite read pool: %w", err)
-	}
-	return db, nil
-}
-
+// sqliteReadMaxOpenConns honors CLOCKWORK_MAX_READ_CONNS when set to a
+// positive int, falling back to sqlitekit's DefaultReadMaxOpenConns. The env
+// override is preserved from the pre-migration code so operators can keep
+// tuning the read pool size without code changes.
 func sqliteReadMaxOpenConns() int {
 	if raw := strings.TrimSpace(os.Getenv("CLOCKWORK_MAX_READ_CONNS")); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
 			return n
 		}
 	}
-	return appdb.DefaultSQLiteMaxReadConns
-}
-
-func sqliteReadDSN(path string, busyTimeoutMs int) string {
-	return appdb.SQLiteDSN(path, appdb.SQLiteDSNOptions{
-		BusyTimeoutMs: busyTimeoutMs,
-	})
+	return sqlitekit.DefaultReadMaxOpenConns
 }

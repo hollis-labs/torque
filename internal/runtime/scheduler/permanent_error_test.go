@@ -27,7 +27,7 @@ func setupPermErrorScheduler(t *testing.T) (*sqlstore.Store, *scheduler.Schedule
 	store := sqlitetest.OpenStore(t)
 
 	dir := t.TempDir()
-	q, err := queue.Open(filepath.Join(dir, "queue.db"))
+	q, err := queue.Open(context.Background(), filepath.Join(dir, "queue.db"))
 	require.NoError(t, err)
 
 	mock := executor.NewMockExecutor()

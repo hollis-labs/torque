@@ -17,7 +17,7 @@ func setupQueue(t *testing.T) *queue.Queue {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "queue.db")
 
-	q, err := queue.Open(dbPath)
+	q, err := queue.Open(context.Background(), dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { q.Close() })
 	return q
@@ -110,13 +110,13 @@ func TestQueuePersistence(t *testing.T) {
 	dbPath := filepath.Join(dir, "queue.db")
 
 	// Enqueue and close
-	q1, err := queue.Open(dbPath)
+	q1, err := queue.Open(context.Background(), dbPath)
 	require.NoError(t, err)
 	q1.Enqueue(context.Background(), &queue.Job{ID: "job-001", TaskID: "T1", RunID: 1})
 	q1.Close()
 
 	// Reopen and dequeue
-	q2, err := queue.Open(dbPath)
+	q2, err := queue.Open(context.Background(), dbPath)
 	require.NoError(t, err)
 	defer q2.Close()
 

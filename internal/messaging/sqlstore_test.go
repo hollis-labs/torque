@@ -12,22 +12,17 @@ import (
 
 	gomsg "github.com/hollis-labs/go-messaging"
 	"github.com/hollis-labs/go-messaging/messagingtest"
+	"github.com/hollis-labs/go-sqlite/sqlitekit"
 	_ "modernc.org/sqlite"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/messaging"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/appdb"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
 )
 
 func newDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := appdb.SQLiteDSN(filepath.Join(dir, "msg.db"), appdb.SQLiteDSNOptions{
-		BusyTimeoutMs:    appdb.DefaultSQLiteBusyTimeoutMs,
-		IncludeCacheSize: true,
-		TxLock:           "immediate",
-	})
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sqlitekit.OpenWriter(context.Background(), filepath.Join(dir, "msg.db"), sqlitekit.OpenOptions{Options: sqlitekit.WriterOptions()})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

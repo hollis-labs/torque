@@ -23,11 +23,10 @@ func TestDBPoolOpen(t *testing.T) {
 		DBPath:           dbPath,
 		QueueDBPath:      queuePath,
 		MaxReadConns:     2,
-		BusyTimeoutMs:    5000,
 		WriteChannelSize: 64,
 	}
 
-	pool, err := concurrency.NewDBPool(cfg)
+	pool, err := concurrency.NewDBPool(context.Background(), cfg)
 	require.NoError(t, err)
 	defer pool.Close()
 
@@ -45,11 +44,10 @@ func TestDBPoolReadConcurrency(t *testing.T) {
 		DBPath:           dbPath,
 		QueueDBPath:      queuePath,
 		MaxReadConns:     4,
-		BusyTimeoutMs:    5000,
 		WriteChannelSize: 64,
 	}
 
-	pool, err := concurrency.NewDBPool(cfg)
+	pool, err := concurrency.NewDBPool(context.Background(), cfg)
 	require.NoError(t, err)
 	defer pool.Close()
 
@@ -89,11 +87,10 @@ func TestDBPoolWALMode(t *testing.T) {
 		DBPath:           dbPath,
 		QueueDBPath:      queuePath,
 		MaxReadConns:     2,
-		BusyTimeoutMs:    5000,
 		WriteChannelSize: 64,
 	}
 
-	pool, err := concurrency.NewDBPool(cfg)
+	pool, err := concurrency.NewDBPool(context.Background(), cfg)
 	require.NoError(t, err)
 	defer pool.Close()
 
@@ -123,18 +120,22 @@ func TestDBPoolBusyTimeout(t *testing.T) {
 		DBPath:           dbPath,
 		QueueDBPath:      queuePath,
 		MaxReadConns:     2,
-		BusyTimeoutMs:    3000,
 		WriteChannelSize: 64,
 	}
 
-	pool, err := concurrency.NewDBPool(cfg)
+	pool, err := concurrency.NewDBPool(context.Background(), cfg)
 	require.NoError(t, err)
 	defer pool.Close()
 
+	// sqlitekit's default busy_timeout (DefaultBusyTimeout = 5s) applies
+	// uniformly to the writer pool — verify it's > 0 to sanity-check the
+	// PRAGMA reached the connection. The previous BusyTimeoutMs knob is
+	// gone; if a per-pool override is needed in future, plumb through
+	// sqlitekit.Options.BusyTimeout.
 	var timeout int
 	err = pool.WriteDB().QueryRow("PRAGMA busy_timeout").Scan(&timeout)
 	require.NoError(t, err)
-	assert.Equal(t, 3000, timeout)
+	assert.Equal(t, 5000, timeout)
 }
 
 func TestDBPoolSeparateFiles(t *testing.T) {
@@ -146,11 +147,10 @@ func TestDBPoolSeparateFiles(t *testing.T) {
 		DBPath:           dbPath,
 		QueueDBPath:      queuePath,
 		MaxReadConns:     2,
-		BusyTimeoutMs:    5000,
 		WriteChannelSize: 64,
 	}
 
-	pool, err := concurrency.NewDBPool(cfg)
+	pool, err := concurrency.NewDBPool(context.Background(), cfg)
 	require.NoError(t, err)
 	defer pool.Close()
 
@@ -170,11 +170,10 @@ func TestDBPoolWriteSerializer(t *testing.T) {
 		DBPath:           dbPath,
 		QueueDBPath:      queuePath,
 		MaxReadConns:     2,
-		BusyTimeoutMs:    5000,
 		WriteChannelSize: 64,
 	}
 
-	pool, err := concurrency.NewDBPool(cfg)
+	pool, err := concurrency.NewDBPool(context.Background(), cfg)
 	require.NoError(t, err)
 	defer pool.Close()
 

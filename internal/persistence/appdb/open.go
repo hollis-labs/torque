@@ -1,59 +1,23 @@
 package appdb
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
-	"net/url"
 	"os"
-	"path/filepath"
 
+	"github.com/hollis-labs/go-sqlite/sqlitekit"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
 )
 
-const (
-	DefaultSQLiteBusyTimeoutMs = 5000
-	DefaultSQLiteMaxReadConns  = 4
-)
-
-type SQLiteDSNOptions struct {
-	BusyTimeoutMs    int
-	IncludeCacheSize bool
-	TxLock           string
-}
-
-func SQLiteDSN(path string, opts SQLiteDSNOptions) string {
-	busyTimeoutMs := opts.BusyTimeoutMs
-	if busyTimeoutMs <= 0 {
-		busyTimeoutMs = DefaultSQLiteBusyTimeoutMs
-	}
-
-	q := url.Values{}
-	q.Add("_pragma", "journal_mode(WAL)")
-	q.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", busyTimeoutMs))
-	q.Add("_pragma", "foreign_keys(1)")
-	q.Add("_pragma", "synchronous(NORMAL)")
-	q.Add("_pragma", "temp_store(memory)")
-	q.Add("_pragma", "mmap_size(30000000000)")
-	q.Add("_pragma", "journal_size_limit(67108864)")
-	if opts.IncludeCacheSize {
-		q.Add("_pragma", "cache_size(-64000)")
-	}
-	if opts.TxLock != "" {
-		q.Set("_txlock", opts.TxLock)
-	}
-
-	if filepath.IsAbs(path) {
-		return (&url.URL{Scheme: "file", Path: path, RawQuery: q.Encode()}).String()
-	}
-
-	// Relative SQLite paths must use the "file:foo.db" URI form. Encoding
-	// them as "file://foo.db" makes the driver treat the path as an authority-
-	// shaped URI and modernc/sqlite fails on first write against real DBs.
-	return "file:" + (&url.URL{Path: path}).EscapedPath() + "?" + q.Encode()
-}
-
-func Open() (*sql.DB, string, error) {
+// Open returns a *sql.DB plus the registered driver name ("sqlite" or
+// "postgres") so callers (e.g. sqlstore.New) can dispatch dialect-specific
+// behavior. For sqlite, the DB is opened via sqlitekit.OpenWriter — a
+// single-connection writer pool with WAL, busy_timeout, and
+// _txlock=immediate baked into the DSN so every connection inherits them.
+// The pgx branch is left untouched.
+func Open(ctx context.Context) (*sql.DB, string, error) {
 	if dsn := os.Getenv("CLOCKWORK_POSTGRES_DSN"); dsn != "" {
 		db, err := sql.Open("pgx", dsn)
 		if err != nil {
@@ -71,12 +35,7 @@ func Open() (*sql.DB, string, error) {
 		path = "clockwork.db"
 	}
 
-	dsn := SQLiteDSN(path, SQLiteDSNOptions{
-		BusyTimeoutMs:    DefaultSQLiteBusyTimeoutMs,
-		IncludeCacheSize: true,
-		TxLock:           "immediate",
-	})
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sqlitekit.OpenWriter(ctx, path, sqlitekit.OpenOptions{CreateParentDir: true})
 	if err != nil {
 		return nil, "", fmt.Errorf("open sqlite %s: %w", path, err)
 	}

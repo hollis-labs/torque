@@ -24,7 +24,7 @@ func TestDeliverablesE2ERequiredPresent(t *testing.T) {
 	store := sqlitetest.OpenStore(t)
 
 	dir := t.TempDir()
-	q, err := queue.Open(filepath.Join(dir, "queue.db"))
+	q, err := queue.Open(context.Background(), filepath.Join(dir, "queue.db"))
 	require.NoError(t, err)
 
 	mock := executor.NewMockExecutor()
@@ -86,7 +86,7 @@ func TestDeliverablesE2ERequiredMissing(t *testing.T) {
 	store := sqlitetest.OpenStore(t)
 
 	dir := t.TempDir()
-	q, err := queue.Open(filepath.Join(dir, "queue.db"))
+	q, err := queue.Open(context.Background(), filepath.Join(dir, "queue.db"))
 	require.NoError(t, err)
 
 	mock := executor.NewMockExecutor()
@@ -151,7 +151,7 @@ func TestDeliverablesE2ETwoRequiredOneMissing(t *testing.T) {
 	store := sqlitetest.OpenStore(t)
 
 	dir := t.TempDir()
-	q, err := queue.Open(filepath.Join(dir, "queue.db"))
+	q, err := queue.Open(context.Background(), filepath.Join(dir, "queue.db"))
 	require.NoError(t, err)
 
 	mock := executor.NewMockExecutor()
@@ -218,7 +218,7 @@ func TestDeliverablesE2ERequiredAndOptional(t *testing.T) {
 	store := sqlitetest.OpenStore(t)
 
 	dir := t.TempDir()
-	q, err := queue.Open(filepath.Join(dir, "queue.db"))
+	q, err := queue.Open(context.Background(), filepath.Join(dir, "queue.db"))
 	require.NoError(t, err)
 
 	mock := executor.NewMockExecutor()
