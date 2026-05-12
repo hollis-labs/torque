@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	_ "modernc.org/sqlite"
 )
 
 func TestSQLiteDSN_RelativePathUsesFileColonForm(t *testing.T) {
