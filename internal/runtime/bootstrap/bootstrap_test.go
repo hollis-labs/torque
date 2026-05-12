@@ -47,12 +47,14 @@ func TestBootstrapExecutors(t *testing.T) {
 	assert.Equal(t, "cli", cli.Name())
 	assert.True(t, cli.Capabilities().SupportsStreaming)
 	assert.True(t, cli.Capabilities().SupportsTools, "Plan 4: tool-broker wired")
+	assert.True(t, cli.Capabilities().SupportsResume, "CW-20260512-0059: cli executor supports resume for at least one provider (claude, codex); per-task answer via agent.ProviderCapabilities")
 
 	api, err := reg.Get("api")
 	require.NoError(t, err)
 	assert.Equal(t, "api", api.Name())
 	assert.True(t, api.Capabilities().SupportsStreaming)
 	assert.True(t, api.Capabilities().SupportsTools, "Plan 4: tool-broker wired")
+	assert.False(t, api.Capabilities().SupportsResume, "CW-20260512-0059: API executor has no native resume; reactor falls back to fresh-boot")
 }
 
 func TestBootstrapExecutorsListAll(t *testing.T) {

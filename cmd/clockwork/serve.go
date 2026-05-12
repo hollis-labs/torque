@@ -196,7 +196,8 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// validation + envelope.* SSE publishing on top of the Store. Distinct
 	// from internal/toolbroker (S1.5); package layout deliberately split
 	// to avoid the name collision flagged in the boot prompt.
-	handler.SetBroker(broker.New(msgStore, handler.SSEHub()))
+	envBroker := broker.New(msgStore, handler.SSEHub())
+	handler.SetBroker(envBroker)
 
 	// Background goroutines share a derived context so cancelling the parent
 	// ctx tears down the scheduler loop, the SSE bridge, and the models.dev
@@ -210,6 +211,17 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// can resolve metadata without threading a client through every layer.
 	svc.Models = modelcatalog.New()
 	svc.Models.Start(runCtx)
+
+	// Envelope reactor (CW-20260512-0061, sprint α.3): subscribes to the
+	// broker's envelope stream and dispatches V0's four kinds — escalation
+	// (→HITL checkpoint), status_update:blocked (→pause+block), request
+	// (→peer fanout), handoff (→reassignment). Everything else routes to
+	// noop+log inside reactor.Dispatch.
+	reactorClose, err := bootstrap.Reactor(runCtx, store, envBroker, svc, agentDeps.Sessions, sched.EventBus())
+	if err != nil {
+		return fmt.Errorf("bootstrap reactor: %w", err)
+	}
+	defer reactorClose()
 
 	// Scheduler cost backfill (Phase 2): wire the catalog + profiles so the
 	// cost-record block can fall back to models.dev pricing when the executor

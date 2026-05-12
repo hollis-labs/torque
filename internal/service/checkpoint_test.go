@@ -1,9 +1,11 @@
 package service_test
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +18,39 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 )
+
+// fakeResponseDispatcher records every DispatchResponse call so tests can
+// assert the (taskID, correlationID, responseJSON) trio routed through
+// CheckpointService.Respond's α.4 dispatch decision. err is the result the
+// fake returns on every call — nil for the success path, a sentinel
+// (service.ErrNoLiveSessionForTask) for the fallback path.
+type fakeResponseDispatcher struct {
+	mu    sync.Mutex
+	calls []service.CheckpointResponseDispatch
+	err   error
+}
+
+func (f *fakeResponseDispatcher) DispatchResponse(ctx context.Context, in service.CheckpointResponseDispatch) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, in)
+	return f.err
+}
+
+func (f *fakeResponseDispatcher) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
+}
+
+func (f *fakeResponseDispatcher) lastCall() service.CheckpointResponseDispatch {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.calls) == 0 {
+		return service.CheckpointResponseDispatch{}
+	}
+	return f.calls[len(f.calls)-1]
+}
 
 // setupServiceWithStore is like setupService but exposes the underlying store
 // so tests can simulate scheduler-side transitions (e.g. parking a task on a
@@ -603,4 +638,202 @@ func TestCheckpointService_ListForTask(t *testing.T) {
 	list, err := svc.Checkpoint.ListForTask(taskID)
 	require.NoError(t, err)
 	assert.Len(t, list, 3)
+}
+
+// Sprint α.4 (CW-20260512-0062): when a CheckpointResponseDispatcher is
+// wired and the parked task's on_checkpoint_response is "resume", Respond
+// hands off to the dispatcher (which the bootstrap wires to
+// agent.Manager.ResumeSession + SendInput) and transitions the task
+// review → doing on success. This supersedes the pre-α.4 review → todo
+// + scheduler-fresh-boot path (D3 reframe of CW-20260510-0122).
+func TestCheckpointService_Respond_DispatchesResume_OnResumeMode(t *testing.T) {
+	svc, store := setupServiceWithStore(t)
+	taskID := createBlockingDecisionTask(t, svc)
+
+	dispatcher := &fakeResponseDispatcher{}
+	svc.Checkpoint.WithResponseDispatcher(dispatcher)
+
+	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID: taskID, Type: "collect_data", PayloadJSON: `{}`, EmitterSourceType: "system",
+	})
+	require.NoError(t, err)
+
+	// Park the task on this correlation (mirrors what the scheduler /
+	// emit path does when a doing+blocking task gets parked).
+	require.NoError(t, store.TransitionTaskWithReason(taskID, "review",
+		"awaiting checkpoint "+out.CorrelationID))
+
+	respJSON := `{"answer":"ship-it"}`
+	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+		CorrelationID:       out.CorrelationID,
+		ResponseJSON:        respJSON,
+		ResponderSourceType: "user",
+		ResponderSourceRef:  "chrispian",
+	}))
+
+	// Dispatcher was called with the exact triple Respond produced.
+	require.Equal(t, 1, dispatcher.callCount(), "dispatcher must be called exactly once on resume-mode respond")
+	got := dispatcher.lastCall()
+	assert.Equal(t, taskID, got.TaskID)
+	assert.Equal(t, out.CorrelationID, got.CorrelationID)
+	assert.Equal(t, respJSON, got.ResponseJSON,
+		"operator response_json flows through unmodified — it becomes the user-turn input via send_input")
+
+	// Task transitioned to doing (dispatcher took ownership; the resumed
+	// session is the new live worker). This is the α.4-specific behavior
+	// — pre-α.4 transitioned to todo and waited for the scheduler tick.
+	task, err := svc.Task.Get(taskID)
+	require.NoError(t, err)
+	assert.Equal(t, "doing", task.Status,
+		"dispatcher-owned resume transitions review → doing (mirrors scheduler dispatch); not legacy → todo")
+	assert.Equal(t, "", task.BlockedReason, "BlockedReason clears on dispatch-owned resume")
+
+	// Response is still attached to metadata.checkpoint_responses[corr]
+	// regardless of which dispatch path won — this is the durable
+	// record the prompt.go checkpointRedispatchPrompt directs agents to
+	// read on first turn after dispatch.
+	require.True(t, task.Metadata.Valid)
+	var md map[string]any
+	require.NoError(t, json.Unmarshal([]byte(task.Metadata.String), &md))
+	responses := md["checkpoint_responses"].(map[string]any)
+	stored := responses[out.CorrelationID].(map[string]any)
+	assert.Equal(t, "ship-it", stored["answer"])
+}
+
+// When the dispatcher returns ErrNoLiveSessionForTask (no resumable session
+// row bound to the task — e.g. one-shot executor task, or a session that
+// was never registered with the long-lived manager), Respond falls back
+// to the legacy review → todo path so the scheduler fresh-boots on the
+// next tick. The contract is documented on CheckpointResponseDispatcher
+// and is the bridge that keeps fresh-boot adapters (gemini/copilot/opencode)
+// shipping today while the resume-capable adapters (claude/codex) take
+// the α.4 path.
+func TestCheckpointService_Respond_FallsBackToTodo_OnDispatcherNoLiveSession(t *testing.T) {
+	svc, store := setupServiceWithStore(t)
+	taskID := createBlockingDecisionTask(t, svc)
+
+	dispatcher := &fakeResponseDispatcher{err: service.ErrNoLiveSessionForTask}
+	svc.Checkpoint.WithResponseDispatcher(dispatcher)
+
+	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID: taskID, Type: "collect_data", PayloadJSON: `{}`, EmitterSourceType: "system",
+	})
+	require.NoError(t, err)
+	require.NoError(t, store.TransitionTaskWithReason(taskID, "review",
+		"awaiting checkpoint "+out.CorrelationID))
+
+	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+		CorrelationID:       out.CorrelationID,
+		ResponseJSON:        `{"answer":"y"}`,
+		ResponderSourceType: "user",
+	}))
+
+	assert.Equal(t, 1, dispatcher.callCount(), "dispatcher is still consulted; the fallback is its decision")
+
+	task, err := svc.Task.Get(taskID)
+	require.NoError(t, err)
+	assert.Equal(t, "todo", task.Status,
+		"ErrNoLiveSessionForTask falls through to the legacy fresh-boot path: task → todo for scheduler pickup")
+	assert.Equal(t, "", task.BlockedReason)
+}
+
+// Any non-sentinel dispatcher error is also treated as a fallback. The
+// service must never strand a task in review when the dispatcher trips
+// — observability of the dispatcher's failure is its own responsibility
+// (it logs + breadcrumbs); the service's job is to keep the task moving.
+func TestCheckpointService_Respond_FallsBackToTodo_OnDispatcherError(t *testing.T) {
+	svc, store := setupServiceWithStore(t)
+	taskID := createBlockingDecisionTask(t, svc)
+
+	dispatcher := &fakeResponseDispatcher{err: errors.New("resume blew up")}
+	svc.Checkpoint.WithResponseDispatcher(dispatcher)
+
+	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID: taskID, Type: "collect_data", PayloadJSON: `{}`, EmitterSourceType: "system",
+	})
+	require.NoError(t, err)
+	require.NoError(t, store.TransitionTaskWithReason(taskID, "review",
+		"awaiting checkpoint "+out.CorrelationID))
+
+	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+		CorrelationID:       out.CorrelationID,
+		ResponseJSON:        `{"answer":"y"}`,
+		ResponderSourceType: "user",
+	}))
+
+	task, err := svc.Task.Get(taskID)
+	require.NoError(t, err)
+	assert.Equal(t, "todo", task.Status,
+		"a transient dispatcher failure must not strand the task in review")
+}
+
+// review-mode parking is unaffected by the dispatcher wiring — the
+// dispatcher is consulted ONLY when on_checkpoint_response="resume". A
+// "review" task stays in review on response (a human drives the next
+// transition) regardless of whether a dispatcher is wired.
+func TestCheckpointService_Respond_ReviewMode_SkipsDispatcher(t *testing.T) {
+	svc, store := setupServiceWithStore(t)
+
+	rec, err := svc.Task.Create(service.TaskCreateInput{
+		Title:                "review-mode w/ dispatcher",
+		Kind:                 "decision",
+		CheckpointMode:       "blocking",
+		OnCheckpointResponse: "review",
+		Manual:               true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
+
+	dispatcher := &fakeResponseDispatcher{}
+	svc.Checkpoint.WithResponseDispatcher(dispatcher)
+
+	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID: rec.ID, Type: "x", PayloadJSON: `{}`, EmitterSourceType: "system",
+	})
+	require.NoError(t, err)
+	require.NoError(t, store.TransitionTaskWithReason(rec.ID, "review",
+		"awaiting checkpoint "+out.CorrelationID))
+
+	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+		CorrelationID:       out.CorrelationID,
+		ResponseJSON:        `{"answer":"maybe"}`,
+		ResponderSourceType: "user",
+	}))
+
+	assert.Equal(t, 0, dispatcher.callCount(),
+		"review-mode respond never dispatches — the dispatcher hook is keyed on on_checkpoint_response=resume")
+
+	task, err := svc.Task.Get(rec.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "review", task.Status, "review mode keeps the task parked through respond")
+}
+
+// Nil dispatcher (the default — legacy callers, test harnesses pre-α.4)
+// preserves the original review → todo behavior so the scheduler's
+// fresh-boot path keeps working unchanged. This is the back-compat seam
+// that lets the α.4 wiring land without breaking any in-tree test that
+// constructs CheckpointService without a dispatcher.
+func TestCheckpointService_Respond_NilDispatcher_LegacyPath(t *testing.T) {
+	svc, store := setupServiceWithStore(t)
+	taskID := createBlockingDecisionTask(t, svc)
+
+	// Explicitly DO NOT wire a dispatcher.
+
+	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID: taskID, Type: "collect_data", PayloadJSON: `{}`, EmitterSourceType: "system",
+	})
+	require.NoError(t, err)
+	require.NoError(t, store.TransitionTaskWithReason(taskID, "review",
+		"awaiting checkpoint "+out.CorrelationID))
+
+	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+		CorrelationID:       out.CorrelationID,
+		ResponseJSON:        `{"answer":"y"}`,
+		ResponderSourceType: "user",
+	}))
+
+	task, err := svc.Task.Get(taskID)
+	require.NoError(t, err)
+	assert.Equal(t, "todo", task.Status,
+		"nil-dispatcher path matches pre-α.4: review → todo, scheduler does the fresh-boot")
 }

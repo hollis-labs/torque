@@ -64,10 +64,13 @@ func TestExecutorCapabilities(t *testing.T) {
 		SupportsTools:       true,
 		SupportsSandbox:     false,
 		SupportsPermissions: false,
+		SupportsResume:      true,
 	}
 	assert.True(t, caps.SupportsStreaming)
 	assert.True(t, caps.SupportsTools)
 	assert.False(t, caps.SupportsSandbox)
+	assert.False(t, caps.SupportsPermissions)
+	assert.True(t, caps.SupportsResume)
 }
 
 // Verify the Executor interface can be assigned

@@ -255,7 +255,11 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	}
 
 	// Resume preset: ModeResume threads the provider's session ID via
-	// SessionIDPreset. Lookup goes through the named checkpoint.
+	// SessionIDPreset. Lookup goes through the named checkpoint. The
+	// state-based resume path (Manager.ResumeSession, sprint α.2) skips
+	// the checkpoint lookup and threads the persisted-on-row session-id
+	// directly via Options.ProviderSessionIDOverride; that path stays on
+	// ModeLongLived but still feeds SessionIDPreset.
 	var sessionIDPreset string
 	var resumeHint []byte
 	if opts.Mode == ModeResume {
@@ -269,6 +273,17 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 			sessionIDPreset = string(cp.ResumeHint)
 			resumeHint = cp.ResumeHint
 		}
+	}
+	if opts.ProviderSessionIDOverride != "" {
+		// Explicit override wins over the checkpoint-derived preset above
+		// — ResumeSession threads the canonical state-based preset here
+		// and the caller picked the override deliberately. resumeHint is
+		// updated in lockstep so the freshly-rebooted session row carries
+		// the same provider session-id forward (otherwise the row's
+		// resume_hint column would briefly diverge from SessionIDPreset
+		// until the next OnSessionID callback fires).
+		sessionIDPreset = opts.ProviderSessionIDOverride
+		resumeHint = []byte(opts.ProviderSessionIDOverride)
 	}
 
 	// OnSessionID persists the provider's first observed session ID so
@@ -335,31 +350,18 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 
 	// AutoFireFirstTurn drives the kickoff via the lib's race-free Start path
 	// for long-lived modes; ModeOneShot stays false so the executor wrapper
-	// drives SendInput synchronously and gets one turn's exit code back.
+	// drives SendInput synchronously and gets one turn's exit code back. The
+	// flag flows uniformly through StartOptions for ModeLongLived/Subagent/
+	// Background — substrate consumers (orchestrator boot, subagent spawn,
+	// background fire-and-forget) get a single declarative contract: "boot
+	// fires the first turn for you" — without a Boot-side SendInput plumbing
+	// path that would race the Launch (CW-20260507-0011's class of bug).
 	autoFire := opts.Mode == ModeLongLived ||
 		opts.Mode == ModeSubagent ||
 		opts.Mode == ModeBackground
 	var firstTurnPayload []byte
 	if autoFire {
 		firstTurnPayload = []byte(kickoffPayload(layout.KickoffFile))
-	}
-
-	// Deferred-kickoff path for subprocess-per-turn long-lived modes. The lib's
-	// AutoFireFirstTurn for adapter-mode runs the entire first turn
-	// SYNCHRONOUSLY inside Manager.Start (per from_adapter.go:127-138 — the
-	// race-elimination cost). For an HTTP-triggered orchestrator that's a
-	// blown caller contract: planstart's POST /plans/<id>/start would hold
-	// the request open for the duration of the orchestrator's first turn
-	// (minutes — orchestrators spawn planner sub-tasks, audit, walk phases).
-	// Surfaced 2026-05-08 in S2.5 smoke. Defer the kickoff to a goroutine so
-	// agent.Boot returns immediately after the session is registered; the
-	// subprocess runs detached. PTY mode doesn't need this — its SendInput
-	// is non-blocking and the kickoff lands via the BootMode/AutoFireFirstTurn
-	// path in microseconds.
-	deferKickoff := autoFire && !caps.PTY && len(firstTurnPayload) > 0
-	libAutoFire := autoFire
-	if deferKickoff {
-		libAutoFire = false
 	}
 
 	// Stderr sidecar: forward to per-run sidecar log + tail buffer + the
@@ -440,7 +442,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 			Stderr:             stderrWriter,
 			Profile:            sandboxProfile,
 			AttachEnabled:      true,
-			AutoFireFirstTurn:  libAutoFire,
+			AutoFireFirstTurn:  autoFire,
 			FirstTurnPayload:   firstTurnPayload,
 			SessionIDPreset:    sessionIDPreset,
 			OnSessionID:        onSessionID,
@@ -495,25 +497,6 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		// finish in state=done instead of waiting for the next daemon-restart
 		// sweep to mark the row crashed.
 		mgr.registerPidPoller(sessID, startPidPoller(mgr, sessID, mgr.pidPollInterval))
-	}
-
-	// Fire the deferred kickoff in a goroutine so agent.Boot can return now
-	// (HTTP-triggered planstart no longer waits for the entire first turn).
-	// The lib's adapter SendInput is synchronous (runner.Run waits for the
-	// subprocess to exit) but we don't care here — the goroutine outlives
-	// the caller via the detached context model the lib's manager already
-	// applies on SendInput. Errors surface via session state transitions
-	// (the lib's StateSink writes failed/done into the DB row); a logged
-	// warning here is forensic-only.
-	if deferKickoff {
-		payload := append([]byte(nil), firstTurnPayload...)
-		go func() {
-			if err := mgr.SendInput(sessID, payload); err != nil {
-				// Don't tear down — the session row reflects the failure
-				// via StateSink. Log for forensic value only.
-				log.Printf("agent.Boot: deferred kickoff send failed for sess=%s: %v", sessID, err)
-			}
-		}()
 	}
 
 	sess := &Session{
