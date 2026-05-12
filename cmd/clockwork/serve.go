@@ -22,11 +22,13 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/appdb"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/clockwork-manifold/internal/persistence/writequeue"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/bootstrap"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/queue"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/waitpoll"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/writeq"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 	"github.com/hollis-labs/clockwork-manifold/internal/toolbroker"
 	"github.com/spf13/cobra"
@@ -107,6 +109,19 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	}
 	defer q.Close()
 
+	telemetryQueuePath := cfg.Concurrency.QueueDBPath
+	if telemetryQueuePath == "" {
+		telemetryQueuePath = "queue.db"
+	}
+	if !filepath.IsAbs(telemetryQueuePath) {
+		telemetryQueuePath = filepath.Join(cfg.DataDir, telemetryQueuePath)
+	}
+	telemetryDB, err := writequeue.OpenDB(telemetryQueuePath)
+	if err != nil {
+		return fmt.Errorf("open telemetry queue: %w", err)
+	}
+	defer telemetryDB.Close()
+
 	// Executor registry
 	registry := executor.NewRegistry()
 	registry.Register(executor.NewMockExecutor())
@@ -118,6 +133,11 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// claim it for per-task MCP loopback wiring (CW-20260427-0059). Same
 	// handle reused by httpserver below.
 	svc := service.New(store)
+	telemetryWriter, err := writequeue.New(store, telemetryDB, writequeue.DefaultConfig())
+	if err != nil {
+		return fmt.Errorf("create telemetry queue writer: %w", err)
+	}
+	svc.Comment.SetTelemetryWriter(telemetryWriter)
 
 	// Tool-broker (CW-20260503-0015 / Plan 4): go-toolbroker selection +
 	// permission engine + audit log, threaded into the unified agent
@@ -133,6 +153,9 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// Scheduler — constructed before AgentDeps so deps can capture
 	// sched.EventBus() for session.state_changed lifecycle SSE.
 	sched := scheduler.New(store, q, registry, predicates, &cfg.Scheduler)
+	sched.SetTelemetryWriter(telemetryWriter)
+	stateWriter := writeq.New(store, writeq.Options{})
+	sched.SetStateWriter(stateWriter)
 
 	// DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
 	if len(cfg.Scheduler.ProjectAllowlist) > 0 {
@@ -144,7 +167,7 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// Constructs Dependencies + Manager, runs the orphan sweep, and is the
 	// single root every Boot caller (planstart, scheduler dispatch, end-agent,
 	// HTTP/MCP) reaches into.
-	agentDeps, agentDepsClose, err := bootstrap.AgentDeps(store, profiles, svc, tools, sched.EventBus())
+	agentDeps, agentDepsClose, err := bootstrap.AgentDeps(store, profiles, svc, tools, sched.EventBus(), stateWriter)
 	if err != nil {
 		return fmt.Errorf("bootstrap agent deps: %w", err)
 	}
@@ -230,10 +253,22 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	bridge := httpserver.NewSchedulerBridge(handler.SSEHub(), sched.EventBus())
 
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(4)
 	go func() {
 		defer wg.Done()
 		bridge.Run(runCtx)
+	}()
+	go func() {
+		defer wg.Done()
+		if err := stateWriter.Run(runCtx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Printf("[serve] state write queue stopped: %v", err)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if err := telemetryWriter.Start(runCtx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Printf("telemetry writequeue: %v", err)
+		}
 	}()
 	go func() {
 		defer wg.Done()

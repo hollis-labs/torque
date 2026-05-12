@@ -51,6 +51,31 @@ func (s *stubStopper) Stop(_ context.Context, id string) error {
 
 func (s *stubStopper) StopCount() int32 { return s.stopCalls.Load() }
 
+func (s *stubStopper) StopCalled() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, len(s.stopCalled))
+	copy(out, s.stopCalled)
+	return out
+}
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 func newHookTestStore(t *testing.T) *sqlstore.Store {
 	t.Helper()
 	return sqlitetest.OpenStore(t)
@@ -100,7 +125,7 @@ func TestSessionLifecycleHook_PlanTerminalTransitionStopsRunningSession(t *testi
 		return stopper.StopCount() == 1
 	}, 3*time.Second, 10*time.Millisecond)
 
-	assert.Equal(t, []string{"SES-LIVE"}, stopper.stopCalled)
+	assert.Equal(t, []string{"SES-LIVE"}, stopper.StopCalled())
 }
 
 // TestSessionLifecycleHook_AlreadyTerminalSessionSkipped covers
@@ -224,7 +249,7 @@ func TestSessionLifecycleHook_ObserveTaskTransition_FiresOnPlanTerminal(t *testi
 	require.Eventually(t, func() bool {
 		return stopper.StopCount() == 1
 	}, 3*time.Second, 10*time.Millisecond)
-	assert.Equal(t, []string{"SES-OBS"}, stopper.stopCalled)
+	assert.Equal(t, []string{"SES-OBS"}, stopper.StopCalled())
 }
 
 // TestSessionLifecycleHook_ObserveTaskTransition_NonTerminalIgnored guards
@@ -268,7 +293,7 @@ func TestSessionLifecycleHook_ObserveComment_StopsLinkedSession(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return stopper.StopCount() == 1
 	}, time.Second, 10*time.Millisecond)
-	assert.Equal(t, []string{"SES-MARKER"}, stopper.stopCalled)
+	assert.Equal(t, []string{"SES-MARKER"}, stopper.StopCalled())
 }
 
 // TestSessionLifecycleHook_ObserveComment_NonOrchestratorAuthorIgnored
@@ -396,7 +421,7 @@ func TestSessionLifecycleHook_ObserveComment_SuppressedWhenChildStillDoing(t *te
 	hook := NewSessionLifecycleHook(bus, store, stopper)
 
 	// Capture log output so we can assert the WARN-line contract.
-	var buf bytes.Buffer
+	var buf lockedBuffer
 	prevOut := log.Writer()
 	prevFlags := log.Flags()
 	log.SetOutput(&buf)
@@ -491,7 +516,7 @@ func TestSessionLifecycleHook_ObserveComment_AllowedWhenChildrenTerminal(t *test
 		return stopper.StopCount() == 1
 	}, time.Second, 10*time.Millisecond,
 		"layer-2 stop must fire when all children are terminal")
-	assert.Equal(t, []string{"SES-CW0064-3"}, stopper.stopCalled)
+	assert.Equal(t, []string{"SES-CW0064-3"}, stopper.StopCalled())
 }
 
 // TestSessionLifecycleHook_ObserveComment_AllowedWhenChildrenAreOnlyTodo

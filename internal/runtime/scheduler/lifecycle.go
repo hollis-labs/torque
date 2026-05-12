@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -8,27 +9,51 @@ import (
 	"time"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/clockwork-manifold/internal/persistence/writequeue"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/writeq"
 )
 
 // LifecycleManager applies OnDone/OnFail/OnReview rules, checks deliverables,
 // and triggers escalation. It is the central decision engine for task state transitions
 // after an execution run completes.
 type LifecycleManager struct {
-	store      *sqlstore.Store
-	bus        *EventBus
-	checker    *DeliverableChecker
-	escalation *EscalationEngine
+	store       *sqlstore.Store
+	bus         *EventBus
+	checker     *DeliverableChecker
+	escalation  *EscalationEngine
+	telemetry   writequeue.TelemetryWriter
+	stateWriter writeq.Writer
 }
 
 // NewLifecycleManager creates a new lifecycle manager.
 func NewLifecycleManager(store *sqlstore.Store, bus *EventBus) *LifecycleManager {
 	return &LifecycleManager{
-		store:      store,
-		bus:        bus,
-		checker:    NewDeliverableChecker(),
-		escalation: NewEscalationEngine(),
+		store:       store,
+		bus:         bus,
+		checker:     NewDeliverableChecker(),
+		escalation:  NewEscalationEngine(),
+		telemetry:   writequeue.NewDirect(store),
+		stateWriter: writeq.NewDirect(store),
 	}
+}
+
+// SetTelemetryWriter swaps the telemetry sink used for lifecycle-side run
+// events and system comments. Nil is ignored.
+func (lm *LifecycleManager) SetTelemetryWriter(w writequeue.TelemetryWriter) {
+	if w == nil {
+		return
+	}
+	lm.telemetry = w
+}
+
+// SetStateWriter swaps the serialized state writer used for lifecycle-side
+// task and session writes. Nil is ignored.
+func (lm *LifecycleManager) SetStateWriter(w writeq.Writer) {
+	if w == nil {
+		return
+	}
+	lm.stateWriter = w
 }
 
 // HandleResult processes an execution result and applies the appropriate lifecycle transition.
@@ -104,7 +129,9 @@ func (lm *LifecycleManager) handleDone(task *sqlstore.TaskRecord, runID int64, r
 	// would misinterpret the transition. Normalize first so the on_done
 	// edge fires from the canonical source state.
 	if task.Status != "doing" {
-		if err := lm.store.TransitionTask(task.ID, "doing"); err != nil {
+		if err := lm.stateWriter.Submit(context.Background(), "lifecycle_normalize_doing", func(tx *sqlstore.WriteTx) error {
+			return tx.TransitionTask(task.ID, "doing")
+		}); err != nil {
 			log.Printf("[lifecycle] CW-20260509-0006 normalize %s -> doing failed: %v (proceeding with on_done from %s)", task.ID, err, task.Status)
 		} else {
 			task.Status = "doing"
@@ -196,7 +223,9 @@ func (lm *LifecycleManager) handleEscalation(task *sqlstore.TaskRecord, runID in
 
 	// Read current escalation step
 	var currentStep int
-	lm.store.DB().QueryRow("SELECT escalation_step FROM tasks WHERE id = ?", task.ID).Scan(&currentStep)
+	if err := lm.store.DB().QueryRow("SELECT escalation_step FROM tasks WHERE id = ?", task.ID).Scan(&currentStep); err != nil {
+		return fmt.Errorf("lifecycle: read escalation step: %w", err)
+	}
 
 	action := lm.escalation.NextAction(chain, currentStep)
 	resolution, err := lm.escalation.Resolve(action)
@@ -204,12 +233,19 @@ func (lm *LifecycleManager) handleEscalation(task *sqlstore.TaskRecord, runID in
 		return fmt.Errorf("lifecycle: resolve escalation: %w", err)
 	}
 
-	// Update escalation step
-	lm.store.DB().Exec("UPDATE tasks SET escalation_step = ? WHERE id = ?", resolution.NewEscalationStep, task.ID)
-
-	// Apply agent profile change if needed
-	if resolution.ChangeAgentProfile {
-		lm.store.UpdateTask(task.ID, sqlstore.TaskUpdate{AgentProfile: &resolution.AgentProfile})
+	if err := lm.stateWriter.Submit(context.Background(), "lifecycle_escalation", func(tx *sqlstore.WriteTx) error {
+		if err := tx.SetTaskEscalationStep(task.ID, resolution.NewEscalationStep); err != nil {
+			return err
+		}
+		if resolution.ChangeAgentProfile {
+			if err := tx.SetTaskAgentProfile(task.ID, resolution.AgentProfile); err != nil {
+				return err
+			}
+			task.AgentProfile = resolution.AgentProfile
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("lifecycle: apply escalation updates: %w", err)
 	}
 
 	if resolution.BlockedReason != "" {
@@ -220,13 +256,22 @@ func (lm *LifecycleManager) handleEscalation(task *sqlstore.TaskRecord, runID in
 }
 
 func (lm *LifecycleManager) retryOrBlock(task *sqlstore.TaskRecord, runID int64, reason string) error {
-	// Read current retry count from DB (uses 002 migration column)
 	var retryCount int
-	lm.store.DB().QueryRow("SELECT retry_count FROM tasks WHERE id = ?", task.ID).Scan(&retryCount)
+	if err := lm.stateWriter.Submit(context.Background(), "lifecycle_retry_count", func(tx *sqlstore.WriteTx) error {
+		var err error
+		retryCount, err = tx.GetTaskRetryCount(task.ID)
+		if err != nil {
+			return err
+		}
+		if retryCount < task.MaxRetries {
+			return tx.IncrementTaskRetryCount(task.ID)
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("lifecycle: retry count for %s: %w", task.ID, err)
+	}
 
 	if retryCount < task.MaxRetries {
-		// Increment retry count
-		lm.store.DB().Exec("UPDATE tasks SET retry_count = retry_count + 1 WHERE id = ?", task.ID)
 		return lm.transition(task, runID, "todo", "")
 	}
 
@@ -236,13 +281,15 @@ func (lm *LifecycleManager) retryOrBlock(task *sqlstore.TaskRecord, runID int64,
 func (lm *LifecycleManager) transition(task *sqlstore.TaskRecord, runID int64, newStatus, blockedReason string) error {
 	oldStatus := task.Status
 
-	if err := lm.store.TransitionTask(task.ID, newStatus); err != nil {
+	if err := lm.stateWriter.Submit(context.Background(), "lifecycle_transition", func(tx *sqlstore.WriteTx) error {
+		if blockedReason != "" {
+			return tx.TransitionTaskWithReason(task.ID, newStatus, blockedReason)
+		}
+		return tx.TransitionTask(task.ID, newStatus)
+	}); err != nil {
 		return fmt.Errorf("lifecycle: transition %s -> %s: %w", task.ID, newStatus, err)
 	}
-
-	if blockedReason != "" {
-		lm.store.UpdateTask(task.ID, sqlstore.TaskUpdate{BlockedReason: &blockedReason})
-	}
+	task.Status = newStatus
 
 	payload := map[string]interface{}{
 		"from": oldStatus,
@@ -251,7 +298,7 @@ func (lm *LifecycleManager) transition(task *sqlstore.TaskRecord, runID int64, n
 	if blockedReason != "" {
 		payload["reason"] = blockedReason
 	}
-	writeRunEvent(lm.store, runID, task.ID, "task_transitioned", payload)
+	writeRunEvent(context.Background(), lm.telemetry, runID, task.ID, "task_transitioned", payload)
 
 	lm.bus.Publish(SchedulerEvent{
 		Type:   "task.transitioned",
@@ -351,10 +398,10 @@ func isTerminalTaskStatus(status string) bool {
 // task record is left untouched.
 func (lm *LifecycleManager) markRunSuperseded(task *sqlstore.TaskRecord, runID int64, result *executor.ExecutionResult) error {
 	if runID > 0 {
-		if _, err := lm.store.DB().Exec(
-			`UPDATE runs SET status = ? WHERE id = ?`,
-			"superseded", runID,
-		); err != nil {
+		if err := lm.stateWriter.Submit(context.Background(), "lifecycle_run_superseded", func(tx *sqlstore.WriteTx) error {
+			_, err := tx.Exec(`UPDATE runs SET status = ? WHERE id = ?`, "superseded", runID)
+			return err
+		}); err != nil {
 			log.Printf("[lifecycle] mark run %d superseded: %v", runID, err)
 		}
 	}
@@ -364,7 +411,7 @@ func (lm *LifecycleManager) markRunSuperseded(task *sqlstore.TaskRecord, runID i
 		"result_status": result.Status,
 		"result_reason": result.Reason,
 	}
-	writeRunEvent(lm.store, runID, task.ID, "run_superseded", payload)
+	writeRunEvent(context.Background(), lm.telemetry, runID, task.ID, "run_superseded", payload)
 
 	lm.bus.Publish(SchedulerEvent{
 		Type:   "run.superseded",

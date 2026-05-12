@@ -71,7 +71,7 @@ func NewManager(deps *Dependencies) *Manager {
 		pidPollers:      make(map[string]func()),
 	}
 	emitter := NewSchedulerEmitter(deps.Bus)
-	stateSink := &storeStateSink{store: deps.Store}
+	stateSink := &storeStateSink{deps: deps}
 	eventSink := &busEventSink{
 		events:     emitter,
 		onTerminal: m.teardownSession,
@@ -272,7 +272,7 @@ func (m *Manager) SendInput(id string, data []byte) error {
 		return err
 	}
 	if m.deps.Store != nil {
-		_ = m.deps.Store.TouchSession(id)
+		_ = m.deps.TouchSession(context.Background(), id)
 	}
 	return nil
 }
@@ -324,7 +324,7 @@ func (m *Manager) Stop(ctx context.Context, id string) error {
 			if m.deps.Store != nil {
 				if rec, getErr := m.deps.Store.GetSession(id); getErr == nil && !Status(rec.State).Terminal() {
 					exit := -1
-					_ = m.deps.Store.UpdateSessionState(id, string(StatusFailed), 0, &exit)
+					_ = m.deps.UpdateSessionState(context.Background(), id, string(StatusFailed), 0, &exit)
 				}
 			}
 			return ErrSessionNotRunning
@@ -390,7 +390,7 @@ func (m *Manager) Checkpoint(req CheckpointRequest) (*Checkpoint, error) {
 	if err := m.deps.Store.CreateSessionCheckpoint(rec); err != nil {
 		return nil, fmt.Errorf("create session checkpoint: %w", err)
 	}
-	_ = m.deps.Store.TouchSession(req.SessionID)
+	_ = m.deps.TouchSession(context.Background(), req.SessionID)
 	return &Checkpoint{
 		ID:        cpID,
 		SessionID: req.SessionID,

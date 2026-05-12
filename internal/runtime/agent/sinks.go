@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 )
 
@@ -17,17 +16,17 @@ type EventEmitter interface {
 	EmitSessionEvent(eventType string, data map[string]interface{})
 }
 
-// storeStateSink adapts *sqlstore.Store to agentsessions.StateSink. State
+// storeStateSink adapts Dependencies to agentsessions.StateSink. State
 // strings are passed through verbatim; the migration's CHECK constraint
 // enforces the four-value go-agent-sessions vocabulary plus `crashed`.
 //
 // Forked from internal/runtime/sessionmgr/sinks.go without semantic change.
 type storeStateSink struct {
-	store *sqlstore.Store
+	deps *Dependencies
 }
 
 func (s *storeStateSink) UpdateSessionState(id string, state agentsessions.State, pid int, exit *int) error {
-	return s.store.UpdateSessionState(id, string(state), pid, exit)
+	return s.deps.UpdateSessionState(context.Background(), id, string(state), pid, exit)
 }
 
 // busEventSink adapts an EventEmitter to agentsessions.EventSink. Each

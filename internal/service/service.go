@@ -3,6 +3,7 @@ package service
 import (
 	"github.com/hollis-labs/clockwork-manifold/internal/modelcatalog"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/clockwork-manifold/internal/persistence/writequeue"
 )
 
 // Service is the root service dispatcher that aggregates all domain services.
@@ -49,7 +50,7 @@ func New(store *sqlstore.Store) *Service {
 		Task:       task,
 		Run:        &RunService{store: store},
 		Artifact:   &ArtifactService{store: store},
-		Comment:    &CommentService{store: store},
+		Comment:    &CommentService{store: store, writer: writequeue.NewDirect(store)},
 		Settings:   &SettingsService{store: store},
 		Feature:    feature,
 		Sprint:     &SprintService{store: store, feature: feature, task: task},

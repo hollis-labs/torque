@@ -4,6 +4,7 @@ import (
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/writeq"
 	"github.com/hollis-labs/clockwork-manifold/internal/toolbroker"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 )
@@ -34,6 +35,10 @@ type RuntimeFactory func(cfg agentsessions.AdapterRuntimeConfig) (agentsessions.
 type Dependencies struct {
 	// Store is the canonical session/checkpoint persistence layer.
 	Store *sqlstore.Store
+
+	// StateWriter serializes session-state mutations back into clockwork.db.
+	// Nil preserves direct Store writes for tests and narrow CLI paths.
+	StateWriter writeq.Writer
 
 	// Profiles maps agent_profile names → AgentProfile shape (provider,
 	// args, model, env policy, ...).

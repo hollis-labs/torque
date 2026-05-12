@@ -1,8 +1,11 @@
 package scheduler
 
 import (
+	"context"
+
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/clockwork-manifold/internal/persistence/writequeue"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
 )
 
@@ -38,11 +41,21 @@ type CostEntry struct {
 // CostTracker records and queries execution costs.
 type CostTracker struct {
 	store *sqlstore.Store
+	writer writequeue.TelemetryWriter
 }
 
 // NewCostTracker creates a new cost tracker.
 func NewCostTracker(store *sqlstore.Store) *CostTracker {
-	return &CostTracker{store: store}
+	return &CostTracker{store: store, writer: writequeue.NewDirect(store)}
+}
+
+// SetTelemetryWriter installs the sink used for cost_ledger rows. Nil keeps
+// the existing writer.
+func (c *CostTracker) SetTelemetryWriter(w writequeue.TelemetryWriter) {
+	if w == nil {
+		return
+	}
+	c.writer = w
 }
 
 // Record persists a cost entry to the cost_ledger table. Empty Source is
@@ -52,13 +65,15 @@ func (c *CostTracker) Record(entry CostEntry) error {
 	if source == "" {
 		source = CostSourceUnknown
 	}
-	_, err := c.store.DB().Exec(
-		`INSERT INTO cost_ledger (task_id, run_id, sprint_id, cost, prompt_tokens, completion_tokens, cost_source)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		entry.TaskID, entry.RunID, nullableString(entry.SprintID),
-		entry.Cost, entry.PromptTokens, entry.CompletionTokens, string(source),
-	)
-	return err
+	return c.writer.RecordCost(context.Background(), &sqlstore.CostLedgerRecord{
+		TaskID:           entry.TaskID,
+		RunID:            entry.RunID,
+		SprintID:         entry.SprintID,
+		Cost:             entry.Cost,
+		PromptTokens:     entry.PromptTokens,
+		CompletionTokens: entry.CompletionTokens,
+		CostSource:       string(source),
+	})
 }
 
 // TaskTotal returns the total cost for a task across all runs.
