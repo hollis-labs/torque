@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/hollis-labs/clockwork-manifold/internal/hitl"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 )
@@ -44,7 +45,7 @@ func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, agg *sqlstore.T
 	if subtodos == nil {
 		subtodos = []sqlstore.Subtodo{}
 	}
-	return map[string]interface{}{
+	body := map[string]interface{}{
 		"id":                 t.ID,
 		"title":              t.Title,
 		"description":        t.Description,
@@ -96,10 +97,10 @@ func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, agg *sqlstore.T
 		// flow but currently unassigned); both NULL means "fresh, never
 		// touched by collections". collection_position is included for
 		// completeness but the GUI doesn't currently consume it.
-		"collection_id":            nullStr(t.CollectionID),
-		"collection_name":          nullableString(collectionName),
-		"collection_position":      nullInt(t.CollectionPosition),
-		"added_to_collections_at":  nullTime(t.AddedToCollectionsAt),
+		"collection_id":           nullStr(t.CollectionID),
+		"collection_name":         nullableString(collectionName),
+		"collection_position":     nullInt(t.CollectionPosition),
+		"added_to_collections_at": nullTime(t.AddedToCollectionsAt),
 
 		// Run roll-up — prompt/completion/cost summed across all recorded
 		// runs for this task, plus a turn count. Nil aggregate renders
@@ -111,6 +112,25 @@ func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, agg *sqlstore.T
 		// (never null) so the client can map without a guard.
 		"subtodos": subtodos,
 	}
+	if policy, ok := requiredWorkflowPolicyFromTask(t); ok {
+		body["required_workflow_policy"] = policy
+	}
+	return body
+}
+
+func requiredWorkflowPolicyFromTask(t *sqlstore.TaskRecord) (hitl.RequiredWorkflowPolicy, bool) {
+	if !t.Metadata.Valid || t.Metadata.String == "" {
+		return hitl.RequiredWorkflowPolicy{}, false
+	}
+	md := map[string]any{}
+	if err := json.Unmarshal([]byte(t.Metadata.String), &md); err != nil {
+		return hitl.RequiredWorkflowPolicy{}, false
+	}
+	policy, ok, err := hitl.ParseRequiredWorkflowFromMetadata(md)
+	if err != nil {
+		return hitl.RequiredWorkflowPolicy{}, false
+	}
+	return policy, ok
 }
 
 // tasksJSON converts a slice of TaskRecord to a JSON-friendly slice.

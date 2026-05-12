@@ -131,3 +131,25 @@ func TestOrchestrator_TemplateEscalationPreconditionTaskStatusGate(t *testing.T)
 	assert.Contains(t, content, "[system/end-agent]",
 		"escalation must reference the [system/end-agent] failed comment as the corroborating crash signal")
 }
+
+func TestOrchestrator_TemplateIncludesHITLCheckpointProtocol(t *testing.T) {
+	t.Setenv(orchestrator.TemplateEnvVar, "/nonexistent/path")
+	t.Setenv("HOME", "/nonexistent/home")
+
+	content, _ := orchestrator.LoadTemplate()
+
+	assert.Contains(t, content, "HITL checkpoint protocol",
+		"template must teach the orchestrator typed HITL checkpoint usage")
+	assert.Contains(t, content, "clockwork_task_checkpoint_emit",
+		"template must name the checkpoint emit MCP tool")
+	assert.Contains(t, content, "pr_review",
+		"template must name the PR review workflow")
+	assert.Contains(t, content, "approval",
+		"template must name the approval workflow")
+	assert.Contains(t, content, "message",
+		"template must name the message workflow")
+	assert.Contains(t, content, "task.metadata.checkpoint_responses",
+		"template must include the redispatch response preflight")
+	assert.NotContains(t, content, "Boot auto-inject",
+		"template should not promise boot-time response injection")
+}

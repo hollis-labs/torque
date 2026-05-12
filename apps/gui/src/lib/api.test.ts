@@ -162,6 +162,60 @@ describe('ClockworkApiClient.setSetting', () => {
   })
 })
 
+describe('ClockworkApiClient.emitCheckpoint', () => {
+  const client = new ClockworkApiClient('/api/v1')
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('posts typed HITL checkpoint emits to /checkpoints', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({
+      id: 1,
+      task_id: 'TASK-1',
+      run_id: null,
+      correlation_id: 'corr-1',
+      type: 'approval',
+      payload_json: '{}',
+      response_json: null,
+      emitter_source_type: 'user',
+      emitter_source_ref: 'gui',
+      responder_source_type: null,
+      responder_source_ref: null,
+      emitted_at: '2026-05-11T00:00:00Z',
+      responded_at: null,
+      timeout_at: null,
+      status: 'pending',
+    }))
+
+    await client.emitCheckpoint({
+      task_id: 'TASK-1',
+      type: 'approval',
+      payload_json: '{"title":"Approval"}',
+      emitter_source_type: 'user',
+      emitter_source_ref: 'gui',
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/checkpoints', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({
+        task_id: 'TASK-1',
+        type: 'approval',
+        payload_json: '{"title":"Approval"}',
+        emitter_source_type: 'user',
+        emitter_source_ref: 'gui',
+      }),
+    })
+  })
+})
+
 describe('ClockworkApiClient.getFeatureFlags', () => {
   const client = new ClockworkApiClient('/api/v1')
   let fetchMock: ReturnType<typeof vi.fn>

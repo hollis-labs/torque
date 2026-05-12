@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 
+	"github.com/hollis-labs/clockwork-manifold/internal/hitl"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
@@ -242,6 +243,49 @@ func TestCheckpointService_Respond(t *testing.T) {
 	assert.Equal(t, `{"answer":"yes"}`, cp.ResponseJSON.String)
 }
 
+func TestCheckpointService_PRReviewContractRoundTrip(t *testing.T) {
+	svc := setupService(t)
+	taskID := createBlockingDecisionTask(t, svc)
+
+	payloadJSON, err := json.Marshal(hitl.PRReviewPayload{
+		PRURL:   "https://github.com/acme/app/pull/42",
+		Title:   "Fix checkout",
+		Summary: "Ready for review.",
+	})
+	require.NoError(t, err)
+
+	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID:            taskID,
+		Type:              hitl.TypePRReview,
+		PayloadJSON:       string(payloadJSON),
+		EmitterSourceType: "system",
+	})
+	require.NoError(t, err)
+
+	responseJSON, err := json.Marshal(hitl.PRReviewResponse{
+		Decision: "approve",
+		Summary:  "Looks good.",
+	})
+	require.NoError(t, err)
+	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+		CorrelationID:       out.CorrelationID,
+		ResponseJSON:        string(responseJSON),
+		ResponderSourceType: "user",
+	}))
+
+	cp, err := svc.Checkpoint.Get(out.CorrelationID)
+	require.NoError(t, err)
+	assert.Equal(t, hitl.TypePRReview, cp.Type)
+
+	var gotPayload hitl.PRReviewPayload
+	require.NoError(t, json.Unmarshal([]byte(cp.PayloadJSON), &gotPayload))
+	assert.Equal(t, "https://github.com/acme/app/pull/42", gotPayload.PRURL)
+
+	var gotResponse hitl.PRReviewResponse
+	require.NoError(t, json.Unmarshal([]byte(cp.ResponseJSON.String), &gotResponse))
+	assert.Equal(t, "approve", gotResponse.Decision)
+}
+
 func TestCheckpointService_Respond_AlreadyTerminal_Conflict(t *testing.T) {
 	svc := setupService(t)
 	taskID := createBlockingDecisionTask(t, svc)
@@ -264,6 +308,67 @@ func TestCheckpointService_Respond_AlreadyTerminal_Conflict(t *testing.T) {
 	require.Error(t, err)
 	var cerr *service.ConflictError
 	require.ErrorAs(t, err, &cerr)
+}
+
+func TestCheckpointService_Respond_RequiredWorkflowRejectsDisallowedResponder(t *testing.T) {
+	svc := setupService(t)
+	rec, err := svc.Task.Create(service.TaskCreateInput{
+		Title:                "restart approval",
+		Description:          "Needs human permission before restart.",
+		Kind:                 "decision",
+		CheckpointMode:       "blocking",
+		OnCheckpointResponse: "resume",
+		Manual:               true,
+		Metadata: map[string]any{
+			"hitl": map[string]any{
+				"required_workflow": map[string]any{
+					"workflow_type":    hitl.TypeApproval,
+					"enforcement_mode": hitl.EnforcementRequired,
+					"requirements": map[string]any{
+						"response_required":              true,
+						"allowed_responder_source_types": []string{"user"},
+						"min_responders":                 1,
+					},
+					"reason": "permission before restart",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
+	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID:            rec.ID,
+		Type:              hitl.TypeApproval,
+		PayloadJSON:       `{"title":"Restart","prompt":"Approve restart?"}`,
+		EmitterSourceType: "agent",
+	})
+	require.NoError(t, err)
+
+	err = svc.Checkpoint.Respond(service.CheckpointRespondInput{
+		CorrelationID:       out.CorrelationID,
+		ResponseJSON:        `{"decision":"approved"}`,
+		ResponderSourceType: "agent",
+	})
+	require.Error(t, err)
+	var verr *service.ValidationError
+	require.ErrorAs(t, err, &verr)
+	assert.Equal(t, "required_workflow", verr.Field)
+
+	cp, err := svc.Checkpoint.Get(out.CorrelationID)
+	require.NoError(t, err)
+	assert.Equal(t, "pending", cp.Status, "rejected required-workflow response must not close the checkpoint")
+	got, err := svc.Task.Get(rec.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "review", got.Status, "task stays parked until a satisfying response arrives")
+
+	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+		CorrelationID:       out.CorrelationID,
+		ResponseJSON:        `{"decision":"approved"}`,
+		ResponderSourceType: "user",
+	}))
+	got, err = svc.Task.Get(rec.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "todo", got.Status, "allowed responder satisfies the required workflow and resumes")
 }
 
 // Spec §4.5: a canceled checkpoint should leave the parked task in review

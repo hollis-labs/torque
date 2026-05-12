@@ -62,6 +62,39 @@ func TestHTTP_Checkpoint_Emit_and_Get(t *testing.T) {
 	assert.Equal(t, "pending", got["status"])
 }
 
+func TestHTTP_HITLWorkflowRegistry(t *testing.T) {
+	ts := setupTestServer(t)
+
+	resp, err := http.Get(ts.URL + "/api/v1/checkpoint-workflows")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var list map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&list))
+	resp.Body.Close()
+	workflows := list["workflows"].([]interface{})
+	require.Len(t, workflows, 3)
+
+	resp, err = http.Get(ts.URL + "/api/v1/checkpoint-workflows/pr_review")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var known map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&known))
+	resp.Body.Close()
+	assert.Equal(t, true, known["known"])
+	assert.Equal(t, "pr_review", known["type"])
+
+	resp, err = http.Get(ts.URL + "/api/v1/checkpoint-workflows/vendor.custom")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var unknown map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&unknown))
+	resp.Body.Close()
+	assert.Equal(t, false, unknown["known"])
+	assert.Equal(t, "vendor.custom", unknown["type"])
+	payloadSchema := unknown["payload_schema"].(map[string]interface{})
+	assert.Equal(t, true, payloadSchema["additionalProperties"])
+}
+
 func TestHTTP_Checkpoint_Respond(t *testing.T) {
 	ts := setupTestServer(t)
 	taskID := httpCreateDecisionTask(t, ts.URL)

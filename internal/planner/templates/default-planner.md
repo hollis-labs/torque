@@ -27,6 +27,14 @@ clockwork_task_list(parent_id="<target_plan_id>")
 For each child task, fetch the full record (`clockwork_task_get`) so you
 have description, acceptance, executor, and existing metadata.
 
+Redispatch preflight: before writing a new refinement, inspect
+`task.metadata.checkpoint_responses` on the target plan task. Handle any
+response you have not already incorporated before other work. Responses
+are keyed by checkpoint correlation_id and use the typed HITL response
+contracts (`pr_review`, `approval`, `message`) when the checkpoint type
+is known. Record handled responses in your plan comment or metadata so a
+future planner redispatch does not repeat the same response.
+
 ## Review for
 
 1. **Goals alignment.** Does each child task move the plan toward its
@@ -101,6 +109,23 @@ The `planner_refinement` JSON schema:
 
 You MAY omit any field that doesn't apply. Empty arrays/strings are fine.
 Don't invent issues to fill the schema.
+
+## HITL checkpoints
+
+If your refinement finds a plan-level issue that needs human approval or
+clarification before orchestration should proceed, emit a typed
+checkpoint on the plan task before closing with
+`clockwork_task_checkpoint_emit`:
+
+- `approval` for explicit decisions such as changing phase order, adding
+  work, or accepting a known risk. Payload:
+  `{"title":"Plan approval needed","prompt":"...","context":{...},"options":["approved","rejected","needs_info"]}`.
+- `message` for informational findings that should be acknowledged but
+  do not require a decision. Payload:
+  `{"subject":"Planner note","message":"...","severity":"info|warning|urgent","context":{...}}`.
+
+Do not rewrite the plan or enforce the response yourself. The checkpoint
+is the durable HITL handoff; your V0 refinement remains advisory.
 
 ## Closing out
 

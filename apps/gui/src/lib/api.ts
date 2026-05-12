@@ -16,6 +16,9 @@ import type {
   Template,
   TemplateInstantiateRequest,
   Checkpoint,
+  CheckpointEmitRequest,
+  HITLWorkflowDefinition,
+  HITLWorkflowListResponse,
   Subtodo,
   PlanDetail,
   PlanPhaseInput,
@@ -878,6 +881,18 @@ export class ClockworkApiClient {
 
   async getCheckpoint(correlationId: string): Promise<Checkpoint> {
     return this.get<Checkpoint>(`/checkpoints/${correlationId}`)
+  }
+
+  async emitCheckpoint(body: CheckpointEmitRequest): Promise<Checkpoint> {
+    return this.post<Checkpoint>('/checkpoints', body)
+  }
+
+  async listHITLWorkflowDefinitions(): Promise<HITLWorkflowListResponse> {
+    return this.get<HITLWorkflowListResponse>('/checkpoint-workflows')
+  }
+
+  async getHITLWorkflowDefinition(type: string): Promise<HITLWorkflowDefinition> {
+    return this.get<HITLWorkflowDefinition>(`/checkpoint-workflows/${encodeURIComponent(type)}`)
   }
 
   async respondCheckpoint(

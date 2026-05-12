@@ -518,6 +518,51 @@ export interface Collection {
 }
 
 export type CheckpointStatus = 'pending' | 'responded' | 'canceled' | 'timed_out'
+export type HITLWorkflowPreset = 'pr_review' | 'approval' | 'message'
+export type HITLEnforcementMode = 'none' | 'advisory' | 'required'
+
+export interface JSONSchema {
+  type?: string | string[]
+  title?: string
+  description?: string
+  required?: string[]
+  properties?: Record<string, JSONSchema>
+  additionalProperties?: boolean | JSONSchema
+  items?: JSONSchema
+  enum?: unknown[]
+  default?: unknown
+  format?: string
+}
+
+export interface HITLWorkflowRequirements {
+  response_required: boolean
+  allowed_responder_source_types?: string[]
+  min_responders?: number
+}
+
+export interface HITLTaskMetadataContract {
+  key: string
+  workflow_type_key: string
+  requirements_key: string
+  enforcement_key: string
+  requirements: HITLWorkflowRequirements
+  enforcement_mode: HITLEnforcementMode
+  behavior_reserved: boolean
+}
+
+export interface HITLWorkflowDefinition {
+  type: string
+  known: boolean
+  title: string
+  description: string
+  payload_schema: JSONSchema
+  response_schema: JSONSchema
+  task_metadata: HITLTaskMetadataContract
+}
+
+export interface HITLWorkflowListResponse {
+  workflows: HITLWorkflowDefinition[]
+}
 
 export interface Checkpoint {
   id: number
@@ -535,4 +580,13 @@ export interface Checkpoint {
   responded_at: string | null
   timeout_at: string | null
   status: CheckpointStatus
+}
+
+export interface CheckpointEmitRequest {
+  task_id: string
+  type: HITLWorkflowPreset
+  payload_json: string
+  emitter_source_type?: string
+  emitter_source_ref?: string
+  timeout_at?: string
 }
