@@ -43,18 +43,29 @@ type AgentProfile struct {
 	Model    string `yaml:"model"`
 
 	// CLI-specific fields
-	Command          string   `yaml:"command,omitempty"`
-	Args             []string `yaml:"args,omitempty"`
-	OutputFormat     string   `yaml:"output_format,omitempty"` // "stream-json" or "print"
-	TimeoutSeconds   int      `yaml:"timeout_seconds,omitempty"`
-	MaxAgentDepth    int      `yaml:"max_agent_depth,omitempty"`
-	// PTY is the operator-side PTY override. nil (yaml absent) → the agent
-	// substrate's per-Mode + per-provider matrix decides. Explicit `true`
-	// forces PTY (still subject to ModeOneShot's subprocess-only constraint).
-	// Explicit `false` forces subprocess-per-turn even on providers/Modes
-	// the matrix would PTY-enable. *bool gives the ternary semantics yaml
-	// otherwise can't express against a `bool` field.
-	PTY              *bool    `yaml:"pty,omitempty"`
+	Command        string   `yaml:"command,omitempty"`
+	Args           []string `yaml:"args,omitempty"`
+	OutputFormat   string   `yaml:"output_format,omitempty"` // "stream-json" or "print"
+	TimeoutSeconds int      `yaml:"timeout_seconds,omitempty"`
+	MaxAgentDepth  int      `yaml:"max_agent_depth,omitempty"`
+	// RuntimeKind is the operator-side runtime-kind override. Empty
+	// (yaml absent) → the agent substrate's per-provider matrix decides
+	// (see runtime/agent/factory.go::selectRuntimeKind). Non-empty values
+	// force a specific go-agent-sessions runtime kind for this profile:
+	//
+	//   "subprocess"      — single-shot subprocess per turn (claude bare,
+	//                       opencode, codex print-mode)
+	//   "pty"             — long-lived PTY/TUI (escape hatch; no provider
+	//                       defaults here today, TUI driving unproven)
+	//   "streaming-stdio" — long-lived NDJSON over stdin/stdout (claude-code)
+	//   "jsonrpc-stdio"   — long-lived JSON-RPC 2.0 over stdio (codex
+	//                       app-server)
+	//
+	// Replaces the legacy boolean `pty:` field (dropped 2026-05-13 with
+	// the codex app-server flip). No compat shim per
+	// feedback_no_compat_shims — pre-launch, no operator config relied on
+	// the old field name.
+	RuntimeKind      string   `yaml:"runtime_kind,omitempty"`
 	EnvStripPrefixes []string `yaml:"env_strip_prefixes,omitempty"`
 
 	// API-specific fields

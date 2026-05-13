@@ -46,18 +46,21 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 
 	profile := config.GetProfileOrDefault(deps.Profiles, opts.AgentProfile)
 
-	// PTY decision drives BOTH Caps.PTY and the adapter constructor — claude
-	// has different arg shapes per mode (go-providers v0.8.1 PTY-aware
-	// ClaudeAdapter), so adapterFor needs to know the decision. Computing
-	// PTY first keeps the adapter wiring in lockstep with the runtime caps.
-	pty := shouldUsePTY(opts.Mode, profile.Provider, profile.PTY, opts.SubprocessPerTurnOverride)
+	// Runtime kind selection drives BOTH the adapter constructor AND the
+	// capability set the lib reads to pick the session implementation
+	// (subprocess / pty / streaming-stdio / jsonrpc-stdio). Operators
+	// override per-profile via profile.RuntimeKind; the per-Boot escape
+	// hatch is opts.RuntimeKindOverride. Computing the kind first keeps
+	// the adapter wiring in lockstep with the runtime caps.
+	runtimeKind, err := resolveRuntimeKind(profile, opts)
+	if err != nil {
+		return nil, fmt.Errorf("%w: runtime kind: %v", ErrAdapterNotFound, err)
+	}
 
-	cliAdapter, baseCaps, err := adapterFor(profile, opts.AgentProfile, pty)
+	cliAdapter, caps, err := adapterFor(profile, opts.AgentProfile, runtimeKind)
 	if err != nil {
 		return nil, fmt.Errorf("%w: adapter: %v", ErrAdapterNotFound, err)
 	}
-	caps := baseCaps
-	caps.PTY = pty
 
 	// Session ID + role (used for SessionMeta + boot.md content).
 	idFn := opts.IDFn

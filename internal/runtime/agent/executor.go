@@ -68,10 +68,15 @@ func (e *Executor) Validate(job *executor.ExecutionJob) error {
 		return err
 	}
 	profile := config.GetProfileOrDefault(e.deps.Profiles, job.AgentProfile)
-	// Validate is provider-existence only — PTY argument doesn't affect
-	// which providers are accepted, so pass false. The actual PTY decision
-	// is re-made at Boot time per the Mode + profile + override matrix.
-	if _, _, err := adapterFor(profile, job.AgentProfile, false); err != nil {
+	// Resolve the kind via the same matrix Boot uses (profile override →
+	// per-provider default). Validate then exercises adapterFor with the
+	// resolved kind so unsupported provider/kind combinations surface as
+	// permanent errors at enqueue, not as boot-time failures.
+	kind, kindErr := selectRuntimeKind(profile.Provider, profile.RuntimeKind)
+	if kindErr != nil {
+		return executor.NewPermanentError(kindErr)
+	}
+	if _, _, err := adapterFor(profile, job.AgentProfile, kind); err != nil {
 		return executor.NewPermanentError(err)
 	}
 	if _, err := executor.ResolveWorkingDir(job.WorkingDir); err != nil {

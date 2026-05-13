@@ -113,50 +113,80 @@ func TestStatus_Terminal(t *testing.T) {
 	}
 }
 
-// TestShouldUsePTY locks the per-Mode + per-provider + per-profile Caps.PTY
-// decision matrix. Default (profile.PTY=nil) is subprocess-per-turn for all
-// providers — programmatic auto-fire against PTY/TUI claude is unproven (the
-// kickoff lands in the TUI input box but doesn't submit; mux's claudecode is
-// human-driven), so long-lived state goes through claude's `--resume` chain
-// across subprocess turns instead. profile.PTY=true is the experiment escape
-// hatch. ModeOneShot is always subprocess. opts.SubprocessPerTurnOverride is
-// a hard override.
-func TestShouldUsePTY(t *testing.T) {
-	bptr := func(b bool) *bool { return &b }
+// TestSelectRuntimeKind locks the per-provider runtime-kind default matrix
+// post-2026-05-13. Per the boot.go ModeOneShot turn-complete wait + the
+// go-providers v0.17.1 long-lived constructors:
+//
+//   - codex       → JsonRpcStdio (app-server, JSON-RPC 2.0 over stdio)
+//   - claude-code → StreamingStdio (NDJSON-over-stdin)
+//   - claude      → Subprocess (bare-mode subprocess-per-turn)
+//   - opencode    → Subprocess (no long-lived adapter)
+//
+// profile.RuntimeKind, when non-empty, beats the matrix. Invalid values
+// surface as a validate error.
+func TestSelectRuntimeKind(t *testing.T) {
 	cases := []struct {
-		name       string
-		mode       Mode
-		provider   string
-		profilePTY *bool
-		override   bool
-		want       bool
+		name        string
+		provider    string
+		profileKind string
+		want        RuntimeKind
+		wantErr     bool
 	}{
-		// Matrix defaults (profile.PTY=nil) — subprocess-per-turn everywhere.
-		{"claude long-lived → no PTY (TUI auto-fire unproven)", ModeLongLived, "claude", nil, false, false},
-		{"claude subagent → no PTY", ModeSubagent, "claude", nil, false, false},
-		{"claude resume → no PTY", ModeResume, "claude", nil, false, false},
-		{"claude background → no PTY", ModeBackground, "claude", nil, false, false},
-		{"claude OneShot → no PTY (single turn)", ModeOneShot, "claude", nil, false, false},
-		{"codex long-lived → no PTY (not yet probed)", ModeLongLived, "codex", nil, false, false},
-		{"opencode long-lived → no PTY", ModeLongLived, "opencode", nil, false, false},
-		{"gemini long-lived → no PTY", ModeLongLived, "gemini", nil, false, false},
-		{"copilot long-lived → no PTY", ModeLongLived, "copilot", nil, false, false},
+		// Per-provider defaults (profileKind="" → matrix).
+		{"codex default → jsonrpc-stdio", "codex", "", RuntimeKindJsonRpcStdio, false},
+		{"claude-code default → streaming-stdio", "claude-code", "", RuntimeKindStreamingStdio, false},
+		{"claude default → subprocess", "claude", "", RuntimeKindSubprocess, false},
+		{"opencode default → subprocess", "opencode", "", RuntimeKindSubprocess, false},
 
-		// opts.SubprocessPerTurnOverride beats everything.
-		{"override forces no PTY even when profile.PTY=true", ModeLongLived, "claude", bptr(true), true, false},
+		// Profile override wins.
+		{"profile override: codex subprocess (escape hatch)", "codex", "subprocess", RuntimeKindSubprocess, false},
+		{"profile override: claude pty (experiment)", "claude", "pty", RuntimeKindPTY, false},
+		{"profile override: claude-code streaming-stdio (explicit but redundant)", "claude-code", "streaming-stdio", RuntimeKindStreamingStdio, false},
 
-		// Explicit profile.PTY override (experiment escape hatch).
-		{"profile.PTY=true forces PTY on claude long-lived", ModeLongLived, "claude", bptr(true), false, true},
-		{"profile.PTY=true forces PTY on codex long-lived", ModeLongLived, "codex", bptr(true), false, true},
-		{"profile.PTY=false explicit (matches default)", ModeLongLived, "claude", bptr(false), false, false},
-		{"profile.PTY=true on OneShot still subprocess (single-turn constraint)", ModeOneShot, "claude", bptr(true), false, false},
+		// Invalid profile kind.
+		{"invalid kind → error", "codex", "tui", "", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := shouldUsePTY(tc.mode, tc.provider, tc.profilePTY, tc.override)
+			got, err := selectRuntimeKind(tc.provider, tc.profileKind)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
 			assert.Equal(t, tc.want, got)
 		})
 	}
+}
+
+// TestResolveRuntimeKind verifies the override precedence chain: per-Boot
+// Options.RuntimeKindOverride > profile.RuntimeKind > per-provider default.
+func TestResolveRuntimeKind(t *testing.T) {
+	codexProfile := config.AgentProfile{Provider: "codex"}
+	codexProfileSubproc := config.AgentProfile{Provider: "codex", RuntimeKind: "subprocess"}
+
+	t.Run("no override, no profile field → per-provider default", func(t *testing.T) {
+		got, err := resolveRuntimeKind(codexProfile, Options{})
+		require.NoError(t, err)
+		assert.Equal(t, RuntimeKindJsonRpcStdio, got)
+	})
+
+	t.Run("profile.RuntimeKind wins over default", func(t *testing.T) {
+		got, err := resolveRuntimeKind(codexProfileSubproc, Options{})
+		require.NoError(t, err)
+		assert.Equal(t, RuntimeKindSubprocess, got)
+	})
+
+	t.Run("Options override wins over profile + default", func(t *testing.T) {
+		got, err := resolveRuntimeKind(codexProfileSubproc, Options{RuntimeKindOverride: RuntimeKindJsonRpcStdio})
+		require.NoError(t, err)
+		assert.Equal(t, RuntimeKindJsonRpcStdio, got)
+	})
+
+	t.Run("invalid Options override → error", func(t *testing.T) {
+		_, err := resolveRuntimeKind(codexProfile, Options{RuntimeKindOverride: RuntimeKind("nope")})
+		require.Error(t, err)
+	})
 }
 
 // TestKickoffPayload covers the user-message body Boot fires (or plants as
@@ -230,23 +260,23 @@ func TestAdapterFor_ClaudeMatrix(t *testing.T) {
 	cases := []struct {
 		name              string
 		args              []string // profile.Args (drives dev-mode detection)
-		pty               bool
+		kind              RuntimeKind
 		wantBare          bool
 		wantPTY           bool
 		wantSkipPermsTrue bool
 	}{
 		{
-			name:              "non-dev + non-pty → bare (subprocess-per-turn)",
+			name:              "non-dev + subprocess → bare",
 			args:              nil,
-			pty:               false,
+			kind:              RuntimeKindSubprocess,
 			wantBare:          true,
 			wantPTY:           false,
 			wantSkipPermsTrue: false,
 		},
 		{
-			name:              "dev + non-pty → dev-bare (subprocess-per-turn)",
+			name:              "dev + subprocess → dev-bare",
 			args:              []string{"--dangerously-skip-permissions"},
-			pty:               false,
+			kind:              RuntimeKindSubprocess,
 			wantBare:          true,
 			wantPTY:           false,
 			wantSkipPermsTrue: true,
@@ -254,7 +284,7 @@ func TestAdapterFor_ClaudeMatrix(t *testing.T) {
 		{
 			name:              "non-dev + pty → pty (non-bare)",
 			args:              nil,
-			pty:               true,
+			kind:              RuntimeKindPTY,
 			wantBare:          false,
 			wantPTY:           true,
 			wantSkipPermsTrue: false,
@@ -262,7 +292,7 @@ func TestAdapterFor_ClaudeMatrix(t *testing.T) {
 		{
 			name:              "dev + pty → dev-pty (non-bare)",
 			args:              []string{"--dangerously-skip-permissions"},
-			pty:               true,
+			kind:              RuntimeKindPTY,
 			wantBare:          false,
 			wantPTY:           true,
 			wantSkipPermsTrue: true,
@@ -271,7 +301,7 @@ func TestAdapterFor_ClaudeMatrix(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			profile := config.AgentProfile{Provider: "claude", Args: tc.args}
-			adapter, caps, err := adapterFor(profile, "claude", tc.pty)
+			adapter, caps, err := adapterFor(profile, "claude", tc.kind)
 			require.NoError(t, err)
 			assert.True(t, caps.BinaryRequired)
 			assert.True(t, caps.ProviderSessionID)
@@ -367,7 +397,7 @@ func TestAdapterFor_OpencodeWiring(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			profile := config.AgentProfile{Provider: "opencode", Model: tc.model}
-			adapter, caps, err := adapterFor(profile, tc.profileName, false)
+			adapter, caps, err := adapterFor(profile, tc.profileName, RuntimeKindSubprocess)
 			if tc.wantErr {
 				require.Error(t, err)
 				return

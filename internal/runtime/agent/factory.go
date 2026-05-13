@@ -8,63 +8,75 @@ import (
 	"github.com/hollis-labs/go-providers/provider"
 )
 
-// adapterFor maps a profile's provider name to a go-providers CLIAdapter and
-// the static capability set its agentsessions Runtime should declare.
+// adapterFor maps a profile's provider name + the resolved RuntimeKind
+// to a go-providers CLIAdapter and the agentsessions Runtime
+// capabilities the lib should declare. The RuntimeKind selects which
+// constructor variant fires (e.g. claude PTY vs Bare; codex
+// subprocess vs app-server) and the capability set the Runtime
+// publishes (which the lib reads to pick the session implementation).
 //
-// profileName is the clockwork agent-profile lookup key. Most adapters ignore
-// it; OpencodeAdapter requires it because `opencode run` dispatches via
-// `--agent <name>`, and by convention the clockwork profile name is the
-// opencode agent name.
+// profileName is the clockwork agent-profile lookup key. Most adapters
+// ignore it; OpencodeAdapter requires it because `opencode run`
+// dispatches via `--agent <name>`, and by convention the clockwork
+// profile name is the opencode agent name.
 //
-// pty signals which ClaudeAdapter constructor to pick: PTY-mode emits
-// interactive args (no -p / --print / --output-format / --verbose / --system-
-// prompt) per go-providers v0.8.1; subprocess-per-turn emits the print-mode
-// args. Non-claude providers (codex / opencode / gemini / copilot) ignore the
-// argument for *adapter constructor selection* — they expose a single
-// adapter type today and don't need a PTY-vs-print-mode constructor split.
-// Their runtime mode is still controlled by Caps.PTY (which shouldUsePTY can
-// flip per-profile via profile.PTY=true), so an operator can opt them into
-// PTY runtime even though the adapter doesn't change shape. Caps.PTY itself
-// is set by the caller via shouldUsePTY; this argument keeps claude's adapter
-// wiring in lockstep with that decision.
+// Per-provider runtime-kind support:
 //
-// Subprocess-per-turn (non-PTY) claude paths use v0.9.1+ bare-mode
-// constructors. Bare mode emits --bare plus four explicit-injection flags
-// (--mcp-config / --append-system-prompt-file / --settings / --add-dir) and
-// skips the CLI's auto-discovery of operator config (~/.claude/settings.json,
-// ~/.claude.json, hooks, plugins, MCP, OAuth, keychain, CLAUDE.md auto-find).
-// This obsoletes the operator-config-bleed-through class for bare consumers
-// (CW-20260508-0019). PTY paths stay non-bare — bare mode is print-mode-
-// focused per Anthropic's docs and the PTY/TUI shape doesn't accept --bare.
+//   - claude:      Subprocess (bare), PTY. Bare is the production
+//                  default; PTY remains an operator escape hatch.
+//   - claude-code: StreamingStdio only. Other kinds error — claude-code
+//                  is a long-lived NDJSON-over-stdin shape, not a
+//                  print-mode subprocess.
+//   - codex:       Subprocess (print-mode), JsonRpcStdio (app-server).
+//                  The default per selectRuntimeKind is JsonRpcStdio;
+//                  operators can opt back to print-mode by setting
+//                  profile.RuntimeKind: subprocess.
+//   - opencode:    Subprocess only. No long-lived adapter exists in
+//                  go-providers today.
+//   - gemini:      Unsupported (PTY adapter removed in go-providers
+//                  v0.12.0).
+//   - copilot:     Unsupported (same as gemini).
 //
-// v0.9.1 fixed the .mcp.json HTTP-loopback shape (CW-20260509-0003): the
-// loopback entry now emits `{"type": "http", "url": "..."}` which bare-mode
-// strict validation accepts.
+// Subprocess-per-turn (non-PTY/non-long-lived) claude paths use the
+// v0.9.1+ bare-mode constructors. Bare mode emits --bare plus four
+// explicit-injection flags (--mcp-config / --append-system-prompt-file
+// / --settings / --add-dir) and skips the CLI's auto-discovery of
+// operator config (~/.claude/settings.json, ~/.claude.json, hooks,
+// plugins, MCP, OAuth, keychain, CLAUDE.md auto-find). This obsoletes
+// the operator-config-bleed-through class for bare consumers
+// (CW-20260508-0019).
 //
 // Bare-mode adapters returned here are pre-injection. Under the lib's
 // AutoPlantBootDir, agentsessions.preparePlant clones the adapter per
-// session and threads MCPConfigPath / AppendSystemPromptFile / SettingsPath
-// / ProjectDir from BareInjectionPaths(<plantedBootDir>, opts.Workdir).
-// The runtime-level adapter stays untouched, so concurrent sessions don't
-// race on shared adapter state.
-func adapterFor(profile config.AgentProfile, profileName string, pty bool) (provider.CLIAdapter, agentsessions.Capabilities, error) {
+// session and threads MCPConfigPath / AppendSystemPromptFile /
+// SettingsPath / ProjectDir from BareInjectionPaths(<plantedBootDir>,
+// opts.Workdir). The runtime-level adapter stays untouched, so
+// concurrent sessions don't race on shared adapter state.
+func adapterFor(profile config.AgentProfile, profileName string, kind RuntimeKind) (provider.CLIAdapter, agentsessions.Capabilities, error) {
+	baseCaps := capabilitiesForRuntimeKind(kind)
+
 	switch profile.Provider {
 	case "claude":
-		caps := agentsessions.Capabilities{
-			BinaryRequired:    true,
-			ProviderSessionID: true,
-			CheckpointResume:  true,
-		}
+		// claude supports Subprocess (bare) + PTY today. CheckpointResume +
+		// ProviderSessionID layer on top of the base caps regardless of kind.
+		caps := baseCaps
+		caps.ProviderSessionID = true
+		caps.CheckpointResume = true
 		dev := profileIsDevMode(profile)
-		switch {
-		case pty && dev:
-			return provider.NewClaudeAdapterDevPTY(), caps, nil
-		case pty:
+		switch kind {
+		case RuntimeKindPTY:
+			if dev {
+				return provider.NewClaudeAdapterDevPTY(), caps, nil
+			}
 			return provider.NewClaudeAdapterPTY(), caps, nil
-		case dev:
-			return provider.NewClaudeAdapterDevBare(), caps, nil
-		default:
+		case RuntimeKindSubprocess, "":
+			if dev {
+				return provider.NewClaudeAdapterDevBare(), caps, nil
+			}
 			return provider.NewClaudeAdapterBare(), caps, nil
+		default:
+			return nil, agentsessions.Capabilities{}, fmt.Errorf(
+				"claude provider does not support runtime kind %q; supported: subprocess, pty (use provider=claude-code for streaming-stdio)", string(kind))
 		}
 
 	case "claude-code":
@@ -86,24 +98,40 @@ func adapterFor(profile config.AgentProfile, profileName string, pty bool) (prov
 		// threaded) AND operator-global `~/.claude.json` keychain auth are
 		// both honored. This sidesteps the bare-mode "Not logged in" gap
 		// surfaced by CW-20260513-0015 smoke 2026-05-12.
-		caps := agentsessions.Capabilities{
-			BinaryRequired:    true,
-			ProviderSessionID: true,
-			StreamingStdio:    true,
-			// CheckpointResume: false — claude `--resume <id>` semantics
-			// differ in streaming mode (re-injects context every turn vs
-			// KV-cache reuse). Conservative default; revisit when the
-			// long-lived resume path is empirically validated.
+		if kind != RuntimeKindStreamingStdio {
+			return nil, agentsessions.Capabilities{}, fmt.Errorf(
+				"claude-code provider only supports runtime kind streaming-stdio; got %q", string(kind))
 		}
+		caps := baseCaps
+		// CheckpointResume: false — claude `--resume <id>` semantics differ
+		// in streaming mode (re-injects context every turn vs KV-cache
+		// reuse). Conservative default; revisit when the long-lived resume
+		// path is empirically validated.
 		if profileIsDevMode(profile) {
 			return provider.NewClaudeAdapterDevStreamingStdio(), caps, nil
 		}
 		return provider.NewClaudeAdapterStreamingStdio(), caps, nil
 
 	case "codex":
-		return provider.NewCodexAdapter(), agentsessions.Capabilities{
-			BinaryRequired: true,
-		}, nil
+		// codex supports Subprocess (print-mode: `codex exec`) and
+		// JsonRpcStdio (app-server: `codex app-server`). go-providers
+		// v0.17.1 ships `NewCodexAdapterAppServer()`; the underlying
+		// `codex app-server` process speaks JSON-RPC 2.0 over stdio
+		// with thread persistence in memory until 30-min idle.
+		// `thread/start` + `thread/resume` are JSON-RPC methods, not
+		// CLI flags — so per-turn params are intentionally dropped from
+		// BuildArgs. Turn delivery in JsonRpcStdio mode goes through
+		// SendTurn (in this package), NOT mgr.SendInput (which is the
+		// JSON-RPC raw-bytes escape hatch).
+		switch kind {
+		case RuntimeKindJsonRpcStdio:
+			return provider.NewCodexAdapterAppServer(), baseCaps, nil
+		case RuntimeKindSubprocess, "":
+			return provider.NewCodexAdapter(), baseCaps, nil
+		default:
+			return nil, agentsessions.Capabilities{}, fmt.Errorf(
+				"codex provider does not support runtime kind %q; supported: subprocess, jsonrpc-stdio", string(kind))
+		}
 
 	case "gemini":
 		// gemini PTY adapter dropped in go-providers v0.12.0 (unused PTY-only
@@ -124,6 +152,10 @@ func adapterFor(profile config.AgentProfile, profileName string, pty bool) (prov
 			return nil, agentsessions.Capabilities{}, fmt.Errorf(
 				"opencode provider requires Options.AgentProfile to be set (maps to opencode --agent)")
 		}
+		if kind != RuntimeKindSubprocess && kind != "" {
+			return nil, agentsessions.Capabilities{}, fmt.Errorf(
+				"opencode provider only supports runtime kind subprocess; got %q (no long-lived adapter in go-providers today)", string(kind))
+		}
 		adapter := provider.NewOpencodeAdapter()
 		adapter.Agent = profileName
 		// Thread profile.Model through so OpencodeAdapter.BuildArgs emits
@@ -135,9 +167,7 @@ func adapterFor(profile config.AgentProfile, profileName string, pty bool) (prov
 		// the agent's opencode.json declares, ignoring the profile's
 		// Model field entirely.
 		adapter.Model = profile.Model
-		return adapter, agentsessions.Capabilities{
-			BinaryRequired: true,
-		}, nil
+		return adapter, baseCaps, nil
 
 	case "":
 		return nil, agentsessions.Capabilities{}, fmt.Errorf(
@@ -148,46 +178,6 @@ func adapterFor(profile config.AgentProfile, profileName string, pty bool) (prov
 			"unknown provider %q; agent.Boot accepts: claude, claude-code, codex, gemini, copilot, opencode",
 			profile.Provider)
 	}
-}
-
-// shouldUsePTY returns true when the Mode + provider + profile combination
-// should opt into Caps.PTY=true (long-lived PTY runtime) on go-agent-sessions
-// v0.6.0.
-//
-// Decision priority (highest first):
-//  1. opts.SubprocessPerTurnOverride forces subprocess-per-turn (escape hatch).
-//  2. ModeOneShot is always subprocess-per-turn (single turn, auto-stop;
-//     PTY would force the lib to keep the process alive across turns).
-//  3. profile.PTY (when non-nil) is the explicit operator override:
-//     `true` forces PTY (subject to #1/#2 above); `false` forces subprocess.
-//  4. Per-provider matrix decides when profile.PTY is nil. All providers
-//     default to subprocess-per-turn today — claude's long-lived
-//     "session" semantics are delivered via `--resume <session_id>` chaining
-//     across subprocess turns, NOT via PTY/TUI. Programmatic auto-fire
-//     against the claude TUI is unproven (mux's claudecode is human-driven
-//     with empty bootstrap.prompt_prefix; the lib's AutoFireFirstTurn
-//     SendInput lands in the TUI's input box but doesn't submit, and the
-//     stdin-pipe BootMode pre-write similarly stalls because claude's TUI
-//     reads its raw-mode input AFTER initialization). Operators can flip
-//     `pty: true` per-profile to experiment.
-//
-// profile.PTY is *bool so yaml can distinguish "absent" (nil → matrix) from
-// "explicitly false" (force subprocess) — see the AgentProfile.PTY godoc for
-// the schema rationale.
-func shouldUsePTY(mode Mode, provider string, profilePTY *bool, override bool) bool {
-	if override {
-		return false
-	}
-	if mode == ModeOneShot {
-		return false
-	}
-	if profilePTY != nil {
-		return *profilePTY
-	}
-	// All providers (claude / codex / opencode / gemini / copilot):
-	// subprocess-per-turn by default until programmatic TUI driving is solved.
-	_ = provider
-	return false
 }
 
 // profileIsDevMode reports whether the profile opts into Claude's

@@ -85,10 +85,15 @@ type Options struct {
 	// + CLOCKWORK_TASK_ID/RUN_ID + agent-file environment by composeEnv.
 	Env map[string]string
 
-	// SubprocessPerTurnOverride forces Caps.PTY=false even on providers/Modes
-	// that would otherwise opt-in to PTY. Escape hatch for diagnostics; most
-	// callers leave it false.
-	SubprocessPerTurnOverride bool
+	// RuntimeKindOverride, when non-empty, forces a specific
+	// go-agent-sessions Runtime kind for this Boot call regardless of
+	// profile.RuntimeKind or the per-provider default matrix. Escape
+	// hatch for diagnostics + tests; most production callers leave it
+	// empty and let profile.RuntimeKind + selectRuntimeKind decide.
+	// Values: "" (default), "subprocess", "pty", "streaming-stdio",
+	// "jsonrpc-stdio". Invalid values surface as ErrAdapterNotFound from
+	// Boot.
+	RuntimeKindOverride RuntimeKind
 
 	// SandboxProfile, when non-zero, applies to the spawn. AllowLoopback is
 	// force-set to true on Boot so the per-task MCP loopback URL resolves.
