@@ -91,34 +91,38 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		return nil, fmt.Errorf("%w: setup loopback: %v", ErrBootFailed, err)
 	}
 
-	// Bare-mode apiKeyHelper (CW-20260509-0016, go-providers v0.9.2):
-	// thread Dependencies.ApiKeyHelperPath onto the adapter BEFORE
-	// plantBootDir runs, because the .claude/settings.json Render
-	// closure captures the receiver at render time and emits
-	// `apiKeyHelper: <path>` only when the field is non-empty. Setting
-	// it post-plant would leave the planted file with no helper field
-	// and bare mode would fall back to ANTHROPIC_API_KEY only — which
-	// is exactly the gap this closes for subscription users (no env
-	// key, authenticated via `claude` interactive → keychain).
+	// apiKeyHelper threading (CW-20260509-0016 / CW-20260513-0017):
+	// thread Dependencies.ApiKeyHelperPath onto the adapter BEFORE the
+	// lib's AutoPlantBootDir runs preparePlant, because the
+	// .claude/settings.json Render closure captures the receiver at
+	// render time and emits `apiKeyHelper: <path>` only when the field
+	// is non-empty. The planted .claude/settings.json sits in cwd=bootDir
+	// and is read by ANY claude invocation (bare or streaming) — claude's
+	// cwd-local config discovery applies in non-bare mode, and bare mode
+	// explicitly references it via --settings.
 	//
-	// Non-claude / non-bare adapters skip this branch via the type-
-	// assertion + Bare check; the adapter type-assert is repeated below
-	// for the four spawn-arg-injection fields, which legitimately need
-	// the post-plant layout paths.
-	if claudeAdapter, ok := cliAdapter.(*provider.ClaudeAdapter); ok && claudeAdapter.Bare && deps.ApiKeyHelperPath != "" {
+	// The lib's preparePlant clones the adapter for per-session path
+	// injection but reads the receiver fields (including ApiKeyHelperPath)
+	// before cloning, so the value flows through. Wired for all
+	// ClaudeAdapter instances (Bare, PTY, StreamingStdio) — the field is
+	// inert when no planted settings.json is read by claude, so this is
+	// defensive across adapter shapes. Mirrors agent-mux v005-07
+	// internal/app/service.go:175's unconditional pattern.
+	if claudeAdapter, ok := cliAdapter.(*provider.ClaudeAdapter); ok && deps.ApiKeyHelperPath != "" {
 		// Validate the resolved path is still an executable file at the
 		// moment we're about to thread it into the adapter. Catches the
 		// race where the helper was removed between resolveApiKeyHelperPath
 		// at startup and the first dispatch (rare but recoverable). Invalid
-		// path → log + skip the adapter set; bare mode falls back to
-		// ANTHROPIC_API_KEY in env (existing CW-20260509-0011 contract).
+		// path → log + skip the adapter set; claude falls back to
+		// ANTHROPIC_API_KEY in env (existing CW-20260509-0011 contract) or
+		// (non-bare modes) to the operator's ~/.claude.json keychain auth.
 		// Failing fast vs. degrading gracefully: degrade. A missing helper
-		// shouldn't block a dispatch on systems where the env-key path
+		// shouldn't block a dispatch on systems where another auth path
 		// works fine — operators will see the misconfig in the log line.
 		if isApiKeyHelperExecutable(deps.ApiKeyHelperPath) {
 			claudeAdapter.ApiKeyHelperPath = deps.ApiKeyHelperPath
 		} else {
-			log.Printf("agent.Boot: deps.ApiKeyHelperPath=%q no longer points at an executable file; skipping (bare-mode claude will rely on ANTHROPIC_API_KEY)", deps.ApiKeyHelperPath)
+			log.Printf("agent.Boot: deps.ApiKeyHelperPath=%q no longer points at an executable file; skipping (claude will rely on ANTHROPIC_API_KEY or ~/.claude.json keychain auth)", deps.ApiKeyHelperPath)
 		}
 	}
 

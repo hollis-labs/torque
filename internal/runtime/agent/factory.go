@@ -41,11 +41,12 @@ import (
 // loopback entry now emits `{"type": "http", "url": "..."}` which bare-mode
 // strict validation accepts.
 //
-// Bare-mode adapters returned here are NOT yet ready to spawn — the four
-// injection-path fields (MCPConfigPath / AppendSystemPromptFile / SettingsPath
-// / ProjectDir) must be populated post-plantBootDir via
-// (*provider.ClaudeAdapter).BareInjectionPaths(layout.BootDir, opts.Workdir).
-// See agent.Boot for the field-population call site.
+// Bare-mode adapters returned here are pre-injection. Under the lib's
+// AutoPlantBootDir, agentsessions.preparePlant clones the adapter per
+// session and threads MCPConfigPath / AppendSystemPromptFile / SettingsPath
+// / ProjectDir from BareInjectionPaths(<plantedBootDir>, opts.Workdir).
+// The runtime-level adapter stays untouched, so concurrent sessions don't
+// race on shared adapter state.
 func adapterFor(profile config.AgentProfile, profileName string, pty bool) (provider.CLIAdapter, agentsessions.Capabilities, error) {
 	switch profile.Provider {
 	case "claude":
@@ -65,6 +66,39 @@ func adapterFor(profile config.AgentProfile, profileName string, pty bool) (prov
 		default:
 			return provider.NewClaudeAdapterBare(), caps, nil
 		}
+
+	case "claude-code":
+		// StreamingStdio long-lived NDJSON-over-stdin runtime (Anthropic's
+		// "Streaming Input Mode (Default & Recommended)" per the Agent SDK
+		// docs). `claude -p --input-format stream-json --output-format
+		// stream-json --verbose` — one long-lived process, KV-cache reused
+		// across turns until stdin EOF. The go-agent-sessions streamingStdio
+		// runtime owns the stdin loop, attach fan-out, and session-id handling.
+		//
+		// Reference shape: agent-mux v005-07 `newClaudeCodeRuntime`
+		// (internal/app/service.go:171-181) using gop.NewClaudeAdapterStreamingStdio()
+		// + Caps.StreamingStdio: true. Substrate unblocked since
+		// go-providers v0.17.0 + go-agent-sessions v0.9.x.
+		//
+		// Critically: does NOT pass `--bare`. Claude's normal config
+		// discovery applies — cwd-local `.claude/settings.json` (planted by
+		// the same BootDirSpec the bare path uses, includes apiKeyHelper if
+		// threaded) AND operator-global `~/.claude.json` keychain auth are
+		// both honored. This sidesteps the bare-mode "Not logged in" gap
+		// surfaced by CW-20260513-0015 smoke 2026-05-12.
+		caps := agentsessions.Capabilities{
+			BinaryRequired:    true,
+			ProviderSessionID: true,
+			StreamingStdio:    true,
+			// CheckpointResume: false — claude `--resume <id>` semantics
+			// differ in streaming mode (re-injects context every turn vs
+			// KV-cache reuse). Conservative default; revisit when the
+			// long-lived resume path is empirically validated.
+		}
+		if profileIsDevMode(profile) {
+			return provider.NewClaudeAdapterDevStreamingStdio(), caps, nil
+		}
+		return provider.NewClaudeAdapterStreamingStdio(), caps, nil
 
 	case "codex":
 		return provider.NewCodexAdapter(), agentsessions.Capabilities{
@@ -107,11 +141,11 @@ func adapterFor(profile config.AgentProfile, profileName string, pty bool) (prov
 
 	case "":
 		return nil, agentsessions.Capabilities{}, fmt.Errorf(
-			"profile has empty provider; agent.Boot requires a go-providers-known provider name (claude|codex|gemini|copilot|opencode)")
+			"profile has empty provider; agent.Boot requires a go-providers-known provider name (claude|claude-code|codex|gemini|copilot|opencode)")
 
 	default:
 		return nil, agentsessions.Capabilities{}, fmt.Errorf(
-			"unknown provider %q; agent.Boot accepts: claude, codex, gemini, copilot, opencode",
+			"unknown provider %q; agent.Boot accepts: claude, claude-code, codex, gemini, copilot, opencode",
 			profile.Provider)
 	}
 }
