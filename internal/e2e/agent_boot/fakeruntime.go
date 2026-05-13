@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	llmtypes "github.com/hollis-labs/go-llm-types"
 	"github.com/hollis-labs/go-providers/provider"
 	"github.com/hollis-labs/go-providers/provider/events"
 )
@@ -33,6 +34,12 @@ type fakeRuntimeConfig struct {
 	// as the second return value. Used by TestBoot_ExitErrorCausePropagation
 	// to assert callers can extract Cause via errors.As.
 	WaitExitErr *agentsessions.ExitError
+
+	// SuppressTurnDoneOnSendInput, when true, makes fakeSession.SendInput
+	// skip the llmtypes.EventDone emission. Used by tests that exercise
+	// agent.Boot's ModeOneShot timeout fall-through (ctx.Done() wins the
+	// select because no turn-complete signal ever arrives).
+	SuppressTurnDoneOnSendInput bool
 }
 
 // newFakeRuntime constructs a fakeRuntime backed by the given config. The
@@ -48,8 +55,9 @@ func newFakeRuntime(cfg fakeRuntimeConfig) *fakeRuntime {
 			ProviderSessionID: true,
 			CheckpointResume:  true,
 		},
-		startErr:     cfg.StartErr,
-		waitExitErr:  cfg.WaitExitErr,
+		startErr:                    cfg.StartErr,
+		waitExitErr:                 cfg.WaitExitErr,
+		suppressTurnDoneOnSendInput: cfg.SuppressTurnDoneOnSendInput,
 	}
 	rt.pidNext.Store(3000)
 	return rt
@@ -81,6 +89,12 @@ type fakeRuntime struct {
 	// startErr / waitExitErr drive failure injection.
 	startErr    error
 	waitExitErr *agentsessions.ExitError
+
+	// suppressTurnDoneOnSendInput, when true, drops the synthetic
+	// llmtypes.EventDone emission from fakeSession.SendInput. Used by
+	// agent.Boot's ModeOneShot timeout-fall-through test (no turn-complete
+	// signal → select must wait for ctx.Done()).
+	suppressTurnDoneOnSendInput bool
 
 	// Captured StartOptions snapshot — populated on every Start() call.
 	// Tests read after Boot returns; access is guarded by atomic.Pointer
@@ -219,6 +233,9 @@ func (r *fakeRuntime) Start(_ context.Context, opts agentsessions.StartOptions) 
 	pid := int(r.pidNext.Add(1))
 	sess := newFakeSession(pid, opts.TypedEventCallback, opts.OnSessionID, r.waitExitErr)
 	sess.bootDir = plantedBootDir
+	if !r.suppressTurnDoneOnSendInput {
+		sess.eventFanout = opts.EventFanout
+	}
 
 	r.mu.Lock()
 	r.sessions = append(r.sessions, sess)
@@ -286,6 +303,14 @@ type fakeSession struct {
 	// terminal-state cleanup contract (cleanupBootDir).
 	bootDir string
 
+	// eventFanout, when non-nil, captures the StartOptions.EventFanout
+	// channel so SendInput can mirror the real adapter/streaming sessions
+	// by emitting an llmtypes.EventDone after the turn payload lands.
+	// Without this signal, agent.Boot's ModeOneShot select would block on
+	// ctx.Done() (the full profile.TimeoutSeconds budget) before tearing
+	// down. Wired by fakeRuntime.Start from opts.EventFanout.
+	eventFanout chan<- llmtypes.StreamEvent
+
 	done     chan struct{}
 	doneOnce sync.Once
 	dead     atomic.Bool
@@ -339,6 +364,22 @@ func (s *fakeSession) SendInput(_ context.Context, data []byte) error {
 	s.mu.Lock()
 	s.sendInputPayload = append(s.sendInputPayload, cp)
 	s.mu.Unlock()
+	// Mirror the lib's adapter / streaming-stdio sessions: every turn
+	// finishes with an llmtypes.EventDone event. agent.Boot's ModeOneShot
+	// path watches the stream fanout for this signal to detect
+	// turn-complete on long-lived adapters. Non-blocking send so a closed
+	// or full consumer never wedges the fake — the recover guards against
+	// send-on-closed (fanout closed by Boot's defer before SendInput races
+	// in).
+	if s.eventFanout != nil {
+		func() {
+			defer func() { _ = recover() }()
+			select {
+			case s.eventFanout <- llmtypes.StreamEvent{Type: llmtypes.EventDone}:
+			default:
+			}
+		}()
+	}
 	return nil
 }
 

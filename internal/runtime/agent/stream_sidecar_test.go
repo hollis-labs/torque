@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	llmtypes "github.com/hollis-labs/go-llm-types"
@@ -126,7 +127,7 @@ func TestStartStreamFanout_DrainAndForward(t *testing.T) {
 	logDir := filepath.Join(dir, "logs")
 
 	downstream := make(chan llmtypes.StreamEvent, 8)
-	in, closer := startStreamFanout(logDir, 8, downstream)
+	in, closer := startStreamFanout(logDir, 8, downstream, nil)
 
 	in <- llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "first"}
 	in <- llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "second"}
@@ -158,7 +159,7 @@ func TestStartStreamFanout_NilDownstream(t *testing.T) {
 	dir := t.TempDir()
 	logDir := filepath.Join(dir, "logs")
 
-	in, closer := startStreamFanout(logDir, 4, nil)
+	in, closer := startStreamFanout(logDir, 4, nil, nil)
 	in <- llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "only-sidecar"}
 	closer()
 
@@ -174,7 +175,7 @@ func TestStartStreamFanout_DownstreamClosedNoPanic(t *testing.T) {
 	logDir := filepath.Join(dir, "logs")
 
 	downstream := make(chan llmtypes.StreamEvent, 4)
-	in, closer := startStreamFanout(logDir, 4, downstream)
+	in, closer := startStreamFanout(logDir, 4, downstream, nil)
 
 	// Close downstream BEFORE feeding events. The drain goroutine's
 	// forwardEventNonBlocking should recover the send-on-closed-chan panic.
@@ -201,7 +202,7 @@ func TestStartStreamFanout_DownstreamFullDrops(t *testing.T) {
 	downstream := make(chan llmtypes.StreamEvent, 1)
 	downstream <- llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "filler"}
 
-	in, closer := startStreamFanout(logDir, 4, downstream)
+	in, closer := startStreamFanout(logDir, 4, downstream, nil)
 
 	const extra = 5
 	for i := 0; i < extra; i++ {
@@ -230,7 +231,7 @@ func TestStartStreamFanout_CloserIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	logDir := filepath.Join(dir, "logs")
 
-	in, closer := startStreamFanout(logDir, 4, nil)
+	in, closer := startStreamFanout(logDir, 4, nil, nil)
 	in <- llmtypes.StreamEvent{Type: llmtypes.EventDone}
 
 	closer()
@@ -244,7 +245,7 @@ func TestStartStreamFanout_ConcurrentWriters(t *testing.T) {
 	dir := t.TempDir()
 	logDir := filepath.Join(dir, "logs")
 
-	in, closer := startStreamFanout(logDir, 64, nil)
+	in, closer := startStreamFanout(logDir, 64, nil, nil)
 
 	const writers = 8
 	const perWriter = 25
@@ -265,4 +266,48 @@ func TestStartStreamFanout_ConcurrentWriters(t *testing.T) {
 	require.NoError(t, err)
 	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
 	assert.Len(t, lines, writers*perWriter, "expected every event to land in the sidecar")
+}
+
+// TestStartStreamFanout_OnDoneFiresOnceOnEventDone verifies the onDone hook
+// fires exactly once when the drain observes llmtypes.EventDone, even if the
+// stream contains multiple done events (defensive: claude/codex emit one
+// done per turn, but the contract guarantees once-only).
+func TestStartStreamFanout_OnDoneFiresOnceOnEventDone(t *testing.T) {
+	dir := t.TempDir()
+	logDir := filepath.Join(dir, "logs")
+
+	var doneCount atomic.Int32
+	in, closer := startStreamFanout(logDir, 8, nil, func() {
+		doneCount.Add(1)
+	})
+
+	in <- llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "first"}
+	in <- llmtypes.StreamEvent{Type: llmtypes.EventDone}
+	in <- llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "after-done"}
+	in <- llmtypes.StreamEvent{Type: llmtypes.EventDone}
+
+	closer()
+
+	assert.Equal(t, int32(1), doneCount.Load(),
+		"onDone must fire exactly once even when multiple EventDone arrive")
+}
+
+// TestStartStreamFanout_OnDoneNotFiredWithoutEventDone verifies the onDone
+// hook stays dormant when no EventDone arrives — the failure-mode path for
+// ModeOneShot is to fall through to ctx.Done() (timeout) rather than have a
+// spurious turn-complete signal.
+func TestStartStreamFanout_OnDoneNotFiredWithoutEventDone(t *testing.T) {
+	dir := t.TempDir()
+	logDir := filepath.Join(dir, "logs")
+
+	var doneCount atomic.Int32
+	in, closer := startStreamFanout(logDir, 4, nil, func() {
+		doneCount.Add(1)
+	})
+
+	in <- llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "no-done-coming"}
+	closer()
+
+	assert.Equal(t, int32(0), doneCount.Load(),
+		"onDone must not fire without an EventDone event")
 }

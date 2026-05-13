@@ -376,11 +376,32 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	// stream fanout for PTY would just produce an empty file and waste a
 	// goroutine + fd. If the lib's PTY runtime starts emitting StreamEvent
 	// values into EventFanout in the future, drop the !caps.PTY guard.
+	// ModeOneShot turn-complete signal. Wired into startStreamFanout's
+	// onDone hook below so the ModeOneShot block at the end of Boot can
+	// wait for the session's `done` event before issuing Stop + WaitSession
+	// — long-lived adapters (StreamingStdio / app-server) stay alive past
+	// the turn, so the prior hardcoded 5s grace SIGTERM'd them mid-turn
+	// (followups_clockwork_streaming_oneshot_turn_complete_wait).
+	// Subprocess-per-turn adapters also emit EventDone before exit, so the
+	// signal is uniformly available across runtime kinds.
+	//
+	// Allocated unconditionally for ModeOneShot so the select below can
+	// rely on a non-nil channel; remains uncreated for non-OneShot modes
+	// (no consumer). PTY runtime leaves streamFanout nil — onDone never
+	// fires there, the select falls through to ctx.Done(); not a regression
+	// vs the prior 5s behavior, and post-Step-3 PTY isn't a target default.
+	var oneshotDone chan struct{}
+	var oneshotOnDone func()
+	if opts.Mode == ModeOneShot {
+		oneshotDone = make(chan struct{})
+		oneshotOnDone = func() { close(oneshotDone) }
+	}
+
 	const streamFanoutDepth = 64
 	var streamFanout chan llmtypes.StreamEvent
 	closeStreamFanout := func() {}
 	if !caps.PTY {
-		streamFanout, closeStreamFanout = startStreamFanout(ws.LogDir, streamFanoutDepth, opts.eventFanout)
+		streamFanout, closeStreamFanout = startStreamFanout(ws.LogDir, streamFanoutDepth, opts.eventFanout, oneshotOnDone)
 	}
 
 	// Supervisor + ResourceLimits resolution.
@@ -521,7 +542,11 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	}
 
 	// ModeOneShot drives the turn synchronously: SendInput delivers the
-	// kickoff, Stop tears down, Wait surfaces the exit code.
+	// kickoff, the select waits for turn-complete (EventDone observed in
+	// the stream) or ctx.Done() (the executor wraps ctx in
+	// context.WithTimeout(profile.TimeoutSeconds) — see the comment on
+	// the startCtx detachment branch above), then Stop tears down and
+	// WaitSession surfaces the exit code.
 	if opts.Mode == ModeOneShot {
 		defer closeStderr()
 		defer closeStreamFanout()
@@ -536,6 +561,33 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		}
 		sendErr := mgr.inner.SendInput(sessID, []byte(prompt))
 
+		// Wait for turn-complete (oneshotDone fires from the streamFanout
+		// onDone hook when EventDone passes through) OR the executor's
+		// budgeted ctx firing. The prior implementation hardcoded a 5s
+		// grace which SIGTERM'd long-lived adapters (StreamingStdio /
+		// app-server) mid-turn; binding the wait to profile.TimeoutSeconds
+		// via ctx aligns with feedback_clockwork_timeout_philosophy (no
+		// new hardcoded timeouts; profile timeouts are the budget).
+		// Subprocess-per-turn adapters emit EventDone before exit, so the
+		// wait collapses to the prior fast-path for short turns.
+		var timedOut bool
+		if sendErr == nil && oneshotDone != nil {
+			select {
+			case <-oneshotDone:
+				// Turn-complete observed.
+			case <-ctx.Done():
+				timedOut = true
+				log.Printf("agent.Boot: ModeOneShot session=%s timed out before turn_complete (ctx.Err=%v)", sessID, ctx.Err())
+			}
+		}
+
+		// Stop + WaitSession with a short grace independent of the
+		// turn-budget ctx (which is already done in the timeout branch).
+		// Background context bounds only the termination handshake, not
+		// the turn itself — the lib's runner sends SIGTERM (with its own
+		// internal grace) and reaps the child; both finish sub-second on
+		// the happy path. Keep the 5s ceiling as a safety net for
+		// pathological subprocess hangs during teardown.
 		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = mgr.inner.Stop(stopCtx, sessID)
 		stopCancel()
@@ -547,6 +599,8 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		sess.ExitCode = &exitCode
 		switch {
 		case sendErr != nil:
+			sess.Status = StatusFailed
+		case timedOut:
 			sess.Status = StatusFailed
 		case exitCode != 0:
 			sess.Status = StatusFailed

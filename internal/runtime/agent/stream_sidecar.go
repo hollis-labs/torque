@@ -120,6 +120,13 @@ func (s *streamSidecar) Close() {
 // background/resume), downstream is nil and the drain only writes to the
 // sidecar file.
 //
+// `onDone`, when non-nil, fires the first time a llmtypes.EventDone event
+// passes through the drain. ModeOneShot uses this hook to detect
+// turn-complete on long-lived adapters (StreamingStdio / app-server) where
+// the session stays alive after the turn ends — without it, Boot would have
+// to fall back to a fixed timeout. sync.Once-guarded so multiple `done`
+// events don't double-fire.
+//
 // `closer` shuts down the drain by closing `in` and waiting for the goroutine
 // to flush + close the sidecar file. Idempotent (sync.Once). Closing
 // downstream is the caller's concern — the drain never closes it.
@@ -129,9 +136,17 @@ func (s *streamSidecar) Close() {
 // closed by its owner (executor.Run's `close(fanout)` after Boot returns) —
 // dropped events are still recorded in the sidecar, so forensic visibility
 // is preserved.
-func startStreamFanout(workspaceLogDir string, depth int, downstream chan<- llmtypes.StreamEvent) (in chan llmtypes.StreamEvent, closer func()) {
+func startStreamFanout(workspaceLogDir string, depth int, downstream chan<- llmtypes.StreamEvent, onDone func()) (in chan llmtypes.StreamEvent, closer func()) {
 	sidecar := openStreamSidecar(workspaceLogDir)
 	in = make(chan llmtypes.StreamEvent, depth)
+
+	var doneOnce sync.Once
+	fireOnDone := func(ev llmtypes.StreamEvent) {
+		if onDone == nil || ev.Type != llmtypes.EventDone {
+			return
+		}
+		doneOnce.Do(onDone)
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -143,6 +158,7 @@ func startStreamFanout(workspaceLogDir string, depth int, downstream chan<- llmt
 			if downstream != nil {
 				forwardEventNonBlocking(downstream, ev)
 			}
+			fireOnDone(ev)
 		}
 	}()
 

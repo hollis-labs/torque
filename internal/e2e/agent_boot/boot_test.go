@@ -106,6 +106,47 @@ func TestBoot_ModeOneShot_SyncTurn(t *testing.T) {
 		"OneShot must os.RemoveAll the boot dir inline; got stat err %v", statErr)
 }
 
+// TestBoot_ModeOneShot_TimeoutFallsThrough validates the new turn-complete
+// wait path's ctx.Done() fall-through: when the runtime never emits a
+// turn-complete signal (long-lived adapter hung, binary failed to flush its
+// final stream-json `done` event, etc), the select must surface a timeout
+// instead of waiting indefinitely. The executor wraps ctx in
+// context.WithTimeout(profile.TimeoutSeconds) at its callsite — here we
+// shortcut by handing Boot a pre-cancelled ctx, which is the limit case.
+// Status must be Failed so the executor records the turn as not-done.
+func TestBoot_ModeOneShot_TimeoutFallsThrough(t *testing.T) {
+	cd := composeDeps(t,
+		fakeRuntimeConfig{PTY: false, SuppressTurnDoneOnSendInput: true},
+		"claude")
+
+	// 250ms ctx — enough for Boot's setup (workspace + plant + Start +
+	// SendInput) to complete, then ctx.Done() fires inside the
+	// turn-complete select. No hardcoded 5s grace anymore; the fall-through
+	// path is bounded by ctx, not a per-Boot constant.
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+
+	sess, err := cd.Manager.Boot(ctx, agent.Options{
+		TaskID:        "CW-TEST-OS-TIMEOUT",
+		AgentProfile:  "clockwork-backend",
+		Workdir:       t.TempDir(),
+		Mode:          agent.ModeOneShot,
+		OneShotPrompt: "trigger turn-complete wait timeout",
+	})
+	require.NoError(t, err, "Boot itself returns success even on timeout — Status carries the failure signal")
+	require.NotNil(t, sess)
+
+	assert.Equal(t, agent.StatusFailed, sess.Status,
+		"ModeOneShot with no turn-complete and a fired ctx must surface Status=Failed")
+
+	// SendInput still fired (the fake records it before the suppress
+	// branch); the no-turn-complete is downstream of the send.
+	fakeSess := cd.Runtime.lastSession()
+	require.NotNil(t, fakeSess)
+	assert.Equal(t, int32(1), fakeSess.recordedSendInputCount(),
+		"SendInput must fire even when the runtime never signals turn-complete")
+}
+
 // TestBoot_ModeSubagent_StampsParent validates the nested-session lifecycle:
 // ParentSessionID is required (Validate rejects empty), and the parent ID
 // is stamped on the session row's metadata so Get/List can recover the
