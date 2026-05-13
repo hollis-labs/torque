@@ -120,7 +120,9 @@ var validOnCheckpointResponse = map[string]bool{
 //   - kind / source_type / trust / checkpoint_mode / on_checkpoint_response
 //     must each be non-empty and in their respective allowed sets.
 //   - kind=agent + executor=""                         → 422 (defensive; the
-//     service layer applies an "opencode" default for agent, so this is structurally
+//     service layer applies a "cli" default for kind=agent — see
+//     task.go::Create's effectiveExecutor branch and migration 024's
+//     `executor TEXT NOT NULL DEFAULT 'cli'` — so this is structurally
 //     unreachable in normal flow but guards hand-crafted callers).
 //   - kind=external + executor!=""                     → 422
 //   - kind=external + auto_execute=true                → 422

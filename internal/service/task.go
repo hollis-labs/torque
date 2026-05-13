@@ -151,13 +151,17 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	}
 
 	// Facet validation — uses effective values (after defaulting) to match
-	// what will be stored. Executor defaults to "opencode" only for kind=agent;
-	// other kinds leave it as the caller set it so validateTaskKind can
+	// what will be stored. The DB schema's `executor TEXT NOT NULL
+	// DEFAULT 'cli'` (migration 024) supplies the default for kind=agent
+	// when the caller leaves it empty; the prior service-layer
+	// belt-and-suspenders that forced 'opencode' is gone with the
+	// dogfood flip to codex (2026-05-10). Non-agent kinds keep their
+	// caller-supplied value (empty included) so validateTaskKind can
 	// enforce kind-specific rules (e.g. external forbids executor).
 	effectiveKind := orDefault(input.Kind, "agent")
 	effectiveExecutor := input.Executor
 	if effectiveKind == "agent" && effectiveExecutor == "" {
-		effectiveExecutor = "opencode"
+		effectiveExecutor = "cli"
 	}
 	effectiveSourceType := orDefault(input.SourceType, "user")
 	effectiveCheckpointMode := orDefault(input.CheckpointMode, "none")
