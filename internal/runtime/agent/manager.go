@@ -48,6 +48,14 @@ type Manager struct {
 	streams    map[string]func()         // sessID → close() for the per-session stream sidecar (CW-20260509-0001)
 	bootDirs   map[string]string         // sessID → ephemeral boot dir; os.RemoveAll in Stop
 	pidPollers map[string]func()         // sessID → close() for the per-session PID poller (CW-20260509-0008)
+
+	// codexThreads caches per-session codex thread IDs for the
+	// JsonRpcStdio runtime kind. Populated lazily by sendTurnJSONRPC
+	// after thread/start succeeds; dropped by teardownSession when
+	// the session reaches terminal state. sync.Map because the access
+	// pattern is write-once-read-many (cache hit after first turn) and
+	// the per-session SendTurn calls fire on independent goroutines.
+	codexThreads sync.Map
 }
 
 // NewManager constructs a Manager bound to deps. Caller invokes Sweep()
@@ -215,6 +223,9 @@ func (m *Manager) teardownSession(sessID string) {
 		// non-fatal; we silently swallow.
 		_ = os.RemoveAll(bootDir)
 	}
+	// Drop the codex thread cache entry (if any). No-op for non-JsonRpcStdio
+	// sessions; safe to fire unconditionally.
+	m.forgetCodexThread(sessID)
 }
 
 // Get returns the persisted session record. Combines store state with any

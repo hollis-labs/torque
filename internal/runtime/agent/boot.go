@@ -2,11 +2,13 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
@@ -200,7 +202,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	}
 	runtime, err := runtimeFactory(agentsessions.AdapterRuntimeConfig{
 		ID:        "clockwork-cli/" + cliAdapter.Name(),
-		Kind:      "cli",
+		Kind:      string(runtimeKind),
 		Adapter:   cliAdapter,
 		Caps:      caps,
 		BuildArgs: buildArgs,
@@ -313,15 +315,24 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 
 	// AutoFireFirstTurn drives the kickoff via the lib's race-free Start path
 	// for long-lived modes; ModeOneShot stays false so the executor wrapper
-	// drives SendInput synchronously and gets one turn's exit code back. The
-	// flag flows uniformly through StartOptions for ModeLongLived/Subagent/
-	// Background — substrate consumers (orchestrator boot, subagent spawn,
-	// background fire-and-forget) get a single declarative contract: "boot
-	// fires the first turn for you" — without a Boot-side SendInput plumbing
-	// path that would race the Launch (CW-20260507-0011's class of bug).
-	autoFire := opts.Mode == ModeLongLived ||
+	// drives SendInput / SendTurn synchronously and gets one turn's exit
+	// code back. The flag flows uniformly through StartOptions for
+	// ModeLongLived/Subagent/Background — substrate consumers (orchestrator
+	// boot, subagent spawn, background fire-and-forget) get a single
+	// declarative contract: "boot fires the first turn for you" — without
+	// a Boot-side SendInput plumbing path that would race the Launch
+	// (CW-20260507-0011's class of bug).
+	//
+	// JsonRpcStdio is the exception: the lib's AutoFireFirstTurn path
+	// calls SendInput which on the JsonRpcStdio session is the raw-bytes
+	// escape hatch (writes plaintext to stdin, no JSON-RPC framing). The
+	// codex app-server rejects unframed input. For JsonRpcStdio long-lived
+	// modes, AutoFireFirstTurn stays false and Boot drives the kickoff
+	// post-Start via SendTurn (which runs the JSON-RPC handshake +
+	// turn/start sequence). See the post-Start block below.
+	autoFire := (opts.Mode == ModeLongLived ||
 		opts.Mode == ModeSubagent ||
-		opts.Mode == ModeBackground
+		opts.Mode == ModeBackground) && runtimeKind != RuntimeKindJsonRpcStdio
 	var firstTurnPayload []byte
 	if autoFire {
 		// kickoffPayload("") returns the canonical "Boot @./boot.md"
@@ -397,7 +408,8 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	var oneshotOnDone func()
 	if opts.Mode == ModeOneShot {
 		oneshotDone = make(chan struct{})
-		oneshotOnDone = func() { close(oneshotDone) }
+		var doneOnce sync.Once
+		oneshotOnDone = func() { doneOnce.Do(func() { close(oneshotDone) }) }
 	}
 
 	const streamFanoutDepth = 64
@@ -405,6 +417,26 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	closeStreamFanout := func() {}
 	if !caps.PTY {
 		streamFanout, closeStreamFanout = startStreamFanout(ws.LogDir, streamFanoutDepth, opts.eventFanout, oneshotOnDone)
+	}
+
+	// JSON-RPC notification hook. For codex JsonRpcStdio sessions, the
+	// `turn.completed` notification (emitted by the codex app-server
+	// after the turn finishes) is the turn-complete signal. Adapter
+	// .ParseLine returns nil for codex app-server mode (per
+	// go-providers v0.17.1 pty_codex.go) so streamFanout's EventDone
+	// hook never fires for JsonRpcStdio — wiring the notification hook
+	// is the only way ModeOneShot can detect turn-complete on this
+	// runtime kind. sync.Once guard inside oneshotOnDone keeps both
+	// routes idempotent: whichever signal arrives first wins, the
+	// other is a no-op.
+	var jsonRpcNotificationHook func(string, json.RawMessage)
+	if runtimeKind == RuntimeKindJsonRpcStdio && oneshotOnDone != nil {
+		hookOnDone := oneshotOnDone
+		jsonRpcNotificationHook = func(method string, _ json.RawMessage) {
+			if method == "turn.completed" {
+				hookOnDone()
+			}
+		}
 	}
 
 	// Supervisor + ResourceLimits resolution.
@@ -449,9 +481,10 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 			ResourceLimits:     limits,
 			EventFanout:        streamFanout,
 			TypedEventCallback: opts.TypedEventCallback,
-			AutoPlantBootDir:   true,
-			BootDirRoot:        bootDirRoot,
-			OnBootDirPlanted:   onBootDirPlanted,
+			AutoPlantBootDir:        true,
+			BootDirRoot:             bootDirRoot,
+			OnBootDirPlanted:        onBootDirPlanted,
+			JsonRpcNotificationHook: jsonRpcNotificationHook,
 			PlantContext: provider.PlantContext{
 				AgentName:      opts.AgentProfile,
 				MCPLoopbackURL: loopbackURL,
@@ -544,9 +577,49 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		CreatedAt:       time.Now().UTC(),
 	}
 
-	// ModeOneShot drives the turn synchronously: SendInput delivers the
-	// kickoff, the select waits for turn-complete (EventDone observed in
-	// the stream) or ctx.Done() (the executor wraps ctx in
+	// Post-Start kickoff for long-lived JsonRpcStdio. The lib's
+	// AutoFireFirstTurn path would call SendInput with plaintext on a
+	// JSON-RPC session — the codex app-server rejects unframed input.
+	// So for ModeLongLived/Subagent/Background on JsonRpcStdio runtimes,
+	// AutoFireFirstTurn stayed false (above) and we fire the kickoff
+	// here via SendTurn, which runs the JSON-RPC handshake
+	// (initialize + thread/start) + turn/start sequence. Synchronous —
+	// blocks until the RPC calls return. The session keeps running
+	// after this returns; the first turn streams via notifications. If
+	// SendTurn fails (binary missing, app-server rejected the call),
+	// log + roll back: stop the session and mark the row failed.
+	//
+	// Resume paths skip the kickoff. ModeResume + ProviderSessionIDOverride
+	// both want to re-thread an existing transcript, not fire a fresh
+	// first turn; for JsonRpcStdio the proper resume sequence is
+	// `thread/resume` (instead of `thread/start`) followed by
+	// turn/start, which is a follow-up captured as
+	// followups.clockwork_manifold.codex_jsonrpc_resume_wireup. For now
+	// resume on JsonRpcStdio falls through to whatever the lib +
+	// SessionIDPreset path negotiate (codex app-server ignores
+	// SessionIDPreset; the session boots cold). Operators wanting
+	// real codex resume should pin profile.RuntimeKind: subprocess
+	// until the JSON-RPC resume wireup lands.
+	isResume := opts.Mode == ModeResume || opts.ProviderSessionIDOverride != ""
+	if opts.Mode != ModeOneShot && runtimeKind == RuntimeKindJsonRpcStdio && !isResume {
+		kickoff := composeUserPrompt(opts)
+		if kickoff == "" {
+			kickoff = kickoffPayload("")
+		}
+		if err := mgr.SendTurn(context.WithoutCancel(ctx), sess, kickoff); err != nil {
+			log.Printf("agent.Boot: long-lived JsonRpcStdio kickoff failed (session=%s): %v", sessID, err)
+			stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = mgr.inner.Stop(stopCtx, sessID)
+			stopCancel()
+			sess.Status = StatusFailed
+			return sess, fmt.Errorf("%w: jsonrpc kickoff: %v", ErrBootFailed, err)
+		}
+	}
+
+	// ModeOneShot drives the turn synchronously: SendTurn delivers the
+	// kickoff, the select waits for turn-complete (oneshotDone fires
+	// from the streamFanout EventDone hook OR the JsonRpcNotificationHook
+	// on `turn.completed`) or ctx.Done() (the executor wraps ctx in
 	// context.WithTimeout(profile.TimeoutSeconds) — see the comment on
 	// the startCtx detachment branch above), then Stop tears down and
 	// WaitSession surfaces the exit code.
@@ -562,7 +635,15 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		if prompt == "" {
 			prompt = kickoffPayload("")
 		}
-		sendErr := mgr.inner.SendInput(sessID, []byte(prompt))
+		// SendTurn routes by runtime kind: JsonRpcStdio runs the
+		// initialize+thread/start+turn/start handshake (with thread_id
+		// cache on Manager); subprocess/streaming-stdio fall through to
+		// the plaintext Manager.SendInput path. Either way, the
+		// turn-complete signal arrives via oneshotDone (closed by the
+		// streamFanout EventDone hook for subprocess/streaming, or by
+		// the JsonRpcNotificationHook on `turn.completed` for
+		// JsonRpcStdio).
+		sendErr := mgr.SendTurn(ctx, sess, prompt)
 
 		// Wait for turn-complete (oneshotDone fires from the streamFanout
 		// onDone hook when EventDone passes through) OR the executor's

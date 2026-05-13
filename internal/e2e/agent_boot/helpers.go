@@ -77,6 +77,15 @@ func composeDeps(t *testing.T, cfg fakeRuntimeConfig, profileProvider string) *c
 			// / boot.md / .mcp.json / .claude/settings.json the same way
 			// agentsessions.preparePlant does in production).
 			rt.adapter = cfg.Adapter
+			// Capture the resolved RuntimeKind from cfg.Kind so the fake
+			// runtime's Kind() returns the same string a real lib
+			// runtime would. This is what flows onto Session.RuntimeKind
+			// and what Manager.SendTurn routes by — without it, every
+			// fakeRuntime session would report Kind="fake" regardless of
+			// the per-provider matrix selection.
+			if cfg.Kind != "" {
+				rt.kind = cfg.Kind
+			}
 			return rt, nil
 		},
 	}

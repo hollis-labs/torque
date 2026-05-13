@@ -2,6 +2,7 @@ package agent_boot
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,6 +41,14 @@ type fakeRuntimeConfig struct {
 	// agent.Boot's ModeOneShot timeout fall-through (ctx.Done() wins the
 	// select because no turn-complete signal ever arrives).
 	SuppressTurnDoneOnSendInput bool
+
+	// JsonRpcResponses scripts canned per-method responses for the
+	// fakeSession.JsonRpcCaller.Call surface. Used by codex JsonRpcStdio
+	// tests to drive the {thread: {id}} envelope clockwork's SendTurn
+	// decodes on the first turn. Methods without an entry get a {}
+	// response (good enough for initialize + turn/start which clockwork
+	// doesn't inspect the result body of).
+	JsonRpcResponses map[string]json.RawMessage
 }
 
 // newFakeRuntime constructs a fakeRuntime backed by the given config. The
@@ -58,6 +67,7 @@ func newFakeRuntime(cfg fakeRuntimeConfig) *fakeRuntime {
 		startErr:                    cfg.StartErr,
 		waitExitErr:                 cfg.WaitExitErr,
 		suppressTurnDoneOnSendInput: cfg.SuppressTurnDoneOnSendInput,
+		jsonRpcResponses:            cfg.JsonRpcResponses,
 	}
 	rt.pidNext.Store(3000)
 	return rt
@@ -95,6 +105,11 @@ type fakeRuntime struct {
 	// agent.Boot's ModeOneShot timeout-fall-through test (no turn-complete
 	// signal → select must wait for ctx.Done()).
 	suppressTurnDoneOnSendInput bool
+
+	// jsonRpcResponses propagates from fakeRuntimeConfig.JsonRpcResponses
+	// to every fakeSession this runtime spawns. Used by JsonRpcStdio
+	// tests to script thread/start's {thread:{id}} envelope.
+	jsonRpcResponses map[string]json.RawMessage
 
 	// Captured StartOptions snapshot — populated on every Start() call.
 	// Tests read after Boot returns; access is guarded by atomic.Pointer
@@ -233,6 +248,8 @@ func (r *fakeRuntime) Start(_ context.Context, opts agentsessions.StartOptions) 
 	pid := int(r.pidNext.Add(1))
 	sess := newFakeSession(pid, opts.TypedEventCallback, opts.OnSessionID, r.waitExitErr)
 	sess.bootDir = plantedBootDir
+	sess.notificationHook = opts.JsonRpcNotificationHook
+	sess.jsonRpcResponses = r.jsonRpcResponses
 	if !r.suppressTurnDoneOnSendInput {
 		sess.eventFanout = opts.EventFanout
 	}
@@ -305,15 +322,43 @@ type fakeSession struct {
 
 	// eventFanout, when non-nil, captures the StartOptions.EventFanout
 	// channel so SendInput can mirror the real adapter/streaming sessions
-	// by emitting an llmtypes.EventDone after the turn payload lands.
-	// Without this signal, agent.Boot's ModeOneShot select would block on
-	// ctx.Done() (the full profile.TimeoutSeconds budget) before tearing
-	// down. Wired by fakeRuntime.Start from opts.EventFanout.
+	// by emitting an llmtypes.EventDone event after the turn payload
+	// lands. JsonRpcStdio sessions skip the EventDone emit (the codex
+	// app-server adapter's ParseLine returns nil; the lib fans no
+	// events through EventFanout for that runtime kind) — turn-complete
+	// is signalled via the notificationHook instead, fired from
+	// fakeSession.Call on `turn/start`.
 	eventFanout chan<- llmtypes.StreamEvent
+
+	// notificationHook captures StartOptions.JsonRpcNotificationHook so
+	// fakeSession.Call can emit a `turn.completed` notification after
+	// recording a turn/start invocation. Mirrors the real codex
+	// app-server's notification stream — every successful turn ends with
+	// a turn.completed notification which agent.Boot ModeOneShot
+	// listens for to detect turn-complete.
+	notificationHook func(string, json.RawMessage)
+
+	// jsonRpcCalls records each JsonRpcCaller.Call invocation in order
+	// for test assertions. Each entry is {method, params}. Guarded by
+	// mu (the same lock that protects sendInputPayload).
+	jsonRpcCalls []recordedJsonRpcCall
+
+	// jsonRpcResponses, when non-nil, scripts canned responses per
+	// JSON-RPC method. Used by tests to drive thread/start's response
+	// shape (the {thread: {id}} envelope clockwork's SendTurn decodes).
+	jsonRpcResponses map[string]json.RawMessage
 
 	done     chan struct{}
 	doneOnce sync.Once
 	dead     atomic.Bool
+}
+
+// recordedJsonRpcCall captures one JsonRpcCaller.Call invocation for
+// test assertions. Params is stored as the raw any so tests can
+// type-assert and inspect specific fields (e.g. turn/start's threadId).
+type recordedJsonRpcCall struct {
+	Method string
+	Params any
 }
 
 func newFakeSession(pid int, cb provider.EventsCallback, onSessionID func(string), waitErr *agentsessions.ExitError) *fakeSession {
@@ -381,6 +426,52 @@ func (s *fakeSession) SendInput(_ context.Context, data []byte) error {
 		}()
 	}
 	return nil
+}
+
+// Call implements agentsessions.JsonRpcCaller so codex JsonRpcStdio
+// tests can exercise SendTurn's full handshake. The fake records each
+// invocation (method + params) for assertions, returns scripted
+// responses when jsonRpcResponses has a match, and fires the
+// `turn.completed` notification hook on turn/start (mirroring the
+// codex app-server's natural notification stream — every successful
+// turn ends with turn.completed). Methods without a scripted response
+// return {} (the empty JSON object) so the SendTurn flow doesn't trip
+// on missing data; tests that care should set jsonRpcResponses
+// explicitly.
+func (s *fakeSession) Call(_ context.Context, method string, params any) (json.RawMessage, error) {
+	if s.dead.Load() {
+		return nil, agentsessions.ErrNoInputChannel
+	}
+	s.mu.Lock()
+	s.jsonRpcCalls = append(s.jsonRpcCalls, recordedJsonRpcCall{Method: method, Params: params})
+	resp, scripted := s.jsonRpcResponses[method]
+	s.mu.Unlock()
+	if !scripted {
+		resp = json.RawMessage(`{}`)
+	}
+	// Fire the notification hook AFTER recording but BEFORE returning,
+	// so observers see the call before the turn.completed notification
+	// (mirrors the codex app-server: the RPC response and the
+	// turn.completed notification both arrive after the turn finishes,
+	// but the notification is what signals turn-complete to consumers).
+	if method == "turn/start" && s.notificationHook != nil {
+		s.notificationHook("turn.completed", json.RawMessage(`{}`))
+	}
+	return resp, nil
+}
+
+// recordedJsonRpcCalls returns a snapshot of every JsonRpcCaller.Call
+// invocation observed so far. Used by tests asserting on the
+// initialize → thread/start → turn/start handshake sequence.
+func (s *fakeSession) recordedJsonRpcCalls() []recordedJsonRpcCall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.jsonRpcCalls) == 0 {
+		return nil
+	}
+	out := make([]recordedJsonRpcCall, len(s.jsonRpcCalls))
+	copy(out, s.jsonRpcCalls)
+	return out
 }
 
 func (s *fakeSession) Resize(_ context.Context, _, _ uint16) error { return nil }

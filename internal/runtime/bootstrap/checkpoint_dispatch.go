@@ -87,17 +87,19 @@ func (d *CheckpointResponseDispatcher) DispatchResponse(ctx context.Context, in 
 		return fmt.Errorf("α.4 HITL resume: %w", err)
 	}
 
-	// Operator response is a user-turn input. send_input expects a complete
-	// turn payload — the lib's PTY/adapter runtime handles newline framing.
-	// The response_json blob is passed through as-is so the agent sees the
-	// exact JSON shape the operator submitted (the prompt.go
-	// checkpointRedispatchPrompt instructs agents to read
-	// task.metadata.checkpoint_responses[corr] for structured access; the
-	// raw user turn is a redundant visibility surface so the answer is
-	// also in the transcript).
-	if err := d.sessions.SendInput(newSess.ID, []byte(in.ResponseJSON)); err != nil {
-		d.recordBreadcrumb(in, prev, newSess, fmt.Errorf("send_input: %w", err))
-		return fmt.Errorf("α.4 HITL send_input: %w", err)
+	// Operator response is a user-turn input. SendTurn routes by the
+	// resumed session's RuntimeKind — JsonRpcStdio runs the JSON-RPC
+	// initialize+thread/start+turn/start handshake (with thread_id
+	// cache); subprocess/streaming-stdio fall through to plaintext
+	// SendInput. The response_json blob is passed through as the turn
+	// text so the agent sees the exact JSON shape the operator
+	// submitted (the prompt.go checkpointRedispatchPrompt instructs
+	// agents to read task.metadata.checkpoint_responses[corr] for
+	// structured access; the raw user turn is a redundant visibility
+	// surface so the answer is also in the transcript).
+	if err := d.sessions.SendTurn(ctx, newSess, in.ResponseJSON); err != nil {
+		d.recordBreadcrumb(in, prev, newSess, fmt.Errorf("send_turn: %w", err))
+		return fmt.Errorf("α.4 HITL send_turn: %w", err)
 	}
 	d.recordBreadcrumb(in, prev, newSess, nil)
 	return nil
