@@ -70,7 +70,13 @@ func composeDeps(t *testing.T, cfg fakeRuntimeConfig, profileProvider string) *c
 		},
 		Loopback:       nil, // disable per-task MCP loopback in tests
 		WorkspacesRoot: filepath.Join(dir, "workspaces"),
-		RuntimeFactory: func(_ agentsessions.AdapterRuntimeConfig) (agentsessions.Runtime, error) {
+		RuntimeFactory: func(cfg agentsessions.AdapterRuntimeConfig) (agentsessions.Runtime, error) {
+			// Capture the adapter so fakeRuntime.Start can simulate the
+			// lib's preparePlant under AutoPlantBootDir (walks
+			// adapter.BootDirSpec().PlantedFiles to materialize CLAUDE.md
+			// / boot.md / .mcp.json / .claude/settings.json the same way
+			// agentsessions.preparePlant does in production).
+			rt.adapter = cfg.Adapter
 			return rt, nil
 		},
 	}

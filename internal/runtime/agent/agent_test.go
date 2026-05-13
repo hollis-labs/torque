@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"os"
 	"strings"
 	"testing"
 
@@ -158,54 +157,6 @@ func TestShouldUsePTY(t *testing.T) {
 			assert.Equal(t, tc.want, got)
 		})
 	}
-}
-
-// TestSanitizeTaskID covers the boot-dir naming sanitizer. Anything outside
-// the forensic-friendly alphabet collapses to '_'.
-func TestSanitizeTaskID(t *testing.T) {
-	cases := map[string]string{
-		"CW-20260508-0001":      "CW-20260508-0001",
-		"task_with_underscores": "task_with_underscores",
-		"task with spaces":      "task_with_spaces",
-		"task/with/slashes":     "task_with_slashes",
-		"task@with#symbols":     "task_with_symbols",
-		"":                      "no-task",
-	}
-	for in, want := range cases {
-		assert.Equal(t, want, sanitizeTaskID(in), "input=%q", in)
-	}
-}
-
-// TestSubstituteTemplates covers the {{.BootDir}} / {{.ProjectDir}} expansion
-// applied to the lib's BootDirSpec.EnvAmendments.
-func TestSubstituteTemplates(t *testing.T) {
-	in := []string{
-		"OPENCODE_CONFIG_DIR={{.BootDir}}",
-		"PROJECT_PATH={{.ProjectDir}}",
-		"NESTED={{.BootDir}}/{{.ProjectDir}}/x",
-		"PASSTHROUGH=plain",
-	}
-	out := substituteTemplates(in, "/tmp/boot", "/repo/x")
-	assert.Equal(t, []string{
-		"OPENCODE_CONFIG_DIR=/tmp/boot",
-		"PROJECT_PATH=/repo/x",
-		"NESTED=/tmp/boot//repo/x/x",
-		"PASSTHROUGH=plain",
-	}, out)
-
-	assert.Nil(t, substituteTemplates(nil, "x", "y"))
-}
-
-// TestTokenizeArg verifies the lib's ProjectDirArg template is split into a
-// pre-tokenized arg slice. Empty inputs yield nil so BuildArgs.append
-// stays a no-op.
-func TestTokenizeArg(t *testing.T) {
-	assert.Equal(t, []string{"--add-dir", "/repo"},
-		tokenizeArg("--add-dir {{.ProjectDir}}", "/tmp/boot", "/repo"))
-	assert.Equal(t, []string{"--cd", "/repo"},
-		tokenizeArg("--cd {{.ProjectDir}}", "/tmp/boot", "/repo"))
-	assert.Nil(t, tokenizeArg("", "/tmp/boot", "/repo"))
-	assert.Nil(t, tokenizeArg("--add-dir {{.ProjectDir}}", "/tmp/boot", ""), "empty projectDir → nil")
 }
 
 // TestKickoffPayload covers the user-message body Boot fires (or plants as
@@ -668,22 +619,3 @@ func TestManager_Sweep_NilStore(t *testing.T) {
 	assert.Equal(t, 0, swept)
 }
 
-// TestBootDir_NamingConvention confirms the cross-app forensic discoverability
-// pattern: clockwork-boot-<provider>-<taskID>-r<runID>-XXXXXX. Tests run
-// against a tempdir-only path so they don't pollute the real $TMPDIR.
-func TestBootDir_NamingConvention(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("TMPDIR", tmp)
-
-	bootDir, err := makeBootDir("claude", "CW-20260508-0001", 42)
-	require.NoError(t, err)
-	defer func() { _ = removeAll(bootDir) }()
-
-	assert.Contains(t, bootDir, "clockwork-boot-claude-CW-20260508-0001-r42-")
-	assert.True(t, strings.HasPrefix(bootDir, tmp), "bootDir under $TMPDIR")
-}
-
-// removeAll is a thin wrapper around os.RemoveAll for test cleanup.
-func removeAll(path string) error {
-	return os.RemoveAll(path)
-}

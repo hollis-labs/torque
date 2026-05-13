@@ -54,3 +54,15 @@ func (d *Dependencies) UpdateSessionResumeHint(ctx context.Context, id string, h
 		return tx.UpdateSessionResumeHint(id, hint)
 	})
 }
+
+func (d *Dependencies) UpdateSessionMeta(ctx context.Context, id, metaJSON string) error {
+	if d == nil || d.Store == nil {
+		return fmt.Errorf("agent deps: nil store")
+	}
+	if d.StateWriter == nil {
+		return d.Store.UpdateSessionMeta(id, metaJSON)
+	}
+	return d.StateWriter.Submit(ctx, "agent_update_session_meta", func(tx *sqlstore.WriteTx) error {
+		return tx.UpdateSessionMeta(id, metaJSON)
+	})
+}

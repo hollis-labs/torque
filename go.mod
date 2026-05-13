@@ -6,12 +6,12 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.38.0
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/google/uuid v1.6.0
-	github.com/hollis-labs/go-agent-sessions v0.7.1
+	github.com/hollis-labs/go-agent-sessions v0.9.4
 	github.com/hollis-labs/go-llm-types v0.1.0
 	github.com/hollis-labs/go-mcp-sanitize v0.1.0
 	github.com/hollis-labs/go-messaging v0.2.0
 	github.com/hollis-labs/go-modelsdev v0.1.0
-	github.com/hollis-labs/go-providers v0.16.1
+	github.com/hollis-labs/go-providers v0.17.1
 	github.com/hollis-labs/go-queue v0.1.1
 	github.com/hollis-labs/go-runner v0.4.0
 	github.com/hollis-labs/go-sandbox v0.2.0

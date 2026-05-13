@@ -1,6 +1,7 @@
 # Binaries
 /clockwork
 /clockworkd
+/clockwork-apikey-helper
 *.exe
 
 # Database

@@ -2,6 +2,9 @@ package agent_boot
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 
@@ -64,6 +67,14 @@ type fakeRuntime struct {
 	id   string
 	kind string
 	caps agentsessions.Capabilities
+
+	// adapter is the per-runtime CLIAdapter the factory was constructed
+	// with. Used to simulate the lib's preparePlant under
+	// AutoPlantBootDir — the fake walks adapter.BootDirSpec().PlantedFiles
+	// the same way agentsessions.preparePlant does, so e2e tests observe
+	// the same Session.BootDir + planted file shape they got pre-AutoPlant.
+	// Set by composeDeps in helpers.go.
+	adapter provider.CLIAdapter
 
 	pidNext atomic.Int32
 
@@ -135,8 +146,79 @@ func (r *fakeRuntime) Start(_ context.Context, opts agentsessions.StartOptions) 
 	r.resourceLimitsPresent.Store(opts.ResourceLimits != nil && !opts.ResourceLimits.IsZero())
 	r.typedEventCallbackSet.Store(opts.TypedEventCallback != nil)
 
+	// Simulate the lib's preparePlant when AutoPlantBootDir is on. The
+	// fake doesn't go through agentsessions.NewFromAdapter, so the lib's
+	// real preparePlant never fires for these tests. Replicating the
+	// behavior here keeps Session.BootDir + planted-file assertions
+	// (e.g. apikey_helper_test) accurate against the post-AutoPlantBootDir
+	// substrate. Match the lib's preparePlant in agentsessions/bootdir_planting.go.
+	var plantedBootDir string
+	if opts.AutoPlantBootDir && r.adapter != nil {
+		bp, ok := r.adapter.(provider.BootDirProvider)
+		if ok {
+			spec := bp.BootDirSpec()
+			if len(spec.PlantedFiles) > 0 {
+				root := opts.BootDirRoot
+				if root == "" && opts.WorkspaceDir != "" {
+					root = filepath.Join(opts.WorkspaceDir, "boot")
+				}
+				if root == "" {
+					root = os.TempDir()
+				}
+				if err := os.MkdirAll(root, 0o750); err != nil {
+					return nil, fmt.Errorf("fakeRuntime: ensure boot root %s: %w", root, err)
+				}
+				dir, err := os.MkdirTemp(root, "agent-sessions-boot-fake-*")
+				if err != nil {
+					return nil, fmt.Errorf("fakeRuntime: create boot dir: %w", err)
+				}
+				bootContent := opts.BootContent
+				if bootContent == "" {
+					bootContent = opts.BootPrompt
+				}
+				plantCtx := opts.PlantContext
+				plantCtx.SystemPrompt = opts.BootPrompt
+				plantCtx.BootContent = bootContent
+				plantCtx.ProjectDir = opts.Workdir
+				plantCtx.BootDir = dir
+				for _, pf := range spec.PlantedFiles {
+					path := filepath.Join(dir, pf.RelPath)
+					if mkErr := os.MkdirAll(filepath.Dir(path), 0o750); mkErr != nil {
+						_ = os.RemoveAll(dir)
+						return nil, fmt.Errorf("fakeRuntime: plant %s: mkdir: %w", pf.RelPath, mkErr)
+					}
+					if pf.Render == nil {
+						continue
+					}
+					content, rerr := pf.Render(plantCtx)
+					if rerr != nil {
+						_ = os.RemoveAll(dir)
+						return nil, fmt.Errorf("fakeRuntime: plant %s: render: %w", pf.RelPath, rerr)
+					}
+					mode := pf.Mode
+					if mode == 0 {
+						if pf.RelPath == ".mcp.json" || filepath.Base(pf.RelPath) == "settings.json" {
+							mode = 0o600
+						} else {
+							mode = 0o644
+						}
+					}
+					if werr := os.WriteFile(path, []byte(content), mode); werr != nil {
+						_ = os.RemoveAll(dir)
+						return nil, fmt.Errorf("fakeRuntime: plant %s: write: %w", pf.RelPath, werr)
+					}
+				}
+				plantedBootDir = dir
+				if opts.OnBootDirPlanted != nil {
+					opts.OnBootDirPlanted(dir)
+				}
+			}
+		}
+	}
+
 	pid := int(r.pidNext.Add(1))
 	sess := newFakeSession(pid, opts.TypedEventCallback, opts.OnSessionID, r.waitExitErr)
+	sess.bootDir = plantedBootDir
 
 	r.mu.Lock()
 	r.sessions = append(r.sessions, sess)
@@ -199,6 +281,11 @@ type fakeSession struct {
 	mu               sync.Mutex
 	sendInputPayload [][]byte // last-N payloads for assertion convenience
 
+	// bootDir, when non-empty, was materialized by fakeRuntime.Start's
+	// preparePlant simulation. Cleared on Stop to mirror the lib's
+	// terminal-state cleanup contract (cleanupBootDir).
+	bootDir string
+
 	done     chan struct{}
 	doneOnce sync.Once
 	dead     atomic.Bool
@@ -233,7 +320,13 @@ func (s *fakeSession) Wait() (int, error) {
 
 func (s *fakeSession) Stop(_ context.Context) error {
 	s.dead.Store(true)
-	s.doneOnce.Do(func() { close(s.done) })
+	s.doneOnce.Do(func() {
+		close(s.done)
+		// Mirror the lib's terminal-state cleanupBootDir contract.
+		if s.bootDir != "" {
+			_ = os.RemoveAll(s.bootDir)
+		}
+	})
 	return nil
 }
 

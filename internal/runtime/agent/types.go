@@ -278,9 +278,4 @@ var (
 
 	// ErrWorkdirRequired — Options.Workdir is empty and there's no fallback.
 	ErrWorkdirRequired = errors.New("agent: Workdir is required")
-
-	// ErrBootDirNotImplemented — provider's bootdir layout is a stub (gemini,
-	// copilot today). The lib's BootDirSpec.Notes describes what to verify
-	// before promoting the per-provider file to a concrete impl.
-	ErrBootDirNotImplemented = errors.New("agent: bootdir layout not yet implemented for this provider")
 )

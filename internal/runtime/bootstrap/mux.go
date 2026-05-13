@@ -100,7 +100,7 @@ func resolveMuxConfig() muxResolution {
 	}
 
 	// Defensive copy of the package-level defaultMuxArgs so consumers
-	// downstream (Dependencies → plantParams → go-providers renderers)
+	// downstream (Dependencies → StartOptions.PlantContext → go-providers renderers)
 	// can't mutate the shared backing slice via append/aliasing. Cheap
 	// (small, fixed slice) and prevents an entire class of "why did the
 	// args list grow across tasks?" footguns.

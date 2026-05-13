@@ -107,8 +107,9 @@ type Dependencies struct {
 	// env. The composition root resolves all three at startup (env
 	// var + sibling-binary + PATH probe; mirrors ApiKeyHelperPath's
 	// resolveApiKeyHelperPath shape) and threads them onto Boot's
-	// PlantContext via plantBootDir. Per-Boot overrides are filed as a
-	// follow-up; today the configuration is daemon-scoped.
+	// PlantContext via the lib's AutoPlantBootDir overlay (StartOptions
+	// .PlantContext). Per-Boot overrides are filed as a follow-up;
+	// today the configuration is daemon-scoped.
 	//
 	// CW-20260510-0110.
 	MuxCommand string

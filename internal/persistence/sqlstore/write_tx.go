@@ -293,6 +293,24 @@ func (w *WriteTx) UpdateSessionResumeHint(id string, hint []byte) error {
 	return nil
 }
 
+// UpdateSessionMeta overwrites the meta column inside the transaction.
+// Mirrors Store.UpdateSessionMeta for the StateWriter path.
+func (w *WriteTx) UpdateSessionMeta(id, metaJSON string) error {
+	res, err := w.tx.Exec(`UPDATE sessions SET meta = ?, updated_at = ? WHERE id = ?`,
+		metaJSON, time.Now().UTC(), id)
+	if err != nil {
+		return fmt.Errorf("update session meta: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrSessionNotFound
+	}
+	return nil
+}
+
 // TransitionTask writes a status transition and defers hook fanout until commit.
 func (w *WriteTx) TransitionTask(id, newStatus string) error {
 	oldStatus, err := w.transitionTask(id, newStatus, nil)

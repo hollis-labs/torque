@@ -239,6 +239,26 @@ func (s *Store) UpdateSessionResumeHint(id string, hint []byte) error {
 	return nil
 }
 
+// UpdateSessionMeta overwrites the meta column on the session row.
+// Used by the substrate to land per-session keys (clockwork.boot_dir
+// among them) that aren't known until after agentsessions.Manager.Start
+// fires the AutoPlantBootDir callback.
+func (s *Store) UpdateSessionMeta(id, metaJSON string) error {
+	res, err := s.db.Exec(`UPDATE sessions SET meta = ?, updated_at = ? WHERE id = ?`,
+		metaJSON, time.Now().UTC(), id)
+	if err != nil {
+		return fmt.Errorf("update session meta: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrSessionNotFound
+	}
+	return nil
+}
+
 // SweepStaleSessions marks sessions in `launching` or `running` states as
 // `crashed` with exit_code=-1. Intended for a single call at daemon
 // startup: any session still in a live state after a process restart is

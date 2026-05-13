@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/config"
@@ -121,89 +122,46 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		}
 	}
 
-	// Boot dir layout via per-provider plant. The lib's BootDirSpec covers
-	// claude/codex/opencode end-to-end; gemini/copilot dispatch to the
-	// bespoke planters in bootdir_<provider>.go (which currently fail with
-	// ErrBootDirNotImplemented until probed).
+	// Boot dir lifecycle is owned by go-agent-sessions v0.9.4's
+	// AutoPlantBootDir (StartOptions below). The lib walks the adapter's
+	// BootDirSpec().PlantedFiles, materializes each file under
+	// BootDirRoot/agent-sessions-boot-<runtimeID>-*, applies bare-mode
+	// adapter cloning + injection, appends EnvAmendments / ProjectDirArg,
+	// fires OnBootDirPlanted with the absolute path, and removes the dir
+	// at terminal state. Adapters without BootDirSpec (or with empty
+	// PlantedFiles — gemini/copilot today) silently no-op the plant.
+	//
+	// PlantContext fields the lib doesn't manage flow through StartOptions
+	// .PlantContext (CW-20260512-0125 → go-agent-sessions v0.9.4):
+	// AgentName, MCPLoopbackURL, MuxCommand/Args/Env. SystemPrompt and
+	// BootContent are passed via StartOptions.BootPrompt and .BootContent
+	// respectively (see v0.9.3 split — persona vs per-task kickoff).
 	kickoffMD := kickoffMarkdown(opts, role)
 	loopbackURL := ""
 	if loopback != nil {
 		loopbackURL = loopback.URL()
 	}
-	layout, err := plantBootDir(plantParams{
-		Provider:       profile.Provider,
-		Adapter:        cliAdapter,
-		TaskID:         opts.TaskID,
-		RunID:          opts.RunID,
-		AgentName:      opts.AgentProfile,
-		SystemPrompt:   systemPrompt,
-		KickoffContent: kickoffMD,
-		ProjectDir:     opts.Workdir,
-		MCPLoopbackURL: loopbackURL,
-		// CW-20260510-0110: thread daemon-scoped Mux config from
-		// Dependencies onto every Boot. Empty MuxCommand (Mux not
-		// resolved at startup) → bootdir plant emits no `mux` MCP
-		// entry (existing pre-CW-20260510-0110 behavior preserved).
-		MuxCommand: deps.MuxCommand,
-		MuxArgs:    deps.MuxArgs,
-		MuxEnv:     deps.MuxEnv,
-	})
-	if err != nil {
-		shutdownLoopbackHandle(loopback)
-		return nil, fmt.Errorf("%w: plant boot dir: %v", ErrBootFailed, err)
-	}
 
-	// Bare-mode claude (go-providers v0.9.0): populate the four explicit-
-	// injection paths from the planted layout. BuildArgs reads these fields
-	// to emit --mcp-config / --append-system-prompt-file / --settings /
-	// --add-dir; without this step the spawn omits those flags and falls
-	// back to auto-discovery (which bare mode disables — the agent then has
-	// no MCP, no system prompt file, no settings).
-	//
-	// Why bare mode: Anthropic's recommended shape for scripted/SDK calls;
-	// skips auto-discovery of ~/.claude/settings.json, ~/.claude.json,
-	// hooks/plugins/MCP/OAuth/keychain/CLAUDE.md auto-find. Obsoletes the
-	// operator-config-bleed-through class (CW-20260508-0019) for bare
-	// consumers. Non-claude / non-bare adapters fall through silently via
-	// the type-assertion check.
-	claudeBareAdapter, claudeIsBare := cliAdapter.(*provider.ClaudeAdapter)
-	if claudeIsBare && claudeBareAdapter.Bare {
-		inj := claudeBareAdapter.BareInjectionPaths(layout.BootDir, opts.Workdir)
-		claudeBareAdapter.MCPConfigPath = inj.MCPConfigPath
-		claudeBareAdapter.AppendSystemPromptFile = inj.AppendSystemPromptFile
-		claudeBareAdapter.SettingsPath = inj.SettingsPath
-		claudeBareAdapter.ProjectDir = inj.ProjectDir
-	} else {
-		claudeIsBare = false
-	}
+	// Boot-dir root: $TMPDIR/clockwork-boot/. The lib's basename pattern
+	// (agent-sessions-boot-<runtimeID>-*) replaces clockwork's pre-AutoPlant
+	// `clockwork-boot-<provider>-<taskID>-r<runID>-*`; the parent dir name
+	// keeps the substring "clockwork-boot" so cross-app forensic tooling
+	// (`find /var/folders -path '*clockwork-boot*'`) still surfaces the
+	// per-task tempdirs from this daemon.
+	bootDirRoot := filepath.Join(os.TempDir(), "clockwork-boot")
 
 	// Workspace dir (persistent state + logs). Independent of boot dir.
 	ws, err := workspaceCreate(deps.WorkspacesRoot, opts.ProjectID, sessID)
 	if err != nil {
-		_ = os.RemoveAll(layout.BootDir)
 		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: workspace: %v", ErrBootFailed, err)
 	}
 
 	// Env: base (filtered OS + CLOCKWORK_TASK_ID/RUN_ID + agent-file env +
-	// opts.Env) + per-provider amendments (e.g. OPENCODE_CONFIG_DIR).
+	// opts.Env). Per-provider env amendments (e.g. OPENCODE_CONFIG_DIR =
+	// <bootDir>) are appended by the lib's preparePlant after the bootdir
+	// is materialized.
 	env := composeEnv(profile, opts, agentFile)
-	env = append(env, layout.EnvAmendments...)
-
-	// BuildArgs wrapper: prepends profile.Args (minus dev-mode flag, which
-	// is consumed by adapterFor → NewClaudeAdapterDev*), appends --model when
-	// set, appends the lib's ProjectDirArg (e.g. --add-dir <projectDir>).
-	//
-	// Bare-mode claude exception: the lib's BuildArgs already emits
-	// `--add-dir <projectDir>` from a.ProjectDir (populated above from
-	// BareInjectionPaths), and the lib does NOT de-dupe args. Appending
-	// layout.ProjectDirArg here would emit `--add-dir <projectDir>` twice.
-	// Claude tolerates the double-add (later wins / both append to the
-	// allow-list), but we skip the second emit to keep the argv clean and
-	// consistent with the lib's bare-mode contract: in bare mode all four
-	// explicit-injection flags flow through the adapter fields, not the
-	// closure's spec-driven append.
-	skipProjectDirArg := claudeIsBare
 
 	// opencode's argv shape requires `--model <X>` BEFORE the positional
 	// prompt arg (`opencode run --agent <A> --model <M> "<prompt>"`).
@@ -218,14 +176,12 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 
 	buildArgs := func(turnPrompt, sessionID string) []string {
 		return composeBuildArgs(buildArgsParams{
-			Adapter:           cliAdapter,
-			Profile:           profile,
-			SystemPrompt:      systemPrompt,
-			TurnPrompt:        turnPrompt,
-			SessionID:         sessionID,
-			ProjectDirArg:     layout.ProjectDirArg,
-			SkipProjectDirArg: skipProjectDirArg,
-			SkipModelSuffix:   skipModelSuffix,
+			Adapter:         cliAdapter,
+			Profile:         profile,
+			SystemPrompt:    systemPrompt,
+			TurnPrompt:      turnPrompt,
+			SessionID:       sessionID,
+			SkipModelSuffix: skipModelSuffix,
 		})
 	}
 
@@ -244,12 +200,10 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		WaitDelay: cancelGraceFromEnv(),
 	})
 	if err != nil {
-		_ = os.RemoveAll(layout.BootDir)
 		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: construct runtime: %v", ErrBootFailed, err)
 	}
 	if err := runtime.Prepare(ctx); err != nil {
-		_ = os.RemoveAll(layout.BootDir)
 		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: prepare runtime: %v", ErrBootFailed, err)
 	}
@@ -265,7 +219,6 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	if opts.Mode == ModeResume {
 		cp, err := findCheckpoint(deps.Store, opts.ResumeFromCheckpoint)
 		if err != nil {
-			_ = os.RemoveAll(layout.BootDir)
 			shutdownLoopbackHandle(loopback)
 			return nil, fmt.Errorf("%w: %v", ErrBootFailed, err)
 		}
@@ -304,19 +257,23 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	// don't have dedicated DB columns yet. Caller-supplied keys are merged
 	// over the substrate values via the loop below; collisions favor the
 	// substrate (caller can't override the locked Mode/BootDir/etc).
-	persistedMeta := make(map[string]string, len(opts.SessionMeta)+4)
+	// metaKeyBootDir is populated post-Start once OnBootDirPlanted fires
+	// (the lib's preparePlant runs synchronously inside Start, before the
+	// child spawn, so the captured path is available immediately after
+	// Start returns nil). Workdir on the row stays at opts.Workdir — the
+	// project root, which is the most useful forensic value; the planted
+	// bootDir lives in metaKeyBootDir and registerBootDir.
+	persistedMeta := make(map[string]string, len(opts.SessionMeta)+3)
 	for k, v := range opts.SessionMeta {
 		persistedMeta[k] = v
 	}
 	persistedMeta[metaKeyMode] = opts.Mode.String()
-	persistedMeta[metaKeyBootDir] = layout.BootDir
 	persistedMeta[metaKeyWorkspaceDir] = ws.Root
 	if opts.ParentSessionID != "" {
 		persistedMeta[metaKeyParentSessionID] = opts.ParentSessionID
 	}
 	metaJSON, err := encodeMeta(persistedMeta)
 	if err != nil {
-		_ = os.RemoveAll(layout.BootDir)
 		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: encode session meta: %v", ErrBootFailed, err)
 	}
@@ -326,7 +283,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		Provider:     profile.Provider,
 		RuntimeID:    runtime.ID(),
 		RuntimeKind:  runtime.Kind(),
-		Workdir:      layout.SpawnCwd,
+		Workdir:      opts.Workdir,
 		ProjectID:    nullableString(opts.ProjectID),
 		TaskID:       nullableString(opts.TaskID),
 		State:        string(StatusLaunching),
@@ -334,7 +291,6 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		MetaJSON:     metaJSON,
 	}
 	if err := deps.CreateSession(context.Background(), rec); err != nil {
-		_ = os.RemoveAll(layout.BootDir)
 		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: create session row: %v", ErrBootFailed, err)
 	}
@@ -361,7 +317,11 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		opts.Mode == ModeBackground
 	var firstTurnPayload []byte
 	if autoFire {
-		firstTurnPayload = []byte(kickoffPayload(layout.KickoffFile))
+		// kickoffPayload("") returns the canonical "Boot @./boot.md"
+		// — claude resolves the @-reference inline, reading the
+		// kickoff body the lib's AutoPlantBootDir wrote into boot.md
+		// from StartOptions.BootContent.
+		firstTurnPayload = []byte(kickoffPayload(""))
 	}
 
 	// Stderr sidecar: forward to per-run sidecar log + tail buffer + the
@@ -430,14 +390,25 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	// nil/nil unless explicitly overridden via Options.
 	supervisor, limits := profileSupervision(profile, opts, caps.PTY)
 
+	// OnBootDirPlanted fires synchronously inside Manager.Start once the
+	// lib's preparePlant materializes the bootdir, BEFORE the child spawn
+	// fires. Captured here so post-Start wiring (registerBootDir,
+	// SessionMeta update, Session.BootDir) can observe the absolute path
+	// without an asynchronous read.
+	var capturedBootDir string
+	onBootDirPlanted := func(path string) {
+		capturedBootDir = path
+	}
+
 	startReq := agentsessions.StartRequest{
 		ID:      sessID,
 		Runtime: runtime,
 		Options: agentsessions.StartOptions{
-			Workdir:            layout.SpawnCwd,
+			Workdir:            opts.Workdir,
 			WorkspaceDir:       ws.Root,
 			LogPath:            ws.LogPath,
 			BootPrompt:         systemPrompt,
+			BootContent:        kickoffMD,
 			Env:                env,
 			Stderr:             stderrWriter,
 			Profile:            sandboxProfile,
@@ -450,6 +421,16 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 			ResourceLimits:     limits,
 			EventFanout:        streamFanout,
 			TypedEventCallback: opts.TypedEventCallback,
+			AutoPlantBootDir:   true,
+			BootDirRoot:        bootDirRoot,
+			OnBootDirPlanted:   onBootDirPlanted,
+			PlantContext: provider.PlantContext{
+				AgentName:      opts.AgentProfile,
+				MCPLoopbackURL: loopbackURL,
+				MuxCommand:     deps.MuxCommand,
+				MuxArgs:        deps.MuxArgs,
+				MuxEnv:         deps.MuxEnv,
+			},
 		},
 		SessionMeta: opts.SessionMeta,
 	}
@@ -473,23 +454,41 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	if err := mgr.inner.Start(startCtx, startReq); err != nil {
 		closeStderr()
 		closeStreamFanout()
-		_ = os.RemoveAll(layout.BootDir)
 		shutdownLoopbackHandle(loopback)
 		// Inner.Start records StateFailed via StateSink on its own; no extra
-		// row update needed here.
+		// row update needed here. The lib's preparePlant cleans up any
+		// partially-planted bootdir on its own error path.
 		return nil, fmt.Errorf("%w: %v", ErrBootFailed, err)
 	}
 
+	// Persist the captured boot dir into SessionMeta. The lib's
+	// preparePlant fired OnBootDirPlanted synchronously inside Start, so
+	// capturedBootDir is populated when Start returns nil (or empty when
+	// the adapter has no BootDirSpec — gemini/copilot today). Empty path
+	// → skip the meta write; future Get/List paths return Session.BootDir
+	// = "" which matches the pre-plant reality.
+	if capturedBootDir != "" {
+		persistedMeta[metaKeyBootDir] = capturedBootDir
+		if updatedMeta, encErr := encodeMeta(persistedMeta); encErr == nil {
+			if updErr := deps.UpdateSessionMeta(context.Background(), sessID, updatedMeta); updErr != nil {
+				log.Printf("agent.Boot: persist bootDir into session meta failed (sessID=%s bootDir=%s): %v", sessID, capturedBootDir, updErr)
+			}
+		}
+	}
+
 	// Register per-session teardown hooks for non-OneShot modes. OneShot
-	// runs synchronously below and drives its own teardown via Stop.
-	// Without bootDir registration, long-lived/background/subagent/resume
-	// sessions would leak $TMPDIR/clockwork-boot-* directories (carrying
-	// .mcp.json with the loopback URL) until OS-level housekeeping ran.
+	// runs synchronously below and drives its own teardown via Stop. The
+	// lib owns bootDir cleanup at terminal state under AutoPlantBootDir,
+	// so registerBootDir is now informational — wired so the in-memory
+	// registry mirrors the persisted meta for daemon-restart cleanup
+	// fallback paths and operator inspection (manager.Get).
 	if opts.Mode != ModeOneShot {
 		mgr.registerLoopback(sessID, loopback)
 		mgr.registerStderrCloser(sessID, closeStderr)
 		mgr.registerStreamCloser(sessID, closeStreamFanout)
-		mgr.registerBootDir(sessID, layout.BootDir)
+		if capturedBootDir != "" {
+			mgr.registerBootDir(sessID, capturedBootDir)
+		}
 		// Per-session PID poller (CW-20260509-0008): the lib records pid only
 		// at launch (always 0 for adapter-mode) and never refreshes the row's
 		// last_activity between turns. The poller bridges that gap and drives
@@ -506,8 +505,8 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		Provider:        profile.Provider,
 		RuntimeID:       runtime.ID(),
 		RuntimeKind:     runtime.Kind(),
-		Workdir:         layout.SpawnCwd,
-		BootDir:         layout.BootDir,
+		Workdir:         opts.Workdir,
+		BootDir:         capturedBootDir,
 		WorkspaceDir:    ws.Root,
 		ProjectID:       opts.ProjectID,
 		TaskID:          opts.TaskID,
@@ -523,17 +522,13 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		defer closeStderr()
 		defer closeStreamFanout()
 		defer shutdownLoopbackHandle(loopback)
-		defer func() {
-			if err := os.RemoveAll(layout.BootDir); err != nil {
-				// Cleanup failure is non-fatal; the boot dir lives in
-				// $TMPDIR and OS housekeeping reclaims it eventually.
-				_ = err
-			}
-		}()
+		// BootDir cleanup is owned by the lib's AutoPlantBootDir at
+		// terminal state (Stop fires below) — no consumer-side
+		// os.RemoveAll required.
 
 		prompt := composeUserPrompt(opts)
 		if prompt == "" {
-			prompt = kickoffPayload(layout.KickoffFile)
+			prompt = kickoffPayload("")
 		}
 		sendErr := mgr.inner.SendInput(sessID, []byte(prompt))
 
@@ -603,46 +598,41 @@ func profileSupervision(profile config.AgentProfile, opts Options, ptyEnabled bo
 
 // buildArgsParams captures every input composeBuildArgs needs to
 // assemble the per-turn argv for the lib's adapter Runtime. Extracted
-// out of the buildArgs closure in Boot so the per-provider switches
-// (skipModelSuffix, skipProjectDirArg) can be unit-tested directly.
+// out of the buildArgs closure in Boot so the per-provider --model
+// placement switch (SkipModelSuffix) can be unit-tested directly.
 type buildArgsParams struct {
-	Adapter           provider.CLIAdapter
-	Profile           config.AgentProfile
-	SystemPrompt      string
-	TurnPrompt        string
-	SessionID         string
-	ProjectDirArg     []string
-	SkipProjectDirArg bool
-	SkipModelSuffix   bool
+	Adapter         provider.CLIAdapter
+	Profile         config.AgentProfile
+	SystemPrompt    string
+	TurnPrompt      string
+	SessionID       string
+	SkipModelSuffix bool
 }
 
-// composeBuildArgs assembles the per-turn argv. It calls the
-// adapter's BuildArgs for the provider-shape baseline, then optionally
-// appends the generic --model suffix and the project-directory args
-// (which are provider-specific: --add-dir for claude, --cd for codex,
-// --dir for opencode — supplied by layout.ProjectDirArg), and finally
-// prepends profile.Args (minus the dev-mode flag, which is consumed
-// by adapterFor → NewClaudeAdapterDev*).
+// composeBuildArgs assembles the per-turn argv. It calls the adapter's
+// BuildArgs for the provider-shape baseline, optionally appends the
+// generic --model suffix, and prepends profile.Args (minus the dev-mode
+// flag, which is consumed by adapterFor → NewClaudeAdapterDev*).
 //
-// Per-provider exceptions:
+// Project-directory args (--add-dir for claude, --cd for codex, --dir
+// for opencode) are owned by go-agent-sessions v0.9.4's AutoPlantBootDir:
+// the lib appends BootDirSpec.ProjectDirArg via planted.ExtraArgs and
+// the runtime splices it into argv after BuildArgs; bare-mode claude
+// adapters get the path threaded through a per-session adapter clone
+// via applyBareInjection (lib drops the ExtraArgs splice in that
+// branch to prevent double-emit).
+//
+// Per-provider exception:
 //
 //   - skipModelSuffix=true: opencode's argv requires --model BEFORE
 //     the positional prompt, which OpencodeAdapter.BuildArgs already
 //     emits when adapter.Model is set (factory.go threads it). The
 //     trailing-suffix path would either land --model AFTER the
 //     prompt (argv corruption) or duplicate the flag.
-//   - skipProjectDirArg=true: bare-mode claude already emits
-//     --add-dir <projectDir> via a.ProjectDir; the lib doesn't
-//     de-dupe, so appending layout.ProjectDirArg would double the
-//     flag. Claude tolerates the duplicate but the cleaner path is
-//     to suppress the second emit.
 func composeBuildArgs(p buildArgsParams) []string {
 	args := p.Adapter.BuildArgs(p.TurnPrompt, p.SystemPrompt, p.SessionID)
 	if !p.SkipModelSuffix && p.Profile.Model != "" {
 		args = append(args, "--model", p.Profile.Model)
-	}
-	if !p.SkipProjectDirArg && len(p.ProjectDirArg) > 0 {
-		args = append(args, p.ProjectDirArg...)
 	}
 	if filtered := profileArgsExcludingDevFlag(p.Profile); len(filtered) > 0 {
 		args = append(filtered, args...)
