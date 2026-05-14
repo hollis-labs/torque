@@ -12,14 +12,15 @@ import (
 // (optionally) assert it in a test. Never rename an existing key — it
 // breaks log-grep workflows.
 const (
-	SkipReasonManual             = "manual"
-	SkipReasonParentKind         = "parent_kind"
-	SkipReasonPlanKind           = "plan_kind"
-	SkipReasonEmptyProfile       = "empty_profile"
-	SkipReasonProjectBusy        = "project_busy"
-	SkipReasonProjectContention  = "project_contention"
-	SkipReasonDepUnmet           = "dep_unmet"
-	SkipReasonDepMalformed       = "dep_malformed"
+	SkipReasonManual            = "manual"
+	SkipReasonParentKind        = "parent_kind"
+	SkipReasonPlanKind          = "plan_kind"
+	SkipReasonIssueKind         = "issue_kind"
+	SkipReasonEmptyProfile      = "empty_profile"
+	SkipReasonProjectBusy       = "project_busy"
+	SkipReasonProjectContention = "project_contention"
+	SkipReasonDepUnmet          = "dep_unmet"
+	SkipReasonDepMalformed      = "dep_malformed"
 	// DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
 	// SkipReasonProjectScopeFilter is recorded when an operator-configured
 	// allowlist (CLOCKWORK_PROJECT_ID / CLOCKWORK_PROJECT_IDS) excludes
@@ -99,7 +100,7 @@ func (p *Picker) SetProjectAllowlist(ids []string) {
 // Pick returns up to `limit` tasks that are eligible for scheduling along
 // with a PickDecisions struct describing why candidates were skipped.
 //
-// Eligible means: status=todo, manual=false, non-parent/plan kind, agent
+// Eligible means: status=todo, manual=false, non-parent/plan/issue kind, agent
 // tasks have an agent_profile, all dependencies are done, AND the task's
 // project_id is not already held by a doing task or tentatively allocated
 // in this same tick (per-project max concurrency = 1 in v0.0.1; tracked
@@ -146,13 +147,15 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, PickDecisions, error) {
 	//     stuck in `doing` (e.g. legacy row, manual transition) shouldn't
 	//     gate dispatch of its own children — same shape as the plan-task
 	//     deadlock above.
+	//   - kind=issue: backlog capture rows, never dispatched and never counted
+	//     as project work in flight.
 	busy, err := p.store.ListTasks(sqlstore.TaskFilter{Status: "doing"})
 	if err != nil {
 		return nil, decisions, err
 	}
 	busyProjects := make(map[string]struct{}, len(busy))
 	for _, t := range busy {
-		if t.Kind == "internal" || t.Kind == "plan" || t.Kind == "parent" {
+		if t.Kind == "internal" || t.Kind == "plan" || t.Kind == "parent" || t.Kind == "issue" {
 			continue
 		}
 		if pk := projectKey(t); pk != "" {
@@ -186,6 +189,12 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, PickDecisions, error) {
 		// children that run on their own. The plan itself never dispatches.
 		if task.Kind == "plan" {
 			record(task.ID, SkipReasonPlanKind)
+			continue
+		}
+		// Issue tasks are backlog capture rows. They can appear in task views,
+		// but are never executor-dispatched.
+		if task.Kind == "issue" {
+			record(task.ID, SkipReasonIssueKind)
 			continue
 		}
 

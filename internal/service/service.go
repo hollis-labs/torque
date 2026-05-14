@@ -13,7 +13,7 @@ type Service struct {
 	// rules apply; the Store() accessor is the explicit escape hatch
 	// for application-service code (planstart, etc.) that composes
 	// across multiple domain services and needs the raw store handle.
-	store      *sqlstore.Store
+	store *sqlstore.Store
 
 	Task       *TaskService
 	Run        *RunService
@@ -29,6 +29,7 @@ type Service struct {
 	Checkpoint *CheckpointService
 	Template   *TemplateService
 	Plan       *PlanService
+	Issue      *IssueService
 
 	// Models is the shared models.dev catalog. nil in test wiring; populated
 	// by serve / mcp entry points. Callers that depend on model metadata
@@ -61,5 +62,6 @@ func New(store *sqlstore.Store) *Service {
 		Checkpoint: &CheckpointService{store: store},
 		Template:   &TemplateService{store: store, tasks: task},
 		Plan:       &PlanService{store: store, tasks: task},
+		Issue:      &IssueService{store: store, tasks: task, feature: feature},
 	}
 }

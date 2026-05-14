@@ -79,6 +79,7 @@ var validKinds = map[string]bool{
 	"parent":   true,
 	"plan":     true,
 	"internal": true,
+	"issue":    true,
 }
 
 var validSourceTypes = map[string]bool{
@@ -139,7 +140,7 @@ func validateTaskKind(
 	if !validKinds[kind] {
 		return &ValidationError{
 			Field:   "kind",
-			Message: "invalid kind: got '" + kind + "', expected one of: agent, external, wait, decision, parent, plan, internal",
+			Message: "invalid kind: got '" + kind + "', expected one of: agent, external, wait, decision, parent, plan, internal, issue",
 		}
 	}
 	if !validSourceTypes[sourceType] {
@@ -229,6 +230,19 @@ func validateTaskKind(
 		// still provide an executor — it's tolerated so imported data with
 		// stale defaults doesn't trip 422; the scheduler treats plan tasks
 		// as non-dispatch-eligible regardless.
+	case "issue":
+		if executor != "" {
+			return &ValidationError{
+				Field:   "executor",
+				Message: "executor not allowed for kind=issue",
+			}
+		}
+		if autoExecute {
+			return &ValidationError{
+				Field:   "auto_execute",
+				Message: "issue tasks cannot be auto-executed (set manual=true)",
+			}
+		}
 	}
 	return nil
 }

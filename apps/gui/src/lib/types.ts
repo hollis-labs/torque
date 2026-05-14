@@ -53,7 +53,7 @@ export interface Deliverable {
  */
 export const UNLIMITED = -1 as const
 
-export type TaskKind = 'agent' | 'external' | 'wait' | 'decision' | 'parent' | 'plan' | 'internal'
+export type TaskKind = 'agent' | 'external' | 'wait' | 'decision' | 'parent' | 'plan' | 'internal' | 'issue'
 export type TaskSourceType = 'agent' | 'user' | 'api' | 'system' | 'webhook' | 'import'
 export type TaskTrust = 'trusted' | 'normal' | 'untrusted'
 export type TaskCheckpointMode = 'none' | 'blocking' | 'non_blocking'

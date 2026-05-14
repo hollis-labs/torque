@@ -305,6 +305,31 @@ export class ClockworkApiClient {
   }
 
   // -------------------------
+  // Issues
+  // -------------------------
+
+  async listIssues(filter?: { project_id?: string; search?: string; limit?: number }): Promise<{ issues: Task[]; total: number }> {
+    const params: Record<string, string | number | boolean | undefined> = {}
+    if (filter?.project_id) params['project_id'] = filter.project_id
+    if (filter?.search) params['q'] = filter.search
+    if (filter?.limit !== undefined) params['limit'] = filter.limit
+    const path = filter?.search ? '/issues/search' : '/issues'
+    return this.get<{ issues: Task[]; total: number }>(path, params)
+  }
+
+  async getIssue(id: string): Promise<Task> {
+    return this.get<Task>(`/issues/${id}`)
+  }
+
+  async createIssue(data: { title: string; body?: string; context?: string; issue?: string; details?: string; project_id: string }): Promise<Task> {
+    return this.post<Task>('/issues', data)
+  }
+
+  async updateIssue(id: string, data: { title?: string; body?: string; context?: string; issue?: string; details?: string; project_id?: string }): Promise<Task> {
+    return this.put<Task>(`/issues/${id}`, data)
+  }
+
+  // -------------------------
   // Runs
   // -------------------------
 
