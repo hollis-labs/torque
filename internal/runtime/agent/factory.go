@@ -3,9 +3,9 @@ package agent
 import (
 	"fmt"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 	"github.com/hollis-labs/go-providers/provider"
+	"github.com/hollis-labs/torque/internal/config"
 )
 
 // adapterFor maps a profile's provider name + the resolved RuntimeKind
@@ -15,26 +15,26 @@ import (
 // subprocess vs app-server) and the capability set the Runtime
 // publishes (which the lib reads to pick the session implementation).
 //
-// profileName is the clockwork agent-profile lookup key. Most adapters
+// profileName is the torque agent-profile lookup key. Most adapters
 // ignore it; OpencodeAdapter requires it because `opencode run`
-// dispatches via `--agent <name>`, and by convention the clockwork
+// dispatches via `--agent <name>`, and by convention the torque
 // profile name is the opencode agent name.
 //
 // Per-provider runtime-kind support:
 //
 //   - claude:      Subprocess (bare), PTY. Bare is the production
-//                  default; PTY remains an operator escape hatch.
+//     default; PTY remains an operator escape hatch.
 //   - claude-code: StreamingStdio only. Other kinds error — claude-code
-//                  is a long-lived NDJSON-over-stdin shape, not a
-//                  print-mode subprocess.
+//     is a long-lived NDJSON-over-stdin shape, not a
+//     print-mode subprocess.
 //   - codex:       Subprocess (print-mode), JsonRpcStdio (app-server).
-//                  The default per selectRuntimeKind is JsonRpcStdio;
-//                  operators can opt back to print-mode by setting
-//                  profile.RuntimeKind: subprocess.
+//     The default per selectRuntimeKind is JsonRpcStdio;
+//     operators can opt back to print-mode by setting
+//     profile.RuntimeKind: subprocess.
 //   - opencode:    Subprocess only. No long-lived adapter exists in
-//                  go-providers today.
+//     go-providers today.
 //   - gemini:      Unsupported (PTY adapter removed in go-providers
-//                  v0.12.0).
+//     v0.12.0).
 //   - copilot:     Unsupported (same as gemini).
 //
 // Subprocess-per-turn (non-PTY/non-long-lived) claude paths use the

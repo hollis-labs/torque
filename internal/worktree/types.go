@@ -49,7 +49,7 @@ type WorktreeConfig struct {
 	DefaultMergePolicy MergePolicy
 
 	// WorktreeBaseDir is where worktrees are created, relative to project root.
-	// Default: ".clockwork/worktrees"
+	// Default: ".torque/worktrees"
 	WorktreeBaseDir string
 }
 
@@ -59,7 +59,7 @@ func DefaultWorktreeConfig() WorktreeConfig {
 		MaxPerProject:      3,
 		CleanupPolicy:      CleanupOnMerge,
 		DefaultMergePolicy: MergePolicyNone,
-		WorktreeBaseDir:    ".clockwork/worktrees",
+		WorktreeBaseDir:    ".torque/worktrees",
 	}
 }
 
@@ -110,7 +110,7 @@ type ResolutionRequest struct {
 type ResolutionResult struct {
 	Success      bool
 	Confidence   float64
-	TaskID       string   // ID of the resolution task
+	TaskID       string // ID of the resolution task
 	TestsPassed  bool
 	ErrorMessage string
 	Artifacts    []string // Artifact IDs attached

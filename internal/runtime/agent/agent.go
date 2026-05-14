@@ -14,7 +14,7 @@ type Options struct {
 	// Mode is the lifecycle policy. Defaults to ModeLongLived (zero-value).
 	Mode Mode
 
-	// AgentProfile is the clockwork agent profile name. Resolves through
+	// AgentProfile is the torque agent profile name. Resolves through
 	// config.GetProfileOrDefault — operators register profiles in
 	// profiles.yaml; the substrate ships builtins for orchestrator / planner
 	// / reviewer-end-agent / cli.
@@ -31,11 +31,11 @@ type Options struct {
 	Workdir string
 
 	// ProjectID / TaskID propagate to the session row's soft-FKs so
-	// `clockwork_session_list project_id=...` returns this session.
+	// `torque_session_list project_id=...` returns this session.
 	ProjectID string
 	TaskID    string
 
-	// RunID stamps the boot dir name (clockwork-boot-<provider>-<task>-r<run>-*)
+	// RunID stamps the boot dir name (torque-boot-<provider>-<task>-r<run>-*)
 	// for forensic discoverability. Zero means "no run dispatched this boot".
 	RunID int64
 
@@ -82,7 +82,7 @@ type Options struct {
 	AgentFile string
 
 	// Env is caller-supplied env additions. Composed with profile.Environment
-	// + CLOCKWORK_TASK_ID/RUN_ID + agent-file environment by composeEnv.
+	// + TORQUE_TASK_ID/RUN_ID + agent-file environment by composeEnv.
 	Env map[string]string
 
 	// RuntimeKindOverride, when non-empty, forces a specific

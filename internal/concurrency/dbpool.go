@@ -10,7 +10,7 @@ import (
 )
 
 // DBPool manages separate read and write connections to the main database
-// (clockwork.db) and a separate connection to the queue database (queue.db).
+// (torque.db) and a separate connection to the queue database (queue.db).
 // WAL mode enables concurrent readers while the write serializer ensures
 // a single writer to the main database.
 type DBPool struct {

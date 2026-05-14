@@ -3,8 +3,8 @@ package bootstrap
 import (
 	"fmt"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/waitpoll"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/runtime/waitpoll"
 )
 
 // Waitpoll registers the built-in wait predicates — task_done (backed by

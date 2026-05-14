@@ -104,7 +104,7 @@ func TestLoadDiscovered(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, discovered, 2)
 
-	host := NewClockworkHost(nil, nil)
+	host := NewTorqueHost(nil, nil)
 	loaded, errs := LoadDiscovered(host, discovered)
 	assert.Empty(t, errs)
 	assert.Len(t, loaded, 2)

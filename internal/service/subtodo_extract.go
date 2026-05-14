@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 // subtodoCheckboxLine matches top-level markdown checkbox list items:

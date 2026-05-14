@@ -3,8 +3,8 @@ package agent
 import (
 	"fmt"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/torque/internal/config"
 )
 
 // RuntimeKind identifies the go-agent-sessions Runtime shape a session
@@ -61,6 +61,7 @@ func (rk RuntimeKind) validate() error {
 //
 //  1. profile.RuntimeKind, when non-empty, is the operator's explicit
 //     pick. Subject to ModeOneShot's constraints (see #2) for now.
+//
 //  2. The per-provider default matrix, used when profile.RuntimeKind
 //     is empty:
 //

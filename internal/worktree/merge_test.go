@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/worktree"
+	"github.com/hollis-labs/torque/internal/worktree"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -35,9 +35,9 @@ func TestMergeAutoSuccess(t *testing.T) {
 	repoDir := setupTestRepo(t)
 
 	// Create a branch and worktree manually
-	gitCmdDir(t, repoDir, "branch", "clockwork/CW-20260407-0001")
-	wtPath := filepath.Join(repoDir, ".clockwork", "worktrees", "CW-20260407-0001")
-	gitCmdDir(t, repoDir, "worktree", "add", wtPath, "clockwork/CW-20260407-0001")
+	gitCmdDir(t, repoDir, "branch", "torque/CW-20260407-0001")
+	wtPath := filepath.Join(repoDir, ".torque", "worktrees", "CW-20260407-0001")
+	gitCmdDir(t, repoDir, "worktree", "add", wtPath, "torque/CW-20260407-0001")
 
 	// Make a non-conflicting change in the worktree
 	makeCommitInWorktree(t, wtPath, "newfile.txt", "new content", "add newfile")
@@ -48,7 +48,7 @@ func TestMergeAutoSuccess(t *testing.T) {
 	result, err := merger.Execute(ctx, worktree.MergeRequest{
 		Policy:       worktree.MergePolicyAuto,
 		RepoPath:     repoDir,
-		SourceBranch: "clockwork/CW-20260407-0001",
+		SourceBranch: "torque/CW-20260407-0001",
 		TargetBranch: "main",
 		WorktreePath: wtPath,
 	})
@@ -65,9 +65,9 @@ func TestMergeAutoConflict(t *testing.T) {
 	makeCommitInWorktree(t, repoDir, "README.md", "# Changed on main", "main change")
 
 	// Create branch and worktree
-	gitCmdDir(t, repoDir, "branch", "clockwork/CW-20260407-0001", "HEAD~1")
-	wtPath := filepath.Join(repoDir, ".clockwork", "worktrees", "CW-20260407-0001")
-	gitCmdDir(t, repoDir, "worktree", "add", wtPath, "clockwork/CW-20260407-0001")
+	gitCmdDir(t, repoDir, "branch", "torque/CW-20260407-0001", "HEAD~1")
+	wtPath := filepath.Join(repoDir, ".torque", "worktrees", "CW-20260407-0001")
+	gitCmdDir(t, repoDir, "worktree", "add", wtPath, "torque/CW-20260407-0001")
 
 	// Make a conflicting change in worktree
 	makeCommitInWorktree(t, wtPath, "README.md", "# Changed in worktree", "wt change")
@@ -78,7 +78,7 @@ func TestMergeAutoConflict(t *testing.T) {
 	result, err := merger.Execute(ctx, worktree.MergeRequest{
 		Policy:       worktree.MergePolicyAuto,
 		RepoPath:     repoDir,
-		SourceBranch: "clockwork/CW-20260407-0001",
+		SourceBranch: "torque/CW-20260407-0001",
 		TargetBranch: "main",
 		WorktreePath: wtPath,
 	})
@@ -97,7 +97,7 @@ func TestMergePolicyNone(t *testing.T) {
 	result, err := merger.Execute(ctx, worktree.MergeRequest{
 		Policy:       worktree.MergePolicyNone,
 		RepoPath:     repoDir,
-		SourceBranch: "clockwork/CW-20260407-0001",
+		SourceBranch: "torque/CW-20260407-0001",
 		TargetBranch: "main",
 	})
 	require.NoError(t, err)
@@ -110,9 +110,9 @@ func TestMergeAutoResolveTriggersResolution(t *testing.T) {
 
 	// Set up conflict
 	makeCommitInWorktree(t, repoDir, "README.md", "# Main version", "main edit")
-	gitCmdDir(t, repoDir, "branch", "clockwork/CW-20260407-0001", "HEAD~1")
-	wtPath := filepath.Join(repoDir, ".clockwork", "worktrees", "CW-20260407-0001")
-	gitCmdDir(t, repoDir, "worktree", "add", wtPath, "clockwork/CW-20260407-0001")
+	gitCmdDir(t, repoDir, "branch", "torque/CW-20260407-0001", "HEAD~1")
+	wtPath := filepath.Join(repoDir, ".torque", "worktrees", "CW-20260407-0001")
+	gitCmdDir(t, repoDir, "worktree", "add", wtPath, "torque/CW-20260407-0001")
 	makeCommitInWorktree(t, wtPath, "README.md", "# Worktree version", "wt edit")
 
 	merger := worktree.NewMerger()
@@ -121,7 +121,7 @@ func TestMergeAutoResolveTriggersResolution(t *testing.T) {
 	result, err := merger.Execute(ctx, worktree.MergeRequest{
 		Policy:       worktree.MergePolicyAutoResolve,
 		RepoPath:     repoDir,
-		SourceBranch: "clockwork/CW-20260407-0001",
+		SourceBranch: "torque/CW-20260407-0001",
 		TargetBranch: "main",
 		WorktreePath: wtPath,
 	})

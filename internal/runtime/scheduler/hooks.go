@@ -3,8 +3,8 @@ package scheduler
 import (
 	"context"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/concurrency"
-	"github.com/hollis-labs/clockwork-manifold/internal/worktree"
+	"github.com/hollis-labs/torque/internal/concurrency"
+	"github.com/hollis-labs/torque/internal/worktree"
 )
 
 // ConcurrencyHooks defines the integration points between the scheduler

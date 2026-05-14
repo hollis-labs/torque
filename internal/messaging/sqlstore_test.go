@@ -15,8 +15,8 @@ import (
 	"github.com/hollis-labs/go-sqlite/sqlitekit"
 	_ "modernc.org/sqlite"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/messaging"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/messaging"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
 )
 
 func newDB(t *testing.T) *sql.DB {

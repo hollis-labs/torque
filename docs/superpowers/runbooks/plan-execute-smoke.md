@@ -1,6 +1,6 @@
 # Plan-execute end-to-end smoke (S2 exit gate)
 
-**Ticket:** [CW-20260503-0021](mux://clockwork/CW-20260503-0021) (S2.5)
+**Ticket:** [CW-20260503-0021](mux://torque/CW-20260503-0021) (S2.5)
 **Epic:** EP-20260503-0002 — Agentic Execution Flow
 
 This runbook validates the full agentic execution loop against a real
@@ -13,18 +13,18 @@ shippable.
 
 ## Prerequisites
 
-- `clockwork` daemon built from the current `feat/agentic-exec-s2-agents`
+- `torque` daemon built from the current `feat/agentic-exec-s2-agents`
   tip (or main once merged). `go build ./...` first.
 - `ANTHROPIC_API_KEY` (preferred) or `OPENAI_API_KEY` exported in the
-  shell that boots `clockwork serve`.
-- `profiles.yaml` includes a `clockwork-backend` profile (or your
+  shell that boots `torque serve`.
+- `profiles.yaml` includes a `torque-backend` profile (or your
   preferred dogfood profile) wired to `executor=cli` + `provider=opencode`
   for the test plan's children. `reviewer-end-agent`, `planner`, and
   `orchestrator` resolve via builtins (S2.3 / S2.4 / S2.2) — you can
   override them in `profiles.yaml` if you want different timeouts /
   models.
 - A scratch worktree the orchestrator can run in (e.g.
-  `~/Projects-apps/clockwork-manifold-smoke/`). Don't run against your
+  `~/Projects-apps/torque-smoke/`). Don't run against your
   primary repo — the agents will read/write files in the workdir.
 
 ## Test plan shape
@@ -32,7 +32,7 @@ shippable.
 A 2-phase × 2-task plan, ~5K tokens per child task. Filing template:
 
 ```bash
-clockwork mcp clockwork_plan_create \
+torque mcp torque_plan_create \
   title="S2.5 smoke: tiny Go module" \
   description="2-phase plan that writes hello.go + a test, then formats and lints." \
   phases='[
@@ -48,33 +48,33 @@ each child stays under ~5K tokens:
 
 ```bash
 # Phase 1 / write
-clockwork mcp clockwork_task_create \
+torque mcp torque_task_create \
   title="hello.go: write a Hello() function" \
   parent_id="<PLAN>" \
   metadata='{"phase_id":"ph-1"}' \
-  agent_profile="clockwork-backend" \
+  agent_profile="torque-backend" \
   manual=true
 
-clockwork mcp clockwork_task_create \
+torque mcp torque_task_create \
   title="hello_test.go: cover Hello()" \
   parent_id="<PLAN>" \
   metadata='{"phase_id":"ph-1"}' \
-  agent_profile="clockwork-backend" \
+  agent_profile="torque-backend" \
   manual=true
 
 # Phase 2 / polish
-clockwork mcp clockwork_task_create \
+torque mcp torque_task_create \
   title="go fmt the package" \
   parent_id="<PLAN>" \
   metadata='{"phase_id":"ph-2"}' \
-  agent_profile="clockwork-backend" \
+  agent_profile="torque-backend" \
   manual=true
 
-clockwork mcp clockwork_task_create \
+torque mcp torque_task_create \
   title="go vet the package" \
   parent_id="<PLAN>" \
   metadata='{"phase_id":"ph-2"}' \
-  agent_profile="clockwork-backend" \
+  agent_profile="torque-backend" \
   manual=true
 ```
 
@@ -85,7 +85,7 @@ ready to dispatch. The user does NOT pre-flip them.
 ## Trigger
 
 ```bash
-clockwork mcp clockwork_plan_start plan_id="<PLAN>" workdir=~/Projects-apps/clockwork-manifold-smoke
+torque mcp torque_plan_start plan_id="<PLAN>" workdir=~/Projects-apps/torque-smoke
 ```
 
 Or via the GUI:
@@ -98,7 +98,7 @@ Or via the GUI:
 Watch each of these end-to-end. All must clear before declaring the
 epic shippable.
 
-1. **Orchestrator session boots** — `clockwork_session_list state=running`
+1. **Orchestrator session boots** — `torque_session_list state=running`
    shows a session with `agent_profile=orchestrator` and
    `meta.plan_id=<PLAN>`.
 2. **Planner sub-agent invoked** — a `kind=internal` task with title
@@ -126,11 +126,11 @@ epic shippable.
    moves to `review` (the `on_done=review` Plans v1 default). The
    orchestrator does NOT auto-close the plan.
 10. **Orchestrator session terminates cleanly** — final
-    `session.state_changed` event with state=`done`. `clockwork_session_list`
+    `session.state_changed` event with state=`done`. `torque_session_list`
     no longer shows it as `running`.
 11. **Cost ledger** — every child task has a `cost` row with
     `tokens_in > 0`, `tokens_out > 0`, `cost_source='models_dev'`.
-    Inspect via `clockwork_run_list task_id=<child_id>` and walk the
+    Inspect via `torque_run_list task_id=<child_id>` and walk the
     run record's cost columns. The orchestrator session itself
     accounts in the same way.
 12. **Whole suite green** — back in the daemon's repo:
@@ -144,14 +144,14 @@ epic shippable.
 ## Failure modes to surface (for follow-up tickets)
 
 These are NOT pass criteria; they're observations to capture if you
-hit them. File new Clockwork tickets per the boot-prompt backlog
+hit them. File new Torque tickets per the boot-prompt backlog
 discipline.
 
 - Reviewer crashes on a specific child → `[system/end-agent] failed`
   comment fires (substrate-side), child stays at `review`. Manual
   resolution.
 - Orchestrator stops mid-phase → check
-  `clockwork_session_get id=<session>` for `state=failed|crashed`. The
+  `torque_session_get id=<session>` for `state=failed|crashed`. The
   orphan sweep (S1.4) marks crashed rows on next daemon restart.
 - Child task dispatched without an agent_profile → picker rejects it
   with `SkipReasonEmptyProfile`. Plan blocked; surface to user.
@@ -163,13 +163,13 @@ discipline.
 To rerun against the same plan:
 
 1. If the plan is in `review` with all children `done`: re-trigger
-   `clockwork_plan_start <PLAN>` — the trigger accepts `review` status
+   `torque_plan_start <PLAN>` — the trigger accepts `review` status
    and boots a fresh orchestrator (children that are already done
    stay done; the orchestrator walks them as no-ops).
 2. If the plan is in `doing` with a live orchestrator session: the
    trigger returns `409 ErrAlreadyOrchestrating` with the existing
    session id. Either wait for it to finish or cancel via
-   `clockwork_session_stop`.
+   `torque_session_stop`.
 3. To start fresh: re-open all children to `todo` (manual transition)
    and re-trigger.
 

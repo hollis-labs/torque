@@ -7,18 +7,18 @@ import (
 )
 
 func (a *Adapter) registerRunTools() {
-	a.addTool(mcp.NewTool("clockwork_run_list",
+	a.addTool(mcp.NewTool("torque_run_list",
 		mcp.WithDescription(`List runs (executor invocations) for a task; newest first.
-Use to audit execution history — failures, exit codes, timestamps. clockwork_run_get for one run by ID. Brief shape drops stdout/stderr bodies; pass verbose="true" for full RunRecord.
+Use to audit execution history — failures, exit codes, timestamps. torque_run_get for one run by ID. Brief shape drops stdout/stderr bodies; pass verbose="true" for full RunRecord.
 Response shape: data = {items: [<briefRun or RunRecord>...], meta: {truncated, returned, limit, hint?}}.
 Example: {"task_id":"T-123"}`),
 		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleRunList)
 
-	a.addTool(mcp.NewTool("clockwork_run_get",
+	a.addTool(mcp.NewTool("torque_run_get",
 		mcp.WithDescription(`Fetch one run's full RunRecord by numeric ID (pass as string).
-Use when you need full stdout/stderr/duration from a specific run; clockwork_run_list for discovery.
+Use when you need full stdout/stderr/duration from a specific run; torque_run_list for discovery.
 Response shape: data = {<RunRecord fields>} — singleton.
 Example: {"id":"99"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Run ID (integer; pass as string)")),

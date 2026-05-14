@@ -3,7 +3,7 @@
 // template + constants and hands the resolved values to agent.Manager.Boot —
 // the LLM agent inside the spawned session reads its system_prompt (this
 // package's template) and walks the plan via MCP loopback through
-// clockwork_task_* / planner / reviewer surfaces.
+// torque_task_* / planner / reviewer surfaces.
 //
 // Package layering: orchestrator deliberately does NOT import the agent
 // package — the dependency goes the other way (planstart imports both).
@@ -36,21 +36,21 @@ const (
 
 	// SessionMetaPlanID is the SessionMeta key the trigger stamps so
 	// the spawned agent can read its target plan via
-	// clockwork_session_get. Mirrors the planner's
+	// torque_session_get. Mirrors the planner's
 	// metadata.planner.target_plan_id pattern but keyed in the
 	// session's metadata since the orchestrator runs as a session, not
 	// a kind=internal task.
 	SessionMetaPlanID = "plan_id"
 
 	// SessionMetaRole disambiguates orchestrator sessions from other
-	// long-lived sessions when an operator queries clockwork_session_list.
+	// long-lived sessions when an operator queries torque_session_list.
 	SessionMetaRole      = "role"
 	SessionMetaRoleValue = "orchestrator"
 
 	// TemplateEnvVar is the user override for the agent template
 	// directory shared with the planner (S2.4). When unset the
-	// resolver looks in $HOME/.clockwork/agent-templates/.
-	TemplateEnvVar = "CLOCKWORK_AGENT_TEMPLATE_DIR"
+	// resolver looks in $HOME/.torque/agent-templates/.
+	TemplateEnvVar = "TORQUE_AGENT_TEMPLATE_DIR"
 
 	// TemplateName is the file the resolver reads from the configured
 	// dir. Operators replace its contents to customize the V0 prompt.
@@ -63,7 +63,7 @@ var embeddedTemplate string
 // SystemPromptForPlan composes the orchestrator's system prompt for the
 // given plan. The body is the resolved template (LoadTemplate) prefixed
 // with a one-line preamble that names the plan id — even if the agent
-// forgets to call clockwork_session_get, it still has the id in immediate
+// forgets to call torque_session_get, it still has the id in immediate
 // context.
 //
 // Caller (planstart.Start) wraps this into agent.Options for the Boot
@@ -74,19 +74,19 @@ func SystemPromptForPlan(planID, template string) string {
 	if template == "" {
 		template, _ = LoadTemplate()
 	}
-	return "Your target plan_id is `" + planID + "`. Read it via clockwork_session_get to confirm.\n\n" + template
+	return "Your target plan_id is `" + planID + "`. Read it via torque_session_get to confirm.\n\n" + template
 }
 
 // LoadTemplate returns the orchestrator template content + the resolved
-// path. Lookup order: $CLOCKWORK_AGENT_TEMPLATE_DIR/default-orchestrator.md,
-// then $HOME/.clockwork/agent-templates/default-orchestrator.md, then the
+// path. Lookup order: $TORQUE_AGENT_TEMPLATE_DIR/default-orchestrator.md,
+// then $HOME/.torque/agent-templates/default-orchestrator.md, then the
 // embedded fallback ("<embedded>" path token). Shared dir convention with
 // the planner template (S2.4).
 func LoadTemplate() (string, string) {
 	dir := os.Getenv(TemplateEnvVar)
 	if dir == "" {
 		if home, err := os.UserHomeDir(); err == nil {
-			dir = filepath.Join(home, ".clockwork", "agent-templates")
+			dir = filepath.Join(home, ".torque", "agent-templates")
 		}
 	}
 	if dir != "" {

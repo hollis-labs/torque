@@ -58,7 +58,7 @@ func DiscoverPlugins(pluginsDir string) ([]DiscoveredPlugin, error) {
 
 // LoadDiscovered sorts discovered plugins by their dependency graph and loads them into host.
 // Returns the successfully loaded plugins and any per-plugin errors.
-func LoadDiscovered(host *ClockworkHost, discovered []DiscoveredPlugin) ([]goplugin.Plugin, []error) {
+func LoadDiscovered(host *TorqueHost, discovered []DiscoveredPlugin) ([]goplugin.Plugin, []error) {
 	sorted, err := sortByDeps(discovered)
 	if err != nil {
 		return nil, []error{err}
@@ -79,7 +79,7 @@ func LoadDiscovered(host *ClockworkHost, discovered []DiscoveredPlugin) ([]goplu
 
 // LoadRegisteredBuiltins loads all constructors from the global registry that are not yet
 // loaded into host. Returns successfully loaded plugins and any per-plugin errors.
-func LoadRegisteredBuiltins(host *ClockworkHost) ([]goplugin.Plugin, []error) {
+func LoadRegisteredBuiltins(host *TorqueHost) ([]goplugin.Plugin, []error) {
 	all := GetRegistered()
 
 	var loaded []goplugin.Plugin

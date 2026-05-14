@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -14,8 +14,8 @@ func TestCreateProject(t *testing.T) {
 
 	proj := &sqlstore.ProjectRecord{
 		ID:       "PRJ-20260407-0001",
-		Name:     "Clockwork Manifold",
-		RepoPath: "~/Projects-apps/clockwork-manifold",
+		Name:     "Torque",
+		RepoPath: "~/Projects-apps/torque",
 	}
 
 	err := store.CreateProject(proj)
@@ -23,8 +23,8 @@ func TestCreateProject(t *testing.T) {
 
 	got, err := store.GetProject("PRJ-20260407-0001")
 	require.NoError(t, err)
-	assert.Equal(t, "Clockwork Manifold", got.Name)
-	assert.Equal(t, "~/Projects-apps/clockwork-manifold", got.RepoPath)
+	assert.Equal(t, "Torque", got.Name)
+	assert.Equal(t, "~/Projects-apps/torque", got.RepoPath)
 	assert.Equal(t, "active", got.Status)
 	assert.Equal(t, "", got.Icon)
 }

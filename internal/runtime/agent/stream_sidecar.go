@@ -11,9 +11,9 @@ import (
 	llmtypes "github.com/hollis-labs/go-llm-types"
 )
 
-// streamEventLine is the JSONL shape clockwork persists to
+// streamEventLine is the JSONL shape torque persists to
 // <workspace>/logs/stream.jsonl. Re-serialized from llmtypes.StreamEvent —
-// this is a clockwork-internal projection, NOT raw claude stream-json (the
+// this is a torque-internal projection, NOT raw claude stream-json (the
 // lib parses claude's stdout into typed StreamEvent values before the
 // EventFanout consumer sees them; the original stream-json bytes are lost in
 // translation). Forensic value: replay the typed event sequence,

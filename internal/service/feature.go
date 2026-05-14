@@ -1,6 +1,6 @@
 package service
 
-import "github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+import "github.com/hollis-labs/torque/internal/persistence/sqlstore"
 
 // knownFeatures lists all valid opt-in feature names.
 var knownFeatures = map[string]bool{

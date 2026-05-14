@@ -41,7 +41,7 @@ func kickoffMarkdown(opts Options, role string) string {
 	}
 
 	body := "# Boot\n\n"
-	body += "You are a `" + role + "` agent dispatched by clockwork.\n\n"
+	body += "You are a `" + role + "` agent dispatched by torque.\n\n"
 	body += "**Task ID:** `" + taskRef + "`\n"
 	if planRef != "" {
 		body += "**Plan ID:** `" + planRef + "`\n"
@@ -50,7 +50,7 @@ func kickoffMarkdown(opts Options, role string) string {
 		body += "**Project root:** `" + opts.Workdir + "`\n"
 	}
 	body += "\n"
-	body += "Use the `clockwork_loopback` MCP server's task-scoped tools (no `task_id` parameter required) for self-task operations. Prefer them over `mcp__mux__clockwork_*` for the booted task.\n\n"
+	body += "Use the `torque_loopback` MCP server's task-scoped tools (no `task_id` parameter required) for self-task operations. Prefer them over `mcp__mux__torque_*` for the booted task.\n\n"
 	if opts.OneShotPrompt != "" {
 		body += "## First turn\n\n"
 		body += opts.OneShotPrompt + "\n"

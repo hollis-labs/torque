@@ -3,8 +3,8 @@ package service_test
 import (
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,14 +22,14 @@ func TestProjectCreate(t *testing.T) {
 	svc.Feature.Enable("projects")
 
 	proj, err := svc.Project.Create(service.ProjectCreateInput{
-		Name:        "Clockwork Manifold",
+		Name:        "Torque",
 		Description: "Task orchestration engine",
-		RepoPath:    "~/Projects-apps/clockwork-manifold",
+		RepoPath:    "~/Projects-apps/torque",
 	})
 	require.NoError(t, err)
 	assert.Contains(t, proj.ID, "PRJ-")
-	assert.Equal(t, "Clockwork Manifold", proj.Name)
-	assert.Equal(t, "~/Projects-apps/clockwork-manifold", proj.RepoPath)
+	assert.Equal(t, "Torque", proj.Name)
+	assert.Equal(t, "~/Projects-apps/torque", proj.RepoPath)
 }
 
 func TestProjectCreateValidation(t *testing.T) {

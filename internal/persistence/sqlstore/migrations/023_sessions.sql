@@ -6,7 +6,7 @@
 -- record; the orphan sweep on startup reconciles `running` rows whose PID is
 -- gone (mirrors mux's SweepStaleSessions pattern).
 --
--- Schema is re-designed for Clockwork — does NOT import mux's columns. The
+-- Schema is re-designed for Torque — does NOT import mux's columns. The
 -- four-value state set matches go-agent-sessions (launching|running|done|
 -- failed); a fifth `crashed` state is reserved for orphan-sweep transitions
 -- so dashboards can distinguish a clean exit from a daemon-killed survivor.
@@ -15,7 +15,7 @@
 
 CREATE TABLE IF NOT EXISTS sessions (
     id              TEXT PRIMARY KEY,
-    -- agent_profile is the clockwork agent profile name (e.g. "default",
+    -- agent_profile is the torque agent profile name (e.g. "default",
     -- "reviewer-end-agent"). Resolved at launch via config.ProfileMap.
     agent_profile   TEXT NOT NULL DEFAULT '',
     -- provider mirrors profile.Provider (claude|codex|gemini|copilot|opencode)
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- a profile registry that may have changed since launch.
     provider        TEXT NOT NULL DEFAULT '',
     -- runtime_id / runtime_kind are the go-agent-sessions Runtime descriptors
-    -- (e.g. "clockwork-cli/claude", "cli"). Stored for diagnostic surfacing.
+    -- (e.g. "torque-cli/claude", "cli"). Stored for diagnostic surfacing.
     runtime_id      TEXT NOT NULL DEFAULT '',
     runtime_kind    TEXT NOT NULL DEFAULT '',
     -- workdir is the spawned process's cwd (boot dir under the cliexec

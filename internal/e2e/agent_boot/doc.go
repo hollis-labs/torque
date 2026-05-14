@@ -10,19 +10,19 @@
 // What lives here:
 //
 //   - fakeruntime.go      fakeRuntime + fakeSession (records StartOptions,
-//                         lets tests trigger TypedEventCallback synthetically,
-//                         drives PIDReporter for both PTY and adapter shapes)
+//     lets tests trigger TypedEventCallback synthetically,
+//     drives PIDReporter for both PTY and adapter shapes)
 //   - helpers.go          composeDeps(t, ...) → real deps wired against the
-//                         fakeRuntime; plantCheckpoint(...) for ModeResume
+//     fakeRuntime; plantCheckpoint(...) for ModeResume
 //   - boot_test.go        per-Mode coverage (LongLived / OneShot / Subagent /
-//                         Background / Resume)
+//     Background / Resume)
 //   - feature_test.go     per-feature coverage (PIDReporter / TypedEventCallback /
-//                         Supervisor / SupervisorPassThrough / ExitErrorCause /
-//                         SandboxAllowLoopback)
+//     Supervisor / SupervisorPassThrough / ExitErrorCause /
+//     SandboxAllowLoopback)
 //   - plan_execute_test.go ports the legacy planstart → orchestrator-boot
-//                         smoke onto agent.Boot's AutoFireFirstTurn shape
+//     smoke onto agent.Boot's AutoFireFirstTurn shape
 //   - broker_test.go      ports the legacy substrate (sessionmgr + broker)
-//                         hello-world smoke onto agent.Manager
+//     hello-world smoke onto agent.Manager
 //
 // Replaces the build-tagged internal/e2e/plan_execute/ + internal/e2e/
 // sessionmgr_broker/ packages — both gated behind agentboot_e2e_pending

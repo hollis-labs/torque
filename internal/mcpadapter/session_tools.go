@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -13,13 +13,13 @@ import (
 // agent.Manager handle wired (mcp-only stdio path); each handler returns a
 // `domain` envelope explaining the missing wiring rather than panicking.
 func (a *Adapter) registerSessionTools() {
-	a.addTool(mcp.NewTool("clockwork_session_create",
+	a.addTool(mcp.NewTool("torque_session_create",
 		mcp.WithDescription(`Boot a long-lived agent session via the unified agent.Manager.Boot path.
 Use to spawn an agent (Reviewer end-agent, Orchestrator, planner, etc.) whose lifetime exceeds a single task — Mode=ModeLongLived. Per-task scheduler-dispatched (one-turn) executions go through the kind=agent task path, not this tool.
-Pair with clockwork_session_checkpoint mid-run and clockwork_session_resume to seed a fresh session from prior checkpoint state.
+Pair with torque_session_checkpoint mid-run and torque_session_resume to seed a fresh session from prior checkpoint state.
 Response shape: data = <Session> singleton — ID, status, runtime descriptors, project/task soft-FKs, Mode, BootDir, WorkspaceDir, ParentSessionID.
 Example: {"agent_profile":"default","workdir":"/tmp/sess","task_id":"T-123"}`),
-		mcp.WithString("agent_profile", mcp.Required(), mcp.Description("Clockwork agent profile name")),
+		mcp.WithString("agent_profile", mcp.Required(), mcp.Description("Torque agent profile name")),
 		mcp.WithString("workdir", mcp.Required(), mcp.Description("Spawned process working directory (boot dir for claude)")),
 		mcp.WithString("project_id", mcp.Description("Optional project soft-FK")),
 		mcp.WithString("task_id", mcp.Description("Optional task soft-FK")),
@@ -29,8 +29,8 @@ Example: {"agent_profile":"default","workdir":"/tmp/sess","task_id":"T-123"}`),
 	// _launch is an alias for _create — the ticket lists both. Kept as
 	// distinct registrations so MCP descriptions can diverge later if
 	// create-then-launch splits into two phases.
-	a.addTool(mcp.NewTool("clockwork_session_launch",
-		mcp.WithDescription(`Alias for clockwork_session_create — boots a Mode=ModeLongLived agent session via agent.Manager.Boot. Same args, same response.
+	a.addTool(mcp.NewTool("torque_session_launch",
+		mcp.WithDescription(`Alias for torque_session_create — boots a Mode=ModeLongLived agent session via agent.Manager.Boot. Same args, same response.
 Kept distinct in the registry so create-then-launch can split into two phases without a breaking rename. Today both names route to the same handler.
 Response shape: data = <Session> singleton.
 Example: {"agent_profile":"default","workdir":"/tmp/sess"}`),
@@ -41,16 +41,16 @@ Example: {"agent_profile":"default","workdir":"/tmp/sess"}`),
 		mcp.WithString("system_prompt"),
 	), a.handleSessionCreate)
 
-	a.addTool(mcp.NewTool("clockwork_session_get",
+	a.addTool(mcp.NewTool("torque_session_get",
 		mcp.WithDescription(`Fetch one session record by ID.
 Use to inspect lifecycle status, exit code, runtime descriptors, and resume hint after launch or before resume.
-Pair with clockwork_session_list for cohort discovery; clockwork_session_get is the singleton accessor.
+Pair with torque_session_list for cohort discovery; torque_session_get is the singleton accessor.
 Response shape: data = <Session> singleton.
 Example: {"id":"SES-..."}`),
 		mcp.WithString("id", mcp.Required()),
 	), a.handleSessionGet)
 
-	a.addTool(mcp.NewTool("clockwork_session_list",
+	a.addTool(mcp.NewTool("torque_session_list",
 		mcp.WithDescription(`List long-lived agent sessions, newest-first. Optional state/task/project filters.
 Use to find live or recently-terminated sessions, audit orphan-sweep results (state=crashed), or build dashboards over running cohorts.
 state filter values: launching|running|done|failed|crashed. limit caps the page.
@@ -62,28 +62,28 @@ Example: {"state":"running","task_id":"T-123"}`),
 		mcp.WithString("limit"),
 	), a.handleSessionList)
 
-	a.addTool(mcp.NewTool("clockwork_session_stop",
+	a.addTool(mcp.NewTool("torque_session_stop",
 		mcp.WithDescription(`Stop a running session. Idempotent — returns stopped:false when the session is already terminal or unknown to this process.
 Use for graceful shutdown of an orchestrator or end-agent before daemon restart.
-Watch goroutine records terminal state asynchronously; poll clockwork_session_get for status convergence.
+Watch goroutine records terminal state asynchronously; poll torque_session_get for status convergence.
 Response shape: data = {stopped:bool, id, reason?}.
 Example: {"id":"SES-..."}`),
 		mcp.WithString("id", mcp.Required()),
 	), a.handleSessionStop)
 
-	a.addTool(mcp.NewTool("clockwork_session_attach",
+	a.addTool(mcp.NewTool("torque_session_attach",
 		mcp.WithDescription(`Probe a session for attachability and return its metadata.
 Note: the MCP transport cannot stream PTY output. Use this tool to inspect the session record and a hint pointing at the HTTP /api/v1/sessions/{id}/attach surface (where actual streaming will land in S2).
-Pair with clockwork_session_get when you only need the snapshot.
+Pair with torque_session_get when you only need the snapshot.
 Response shape: data = {session:<Session>, hint:string}.
 Example: {"id":"SES-..."}`),
 		mcp.WithString("id", mcp.Required()),
 	), a.handleSessionAttach)
 
-	a.addTool(mcp.NewTool("clockwork_session_checkpoint",
+	a.addTool(mcp.NewTool("torque_session_checkpoint",
 		mcp.WithDescription(`Persist a checkpoint (opaque caller payload + optional note) for a session.
 Use to capture continuity state — orchestrator plan progress, reviewer queue depth, etc. — before a planned interruption.
-Pair with clockwork_session_resume to spawn a new session id seeded from this checkpoint's state.
+Pair with torque_session_resume to spawn a new session id seeded from this checkpoint's state.
 Response shape: data = <Checkpoint> singleton — id, session_id, payload, created_at.
 Example: {"id":"SES-...","payload":"{\"step\":42}","note":"after design pass"}`),
 		mcp.WithString("id", mcp.Required()),
@@ -91,7 +91,7 @@ Example: {"id":"SES-...","payload":"{\"step\":42}","note":"after design pass"}`)
 		mcp.WithString("note"),
 	), a.handleSessionCheckpoint)
 
-	a.addTool(mcp.NewTool("clockwork_session_resume",
+	a.addTool(mcp.NewTool("torque_session_resume",
 		mcp.WithDescription(`Resume a session: launches a NEW session id seeded from a previous session's checkpoint.
 Use after a daemon restart, a graceful stop, or an orphan-sweep crash to pick up an orchestrator/reviewer where it left off.
 checkpoint_id is optional — when omitted the manager picks the most recent checkpoint. agent_profile/workdir overrides default to the source session's values.

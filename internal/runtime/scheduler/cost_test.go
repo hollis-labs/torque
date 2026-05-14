@@ -4,10 +4,10 @@ import (
 	"database/sql"
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
@@ -219,13 +219,13 @@ func TestScheduler_ResolveCost_NormalizesProviderAlias(t *testing.T) {
 		// that constructs a real *Scheduler and calls resolveCost
 		// with Profile{Provider: "claude"} to lock the
 		// CatalogProviderID call site against regression.
-		if name == "clockwork-backend" {
+		if name == "torque-backend" {
 			return "anthropic", "claude-sonnet-4-5", true
 		}
 		return "", "", false
 	}
 
-	cost, src := scheduler.ResolveCost("clockwork-backend",
+	cost, src := scheduler.ResolveCost("torque-backend",
 		&executor.ExecutionResult{Cost: 0, Tokens: executor.TokenUsage{PromptTokens: 1000, CompletionTokens: 500}},
 		estimate, resolveProfile, true)
 

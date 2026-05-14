@@ -27,9 +27,9 @@ type ApprovalRequest struct {
 
 // ApprovalResponse is the response to an approval request.
 type ApprovalResponse struct {
-	Decision  Decision
-	Scope     Scope
-	TimedOut  bool
+	Decision Decision
+	Scope    Scope
+	TimedOut bool
 }
 
 // Engine manages permission checking with rules, modes, and session grants.

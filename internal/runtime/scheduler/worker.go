@@ -5,7 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
 )
 
 // WorkFunc is the function a worker executes. It receives a context that is

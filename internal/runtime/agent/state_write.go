@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 func (d *Dependencies) CreateSession(ctx context.Context, rec *sqlstore.SessionRecord) error {

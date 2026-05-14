@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
+	"github.com/hollis-labs/torque/internal/service"
 )
 
 // CheckpointResponseDispatcher (sprint α.4, CW-20260512-0062) implements

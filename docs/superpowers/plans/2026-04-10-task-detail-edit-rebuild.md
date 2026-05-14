@@ -2635,8 +2635,8 @@ EOF
 
 - [ ] **Step 11.1: Start the dev stack**
 
-- Confirm clockwork-api is running (via cerberus). Default port 8990.
-- Confirm clockwork-frontend is running (via cerberus). Default port 5175.
+- Confirm torque-api is running (via cerberus). Default port 8990.
+- Confirm torque-frontend is running (via cerberus). Default port 5175.
 
 If either is down:
 
@@ -2645,8 +2645,8 @@ If either is down:
 cerberus status
 
 # Start if needed
-cerberus start clockwork-api
-cerberus start clockwork-frontend
+cerberus start torque-api
+cerberus start torque-frontend
 ```
 
 - [ ] **Step 11.2: Load the board and navigate to a task**

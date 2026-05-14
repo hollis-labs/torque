@@ -11,7 +11,7 @@ import (
 )
 
 // PerRunOptions configures the per-run worktree behaviour. These map to
-// CLOCKWORK_WORKTREE_* env vars resolved by the scheduler config layer.
+// TORQUE_WORKTREE_* env vars resolved by the scheduler config layer.
 type PerRunOptions struct {
 	// Enabled is checked by callers; SetupPerRun does not gate on it.
 	Enabled bool

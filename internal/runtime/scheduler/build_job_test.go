@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/queue"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/queue"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
@@ -52,9 +52,9 @@ func TestBuildJob_InheritsProjectContext(t *testing.T) {
 	sched, store := setupBuildJobScheduler(t)
 	project := &sqlstore.ProjectRecord{
 		ID:           "PRJ-1",
-		Name:         "Clockwork",
+		Name:         "Torque",
 		RepoPath:     "/repo/project",
-		AgentPath:    ".agents/clockwork.md",
+		AgentPath:    ".agents/torque.md",
 		ReadPaths:    sql.NullString{String: `["docs","specs"]`, Valid: true},
 		WritePaths:   sql.NullString{String: `["apps/gui"]`, Valid: true},
 		ContextPaths: sql.NullString{String: `["docs/architecture","design"]`, Valid: true},
@@ -78,7 +78,7 @@ func TestBuildJob_InheritsProjectContext(t *testing.T) {
 	job := sched.buildJob(task, 7)
 	require.NotNil(t, job.Metadata)
 	assert.Equal(t, "/repo/project", job.WorkingDir)
-	assert.Equal(t, ".agents/clockwork.md", job.AgentFile)
+	assert.Equal(t, ".agents/torque.md", job.AgentFile)
 	assert.Contains(t, job.Files, "docs/architecture")
 	assert.Contains(t, job.Files, "docs/prd.md")
 	assert.Equal(t, "workspace-write", job.Permissions["sandbox"])

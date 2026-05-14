@@ -3,14 +3,14 @@ package mcpadapter
 import (
 	"context"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func (a *Adapter) registerCommentTools() {
-	a.addTool(mcp.NewTool("clockwork_comment_add",
+	a.addTool(mcp.NewTool("torque_comment_add",
 		mcp.WithDescription(`Append a comment (freeform prose) to an entity; returns the persisted CommentRecord with assigned ID.
-Comments are polymorphic — entity_type selects which kind of entity the comment is attached to. Currently supported: "task". Future: "collection", "epic", "sprint", "project". Use for agent-to-user channel, review notes, or blocked-reason explanation; structured audit trails should go in artifacts via clockwork_artifact_create. Comments never drive lifecycle.
+Comments are polymorphic — entity_type selects which kind of entity the comment is attached to. Currently supported: "task". Future: "collection", "epic", "sprint", "project". Use for agent-to-user channel, review notes, or blocked-reason explanation; structured audit trails should go in artifacts via torque_artifact_create. Comments never drive lifecycle.
 Response shape: data = {<CommentRecord fields>} — singleton.
 Example: {"entity_type":"task","entity_id":"T-123","author":"reviewer","content":"Please also cover the null-parent case."}`),
 		mcp.WithString("entity_type", mcp.Required(), mcp.Description(`Entity kind the comment is attached to. Valid: "task". Future: "collection", "epic", "sprint", "project".`)),
@@ -19,9 +19,9 @@ Example: {"entity_type":"task","entity_id":"T-123","author":"reviewer","content"
 		mcp.WithString("content", mcp.Required(), mcp.Description("Comment body (prose)")),
 	), a.handleCommentAdd)
 
-	a.addTool(mcp.NewTool("clockwork_comment_list",
+	a.addTool(mcp.NewTool("torque_comment_list",
 		mcp.WithDescription(`List all comments on an entity, oldest first (chronological order). Default brief shape includes a 100-char excerpt of the body; pass verbose="true" for full content.
-Use to review the discussion thread for a given entity; clockwork_comment_add to append. For newest-first cross-entity search use clockwork_comment_search. No comment_get/delete yet — brief ID + list is the read surface.
+Use to review the discussion thread for a given entity; torque_comment_add to append. For newest-first cross-entity search use torque_comment_search. No comment_get/delete yet — brief ID + list is the read surface.
 Response shape: data = {items: [<briefComment or CommentRecord>...], meta: {truncated, returned, limit, hint?}}.
 Example: {"entity_type":"task","entity_id":"T-123"}`),
 		mcp.WithString("entity_type", mcp.Required(), mcp.Description(`Entity kind. Valid: "task". Future: "collection", "epic", "sprint", "project".`)),
@@ -29,9 +29,9 @@ Example: {"entity_type":"task","entity_id":"T-123"}`),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleCommentList)
 
-	a.addTool(mcp.NewTool("clockwork_comment_search",
+	a.addTool(mcp.NewTool("torque_comment_search",
 		mcp.WithDescription(`Search comments by content across all entities, optionally scoped to one entity (entity_type + entity_id) or author. Returns newest first.
-Use to discover comments by content; clockwork_comment_list for per-entity ordered history. No comment_get/delete yet.
+Use to discover comments by content; torque_comment_list for per-entity ordered history. No comment_get/delete yet.
 Response shape: data = {items: [<CommentRecord>...], meta: {truncated, returned, limit, hint?}}.
 Example: {"query":"review notes","entity_type":"task","entity_id":"T-123"}`),
 		mcp.WithString("query", mcp.Required(), mcp.Description("Substring match on comment content")),

@@ -16,17 +16,17 @@ Response shape: data = {enabled, max_workers, active_workers, queue_depth, total
 Example: {}`
 
 const schedulerToggleDescription = `Enable or disable the task scheduler.
-Use to pause auto-dispatch for a session (e.g. before a mass-flip or noisy debug) and resume afterwards. Session-scoped: reset on serve restart (scheduler re-initializes from config); persistent disable belongs in clockwork_settings_save, not here.
+Use to pause auto-dispatch for a session (e.g. before a mass-flip or noisy debug) and resume afterwards. Session-scoped: reset on serve restart (scheduler re-initializes from config); persistent disable belongs in torque_settings_save, not here.
 Idempotent — toggling to the current state is a no-op and returns the same status. Unlike the HTTP toggle (which always flips), this tool takes an explicit enabled arg so agents don't have to read-modify-write across two tool calls.
 Response shape: data = {enabled, max_workers, active_workers, queue_depth, total_cost, subscribers, stale_heartbeat_seconds}.
 Example: {"enabled":"false"}`
 
 func (a *Adapter) registerSchedulerTools() {
-	a.addTool(mcp.NewTool("clockwork_scheduler_status",
+	a.addTool(mcp.NewTool("torque_scheduler_status",
 		mcp.WithDescription(schedulerStatusDescription),
 	), a.handleSchedulerStatus)
 
-	a.addTool(mcp.NewTool("clockwork_scheduler_toggle",
+	a.addTool(mcp.NewTool("torque_scheduler_toggle",
 		mcp.WithDescription(schedulerToggleDescription),
 		mcp.WithString("enabled", mcp.Required(), mcp.Description("true to enable dispatch, false to pause. Session-scoped — no effect on config. (boolean, accepts \"true\"/\"false\" strings).")),
 	), a.handleSchedulerToggle)

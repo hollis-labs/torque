@@ -12,17 +12,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/broker"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/reactor"
+	"github.com/hollis-labs/torque/internal/broker"
+	"github.com/hollis-labs/torque/internal/runtime/reactor"
 )
 
 // --- fakes ------------------------------------------------------------
 
 type fakeCheckpoints struct {
-	mu       sync.Mutex
-	calls    []checkpointCall
-	corrID   string
-	emitErr  error
+	mu      sync.Mutex
+	calls   []checkpointCall
+	corrID  string
+	emitErr error
 }
 
 type checkpointCall struct {
@@ -44,9 +44,9 @@ type fakeBlocker struct {
 }
 
 type blockerCall struct {
-	TaskID   string
-	Status   string
-	Reason   string
+	TaskID string
+	Status string
+	Reason string
 }
 
 func (f *fakeBlocker) TransitionTaskWithReason(taskID, status, reason string) error {
@@ -70,9 +70,9 @@ func (f *fakeSessions) Stop(_ context.Context, sessionID string) error {
 }
 
 type fakeFanout struct {
-	mu    sync.Mutex
-	sent  []gomsg.Envelope
-	err   error
+	mu   sync.Mutex
+	sent []gomsg.Envelope
+	err  error
 }
 
 func (f *fakeFanout) Send(_ context.Context, env gomsg.Envelope) (gomsg.Envelope, error) {

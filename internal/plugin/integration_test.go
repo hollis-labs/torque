@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	pluginpkg "github.com/hollis-labs/clockwork-manifold/internal/plugin"
+	pluginpkg "github.com/hollis-labs/torque/internal/plugin"
 )
 
 // ---- integrationPlugin ----
@@ -55,8 +55,8 @@ func (p *integrationPlugin) Load(host goplugin.Host) error {
 		return err
 	}
 
-	// Register a UI slot entry — requires type assertion to *ClockworkHost.
-	if ch, ok := host.(*pluginpkg.ClockworkHost); ok {
+	// Register a UI slot entry — requires type assertion to *TorqueHost.
+	if ch, ok := host.(*pluginpkg.TorqueHost); ok {
 		_ = ch.RegisterSlot(pluginpkg.UISlotEntry{
 			ID:       "integration-slot-entry",
 			PluginID: p.id,
@@ -123,7 +123,7 @@ func (e *integrationExecutor) Validate(_ *pluginpkg.ExecutionJob) error { return
 func TestIntegrationFullLifecycle(t *testing.T) {
 	// 1. Create host with mux.
 	mux := http.NewServeMux()
-	h := pluginpkg.NewClockworkHost(mux, nil)
+	h := pluginpkg.NewTorqueHost(mux, nil)
 	require.NotNil(t, h)
 
 	// 2. Register services, executor, tools, filter.

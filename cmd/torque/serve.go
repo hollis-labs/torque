@@ -14,23 +14,23 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/broker"
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/httpserver"
-	clockmsg "github.com/hollis-labs/clockwork-manifold/internal/messaging"
-	"github.com/hollis-labs/clockwork-manifold/internal/modelcatalog"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/appdb"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/writequeue"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/bootstrap"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/queue"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/waitpoll"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/writeq"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
-	"github.com/hollis-labs/clockwork-manifold/internal/toolbroker"
+	"github.com/hollis-labs/torque/internal/broker"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/httpserver"
+	clockmsg "github.com/hollis-labs/torque/internal/messaging"
+	"github.com/hollis-labs/torque/internal/modelcatalog"
+	"github.com/hollis-labs/torque/internal/persistence/appdb"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/persistence/writequeue"
+	"github.com/hollis-labs/torque/internal/runtime/bootstrap"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/queue"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/runtime/waitpoll"
+	"github.com/hollis-labs/torque/internal/runtime/writeq"
+	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/toolbroker"
 	"github.com/spf13/cobra"
 )
 
@@ -39,7 +39,7 @@ func serveCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Start Clockwork HTTP API server, scheduler, and GUI",
+		Short: "Start Torque HTTP API server, scheduler, and GUI",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -192,7 +192,7 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	msgStore := clockmsg.NewStore(db)
 	handler.SetMessaging(msgStore)
 
-	// Typed envelope broker (CW-20260503-0013, S1.3) — Clockwork-specific
+	// Typed envelope broker (CW-20260503-0013, S1.3) — Torque-specific
 	// validation + envelope.* SSE publishing on top of the Store. Distinct
 	// from internal/toolbroker (S1.5); package layout deliberately split
 	// to avoid the name collision flagged in the boot prompt.
@@ -311,7 +311,7 @@ func runServe(ctx context.Context, ln net.Listener) error {
 		}
 	}()
 
-	log.Printf("Clockwork HTTP server listening on %s", ln.Addr().String())
+	log.Printf("Torque HTTP server listening on %s", ln.Addr().String())
 	log.Printf("GUI available at http://%s", ln.Addr().String())
 	log.Printf("API available at http://%s/api/v1", ln.Addr().String())
 	log.Printf("Scheduler: workers=%d interval=%ds stale_heartbeat_threshold=%ds enabled=%t",
@@ -337,12 +337,12 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	return nil
 }
 
-// loadProfilesOrEmpty loads agent profiles from CLOCKWORK_PROFILES_PATH if
+// loadProfilesOrEmpty loads agent profiles from TORQUE_PROFILES_PATH if
 // set, or from "./profiles.yaml" if it exists. Missing files are NOT an
 // error: returns an empty ProfileMap so mock-only dev setups work out of the
 // box. Real-CLI runs require the file and will fail per-task at Validate time.
 func loadProfilesOrEmpty() config.ProfileMap {
-	path := os.Getenv("CLOCKWORK_PROFILES_PATH")
+	path := os.Getenv("TORQUE_PROFILES_PATH")
 	if path == "" {
 		path = "profiles.yaml"
 	}

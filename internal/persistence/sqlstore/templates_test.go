@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 func sampleTemplate(id string, version int) *sqlstore.TemplateRecord {

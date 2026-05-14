@@ -9,9 +9,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
-
 
 // Manager handles git worktree lifecycle — creation, tracking, and cleanup.
 type Manager struct {
@@ -36,8 +35,8 @@ func NewManager(store *sqlstore.Store, cfg WorktreeConfig) *Manager {
 }
 
 // Create creates a new git worktree for a task execution.
-// It creates a branch named clockwork/<taskID>, adds a git worktree at
-// <repoPath>/.clockwork/worktrees/<taskID>/, and records it in the database.
+// It creates a branch named torque/<taskID>, adds a git worktree at
+// <repoPath>/.torque/worktrees/<taskID>/, and records it in the database.
 func (m *Manager) Create(ctx context.Context, req CreateRequest) (*WorktreeRecord, error) {
 	// Check max concurrent worktrees for this project.
 	active, err := m.countActiveForProject(ctx, req.ProjectID)
@@ -48,7 +47,7 @@ func (m *Manager) Create(ctx context.Context, req CreateRequest) (*WorktreeRecor
 		return nil, fmt.Errorf("max concurrent worktrees (%d) reached for project %s", m.cfg.MaxPerProject, req.ProjectID)
 	}
 
-	branch := "clockwork/" + req.TaskID
+	branch := "torque/" + req.TaskID
 	wtPath := filepath.Join(req.RepoPath, m.cfg.WorktreeBaseDir, req.TaskID)
 
 	// Ensure the parent directory exists.

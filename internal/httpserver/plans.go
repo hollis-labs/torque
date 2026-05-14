@@ -5,21 +5,21 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/planstart"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/planstart"
+	"github.com/hollis-labs/torque/internal/service"
 )
 
 // PlanCreateRequest is the POST /api/v1/plans body.
 type PlanCreateRequest struct {
-	Title       string                    `json:"title"`
-	Description string                    `json:"description,omitempty"`
-	Priority    int                       `json:"priority,omitempty"`
-	ProjectID   string                    `json:"project_id,omitempty"`
-	SprintID    string                    `json:"sprint_id,omitempty"`
-	EpicID      string                    `json:"epic_id,omitempty"`
-	Phases      []service.PlanPhaseInput  `json:"phases,omitempty"`
-	Tags        []string                  `json:"tags,omitempty"`
+	Title       string                   `json:"title"`
+	Description string                   `json:"description,omitempty"`
+	Priority    int                      `json:"priority,omitempty"`
+	ProjectID   string                   `json:"project_id,omitempty"`
+	SprintID    string                   `json:"sprint_id,omitempty"`
+	EpicID      string                   `json:"epic_id,omitempty"`
+	Phases      []service.PlanPhaseInput `json:"phases,omitempty"`
+	Tags        []string                 `json:"tags,omitempty"`
 }
 
 // PlanAddPhaseRequest is the POST /api/v1/plans/{id}/phases body.

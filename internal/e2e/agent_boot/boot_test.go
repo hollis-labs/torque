@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
 )
 
 // TestBoot_ModeLongLived_AutoFiresFirstTurn validates the long-lived
@@ -24,7 +24,7 @@ func TestBoot_ModeLongLived_AutoFiresFirstTurn(t *testing.T) {
 
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID:       "CW-TEST-LL-001",
-		AgentProfile: "clockwork-backend",
+		AgentProfile: "torque-backend",
 		Workdir:      t.TempDir(),
 		Mode:         agent.ModeLongLived,
 	})
@@ -44,7 +44,7 @@ func TestBoot_ModeLongLived_AutoFiresFirstTurn(t *testing.T) {
 	rec, err := cd.Store.GetSession(sess.ID)
 	require.NoError(t, err)
 	assert.Contains(t, rec.MetaJSON, "long_lived",
-		"clockwork.mode meta must record the long-lived lifecycle")
+		"torque.mode meta must record the long-lived lifecycle")
 
 	// Boot must NOT have called SendInput separately. The lib's runtime is
 	// responsible for the AutoFireFirstTurn delivery; Boot's contract is just
@@ -69,7 +69,7 @@ func TestBoot_ModeOneShot_SyncTurn(t *testing.T) {
 
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID:        "CW-TEST-OS-001",
-		AgentProfile:  "clockwork-backend",
+		AgentProfile:  "torque-backend",
 		Workdir:       t.TempDir(),
 		Mode:          agent.ModeOneShot,
 		OneShotPrompt: "do the thing",
@@ -128,7 +128,7 @@ func TestBoot_ModeOneShot_TimeoutFallsThrough(t *testing.T) {
 
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID:        "CW-TEST-OS-TIMEOUT",
-		AgentProfile:  "clockwork-backend",
+		AgentProfile:  "torque-backend",
 		Workdir:       t.TempDir(),
 		Mode:          agent.ModeOneShot,
 		OneShotPrompt: "trigger turn-complete wait timeout",
@@ -160,7 +160,7 @@ func TestBoot_ModeSubagent_StampsParent(t *testing.T) {
 	t.Run("missing ParentSessionID rejected", func(t *testing.T) {
 		_, err := cd.Manager.Boot(ctx, agent.Options{
 			TaskID:       "CW-TEST-SA-MISS",
-			AgentProfile: "clockwork-backend",
+			AgentProfile: "torque-backend",
 			Workdir:      t.TempDir(),
 			Mode:         agent.ModeSubagent,
 		})
@@ -171,7 +171,7 @@ func TestBoot_ModeSubagent_StampsParent(t *testing.T) {
 	t.Run("happy path stamps parent on session row", func(t *testing.T) {
 		sess, err := cd.Manager.Boot(ctx, agent.Options{
 			TaskID:          "CW-TEST-SA-OK",
-			AgentProfile:    "clockwork-backend",
+			AgentProfile:    "torque-backend",
 			Workdir:         t.TempDir(),
 			Mode:            agent.ModeSubagent,
 			ParentSessionID: "SES-PARENT-X",
@@ -186,7 +186,7 @@ func TestBoot_ModeSubagent_StampsParent(t *testing.T) {
 		got, err := cd.Manager.Get(sess.ID)
 		require.NoError(t, err)
 		assert.Equal(t, "SES-PARENT-X", got.ParentSessionID,
-			"Manager.Get must recover ParentSessionID from clockwork.parent_session_id meta")
+			"Manager.Get must recover ParentSessionID from torque.parent_session_id meta")
 
 		// AutoFireFirstTurn fires for ModeSubagent (per boot.go's autoFire matrix).
 		assert.True(t, cd.Runtime.autoFireFirstTurn.Load(),
@@ -207,7 +207,7 @@ func TestBoot_ModeBackground_ReturnsImmediately(t *testing.T) {
 	start := time.Now()
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID:       "CW-TEST-BG-001",
-		AgentProfile: "clockwork-backend",
+		AgentProfile: "torque-backend",
 		Workdir:      t.TempDir(),
 		Mode:         agent.ModeBackground,
 	})
@@ -241,7 +241,7 @@ func TestBoot_ModeResume_LoadsCheckpoint(t *testing.T) {
 
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID:               "CW-TEST-RES-001",
-		AgentProfile:         "clockwork-backend",
+		AgentProfile:         "torque-backend",
 		Workdir:              t.TempDir(),
 		Mode:                 agent.ModeResume,
 		ResumeFromCheckpoint: cpID,
@@ -279,7 +279,7 @@ func TestBoot_ModeResume_MissingCheckpointRejected(t *testing.T) {
 
 	_, err := cd.Manager.Boot(context.Background(), agent.Options{
 		TaskID:       "CW-TEST-RES-MISS",
-		AgentProfile: "clockwork-backend",
+		AgentProfile: "torque-backend",
 		Workdir:      t.TempDir(),
 		Mode:         agent.ModeResume,
 	})

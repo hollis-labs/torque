@@ -4,15 +4,15 @@ import (
 	"context"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/writequeue"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/writequeue"
 )
 
 const commentPersistTimeout = 5 * time.Second
 
 // CommentObserver is invoked synchronously after a comment is persisted.
 // Implementations must be non-blocking — observers run on the call path of
-// every clockwork_comment_add. Used by CW-20260509-0028 layer 2 to spot the
+// every torque_comment_add. Used by CW-20260509-0028 layer 2 to spot the
 // orchestrator's session-complete marker.
 type CommentObserver interface {
 	ObserveComment(ctx context.Context, c *sqlstore.CommentRecord)

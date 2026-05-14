@@ -9,9 +9,9 @@
 
 ## Summary
 
-The MCP adapter's task tools are missing filter parity with the backend. `clockwork_task_list` doesn't expose `project_id`, `sprint_id`, `epic_id`, `tags`, `manual`, or `search` even though `sqlstore.TaskFilter` supports them all. `clockwork_task_search` accepts only a free-text `query`, which forces LLM agents to either use the wrong tool or accept unfiltered results. Separately, there is no way to search comments via MCP — only per-task listing.
+The MCP adapter's task tools are missing filter parity with the backend. `torque_task_list` doesn't expose `project_id`, `sprint_id`, `epic_id`, `tags`, `manual`, or `search` even though `sqlstore.TaskFilter` supports them all. `torque_task_search` accepts only a free-text `query`, which forces LLM agents to either use the wrong tool or accept unfiltered results. Separately, there is no way to search comments via MCP — only per-task listing.
 
-This spec adds the missing filters to both task tools and introduces a new `clockwork_comment_search` tool.
+This spec adds the missing filters to both task tools and introduces a new `torque_comment_search` tool.
 
 ## Goals
 
@@ -46,7 +46,7 @@ This spec adds the missing filters to both task tools and introduces a new `cloc
 internal/persistence/sqlstore/comments.go       # add CommentFilter struct + SearchComments method
 internal/persistence/sqlstore/comments_test.go  # add TestSearchComments
 internal/service/comment.go (if standalone; else the relevant service file) # add Search wrapper
-internal/mcpadapter/comment_tools.go (if standalone; else wherever clockwork_comment_* tools register) # add handleCommentSearch + tool registration
+internal/mcpadapter/comment_tools.go (if standalone; else wherever torque_comment_* tools register) # add handleCommentSearch + tool registration
 internal/mcpadapter/<adapter-test>              # add full-stack test for comment search
 internal/mcpadapter/task_tools.go               # add 6 filter params to task_list and task_search; both call svc.Task.List
 internal/mcpadapter/task_tools_test.go          # extend TestFullStack_SearchTasks coverage
@@ -62,7 +62,7 @@ MCP client → mcp-go server → Adapter handler → svc.Task.List / svc.Comment
 
 No new layers. The adapter is the thin translation boundary; everything below already exists or is a small mirror of existing code.
 
-## `clockwork_task_list` and `clockwork_task_search` — new filter params
+## `torque_task_list` and `torque_task_search` — new filter params
 
 Both tools gain these optional parameters (`task_search` keeps `query` as required; it maps to `TaskFilter.Search`):
 
@@ -83,12 +83,12 @@ The `task_search` handler stops calling `svc.Task.Search` and `handleTaskSearch`
 
 Both tools get updated descriptions reflecting the new params. `task_search`'s description adds: "Filters (project_id, sprint_id, epic_id, tags, manual) combine with the query via AND — use them to narrow free-text results."
 
-## `clockwork_comment_search` — new tool
+## `torque_comment_search` — new tool
 
 ### MCP signature
 
 ```
-clockwork_comment_search(
+torque_comment_search(
   query:   string (required) — substring match on comment.content
   task_id: string (optional) — restrict to one task
   author:  string (optional) — exact match
@@ -154,7 +154,7 @@ Mirrors `handleTaskSearch`'s shape: clamp limit, build filter, call service, ret
 ### MCP adapter
 
 - `TestFullStack_SearchTasks` gains cases for each new filter (`project_id`, `tags`, `manual`, combined with `query`).
-- New `TestFullStack_CommentSearch`: create task + 3 comments (different authors, different content), call `clockwork_comment_search` with each filter, assert envelope and rows.
+- New `TestFullStack_CommentSearch`: create task + 3 comments (different authors, different content), call `torque_comment_search` with each filter, assert envelope and rows.
 
 No frontend tests — the FE isn't touched.
 
@@ -166,7 +166,7 @@ No frontend tests — the FE isn't touched.
 
 ## Follow-up candidates (explicitly deferred)
 
-- Expose comment search via HTTP (`GET /api/v1/comments/search`) and CLI (`clockwork comment search`) — the user deferred the API/CLI surface; this is when to add them. The MCP changes here leave the service-layer surface (`svc.Comment.Search`) ready for that next step.
+- Expose comment search via HTTP (`GET /api/v1/comments/search`) and CLI (`torque comment search`) — the user deferred the API/CLI surface; this is when to add them. The MCP changes here leave the service-layer surface (`svc.Comment.Search`) ready for that next step.
 - Remove `/tasks/search` HTTP endpoint and `Store.SearchTasks` once CLI callers migrate to `list?search=`.
 - Add comment edit/delete MCP tools if needed.
 - FTS5 / ranking for both task and comment search.

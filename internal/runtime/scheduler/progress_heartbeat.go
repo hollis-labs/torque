@@ -34,7 +34,7 @@ func newProgressHeartbeat(bus *EventBus, interval time.Duration) *progressHeartb
 
 // start launches a heartbeat goroutine for runID. A non-positive interval
 // disables heartbeats entirely (tests and operators can opt out by setting
-// CLOCKWORK_PROGRESS_HEARTBEAT_SECONDS=0). startedAt is the anchor for
+// TORQUE_PROGRESS_HEARTBEAT_SECONDS=0). startedAt is the anchor for
 // elapsed_sec in the emitted payload.
 func (h *progressHeartbeat) start(taskID string, runID int64, workerID string, startedAt time.Time) {
 	if h.interval <= 0 || h.bus == nil {

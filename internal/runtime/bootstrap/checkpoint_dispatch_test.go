@@ -9,11 +9,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/bootstrap"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
-	"github.com/hollis-labs/clockwork-manifold/internal/testutil/sqlitetest"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
+	"github.com/hollis-labs/torque/internal/runtime/bootstrap"
+	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/testutil/sqlitetest"
 )
 
 // Sprint α.4 (CW-20260512-0062): when no session row is bound to the
@@ -79,7 +79,7 @@ func TestCheckpointResponseDispatcher_SessionPresent_EmitsBreadcrumbAndAttemptsR
 		ID:           sessID,
 		AgentProfile: "default",
 		Provider:     "claude",
-		RuntimeID:    "clockwork-cli/claude",
+		RuntimeID:    "torque-cli/claude",
 		RuntimeKind:  "cli",
 		Workdir:      t.TempDir(),
 		State:        "done", // terminal — but α.2's ResumeSession works on persisted state

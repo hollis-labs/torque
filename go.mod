@@ -1,4 +1,4 @@
-module github.com/hollis-labs/clockwork-manifold
+module github.com/hollis-labs/torque
 
 go 1.26.1
 

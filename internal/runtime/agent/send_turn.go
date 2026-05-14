@@ -6,11 +6,11 @@ import (
 	"fmt"
 )
 
-// clockworkClientVersion is the value the JSON-RPC initialize call
+// torqueClientVersion is the value the JSON-RPC initialize call
 // reports as clientInfo.version to the codex app-server. Build-time
 // constant; surfaced in the app-server's diagnostic log so operators
-// can correlate clockwork releases against codex sessions.
-const clockworkClientVersion = "0.1-dev"
+// can correlate torque releases against codex sessions.
+const torqueClientVersion = "0.1-dev"
 
 // SendTurn delivers a user-message turn to a running agent session.
 // The delivery path is selected by the session's RuntimeKind:
@@ -47,7 +47,7 @@ func (m *Manager) SendTurn(ctx context.Context, sess *Session, text string) erro
 		// raw-stdin path. PTY runtime treats the bytes as if typed at
 		// the TUI; streaming-stdio expects NDJSON-encoded user
 		// messages (which the upstream agent-mux reference layers on
-		// top of SendInput, not here — clockwork's kickoffPayload
+		// top of SendInput, not here — torque's kickoffPayload
 		// pattern is `"Boot @./boot.md"` plaintext which claude-code
 		// parses as a user message verbatim).
 		return m.inner.SendInput(sess.ID, []byte(text))
@@ -67,15 +67,15 @@ func (m *Manager) SendTurn(ctx context.Context, sess *Session, text string) erro
 // subsequent turn on this session. turn/start delivers the actual user
 // message and returns when the call is accepted — NOT when the turn
 // is done. Turn-complete detection rides on the
-// `turn.completed` JSON-RPC notification, which clockwork wires via
+// `turn.completed` JSON-RPC notification, which torque wires via
 // StartOptions.JsonRpcNotificationHook in boot.go.
 func (m *Manager) sendTurnJSONRPC(ctx context.Context, sessID, text string) error {
 	threadID, cached := m.lookupCodexThread(sessID)
 	if !cached {
 		initParams := map[string]any{
 			"clientInfo": map[string]any{
-				"name":    "clockwork-manifold",
-				"version": clockworkClientVersion,
+				"name":    "torque",
+				"version": torqueClientVersion,
 			},
 		}
 		if _, err := m.inner.JsonRpcCall(ctx, sessID, "initialize", initParams); err != nil {

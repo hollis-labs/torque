@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/oklog/ulid/v2"
 )
 
@@ -28,7 +28,7 @@ func defaultSessionID() string {
 
 // Manager owns the lifecycle of registered sessions and proxies the
 // agentsessions.Manager surface (SendInput/Resize/Stop/Wait/Attach) with
-// clockwork-side persistence and event emission.
+// torque-side persistence and event emission.
 //
 // Replaces internal/runtime/sessionmgr/Manager. The Boot pattern moves
 // Launch from Manager onto the package-level agent.Boot() entry point;
@@ -162,7 +162,7 @@ func (m *Manager) registerStreamCloser(sessID string, closer func()) {
 // registerBootDir associates the per-task ephemeral tempdir with the session
 // so terminal-state observation + explicit Stop can os.RemoveAll it. Without
 // this, non-OneShot Modes (LongLived / Subagent / Background / Resume) would
-// leak $TMPDIR/clockwork-boot-* directories (with .mcp.json carrying the
+// leak $TMPDIR/torque-boot-* directories (with .mcp.json carrying the
 // loopback URL) until OS-level housekeeping reclaimed them. ModeOneShot
 // continues to clean inline via Boot's defer.
 func (m *Manager) registerBootDir(sessID, bootDir string) {
@@ -581,10 +581,10 @@ func (m *Manager) Resume(ctx context.Context, req ResumeRequest) (string, error)
 }
 
 // providerFromRuntime extracts a stable provider token from a Runtime ID
-// (convention: "clockwork-cli/<provider>").
+// (convention: "torque-cli/<provider>").
 func providerFromRuntime(rt agentsessions.Runtime) string {
 	id := rt.ID()
-	const prefix = "clockwork-cli/"
+	const prefix = "torque-cli/"
 	if len(id) > len(prefix) && id[:len(prefix)] == prefix {
 		return id[len(prefix):]
 	}
@@ -621,18 +621,18 @@ func nullableString(s string) sql.NullString {
 }
 
 // Reserved keys stamped into SessionMeta by Boot so Get/List can recover the
-// fields that don't have dedicated DB columns. The `clockwork.` prefix marks
+// fields that don't have dedicated DB columns. The `torque.` prefix marks
 // them as substrate-internal so caller-supplied SessionMeta keys won't
 // collide.
 const (
-	metaKeyMode            = "clockwork.mode"
-	metaKeyBootDir         = "clockwork.boot_dir"
-	metaKeyWorkspaceDir    = "clockwork.workspace_dir"
-	metaKeyParentSessionID = "clockwork.parent_session_id"
+	metaKeyMode            = "torque.mode"
+	metaKeyBootDir         = "torque.boot_dir"
+	metaKeyWorkspaceDir    = "torque.workspace_dir"
+	metaKeyParentSessionID = "torque.parent_session_id"
 )
 
 // sessionFromRecord projects a sqlstore row onto the public Session shape.
-// Decodes the substrate-stamped MetaJSON keys (clockwork.mode, .boot_dir,
+// Decodes the substrate-stamped MetaJSON keys (torque.mode, .boot_dir,
 // .workspace_dir, .parent_session_id) so Get/List return the same fields
 // Boot returns — addresses Copilot review feedback on PR #19 about API
 // surface inconsistency.

@@ -11,12 +11,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 	llmtypes "github.com/hollis-labs/go-llm-types"
 	"github.com/hollis-labs/go-providers/provider"
 	"github.com/hollis-labs/go-sandbox/sandbox"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 // Boot is the unified entry point for spawning an agent session. Replaces
@@ -151,13 +151,13 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		loopbackURL = loopback.URL()
 	}
 
-	// Boot-dir root: $TMPDIR/clockwork-boot/. The lib's basename pattern
-	// (agent-sessions-boot-<runtimeID>-*) replaces clockwork's pre-AutoPlant
-	// `clockwork-boot-<provider>-<taskID>-r<runID>-*`; the parent dir name
-	// keeps the substring "clockwork-boot" so cross-app forensic tooling
-	// (`find /var/folders -path '*clockwork-boot*'`) still surfaces the
+	// Boot-dir root: $TMPDIR/torque-boot/. The lib's basename pattern
+	// (agent-sessions-boot-<runtimeID>-*) replaces torque's pre-AutoPlant
+	// `torque-boot-<provider>-<taskID>-r<runID>-*`; the parent dir name
+	// keeps the substring "torque-boot" so cross-app forensic tooling
+	// (`find /var/folders -path '*torque-boot*'`) still surfaces the
 	// per-task tempdirs from this daemon.
-	bootDirRoot := filepath.Join(os.TempDir(), "clockwork-boot")
+	bootDirRoot := filepath.Join(os.TempDir(), "torque-boot")
 
 	// Workspace dir (persistent state + logs). Independent of boot dir.
 	ws, err := workspaceCreate(deps.WorkspacesRoot, opts.ProjectID, sessID)
@@ -166,7 +166,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		return nil, fmt.Errorf("%w: workspace: %v", ErrBootFailed, err)
 	}
 
-	// Env: base (filtered OS + CLOCKWORK_TASK_ID/RUN_ID + agent-file env +
+	// Env: base (filtered OS + TORQUE_TASK_ID/RUN_ID + agent-file env +
 	// opts.Env). Per-provider env amendments (e.g. OPENCODE_CONFIG_DIR =
 	// <bootDir>) are appended by the lib's preparePlant after the bootdir
 	// is materialized.
@@ -201,7 +201,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		}
 	}
 	runtime, err := runtimeFactory(agentsessions.AdapterRuntimeConfig{
-		ID:        "clockwork-cli/" + cliAdapter.Name(),
+		ID:        "torque-cli/" + cliAdapter.Name(),
 		Kind:      string(runtimeKind),
 		Adapter:   cliAdapter,
 		Caps:      caps,
@@ -395,7 +395,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	// wait for the session's `done` event before issuing Stop + WaitSession
 	// — long-lived adapters (StreamingStdio / app-server) stay alive past
 	// the turn, so the prior hardcoded 5s grace SIGTERM'd them mid-turn
-	// (followups_clockwork_streaming_oneshot_turn_complete_wait).
+	// (followups_torque_streaming_oneshot_turn_complete_wait).
 	// Subprocess-per-turn adapters also emit EventDone before exit, so the
 	// signal is uniformly available across runtime kinds.
 	//
@@ -464,23 +464,23 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		ID:      sessID,
 		Runtime: runtime,
 		Options: agentsessions.StartOptions{
-			Workdir:            opts.Workdir,
-			WorkspaceDir:       ws.Root,
-			LogPath:            ws.LogPath,
-			BootPrompt:         systemPrompt,
-			BootContent:        kickoffMD,
-			Env:                env,
-			Stderr:             stderrWriter,
-			Profile:            sandboxProfile,
-			AttachEnabled:      true,
-			AutoFireFirstTurn:  autoFire,
-			FirstTurnPayload:   firstTurnPayload,
-			SessionIDPreset:    sessionIDPreset,
-			OnSessionID:        onSessionID,
-			Supervisor:         supervisor,
-			ResourceLimits:     limits,
-			EventFanout:        streamFanout,
-			TypedEventCallback: opts.TypedEventCallback,
+			Workdir:                 opts.Workdir,
+			WorkspaceDir:            ws.Root,
+			LogPath:                 ws.LogPath,
+			BootPrompt:              systemPrompt,
+			BootContent:             kickoffMD,
+			Env:                     env,
+			Stderr:                  stderrWriter,
+			Profile:                 sandboxProfile,
+			AttachEnabled:           true,
+			AutoFireFirstTurn:       autoFire,
+			FirstTurnPayload:        firstTurnPayload,
+			SessionIDPreset:         sessionIDPreset,
+			OnSessionID:             onSessionID,
+			Supervisor:              supervisor,
+			ResourceLimits:          limits,
+			EventFanout:             streamFanout,
+			TypedEventCallback:      opts.TypedEventCallback,
 			AutoPlantBootDir:        true,
 			BootDirRoot:             bootDirRoot,
 			OnBootDirPlanted:        onBootDirPlanted,
@@ -594,7 +594,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	// first turn; for JsonRpcStdio the proper resume sequence is
 	// `thread/resume` (instead of `thread/start`) followed by
 	// turn/start, which is a follow-up captured as
-	// followups.clockwork_manifold.codex_jsonrpc_resume_wireup. For now
+	// followups.torque.codex_jsonrpc_resume_wireup. For now
 	// resume on JsonRpcStdio falls through to whatever the lib +
 	// SessionIDPreset path negotiate (codex app-server ignores
 	// SessionIDPreset; the session boots cold). Operators wanting
@@ -650,7 +650,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		// budgeted ctx firing. The prior implementation hardcoded a 5s
 		// grace which SIGTERM'd long-lived adapters (StreamingStdio /
 		// app-server) mid-turn; binding the wait to profile.TimeoutSeconds
-		// via ctx aligns with feedback_clockwork_timeout_philosophy (no
+		// via ctx aligns with feedback_torque_timeout_philosophy (no
 		// new hardcoded timeouts; profile timeouts are the budget).
 		// Subprocess-per-turn adapters emit EventDone before exit, so the
 		// wait collapses to the prior fast-path for short turns.

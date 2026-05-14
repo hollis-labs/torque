@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"log"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/agentfile"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/agentfile"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 // validTransitions defines the allowed FSM transitions for task status.
@@ -133,7 +133,7 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		// working_dir inheritance: when the caller leaves WorkingDir empty
 		// AND the parent has a non-empty working_dir, inherit it. Surfaced
 		// 2026-05-08 in S2.5 smoke (CW-20260508-0004): orchestrator agent
-		// created kind=internal planner sub-task via clockwork_task_create
+		// created kind=internal planner sub-task via torque_task_create
 		// without working_dir; scheduler dispatched via cliexec ->
 		// agent.Executor rejected with "working_dir is required" -> 3
 		// retries -> blocked. Auto-inheritance from parent makes child

@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
 )
 
 // TestBoot_ApiKeyHelperPath_ThreadsIntoSettings asserts that
@@ -34,7 +34,7 @@ func TestBoot_ApiKeyHelperPath_ThreadsIntoSettings(t *testing.T) {
 	// regular-file check). Use a real fake helper file so the validation
 	// succeeds and the field threads through to the planted settings.json.
 	helperDir := t.TempDir()
-	helperPath := filepath.Join(helperDir, "clockwork-apikey-helper")
+	helperPath := filepath.Join(helperDir, "torque-apikey-helper")
 	require.NoError(t, os.WriteFile(helperPath, []byte("#!/bin/sh\necho fake\n"), 0o755))
 	cd.Deps.ApiKeyHelperPath = helperPath
 
@@ -43,7 +43,7 @@ func TestBoot_ApiKeyHelperPath_ThreadsIntoSettings(t *testing.T) {
 
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID:       "CW-TEST-AKH-001",
-		AgentProfile: "clockwork-backend",
+		AgentProfile: "torque-backend",
 		Workdir:      t.TempDir(),
 		Mode:         agent.ModeOneShot,
 		Description:  "ignored",
@@ -66,7 +66,7 @@ func TestBoot_ApiKeyHelperPath_ThreadsIntoSettings(t *testing.T) {
 		// long-lived just gives us a stable read window.
 		sess2, err := cd.Manager.Boot(ctx, agent.Options{
 			TaskID:       "CW-TEST-AKH-002",
-			AgentProfile: "clockwork-backend",
+			AgentProfile: "torque-backend",
 			Workdir:      t.TempDir(),
 			Mode:         agent.ModeLongLived,
 			Description:  "ignored",
@@ -107,7 +107,7 @@ func TestBoot_ApiKeyHelperPath_AbsentWhenDepsEmpty(t *testing.T) {
 
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID:       "CW-TEST-AKH-003",
-		AgentProfile: "clockwork-backend",
+		AgentProfile: "torque-backend",
 		Workdir:      t.TempDir(),
 		Mode:         agent.ModeLongLived,
 		Description:  "ignored",

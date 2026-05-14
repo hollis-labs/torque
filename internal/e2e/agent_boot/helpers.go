@@ -12,11 +12,11 @@ import (
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
 )
 
 // composedDeps bundles the substrate the agent_boot tests drive: a real
@@ -58,15 +58,15 @@ func composeDeps(t *testing.T, cfg fakeRuntimeConfig, profileProvider string) *c
 	deps := &agent.Dependencies{
 		Store: store,
 		// Register the profile under every name the agent_boot tests stamp
-		// on agent.Options.AgentProfile — boot tests use "clockwork-backend",
+		// on agent.Options.AgentProfile — boot tests use "torque-backend",
 		// the planstart e2e uses orchestrator.Profile ("orchestrator"), the
 		// broker e2e uses "alice" / "bob". One profile, many lookup keys.
 		Profiles: config.ProfileMap{
-			"clockwork-backend": prof,
-			"orchestrator":      prof,
-			"alice":             prof,
-			"bob":               prof,
-			"default":           prof,
+			"torque-backend": prof,
+			"orchestrator":   prof,
+			"alice":          prof,
+			"bob":            prof,
+			"default":        prof,
 		},
 		Loopback:       nil, // disable per-task MCP loopback in tests
 		WorkspacesRoot: filepath.Join(dir, "workspaces"),
@@ -126,7 +126,7 @@ func plantCheckpoint(t *testing.T, store *sqlstore.Store, sessID, providerSessio
 	t.Helper()
 	require.NoError(t, store.CreateSession(&sqlstore.SessionRecord{
 		ID:           sessID,
-		AgentProfile: "clockwork-backend",
+		AgentProfile: "torque-backend",
 		Provider:     "claude",
 		RuntimeID:    "fake-runtime",
 		RuntimeKind:  "fake",

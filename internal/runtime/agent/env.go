@@ -5,15 +5,15 @@ import (
 	"os"
 	"sort"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/agentfile"
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/agentfile"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
 )
 
 // composeEnv assembles the environment slice handed to the spawned subprocess.
 // Order:
 //  1. Filtered OS environment (secrets stripped per profile.EnvStripPrefixes)
-//  2. CLOCKWORK_TASK_ID + CLOCKWORK_RUN_ID (always present, even when zero)
+//  2. TORQUE_TASK_ID + TORQUE_RUN_ID (always present, even when zero)
 //  3. agent_file.environment (skipped for keys the caller overrides; secrets
 //     filtered via executor.ShouldStripEnvVar — provider-auth allowlist applied)
 //  4. opts.Env (secrets filtered, same allowlist semantics)
@@ -24,8 +24,8 @@ import (
 // and the caller appends after this function.
 func composeEnv(profile config.AgentProfile, opts Options, agent *agentfile.AgentFile) []string {
 	extras := []string{
-		"CLOCKWORK_TASK_ID=" + opts.TaskID,
-		fmt.Sprintf("CLOCKWORK_RUN_ID=%d", opts.RunID),
+		"TORQUE_TASK_ID=" + opts.TaskID,
+		fmt.Sprintf("TORQUE_RUN_ID=%d", opts.RunID),
 	}
 
 	if agent != nil {

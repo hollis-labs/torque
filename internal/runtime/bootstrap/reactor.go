@@ -6,12 +6,12 @@ import (
 
 	gomsg "github.com/hollis-labs/go-messaging"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/broker"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/reactor"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/broker"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
+	"github.com/hollis-labs/torque/internal/runtime/reactor"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/service"
 )
 
 // Reactor wires the envelope dispatch table (CW-20260512-0061, sprint α.3)

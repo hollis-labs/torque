@@ -3,7 +3,7 @@ package agent
 import (
 	"strings"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
 )
 
 // ProviderCapabilities returns the static capability set for a single provider

@@ -5,7 +5,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/hitl"
+	"github.com/hollis-labs/torque/internal/hitl"
 )
 
 func (s *Server) listHITLWorkflows(w http.ResponseWriter, r *http.Request) {

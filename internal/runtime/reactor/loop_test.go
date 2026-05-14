@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/broker"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/reactor"
+	"github.com/hollis-labs/torque/internal/broker"
+	"github.com/hollis-labs/torque/internal/runtime/reactor"
 )
 
 // fakeSubscriber implements reactor.Subscriber. The returned channel is

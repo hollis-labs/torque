@@ -1,12 +1,12 @@
 .PHONY: build build-all test test-scheduler lint clean install
 
-BINARY=clockwork
-APIKEY_HELPER=clockwork-apikey-helper
-MODULE=github.com/hollis-labs/clockwork-manifold
+BINARY=torque
+APIKEY_HELPER=torque-apikey-helper
+MODULE=github.com/hollis-labs/torque
 
 build:
-	go build -o $(BINARY) ./cmd/clockwork
-	go build -o $(APIKEY_HELPER) ./cmd/clockwork-apikey-helper
+	go build -o $(BINARY) ./cmd/torque
+	go build -o $(APIKEY_HELPER) ./cmd/torque-apikey-helper
 
 build-all: build
 

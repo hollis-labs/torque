@@ -1,7 +1,7 @@
 package service
 
 import (
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 // CollectionService provides business logic for the collections feature.

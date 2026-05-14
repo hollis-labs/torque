@@ -1,9 +1,9 @@
 package bootstrap
 
 import (
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
-	executorapi "github.com/hollis-labs/clockwork-manifold/plugins/executor-api"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
+	executorapi "github.com/hollis-labs/torque/plugins/executor-api"
 )
 
 // Executors registers the built-in executor plugins with the registry.

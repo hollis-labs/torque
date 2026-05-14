@@ -3,8 +3,8 @@ package service
 import (
 	"strings"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/go-strutil"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 // TagService provides business logic for tags.

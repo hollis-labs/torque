@@ -1,5 +1,5 @@
 name: core
 version: 1.0.0
-description: Core task CRUD handlers for Clockwork Manifold
+description: Core task CRUD handlers for Torque
 author: Hollis Labs
 dependencies: []

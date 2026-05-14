@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/testutil/sqlitetest"
-	"github.com/hollis-labs/clockwork-manifold/internal/worktree"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/testutil/sqlitetest"
+	"github.com/hollis-labs/torque/internal/worktree"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -67,7 +67,7 @@ func TestWorktreeCreate(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, "clockwork/CW-20260407-0001", wt.Branch)
+	assert.Equal(t, "torque/CW-20260407-0001", wt.Branch)
 	assert.Contains(t, wt.Path, "CW-20260407-0001")
 	assert.Equal(t, "active", wt.Status)
 
@@ -76,11 +76,11 @@ func TestWorktreeCreate(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify the branch was created
-	cmd := exec.Command("git", "branch", "--list", "clockwork/CW-20260407-0001")
+	cmd := exec.Command("git", "branch", "--list", "torque/CW-20260407-0001")
 	cmd.Dir = repoDir
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err)
-	assert.Contains(t, string(out), "clockwork/CW-20260407-0001")
+	assert.Contains(t, string(out), "torque/CW-20260407-0001")
 }
 
 func TestWorktreeMaxPerProject(t *testing.T) {
@@ -190,5 +190,5 @@ func TestWorktreeBranchNaming(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, "clockwork/CW-20260407-0042", wt.Branch)
+	assert.Equal(t, "torque/CW-20260407-0042", wt.Branch)
 }

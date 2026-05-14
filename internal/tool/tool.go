@@ -43,7 +43,7 @@ type PermissionRule struct {
 	Behavior string `json:"behavior" yaml:"behavior"`
 }
 
-// Tool is the interface that all Clockwork tools must implement.
+// Tool is the interface that all Torque tools must implement.
 type Tool interface {
 	// Identity
 	Name() string

@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/service"
 )
 
 func TestTemplateService_Create_BasicRoundTrip(t *testing.T) {
@@ -297,7 +297,7 @@ func TestTemplateService_Instantiate_UnresolvedPlaceholder_422(t *testing.T) {
 func TestTemplateService_Instantiate_Overrides(t *testing.T) {
 	svc := setupService(t)
 	_, err := svc.Template.Create(service.TemplateCreateInput{
-		ID:          "t", Name: "t", Description: "x",
+		ID: "t", Name: "t", Description: "x",
 		Kind: "agent", Executor: "cli", AutoExecute: true,
 	})
 	require.NoError(t, err)

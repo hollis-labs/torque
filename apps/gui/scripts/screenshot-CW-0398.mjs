@@ -24,7 +24,7 @@ async function shoot(page, name) {
   await mkdir(OUT, { recursive: true })
   const path = join(OUT, `${name}.png`)
   await page.screenshot({ path, fullPage: false })
-  console.log('CLOCKWORK_ARTIFACT:', `apps/gui/artifacts/CW-20260417-0398/${name}.png`)
+  console.log('TORQUE_ARTIFACT:', `apps/gui/artifacts/CW-20260417-0398/${name}.png`)
 }
 
 const browser = await chromium.launch()

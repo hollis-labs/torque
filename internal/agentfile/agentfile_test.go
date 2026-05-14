@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/agentfile"
+	"github.com/hollis-labs/torque/internal/agentfile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

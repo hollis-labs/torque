@@ -9,10 +9,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 	"github.com/hollis-labs/go-providers/provider/events"
 	"github.com/hollis-labs/go-sandbox/sandbox"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
 )
 
 // TestBoot_PIDReporter validates the agent.Manager.LivePID surface against
@@ -27,7 +27,7 @@ func TestBoot_PIDReporter(t *testing.T) {
 
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID:       "CW-TEST-PID-001",
-		AgentProfile: "clockwork-backend",
+		AgentProfile: "torque-backend",
 		Workdir:      t.TempDir(),
 		Mode:         agent.ModeLongLived,
 	})
@@ -65,7 +65,7 @@ func TestBoot_TypedEventCallback_FiresOnPTYPath(t *testing.T) {
 	hits := make(chan events.Event, 4)
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID:       "CW-TEST-TEC-001",
-		AgentProfile: "clockwork-backend",
+		AgentProfile: "torque-backend",
 		Workdir:      t.TempDir(),
 		Mode:         agent.ModeLongLived,
 		TypedEventCallback: func(ev events.Event) {
@@ -110,7 +110,7 @@ func TestBoot_SupervisorWiresOnPTYPath(t *testing.T) {
 	}
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID:       "CW-TEST-SUP-PTY-001",
-		AgentProfile: "clockwork-backend",
+		AgentProfile: "torque-backend",
 		Workdir:      t.TempDir(),
 		Mode:         agent.ModeLongLived,
 		Supervisor:   sup,
@@ -149,7 +149,7 @@ func TestBoot_SupervisorPassesThroughOnAdapterPath(t *testing.T) {
 	sup := &agentsessions.SupervisorOptions{IdleKill: 60 * time.Second, RestartOnCrash: 2}
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID:        "CW-TEST-SUP-AD-001",
-		AgentProfile:  "clockwork-backend",
+		AgentProfile:  "torque-backend",
 		Workdir:       t.TempDir(),
 		Mode:          agent.ModeOneShot,
 		OneShotPrompt: "x",
@@ -193,7 +193,7 @@ func TestBoot_ExitErrorCausePropagation(t *testing.T) {
 
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID:       "CW-TEST-EXIT-001",
-		AgentProfile: "clockwork-backend",
+		AgentProfile: "torque-backend",
 		Workdir:      t.TempDir(),
 		Mode:         agent.ModeLongLived,
 	})
@@ -240,7 +240,7 @@ func TestBoot_SandboxAllowLoopback(t *testing.T) {
 	profile := &sandbox.Profile{ID: "test-profile", Description: "test"}
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID:         "CW-TEST-SAND-001",
-		AgentProfile:   "clockwork-backend",
+		AgentProfile:   "torque-backend",
 		Workdir:        t.TempDir(),
 		Mode:           agent.ModeLongLived,
 		SandboxProfile: profile,

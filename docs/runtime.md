@@ -2,10 +2,10 @@
 
 ## Storage
 
-Clockwork opens either:
+Torque opens either:
 
-- SQLite, when `CLOCKWORK_POSTGRES_DSN` is not set
-- Postgres, when `CLOCKWORK_POSTGRES_DSN` is set
+- SQLite, when `TORQUE_POSTGRES_DSN` is not set
+- Postgres, when `TORQUE_POSTGRES_DSN` is set
 
 Schema migrations run on startup for both `serve` and `mcp`.
 
@@ -22,7 +22,7 @@ Schema migrations run on startup for both `serve` and `mcp`.
 
 ## Scheduler
 
-The scheduler is created only in `clockwork serve`.
+The scheduler is created only in `torque serve`.
 
 Current behavior:
 
@@ -35,16 +35,16 @@ Current behavior:
 
 Important env vars:
 
-- `CLOCKWORK_SCHED_WORKERS`
-- `CLOCKWORK_SCHED_INTERVAL`
-- `CLOCKWORK_SCHED_ENABLED`
-- `CLOCKWORK_SCHED_MAX_PER_PROJECT`
-- `CLOCKWORK_SCHED_STALE`
-- `CLOCKWORK_WORKTREE_PER_RUN`
-- `CLOCKWORK_WORKTREE_ROOT`
-- `CLOCKWORK_WORKTREE_KEEP_DAYS`
-- `CLOCKWORK_PROJECT_ID`
-- `CLOCKWORK_PROJECT_IDS`
+- `TORQUE_SCHED_WORKERS`
+- `TORQUE_SCHED_INTERVAL`
+- `TORQUE_SCHED_ENABLED`
+- `TORQUE_SCHED_MAX_PER_PROJECT`
+- `TORQUE_SCHED_STALE`
+- `TORQUE_WORKTREE_PER_RUN`
+- `TORQUE_WORKTREE_ROOT`
+- `TORQUE_WORKTREE_KEEP_DAYS`
+- `TORQUE_PROJECT_ID`
+- `TORQUE_PROJECT_IDS`
 
 ## Feature Flags
 

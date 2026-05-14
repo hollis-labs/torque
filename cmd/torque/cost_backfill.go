@@ -9,11 +9,11 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/modelcatalog"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/appdb"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/modelcatalog"
+	"github.com/hollis-labs/torque/internal/persistence/appdb"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
 	"github.com/spf13/cobra"
 )
 
@@ -29,7 +29,7 @@ type costBackfillCandidate struct {
 }
 
 type sessionMeta struct {
-	BootDir string `json:"clockwork.boot_dir"`
+	BootDir string `json:"torque.boot_dir"`
 }
 
 func costBackfillCmd() *cobra.Command {

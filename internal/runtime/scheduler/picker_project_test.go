@@ -4,8 +4,8 @@ import (
 	"database/sql"
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -123,8 +123,8 @@ func TestPickerDoesNotConsumeProjectSlotOnDepBlockedTask(t *testing.T) {
 	// Ordering (priority ASC, created_at ASC) places this first.
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-P-BLOCKED", Title: "dep-blocked", Status: "todo",
-		Priority:  1,
-		Executor:  "cli", AgentProfile: "cli-profile",
+		Priority: 1,
+		Executor: "cli", AgentProfile: "cli-profile",
 		ProjectID: sql.NullString{String: "PRJ-P", Valid: true},
 		DependsOn: sql.NullString{String: `["CW-DEP"]`, Valid: true},
 	}))
@@ -132,8 +132,8 @@ func TestPickerDoesNotConsumeProjectSlotOnDepBlockedTask(t *testing.T) {
 	// picked once the dep-blocked task is skipped.
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-P-READY", Title: "ready", Status: "todo",
-		Priority:  2,
-		Executor:  "cli", AgentProfile: "cli-profile",
+		Priority: 2,
+		Executor: "cli", AgentProfile: "cli-profile",
 		ProjectID: sql.NullString{String: "PRJ-P", Valid: true},
 	}))
 

@@ -1,6 +1,6 @@
 package service
 
-import "github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+import "github.com/hollis-labs/torque/internal/persistence/sqlstore"
 
 // ArtifactService provides business logic for task artifacts.
 type ArtifactService struct {

@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/mcpadapter"
-	"github.com/hollis-labs/clockwork-manifold/internal/modelcatalog"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
 	"github.com/hollis-labs/go-modelsdev/modelsdev"
+	"github.com/hollis-labs/torque/internal/mcpadapter"
+	"github.com/hollis-labs/torque/internal/modelcatalog"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
@@ -70,7 +70,7 @@ func setupAdapterWithCatalog(t *testing.T) *mcpadapter.Adapter {
 func TestFullStack_ModelsList(t *testing.T) {
 	a := setupAdapterWithCatalog(t)
 
-	text, isErr := callTool(t, a, "clockwork_models_list", map[string]interface{}{})
+	text, isErr := callTool(t, a, "torque_models_list", map[string]interface{}{})
 	require.False(t, isErr, "got error: %s", text)
 
 	var env struct {
@@ -87,7 +87,7 @@ func TestFullStack_ModelsList(t *testing.T) {
 func TestFullStack_ModelsList_FilterByProvider(t *testing.T) {
 	a := setupAdapterWithCatalog(t)
 
-	text, isErr := callTool(t, a, "clockwork_models_list", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_models_list", map[string]interface{}{
 		"provider": "anthropic",
 	})
 	require.False(t, isErr, "got error: %s", text)
@@ -106,7 +106,7 @@ func TestFullStack_ModelsList_FilterByProvider(t *testing.T) {
 func TestFullStack_ModelsGet(t *testing.T) {
 	a := setupAdapterWithCatalog(t)
 
-	text, isErr := callTool(t, a, "clockwork_models_get", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_models_get", map[string]interface{}{
 		"provider": "anthropic",
 		"model":    "claude-sonnet-4-6",
 	})
@@ -122,7 +122,7 @@ func TestFullStack_ModelsGet(t *testing.T) {
 func TestFullStack_ModelsGet_NotFound(t *testing.T) {
 	a := setupAdapterWithCatalog(t)
 
-	text, isErr := callTool(t, a, "clockwork_models_get", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_models_get", map[string]interface{}{
 		"provider": "anthropic",
 		"model":    "missing",
 	})
@@ -135,7 +135,7 @@ func TestFullStack_ModelsList_ColdCache(t *testing.T) {
 	// Use the standard adapter (no Models wired) — list should return empty.
 	a := setupAdapter(t)
 
-	text, isErr := callTool(t, a, "clockwork_models_list", map[string]interface{}{})
+	text, isErr := callTool(t, a, "torque_models_list", map[string]interface{}{})
 	require.False(t, isErr, "got error: %s", text)
 
 	var env struct {

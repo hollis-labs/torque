@@ -1,4 +1,4 @@
-# Clockwork Manifold — Design Specification
+# Torque — Design Specification
 
 **Date:** 2026-04-07
 **Status:** Draft
@@ -8,27 +8,27 @@
 
 ## 1. Overview
 
-Clockwork Manifold (short: Clockwork) is a standalone task orchestration and execution engine. It manages tasks through a full finite state machine, schedules them via a persistent multi-worker queue, and delegates execution to pluggable executor backends. Everything beyond task management and execution is a plugin.
+Torque (short: Torque) is a standalone task orchestration and execution engine. It manages tasks through a full finite state machine, schedules them via a persistent multi-worker queue, and delegates execution to pluggable executor backends. Everything beyond task management and execution is a plugin.
 
-Clockwork replaces Fragments Engine (formerly Volon). It is a clean rebuild — not a rename or refactor — taking the best of Fragments Engine's task/scheduler system and Nanite's executor/permission/sandbox patterns, discarding legacy baggage.
+Torque replaces Fragments Engine (formerly Volon). It is a clean rebuild — not a rename or refactor — taking the best of Fragments Engine's task/scheduler system and Nanite's executor/permission/sandbox patterns, discarding legacy baggage.
 
 ### Identity
 
 | Property | Value |
 |---|---|
-| Full name | Clockwork Manifold |
-| Short name | Clockwork |
-| Repo | `hollis-labs/clockwork-manifold` |
-| Module | `github.com/hollis-labs/clockwork-manifold` |
-| CLI binary | `clockwork` |
-| MCP prefix | `mcp__clockwork__*` |
-| Signal prefix | `CLOCKWORK_*` |
-| Env prefix | `CLOCKWORK_*` |
-| Data directory | `.clockwork/` |
-| OTel tracer | `clockwork/*` |
-| Local path | `~/Projects-apps/clockwork-manifold` |
+| Full name | Torque |
+| Short name | Torque |
+| Repo | `hollis-labs/torque` |
+| Module | `github.com/hollis-labs/torque` |
+| CLI binary | `torque` |
+| MCP prefix | `mcp__torque__*` |
+| Signal prefix | `TORQUE_*` |
+| Env prefix | `TORQUE_*` |
+| Data directory | `.torque/` |
+| OTel tracer | `torque/*` |
+| Local path | `~/Projects-apps/torque` |
 
-### What Clockwork Is
+### What Torque Is
 
 - A standalone task orchestration + execution engine
 - Tasks are self-contained execution contracts with full context
@@ -39,7 +39,7 @@ Clockwork replaces Fragments Engine (formerly Volon). It is a clean rebuild — 
 - Agent-assisted recovery at high-value decision points
 - Opinionated about scheduling and lifecycle, unopinionated about who does the work
 
-### What Clockwork Is NOT
+### What Torque Is NOT
 
 - A chat interface (plugin if someone wants it)
 - An agent identity/personality system (plugin territory)
@@ -54,7 +54,7 @@ Clockwork replaces Fragments Engine (formerly Volon). It is a clean rebuild — 
 ```
 User's harness (Claude Code, Codex, Copilot, Nanite, etc.)
     | MCP
-Clockwork Manifold (tasks, queue, execution)
+Torque (tasks, queue, execution)
     | executor plugins          | go-queue        | plugins
   CLI / API / custom        job scheduling      Nexus, GitHub, Slack, etc.
     | go-providers
@@ -75,10 +75,10 @@ Clockwork Manifold (tasks, queue, execution)
 ## 2. Repository Structure
 
 ```
-clockwork-manifold/
+torque/
 ├── cmd/
-│   ├── clockwork/        # Primary CLI + MCP server
-│   └── clockworkd/       # Scheduler daemon
+│   ├── torque/        # Primary CLI + MCP server
+│   └── torqued/       # Scheduler daemon
 ├── internal/
 │   ├── persistence/      # sqlstore, migrations
 │   ├── service/          # Business logic (task-centric)
@@ -99,16 +99,16 @@ clockwork-manifold/
 ├── apps/
 │   └── gui/              # React/Tauri GUI (tasks-first)
 ├── api/
-│   └── proto/            # gRPC definitions (clockwork.tasks.v1)
+│   └── proto/            # gRPC definitions (torque.tasks.v1)
 ├── docs/
 └── .agentrc/
 ```
 
 **Two entrypoints:**
-- `clockwork` — CLI + MCP server + `clockwork serve` (GUI HTTP server)
-- `clockworkd` — Scheduler daemon
+- `torque` — CLI + MCP server + `torque serve` (GUI HTTP server)
+- `torqued` — Scheduler daemon
 
-The gui-server is a subcommand of `clockwork serve`, not a separate binary. Chat is gone from core entirely.
+The gui-server is a subcommand of `torque serve`, not a separate binary. Chat is gone from core entirely.
 
 ---
 
@@ -290,7 +290,7 @@ When on: MCP tools appear, GUI shows views, task create/update forms expose asso
 
 ### Design Principle
 
-Clockwork core doesn't know how to run a task. It schedules, tracks, and manages lifecycle. Execution is delegated to executor plugins via a clean interface.
+Torque core doesn't know how to run a task. It schedules, tracks, and manages lifecycle. Execution is delegated to executor plugins via a clean interface.
 
 ### Executor Interface
 
@@ -327,7 +327,7 @@ type EventCallback func(event ExecutionEvent)
 
 type ExecutionEvent struct {
     Type      EventType   // Log, Signal, Artifact, Progress, TokenUsage
-    Signal    string      // CLOCKWORK_DONE, CLOCKWORK_BLOCKED, etc.
+    Signal    string      // TORQUE_DONE, TORQUE_BLOCKED, etc.
     Content   string
     Artifact  *Artifact
     Tokens    *TokenUsage
@@ -363,7 +363,7 @@ Scheduler -> Executor (CLI or API) -> LLM decides on tool call
                                MCP tool execution (sandboxed)
 ```
 
-- **executor-cli**: Spawns CLI process. CLI handles its own tool execution internally. Clockwork sandboxes the CLI process itself (restricted env, secrets stripped).
+- **executor-cli**: Spawns CLI process. CLI handles its own tool execution internally. Torque sandboxes the CLI process itself (restricted env, secrets stripped).
 - **executor-api**: Calls LLM API directly. Tool calls route through core's tool router which handles permission checks and sandboxed execution.
 
 Core tool/permission/sandbox packages are ported from Nanite's patterns:
@@ -376,7 +376,7 @@ Core tool/permission/sandbox packages are ported from Nanite's patterns:
 **executor-cli** (default):
 - Spawns CLI processes (claude, codex, copilot, gemini, generic)
 - Subprocess by default, PTY opt-in per agent profile
-- Parses stdout for `CLOCKWORK_*` signals
+- Parses stdout for `TORQUE_*` signals
 - Sandbox: restricted env, secret filtering, network proxy
 - Agent profiles = CLI configs (binary, model flags, args)
 - Quality gates as post-execution shell commands
@@ -397,7 +397,7 @@ Anyone can implement the `Executor` interface. LangChain, CrewAI, custom interna
 
 ### Design Principle
 
-Same go-plugin SDK as Nanite. Full extension surface. Same catalog/registry model. Plugins can extend UI, data, execution, lifecycle, and filtering. Implement what Clockwork needs now; the rest of the SDK surface is available when demand arrives.
+Same go-plugin SDK as Nanite. Full extension surface. Same catalog/registry model. Plugins can extend UI, data, execution, lifecycle, and filtering. Implement what Torque needs now; the rest of the SDK surface is available when demand arrives.
 
 ### Plugin Host Interface
 
@@ -442,7 +442,7 @@ type Host interface {
 | Event hooks | Yes — task/run/artifact lifecycle | Custom events |
 | Executor registration | Yes | |
 | Tool registration | Yes | |
-| UI slots | Yes — Clockwork-specific slots | Additional slots |
+| UI slots | Yes — Torque-specific slots | Additional slots |
 | Filters | Yes — minimal set | Additional chains |
 | Connectors | Interface ready | Plugins bring their own |
 | Catalog/registry | Yes — same as Nanite | |
@@ -488,11 +488,11 @@ Filters are priority-ordered. They can modify the payload or short-circuit with 
 
 ### Catalog & Discovery
 
-Same model as Nanite: `CatalogFetcher` with multi-source merging, signature verification, priority-ordered sources. `clockwork plugin install <name>` pulls from catalog, verifies, installs. Local discovery via `plugins/` directory with `plugin.yaml` manifests.
+Same model as Nanite: `CatalogFetcher` with multi-source merging, signature verification, priority-ordered sources. `torque plugin install <name>` pulls from catalog, verifies, installs. Local discovery via `plugins/` directory with `plugin.yaml` manifests.
 
 ### Ecosystem Note
 
-Each app (Nanite, Clockwork, Hadron) has its own slots, filter chains, and connector needs. The SDK provides the mechanism. The app defines what's meaningful. A plugin built for Nanite's `Composer` slot won't work in Clockwork — that's expected and correct.
+Each app (Nanite, Torque, Hadron) has its own slots, filter chains, and connector needs. The SDK provides the mechanism. The app defines what's meaningful. A plugin built for Nanite's `Composer` slot won't work in Torque — that's expected and correct.
 
 ---
 
@@ -500,12 +500,12 @@ Each app (Nanite, Clockwork, Hadron) has its own slots, filter chains, and conne
 
 ### Design Principle
 
-The scheduler is Clockwork's core differentiator. Persistent, multi-worker orchestration that turns tasks into completed work. Built on go-queue for the queue layer, with the scheduler providing intelligence on top.
+The scheduler is Torque's core differentiator. Persistent, multi-worker orchestration that turns tasks into completed work. Built on go-queue for the queue layer, with the scheduler providing intelligence on top.
 
 ### Architecture
 
 ```
-clockworkd (scheduler daemon)
+torqued (scheduler daemon)
     |
     +-- Queue (go-queue)
     |   +-- SQLite driver (default)
@@ -618,7 +618,7 @@ go-queue (queue.db — SEPARATE SQLite file, append-only)
     |
 Write worker (single goroutine, drains at controlled pace)
     |
-Main database (clockwork.db — batched writes, e.g. every 1s or 50 items)
+Main database (torque.db — batched writes, e.g. every 1s or 50 items)
 ```
 
 - `queue.db` is append-only — minimal contention
@@ -646,13 +646,13 @@ Main database (clockwork.db — batched writes, e.g. every 1s or 50 items)
 
 ```
 ~/Projects-apps/my-project/                       # Main worktree (user's, never touched)
-~/Projects-apps/my-project/.clockwork/worktrees/
+~/Projects-apps/my-project/.torque/worktrees/
     +-- CW-20260407-0001/                          # Agent 1's isolated worktree
     +-- CW-20260407-0002/                          # Agent 2's isolated worktree
     +-- CW-20260407-0003/                          # Agent 3's isolated worktree
 ```
 
-- Worktree branch = `clockwork/<taskID>`
+- Worktree branch = `torque/<taskID>`
 - Created on `run.started`, cleaned up based on policy
 - Max concurrent tasks per project = configurable (default: 3)
 
@@ -742,46 +742,46 @@ merge:
 ### Core Tools (always registered)
 
 ```
-clockwork_health
-clockwork_settings_get
-clockwork_settings_save
+torque_health
+torque_settings_get
+torque_settings_save
 
-clockwork_task_create
-clockwork_task_get
-clockwork_task_update
-clockwork_task_delete
-clockwork_task_list
-clockwork_task_search
-clockwork_task_transition
-clockwork_task_bulk_transition
+torque_task_create
+torque_task_get
+torque_task_update
+torque_task_delete
+torque_task_list
+torque_task_search
+torque_task_transition
+torque_task_bulk_transition
 
-clockwork_run_list
-clockwork_run_get
+torque_run_list
+torque_run_get
 
-clockwork_artifact_create
-clockwork_artifact_list
+torque_artifact_create
+torque_artifact_list
 
-clockwork_comment_add
-clockwork_comment_list
+torque_comment_add
+torque_comment_list
 
-clockwork_scheduler_status
-clockwork_scheduler_toggle
+torque_scheduler_status
+torque_scheduler_toggle
 ```
 
 ### Opt-in Tools (registered when features enabled)
 
 ```
 # features.sprints = true
-clockwork_sprint_create / _get / _update / _delete / _list / _approve
+torque_sprint_create / _get / _update / _delete / _list / _approve
 
 # features.projects = true
-clockwork_project_create / _list / _delete
+torque_project_create / _list / _delete
 
 # features.epics = true
-clockwork_epic_create / _get / _update / _delete / _list
+torque_epic_create / _get / _update / _delete / _list
 ```
 
-Plugin-registered tools appear as `clockwork_<plugin>_<tool>`.
+Plugin-registered tools appear as `torque_<plugin>_<tool>`.
 
 ---
 
@@ -795,7 +795,7 @@ Tasks-first. Scoped down from Engine's current GUI. Opt-in complexity. Plugin-ex
 
 ```
 +--------------------------------------------------+
-|  Clockwork Manifold                   [Settings]  |
+|  Torque                   [Settings]  |
 +--------+-----------------------------------------+
 |        |                                         |
 | Tasks  | Task List (filter by status, priority,  |
@@ -829,7 +829,7 @@ Tasks-first. Scoped down from Engine's current GUI. Opt-in complexity. Plugin-ex
 
 ### Tech
 
-React + Tauri (carried from Engine). HTTP API backend via `clockwork serve`. SSE for real-time updates.
+React + Tauri (carried from Engine). HTTP API backend via `torque serve`. SSE for real-time updates.
 
 ### Removed from Engine
 
@@ -844,7 +844,7 @@ React + Tauri (carried from Engine). HTTP API backend via `clockwork serve`. SSE
 
 **Fork + Rebuild Core (Approach C).**
 
-New repo (`clockwork-manifold`) with only core pieces ported from Engine. Cherry-pick task FSM, runner, persistence, plugin host, MCP adapter. Build executor plugin interface fresh using the best of Engine + Nanite patterns. Old repo stays as reference.
+New repo (`torque`) with only core pieces ported from Engine. Cherry-pick task FSM, runner, persistence, plugin host, MCP adapter. Build executor plugin interface fresh using the best of Engine + Nanite patterns. Old repo stays as reference.
 
 **Rationale:** No deadline, no external users, no migration burden. Build it right, not fast. Saves time long-term by avoiding legacy baggage and tech debt.
 
@@ -864,7 +864,7 @@ New repo (`clockwork-manifold`) with only core pieces ported from Engine. Cherry
 - Deliverable system
 - Merge policy and agent-assisted resolution
 - Database concurrency model (split writes, go-queue buffer)
-- Signal protocol (CLOCKWORK_* replacing VOLON_*)
+- Signal protocol (TORQUE_* replacing VOLON_*)
 - All configuration and env vars
 
 ### What's Left Behind

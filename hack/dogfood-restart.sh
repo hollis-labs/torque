@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# dogfood-restart.sh — rebuild the clockwork binary, bounce the dogfood
+# dogfood-restart.sh — rebuild the torque binary, bounce the dogfood
 # serve on :8991, re-enable the scheduler. Idempotent. Meant to be run
-# from ~/Projects-apps/clockwork-manifold (or anywhere with a clean main).
+# from ~/Projects-apps/torque (or anywhere with a clean main).
 #
 # What it does not do (by design):
 #   - Merge anything. Merge your branches first, then run this.
@@ -13,17 +13,17 @@
 
 set -euo pipefail
 
-REPO_ROOT="${REPO_ROOT:-$HOME/Projects-apps/clockwork-manifold}"
-DATA_DIR="${CLOCKWORK_DATA_DIR:-$HOME/.clockwork/dogfood}"
-PROFILES_PATH="${CLOCKWORK_PROFILES_PATH:-$DATA_DIR/profiles.yaml}"
-PORT="${CLOCKWORK_HTTP_PORT:-8991}"
-BIN="${CLOCKWORK_BIN:-$HOME/go/bin/clockwork}"
+REPO_ROOT="${REPO_ROOT:-$HOME/Projects-apps/torque}"
+DATA_DIR="${TORQUE_DATA_DIR:-$HOME/.torque/dogfood}"
+PROFILES_PATH="${TORQUE_PROFILES_PATH:-$DATA_DIR/profiles.yaml}"
+PORT="${TORQUE_HTTP_PORT:-8991}"
+BIN="${TORQUE_BIN:-$HOME/go/bin/torque}"
 API="http://127.0.0.1:${PORT}/api/v1"
 
 cd "$REPO_ROOT"
 
-echo "==> go install ./cmd/clockwork"
-if ! go install ./cmd/clockwork; then
+echo "==> go install ./cmd/torque"
+if ! go install ./cmd/torque; then
   echo "FATAL: build failed" >&2
   exit 1
 fi
@@ -50,15 +50,15 @@ fi
 
 echo "==> starting serve on :$PORT"
 nohup env \
-  CLOCKWORK_DB_PATH="$DATA_DIR/clockwork.db" \
-  CLOCKWORK_HTTP_PORT="$PORT" \
-  CLOCKWORK_DATA_DIR="$DATA_DIR" \
-  CLOCKWORK_PROFILES_PATH="$PROFILES_PATH" \
-  CLOCKWORK_SCHED_ENABLED=true \
-  CLOCKWORK_SCHED_WORKERS="${CLOCKWORK_SCHED_WORKERS:-2}" \
-  CLOCKWORK_SCHED_INTERVAL_SECONDS="${CLOCKWORK_SCHED_INTERVAL_SECONDS:-10}" \
-  CLOCKWORK_POSTGRES_DSN="" \
-  CLOCKWORK_GUI_DIR="$REPO_ROOT/apps/gui" \
+  TORQUE_DB_PATH="$DATA_DIR/torque.db" \
+  TORQUE_HTTP_PORT="$PORT" \
+  TORQUE_DATA_DIR="$DATA_DIR" \
+  TORQUE_PROFILES_PATH="$PROFILES_PATH" \
+  TORQUE_SCHED_ENABLED=true \
+  TORQUE_SCHED_WORKERS="${TORQUE_SCHED_WORKERS:-2}" \
+  TORQUE_SCHED_INTERVAL_SECONDS="${TORQUE_SCHED_INTERVAL_SECONDS:-10}" \
+  TORQUE_POSTGRES_DSN="" \
+  TORQUE_GUI_DIR="$REPO_ROOT/apps/gui" \
   "$BIN" serve > "$DATA_DIR/serve.log" 2>&1 &
 disown
 

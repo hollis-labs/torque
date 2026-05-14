@@ -13,10 +13,10 @@ import (
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/hitl"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/hitl"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/service"
 )
 
 // fakeResponseDispatcher records every DispatchResponse call so tests can
@@ -162,7 +162,7 @@ func TestCheckpointService_Emit_WithTimeout(t *testing.T) {
 
 // Parity with scheduler.HandleCheckpointSignal: CheckpointService.Emit must
 // park a doing+blocking task in review so MCP/HTTP emits get the same
-// behaviour as an in-run CLOCKWORK_CHECKPOINT signal. Spec §4.2.
+// behaviour as an in-run TORQUE_CHECKPOINT signal. Spec §4.2.
 func TestCheckpointService_Emit_ParksDoingBlockingTask(t *testing.T) {
 	svc := setupService(t)
 	taskID := createBlockingDecisionTask(t, svc)

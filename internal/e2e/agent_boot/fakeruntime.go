@@ -20,7 +20,7 @@ import (
 // per-Mode + per-provider matrix); StartErr / WaitExitErr drive failure
 // injection. Note Supervisor / ResourceLimits flow regardless of PTY —
 // profileSupervision pass-through is unconditional (see
-// decisions.clockwork_manifold.supervisor_passthrough_on_adapter_path).
+// decisions.torque.supervisor_passthrough_on_adapter_path).
 type fakeRuntimeConfig struct {
 	// PTY becomes Caps.PTY. Tests pick true for ModeLongLived/Subagent/
 	// Background/Resume coverage and false for OneShot.
@@ -44,9 +44,9 @@ type fakeRuntimeConfig struct {
 
 	// JsonRpcResponses scripts canned per-method responses for the
 	// fakeSession.JsonRpcCaller.Call surface. Used by codex JsonRpcStdio
-	// tests to drive the {thread: {id}} envelope clockwork's SendTurn
+	// tests to drive the {thread: {id}} envelope torque's SendTurn
 	// decodes on the first turn. Methods without an entry get a {}
-	// response (good enough for initialize + turn/start which clockwork
+	// response (good enough for initialize + turn/start which torque
 	// doesn't inspect the result body of).
 	JsonRpcResponses map[string]json.RawMessage
 }
@@ -118,14 +118,14 @@ type fakeRuntime struct {
 
 	// Convenience extractors for the most commonly asserted StartOptions
 	// fields. Mirror the lastStartOpts snapshot; tests can use either form.
-	autoFireFirstTurn      atomic.Bool
-	firstTurnPayload       atomic.Pointer[[]byte]
-	workspaceDir           atomic.Pointer[string]
-	sessionIDPreset        atomic.Pointer[string]
-	allowLoopback          atomic.Bool
-	supervisorPresent      atomic.Bool
-	resourceLimitsPresent  atomic.Bool
-	typedEventCallbackSet  atomic.Bool
+	autoFireFirstTurn     atomic.Bool
+	firstTurnPayload      atomic.Pointer[[]byte]
+	workspaceDir          atomic.Pointer[string]
+	sessionIDPreset       atomic.Pointer[string]
+	allowLoopback         atomic.Bool
+	supervisorPresent     atomic.Bool
+	resourceLimitsPresent atomic.Bool
+	typedEventCallbackSet atomic.Bool
 
 	// sessions tracks every fakeSession returned by Start. Tests that need
 	// to drive lifecycle (simulate typed events, force exit errors) reach
@@ -345,7 +345,7 @@ type fakeSession struct {
 
 	// jsonRpcResponses, when non-nil, scripts canned responses per
 	// JSON-RPC method. Used by tests to drive thread/start's response
-	// shape (the {thread: {id}} envelope clockwork's SendTurn decodes).
+	// shape (the {thread: {id}} envelope torque's SendTurn decodes).
 	jsonRpcResponses map[string]json.RawMessage
 
 	done     chan struct{}

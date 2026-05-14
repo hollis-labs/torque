@@ -6,13 +6,13 @@ import (
 	"path/filepath"
 	"text/tabwriter"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/plugin"
+	"github.com/hollis-labs/torque/internal/plugin"
 	"github.com/spf13/cobra"
 )
 
 // pluginsDir returns the plugins directory from env or the default.
 func pluginsDir() string {
-	if dir := os.Getenv("CLOCKWORK_PLUGINS_DIR"); dir != "" {
+	if dir := os.Getenv("TORQUE_PLUGINS_DIR"); dir != "" {
 		return dir
 	}
 	return "./plugins"
@@ -22,7 +22,7 @@ func pluginsDir() string {
 func newPluginCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "plugin",
-		Short: "Manage Clockwork plugins",
+		Short: "Manage Torque plugins",
 	}
 
 	cmd.AddCommand(pluginListCmd())

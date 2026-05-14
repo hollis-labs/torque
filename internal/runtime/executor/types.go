@@ -68,7 +68,7 @@ type ExecutionEvent struct {
 	Artifact *Artifact // When Type == EventArtifact
 	Tokens   *TokenUsage
 	Progress *float64 // 0.0-1.0 (when Type == EventProgress)
-	ToolUse  *ToolUse  // When Type == EventToolUse
+	ToolUse  *ToolUse // When Type == EventToolUse
 }
 
 // ToolUse is the payload of an EventToolUse event. ArgsSummary is a
@@ -97,7 +97,7 @@ type TokenUsage struct {
 
 // ExecutionResult is the final outcome of an execution run.
 type ExecutionResult struct {
-	Status    string        // "done", "review", "blocked", "failed"
+	Status    string // "done", "review", "blocked", "failed"
 	Reason    string
 	Artifacts []Artifact
 	Tokens    TokenUsage

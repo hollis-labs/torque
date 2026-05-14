@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/waitpoll"
+	"github.com/hollis-labs/torque/internal/runtime/waitpoll"
 )
 
 func TestURLReachable_200_ReturnsTrue(t *testing.T) {

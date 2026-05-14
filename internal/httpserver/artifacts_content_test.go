@@ -13,11 +13,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/service"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/httpserver"
+	"github.com/hollis-labs/torque/internal/httpserver"
 	"net/http/httptest"
 
 	_ "modernc.org/sqlite"
@@ -50,7 +50,7 @@ func setupArtifactServer(t *testing.T) *artifactServerEnv {
 	t.Helper()
 
 	dataDir := t.TempDir()
-	t.Setenv("CLOCKWORK_DATA_DIR", dataDir)
+	t.Setenv("TORQUE_DATA_DIR", dataDir)
 	// Point HOME somewhere safe so the portfolio-root fallback cannot widen
 	// the allowlist to the real homedir during the test run.
 	t.Setenv("HOME", t.TempDir())
@@ -67,7 +67,7 @@ func setupArtifactServer(t *testing.T) *artifactServerEnv {
 	t.Cleanup(ts.Close)
 
 	// Make a task (working_dir = dataDir so we can test task-working-dir
-	// rooting distinctly from CLOCKWORK_DATA_DIR).
+	// rooting distinctly from TORQUE_DATA_DIR).
 	task, err := svc.Task.Create(service.TaskCreateInput{
 		Title:      "artifact content test task",
 		Executor:   "cli",
@@ -227,9 +227,9 @@ func TestArtifactContent_OK_UnderTaskWorkingDir(t *testing.T) {
 	env := setupArtifactServer(t)
 
 	// Point the task's working_dir at a separate allowed dir, drop the
-	// CLOCKWORK_DATA_DIR to force rooting via the task's working_dir.
+	// TORQUE_DATA_DIR to force rooting via the task's working_dir.
 	wd := t.TempDir()
-	t.Setenv("CLOCKWORK_DATA_DIR", "")
+	t.Setenv("TORQUE_DATA_DIR", "")
 	require.NoError(t, env.svc.Task.Update(env.taskID, service.TaskUpdateInput{
 		TaskUpdate: sqlstore.TaskUpdate{WorkingDir: strPtr(wd)},
 	}))

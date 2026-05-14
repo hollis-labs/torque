@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 // TemplateService owns CRUD + versioning + instantiation for task

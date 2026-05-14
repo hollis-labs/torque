@@ -3,11 +3,11 @@ package bootstrap_test
 import (
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/bootstrap"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
-	"github.com/hollis-labs/clockwork-manifold/internal/toolbroker"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
+	"github.com/hollis-labs/torque/internal/runtime/bootstrap"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/toolbroker"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

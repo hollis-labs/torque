@@ -3,7 +3,7 @@ package agent
 import (
 	"fmt"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/agentfile"
+	"github.com/hollis-labs/torque/internal/agentfile"
 )
 
 // loadAgentFile resolves and loads the task's agent_file (if any) at boot.

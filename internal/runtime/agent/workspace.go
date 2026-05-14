@@ -9,7 +9,7 @@ import (
 // workspace describes the persistent per-session dir tree:
 //
 //	<WorkspacesRoot>/<projectKey>/<sessID>/
-//	├── prompts/         (reserved — clockwork does not yet mirror boot.md
+//	├── prompts/         (reserved — torque does not yet mirror boot.md
 //	│                     here; planted-file lifetime is the boot dir)
 //	├── state/           (reserved — resume hint + plan snapshot mirroring
 //	│                     deferred to a follow-up; today resume hints live
@@ -28,7 +28,7 @@ import (
 // resume + post-mortem work without the boot dir; today the prompts/ + state/
 // dirs are scaffolded but empty — see Copilot review feedback on PR #19.
 type workspace struct {
-	Root      string // ~/.clockwork/workspaces/<projectKey>/<sessID>
+	Root      string // ~/.torque/workspaces/<projectKey>/<sessID>
 	PromptDir string // <root>/prompts
 	StateDir  string // <root>/state
 	LogDir    string // <root>/logs
@@ -41,13 +41,13 @@ type workspace struct {
 // logs/session.log when LogPath is empty, but explicit is clearer).
 func workspaceCreate(workspacesRoot, projectID, sessID string) (*workspace, error) {
 	if workspacesRoot == "" {
-		// Default to $HOME/.clockwork/workspaces; matches the convention in
+		// Default to $HOME/.torque/workspaces; matches the convention in
 		// the mux daemon path and nanite's chat sessions.
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return nil, fmt.Errorf("resolve $HOME for workspaces root: %w", err)
 		}
-		workspacesRoot = filepath.Join(home, ".clockwork", "workspaces")
+		workspacesRoot = filepath.Join(home, ".torque", "workspaces")
 	}
 	projectKey := projectID
 	if projectKey == "" {

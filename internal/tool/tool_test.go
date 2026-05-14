@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/tool"
+	"github.com/hollis-labs/torque/internal/tool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,11 +24,11 @@ func (m *mockTool) InputSchema() json.RawMessage {
 func (m *mockTool) Call(_ context.Context, _ map[string]any, _ tool.ExecutionContext) (*tool.ToolResult, error) {
 	return &tool.ToolResult{Output: "ok"}, nil
 }
-func (m *mockTool) ValidateInput(_ map[string]any) error                  { return nil }
-func (m *mockTool) IsConcurrencySafe(_ map[string]any) bool               { return true }
-func (m *mockTool) IsReadOnly(_ map[string]any) bool                      { return true }
-func (m *mockTool) IsDestructive(_ map[string]any) bool                   { return false }
-func (m *mockTool) DefaultPermissions() []tool.PermissionRule             { return []tool.PermissionRule{} }
+func (m *mockTool) ValidateInput(_ map[string]any) error      { return nil }
+func (m *mockTool) IsConcurrencySafe(_ map[string]any) bool   { return true }
+func (m *mockTool) IsReadOnly(_ map[string]any) bool          { return true }
+func (m *mockTool) IsDestructive(_ map[string]any) bool       { return false }
+func (m *mockTool) DefaultPermissions() []tool.PermissionRule { return []tool.PermissionRule{} }
 
 // Compile-time interface check.
 var _ tool.Tool = (*mockTool)(nil)

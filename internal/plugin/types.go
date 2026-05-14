@@ -27,15 +27,15 @@ type UISlotName string
 
 // UISlotEntry is a plugin's registration into a UI slot.
 type UISlotEntry struct {
-	ID       string     `json:"id"`
-	PluginID string     `json:"plugin_id"`
-	Slot     UISlotName `json:"slot"`
-	Label    string     `json:"label"`
-	Priority int        `json:"priority"`
+	ID       string                 `json:"id"`
+	PluginID string                 `json:"plugin_id"`
+	Slot     UISlotName             `json:"slot"`
+	Label    string                 `json:"label"`
+	Priority int                    `json:"priority"`
 	Props    map[string]interface{} `json:"props,omitempty"`
 }
 
-// Clockwork UI slot constants.
+// Torque UI slot constants.
 const (
 	SlotTaskDetail      UISlotName = "task-detail"
 	SlotTaskListActions UISlotName = "task-list.actions"
@@ -56,7 +56,7 @@ type ToolDefinition struct {
 // ToolHandler is a function that handles MCP tool calls.
 type ToolHandler func(ctx interface{}, args map[string]interface{}) (interface{}, error)
 
-// Executor is Clockwork's domain-specific executor interface.
+// Executor is Torque's domain-specific executor interface.
 type Executor interface {
 	Name() string
 	Run(ctx interface{}, job *ExecutionJob, cb EventCallback) (*ExecutionResult, error)
@@ -66,16 +66,16 @@ type Executor interface {
 
 // ExecutionJob is the plugin-facing execution contract.
 type ExecutionJob struct {
-	TaskID        string
-	Description   string
-	SystemPrompt  string
-	WorkingDir    string
-	AgentProfile  string
-	Tools         []string
-	Permissions   map[string]string
-	Environment   map[string]string
-	Files         []string
-	Limits        ExecutionLimits
+	TaskID       string
+	Description  string
+	SystemPrompt string
+	WorkingDir   string
+	AgentProfile string
+	Tools        []string
+	Permissions  map[string]string
+	Environment  map[string]string
+	Files        []string
+	Limits       ExecutionLimits
 }
 
 // ExecutionLimits constrains a single execution run.
@@ -111,7 +111,7 @@ type ExecutionResult struct {
 // decision D4). Plugin-SDK consumers see the same surface as in-process
 // executors.
 type ExecutorCapabilities struct {
-	SupportsStreaming    bool
+	SupportsStreaming   bool
 	SupportsTools       bool
 	SupportsSandbox     bool
 	SupportsPermissions bool

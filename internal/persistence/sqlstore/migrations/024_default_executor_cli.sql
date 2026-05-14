@@ -2,15 +2,15 @@
 --
 -- Migration 016 (2026-04-XX) set the default to 'opencode' when opencode
 -- was the dogfood executor. Dogfood flipped to codex on 2026-05-10 (per
--- ~/.clockwork/dogfood/profiles.yaml header: "after the Codex + Opencode
+-- ~/.torque/dogfood/profiles.yaml header: "after the Codex + Opencode
 -- parity work landed (CW-20260510-0065/0067)"). Codex profiles use
 -- `executor: cli`, but the task-creation default never followed — every
--- clockwork_task_create with no explicit executor returned
+-- torque_task_create with no explicit executor returned
 -- Executor="opencode" even when the chosen agent_profile was
 -- configured `executor: cli`. The MCP tool docstring already claims
 -- "default cli"; this migration makes reality match the doc.
 --
--- Captured in Vanta as followups_clockwork_executor_default_drift; this
+-- Captured in Vanta as followups_torque_executor_default_drift; this
 -- is the (a) layer of the three-layer fix. The service-layer fallback
 -- (internal/service/task.go:154-160 effectiveExecutor = "opencode") is
 -- the (b) layer, dropped in a sibling commit. No compat shim per
@@ -23,6 +23,12 @@
 -- sessions, neither touched tasks). Existing rows keep their current
 -- executor value (per-row data unchanged); only the default for
 -- future inserts changes.
+--
+-- Live databases can have child rows in runs, comments, artifacts, sessions,
+-- and related tables pointing at tasks.id. Defer FK checks until commit so the
+-- drop/rename swap can complete with the final tasks table present.
+
+PRAGMA defer_foreign_keys = ON;
 
 CREATE TABLE tasks_new (
     id                       TEXT PRIMARY KEY,

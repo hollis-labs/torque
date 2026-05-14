@@ -25,14 +25,14 @@ func TestServeE2EMockTaskCompletes(t *testing.T) {
 	dir := t.TempDir()
 
 	// Isolate all persistent state inside the temp dir so the test does not
-	// touch the dev/prod clockwork.db or data dir.
-	t.Setenv("CLOCKWORK_DB_PATH", filepath.Join(dir, "test.db"))
-	t.Setenv("CLOCKWORK_DATA_DIR", dir)
-	t.Setenv("CLOCKWORK_POSTGRES_DSN", "") // force sqlite even if the dev env sets it
-	t.Setenv("CLOCKWORK_PROFILES_PATH", filepath.Join(dir, "no-such-profiles.yaml"))
-	t.Setenv("CLOCKWORK_SCHED_INTERVAL", "1")
-	t.Setenv("CLOCKWORK_SCHED_ENABLED", "true")
-	t.Setenv("CLOCKWORK_SCHED_WORKERS", "1")
+	// touch the dev/prod torque.db or data dir.
+	t.Setenv("TORQUE_DB_PATH", filepath.Join(dir, "test.db"))
+	t.Setenv("TORQUE_DATA_DIR", dir)
+	t.Setenv("TORQUE_POSTGRES_DSN", "") // force sqlite even if the dev env sets it
+	t.Setenv("TORQUE_PROFILES_PATH", filepath.Join(dir, "no-such-profiles.yaml"))
+	t.Setenv("TORQUE_SCHED_INTERVAL", "1")
+	t.Setenv("TORQUE_SCHED_ENABLED", "true")
+	t.Setenv("TORQUE_SCHED_WORKERS", "1")
 
 	// Pick a free port by binding 127.0.0.1:0 and handing the listener to
 	// runServe. The listener is closed by srv.Serve inside runServe on shutdown.
@@ -150,12 +150,12 @@ func TestServeE2EMockTaskCompletes(t *testing.T) {
 // left the shutdown goroutine blocked on <-ctx.Done() forever.
 func TestRunServeUnblocksOnListenerClose(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("CLOCKWORK_DB_PATH", filepath.Join(dir, "test.db"))
-	t.Setenv("CLOCKWORK_DATA_DIR", dir)
-	t.Setenv("CLOCKWORK_POSTGRES_DSN", "")
-	t.Setenv("CLOCKWORK_PROFILES_PATH", filepath.Join(dir, "no-profiles.yaml"))
-	t.Setenv("CLOCKWORK_SCHED_INTERVAL", "1")
-	t.Setenv("CLOCKWORK_SCHED_ENABLED", "false") // no scheduler ticks needed for this test
+	t.Setenv("TORQUE_DB_PATH", filepath.Join(dir, "test.db"))
+	t.Setenv("TORQUE_DATA_DIR", dir)
+	t.Setenv("TORQUE_POSTGRES_DSN", "")
+	t.Setenv("TORQUE_PROFILES_PATH", filepath.Join(dir, "no-profiles.yaml"))
+	t.Setenv("TORQUE_SCHED_INTERVAL", "1")
+	t.Setenv("TORQUE_SCHED_ENABLED", "false") // no scheduler ticks needed for this test
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 // Resolver handles agent-assisted merge conflict resolution.
@@ -71,7 +71,7 @@ func (r *Resolver) BuildResolutionRequest(ctx context.Context, input ResolutionI
 		}
 		if t.Status == "done" || t.Status == "doing" || t.Status == "review" {
 			relatedIDs = append(relatedIDs, t.ID)
-			relatedBranches = append(relatedBranches, "clockwork/"+t.ID)
+			relatedBranches = append(relatedBranches, "torque/"+t.ID)
 			relatedDescs[t.ID] = t.Description
 		}
 	}
@@ -249,7 +249,7 @@ func (r *Resolver) buildResolutionSystemPrompt(req *ResolutionRequest) string {
 	sb.WriteString("- Report confidence as a float between 0.0 and 1.0\n")
 	sb.WriteString(fmt.Sprintf("- Confidence must be >= %.2f for auto-acceptance\n", req.ConfidenceThreshold))
 	sb.WriteString("- If you cannot confidently resolve, report low confidence so a human can review\n")
-	sb.WriteString("\nWhen complete, post your resolution summary + confidence via the clockwork_task_summary MCP tool.\n")
+	sb.WriteString("\nWhen complete, post your resolution summary + confidence via the torque_task_summary MCP tool.\n")
 
 	return sb.String()
 }

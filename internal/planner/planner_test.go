@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/planner"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/planner"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
@@ -190,7 +190,7 @@ func TestPlanner_TemplateIncludesHITLRedispatchGuidance(t *testing.T) {
 	assert.Contains(t, content, "Redispatch preflight")
 	assert.Contains(t, content, "task.metadata.checkpoint_responses")
 	assert.Contains(t, content, "HITL checkpoints")
-	assert.Contains(t, content, "clockwork_task_checkpoint_emit")
+	assert.Contains(t, content, "torque_task_checkpoint_emit")
 	assert.Contains(t, content, "approval")
 	assert.Contains(t, content, "message")
 }

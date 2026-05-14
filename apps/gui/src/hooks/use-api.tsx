@@ -1,7 +1,7 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react'
-import { ClockworkApiClient } from '@/lib/api'
+import { TorqueApiClient } from '@/lib/api'
 
-const ApiContext = createContext<ClockworkApiClient | null>(null)
+const ApiContext = createContext<TorqueApiClient | null>(null)
 
 interface ApiProviderProps {
   baseUrl?: string
@@ -10,14 +10,14 @@ interface ApiProviderProps {
 
 export function ApiProvider({ baseUrl, children }: ApiProviderProps) {
   const client = useMemo(
-    () => new ClockworkApiClient(baseUrl),
+    () => new TorqueApiClient(baseUrl),
     [baseUrl]
   )
 
   return <ApiContext.Provider value={client}>{children}</ApiContext.Provider>
 }
 
-export function useApi(): ClockworkApiClient {
+export function useApi(): TorqueApiClient {
   const client = useContext(ApiContext)
   if (!client) {
     throw new Error('useApi must be used within an ApiProvider')

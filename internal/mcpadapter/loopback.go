@@ -3,8 +3,8 @@ package mcpadapter
 import (
 	"context"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/service"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -17,17 +17,17 @@ import (
 // and can't act on other tasks.
 //
 // Tool catalog (loopback subset):
-//   - clockwork_task_summary(text)        — agent's prose summary at done
-//   - clockwork_task_blocked(reason)      — flag blocked + set reason
-//   - clockwork_task_review(reason)       — flag review + comment
-//   - clockwork_artifact_create           — task_id implicit
-//   - clockwork_comment_add               — task_id + author implicit
-//   - clockwork_task_subtodo_add          — task_id implicit
-//   - clockwork_task_subtodo_done         — task_id implicit
+//   - torque_task_summary(text)        — agent's prose summary at done
+//   - torque_task_blocked(reason)      — flag blocked + set reason
+//   - torque_task_review(reason)       — flag review + comment
+//   - torque_artifact_create           — task_id implicit
+//   - torque_comment_add               — task_id + author implicit
+//   - torque_task_subtodo_add          — task_id implicit
+//   - torque_task_subtodo_done         — task_id implicit
 //
 // Deterministic lifecycle (started, exited, timeout) is NOT in this catalog
 // — the executor wrapper drives those off go-runner events.
-// clockwork_task_transition is also excluded; agents do not drive their own
+// torque_task_transition is also excluded; agents do not drive their own
 // FSM. Discovery / read tools (list, get, search) are excluded — the agent
 // already has its task body in the prompt.
 //
@@ -38,7 +38,7 @@ func NewLoopback(svc *service.Service, taskID string) *Adapter {
 		panic("mcpadapter: NewLoopback requires non-empty taskID")
 	}
 	s := server.NewMCPServer(
-		"Clockwork Loopback",
+		"Torque Loopback",
 		"0.1.0",
 		server.WithToolCapabilities(true),
 	)
@@ -53,22 +53,22 @@ func NewLoopback(svc *service.Service, taskID string) *Adapter {
 }
 
 func (a *Adapter) registerLoopbackTools() {
-	a.addTool(mcp.NewTool("clockwork_task_summary",
-		mcp.WithDescription(`Capture an agent-written summary of what was accomplished this turn. Persisted as a comment with author="agent" so the audit trail stays queryable via clockwork_comment_search.
+	a.addTool(mcp.NewTool("torque_task_summary",
+		mcp.WithDescription(`Capture an agent-written summary of what was accomplished this turn. Persisted as a comment with author="agent" so the audit trail stays queryable via torque_comment_search.
 Use exactly once per turn, near the end, before the wrapper signals done. The wrapper drives the FSM transition; this is interpretive signal only.
 Response shape: data = {<CommentRecord fields>} — singleton.
 Example: {"text":"Refactored streamparser per CW-..., added 3 tests, all green."}`),
 		mcp.WithString("text", mcp.Required(), mcp.Description("Prose summary of work accomplished")),
 	), a.handleLoopbackSummary)
 
-	a.addTool(mcp.NewTool("clockwork_task_blocked",
+	a.addTool(mcp.NewTool("torque_task_blocked",
 		mcp.WithDescription(`Flag the current task as blocked with an explanation. Sets blocked_reason and transitions the task to blocked. Use only when the agent has determined the task cannot proceed without external action; lifecycle (started, exited, timeout) is wrapper-driven and should not be signaled here.
 Response shape: data = {task_id, status:"blocked", blocked_reason}.
 Example: {"reason":"Need credentials for the staging API; ENV var not set."}`),
 		mcp.WithString("reason", mcp.Required(), mcp.Description("Why the task is blocked (persisted as blocked_reason)")),
 	), a.handleLoopbackBlocked)
 
-	a.addTool(mcp.NewTool("clockwork_task_review",
+	a.addTool(mcp.NewTool("torque_task_review",
 		mcp.WithDescription(`Flag the current task as needing review. The reason is posted as a comment with author="agent" for the reviewer. Transitions the task to review.
 Use when the agent has completed enough to warrant review but cannot self-determine done.
 Response shape: data = {task_id, status:"review"}.
@@ -76,7 +76,7 @@ Example: {"reason":"Implementation done but the test for edge case X is not feas
 		mcp.WithString("reason", mcp.Description("Optional context for the reviewer (persisted as a comment)")),
 	), a.handleLoopbackReview)
 
-	a.addTool(mcp.NewTool("clockwork_artifact_create",
+	a.addTool(mcp.NewTool("torque_artifact_create",
 		mcp.WithDescription(`Create an artifact (file pointer, URL, or inline content) attached to the current task; returns the persisted ArtifactRecord.
 The current task is implicit (loopback context) — agents cannot create artifacts for other tasks via this server.
 Response shape: data = {<ArtifactRecord fields>} — singleton.
@@ -87,15 +87,15 @@ Example: {"type":"file","file_path":"/tmp/report.md"}`),
 		mcp.WithString("file_path", mcp.Description("Filesystem path (for type=file)")),
 	), a.handleLoopbackArtifactCreate)
 
-	a.addTool(mcp.NewTool("clockwork_comment_add",
+	a.addTool(mcp.NewTool("torque_comment_add",
 		mcp.WithDescription(`Append a comment (freeform prose) to the current task; returns the persisted CommentRecord.
-The current task is implicit (loopback context). Author defaults to "agent". Use for agent-to-user channel; for the canonical end-of-turn summary use clockwork_task_summary instead.
+The current task is implicit (loopback context). Author defaults to "agent". Use for agent-to-user channel; for the canonical end-of-turn summary use torque_task_summary instead.
 Response shape: data = {<CommentRecord fields>} — singleton.
 Example: {"content":"Investigating the auth flow; see file X for context."}`),
 		mcp.WithString("content", mcp.Required(), mcp.Description("Comment body (prose)")),
 	), a.handleLoopbackCommentAdd)
 
-	a.addTool(mcp.NewTool("clockwork_task_subtodo_add",
+	a.addTool(mcp.NewTool("torque_task_subtodo_add",
 		mcp.WithDescription(`Append a subtodo item to the current task's checklist. required=true means the task cannot transition past review until the item is ticked off.
 The current task is implicit (loopback context).
 Response shape: data = [<Subtodo>...] — returns the updated full checklist.
@@ -105,7 +105,7 @@ Example: {"id":"check-1","text":"write regression test","required":true}`),
 		mcp.WithBoolean("required", mcp.Description("If true, blocks done until ticked off (default false)")),
 	), a.handleLoopbackSubtodoAdd)
 
-	a.addTool(mcp.NewTool("clockwork_task_subtodo_done",
+	a.addTool(mcp.NewTool("torque_task_subtodo_done",
 		mcp.WithDescription(`Mark a subtodo done with an evidence string (artifact id, commit SHA, URL, or note). Operates on the current task's checklist.
 Response shape: data = [<Subtodo>...] — returns the updated full checklist.
 Example: {"id":"check-1","evidence":"abc123 / PR #42"}`),

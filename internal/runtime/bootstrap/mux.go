@@ -11,7 +11,7 @@ import (
 // per-task bootdir plant should expose Mux to the spawned agent.
 //
 // Empty Command means "no Mux entry"; the bootdir plant then carries
-// only the per-task clockwork loopback (the existing pre-CW-20260510-0110
+// only the per-task torque loopback (the existing pre-CW-20260510-0110
 // behavior). Non-empty Command flows into PlantContext.MuxCommand /
 // MuxArgs / MuxEnv at Boot time so go-providers' renderers emit a second
 // `mux` MCP server entry alongside the loopback.
@@ -31,14 +31,14 @@ type muxResolution struct {
 // `mcpServers.mux` shape — verified against the user's actual config
 // at the time of CW-20260510-0110. The token + scopes here are the
 // project-default development values; operators with hardened
-// deployments override via CLOCKWORK_MUX_ARGS (whitespace-split tokens)
+// deployments override via TORQUE_MUX_ARGS (whitespace-split tokens)
 // or via direct config plumbing in the future. (A JSON-array variant —
-// CLOCKWORK_MUX_ARGS_JSON — is a deferred follow-up; not wired yet.)
+// TORQUE_MUX_ARGS_JSON — is a deferred follow-up; not wired yet.)
 //
 // Spelling these out as a single source of truth prevents drift between
 // the per-task plant shape and the user's interactive shell shape —
 // agents that work interactively will see the same aggregator surface
-// when dispatched as a clockwork task.
+// when dispatched as a torque task.
 //
 // Mirroring the interactive shape verbatim is also the lowest-risk
 // initial default: anything the interactive `claude → mux` flow can do,
@@ -46,7 +46,7 @@ type muxResolution struct {
 // semantics differ between claude and opencode/codex).
 var defaultMuxArgs = []string{
 	"mcp", "--proxy",
-	"--servers", "vanta,clockwork,cerberus",
+	"--servers", "vanta,torque,cerberus",
 	"--token", "local-dev",
 	"--scopes", "session.write,message.write",
 }
@@ -60,7 +60,7 @@ var defaultMuxArgs = []string{
 //
 // Resolution order for the binary path:
 //
-//  1. CLOCKWORK_MUX_COMMAND env var (operator override; useful for
+//  1. TORQUE_MUX_COMMAND env var (operator override; useful for
 //     dev sessions where the binary lives in a non-standard dir).
 //  2. <dir(os.Executable())>/mux — the production deployment shape:
 //     when cerberus syncs both binaries into the same artifact dir.
@@ -69,13 +69,13 @@ var defaultMuxArgs = []string{
 //     case for `go install ./...` developer setups).
 //
 // Args resolution: defaults to the canonical interactive shape
-// (defaultMuxArgs). CLOCKWORK_MUX_ARGS env var, when set, overrides
+// (defaultMuxArgs). TORQUE_MUX_ARGS env var, when set, overrides
 // the default. The value is parsed as whitespace-split tokens with no
 // quoting; operators with values containing spaces will need to wait
-// for the deferred CLOCKWORK_MUX_ARGS_JSON follow-up or for structured
+// for the deferred TORQUE_MUX_ARGS_JSON follow-up or for structured
 // config plumbing.
 //
-// Whitespace-only override behavior: if CLOCKWORK_MUX_ARGS is set but
+// Whitespace-only override behavior: if TORQUE_MUX_ARGS is set but
 // strings.Fields() returns an empty slice (whitespace-only value), we
 // log a WARN and fall back to defaultMuxArgs rather than emitting a
 // "mux with no args" invocation. Empty-after-Fields is much more likely
@@ -95,7 +95,7 @@ var defaultMuxArgs = []string{
 func resolveMuxConfig() muxResolution {
 	command := resolveMuxCommand()
 	if command == "" {
-		log.Printf("[bootstrap] mux NOT resolved (no CLOCKWORK_MUX_COMMAND override, no sibling binary, no PATH match) — per-task bootdir plants will carry only the clockwork loopback (no Vanta / cross-task / cerberus access for spawned agents)")
+		log.Printf("[bootstrap] mux NOT resolved (no TORQUE_MUX_COMMAND override, no sibling binary, no PATH match) — per-task bootdir plants will carry only the torque loopback (no Vanta / cross-task / cerberus access for spawned agents)")
 		return muxResolution{}
 	}
 
@@ -105,17 +105,17 @@ func resolveMuxConfig() muxResolution {
 	// (small, fixed slice) and prevents an entire class of "why did the
 	// args list grow across tasks?" footguns.
 	args := append([]string(nil), defaultMuxArgs...)
-	if override := os.Getenv("CLOCKWORK_MUX_ARGS"); override != "" {
+	if override := os.Getenv("TORQUE_MUX_ARGS"); override != "" {
 		// Whitespace-split with no quoting. Operators needing values
 		// with spaces (rare for Mux args) will need the deferred
-		// CLOCKWORK_MUX_ARGS_JSON path or future structured config.
+		// TORQUE_MUX_ARGS_JSON path or future structured config.
 		parsed := strings.Fields(override)
 		if len(parsed) == 0 {
 			// Whitespace-only override → fall back to defaults (safer
 			// than emitting a bare-`mux` invocation; empty-after-Fields
 			// is far more likely a misconfiguration than intent). Log a
 			// WARN so operators can spot the bad value.
-			log.Printf("[bootstrap] WARN: CLOCKWORK_MUX_ARGS is set but parses to zero tokens (whitespace-only?); falling back to default args")
+			log.Printf("[bootstrap] WARN: TORQUE_MUX_ARGS is set but parses to zero tokens (whitespace-only?); falling back to default args")
 		} else {
 			args = parsed
 			// Redacted log: never echo the raw value — it routinely
@@ -123,7 +123,7 @@ func resolveMuxConfig() muxResolution {
 			// etc.). Operators who need to debug already have the env
 			// var on hand; the daemon log is not the right channel for
 			// the verbatim value.
-			log.Printf("[bootstrap] mux args overridden via CLOCKWORK_MUX_ARGS (%d tokens; values redacted)", len(parsed))
+			log.Printf("[bootstrap] mux args overridden via TORQUE_MUX_ARGS (%d tokens; values redacted)", len(parsed))
 		}
 	}
 
@@ -144,7 +144,7 @@ func resolveMuxConfig() muxResolution {
 // override-then-sibling-then-PATH order, same isExecutableFile
 // predicate, same EvalSymlinks normalization for the override path).
 func resolveMuxCommand() string {
-	if override := os.Getenv("CLOCKWORK_MUX_COMMAND"); override != "" {
+	if override := os.Getenv("TORQUE_MUX_COMMAND"); override != "" {
 		// Normalize to absolute + symlink-resolved so the contract
 		// "absolute path" holds even when an operator sets a relative
 		// path or routes through a symlink. Failures fall back to the
@@ -158,10 +158,10 @@ func resolveMuxCommand() string {
 			resolved = eval
 		}
 		if isExecutableFile(resolved) {
-			log.Printf("[bootstrap] mux resolved via CLOCKWORK_MUX_COMMAND=%s", resolved)
+			log.Printf("[bootstrap] mux resolved via TORQUE_MUX_COMMAND=%s", resolved)
 			return resolved
 		}
-		log.Printf("[bootstrap] CLOCKWORK_MUX_COMMAND=%s (resolved=%s) set but path is not an executable file; ignoring", override, resolved)
+		log.Printf("[bootstrap] TORQUE_MUX_COMMAND=%s (resolved=%s) set but path is not an executable file; ignoring", override, resolved)
 	}
 
 	exe, err := os.Executable()

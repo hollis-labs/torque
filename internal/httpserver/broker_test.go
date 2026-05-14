@@ -15,12 +15,12 @@ import (
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/broker"
-	"github.com/hollis-labs/clockwork-manifold/internal/httpserver"
-	clockmsg "github.com/hollis-labs/clockwork-manifold/internal/messaging"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/broker"
+	"github.com/hollis-labs/torque/internal/httpserver"
+	clockmsg "github.com/hollis-labs/torque/internal/messaging"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/service"
 )
 
 // setupBrokerServer wires the broker through SetBroker so all routes serve

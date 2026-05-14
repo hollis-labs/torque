@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/service"
 )
 
 // TestPlanCreate_ShapeAndMetadata verifies that CreatePlan builds a

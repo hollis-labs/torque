@@ -8,8 +8,8 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/service"
 )
 
 // ErrorCode is the structured taxonomy for MCP tool errors. Agents inspect

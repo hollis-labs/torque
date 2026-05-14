@@ -11,12 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/broker"
-	"github.com/hollis-labs/clockwork-manifold/internal/mcpadapter"
-	clockmsg "github.com/hollis-labs/clockwork-manifold/internal/messaging"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/broker"
+	"github.com/hollis-labs/torque/internal/mcpadapter"
+	clockmsg "github.com/hollis-labs/torque/internal/messaging"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/service"
 )
 
 // setupAdapterWithBroker is a sibling of setupAdapter that wires a real
@@ -40,11 +40,11 @@ func setupAdapterWithBroker(t *testing.T) *mcpadapter.Adapter {
 	return a
 }
 
-// AC5: clockwork_broker_send round-trips a kind=notice envelope.
+// AC5: torque_broker_send round-trips a kind=notice envelope.
 func TestFullStack_BrokerSend_Notice(t *testing.T) {
 	a := setupAdapterWithBroker(t)
 
-	text, isErr := callTool(t, a, "clockwork_broker_send", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_broker_send", map[string]interface{}{
 		"kind":    "notice",
 		"from":    "msg://agent/test/alice",
 		"to":      "msg://agent/test/bob",
@@ -63,7 +63,7 @@ func TestFullStack_BrokerSend_Notice(t *testing.T) {
 func TestFullStack_BrokerSend_BogusKindRejected(t *testing.T) {
 	a := setupAdapterWithBroker(t)
 
-	text, isErr := callTool(t, a, "clockwork_broker_send", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_broker_send", map[string]interface{}{
 		"kind": "bogus",
 		"from": "msg://agent/test/alice",
 		"to":   "msg://agent/test/bob",
@@ -73,12 +73,12 @@ func TestFullStack_BrokerSend_BogusKindRejected(t *testing.T) {
 	assert.Equal(t, "arg_invalid", code)
 }
 
-// AC5: clockwork_broker_inbox drains and returns matched envelopes.
+// AC5: torque_broker_inbox drains and returns matched envelopes.
 func TestFullStack_BrokerInbox_Drains(t *testing.T) {
 	a := setupAdapterWithBroker(t)
 
 	for i := 0; i < 3; i++ {
-		text, isErr := callTool(t, a, "clockwork_broker_send", map[string]interface{}{
+		text, isErr := callTool(t, a, "torque_broker_send", map[string]interface{}{
 			"kind":    "notice",
 			"from":    "msg://agent/test/alice",
 			"to":      "msg://agent/test/bob",
@@ -87,7 +87,7 @@ func TestFullStack_BrokerInbox_Drains(t *testing.T) {
 		require.False(t, isErr, "send %d failed: %s", i, text)
 	}
 
-	text, isErr := callTool(t, a, "clockwork_broker_inbox", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_broker_inbox", map[string]interface{}{
 		"to": "msg://agent/test/bob",
 	})
 	require.False(t, isErr, "inbox should not error: %s", text)
@@ -99,19 +99,19 @@ func TestFullStack_BrokerInbox_Drains(t *testing.T) {
 	assert.Len(t, page.Envelopes, 3)
 
 	// Drained.
-	text, _ = callTool(t, a, "clockwork_broker_inbox", map[string]interface{}{
+	text, _ = callTool(t, a, "torque_broker_inbox", map[string]interface{}{
 		"to": "msg://agent/test/bob",
 	})
 	parseData(t, text, &page)
 	assert.Empty(t, page.Envelopes)
 }
 
-// AC5: clockwork_broker_request returns a domain error when the timeout
+// AC5: torque_broker_request returns a domain error when the timeout
 // expires with no matching response.
 func TestFullStack_BrokerRequest_Timeout(t *testing.T) {
 	a := setupAdapterWithBroker(t)
 
-	text, isErr := callTool(t, a, "clockwork_broker_request", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_broker_request", map[string]interface{}{
 		"from":            "msg://agent/test/asker",
 		"to":              "msg://agent/test/silent",
 		"payload":         `{}`,
@@ -126,7 +126,7 @@ func TestFullStack_BrokerRequest_Timeout(t *testing.T) {
 func TestFullStack_BrokerRequest_TimeoutOutOfRange(t *testing.T) {
 	a := setupAdapterWithBroker(t)
 
-	text, isErr := callTool(t, a, "clockwork_broker_request", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_broker_request", map[string]interface{}{
 		"from":            "msg://agent/test/asker",
 		"to":              "msg://agent/test/silent",
 		"timeout_seconds": "99999",
@@ -143,7 +143,7 @@ func TestFullStack_BrokerNoBrokerWired(t *testing.T) {
 	// Use the standard setupAdapter (no WithBroker call).
 	a := setupAdapter(t)
 
-	text, isErr := callTool(t, a, "clockwork_broker_send", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_broker_send", map[string]interface{}{
 		"kind": "notice",
 		"from": "msg://agent/test/a",
 		"to":   "msg://agent/test/b",

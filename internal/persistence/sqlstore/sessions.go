@@ -240,7 +240,7 @@ func (s *Store) UpdateSessionResumeHint(id string, hint []byte) error {
 }
 
 // UpdateSessionMeta overwrites the meta column on the session row.
-// Used by the substrate to land per-session keys (clockwork.boot_dir
+// Used by the substrate to land per-session keys (torque.boot_dir
 // among them) that aren't known until after agentsessions.Manager.Start
 // fires the AutoPlantBootDir callback.
 func (s *Store) UpdateSessionMeta(id, metaJSON string) error {

@@ -10,10 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/service"
 )
 
 // setupE2EStack builds the full service + store stack that scheduler handlers
@@ -32,11 +32,11 @@ func setupE2EStack(t *testing.T) (*sqlstore.Store, *service.Service) {
 }
 
 // TestE2E_Checkpoint_Emit_RespondService_TaskResumes exercises the full
-// pipeline end-to-end (Phase E shape — CLOCKWORK_CHECKPOINT signal protocol
+// pipeline end-to-end (Phase E shape — TORQUE_CHECKPOINT signal protocol
 // retired; emission now goes through service.Checkpoint.Emit, which is the
-// same path the MCP tool clockwork_task_checkpoint_emit invokes):
+// same path the MCP tool torque_task_checkpoint_emit invokes):
 //  1. A decision task with checkpoint_mode=blocking exists and is "doing".
-//  2. The agent emits via the service-layer Emit (was: inline CLOCKWORK_CHECKPOINT).
+//  2. The agent emits via the service-layer Emit (was: inline TORQUE_CHECKPOINT).
 //     The service persists a pending checkpoint and parks the task in review.
 //  3. A responder (mirroring MCP/HTTP) calls CheckpointService.Respond with
 //     a JSON answer.

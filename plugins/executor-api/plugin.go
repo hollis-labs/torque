@@ -1,8 +1,8 @@
-// Package executorapi implements clockwork's `api` executor by calling
+// Package executorapi implements torque's `api` executor by calling
 // vendor-published Go SDKs directly (Anthropic, OpenAI, ...).
 //
 // Phase E (CW-20260427-0043) replaced the legacy HTTP-Provider stub + the
-// CLOCKWORK_* stdout signal protocol with a `vendorClient` interface backed by
+// TORQUE_* stdout signal protocol with a `vendorClient` interface backed by
 // real vendor SDK streaming. Per-task FSM transitions are driven by stream
 // completion + tool-call MCP signaling (same as cliexec), not stdout parsing.
 package executorapi
@@ -12,9 +12,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
-	"github.com/hollis-labs/clockwork-manifold/internal/toolbroker"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/toolbroker"
 )
 
 // APIExecutor implements executor.Executor by dispatching to a per-provider

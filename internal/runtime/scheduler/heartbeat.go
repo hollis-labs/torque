@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 // StaleWorker represents a worker that has not sent a heartbeat within the threshold.

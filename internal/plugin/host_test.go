@@ -19,14 +19,14 @@ type testPlugin struct {
 	loaded   bool
 }
 
-func (p *testPlugin) ID() string              { return p.id }
-func (p *testPlugin) Name() string            { return p.name }
-func (p *testPlugin) Version() string         { return "1.0.0" }
-func (p *testPlugin) Description() string     { return "test plugin" }
-func (p *testPlugin) Dependencies() []string  { return p.deps }
-func (p *testPlugin) Unload() error           { p.loaded = false; return nil }
-func (p *testPlugin) Status() PluginStatus    { return PluginStatus{Loaded: p.loaded} }
-func (p *testPlugin) Load(host Host) error    { p.loaded = true; return nil }
+func (p *testPlugin) ID() string             { return p.id }
+func (p *testPlugin) Name() string           { return p.name }
+func (p *testPlugin) Version() string        { return "1.0.0" }
+func (p *testPlugin) Description() string    { return "test plugin" }
+func (p *testPlugin) Dependencies() []string { return p.deps }
+func (p *testPlugin) Unload() error          { p.loaded = false; return nil }
+func (p *testPlugin) Status() PluginStatus   { return PluginStatus{Loaded: p.loaded} }
+func (p *testPlugin) Load(host Host) error   { p.loaded = true; return nil }
 
 type testCRUDHandler struct{}
 
@@ -56,9 +56,9 @@ func (h *testEventHook) Handle(ctx context.Context, event goplugin.Event) error 
 
 type testConnector struct{ name string }
 
-func (c *testConnector) Name() string                                        { return c.name }
+func (c *testConnector) Name() string                                                   { return c.name }
 func (c *testConnector) Send(ctx context.Context, payload map[string]interface{}) error { return nil }
-func (c *testConnector) Health(ctx context.Context) error                    { return nil }
+func (c *testConnector) Health(ctx context.Context) error                               { return nil }
 
 type testExecutor struct{ name string }
 
@@ -73,8 +73,8 @@ func (e *testExecutor) Validate(job *ExecutionJob) error { return nil }
 
 // ---- tests ----
 
-func TestNewClockworkHost(t *testing.T) {
-	h := NewClockworkHost(nil, nil)
+func TestNewTorqueHost(t *testing.T) {
+	h := NewTorqueHost(nil, nil)
 	require.NotNil(t, h)
 	assert.NotNil(t, h.inner)
 	assert.NotNil(t, h.executors)
@@ -86,7 +86,7 @@ func TestNewClockworkHost(t *testing.T) {
 }
 
 func TestLoadPlugin(t *testing.T) {
-	h := NewClockworkHost(nil, NewLogger("test"))
+	h := NewTorqueHost(nil, NewLogger("test"))
 	p := &testPlugin{id: "plug-1", name: "Test Plugin"}
 	err := h.LoadPlugin(p)
 	require.NoError(t, err)
@@ -98,7 +98,7 @@ func TestLoadPlugin(t *testing.T) {
 }
 
 func TestLoadPluginDuplicate(t *testing.T) {
-	h := NewClockworkHost(nil, NewLogger("test"))
+	h := NewTorqueHost(nil, NewLogger("test"))
 	p := &testPlugin{id: "plug-dup", name: "Dup"}
 	require.NoError(t, h.LoadPlugin(p))
 	err := h.LoadPlugin(&testPlugin{id: "plug-dup", name: "Dup2"})
@@ -106,7 +106,7 @@ func TestLoadPluginDuplicate(t *testing.T) {
 }
 
 func TestLoadPluginMissingDep(t *testing.T) {
-	h := NewClockworkHost(nil, NewLogger("test"))
+	h := NewTorqueHost(nil, NewLogger("test"))
 	p := &testPlugin{id: "needs-dep", name: "Dep", deps: []string{"missing-dep"}}
 	err := h.LoadPlugin(p)
 	require.Error(t, err)
@@ -115,7 +115,7 @@ func TestLoadPluginMissingDep(t *testing.T) {
 
 func TestRegisterCRUDHandler(t *testing.T) {
 	mux := http.NewServeMux()
-	h := NewClockworkHost(mux, NewLogger("test"))
+	h := NewTorqueHost(mux, NewLogger("test"))
 	err := h.RegisterCRUDHandler("widgets", &testCRUDHandler{})
 	require.NoError(t, err)
 
@@ -125,7 +125,7 @@ func TestRegisterCRUDHandler(t *testing.T) {
 }
 
 func TestRegisterEventHook(t *testing.T) {
-	h := NewClockworkHost(nil, NewLogger("test"))
+	h := NewTorqueHost(nil, NewLogger("test"))
 	hook := &testEventHook{}
 	err := h.RegisterEventHook([]string{EventTaskCreated}, hook)
 	require.NoError(t, err)
@@ -136,7 +136,7 @@ func TestRegisterEventHook(t *testing.T) {
 }
 
 func TestRegisterExecutor(t *testing.T) {
-	h := NewClockworkHost(nil, NewLogger("test"))
+	h := NewTorqueHost(nil, NewLogger("test"))
 	exec := &testExecutor{name: "claude"}
 	err := h.RegisterExecutor(exec)
 	require.NoError(t, err)
@@ -151,7 +151,7 @@ func TestRegisterExecutor(t *testing.T) {
 }
 
 func TestRegisterTools(t *testing.T) {
-	h := NewClockworkHost(nil, NewLogger("test"))
+	h := NewTorqueHost(nil, NewLogger("test"))
 	tools := []ToolDefinition{
 		{Name: "tool-a", Description: "A tool"},
 		{Name: "tool-b", Description: "B tool"},
@@ -165,7 +165,7 @@ func TestRegisterTools(t *testing.T) {
 }
 
 func TestRegisterUISlot(t *testing.T) {
-	h := NewClockworkHost(nil, NewLogger("test"))
+	h := NewTorqueHost(nil, NewLogger("test"))
 
 	entries := []UISlotEntry{
 		{ID: "e1", PluginID: "p1", Slot: SlotDashboard, Label: "Widget A", Priority: 10},
@@ -185,7 +185,7 @@ func TestRegisterUISlot(t *testing.T) {
 }
 
 func TestRegisterFilter(t *testing.T) {
-	h := NewClockworkHost(nil, NewLogger("test"))
+	h := NewTorqueHost(nil, NewLogger("test"))
 	called := false
 	err := h.RegisterFilter(FilterTaskBeforeCreate, 1, func(data interface{}, ctx FilterContext) (interface{}, error) {
 		called = true
@@ -202,7 +202,7 @@ func TestRegisterFilter(t *testing.T) {
 }
 
 func TestRegisterConnector(t *testing.T) {
-	h := NewClockworkHost(nil, NewLogger("test"))
+	h := NewTorqueHost(nil, NewLogger("test"))
 	c := &testConnector{name: "slack"}
 	err := h.RegisterConnector("slack", c)
 	require.NoError(t, err)
@@ -214,7 +214,7 @@ func TestRegisterConnector(t *testing.T) {
 }
 
 func TestEmitEvent(t *testing.T) {
-	h := NewClockworkHost(nil, NewLogger("test"))
+	h := NewTorqueHost(nil, NewLogger("test"))
 
 	ch := h.SubscribeEvents()
 	hook := &testEventHook{}

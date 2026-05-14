@@ -47,11 +47,11 @@ func (t *tailBuffer) Bytes() []byte {
 //
 //  1. An in-memory tail buffer (used by the executor to surface the trailing
 //     few KB on the result reason when a turn fails).
-//  2. A per-run sidecar log at $CLOCKWORK_DATA_DIR/runs/<run_id>.stderr.log
+//  2. A per-run sidecar log at $TORQUE_DATA_DIR/runs/<run_id>.stderr.log
 //     (preserving CW-20260417-0024 — RunID-scoped, useful for executor
 //     ModeOneShot turns where each run has a unique RunID).
 //  3. The per-session log at <workspaceLogPath> (typically
-//     ~/.clockwork/workspaces/<proj>/<sess>/logs/session.log) when non-empty.
+//     ~/.torque/workspaces/<proj>/<sess>/logs/session.log) when non-empty.
 //     This is the path forensic tooling reaches for first when a session
 //     fails, and the long-lived session boot path uses RunID=0 for every
 //     spawn (because RunID is a scheduler-side concept), so without this tee
@@ -74,9 +74,9 @@ func openStderrSidecar(runID int64, workspaceLogPath string) (writer io.Writer, 
 	closers := make([]func(), 0, 2)
 	writers := []io.Writer{tail}
 
-	dataDir := os.Getenv("CLOCKWORK_DATA_DIR")
+	dataDir := os.Getenv("TORQUE_DATA_DIR")
 	if dataDir == "" {
-		dataDir = filepath.Join(os.TempDir(), "clockwork")
+		dataDir = filepath.Join(os.TempDir(), "torque")
 	}
 	runsDir := filepath.Join(dataDir, "runs")
 

@@ -6,8 +6,8 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/service"
 )
 
 // maxMCPResponseBytes is the size guard for list/search responses. mark3labs
@@ -90,13 +90,13 @@ type briefProject struct {
 }
 
 type briefRun struct {
-	ID       int64  `json:"id"`
-	TaskID   string `json:"task_id"`
-	Executor string `json:"executor,omitempty"`
-	Status   string `json:"status"`
-	ExitCode *int64 `json:"exit_code,omitempty"`
-	Cost     float64 `json:"cost,omitempty"`
-	StartedAt string `json:"started_at"`
+	ID        int64   `json:"id"`
+	TaskID    string  `json:"task_id"`
+	Executor  string  `json:"executor,omitempty"`
+	Status    string  `json:"status"`
+	ExitCode  *int64  `json:"exit_code,omitempty"`
+	Cost      float64 `json:"cost,omitempty"`
+	StartedAt string  `json:"started_at"`
 }
 
 type briefTemplate struct {
@@ -120,11 +120,11 @@ type briefComment struct {
 }
 
 type briefArtifact struct {
-	ID       int64  `json:"id"`
-	TaskID   string `json:"task_id"`
-	Type     string `json:"type"`
-	URL      string `json:"url,omitempty"`
-	FilePath string `json:"file_path,omitempty"`
+	ID        int64  `json:"id"`
+	TaskID    string `json:"task_id"`
+	Type      string `json:"type"`
+	URL       string `json:"url,omitempty"`
+	FilePath  string `json:"file_path,omitempty"`
 	CreatedAt string `json:"created_at"`
 }
 

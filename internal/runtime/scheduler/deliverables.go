@@ -1,7 +1,7 @@
 package scheduler
 
 import (
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
 )
 
 // DeliverableChecker validates that required artifacts are present

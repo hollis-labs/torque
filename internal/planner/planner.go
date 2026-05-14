@@ -18,7 +18,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 const (
@@ -35,8 +35,8 @@ const (
 
 	// TemplateEnvVar is the user override for the planner template
 	// directory. When unset the resolver looks in
-	// $HOME/.clockwork/agent-templates/.
-	TemplateEnvVar = "CLOCKWORK_AGENT_TEMPLATE_DIR"
+	// $HOME/.torque/agent-templates/.
+	TemplateEnvVar = "TORQUE_AGENT_TEMPLATE_DIR"
 
 	// TemplateName is the file the resolver reads from the configured
 	// dir. Operators replace its contents to customize the V0 prompt.
@@ -65,11 +65,11 @@ var embeddedTemplate string
 // but readers should treat empty slices/maps as "no observation"
 // rather than "no opinion".
 type Refinement struct {
-	Version   string             `json:"version"`
-	PerTask   []TaskHint         `json:"per_task,omitempty"`
-	PlanLevel *PlanLevelChanges  `json:"plan_level,omitempty"`
+	Version    string            `json:"version"`
+	PerTask    []TaskHint        `json:"per_task,omitempty"`
+	PlanLevel  *PlanLevelChanges `json:"plan_level,omitempty"`
 	Confidence string            `json:"confidence,omitempty"`
-	Notes     string             `json:"notes,omitempty"`
+	Notes      string            `json:"notes,omitempty"`
 }
 
 // TaskHint is the per-child advisory entry the planner emits. The
@@ -88,10 +88,10 @@ type TaskHint struct {
 // than a single child. Each slice is a list of free-form statements
 // the planner authored.
 type PlanLevelChanges struct {
-	Ordering        []string `json:"ordering,omitempty"`
-	PhaseChanges    []string `json:"phase_changes,omitempty"`
-	AcceptanceGaps  []string `json:"acceptance_gaps,omitempty"`
-	Redundancies    []string `json:"redundancies,omitempty"`
+	Ordering       []string `json:"ordering,omitempty"`
+	PhaseChanges   []string `json:"phase_changes,omitempty"`
+	AcceptanceGaps []string `json:"acceptance_gaps,omitempty"`
+	Redundancies   []string `json:"redundancies,omitempty"`
 }
 
 // BuildOptions parametrizes BuildTask. Caller supplies the plan-task
@@ -115,7 +115,7 @@ type BuildOptions struct {
 
 	// Template lets the caller pass a pre-resolved template string,
 	// short-circuiting LoadTemplate. Tests use this to assert the
-	// task's system_prompt without touching the user's ~/.clockwork.
+	// task's system_prompt without touching the user's ~/.torque.
 	Template string
 }
 
@@ -192,14 +192,14 @@ func BuildTask(opts BuildOptions) (*sqlstore.TaskRecord, error) {
 }
 
 // LoadTemplate returns the planner template content + the resolved
-// path. Lookup order: $CLOCKWORK_AGENT_TEMPLATE_DIR/default-planner.md,
-// then $HOME/.clockwork/agent-templates/default-planner.md, then the
+// path. Lookup order: $TORQUE_AGENT_TEMPLATE_DIR/default-planner.md,
+// then $HOME/.torque/agent-templates/default-planner.md, then the
 // embedded fallback ("<embedded>" path token).
 func LoadTemplate() (string, string) {
 	dir := os.Getenv(TemplateEnvVar)
 	if dir == "" {
 		if home, err := os.UserHomeDir(); err == nil {
-			dir = filepath.Join(home, ".clockwork", "agent-templates")
+			dir = filepath.Join(home, ".torque", "agent-templates")
 		}
 	}
 	if dir != "" {
@@ -215,7 +215,7 @@ func LoadTemplate() (string, string) {
 // task's existing metadata blob is preserved — Write only replaces the
 // `plan.planner_refinement` and `plan.planner_refined_at` keys under
 // the top-level `plan` namespace. Used by the planner agent (via MCP
-// loopback through clockwork_task_update) and by tests.
+// loopback through torque_task_update) and by tests.
 func Write(store *sqlstore.Store, planID string, ref *Refinement, now time.Time) error {
 	if planID == "" {
 		return fmt.Errorf("planner: Write requires planID")

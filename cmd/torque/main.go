@@ -11,15 +11,15 @@ var version = "0.1.1"
 
 func main() {
 	root := &cobra.Command{
-		Use:   "clockwork",
-		Short: "Clockwork Manifold — task orchestration and execution engine",
+		Use:   "torque",
+		Short: "Torque — task orchestration and execution engine",
 	}
 
 	root.AddCommand(&cobra.Command{
 		Use:   "version",
 		Short: "Print version",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("clockwork %s\n", version)
+			fmt.Printf("torque %s\n", version)
 		},
 	})
 

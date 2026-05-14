@@ -1,5 +1,5 @@
 // Package toolbroker is the executor-facing facade that composes
-// go-toolbroker (intent-aware MCP tool selection) with clockwork's local
+// go-toolbroker (intent-aware MCP tool selection) with torque's local
 // permission engine + tool registry (internal/toolrouter, internal/permission,
 // internal/tool). It is the concrete type threaded through bootstrap.Executors
 // into both cliexec and executor-api, replacing the prior `interface{}` /
@@ -29,10 +29,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/permission"
-	"github.com/hollis-labs/clockwork-manifold/internal/tool"
-	"github.com/hollis-labs/clockwork-manifold/internal/toolrouter"
 	"github.com/hollis-labs/go-toolbroker/broker"
+	"github.com/hollis-labs/torque/internal/permission"
+	"github.com/hollis-labs/torque/internal/tool"
+	"github.com/hollis-labs/torque/internal/toolrouter"
 )
 
 // AuditEntry is one record of a tool-call attempt. Decision is the terminal

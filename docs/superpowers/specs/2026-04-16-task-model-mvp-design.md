@@ -1,15 +1,15 @@
-# Clockwork Manifold — Task Model MVP Design
+# Torque — Task Model MVP Design
 
 **Date:** 2026-04-16
 **Status:** Draft (pre-implementation)
 **Authors:** Chrispian + Claude (planner, brainstorm session)
-**Predecessor spec:** `2026-04-07-clockwork-manifold-design.md` (canonical identity + 35-field task record)
+**Predecessor spec:** `2026-04-07-torque-design.md` (canonical identity + 35-field task record)
 
 ---
 
 ## 1. Purpose
 
-Firm up the Clockwork backend and task data model to a dogfoodable MVP. Explicit goals:
+Firm up the Torque backend and task data model to a dogfoodable MVP. Explicit goals:
 
 - Model task-type diversity without branching the scheduler: agent-executed, external (human/other-system), wait-for-predicate, decision/checkpoint, parent/container.
 - Make "who originated this task" a first-class, queryable facet so routing, auto-approve, and trust rules are config + data, not reasoning.
@@ -31,7 +31,7 @@ Non-goals:
 User / Agent / API / Webhook
     |
     v
-clockwork_task_create         clockwork_task_create_from_template
+torque_task_create         torque_task_create_from_template
     |                                    |
     +------------+-----------------------+
                  |
@@ -50,7 +50,7 @@ clockwork_task_create         clockwork_task_create_from_template
    Executor)
        |
        v
-   Executor runs --> CLOCKWORK_* signals --> Run events
+   Executor runs --> TORQUE_* signals --> Run events
        |                   ^
        v                   |
    Checkpoint? --yes--> emit {type, payload}  ---(wait)---  response via MCP
@@ -195,7 +195,7 @@ CREATE INDEX idx_checkpoints_correlation  ON checkpoints(correlation_id);
 Executor emits during a run:
 
 ```
-CLOCKWORK_CHECKPOINT <correlation_id> <type> <base64(payload_json)>
+TORQUE_CHECKPOINT <correlation_id> <type> <base64(payload_json)>
 ```
 
 Scheduler:
@@ -210,7 +210,7 @@ Scheduler:
 
 ### 4.3 Response path
 
-`clockwork_task_checkpoint_respond` accepts `{correlation_id, response_json, responder_source_type, responder_source_ref}`:
+`torque_task_checkpoint_respond` accepts `{correlation_id, response_json, responder_source_type, responder_source_ref}`:
 
 1. Row updated: `response_json`, `responder_*`, `responded_at`, `status=responded`.
 2. If task is parked in `review` on this checkpoint, lifecycle manager applies `on_checkpoint_response`:
@@ -230,7 +230,7 @@ MVP does not ship default-on-timeout responses. Plugin authors can listen for `c
 
 ### 4.5 Cancel
 
-Reuses the same row-flip mechanism as timeout/respond. `clockwork_task_checkpoint_cancel` accepts `{correlation_id, reason, canceler_source_type, canceler_source_ref}`:
+Reuses the same row-flip mechanism as timeout/respond. `torque_task_checkpoint_cancel` accepts `{correlation_id, reason, canceler_source_type, canceler_source_ref}`:
 
 ```
 status             = 'canceled'
@@ -245,14 +245,14 @@ Anyone with MCP access can cancel in MVP (no ACL). Gating deferred to BLG-033 + 
 
 Error cases: cancel already-terminal checkpoint → 409; unknown correlation_id → 404.
 
-### 4.6 Signals added to the `CLOCKWORK_*` vocabulary
+### 4.6 Signals added to the `TORQUE_*` vocabulary
 
 ```
-CLOCKWORK_CHECKPOINT <correlation_id> <type> <base64(payload_json)>
-CLOCKWORK_CHECKPOINT_AWAIT <correlation_id>
+TORQUE_CHECKPOINT <correlation_id> <type> <base64(payload_json)>
+TORQUE_CHECKPOINT_AWAIT <correlation_id>
 ```
 
-Parser is in-tree today at `internal/runtime/executor/signal.go`. Phase B (see §8.2) adds `CLOCKWORK_CHECKPOINT` and `CLOCKWORK_CHECKPOINT_AWAIT` to the existing parser. A future `go-signals` extraction (separate effort — see `agent-workspaces/knowledge/ideas/go-extractions.md`) will lift this package into a shared library; Clockwork will consume it post-extraction. The MVP does not depend on the extraction.
+Parser is in-tree today at `internal/runtime/executor/signal.go`. Phase B (see §8.2) adds `TORQUE_CHECKPOINT` and `TORQUE_CHECKPOINT_AWAIT` to the existing parser. A future `go-signals` extraction (separate effort — see `agent-workspaces/knowledge/ideas/go-extractions.md`) will lift this package into a shared library; Torque will consume it post-extraction. The MVP does not depend on the extraction.
 
 ### 4.7 What MVP **does not** do
 
@@ -312,15 +312,15 @@ JSON fields (`tools`, `permissions`, `environment`, `escalation_chain`, `quality
 
 ### 5.2 Versioning semantics
 
-- `clockwork_template_update` = new row with `version = max(version) + 1`. Old versions preserved.
+- `torque_template_update` = new row with `version = max(version) + 1`. Old versions preserved.
 - Tasks carry `metadata.template_ref = {id, version}` — not a FK. Templates can be archived; historical references survive.
 - No mutable-in-place edits on a live version. Templates are immutable per version.
-- `clockwork_template_archive` removes a template from the instantiation catalog; its rows remain for task-history lookup. This is the recommended lifecycle end-state.
-- `clockwork_template_delete` (hard delete) is allowed **only when no tasks reference any version of the template** (i.e., no task row has `metadata.template_ref.id == template.id`). Otherwise returns 409 with a list of referencing task IDs. Prefer archive; delete is for mistakes caught before use.
+- `torque_template_archive` removes a template from the instantiation catalog; its rows remain for task-history lookup. This is the recommended lifecycle end-state.
+- `torque_template_delete` (hard delete) is allowed **only when no tasks reference any version of the template** (i.e., no task row has `metadata.template_ref.id == template.id`). Otherwise returns 409 with a list of referencing task IDs. Prefer archive; delete is for mistakes caught before use.
 
 ### 5.3 Instantiation
 
-`clockwork_task_create_from_template` accepts:
+`torque_task_create_from_template` accepts:
 
 ```
 template_id         string   required
@@ -495,35 +495,35 @@ Target: ~35 new tests across the template track alone; total new tests across al
 
 Templates (7):
 ```
-clockwork_template_create
-clockwork_template_get
-clockwork_template_update
-clockwork_template_delete
-clockwork_template_archive
-clockwork_template_list
-clockwork_task_create_from_template
+torque_template_create
+torque_template_get
+torque_template_update
+torque_template_delete
+torque_template_archive
+torque_template_list
+torque_task_create_from_template
 ```
 
 Checkpoints (6):
 ```
-clockwork_task_checkpoint_emit
-clockwork_task_checkpoint_respond
-clockwork_task_checkpoint_cancel
-clockwork_task_checkpoint_list
-clockwork_task_checkpoint_get
-clockwork_task_checkpoints_pending
+torque_task_checkpoint_emit
+torque_task_checkpoint_respond
+torque_task_checkpoint_cancel
+torque_task_checkpoint_list
+torque_task_checkpoint_get
+torque_task_checkpoints_pending
 ```
 
 ### 7.2 Modified tools
 
-- `clockwork_task_create` and `clockwork_task_update` accept the six new facet fields. Defaults applied when omitted. No breaking change.
-- `clockwork_task_list` gains filters: `kind`, `source_type`, `source_ref`, `trust`, `checkpoint_mode`.
-- `clockwork_task_search` adds the same facets to searchable indexes.
-- `clockwork_task_get` response includes facet fields, nested `checkpoints` summary (count + latest status), and `template_ref` if set.
+- `torque_task_create` and `torque_task_update` accept the six new facet fields. Defaults applied when omitted. No breaking change.
+- `torque_task_list` gains filters: `kind`, `source_type`, `source_ref`, `trust`, `checkpoint_mode`.
+- `torque_task_search` adds the same facets to searchable indexes.
+- `torque_task_get` response includes facet fields, nested `checkpoints` summary (count + latest status), and `template_ref` if set.
 
 ### 7.3 Unchanged
 
-`clockwork_task_transition`, `clockwork_task_bulk_transition`, `clockwork_task_delete`, `clockwork_run_*`, `clockwork_artifact_*`, `clockwork_comment_*`, `clockwork_scheduler_*`, `clockwork_health`, `clockwork_settings_*`, and all sprint/project/epic tools.
+`torque_task_transition`, `torque_task_bulk_transition`, `torque_task_delete`, `torque_run_*`, `torque_artifact_*`, `torque_comment_*`, `torque_scheduler_*`, `torque_health`, `torque_settings_*`, and all sprint/project/epic tools.
 
 ### 7.4 New lifecycle events
 
@@ -572,8 +572,8 @@ Total rough sizing: **5–7 dev days**. Planning estimate only.
 F passes. Specifically:
 
 1. All five example templates create cleanly via MCP.
-2. `clockwork_task_create_from_template backend-fix --vars={repo_path: /tmp/demo}` produces a task that the scheduler picks up and dispatches to the mock executor.
-3. A `kind=decision` task with `checkpoint_mode=blocking` emitted via signal parks the task correctly; `clockwork_task_checkpoint_respond` resumes it; `clockwork_task_checkpoint_cancel` also closes it cleanly.
+2. `torque_task_create_from_template backend-fix --vars={repo_path: /tmp/demo}` produces a task that the scheduler picks up and dispatches to the mock executor.
+3. A `kind=decision` task with `checkpoint_mode=blocking` emitted via signal parks the task correctly; `torque_task_checkpoint_respond` resumes it; `torque_task_checkpoint_cancel` also closes it cleanly.
 4. A `kind=wait` task with `predicate_type=task_done` blocks until the target task completes, then transitions to `done`.
 5. A `kind=external` task can be created, status-transitioned manually via MCP, and honors its deliverables gate.
 6. A `kind=parent` task with two children auto-transitions when both children reach `done`.
@@ -590,7 +590,7 @@ F passes. Specifically:
 | Multi-responder checkpoints / nesting / default-on-timeout / ACL | BLG-033 |
 | Custom wait predicates as plugin hook | BLG-034 |
 | Known-source trust registry | BLG-035 |
-| Fragments Engine migration / import tooling | KB GAP — `knowledge/projects/clockwork-manifold.md` |
+| Fragments Engine migration / import tooling | KB GAP — `knowledge/projects/torque.md` |
 | Vanta Conduit context-packet integration | KB GAP + Nanite Phase 3 S3 |
 | Context hot-swapping | KB GAP + Nanite Phase 3 S3 |
 | Automated oversight / Special Agent patterns | subsumed by BLG-031 |
@@ -604,10 +604,10 @@ All cross-portfolio `feedback_service_invariants` principles hold:
 - **Append-only** — checkpoints append; templates new-version-on-edit; task audit trail unchanged.
 - **Deterministic** — kind validation, trust defaulting, variable resolution, timeout sweeping are rule-driven. No reasoning.
 - **Selectors-not-processors** — templates describe shape; scheduler reads shape; plugins compose via filters and hooks.
-- **Namespace-owned** — `checkpoints` and `task_templates` are Clockwork's. Envelope schemas are `go-envelope`'s. Signal parsing is `go-signals`'s. No cross-namespace mutation.
+- **Namespace-owned** — `checkpoints` and `task_templates` are Torque's. Envelope schemas are `go-envelope`'s. Signal parsing is `go-signals`'s. No cross-namespace mutation.
 - **Audit-canonical** — DB > files > ambient. Templates and checkpoints are DB-canonical. YAML in `docs/templates/` is documentation, not source of truth.
 
-Additional Clockwork-specific principles preserved:
+Additional Torque-specific principles preserved:
 
 - **Task-only scope.** Everything added is a task-shaping facet or a task-lifecycle mechanism. No new domain entities beyond `task_templates` (templates are task factories) and `checkpoints` (task-scoped messages).
 - **Agent-first, composition over coupling.** Facets surface to agents at create-time and query-time. Templates become discoverable shapes. Checkpoints become a first-class surface for orchestrator agents to observe and respond. None of these require orchestration coupling — composition happens through MCP tools + SSE events.
@@ -616,8 +616,8 @@ Additional Clockwork-specific principles preserved:
 
 ## 10. References
 
-- Canonical spec: `docs/superpowers/specs/2026-04-07-clockwork-manifold-design.md`
-- Evaluation session: `agent-workspaces/planning/clockwork-executor-wiring/evaluation-session-2026-04-15.md`
-- Project oracle: `agent-workspaces/knowledge/projects/clockwork-manifold.md`
-- Session tracking: `agent-workspaces/execution/clockwork-manifold/planner/2026-04-16/`
-- BLGs filed this session (in Engine, project `clockwork-manifold`): 029, 030, 031, 032, 033, 034, 035.
+- Canonical spec: `docs/superpowers/specs/2026-04-07-torque-design.md`
+- Evaluation session: `agent-workspaces/planning/torque-executor-wiring/evaluation-session-2026-04-15.md`
+- Project oracle: `agent-workspaces/knowledge/projects/torque.md`
+- Session tracking: `agent-workspaces/execution/torque/planner/2026-04-16/`
+- BLGs filed this session (in Engine, project `torque`): 029, 030, 031, 032, 033, 034, 035.

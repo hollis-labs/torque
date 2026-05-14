@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/broker"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/stuck"
+	"github.com/hollis-labs/torque/internal/broker"
+	"github.com/hollis-labs/torque/internal/runtime/stuck"
 )
 
 // --- fakes ------------------------------------------------------------
@@ -120,10 +120,10 @@ type resumeCall struct {
 }
 
 type fakeResume struct {
-	mu          sync.Mutex
-	calls       []resumeCall
-	newSessID   string
-	err         error
+	mu        sync.Mutex
+	calls     []resumeCall
+	newSessID string
+	err       error
 }
 
 func (f *fakeResume) ResumeSession(_ context.Context, sessID, note string) (string, error) {

@@ -3,7 +3,7 @@ package scheduler
 import (
 	"encoding/json"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 // Skip reason tags emitted by the picker. These are the canonical keys the
@@ -23,7 +23,7 @@ const (
 	SkipReasonDepMalformed      = "dep_malformed"
 	// DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
 	// SkipReasonProjectScopeFilter is recorded when an operator-configured
-	// allowlist (CLOCKWORK_PROJECT_ID / CLOCKWORK_PROJECT_IDS) excludes
+	// allowlist (TORQUE_PROJECT_ID / TORQUE_PROJECT_IDS) excludes
 	// this task's project_id. Stopgap for shared-DB cross-project
 	// contamination pending workspaces.
 	SkipReasonProjectScopeFilter = "project_scope_filter"

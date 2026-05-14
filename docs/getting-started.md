@@ -8,9 +8,9 @@
 ## Main Commands
 
 ```bash
-clockwork serve
-clockwork mcp
-clockwork version
+torque serve
+torque mcp
+torque version
 ```
 
 ## Local Defaults
@@ -18,34 +18,34 @@ clockwork version
 Without extra configuration:
 
 - SQLite is used
-- The DB path defaults to `clockwork.db`
+- The DB path defaults to `torque.db`
 - The HTTP server listens on port `8990`
-- Runtime data goes under `.clockwork/`
+- Runtime data goes under `.torque/`
 
 ## Useful Environment Variables
 
 ```bash
-export CLOCKWORK_DB_PATH=/path/to/clockwork.db
-export CLOCKWORK_HTTP_PORT=8990
-export CLOCKWORK_DATA_DIR=.clockwork
-export CLOCKWORK_PROFILES_PATH=/path/to/profiles.yaml
+export TORQUE_DB_PATH=/path/to/torque.db
+export TORQUE_HTTP_PORT=8990
+export TORQUE_DATA_DIR=.torque
+export TORQUE_PROFILES_PATH=/path/to/profiles.yaml
 ```
 
 To use Postgres instead of SQLite:
 
 ```bash
-export CLOCKWORK_POSTGRES_DSN=postgres://...
+export TORQUE_POSTGRES_DSN=postgres://...
 ```
 
 ## Notes About `serve` vs `mcp`
 
-`clockwork serve` starts:
+`torque serve` starts:
 
 - the HTTP API
 - the scheduler
 - the GUI
 
-`clockwork mcp` starts:
+`torque mcp` starts:
 
 - the MCP server over stdio
 

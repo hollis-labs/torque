@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/agentfile"
+	"github.com/hollis-labs/torque/internal/agentfile"
 )
 
 // composeSystemPrompt assembles the system prompt for the spawned agent.
@@ -32,7 +32,7 @@ func composeSystemPrompt(opts Options, agent *agentfile.AgentFile) string {
 }
 
 const checkpointRedispatchPrompt = `Checkpoint redispatch protocol:
-- At the start of each task dispatch, read your current task record through the clockwork loopback and inspect task.metadata.checkpoint_responses.
+- At the start of each task dispatch, read your current task record through the torque loopback and inspect task.metadata.checkpoint_responses.
 - Treat each entry as a typed HITL checkpoint response keyed by correlation_id. Handle any response you have not already incorporated before starting unrelated work.
 - Boot does not inline checkpoint responses into your prompt. Read task metadata explicitly, then record what you handled in the task's normal audit trail so later redispatches do not repeat it.`
 

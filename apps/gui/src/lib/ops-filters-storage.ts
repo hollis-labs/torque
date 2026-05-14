@@ -1,6 +1,6 @@
 import type { TaskStatus } from './types'
 
-const KEY = 'clockwork:ops:filters:v1'
+const KEY = 'torque:ops:filters:v1'
 
 /**
  * Manual-flag filter tri-state.

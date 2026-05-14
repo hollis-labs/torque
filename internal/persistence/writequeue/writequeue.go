@@ -11,10 +11,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	queue "github.com/hollis-labs/go-queue"
 	qsqlite "github.com/hollis-labs/go-queue/driver/sqlite"
 	"github.com/hollis-labs/go-sqlite/sqlitekit"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 const (

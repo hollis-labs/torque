@@ -4,7 +4,7 @@ This directory now follows a simple rule: current docs should match the code tha
 
 Start with:
 
-- [overview.md](overview.md) — what Clockwork is and what it is not
+- [overview.md](overview.md) — what Torque is and what it is not
 - [getting-started.md](getting-started.md) — how to run the server and MCP locally
 - [runtime.md](runtime.md) — storage, scheduler, executors, and feature flags
 - [surfaces.md](surfaces.md) — the current HTTP and MCP surfaces at a high level

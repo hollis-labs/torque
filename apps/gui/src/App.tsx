@@ -65,7 +65,7 @@ function AppShell() {
         {/* Logo */}
         <div
           className="mb-2 flex h-9 w-9 items-center justify-center rounded-md border border-zinc-800 bg-zinc-900 text-zinc-300"
-          title="Clockwork Manifold"
+          title="Torque"
         >
           <Cog className="h-5 w-5" />
         </div>

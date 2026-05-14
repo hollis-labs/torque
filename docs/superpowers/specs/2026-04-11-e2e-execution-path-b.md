@@ -50,7 +50,7 @@ A user can create a task in the GUI and **watch it execute live** from the task 
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                     clockwork serve (single process)            │
+│                     torque serve (single process)            │
 │                                                                 │
 │  ┌─────────────┐   ┌──────────────┐   ┌─────────────────────┐   │
 │  │ HTTP/API    │──▶│ Service      │──▶│ SQLite (tasks, runs,│   │
@@ -83,7 +83,7 @@ A user can create a task in the GUI and **watch it execute live** from the task 
 
 **Key flow changes from today:**
 
-1. Scheduler lives inside `clockwork serve` (Option A decision).
+1. Scheduler lives inside `torque serve` (Option A decision).
 2. `bootstrap.Executors()` registers `cli` + `api` executors. Mock stays registered for testing.
 3. A single adapter goroutine subscribes to `scheduler.EventBus` and republishes to `httpserver.SSEHub` as typed events.
 4. Executor event callbacks, in addition to publishing to the bus and creating artifacts, also **write to `run_events`** via a new `Store.AppendRunEvent()` method.
@@ -94,9 +94,9 @@ A user can create a task in the GUI and **watch it execute live** from the task 
 
 ## Components (by file)
 
-### Component 1 — Scheduler integration into `clockwork serve`
+### Component 1 — Scheduler integration into `torque serve`
 
-**File:** `cmd/clockwork/serve.go` (~30 line diff)
+**File:** `cmd/torque/serve.go` (~30 line diff)
 
 **Changes:**
 - Build scheduler with `scheduler.New(store, queue, registry, &cfg.Scheduler)`.
@@ -116,9 +116,9 @@ func New(svc *service.Service, sched *scheduler.Scheduler) http.Handler
 
 **Why:** Single-process architecture (D5 from prior art). Eliminates the dual-DB-handle race that the two-process model has today and gives HTTP handlers a real scheduler reference.
 
-**Queue path:** The old `clockworkd` opened a separate `queue.db` at `cfg.DataDir/queue.db`. Path B keeps the same path for compatibility with existing tests. `clockwork serve` takes ownership of queue lifecycle.
+**Queue path:** The old `torqued` opened a separate `queue.db` at `cfg.DataDir/queue.db`. Path B keeps the same path for compatibility with existing tests. `torque serve` takes ownership of queue lifecycle.
 
-**Old `clockworkd` binary:** **Deleted in Path B.** The executable becomes dead code once `serve` hosts the scheduler. Path A keeps it for parallel-running confidence during the migration; Path B removes it.
+**Old `torqued` binary:** **Deleted in Path B.** The executable becomes dead code once `serve` hosts the scheduler. Path A keeps it for parallel-running confidence during the migration; Path B removes it.
 
 ### Component 2 — Real scheduler HTTP handlers
 
@@ -307,7 +307,7 @@ func (b *SchedulerBridge) Run(ctx context.Context) {
 2. Same task, mock executor produces no artifacts → task transitions `blocked` with `blocked_reason` matching.
 3. Task with two required deliverables, executor produces one → `blocked`.
 4. Task with one required + one optional deliverable, executor produces only required → `done`.
-5. Same full roundtrip against real CLI executor with a profile that emits `CLOCKWORK_ARTIFACT` signals.
+5. Same full roundtrip against real CLI executor with a profile that emits `TORQUE_ARTIFACT` signals.
 
 **Why:** Boot prompt asks specifically for this. Half-wired today — the check exists but artifact plumbing bug means it's untested with real streaming.
 
@@ -334,7 +334,7 @@ Path B requires the GUI task detail page to:
 
 ## Named decisions
 
-**D1 — Single-process architecture.** Scheduler runs inside `clockwork serve`. `clockworkd` becomes dead code in Path B and is deleted.
+**D1 — Single-process architecture.** Scheduler runs inside `torque serve`. `torqued` becomes dead code in Path B and is deleted.
 
 **D2 — `run_events` is the source of truth for run observability.** Written by the scheduler on every executor event. Read by HTTP for history + live tail.
 
@@ -366,9 +366,9 @@ Path B requires the GUI task detail page to:
 6. `cb` handler: `AppendRunEvent("log", {line})` + `bus.Publish(SchedulerEvent{Type: "run.event", ...})`.
 7. Bridge goroutine reads bus → `hub.Broadcast("run.event", data)`.
 8. GUI's open SSE subscribers receive the event; task detail page re-renders.
-9. Executor emits `CLOCKWORK_ARTIFACT {type: "diff", content: "..."}`.
+9. Executor emits `TORQUE_ARTIFACT {type: "diff", content: "..."}`.
 10. `cb` handler: appends to `result.Artifacts`, `CreateArtifact` (existing), `AppendRunEvent("artifact", {...})`, publishes.
-11. Executor emits `CLOCKWORK_DONE`.
+11. Executor emits `TORQUE_DONE`.
 12. Run completes, `result.Status = "done"`, `result.Artifacts` populated.
 13. Result drains to lifecycle: `HandleResult(taskID, runID, result)`.
 14. Lifecycle: deliverables check — `result.Artifacts` has `type=diff`, requirement met → `transition(task, "done", "")`.
@@ -407,7 +407,7 @@ Path B requires the GUI task detail page to:
 ### Smoke tests (manual)
 
 - Mock smoke: create task via `curl POST /api/v1/tasks`, watch status transition via `curl /api/v1/tasks/{id}` — run with mock executor.
-- Real CLI smoke: same task with a profile pointing at a minimal shell script that echoes `CLOCKWORK_DONE`. Verify full run record + event log.
+- Real CLI smoke: same task with a profile pointing at a minimal shell script that echoes `TORQUE_DONE`. Verify full run record + event log.
 - GUI smoke: open task detail page, create a task, watch live status + event stream update. (Deferred to GUI session.)
 
 ---
@@ -441,7 +441,7 @@ Path B requires the GUI task detail page to:
 
 Path A is the strict subset. The invariants Path A **must** respect so Path B extends cleanly:
 
-- **Component 1 (scheduler in serve)** — ship in full. No half-measures; delete `clockworkd` in A too if possible.
+- **Component 1 (scheduler in serve)** — ship in full. No half-measures; delete `torqued` in A too if possible.
 - **Component 2 (scheduler HTTP handlers)** — ship in full. Trivial once scheduler exists.
 - **Component 3 (Store run_events methods)** — **ship at least `AppendRunEvent` + `ListRunEvents`** in A. A doesn't need pagination in the GUI, but the methods must exist so scheduler can write.
 - **Component 4 (scheduler writes run events)** — ship in A. Even if the GUI doesn't read them yet, the data must be captured from day one. Otherwise Path B has no history to work with for runs that happen between A and B.
@@ -462,7 +462,7 @@ This means **Path A's surface is ~70% of Path B's code**, but only ~30% of Path 
 - **Scheduler goroutine lifecycle during tests.** `httpserver` tests currently don't need a scheduler. Decision: make the scheduler parameter optional (nil-safe) in `httpserver.New`, so existing tests don't need to construct one. Handlers that need it return 503 if nil.
 - **SQLite write contention under load.** Today's scheduler persists runs and artifacts; Path B adds run events (potentially many per run). Write-ahead logging (WAL) is already enabled (`appdb.Open`). Batch inserts if benchmarks show a bottleneck — probably not needed at our scale.
 - **Bridge goroutine leak on shutdown.** `SchedulerBridge.Run` must exit on context cancel; if it blocks on bus receive after bus closes, we leak. Handled via the `ok := <-sub` pattern.
-- **Real CLI smoke test depends on a profile.** Need a minimal shell-script profile that emits `CLOCKWORK_DONE`. Either ship one as an example or generate it in the test. Prefer shipping one — it's also a user-facing example.
+- **Real CLI smoke test depends on a profile.** Need a minimal shell-script profile that emits `TORQUE_DONE`. Either ship one as an example or generate it in the test. Prefer shipping one — it's also a user-facing example.
 - **Migration drift.** `run_events` table exists in migration 003 but the comment references a "write buffer drain goroutine" that doesn't exist. Two options: (a) delete the stale comment, (b) actually build the write buffer. Path B picks (a) — direct writes are simpler and the contention risk is theoretical.
 
 ---

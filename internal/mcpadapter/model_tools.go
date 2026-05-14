@@ -10,16 +10,16 @@ import (
 // briefModel drops the noisier fields (full modality + every cost variant) to
 // keep the default list payload small. Verbose=true returns the full ModelRef.
 type briefModel struct {
-	ProviderID      string `json:"provider_id"`
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Family          string `json:"family,omitempty"`
-	ContextWindow   int    `json:"context_window,omitempty"`
-	MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
+	ProviderID      string  `json:"provider_id"`
+	ID              string  `json:"id"`
+	Name            string  `json:"name"`
+	Family          string  `json:"family,omitempty"`
+	ContextWindow   int     `json:"context_window,omitempty"`
+	MaxOutputTokens int     `json:"max_output_tokens,omitempty"`
 	InputCost       float64 `json:"input_cost,omitempty"`
 	OutputCost      float64 `json:"output_cost,omitempty"`
-	ToolCall        bool   `json:"tool_call,omitempty"`
-	Reasoning       bool   `json:"reasoning,omitempty"`
+	ToolCall        bool    `json:"tool_call,omitempty"`
+	Reasoning       bool    `json:"reasoning,omitempty"`
 }
 
 func toBriefModel(m modelsdev.ModelRef) briefModel {
@@ -38,7 +38,7 @@ func toBriefModel(m modelsdev.ModelRef) briefModel {
 }
 
 func (a *Adapter) registerModelTools() {
-	a.addTool(mcp.NewTool("clockwork_models_list",
+	a.addTool(mcp.NewTool("torque_models_list",
 		mcp.WithDescription(`List every (provider, model) pair in the models.dev catalog with pricing, context-window, and capability data.
 Use to discover what's available before configuring a profile or estimating cost. Filter with provider="anthropic" to narrow. Cold cache returns an empty list — retry rather than treat absence as fatal. Brief shape drops cache pricing + modality; pass verbose="true" for the full record.
 Response shape: data = {items: [<briefModel or ModelRef>...], meta: {truncated, returned, limit, hint?}}.
@@ -48,7 +48,7 @@ Example: {"provider":"anthropic","limit":"50"}`),
 		mcp.WithString("limit", mcp.Description("Max records to return (default 100, capped at 500)")),
 	), a.handleModelsList)
 
-	a.addTool(mcp.NewTool("clockwork_models_get",
+	a.addTool(mcp.NewTool("torque_models_get",
 		mcp.WithDescription(`Look up a single (provider, model) pair. Returns the full Model record.
 Use when you need exact pricing or capability flags for a known model. Returns error.code=not_found on cold cache or unknown id.
 Response shape: data = <Model> — singleton.

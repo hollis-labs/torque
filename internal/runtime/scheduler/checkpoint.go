@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 // SweepCheckpointTimeouts flips pending checkpoints past their timeout_at to

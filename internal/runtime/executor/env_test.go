@@ -3,7 +3,7 @@ package executor_test
 import (
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -15,7 +15,7 @@ func TestFilterEnvStripsSecrets(t *testing.T) {
 		"AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
 		"DATABASE_URL=postgres://localhost/db",
 		"MY_APP_SECRET=topsecret",
-		"CLOCKWORK_DB_PATH=clockwork.db",
+		"TORQUE_DB_PATH=torque.db",
 	}
 
 	filtered, stripped := executor.FilterEnv(env, executor.FilterEnvOpts{})
@@ -23,7 +23,7 @@ func TestFilterEnvStripsSecrets(t *testing.T) {
 	assert.NotContains(t, filtered, "MY_APP_SECRET=topsecret")
 	assert.Contains(t, filtered, "HOME=/home/user")
 	assert.Contains(t, filtered, "PATH=/usr/bin")
-	assert.Contains(t, filtered, "CLOCKWORK_DB_PATH=clockwork.db")
+	assert.Contains(t, filtered, "TORQUE_DB_PATH=torque.db")
 
 	assert.Contains(t, stripped, "AWS_SECRET_ACCESS_KEY")
 	assert.Contains(t, stripped, "MY_APP_SECRET")
@@ -107,13 +107,13 @@ func TestFilterEnvAddsExtraVars(t *testing.T) {
 
 	filtered, _ := executor.FilterEnv(env, executor.FilterEnvOpts{
 		ExtraVars: []string{
-			"CLOCKWORK_TASK_ID=CW-20260407-0001",
-			"CLOCKWORK_AGENT_DEPTH=1",
+			"TORQUE_TASK_ID=CW-20260407-0001",
+			"TORQUE_AGENT_DEPTH=1",
 		},
 	})
 	assert.Contains(t, filtered, "HOME=/home/user")
-	assert.Contains(t, filtered, "CLOCKWORK_TASK_ID=CW-20260407-0001")
-	assert.Contains(t, filtered, "CLOCKWORK_AGENT_DEPTH=1")
+	assert.Contains(t, filtered, "TORQUE_TASK_ID=CW-20260407-0001")
+	assert.Contains(t, filtered, "TORQUE_AGENT_DEPTH=1")
 }
 
 func TestFilterEnvAddsGUIPreventionVars(t *testing.T) {
@@ -130,7 +130,7 @@ func TestFilterEnvAllowListMode(t *testing.T) {
 		"HOME=/home/user",
 		"PATH=/usr/bin",
 		"RANDOM_VAR=something",
-		"CLOCKWORK_DB_PATH=clockwork.db",
+		"TORQUE_DB_PATH=torque.db",
 	}
 
 	filtered, _ := executor.FilterEnv(env, executor.FilterEnvOpts{
@@ -176,7 +176,7 @@ func TestSecretPatternDetection(t *testing.T) {
 	// Plain non-secret names.
 	assert.False(t, executor.LooksLikeSecret("HOME"))
 	assert.False(t, executor.LooksLikeSecret("PATH"))
-	assert.False(t, executor.LooksLikeSecret("CLOCKWORK_DB_PATH"))
+	assert.False(t, executor.LooksLikeSecret("TORQUE_DB_PATH"))
 	assert.False(t, executor.LooksLikeSecret("TERM"))
 	assert.False(t, executor.LooksLikeSecret("SHELL"))
 	// safeTokenVars false-positive path.
@@ -192,7 +192,7 @@ func TestShouldStripEnvVar(t *testing.T) {
 	// Non-secret names: never stripped.
 	assert.False(t, executor.ShouldStripEnvVar("HOME"))
 	assert.False(t, executor.ShouldStripEnvVar("PATH"))
-	assert.False(t, executor.ShouldStripEnvVar("CLOCKWORK_DB_PATH"))
+	assert.False(t, executor.ShouldStripEnvVar("TORQUE_DB_PATH"))
 
 	// Generic secrets: stripped.
 	assert.True(t, executor.ShouldStripEnvVar("AWS_SECRET_ACCESS_KEY"))

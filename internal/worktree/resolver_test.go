@@ -5,10 +5,10 @@ import (
 	"database/sql"
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/testutil/sqlitetest"
-	"github.com/hollis-labs/clockwork-manifold/internal/worktree"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/testutil/sqlitetest"
+	"github.com/hollis-labs/torque/internal/worktree"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -55,16 +55,16 @@ func TestBuildResolutionRequest(t *testing.T) {
 
 	req, err := resolver.BuildResolutionRequest(ctx, worktree.ResolutionInput{
 		SourceTaskID:  "CW-20260407-0001",
-		SourceBranch:  "clockwork/CW-20260407-0001",
+		SourceBranch:  "torque/CW-20260407-0001",
 		TargetBranch:  "main",
-		WorktreePath:  "/projects/myapp/.clockwork/worktrees/CW-20260407-0001",
+		WorktreePath:  "/projects/myapp/.torque/worktrees/CW-20260407-0001",
 		ConflictFiles: []string{"pkg/user/validate.go", "pkg/user/handler.go"},
 		ProjectID:     "proj-1",
 	})
 	require.NoError(t, err)
 
 	assert.Equal(t, "CW-20260407-0001", req.SourceTaskID)
-	assert.Equal(t, "clockwork/CW-20260407-0001", req.SourceBranch)
+	assert.Equal(t, "torque/CW-20260407-0001", req.SourceBranch)
 	assert.Equal(t, "main", req.TargetBranch)
 	assert.Equal(t, []string{"pkg/user/validate.go", "pkg/user/handler.go"}, req.ConflictFiles)
 	assert.Equal(t, 0.8, req.ConfidenceThreshold)
@@ -98,9 +98,9 @@ func TestCreateResolutionTask(t *testing.T) {
 
 	resReq := &worktree.ResolutionRequest{
 		SourceTaskID:        "CW-20260407-0001",
-		SourceBranch:        "clockwork/CW-20260407-0001",
+		SourceBranch:        "torque/CW-20260407-0001",
 		TargetBranch:        "main",
-		WorktreePath:        "/projects/myapp/.clockwork/worktrees/CW-20260407-0001",
+		WorktreePath:        "/projects/myapp/.torque/worktrees/CW-20260407-0001",
 		ConflictFiles:       []string{"pkg/user/validate.go"},
 		RelatedTaskIDs:      []string{},
 		SourceDescription:   "Fix the email validation logic",

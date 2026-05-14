@@ -3,13 +3,13 @@ package mcpadapter
 import (
 	"context"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/service"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func (a *Adapter) registerIssueTools() {
-	a.addTool(mcp.NewTool("clockwork_issue_create",
+	a.addTool(mcp.NewTool("torque_issue_create",
 		mcp.WithDescription(`Create a project-scoped issue as a kind=issue backlog task. Requires title, body/context/issue/details, and project_id.
 Use for low-friction issue capture that should appear in task views but never auto-dispatch. Response shape: data = {<TaskRecord fields>, Body, Tags[]}.
 Validation: project_id is required and must reference an enabled project.
@@ -22,25 +22,25 @@ Example: {"title":"Login error","body":"Users see 500 on callback","project_id":
 		mcp.WithString("project_id", mcp.Required(), mcp.Description("Project ID (requires features.projects)")),
 	), a.handleIssueCreate)
 
-	a.addTool(mcp.NewTool("clockwork_issue_get",
+	a.addTool(mcp.NewTool("torque_issue_get",
 		mcp.WithDescription(`Fetch one issue by ID. Rejects non-issue task IDs.
 Response shape: data = {<TaskRecord fields>, Body, Tags[]}.
-Use clockwork_task_get for generic task IDs that may not be issues.
+Use torque_task_get for generic task IDs that may not be issues.
 Example: {"id":"CW-20260514-0001"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Issue task ID")),
 	), a.handleIssueGet)
 
-	a.addTool(mcp.NewTool("clockwork_issue_list",
+	a.addTool(mcp.NewTool("torque_issue_list",
 		mcp.WithDescription(`List issues only (hard-scoped to kind=issue), optionally narrowed to one project_id.
 Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, hint?}}.
-Use this instead of clockwork_task_list when the caller specifically wants issue capture rows.
+Use this instead of torque_task_list when the caller specifically wants issue capture rows.
 Example: {"project_id":"PRJ-...","limit":"50"}`),
 		mcp.WithString("project_id", mcp.Description("Optional project ID filter")),
 		mcp.WithString("limit", mcp.Description("Max results (integer, default 50, max 200)")),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleIssueList)
 
-	a.addTool(mcp.NewTool("clockwork_issue_search",
+	a.addTool(mcp.NewTool("torque_issue_search",
 		mcp.WithDescription(`Search issues only (hard-scoped to kind=issue) across ID, title, and body/description.
 Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, hint?}}.
 Filters combine with the query via AND, so project_id narrows results to one project.
@@ -51,7 +51,7 @@ Example: {"query":"login","project_id":"PRJ-...","limit":"10"}`),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleIssueSearch)
 
-	a.addTool(mcp.NewTool("clockwork_issue_update",
+	a.addTool(mcp.NewTool("torque_issue_update",
 		mcp.WithDescription(`Update the minimal issue fields. Only supplied keys change; body/context/issue/details are aliases.
 Response shape: data = {<TaskRecord fields>, Body, Tags[]}.
 This refuses non-issue IDs so generic task rows cannot be edited through the issue surface.

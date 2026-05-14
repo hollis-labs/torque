@@ -87,7 +87,7 @@ Note: SQLite does not support DROP COLUMN in older versions. We leave `goal` in 
 
 - [ ] **Step 2: Run tests to verify migration applies cleanly**
 
-Run: `cd /Users/chrispian/Projects-apps/clockwork-manifold && go test ./internal/persistence/sqlstore/... -run TestCreate -count=1 -v`
+Run: `cd /Users/chrispian/Projects-apps/torque && go test ./internal/persistence/sqlstore/... -run TestCreate -count=1 -v`
 Expected: All existing tests still PASS (migration adds columns with defaults, no breaking changes)
 
 - [ ] **Step 3: Commit**
@@ -1107,8 +1107,8 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/service"
 )
 
 func projectJSON(p *sqlstore.ProjectRecord) map[string]interface{} {
@@ -1287,8 +1287,8 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/service"
 )
 
 func sprintJSON(sp *sqlstore.SprintRecord) map[string]interface{} {
@@ -1502,8 +1502,8 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/service"
 )
 
 func epicJSON(e *sqlstore.EpicRecord) map[string]interface{} {
@@ -1717,7 +1717,7 @@ export interface Epic {
 
 - [ ] **Step 2: Add CRUD methods to api.ts**
 
-Add to the `ClockworkApiClient` class:
+Add to the `TorqueApiClient` class:
 
 ```typescript
   // -------------------------
@@ -2752,17 +2752,17 @@ git commit -m "feat: wire up routes and nav for projects, sprints, epics pages"
 
 - [ ] **Step 1: Run all Go tests**
 
-Run: `cd /Users/chrispian/Projects-apps/clockwork-manifold && go test ./... -count=1`
+Run: `cd /Users/chrispian/Projects-apps/torque && go test ./... -count=1`
 Expected: ALL PASS
 
 - [ ] **Step 2: Build the daemon**
 
-Run: `make build` (or `go build ./cmd/clockworkd/`)
+Run: `make build` (or `go build ./cmd/torqued/`)
 Expected: Build succeeds
 
 - [ ] **Step 3: Build the CLI**
 
-Run: `go build ./cmd/clockwork/`
+Run: `go build ./cmd/torque/`
 Expected: Build succeeds
 
 - [ ] **Step 4: Fix any failures, then commit**

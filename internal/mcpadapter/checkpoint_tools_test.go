@@ -12,7 +12,7 @@ func TestMCP_Checkpoint_EmitRespondGetList(t *testing.T) {
 	a := setupAdapter(t)
 
 	// Create a decision task and move it to doing.
-	text, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":           "decision task",
 		"description":     "x",
 		"kind":            "decision",
@@ -24,13 +24,13 @@ func TestMCP_Checkpoint_EmitRespondGetList(t *testing.T) {
 	parseData(t, text, &created)
 	taskID := created["ID"].(string)
 
-	_, terr := callTool(t, a, "clockwork_task_transition", map[string]interface{}{
+	_, terr := callTool(t, a, "torque_task_transition", map[string]interface{}{
 		"id": taskID, "status": "doing",
 	})
 	require.False(t, terr)
 
 	// Emit
-	emitText, isErr := callTool(t, a, "clockwork_task_checkpoint_emit", map[string]interface{}{
+	emitText, isErr := callTool(t, a, "torque_task_checkpoint_emit", map[string]interface{}{
 		"task_id":             taskID,
 		"type":                "collect_data",
 		"payload_json":        `{"q":"?"}`,
@@ -44,7 +44,7 @@ func TestMCP_Checkpoint_EmitRespondGetList(t *testing.T) {
 	assert.NotEmpty(t, corr)
 
 	// Respond
-	respText, isErr := callTool(t, a, "clockwork_task_checkpoint_respond", map[string]interface{}{
+	respText, isErr := callTool(t, a, "torque_task_checkpoint_respond", map[string]interface{}{
 		"correlation_id":        corr,
 		"response_json":         `{"a":1}`,
 		"responder_source_type": "user",
@@ -56,7 +56,7 @@ func TestMCP_Checkpoint_EmitRespondGetList(t *testing.T) {
 	assert.Equal(t, "responded", responded["Status"])
 
 	// Get
-	getText, isErr := callTool(t, a, "clockwork_task_checkpoint_get", map[string]interface{}{
+	getText, isErr := callTool(t, a, "torque_task_checkpoint_get", map[string]interface{}{
 		"correlation_id": corr,
 	})
 	require.False(t, isErr)
@@ -65,7 +65,7 @@ func TestMCP_Checkpoint_EmitRespondGetList(t *testing.T) {
 	assert.Equal(t, "responded", got["Status"])
 
 	// List for task — new {items, meta} envelope with brief default shape
-	listText, isErr := callTool(t, a, "clockwork_task_checkpoint_list", map[string]interface{}{
+	listText, isErr := callTool(t, a, "torque_task_checkpoint_list", map[string]interface{}{
 		"task_id": taskID,
 	})
 	require.False(t, isErr)
@@ -82,7 +82,7 @@ func TestMCP_Checkpoint_EmitRespondGetList(t *testing.T) {
 func TestMCP_Checkpoint_Cancel(t *testing.T) {
 	a := setupAdapter(t)
 
-	text, _ := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":           "decision cancel",
 		"description":     "x",
 		"kind":            "decision",
@@ -93,11 +93,11 @@ func TestMCP_Checkpoint_Cancel(t *testing.T) {
 	parseData(t, text, &created)
 	taskID := created["ID"].(string)
 
-	_, _ = callTool(t, a, "clockwork_task_transition", map[string]interface{}{
+	_, _ = callTool(t, a, "torque_task_transition", map[string]interface{}{
 		"id": taskID, "status": "doing",
 	})
 
-	emitText, _ := callTool(t, a, "clockwork_task_checkpoint_emit", map[string]interface{}{
+	emitText, _ := callTool(t, a, "torque_task_checkpoint_emit", map[string]interface{}{
 		"task_id":             taskID,
 		"type":                "collect_data",
 		"payload_json":        `{}`,
@@ -107,7 +107,7 @@ func TestMCP_Checkpoint_Cancel(t *testing.T) {
 	parseData(t, emitText, &emitted)
 	corr := emitted["CorrelationID"].(string)
 
-	cancelText, isErr := callTool(t, a, "clockwork_task_checkpoint_cancel", map[string]interface{}{
+	cancelText, isErr := callTool(t, a, "torque_task_checkpoint_cancel", map[string]interface{}{
 		"correlation_id":       corr,
 		"reason":               "no longer relevant",
 		"canceler_source_type": "user",
@@ -122,7 +122,7 @@ func TestMCP_Checkpoint_Cancel(t *testing.T) {
 func TestMCP_Checkpoint_Pending(t *testing.T) {
 	a := setupAdapter(t)
 
-	text, _ := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":           "decision pending",
 		"description":     "x",
 		"kind":            "decision",
@@ -132,18 +132,18 @@ func TestMCP_Checkpoint_Pending(t *testing.T) {
 	var created map[string]interface{}
 	parseData(t, text, &created)
 	taskID := created["ID"].(string)
-	_, _ = callTool(t, a, "clockwork_task_transition", map[string]interface{}{
+	_, _ = callTool(t, a, "torque_task_transition", map[string]interface{}{
 		"id": taskID, "status": "doing",
 	})
 
-	_, _ = callTool(t, a, "clockwork_task_checkpoint_emit", map[string]interface{}{
+	_, _ = callTool(t, a, "torque_task_checkpoint_emit", map[string]interface{}{
 		"task_id":             taskID,
 		"type":                "collect_data",
 		"payload_json":        `{}`,
 		"emitter_source_type": "system",
 	})
 
-	pendingText, isErr := callTool(t, a, "clockwork_task_checkpoints_pending", map[string]interface{}{})
+	pendingText, isErr := callTool(t, a, "torque_task_checkpoints_pending", map[string]interface{}{})
 	require.False(t, isErr)
 	var pendingEnv struct {
 		Items []map[string]interface{} `json:"items"`
@@ -158,7 +158,7 @@ func TestMCP_Checkpoint_Pending(t *testing.T) {
 func TestMCP_Checkpoint_EmitTimeoutAtSet(t *testing.T) {
 	a := setupAdapter(t)
 
-	text, _ := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":           "decision to",
 		"description":     "x",
 		"kind":            "decision",
@@ -168,12 +168,12 @@ func TestMCP_Checkpoint_EmitTimeoutAtSet(t *testing.T) {
 	var created map[string]interface{}
 	parseData(t, text, &created)
 	taskID := created["ID"].(string)
-	_, _ = callTool(t, a, "clockwork_task_transition", map[string]interface{}{
+	_, _ = callTool(t, a, "torque_task_transition", map[string]interface{}{
 		"id": taskID, "status": "doing",
 	})
 
 	deadline := time.Now().UTC().Add(1 * time.Hour).Format(time.RFC3339)
-	emitText, isErr := callTool(t, a, "clockwork_task_checkpoint_emit", map[string]interface{}{
+	emitText, isErr := callTool(t, a, "torque_task_checkpoint_emit", map[string]interface{}{
 		"task_id":             taskID,
 		"type":                "collect_data",
 		"payload_json":        `{}`,
@@ -185,7 +185,7 @@ func TestMCP_Checkpoint_EmitTimeoutAtSet(t *testing.T) {
 	parseData(t, emitText, &emitted)
 	corr := emitted["CorrelationID"].(string)
 
-	getText, _ := callTool(t, a, "clockwork_task_checkpoint_get", map[string]interface{}{
+	getText, _ := callTool(t, a, "torque_task_checkpoint_get", map[string]interface{}{
 		"correlation_id": corr,
 	})
 	var got map[string]interface{}

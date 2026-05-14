@@ -20,7 +20,7 @@ func TestAdminGate_NonLocalhostDenied(t *testing.T) {
 }
 
 func TestAdminGate_LocalhostAllowedWithoutToken(t *testing.T) {
-	t.Setenv("CLOCKWORK_ADMIN_TOKEN", "")
+	t.Setenv("TORQUE_ADMIN_TOKEN", "")
 	called := false
 	h := adminGate(func(w http.ResponseWriter, _ *http.Request) {
 		called = true
@@ -36,7 +36,7 @@ func TestAdminGate_LocalhostAllowedWithoutToken(t *testing.T) {
 }
 
 func TestAdminGate_TokenMismatchDenied(t *testing.T) {
-	t.Setenv("CLOCKWORK_ADMIN_TOKEN", "secret")
+	t.Setenv("TORQUE_ADMIN_TOKEN", "secret")
 	h := adminGate(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -51,7 +51,7 @@ func TestAdminGate_TokenMismatchDenied(t *testing.T) {
 }
 
 func TestAdminGate_TokenMatchAllowed(t *testing.T) {
-	t.Setenv("CLOCKWORK_ADMIN_TOKEN", "secret")
+	t.Setenv("TORQUE_ADMIN_TOKEN", "secret")
 	called := false
 	h := adminGate(func(w http.ResponseWriter, _ *http.Request) {
 		called = true

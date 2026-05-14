@@ -7,17 +7,17 @@ import (
 )
 
 func (a *Adapter) registerSettingsTools() {
-	a.addTool(mcp.NewTool("clockwork_settings_get",
+	a.addTool(mcp.NewTool("torque_settings_get",
 		mcp.WithDescription(`Read one settings value by key (e.g. features.sprints, scheduler.enabled).
-Use for runtime config introspection; clockwork_settings_save writes. clockwork_health reports enabled_features shortcut.
+Use for runtime config introspection; torque_settings_save writes. torque_health reports enabled_features shortcut.
 Response shape: data = {key, value}.
 Example: {"key":"features.sprints"}`),
 		mcp.WithString("key", mcp.Required(), mcp.Description("Settings key (dotted path)")),
 	), a.handleSettingsGet)
 
-	a.addTool(mcp.NewTool("clockwork_settings_save",
+	a.addTool(mcp.NewTool("torque_settings_save",
 		mcp.WithDescription(`Write one settings key/value; persisted across restarts. Feature flags may require a restart to register new tools.
-Use for runtime config mutation. clockwork_settings_get reads.
+Use for runtime config mutation. torque_settings_get reads.
 Response shape: data = {key, value}.
 Example: {"key":"features.epics","value":"true"}`),
 		mcp.WithString("key", mcp.Required(), mcp.Description("Settings key (dotted path)")),

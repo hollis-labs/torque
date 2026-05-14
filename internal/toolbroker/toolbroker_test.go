@@ -7,11 +7,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/permission"
-	"github.com/hollis-labs/clockwork-manifold/internal/tool"
-	"github.com/hollis-labs/clockwork-manifold/internal/toolbroker"
-	"github.com/hollis-labs/clockwork-manifold/internal/toolrouter"
 	"github.com/hollis-labs/go-toolbroker/broker"
+	"github.com/hollis-labs/torque/internal/permission"
+	"github.com/hollis-labs/torque/internal/tool"
+	"github.com/hollis-labs/torque/internal/toolbroker"
+	"github.com/hollis-labs/torque/internal/toolrouter"
 )
 
 // build wires a ToolRouter around a registry holding two test tools so each

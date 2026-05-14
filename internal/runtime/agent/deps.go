@@ -1,12 +1,12 @@
 package agent
 
 import (
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/writeq"
-	"github.com/hollis-labs/clockwork-manifold/internal/toolbroker"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/runtime/writeq"
+	"github.com/hollis-labs/torque/internal/toolbroker"
 )
 
 // RuntimeFactory constructs the agentsessions.Runtime Boot uses to spawn the
@@ -18,7 +18,7 @@ import (
 type RuntimeFactory func(cfg agentsessions.AdapterRuntimeConfig) (agentsessions.Runtime, error)
 
 // Dependencies bundles every collaborator agent.Boot and Manager need.
-// Constructed once at composition root (cmd/clockwork/serve.go) and passed
+// Constructed once at composition root (cmd/torque/serve.go) and passed
 // by pointer to every Boot caller. No global state.
 //
 // Construction order (NewManager populates deps.Sessions in place):
@@ -36,7 +36,7 @@ type Dependencies struct {
 	// Store is the canonical session/checkpoint persistence layer.
 	Store *sqlstore.Store
 
-	// StateWriter serializes session-state mutations back into clockwork.db.
+	// StateWriter serializes session-state mutations back into torque.db.
 	// Nil preserves direct Store writes for tests and narrow CLI paths.
 	StateWriter writeq.Writer
 
@@ -61,7 +61,7 @@ type Dependencies struct {
 	Bus *scheduler.EventBus
 
 	// WorkspacesRoot is the parent dir under which per-session workspace
-	// dirs are materialized. Default $HOME/.clockwork/workspaces; tests
+	// dirs are materialized. Default $HOME/.torque/workspaces; tests
 	// override to a tempdir.
 	WorkspacesRoot string
 
@@ -85,7 +85,7 @@ type Dependencies struct {
 	// Closes CW-20260509-0016: bare mode disables OAuth/keychain
 	// auto-resolution, so subscription users (no ANTHROPIC_API_KEY in
 	// env) need an explicit hook. The composition root resolves this
-	// path at startup (typically `<dir(os.Executable())>/clockwork-
+	// path at startup (typically `<dir(os.Executable())>/torque-
 	// apikey-helper`) and falls back to the empty string when the
 	// helper is absent — bare mode then requires ANTHROPIC_API_KEY in
 	// env (the existing CW-20260509-0011 contract). Empty here is
@@ -98,7 +98,7 @@ type Dependencies struct {
 	// MuxCommand, when non-empty, is the absolute path to the Mux
 	// binary the per-task bootdir plant should expose to spawned
 	// agents as a second MCP server entry (alongside the per-task
-	// clockwork loopback). The agent then has access to Vanta + the
+	// torque loopback). The agent then has access to Vanta + the
 	// portfolio-wide Mux-aggregated tool surface, not just the
 	// task-restricted loopback. Empty disables the entry (back-compat
 	// fence — pre-CW-20260510-0110 behavior preserved byte-for-byte).
@@ -117,10 +117,10 @@ type Dependencies struct {
 	// MuxArgs is the argv passed to MuxCommand by the planted MCP
 	// stdio entry. Default mirrors the user's interactive
 	// ~/.claude.json `mcpServers.mux` shape:
-	// `["mcp", "--proxy", "--servers", "vanta,clockwork,cerberus",
+	// `["mcp", "--proxy", "--servers", "vanta,torque,cerberus",
 	//  "--token", "local-dev", "--scopes", "session.write,message.write"]`.
 	//
-	// Daemon-scoped today; CLOCKWORK_MUX_ARGS env var override is
+	// Daemon-scoped today; TORQUE_MUX_ARGS env var override is
 	// supported at startup. Per-Boot per-task scoping (e.g. read-only
 	// token for some workers) is filed as a follow-up.
 	MuxArgs []string

@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/hitl"
+	"github.com/hollis-labs/torque/internal/hitl"
 )
 
 func TestLookupCanonicalWorkflowSchemas(t *testing.T) {

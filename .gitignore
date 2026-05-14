@@ -1,7 +1,6 @@
 # Binaries
-/clockwork
-/clockworkd
-/clockwork-apikey-helper
+/torque
+/torque-apikey-helper
 *.exe
 
 # Database
@@ -19,7 +18,7 @@ queue.db
 .DS_Store
 
 # Data
-.clockwork/
+.torque/
 
 # Build
 dist/

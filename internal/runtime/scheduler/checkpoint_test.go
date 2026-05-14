@@ -9,15 +9,15 @@ import (
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/service"
 )
 
-// CLOCKWORK_CHECKPOINT signal-protocol tests retired with Phase E
+// TORQUE_CHECKPOINT signal-protocol tests retired with Phase E
 // (CW-20260427-0043) — agents now emit checkpoints via the
-// clockwork_task_checkpoint_emit MCP tool, which calls
+// torque_task_checkpoint_emit MCP tool, which calls
 // service.CheckpointService.Emit. Coverage of the parking/no-parking/malformed
 // branches lives in internal/service/checkpoint_test.go.
 //

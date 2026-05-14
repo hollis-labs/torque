@@ -3,23 +3,23 @@ package mcpadapter
 import (
 	"context"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func (a *Adapter) registerSubtodoTools() {
-	a.addTool(mcp.NewTool("clockwork_task_subtodo_list",
+	a.addTool(mcp.NewTool("torque_task_subtodo_list",
 		mcp.WithDescription(`List the structural checklist (subtodos) on a task. Brief shape drops the evidence column; pass verbose="true" for full records.
-Use to inspect gating state; sibling clockwork_task_subtodo_add/clockwork_task_subtodo_done mutate. Unlike comments, subtodos drive lifecycle (required items block done).
+Use to inspect gating state; sibling torque_task_subtodo_add/torque_task_subtodo_done mutate. Unlike comments, subtodos drive lifecycle (required items block done).
 Response shape: data = {items: [<briefSubtodo or Subtodo>...], meta: {truncated, returned, limit, hint?}}.
 Example: {"task_id":"T-123"}`),
 		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleSubtodoList)
 
-	a.addTool(mcp.NewTool("clockwork_task_subtodo_add",
+	a.addTool(mcp.NewTool("torque_task_subtodo_add",
 		mcp.WithDescription(`Append a subtodo item to a task's checklist. required=true means the task cannot transition past review until the item is ticked off.
-Use for structural gating; clockwork_task_subtodo_done marks completion, clockwork_task_subtodo_list reads. Prefer clockwork_comment_add for non-gating discussion.
+Use for structural gating; torque_task_subtodo_done marks completion, torque_task_subtodo_list reads. Prefer torque_comment_add for non-gating discussion.
 Response shape: data = [<Subtodo>...] — returns the updated full checklist.
 Example: {"task_id":"T-123","id":"check-1","text":"write regression test","required":true}`),
 		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),
@@ -28,9 +28,9 @@ Example: {"task_id":"T-123","id":"check-1","text":"write regression test","requi
 		mcp.WithBoolean("required", mcp.Description("If true, blocks done until ticked off (default false)")),
 	), a.handleSubtodoAdd)
 
-	a.addTool(mcp.NewTool("clockwork_task_subtodo_done",
+	a.addTool(mcp.NewTool("torque_task_subtodo_done",
 		mcp.WithDescription(`Mark a subtodo done with an evidence string (artifact id, commit SHA, URL, or note).
-Use to unblock required subtodos; clockwork_task_subtodo_add to create, clockwork_task_subtodo_list to inspect, clockwork_task_subtodo_update to edit, clockwork_task_subtodo_delete to remove.
+Use to unblock required subtodos; torque_task_subtodo_add to create, torque_task_subtodo_list to inspect, torque_task_subtodo_update to edit, torque_task_subtodo_delete to remove.
 Response shape: data = [<Subtodo>...] — returns the updated full checklist.
 Example: {"task_id":"T-123","id":"check-1","evidence":"abc123 / PR #42"}`),
 		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),
@@ -38,9 +38,9 @@ Example: {"task_id":"T-123","id":"check-1","evidence":"abc123 / PR #42"}`),
 		mcp.WithString("evidence", mcp.Description("Optional evidence pointer (artifact id, commit, URL, or note)")),
 	), a.handleSubtodoDone)
 
-	a.addTool(mcp.NewTool("clockwork_task_subtodo_update",
+	a.addTool(mcp.NewTool("torque_task_subtodo_update",
 		mcp.WithDescription(`Edit the text and/or required flag on an existing subtodo. Omitted fields are left unchanged.
-Use for typo fixes or required-flag adjustments; clockwork_task_subtodo_done to tick off, clockwork_task_subtodo_delete to remove entirely.
+Use for typo fixes or required-flag adjustments; torque_task_subtodo_done to tick off, torque_task_subtodo_delete to remove entirely.
 Response shape: data = [<Subtodo>...] — returns the updated full checklist.
 Example: {"task_id":"T-123","id":"check-1","text":"write integration test","required":true}`),
 		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),
@@ -49,9 +49,9 @@ Example: {"task_id":"T-123","id":"check-1","text":"write integration test","requ
 		mcp.WithBoolean("required", mcp.Description("New required flag (omit to leave unchanged)")),
 	), a.handleSubtodoUpdate)
 
-	a.addTool(mcp.NewTool("clockwork_task_subtodo_delete",
+	a.addTool(mcp.NewTool("torque_task_subtodo_delete",
 		mcp.WithDescription(`Remove a subtodo item from a task's checklist. Returns the updated checklist (which may be empty).
-Use sparingly — prefer clockwork_task_subtodo_done with evidence for closure that preserves the audit trail. Delete is for items that should not have been added in the first place.
+Use sparingly — prefer torque_task_subtodo_done with evidence for closure that preserves the audit trail. Delete is for items that should not have been added in the first place.
 Response shape: data = [<Subtodo>...] — returns the updated full checklist.
 Example: {"task_id":"T-123","id":"check-1"}`),
 		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),

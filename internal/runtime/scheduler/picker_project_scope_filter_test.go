@@ -1,7 +1,7 @@
 package scheduler_test
 
 // DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
-// These tests cover the stopgap CLOCKWORK_PROJECT_ID / CLOCKWORK_PROJECT_IDS
+// These tests cover the stopgap TORQUE_PROJECT_ID / TORQUE_PROJECT_IDS
 // scheduler allowlist (CW-20260417-0130). Delete this file when the
 // workspace feature lands and the SkipReasonProjectScopeFilter constant is
 // removed from the picker.
@@ -10,8 +10,8 @@ import (
 	"database/sql"
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

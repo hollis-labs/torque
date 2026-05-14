@@ -13,18 +13,18 @@ import (
 // which would break consumers expecting the same shape as Model. Wrapping is
 // cheaper than a fork.
 type modelEntry struct {
-	ProviderID      string                  `json:"provider_id"`
-	ID              string                  `json:"id"`
-	Name            string                  `json:"name"`
-	Family          string                  `json:"family"`
-	OpenWeights     bool                    `json:"open_weights"`
-	ReleaseDate     string                  `json:"release_date"`
-	KnowledgeCutoff string                  `json:"knowledge_cutoff"`
-	LastUpdated     string                  `json:"last_updated"`
-	Cost            modelsdev.Pricing       `json:"cost"`
-	Limit           modelsdev.Limits        `json:"limit"`
-	Modality        modelsdev.Modality      `json:"modality"`
-	Capabilities    modelsdev.Capabilities  `json:"capabilities"`
+	ProviderID      string                 `json:"provider_id"`
+	ID              string                 `json:"id"`
+	Name            string                 `json:"name"`
+	Family          string                 `json:"family"`
+	OpenWeights     bool                   `json:"open_weights"`
+	ReleaseDate     string                 `json:"release_date"`
+	KnowledgeCutoff string                 `json:"knowledge_cutoff"`
+	LastUpdated     string                 `json:"last_updated"`
+	Cost            modelsdev.Pricing      `json:"cost"`
+	Limit           modelsdev.Limits       `json:"limit"`
+	Modality        modelsdev.Modality     `json:"modality"`
+	Capabilities    modelsdev.Capabilities `json:"capabilities"`
 }
 
 func toModelEntry(m modelsdev.ModelRef) modelEntry {

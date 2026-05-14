@@ -14,7 +14,7 @@ func TestFullStack_ArtifactCRUD(t *testing.T) {
 	a := setupAdapter(t)
 
 	// Need a task first so the artifact has a valid task_id.
-	text, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "artifact-owner",
 		"description": "x",
 	})
@@ -24,7 +24,7 @@ func TestFullStack_ArtifactCRUD(t *testing.T) {
 	taskID := task["ID"].(string)
 
 	// Create an artifact.
-	text, isErr = callTool(t, a, "clockwork_artifact_create", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_artifact_create", map[string]interface{}{
 		"task_id":   taskID,
 		"type":      "file",
 		"file_path": "/tmp/demo.log",
@@ -36,7 +36,7 @@ func TestFullStack_ArtifactCRUD(t *testing.T) {
 	require.True(t, ok, "response should contain numeric ID: %v", created)
 
 	// Get by id.
-	text, isErr = callTool(t, a, "clockwork_artifact_get", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_artifact_get", map[string]interface{}{
 		"artifact_id": id,
 	})
 	require.False(t, isErr, "artifact get: %s", text)
@@ -47,7 +47,7 @@ func TestFullStack_ArtifactCRUD(t *testing.T) {
 	assert.Equal(t, "/tmp/demo.log", got["FilePath"])
 
 	// Delete.
-	text, isErr = callTool(t, a, "clockwork_artifact_delete", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_artifact_delete", map[string]interface{}{
 		"artifact_id": id,
 	})
 	require.False(t, isErr, "artifact delete: %s", text)
@@ -56,13 +56,13 @@ func TestFullStack_ArtifactCRUD(t *testing.T) {
 	assert.Equal(t, true, delResp["deleted"])
 
 	// Get after delete should error.
-	text, isErr = callTool(t, a, "clockwork_artifact_get", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_artifact_get", map[string]interface{}{
 		"artifact_id": id,
 	})
 	assert.True(t, isErr, "get after delete should error: %s", text)
 
 	// Delete again should error.
-	text, isErr = callTool(t, a, "clockwork_artifact_delete", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_artifact_delete", map[string]interface{}{
 		"artifact_id": id,
 	})
 	assert.True(t, isErr, "delete missing should error: %s", text)

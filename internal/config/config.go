@@ -33,7 +33,7 @@ type StuckConfig struct {
 	// On timeout the probe falls through to checkpoint+resume.
 	//
 	// Default 90 (the midpoint of the sprint-α α.5 60–120s range). Set
-	// CLOCKWORK_STUCK_WAIT_SECONDS to override. The stuck package also
+	// TORQUE_STUCK_WAIT_SECONDS to override. The stuck package also
 	// exports a DefaultWaitTimeout that callers passing a zero
 	// ProbeInput.WaitTimeout inherit directly; this config field is for
 	// the production trigger wireup once that lands.
@@ -93,26 +93,26 @@ type SchedulerConfig struct {
 	// contamination observed 2026-04-17. When non-empty, the scheduler
 	// picker only considers tasks whose project_id is in this list; empty
 	// means no filter (current all-projects behavior). Populated at
-	// startup from CLOCKWORK_PROJECT_IDS (comma-separated, wins if set) or
-	// CLOCKWORK_PROJECT_ID (single id). Read once at Load() — there is no
+	// startup from TORQUE_PROJECT_IDS (comma-separated, wins if set) or
+	// TORQUE_PROJECT_ID (single id). Read once at Load() — there is no
 	// reload mechanism; changing the env var requires a serve restart.
 	ProjectAllowlist []string
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		DBPath:      envOr("CLOCKWORK_DB_PATH", "clockwork.db"),
-		PostgresDSN: os.Getenv("CLOCKWORK_POSTGRES_DSN"),
-		HTTPPort:    envInt("CLOCKWORK_HTTP_PORT", 8990),
-		RepoRoot:    os.Getenv("CLOCKWORK_REPO"),
-		DataDir:     envOr("CLOCKWORK_DATA_DIR", ".clockwork"),
+		DBPath:      envOr("TORQUE_DB_PATH", "torque.db"),
+		PostgresDSN: os.Getenv("TORQUE_POSTGRES_DSN"),
+		HTTPPort:    envInt("TORQUE_HTTP_PORT", 8990),
+		RepoRoot:    os.Getenv("TORQUE_REPO"),
+		DataDir:     envOr("TORQUE_DATA_DIR", ".torque"),
 		Scheduler: SchedulerConfig{
-			Workers:                  envInt("CLOCKWORK_SCHED_WORKERS", 3),
-			IntervalSeconds:          envInt("CLOCKWORK_SCHED_INTERVAL", 10),
-			RetryBudget:              envInt("CLOCKWORK_SCHED_RETRY_BUDGET", 3),
-			CostCeiling:              envFloat("CLOCKWORK_SCHED_COST_CEILING", 0),
-			HeartbeatSeconds:         envInt("CLOCKWORK_SCHED_HEARTBEAT", 15),
-			HeartbeatProgressSeconds: envInt("CLOCKWORK_PROGRESS_HEARTBEAT_SECONDS", 30),
+			Workers:                  envInt("TORQUE_SCHED_WORKERS", 3),
+			IntervalSeconds:          envInt("TORQUE_SCHED_INTERVAL", 10),
+			RetryBudget:              envInt("TORQUE_SCHED_RETRY_BUDGET", 3),
+			CostCeiling:              envFloat("TORQUE_SCHED_COST_CEILING", 0),
+			HeartbeatSeconds:         envInt("TORQUE_SCHED_HEARTBEAT", 15),
+			HeartbeatProgressSeconds: envInt("TORQUE_PROGRESS_HEARTBEAT_SECONDS", 30),
 			// StaleSeconds is the staleness threshold for worker heartbeats.
 			// A row in worker_heartbeats whose last_heartbeat is older than
 			// this gets logged, published on the bus as worker.stale, and
@@ -122,36 +122,36 @@ func Load() (*Config, error) {
 			// enough that a crashed worker doesn't linger in the table
 			// across a whole session. Tune down for faster feedback in
 			// dev/test, not recommended below ~30s in production.
-			StaleSeconds:             envInt("CLOCKWORK_SCHED_STALE", 300),
-			Enabled:                  envBool("CLOCKWORK_SCHED_ENABLED", true),
-			MaxPerProject:            envInt("CLOCKWORK_SCHED_MAX_PER_PROJECT", 2),
-			DefaultMerge:             envOr("CLOCKWORK_SCHED_DEFAULT_MERGE", "none"),
-			WorktreeCleanup:          envOr("CLOCKWORK_SCHED_WORKTREE_CLEANUP", "on_merge"),
-			WorktreePerRun:           envBool("CLOCKWORK_WORKTREE_PER_RUN", false),
-			WorktreeRoot:             os.Getenv("CLOCKWORK_WORKTREE_ROOT"),
-			WorktreeKeepDays:         envInt("CLOCKWORK_WORKTREE_KEEP_DAYS", 7),
+			StaleSeconds:     envInt("TORQUE_SCHED_STALE", 300),
+			Enabled:          envBool("TORQUE_SCHED_ENABLED", true),
+			MaxPerProject:    envInt("TORQUE_SCHED_MAX_PER_PROJECT", 2),
+			DefaultMerge:     envOr("TORQUE_SCHED_DEFAULT_MERGE", "none"),
+			WorktreeCleanup:  envOr("TORQUE_SCHED_WORKTREE_CLEANUP", "on_merge"),
+			WorktreePerRun:   envBool("TORQUE_WORKTREE_PER_RUN", false),
+			WorktreeRoot:     os.Getenv("TORQUE_WORKTREE_ROOT"),
+			WorktreeKeepDays: envInt("TORQUE_WORKTREE_KEEP_DAYS", 7),
 			// DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
 			ProjectAllowlist: envProjectAllowlist(),
 		},
 		Concurrency: ConcurrencyConfig{
-			MaxReadConns:     envInt("CLOCKWORK_MAX_READ_CONNS", 4),
-			BusyTimeoutMs:    envInt("CLOCKWORK_BUSY_TIMEOUT_MS", 5000),
-			WriteChannelSize: envInt("CLOCKWORK_WRITE_CHANNEL_SIZE", 256),
-			DrainBatchSize:   envInt("CLOCKWORK_DRAIN_BATCH_SIZE", 50),
-			DrainIntervalMs:  envInt("CLOCKWORK_DRAIN_INTERVAL_MS", 1000),
-			QueueDBPath:      envOr("CLOCKWORK_QUEUE_DB_PATH", "queue.db"),
+			MaxReadConns:     envInt("TORQUE_MAX_READ_CONNS", 4),
+			BusyTimeoutMs:    envInt("TORQUE_BUSY_TIMEOUT_MS", 5000),
+			WriteChannelSize: envInt("TORQUE_WRITE_CHANNEL_SIZE", 256),
+			DrainBatchSize:   envInt("TORQUE_DRAIN_BATCH_SIZE", 50),
+			DrainIntervalMs:  envInt("TORQUE_DRAIN_INTERVAL_MS", 1000),
+			QueueDBPath:      envOr("TORQUE_QUEUE_DB_PATH", "queue.db"),
 		},
 		Merge: MergeConfig{
-			ResolutionExecutor:    envOr("CLOCKWORK_MERGE_EXECUTOR", "cli"),
-			ResolutionAgent:       envOr("CLOCKWORK_MERGE_AGENT", "default"),
-			ConfidenceThreshold:   envFloat("CLOCKWORK_MERGE_CONFIDENCE", 0.8),
-			MaxResolutionAttempts: envInt("CLOCKWORK_MERGE_MAX_ATTEMPTS", 1),
-			NotifyOnConflict:      envBool("CLOCKWORK_MERGE_NOTIFY", true),
+			ResolutionExecutor:    envOr("TORQUE_MERGE_EXECUTOR", "cli"),
+			ResolutionAgent:       envOr("TORQUE_MERGE_AGENT", "default"),
+			ConfidenceThreshold:   envFloat("TORQUE_MERGE_CONFIDENCE", 0.8),
+			MaxResolutionAttempts: envInt("TORQUE_MERGE_MAX_ATTEMPTS", 1),
+			NotifyOnConflict:      envBool("TORQUE_MERGE_NOTIFY", true),
 		},
 		Stuck: StuckConfig{
 			// 90s = midpoint of the sprint-α α.5 60–120s range. Tuning
 			// notes on StuckConfig.WaitSeconds.
-			WaitSeconds: envInt("CLOCKWORK_STUCK_WAIT_SECONDS", 90),
+			WaitSeconds: envInt("TORQUE_STUCK_WAIT_SECONDS", 90),
 		},
 	}
 	return cfg, nil
@@ -192,8 +192,8 @@ func envBool(key string, fallback bool) bool {
 }
 
 // envProjectAllowlist parses the project-scope filter env vars for the
-// scheduler. CLOCKWORK_PROJECT_IDS (comma-separated) wins if set; otherwise
-// CLOCKWORK_PROJECT_ID becomes a single-element list; otherwise nil (no
+// scheduler. TORQUE_PROJECT_IDS (comma-separated) wins if set; otherwise
+// TORQUE_PROJECT_ID becomes a single-element list; otherwise nil (no
 // filter). Whitespace around tokens is trimmed and empty tokens are
 // discarded, so "PRJ-A, PRJ-B" and "PRJ-A,PRJ-B" are equivalent. A non-empty
 // allowlist is logged at startup so operators can spot a stale env var
@@ -201,9 +201,9 @@ func envBool(key string, fallback bool) bool {
 //
 // DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
 func envProjectAllowlist() []string {
-	raw := os.Getenv("CLOCKWORK_PROJECT_IDS")
+	raw := os.Getenv("TORQUE_PROJECT_IDS")
 	if raw == "" {
-		if single := os.Getenv("CLOCKWORK_PROJECT_ID"); single != "" {
+		if single := os.Getenv("TORQUE_PROJECT_ID"); single != "" {
 			raw = single
 		}
 	}

@@ -7,7 +7,7 @@
 
 ## Problem
 
-The Clockwork GUI has ~16 mutation handlers that silently swallow errors. When a user triggers an action (transition a task, add a comment, create a sprint, delete a project) and the API call fails, nothing visible happens: the handler's `catch {}` eats the error, the optimistic UI doesn't roll back visibly, and the user is left to guess whether their action worked.
+The Torque GUI has ~16 mutation handlers that silently swallow errors. When a user triggers an action (transition a task, add a comment, create a sprint, delete a project) and the API call fails, nothing visible happens: the handler's `catch {}` eats the error, the optimistic UI doesn't roll back visibly, and the user is left to guess whether their action worked.
 
 Sonner's `<Toaster />` is already mounted in `apps/gui/src/App.tsx` with a themed dark wrapper (`apps/gui/src/components/ui/sonner.tsx`) and icons for success/info/warning/error/loading. Nothing currently imports `toast` from sonner anywhere in the app — the infrastructure is in place but unused.
 

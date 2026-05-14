@@ -1,5 +1,5 @@
 // Package messaging implements the github.com/hollis-labs/go-messaging
-// Store contract over Clockwork's SQLite substrate. It is the durable
+// Store contract over Torque's SQLite substrate. It is the durable
 // layer the S1.3 broker sits on; typed envelope semantics (request/reply
 // shapes, broker policy) live above this package.
 //
@@ -111,7 +111,7 @@ func (s *Store) Get(ctx context.Context, id string) (messaging.Envelope, error) 
 // txutil.WithImmediate acquires the writer lock at BEGIN time so concurrent
 // Inbox calls queue on busy_timeout rather than racing on a mid-tx
 // upgrade. This depends on the underlying *sql.DB having
-// _txlock=immediate on its DSN — Clockwork's writer pool is opened via
+// _txlock=immediate on its DSN — Torque's writer pool is opened via
 // sqlitekit.OpenWriter (see internal/persistence/appdb/open.go), which
 // sets that.
 func (s *Store) Inbox(ctx context.Context, to messaging.Address, f messaging.Filter) ([]messaging.Envelope, error) {

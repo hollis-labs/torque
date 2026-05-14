@@ -7,13 +7,13 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/service"
 )
 
 func (a *Adapter) registerTemplateTools() {
-	a.addTool(mcp.NewTool("clockwork_template_create",
-		mcp.WithDescription(`Create a task template at version=1; subsequent clockwork_template_update calls append new versions.
-Use to encode repeated task shapes with {{var}} placeholders and required_vars; clockwork_task_create_from_template instantiates. clockwork_task_create is the ad-hoc alternative.
+	a.addTool(mcp.NewTool("torque_template_create",
+		mcp.WithDescription(`Create a task template at version=1; subsequent torque_template_update calls append new versions.
+Use to encode repeated task shapes with {{var}} placeholders and required_vars; torque_task_create_from_template instantiates. torque_task_create is the ad-hoc alternative.
 Response shape: data = {<TemplateRecord fields>} — singleton.
 Example: {"id":"backend-fix","name":"Backend Fix","description":"Fix {{issue}}","kind":"agent","executor":"cli","required_vars":"[\"issue\"]"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Template id (stable across versions)")),
@@ -42,18 +42,18 @@ Example: {"id":"backend-fix","name":"Backend Fix","description":"Fix {{issue}}",
 		mcp.WithString("tags", mcp.Description("JSON array of tag names")),
 	), a.handleTemplateCreate)
 
-	a.addTool(mcp.NewTool("clockwork_template_get",
+	a.addTool(mcp.NewTool("torque_template_get",
 		mcp.WithDescription(`Fetch a template by id (and optional version). When version is omitted, returns the latest non-archived version.
-Use when you have the id; clockwork_template_list for browsing, clockwork_task_create_from_template when you want to instantiate not inspect.
+Use when you have the id; torque_template_list for browsing, torque_task_create_from_template when you want to instantiate not inspect.
 Response shape: data = {<TemplateRecord fields>} — singleton.
 Example: {"id":"backend-fix"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Template id (stable across versions)")),
 		mcp.WithString("version", mcp.Description("Optional integer; omit for latest non-archived")),
 	), a.handleTemplateGet)
 
-	a.addTool(mcp.NewTool("clockwork_template_update",
+	a.addTool(mcp.NewTool("torque_template_update",
 		mcp.WithDescription(`Append a new version with merged changes; prior versions remain queryable.
-Use for forward-only template evolution; clockwork_template_archive retires a version, clockwork_template_delete wipes all versions (rejected if referenced).
+Use for forward-only template evolution; torque_template_archive retires a version, torque_template_delete wipes all versions (rejected if referenced).
 Response shape: data = {<TemplateRecord fields>} — singleton, the new version.
 Example: {"id":"backend-fix","description":"Fix {{issue}} in {{component}}"}`),
 		mcp.WithString("id", mcp.Required()),
@@ -82,26 +82,26 @@ Example: {"id":"backend-fix","description":"Fix {{issue}} in {{component}}"}`),
 		mcp.WithString("tags"),
 	), a.handleTemplateUpdate)
 
-	a.addTool(mcp.NewTool("clockwork_template_archive",
+	a.addTool(mcp.NewTool("torque_template_archive",
 		mcp.WithDescription(`Soft-remove one (id, version) from the live catalog; the row stays queryable with include_archived=true.
-Use to retire an old template version while keeping audit; clockwork_template_delete when you want to hard-wipe all versions.
+Use to retire an old template version while keeping audit; torque_template_delete when you want to hard-wipe all versions.
 Response shape: data = {id, version, archived: true}.
 Example: {"id":"backend-fix","version":"1"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Template id")),
 		mcp.WithString("version", mcp.Required(), mcp.Description("Template version (integer; pass as string)")),
 	), a.handleTemplateArchive)
 
-	a.addTool(mcp.NewTool("clockwork_template_delete",
+	a.addTool(mcp.NewTool("torque_template_delete",
 		mcp.WithDescription(`Hard-delete every version of a template. Rejected with error.code=conflict if any task still references it.
-Use sparingly — prefer clockwork_template_archive to retire. Has no version arg because it wipes all versions.
+Use sparingly — prefer torque_template_archive to retire. Has no version arg because it wipes all versions.
 Response shape: data = {id, deleted: true}.
 Example: {"id":"backend-fix"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Template id")),
 	), a.handleTemplateDelete)
 
-	a.addTool(mcp.NewTool("clockwork_template_list",
+	a.addTool(mcp.NewTool("torque_template_list",
 		mcp.WithDescription(`List templates, optionally filtered by kind; include_archived=true surfaces retired rows.
-Use for template discovery; clockwork_template_get when you know the id. Default brief shape excludes the description body; pass verbose="true" for full records (description MAY include {{var}} placeholders).
+Use for template discovery; torque_template_get when you know the id. Default brief shape excludes the description body; pass verbose="true" for full records (description MAY include {{var}} placeholders).
 Response shape: data = {items: [<briefTemplate or TemplateRecord>...], meta: {truncated, returned, limit, hint?}}.
 Example: {"kind":"agent"}`),
 		mcp.WithBoolean("include_archived", mcp.Description("Surface retired rows (default false)")),
@@ -109,9 +109,9 @@ Example: {"kind":"agent"}`),
 		mcp.WithString("verbose", mcp.Description("Return full records (incl. description body) instead of brief (string 'true'/'false', default false)")),
 	), a.handleTemplateList)
 
-	a.addTool(mcp.NewTool("clockwork_task_create_from_template",
+	a.addTool(mcp.NewTool("torque_task_create_from_template",
 		mcp.WithDescription(`Instantiate a template into a new task; validates required_vars and resolves {{var}} placeholders in description/prompts/metadata.
-Use when a matching template exists; clockwork_task_create for ad-hoc tasks, clockwork_plan_create for multi-phase plans. Missing required_vars return error.code=arg_invalid.
+Use when a matching template exists; torque_task_create for ad-hoc tasks, torque_plan_create for multi-phase plans. Missing required_vars return error.code=arg_invalid.
 Response shape: data = {<TaskRecord fields>, Tags[]} — singleton, the new task.
 Example: {"template_id":"backend-fix","title":"Fix auth","vars":"{\"issue\":\"auth-42\"}"}`),
 		mcp.WithString("template_id", mcp.Required(), mcp.Description("Template id to instantiate")),

@@ -9,9 +9,9 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/hollis-labs/clockwork-manifold/internal/hitl"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/hitl"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/service"
 )
 
 // taskJSON converts a TaskRecord to a JSON-friendly map with snake_case keys

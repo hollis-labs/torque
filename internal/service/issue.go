@@ -3,7 +3,7 @@ package service
 import (
 	"database/sql"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 // IssueCreateInput is the minimal capture surface for a project-scoped issue.

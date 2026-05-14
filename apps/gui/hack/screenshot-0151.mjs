@@ -18,7 +18,7 @@ async function shoot(page, url, filename) {
   await page.waitForTimeout(2500)
   const out = path.join(ARTIFACTS, filename)
   await page.screenshot({ path: out, fullPage: false })
-  console.log('CLOCKWORK_ARTIFACT: apps/gui/artifacts/CW-20260417-0151/' + filename)
+  console.log('TORQUE_ARTIFACT: apps/gui/artifacts/CW-20260417-0151/' + filename)
 }
 
 const browser = await chromium.launch()

@@ -3,7 +3,7 @@ package httpserver
 import (
 	"context"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
 )
 
 // SchedulerBridge subscribes to a scheduler.EventBus and republishes each event

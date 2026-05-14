@@ -7,20 +7,20 @@
 // recovery loop:
 //
 //  1. PROBE   — SendInput a user-turn message asking the agent to emit a
-//               status_update envelope describing its state.
+//     status_update envelope describing its state.
 //  2. WAIT    — Subscribe to the broker filtered to MsgKindStatusUpdate and
-//               wait up to WaitTimeout for an envelope tagged with
-//               metadata.task_id == TaskID. The first match wins.
-//  3a. RESPOND — On envelope receipt: hand the envelope to the reactor
-//               Dispatcher (the same surface α.3 wired). status_update:
-//               blocked routes through to pause-and-block; non-blocked
-//               status_updates are noop+log per α.3 D2 contract — no
-//               duplicate routing in the probe.
-//  3b. RESUME  — On WaitTimeout silence: Checkpoint the session (for audit
-//               + linkage), then ResumeSession with ResumeOptions.
-//               DiagnosticNote set to the silence-framing prepend so the
-//               resumed transcript's first turn sees the operator-style
-//               "you went silent, here's what to do" framing.
+//     wait up to WaitTimeout for an envelope tagged with
+//     metadata.task_id == TaskID. The first match wins.
+//     3a. RESPOND — On envelope receipt: hand the envelope to the reactor
+//     Dispatcher (the same surface α.3 wired). status_update:
+//     blocked routes through to pause-and-block; non-blocked
+//     status_updates are noop+log per α.3 D2 contract — no
+//     duplicate routing in the probe.
+//     3b. RESUME  — On WaitTimeout silence: Checkpoint the session (for audit
+//     + linkage), then ResumeSession with ResumeOptions.
+//     DiagnosticNote set to the silence-framing prepend so the
+//     resumed transcript's first turn sees the operator-style
+//     "you went silent, here's what to do" framing.
 //
 // Composition with α.2 / α.3 / α.4:
 //
@@ -59,7 +59,7 @@ import (
 
 	gomsg "github.com/hollis-labs/go-messaging"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/broker"
+	"github.com/hollis-labs/torque/internal/broker"
 )
 
 // DefaultWaitTimeout is the WAIT-phase timeout used when ProbeInput.
@@ -76,7 +76,7 @@ const DefaultWaitTimeout = 90 * time.Second
 // agent to emit a status_update envelope so the WAIT phase has a
 // matchable surface.
 const DefaultProbeMessage = "Are you stuck? Respond with a status_update envelope " +
-	"(broker tool: clockwork_broker_send, kind=status_update). " +
+	"(broker tool: torque_broker_send, kind=status_update). " +
 	"Set state to one of: working, blocked, idle. " +
 	"Include a brief note describing your current step or block."
 

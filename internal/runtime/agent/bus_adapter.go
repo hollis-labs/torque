@@ -3,7 +3,7 @@ package agent
 import (
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
 )
 
 // SchedulerEmitter adapts *scheduler.EventBus to the EventEmitter interface

@@ -3,7 +3,7 @@ package service
 import (
 	"fmt"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 // RunService provides business logic for task runs.

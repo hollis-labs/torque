@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
+	"github.com/hollis-labs/torque/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -13,7 +13,7 @@ func TestDefaultConfig(t *testing.T) {
 	cfg, err := config.Load()
 	require.NoError(t, err)
 
-	assert.Equal(t, "clockwork.db", cfg.DBPath)
+	assert.Equal(t, "torque.db", cfg.DBPath)
 	assert.Equal(t, "", cfg.PostgresDSN)
 	assert.Equal(t, 8990, cfg.HTTPPort)
 	assert.Equal(t, 3, cfg.Scheduler.Workers)
@@ -62,20 +62,20 @@ func TestPerRunWorktreeDefaults(t *testing.T) {
 }
 
 func TestPerRunWorktreeFromEnv(t *testing.T) {
-	os.Setenv("CLOCKWORK_WORKTREE_PER_RUN", "true")
-	os.Setenv("CLOCKWORK_WORKTREE_ROOT", "/var/clockwork/worktrees")
-	os.Setenv("CLOCKWORK_WORKTREE_KEEP_DAYS", "14")
+	os.Setenv("TORQUE_WORKTREE_PER_RUN", "true")
+	os.Setenv("TORQUE_WORKTREE_ROOT", "/var/torque/worktrees")
+	os.Setenv("TORQUE_WORKTREE_KEEP_DAYS", "14")
 	defer func() {
-		os.Unsetenv("CLOCKWORK_WORKTREE_PER_RUN")
-		os.Unsetenv("CLOCKWORK_WORKTREE_ROOT")
-		os.Unsetenv("CLOCKWORK_WORKTREE_KEEP_DAYS")
+		os.Unsetenv("TORQUE_WORKTREE_PER_RUN")
+		os.Unsetenv("TORQUE_WORKTREE_ROOT")
+		os.Unsetenv("TORQUE_WORKTREE_KEEP_DAYS")
 	}()
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
 
 	assert.True(t, cfg.Scheduler.WorktreePerRun)
-	assert.Equal(t, "/var/clockwork/worktrees", cfg.Scheduler.WorktreeRoot)
+	assert.Equal(t, "/var/torque/worktrees", cfg.Scheduler.WorktreeRoot)
 	assert.Equal(t, 14, cfg.Scheduler.WorktreeKeepDays)
 }
 
@@ -83,39 +83,39 @@ func TestPerRunWorktreeFromEnv(t *testing.T) {
 // Covers the CW-20260417-0130 stopgap project-scope env-var parsing.
 func TestProjectAllowlistFromEnv(t *testing.T) {
 	t.Run("unset = nil", func(t *testing.T) {
-		os.Unsetenv("CLOCKWORK_PROJECT_ID")
-		os.Unsetenv("CLOCKWORK_PROJECT_IDS")
+		os.Unsetenv("TORQUE_PROJECT_ID")
+		os.Unsetenv("TORQUE_PROJECT_IDS")
 		cfg, err := config.Load()
 		require.NoError(t, err)
 		assert.Nil(t, cfg.Scheduler.ProjectAllowlist)
 	})
 
-	t.Run("single CLOCKWORK_PROJECT_ID", func(t *testing.T) {
-		os.Unsetenv("CLOCKWORK_PROJECT_IDS")
-		os.Setenv("CLOCKWORK_PROJECT_ID", "PRJ-A")
-		defer os.Unsetenv("CLOCKWORK_PROJECT_ID")
+	t.Run("single TORQUE_PROJECT_ID", func(t *testing.T) {
+		os.Unsetenv("TORQUE_PROJECT_IDS")
+		os.Setenv("TORQUE_PROJECT_ID", "PRJ-A")
+		defer os.Unsetenv("TORQUE_PROJECT_ID")
 
 		cfg, err := config.Load()
 		require.NoError(t, err)
 		assert.Equal(t, []string{"PRJ-A"}, cfg.Scheduler.ProjectAllowlist)
 	})
 
-	t.Run("comma-separated CLOCKWORK_PROJECT_IDS with whitespace", func(t *testing.T) {
-		os.Unsetenv("CLOCKWORK_PROJECT_ID")
-		os.Setenv("CLOCKWORK_PROJECT_IDS", "PRJ-A, PRJ-B ,PRJ-C")
-		defer os.Unsetenv("CLOCKWORK_PROJECT_IDS")
+	t.Run("comma-separated TORQUE_PROJECT_IDS with whitespace", func(t *testing.T) {
+		os.Unsetenv("TORQUE_PROJECT_ID")
+		os.Setenv("TORQUE_PROJECT_IDS", "PRJ-A, PRJ-B ,PRJ-C")
+		defer os.Unsetenv("TORQUE_PROJECT_IDS")
 
 		cfg, err := config.Load()
 		require.NoError(t, err)
 		assert.Equal(t, []string{"PRJ-A", "PRJ-B", "PRJ-C"}, cfg.Scheduler.ProjectAllowlist)
 	})
 
-	t.Run("CLOCKWORK_PROJECT_IDS wins over CLOCKWORK_PROJECT_ID", func(t *testing.T) {
-		os.Setenv("CLOCKWORK_PROJECT_ID", "PRJ-X")
-		os.Setenv("CLOCKWORK_PROJECT_IDS", "PRJ-A,PRJ-B")
+	t.Run("TORQUE_PROJECT_IDS wins over TORQUE_PROJECT_ID", func(t *testing.T) {
+		os.Setenv("TORQUE_PROJECT_ID", "PRJ-X")
+		os.Setenv("TORQUE_PROJECT_IDS", "PRJ-A,PRJ-B")
 		defer func() {
-			os.Unsetenv("CLOCKWORK_PROJECT_ID")
-			os.Unsetenv("CLOCKWORK_PROJECT_IDS")
+			os.Unsetenv("TORQUE_PROJECT_ID")
+			os.Unsetenv("TORQUE_PROJECT_IDS")
 		}()
 
 		cfg, err := config.Load()
@@ -124,9 +124,9 @@ func TestProjectAllowlistFromEnv(t *testing.T) {
 	})
 
 	t.Run("only-whitespace and commas collapse to nil", func(t *testing.T) {
-		os.Unsetenv("CLOCKWORK_PROJECT_ID")
-		os.Setenv("CLOCKWORK_PROJECT_IDS", " , ,  ")
-		defer os.Unsetenv("CLOCKWORK_PROJECT_IDS")
+		os.Unsetenv("TORQUE_PROJECT_ID")
+		os.Setenv("TORQUE_PROJECT_IDS", " , ,  ")
+		defer os.Unsetenv("TORQUE_PROJECT_IDS")
 
 		cfg, err := config.Load()
 		require.NoError(t, err)
@@ -135,13 +135,13 @@ func TestProjectAllowlistFromEnv(t *testing.T) {
 }
 
 func TestConfigFromEnv(t *testing.T) {
-	os.Setenv("CLOCKWORK_DB_PATH", "/tmp/test.db")
-	os.Setenv("CLOCKWORK_HTTP_PORT", "9999")
-	os.Setenv("CLOCKWORK_POSTGRES_DSN", "postgres://localhost/clockwork")
+	os.Setenv("TORQUE_DB_PATH", "/tmp/test.db")
+	os.Setenv("TORQUE_HTTP_PORT", "9999")
+	os.Setenv("TORQUE_POSTGRES_DSN", "postgres://localhost/torque")
 	defer func() {
-		os.Unsetenv("CLOCKWORK_DB_PATH")
-		os.Unsetenv("CLOCKWORK_HTTP_PORT")
-		os.Unsetenv("CLOCKWORK_POSTGRES_DSN")
+		os.Unsetenv("TORQUE_DB_PATH")
+		os.Unsetenv("TORQUE_HTTP_PORT")
+		os.Unsetenv("TORQUE_POSTGRES_DSN")
 	}()
 
 	cfg, err := config.Load()
@@ -149,5 +149,5 @@ func TestConfigFromEnv(t *testing.T) {
 
 	assert.Equal(t, "/tmp/test.db", cfg.DBPath)
 	assert.Equal(t, 9999, cfg.HTTPPort)
-	assert.Equal(t, "postgres://localhost/clockwork", cfg.PostgresDSN)
+	assert.Equal(t, "postgres://localhost/torque", cfg.PostgresDSN)
 }

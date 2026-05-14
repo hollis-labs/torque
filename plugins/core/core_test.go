@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	pluginpkg "github.com/hollis-labs/clockwork-manifold/internal/plugin"
-	"github.com/hollis-labs/clockwork-manifold/plugins/core"
+	pluginpkg "github.com/hollis-labs/torque/internal/plugin"
+	"github.com/hollis-labs/torque/plugins/core"
 )
 
 // ---- mock task service ----
@@ -53,8 +53,8 @@ func (m *mockTaskService) List(_ context.Context, _ map[string]interface{}) ([]i
 
 // ---- helpers ----
 
-func newTestHost() *pluginpkg.ClockworkHost {
-	return pluginpkg.NewClockworkHost(http.NewServeMux(), nil)
+func newTestHost() *pluginpkg.TorqueHost {
+	return pluginpkg.NewTorqueHost(http.NewServeMux(), nil)
 }
 
 func newCorePlugin() goplugin.Plugin {

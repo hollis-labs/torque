@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/queue"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
-	"github.com/hollis-labs/clockwork-manifold/internal/testutil/sqlitetest"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/queue"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -160,7 +160,7 @@ func TestSchedulerTransientValidateErrorDoesNotBlock(t *testing.T) {
 
 // TestPickerSkipsAgentTaskWithEmptyProfile is the defense-in-depth guard:
 // even with the pre-dispatch validation hook in place, a task with
-// kind='agent' AND agent_profile='' must not be selected as a candidate.
+// kind='agent' AND agent_profile=” must not be selected as a candidate.
 // Repeated ticks must leave the task status=todo, never transitioned,
 // with zero active_workers — the scheduler simply never sees it.
 func TestPickerSkipsAgentTaskWithEmptyProfile(t *testing.T) {

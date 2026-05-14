@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 // portfolioRootSubdir is the named portfolio root under $HOME. Placeholder we
@@ -20,7 +20,7 @@ const portfolioRootSubdir = "Projects-apps"
 
 // serveArtifactContent streams the file referenced by artifacts.file_path.
 // Strict security gate: the symlink-resolved absolute path must live inside
-// one of: CLOCKWORK_DATA_DIR, the owning task's working_dir, or
+// one of: TORQUE_DATA_DIR, the owning task's working_dir, or
 // $HOME/Projects-apps.
 func (s *Server) serveArtifactContent(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
@@ -119,7 +119,7 @@ func resolvePath(p string) (string, error) {
 // unresolvable roots are silently dropped.
 func collectAllowedRoots(taskWorkingDir string) []string {
 	candidates := []string{
-		os.Getenv("CLOCKWORK_DATA_DIR"),
+		os.Getenv("TORQUE_DATA_DIR"),
 		taskWorkingDir,
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {

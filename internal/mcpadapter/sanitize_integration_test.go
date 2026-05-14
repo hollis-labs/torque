@@ -20,17 +20,17 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/service"
 
 	_ "modernc.org/sqlite"
 )
 
 // newSanitizeTestAdapter builds an Adapter wired against an in-memory sqlite
 // store with the slog logger captured to the t.Log buffer. Mirrors the
-// production wiring shape (cmd/clockwork/mcp.go) minus the agent.Manager
-// (clockwork_task_create doesn't need it).
+// production wiring shape (cmd/torque/mcp.go) minus the agent.Manager
+// (torque_task_create doesn't need it).
 func newSanitizeTestAdapter(t *testing.T) *Adapter {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
@@ -79,7 +79,7 @@ func parseSanitizeResult(t *testing.T, res *mcp.CallToolResult) map[string]any {
 }
 
 // TestSanitizeMiddleware_PollutedTaskCreate exercises the go-mcp-sanitize
-// middleware against the smoking-gun shape: a clockwork_task_create call
+// middleware against the smoking-gun shape: a torque_task_create call
 // where description ends with leaked agent-XML markup
 // (`</description>\n<parameter name="title">REAL_TITLE</parameter>...`),
 // with a separate clean title field also present in the call.
@@ -115,7 +115,7 @@ func TestSanitizeMiddleware_PollutedTaskCreate(t *testing.T) {
 	wrapped := mcpsanitize.Middleware(a.Logger)(a.handleTaskCreate)
 
 	req := mcp.CallToolRequest{}
-	req.Params.Name = "clockwork_task_create"
+	req.Params.Name = "torque_task_create"
 	req.Params.Arguments = args
 
 	res, err := wrapped(context.Background(), req)
@@ -162,7 +162,7 @@ func TestSanitizeMiddleware_CleanTaskCreatePassesThrough(t *testing.T) {
 	wrapped := mcpsanitize.Middleware(a.Logger)(a.handleTaskCreate)
 
 	req := mcp.CallToolRequest{}
-	req.Params.Name = "clockwork_task_create"
+	req.Params.Name = "torque_task_create"
 	req.Params.Arguments = args
 
 	res, err := wrapped(context.Background(), req)

@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/queue"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
-	"github.com/hollis-labs/clockwork-manifold/internal/testutil/sqlitetest"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/queue"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -86,9 +86,9 @@ func TestRunStartedEventCarriesPayload(t *testing.T) {
 }
 
 // TestRunProgressArtifact verifies that an artifact executor event surfaces
-// as a run.progress SSE event with kind=artifact. Note progress (CLOCKWORK_NOTE
+// as a run.progress SSE event with kind=artifact. Note progress (TORQUE_NOTE
 // stdout signal) was retired in Phase E along with the rest of the
-// CLOCKWORK_* protocol — agents now post notes via clockwork_comment_add over
+// TORQUE_* protocol — agents now post notes via torque_comment_add over
 // MCP, which doesn't ride the run.progress SSE channel.
 func TestRunProgressArtifact(t *testing.T) {
 	mock := executor.NewMockExecutor()

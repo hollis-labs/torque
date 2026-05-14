@@ -3,10 +3,10 @@ package scheduler
 import (
 	"context"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/writequeue"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/writequeue"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
 )
 
 // CostSource identifies where a cost_ledger entry's `cost` value came from.
@@ -40,7 +40,7 @@ type CostEntry struct {
 
 // CostTracker records and queries execution costs.
 type CostTracker struct {
-	store *sqlstore.Store
+	store  *sqlstore.Store
 	writer writequeue.TelemetryWriter
 }
 

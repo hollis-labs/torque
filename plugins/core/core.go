@@ -1,4 +1,4 @@
-// Package core provides the core task CRUD handlers and lifecycle hooks for Clockwork Manifold.
+// Package core provides the core task CRUD handlers and lifecycle hooks for Torque.
 package core
 
 import (
@@ -7,7 +7,7 @@ import (
 
 	goplugin "github.com/hollis-labs/plugin"
 
-	pluginpkg "github.com/hollis-labs/clockwork-manifold/internal/plugin"
+	pluginpkg "github.com/hollis-labs/torque/internal/plugin"
 )
 
 func init() {
@@ -37,7 +37,7 @@ func (p *CorePlugin) Version() string { return "1.0.0" }
 
 // Description implements goplugin.Plugin.
 func (p *CorePlugin) Description() string {
-	return "Core task CRUD handlers for Clockwork Manifold"
+	return "Core task CRUD handlers for Torque"
 }
 
 // Dependencies implements goplugin.Plugin.
@@ -66,8 +66,8 @@ func (p *CorePlugin) Load(host goplugin.Host) error {
 		return fmt.Errorf("core: register lifecycle hook: %w", err)
 	}
 
-	// Register a UI slot entry (Clockwork-specific, requires type assertion).
-	if ch, ok := host.(*pluginpkg.ClockworkHost); ok {
+	// Register a UI slot entry (Torque-specific, requires type assertion).
+	if ch, ok := host.(*pluginpkg.TorqueHost); ok {
 		entry := pluginpkg.UISlotEntry{
 			ID:       "core-task-list-action",
 			PluginID: "core",

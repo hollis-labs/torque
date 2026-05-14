@@ -4,7 +4,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
+	"github.com/hollis-labs/torque/internal/config"
 )
 
 // Valid range for task-level timeout_seconds_override. Mirrors the legacy
@@ -69,11 +69,11 @@ func taskTimeoutOverride(md map[string]any) (int, bool) {
 	return secs, true
 }
 
-// cancelGraceFromEnv parses CLOCKWORK_SCHED_CANCEL_GRACE for SIGTERM→SIGKILL
+// cancelGraceFromEnv parses TORQUE_SCHED_CANCEL_GRACE for SIGTERM→SIGKILL
 // child-process grace; falls back to 5s. Forked verbatim from cliexec.
 func cancelGraceFromEnv() time.Duration {
 	const def = 5 * time.Second
-	v := os.Getenv("CLOCKWORK_SCHED_CANCEL_GRACE")
+	v := os.Getenv("TORQUE_SCHED_CANCEL_GRACE")
 	if v == "" {
 		return def
 	}

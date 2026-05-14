@@ -8,14 +8,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/mcpadapter"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/queue"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/waitpoll"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
-	"github.com/hollis-labs/clockwork-manifold/internal/testutil/sqlitetest"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/mcpadapter"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/queue"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/runtime/waitpoll"
+	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/testutil/sqlitetest"
 )
 
 // setupAdapterWithScheduler builds a scheduler instance and wires it into a
@@ -49,7 +49,7 @@ func setupAdapterWithScheduler(t *testing.T, initialEnabled bool) (*mcpadapter.A
 // TestSchedulerToggle_RoundTrip exercises the happy path: start enabled,
 // toggle to disabled via the MCP tool, confirm status reflects it, toggle
 // back to enabled, confirm again. Status is checked both via the adapter
-// (clockwork_scheduler_status) and directly on the scheduler so we know the
+// (torque_scheduler_status) and directly on the scheduler so we know the
 // MCP path actually drove the real state, not just a reflected arg.
 func TestSchedulerToggle_RoundTrip(t *testing.T) {
 	a, sched := setupAdapterWithScheduler(t, true)
@@ -60,7 +60,7 @@ func TestSchedulerToggle_RoundTrip(t *testing.T) {
 	// Toggle off via MCP. Schema declares enabled as a string (Phase A pattern:
 	// every arg is a string, server-side coerce via reqBool). Callers must send
 	// "true"/"false"; mcp-go's stdio schema validator rejects JSON booleans.
-	text, isErr := callTool(t, a, "clockwork_scheduler_toggle", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_scheduler_toggle", map[string]interface{}{
 		"enabled": "false",
 	})
 	require.False(t, isErr, "toggle off should succeed: %s", text)
@@ -72,13 +72,13 @@ func TestSchedulerToggle_RoundTrip(t *testing.T) {
 	assert.False(t, sched.Status().Enabled, "scheduler.Status() must agree with MCP response")
 
 	// Status tool should also reflect the change.
-	statusText, isErr := callTool(t, a, "clockwork_scheduler_status", map[string]interface{}{})
+	statusText, isErr := callTool(t, a, "torque_scheduler_status", map[string]interface{}{})
 	require.False(t, isErr, statusText)
 	parseData(t, statusText, &status)
 	assert.Equal(t, false, status["enabled"])
 
 	// Toggle back on.
-	text, isErr = callTool(t, a, "clockwork_scheduler_toggle", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_scheduler_toggle", map[string]interface{}{
 		"enabled": "true",
 	})
 	require.False(t, isErr, text)
@@ -94,7 +94,7 @@ func TestSchedulerToggle_Idempotent(t *testing.T) {
 	a, sched := setupAdapterWithScheduler(t, true)
 
 	// Toggle to enabled=true when already enabled. Schema requires string.
-	text, isErr := callTool(t, a, "clockwork_scheduler_toggle", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_scheduler_toggle", map[string]interface{}{
 		"enabled": "true",
 	})
 	require.False(t, isErr, text)
@@ -104,10 +104,10 @@ func TestSchedulerToggle_Idempotent(t *testing.T) {
 	assert.True(t, sched.Status().Enabled)
 
 	// Toggle off, then toggle off again.
-	_, _ = callTool(t, a, "clockwork_scheduler_toggle", map[string]interface{}{
+	_, _ = callTool(t, a, "torque_scheduler_toggle", map[string]interface{}{
 		"enabled": "false",
 	})
-	text, isErr = callTool(t, a, "clockwork_scheduler_toggle", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_scheduler_toggle", map[string]interface{}{
 		"enabled": "false",
 	})
 	require.False(t, isErr, text)
@@ -124,11 +124,11 @@ func TestSchedulerTools_NoScheduler(t *testing.T) {
 	// Use the regular setupAdapter which passes nil for sched.
 	a := setupAdapter(t)
 
-	text, isErr := callTool(t, a, "clockwork_scheduler_status", map[string]interface{}{})
+	text, isErr := callTool(t, a, "torque_scheduler_status", map[string]interface{}{})
 	assert.True(t, isErr, "status without scheduler should error: %s", text)
 	assert.Contains(t, text, "scheduler not running")
 
-	text, isErr = callTool(t, a, "clockwork_scheduler_toggle", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_scheduler_toggle", map[string]interface{}{
 		"enabled": true,
 	})
 	assert.True(t, isErr, "toggle without scheduler should error: %s", text)

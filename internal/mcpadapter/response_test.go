@@ -34,7 +34,7 @@ func TestBriefShapes_UnderByteLimit(t *testing.T) {
 	a := setupAdapter(t)
 
 	// Seed a single rich task that exercises every brief field.
-	text, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":         "brief-size-task",
 		"description":   strings.Repeat("x", 2000), // big description must NOT bloat brief
 		"priority":      "3",
@@ -45,14 +45,14 @@ func TestBriefShapes_UnderByteLimit(t *testing.T) {
 	})
 	require.False(t, isErr, text)
 
-	// clockwork_task_list returns {items, meta}. The transport payload is
+	// torque_task_list returns {items, meta}. The transport payload is
 	// pretty-printed (2-space indent), so the per-record slice includes all
 	// whitespace. Assert the compact (whitespace-stripped) projection stays
 	// under 256 bytes — the ticket's "~150 byte" target refers to the data
 	// footprint, not the pretty-printed wire bytes. Indented transport bytes
 	// must still fit under a looser 512B threshold so the per-record overhead
 	// of json.MarshalIndent doesn't explode.
-	text, isErr = callTool(t, a, "clockwork_task_list", map[string]interface{}{})
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{})
 	require.False(t, isErr)
 	var env struct {
 		Items []json.RawMessage `json:"items"`
@@ -82,7 +82,7 @@ func TestTaskList_500Tasks_FitsUnderCap(t *testing.T) {
 	// is ~1MB and would blow the 128KB stdio cap — the exact user bug.
 	bigDesc := strings.Repeat("x", 2000)
 	for i := 0; i < 500; i++ {
-		_, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 			"title":       fmt.Sprintf("task-%04d", i),
 			"description": bigDesc,
 			"priority":    "2",
@@ -91,7 +91,7 @@ func TestTaskList_500Tasks_FitsUnderCap(t *testing.T) {
 	}
 
 	// Default (brief) list with max limit = 200 must stay under both caps.
-	text, isErr := callTool(t, a, "clockwork_task_list", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
 		"limit": "200",
 	})
 	require.False(t, isErr, text)
@@ -118,7 +118,7 @@ func TestTaskSearch_Default25Limit_FitsUnderCap(t *testing.T) {
 
 	bigDesc := strings.Repeat("x", 2000)
 	for i := 0; i < 100; i++ {
-		_, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 			"title":       fmt.Sprintf("search-hit-%04d", i),
 			"description": bigDesc,
 		})
@@ -126,7 +126,7 @@ func TestTaskSearch_Default25Limit_FitsUnderCap(t *testing.T) {
 	}
 
 	// Search with no explicit limit → default 25.
-	text, isErr := callTool(t, a, "clockwork_task_search", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_search", map[string]interface{}{
 		"query": "search-hit",
 	})
 	require.False(t, isErr, text)
@@ -144,7 +144,7 @@ func TestTaskSearch_Default25Limit_FitsUnderCap(t *testing.T) {
 func TestTaskSearch_MaxLimitCapped(t *testing.T) {
 	a := setupAdapter(t)
 	for i := 0; i < 150; i++ {
-		_, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 			"title":       fmt.Sprintf("clamp-me-%04d", i),
 			"description": "x",
 		})
@@ -152,7 +152,7 @@ func TestTaskSearch_MaxLimitCapped(t *testing.T) {
 	}
 
 	// Request 500, should clamp to 100 (max).
-	text, isErr := callTool(t, a, "clockwork_task_search", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_search", map[string]interface{}{
 		"query": "clamp-me",
 		"limit": "500",
 	})
@@ -183,14 +183,14 @@ func TestTaskList_Truncation_WhenBriefRecordsExceedCap(t *testing.T) {
 	// ~120KB, which crosses the 100KB soft cap and forces truncation.
 	bigTitle := strings.Repeat("T", 500)
 	for i := 0; i < 500; i++ {
-		_, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 			"title":       fmt.Sprintf("%s-%04d", bigTitle, i),
 			"description": "x",
 		})
 		require.False(t, isErr)
 	}
 
-	text, isErr := callTool(t, a, "clockwork_task_list", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
 		"limit": "200",
 	})
 	require.False(t, isErr, text)
@@ -222,7 +222,7 @@ func TestTaskList_Verbose_RoundTripsFullRecord(t *testing.T) {
 	a := setupAdapter(t)
 
 	for i := 0; i < 25; i++ {
-		_, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 			"title":       fmt.Sprintf("verbose-%02d", i),
 			"description": fmt.Sprintf("desc body for %d", i),
 			"tags":        `["one","two"]`,
@@ -230,7 +230,7 @@ func TestTaskList_Verbose_RoundTripsFullRecord(t *testing.T) {
 		require.False(t, isErr)
 	}
 
-	text, isErr := callTool(t, a, "clockwork_task_list", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
 		"limit":   "50",
 		"verbose": "true",
 	})
@@ -263,14 +263,14 @@ func TestTaskList_Verbose_RoundTripsFullRecord(t *testing.T) {
 func TestTaskList_50Tasks_Default_Under10KB(t *testing.T) {
 	a := setupAdapter(t)
 	for i := 0; i < 50; i++ {
-		_, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 			"title":       fmt.Sprintf("realistic-%02d", i),
 			"description": "Short body, typical workload",
 			"priority":    "2",
 		})
 		require.False(t, isErr)
 	}
-	text, isErr := callTool(t, a, "clockwork_task_list", map[string]interface{}{})
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{})
 	require.False(t, isErr)
 	// 12KB threshold: ticket target is "< 10KB" for raw data, but the wire
 	// format is pretty-printed JSON (2-space indent), which adds ~20% overhead.
@@ -290,7 +290,7 @@ func TestBeforeAfter_ByteCounts(t *testing.T) {
 	// 80 tasks with ~6KB descriptions — the user's original 474KB repro.
 	bigDesc := strings.Repeat("x", 6000)
 	for i := 0; i < 80; i++ {
-		_, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 			"title":       fmt.Sprintf("repro-%02d", i),
 			"description": bigDesc,
 		})
@@ -298,7 +298,7 @@ func TestBeforeAfter_ByteCounts(t *testing.T) {
 	}
 
 	// Verbose: what the old bare-array shape approximated.
-	text, _ := callTool(t, a, "clockwork_task_search", map[string]interface{}{
+	text, _ := callTool(t, a, "torque_task_search", map[string]interface{}{
 		"query":   "repro",
 		"limit":   "100",
 		"verbose": "true",
@@ -306,13 +306,13 @@ func TestBeforeAfter_ByteCounts(t *testing.T) {
 	verboseBytes := len(text)
 
 	// Brief: the new default.
-	text, _ = callTool(t, a, "clockwork_task_search", map[string]interface{}{
+	text, _ = callTool(t, a, "torque_task_search", map[string]interface{}{
 		"query": "repro",
 		"limit": "100",
 	})
 	briefBytes := len(text)
 
-	t.Logf("BEFORE/AFTER byte counts — clockwork_task_search, 80 matching tasks:")
+	t.Logf("BEFORE/AFTER byte counts — torque_task_search, 80 matching tasks:")
 	t.Logf("  verbose (full records): %d bytes", verboseBytes)
 	t.Logf("  brief (default):        %d bytes", briefBytes)
 
@@ -330,14 +330,14 @@ func TestSprintList_Brief_FitsUnderCap(t *testing.T) {
 	a := adapterFromService(svc)
 
 	for i := 0; i < 200; i++ {
-		_, isErr := callTool(t, a, "clockwork_sprint_create", map[string]interface{}{
+		_, isErr := callTool(t, a, "torque_sprint_create", map[string]interface{}{
 			"name": fmt.Sprintf("sprint-%03d", i),
 			"goal": strings.Repeat("g", 500), // long goal, brief drops it
 		})
 		require.False(t, isErr)
 	}
 
-	text, isErr := callTool(t, a, "clockwork_sprint_list", map[string]interface{}{})
+	text, isErr := callTool(t, a, "torque_sprint_list", map[string]interface{}{})
 	require.False(t, isErr, text)
 	assert.Less(t, len(text), soft100KB)
 
@@ -360,7 +360,7 @@ func TestTemplateList_Brief_ExcludesDescriptionBody(t *testing.T) {
 
 	bigBody := strings.Repeat("T", 3000)
 	for i := 0; i < 100; i++ {
-		_, isErr := callTool(t, a, "clockwork_template_create", map[string]interface{}{
+		_, isErr := callTool(t, a, "torque_template_create", map[string]interface{}{
 			"id":          fmt.Sprintf("tpl-%03d", i),
 			"name":        fmt.Sprintf("Template %d", i),
 			"description": bigBody, // brief must drop this
@@ -370,7 +370,7 @@ func TestTemplateList_Brief_ExcludesDescriptionBody(t *testing.T) {
 		require.False(t, isErr)
 	}
 
-	text, isErr := callTool(t, a, "clockwork_template_list", map[string]interface{}{})
+	text, isErr := callTool(t, a, "torque_template_list", map[string]interface{}{})
 	require.False(t, isErr, text)
 
 	assert.Less(t, len(text), soft100KB,

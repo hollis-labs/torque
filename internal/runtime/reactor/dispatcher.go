@@ -1,4 +1,4 @@
-// Package reactor implements Clockwork's deterministic envelope-to-action
+// Package reactor implements Torque's deterministic envelope-to-action
 // dispatcher (CW-20260512-0061, sprint α.3). It pattern-matches incoming
 // broker envelopes by Kind and dispatches each to a deterministic
 // in-process action.
@@ -23,7 +23,7 @@ import (
 
 	gomsg "github.com/hollis-labs/go-messaging"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/broker"
+	"github.com/hollis-labs/torque/internal/broker"
 )
 
 // Action is the symbolic result of a Dispatch call. Returned for
@@ -98,7 +98,7 @@ type TaskBlocker interface {
 }
 
 // SessionStopper is the narrow surface the dispatcher needs to pause
-// (stop, in Clockwork terms) a session whose task just blocked.
+// (stop, in Torque terms) a session whose task just blocked.
 // Production wires agent.Manager.Stop.
 type SessionStopper interface {
 	Stop(ctx context.Context, sessionID string) error

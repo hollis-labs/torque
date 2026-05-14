@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 // ResumeSession resumes a previously booted session by sessionID using the

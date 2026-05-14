@@ -50,7 +50,7 @@ package service_test
 import (
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/service"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -170,9 +170,9 @@ import (
 	"database/sql"
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
@@ -2104,7 +2104,7 @@ Expected: empty output. If anything has drift, run `gofmt -w` on it and re-commi
 
 - [ ] **Step 4: Rebuild the API via cerberus**
 
-Use the cerberus MCP tool `cerberus_rebuild` with `service_id: clockwork-api` and a reason like `"Deploy task API expansion: 12 new fields, sentinel values, strict validation, typed request shapes"`.
+Use the cerberus MCP tool `cerberus_rebuild` with `service_id: torque-api` and a reason like `"Deploy task API expansion: 12 new fields, sentinel values, strict validation, typed request shapes"`.
 
 Expected: rebuild succeeds, service restarts.
 

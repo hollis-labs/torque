@@ -140,12 +140,12 @@ func sqliteMainDBPath(db *sql.DB) (string, error) {
 	return "", nil
 }
 
-// sqliteReadMaxOpenConns honors CLOCKWORK_MAX_READ_CONNS when set to a
+// sqliteReadMaxOpenConns honors TORQUE_MAX_READ_CONNS when set to a
 // positive int, falling back to sqlitekit's DefaultReadMaxOpenConns. The env
 // override is preserved from the pre-migration code so operators can keep
 // tuning the read pool size without code changes.
 func sqliteReadMaxOpenConns() int {
-	if raw := strings.TrimSpace(os.Getenv("CLOCKWORK_MAX_READ_CONNS")); raw != "" {
+	if raw := strings.TrimSpace(os.Getenv("TORQUE_MAX_READ_CONNS")); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
 			return n
 		}

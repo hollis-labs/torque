@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/orchestrator"
+	"github.com/hollis-labs/torque/internal/orchestrator"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -15,7 +15,7 @@ import (
 func TestOrchestrator_SystemPromptForPlan(t *testing.T) {
 	prompt := orchestrator.SystemPromptForPlan("CW-PLAN-001", "STUB TEMPLATE BODY")
 
-	// Preamble surfaces plan_id even if the agent skips clockwork_session_get.
+	// Preamble surfaces plan_id even if the agent skips torque_session_get.
 	assert.True(t, strings.HasPrefix(prompt, "Your target plan_id is `CW-PLAN-001`."),
 		"preamble must lead with plan_id; got: %q", prompt[:64])
 	assert.Contains(t, prompt, "STUB TEMPLATE BODY")
@@ -58,7 +58,7 @@ func TestOrchestrator_TemplateForbidsBashPolling(t *testing.T) {
 
 	assert.Contains(t, content, "Polling protocol",
 		"template must contain a Polling protocol section")
-	assert.Contains(t, content, "clockwork_task_get",
+	assert.Contains(t, content, "torque_task_get",
 		"template must name the MCP tool to use for polling")
 	assert.Contains(t, content, "curl",
 		"template must explicitly mention `curl` to forbid it")
@@ -80,7 +80,7 @@ func TestOrchestrator_TemplateForbidsBashPolling(t *testing.T) {
 
 // TestOrchestrator_TemplateForbidsSessionListForChildMonitoring guards the
 // CW-20260510-0064 fix: the orchestrator must NEVER poll child liveness via
-// clockwork_session_list / clockwork_session_get — those tools surface
+// torque_session_list / torque_session_get — those tools surface
 // substrate process state (PID=0, ExitCode=null for live adapter-mode
 // sessions), and an LLM reading them as "crashed" produces false-negative
 // child-crash diagnoses that abort the plan. Lock the deny-list in.
@@ -90,10 +90,10 @@ func TestOrchestrator_TemplateForbidsSessionListForChildMonitoring(t *testing.T)
 
 	content, _ := orchestrator.LoadTemplate()
 
-	assert.Contains(t, content, "clockwork_session_list",
-		"template must explicitly name clockwork_session_list in the deny-list")
-	assert.Contains(t, content, "clockwork_session_get",
-		"template must explicitly name clockwork_session_get in the deny-list")
+	assert.Contains(t, content, "torque_session_list",
+		"template must explicitly name torque_session_list in the deny-list")
+	assert.Contains(t, content, "torque_session_get",
+		"template must explicitly name torque_session_get in the deny-list")
 	// Sanity: the deny-list rationale must teach the wire shape the daemon
 	// produces post-PR-#41 — ExitCode/EndedAt are OMITTED (absent) from the
 	// JSON for live adapter-mode sessions, not present-as-null. The agent
@@ -110,7 +110,7 @@ func TestOrchestrator_TemplateForbidsSessionListForChildMonitoring(t *testing.T)
 // TestOrchestrator_TemplateEscalationPreconditionTaskStatusGate guards the
 // CW-20260510-0064 fix to the Escalation section: before declaring a child
 // crashed, the orchestrator MUST verify task.status ∈
-// {failed, blocked, cancelled} via clockwork_task_get. A child with
+// {failed, blocked, cancelled} via torque_task_get. A child with
 // status=doing and a recent updated_at is NOT crashed regardless of session-
 // shaped signals.
 func TestOrchestrator_TemplateEscalationPreconditionTaskStatusGate(t *testing.T) {
@@ -140,7 +140,7 @@ func TestOrchestrator_TemplateIncludesHITLCheckpointProtocol(t *testing.T) {
 
 	assert.Contains(t, content, "HITL checkpoint protocol",
 		"template must teach the orchestrator typed HITL checkpoint usage")
-	assert.Contains(t, content, "clockwork_task_checkpoint_emit",
+	assert.Contains(t, content, "torque_task_checkpoint_emit",
 		"template must name the checkpoint emit MCP tool")
 	assert.Contains(t, content, "pr_review",
 		"template must name the PR review workflow")

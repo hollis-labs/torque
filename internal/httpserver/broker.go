@@ -9,14 +9,14 @@ import (
 
 	gomsg "github.com/hollis-labs/go-messaging"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/broker"
+	"github.com/hollis-labs/torque/internal/broker"
 )
 
 // SetBroker wires a typed envelope broker into the HTTP server. Routes
 // for /api/v1/broker/* are always registered; when no broker is wired,
 // handlers 503 (mirrors SetMessaging / SetScheduler / WithSessionMgr).
 //
-// CW-20260503-0013 (S1.3) — broker layers Clockwork-specific validation
+// CW-20260503-0013 (S1.3) — broker layers Torque-specific validation
 // and SSE publishing on top of the messaging.Store wired via SetMessaging.
 func (s *Server) SetBroker(b *broker.Broker) {
 	s.broker = b

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/modelcatalog"
 	"github.com/hollis-labs/go-modelsdev/modelsdev"
+	"github.com/hollis-labs/torque/internal/modelcatalog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

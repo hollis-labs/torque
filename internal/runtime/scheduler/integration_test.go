@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/queue"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
-	"github.com/hollis-labs/clockwork-manifold/internal/testutil/sqlitetest"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/queue"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -102,7 +102,7 @@ func TestIntegrationFullRoundTrip(t *testing.T) {
 	assert.Contains(t, jobs[0].Description, "login endpoint")
 	// Regression: the RunID the plugin sees must be the DB-issued runs.id,
 	// not a synthetic counter or the zero value. Stderr sidecar paths and
-	// CLOCKWORK_RUN_ID env var both key on this. See CW-20260417-0030.
+	// TORQUE_RUN_ID env var both key on this. See CW-20260417-0030.
 	assert.Equal(t, runs[0].ID, jobs[0].RunID, "plugin should receive the DB-issued run ID in job.RunID")
 
 	// Verify events were emitted

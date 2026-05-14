@@ -7,14 +7,14 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/hitl"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/hitl"
+	"github.com/hollis-labs/torque/internal/service"
 )
 
 func (a *Adapter) registerCheckpointTools() {
-	a.addTool(mcp.NewTool("clockwork_task_checkpoint_emit",
+	a.addTool(mcp.NewTool("torque_task_checkpoint_emit",
 		mcp.WithDescription(fmt.Sprintf(`Emit a pending checkpoint on a task. If the task's checkpoint_mode is "blocking", the task parks until respond/cancel.
-Use for mid-run user-interaction gates or data-collection stops; sibling clockwork_task_checkpoint_respond to resolve, clockwork_task_checkpoint_cancel to abandon. clockwork_task_checkpoint_list/pending for discovery.
+Use for mid-run user-interaction gates or data-collection stops; sibling torque_task_checkpoint_respond to resolve, torque_task_checkpoint_cancel to abandon. torque_task_checkpoint_list/pending for discovery.
 Response shape: data = {<CheckpointRecord fields>} — singleton with correlation_id, status="pending".
 Canonical HITL types: %s, %s, %s. Payload contracts: pr_review={pr_url,title?,summary?,branch?,checklist?}; approval={title,prompt,context?,options?}; message={subject?,message,severity?,context?}. Unknown types are allowed and should be treated as opaque JSON.
 Example: {"task_id":"T-123","type":"%s","payload_json":"{\"pr_url\":\"https://github.com/acme/app/pull/42\",\"title\":\"Review checkout fix\",\"summary\":\"Awaiting human review and merge.\"}","emitter_source_type":"agent"}`,
@@ -31,9 +31,9 @@ Example: {"task_id":"T-123","type":"%s","payload_json":"{\"pr_url\":\"https://gi
 		mcp.WithString("timeout_at", mcp.Description("Optional RFC3339 timestamp for the timeout sweeper")),
 	), a.handleCheckpointEmit)
 
-	a.addTool(mcp.NewTool("clockwork_task_checkpoint_respond",
+	a.addTool(mcp.NewTool("torque_task_checkpoint_respond",
 		mcp.WithDescription(`Resolve a pending checkpoint with a JSON response; applies the task's on_checkpoint_response rule (resume|review|custom).
-Use to unpark a blocking task; clockwork_task_checkpoint_cancel to abandon without resolution. Responding to a terminal checkpoint returns error.code=conflict.
+Use to unpark a blocking task; torque_task_checkpoint_cancel to abandon without resolution. Responding to a terminal checkpoint returns error.code=conflict.
 Response shape: data = {<CheckpointRecord fields>} — singleton, status="responded".
 Typed response contracts: pr_review={decision:"approve|request_changes|comment",summary?,comments?,required_changes?}; approval={decision:"approved|rejected|needs_info",comment?}; message={acknowledged:boolean,reply?}. Responses are also attached to task.metadata.checkpoint_responses[correlation_id].
 Example: {"correlation_id":"01HK...","response_json":"{\"decision\":\"approved\",\"comment\":\"Ship it.\"}","responder_source_type":"user"}`),
@@ -43,9 +43,9 @@ Example: {"correlation_id":"01HK...","response_json":"{\"decision\":\"approved\"
 		mcp.WithString("responder_source_ref", mcp.Description("Responder slug/id")),
 	), a.handleCheckpointRespond)
 
-	a.addTool(mcp.NewTool("clockwork_task_checkpoint_cancel",
+	a.addTool(mcp.NewTool("torque_task_checkpoint_cancel",
 		mcp.WithDescription(`Cancel a pending checkpoint without a response; the task stays in review with the canceled reason logged.
-Use when the checkpoint became obsolete; clockwork_task_checkpoint_respond when you have a real answer. Canceling a terminal checkpoint returns error.code=conflict.
+Use when the checkpoint became obsolete; torque_task_checkpoint_respond when you have a real answer. Canceling a terminal checkpoint returns error.code=conflict.
 Response shape: data = {<CheckpointRecord fields>} — singleton, status="canceled".
 Example: {"correlation_id":"01HK...","reason":"superseded","canceler_source_type":"user"}`),
 		mcp.WithString("correlation_id", mcp.Required()),
@@ -54,26 +54,26 @@ Example: {"correlation_id":"01HK...","reason":"superseded","canceler_source_type
 		mcp.WithString("canceler_source_ref", mcp.Description("Canceler slug/id")),
 	), a.handleCheckpointCancel)
 
-	a.addTool(mcp.NewTool("clockwork_task_checkpoint_list",
+	a.addTool(mcp.NewTool("torque_task_checkpoint_list",
 		mcp.WithDescription(`List checkpoints emitted against one task, newest first. Brief shape drops payload/response bodies; pass verbose="true" for full records.
-Use to inspect one task's checkpoint history; clockwork_task_checkpoints_pending for cross-task pending-only view.
+Use to inspect one task's checkpoint history; torque_task_checkpoints_pending for cross-task pending-only view.
 Response shape: data = {items: [<briefCheckpoint or CheckpointRecord>...], meta: {truncated, returned, limit, hint?}}.
 Example: {"task_id":"T-123"}`),
 		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleCheckpointList)
 
-	a.addTool(mcp.NewTool("clockwork_task_checkpoint_get",
+	a.addTool(mcp.NewTool("torque_task_checkpoint_get",
 		mcp.WithDescription(`Fetch one checkpoint's full record by correlation_id (ULID).
-Use when you have the correlation_id; clockwork_task_checkpoint_list for a task's history, clockwork_task_checkpoints_pending for cross-task pending.
+Use when you have the correlation_id; torque_task_checkpoint_list for a task's history, torque_task_checkpoints_pending for cross-task pending.
 Response shape: data = {<CheckpointRecord fields>} — singleton.
 Example: {"correlation_id":"01HK..."}`),
 		mcp.WithString("correlation_id", mcp.Required(), mcp.Description("Checkpoint correlation_id (ULID)")),
 	), a.handleCheckpointGet)
 
-	a.addTool(mcp.NewTool("clockwork_task_checkpoints_pending",
+	a.addTool(mcp.NewTool("torque_task_checkpoints_pending",
 		mcp.WithDescription(`List every pending (unresolved) checkpoint across all tasks, oldest first — the global response queue.
-Use for agent/user dashboards that need to triage outstanding decision gates; clockwork_task_checkpoint_list for single-task scope.
+Use for agent/user dashboards that need to triage outstanding decision gates; torque_task_checkpoint_list for single-task scope.
 Response shape: data = {items: [<briefCheckpoint or CheckpointRecord>...], meta: {truncated, returned, limit, hint?}}.
 Example: {}`),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),

@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/writeq"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/runtime/writeq"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 )
@@ -18,7 +18,7 @@ import (
 func setupStore(t *testing.T) *sqlstore.Store {
 	t.Helper()
 
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "clockwork.db"))
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "torque.db"))
 	require.NoError(t, err)
 	require.NoError(t, migrations.Run(db))
 

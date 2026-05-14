@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/concurrency"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
 	qsqlite "github.com/hollis-labs/go-queue/driver/sqlite"
+	"github.com/hollis-labs/torque/internal/concurrency"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
@@ -18,7 +18,7 @@ import (
 func setupWriteBufferDeps(t *testing.T) (*sql.DB, *sql.DB) {
 	t.Helper()
 
-	// Main database (clockwork.db equivalent)
+	// Main database (torque.db equivalent)
 	mainDB, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	_, err = mainDB.Exec("PRAGMA journal_mode=WAL")

@@ -9,8 +9,8 @@ import (
 	"github.com/openai/openai-go/packages/param"
 	"github.com/openai/openai-go/shared"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
 )
 
 // openaiClient wraps the official OpenAI Go SDK. Streaming dispatches text

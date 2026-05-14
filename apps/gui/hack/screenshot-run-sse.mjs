@@ -2,7 +2,7 @@
 // Launches the built SPA via `vite preview`, mocks the backend (`/api/v1/*`
 // plus the SSE `/events` endpoint) using playwright page.route so we can
 // deterministically show active-run pulse + Activity panel without a live
-// clockwork server. Artifacts land under apps/gui/artifacts/CW-20260417-0032/.
+// torque server. Artifacts land under apps/gui/artifacts/CW-20260417-0032/.
 
 import { chromium } from 'playwright-core'
 import { spawn } from 'node:child_process'

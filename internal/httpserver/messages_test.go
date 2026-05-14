@@ -18,11 +18,11 @@ import (
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/httpserver"
-	clockmsg "github.com/hollis-labs/clockwork-manifold/internal/messaging"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/httpserver"
+	clockmsg "github.com/hollis-labs/torque/internal/messaging"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/service"
 )
 
 func setupMessagingServer(t *testing.T) *httptest.Server {
@@ -305,4 +305,3 @@ func TestHTTP_Messages_SubscribeStreamsEnvelope(t *testing.T) {
 		t.Fatal("subscriber did not receive envelope before deadline")
 	}
 }
-

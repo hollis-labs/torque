@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/writequeue"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/writeq"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/writequeue"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/writeq"
 )
 
 // LifecycleManager applies OnDone/OnFail/OnReview rules, checks deliverables,
@@ -154,7 +154,7 @@ func (lm *LifecycleManager) handleDone(task *sqlstore.TaskRecord, runID int64, r
 
 	// Structural acceptance gate: required subtodos must be ticked off. Unlike
 	// deliverables this is keyed by item_id + agent-provided evidence; agents
-	// tick items off via the clockwork_task_subtodo_done MCP tool during the
+	// tick items off via the torque_task_subtodo_done MCP tool during the
 	// run. Non-required items are ignored.
 	if missing, err := lm.missingRequiredSubtodos(task.ID); err != nil {
 		log.Printf("[lifecycle] subtodo check error for %s: %v", task.ID, err)

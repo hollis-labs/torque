@@ -155,7 +155,7 @@ function ItemRow({ item }: { item: ActivityItem }) {
 
 // ActivityPanel renders a live feed of the in-flight run for this task:
 // elapsed timer, optional cost meter, and a reverse-chronological list of
-// CLOCKWORK_NOTE / CLOCKWORK_ARTIFACT / CLOCKWORK_TOKENS events as they
+// TORQUE_NOTE / TORQUE_ARTIFACT / TORQUE_TOKENS events as they
 // stream in. Renders nothing when the task has no active run, so consumers
 // can drop it in unconditionally.
 export function ActivityPanel({ taskId }: ActivityPanelProps) {

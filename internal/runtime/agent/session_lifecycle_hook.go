@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
 )
 
 // stopGraceWindow bounds the per-Stop call so a misbehaving session can't
@@ -30,7 +30,7 @@ const planTransitionStopDelay = 2 * time.Second
 const orchestratorAuthorPrefix = "[system/orchestrator/"
 
 // orchestratorCompleteMarker is the literal first-line content prefix the
-// orchestrator emits via clockwork_comment_add as its self-stop signal.
+// orchestrator emits via torque_comment_add as its self-stop signal.
 // Strict prefix matching: any deviation (extra whitespace before, different
 // author prefix, marker on line 2+) is treated as a non-marker comment.
 const orchestratorCompleteMarker = "[system/orchestrator/session-complete]"

@@ -104,7 +104,7 @@ Before starting:
 - Create: `docs/templates/wait-for-git-tag.yaml`
 - Create: `docs/templates/decision-checkpoint.yaml`
 - Create: `docs/templates/sprint-split-parent.yaml`
-- Create: `cmd/clockwork/smoke_templates_test.go`
+- Create: `cmd/torque/smoke_templates_test.go`
 
 ---
 
@@ -906,7 +906,7 @@ func TestMCP_TaskCreate_Facets(t *testing.T) {
         "source_type":"user",
         "source_ref":"chrispian",
     }
-    resp := callTool(t, server, "clockwork_task_create", payload)
+    resp := callTool(t, server, "torque_task_create", payload)
     require.False(t, resp.IsError)
     // decode resp.Content, assert facets present
 }
@@ -921,7 +921,7 @@ Expected: FAIL.
 
 In `internal/mcpadapter/task_tools.go`:
 
-3a. Add the six facet fields to the `clockwork_task_create` schema (MCP tool definition). Find where `title`/`description`/existing fields are declared in the `mcp.NewTool(...)` definition and add:
+3a. Add the six facet fields to the `torque_task_create` schema (MCP tool definition). Find where `title`/`description`/existing fields are declared in the `mcp.NewTool(...)` definition and add:
 
 ```go
 mcp.WithString("kind", mcp.Description("agent|external|wait|decision|parent"), mcp.DefaultString("agent")),
@@ -932,11 +932,11 @@ mcp.WithString("checkpoint_mode", mcp.Description("none|blocking|non_blocking"),
 mcp.WithString("on_checkpoint_response", mcp.Description("resume|review|custom"), mcp.DefaultString("resume")),
 ```
 
-3b. In the `clockwork_task_create` handler, extract these params and pass to `TaskCreateInput`.
+3b. In the `torque_task_create` handler, extract these params and pass to `TaskCreateInput`.
 
-3c. Same for `clockwork_task_update` (`*string` handling).
+3c. Same for `torque_task_update` (`*string` handling).
 
-3d. For `clockwork_task_list`, add the filter params to the schema + handler.
+3d. For `torque_task_list`, add the filter params to the schema + handler.
 
 3e. Update the `taskWithTags` helper / response formatter so the MCP JSON includes the facets, matching the HTTP response shape from Task A6.
 
@@ -1445,7 +1445,7 @@ import (
     "fmt"
     "time"
 
-    "github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+    "github.com/hollis-labs/torque/internal/persistence/sqlstore"
     "github.com/oklog/ulid/v2"             // add to go.mod if not present — or use your existing ULID source
 )
 
@@ -1620,7 +1620,7 @@ git commit -m "feat(service): CheckpointService — emit/respond/cancel/list"
 
 ---
 
-### Task B4: Signal parser — CLOCKWORK_CHECKPOINT + CLOCKWORK_CHECKPOINT_AWAIT
+### Task B4: Signal parser — TORQUE_CHECKPOINT + TORQUE_CHECKPOINT_AWAIT
 
 **Files:**
 - Modify: `internal/runtime/executor/signal.go`
@@ -1634,18 +1634,18 @@ Add to `internal/runtime/executor/parser_test.go`:
 ```go
 func TestParser_Checkpoint(t *testing.T) {
     p := NewStreamParser()
-    evt, ok := p.ParseLine("CLOCKWORK_CHECKPOINT 01H-CORR collect_data eyJxIjoicGljayJ9")
+    evt, ok := p.ParseLine("TORQUE_CHECKPOINT 01H-CORR collect_data eyJxIjoicGljayJ9")
     require.True(t, ok)
     require.Equal(t, EventSignal, evt.Type)
-    require.Equal(t, "CLOCKWORK_CHECKPOINT", evt.Signal)
+    require.Equal(t, "TORQUE_CHECKPOINT", evt.Signal)
     require.Equal(t, "01H-CORR collect_data eyJxIjoicGljayJ9", evt.Content)
 }
 
 func TestParser_CheckpointAwait(t *testing.T) {
     p := NewStreamParser()
-    evt, ok := p.ParseLine("CLOCKWORK_CHECKPOINT_AWAIT 01H-CORR")
+    evt, ok := p.ParseLine("TORQUE_CHECKPOINT_AWAIT 01H-CORR")
     require.True(t, ok)
-    require.Equal(t, "CLOCKWORK_CHECKPOINT_AWAIT", evt.Signal)
+    require.Equal(t, "TORQUE_CHECKPOINT_AWAIT", evt.Signal)
     require.Equal(t, "01H-CORR", evt.Content)
 }
 ```
@@ -1661,31 +1661,31 @@ Expected: FAIL.
 
 ```go
 // Add to the SignalType const block (after SignalArtifact):
-SignalCheckpointAwait        // CLOCKWORK_CHECKPOINT_AWAIT <correlation_id>
+SignalCheckpointAwait        // TORQUE_CHECKPOINT_AWAIT <correlation_id>
 ```
 
 And in `signalNames`:
 
 ```go
-SignalCheckpointAwait: "CLOCKWORK_CHECKPOINT_AWAIT",
+SignalCheckpointAwait: "TORQUE_CHECKPOINT_AWAIT",
 ```
 
 And in `signalFromString`:
 
 ```go
-"CLOCKWORK_CHECKPOINT_AWAIT": SignalCheckpointAwait,
+"TORQUE_CHECKPOINT_AWAIT": SignalCheckpointAwait,
 ```
 
-3b. In `internal/runtime/executor/parser.go` (read the file first for exact shape of current parsing — the existing parser already handles CLOCKWORK_CHECKPOINT as a JSON-shaped signal; this plan assumes it needs to also parse the plain-text form `CLOCKWORK_CHECKPOINT <corr> <type> <base64>`):
+3b. In `internal/runtime/executor/parser.go` (read the file first for exact shape of current parsing — the existing parser already handles TORQUE_CHECKPOINT as a JSON-shaped signal; this plan assumes it needs to also parse the plain-text form `TORQUE_CHECKPOINT <corr> <type> <base64>`):
 
-Extend the line-parsing function to match the new format. Look for the current match arm for `CLOCKWORK_DONE` / `CLOCKWORK_NOTE` style prefix matching and add:
+Extend the line-parsing function to match the new format. Look for the current match arm for `TORQUE_DONE` / `TORQUE_NOTE` style prefix matching and add:
 
 ```go
-if strings.HasPrefix(line, "CLOCKWORK_CHECKPOINT ") {
-    return SignalEvent("CLOCKWORK_CHECKPOINT", strings.TrimPrefix(line, "CLOCKWORK_CHECKPOINT ")), true
+if strings.HasPrefix(line, "TORQUE_CHECKPOINT ") {
+    return SignalEvent("TORQUE_CHECKPOINT", strings.TrimPrefix(line, "TORQUE_CHECKPOINT ")), true
 }
-if strings.HasPrefix(line, "CLOCKWORK_CHECKPOINT_AWAIT ") {
-    return SignalEvent("CLOCKWORK_CHECKPOINT_AWAIT", strings.TrimPrefix(line, "CLOCKWORK_CHECKPOINT_AWAIT ")), true
+if strings.HasPrefix(line, "TORQUE_CHECKPOINT_AWAIT ") {
+    return SignalEvent("TORQUE_CHECKPOINT_AWAIT", strings.TrimPrefix(line, "TORQUE_CHECKPOINT_AWAIT ")), true
 }
 ```
 
@@ -1700,7 +1700,7 @@ Expected: all PASS.
 
 ```bash
 git add internal/runtime/executor/signal.go internal/runtime/executor/parser.go internal/runtime/executor/parser_test.go
-git commit -m "feat(executor): parse CLOCKWORK_CHECKPOINT and CLOCKWORK_CHECKPOINT_AWAIT"
+git commit -m "feat(executor): parse TORQUE_CHECKPOINT and TORQUE_CHECKPOINT_AWAIT"
 ```
 
 ---
@@ -1723,7 +1723,7 @@ func TestScheduler_CheckpointEmit_Blocking_ParksTask(t *testing.T) {
     // simulate executor event for CHECKPOINT
     h.worker.HandleEvent(task.ID, &RunRef{ID: 1}, executor.ExecutionEvent{
         Type:    executor.EventSignal,
-        Signal:  "CLOCKWORK_CHECKPOINT",
+        Signal:  "TORQUE_CHECKPOINT",
         Content: "CORR-1 collect_data eyJxIjoiaGlkIn0=",
     })
     got, err := h.store.GetTask(task.ID)
@@ -1754,11 +1754,11 @@ import (
     "fmt"
     "strings"
 
-    "github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-    "github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
+    "github.com/hollis-labs/torque/internal/persistence/sqlstore"
+    "github.com/hollis-labs/torque/internal/runtime/executor"
 )
 
-// HandleCheckpointSignal parses a CLOCKWORK_CHECKPOINT signal payload and
+// HandleCheckpointSignal parses a TORQUE_CHECKPOINT signal payload and
 // creates a checkpoints row. If the task has checkpoint_mode=blocking, it
 // parks the task (transition to review with BlockedReason) and returns
 // parkTask=true so the caller stops further event processing for this task.
@@ -1818,10 +1818,10 @@ func (s *Store) TransitionTaskWithReason(id, newStatus, reason string) error {
 
 - [ ] **Step 4: Wire into `worker.go`**
 
-Read `internal/runtime/scheduler/worker.go`. Find the event handler (likely a switch on `event.Signal` or `event.Type`). Add a case for `CLOCKWORK_CHECKPOINT`:
+Read `internal/runtime/scheduler/worker.go`. Find the event handler (likely a switch on `event.Signal` or `event.Type`). Add a case for `TORQUE_CHECKPOINT`:
 
 ```go
-case "CLOCKWORK_CHECKPOINT":
+case "TORQUE_CHECKPOINT":
     if park, err := HandleCheckpointSignal(w.store, taskID, runID, event.Content); err != nil {
         w.logger.Error("checkpoint signal", "err", err)
     } else if park {
@@ -1840,7 +1840,7 @@ Expected: all PASS.
 ```bash
 git add internal/runtime/scheduler/checkpoint.go internal/runtime/scheduler/checkpoint_test.go \
         internal/runtime/scheduler/worker.go internal/persistence/sqlstore/tasks.go
-git commit -m "feat(scheduler): handle CLOCKWORK_CHECKPOINT — create row, park blocking task"
+git commit -m "feat(scheduler): handle TORQUE_CHECKPOINT — create row, park blocking task"
 ```
 
 ---
@@ -2069,7 +2069,7 @@ git commit -m "feat(checkpoint): apply on_checkpoint_response — resume + attac
 func TestMCP_CheckpointEmit_And_Respond(t *testing.T) {
     server := setupMCPServer(t)
     // Create a decision task
-    resp := callTool(t, server, "clockwork_task_create", map[string]any{
+    resp := callTool(t, server, "torque_task_create", map[string]any{
         "title": "t", "description": "x", "kind": "decision",
         "manual": true, "checkpoint_mode": "blocking",
     })
@@ -2079,7 +2079,7 @@ func TestMCP_CheckpointEmit_And_Respond(t *testing.T) {
     taskID := created["id"].(string)
 
     // Emit
-    emitResp := callTool(t, server, "clockwork_task_checkpoint_emit", map[string]any{
+    emitResp := callTool(t, server, "torque_task_checkpoint_emit", map[string]any{
         "task_id": taskID, "type": "collect_data", "payload_json": `{"q":"?"}`,
         "emitter_source_type": "system",
     })
@@ -2089,14 +2089,14 @@ func TestMCP_CheckpointEmit_And_Respond(t *testing.T) {
     corr := emitted["correlation_id"].(string)
 
     // Respond
-    respondResp := callTool(t, server, "clockwork_task_checkpoint_respond", map[string]any{
+    respondResp := callTool(t, server, "torque_task_checkpoint_respond", map[string]any{
         "correlation_id": corr, "response_json": `{"a":1}`,
         "responder_source_type": "user", "responder_source_ref": "chrispian",
     })
     require.False(t, respondResp.IsError)
 
     // Get
-    getResp := callTool(t, server, "clockwork_task_checkpoint_get", map[string]any{
+    getResp := callTool(t, server, "torque_task_checkpoint_get", map[string]any{
         "correlation_id": corr,
     })
     require.False(t, getResp.IsError)
@@ -2124,12 +2124,12 @@ import (
 
     "github.com/mark3labs/mcp-go/mcp"
     "github.com/mark3labs/mcp-go/server"
-    "github.com/hollis-labs/clockwork-manifold/internal/service"
+    "github.com/hollis-labs/torque/internal/service"
 )
 
 func RegisterCheckpointTools(s *server.MCPServer, cp *service.CheckpointService) {
     s.AddTool(
-        mcp.NewTool("clockwork_task_checkpoint_emit",
+        mcp.NewTool("torque_task_checkpoint_emit",
             mcp.WithDescription("Manually emit a task checkpoint"),
             mcp.WithString("task_id", mcp.Required()),
             mcp.WithString("type", mcp.Required()),
@@ -2163,7 +2163,7 @@ func RegisterCheckpointTools(s *server.MCPServer, cp *service.CheckpointService)
 
 Register the handler for each of the six tools following the same pattern.
 
-Also wire `RegisterCheckpointTools` into the MCP server bootstrap (likely `cmd/clockwork/serve.go` or wherever the existing `RegisterTaskTools(...)` gets called).
+Also wire `RegisterCheckpointTools` into the MCP server bootstrap (likely `cmd/torque/serve.go` or wherever the existing `RegisterTaskTools(...)` gets called).
 
 - [ ] **Step 4: Run**
 
@@ -2173,7 +2173,7 @@ Expected: all PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add internal/mcpadapter/checkpoint_tools.go internal/mcpadapter/checkpoint_tools_test.go cmd/clockwork/serve.go
+git add internal/mcpadapter/checkpoint_tools.go internal/mcpadapter/checkpoint_tools_test.go cmd/torque/serve.go
 git commit -m "feat(mcp): 6 checkpoint tools — emit/respond/cancel/list/get/pending"
 ```
 
@@ -2232,7 +2232,7 @@ import (
     "net/http"
 
     "github.com/go-chi/chi/v5"
-    "github.com/hollis-labs/clockwork-manifold/internal/service"
+    "github.com/hollis-labs/torque/internal/service"
 )
 
 type CheckpointHandler struct {
@@ -2313,7 +2313,7 @@ func TestE2E_Checkpoint_EmitViaSignal_RespondViaMCP_TaskResumes(t *testing.T) {
     // Simulate executor emit via signal
     h.worker.HandleEvent(task.ID, &RunRef{ID: 1}, executor.ExecutionEvent{
         Type: executor.EventSignal,
-        Signal: "CLOCKWORK_CHECKPOINT",
+        Signal: "TORQUE_CHECKPOINT",
         Content: "CORR-E2E collect_data eyJxIjoicGljayJ9",
     })
     // Task should be parked
@@ -2520,7 +2520,7 @@ import (
     "context"
     "fmt"
 
-    "github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+    "github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 type TaskDone struct {
@@ -2824,7 +2824,7 @@ git commit -m "feat(scheduler): dispatch kind=wait tasks to predicate registry"
 
 **Files:**
 - Modify: `internal/runtime/bootstrap/bootstrap.go`
-- Modify: `cmd/clockwork/serve.go` (pass registry to scheduler)
+- Modify: `cmd/torque/serve.go` (pass registry to scheduler)
 
 - [ ] **Step 1: Write the test**
 
@@ -2858,7 +2858,7 @@ func Waitpoll(reg *waitpoll.Registry, store *sqlstore.Store) error {
 }
 ```
 
-In `cmd/clockwork/serve.go`, after the existing executor bootstrap:
+In `cmd/torque/serve.go`, after the existing executor bootstrap:
 
 ```go
 predRegistry := waitpoll.NewRegistry()
@@ -2871,7 +2871,7 @@ if err := bootstrap.Waitpoll(predRegistry, store); err != nil {
 - [ ] **Step 4: Run + commit**
 
 ```bash
-git add internal/runtime/bootstrap/bootstrap.go internal/runtime/bootstrap/bootstrap_test.go cmd/clockwork/serve.go
+git add internal/runtime/bootstrap/bootstrap.go internal/runtime/bootstrap/bootstrap_test.go cmd/torque/serve.go
 git commit -m "feat(bootstrap): register waitpoll built-in predicates"
 ```
 
@@ -2930,7 +2930,7 @@ func TestParentRollup_StillWorkInFlight_ParentUnchanged(t *testing.T) {
 package scheduler
 
 import (
-    "github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+    "github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 func ParentRollupTick(store *sqlstore.Store) error {
@@ -3583,14 +3583,14 @@ git commit -m "feat(service): ResolveVars — flat {{var}} substitution, fails o
 func TestMCP_Template_RoundTrip(t *testing.T) {
     server := setupMCPServer(t)
     // Create
-    r := callTool(t, server, "clockwork_template_create", map[string]any{
+    r := callTool(t, server, "torque_template_create", map[string]any{
         "id": "backend-fix", "name": "Backend fix", "description": "x", "kind": "agent",
         "executor": "cli", "auto_execute": true, "required_vars": []string{"repo_path"},
         "metadata_template": map[string]any{"working_dir_template": "{{repo_path}}"},
     })
     require.False(t, r.IsError)
     // Instantiate
-    i := callTool(t, server, "clockwork_task_create_from_template", map[string]any{
+    i := callTool(t, server, "torque_task_create_from_template", map[string]any{
         "template_id": "backend-fix", "title": "t", "description": "d",
         "vars": map[string]any{"repo_path": "/tmp/demo"},
     })
@@ -3609,12 +3609,12 @@ func TestMCP_Template_RoundTrip(t *testing.T) {
 
 Create `internal/mcpadapter/template_tools.go` registering seven tools (create, get, update, delete, archive, list, create_from_template). Each tool's handler calls the corresponding `TemplateService` method and returns the JSON-serialized result.
 
-Wire the registration into `cmd/clockwork/serve.go` (or the MCP server bootstrap path).
+Wire the registration into `cmd/torque/serve.go` (or the MCP server bootstrap path).
 
 - [ ] **Step 4: Run + commit**
 
 ```bash
-git add internal/mcpadapter/template_tools.go internal/mcpadapter/template_tools_test.go cmd/clockwork/serve.go
+git add internal/mcpadapter/template_tools.go internal/mcpadapter/template_tools_test.go cmd/torque/serve.go
 git commit -m "feat(mcp): 7 template tools — CRUD + archive + instantiate"
 ```
 
@@ -3722,7 +3722,7 @@ git commit -m "docs(templates): 5 reference template YAMLs from spec §5.5"
 ### Task F6: End-to-end smoke test — create 5 templates, instantiate, exercise MVP criteria
 
 **Files:**
-- Create: `cmd/clockwork/smoke_templates_test.go`
+- Create: `cmd/torque/smoke_templates_test.go`
 
 - [ ] **Step 1: Write the smoke test**
 
@@ -3768,7 +3768,7 @@ func TestSmoke_MVPExitCriteria(t *testing.T) {
 
 - [ ] **Step 2: Run**
 
-Run: `go test -tags=smoke ./cmd/clockwork -run TestSmoke_MVPExitCriteria -v`
+Run: `go test -tags=smoke ./cmd/torque -run TestSmoke_MVPExitCriteria -v`
 Expected: PASS.
 
 - [ ] **Step 3: Run the full test suite one last time**
@@ -3777,7 +3777,7 @@ Expected: PASS.
 go build ./...
 go vet ./...
 go test ./...
-go test -tags=smoke ./cmd/clockwork
+go test -tags=smoke ./cmd/torque
 ```
 
 Expected: all PASS.
@@ -3785,7 +3785,7 @@ Expected: all PASS.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add cmd/clockwork/smoke_templates_test.go
+git add cmd/torque/smoke_templates_test.go
 git commit -m "test(smoke): MVP exit criteria per spec §8.3"
 ```
 
@@ -3796,7 +3796,7 @@ git commit -m "test(smoke): MVP exit criteria per spec §8.3"
 After all phases complete:
 
 - [ ] **Final build + test:** `go build ./... && go vet ./... && go test ./...`
-- [ ] **Migrate a fresh DB end-to-end:** `rm -f ./clockwork.db && ./clockwork migrate` — verify 009 runs cleanly
+- [ ] **Migrate a fresh DB end-to-end:** `rm -f ./torque.db && ./torque migrate` — verify 009 runs cleanly
 - [ ] **Open a PR** to `main` with title `feat: task model MVP — facets, checkpoints, templates`. Link to the spec and this plan in the PR body. Reference BLG-029 through BLG-035 as post-MVP follow-ups.
 
 ---

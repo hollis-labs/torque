@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
 )
 
 // TestPidPoller_RecordsLivePIDChanges drives a long-lived adapter session
@@ -27,7 +27,7 @@ func TestPidPoller_RecordsLivePIDChanges(t *testing.T) {
 
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID:       "CW-TEST-PID-POLLER-001",
-		AgentProfile: "clockwork-backend",
+		AgentProfile: "torque-backend",
 		Workdir:      t.TempDir(),
 		Mode:         agent.ModeLongLived,
 	})
@@ -72,7 +72,7 @@ func TestPidPoller_BumpsLastActivity(t *testing.T) {
 
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID:       "CW-TEST-PID-POLLER-002",
-		AgentProfile: "clockwork-backend",
+		AgentProfile: "torque-backend",
 		Workdir:      t.TempDir(),
 		Mode:         agent.ModeLongLived,
 	})
@@ -104,7 +104,7 @@ func TestPidPoller_TerminalStateOnAliveFalse(t *testing.T) {
 
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID:       "CW-TEST-PID-POLLER-003",
-		AgentProfile: "clockwork-backend",
+		AgentProfile: "torque-backend",
 		Workdir:      t.TempDir(),
 		Mode:         agent.ModeLongLived,
 	})
@@ -139,7 +139,7 @@ func TestPidPoller_NoGoroutineLeak(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		sess, err := cd.Manager.Boot(ctx, agent.Options{
 			TaskID:       "CW-TEST-PID-POLLER-LEAK",
-			AgentProfile: "clockwork-backend",
+			AgentProfile: "torque-backend",
 			Workdir:      t.TempDir(),
 			Mode:         agent.ModeLongLived,
 		})

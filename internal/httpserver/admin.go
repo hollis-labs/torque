@@ -16,12 +16,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/worktree"
+	"github.com/hollis-labs/torque/internal/worktree"
 )
 
 // Admin endpoints are GUI-triggered maintenance actions. Pre-launch, the
 // frontend has no auth layer, so these are gated to localhost-only by
-// default. An optional CLOCKWORK_ADMIN_TOKEN env var, if set, adds an
+// default. An optional TORQUE_ADMIN_TOKEN env var, if set, adds an
 // X-Admin-Token header requirement on top of the localhost check.
 
 const (
@@ -40,7 +40,7 @@ func adminGate(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusForbidden, "admin endpoints are localhost-only")
 			return
 		}
-		if token := strings.TrimSpace(os.Getenv("CLOCKWORK_ADMIN_TOKEN")); token != "" {
+		if token := strings.TrimSpace(os.Getenv("TORQUE_ADMIN_TOKEN")); token != "" {
 			if r.Header.Get("X-Admin-Token") != token {
 				writeError(w, http.StatusForbidden, "invalid admin token")
 				return
@@ -128,14 +128,14 @@ func (s *Server) restartFrontend(w http.ResponseWriter, r *http.Request) {
 }
 
 // locateGuiDir resolves the GUI source directory in priority order:
-// explicit CLOCKWORK_GUI_DIR (matches the SPA handler convention),
-// then CLOCKWORK_REPO + /apps/gui, then walking up from cwd looking for a
+// explicit TORQUE_GUI_DIR (matches the SPA handler convention),
+// then TORQUE_REPO + /apps/gui, then walking up from cwd looking for a
 // .git. Returns an error if none of the lookups yield a directory.
 func locateGuiDir() (string, error) {
-	if gui := strings.TrimSpace(os.Getenv("CLOCKWORK_GUI_DIR")); gui != "" {
+	if gui := strings.TrimSpace(os.Getenv("TORQUE_GUI_DIR")); gui != "" {
 		return verifyDir(gui)
 	}
-	if root := strings.TrimSpace(os.Getenv("CLOCKWORK_REPO")); root != "" {
+	if root := strings.TrimSpace(os.Getenv("TORQUE_REPO")); root != "" {
 		return verifyDir(filepath.Join(root, "apps", "gui"))
 	}
 	cwd, err := os.Getwd()

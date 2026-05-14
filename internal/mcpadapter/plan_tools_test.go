@@ -7,11 +7,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/mcpadapter"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/mcpadapter"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
+	"github.com/hollis-labs/torque/internal/service"
 
 	_ "modernc.org/sqlite"
 )
@@ -22,7 +22,7 @@ import (
 func TestPlanStart_NoSessionsWired_ReturnsDomainError(t *testing.T) {
 	a := setupAdapter(t) // mcpadapter.New(svc, nil) without .WithSessions
 
-	text, isErr := callTool(t, a, "clockwork_plan_start", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_plan_start", map[string]interface{}{
 		"plan_id": "CW-DOES-NOT-MATTER",
 	})
 
@@ -53,7 +53,7 @@ func TestPlanStart_SessionsWired_PassesNilCheck(t *testing.T) {
 
 	a := mcpadapter.New(svc, nil).WithSessions(deps.Sessions)
 
-	text, isErr := callTool(t, a, "clockwork_plan_start", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_plan_start", map[string]interface{}{
 		"plan_id": "CW-DOES-NOT-EXIST-IN-DB",
 	})
 
@@ -83,7 +83,7 @@ func TestPlanStart_SessionsWired_MissingPlanID(t *testing.T) {
 
 	a := mcpadapter.New(svc, nil).WithSessions(deps.Sessions)
 
-	text, isErr := callTool(t, a, "clockwork_plan_start", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_plan_start", map[string]interface{}{
 		// no plan_id
 	})
 

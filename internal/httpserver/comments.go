@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 // defaultCommentAuthor is used when a POST has no explicit author and no

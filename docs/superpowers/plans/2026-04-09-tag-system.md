@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Promote tags from a JSON-encoded string column into a first-class relational entity with CRUD, merge, auto-create-on-write semantics, and a semantic-token color palette, exposed through a new HTTP surface and consumed by the existing Clockwork React GUI.
+**Goal:** Promote tags from a JSON-encoded string column into a first-class relational entity with CRUD, merge, auto-create-on-write semantics, and a semantic-token color palette, exposed through a new HTTP surface and consumed by the existing Torque React GUI.
 
 **Architecture:** New `tags` table + `task_tags` join table (tasks-only, not polymorphic). Store methods for CRUD and linking. Service layer with validation and auto-resolve. HTTP handlers at `/api/v1/tags`. Task API changes so `tags` returns `Tag[]` and accepts `[]string` on write. Frontend introduces a reusable `<TagChip>` component. The slug helper comes from an external module `github.com/hollis-labs/go-strutil` wired via a local `replace` directive.
 
@@ -60,7 +60,7 @@
 Open `go.mod` and add a new `require` block (if there's an existing `require` block, add the line inside it) plus a `replace` directive. The file will look like:
 
 ```go
-module github.com/hollis-labs/clockwork-manifold
+module github.com/hollis-labs/torque
 
 go 1.26.1
 
@@ -72,7 +72,7 @@ require (
 replace github.com/hollis-labs/go-strutil => ../framework/utils/go-strutil
 ```
 
-The relative path `../framework/utils/go-strutil` is correct because Clockwork lives at `~/Projects-apps/clockwork-manifold` and the strutil module lives at `~/Projects-apps/framework/utils/go-strutil`.
+The relative path `../framework/utils/go-strutil` is correct because Torque lives at `~/Projects-apps/torque` and the strutil module lives at `~/Projects-apps/framework/utils/go-strutil`.
 
 - [ ] **Step 2: Run `go mod tidy`**
 
@@ -193,7 +193,7 @@ import (
     "testing"
     "time"
 
-    "github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+    "github.com/hollis-labs/torque/internal/persistence/sqlstore"
     "github.com/stretchr/testify/assert"
     "github.com/stretchr/testify/require"
 )
@@ -868,9 +868,9 @@ import (
     "database/sql"
     "testing"
 
-    "github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-    "github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-    "github.com/hollis-labs/clockwork-manifold/internal/service"
+    "github.com/hollis-labs/torque/internal/persistence/sqlstore"
+    "github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+    "github.com/hollis-labs/torque/internal/service"
     "github.com/stretchr/testify/assert"
     "github.com/stretchr/testify/require"
     _ "modernc.org/sqlite"
@@ -1026,7 +1026,7 @@ package service
 import (
     "strings"
 
-    "github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+    "github.com/hollis-labs/torque/internal/persistence/sqlstore"
     "github.com/hollis-labs/go-strutil"
 )
 
@@ -1164,7 +1164,7 @@ Edit `internal/service/service.go`:
 ```go
 package service
 
-import "github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+import "github.com/hollis-labs/torque/internal/persistence/sqlstore"
 
 // Service is the root service dispatcher that aggregates all domain services.
 type Service struct {
@@ -1887,8 +1887,8 @@ import (
     "time"
 
     "github.com/go-chi/chi/v5"
-    "github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-    "github.com/hollis-labs/clockwork-manifold/internal/service"
+    "github.com/hollis-labs/torque/internal/persistence/sqlstore"
+    "github.com/hollis-labs/torque/internal/service"
 )
 
 // tagJSON converts a TagRecord to a JSON-friendly map.
@@ -2366,7 +2366,7 @@ Expected: clean.
 
 - [ ] **Step 3: Rebuild the API via cerberus**
 
-Run: use the cerberus MCP tool `cerberus_rebuild` with `service: clockwork-api` (or equivalent shell command if MCP isn't available).
+Run: use the cerberus MCP tool `cerberus_rebuild` with `service: torque-api` (or equivalent shell command if MCP isn't available).
 
 Expected: rebuild succeeds, service restarts, healthcheck passes.
 
@@ -2655,7 +2655,7 @@ import type {
 } from './types'
 ```
 
-- [ ] **Step 2: Add tag CRUD methods to `ClockworkApiClient`**
+- [ ] **Step 2: Add tag CRUD methods to `TorqueApiClient`**
 
 Find the comment marker `// Tasks` or the end of the Epics block and add a new section:
 
@@ -2758,13 +2758,13 @@ Expected: clean or pre-existing warnings only.
 
 - [ ] **Step 3: Restart the frontend dev server via cerberus**
 
-Use the cerberus MCP tool `cerberus_restart` with `service: clockwork-frontend`.
+Use the cerberus MCP tool `cerberus_restart` with `service: torque-frontend`.
 
 Expected: the frontend restarts; watch the cerberus log for errors.
 
 - [ ] **Step 4: Visual verification in the browser**
 
-Open the Clockwork GUI (typically at `http://localhost:5175`):
+Open the Torque GUI (typically at `http://localhost:5175`):
 
 1. **Tasks board** — navigate to the board. Create a new task via the API (or use the UI if there's a form) with tags `["Bug", "UI", "Frontend", "High Priority"]`. Verify:
    - The row shows 3 tag chips with color styling (all zinc by default)

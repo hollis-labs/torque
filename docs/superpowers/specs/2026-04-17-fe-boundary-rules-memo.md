@@ -1,7 +1,7 @@
 ---
 task: CW-20260417-0079
 status: research memo — no implementation yet
-owner: clockwork runtime
+owner: torque runtime
 date: 2026-04-17
 source: Fragments Engine (`~/Projects-apps/fragments-engine/engine/docs/`)
 ---
@@ -11,7 +11,7 @@ source: Fragments Engine (`~/Projects-apps/fragments-engine/engine/docs/`)
 ## Context
 
 Fragments Engine (FE) is the parent of the Volon/Vanta/Cerberus/Hadron
-portfolio Clockwork will eventually plug into. FE codifies four families
+portfolio Torque will eventually plug into. FE codifies four families
 of **boundary rules** covering permission, isolation, and trust:
 
 1. Task-lifecycle execution boundaries (`on_*` hook policy)
@@ -20,9 +20,9 @@ of **boundary rules** covering permission, isolation, and trust:
    cache, blocked writes via hook)
 4. Persistence adapter boundary (dialect containment)
 
-This memo summarizes each, compares against Clockwork's current state,
+This memo summarizes each, compares against Torque's current state,
 and recommends adopt/skip per rule. Authoritative FE sources are cited
-inline; Clockwork call-sites are cited with file:line so follow-ups can
+inline; Torque call-sites are cited with file:line so follow-ups can
 pick up directly.
 
 ## 1. Task-Lifecycle Execution Boundaries
@@ -38,7 +38,7 @@ pick up directly.
 - **Override hierarchy:** task-type override → agent-profile override →
   project default.
 
-**Clockwork today** (`internal/service/task.go:36`,
+**Torque today** (`internal/service/task.go:36`,
 `internal/runtime/scheduler/lifecycle.go:97`):
 
 - `OnDone` (review/close/notify), `OnFail` (retry/block/escalate/
@@ -73,7 +73,7 @@ GUI.
   bootstrap/cache tiers.
 - Future: short-lived bearer tokens with role claims.
 
-**Clockwork today**:
+**Torque today**:
 
 - `Task.Permissions map[string]any` (`internal/service/task.go:48`) is
   passed to executors as opaque hints (e.g., network=deny, fs=readonly)
@@ -82,16 +82,16 @@ GUI.
   `source_type`; used only in validation, not in gating.
 - No role concept. No depth tracking. No middleware.
 
-**Recommendation: SKIP for now. Revisit when Clockwork becomes
+**Recommendation: SKIP for now. Revisit when Torque becomes
 multi-tenant or embeds into a portfolio API surface.**
 
-Clockwork's current threat model is single-operator local-first:
+Torque's current threat model is single-operator local-first:
 the API binds to localhost, the scheduler runs as the user, and
 `executor=cli` already delegates sandboxing to the harness (Claude
 Code, Codex, etc.). A role model is premium complexity we don't need
 yet. What *is* worth keeping in mind:
 
-- When Clockwork grows a shared remote mode (e.g., hosted GUI, shared
+- When Torque grows a shared remote mode (e.g., hosted GUI, shared
   scheduler), re-open this and adopt the header + middleware pattern
   from FE verbatim — it's small (one middleware, one env var) and
   battle-tested.
@@ -111,20 +111,20 @@ yet. What *is* worth keeping in mind:
 - Promotion paths: draft → docs → task (API create); backlog → task;
   session → task.
 
-**Clockwork today**: none of this is present. Task records, sprints,
+**Torque today**: none of this is present. Task records, sprints,
 and backlog items live in SQLite (authoritative) and are read via MCP
 and the GUI. There is no filesystem cache or hook-blocked directory.
 
-**Recommendation: SKIP — not applicable to Clockwork's model.**
+**Recommendation: SKIP — not applicable to Torque's model.**
 
 FE's tier story exists because it layers agentrc/PCC filesystem
-projections on top of its DB. Clockwork is DB-plus-GUI; it has no
+projections on top of its DB. Torque is DB-plus-GUI; it has no
 parallel filesystem shadow. The DB is already the single source of
 truth by construction (principle #5 of
 `docs/architecture/design-philosophy.md:33`).
 
 **One rule worth copying in spirit, not code:** document explicitly
-that the only write path to Clockwork state is the API (MCP + HTTP).
+that the only write path to Torque state is the API (MCP + HTTP).
 No direct SQLite edits. Add this as a line in `design-philosophy.md`
 or `task-model-v0.1.md` so it's unambiguous for contributors.
 
@@ -138,7 +138,7 @@ or `task-model-v0.1.md` so it's unambiguous for contributors.
   current architecture — no stale dialect references.
 - Historical artifacts (old task records, logs) are preserved as-is.
 
-**Clockwork today**
+**Torque today**
 (`internal/persistence/sqlstore/store.go:13`,
 `internal/persistence/sqlstore/dialect.go:5`):
 
@@ -157,7 +157,7 @@ contributors don't accidentally regress the boundary.
 
 ## Summary Table
 
-| Rule | FE | Clockwork today | Verdict |
+| Rule | FE | Torque today | Verdict |
 |---|---|---|---|
 | Task-lifecycle hooks | full 3-axis policy w/ profile+project defaults | task-only, no inheritance | **Adopt inheritance + `pause` on_done** |
 | Role-gated API | header+env+middleware+depth | opaque permissions map, Trust field | **Skip; revisit when multi-tenant** |

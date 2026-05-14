@@ -3,9 +3,9 @@ package scheduler_test
 import (
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,7 +38,7 @@ func TestLifecycleBlocksOnMissingRequiredSubtodos(t *testing.T) {
 }
 
 // TestLifecycleAllowsDoneWhenRequiredSubtodosTicked: once the agent ticks
-// every required item via the clockwork_task_subtodo_done MCP tool, the
+// every required item via the torque_task_subtodo_done MCP tool, the
 // task transitions through the normal OnDone path.
 func TestLifecycleAllowsDoneWhenRequiredSubtodosTicked(t *testing.T) {
 	store := setupLifecycleStore(t)

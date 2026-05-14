@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
 	"github.com/hollis-labs/go-providers/provider"
+	"github.com/hollis-labs/torque/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -213,7 +213,7 @@ func TestKickoffMarkdown(t *testing.T) {
 	assert.Contains(t, body, "CW-PLAN-001")
 	assert.Contains(t, body, "/repo/x")
 	assert.Contains(t, body, "Walk the plan.")
-	assert.Contains(t, body, "clockwork_loopback")
+	assert.Contains(t, body, "torque_loopback")
 
 	// Empty role falls back to AgentProfile.
 	body = kickoffMarkdown(Options{AgentProfile: "planner"}, "")
@@ -547,7 +547,7 @@ func TestProfileArgsExcludingDevFlag(t *testing.T) {
 }
 
 // TestComposeEnv exercises the env composition order: filtered OS env →
-// CLOCKWORK_TASK_ID/RUN_ID → opts.Env. Agent-file env was dropped from the
+// TORQUE_TASK_ID/RUN_ID → opts.Env. Agent-file env was dropped from the
 // per-call surface for V1 (caller can stamp via opts.Env directly).
 //
 // Also asserts the CW-20260509-0011 provider-auth-passthrough contract:
@@ -557,7 +557,7 @@ func TestProfileArgsExcludingDevFlag(t *testing.T) {
 // "TOKEN" — bare-mode claude in the daemon-spawned subprocess then failed
 // with "Not logged in".
 func TestComposeEnv(t *testing.T) {
-	t.Setenv("CLOCKWORK_TEST_MARKER", "yes")
+	t.Setenv("TORQUE_TEST_MARKER", "yes")
 	t.Setenv("ANTHROPIC_API_KEY", "secret-should-survive")
 
 	out := composeEnv(config.AgentProfile{}, Options{
@@ -576,10 +576,10 @@ func TestComposeEnv(t *testing.T) {
 		}
 		asMap[kv[:i]] = kv[i+1:]
 	}
-	assert.Equal(t, "CW-1", asMap["CLOCKWORK_TASK_ID"])
-	assert.Equal(t, "42", asMap["CLOCKWORK_RUN_ID"])
+	assert.Equal(t, "CW-1", asMap["TORQUE_TASK_ID"])
+	assert.Equal(t, "42", asMap["TORQUE_RUN_ID"])
 	assert.Equal(t, "bar", asMap["FOO"])
-	assert.Equal(t, "yes", asMap["CLOCKWORK_TEST_MARKER"])
+	assert.Equal(t, "yes", asMap["TORQUE_TEST_MARKER"])
 	assert.Equal(t, "secret-should-survive", asMap["ANTHROPIC_API_KEY"],
 		"ANTHROPIC_API_KEY must survive composeEnv per CW-20260509-0011 (provider-auth passthrough)")
 }
@@ -648,4 +648,3 @@ func TestManager_Sweep_NilStore(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 0, swept)
 }
-

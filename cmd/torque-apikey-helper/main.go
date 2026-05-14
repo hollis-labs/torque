@@ -1,4 +1,4 @@
-// Command clockwork-apikey-helper resolves an Anthropic API bearer token
+// Command torque-apikey-helper resolves an Anthropic API bearer token
 // for the bare-mode claude CLI's apiKeyHelper hook.
 //
 // Resolution order:
@@ -46,7 +46,7 @@
 //     now_ms + expires_in*1000.
 //
 // For testing, the OAuth URL can be overridden via the
-// CLOCKWORK_APIKEY_OAUTH_URL env var so tests don't hit the live endpoint.
+// TORQUE_APIKEY_OAUTH_URL env var so tests don't hit the live endpoint.
 // The keychain layer is also testable via the keychainAccessor interface.
 package main
 
@@ -72,7 +72,7 @@ import (
 const claudeCodeClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 
 // defaultOAuthTokenURL is the production OAuth refresh endpoint. Tests
-// override this via CLOCKWORK_APIKEY_OAUTH_URL.
+// override this via TORQUE_APIKEY_OAUTH_URL.
 const defaultOAuthTokenURL = "https://platform.claude.com/v1/oauth/token"
 
 // anthropicBetaOAuth is the beta header value claude sends with refresh
@@ -160,17 +160,17 @@ func main() {
 	}
 	tok, err := r.resolve()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "clockwork-apikey-helper: %v\n", err)
+		fmt.Fprintf(os.Stderr, "torque-apikey-helper: %v\n", err)
 		os.Exit(1)
 	}
 	fmt.Println(tok)
 }
 
-// resolveOAuthURL honors CLOCKWORK_APIKEY_OAUTH_URL for tests; falls
+// resolveOAuthURL honors TORQUE_APIKEY_OAUTH_URL for tests; falls
 // back to the production endpoint. Trimmed so a stray newline in the
 // env doesn't break URL parsing downstream.
 func resolveOAuthURL() string {
-	if u := strings.TrimSpace(os.Getenv("CLOCKWORK_APIKEY_OAUTH_URL")); u != "" {
+	if u := strings.TrimSpace(os.Getenv("TORQUE_APIKEY_OAUTH_URL")); u != "" {
 		return u
 	}
 	return defaultOAuthTokenURL
@@ -252,7 +252,7 @@ func (r *resolver) resolveFromKeychain() (string, error) {
 	}
 	if rt == "" {
 		fmt.Fprintf(r.stderr,
-			"clockwork-apikey-helper: token near/past expiry but no refreshToken in keychain; "+
+			"torque-apikey-helper: token near/past expiry but no refreshToken in keychain; "+
 				"returning existing token. Re-login via `claude` to populate refreshToken.\n")
 		return tok, nil
 	}
@@ -263,7 +263,7 @@ func (r *resolver) resolveFromKeychain() (string, error) {
 		// token getting a 401 is recoverable (user re-logs in); a hard
 		// helper failure breaks every spawned session.
 		fmt.Fprintf(r.stderr,
-			"clockwork-apikey-helper: oauth refresh failed (%v); returning existing token. "+
+			"torque-apikey-helper: oauth refresh failed (%v); returning existing token. "+
 				"If the API responds 401, run `claude` interactively to refresh.\n", err)
 		return tok, nil
 	}
@@ -302,7 +302,7 @@ func (r *resolver) refreshAndPersist(user, raw string, payload keychainPayload, 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("anthropic-beta", anthropicBetaOAuth)
-	req.Header.Set("User-Agent", "clockwork-apikey-helper/1")
+	req.Header.Set("User-Agent", "torque-apikey-helper/1")
 
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
@@ -352,7 +352,7 @@ func (r *resolver) refreshAndPersist(user, raw string, payload keychainPayload, 
 		// keychain still has the old expiry. Surface the warning but
 		// return the new token so the current dispatch succeeds.
 		fmt.Fprintf(r.stderr,
-			"clockwork-apikey-helper: keychain write-back failed after refresh (%v); "+
+			"torque-apikey-helper: keychain write-back failed after refresh (%v); "+
 				"returning fresh token but next invocation will re-refresh.\n", err)
 	}
 	return newAccess, nil

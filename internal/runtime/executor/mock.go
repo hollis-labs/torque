@@ -76,7 +76,7 @@ func (m *MockExecutor) Run(ctx context.Context, job *ExecutionJob, cb EventCallb
 
 func (m *MockExecutor) Capabilities() ExecutorCapabilities {
 	return ExecutorCapabilities{
-		SupportsStreaming:    true,
+		SupportsStreaming:   true,
 		SupportsTools:       true,
 		SupportsSandbox:     false,
 		SupportsPermissions: false,

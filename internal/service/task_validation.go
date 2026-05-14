@@ -3,8 +3,8 @@ package service
 import (
 	"errors"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/hitl"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/hitl"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 // Unlimited is the sentinel value meaning "no cap" for the three nullable

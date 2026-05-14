@@ -1,13 +1,13 @@
 # Task API Expansion — Design Spec
 
 **Date:** 2026-04-09
-**Project:** clockwork-manifold
+**Project:** torque
 **Status:** Draft — awaiting user review
 **Author:** brainstormed with Claude
 
 ## 1. Context
 
-The canonical Clockwork task model (spec `2026-04-07-clockwork-manifold-design.md` Section 3.2) defines ~34 fields per task covering execution context, budget, lifecycle rules, deliverables, dependencies, and metadata. The storage layer has supported all of them since day one — `sqlstore.TaskRecord` and `sqlstore.TaskUpdate` expose every field.
+The canonical Torque task model (spec `2026-04-07-torque-design.md` Section 3.2) defines ~34 fields per task covering execution context, budget, lifecycle rules, deliverables, dependencies, and metadata. The storage layer has supported all of them since day one — `sqlstore.TaskRecord` and `sqlstore.TaskUpdate` expose every field.
 
 Project 1 (the tag system, merged as PR #1) surfaced `Tag[]` through the HTTP API and TypeScript types. Eleven other fields remain invisible to clients: the task API still accepts ~6 fields on create, ~4 fields on update, and omits 12 fields from the `taskJSON` response.
 
@@ -91,7 +91,7 @@ Twelve fields missing from the current `taskJSON` response and write handlers:
 
 ```go
 // Deliverable declares an expected artifact a task must produce before it
-// can be marked complete. See the canonical Clockwork design spec section
+// can be marked complete. See the canonical Torque design spec section
 // on deliverables for the list of built-in types.
 type Deliverable struct {
     Type        string `json:"type"`
@@ -657,7 +657,7 @@ Single vertical slice, stepped internally:
 2. **Service layer — `TaskCreateInput` expansion + `Create`/`Update` wiring** — extend the input type, wire each new field into the Create flow and the store write, wire `validateTaskWrites` into both `Create` and `Update`, add round-trip tests. Green.
 3. **HTTP layer — request types + parse helpers + handler rewrite** — add `TaskCreateRequest`, `TaskUpdateRequest`, the four parse helpers, `nullJSONString`, rewrite handlers, expand `taskJSON`, add handler tests. Green.
 4. **Frontend — TS types + enum narrowing** — add new types and expand `Task`, narrow the enum fields, verify `tsc --noEmit` clean and lint count unchanged.
-5. **Rebuild + smoke test** — `cerberus_rebuild clockwork-api`, round-trip a task with all fields populated via curl, verify the response, restart `clockwork-frontend` to verify TS still compiles.
+5. **Rebuild + smoke test** — `cerberus_rebuild torque-api`, round-trip a task with all fields populated via curl, verify the response, restart `torque-frontend` to verify TS still compiles.
 6. **PR cycle** — branch review, address feedback, merge.
 
 ## 11. Risks and Open Questions

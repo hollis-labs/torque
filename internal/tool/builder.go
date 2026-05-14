@@ -25,14 +25,14 @@ type toolImpl struct {
 	timeout     time.Duration
 	permissions []PermissionRule
 
-	callFn           CallFunc
-	validateFn       func(map[string]any) error
+	callFn            CallFunc
+	validateFn        func(map[string]any) error
 	concurrencySafeFn func(map[string]any) bool
-	concurrencySafe  bool
-	readOnlyFn       func(map[string]any) bool
-	readOnly         bool
-	destructiveFn    func(map[string]any) bool
-	destructive      bool
+	concurrencySafe   bool
+	readOnlyFn        func(map[string]any) bool
+	readOnly          bool
+	destructiveFn     func(map[string]any) bool
+	destructive       bool
 }
 
 // NewTool creates a Tool using functional options.

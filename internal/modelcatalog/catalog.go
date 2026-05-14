@@ -1,5 +1,5 @@
 // Package modelcatalog wraps go-modelsdev with provider+model-keyed lookups
-// shaped for Clockwork's needs. It is the single point in the codebase that
+// shaped for Torque's needs. It is the single point in the codebase that
 // owns the modelsdev.Client lifecycle and the only sanctioned way to read
 // pricing, context-window, and capability data.
 //

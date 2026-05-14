@@ -3,8 +3,8 @@ package scheduler_test
 import (
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
 	"github.com/stretchr/testify/assert"
 )
 

@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
 )
 
 // plantSessionForResume inserts a sessions row with an already-captured
@@ -26,7 +26,7 @@ func plantSessionForResume(t *testing.T, store *sqlstore.Store, sessID, provider
 		ID:           sessID,
 		AgentProfile: agentProfile,
 		Provider:     provider,
-		RuntimeID:    "clockwork-cli/" + provider,
+		RuntimeID:    "torque-cli/" + provider,
 		RuntimeKind:  "cli",
 		Workdir:      workdir,
 		State:        "done",
@@ -48,7 +48,7 @@ func TestResumeSession_Claude_ThreadsProviderSessionID(t *testing.T) {
 	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude")
 
 	const providerSessionID = "claude-session-aaaa-bbbb-cccc"
-	plantSessionForResume(t, cd.Store, "SES-RESUME-CLAUDE", "claude", providerSessionID, t.TempDir(), "clockwork-backend")
+	plantSessionForResume(t, cd.Store, "SES-RESUME-CLAUDE", "claude", providerSessionID, t.TempDir(), "torque-backend")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -69,7 +69,7 @@ func TestResumeSession_Claude_ThreadsProviderSessionID(t *testing.T) {
 	// AgentProfile + Workdir + Provider rehydrated from the original row.
 	rec, err := cd.Store.GetSession(sess.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "clockwork-backend", rec.AgentProfile)
+	assert.Equal(t, "torque-backend", rec.AgentProfile)
 	assert.Equal(t, "claude", rec.Provider)
 }
 
@@ -80,13 +80,13 @@ func TestResumeSession_Claude_ThreadsProviderSessionID(t *testing.T) {
 // comment), but the substrate's job is to feed SessionIDPreset based on
 // the declared capability; per-adapter argv wiring is the go-providers
 // codex adapter's concern. This test pins the substrate behavior so when
-// go-providers ships codex resume support, no clockwork-side change is
+// go-providers ships codex resume support, no torque-side change is
 // needed.
 func TestResumeSession_Codex_ThreadsProviderSessionID(t *testing.T) {
 	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "codex")
 
 	const providerSessionID = "codex-thread-id-xyz-789"
-	plantSessionForResume(t, cd.Store, "SES-RESUME-CODEX", "codex", providerSessionID, t.TempDir(), "clockwork-backend")
+	plantSessionForResume(t, cd.Store, "SES-RESUME-CODEX", "codex", providerSessionID, t.TempDir(), "torque-backend")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -107,7 +107,7 @@ func TestResumeSession_Codex_ThreadsProviderSessionID(t *testing.T) {
 func TestResumeSession_Opencode_FreshBoot(t *testing.T) {
 	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "opencode")
 
-	plantSessionForResume(t, cd.Store, "SES-RESUME-OPENCODE", "opencode", "ignored-session-id", t.TempDir(), "clockwork-backend")
+	plantSessionForResume(t, cd.Store, "SES-RESUME-OPENCODE", "opencode", "ignored-session-id", t.TempDir(), "torque-backend")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -155,7 +155,7 @@ func TestResumeSession_EmptySessionID(t *testing.T) {
 func TestResumeSession_DiagnosticNote_FlowsIntoSystemPrompt(t *testing.T) {
 	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude")
 
-	plantSessionForResume(t, cd.Store, "SES-RESUME-DIAG", "claude", "claude-session-diag", t.TempDir(), "clockwork-backend")
+	plantSessionForResume(t, cd.Store, "SES-RESUME-DIAG", "claude", "claude-session-diag", t.TempDir(), "torque-backend")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -183,9 +183,9 @@ func TestResumeSession_FreshBoot_RehydratesFields(t *testing.T) {
 	workdir := t.TempDir()
 	require.NoError(t, cd.Store.CreateSession(&sqlstore.SessionRecord{
 		ID:           "SES-FRESH-REHY",
-		AgentProfile: "clockwork-backend",
+		AgentProfile: "torque-backend",
 		Provider:     "opencode",
-		RuntimeID:    "clockwork-cli/opencode",
+		RuntimeID:    "torque-cli/opencode",
 		RuntimeKind:  "cli",
 		Workdir:      workdir,
 		ProjectID:    sql.NullString{String: "PROJ-7", Valid: true},
@@ -203,7 +203,7 @@ func TestResumeSession_FreshBoot_RehydratesFields(t *testing.T) {
 	sess, err := cd.Manager.ResumeSession(ctx, "SES-FRESH-REHY", agent.ResumeOptions{})
 	require.NoError(t, err)
 	require.NotNil(t, sess)
-	assert.Equal(t, "clockwork-backend", sess.AgentProfile)
+	assert.Equal(t, "torque-backend", sess.AgentProfile)
 	assert.Equal(t, "opencode", sess.Provider)
 	assert.Equal(t, workdir, sess.Workdir,
 		"Workdir is the agent.Boot input; the recorded spawn cwd may differ (provider-specific plant) — Session.Workdir reflects the spawn cwd, not the input")
@@ -232,7 +232,7 @@ func TestResumeSession_StatePersistence_OnSessionID_FlowsToResumeHint(t *testing
 	// First boot — captures the provider session-id via OnSessionID.
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID:       "CW-TEST-STATE-001",
-		AgentProfile: "clockwork-backend",
+		AgentProfile: "torque-backend",
 		Workdir:      t.TempDir(),
 		Mode:         agent.ModeLongLived,
 	})
@@ -264,4 +264,3 @@ func TestResumeSession_StatePersistence_OnSessionID_FlowsToResumeHint(t *testing
 	assert.Equal(t, providerSessionID, *preset,
 		"end-to-end: OnSessionID → row.resume_hint → ResumeSession → SessionIDPreset")
 }
-

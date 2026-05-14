@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 // TaskDone is a predicate that fires when a target task reaches the "done"

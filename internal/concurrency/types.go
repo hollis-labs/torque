@@ -7,7 +7,7 @@ import (
 )
 
 // WriteOp represents a serialized write operation to the main database.
-// All writes to clockwork.db flow through the write serializer channel
+// All writes to torque.db flow through the write serializer channel
 // as WriteOp values.
 type WriteOp struct {
 	// Fn is the write function to execute inside the serialized writer.
@@ -48,7 +48,7 @@ type DrainStats struct {
 
 // DBPoolConfig configures the read/write connection pool.
 type DBPoolConfig struct {
-	// DBPath is the path to the main clockwork.db file.
+	// DBPath is the path to the main torque.db file.
 	DBPath string
 
 	// QueueDBPath is the path to the hot-tier queue.db file.

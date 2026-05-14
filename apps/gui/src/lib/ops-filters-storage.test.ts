@@ -50,7 +50,7 @@ describe('ops-filters-storage', () => {
   // hidden-by-default behavior as the backend.
   it('defaults includeInternal to false when the stored entry predates the field', () => {
     localStorage.setItem(
-      'clockwork:ops:filters:v1',
+      'torque:ops:filters:v1',
       JSON.stringify({
         statuses: ['todo'],
         priorities: [],
@@ -67,7 +67,7 @@ describe('ops-filters-storage', () => {
 
   it('defaults manual to "both" when the stored entry predates the field', () => {
     localStorage.setItem(
-      'clockwork:ops:filters:v1',
+      'torque:ops:filters:v1',
       JSON.stringify({
         statuses: ['todo'],
         priorities: [],
@@ -122,7 +122,7 @@ describe('ops-filters-storage', () => {
   it('sanitizes malformed stored values', () => {
     // Simulate a corrupted entry written by an older build or manual edit.
     localStorage.setItem(
-      'clockwork:ops:filters:v1',
+      'torque:ops:filters:v1',
       JSON.stringify({
         statuses: ['todo', 42, 'doing'],
         priorities: [1, '2', 3],
@@ -148,13 +148,13 @@ describe('ops-filters-storage', () => {
   })
 
   it('treats non-JSON storage as absent (no throw)', () => {
-    localStorage.setItem('clockwork:ops:filters:v1', '{not valid json')
+    localStorage.setItem('torque:ops:filters:v1', '{not valid json')
     expect(readOpsFilters()).toBeNull()
   })
 
   it('migrates legacy manual="all" to "both" on read', () => {
     localStorage.setItem(
-      'clockwork:ops:filters:v1',
+      'torque:ops:filters:v1',
       JSON.stringify({
         statuses: ['todo'],
         priorities: [],
@@ -171,7 +171,7 @@ describe('ops-filters-storage', () => {
 
   it('drops the legacy mode field and defaults search to "" on read', () => {
     localStorage.setItem(
-      'clockwork:ops:filters:v1',
+      'torque:ops:filters:v1',
       JSON.stringify({
         statuses: ['todo'],
         priorities: [],

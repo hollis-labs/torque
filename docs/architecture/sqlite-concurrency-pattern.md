@@ -1,6 +1,6 @@
 # SQLite Concurrency Pattern
 
-This is the current Clockwork pattern for running SQLite under concurrent API,
+This is the current Torque pattern for running SQLite under concurrent API,
 scheduler, worker, and telemetry traffic. It is the canonical reference for
 Nanite, Vanta, Hadron, and other local-first apps that want SQLite without
 `SQLITE_BUSY` becoming normal runtime noise.
@@ -11,7 +11,7 @@ SQLite allows many concurrent readers, but it still has one writer. WAL mode
 keeps readers from blocking writers in the common case; it does not make
 multiple write transactions safe to race through a pooled `*sql.DB`.
 
-Clockwork previously had several independent write paths:
+Torque previously had several independent write paths:
 
 - scheduler dispatch and lifecycle state changes
 - agent/session state changes
@@ -24,9 +24,9 @@ not to hide the issue with `SetMaxOpenConns(1)` everywhere; that preserves
 correctness by disabling concurrency. The fix was to make write ownership
 explicit.
 
-## Clockwork Shape
+## Torque Shape
 
-Clockwork now uses three layers:
+Torque now uses three layers:
 
 - A SQLite store with a dedicated single-connection writer pool and a separate
   read pool.
@@ -44,7 +44,7 @@ All SQLite handles should be opened through `appdb.SQLiteDSN`. It applies the
 same pragmas everywhere and handles relative paths correctly:
 
 ```go
-dsn := appdb.SQLiteDSN("clockwork.db", appdb.SQLiteDSNOptions{
+dsn := appdb.SQLiteDSN("torque.db", appdb.SQLiteDSNOptions{
 	BusyTimeoutMs:    appdb.DefaultSQLiteBusyTimeoutMs,
 	IncludeCacheSize: true,
 	TxLock:           "immediate",
@@ -53,7 +53,7 @@ db, err := sql.Open("sqlite", dsn)
 ```
 
 The relative-path detail matters. Relative SQLite URIs must use the
-`file:clockwork.db?...` form, not `file://clockwork.db?...`.
+`file:torque.db?...` form, not `file://torque.db?...`.
 
 `sqlstore.New` turns the bootstrap DB into the runtime shape:
 
@@ -87,7 +87,7 @@ State writes are writes where the caller needs a committed result before
 continuing: task transitions, run creation/completion, session state, retry
 counters, and similar scheduler decisions.
 
-Clockwork routes those through `internal/runtime/writeq`:
+Torque routes those through `internal/runtime/writeq`:
 
 ```go
 stateWriter := writeq.New(store, writeq.Options{})
@@ -152,7 +152,7 @@ not depend on SQLite latency.
 Telemetry-class writes are high-volume writes that should not contend with
 scheduler state transitions: run events, cost ledger rows, and comments.
 
-Clockwork uses `internal/persistence/writequeue` for that layer:
+Torque uses `internal/persistence/writequeue` for that layer:
 
 ```go
 telemetryDB, err := writequeue.OpenDB(filepath.Join(cfg.DataDir, "queue.db"))
@@ -213,7 +213,7 @@ Avoid `:memory:` for store-level concurrency tests because each connection gets
 a different database unless special shared-cache handling is used. Avoid blanket
 `SetMaxOpenConns(1)` in fixtures because it hides production contention.
 
-Use `internal/testutil/sqlitetest` for Clockwork tests:
+Use `internal/testutil/sqlitetest` for Torque tests:
 
 ```go
 store := sqlitetest.OpenStore(t)
@@ -231,8 +231,8 @@ without `SQLITE_BUSY` while using a pooled file-backed DB."
 ## Shared Package Assessment
 
 This is a candidate for a shared package, but not as a direct export of
-Clockwork's current packages. The current implementation mixes reusable
-SQLite mechanics with Clockwork-specific domain helpers.
+Torque's current packages. The current implementation mixes reusable
+SQLite mechanics with Torque-specific domain helpers.
 
 Good shared-package candidates now:
 
@@ -253,14 +253,14 @@ Keep app-specific:
 - lifecycle/bootstrap wiring
 
 Recommendation: extract `sqlitekit` first because it is low-risk and already
-validated by Clockwork. Extract the generic serialized writer after one more app
+validated by Torque. Extract the generic serialized writer after one more app
 adopts the pattern, so Nanite or Vanta can force the interface to be app-neutral
 before it becomes shared API. Treat the durable telemetry queue as a reusable
 scaffold, not a shared domain package.
 
 ## Older Concurrency Package
 
-Clockwork still has an older `internal/concurrency` package with DB pool,
+Torque still has an older `internal/concurrency` package with DB pool,
 write serializer, and buffered-event prototypes. It is not the server's current
 canonical concurrency layer. New work should copy the pattern documented here:
 `appdb` + `sqlstore` read/write split + `runtime/writeq` +

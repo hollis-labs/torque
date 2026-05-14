@@ -8,8 +8,8 @@ import (
 	"log"
 	"strings"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/service"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -38,9 +38,9 @@ func parseManualFilter(v string) *bool {
 }
 
 func (a *Adapter) registerTaskTools() {
-	a.addTool(mcp.NewTool("clockwork_task_create",
-		mcp.WithDescription(`Create a new task in Clockwork; returns the full TaskRecord with its assigned ID.
-Use for ad-hoc work items — prefer clockwork_task_create_from_template when a matching template exists, and clockwork_plan_create for multi-phase work. Safety override forces manual=true on every create (CW-20260417-0133); promote to manual=false via clockwork_task_update after review.
+	a.addTool(mcp.NewTool("torque_task_create",
+		mcp.WithDescription(`Create a new task in Torque; returns the full TaskRecord with its assigned ID.
+Use for ad-hoc work items — prefer torque_task_create_from_template when a matching template exists, and torque_plan_create for multi-phase work. Safety override forces manual=true on every create (CW-20260417-0133); promote to manual=false via torque_task_update after review.
 Response shape: data = {<TaskRecord fields>, Tags[]} — singleton, PascalCase keys.
 Example: {"title":"Fix auth bug","description":"Login returns 500","priority":"2","tags":"[\"backend\"]"}`),
 		mcp.WithString("title", mcp.Required(), mcp.Description("Task title")),
@@ -70,17 +70,17 @@ Example: {"title":"Fix auth bug","description":"Login returns 500","priority":"2
 		mcp.WithString("parent_id", mcp.Description("Optional parent task ID (migration 013). Empty = top of lineage.")),
 	), a.handleTaskCreate)
 
-	a.addTool(mcp.NewTool("clockwork_task_get",
+	a.addTool(mcp.NewTool("torque_task_get",
 		mcp.WithDescription(`Fetch the full TaskRecord for one task ID, including all facet/budget/hook columns and linked tags.
-Use when you already have the ID; prefer clockwork_task_list/search when filtering a cohort, and clockwork_task_subtodo_list for checklist-only views.
+Use when you already have the ID; prefer torque_task_list/search when filtering a cohort, and torque_task_subtodo_list for checklist-only views.
 Response shape: data = {<TaskRecord fields>, Tags[]} — singleton, PascalCase keys.
 Example: {"id":"T-123"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
 	), a.handleTaskGet)
 
-	a.addTool(mcp.NewTool("clockwork_task_list",
+	a.addTool(mcp.NewTool("torque_task_list",
 		mcp.WithDescription(`List tasks with optional status/priority/facet filters; ordered updated_at DESC.
-Use for browsing or filtered cohorts; prefer clockwork_task_search for free-text queries and clockwork_task_get when you already know the ID. Default returns ~150B briefTask records (lowercase JSON) so large fan-outs fit under the 100KB cap; pass verbose="true" for full TaskRecord columns.
+Use for browsing or filtered cohorts; prefer torque_task_search for free-text queries and torque_task_get when you already know the ID. Default returns ~150B briefTask records (lowercase JSON) so large fan-outs fit under the 100KB cap; pass verbose="true" for full TaskRecord columns.
 Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, hint?}}.
 Example: {"status":"doing","limit":"50"}`),
 		mcp.WithString("status", mcp.Description("Filter by status")),
@@ -103,9 +103,9 @@ Example: {"status":"doing","limit":"50"}`),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleTaskList)
 
-	a.addTool(mcp.NewTool("clockwork_task_update",
+	a.addTool(mcp.NewTool("torque_task_update",
 		mcp.WithDescription(`Partial update of a task's fields; only provided keys change (empty string clears most nullable scalars). Returns the updated TaskRecord.
-Use for field edits; prefer clockwork_task_transition for lifecycle moves and clockwork_task_bulk_transition for multi-id status changes. Numeric sentinel "-1" = unlimited for budget fields.
+Use for field edits; prefer torque_task_transition for lifecycle moves and torque_task_bulk_transition for multi-id status changes. Numeric sentinel "-1" = unlimited for budget fields.
 Response shape: data = {<TaskRecord fields>, Tags[]} — singleton, PascalCase keys.
 Example: {"id":"T-123","priority":"1","tags":"[\"p0\",\"backend\"]"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
@@ -150,17 +150,17 @@ Example: {"id":"T-123","priority":"1","tags":"[\"p0\",\"backend\"]"}`),
 		mcp.WithString("parent_id", mcp.Description("New parent_id (migration 013; empty string clears the parent)")),
 	), a.handleTaskUpdate)
 
-	a.addTool(mcp.NewTool("clockwork_task_delete",
+	a.addTool(mcp.NewTool("torque_task_delete",
 		mcp.WithDescription(`Hard-delete a task row and its linkage (runs, artifacts, comments cascade).
-Use sparingly — prefer clockwork_task_transition to "abandoned" for audit-preserving closure. For epics/sprints/projects use their respective *_delete tools.
+Use sparingly — prefer torque_task_transition to "abandoned" for audit-preserving closure. For epics/sprints/projects use their respective *_delete tools.
 Response shape: data = {id, deleted: true}.
 Example: {"id":"T-123"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
 	), a.handleTaskDelete)
 
-	a.addTool(mcp.NewTool("clockwork_task_transition",
+	a.addTool(mcp.NewTool("torque_task_transition",
 		mcp.WithDescription(`Move a task through the lifecycle FSM (todo -> doing -> review -> done, or -> blocked/abandoned). Returns the updated TaskRecord.
-Use for single-task status changes; clockwork_task_bulk_transition for batches; clockwork_sprint_approve for sprint-scoped approvals. Invalid transitions return error.code=conflict — set force=true to bypass the FSM (user-initiated cleanup only; agents should respect the FSM).
+Use for single-task status changes; torque_task_bulk_transition for batches; torque_sprint_approve for sprint-scoped approvals. Invalid transitions return error.code=conflict — set force=true to bypass the FSM (user-initiated cleanup only; agents should respect the FSM).
 Response shape: data = {<TaskRecord fields>, Tags[]} — singleton.
 Example: {"id":"T-123","status":"doing"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
@@ -168,9 +168,9 @@ Example: {"id":"T-123","status":"doing"}`),
 		mcp.WithBoolean("force", mcp.Description("Bypass FSM rules; for user-initiated dispositioning only (default false)")),
 	), a.handleTaskTransition)
 
-	a.addTool(mcp.NewTool("clockwork_task_search",
+	a.addTool(mcp.NewTool("torque_task_search",
 		mcp.WithDescription(`Full-text search across task title and description; ordered by priority ASC, created_at ASC.
-Use for free-text discovery; prefer clockwork_task_list when filtering by structured fields. Default returns ~150B briefTask records; pass verbose="true" for full TaskRecord. Limit defaults to 25, capped at 100.
+Use for free-text discovery; prefer torque_task_list when filtering by structured fields. Default returns ~150B briefTask records; pass verbose="true" for full TaskRecord. Limit defaults to 25, capped at 100.
 Filters (project_id, sprint_id, epic_id, tags, manual) combine with the query via AND — use them to narrow free-text results.
 Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, hint?}}.
 Example: {"query":"auth bug","limit":"10"}`),
@@ -185,9 +185,9 @@ Example: {"query":"auth bug","limit":"10"}`),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleTaskSearch)
 
-	a.addTool(mcp.NewTool("clockwork_task_bulk_transition",
+	a.addTool(mcp.NewTool("torque_task_bulk_transition",
 		mcp.WithDescription(`Transition many tasks to the same status in one call; per-task validation errors are collected, not fatal.
-Use for batch approvals or closures; prefer clockwork_sprint_approve for sprint-scoped approve-all. clockwork_task_transition for single-task moves.
+Use for batch approvals or closures; prefer torque_sprint_approve for sprint-scoped approve-all. torque_task_transition for single-task moves.
 Response shape: data = {success: int, failed: int, errors?: "semicolon-joined messages"}.
 Example: {"ids":"[\"T-1\",\"T-2\",\"T-3\"]","status":"done"}`),
 		mcp.WithString("ids", mcp.Required(), mcp.Description("JSON array of task IDs")),
@@ -229,7 +229,7 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest)
 	manual := reqBool(req, "manual")
 	title := reqStr(req, "title")
 	if !manual {
-		log.Printf("clockwork_task_create: forcing manual=true on %q (caller passed manual=false) — safety override per CW-20260417-0133", title)
+		log.Printf("torque_task_create: forcing manual=true on %q (caller passed manual=false) — safety override per CW-20260417-0133", title)
 		manual = true
 	}
 

@@ -4,15 +4,15 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/service"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func (a *Adapter) registerSprintTools() {
-	a.addTool(mcp.NewTool("clockwork_sprint_create",
+	a.addTool(mcp.NewTool("torque_sprint_create",
 		mcp.WithDescription(`Create a sprint (feature-flagged: requires features.sprints). Returns the SprintRecord.
-Use to scope a cohort of tasks under a common approval_mode + cost budget; prefer clockwork_epic_create for long-running multi-sprint initiatives, clockwork_project_create for infrastructure grouping.
+Use to scope a cohort of tasks under a common approval_mode + cost budget; prefer torque_epic_create for long-running multi-sprint initiatives, torque_project_create for infrastructure grouping.
 Response shape: data = {<SprintRecord fields>} — singleton.
 Example: {"name":"Sprint 17","goal":"Land Phase C","approval_mode":"approve_each","cost_budget":"50"}`),
 		mcp.WithString("name", mcp.Required(), mcp.Description("Sprint name")),
@@ -22,17 +22,17 @@ Example: {"name":"Sprint 17","goal":"Land Phase C","approval_mode":"approve_each
 		mcp.WithString("project_id", mcp.Description("Project ID to associate this sprint with (requires features.projects)")),
 	), a.handleSprintCreate)
 
-	a.addTool(mcp.NewTool("clockwork_sprint_get",
+	a.addTool(mcp.NewTool("torque_sprint_get",
 		mcp.WithDescription(`Fetch a sprint by ID plus derived budget headroom (within_budget, cost_remaining).
-Use when you need the definition + live budget check; clockwork_sprint_list for browsing, clockwork_task_list with sprint_id filter for the sprint's tasks.
+Use when you need the definition + live budget check; torque_sprint_list for browsing, torque_task_list with sprint_id filter for the sprint's tasks.
 Response shape: data = {sprint: <SprintRecord>, within_budget: bool, cost_remaining: float}.
 Example: {"id":"SP-17"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Sprint ID")),
 	), a.handleSprintGet)
 
-	a.addTool(mcp.NewTool("clockwork_sprint_update",
+	a.addTool(mcp.NewTool("torque_sprint_update",
 		mcp.WithDescription(`Partial update of sprint fields; pass status to transition (active<->inactive, either to completed terminal).
-Use for field edits or lifecycle moves; sibling clockwork_sprint_approve handles task approvals.
+Use for field edits or lifecycle moves; sibling torque_sprint_approve handles task approvals.
 Response shape: data = {id, updated: bool, message}.
 Example: {"id":"SP-17","status":"completed"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Sprint ID")),
@@ -44,17 +44,17 @@ Example: {"id":"SP-17","status":"completed"}`),
 		mcp.WithString("status", mcp.Description("Transition target: active|inactive|completed")),
 	), a.handleSprintUpdate)
 
-	a.addTool(mcp.NewTool("clockwork_sprint_delete",
+	a.addTool(mcp.NewTool("torque_sprint_delete",
 		mcp.WithDescription(`Hard-delete a sprint; tasks previously assigned have sprint_id cleared but are kept.
-Use sparingly — prefer clockwork_sprint_update status=completed for audit. Similar surfaces: clockwork_project_delete, clockwork_epic_delete.
+Use sparingly — prefer torque_sprint_update status=completed for audit. Similar surfaces: torque_project_delete, torque_epic_delete.
 Response shape: data = {id, deleted: true, message}.
 Example: {"id":"SP-17"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Sprint ID")),
 	), a.handleSprintDelete)
 
-	a.addTool(mcp.NewTool("clockwork_sprint_list",
+	a.addTool(mcp.NewTool("torque_sprint_list",
 		mcp.WithDescription(`List sprints, optionally filtered by status; ordered updated_at DESC.
-Use for browsing; clockwork_sprint_get when you know the ID. Default brief shape drops goal body for size; pass verbose="true" for full records.
+Use for browsing; torque_sprint_get when you know the ID. Default brief shape drops goal body for size; pass verbose="true" for full records.
 Response shape: data = {items: [<briefSprint or SprintRecord>...], meta: {truncated, returned, limit, hint?}}.
 Example: {"status":"active"}`),
 		mcp.WithString("status", mcp.Description("Filter: active|inactive|completed")),
@@ -62,9 +62,9 @@ Example: {"status":"active"}`),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleSprintList)
 
-	a.addTool(mcp.NewTool("clockwork_sprint_approve",
+	a.addTool(mcp.NewTool("torque_sprint_approve",
 		mcp.WithDescription(`Approve tasks in a sprint. With task_id, approves one task; without, approves every task currently in review.
-Use for sprint-level review-gate closures; clockwork_task_transition for single-task control and clockwork_task_bulk_transition when approving outside a sprint.
+Use for sprint-level review-gate closures; torque_task_transition for single-task control and torque_task_bulk_transition when approving outside a sprint.
 Response shape: data = {sprint_id, task_id?, approved: count, message}.
 Example: {"id":"SP-17"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Sprint ID")),

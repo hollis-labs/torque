@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
 )
 
 // writeWaitResponse is a thin presentation layer over agent.Manager.Wait's

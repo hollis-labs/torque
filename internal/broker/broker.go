@@ -1,5 +1,5 @@
-// Package broker is Clockwork's typed envelope dispatcher. It layers
-// Clockwork-specific validation, kind-aware helpers, and SSE publishing
+// Package broker is Torque's typed envelope dispatcher. It layers
+// Torque-specific validation, kind-aware helpers, and SSE publishing
 // on top of a `gomsg.Store` (S1.2 / CW-20260503-0012).
 //
 // CW-20260503-0013 (S1.3). Distinct from internal/toolbroker/, which
@@ -74,7 +74,7 @@ type EventPublisher interface {
 	Broadcast(eventType string, data map[string]interface{})
 }
 
-// Broker wraps a messaging.Dispatcher with Clockwork-specific
+// Broker wraps a messaging.Dispatcher with Torque-specific
 // validation, typed-envelope helpers, and SSE event publishing.
 type Broker struct {
 	d   gomsg.Dispatcher
@@ -102,7 +102,7 @@ var (
 // Publishes envelope.created on success.
 //
 // Use directly when you already have a fully-formed envelope (the HTTP
-// /broker/send route, MCP clockwork_broker_send tool). Prefer the
+// /broker/send route, MCP torque_broker_send tool). Prefer the
 // typed helpers (Notice / Escalation / Handoff / StatusUpdate) when
 // constructing an envelope from primitives.
 func (b *Broker) Send(ctx context.Context, env gomsg.Envelope) (gomsg.Envelope, error) {
@@ -304,8 +304,8 @@ func WithContentType(ct string) Option {
 	return func(e *gomsg.Envelope) { e.ContentType = ct }
 }
 
-// validKinds is the closed set of envelope kinds Clockwork dispatches.
-// Mirrors gomsg's enum but kept Clockwork-side so future kinds added
+// validKinds is the closed set of envelope kinds Torque dispatches.
+// Mirrors gomsg's enum but kept Torque-side so future kinds added
 // to gomsg don't silently route — every new kind is an explicit add.
 var validKinds = map[gomsg.Kind]bool{
 	gomsg.MsgKindRequest:      true,
@@ -324,7 +324,7 @@ var validSeverities = map[Severity]bool{
 	SeverityCritical: true,
 }
 
-// validate enforces Clockwork-specific envelope invariants applied to
+// validate enforces Torque-specific envelope invariants applied to
 // every Send / Request / Escalation path:
 //   - kind in the recognized enum
 //   - From and To addresses non-zero

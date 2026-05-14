@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestFullStack_TaskList_NumericStringLimit dispatches clockwork_task_list
+// TestFullStack_TaskList_NumericStringLimit dispatches torque_task_list
 // with limit passed as a string ("50"). Asserts no schema-boundary error and
 // that the limit is respected after coercion.
 func TestFullStack_TaskList_NumericStringLimit(t *testing.T) {
@@ -24,7 +24,7 @@ func TestFullStack_TaskList_NumericStringLimit(t *testing.T) {
 	// Seed 3 tasks so the default-50 fallback and the limit-2 path diverge
 	// visibly without relying on a huge seed.
 	for i := 0; i < 3; i++ {
-		_, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 			"title":       fmt.Sprintf("numeric-string-arg %d", i),
 			"description": "x",
 		})
@@ -32,7 +32,7 @@ func TestFullStack_TaskList_NumericStringLimit(t *testing.T) {
 	}
 
 	// --- string-encoded limit: the bug's canonical reproduction ---
-	text, isErr := callTool(t, a, "clockwork_task_list", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
 		"limit": "2",
 	})
 	require.False(t, isErr, "string-encoded limit must not trip schema validation: %s", text)
@@ -47,7 +47,7 @@ func TestFullStack_TaskList_NumericStringLimit(t *testing.T) {
 	require.Equal(t, float64(2), env.Meta["limit"])
 
 	// --- numeric-encoded limit still works (legacy shape) ---
-	text, isErr = callTool(t, a, "clockwork_task_list", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{
 		"limit": float64(2),
 	})
 	require.False(t, isErr, "numeric limit should still work: %s", text)
@@ -82,7 +82,7 @@ func TestFullStack_TaskList_StringLimit_NoArgValidationFailed(t *testing.T) {
 		"id":      1,
 		"method":  "tools/call",
 		"params": map[string]interface{}{
-			"name": "clockwork_task_list",
+			"name": "torque_task_list",
 			"arguments": map[string]interface{}{
 				"limit": "10",
 			},
@@ -111,7 +111,7 @@ func TestFullStack_TaskList_StringLimit_NoArgValidationFailed(t *testing.T) {
 func TestFullStack_TaskCreate_PriorityAcceptsString(t *testing.T) {
 	a := setupAdapter(t)
 
-	text, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "string priority",
 		"description": "x",
 		"priority":    "4",
@@ -135,7 +135,7 @@ func TestFullStack_TaskUpdate_BudgetStringRoundTrip(t *testing.T) {
 	a := setupAdapter(t)
 
 	// Create a task to update.
-	text, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "budget update",
 		"description": "x",
 	})
@@ -145,7 +145,7 @@ func TestFullStack_TaskUpdate_BudgetStringRoundTrip(t *testing.T) {
 	id := created["ID"].(string)
 
 	// Sentinel round-trip: -1 (unlimited) passed as string.
-	text, isErr = callTool(t, a, "clockwork_task_update", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_task_update", map[string]interface{}{
 		"id":              id,
 		"cost_budget":     "-1",
 		"max_retries":     "3",

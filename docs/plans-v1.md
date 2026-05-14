@@ -52,17 +52,17 @@ All endpoints live under `/api/v1/plans`:
 
 ## MCP surface
 
-Plan tools live alongside `clockwork_task_*`:
+Plan tools live alongside `torque_task_*`:
 
-- `clockwork_plan_create(title, description?, phases?, ...)`
-- `clockwork_plan_get(plan_id)`
-- `clockwork_plan_add_phase(plan_id, name, acceptance?)`
-- `clockwork_plan_remove_phase(plan_id, phase_id)`
-- `clockwork_plan_list_children(plan_id, phase_id?)`
+- `torque_plan_create(title, description?, phases?, ...)`
+- `torque_plan_get(plan_id)`
+- `torque_plan_add_phase(plan_id, name, acceptance?)`
+- `torque_plan_remove_phase(plan_id, phase_id)`
+- `torque_plan_list_children(plan_id, phase_id?)`
 
 ## Creating a child task under a plan
 
-Use the existing `clockwork_task_create` or `POST /tasks` with:
+Use the existing `torque_task_create` or `POST /tasks` with:
 
 ```json
 {

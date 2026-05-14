@@ -7,13 +7,13 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/writeq"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
-	"github.com/hollis-labs/clockwork-manifold/internal/toolbroker"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/runtime/writeq"
+	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/toolbroker"
 )
 
 // AgentDeps constructs the unified agent.Dependencies + Manager and runs
@@ -53,10 +53,10 @@ func AgentDeps(
 	}
 
 	// CW-20260510-0110: resolve Mux binary + args at startup. Empty
-	// Command → per-task bootdir plants carry only the clockwork
+	// Command → per-task bootdir plants carry only the torque
 	// loopback (existing behavior). Non-empty Command → plants gain
 	// a parallel `mux` MCP server entry that spawns Mux as an stdio
-	// child, exposing Vanta + cross-task clockwork + cerberus to the
+	// child, exposing Vanta + cross-task torque + cerberus to the
 	// spawned agent.
 	muxCfg := resolveMuxConfig()
 
@@ -70,7 +70,7 @@ func AgentDeps(
 		MuxCommand:       muxCfg.Command,
 		MuxArgs:          muxCfg.Args,
 		MuxEnv:           muxCfg.Env,
-		// WorkspacesRoot defaults to $HOME/.clockwork/workspaces inside
+		// WorkspacesRoot defaults to $HOME/.torque/workspaces inside
 		// agent.workspaceCreate when left empty.
 	}
 	// loopbackBuilder needs a reference to deps.Sessions, but Sessions is
@@ -125,14 +125,14 @@ func AgentDeps(
 }
 
 // resolveApiKeyHelperPath returns the absolute path to the
-// clockwork-apikey-helper binary that ships next to the daemon, or an
+// torque-apikey-helper binary that ships next to the daemon, or an
 // empty string when the helper is absent.
 //
 // Resolution order:
 //
-//  1. CLOCKWORK_APIKEY_HELPER env var (operator override; useful for
+//  1. TORQUE_APIKEY_HELPER env var (operator override; useful for
 //     dev sessions where the helper was built into a separate dir).
-//  2. <dir(os.Executable())>/clockwork-apikey-helper — the production
+//  2. <dir(os.Executable())>/torque-apikey-helper — the production
 //     deployment shape: cerberus_resource_apply syncs both binaries
 //     into the same artifact dir.
 //  3. exec.LookPath equivalent against the daemon's PATH — fallback
@@ -148,7 +148,7 @@ func AgentDeps(
 // CW-20260509-0016. Closes the auth gap for subscription users
 // dispatching bare-mode claude without an API key in the daemon env.
 func resolveApiKeyHelperPath() string {
-	if override := os.Getenv("CLOCKWORK_APIKEY_HELPER"); override != "" {
+	if override := os.Getenv("TORQUE_APIKEY_HELPER"); override != "" {
 		// Normalize to absolute + symlink-resolved so the doc-promised
 		// "absolute path" contract holds even when an operator sets a
 		// relative path or routes through a symlink. Failures fall back to
@@ -162,10 +162,10 @@ func resolveApiKeyHelperPath() string {
 			resolved = eval
 		}
 		if isExecutableFile(resolved) {
-			log.Printf("[bootstrap] apiKeyHelper resolved via CLOCKWORK_APIKEY_HELPER=%s", resolved)
+			log.Printf("[bootstrap] apiKeyHelper resolved via TORQUE_APIKEY_HELPER=%s", resolved)
 			return resolved
 		}
-		log.Printf("[bootstrap] CLOCKWORK_APIKEY_HELPER=%s (resolved=%s) set but path is not an executable file; ignoring", override, resolved)
+		log.Printf("[bootstrap] TORQUE_APIKEY_HELPER=%s (resolved=%s) set but path is not an executable file; ignoring", override, resolved)
 	}
 
 	exe, err := os.Executable()
@@ -176,7 +176,7 @@ func resolveApiKeyHelperPath() string {
 		if resolved, rerr := filepath.EvalSymlinks(exe); rerr == nil {
 			exe = resolved
 		}
-		candidate := filepath.Join(filepath.Dir(exe), "clockwork-apikey-helper")
+		candidate := filepath.Join(filepath.Dir(exe), "torque-apikey-helper")
 		if isExecutableFile(candidate) {
 			log.Printf("[bootstrap] apiKeyHelper resolved next to daemon binary at %s", candidate)
 			return candidate
@@ -185,12 +185,12 @@ func resolveApiKeyHelperPath() string {
 
 	// PATH lookup as a last resort — homebrew installs, dev `go install`
 	// targets, etc. Match the helper binary name.
-	if path, lookErr := lookExecOnPath("clockwork-apikey-helper"); lookErr == nil {
+	if path, lookErr := lookExecOnPath("torque-apikey-helper"); lookErr == nil {
 		log.Printf("[bootstrap] apiKeyHelper resolved on PATH at %s", path)
 		return path
 	}
 
-	log.Printf("[bootstrap] apiKeyHelper NOT resolved (no CLOCKWORK_APIKEY_HELPER override, no sibling binary, no PATH match) — bare-mode claude will require ANTHROPIC_API_KEY in env")
+	log.Printf("[bootstrap] apiKeyHelper NOT resolved (no TORQUE_APIKEY_HELPER override, no sibling binary, no PATH match) — bare-mode claude will require ANTHROPIC_API_KEY in env")
 	return ""
 }
 

@@ -2,7 +2,7 @@ package executor
 
 // EventType classifies events emitted to the EventCallback during execution.
 //
-// The CLOCKWORK_* stdout signal protocol that fed an EventSignal variant was
+// The TORQUE_* stdout signal protocol that fed an EventSignal variant was
 // retired in Phase E (CW-20260427-0043) — agents emit interpretive signals
 // (note / artifact / subtodo-done / checkpoint) via MCP tool calls instead.
 type EventType int

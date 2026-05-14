@@ -1,6 +1,6 @@
 // Package planstart implements the V0 trigger that boots an Orchestrator
 // session for a kind=plan task (CW-20260503-0017, S2.1). HTTP
-// (/api/v1/plans/{id}/start) and MCP (clockwork_plan_start) both call
+// (/api/v1/plans/{id}/start) and MCP (torque_plan_start) both call
 // Start; the GUI's Execute Plan button hits the HTTP route.
 //
 // V0 wires the trigger as a hardcoded MCP tool + HTTP route. Refactor
@@ -22,9 +22,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/orchestrator"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
+	"github.com/hollis-labs/torque/internal/orchestrator"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
 )
 
 // Sentinel errors for the trigger. Handlers map them to HTTP status:
@@ -173,7 +173,7 @@ func Start(ctx context.Context, store Store, mgr SessionManager, planID string, 
 	// Stamp orchestrator_session_id into metadata.plan and transition
 	// plan → doing. Both writes are best-effort cleanup if the second
 	// fails: the session is already running and visible via
-	// clockwork_session_list; the plan's status will catch up next time
+	// torque_session_list; the plan's status will catch up next time
 	// the orchestrator polls / the user re-views the plan.
 	if err := writeOrchestratorSessionID(store, plan, sess.ID); err != nil {
 		// Don't roll back the launched session — log via the error

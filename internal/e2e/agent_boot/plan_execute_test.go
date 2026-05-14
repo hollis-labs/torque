@@ -17,9 +17,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/orchestrator"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/planstart"
+	"github.com/hollis-labs/torque/internal/orchestrator"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/planstart"
 )
 
 // createPlanTask inserts a minimal kind=plan record matching what the
@@ -139,7 +139,7 @@ func TestPlanExecute_RejectsInvalidTargets(t *testing.T) {
 	// Wrong kind.
 	require.NoError(t, cd.Store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-NOT-PLAN", Title: "x", Status: "todo", Kind: "agent",
-		Executor: "cli", AgentProfile: "clockwork-backend",
+		Executor: "cli", AgentProfile: "torque-backend",
 	}))
 	_, err := planstart.Start(ctx, cd.Store, cd.Manager, "CW-NOT-PLAN", planstart.Options{})
 	assert.ErrorIs(t, err, planstart.ErrPlanNotFound)

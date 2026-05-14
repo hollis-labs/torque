@@ -905,7 +905,7 @@ After Task 11, do not switch checkouts; instead `cd` back to the main checkout f
 
 ```bash
 # from worktree
-cd /Users/chrispian/Projects-apps/clockwork-manifold
+cd /Users/chrispian/Projects-apps/torque
 ```
 
 You will not see the new code in the running cerberus instance, so this option only works AFTER the PR is merged. Skip Option A unless you've already merged.
@@ -947,8 +947,8 @@ Open any task detail page, attempt to add a comment with content the API rejects
 In a parallel terminal:
 
 ```bash
-cerberus logs clockwork-frontend --follow
-cerberus logs clockwork-api --follow
+cerberus logs torque-frontend --follow
+cerberus logs torque-api --follow
 ```
 
 (Two terminals, or one with `&`.) Note any unexpected errors or warnings.

@@ -6,8 +6,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/service"
 )
 
 // TestTaskCreate_ParentIDRoundTrip verifies that Create persists parent_id
@@ -112,7 +112,7 @@ func TestTaskUpdate_ParentIDClear(t *testing.T) {
 // a child task created without WorkingDir inherits from the parent when
 // the parent has a non-empty WorkingDir. Surfaced in S2.5 plan-execute
 // smoke (2026-05-08): orchestrator created kind=internal planner sub-task
-// via clockwork_task_create without working_dir; scheduler dispatch then
+// via torque_task_create without working_dir; scheduler dispatch then
 // failed with "agent.Executor: working_dir is required". Auto-inheritance
 // makes the common case (LLM-driven sub-task creation) work without
 // every caller knowing to pass the field.

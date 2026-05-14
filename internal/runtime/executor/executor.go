@@ -3,7 +3,7 @@ package executor
 import "context"
 
 // Executor is the interface that all executor plugins must implement.
-// Clockwork core schedules and manages lifecycle; executors do the actual work.
+// Torque core schedules and manages lifecycle; executors do the actual work.
 type Executor interface {
 	// Name returns the executor's registered name (e.g., "cli", "api").
 	Name() string

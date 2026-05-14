@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 // CW-20260503-0019 (S2.3) — Reviewer end-agent V1.
@@ -33,8 +33,8 @@ const (
 	EndAgentProfile = "reviewer-end-agent"
 
 	// EndAgentTemplateEnvVar overrides the default template-search dir.
-	// When unset the resolver looks in $HOME/.clockwork/end-agent-templates.
-	EndAgentTemplateEnvVar = "CLOCKWORK_END_AGENT_TEMPLATE_DIR"
+	// When unset the resolver looks in $HOME/.torque/end-agent-templates.
+	EndAgentTemplateEnvVar = "TORQUE_END_AGENT_TEMPLATE_DIR"
 
 	// DefaultEndAgentTemplate is the file name read from the resolved dir.
 	// Operators replace its contents to customize the V1 checklist.
@@ -154,15 +154,15 @@ func (lm *LifecycleManager) enqueueEndAgent(target *sqlstore.TaskRecord) {
 }
 
 // loadEndAgentTemplate resolves the V1 reviewer template content. Lookup
-// order: $CLOCKWORK_END_AGENT_TEMPLATE_DIR/<DefaultEndAgentTemplate>,
-// then $HOME/.clockwork/end-agent-templates/<DefaultEndAgentTemplate>,
+// order: $TORQUE_END_AGENT_TEMPLATE_DIR/<DefaultEndAgentTemplate>,
+// then $HOME/.torque/end-agent-templates/<DefaultEndAgentTemplate>,
 // then the embedded fallback. Returns the content + the resolved path
 // (for traceability metadata; "<embedded>" when the fallback is used).
 func loadEndAgentTemplate() (string, string) {
 	dir := os.Getenv(EndAgentTemplateEnvVar)
 	if dir == "" {
 		if home, err := os.UserHomeDir(); err == nil {
-			dir = filepath.Join(home, ".clockwork", "end-agent-templates")
+			dir = filepath.Join(home, ".torque", "end-agent-templates")
 		}
 	}
 	if dir != "" {

@@ -1,7 +1,7 @@
 # Tag System — Design Spec
 
 **Date:** 2026-04-09
-**Project:** clockwork-manifold
+**Project:** torque
 **Status:** Draft — awaiting user review
 **Author:** brainstormed with Claude
 
@@ -38,7 +38,7 @@ The UI side is deferred to Project 3, so this project is scoped to the data/API 
 - Usage counts / tag detail views showing tagged items. Part of the future management UI
 - Tag groups, namespaces, or archival flags
 - MCP tool surface for tags. HTTP only for now; MCP can wrap the service later if needed
-- JSON:API envelope. Clockwork uses plain JSON throughout and this spec stays consistent with that
+- JSON:API envelope. Torque uses plain JSON throughout and this spec stays consistent with that
 
 ## 4. Data Model
 
@@ -72,7 +72,7 @@ CREATE INDEX idx_task_tags_tag_slug ON task_tags(tag_slug);
 ALTER TABLE tasks DROP COLUMN tags;
 ```
 
-SQLite 3.35+ supports `DROP COLUMN`. Clockwork already targets a modern SQLite (WAL + JSON1), so this is safe.
+SQLite 3.35+ supports `DROP COLUMN`. Torque already targets a modern SQLite (WAL + JSON1), so this is safe.
 
 ### 4.2 Slug rules
 
@@ -97,10 +97,10 @@ The Go module `github.com/hollis-labs/go-strutil` lives at `~/Projects-apps/fram
 
 Only `strutil.Slugify(s string) string` is consumed by this project.
 
-Clockwork imports it via a local `replace` directive in `go.mod` during pre-release:
+Torque imports it via a local `replace` directive in `go.mod` during pre-release:
 
 ```go
-// clockwork-manifold/go.mod
+// torque/go.mod
 require github.com/hollis-labs/go-strutil v0.0.0-00010101000000-000000000000
 replace github.com/hollis-labs/go-strutil => ../framework/utils/go-strutil
 ```
@@ -488,7 +488,7 @@ TDD throughout: write failing tests first, implement, verify pass.
 | Service | `internal/service/tag_test.go` | Create validates name/slug/color/description; Create rejects name that slugifies to empty; auto-derive slug from name; Update partial; Delete; Merge rejects source==dest and missing slugs; ResolveNames auto-creates, dedups, preserves order, silently drops empty-after-slugify inputs, preserves first-seen display name |
 | HTTP handlers | extend `internal/httpserver/server_test.go` | GET/POST/PATCH/DELETE `/tags`; POST `/tags/:slug/merge`; 400/404/409/422 error paths; task create/update with `tags: []string` in body; task response contains `Tag[]`; board and detail views render correctly (manual verification since there's no frontend test harness) |
 
-No e2e frontend tests in this project — the user has captured the tag management GUI backlog with a note to add snapshot/e2e tests then. Manual verification via `cerberus restart clockwork-frontend` and eyeballing the board + detail view is sufficient for this pass.
+No e2e frontend tests in this project — the user has captured the tag management GUI backlog with a note to add snapshot/e2e tests then. Manual verification via `cerberus restart torque-frontend` and eyeballing the board + detail view is sufficient for this pass.
 
 ## 12. Implementation Order
 
@@ -496,12 +496,12 @@ Single vertical slice, but stepped internally to keep each commit coherent:
 
 1. **Migration + store layer** — write migration 005, `tags.go` with `TagRecord`/`TagUpdate` and all store methods, `tags_test.go` with table-driven tests. Run `go test ./internal/persistence/sqlstore/...` green before moving on.
 2. **Service layer** — write `service/tag.go` with `TagService`, register it in `service/service.go`. Write `tag_test.go`. Green before moving on.
-3. **`strutil` wiring** — add the `replace` directive to Clockwork's `go.mod` pointing at `~/Projects-apps/framework/utils/go-strutil`. Confirm `strutil.Slugify` imports cleanly. (The `strutil` module itself is built in parallel by a separate agent using `BOOT.md`.)
+3. **`strutil` wiring** — add the `replace` directive to Torque's `go.mod` pointing at `~/Projects-apps/framework/utils/go-strutil`. Confirm `strutil.Slugify` imports cleanly. (The `strutil` module itself is built in parallel by a separate agent using `BOOT.md`.)
 4. **Task service + task storage updates** — remove `Tags` from `TaskRecord` and `sqlstore.TaskUpdate`; update `tasks.go` `taskSelectCols`, `scanTask`, CREATE and UPDATE SQL to drop the column. In the service layer: update `TaskCreateInput.Tags` to `[]string`, introduce `service.TaskUpdateInput` (embeds `sqlstore.TaskUpdate`, adds `Tags *[]string`), add a `*TagService` field on `TaskService`, update `Services` container wiring in `service/service.go`, and change `TaskService.Create`/`Update` to call `ResolveNames` + `SetTaskTags`. Update existing `task_test.go` and `task_sprint_test.go` to use the new shape. Green before moving on.
 5. **HTTP layer** — `httpserver/tags.go` with all endpoints, register routes in `server.go`, update `taskJSON` to load and serialize `Tag[]`, update `createTask`/`updateTask` to accept `tags: []string`. Extend `server_test.go`. Green before moving on.
 6. **Frontend types + constants + TagChip** — add `Tag`, `TagColor`, `TAG_COLOR_CLASSES`, `<TagChip>` component. No consumers yet, just the building blocks.
 7. **Board row + task detail + api client + utils cleanup** — swap `parseTags` for `<TagChip>`, cap board row at 3 tags, add API client methods, remove `parseTags`. Manual visual verification.
-8. **Rebuild and restart services** — `cerberus rebuild clockwork-api`, `cerberus restart clockwork-frontend`, smoke-test by creating a task with `["bug", "ui"]` tags via the API and confirming it renders with the right color chips.
+8. **Rebuild and restart services** — `cerberus rebuild torque-api`, `cerberus restart torque-frontend`, smoke-test by creating a task with `["bug", "ui"]` tags via the API and confirming it renders with the right color chips.
 
 ## 13. Risks and Open Questions
 
@@ -515,7 +515,7 @@ Single vertical slice, but stepped internally to keep each commit coherent:
 - **BLG-20260409-002** — Tag management GUI (post-MVP, P3 — settings page, usage counts, merge, history of recurring overwrites to watch for)
 - **Polymorphic taggables** — tasks only for now; sprints/projects/epics can be added later with a generalized `taggables` join table
 - **MCP tools for tags** — HTTP only; wrap in MCP when there's a clear use case
-- **JSON:API envelope for the Clockwork API** — no action; may revisit if API consistency becomes a priority
+- **JSON:API envelope for the Torque API** — no action; may revisit if API consistency becomes a priority
 - **Tag usage counts on list endpoint** — part of the future GUI, not the MVP
 
 ## 15. Success Criteria

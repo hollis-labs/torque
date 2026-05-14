@@ -13,7 +13,7 @@ import (
 func TestSubtodoRoundTrip_AddListDone(t *testing.T) {
 	a := setupAdapter(t)
 
-	text, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "gated task",
 		"description": "no checkboxes so no auto-extract",
 	})
@@ -23,7 +23,7 @@ func TestSubtodoRoundTrip_AddListDone(t *testing.T) {
 	taskID, _ := created["ID"].(string)
 	require.NotEmpty(t, taskID)
 
-	_, isErr = callTool(t, a, "clockwork_task_subtodo_add", map[string]interface{}{
+	_, isErr = callTool(t, a, "torque_task_subtodo_add", map[string]interface{}{
 		"task_id":  taskID,
 		"id":       "item-1",
 		"text":     "write test",
@@ -31,7 +31,7 @@ func TestSubtodoRoundTrip_AddListDone(t *testing.T) {
 	})
 	require.False(t, isErr)
 
-	_, isErr = callTool(t, a, "clockwork_task_subtodo_add", map[string]interface{}{
+	_, isErr = callTool(t, a, "torque_task_subtodo_add", map[string]interface{}{
 		"task_id":  taskID,
 		"id":       "item-2",
 		"text":     "ship it",
@@ -39,7 +39,7 @@ func TestSubtodoRoundTrip_AddListDone(t *testing.T) {
 	})
 	require.False(t, isErr)
 
-	listText, isErr := callTool(t, a, "clockwork_task_subtodo_list", map[string]interface{}{
+	listText, isErr := callTool(t, a, "torque_task_subtodo_list", map[string]interface{}{
 		"task_id": taskID,
 	})
 	require.False(t, isErr, listText)
@@ -52,7 +52,7 @@ func TestSubtodoRoundTrip_AddListDone(t *testing.T) {
 	assert.Equal(t, "item-1", env.Items[0]["id"])
 	assert.Equal(t, true, env.Items[0]["required"])
 
-	_, isErr = callTool(t, a, "clockwork_task_subtodo_done", map[string]interface{}{
+	_, isErr = callTool(t, a, "torque_task_subtodo_done", map[string]interface{}{
 		"task_id":  taskID,
 		"id":       "item-1",
 		"evidence": "commit-abc123",
@@ -61,7 +61,7 @@ func TestSubtodoRoundTrip_AddListDone(t *testing.T) {
 
 	// Brief shape drops evidence (no-op field when size is the priority).
 	// Use verbose=true to get the full Subtodo including evidence string.
-	listText, _ = callTool(t, a, "clockwork_task_subtodo_list", map[string]interface{}{
+	listText, _ = callTool(t, a, "torque_task_subtodo_list", map[string]interface{}{
 		"task_id": taskID,
 		"verbose": "true",
 	})
@@ -75,18 +75,18 @@ func TestSubtodoRoundTrip_AddListDone(t *testing.T) {
 
 func TestSubtodoAdd_RejectsDuplicateID(t *testing.T) {
 	a := setupAdapter(t)
-	text, _ := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title": "dup",
 	})
 	var created map[string]interface{}
 	parseData(t, text, &created)
 	taskID, _ := created["ID"].(string)
 
-	_, isErr := callTool(t, a, "clockwork_task_subtodo_add", map[string]interface{}{
+	_, isErr := callTool(t, a, "torque_task_subtodo_add", map[string]interface{}{
 		"task_id": taskID, "id": "x", "text": "one",
 	})
 	require.False(t, isErr)
-	dup, isErr := callTool(t, a, "clockwork_task_subtodo_add", map[string]interface{}{
+	dup, isErr := callTool(t, a, "torque_task_subtodo_add", map[string]interface{}{
 		"task_id": taskID, "id": "x", "text": "two",
 	})
 	require.True(t, isErr, "duplicate id must error: %s", dup)

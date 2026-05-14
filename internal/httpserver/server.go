@@ -8,10 +8,10 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	gomsg "github.com/hollis-labs/go-messaging"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/broker"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/broker"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/service"
 )
 
 // Server holds the router, service layer, scheduler reference, and SSE hub.

@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
 )
 
 // requireSessions writes a 503 envelope when the session manager is not

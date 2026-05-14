@@ -20,7 +20,7 @@ func TestVerifySignature(t *testing.T) {
 	// Create temp file.
 	f, err := os.CreateTemp(t.TempDir(), "sig-test-*")
 	require.NoError(t, err)
-	_, err = f.WriteString("hello clockwork")
+	_, err = f.WriteString("hello torque")
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
 
@@ -40,7 +40,7 @@ func TestVerifySignature_BadSignature(t *testing.T) {
 
 	f, err := os.CreateTemp(t.TempDir(), "sig-test-*")
 	require.NoError(t, err)
-	_, err = f.WriteString("hello clockwork")
+	_, err = f.WriteString("hello torque")
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
 

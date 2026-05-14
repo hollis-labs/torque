@@ -69,4 +69,4 @@ The frontend currently includes pages for:
 - Sprint detail
 - Epic detail
 
-The GUI is served by the same `clockwork serve` process.
+The GUI is served by the same `torque serve` process.

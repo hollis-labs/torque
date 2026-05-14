@@ -22,7 +22,7 @@ Shared store fixtures should use `internal/testutil/sqlitetest`:
 
 The Phase 0 audit moved the old blanket single-conn fixtures in:
 
-- `cmd/clockwork/smoke_templates_test.go`
+- `cmd/torque/smoke_templates_test.go`
 - `internal/mcpadapter/scheduler_tools_test.go`
 - `internal/persistence/sqlstore/tasks_test.go` (`setupTestStore`)
 - `internal/runtime/agent/session_lifecycle_hook_test.go`

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Bring MCP task filter coverage to full parity with `sqlstore.TaskFilter`, let agents combine free-text search with faceted filters in a single request, and introduce a new `clockwork_comment_search` tool backed by a new `Store.SearchComments` / `svc.Comment.Search` path.
+**Goal:** Bring MCP task filter coverage to full parity with `sqlstore.TaskFilter`, let agents combine free-text search with faceted filters in a single request, and introduce a new `torque_comment_search` tool backed by a new `Store.SearchComments` / `svc.Comment.Search` path.
 
 **Scope:** MCP adapter + backend Go only. No frontend, no HTTP API additions, no CLI surface. See spec for deferred items.
 
@@ -17,8 +17,8 @@
 - **No emojis** in code, commits, or documentation.
 - **No `--no-verify`**, no hook bypass. Fix the underlying issue if hooks fail.
 - **TDD discipline:** sqlstore test cases written before the `SearchComments` implementation; MCP full-stack test cases written before the handler.
-- **Run tests from** `~/Projects-apps/clockwork-manifold` (repo root) via `go test ./...` (full suite) or targeted: `go test ./internal/persistence/sqlstore/...` and `go test ./internal/mcpadapter/...`.
-- **Backend binary:** Cerberus manages the service. Rebuild via `cerberus rebuild clockwork-manifold` after changes; do **not** manually start/stop.
+- **Run tests from** `~/Projects-apps/torque` (repo root) via `go test ./...` (full suite) or targeted: `go test ./internal/persistence/sqlstore/...` and `go test ./internal/mcpadapter/...`.
+- **Backend binary:** Cerberus manages the service. Rebuild via `cerberus rebuild torque` after changes; do **not** manually start/stop.
 
 ---
 
@@ -146,7 +146,7 @@
       filter.Search = v
   }
   ```
-- [ ] Update the `clockwork_task_list` tool schema (the `mcp.Tool` definition for this handler) to declare the 6 new optional parameters with their descriptions, matching the spec table. Add them to the `inputSchema` properties and `required` (none of them are required).
+- [ ] Update the `torque_task_list` tool schema (the `mcp.Tool` definition for this handler) to declare the 6 new optional parameters with their descriptions, matching the spec table. Add them to the `inputSchema` properties and `required` (none of them are required).
   - `project_id`: "Filter by project ID; exact match."
   - `sprint_id`: "Filter by sprint ID; exact match."
   - `epic_id`: "Filter by epic ID; exact match."
@@ -208,7 +208,7 @@
 
   > **Check first:** Confirm whether `svc.Task.List` and `svc.Task.Search` return the same shape (`[]sqlstore.TaskRecord`). If so, swap is mechanical. The limit is now server-side (pushed into the filter) rather than a Go slice post-query.
 
-- [ ] Update the `clockwork_task_search` tool schema to declare `project_id`, `sprint_id`, `epic_id`, `tags`, and `manual` as optional parameters (same descriptions as `task_list`). Keep `query` as required.
+- [ ] Update the `torque_task_search` tool schema to declare `project_id`, `sprint_id`, `epic_id`, `tags`, and `manual` as optional parameters (same descriptions as `task_list`). Keep `query` as required.
 - [ ] Update description: append "Filters (project_id, sprint_id, epic_id, tags, manual) combine with the query via AND — use them to narrow free-text results."
 - [ ] Compile: `go build ./internal/mcpadapter/...`
 
@@ -220,7 +220,7 @@
 - [ ] Add the new tool registration in the `registerCommentTools` (or equivalent) function:
   ```go
   server.AddTool(mcp.Tool{
-      Name: "clockwork_comment_search",
+      Name: "torque_comment_search",
       Description: "Search comments by content, optionally scoped to a task or author. Returns full CommentRecord items newest first.",
       InputSchema: mcp.ToolInputSchema{
           Type: "object",
@@ -318,20 +318,20 @@
 
 - [ ] Run full suite: `go test ./...`
 - [ ] Fix any regressions (none expected if existing `TestFullStack_SearchTasks` passes via the new `svc.Task.List` path).
-- [ ] Rebuild the service via Cerberus: `cerberus rebuild clockwork-manifold` (or the configured service ID).
+- [ ] Rebuild the service via Cerberus: `cerberus rebuild torque` (or the configured service ID).
 - [ ] Smoke test via MCP client or `curl` against the running instance:
-  - `clockwork_task_list` with `project_id` → filtered results.
-  - `clockwork_task_search` with `query` + `tags` → AND-filtered results.
-  - `clockwork_comment_search` with `query` → results in newest-first order.
-  - `clockwork_comment_search` with empty `query` → structured error.
+  - `torque_task_list` with `project_id` → filtered results.
+  - `torque_task_search` with `query` + `tags` → AND-filtered results.
+  - `torque_comment_search` with `query` → results in newest-first order.
+  - `torque_comment_search` with empty `query` → structured error.
 
 ---
 
 ## Acceptance criteria
 
-- [ ] `clockwork_task_list` accepts and correctly applies `project_id`, `sprint_id`, `epic_id`, `tags`, `manual`, and `search` params.
-- [ ] `clockwork_task_search` accepts the same 5 optional filters (not `search` — it uses `query`) and calls `svc.Task.List` internally.
-- [ ] `clockwork_comment_search` exists, requires `query`, supports `task_id` / `author` / `limit`, returns `ORDER BY created_at DESC`.
+- [ ] `torque_task_list` accepts and correctly applies `project_id`, `sprint_id`, `epic_id`, `tags`, `manual`, and `search` params.
+- [ ] `torque_task_search` accepts the same 5 optional filters (not `search` — it uses `query`) and calls `svc.Task.List` internally.
+- [ ] `torque_comment_search` exists, requires `query`, supports `task_id` / `author` / `limit`, returns `ORDER BY created_at DESC`.
 - [ ] `TestSearchComments` covers all 6 spec cases and passes.
 - [ ] `TestFullStack_SearchTasks` covers all new filter combinations and passes.
 - [ ] `TestFullStack_CommentSearch` covers all 7 spec cases and passes.
@@ -343,7 +343,7 @@
 
 ## Deferred (do not implement now)
 
-- HTTP `GET /api/v1/comments/search` endpoint and CLI `clockwork comment search`.
+- HTTP `GET /api/v1/comments/search` endpoint and CLI `torque comment search`.
 - Remove `/tasks/search` HTTP endpoint and `Store.SearchTasks` once CLI migrates.
 - Comment edit/delete MCP tools.
 - FTS5 / relevance scoring.

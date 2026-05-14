@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

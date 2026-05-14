@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
@@ -42,7 +42,7 @@ func TestEndAgent_EnqueuesOnAgentReview(t *testing.T) {
 
 	target := &sqlstore.TaskRecord{
 		ID: "CW-TARGET-001", Title: "executor task", Status: "doing",
-		Executor: "cli", AgentProfile: "clockwork-backend",
+		Executor: "cli", AgentProfile: "torque-backend",
 		Kind: "agent", OnDone: "review",
 	}
 	require.NoError(t, store.CreateTask(target))
@@ -147,7 +147,7 @@ func TestEndAgent_FailureCommentsOnParent(t *testing.T) {
 
 	target := &sqlstore.TaskRecord{
 		ID: "CW-TARGET-002", Title: "executor task", Status: "review",
-		Executor: "cli", AgentProfile: "clockwork-backend",
+		Executor: "cli", AgentProfile: "torque-backend",
 		Kind: "agent",
 	}
 	require.NoError(t, store.CreateTask(target))
@@ -188,7 +188,7 @@ func TestEndAgent_SuccessLeavesNoFailureComment(t *testing.T) {
 
 	target := &sqlstore.TaskRecord{
 		ID: "CW-TARGET-003", Title: "executor task", Status: "review",
-		Executor: "cli", AgentProfile: "clockwork-backend", Kind: "agent",
+		Executor: "cli", AgentProfile: "torque-backend", Kind: "agent",
 	}
 	require.NoError(t, store.CreateTask(target))
 
@@ -229,7 +229,7 @@ func TestEndAgent_TemplateIncludesPRMergeCheck(t *testing.T) {
 
 	target := &sqlstore.TaskRecord{
 		ID: "CW-TARGET-PR-001", Title: "executor task", Status: "doing",
-		Executor: "cli", AgentProfile: "clockwork-backend",
+		Executor: "cli", AgentProfile: "torque-backend",
 		Kind: "agent", OnDone: "review",
 	}
 	require.NoError(t, store.CreateTask(target))
@@ -263,7 +263,7 @@ func TestEndAgent_TemplateIncludesPRMergeCheck(t *testing.T) {
 	// Detection signal: artifact-shape, not agent_profile name. The ticket
 	// confirmed real-world data uses generic profiles for PR-producing
 	// roles, so name-matching would silently miss most cases.
-	assert.Contains(t, prompt, "clockwork_artifact_list",
+	assert.Contains(t, prompt, "torque_artifact_list",
 		"template must point the agent at the artifact list MCP tool")
 	assert.Contains(t, prompt, "/pull/",
 		"template must describe GitHub PR URL shape for detection")
@@ -296,7 +296,7 @@ func TestEndAgent_TemplatePreservesOriginalFiveChecks(t *testing.T) {
 
 	target := &sqlstore.TaskRecord{
 		ID: "CW-TARGET-PR-002", Title: "executor task", Status: "doing",
-		Executor: "cli", AgentProfile: "clockwork-backend",
+		Executor: "cli", AgentProfile: "torque-backend",
 		Kind: "agent", OnDone: "review",
 	}
 	require.NoError(t, store.CreateTask(target))
@@ -330,7 +330,7 @@ func TestEndAgent_TemplateIncludesHITLCheckpointProtocol(t *testing.T) {
 
 	target := &sqlstore.TaskRecord{
 		ID: "CW-TARGET-HITL-001", Title: "executor task", Status: "doing",
-		Executor: "cli", AgentProfile: "clockwork-backend",
+		Executor: "cli", AgentProfile: "torque-backend",
 		Kind: "agent", OnDone: "review",
 	}
 	require.NoError(t, store.CreateTask(target))
@@ -350,7 +350,7 @@ func TestEndAgent_TemplateIncludesHITLCheckpointProtocol(t *testing.T) {
 	assert.Contains(t, prompt, "Redispatch preflight")
 	assert.Contains(t, prompt, "target.metadata.checkpoint_responses")
 	assert.Contains(t, prompt, "HITL checkpoints")
-	assert.Contains(t, prompt, "clockwork_task_checkpoint_emit")
+	assert.Contains(t, prompt, "torque_task_checkpoint_emit")
 	assert.Contains(t, prompt, "type=\"pr_review\"")
 	assert.Contains(t, prompt, "type=\"approval\"")
 	assert.Contains(t, prompt, "type=\"message\"")
@@ -367,7 +367,7 @@ func TestEndAgent_RefiresOnReReview(t *testing.T) {
 
 	target := &sqlstore.TaskRecord{
 		ID: "CW-TARGET-004", Title: "executor task", Status: "doing",
-		Executor: "cli", AgentProfile: "clockwork-backend",
+		Executor: "cli", AgentProfile: "torque-backend",
 		Kind: "agent", OnDone: "review",
 	}
 	require.NoError(t, store.CreateTask(target))

@@ -8,8 +8,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
 )
 
 // secretRE matches Anthropic / OpenAI key shapes. Alternation is leftmost-

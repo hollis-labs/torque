@@ -1,4 +1,4 @@
-# Reference template — commit to DB via clockwork_template_create.
+# Reference template — commit to DB via torque_template_create.
 # Source of truth is the DB row; this file documents the shape for humans.
 id: decision-checkpoint
 name: Decision Checkpoint

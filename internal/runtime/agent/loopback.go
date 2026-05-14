@@ -9,7 +9,7 @@ import (
 // bootstrap/loopback.go to keep the agent package free of any mcpadapter
 // import — that direction would close the planstart → agent → mcpadapter →
 // planstart import cycle introduced by the Boot unification (mcpadapter's
-// plan_tools.go imports planstart for clockwork_plan_start).
+// plan_tools.go imports planstart for torque_plan_start).
 //
 // Boot calls Dependencies.Loopback(taskID) when non-nil to materialize a
 // handle. Caller (Boot internals + Manager teardown) drives Shutdown when

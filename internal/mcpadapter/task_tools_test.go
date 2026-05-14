@@ -9,10 +9,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/mcpadapter"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/mcpadapter"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/service"
 
 	_ "modernc.org/sqlite"
 )
@@ -145,7 +145,7 @@ func TestFullStack_CreateAndGetTask(t *testing.T) {
 	a := setupAdapter(t)
 
 	// Create a task.
-	text, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "Fix auth bug",
 		"description": "Login returns 500",
 		"priority":    1,
@@ -161,7 +161,7 @@ func TestFullStack_CreateAndGetTask(t *testing.T) {
 	require.NotEmpty(t, id)
 
 	// Fetch the task by ID.
-	text, isErr = callTool(t, a, "clockwork_task_get", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_task_get", map[string]interface{}{
 		"id": id,
 	})
 	require.False(t, isErr, "get should not error: %s", text)
@@ -174,7 +174,7 @@ func TestFullStack_CreateAndGetTask(t *testing.T) {
 func TestFullStack_TaskCreate_Facets(t *testing.T) {
 	a := setupAdapter(t)
 
-	text, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":                  "facets",
 		"description":            "x",
 		"kind":                   "external",
@@ -202,7 +202,7 @@ func TestFullStack_TaskCreate_Facets(t *testing.T) {
 func TestFullStack_TaskCreate_FacetDefaults(t *testing.T) {
 	a := setupAdapter(t)
 
-	text, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "defaults",
 		"description": "x",
 	})
@@ -220,18 +220,18 @@ func TestFullStack_TaskCreate_FacetDefaults(t *testing.T) {
 func TestFullStack_TaskList_FilterByKind(t *testing.T) {
 	a := setupAdapter(t)
 
-	_, _ = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	_, _ = callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "agent one",
 		"description": "x",
 	})
-	_, _ = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	_, _ = callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "external one",
 		"description": "x",
 		"kind":        "external",
 		"manual":      true,
 	})
 
-	text, isErr := callTool(t, a, "clockwork_task_list", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
 		"kind": "external",
 	})
 	require.False(t, isErr, "list should not error: %s", text)
@@ -255,14 +255,14 @@ func TestFullStack_TaskList_FilterByKind(t *testing.T) {
 func TestFullStack_TaskList_DefaultExcludesInternal(t *testing.T) {
 	a := setupAdapter(t)
 
-	_, _ = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	_, _ = callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":         "agent one",
 		"description":   "x",
 		"kind":          "agent",
 		"executor":      "cli",
 		"agent_profile": "cli",
 	})
-	_, _ = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	_, _ = callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":         "internal end-agent",
 		"description":   "x",
 		"kind":          "internal",
@@ -279,33 +279,33 @@ func TestFullStack_TaskList_DefaultExcludesInternal(t *testing.T) {
 	}
 
 	// Default — no include_internal — hides the internal row.
-	text, isErr := callTool(t, a, "clockwork_task_list", map[string]interface{}{})
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{})
 	require.False(t, isErr, "list should not error: %s", text)
 	items := parseList(text)
 	require.Len(t, items, 1)
 	require.Equal(t, "agent", items[0]["kind"])
 
 	// include_internal=true surfaces both.
-	text, _ = callTool(t, a, "clockwork_task_list", map[string]interface{}{
+	text, _ = callTool(t, a, "torque_task_list", map[string]interface{}{
 		"include_internal": "true",
 	})
 	require.Len(t, parseList(text), 2)
 
 	// Explicit kind=internal filter — internal-only.
-	text, _ = callTool(t, a, "clockwork_task_list", map[string]interface{}{
+	text, _ = callTool(t, a, "torque_task_list", map[string]interface{}{
 		"kind": "internal",
 	})
 	internalOnly := parseList(text)
 	require.Len(t, internalOnly, 1)
 	require.Equal(t, "internal", internalOnly[0]["kind"])
 
-	// clockwork_task_search mirrors the same default-exclude.
-	text, _ = callTool(t, a, "clockwork_task_search", map[string]interface{}{
+	// torque_task_search mirrors the same default-exclude.
+	text, _ = callTool(t, a, "torque_task_search", map[string]interface{}{
 		"query": "x",
 	})
 	require.Len(t, parseList(text), 1, "search default-excludes internal")
 
-	text, _ = callTool(t, a, "clockwork_task_search", map[string]interface{}{
+	text, _ = callTool(t, a, "torque_task_search", map[string]interface{}{
 		"query":            "x",
 		"include_internal": "1",
 	})
@@ -315,7 +315,7 @@ func TestFullStack_TaskList_DefaultExcludesInternal(t *testing.T) {
 func TestFullStack_TaskUpdate_Facets(t *testing.T) {
 	a := setupAdapter(t)
 
-	text, _ := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "u",
 		"description": "x",
 	})
@@ -323,7 +323,7 @@ func TestFullStack_TaskUpdate_Facets(t *testing.T) {
 	parseData(t, text, &created)
 	id := created["ID"].(string)
 
-	text, isErr := callTool(t, a, "clockwork_task_update", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_update", map[string]interface{}{
 		"id":                     id,
 		"checkpoint_mode":        "blocking",
 		"on_checkpoint_response": "review",
@@ -340,12 +340,12 @@ func TestFullStack_TaskUpdate_Facets(t *testing.T) {
 }
 
 // TestFullStack_TaskUpdate_WritableFields exercises each field newly exposed on
-// the clockwork_task_update MCP tool for HTTP PUT parity (CW-20260417-0007).
+// the torque_task_update MCP tool for HTTP PUT parity (CW-20260417-0007).
 // Each field gets a round-trip check via the returned TaskRecord JSON.
 func TestFullStack_TaskUpdate_WritableFields(t *testing.T) {
 	a := setupAdapter(t)
 
-	text, _ := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "writable-fields",
 		"description": "x",
 	})
@@ -354,7 +354,7 @@ func TestFullStack_TaskUpdate_WritableFields(t *testing.T) {
 	id := created["ID"].(string)
 
 	// Scalars / simple strings / bools / numbers.
-	text, isErr := callTool(t, a, "clockwork_task_update", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_update", map[string]interface{}{
 		"id":                 id,
 		"manual":             true,
 		"executor":           "cli",
@@ -399,7 +399,7 @@ func TestFullStack_TaskUpdate_WritableFields(t *testing.T) {
 
 	// JSON-blob fields (passed as JSON-encoded strings).
 	// Need a real task ID for depends_on to satisfy validateTaskWrites.
-	text, _ = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, _ = callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "dep",
 		"description": "x",
 	})
@@ -407,7 +407,7 @@ func TestFullStack_TaskUpdate_WritableFields(t *testing.T) {
 	parseData(t, text, &dep)
 	depID := dep["ID"].(string)
 
-	text, isErr = callTool(t, a, "clockwork_task_update", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_task_update", map[string]interface{}{
 		"id":               id,
 		"tools":            `["Read","Write"]`,
 		"permissions":      `{"net":"allow"}`,
@@ -444,7 +444,7 @@ func TestFullStack_TaskLifecycle(t *testing.T) {
 	a := setupAdapter(t)
 
 	// Create a task.
-	text, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "Lifecycle task",
 		"description": "Testing full lifecycle",
 	})
@@ -455,28 +455,28 @@ func TestFullStack_TaskLifecycle(t *testing.T) {
 	id := created["ID"].(string)
 
 	// todo → doing.
-	text, isErr = callTool(t, a, "clockwork_task_transition", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_task_transition", map[string]interface{}{
 		"id":     id,
 		"status": "doing",
 	})
 	require.False(t, isErr, "todo→doing should succeed: %s", text)
 
 	// doing → review.
-	text, isErr = callTool(t, a, "clockwork_task_transition", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_task_transition", map[string]interface{}{
 		"id":     id,
 		"status": "review",
 	})
 	require.False(t, isErr, "doing→review should succeed: %s", text)
 
 	// review → done.
-	text, isErr = callTool(t, a, "clockwork_task_transition", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_task_transition", map[string]interface{}{
 		"id":     id,
 		"status": "done",
 	})
 	require.False(t, isErr, "review→done should succeed: %s", text)
 
 	// done → doing (invalid).
-	text, isErr = callTool(t, a, "clockwork_task_transition", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_task_transition", map[string]interface{}{
 		"id":     id,
 		"status": "doing",
 	})
@@ -486,7 +486,7 @@ func TestFullStack_TaskLifecycle(t *testing.T) {
 func TestFullStack_Health(t *testing.T) {
 	a := setupAdapter(t)
 
-	text, isErr := callTool(t, a, "clockwork_health", map[string]interface{}{})
+	text, isErr := callTool(t, a, "torque_health", map[string]interface{}{})
 	require.False(t, isErr, "health should not error")
 	require.Contains(t, text, "running")
 }
@@ -495,20 +495,20 @@ func TestFullStack_SearchTasks(t *testing.T) {
 	a := setupAdapter(t)
 
 	// Create two tasks.
-	_, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "Fix login bug",
 		"description": "Login is broken",
 	})
 	require.False(t, isErr)
 
-	_, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	_, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "Add unit tests",
 		"description": "Write tests for all handlers",
 	})
 	require.False(t, isErr)
 
 	// Search for "login".
-	text, isErr := callTool(t, a, "clockwork_task_search", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_search", map[string]interface{}{
 		"query": "login",
 	})
 	require.False(t, isErr, "search should not error: %s", text)
@@ -529,39 +529,39 @@ func TestFullStack_TaskList_FilterByProjectID(t *testing.T) {
 	// Create the projects first (features are enabled, so task_create validates existence).
 	// repo_path supplied because project_create requires it for real-shape projects;
 	// distinct paths keep the two projects unambiguously separate fixtures.
-	text, isErr := callTool(t, a, "clockwork_project_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":      "Alpha",
-		"repo_path": "/tmp/clockwork-test/alpha",
+		"repo_path": "/tmp/torque-test/alpha",
 	})
 	require.False(t, isErr, "create project Alpha: %s", text)
 	var projAlpha map[string]interface{}
 	parseData(t, text, &projAlpha)
 	alphaID := projAlpha["ID"].(string)
 
-	text, isErr = callTool(t, a, "clockwork_project_create", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":      "Beta",
-		"repo_path": "/tmp/clockwork-test/beta",
+		"repo_path": "/tmp/torque-test/beta",
 	})
 	require.False(t, isErr, "create project Beta: %s", text)
 	var projBeta map[string]interface{}
 	parseData(t, text, &projBeta)
 	betaID := projBeta["ID"].(string)
 
-	_, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	_, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "Project Alpha task",
 		"description": "belongs to alpha",
 		"project_id":  alphaID,
 	})
 	require.False(t, isErr)
 
-	_, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	_, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "Project Beta task",
 		"description": "belongs to beta",
 		"project_id":  betaID,
 	})
 	require.False(t, isErr)
 
-	text, isErr = callTool(t, a, "clockwork_task_list", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{
 		"project_id": alphaID,
 	})
 	require.False(t, isErr, "task_list with project_id should not error: %s", text)
@@ -579,14 +579,14 @@ func TestFullStack_TaskList_FilterByProjectID(t *testing.T) {
 func TestFullStack_TaskList_FilterByTags(t *testing.T) {
 	a := setupAdapter(t)
 
-	_, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "Backend task",
 		"description": "x",
 		"tags":        `["backend","p1"]`,
 	})
 	require.False(t, isErr)
 
-	_, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	_, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "Frontend task",
 		"description": "x",
 		"tags":        `["frontend"]`,
@@ -594,7 +594,7 @@ func TestFullStack_TaskList_FilterByTags(t *testing.T) {
 	require.False(t, isErr)
 
 	// Filter to tasks with "backend" tag.
-	text, isErr := callTool(t, a, "clockwork_task_list", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
 		"tags": `["backend"]`,
 	})
 	require.False(t, isErr, "task_list with tags should not error: %s", text)
@@ -613,7 +613,7 @@ func TestFullStack_TaskList_FilterByManual(t *testing.T) {
 	a := setupAdapter(t)
 
 	// Create one manual and one non-manual task (update bypasses safety override).
-	text, _ := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "Manual task",
 		"description": "x",
 	})
@@ -622,7 +622,7 @@ func TestFullStack_TaskList_FilterByManual(t *testing.T) {
 	id1 := created1["ID"].(string)
 	// Keep manual=true (already forced by safety override).
 
-	text, _ = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, _ = callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "Auto task",
 		"description": "x",
 	})
@@ -631,7 +631,7 @@ func TestFullStack_TaskList_FilterByManual(t *testing.T) {
 	id2 := created2["ID"].(string)
 
 	// Flip task2 to manual=false via update.
-	_, isErr := callTool(t, a, "clockwork_task_update", map[string]interface{}{
+	_, isErr := callTool(t, a, "torque_task_update", map[string]interface{}{
 		"id":     id2,
 		"manual": false,
 	})
@@ -640,7 +640,7 @@ func TestFullStack_TaskList_FilterByManual(t *testing.T) {
 	_ = id1 // id1 stays manual=true
 
 	t.Run("manual filter returns only manual tasks", func(t *testing.T) {
-		text, isErr := callTool(t, a, "clockwork_task_list", map[string]interface{}{
+		text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
 			"manual": "manual",
 		})
 		require.False(t, isErr, "should not error: %s", text)
@@ -653,7 +653,7 @@ func TestFullStack_TaskList_FilterByManual(t *testing.T) {
 	})
 
 	t.Run("auto filter returns only non-manual tasks", func(t *testing.T) {
-		text, isErr := callTool(t, a, "clockwork_task_list", map[string]interface{}{
+		text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
 			"manual": "auto",
 		})
 		require.False(t, isErr, "should not error: %s", text)
@@ -666,7 +666,7 @@ func TestFullStack_TaskList_FilterByManual(t *testing.T) {
 	})
 
 	t.Run("both/omit returns all tasks", func(t *testing.T) {
-		text, isErr := callTool(t, a, "clockwork_task_list", map[string]interface{}{
+		text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
 			"manual": "both",
 		})
 		require.False(t, isErr, "should not error: %s", text)
@@ -684,39 +684,39 @@ func TestFullStack_TaskList_CombinedSearchAndProjectID(t *testing.T) {
 
 	// Create projects. repo_path supplied because project_create requires it for real-shape
 	// projects; the test exercises combined search+project_id filtering, not validation edges.
-	text, isErr := callTool(t, a, "clockwork_project_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":      "Alpha",
-		"repo_path": "/tmp/clockwork-test/alpha",
+		"repo_path": "/tmp/torque-test/alpha",
 	})
 	require.False(t, isErr)
 	var projAlpha map[string]interface{}
 	parseData(t, text, &projAlpha)
 	alphaID := projAlpha["ID"].(string)
 
-	text, isErr = callTool(t, a, "clockwork_project_create", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":      "Beta",
-		"repo_path": "/tmp/clockwork-test/beta",
+		"repo_path": "/tmp/torque-test/beta",
 	})
 	require.False(t, isErr)
 	var projBeta map[string]interface{}
 	parseData(t, text, &projBeta)
 	betaID := projBeta["ID"].(string)
 
-	_, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	_, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "Auth bug in Alpha",
 		"description": "login broken",
 		"project_id":  alphaID,
 	})
 	require.False(t, isErr)
 
-	_, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	_, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "Auth bug in Beta",
 		"description": "login broken",
 		"project_id":  betaID,
 	})
 	require.False(t, isErr)
 
-	text, isErr = callTool(t, a, "clockwork_task_list", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{
 		"search":     "login",
 		"project_id": alphaID,
 	})
@@ -735,33 +735,33 @@ func TestFullStack_TaskSearch_WithSprintID(t *testing.T) {
 	a := setupAdapterWithFeatures(t)
 
 	// Create sprints.
-	text, isErr := callTool(t, a, "clockwork_sprint_create", map[string]interface{}{"name": "Sprint 01"})
+	text, isErr := callTool(t, a, "torque_sprint_create", map[string]interface{}{"name": "Sprint 01"})
 	require.False(t, isErr, "create sprint 01: %s", text)
 	var sprint01 map[string]interface{}
 	parseData(t, text, &sprint01)
 	sp01ID := sprint01["ID"].(string)
 
-	text, isErr = callTool(t, a, "clockwork_sprint_create", map[string]interface{}{"name": "Sprint 02"})
+	text, isErr = callTool(t, a, "torque_sprint_create", map[string]interface{}{"name": "Sprint 02"})
 	require.False(t, isErr, "create sprint 02: %s", text)
 	var sprint02 map[string]interface{}
 	parseData(t, text, &sprint02)
 	sp02ID := sprint02["ID"].(string)
 
-	_, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	_, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "Sprint task refactor",
 		"description": "refactoring the auth module",
 		"sprint_id":   sp01ID,
 	})
 	require.False(t, isErr)
 
-	_, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	_, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "Other sprint refactor",
 		"description": "refactoring something else",
 		"sprint_id":   sp02ID,
 	})
 	require.False(t, isErr)
 
-	text, isErr = callTool(t, a, "clockwork_task_search", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_task_search", map[string]interface{}{
 		"query":     "refactor",
 		"sprint_id": sp01ID,
 	})
@@ -782,7 +782,7 @@ func TestFullStack_TaskSearch_EmptyQueryReturnsError(t *testing.T) {
 
 	// task_search declares query as Required() so the MCP framework may reject
 	// it before the handler runs. Passing an explicit empty string instead.
-	text, isErr := callTool(t, a, "clockwork_task_search", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_search", map[string]interface{}{
 		"query": "",
 	})
 	require.True(t, isErr, "empty query should return error; got: %s", text)
@@ -791,19 +791,19 @@ func TestFullStack_TaskSearch_EmptyQueryReturnsError(t *testing.T) {
 	require.Equal(t, "query", field)
 }
 
-// TestFullStack_CommentSearch covers 7 sub-tests for clockwork_comment_search.
+// TestFullStack_CommentSearch covers 7 sub-tests for torque_comment_search.
 func TestFullStack_CommentSearch(t *testing.T) {
 	a := setupAdapter(t)
 
 	// Create two tasks.
-	text, _ := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title": "Task A", "description": "x",
 	})
 	var taskA map[string]interface{}
 	parseData(t, text, &taskA)
 	taskAID := taskA["ID"].(string)
 
-	text, _ = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, _ = callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title": "Task B", "description": "x",
 	})
 	var taskB map[string]interface{}
@@ -811,7 +811,7 @@ func TestFullStack_CommentSearch(t *testing.T) {
 	taskBID := taskB["ID"].(string)
 
 	// Add 3 comments.
-	_, isErr := callTool(t, a, "clockwork_comment_add", map[string]interface{}{
+	_, isErr := callTool(t, a, "torque_comment_add", map[string]interface{}{
 		"entity_type": "task",
 		"entity_id":   taskAID,
 		"author":      "alice",
@@ -819,7 +819,7 @@ func TestFullStack_CommentSearch(t *testing.T) {
 	})
 	require.False(t, isErr)
 
-	_, isErr = callTool(t, a, "clockwork_comment_add", map[string]interface{}{
+	_, isErr = callTool(t, a, "torque_comment_add", map[string]interface{}{
 		"entity_type": "task",
 		"entity_id":   taskAID,
 		"author":      "bob",
@@ -827,7 +827,7 @@ func TestFullStack_CommentSearch(t *testing.T) {
 	})
 	require.False(t, isErr)
 
-	_, isErr = callTool(t, a, "clockwork_comment_add", map[string]interface{}{
+	_, isErr = callTool(t, a, "torque_comment_add", map[string]interface{}{
 		"entity_type": "task",
 		"entity_id":   taskBID,
 		"author":      "alice",
@@ -846,7 +846,7 @@ func TestFullStack_CommentSearch(t *testing.T) {
 	}
 
 	t.Run("content match", func(t *testing.T) {
-		text, isErr := callTool(t, a, "clockwork_comment_search", map[string]interface{}{
+		text, isErr := callTool(t, a, "torque_comment_search", map[string]interface{}{
 			"query": "login",
 		})
 		require.False(t, isErr, "should not error: %s", text)
@@ -860,7 +860,7 @@ func TestFullStack_CommentSearch(t *testing.T) {
 	})
 
 	t.Run("entity_id scope", func(t *testing.T) {
-		text, isErr := callTool(t, a, "clockwork_comment_search", map[string]interface{}{
+		text, isErr := callTool(t, a, "torque_comment_search", map[string]interface{}{
 			"query":       "task",
 			"entity_type": "task",
 			"entity_id":   taskBID,
@@ -873,7 +873,7 @@ func TestFullStack_CommentSearch(t *testing.T) {
 	})
 
 	t.Run("author filter", func(t *testing.T) {
-		text, isErr := callTool(t, a, "clockwork_comment_search", map[string]interface{}{
+		text, isErr := callTool(t, a, "torque_comment_search", map[string]interface{}{
 			"query":  "login",
 			"author": "alice",
 		})
@@ -885,7 +885,7 @@ func TestFullStack_CommentSearch(t *testing.T) {
 
 	t.Run("author not in content still matches when query matches", func(t *testing.T) {
 		// "alice" is an author; query "Unrelated" doesn't mention alice by name.
-		text, isErr := callTool(t, a, "clockwork_comment_search", map[string]interface{}{
+		text, isErr := callTool(t, a, "torque_comment_search", map[string]interface{}{
 			"query":  "Unrelated",
 			"author": "alice",
 		})
@@ -897,7 +897,7 @@ func TestFullStack_CommentSearch(t *testing.T) {
 	})
 
 	t.Run("combined filters", func(t *testing.T) {
-		text, isErr := callTool(t, a, "clockwork_comment_search", map[string]interface{}{
+		text, isErr := callTool(t, a, "torque_comment_search", map[string]interface{}{
 			"query":       "login",
 			"entity_type": "task",
 			"entity_id":   taskAID,
@@ -912,7 +912,7 @@ func TestFullStack_CommentSearch(t *testing.T) {
 
 	t.Run("limit and truncated flag", func(t *testing.T) {
 		// query "login" matches 2 comments; limit to 1.
-		text, isErr := callTool(t, a, "clockwork_comment_search", map[string]interface{}{
+		text, isErr := callTool(t, a, "torque_comment_search", map[string]interface{}{
 			"query": "login",
 			"limit": "1",
 		})
@@ -925,7 +925,7 @@ func TestFullStack_CommentSearch(t *testing.T) {
 	})
 
 	t.Run("empty query returns error", func(t *testing.T) {
-		text, isErr := callTool(t, a, "clockwork_comment_search", map[string]interface{}{
+		text, isErr := callTool(t, a, "torque_comment_search", map[string]interface{}{
 			"query": "",
 		})
 		require.True(t, isErr, "empty query should error; got: %s", text)
@@ -936,12 +936,12 @@ func TestFullStack_CommentSearch(t *testing.T) {
 }
 
 // TestFullStack_TaskCreate_ForcesManualTrue_ExplicitFalse verifies the
-// CW-20260417-0133 safety override at the MCP surface: clockwork_task_create
+// CW-20260417-0133 safety override at the MCP surface: torque_task_create
 // with an explicit manual=false still persists manual=true.
 func TestFullStack_TaskCreate_ForcesManualTrue_ExplicitFalse(t *testing.T) {
 	a := setupAdapter(t)
 
-	text, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "mcp-force-explicit",
 		"description": "x",
 		"manual":      false,
@@ -954,12 +954,12 @@ func TestFullStack_TaskCreate_ForcesManualTrue_ExplicitFalse(t *testing.T) {
 }
 
 // TestFullStack_TaskCreate_ManualOmitted_CoercedToTrue verifies that a
-// clockwork_task_create call with no manual arg (historical default-false)
+// torque_task_create call with no manual arg (historical default-false)
 // is coerced to manual=true.
 func TestFullStack_TaskCreate_ManualOmitted_CoercedToTrue(t *testing.T) {
 	a := setupAdapter(t)
 
-	text, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "mcp-force-omitted",
 		"description": "x",
 	})
@@ -976,7 +976,7 @@ func TestFullStack_TaskCreate_ManualOmitted_CoercedToTrue(t *testing.T) {
 func TestFullStack_TaskUpdate_ManualFalse_Unchanged(t *testing.T) {
 	a := setupAdapter(t)
 
-	text, _ := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "mcp-promote-me",
 		"description": "x",
 	})
@@ -985,7 +985,7 @@ func TestFullStack_TaskUpdate_ManualFalse_Unchanged(t *testing.T) {
 	id := created["ID"].(string)
 	require.Equal(t, true, created["Manual"])
 
-	text, isErr := callTool(t, a, "clockwork_task_update", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_update", map[string]interface{}{
 		"id":     id,
 		"manual": false,
 	})
@@ -997,7 +997,7 @@ func TestFullStack_TaskUpdate_ManualFalse_Unchanged(t *testing.T) {
 }
 
 // TestFullStack_TaskUpdate_ManualStringCoercion reproduces CW-20260418-0019
-// Instance 1: clockwork_task_update manual=true returned success but the
+// Instance 1: torque_task_update manual=true returned success but the
 // DB column didn't flip. Root cause was the local reqBool helper silently
 // returning false for any non-bool JSON type, including strings. If a
 // caller (or a middle layer) shipped "manual": "true" as a JSON string,
@@ -1011,7 +1011,7 @@ func TestFullStack_TaskUpdate_ManualStringCoercion(t *testing.T) {
 	// Create a task (forced manual=true by CW-20260417-0133 override) and
 	// flip it to manual=false with a properly-typed bool so we have a
 	// known baseline to flip back.
-	text, _ := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "coerce-me",
 		"description": "x",
 	})
@@ -1019,7 +1019,7 @@ func TestFullStack_TaskUpdate_ManualStringCoercion(t *testing.T) {
 	parseData(t, text, &created)
 	id := created["ID"].(string)
 
-	text, isErr := callTool(t, a, "clockwork_task_update", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_update", map[string]interface{}{
 		"id":     id,
 		"manual": false,
 	})
@@ -1029,7 +1029,7 @@ func TestFullStack_TaskUpdate_ManualStringCoercion(t *testing.T) {
 	require.Equal(t, false, flipped["Manual"])
 
 	// The silent-drop repro: caller sends "true" as a JSON string.
-	text, isErr = callTool(t, a, "clockwork_task_update", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_task_update", map[string]interface{}{
 		"id":     id,
 		"manual": "true",
 	})
@@ -1037,10 +1037,10 @@ func TestFullStack_TaskUpdate_ManualStringCoercion(t *testing.T) {
 	var promoted map[string]interface{}
 	parseData(t, text, &promoted)
 	assert.Equal(t, true, promoted["Manual"],
-		`clockwork_task_update manual="true" (string) must coerce to bool true; silent drop was CW-20260418-0019 Instance 1`)
+		`torque_task_update manual="true" (string) must coerce to bool true; silent drop was CW-20260418-0019 Instance 1`)
 
 	// Confirm the DB row agrees (not just the response echo).
-	text, _ = callTool(t, a, "clockwork_task_get", map[string]interface{}{"id": id})
+	text, _ = callTool(t, a, "torque_task_get", map[string]interface{}{"id": id})
 	var got map[string]interface{}
 	parseData(t, text, &got)
 	assert.Equal(t, true, got["Manual"], "task_get must reflect the coerced manual=true in DB")
@@ -1073,7 +1073,7 @@ func TestFullStack_TaskUpdate_BoolCoercionVariants(t *testing.T) {
 		tc := tc
 		t.Run(tc.label, func(t *testing.T) {
 			a := setupAdapter(t)
-			text, _ := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+			text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
 				"title":       "bool-variant",
 				"description": "x",
 			})
@@ -1083,7 +1083,7 @@ func TestFullStack_TaskUpdate_BoolCoercionVariants(t *testing.T) {
 
 			// Baseline: flip to the opposite of tc.want so we can detect an
 			// actual change.
-			text, _ = callTool(t, a, "clockwork_task_update", map[string]interface{}{
+			text, _ = callTool(t, a, "torque_task_update", map[string]interface{}{
 				"id":     id,
 				"manual": !tc.want,
 			})
@@ -1091,7 +1091,7 @@ func TestFullStack_TaskUpdate_BoolCoercionVariants(t *testing.T) {
 			parseData(t, text, &baseline)
 			require.Equal(t, !tc.want, baseline["Manual"])
 
-			text, isErr := callTool(t, a, "clockwork_task_update", map[string]interface{}{
+			text, isErr := callTool(t, a, "torque_task_update", map[string]interface{}{
 				"id":     id,
 				"manual": tc.input,
 			})

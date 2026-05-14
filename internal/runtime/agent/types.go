@@ -1,4 +1,4 @@
-// Package agent is clockwork's unified agent-boot substrate.
+// Package agent is torque's unified agent-boot substrate.
 //
 // One entry point — Boot — replaces the prior split between cliexec (per-task
 // scheduler-dispatched executor) and sessionmgr (long-lived sessions). Every
@@ -6,12 +6,12 @@
 //
 //   - Per-task ephemeral boot dir (planted CLAUDE.md / AGENTS.md / .mcp.json)
 //   - Persistent workspace dir (root + prompts/ state/ logs/ scaffolded; the
-//     lib writes session.log when LogPath is unset, but clockwork doesn't
+//     lib writes session.log when LogPath is unset, but torque doesn't
 //     mirror prompts/state into it today — see workspace.go for the
 //     fence on what the substrate does vs. what's reserved)
 //   - Composed system prompt (role + agent-file + project context)
 //   - MCP loopback (closure-bound, no task_id parameter)
-//   - Composed env (filtered OS env + CLOCKWORK_TASK_ID + CLOCKWORK_RUN_ID +
+//   - Composed env (filtered OS env + TORQUE_TASK_ID + TORQUE_RUN_ID +
 //     agent_file.environment + opts.Env + per-provider amendments)
 //   - Sandbox profile (zero-value preserves "no sandbox" today)
 //
@@ -82,7 +82,7 @@ func (m Mode) String() string {
 }
 
 // parseModeString is the inverse of Mode.String — used by sessionFromRecord
-// to recover Mode from the SessionMeta `clockwork.mode` key. Unknown / empty
+// to recover Mode from the SessionMeta `torque.mode` key. Unknown / empty
 // strings round-trip to ModeLongLived (the zero value), matching the default
 // for any session whose meta predates the stamping convention.
 func parseModeString(s string) Mode {
@@ -146,7 +146,7 @@ type Session struct {
 	RuntimeKind     string            `json:"RuntimeKind"`
 	Workdir         string            `json:"Workdir"`      // spawned process cwd (boot dir for claude/codex; project dir for opencode)
 	BootDir         string            `json:"BootDir"`      // ephemeral per-task tempdir
-	WorkspaceDir    string            `json:"WorkspaceDir"` // persistent ~/.clockwork/workspaces/<project>/<sessID>/
+	WorkspaceDir    string            `json:"WorkspaceDir"` // persistent ~/.torque/workspaces/<project>/<sessID>/
 	ProjectID       string            `json:"ProjectID"`
 	TaskID          string            `json:"TaskID"`
 	ParentSessionID string            `json:"ParentSessionID,omitempty"` // ModeSubagent

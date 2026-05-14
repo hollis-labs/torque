@@ -2,7 +2,7 @@
 
 // Package smoke_templates_test exercises the Phase F exit criteria for the
 // Task Model MVP (spec §8.3) against the real service, store, and scheduler
-// — no HTTP harness. Run with `go test -tags=smoke ./cmd/clockwork`.
+// — no HTTP harness. Run with `go test -tags=smoke ./cmd/torque`.
 //
 // Seven criteria, one subtest each:
 //  1. All five reference templates create cleanly via the service layer.
@@ -29,15 +29,15 @@ import (
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/bootstrap"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/queue"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/waitpoll"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
-	"github.com/hollis-labs/clockwork-manifold/internal/testutil/sqlitetest"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/runtime/bootstrap"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/queue"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/runtime/waitpoll"
+	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/testutil/sqlitetest"
 )
 
 type smokeStack struct {

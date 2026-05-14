@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/waitpoll"
+	"github.com/hollis-labs/torque/internal/runtime/waitpoll"
 )
 
 type stubPredicate struct {
@@ -15,8 +15,8 @@ type stubPredicate struct {
 	result bool
 }
 
-func (s *stubPredicate) Type() string                         { return s.typ }
-func (s *stubPredicate) Validate(_ map[string]any) error      { return nil }
+func (s *stubPredicate) Type() string                    { return s.typ }
+func (s *stubPredicate) Validate(_ map[string]any) error { return nil }
 func (s *stubPredicate) Evaluate(_ context.Context, _ map[string]any) (bool, error) {
 	return s.result, nil
 }

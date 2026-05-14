@@ -9,13 +9,13 @@
 
 ## Purpose
 
-Clockwork-Manifold's scheduler → executor → artifact → result loop is being wired for real end-to-end task runs (`BLG-20260409-001` and the boot-prompt E2E goal). Three sibling Go / PHP projects already have production runner patterns. This doc captures the load-bearing ideas so Path A/B designs can borrow instead of reinvent.
+Torque-Manifold's scheduler → executor → artifact → result loop is being wired for real end-to-end task runs (`BLG-20260409-001` and the boot-prompt E2E goal). Three sibling Go / PHP projects already have production runner patterns. This doc captures the load-bearing ideas so Path A/B designs can borrow instead of reinvent.
 
 ---
 
 ## Hadron — closest analog
 
-Hadron is the closest structural match: Go, SQLite-backed run records, worker pool, scheduled triggers. No deliverables gate — that's a novel feature in clockwork-manifold.
+Hadron is the closest structural match: Go, SQLite-backed run records, worker pool, scheduled triggers. No deliverables gate — that's a novel feature in torque.
 
 ### Run lifecycle
 
@@ -92,7 +92,7 @@ func (b *Broadcaster) Publish(e Event)  // non-blocking; drops on full buffer
 - Buffered channels (64-slot).
 - `Publish` uses a non-blocking `select` — if a subscriber's buffer is full, the event is dropped **for that subscriber only**. Publisher never blocks.
 - Event types: `pipeline.started`, `step.skipped`, `step.completed`, `pipeline.cancelled`.
-- This is structurally identical to what `internal/runtime/scheduler/events.go:57-75` already does in clockwork-manifold. Pattern is already adopted; we just need to bridge it to HTTP.
+- This is structurally identical to what `internal/runtime/scheduler/events.go:57-75` already does in torque. Pattern is already adopted; we just need to bridge it to HTTP.
 
 ### Smoke testing
 
@@ -108,7 +108,7 @@ func (b *Broadcaster) Publish(e Event)  // non-blocking; drops on full buffer
 
 ## Fragments-Engine — lifecycle-hook inspiration
 
-Older and larger. Most of its value is the **lifecycle-hook model** that inspired clockwork-manifold's `on_done` / `on_fail` rules. Validates the design choice rather than providing new code to borrow.
+Older and larger. Most of its value is the **lifecycle-hook model** that inspired torque's `on_done` / `on_fail` rules. Validates the design choice rather than providing new code to borrow.
 
 ### Run lifecycle
 
@@ -121,13 +121,13 @@ Older and larger. Most of its value is the **lifecycle-hook model** that inspire
 
 - Executor output captured as structured result.
 - Artifacts promoted via CLI (`volon artifact promote`) — copies to `docs/`, injects `promoted_at` frontmatter, logs to `.agentrc/logs/`.
-- **No in-process artifact callback** — the CLI is responsible for writing. This is the opposite end of the spectrum from Hadron's event-stream approach. Clockwork should prefer Hadron's model.
+- **No in-process artifact callback** — the CLI is responsible for writing. This is the opposite end of the spectrum from Hadron's event-stream approach. Torque should prefer Hadron's model.
 
 ### Executor dispatch
 
 - Multi-worker scheduler loop. Each tick tries `claimNextTodo()` with optimistic locking.
 - Executor wraps providers (Claude, local CLI). Signal tokens handled for interrupts.
-- `LogBroadcast` callback streams task logs line-by-line to the HTTP server for SSE. **This is the same seam clockwork's scheduler has** — executor → callback → bus → HTTP.
+- `LogBroadcast` callback streams task logs line-by-line to the HTTP server for SSE. **This is the same seam torque's scheduler has** — executor → callback → bus → HTTP.
 
 ### Lifecycle hooks
 
@@ -158,7 +158,7 @@ Write one row per streamed event (log line, signal, artifact, status change). Ke
 - Live tailing (subscribe to new rows)
 - GUI log viewer that doesn't need to be connected during execution
 
-**Clockwork status:** Table already exists in `migrations/003_concurrency.sql:3`. No Go wrapper, no scheduler integration. Comment on the migration says "drained from queue.db into this table for persistence" — implies a future write-buffer architecture that never landed. For now we can write directly from the scheduler's event callback.
+**Torque status:** Table already exists in `migrations/003_concurrency.sql:3`. No Go wrapper, no scheduler integration. Comment on the migration says "drained from queue.db into this table for persistence" — implies a future write-buffer architecture that never landed. For now we can write directly from the scheduler's event callback.
 
 ### 2. Broadcaster / non-blocking fan-out (Nanite)
 
@@ -166,13 +166,13 @@ Pattern: publisher never blocks on slow subscribers; slow subscribers drop event
 
 ### 3. Worker pool + buffered queue (Hadron)
 
-Decouples scheduler tick from execution. Already implemented in `internal/runtime/scheduler/worker.go`. Clockwork matches Hadron here.
+Decouples scheduler tick from execution. Already implemented in `internal/runtime/scheduler/worker.go`. Torque matches Hadron here.
 
 ### 4. Lifecycle boundary rules (Fragments-Engine)
 
-Gate task transitions on `on_done` / `on_fail` rules. Already implemented in `internal/runtime/scheduler/lifecycle.go`. Clockwork matches.
+Gate task transitions on `on_done` / `on_fail` rules. Already implemented in `internal/runtime/scheduler/lifecycle.go`. Torque matches.
 
-### 5. Deliverables gate (novel to clockwork)
+### 5. Deliverables gate (novel to torque)
 
 No prior art in any of the three repos. Half-wired at `internal/runtime/scheduler/lifecycle.go:54-66`. Needs `result.Artifacts` to be populated — currently executors stream artifacts via callback but don't append to the result struct, so the gate never sees them.
 
@@ -180,7 +180,7 @@ No prior art in any of the three repos. Half-wired at `internal/runtime/schedule
 
 ## Anti-patterns to avoid
 
-- **Polling-only HTTP surface (Hadron).** Fine for Hadron's audit-first use case, wrong for clockwork-manifold's "watch your task run" UX. We already have SSE infrastructure; use it.
+- **Polling-only HTTP surface (Hadron).** Fine for Hadron's audit-first use case, wrong for torque's "watch your task run" UX. We already have SSE infrastructure; use it.
 - **Synchronous in-memory run state (Nanite).** Fine for Nanite's short-lived pipelines, wrong for multi-minute LLM task runs. We already persist runs; keep doing that.
 - **Mock-free smoke testing (Fragments-Engine).** We already have `MockExecutor` in `internal/runtime/executor/mock.go`. Keep the mock path and add a real-CLI path alongside it.
 
@@ -205,7 +205,7 @@ When writing the deliverables plumbing fix:
 
 ## Named decisions (from this survey)
 
-**D1 — Borrow Hadron's append-only run_events model, not Fragments-Engine's CLI-promotion model.** Clockwork needs in-process event capture for live observability; CLI promotion is too slow and too coupled to a specific workflow.
+**D1 — Borrow Hadron's append-only run_events model, not Fragments-Engine's CLI-promotion model.** Torque needs in-process event capture for live observability; CLI promotion is too slow and too coupled to a specific workflow.
 
 **D2 — Use the existing `EventBus`, bridge to existing `SSEHub`.** Don't add a third broadcaster. One adapter goroutine closes the gap.
 
@@ -213,4 +213,4 @@ When writing the deliverables plumbing fix:
 
 **D4 — `result.Artifacts` must be populated during execution**, not just streamed. The deliverables gate and the run_events persistence both need this. Fix it once, in the executor plugins, early in Path A.
 
-**D5 — Single process (clockwork serve).** Hadron and Fragments-Engine both run scheduler + HTTP in one process. Clockwork's split (`clockworkd` + `clockwork serve`) is an accident of staged development, not a design choice.
+**D5 — Single process (torque serve).** Hadron and Fragments-Engine both run scheduler + HTTP in one process. Torque's split (`torqued` + `torque serve`) is an accident of staged development, not a design choice.

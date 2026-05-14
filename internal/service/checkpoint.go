@@ -11,8 +11,8 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/hitl"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/hitl"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 // ErrNoLiveSessionForTask is the sentinel a CheckpointResponseDispatcher
@@ -121,7 +121,7 @@ type CheckpointCancelInput struct {
 // source defaults, persists the row, and — when the task is actively running
 // (status=doing) and its checkpoint_mode is "blocking" — parks it in review
 // with BlockedReason="awaiting checkpoint <corr>". This is the sole code path
-// for checkpoint emission (the legacy in-run CLOCKWORK_CHECKPOINT stdout
+// for checkpoint emission (the legacy in-run TORQUE_CHECKPOINT stdout
 // signal protocol was retired in Phase E / CW-20260427-0043; spec §4.2).
 //
 // The park is conditional at the SQL level via store.ParkTaskOnCheckpoint:

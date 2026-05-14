@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/mcpadapter"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/mcpadapter"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -76,8 +76,8 @@ func toolIsRegistered(t *testing.T, a *mcpadapter.Adapter, toolName string) bool
 func TestSprintToolsNotRegisteredWhenDisabled(t *testing.T) {
 	a := setupAdapter(t)
 	// Sprint tools should not be registered when features.sprints is not enabled
-	assert.False(t, toolIsRegistered(t, a, "clockwork_sprint_create"),
-		"clockwork_sprint_create should not be registered when sprints feature is disabled")
+	assert.False(t, toolIsRegistered(t, a, "torque_sprint_create"),
+		"torque_sprint_create should not be registered when sprints feature is disabled")
 }
 
 func TestSprintToolsRegisteredWhenEnabled(t *testing.T) {
@@ -85,7 +85,7 @@ func TestSprintToolsRegisteredWhenEnabled(t *testing.T) {
 	require.NoError(t, svc.Feature.Enable("sprints"))
 	a := adapterFromService(svc)
 
-	text, isErr := callTool(t, a, "clockwork_sprint_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_sprint_create", map[string]interface{}{
 		"name": "Sprint 1",
 		"goal": "Ship it",
 	})
@@ -98,7 +98,7 @@ func TestSprintToolsRegisteredWhenEnabled(t *testing.T) {
 }
 
 // TestSprintCreate_GoalRoundTrip_EdgeCaseStrings reproduces CW-20260418-0019
-// Instance 2: clockwork_sprint_create silently dropped multi-line goal
+// Instance 2: torque_sprint_create silently dropped multi-line goal
 // strings because handleSprintCreate never read goal from the request and
 // SprintCreateInput had no Goal field at all. Exercises multi-line,
 // special-char, embedded-JSON, and Unicode payloads to guard against
@@ -118,7 +118,7 @@ func TestSprintCreate_GoalRoundTrip_EdgeCaseStrings(t *testing.T) {
 			require.NoError(t, svc.Feature.Enable("sprints"))
 			a := adapterFromService(svc)
 
-			text, isErr := callTool(t, a, "clockwork_sprint_create", map[string]interface{}{
+			text, isErr := callTool(t, a, "torque_sprint_create", map[string]interface{}{
 				"name": "Goal edge-case " + name,
 				"goal": goal,
 			})
@@ -131,7 +131,7 @@ func TestSprintCreate_GoalRoundTrip_EdgeCaseStrings(t *testing.T) {
 			// Cross-check: fetch via sprint_get to confirm the DB row matches
 			// the create response (guards against the create response being
 			// populated from input while DB row silently loses the field).
-			text, isErr = callTool(t, a, "clockwork_sprint_get", map[string]interface{}{
+			text, isErr = callTool(t, a, "torque_sprint_get", map[string]interface{}{
 				"id": sprint["ID"],
 			})
 			require.False(t, isErr, "sprint_get should succeed: %s", text)
@@ -149,7 +149,7 @@ func TestSprintFullLifecycleViaMCP(t *testing.T) {
 	a := adapterFromService(svc)
 
 	// Create sprint
-	text, isErr := callTool(t, a, "clockwork_sprint_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_sprint_create", map[string]interface{}{
 		"name":          "Lifecycle Sprint",
 		"approval_mode": "approve_each",
 		"cost_budget":   float64(100),
@@ -161,19 +161,19 @@ func TestSprintFullLifecycleViaMCP(t *testing.T) {
 	sprintID := sprint["ID"].(string)
 
 	// Get sprint
-	text, isErr = callTool(t, a, "clockwork_sprint_get", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_sprint_get", map[string]interface{}{
 		"id": sprintID,
 	})
 	require.False(t, isErr, "sprint_get should succeed: %s", text)
 
 	// List active sprints (sprint is active by default)
-	text, isErr = callTool(t, a, "clockwork_sprint_list", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_sprint_list", map[string]interface{}{
 		"status": "active",
 	})
 	require.False(t, isErr, "sprint_list should succeed: %s", text)
 
 	// Create task in sprint (sprint is active)
-	text, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "Sprint task",
 		"description": "Task in the sprint",
 		"sprint_id":   sprintID,
@@ -185,32 +185,32 @@ func TestSprintFullLifecycleViaMCP(t *testing.T) {
 	taskID := task["ID"].(string)
 
 	// Move task through lifecycle
-	_, _ = callTool(t, a, "clockwork_task_transition", map[string]interface{}{"id": taskID, "status": "doing"})
-	_, _ = callTool(t, a, "clockwork_task_transition", map[string]interface{}{"id": taskID, "status": "review"})
+	_, _ = callTool(t, a, "torque_task_transition", map[string]interface{}{"id": taskID, "status": "doing"})
+	_, _ = callTool(t, a, "torque_task_transition", map[string]interface{}{"id": taskID, "status": "review"})
 
 	// Approve individual task
-	text, isErr = callTool(t, a, "clockwork_sprint_approve", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_sprint_approve", map[string]interface{}{
 		"id":      sprintID,
 		"task_id": taskID,
 	})
 	require.False(t, isErr, "sprint_approve should succeed: %s", text)
 
 	// Verify task is done
-	text, isErr = callTool(t, a, "clockwork_task_get", map[string]interface{}{"id": taskID})
+	text, isErr = callTool(t, a, "torque_task_get", map[string]interface{}{"id": taskID})
 	require.False(t, isErr)
 	var updatedTask map[string]interface{}
 	parseData(t, text, &updatedTask)
 	assert.Equal(t, "done", updatedTask["Status"])
 
 	// Transition sprint to inactive
-	text, isErr = callTool(t, a, "clockwork_sprint_update", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_sprint_update", map[string]interface{}{
 		"id":     sprintID,
 		"status": "inactive",
 	})
 	require.False(t, isErr, "sprint_update to inactive should succeed: %s", text)
 
 	// Delete sprint
-	text, isErr = callTool(t, a, "clockwork_sprint_delete", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_sprint_delete", map[string]interface{}{
 		"id": sprintID,
 	})
 	require.False(t, isErr, "sprint_delete should succeed: %s", text)
@@ -222,7 +222,7 @@ func TestProjectToolsViaMCP(t *testing.T) {
 	a := adapterFromService(svc)
 
 	// Create project
-	text, isErr := callTool(t, a, "clockwork_project_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":        "Test Project",
 		"description": "A test project",
 		"repo_path":   "/tmp/test-project",
@@ -235,7 +235,7 @@ func TestProjectToolsViaMCP(t *testing.T) {
 	assert.Contains(t, projectID, "PRJ-")
 
 	// List projects — new {items, meta} envelope shape
-	text, isErr = callTool(t, a, "clockwork_project_list", map[string]interface{}{})
+	text, isErr = callTool(t, a, "torque_project_list", map[string]interface{}{})
 	require.False(t, isErr, "project_list should succeed: %s", text)
 
 	var projectEnv struct {
@@ -247,7 +247,7 @@ func TestProjectToolsViaMCP(t *testing.T) {
 	assert.Equal(t, float64(1), projectEnv.Meta["returned"])
 
 	// Create task in project
-	text, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "Project task",
 		"description": "Task in the project",
 		"project_id":  projectID,
@@ -255,7 +255,7 @@ func TestProjectToolsViaMCP(t *testing.T) {
 	require.False(t, isErr, "task_create with project should succeed: %s", text)
 
 	// Delete project
-	text, isErr = callTool(t, a, "clockwork_project_delete", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_project_delete", map[string]interface{}{
 		"id": projectID,
 	})
 	require.False(t, isErr, "project_delete should succeed: %s", text)
@@ -267,7 +267,7 @@ func TestEpicToolsViaMCP(t *testing.T) {
 	a := adapterFromService(svc)
 
 	// Create epic
-	text, isErr := callTool(t, a, "clockwork_epic_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_epic_create", map[string]interface{}{
 		"name":        "Auth Overhaul",
 		"description": "Replace entire auth stack",
 	})
@@ -279,11 +279,11 @@ func TestEpicToolsViaMCP(t *testing.T) {
 	assert.Contains(t, epicID, "EP-")
 
 	// Get epic
-	text, isErr = callTool(t, a, "clockwork_epic_get", map[string]interface{}{"id": epicID})
+	text, isErr = callTool(t, a, "torque_epic_get", map[string]interface{}{"id": epicID})
 	require.False(t, isErr, "epic_get should succeed: %s", text)
 
 	// Update epic
-	text, isErr = callTool(t, a, "clockwork_epic_update", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_epic_update", map[string]interface{}{
 		"id":     epicID,
 		"name":   "Auth Overhaul v2",
 		"status": "inactive",
@@ -291,7 +291,7 @@ func TestEpicToolsViaMCP(t *testing.T) {
 	require.False(t, isErr, "epic_update should succeed: %s", text)
 
 	// List epics filtered by inactive — new {items, meta} envelope shape
-	text, isErr = callTool(t, a, "clockwork_epic_list", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_epic_list", map[string]interface{}{
 		"status": "inactive",
 	})
 	require.False(t, isErr, "epic_list should succeed: %s", text)
@@ -305,7 +305,7 @@ func TestEpicToolsViaMCP(t *testing.T) {
 	assert.Equal(t, float64(1), epicEnv.Meta["returned"])
 
 	// Create task in epic
-	text, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title":       "Epic task",
 		"description": "Task in the epic",
 		"epic_id":     epicID,
@@ -313,7 +313,7 @@ func TestEpicToolsViaMCP(t *testing.T) {
 	require.False(t, isErr, "task_create with epic should succeed: %s", text)
 
 	// Delete epic
-	text, isErr = callTool(t, a, "clockwork_epic_delete", map[string]interface{}{"id": epicID})
+	text, isErr = callTool(t, a, "torque_epic_delete", map[string]interface{}{"id": epicID})
 	require.False(t, isErr, "epic_delete should succeed: %s", text)
 }
 
@@ -323,7 +323,7 @@ func TestSprintApproveAllViaMCP(t *testing.T) {
 	a := adapterFromService(svc)
 
 	// Create sprint with approve_sprint mode
-	text, isErr := callTool(t, a, "clockwork_sprint_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_sprint_create", map[string]interface{}{
 		"name":          "Batch Approve Sprint",
 		"approval_mode": "approve_sprint",
 	})
@@ -336,10 +336,10 @@ func TestSprintApproveAllViaMCP(t *testing.T) {
 	// Sprint is already active by default — no transition needed
 
 	// Create two tasks, move to review
-	text1, _ := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text1, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title": "Task 1", "description": "First", "sprint_id": sprintID,
 	})
-	text2, _ := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text2, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title": "Task 2", "description": "Second", "sprint_id": sprintID,
 	})
 
@@ -349,13 +349,13 @@ func TestSprintApproveAllViaMCP(t *testing.T) {
 	t1ID := t1["ID"].(string)
 	t2ID := t2["ID"].(string)
 
-	callTool(t, a, "clockwork_task_transition", map[string]interface{}{"id": t1ID, "status": "doing"})
-	callTool(t, a, "clockwork_task_transition", map[string]interface{}{"id": t1ID, "status": "review"})
-	callTool(t, a, "clockwork_task_transition", map[string]interface{}{"id": t2ID, "status": "doing"})
-	callTool(t, a, "clockwork_task_transition", map[string]interface{}{"id": t2ID, "status": "review"})
+	callTool(t, a, "torque_task_transition", map[string]interface{}{"id": t1ID, "status": "doing"})
+	callTool(t, a, "torque_task_transition", map[string]interface{}{"id": t1ID, "status": "review"})
+	callTool(t, a, "torque_task_transition", map[string]interface{}{"id": t2ID, "status": "doing"})
+	callTool(t, a, "torque_task_transition", map[string]interface{}{"id": t2ID, "status": "review"})
 
 	// Approve all (no task_id)
-	text, isErr = callTool(t, a, "clockwork_sprint_approve", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_sprint_approve", map[string]interface{}{
 		"id": sprintID,
 	})
 	require.False(t, isErr, "sprint_approve_all should succeed: %s", text)
@@ -372,14 +372,14 @@ func TestTaskAssociationUpdateViaMCP(t *testing.T) {
 	// Create entities. project_create requires repo_path (real-shape project — repo_path is
 	// load-bearing for production callers; supplying a value here matches the project_create
 	// contract rather than papering over scope drift).
-	sprintText, isErr := callTool(t, a, "clockwork_sprint_create", map[string]interface{}{"name": "Sprint"})
+	sprintText, isErr := callTool(t, a, "torque_sprint_create", map[string]interface{}{"name": "Sprint"})
 	require.False(t, isErr)
-	projectText, isErr := callTool(t, a, "clockwork_project_create", map[string]interface{}{
+	projectText, isErr := callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":      "Project",
-		"repo_path": "/tmp/clockwork-test/task-association",
+		"repo_path": "/tmp/torque-test/task-association",
 	})
 	require.False(t, isErr)
-	epicText, isErr := callTool(t, a, "clockwork_epic_create", map[string]interface{}{"name": "Epic"})
+	epicText, isErr := callTool(t, a, "torque_epic_create", map[string]interface{}{"name": "Epic"})
 	require.False(t, isErr)
 
 	var sp, pr, ep map[string]interface{}
@@ -388,7 +388,7 @@ func TestTaskAssociationUpdateViaMCP(t *testing.T) {
 	parseData(t, epicText, &ep)
 
 	// Create unassociated task
-	taskText, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	taskText, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title": "Unassociated", "description": "No associations yet",
 	})
 	require.False(t, isErr)
@@ -398,7 +398,7 @@ func TestTaskAssociationUpdateViaMCP(t *testing.T) {
 	taskID := task["ID"].(string)
 
 	// Update task to assign to sprint, project, and epic
-	text, isErr := callTool(t, a, "clockwork_task_update", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_update", map[string]interface{}{
 		"id":         taskID,
 		"sprint_id":  sp["ID"],
 		"project_id": pr["ID"],
@@ -407,7 +407,7 @@ func TestTaskAssociationUpdateViaMCP(t *testing.T) {
 	require.False(t, isErr, "task_update with associations should succeed: %s", text)
 
 	// Verify associations
-	text, isErr = callTool(t, a, "clockwork_task_get", map[string]interface{}{"id": taskID})
+	text, isErr = callTool(t, a, "torque_task_get", map[string]interface{}{"id": taskID})
 	require.False(t, isErr)
 
 	var got map[string]interface{}
@@ -420,7 +420,7 @@ func TestTaskAssociationUpdateViaMCP(t *testing.T) {
 }
 
 // TestSprintCreateProjectIDViaMCP verifies project_id is exposed and persisted on
-// the clockwork_sprint_create tool. Closes the audit gap surfaced 2026-05-12 where
+// the torque_sprint_create tool. Closes the audit gap surfaced 2026-05-12 where
 // the underlying store accepted project_id but the MCP tool schema didn't declare
 // it, causing the parameter to be invisible to clients.
 func TestSprintCreateProjectIDViaMCP(t *testing.T) {
@@ -430,9 +430,9 @@ func TestSprintCreateProjectIDViaMCP(t *testing.T) {
 	a := adapterFromService(svc)
 
 	// Create project to associate with
-	projectText, isErr := callTool(t, a, "clockwork_project_create", map[string]interface{}{
+	projectText, isErr := callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":      "Project for sprint",
-		"repo_path": "/tmp/clockwork-test/sprint-project-id",
+		"repo_path": "/tmp/torque-test/sprint-project-id",
 	})
 	require.False(t, isErr)
 	var pr map[string]interface{}
@@ -440,7 +440,7 @@ func TestSprintCreateProjectIDViaMCP(t *testing.T) {
 	projectID := pr["ID"].(string)
 
 	// Create sprint with project_id
-	text, isErr := callTool(t, a, "clockwork_sprint_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_sprint_create", map[string]interface{}{
 		"name":       "Sprint with project",
 		"project_id": projectID,
 	})
@@ -451,7 +451,7 @@ func TestSprintCreateProjectIDViaMCP(t *testing.T) {
 	sprintID := sprint["ID"].(string)
 
 	// Read back via sprint_get to confirm DB persistence
-	text, isErr = callTool(t, a, "clockwork_sprint_get", map[string]interface{}{"id": sprintID})
+	text, isErr = callTool(t, a, "torque_sprint_get", map[string]interface{}{"id": sprintID})
 	require.False(t, isErr, "sprint_get should succeed: %s", text)
 	var resp map[string]interface{}
 	parseData(t, text, &resp)
@@ -462,7 +462,7 @@ func TestSprintCreateProjectIDViaMCP(t *testing.T) {
 }
 
 // TestSprintUpdateProjectIDViaMCP verifies project_id can be set on an existing
-// sprint via clockwork_sprint_update (the backfill path for the 3 sprints created
+// sprint via torque_sprint_update (the backfill path for the 3 sprints created
 // 2026-05-12 prior to this fix).
 func TestSprintUpdateProjectIDViaMCP(t *testing.T) {
 	svc := setupServiceDirect(t)
@@ -470,9 +470,9 @@ func TestSprintUpdateProjectIDViaMCP(t *testing.T) {
 	require.NoError(t, svc.Feature.Enable("projects"))
 	a := adapterFromService(svc)
 
-	projectText, isErr := callTool(t, a, "clockwork_project_create", map[string]interface{}{
+	projectText, isErr := callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":      "Project for update",
-		"repo_path": "/tmp/clockwork-test/sprint-update-project",
+		"repo_path": "/tmp/torque-test/sprint-update-project",
 	})
 	require.False(t, isErr)
 	var pr map[string]interface{}
@@ -480,7 +480,7 @@ func TestSprintUpdateProjectIDViaMCP(t *testing.T) {
 	projectID := pr["ID"].(string)
 
 	// Create sprint without project_id
-	sprintText, isErr := callTool(t, a, "clockwork_sprint_create", map[string]interface{}{
+	sprintText, isErr := callTool(t, a, "torque_sprint_create", map[string]interface{}{
 		"name": "Orphan sprint",
 	})
 	require.False(t, isErr)
@@ -489,14 +489,14 @@ func TestSprintUpdateProjectIDViaMCP(t *testing.T) {
 	sprintID := sprint["ID"].(string)
 
 	// Update to attach project_id
-	text, isErr := callTool(t, a, "clockwork_sprint_update", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_sprint_update", map[string]interface{}{
 		"id":         sprintID,
 		"project_id": projectID,
 	})
 	require.False(t, isErr, "sprint_update with project_id should succeed: %s", text)
 
 	// Read back
-	text, isErr = callTool(t, a, "clockwork_sprint_get", map[string]interface{}{"id": sprintID})
+	text, isErr = callTool(t, a, "torque_sprint_get", map[string]interface{}{"id": sprintID})
 	require.False(t, isErr)
 	var resp map[string]interface{}
 	parseData(t, text, &resp)
@@ -507,18 +507,18 @@ func TestSprintUpdateProjectIDViaMCP(t *testing.T) {
 }
 
 // TestSprintUpdateProjectIDClearViaMCP verifies an existing project_id can be
-// cleared via clockwork_sprint_update by passing an empty string. Closes Copilot
+// cleared via torque_sprint_update by passing an empty string. Closes Copilot
 // review feedback on PR #51: the documented clear behavior must actually persist
-// as SQL NULL (ProjectID.Valid=false), not as project_id = '' (Valid=true).
+// as SQL NULL (ProjectID.Valid=false), not as project_id = ” (Valid=true).
 func TestSprintUpdateProjectIDClearViaMCP(t *testing.T) {
 	svc := setupServiceDirect(t)
 	require.NoError(t, svc.Feature.Enable("sprints"))
 	require.NoError(t, svc.Feature.Enable("projects"))
 	a := adapterFromService(svc)
 
-	projectText, isErr := callTool(t, a, "clockwork_project_create", map[string]interface{}{
+	projectText, isErr := callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":      "Project for sprint clear",
-		"repo_path": "/tmp/clockwork-test/sprint-clear-project",
+		"repo_path": "/tmp/torque-test/sprint-clear-project",
 	})
 	require.False(t, isErr)
 	var pr map[string]interface{}
@@ -526,7 +526,7 @@ func TestSprintUpdateProjectIDClearViaMCP(t *testing.T) {
 	projectID := pr["ID"].(string)
 
 	// Create sprint with project_id set
-	sprintText, isErr := callTool(t, a, "clockwork_sprint_create", map[string]interface{}{
+	sprintText, isErr := callTool(t, a, "torque_sprint_create", map[string]interface{}{
 		"name":       "Sprint to clear",
 		"project_id": projectID,
 	})
@@ -536,14 +536,14 @@ func TestSprintUpdateProjectIDClearViaMCP(t *testing.T) {
 	sprintID := sprint["ID"].(string)
 
 	// Clear project_id via empty string
-	_, isErr = callTool(t, a, "clockwork_sprint_update", map[string]interface{}{
+	_, isErr = callTool(t, a, "torque_sprint_update", map[string]interface{}{
 		"id":         sprintID,
 		"project_id": "",
 	})
 	require.False(t, isErr, "sprint_update with empty project_id should succeed")
 
 	// Read back: ProjectID.Valid must be false (SQL NULL semantics)
-	text, isErr := callTool(t, a, "clockwork_sprint_get", map[string]interface{}{"id": sprintID})
+	text, isErr := callTool(t, a, "torque_sprint_get", map[string]interface{}{"id": sprintID})
 	require.False(t, isErr)
 	var resp map[string]interface{}
 	parseData(t, text, &resp)
@@ -553,16 +553,16 @@ func TestSprintUpdateProjectIDClearViaMCP(t *testing.T) {
 }
 
 // TestEpicCreateProjectIDViaMCP verifies project_id is exposed and persisted on
-// the clockwork_epic_create tool. Same audit-gap class as the sprint fix above.
+// the torque_epic_create tool. Same audit-gap class as the sprint fix above.
 func TestEpicCreateProjectIDViaMCP(t *testing.T) {
 	svc := setupServiceDirect(t)
 	require.NoError(t, svc.Feature.Enable("epics"))
 	require.NoError(t, svc.Feature.Enable("projects"))
 	a := adapterFromService(svc)
 
-	projectText, isErr := callTool(t, a, "clockwork_project_create", map[string]interface{}{
+	projectText, isErr := callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":      "Project for epic",
-		"repo_path": "/tmp/clockwork-test/epic-project-id",
+		"repo_path": "/tmp/torque-test/epic-project-id",
 	})
 	require.False(t, isErr)
 	var pr map[string]interface{}
@@ -570,7 +570,7 @@ func TestEpicCreateProjectIDViaMCP(t *testing.T) {
 	projectID := pr["ID"].(string)
 
 	// Create epic with project_id
-	text, isErr := callTool(t, a, "clockwork_epic_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_epic_create", map[string]interface{}{
 		"name":       "Epic with project",
 		"project_id": projectID,
 	})
@@ -581,7 +581,7 @@ func TestEpicCreateProjectIDViaMCP(t *testing.T) {
 	epicID := epic["ID"].(string)
 
 	// Read back via epic_get
-	text, isErr = callTool(t, a, "clockwork_epic_get", map[string]interface{}{"id": epicID})
+	text, isErr = callTool(t, a, "torque_epic_get", map[string]interface{}{"id": epicID})
 	require.False(t, isErr)
 	var got map[string]interface{}
 	parseData(t, text, &got)
@@ -591,23 +591,23 @@ func TestEpicCreateProjectIDViaMCP(t *testing.T) {
 }
 
 // TestEpicUpdateProjectIDViaMCP verifies project_id can be set on an existing
-// epic via clockwork_epic_update.
+// epic via torque_epic_update.
 func TestEpicUpdateProjectIDViaMCP(t *testing.T) {
 	svc := setupServiceDirect(t)
 	require.NoError(t, svc.Feature.Enable("epics"))
 	require.NoError(t, svc.Feature.Enable("projects"))
 	a := adapterFromService(svc)
 
-	projectText, isErr := callTool(t, a, "clockwork_project_create", map[string]interface{}{
+	projectText, isErr := callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":      "Project for epic update",
-		"repo_path": "/tmp/clockwork-test/epic-update-project",
+		"repo_path": "/tmp/torque-test/epic-update-project",
 	})
 	require.False(t, isErr)
 	var pr map[string]interface{}
 	parseData(t, projectText, &pr)
 	projectID := pr["ID"].(string)
 
-	epicText, isErr := callTool(t, a, "clockwork_epic_create", map[string]interface{}{
+	epicText, isErr := callTool(t, a, "torque_epic_create", map[string]interface{}{
 		"name": "Orphan epic",
 	})
 	require.False(t, isErr)
@@ -615,13 +615,13 @@ func TestEpicUpdateProjectIDViaMCP(t *testing.T) {
 	parseData(t, epicText, &epic)
 	epicID := epic["ID"].(string)
 
-	text, isErr := callTool(t, a, "clockwork_epic_update", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_epic_update", map[string]interface{}{
 		"id":         epicID,
 		"project_id": projectID,
 	})
 	require.False(t, isErr, "epic_update with project_id should succeed: %s", text)
 
-	text, isErr = callTool(t, a, "clockwork_epic_get", map[string]interface{}{"id": epicID})
+	text, isErr = callTool(t, a, "torque_epic_get", map[string]interface{}{"id": epicID})
 	require.False(t, isErr)
 	var got map[string]interface{}
 	parseData(t, text, &got)
@@ -631,7 +631,7 @@ func TestEpicUpdateProjectIDViaMCP(t *testing.T) {
 }
 
 // TestEpicUpdateProjectIDClearViaMCP verifies an existing project_id can be
-// cleared via clockwork_epic_update by passing an empty string. Closes Copilot
+// cleared via torque_epic_update by passing an empty string. Closes Copilot
 // review feedback on PR #51: clearing must persist as SQL NULL, not as empty string.
 func TestEpicUpdateProjectIDClearViaMCP(t *testing.T) {
 	svc := setupServiceDirect(t)
@@ -639,16 +639,16 @@ func TestEpicUpdateProjectIDClearViaMCP(t *testing.T) {
 	require.NoError(t, svc.Feature.Enable("projects"))
 	a := adapterFromService(svc)
 
-	projectText, isErr := callTool(t, a, "clockwork_project_create", map[string]interface{}{
+	projectText, isErr := callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":      "Project for epic clear",
-		"repo_path": "/tmp/clockwork-test/epic-clear-project",
+		"repo_path": "/tmp/torque-test/epic-clear-project",
 	})
 	require.False(t, isErr)
 	var pr map[string]interface{}
 	parseData(t, projectText, &pr)
 	projectID := pr["ID"].(string)
 
-	epicText, isErr := callTool(t, a, "clockwork_epic_create", map[string]interface{}{
+	epicText, isErr := callTool(t, a, "torque_epic_create", map[string]interface{}{
 		"name":       "Epic to clear",
 		"project_id": projectID,
 	})
@@ -657,13 +657,13 @@ func TestEpicUpdateProjectIDClearViaMCP(t *testing.T) {
 	parseData(t, epicText, &epic)
 	epicID := epic["ID"].(string)
 
-	_, isErr = callTool(t, a, "clockwork_epic_update", map[string]interface{}{
+	_, isErr = callTool(t, a, "torque_epic_update", map[string]interface{}{
 		"id":         epicID,
 		"project_id": "",
 	})
 	require.False(t, isErr, "epic_update with empty project_id should succeed")
 
-	text, isErr := callTool(t, a, "clockwork_epic_get", map[string]interface{}{"id": epicID})
+	text, isErr := callTool(t, a, "torque_epic_get", map[string]interface{}{"id": epicID})
 	require.False(t, isErr)
 	var got map[string]interface{}
 	parseData(t, text, &got)
@@ -677,7 +677,7 @@ func TestHealthShowsEnabledFeatures(t *testing.T) {
 	require.NoError(t, svc.Feature.Enable("epics"))
 	a := adapterFromService(svc)
 
-	text, isErr := callTool(t, a, "clockwork_health", map[string]interface{}{})
+	text, isErr := callTool(t, a, "torque_health", map[string]interface{}{})
 	require.False(t, isErr, "health should not error: %s", text)
 
 	var health map[string]interface{}

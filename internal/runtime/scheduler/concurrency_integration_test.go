@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/concurrency"
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/worktree"
+	"github.com/hollis-labs/torque/internal/concurrency"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/worktree"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
@@ -111,7 +111,7 @@ func TestSchedulerWorktreeLifecycle(t *testing.T) {
 	result, err := merger.Execute(ctx, worktree.MergeRequest{
 		Policy:       worktree.MergePolicyAuto,
 		RepoPath:     repoDir,
-		SourceBranch: "clockwork/CW-20260407-0001",
+		SourceBranch: "torque/CW-20260407-0001",
 		TargetBranch: "main",
 		WorktreePath: wt.Path,
 	})
@@ -153,7 +153,7 @@ func TestSchedulerResolutionTaskCreation(t *testing.T) {
 	// Simulate conflict detection
 	req, err := resolver.BuildResolutionRequest(ctx, worktree.ResolutionInput{
 		SourceTaskID:  "CW-20260407-0001",
-		SourceBranch:  "clockwork/CW-20260407-0001",
+		SourceBranch:  "torque/CW-20260407-0001",
 		TargetBranch:  "main",
 		WorktreePath:  "/tmp/worktree",
 		ConflictFiles: []string{"main.go", "handler.go"},

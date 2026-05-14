@@ -7,10 +7,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
-	"github.com/hollis-labs/clockwork-manifold/internal/toolbroker"
 	llmtypes "github.com/hollis-labs/go-llm-types"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/toolbroker"
 )
 
 // Executor adapts agent.Boot(Mode=ModeOneShot) to the executor.Executor
@@ -221,7 +221,7 @@ func optsFromJob(job *executor.ExecutionJob, resolvedWD string) Options {
 
 // translateStreamEvent maps a single llmtypes.StreamEvent onto:
 //   - the ExecutionEvent callback (delta → log, tool_use, usage → token-event)
-//   - the result accumulator (tokens, cost — clockwork-side cost computation
+//   - the result accumulator (tokens, cost — torque-side cost computation
 //     happens in the scheduler from these tokens; the executor just reports raw)
 //   - the streamErr sink (turn-terminal EventError)
 //

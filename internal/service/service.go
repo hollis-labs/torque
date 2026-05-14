@@ -1,9 +1,9 @@
 package service
 
 import (
-	"github.com/hollis-labs/clockwork-manifold/internal/modelcatalog"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/writequeue"
+	"github.com/hollis-labs/torque/internal/modelcatalog"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/writequeue"
 )
 
 // Service is the root service dispatcher that aggregates all domain services.

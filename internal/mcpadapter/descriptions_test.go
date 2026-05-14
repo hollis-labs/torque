@@ -17,15 +17,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/mcpadapter"
+	"github.com/hollis-labs/torque/internal/mcpadapter"
 )
 
 // descriptionInventoryPath is the orchestrator-facing artifact location.
-// The test writes to CLOCKWORK_DESCRIPTION_INVENTORY_PATH if set (so CI
+// The test writes to TORQUE_DESCRIPTION_INVENTORY_PATH if set (so CI
 // can redirect), otherwise uses the ticket-prescribed agent-workspaces
 // path. Missing parent dir is treated as "artifact emission is optional"
 // — the assertions below still run and guard the descriptions in-tree.
-const descriptionInventoryPath = "/Users/chrispian/Projects-apps/agent-workspaces/execution/clockwork-manifold/orch-mcp-hardening/2026-04-17/CW-20260418-0013-tool-descriptions.md"
+const descriptionInventoryPath = "/Users/chrispian/Projects-apps/agent-workspaces/execution/torque/orch-mcp-hardening/2026-04-17/CW-20260418-0013-tool-descriptions.md"
 
 // TestDescriptionInventory_AssertsMinimumsAndEmitsArtifact walks every
 // registered tool (core + all opt-in features enabled) and:
@@ -82,7 +82,7 @@ func TestDescriptionInventory_AssertsMinimumsAndEmitsArtifact(t *testing.T) {
 	// The orchestrator creates the tracking_root before running tests, so
 	// in-workspace execution succeeds. CI/sibling-env runs where the path
 	// is absent degrade gracefully.
-	path := os.Getenv("CLOCKWORK_DESCRIPTION_INVENTORY_PATH")
+	path := os.Getenv("TORQUE_DESCRIPTION_INVENTORY_PATH")
 	if path == "" {
 		path = descriptionInventoryPath
 	}

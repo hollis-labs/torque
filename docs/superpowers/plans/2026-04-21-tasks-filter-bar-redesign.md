@@ -19,7 +19,7 @@
 - **No emojis** in code, commits, or UI copy.
 - **No `--no-verify`**, no hook bypass. If pre-commit hooks fail, fix the underlying issue.
 - **TDD discipline:** new primitive components get their test written and failing before the component exists. Migrations get their new-shape test written before the type/parse changes land.
-- **Run tests from** `~/Projects-apps/clockwork-manifold/apps/gui` via `npm run test:run` (one-shot vitest). Prefer targeted file runs during iteration: `npm run test:run -- src/path/to.test.ts`.
+- **Run tests from** `~/Projects-apps/torque/apps/gui` via `npm run test:run` (one-shot vitest). Prefer targeted file runs during iteration: `npm run test:run -- src/path/to.test.ts`.
 - **Dev server:** `npm run dev` from `apps/gui` for manual smoke (Task 10). Backend should be running via Cerberus on `:8990`.
 
 ## File Structure
@@ -81,7 +81,7 @@ Append two new cases to `apps/gui/src/lib/ops-filters-storage.test.ts` (keep the
 ```ts
   it('migrates legacy manual="all" to "both" on read', () => {
     localStorage.setItem(
-      'clockwork:ops:filters:v1',
+      'torque:ops:filters:v1',
       JSON.stringify({
         statuses: ['todo'],
         priorities: [],
@@ -98,7 +98,7 @@ Append two new cases to `apps/gui/src/lib/ops-filters-storage.test.ts` (keep the
 
   it('drops the legacy mode field and defaults search to "" on read', () => {
     localStorage.setItem(
-      'clockwork:ops:filters:v1',
+      'torque:ops:filters:v1',
       JSON.stringify({
         statuses: ['todo'],
         priorities: [],
@@ -133,7 +133,7 @@ Replace the file contents with:
 ```ts
 import type { TaskStatus } from './types'
 
-const KEY = 'clockwork:ops:filters:v1'
+const KEY = 'torque:ops:filters:v1'
 
 /**
  * Manual-flag filter tri-state.
@@ -253,7 +253,7 @@ Edit `apps/gui/src/lib/task-list-cursor.ts`. Drop the `mode` field and add `sear
 import type { TaskStatus } from './types'
 import { parseManualFilter, type ManualFilter } from './ops-filters-storage'
 
-const KEY = 'clockwork:task-list-cursor'
+const KEY = 'torque:task-list-cursor'
 
 export interface CursorFilter {
   statuses: TaskStatus[]
@@ -509,7 +509,7 @@ Expected: no errors.
 - [ ] **Step 1.11: Commit**
 
 ```bash
-cd ~/Projects-apps/clockwork-manifold
+cd ~/Projects-apps/torque
 git add apps/gui/src/lib/ops-filters-storage.ts \
         apps/gui/src/lib/ops-filters-storage.test.ts \
         apps/gui/src/lib/task-list-cursor.ts \
@@ -533,7 +533,7 @@ Structural move only — no behavior change. After this task, all four existing 
 - [ ] **Step 2.1: Create the new directory and copy the file**
 
 ```bash
-cd ~/Projects-apps/clockwork-manifold/apps/gui/src/components/domain
+cd ~/Projects-apps/torque/apps/gui/src/components/domain
 mkdir filter-bar
 git mv filter-bar.tsx filter-bar/filter-bar.tsx
 ```
@@ -559,7 +559,7 @@ Expected: both green. All four callers (`BoardPage`, `SprintDetailPage`, `Projec
 - [ ] **Step 2.4: Commit**
 
 ```bash
-cd ~/Projects-apps/clockwork-manifold
+cd ~/Projects-apps/torque
 git add apps/gui/src/components/domain/filter-bar/
 git commit -m "refactor(ops): move filter-bar.tsx into filter-bar/ directory with index re-export"
 ```
@@ -751,7 +751,7 @@ Expected: 4 passing.
 - [ ] **Step 3.5: Commit**
 
 ```bash
-cd ~/Projects-apps/clockwork-manifold
+cd ~/Projects-apps/torque
 git add apps/gui/src/components/domain/filter-bar/filter-cycle-toggle.tsx \
         apps/gui/src/components/domain/filter-bar/filter-cycle-toggle.test.tsx
 git commit -m "feat(ops): add FilterCycleToggle primitive"
@@ -814,7 +814,7 @@ Expected: all green. (The cycle-toggle unit tests plus existing BoardPage tests.
 - [ ] **Step 4.3: Commit**
 
 ```bash
-cd ~/Projects-apps/clockwork-manifold
+cd ~/Projects-apps/torque
 git add apps/gui/src/components/domain/filter-bar/filter-bar.tsx
 git commit -m "feat(ops): swap Manual tri-state chips for FilterCycleToggle"
 ```
@@ -1081,7 +1081,7 @@ expect(await screen.findByText('Alpha')).toBeInTheDocument()
 - [ ] **Step 5.5: Commit**
 
 ```bash
-cd ~/Projects-apps/clockwork-manifold
+cd ~/Projects-apps/torque
 git add apps/gui/src/components/domain/filter-bar/filter-entity-combobox.tsx \
         apps/gui/src/components/domain/filter-bar/filter-entity-combobox.test.tsx
 git commit -m "feat(ops): add FilterEntityCombobox primitive"
@@ -1188,7 +1188,7 @@ Expected: all green.
 - [ ] **Step 6.5: Commit**
 
 ```bash
-cd ~/Projects-apps/clockwork-manifold
+cd ~/Projects-apps/torque
 git add apps/gui/src/components/domain/filter-bar/filter-bar.tsx
 git commit -m "feat(ops): swap GroupSelect dropdowns for FilterEntityCombobox"
 ```
@@ -1419,7 +1419,7 @@ Expected: 6 passing.
 - [ ] **Step 7.5: Commit**
 
 ```bash
-cd ~/Projects-apps/clockwork-manifold
+cd ~/Projects-apps/torque
 git add apps/gui/src/components/domain/filter-bar/filter-search-input.tsx \
         apps/gui/src/components/domain/filter-bar/filter-search-input.test.tsx
 git commit -m "feat(ops): add FilterSearchInput primitive with debounce + / shortcut"
@@ -1719,7 +1719,7 @@ Expected: all green. The Sprint/Project/Epic detail page tests (if any smoke tes
 - [ ] **Step 8.6: Commit**
 
 ```bash
-cd ~/Projects-apps/clockwork-manifold
+cd ~/Projects-apps/torque
 git add apps/gui/src/components/domain/filter-bar/filter-bar.tsx
 git commit -m "feat(ops): add two-row FilterBar layout with summary and integrated Clear"
 ```
@@ -1942,7 +1942,7 @@ Expected: all green. Task 9's rehydration test passes; all existing tests contin
 - [ ] **Step 9.10: Commit**
 
 ```bash
-cd ~/Projects-apps/clockwork-manifold
+cd ~/Projects-apps/torque
 git add apps/gui/src/pages/BoardPage.tsx \
         apps/gui/src/pages/BoardPage.rehydrate.test.tsx
 git commit -m "feat(ops): wire search through BoardPage with debounced fetch + storage persistence"
@@ -1983,7 +1983,7 @@ Expected: zero errors. Warnings about hook dependency arrays deserve a close loo
 
 - [ ] **Step 10.4: Start dev server and smoke-test manually**
 
-Backend must be running (Cerberus-managed `clockwork-api` on `:8990` — see boot prompt's fast health probe).
+Backend must be running (Cerberus-managed `torque-api` on `:8990` — see boot prompt's fast health probe).
 
 ```bash
 cd apps/gui
@@ -2019,7 +2019,7 @@ If no changelog convention is in use, skip this step.
 
 - [ ] **Step 10.6: Final push (if policy allows)**
 
-Do NOT push without user confirmation. The feature is ready for review; ask the user whether to open a PR or merge locally per the clockwork-manifold profile (branch + local-merge workflow — see boot prompt pitfall #1).
+Do NOT push without user confirmation. The feature is ready for review; ask the user whether to open a PR or merge locally per the torque profile (branch + local-merge workflow — see boot prompt pitfall #1).
 
 ---
 

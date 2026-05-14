@@ -56,7 +56,7 @@ export default function SettingsPage() {
               <CardHeader>
                 <CardTitle className="text-base">Feature Flags</CardTitle>
                 <CardDescription>
-                  Enable or disable optional features in Clockwork Manifold.
+                  Enable or disable optional features in Torque.
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col gap-5">
@@ -107,7 +107,7 @@ export default function SettingsPage() {
           <TabsContent value="about">
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">Clockwork Manifold</CardTitle>
+                <CardTitle className="text-base">Torque</CardTitle>
                 <CardDescription>Task orchestration engine for autonomous agents.</CardDescription>
               </CardHeader>
               <CardContent>

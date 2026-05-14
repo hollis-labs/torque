@@ -7,8 +7,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/permission"
-	"github.com/hollis-labs/clockwork-manifold/internal/tool"
+	"github.com/hollis-labs/torque/internal/permission"
+	"github.com/hollis-labs/torque/internal/tool"
 )
 
 // ToolCall represents a single tool invocation request.

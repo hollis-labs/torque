@@ -18,7 +18,7 @@ import (
 // _txlock=immediate baked into the DSN so every connection inherits them.
 // The pgx branch is left untouched.
 func Open(ctx context.Context) (*sql.DB, string, error) {
-	if dsn := os.Getenv("CLOCKWORK_POSTGRES_DSN"); dsn != "" {
+	if dsn := os.Getenv("TORQUE_POSTGRES_DSN"); dsn != "" {
 		db, err := sql.Open("pgx", dsn)
 		if err != nil {
 			return nil, "", fmt.Errorf("open postgres: %w", err)
@@ -30,9 +30,9 @@ func Open(ctx context.Context) (*sql.DB, string, error) {
 		return db, "postgres", nil
 	}
 
-	path := os.Getenv("CLOCKWORK_DB_PATH")
+	path := os.Getenv("TORQUE_DB_PATH")
 	if path == "" {
-		path = "clockwork.db"
+		path = "torque.db"
 	}
 
 	db, err := sqlitekit.OpenWriter(ctx, path, sqlitekit.OpenOptions{CreateParentDir: true})

@@ -192,7 +192,7 @@ async function parseResponse<T>(res: Response): Promise<T> {
   }
 }
 
-export class ClockworkApiClient {
+export class TorqueApiClient {
   private baseUrl: string
 
   constructor(baseUrl: string = '/api/v1') {

@@ -9,10 +9,10 @@ import (
 
 	mcpsanitize "github.com/hollis-labs/go-mcp-sanitize"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/broker"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/broker"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/service"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -30,17 +30,17 @@ type Adapter struct {
 	server         *server.MCPServer
 	loopbackTaskID string
 	// sessions wires the long-lived agent session manager (CW-20260503-0014).
-	// Nil disables clockwork_session_* tools — they reply with a domain error
+	// Nil disables torque_session_* tools — they reply with a domain error
 	// rather than panicking. Mirrors the sched=nil contract.
 	sessions *agent.Manager
 	// broker wires the typed envelope dispatcher (CW-20260503-0013, S1.3).
-	// Nil disables clockwork_broker_* tools the same way.
+	// Nil disables torque_broker_* tools the same way.
 	broker *broker.Broker
 	// Logger receives go-mcp-sanitize warn telemetry when the middleware
 	// auto-cleans malformed agent tool-call XML in free-text params (see
 	// CW-20260509-0033, mirrors vanta-conduit's Pattern A install). Nil
 	// falls back to slog.Default(); production wiring routes this to stderr
-	// in cmd/clockwork/mcp.go because stdio MCP reserves stdout for the
+	// in cmd/torque/mcp.go because stdio MCP reserves stdout for the
 	// JSON-RPC protocol stream.
 	Logger *slog.Logger
 }
@@ -52,7 +52,7 @@ type Adapter struct {
 // any future in-process wiring can pass a live *scheduler.Scheduler.
 func New(svc *service.Service, sched *scheduler.Scheduler) *Adapter {
 	s := server.NewMCPServer(
-		"Clockwork Manifold",
+		"Torque",
 		"0.1.0",
 		server.WithToolCapabilities(true),
 	)
@@ -66,7 +66,7 @@ func New(svc *service.Service, sched *scheduler.Scheduler) *Adapter {
 func (a *Adapter) Server() *server.MCPServer { return a.server }
 
 // WithSessions attaches the unified agent session manager so the
-// clockwork_session_* tools surface real data. Must be called before any
+// torque_session_* tools surface real data. Must be called before any
 // MCP requests are served (not goroutine-safe with respect to live calls).
 //
 // Renamed from WithSessionMgr (CW-20260508-0001) when sessionmgr was folded
@@ -76,7 +76,7 @@ func (a *Adapter) WithSessions(mgr *agent.Manager) *Adapter {
 	return a
 }
 
-// WithBroker attaches the typed envelope broker so the clockwork_broker_*
+// WithBroker attaches the typed envelope broker so the torque_broker_*
 // tools surface real data. Same pre-flight contract as WithSessionMgr.
 func (a *Adapter) WithBroker(b *broker.Broker) *Adapter {
 	a.broker = b
@@ -107,8 +107,8 @@ func (a *Adapter) addTool(t mcp.Tool, h server.ToolHandlerFunc) {
 }
 
 func (a *Adapter) registerCoreTools() {
-	a.addTool(mcp.NewTool("clockwork_health",
-		mcp.WithDescription(`Liveness probe for the Clockwork MCP server.
+	a.addTool(mcp.NewTool("torque_health",
+		mcp.WithDescription(`Liveness probe for the Torque MCP server.
 Use before any other tool when you need to confirm the service is reachable and discover which opt-in feature flags (sprints, projects, epics, collections) are enabled.
 Response shape: data = {status, message, enabled_features[]}.
 Example: {}`),
@@ -150,7 +150,7 @@ func (a *Adapter) handleHealth(ctx context.Context, req mcp.CallToolRequest) (*m
 	features := a.svc.Feature.ListEnabled()
 	return okResult(map[string]interface{}{
 		"status":           "running",
-		"message":          "Clockwork Manifold is running",
+		"message":          "Torque is running",
 		"enabled_features": features,
 	})
 }
@@ -181,7 +181,7 @@ func reqStr(req mcp.CallToolRequest, key string) string {
 // reqStrSlice extracts a list-of-strings argument tolerant of both the legacy
 // JSON-encoded-string shape and the post-sanitize []any shape.
 //
-// Background: clockwork-manifold's MCP schema declares list-shaped params
+// Background: torque's MCP schema declares list-shaped params
 // (notably `tags` and `depends_on`) as a JSON-encoded string so LLM-backed
 // clients that emit the array as a literal can round-trip through mcp-go's
 // schema-string boundary. Per CW-20260509-0033, the go-mcp-sanitize middleware

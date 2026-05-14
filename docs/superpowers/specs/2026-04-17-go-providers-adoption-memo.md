@@ -12,8 +12,8 @@ supersedes: executor-api stub `Provider` interface at `plugins/executor-api/conv
 
 `github.com/chrispian/go-providers` (standalone repo at `~/Projects-apps/go-providers`)
 is a unified LLM provider abstraction — the same package Nanite uses in
-production. The core Clockwork design spec
-(`2026-04-07-clockwork-manifold-design.md:71`) already identifies it as
+production. The core Torque design spec
+(`2026-04-07-torque-design.md:71`) already identifies it as
 **executor-plugin territory, not core**. This memo translates that
 pre-approved direction into a concrete adoption plan for `executor-api`.
 
@@ -40,12 +40,12 @@ interface as stable. Tests are pure-Go with `httptest` fakes — no
 external service dependency. Dependency footprint is minimal
 (`creack/pty`, `otel`).
 
-## Clockwork's Current State (baseline)
+## Torque's Current State (baseline)
 
 | Area | File | Status |
 |---|---|---|
 | Executor core interface | `internal/runtime/executor/executor.go:1` | stable, pluggable |
-| CLI executor plugin | `plugins/executor-cli/plugin.go:80` | production; spawns subprocess, parses `CLOCKWORK_*` markers |
+| CLI executor plugin | `plugins/executor-cli/plugin.go:80` | production; spawns subprocess, parses `TORQUE_*` markers |
 | API executor plugin | `plugins/executor-api/plugin.go:73` | wired into registry |
 | **Stub** `Provider` interface | `plugins/executor-api/conversation.go:11` | `Complete(ctx, req) (*CompletionResponse, error)` — **zero implementations** |
 | go-providers import | — | not yet present in `go.mod` |
@@ -61,7 +61,7 @@ adopter depends on its shape. It's safe to replace outright.
   interface with a thin adapter around `go-providers.Provider`.
 - **Do NOT fold `executor-cli` into go-providers' CLI bridges.** The two
   models are incompatible: `executor-cli` runs task-bound subprocesses
-  and parses `CLOCKWORK_*` markers from stdout; go-providers' PTY
+  and parses `TORQUE_*` markers from stdout; go-providers' PTY
   bridges model interactive chat sessions streaming `StreamEvent`s.
   Re-homing `executor-cli` would rewrite its semantics, not just its
   plumbing.
@@ -83,7 +83,7 @@ executor-api plugin
 - The plugin owns a `*provider.Registry`. Build it once at
   `APIExecutor.Start()` from credentials + config; pick per-job by
   `job.Provider` name.
-- Credentials come from Clockwork's settings table (existing
+- Credentials come from Torque's settings table (existing
   `settings_get/save` MCP tools) — we pass them into `APIKeySetter`
   at registry-construction time. go-providers does not manage
   secrets; we do.
@@ -102,10 +102,10 @@ Swap `runConversation` from `provider.Complete(...)` to
 - `tool_use` → future Plan-4 tool routing (stub for now; `ToolDefinition`
   at `conversation.go:31` is already earmarked)
 - `done` → terminal result; apply `ParseLine` to accumulated content
-  for `CLOCKWORK_*` marker extraction exactly as today
+  for `TORQUE_*` marker extraction exactly as today
 - `error` → `result.Status = "failed"` + `result.Reason`
 
-This preserves the existing `CLOCKWORK_*` parser model while unlocking
+This preserves the existing `TORQUE_*` parser model while unlocking
 live event emission during long completions.
 
 ### Versioning + risk
@@ -117,9 +117,9 @@ live event emission during long completions.
 - We do not use the Embedder surface in executor-api today; ignore it
   unless/until we wire embeddings.
 
-## Proposed Clockwork-side interface sketch
+## Proposed Torque-side interface sketch
 
-Keep Clockwork's own thin interface inside executor-api. Do not
+Keep Torque's own thin interface inside executor-api. Do not
 re-export `go-providers.Provider` to core. This isolates the upstream
 dependency to one file and lets us tune the shape to our callback
 model without fighting go-providers' chat-oriented API.
@@ -132,7 +132,7 @@ model without fighting go-providers' chat-oriented API.
 type Provider interface {
     // Stream runs one turn and emits events as they arrive. The
     // returned final result carries accumulated content for
-    // CLOCKWORK_* marker extraction by the existing parser.
+    // TORQUE_* marker extraction by the existing parser.
     Stream(ctx context.Context, req CompletionRequest, emit EventSink) (*CompletionResponse, error)
 
     // Name returns the provider's registered name (anthropic, openai, ollama, ...).
@@ -232,7 +232,7 @@ func buildRegistry(cfg Config) (*provider.Registry, error) {
 3. Add `plugins/executor-api/adapters/providers.go` with
    `goProvidersAdapter` translating request/event shapes.
 4. Add `plugins/executor-api/registry_bootstrap.go` that reads
-   credentials from Clockwork settings and constructs
+   credentials from Torque settings and constructs
    `*provider.Registry`.
 5. Refactor `runConversation` to call `Stream(...)` instead of
    `Complete(...)`. Preserve `executor.ParseLine` marker extraction
@@ -260,6 +260,6 @@ func buildRegistry(cfg Config) (*provider.Registry, error) {
 
 go-providers is the right abstraction, already pre-approved by the
 design spec, and its Nanite call sites prove ergonomic adoption. Scope
-the adoption to `executor-api` and preserve Clockwork's own narrow
+the adoption to `executor-api` and preserve Torque's own narrow
 `Provider` interface as a shim — one file changes if upstream breaks.
 `executor-cli` stays as-is.

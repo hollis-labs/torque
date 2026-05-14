@@ -3,7 +3,7 @@ package service
 import (
 	"database/sql"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 // EpicService provides business logic for epics.

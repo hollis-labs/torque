@@ -5,8 +5,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
 	"github.com/hollis-labs/go-modelsdev/modelsdev"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 // PrecheckMode is the per-check enforcement level. Tri-state by design — a

@@ -1,7 +1,7 @@
 import type { TaskStatus } from './types'
 import { parseManualFilter, type ManualFilter } from './ops-filters-storage'
 
-const KEY = 'clockwork:task-list-cursor'
+const KEY = 'torque:task-list-cursor'
 
 export interface CursorFilter {
   statuses: TaskStatus[]

@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/writequeue"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/persistence/writequeue"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 )
@@ -18,7 +18,7 @@ func setupWriter(t *testing.T, cfg writequeue.Config) (*sqlstore.Store, *writequ
 	t.Helper()
 
 	dir := t.TempDir()
-	mainPath := filepath.Join(dir, "clockwork.db")
+	mainPath := filepath.Join(dir, "torque.db")
 	mainDB, err := sql.Open("sqlite", mainPath)
 	require.NoError(t, err)
 	require.NoError(t, migrations.Run(mainDB))

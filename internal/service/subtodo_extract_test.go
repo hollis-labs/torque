@@ -3,7 +3,7 @@ package service_test
 import (
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/service"
 	"github.com/stretchr/testify/assert"
 )
 

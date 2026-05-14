@@ -24,7 +24,7 @@ import (
 // via MCP session_create) leave stderr where forensic tooling looks first.
 func TestOpenStderrSidecar_TeesToSessionLog(t *testing.T) {
 	dataDir := t.TempDir()
-	t.Setenv("CLOCKWORK_DATA_DIR", dataDir)
+	t.Setenv("TORQUE_DATA_DIR", dataDir)
 
 	wsRoot := t.TempDir()
 	sessionLog := filepath.Join(wsRoot, "logs", "session.log")
@@ -63,7 +63,7 @@ func TestOpenStderrSidecar_TeesToSessionLog(t *testing.T) {
 // optional sessionLogPath argument is genuinely optional.
 func TestOpenStderrSidecar_EmptySessionLogPath(t *testing.T) {
 	dataDir := t.TempDir()
-	t.Setenv("CLOCKWORK_DATA_DIR", dataDir)
+	t.Setenv("TORQUE_DATA_DIR", dataDir)
 
 	w, tail, closer := openStderrSidecar(11, "")
 	require.NotNil(t, w)
@@ -85,7 +85,7 @@ func TestOpenStderrSidecar_EmptySessionLogPath(t *testing.T) {
 // workspace materialization.
 func TestOpenStderrSidecar_SessionLogParentDirAutoCreated(t *testing.T) {
 	dataDir := t.TempDir()
-	t.Setenv("CLOCKWORK_DATA_DIR", dataDir)
+	t.Setenv("TORQUE_DATA_DIR", dataDir)
 
 	wsRoot := t.TempDir()
 	sessionLog := filepath.Join(wsRoot, "deep", "nested", "logs", "session.log")
@@ -118,7 +118,7 @@ func TestOpenStderrSidecar_IntegratesWithRunner(t *testing.T) {
 	}
 
 	dataDir := t.TempDir()
-	t.Setenv("CLOCKWORK_DATA_DIR", dataDir)
+	t.Setenv("TORQUE_DATA_DIR", dataDir)
 
 	wsRoot := t.TempDir()
 	sessionLog := filepath.Join(wsRoot, "logs", "session.log")
@@ -180,10 +180,10 @@ func (a *echoStderrAdapter) ParseLine(_ []byte) ([]llmtypes.StreamEvent, error) 
 // per-run dir is unwritable the session log still receives stderr — losing
 // any one sink is never a hard failure.
 func TestOpenStderrSidecar_RunSidecarFailureDoesNotBlockSessionLog(t *testing.T) {
-	// Point CLOCKWORK_DATA_DIR at a path that can't be a directory.
+	// Point TORQUE_DATA_DIR at a path that can't be a directory.
 	notADir := filepath.Join(t.TempDir(), "blocking-file")
 	require.NoError(t, os.WriteFile(notADir, []byte{}, 0o600))
-	t.Setenv("CLOCKWORK_DATA_DIR", notADir)
+	t.Setenv("TORQUE_DATA_DIR", notADir)
 
 	wsRoot := t.TempDir()
 	sessionLog := filepath.Join(wsRoot, "logs", "session.log")

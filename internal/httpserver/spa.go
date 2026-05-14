@@ -13,7 +13,7 @@ func spaHandler() http.HandlerFunc {
 		"apps/gui/dist",
 		"../apps/gui/dist",
 	}
-	if guiDir := os.Getenv("CLOCKWORK_GUI_DIR"); guiDir != "" {
+	if guiDir := os.Getenv("TORQUE_GUI_DIR"); guiDir != "" {
 		dirs = append([]string{filepath.Join(guiDir, "dist")}, dirs...)
 	}
 
@@ -29,7 +29,7 @@ func spaHandler() http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/html")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`<!DOCTYPE html><html><body style="background:#09090b;color:#fafafa;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh"><div><h1>Clockwork Manifold</h1><p>GUI not built. Run: cd apps/gui &amp;&amp; npm run build</p></div></body></html>`)) //nolint:errcheck
+			w.Write([]byte(`<!DOCTYPE html><html><body style="background:#09090b;color:#fafafa;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh"><div><h1>Torque</h1><p>GUI not built. Run: cd apps/gui &amp;&amp; npm run build</p></div></body></html>`)) //nolint:errcheck
 		}
 	}
 

@@ -8,10 +8,10 @@ import (
 
 // Filter chain name constants.
 const (
-	FilterTaskBeforeCreate      = "task.before_create"
-	FilterTaskBeforeTransition  = "task.before_transition"
-	FilterExecutionBeforeRun    = "execution.before_run"
-	FilterArtifactBeforeAttach  = "artifact.before_attach"
+	FilterTaskBeforeCreate     = "task.before_create"
+	FilterTaskBeforeTransition = "task.before_transition"
+	FilterExecutionBeforeRun   = "execution.before_run"
+	FilterArtifactBeforeAttach = "artifact.before_attach"
 )
 
 type filterEntry struct {

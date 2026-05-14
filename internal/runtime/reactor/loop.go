@@ -21,7 +21,7 @@ type Subscriber interface {
 // preserves envelope ordering per subscription (matters when a fast burst
 // of escalation + status_update arrives for the same task).
 //
-// V0 wires a single Loop in cmd/clockwork/serve.go subscribing on a zero
+// V0 wires a single Loop in cmd/torque/serve.go subscribing on a zero
 // Address (system-wide); future sprints may run multiple Loops scoped to
 // specific authorities.
 type Loop struct {

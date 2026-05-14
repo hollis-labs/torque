@@ -5,13 +5,13 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/mcpadapter"
-	"github.com/hollis-labs/clockwork-manifold/internal/modelcatalog"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/appdb"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore/migrations"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/bootstrap"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/mcpadapter"
+	"github.com/hollis-labs/torque/internal/modelcatalog"
+	"github.com/hollis-labs/torque/internal/persistence/appdb"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/runtime/bootstrap"
+	"github.com/hollis-labs/torque/internal/service"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"
 )
@@ -19,7 +19,7 @@ import (
 func mcpCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "mcp",
-		Short: "Start Clockwork MCP server (stdio transport)",
+		Short: "Start Torque MCP server (stdio transport)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			db, driver, err := appdb.Open(cmd.Context())
 			if err != nil {
@@ -42,18 +42,18 @@ func mcpCmd() *cobra.Command {
 			svc.Models = modelcatalog.New()
 			svc.Models.Start(cmd.Context())
 
-			// Profile config (CLOCKWORK_PROFILES_PATH or ./profiles.yaml) —
+			// Profile config (TORQUE_PROFILES_PATH or ./profiles.yaml) —
 			// required by agent.Boot to resolve provider + adapter selection
-			// when session-creating tools (clockwork_plan_start,
-			// clockwork_session_create) are invoked. Empty map is fine; per-
+			// when session-creating tools (torque_plan_start,
+			// torque_session_create) are invoked. Empty map is fine; per-
 			// task Validate will surface "profile not found" at dispatch.
 			profiles := loadProfilesOrEmpty()
 
 			// Agent substrate (CW-20260509-0013): wire agent.Manager into the
 			// stdio MCP adapter so session-manager-dependent tools
-			// (clockwork_plan_start, clockwork_session_*) work over MCP stdio
+			// (torque_plan_start, torque_session_*) work over MCP stdio
 			// the same way they do over HTTP. Before this fix, calling
-			// clockwork_plan_start over the stdio transport returned
+			// torque_plan_start over the stdio transport returned
 			// `ErrSessionMgrMissing` because mcpadapter.New(svc, nil) wasn't
 			// chained with .WithSessions(...).
 			//
@@ -81,7 +81,7 @@ func mcpCmd() *cobra.Command {
 			//
 			// Scheduler is intentionally NOT wired here. The stdio mcp does
 			// NOT dispatch kind=agent / kind=internal tasks (that's the
-			// `clockwork serve` daemon's role). MCP scheduler_* tools will
+			// `torque serve` daemon's role). MCP scheduler_* tools will
 			// surface a `not running` error when called against this stdio
 			// instance, matching the HTTP 503 contract documented in
 			// mcpadapter.New's nil-sched godoc.

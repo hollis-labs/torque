@@ -4,14 +4,14 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/service"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func (a *Adapter) registerEpicTools() {
-	a.addTool(mcp.NewTool("clockwork_epic_create",
+	a.addTool(mcp.NewTool("torque_epic_create",
 		mcp.WithDescription(`Create an epic (feature-flagged: requires features.epics). Returns the EpicRecord.
-Use to group multiple sprints under one multi-sprint initiative; sibling clockwork_sprint_create for short-cycle cohorts, clockwork_project_create for repo-level grouping.
+Use to group multiple sprints under one multi-sprint initiative; sibling torque_sprint_create for short-cycle cohorts, torque_project_create for repo-level grouping.
 Response shape: data = {<EpicRecord fields>} — singleton.
 Example: {"name":"Auth Overhaul","description":"Replace entire auth stack"}`),
 		mcp.WithString("name", mcp.Required(), mcp.Description("Epic name")),
@@ -19,15 +19,15 @@ Example: {"name":"Auth Overhaul","description":"Replace entire auth stack"}`),
 		mcp.WithString("project_id", mcp.Description("Project ID to associate this epic with (requires features.projects)")),
 	), a.handleEpicCreate)
 
-	a.addTool(mcp.NewTool("clockwork_epic_get",
+	a.addTool(mcp.NewTool("torque_epic_get",
 		mcp.WithDescription(`Fetch an epic's full record by ID.
-Use when you know the ID; clockwork_epic_list for browsing, clockwork_task_list with epic_id filter for the epic's task set.
+Use when you know the ID; torque_epic_list for browsing, torque_task_list with epic_id filter for the epic's task set.
 Response shape: data = {<EpicRecord fields>} — singleton.
 Example: {"id":"EP-4"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Epic ID")),
 	), a.handleEpicGet)
 
-	a.addTool(mcp.NewTool("clockwork_epic_update",
+	a.addTool(mcp.NewTool("torque_epic_update",
 		mcp.WithDescription(`Partial update of epic fields or status.
 Use for edits or open<->closed transitions. No dedicated epic approval flow — close via status=closed.
 Response shape: data = {id, updated: bool, message}.
@@ -39,17 +39,17 @@ Example: {"id":"EP-4","status":"closed"}`),
 		mcp.WithString("project_id", mcp.Description("Project ID to associate this epic with (requires features.projects); pass empty string to clear")),
 	), a.handleEpicUpdate)
 
-	a.addTool(mcp.NewTool("clockwork_epic_delete",
+	a.addTool(mcp.NewTool("torque_epic_delete",
 		mcp.WithDescription(`Hard-delete an epic; linked tasks have epic_id cleared.
-Prefer clockwork_epic_update status=closed for audit. Similar surfaces: clockwork_sprint_delete, clockwork_project_delete.
+Prefer torque_epic_update status=closed for audit. Similar surfaces: torque_sprint_delete, torque_project_delete.
 Response shape: data = {id, deleted: true, message}.
 Example: {"id":"EP-4"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Epic ID")),
 	), a.handleEpicDelete)
 
-	a.addTool(mcp.NewTool("clockwork_epic_list",
+	a.addTool(mcp.NewTool("torque_epic_list",
 		mcp.WithDescription(`List epics, optionally filtered by status; ordered updated_at DESC.
-Use for browsing; clockwork_epic_get when you know the ID. Default brief shape; pass verbose="true" for full records.
+Use for browsing; torque_epic_get when you know the ID. Default brief shape; pass verbose="true" for full records.
 Response shape: data = {items: [<briefEpic or EpicRecord>...], meta: {truncated, returned, limit, hint?}}.
 Example: {"status":"open"}`),
 		mcp.WithString("status", mcp.Description("Filter: open|closed|inactive")),

@@ -4,7 +4,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/mcpadapter"
+	"github.com/hollis-labs/torque/internal/mcpadapter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,14 +21,14 @@ func setupCollectionsAdapter(t *testing.T) *mcpadapter.Adapter {
 
 func TestCollectionToolsNotRegisteredWhenDisabled(t *testing.T) {
 	a := setupAdapter(t)
-	assert.False(t, toolIsRegistered(t, a, "clockwork_collection_create"),
-		"clockwork_collection_create should not be registered when collections feature is disabled")
+	assert.False(t, toolIsRegistered(t, a, "torque_collection_create"),
+		"torque_collection_create should not be registered when collections feature is disabled")
 }
 
 func TestCollectionToolsRegisteredWhenEnabled(t *testing.T) {
 	a := setupCollectionsAdapter(t)
 
-	text, isErr := callTool(t, a, "clockwork_collection_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_collection_create", map[string]interface{}{
 		"name":        "Roadmap",
 		"description": "Quarterly themes",
 	})
@@ -48,26 +48,26 @@ func TestCollectionToolsSurfacedInListToolsWhenEnabled(t *testing.T) {
 
 	var names []string
 	for name := range tools {
-		if len(name) >= len("clockwork_collection_") && name[:len("clockwork_collection_")] == "clockwork_collection_" {
+		if len(name) >= len("torque_collection_") && name[:len("torque_collection_")] == "torque_collection_" {
 			names = append(names, name)
 		}
 	}
 	sort.Strings(names)
 
 	assert.Equal(t, []string{
-		"clockwork_collection_archive",
-		"clockwork_collection_create",
-		"clockwork_collection_get",
-		"clockwork_collection_inbox_add",
-		"clockwork_collection_inbox_list",
-		"clockwork_collection_list",
-		"clockwork_collection_task_add",
-		"clockwork_collection_task_move",
-		"clockwork_collection_task_remove",
-		"clockwork_collection_task_reorder",
-		"clockwork_collection_tasks_list",
-		"clockwork_collection_unarchive",
-		"clockwork_collection_update",
+		"torque_collection_archive",
+		"torque_collection_create",
+		"torque_collection_get",
+		"torque_collection_inbox_add",
+		"torque_collection_inbox_list",
+		"torque_collection_list",
+		"torque_collection_task_add",
+		"torque_collection_task_move",
+		"torque_collection_task_remove",
+		"torque_collection_task_reorder",
+		"torque_collection_tasks_list",
+		"torque_collection_unarchive",
+		"torque_collection_update",
 	}, names)
 }
 
@@ -75,7 +75,7 @@ func TestCollectionFullLifecycleViaMCP(t *testing.T) {
 	a := setupCollectionsAdapter(t)
 
 	// 1. Create collection
-	text, isErr := callTool(t, a, "clockwork_collection_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_collection_create", map[string]interface{}{
 		"name": "Lifecycle Bucket",
 	})
 	require.False(t, isErr, "collection_create should succeed: %s", text)
@@ -87,7 +87,7 @@ func TestCollectionFullLifecycleViaMCP(t *testing.T) {
 	// 2. Create three tasks
 	taskIDs := make([]string, 3)
 	for i := range taskIDs {
-		text, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+		text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 			"title":       "Task " + string(rune('A'+i)),
 			"description": "Lifecycle task",
 		})
@@ -99,7 +99,7 @@ func TestCollectionFullLifecycleViaMCP(t *testing.T) {
 
 	// 3. Add tasks to collection
 	for _, taskID := range taskIDs {
-		text, isErr := callTool(t, a, "clockwork_collection_task_add", map[string]interface{}{
+		text, isErr := callTool(t, a, "torque_collection_task_add", map[string]interface{}{
 			"collection_id": collectionID,
 			"task_id":       taskID,
 		})
@@ -107,7 +107,7 @@ func TestCollectionFullLifecycleViaMCP(t *testing.T) {
 	}
 
 	// 4. List collection tasks — must contain all three in insertion order
-	text, isErr = callTool(t, a, "clockwork_collection_tasks_list", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_collection_tasks_list", map[string]interface{}{
 		"collection_id": collectionID,
 	})
 	require.False(t, isErr, "collection_tasks_list should succeed: %s", text)
@@ -128,13 +128,13 @@ func TestCollectionFullLifecycleViaMCP(t *testing.T) {
 	for i, id := range reversed {
 		rawIDs[i] = id
 	}
-	text, isErr = callTool(t, a, "clockwork_collection_task_reorder", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_collection_task_reorder", map[string]interface{}{
 		"collection_id": collectionID,
 		"task_ids":      rawIDs,
 	})
 	require.False(t, isErr, "collection_task_reorder should succeed: %s", text)
 
-	text, isErr = callTool(t, a, "clockwork_collection_tasks_list", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_collection_tasks_list", map[string]interface{}{
 		"collection_id": collectionID,
 	})
 	require.False(t, isErr)
@@ -145,20 +145,20 @@ func TestCollectionFullLifecycleViaMCP(t *testing.T) {
 	}
 
 	// 6. Archive
-	text, isErr = callTool(t, a, "clockwork_collection_archive", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_collection_archive", map[string]interface{}{
 		"id": collectionID,
 	})
 	require.False(t, isErr, "collection_archive should succeed: %s", text)
 
 	// 7. List active should be empty; list archived should contain it
-	text, isErr = callTool(t, a, "clockwork_collection_list", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_collection_list", map[string]interface{}{
 		"status": "active",
 	})
 	require.False(t, isErr)
 	parseData(t, text, &listEnv)
 	assert.Len(t, listEnv.Items, 0, "archived collection should not appear in active list")
 
-	text, isErr = callTool(t, a, "clockwork_collection_list", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_collection_list", map[string]interface{}{
 		"status": "archived",
 	})
 	require.False(t, isErr)
@@ -171,7 +171,7 @@ func TestCollectionInboxRoundtripViaMCP(t *testing.T) {
 	a := setupCollectionsAdapter(t)
 
 	// Create a task
-	text, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title": "Inbox Task",
 	})
 	require.False(t, isErr, "task_create should succeed: %s", text)
@@ -180,13 +180,13 @@ func TestCollectionInboxRoundtripViaMCP(t *testing.T) {
 	taskID := task["ID"].(string)
 
 	// Inbox-add
-	text, isErr = callTool(t, a, "clockwork_collection_inbox_add", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_collection_inbox_add", map[string]interface{}{
 		"task_id": taskID,
 	})
 	require.False(t, isErr, "collection_inbox_add should succeed: %s", text)
 
 	// Inbox-list — must contain our task
-	text, isErr = callTool(t, a, "clockwork_collection_inbox_list", map[string]interface{}{})
+	text, isErr = callTool(t, a, "torque_collection_inbox_list", map[string]interface{}{})
 	require.False(t, isErr, "collection_inbox_list should succeed: %s", text)
 
 	var listEnv struct {
@@ -202,20 +202,20 @@ func TestCollectionTaskMoveViaMCP(t *testing.T) {
 	a := setupCollectionsAdapter(t)
 
 	// Two collections
-	text, isErr := callTool(t, a, "clockwork_collection_create", map[string]interface{}{"name": "A"})
+	text, isErr := callTool(t, a, "torque_collection_create", map[string]interface{}{"name": "A"})
 	require.False(t, isErr)
 	var colA map[string]interface{}
 	parseData(t, text, &colA)
 	colAID := colA["ID"].(string)
 
-	text, isErr = callTool(t, a, "clockwork_collection_create", map[string]interface{}{"name": "B"})
+	text, isErr = callTool(t, a, "torque_collection_create", map[string]interface{}{"name": "B"})
 	require.False(t, isErr)
 	var colB map[string]interface{}
 	parseData(t, text, &colB)
 	colBID := colB["ID"].(string)
 
 	// Task starts in A
-	text, isErr = callTool(t, a, "clockwork_task_create", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
 		"title": "Movable",
 	})
 	require.False(t, isErr)
@@ -223,21 +223,21 @@ func TestCollectionTaskMoveViaMCP(t *testing.T) {
 	parseData(t, text, &task)
 	taskID := task["ID"].(string)
 
-	_, isErr = callTool(t, a, "clockwork_collection_task_add", map[string]interface{}{
+	_, isErr = callTool(t, a, "torque_collection_task_add", map[string]interface{}{
 		"collection_id": colAID,
 		"task_id":       taskID,
 	})
 	require.False(t, isErr)
 
 	// Move to B
-	text, isErr = callTool(t, a, "clockwork_collection_task_move", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_collection_task_move", map[string]interface{}{
 		"task_id":              taskID,
 		"target_collection_id": colBID,
 	})
 	require.False(t, isErr, "collection_task_move should succeed: %s", text)
 
 	// Confirm B has the task; A is empty
-	text, isErr = callTool(t, a, "clockwork_collection_tasks_list", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_collection_tasks_list", map[string]interface{}{
 		"collection_id": colBID,
 	})
 	require.False(t, isErr)
@@ -249,7 +249,7 @@ func TestCollectionTaskMoveViaMCP(t *testing.T) {
 	require.Len(t, listEnv.Items, 1)
 	assert.Equal(t, taskID, listEnv.Items[0]["id"])
 
-	text, isErr = callTool(t, a, "clockwork_collection_tasks_list", map[string]interface{}{
+	text, isErr = callTool(t, a, "torque_collection_tasks_list", map[string]interface{}{
 		"collection_id": colAID,
 	})
 	require.False(t, isErr)
@@ -261,29 +261,29 @@ func TestCollectionTaskRemoveReturnsToInbox(t *testing.T) {
 	a := setupCollectionsAdapter(t)
 
 	// Create collection + task; add task; then remove → must show up in inbox.
-	colText, isErr := callTool(t, a, "clockwork_collection_create", map[string]interface{}{"name": "C"})
+	colText, isErr := callTool(t, a, "torque_collection_create", map[string]interface{}{"name": "C"})
 	require.False(t, isErr)
 	var col map[string]interface{}
 	parseData(t, colText, &col)
 
-	taskText, isErr := callTool(t, a, "clockwork_task_create", map[string]interface{}{"title": "Roundtrip"})
+	taskText, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{"title": "Roundtrip"})
 	require.False(t, isErr)
 	var task map[string]interface{}
 	parseData(t, taskText, &task)
 	taskID := task["ID"].(string)
 
-	_, isErr = callTool(t, a, "clockwork_collection_task_add", map[string]interface{}{
+	_, isErr = callTool(t, a, "torque_collection_task_add", map[string]interface{}{
 		"collection_id": col["ID"],
 		"task_id":       taskID,
 	})
 	require.False(t, isErr)
 
-	_, isErr = callTool(t, a, "clockwork_collection_task_remove", map[string]interface{}{
+	_, isErr = callTool(t, a, "torque_collection_task_remove", map[string]interface{}{
 		"task_id": taskID,
 	})
 	require.False(t, isErr)
 
-	text, isErr := callTool(t, a, "clockwork_collection_inbox_list", map[string]interface{}{})
+	text, isErr := callTool(t, a, "torque_collection_inbox_list", map[string]interface{}{})
 	require.False(t, isErr)
 
 	var listEnv struct {

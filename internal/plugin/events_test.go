@@ -45,7 +45,7 @@ func TestNewEvent(t *testing.T) {
 }
 
 func TestSubscribeEvents(t *testing.T) {
-	h := NewClockworkHost(nil, NewLogger("test"))
+	h := NewTorqueHost(nil, NewLogger("test"))
 
 	ch := h.SubscribeEvents()
 	require.NotNil(t, ch)

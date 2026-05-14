@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
 )
 
 // TestBoot_ModeOneShot_CodexJsonRpcStdio_Handshake exercises the full
@@ -46,7 +46,7 @@ func TestBoot_ModeOneShot_CodexJsonRpcStdio_Handshake(t *testing.T) {
 
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID:        "CW-TEST-CODEX-001",
-		AgentProfile:  "clockwork-backend",
+		AgentProfile:  "torque-backend",
 		Workdir:       t.TempDir(),
 		Mode:          agent.ModeOneShot,
 		OneShotPrompt: "audit the thing",
@@ -84,12 +84,12 @@ func TestBoot_ModeOneShot_CodexJsonRpcStdio_Handshake(t *testing.T) {
 	assert.Equal(t, "thread/start", calls[1].Method)
 	assert.Equal(t, "turn/start", calls[2].Method)
 
-	// initialize params carry clientInfo identifying clockwork.
+	// initialize params carry clientInfo identifying torque.
 	initParams, ok := calls[0].Params.(map[string]any)
 	require.True(t, ok, "initialize params should be map[string]any, got %T", calls[0].Params)
 	clientInfo, ok := initParams["clientInfo"].(map[string]any)
 	require.True(t, ok, "clientInfo missing from initialize params: %v", initParams)
-	assert.Equal(t, "clockwork-manifold", clientInfo["name"])
+	assert.Equal(t, "torque", clientInfo["name"])
 	assert.NotEmpty(t, clientInfo["version"], "initialize.clientInfo.version must be populated")
 
 	// turn/start carries the cached thread id from thread/start's
@@ -136,7 +136,7 @@ func TestBoot_ModeLongLived_CodexJsonRpcStdio_PostStartKickoff(t *testing.T) {
 
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID:       "CW-TEST-CODEX-LL-001",
-		AgentProfile: "clockwork-backend",
+		AgentProfile: "torque-backend",
 		Workdir:      t.TempDir(),
 		Mode:         agent.ModeLongLived,
 	})
@@ -169,7 +169,7 @@ func TestSendTurn_RoutesNonJsonRpcThroughSendInput(t *testing.T) {
 
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID:        "CW-TEST-CLAUDE-ROUTING",
-		AgentProfile:  "clockwork-backend",
+		AgentProfile:  "torque-backend",
 		Workdir:       t.TempDir(),
 		Mode:          agent.ModeOneShot,
 		OneShotPrompt: "hello there",

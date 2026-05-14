@@ -21,10 +21,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/broker"
-	clockmsg "github.com/hollis-labs/clockwork-manifold/internal/messaging"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
+	"github.com/hollis-labs/torque/internal/broker"
+	clockmsg "github.com/hollis-labs/torque/internal/messaging"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
 )
 
 // recordingHub captures every Broadcast — the test treats SSE event shape
@@ -275,4 +275,3 @@ func assertHasEvent(t *testing.T, types []string, want string) {
 	}
 	t.Errorf("expected SSE event type %q, got %v", want, types)
 }
-

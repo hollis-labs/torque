@@ -65,7 +65,7 @@ function makeArtifact(overrides: Partial<Artifact> = {}): Artifact {
     run_id: null,
     type: 'pr-link',
     content: '',
-    url: 'https://github.com/hollis-labs/clockwork-manifold/pull/42',
+    url: 'https://github.com/hollis-labs/torque/pull/42',
     file_path: '',
     metadata: {},
     created_at: '2026-05-11T00:00:00Z',
@@ -143,7 +143,7 @@ describe('TaskHITLRequestDialog', () => {
 
     const payload = screen.getByLabelText('Payload JSON') as HTMLTextAreaElement
     const parsed = JSON.parse(payload.value)
-    expect(parsed.pr_url).toBe('https://github.com/hollis-labs/clockwork-manifold/pull/42')
+    expect(parsed.pr_url).toBe('https://github.com/hollis-labs/torque/pull/42')
     expect(parsed.context.files).toEqual(['apps/gui/src/pages/TaskDetailPage.tsx'])
 
     fireEvent.click(screen.getByRole('button', { name: 'Request checkpoint' }))

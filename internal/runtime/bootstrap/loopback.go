@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/mcpadapter"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
-	"github.com/hollis-labs/clockwork-manifold/internal/service"
+	"github.com/hollis-labs/torque/internal/mcpadapter"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
+	"github.com/hollis-labs/torque/internal/service"
 	"github.com/mark3labs/mcp-go/server"
 )
 
@@ -84,8 +84,8 @@ func loopbackBuilder(svc *service.Service, sessionsRef func() *agent.Manager) ag
 	}
 	return func(taskID, role string) (agent.LoopbackHandle, error) {
 		// Per CW-20260509-0018: orchestrator-class roles drive plan walks
-		// and need cross-task tools (clockwork_plan_get, clockwork_task_*,
-		// clockwork_session_get, etc.). The legacy NewLoopback(taskID)
+		// and need cross-task tools (torque_plan_get, torque_task_*,
+		// torque_session_get, etc.). The legacy NewLoopback(taskID)
 		// adapter exposes only the self-task subset (artifact_create,
 		// comment_add, task_summary/blocked/review, task_subtodo_*) which
 		// is correct for kind=agent worker tasks but insufficient for the
@@ -97,14 +97,14 @@ func loopbackBuilder(svc *service.Service, sessionsRef func() *agent.Manager) ag
 		//     workers) → restricted self-task subset (legacy behavior).
 		var loopback *mcpadapter.Adapter
 		if isOrchestratorClassRole(role) && sessionsRef != nil {
-			// Full clockwork tool surface — NOT pinned to taskID. Unlike
+			// Full torque tool surface — NOT pinned to taskID. Unlike
 			// NewLoopback, mcpadapter.New requires explicit task IDs on
-			// every call (clockwork_task_get(id="..."), etc.). That
+			// every call (torque_task_get(id="..."), etc.). That
 			// matches the orchestrator's actual usage pattern: it acts on
 			// many task IDs (the plan task, planner sub-task, child
 			// tasks), not just its own. The orchestrator template already
 			// uses the explicit-id forms verbatim. Sessions wired so
-			// clockwork_session_* + clockwork_plan_start work.
+			// torque_session_* + torque_plan_start work.
 			loopback = mcpadapter.New(svc, nil).WithSessions(sessionsRef())
 		} else {
 			loopback = mcpadapter.NewLoopback(svc, taskID)

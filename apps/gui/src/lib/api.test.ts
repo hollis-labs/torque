@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ClockworkApiClient, normalizeArtifactList } from './api'
+import { TorqueApiClient, normalizeArtifactList } from './api'
 
 function jsonResponse(body: unknown, init: Partial<ResponseInit> = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -64,8 +64,8 @@ describe('normalizeArtifactList', () => {
   })
 })
 
-describe('ClockworkApiClient.listArtifacts', () => {
-  const client = new ClockworkApiClient('/api/v1')
+describe('TorqueApiClient.listArtifacts', () => {
+  const client = new TorqueApiClient('/api/v1')
   let fetchMock: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
@@ -135,8 +135,8 @@ describe('ClockworkApiClient.listArtifacts', () => {
   })
 })
 
-describe('ClockworkApiClient.setSetting', () => {
-  const client = new ClockworkApiClient('/api/v1')
+describe('TorqueApiClient.setSetting', () => {
+  const client = new TorqueApiClient('/api/v1')
   let fetchMock: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
@@ -162,8 +162,8 @@ describe('ClockworkApiClient.setSetting', () => {
   })
 })
 
-describe('ClockworkApiClient.emitCheckpoint', () => {
-  const client = new ClockworkApiClient('/api/v1')
+describe('TorqueApiClient.emitCheckpoint', () => {
+  const client = new TorqueApiClient('/api/v1')
   let fetchMock: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
@@ -216,8 +216,8 @@ describe('ClockworkApiClient.emitCheckpoint', () => {
   })
 })
 
-describe('ClockworkApiClient.getFeatureFlags', () => {
-  const client = new ClockworkApiClient('/api/v1')
+describe('TorqueApiClient.getFeatureFlags', () => {
+  const client = new TorqueApiClient('/api/v1')
   let fetchMock: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
@@ -245,8 +245,8 @@ describe('ClockworkApiClient.getFeatureFlags', () => {
   })
 })
 
-describe('ClockworkApiClient HTML fallback errors', () => {
-  const client = new ClockworkApiClient('/api/v1')
+describe('TorqueApiClient HTML fallback errors', () => {
+  const client = new TorqueApiClient('/api/v1')
   let fetchMock: ReturnType<typeof vi.fn>
 
   beforeEach(() => {

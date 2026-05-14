@@ -15,8 +15,8 @@ import (
 func TestIsOrchestratorClassRole(t *testing.T) {
 	t.Run("orchestrator-class roles return true", func(t *testing.T) {
 		for _, role := range []string{
-			"orchestrator",      // planstart-driven plan walker
-			"planner",           // planner sub-task spawned by orchestrator
+			"orchestrator",       // planstart-driven plan walker
+			"planner",            // planner sub-task spawned by orchestrator
 			"reviewer-end-agent", // reviewer fired on review-transition
 		} {
 			assert.True(t, isOrchestratorClassRole(role), "role %q should be orchestrator-class", role)
@@ -25,10 +25,10 @@ func TestIsOrchestratorClassRole(t *testing.T) {
 
 	t.Run("worker-class roles return false", func(t *testing.T) {
 		for _, role := range []string{
-			"",                 // empty = kind=agent worker, restricted subset
-			"agent",            // generic agent
-			"clockwork-backend",
-			"clockwork-frontend",
+			"",      // empty = kind=agent worker, restricted subset
+			"agent", // generic agent
+			"torque-backend",
+			"torque-frontend",
 			"some-custom-profile",
 		} {
 			assert.False(t, isOrchestratorClassRole(role), "role %q should be worker-class", role)
@@ -46,12 +46,12 @@ func TestIsOrchestratorClassRole(t *testing.T) {
 	t.Run("near-misses must NOT match", func(t *testing.T) {
 		// Catch typos that would silently widen the loopback contract.
 		for _, role := range []string{
-			"orchestrators",       // plural
-			"orchestrator-v2",     // versioned
-			"my-orchestrator",     // prefixed
-			"plan",                // truncated
-			"reviewer",            // truncated
-			"end-agent",           // truncated
+			"orchestrators",   // plural
+			"orchestrator-v2", // versioned
+			"my-orchestrator", // prefixed
+			"plan",            // truncated
+			"reviewer",        // truncated
+			"end-agent",       // truncated
 		} {
 			assert.False(t, isOrchestratorClassRole(role), "role %q should NOT match orchestrator-class", role)
 		}

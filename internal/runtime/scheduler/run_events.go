@@ -6,9 +6,9 @@ import (
 	"encoding/json"
 	"log"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/writequeue"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/writequeue"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
 )
 
 // writeRunEvent appends a run event to the store. Errors are logged but not

@@ -12,21 +12,21 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hollis-labs/clockwork-manifold/internal/config"
-	"github.com/hollis-labs/clockwork-manifold/internal/modelcatalog"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/sqlstore"
-	"github.com/hollis-labs/clockwork-manifold/internal/persistence/writequeue"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/executor"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/queue"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/waitpoll"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/writeq"
-	"github.com/hollis-labs/clockwork-manifold/internal/worktree"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/modelcatalog"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/writequeue"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/queue"
+	"github.com/hollis-labs/torque/internal/runtime/waitpoll"
+	"github.com/hollis-labs/torque/internal/runtime/writeq"
+	"github.com/hollis-labs/torque/internal/worktree"
 )
 
-// envRepoRoot returns CLOCKWORK_REPO so the startup sweep knows which
+// envRepoRoot returns TORQUE_REPO so the startup sweep knows which
 // repo's worktree admin to prune against. Kept as a tiny helper so tests
 // can override behavior by setting the env var.
-func envRepoRoot() string { return os.Getenv("CLOCKWORK_REPO") }
+func envRepoRoot() string { return os.Getenv("TORQUE_REPO") }
 
 // SchedulerStatus reports the current state of the scheduler.
 type SchedulerStatus struct {
@@ -41,7 +41,7 @@ type SchedulerStatus struct {
 	// worker's last heartbeat after which it is considered stale and its
 	// row is pruned by the next scheduler tick. Surfaced here so operators
 	// can verify the effective threshold without re-reading the env
-	// (CW-20260418-0018). Controlled by CLOCKWORK_SCHED_STALE, default 300.
+	// (CW-20260418-0018). Controlled by TORQUE_SCHED_STALE, default 300.
 	StaleHeartbeatThresholdSeconds int `json:"stale_heartbeat_threshold_seconds"`
 }
 
@@ -69,7 +69,7 @@ type Scheduler struct {
 
 	// cancelGrace is how long the worker gives a child process to exit
 	// after SIGTERM before escalating to SIGKILL. Sourced from
-	// CLOCKWORK_SCHED_CANCEL_GRACE at New() time; defaults to 5s.
+	// TORQUE_SCHED_CANCEL_GRACE at New() time; defaults to 5s.
 	// (CW-20260418-0005)
 	cancelGrace time.Duration
 
@@ -87,7 +87,7 @@ type Scheduler struct {
 	tickCounter uint64
 
 	// pickerDebug controls whether per-task [picker] decisions are logged
-	// at debug level. Sampled once at startup from CLOCKWORK_SCHEDULER_DEBUG
+	// at debug level. Sampled once at startup from TORQUE_SCHEDULER_DEBUG
 	// so test runs don't flip mid-suite based on env changes.
 	pickerDebug bool
 
@@ -213,30 +213,30 @@ func (s *Scheduler) SetStateWriter(w writeq.Writer) {
 	}
 }
 
-// cancelGraceFromEnv parses CLOCKWORK_SCHED_CANCEL_GRACE (duration string
+// cancelGraceFromEnv parses TORQUE_SCHED_CANCEL_GRACE (duration string
 // accepted by time.ParseDuration, e.g. "5s", "500ms") and returns the
 // configured grace period. Falls back to 5s when unset or unparseable —
 // matches the ticket default and keeps shutdown latency predictable.
 func cancelGraceFromEnv() time.Duration {
 	const def = 5 * time.Second
-	v := os.Getenv("CLOCKWORK_SCHED_CANCEL_GRACE")
+	v := os.Getenv("TORQUE_SCHED_CANCEL_GRACE")
 	if v == "" {
 		return def
 	}
 	d, err := time.ParseDuration(v)
 	if err != nil || d <= 0 {
-		log.Printf("[scheduler] invalid CLOCKWORK_SCHED_CANCEL_GRACE=%q, using default %s", v, def)
+		log.Printf("[scheduler] invalid TORQUE_SCHED_CANCEL_GRACE=%q, using default %s", v, def)
 		return def
 	}
 	return d
 }
 
 // isPickerDebugEnabled reads the debug-level toggle for the scheduler
-// picker. Set CLOCKWORK_SCHEDULER_DEBUG=1 (or "true") to emit per-task
+// picker. Set TORQUE_SCHEDULER_DEBUG=1 (or "true") to emit per-task
 // [picker] decision logs. The per-tick counter line is ALWAYS emitted at
 // info level regardless of this toggle.
 func isPickerDebugEnabled() bool {
-	switch os.Getenv("CLOCKWORK_SCHEDULER_DEBUG") {
+	switch os.Getenv("TORQUE_SCHEDULER_DEBUG") {
 	case "1", "true", "TRUE", "yes", "on":
 		return true
 	}
@@ -342,7 +342,7 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 		tickN, decisions.Candidates, len(tasks), formatSkipCounts(decisions.Counts))
 
 	// Per-task debug log: one line per skipped candidate. Gated behind
-	// CLOCKWORK_SCHEDULER_DEBUG so steady-state operators don't drown in
+	// TORQUE_SCHEDULER_DEBUG so steady-state operators don't drown in
 	// per-tick noise.
 	if s.pickerDebug {
 		for _, d := range decisions.Skipped {
@@ -487,7 +487,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	}
 
 	// Build execution job. RunID must be the DB-issued runs.id so the
-	// executor can key stderr sidecars, the CLOCKWORK_RUN_ID env var, and
+	// executor can key stderr sidecars, the TORQUE_RUN_ID env var, and
 	// log messages on the same id observers see in runs table.
 	job := s.buildJob(task, runID)
 
@@ -607,12 +607,12 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 				})
 			}
 
-			// Subtodo + checkpoint emission previously rode the CLOCKWORK_*
-			// stdout signal protocol (subtodo via CLOCKWORK_SUBTODO_DONE,
-			// checkpoint via inline CLOCKWORK_CHECKPOINT). Phase E retired
+			// Subtodo + checkpoint emission previously rode the TORQUE_*
+			// stdout signal protocol (subtodo via TORQUE_SUBTODO_DONE,
+			// checkpoint via inline TORQUE_CHECKPOINT). Phase E retired
 			// that channel — agents now use the MCP tools
-			// (clockwork_task_subtodo_done, clockwork_task_checkpoint_emit)
-			// against the global clockwork mcp server with explicit task_id.
+			// (torque_task_subtodo_done, torque_task_checkpoint_emit)
+			// against the global torque mcp server with explicit task_id.
 			// The scheduler no longer parses inline signal text; the MCP
 			// handlers in internal/mcpadapter own those code paths.
 
@@ -852,7 +852,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		s.cfg.Workers, interval, s.cfg.StaleSeconds)
 
 	// Best-effort sweep of orphaned per-run worktrees on startup. Requires
-	// CLOCKWORK_REPO so we know which repo's admin to prune against; if the
+	// TORQUE_REPO so we know which repo's admin to prune against; if the
 	// operator hasn't set it, the sweep is silently skipped.
 	if s.cfg.WorktreePerRun && s.cfg.WorktreeKeepDays > 0 && envRepoRoot() != "" {
 		removed, errs := worktree.SweepPerRun(envRepoRoot(), s.cfg.WorktreeRoot, s.cfg.WorktreeKeepDays, time.Now())
@@ -896,9 +896,9 @@ func (s *Scheduler) Stop(ctx context.Context) error {
 }
 
 // publishProgress emits a run.progress SSE event for user-visible streaming
-// signal (artifacts, tool-use, tokens). CLOCKWORK_* stdout signaling (notes,
+// signal (artifacts, tool-use, tokens). TORQUE_* stdout signaling (notes,
 // inline-tokens) was retired in Phase E along with executor.EventSignal —
-// agents emit notes via clockwork_comment_add over MCP, and token events
+// agents emit notes via torque_comment_add over MCP, and token events
 // arrive as typed EventTokenUsage from the executor adapters directly.
 // Tokens-class emissions are rate-limited via progressThrottler to keep the
 // SSE stream readable during chatty streaming runs.
