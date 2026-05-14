@@ -23,6 +23,7 @@ var validTransitions = map[string][]string{
 type TaskCreateInput struct {
 	Title             string
 	Description       string
+	Status            string
 	Priority          int
 	Tags              []string
 	Manual            bool
@@ -262,6 +263,7 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		ID:                   id,
 		Title:                input.Title,
 		Description:          input.Description,
+		Status:               input.Status,
 		Priority:             priority,
 		Manual:               input.Manual,
 		Executor:             effectiveExecutor,

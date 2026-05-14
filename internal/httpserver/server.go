@@ -90,6 +90,13 @@ func (s *Server) routes() {
 		r.Patch("/tasks/{id}/subtodos/{item_id}", s.updateSubtodo)
 		r.Delete("/tasks/{id}/subtodos/{item_id}", s.deleteSubtodo)
 
+		// Issues — project-scoped backlog capture rows over kind=issue tasks.
+		r.Get("/issues", s.listIssues)
+		r.Post("/issues", s.createIssue)
+		r.Get("/issues/search", s.searchIssues)
+		r.Get("/issues/{id}", s.getIssue)
+		r.Put("/issues/{id}", s.updateIssue)
+
 		// Checkpoints — emit/respond/cancel keyed on correlation_id.
 		r.Get("/checkpoint-workflows", s.listHITLWorkflows)
 		r.Get("/checkpoint-workflows/{type}", s.getHITLWorkflow)

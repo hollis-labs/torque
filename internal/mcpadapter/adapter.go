@@ -10,8 +10,8 @@ import (
 	mcpsanitize "github.com/hollis-labs/go-mcp-sanitize"
 
 	"github.com/hollis-labs/clockwork-manifold/internal/broker"
-	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
 	"github.com/hollis-labs/clockwork-manifold/internal/runtime/agent"
+	"github.com/hollis-labs/clockwork-manifold/internal/runtime/scheduler"
 	"github.com/hollis-labs/clockwork-manifold/internal/service"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -123,6 +123,7 @@ Example: {}`),
 	a.registerTemplateTools()
 	a.registerSubtodoTools()
 	a.registerPlanTools()
+	a.registerIssueTools()
 	a.registerModelTools()
 	a.registerSessionTools()
 	a.registerBrokerTools()
