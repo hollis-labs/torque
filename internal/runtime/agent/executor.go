@@ -199,6 +199,9 @@ func (e *Executor) Run(ctx context.Context, job *executor.ExecutionJob, cb execu
 // ModeOneShot dispatch path. Preserves cliexec's behavior:
 //
 //   - Workdir comes from the resolved working dir (not the raw job.WorkingDir).
+//   - RepoRoot carries the canonical checkout (job.RepoRoot) when the scheduler
+//     resolved a per-run worktree; empty otherwise, leaving Boot's fallback to
+//     Workdir in effect (shared mode, work_root == repo_root).
 //   - SystemPrompt = job.SystemPrompt (agent_file persona stacks on top inside
 //     composeSystemPrompt at Boot time).
 //   - Description carries through as the user-prompt body for the OneShot turn.
@@ -208,6 +211,7 @@ func optsFromJob(job *executor.ExecutionJob, resolvedWD string) Options {
 		Mode:         ModeOneShot,
 		AgentProfile: job.AgentProfile,
 		Workdir:      resolvedWD,
+		RepoRoot:     job.RepoRoot,
 		ProjectID:    "", // ExecutionJob doesn't currently carry ProjectID
 		TaskID:       job.TaskID,
 		RunID:        job.RunID,

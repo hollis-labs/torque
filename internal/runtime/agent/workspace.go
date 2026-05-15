@@ -13,10 +13,12 @@ import (
 // tooling (`find /var/folders -path '*torque-boot*'`).
 const BuildDirRootName = "torque-boot"
 
-// DefaultBuildDirRoot returns $TMPDIR/torque-boot — the parent directory the
-// go-agent-sessions AutoPlantBootDir materializes per-run boot dirs under.
-// This is the root of build_dir in the four-root model; the per-run leaf
-// (agent-sessions-boot-<runtimeID>-*) is named by the lib.
+// DefaultBuildDirRoot returns $TMPDIR/torque-boot — the parent directory under
+// which go-agent-launch materializes per-run provider boot dirs (launcher.Prepare
+// allocates the dir, providerplant.Plant renders the BootDirSpec into it). This
+// is the root of build_dir in the four-root model; the per-run leaf basename is
+// agentlaunch-bootdir-<planhash>-* (named by go-agent-launch). Torque owns the
+// leaf's lifecycle — cleanup is consumer-driven, not lib-driven.
 func DefaultBuildDirRoot() string {
 	return filepath.Join(os.TempDir(), BuildDirRootName)
 }
@@ -41,9 +43,11 @@ func DefaultBuildDirRoot() string {
 //	               OUTSIDE any worktree so durable logs/state survive worktree
 //	               cleanup.
 //	BuildDir     — the planted provider boot directory. BuildDirRoot is
-//	               $TMPDIR/torque-boot; the per-run leaf is planted by the lib
-//	               and captured post-Start (so BuildDir may be empty until
-//	               OnBootDirPlanted fires).
+//	               $TMPDIR/torque-boot; the per-run leaf (agentlaunch-bootdir-*)
+//	               is planted by go-agent-launch (launcher.Prepare +
+//	               providerplant.Plant) before the session starts and captured
+//	               by Boot. Torque owns the leaf's cleanup. May be empty for
+//	               adapters with no BootDirSpec.
 //
 // The sub-paths (PromptDir / StateDir / LogDir / LogPath) are children of
 // WorkspaceDir and carry the existing per-session dir tree.
@@ -75,8 +79,9 @@ type WorkspaceLayout struct {
 	// dirs. Always populated.
 	BuildDirRoot string
 
-	// BuildDir is the concrete planted provider boot dir for this run. Empty
-	// until OnBootDirPlanted fires (or for adapters with no BootDirSpec).
+	// BuildDir is the concrete planted provider boot dir for this run
+	// (agentlaunch-bootdir-*), planted by go-agent-launch's providerplant.Plant
+	// before the session starts. Empty for adapters with no BootDirSpec.
 	BuildDir string
 }
 

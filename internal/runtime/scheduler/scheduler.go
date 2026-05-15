@@ -521,11 +521,17 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		// sourced from config (which is itself env-driven), but the
 		// scheduler now thinks in terms of the spec rather than reading
 		// TORQUE_WORKTREE_* directly — Stage 2 threads the same spec down.
-		workRoot, path, err := spec.Resolve(job.WorkingDir, runID)
+		repoRoot := job.WorkingDir
+		workRoot, path, err := spec.Resolve(repoRoot, runID)
 		if err != nil {
 			log.Printf("[scheduler] per-run worktree setup failed for %s run %d: %v (falling back to %s)", task.ID, runID, err, job.WorkingDir)
 		} else {
 			wtPath = path
+			// work_root → the per-run worktree; repo_root → the canonical
+			// checkout. Recording both keeps the four-root model honest:
+			// agent.Boot threads RepoRoot through to WorkspaceLayout.RepoRoot
+			// so it stays distinct from WorkRoot in worktree mode.
+			job.RepoRoot = repoRoot
 			job.WorkingDir = workRoot
 			log.Printf("[scheduler] per-run worktree ready for %s run %d at %s", task.ID, runID, workRoot)
 		}

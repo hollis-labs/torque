@@ -104,3 +104,27 @@ func TestSpecFromEnv(t *testing.T) {
 	t.Setenv("TORQUE_WORKTREE_PER_RUN", "true")
 	assert.Equal(t, worktree.ModeWorktree, worktree.SpecFromEnv().Mode)
 }
+
+// TestSpecFromEnvKeepDays: SpecFromEnv populates Spec.KeepDays from
+// TORQUE_WORKTREE_KEEP_DAYS, defaulting to 7 (matching config.Load's
+// envInt("TORQUE_WORKTREE_KEEP_DAYS", 7)) when unset or unparseable.
+func TestSpecFromEnvKeepDays(t *testing.T) {
+	t.Setenv("TORQUE_WORKTREE_PER_RUN", "")
+	t.Setenv("TORQUE_WORKTREE_ROOT", "")
+
+	// Unset → default 7.
+	t.Setenv("TORQUE_WORKTREE_KEEP_DAYS", "")
+	assert.Equal(t, 7, worktree.SpecFromEnv().KeepDays)
+
+	// Explicit value parsed.
+	t.Setenv("TORQUE_WORKTREE_KEEP_DAYS", "21")
+	assert.Equal(t, 21, worktree.SpecFromEnv().KeepDays)
+
+	// Zero is honored (keep forever).
+	t.Setenv("TORQUE_WORKTREE_KEEP_DAYS", "0")
+	assert.Equal(t, 0, worktree.SpecFromEnv().KeepDays)
+
+	// Unparseable → default 7.
+	t.Setenv("TORQUE_WORKTREE_KEEP_DAYS", "not-a-number")
+	assert.Equal(t, 7, worktree.SpecFromEnv().KeepDays)
+}

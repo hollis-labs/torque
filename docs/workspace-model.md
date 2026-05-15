@@ -10,7 +10,7 @@ The four-root vocabulary is shared with the wider agent-OS toolchain.
 | `repo_root`     | Canonical project checkout, read-mostly.              | `agent.Options.Workdir` (the project root).           |
 | `work_root`     | The per-launch **writable** dir the agent executes in.| Shared mode: `== repo_root`. Worktree mode: the per-run git worktree. |
 | `workspace_dir` | Per-session **state / logs / metadata** root.         | `agent.WorkspaceCreate` → `~/.torque/workspaces/<projectKey>/<sessID>/`. |
-| `build_dir`     | The planted provider **boot directory**.              | `$TMPDIR/torque-boot/agent-sessions-boot-*` (planted by go-agent-sessions). |
+| `build_dir`     | The planted provider **boot directory**.              | `$TMPDIR/torque-boot/agentlaunch-bootdir-*` (planted by go-agent-launch — `launcher.Prepare` + `providerplant.Plant`; cleanup is consumer-owned by Torque). |
 
 ## `WorkspaceLayout`
 
@@ -31,8 +31,12 @@ BuildDir     – the concrete planted boot dir (filled post-Start)
 
 `WorkspaceCreate(workspacesRoot, projectID, sessID, repoRoot, workRoot)`
 materializes the durable `workspace_dir` tree and returns a populated
-`WorkspaceLayout`. `BuildDir` is empty until `OnBootDirPlanted` fires (the lib
-plants it synchronously inside `Manager.Start`).
+`WorkspaceLayout`. `repoRoot` is the canonical checkout and `workRoot` the
+writable execution dir; in shared mode they are equal, and `agent.Boot` falls
+back to `workRoot` (`opts.Workdir`) when `opts.RepoRoot` is empty. `BuildDir`
+is planted by go-agent-launch's `providerplant.Plant` (basename
+`agentlaunch-bootdir-*`) before the session starts, so `agent.Boot` captures it
+up-front rather than via a post-`Start` callback.
 
 ## `work_root` selection — `worktree.Spec`
 
@@ -54,10 +58,12 @@ workRoot, wtPath, err := spec.Resolve(repoRoot, runID)
 - **`ModeWorktree`**: `SetupPerRun` creates a detached worktree at
   `origin/main`; `work_root` is that path and `wtPath` is the cleanup handle.
 
-The env var is still honoured — `SpecFromEnv` reads `TORQUE_WORKTREE_PER_RUN` /
-`TORQUE_WORKTREE_ROOT` / `TORQUE_WORKTREE_KEEP_DAYS` as the default — but it is
-now a *source* for a `Spec`, not the only switch. The scheduler builds its spec
-via `Scheduler.worktreeSpec()` (config-driven, config itself env-driven).
+The env vars are still honoured — `SpecFromEnv` reads `TORQUE_WORKTREE_PER_RUN`
+(→ `Mode`), `TORQUE_WORKTREE_ROOT` (→ `Root`), and `TORQUE_WORKTREE_KEEP_DAYS`
+(→ `KeepDays`, parsed via `strconv.Atoi`, defaulting to **7** when unset or
+unparseable — matching `config.Load`) as the default — but they are now a
+*source* for a `Spec`, not the only switch. The scheduler builds its spec via
+`Scheduler.worktreeSpec()` (config-driven, config itself env-driven).
 
 ## Ownership boundary: scheduler vs launch
 
@@ -81,4 +87,7 @@ the same dirty-preservation rule to orphans older than `KeepDays`.
 
 `workspace_dir` lives **outside** any worktree (under `~/.torque/workspaces/`),
 so durable logs and state survive worktree cleanup unconditionally. `build_dir`
-is ephemeral and removed by go-agent-sessions at terminal session state.
+is ephemeral and **consumer-owned**: Torque removes the planted
+`agentlaunch-bootdir-*` leaf itself — inline for `ModeOneShot`, via
+`Manager.teardownSession` on Stop / terminal-state observation for long-lived
+modes. (go-agent-launch only plants the dir; it does not reap it.)

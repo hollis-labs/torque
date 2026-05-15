@@ -146,10 +146,14 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	// WorkspaceCreate materializes the durable per-session state/logs tree
 	// and populates RepoRoot, WorkRoot, WorkspaceDir, BuildDirRoot.
 	//
-	// RepoRoot/WorkRoot: Boot itself runs in shared mode — WorkRoot ==
-	// RepoRoot (opts.Workdir). The scheduler owns per-run worktree creation
-	// (worktree.Spec.Resolve) and hands Boot the already-resolved WorkRoot
-	// via opts.Workdir; Boot does not create worktrees of its own.
+	// RepoRoot/WorkRoot: WorkRoot is opts.Workdir — the per-launch writable
+	// dir. The scheduler owns per-run worktree creation (worktree.Spec.Resolve)
+	// and hands Boot the already-resolved WorkRoot via opts.Workdir; Boot does
+	// not create worktrees of its own. RepoRoot is opts.RepoRoot — the
+	// canonical checkout — falling back to opts.Workdir when unset (shared
+	// mode, where work_root == repo_root). The scheduler sets opts.RepoRoot
+	// to the real repo root alongside the worktree work_root so the two stay
+	// distinct in worktree mode.
 	//
 	// BuildDirRoot: $TMPDIR/torque-boot — the parent dir go-agent-launch's
 	// launcher.Prepare materializes per-run boot dirs under (threaded via
@@ -157,7 +161,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	// (agentlaunch-bootdir-<planhash>-*) does NOT contain "torque-boot",
 	// but the parent dir does — so cross-app forensic tooling
 	// (`find /var/folders -path '*torque-boot*'`) still surfaces them.
-	ws, err := WorkspaceCreate(deps.WorkspacesRoot, opts.ProjectID, sessID, opts.Workdir, opts.Workdir)
+	ws, err := WorkspaceCreate(deps.WorkspacesRoot, opts.ProjectID, sessID, resolveRepoRoot(opts), opts.Workdir)
 	if err != nil {
 		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: workspace: %v", ErrBootFailed, err)
@@ -242,7 +246,12 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	// — which fails if the prefix dir is absent. The session lib's old
 	// AutoPlantBootDir MkdirAll'd BootDirRoot for us; providerplant's
 	// Prepare does not, so ensure $TMPDIR/torque-boot exists here.
-	if err := os.MkdirAll(ws.BuildDirRoot, 0o750); err != nil {
+	//
+	// 0o700 (user-private), matching the workspace tree (WorkspaceCreate):
+	// planted boot dirs hold sensitive files (.claude/settings.json with the
+	// apiKeyHelper path, MCP loopback config) and live under a world-writable
+	// $TMPDIR, so the root must not be group/other-traversable.
+	if err := os.MkdirAll(ws.BuildDirRoot, 0o700); err != nil {
 		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: ensure boot dir root: %v", ErrBootFailed, err)
 	}
@@ -983,6 +992,19 @@ func composeBuildArgs(p buildArgsParams) []string {
 // exception.
 func skipModelSuffixForProvider(providerName string) bool {
 	return providerName == "opencode"
+}
+
+// resolveRepoRoot returns the canonical project checkout (repo_root) for a
+// Boot call: Options.RepoRoot when the caller supplied it (the scheduler does,
+// alongside the per-run worktree work_root), falling back to Options.Workdir
+// otherwise. The fallback preserves shared-mode behaviour where work_root ==
+// repo_root, and keeps WorkspaceLayout.RepoRoot honest in worktree mode where
+// Workdir points at the worktree rather than the canonical checkout.
+func resolveRepoRoot(opts Options) string {
+	if opts.RepoRoot != "" {
+		return opts.RepoRoot
+	}
+	return opts.Workdir
 }
 
 // isApiKeyHelperExecutable mirrors bootstrap.isExecutableFile for the

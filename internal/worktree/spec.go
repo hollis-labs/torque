@@ -1,6 +1,15 @@
 package worktree
 
-import "os"
+import (
+	"os"
+	"strconv"
+)
+
+// defaultKeepDays is the fallback TTL (in days) for orphaned worktrees when
+// TORQUE_WORKTREE_KEEP_DAYS is unset or unparseable. Mirrors config.Load's
+// envInt("TORQUE_WORKTREE_KEEP_DAYS", 7) default so env-driven (SpecFromEnv)
+// and config-driven Spec construction agree.
+const defaultKeepDays = 7
 
 // Mode names the work-root strategy for a run. It is the spec-level,
 // env-independent expression of "does this run get its own git worktree".
@@ -39,9 +48,14 @@ type Spec struct {
 }
 
 // SpecFromEnv builds a Spec from the TORQUE_WORKTREE_* environment, preserving
-// the historical env-driven behaviour as a default/fallback. enabled mirrors
-// config.SchedulerConfig.WorktreePerRun (sourced from TORQUE_WORKTREE_PER_RUN);
-// root and keepDays mirror WorktreeRoot / WorktreeKeepDays.
+// the historical env-driven behaviour as a default/fallback:
+//
+//   - Mode      ← TORQUE_WORKTREE_PER_RUN (mirrors config.SchedulerConfig.WorktreePerRun)
+//   - Root      ← TORQUE_WORKTREE_ROOT    (mirrors config.SchedulerConfig.WorktreeRoot)
+//   - KeepDays  ← TORQUE_WORKTREE_KEEP_DAYS, parsed via strconv.Atoi; falls back
+//     to defaultKeepDays (7) when the var is unset or unparseable, matching
+//     config.Load's envInt("TORQUE_WORKTREE_KEEP_DAYS", 7) so env-driven and
+//     config-driven Spec construction agree.
 //
 // Callers that already have a config.SchedulerConfig should prefer
 // SpecFromConfig-style construction at the call site; SpecFromEnv exists for
@@ -52,9 +66,16 @@ func SpecFromEnv() Spec {
 	if v := os.Getenv("TORQUE_WORKTREE_PER_RUN"); v == "1" || v == "true" || v == "TRUE" {
 		mode = ModeWorktree
 	}
+	keepDays := defaultKeepDays
+	if v := os.Getenv("TORQUE_WORKTREE_KEEP_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			keepDays = n
+		}
+	}
 	return Spec{
-		Mode: mode,
-		Root: os.Getenv("TORQUE_WORKTREE_ROOT"),
+		Mode:     mode,
+		Root:     os.Getenv("TORQUE_WORKTREE_ROOT"),
+		KeepDays: keepDays,
 	}
 }
 
