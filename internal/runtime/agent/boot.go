@@ -3,14 +3,16 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/hollis-labs/go-agent-launch/agentlaunch/launcher"
+	"github.com/hollis-labs/go-agent-launch/agentlaunch/providerplant"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 	llmtypes "github.com/hollis-labs/go-llm-types"
 	"github.com/hollis-labs/go-providers/provider"
@@ -97,22 +99,25 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	}
 
 	// apiKeyHelper threading (CW-20260509-0016 / CW-20260513-0017):
-	// thread Dependencies.ApiKeyHelperPath onto the adapter BEFORE the
-	// lib's AutoPlantBootDir runs preparePlant, because the
-	// .claude/settings.json Render closure captures the receiver at
-	// render time and emits `apiKeyHelper: <path>` only when the field
-	// is non-empty. The planted .claude/settings.json sits in cwd=bootDir
-	// and is read by ANY claude invocation (bare or streaming) — claude's
-	// cwd-local config discovery applies in non-bare mode, and bare mode
+	// thread Dependencies.ApiKeyHelperPath onto the adapter BEFORE
+	// providerplant.Plant runs, because the .claude/settings.json
+	// Render closure captures the receiver at render time and emits
+	// `apiKeyHelper: <path>` only when the field is non-empty. The
+	// planted .claude/settings.json sits in cwd=bootDir and is read by
+	// ANY claude invocation (bare or streaming) — claude's cwd-local
+	// config discovery applies in non-bare mode, and bare mode
 	// explicitly references it via --settings.
 	//
-	// The lib's preparePlant clones the adapter for per-session path
-	// injection but reads the receiver fields (including ApiKeyHelperPath)
-	// before cloning, so the value flows through. Wired for all
-	// ClaudeAdapter instances (Bare, PTY, StreamingStdio) — the field is
-	// inert when no planted settings.json is read by claude, so this is
-	// defensive across adapter shapes. Mirrors agent-mux v005-07
-	// internal/app/service.go:175's unconditional pattern.
+	// Post Stage-2 (CW-20260515-0020): boot dirs are planted by
+	// go-agent-launch's providerplant.Plant, NOT the session lib's
+	// AutoPlantBootDir. providerplant.Plant renders the adapter's
+	// BootDirSpec.PlantedFiles directly against the live adapter, so the
+	// ApiKeyHelperPath set here flows into the planted settings.json the
+	// same way. apiKeyHelper is deliberately NOT routed through the
+	// shared InjectionSpec — it is a secret-bearing, provider-adapter-
+	// specific path and InjectionSpec is persisted at rest. Wired for
+	// all ClaudeAdapter instances (Bare, PTY, StreamingStdio); the field
+	// is inert when no planted settings.json is read by claude.
 	if claudeAdapter, ok := cliAdapter.(*provider.ClaudeAdapter); ok && deps.ApiKeyHelperPath != "" {
 		// Validate the resolved path is still an executable file at the
 		// moment we're about to thread it into the adapter. Catches the
@@ -131,36 +136,32 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		}
 	}
 
-	// Boot dir lifecycle is owned by go-agent-sessions v0.9.4's
-	// AutoPlantBootDir (StartOptions below). The lib walks the adapter's
-	// BootDirSpec().PlantedFiles, materializes each file under
-	// BootDirRoot/agent-sessions-boot-<runtimeID>-*, applies bare-mode
-	// adapter cloning + injection, appends EnvAmendments / ProjectDirArg,
-	// fires OnBootDirPlanted with the absolute path, and removes the dir
-	// at terminal state. Adapters without BootDirSpec (or with empty
-	// PlantedFiles — gemini/copilot today) silently no-op the plant.
-	//
-	// PlantContext fields the lib doesn't manage flow through StartOptions
-	// .PlantContext (CW-20260512-0125 → go-agent-sessions v0.9.4):
-	// AgentName, MCPLoopbackURL, MuxCommand/Args/Env. SystemPrompt and
-	// BootContent are passed via StartOptions.BootPrompt and .BootContent
-	// respectively (see v0.9.3 split — persona vs per-task kickoff).
 	kickoffMD := kickoffMarkdown(opts, role)
 	loopbackURL := ""
 	if loopback != nil {
 		loopbackURL = loopback.URL()
 	}
 
-	// Boot-dir root: $TMPDIR/torque-boot/. The lib's basename pattern
-	// (agent-sessions-boot-<runtimeID>-*) replaces torque's pre-AutoPlant
-	// `torque-boot-<provider>-<taskID>-r<runID>-*`; the parent dir name
-	// keeps the substring "torque-boot" so cross-app forensic tooling
-	// (`find /var/folders -path '*torque-boot*'`) still surfaces the
-	// per-task tempdirs from this daemon.
-	bootDirRoot := filepath.Join(os.TempDir(), "torque-boot")
-
-	// Workspace dir (persistent state + logs). Independent of boot dir.
-	ws, err := workspaceCreate(deps.WorkspacesRoot, opts.ProjectID, sessID)
+	// Workspace layout (the shared four-root model — see WorkspaceLayout).
+	// WorkspaceCreate materializes the durable per-session state/logs tree
+	// and populates RepoRoot, WorkRoot, WorkspaceDir, BuildDirRoot.
+	//
+	// RepoRoot/WorkRoot: WorkRoot is opts.Workdir — the per-launch writable
+	// dir. The scheduler owns per-run worktree creation (worktree.Spec.Resolve)
+	// and hands Boot the already-resolved WorkRoot via opts.Workdir; Boot does
+	// not create worktrees of its own. RepoRoot is opts.RepoRoot — the
+	// canonical checkout — falling back to opts.Workdir when unset (shared
+	// mode, where work_root == repo_root). The scheduler sets opts.RepoRoot
+	// to the real repo root alongside the worktree work_root so the two stay
+	// distinct in worktree mode.
+	//
+	// BuildDirRoot: $TMPDIR/torque-boot — the parent dir go-agent-launch's
+	// launcher.Prepare materializes per-run boot dirs under (threaded via
+	// LaunchPlan.Workspace.TempPrefix). The launcher's basename pattern
+	// (agentlaunch-bootdir-<planhash>-*) does NOT contain "torque-boot",
+	// but the parent dir does — so cross-app forensic tooling
+	// (`find /var/folders -path '*torque-boot*'`) still surfaces them.
+	ws, err := WorkspaceCreate(deps.WorkspacesRoot, opts.ProjectID, sessID, resolveRepoRoot(opts), opts.Workdir)
 	if err != nil {
 		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: workspace: %v", ErrBootFailed, err)
@@ -168,9 +169,198 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 
 	// Env: base (filtered OS + TORQUE_TASK_ID/RUN_ID + agent-file env +
 	// opts.Env). Per-provider env amendments (e.g. OPENCODE_CONFIG_DIR =
-	// <bootDir>) are appended by the lib's preparePlant after the bootdir
-	// is materialized.
+	// <bootDir>, CODEX_HOME = <bootDir>) are merged in after planting from
+	// prepared.Env (providerplant.Plant resolves the BootDirSpec env
+	// amendments against the planted bootdir).
 	env := composeEnv(profile, opts, agentFile)
+
+	// Shared-launch preparation + boot-dir planting (CW-20260515-0020).
+	//
+	// Torque builds a go-agent-launch LaunchPlan from its own Boot inputs,
+	// compiles + prepares it, threads the task-scoped PlantContext fields
+	// (MCP loopback URL + the daemon-scoped mux MCP entry) onto the
+	// PreparedLaunch, and plants the provider boot dir via
+	// providerplant.Plant — all BEFORE the session starts.
+	//
+	// This replaces go-agent-sessions v0.9.4's AutoPlantBootDir: the
+	// StartRequest below sets AutoPlantBootDir:false so the session layer
+	// does not double-plant. The planted boot dir, the bootdir-derived
+	// env amendments, and the project-dir argv flow into the existing
+	// StartOptions; everything downstream (kickoff, teardown, one-shot
+	// turn wait) is unchanged.
+	// Optional launch profile (CW-20260515-0021). When the agent profile
+	// or Options opts into a shared go-agent-launch launch profile, resolve
+	// it into a base LaunchPlan; buildLaunchPlan overlays Torque's
+	// runtime-critical fields on top. When nothing is referenced
+	// (the default), launchProfileSrc stays nil and buildLaunchPlan runs
+	// the pure-inline path — byte-identical to the pre-Stage-3 behavior.
+	launchProfileSrc, err := resolveLaunchProfile(resolveLaunchProfileInput{
+		ProfileRef:    profile.LaunchProfile,
+		OptionsRef:    opts.LaunchProfile,
+		InlinePayload: opts.LaunchProfileInline,
+	})
+	if err != nil {
+		shutdownLoopbackHandle(loopback)
+		// errors.Join keeps BOTH sentinels matchable: ErrBootFailed (the
+		// Boot-failed contract) and ErrLaunchProfile (the more specific
+		// cause carried by err). A plain "%w: ...: %v" would drop the
+		// ErrLaunchProfile chain.
+		return nil, errors.Join(ErrBootFailed, fmt.Errorf("resolve launch profile: %w", err))
+	}
+	plan, err := buildLaunchPlan(buildLaunchPlanInput{
+		Profile:       profile,
+		AgentProfile:  opts.AgentProfile,
+		Role:          role,
+		AgentFile:     agentFile,
+		AgentFilePath: opts.AgentFile,
+		RuntimeKind:   runtimeKind,
+		ProjectID:     opts.ProjectID,
+		Workdir:       opts.Workdir,
+		WorkspaceDir:  ws.WorkspaceDir,
+		BuildDirRoot:  ws.BuildDirRoot,
+		SystemPrompt:  systemPrompt,
+		KickoffMD:     kickoffMD,
+		LoopbackURL:   loopbackURL,
+		LaunchProfile: launchProfileSrc,
+	})
+	if err != nil {
+		shutdownLoopbackHandle(loopback)
+		return nil, fmt.Errorf("%w: build launch plan: %v", ErrBootFailed, err)
+	}
+	// Thread catalog provenance into Compile when the plan came from a
+	// launch-profile catalog path (empty for the inline / no-profile
+	// paths, leaving Compile's zero-value default in place).
+	var compileOpts []launcher.CompileOption
+	if launchProfileSrc != nil && launchProfileSrc.SourceCatalog != "" {
+		compileOpts = append(compileOpts, launcher.WithSourceCatalog(
+			launchProfileSrc.SourceCatalog,
+			launchProfileSrc.SourceCatalogVersion,
+		))
+	}
+	compiled, err := launcher.Compile(ctx, plan, compileOpts...)
+	if err != nil {
+		shutdownLoopbackHandle(loopback)
+		return nil, fmt.Errorf("%w: compile launch: %v", ErrBootFailed, err)
+	}
+	// launcher.Prepare's allocateBootDir does os.MkdirTemp(TempPrefix, ...)
+	// — which fails if the prefix dir is absent. The session lib's old
+	// AutoPlantBootDir MkdirAll'd BootDirRoot for us; providerplant's
+	// Prepare does not, so ensure $TMPDIR/torque-boot exists here.
+	//
+	// 0o700 (user-private), matching the workspace tree (WorkspaceCreate):
+	// planted boot dirs hold sensitive files (.claude/settings.json with the
+	// apiKeyHelper path, MCP loopback config) and live under a world-writable
+	// $TMPDIR, so the root must not be group/other-traversable.
+	if err := os.MkdirAll(ws.BuildDirRoot, 0o700); err != nil {
+		shutdownLoopbackHandle(loopback)
+		return nil, fmt.Errorf("%w: ensure boot dir root: %v", ErrBootFailed, err)
+	}
+	prepared, err := launcher.Prepare(ctx, compiled)
+	if err != nil {
+		shutdownLoopbackHandle(loopback)
+		return nil, fmt.Errorf("%w: prepare launch: %v", ErrBootFailed, err)
+	}
+	// Task-scoped + daemon-scoped PlantContext fields the shared plan
+	// does not carry: the MCP loopback URL (Torque still CONSTRUCTS the
+	// loopback itself — only the URL flows here) and the mux MCP entry
+	// (deps.MuxCommand/MuxArgs/MuxEnv). These are runtime values, kept
+	// off the persisted-at-rest LaunchPlan deliberately.
+	prepared.PlantContext.MCPLoopbackURL = loopbackURL
+	prepared.PlantContext.MuxCommand = deps.MuxCommand
+	prepared.PlantContext.MuxArgs = append([]string(nil), deps.MuxArgs...)
+	prepared.PlantContext.MuxEnv = muxEnvSliceToMap(deps.MuxEnv)
+	// Plant the provider boot dir. WithAdapter pins the exact adapter
+	// Torque resolved (adapterFor) — critically the BARE-mode claude
+	// adapter, which providerplant's DefaultResolver would not select
+	// (it returns plain claude). Planting against the same adapter
+	// instance Torque spawns keeps the planted files byte-identical to
+	// the pre-Stage-2 AutoPlantBootDir output.
+	bootDirProvider, hasBootDir := cliAdapter.(provider.BootDirProvider)
+	if hasBootDir {
+		if err := providerplant.Plant(ctx, prepared, providerplant.WithAdapter(bootDirProvider)); err != nil {
+			shutdownLoopbackHandle(loopback)
+			return nil, fmt.Errorf("%w: plant boot dir: %v", ErrBootFailed, err)
+		}
+	}
+	// capturedBootDir is the planted dir; "" for adapters with no
+	// BootDirSpec (gemini/copilot — unsupported in Torque today, but the
+	// branch keeps Boot generic). Planting already happened, so this is
+	// known up-front rather than via an OnBootDirPlanted callback.
+	capturedBootDir := ""
+	if hasBootDir {
+		capturedBootDir = prepared.PlantedBootDir
+	}
+
+	// Boot-dir leak guard (CW-20260515-0020 follow-up). Post Stage-2 the
+	// boot dir is planted to disk HERE, before runtime construction,
+	// runtime.Prepare, the ModeResume checkpoint lookup, encodeMeta, and
+	// deps.CreateSession — each of which can return an error. The session
+	// lib's AutoPlantBootDir used to own teardown (planting happened
+	// inside Start); now planting is external + earlier, so every error
+	// return between this point and a successful mgr.inner.Start() would
+	// leak the planted temp dir under $TMPDIR/torque-boot.
+	//
+	// Single deferred cleanup guarded by bootDirPlanted: it fires for
+	// every intermediate pre-Start failure and is a no-op once cleared.
+	// The flag is cleared the instant mgr.inner.Start() returns nil, so
+	// the success path keeps the dir (registerBootDir / OneShot inline
+	// cleanup take over) and the Start-error path — which clears the flag
+	// too — does its own os.RemoveAll without this defer double-removing.
+	bootDirPlanted := capturedBootDir != ""
+	defer func() {
+		if bootDirPlanted {
+			_ = os.RemoveAll(capturedBootDir)
+		}
+	}()
+
+	// Thread the planted boot dir into the adapter / session argv.
+	//
+	// Two distinct mechanisms, by adapter shape:
+	//
+	//   - Bare-mode claude: the boot dir is referenced via four explicit
+	//     CLI flags (--mcp-config / --append-system-prompt-file /
+	//     --settings / --add-dir) that ClaudeAdapter.BuildArgs emits from
+	//     the adapter's own MCPConfigPath/AppendSystemPromptFile/
+	//     SettingsPath/ProjectDir fields. We populate them here from
+	//     BareInjectionPaths(plantedBootDir, projectDir). Because BuildArgs
+	//     already emits --add-dir for the bare adapter, the ExtraArgs
+	//     splice below is suppressed for bare claude to avoid a double
+	//     --add-dir.
+	//
+	//   - Non-bare adapters (claude PTY/streaming, codex subprocess,
+	//     opencode): the boot dir is referenced via the BootDirSpec's
+	//     ProjectDirArg (--add-dir / --cd / --dir) plus EnvAmendments
+	//     (CODEX_HOME / OPENCODE_CONFIG_DIR). providerplant.Plant resolved
+	//     both into prepared.Argv[1:] and prepared.Env; we thread Argv[1:]
+	//     into StartOptions.ExtraArgs (a public field consumers may set
+	//     directly — the runtime splices it after adapter.BuildArgs) and
+	//     merge prepared.Env into the spawn env.
+	var bootDirExtraArgs []string
+	if claudeAdapter, ok := cliAdapter.(*provider.ClaudeAdapter); ok && claudeAdapter.Bare && capturedBootDir != "" {
+		inj := claudeAdapter.BareInjectionPaths(capturedBootDir, opts.Workdir)
+		claudeAdapter.MCPConfigPath = inj.MCPConfigPath
+		claudeAdapter.AppendSystemPromptFile = inj.AppendSystemPromptFile
+		claudeAdapter.SettingsPath = inj.SettingsPath
+		claudeAdapter.ProjectDir = inj.ProjectDir
+		// Bare BuildArgs emits --add-dir from claudeAdapter.ProjectDir;
+		// prepared.Argv[1:] would double it. Suppress the splice.
+	} else if len(prepared.Argv) > 1 {
+		bootDirExtraArgs = append([]string(nil), prepared.Argv[1:]...)
+	}
+
+	// Merge the bootdir-derived env amendments (CODEX_HOME /
+	// OPENCODE_CONFIG_DIR) that providerplant.Plant resolved into
+	// prepared.Env. Torque's composeEnv already produced the base
+	// "K=V" slice; append the amendments last so they win.
+	env = mergePreparedEnv(env, prepared.Env)
+
+	// Spawn cwd: providerplant.Plant set prepared.Workdir to the spec's
+	// SpawnWorkdir (bootDir for claude/codex, projectDir for opencode).
+	// Fall back to opts.Workdir when no boot dir was planted.
+	spawnWorkdir := opts.Workdir
+	if capturedBootDir != "" && prepared.Workdir != "" {
+		spawnWorkdir = prepared.Workdir
+	}
 
 	// opencode's argv shape requires `--model <X>` BEFORE the positional
 	// prompt arg (`opencode run --agent <A> --model <M> "<prompt>"`).
@@ -277,7 +467,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		persistedMeta[k] = v
 	}
 	persistedMeta[metaKeyMode] = opts.Mode.String()
-	persistedMeta[metaKeyWorkspaceDir] = ws.Root
+	persistedMeta[metaKeyWorkspaceDir] = ws.WorkspaceDir
 	if opts.ParentSessionID != "" {
 		persistedMeta[metaKeyParentSessionID] = opts.ParentSessionID
 	}
@@ -450,22 +640,22 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	// nil/nil unless explicitly overridden via Options.
 	supervisor, limits := profileSupervision(profile, opts, caps.PTY)
 
-	// OnBootDirPlanted fires synchronously inside Manager.Start once the
-	// lib's preparePlant materializes the bootdir, BEFORE the child spawn
-	// fires. Captured here so post-Start wiring (registerBootDir,
-	// SessionMeta update, Session.BootDir) can observe the absolute path
-	// without an asynchronous read.
-	var capturedBootDir string
-	onBootDirPlanted := func(path string) {
-		capturedBootDir = path
-	}
-
+	// Boot dir is already planted by providerplant.Plant (above), so
+	// StartOptions.AutoPlantBootDir is false — the session layer must
+	// not double-plant. capturedBootDir was resolved at plant time;
+	// ExtraArgs / Workdir / Env carry the planted layout into the spawn.
+	//
+	// BootPrompt / BootContent still flow so the existing kickoff path
+	// (boot.md @-reference + AutoFireFirstTurn) is unchanged — the
+	// session layer consumes them for the first-turn payload framing
+	// independently of planting. PlantContext is left zero: nothing in
+	// the session layer reads it when AutoPlantBootDir is false.
 	startReq := agentsessions.StartRequest{
 		ID:      sessID,
 		Runtime: runtime,
 		Options: agentsessions.StartOptions{
-			Workdir:                 opts.Workdir,
-			WorkspaceDir:            ws.Root,
+			Workdir:                 spawnWorkdir,
+			WorkspaceDir:            ws.WorkspaceDir,
 			LogPath:                 ws.LogPath,
 			BootPrompt:              systemPrompt,
 			BootContent:             kickoffMD,
@@ -481,17 +671,9 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 			ResourceLimits:          limits,
 			EventFanout:             streamFanout,
 			TypedEventCallback:      opts.TypedEventCallback,
-			AutoPlantBootDir:        true,
-			BootDirRoot:             bootDirRoot,
-			OnBootDirPlanted:        onBootDirPlanted,
+			AutoPlantBootDir:        false,
+			ExtraArgs:               bootDirExtraArgs,
 			JsonRpcNotificationHook: jsonRpcNotificationHook,
-			PlantContext: provider.PlantContext{
-				AgentName:      opts.AgentProfile,
-				MCPLoopbackURL: loopbackURL,
-				MuxCommand:     deps.MuxCommand,
-				MuxArgs:        deps.MuxArgs,
-				MuxEnv:         deps.MuxEnv,
-			},
 		},
 		SessionMeta: opts.SessionMeta,
 	}
@@ -517,17 +699,27 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		closeStreamFanout()
 		shutdownLoopbackHandle(loopback)
 		// Inner.Start records StateFailed via StateSink on its own; no extra
-		// row update needed here. The lib's preparePlant cleans up any
-		// partially-planted bootdir on its own error path.
+		// row update needed here. Boot dir planting happened BEFORE Start
+		// (providerplant.Plant), so the lib no longer owns its cleanup —
+		// remove the planted dir here on the Start-failed path. Clear the
+		// leak-guard flag first so the deferred cleanup does not double-remove.
+		if capturedBootDir != "" {
+			bootDirPlanted = false
+			_ = os.RemoveAll(capturedBootDir)
+		}
 		return nil, fmt.Errorf("%w: %v", ErrBootFailed, err)
 	}
+	// Start succeeded — the planted boot dir is now owned by the running
+	// session (registerBootDir below for long-lived modes, the OneShot
+	// inline defer for ModeOneShot). Clear the leak guard so the deferred
+	// cleanup is a no-op on every success path.
+	bootDirPlanted = false
 
-	// Persist the captured boot dir into SessionMeta. The lib's
-	// preparePlant fired OnBootDirPlanted synchronously inside Start, so
-	// capturedBootDir is populated when Start returns nil (or empty when
-	// the adapter has no BootDirSpec — gemini/copilot today). Empty path
-	// → skip the meta write; future Get/List paths return Session.BootDir
-	// = "" which matches the pre-plant reality.
+	// Persist the captured boot dir into SessionMeta. providerplant.Plant
+	// resolved capturedBootDir before Start, so it is known here (or empty
+	// when the adapter has no BootDirSpec — gemini/copilot today). Empty
+	// path → skip the meta write; Get/List paths return Session.BootDir
+	// = "" which matches the no-plant reality.
 	if capturedBootDir != "" {
 		persistedMeta[metaKeyBootDir] = capturedBootDir
 		if updatedMeta, encErr := encodeMeta(persistedMeta); encErr == nil {
@@ -538,11 +730,11 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	}
 
 	// Register per-session teardown hooks for non-OneShot modes. OneShot
-	// runs synchronously below and drives its own teardown via Stop. The
-	// lib owns bootDir cleanup at terminal state under AutoPlantBootDir,
-	// so registerBootDir is now informational — wired so the in-memory
-	// registry mirrors the persisted meta for daemon-restart cleanup
-	// fallback paths and operator inspection (manager.Get).
+	// runs synchronously below and drives its own teardown via Stop.
+	// Boot dir cleanup is consumer-owned post Stage-2 (the session lib's
+	// AutoPlantBootDir terminal-state cleanup is no longer in play):
+	// registerBootDir hands the planted dir to Manager.teardownSession,
+	// which os.RemoveAll's it on Stop / terminal-state observation.
 	if opts.Mode != ModeOneShot {
 		mgr.registerLoopback(sessID, loopback)
 		mgr.registerStderrCloser(sessID, closeStderr)
@@ -568,7 +760,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		RuntimeKind:     runtime.Kind(),
 		Workdir:         opts.Workdir,
 		BootDir:         capturedBootDir,
-		WorkspaceDir:    ws.Root,
+		WorkspaceDir:    ws.WorkspaceDir,
 		ProjectID:       opts.ProjectID,
 		TaskID:          opts.TaskID,
 		ParentSessionID: opts.ParentSessionID,
@@ -627,9 +819,13 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		defer closeStderr()
 		defer closeStreamFanout()
 		defer shutdownLoopbackHandle(loopback)
-		// BootDir cleanup is owned by the lib's AutoPlantBootDir at
-		// terminal state (Stop fires below) — no consumer-side
-		// os.RemoveAll required.
+		// BootDir cleanup is consumer-owned post Stage-2: providerplant
+		// .Plant materialized the dir before Start, so the session lib
+		// does not reap it. Remove it inline once the synchronous OneShot
+		// turn + Stop have completed.
+		if capturedBootDir != "" {
+			defer func() { _ = os.RemoveAll(capturedBootDir) }()
+		}
 
 		prompt := composeUserPrompt(opts)
 		if prompt == "" {
@@ -796,6 +992,19 @@ func composeBuildArgs(p buildArgsParams) []string {
 // exception.
 func skipModelSuffixForProvider(providerName string) bool {
 	return providerName == "opencode"
+}
+
+// resolveRepoRoot returns the canonical project checkout (repo_root) for a
+// Boot call: Options.RepoRoot when the caller supplied it (the scheduler does,
+// alongside the per-run worktree work_root), falling back to Options.Workdir
+// otherwise. The fallback preserves shared-mode behaviour where work_root ==
+// repo_root, and keeps WorkspaceLayout.RepoRoot honest in worktree mode where
+// Workdir points at the worktree rather than the canonical checkout.
+func resolveRepoRoot(opts Options) string {
+	if opts.RepoRoot != "" {
+		return opts.RepoRoot
+	}
+	return opts.Workdir
 }
 
 // isApiKeyHelperExecutable mirrors bootstrap.isExecutableFile for the

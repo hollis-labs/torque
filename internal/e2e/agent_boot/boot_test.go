@@ -2,6 +2,7 @@ package agent_boot
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -145,6 +146,68 @@ func TestBoot_ModeOneShot_TimeoutFallsThrough(t *testing.T) {
 	require.NotNil(t, fakeSess)
 	assert.Equal(t, int32(1), fakeSess.recordedSendInputCount(),
 		"SendInput must fire even when the runtime never signals turn-complete")
+}
+
+// TestBoot_PreStartFailure_RemovesPlantedBootDir is the regression test for
+// the Stage-2 boot-dir leak. Post Stage-2, providerplant.Plant materializes
+// the boot dir under $TMPDIR/torque-boot BEFORE runtime construction; an
+// error between that plant and a successful mgr.inner.Start() must not leak
+// the planted dir. Here the injected RuntimeFactory error fires Boot's
+// "construct runtime" intermediate-failure path — Boot's guarded deferred
+// cleanup must os.RemoveAll the planted dir before returning the error.
+//
+// Detection: snapshot the set of $TMPDIR/torque-boot entries before Boot and
+// after; a leak shows up as a new surviving entry. The shared root means
+// other tests' (cleaned-up) dirs don't perturb the delta.
+func TestBoot_PreStartFailure_RemovesPlantedBootDir(t *testing.T) {
+	injected := errors.New("injected runtime-construction failure")
+	cd := composeDeps(t,
+		fakeRuntimeConfig{PTY: true, RuntimeFactoryErr: injected},
+		"claude")
+
+	bootRoot := agent.DefaultBuildDirRoot()
+	before := dirEntrySet(t, bootRoot)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	sess, err := cd.Manager.Boot(ctx, agent.Options{
+		TaskID:       "CW-TEST-LEAK-001",
+		AgentProfile: "torque-backend",
+		Workdir:      t.TempDir(),
+		Mode:         agent.ModeLongLived,
+	})
+	require.Error(t, err, "Boot must fail when runtime construction errors")
+	require.Nil(t, sess)
+	assert.ErrorIs(t, err, agent.ErrBootFailed)
+
+	after := dirEntrySet(t, bootRoot)
+	var leaked []string
+	for name := range after {
+		if !before[name] {
+			leaked = append(leaked, name)
+		}
+	}
+	assert.Empty(t, leaked,
+		"Boot must os.RemoveAll the planted boot dir on a pre-Start failure; leaked entries under %s: %v",
+		bootRoot, leaked)
+}
+
+// dirEntrySet returns the set of entry names directly under dir. A missing
+// dir yields an empty set (the boot root may not exist before the first
+// Boot allocates it).
+func dirEntrySet(t *testing.T, dir string) map[string]bool {
+	t.Helper()
+	ents, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return map[string]bool{}
+	}
+	require.NoError(t, err)
+	out := make(map[string]bool, len(ents))
+	for _, e := range ents {
+		out[e.Name()] = true
+	}
+	return out
 }
 
 // TestBoot_ModeSubagent_StampsParent validates the nested-session lifecycle:

@@ -414,6 +414,24 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 	return nil
 }
 
+// worktreeSpec projects the scheduler's worktree-related config onto a
+// worktree.Spec — the env-independent expression of work-root strategy.
+// SchedulerConfig.WorktreePerRun is itself sourced from TORQUE_WORKTREE_PER_RUN
+// at config.Load time, so the env var is still the default/fallback; the spec
+// is just the structured form the scheduler (and Stage 2's go-agent-launch
+// integration) thread instead of re-reading env vars at each layer.
+func (s *Scheduler) worktreeSpec() worktree.Spec {
+	mode := worktree.ModeShared
+	if s.cfg.WorktreePerRun {
+		mode = worktree.ModeWorktree
+	}
+	return worktree.Spec{
+		Mode:     mode,
+		Root:     s.cfg.WorktreeRoot,
+		KeepDays: s.cfg.WorktreeKeepDays,
+	}
+}
+
 func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) error {
 	// Look up executor
 	exec, err := s.registry.Get(task.Executor)
@@ -497,18 +515,25 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	// running in task.working_dir so a stale remote or git issue can't block
 	// dispatch.
 	wtPath := ""
-	if s.cfg.WorktreePerRun && job.WorkingDir != "" {
-		path, err := worktree.SetupPerRun(worktree.PerRunOptions{
-			Enabled:  true,
-			Root:     s.cfg.WorktreeRoot,
-			KeepDays: s.cfg.WorktreeKeepDays,
-		}, job.WorkingDir, runID)
+	if spec := s.worktreeSpec(); spec.WorktreeEnabled() && job.WorkingDir != "" {
+		// Spec.Resolve resolves the run's work_root: repo_root in shared
+		// mode, or a per-run git worktree in worktree mode. The spec is
+		// sourced from config (which is itself env-driven), but the
+		// scheduler now thinks in terms of the spec rather than reading
+		// TORQUE_WORKTREE_* directly — Stage 2 threads the same spec down.
+		repoRoot := job.WorkingDir
+		workRoot, path, err := spec.Resolve(repoRoot, runID)
 		if err != nil {
 			log.Printf("[scheduler] per-run worktree setup failed for %s run %d: %v (falling back to %s)", task.ID, runID, err, job.WorkingDir)
 		} else {
 			wtPath = path
-			job.WorkingDir = path
-			log.Printf("[scheduler] per-run worktree ready for %s run %d at %s", task.ID, runID, path)
+			// work_root → the per-run worktree; repo_root → the canonical
+			// checkout. Recording both keeps the four-root model honest:
+			// agent.Boot threads RepoRoot through to WorkspaceLayout.RepoRoot
+			// so it stays distinct from WorkRoot in worktree mode.
+			job.RepoRoot = repoRoot
+			job.WorkingDir = workRoot
+			log.Printf("[scheduler] per-run worktree ready for %s run %d at %s", task.ID, runID, workRoot)
 		}
 	}
 
@@ -854,8 +879,8 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	// Best-effort sweep of orphaned per-run worktrees on startup. Requires
 	// TORQUE_REPO so we know which repo's admin to prune against; if the
 	// operator hasn't set it, the sweep is silently skipped.
-	if s.cfg.WorktreePerRun && s.cfg.WorktreeKeepDays > 0 && envRepoRoot() != "" {
-		removed, errs := worktree.SweepPerRun(envRepoRoot(), s.cfg.WorktreeRoot, s.cfg.WorktreeKeepDays, time.Now())
+	if spec := s.worktreeSpec(); spec.WorktreeEnabled() && spec.KeepDays > 0 && envRepoRoot() != "" {
+		removed, errs := worktree.SweepPerRun(envRepoRoot(), spec.Root, spec.KeepDays, time.Now())
 		for _, p := range removed {
 			log.Printf("[scheduler] swept stale worktree %s", p)
 		}

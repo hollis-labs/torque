@@ -101,6 +101,29 @@ func TestOptions_Validate(t *testing.T) {
 	})
 }
 
+// TestResolveRepoRoot verifies the repo_root resolution Boot threads into
+// WorkspaceLayout.RepoRoot: Options.RepoRoot wins when set (the scheduler
+// supplies it alongside the per-run worktree work_root), with a fallback to
+// Options.Workdir that preserves shared-mode behaviour (work_root == repo_root).
+func TestResolveRepoRoot(t *testing.T) {
+	t.Run("RepoRoot unset → falls back to Workdir (shared mode)", func(t *testing.T) {
+		got := resolveRepoRoot(Options{Workdir: "/repo/canonical"})
+		assert.Equal(t, "/repo/canonical", got)
+	})
+
+	t.Run("RepoRoot set → wins over Workdir (worktree mode)", func(t *testing.T) {
+		// Worktree mode: Workdir is the per-run worktree, RepoRoot is the
+		// canonical checkout. The two must stay distinct.
+		got := resolveRepoRoot(Options{
+			Workdir:  "/repo/canonical-worktrees/run-7",
+			RepoRoot: "/repo/canonical",
+		})
+		assert.Equal(t, "/repo/canonical", got)
+		assert.NotEqual(t, "/repo/canonical-worktrees/run-7", got,
+			"worktree mode: repo_root must not collapse onto work_root")
+	})
+}
+
 // TestStatus_Terminal locks the `crashed` value into the terminal set.
 // Dashboards and the orphan sweep rely on Terminal() returning true for
 // any value that should stop appearing in "running" rollups.

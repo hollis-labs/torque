@@ -49,6 +49,13 @@ type fakeRuntimeConfig struct {
 	// response (good enough for initialize + turn/start which torque
 	// doesn't inspect the result body of).
 	JsonRpcResponses map[string]json.RawMessage
+
+	// RuntimeFactoryErr, when non-nil, makes Dependencies.RuntimeFactory
+	// return it instead of a fakeRuntime. agent.Boot invokes the factory
+	// AFTER providerplant.Plant materializes the boot dir, so this drives
+	// the "construct runtime" intermediate-failure path — used by the
+	// boot-dir leak regression test to assert the planted dir is reaped.
+	RuntimeFactoryErr error
 }
 
 // newFakeRuntime constructs a fakeRuntime backed by the given config. The

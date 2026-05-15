@@ -15,8 +15,17 @@ type ExecutionJob struct {
 	// AgentFile is the task's agent_file field verbatim: absolute path, or
 	// path relative to WorkingDir. The executor is responsible for resolving
 	// and loading it at dispatch (see internal/agentfile). Empty when unset.
-	AgentFile    string
-	WorkingDir   string
+	AgentFile string
+	// WorkingDir is the run's work_root — the writable dir the agent executes
+	// in. When per-run worktrees are enabled the scheduler rewrites this to
+	// the per-run worktree path before dispatch.
+	WorkingDir string
+	// RepoRoot is the canonical project checkout (the four-root model's
+	// repo_root). Equals WorkingDir in shared mode; when the scheduler
+	// resolves a per-run worktree it sets RepoRoot to the original repo root
+	// so the canonical checkout is not lost behind the worktree path. Empty
+	// when no worktree resolution happened (executors fall back to WorkingDir).
+	RepoRoot     string
 	AgentProfile string
 	Tools        []string
 	Permissions  map[string]string

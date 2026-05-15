@@ -28,15 +28,27 @@ type Options struct {
 	// Workdir is the project directory the agent should reason about. For
 	// claude/codex this is reached via --add-dir; for opencode it's the
 	// spawn cwd directly. Required (Boot rejects empty).
+	//
+	// In the four-root model Workdir is the run's work_root: when per-run
+	// worktrees are enabled the scheduler points this at the per-run
+	// worktree, not the canonical checkout.
 	Workdir string
+
+	// RepoRoot is the canonical project checkout (the four-root model's
+	// repo_root, read-mostly). Optional: when empty, Boot falls back to
+	// Workdir, preserving shared-mode behaviour where work_root == repo_root.
+	// The scheduler sets this to the real repo root when it resolves a
+	// per-run worktree for Workdir, so WorkspaceLayout.RepoRoot stays
+	// distinct from WorkRoot even in worktree mode.
+	RepoRoot string
 
 	// ProjectID / TaskID propagate to the session row's soft-FKs so
 	// `torque_session_list project_id=...` returns this session.
 	ProjectID string
 	TaskID    string
 
-	// RunID stamps the boot dir name (torque-boot-<provider>-<task>-r<run>-*)
-	// for forensic discoverability. Zero means "no run dispatched this boot".
+	// RunID identifies the dispatching run; it keys the stderr sidecar log
+	// and the TORQUE_RUN_ID env var. Zero means "no run dispatched this boot".
 	RunID int64
 
 	// ParentSessionID — required when Mode == ModeSubagent.
@@ -84,6 +96,22 @@ type Options struct {
 	// Env is caller-supplied env additions. Composed with profile.Environment
 	// + TORQUE_TASK_ID/RUN_ID + agent-file environment by composeEnv.
 	Env map[string]string
+
+	// LaunchProfile, when non-empty, is the per-Boot launch-profile
+	// override (CW-20260515-0021). Same value forms as
+	// config.AgentProfile.LaunchProfile ("<path>" or "<path>#<launchID>").
+	// Wins over the agent profile's LaunchProfile field. Empty leaves the
+	// agent profile's value (or, when that is also empty, the pure-inline
+	// LaunchPlan path) in effect.
+	LaunchProfile string
+
+	// LaunchProfileInline, when non-empty, supplies a self-contained
+	// launch-profile YAML body directly — for standalone Torque usage
+	// where no catalog file exists on disk. The payload must be an
+	// inline GlobalCatalog (inline projects/agents/providers/launches
+	// lists) carrying exactly one launch entry. Wins over both
+	// LaunchProfile and config.AgentProfile.LaunchProfile.
+	LaunchProfileInline []byte
 
 	// RuntimeKindOverride, when non-empty, forces a specific
 	// go-agent-sessions Runtime kind for this Boot call regardless of
