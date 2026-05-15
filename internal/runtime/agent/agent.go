@@ -85,6 +85,22 @@ type Options struct {
 	// + TORQUE_TASK_ID/RUN_ID + agent-file environment by composeEnv.
 	Env map[string]string
 
+	// LaunchProfile, when non-empty, is the per-Boot launch-profile
+	// override (CW-20260515-0021). Same value forms as
+	// config.AgentProfile.LaunchProfile ("<path>" or "<path>#<launchID>").
+	// Wins over the agent profile's LaunchProfile field. Empty leaves the
+	// agent profile's value (or, when that is also empty, the pure-inline
+	// LaunchPlan path) in effect.
+	LaunchProfile string
+
+	// LaunchProfileInline, when non-empty, supplies a self-contained
+	// launch-profile YAML body directly — for standalone Torque usage
+	// where no catalog file exists on disk. The payload must be an
+	// inline GlobalCatalog (inline projects/agents/providers/launches
+	// lists) carrying exactly one launch entry. Wins over both
+	// LaunchProfile and config.AgentProfile.LaunchProfile.
+	LaunchProfileInline []byte
+
 	// RuntimeKindOverride, when non-empty, forces a specific
 	// go-agent-sessions Runtime kind for this Boot call regardless of
 	// profile.RuntimeKind or the per-provider default matrix. Escape

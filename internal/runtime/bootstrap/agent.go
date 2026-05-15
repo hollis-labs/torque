@@ -71,7 +71,7 @@ func AgentDeps(
 		MuxArgs:          muxCfg.Args,
 		MuxEnv:           muxCfg.Env,
 		// WorkspacesRoot defaults to $HOME/.torque/workspaces inside
-		// agent.workspaceCreate when left empty.
+		// agent.WorkspaceCreate when left empty.
 	}
 	// loopbackBuilder needs a reference to deps.Sessions, but Sessions is
 	// constructed by agent.NewManager(deps) BELOW (and NewManager itself

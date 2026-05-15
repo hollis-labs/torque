@@ -53,6 +53,7 @@ func composeDeps(t *testing.T, cfg fakeRuntimeConfig, profileProvider string) *c
 	require.NoError(t, err)
 
 	rt := newFakeRuntime(cfg)
+	rtFactoryErr := cfg.RuntimeFactoryErr
 
 	prof := config.AgentProfile{Executor: "cli", Provider: profileProvider}
 	deps := &agent.Dependencies{
@@ -71,6 +72,14 @@ func composeDeps(t *testing.T, cfg fakeRuntimeConfig, profileProvider string) *c
 		Loopback:       nil, // disable per-task MCP loopback in tests
 		WorkspacesRoot: filepath.Join(dir, "workspaces"),
 		RuntimeFactory: func(cfg agentsessions.AdapterRuntimeConfig) (agentsessions.Runtime, error) {
+			// Injected runtime-construction failure. agent.Boot calls the
+			// factory AFTER providerplant.Plant materializes the boot dir,
+			// so returning an error here exercises Boot's intermediate
+			// pre-Start failure path (the boot-dir leak regression test
+			// asserts the planted dir is reaped on this path).
+			if rtFactoryErr != nil {
+				return nil, rtFactoryErr
+			}
 			// Capture the adapter so fakeRuntime.Start can simulate the
 			// lib's preparePlant under AutoPlantBootDir (walks
 			// adapter.BootDirSpec().PlantedFiles to materialize CLAUDE.md

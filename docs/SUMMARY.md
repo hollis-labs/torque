@@ -10,6 +10,7 @@ Use these first:
 - [surfaces.md](surfaces.md)
 - [architecture/sqlite-concurrency-pattern.md](architecture/sqlite-concurrency-pattern.md)
 - [hitl-workflows.md](hitl-workflows.md)
+- [launch-profiles.md](launch-profiles.md)
 - [architecture/sqlite-test-infra.md](architecture/sqlite-test-infra.md)
 
 Older material under `docs/architecture/` and `docs/superpowers/` is historical design work, not the canonical current-state documentation.
