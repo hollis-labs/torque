@@ -336,15 +336,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	//     directly — the runtime splices it after adapter.BuildArgs) and
 	//     merge prepared.Env into the spawn env.
 	var bootDirExtraArgs []string
-	if claudeAdapter, ok := cliAdapter.(*provider.ClaudeAdapter); ok && claudeAdapter.Bare && capturedBootDir != "" {
-		inj := claudeAdapter.BareInjectionPaths(capturedBootDir, opts.Workdir)
-		claudeAdapter.MCPConfigPath = inj.MCPConfigPath
-		claudeAdapter.AppendSystemPromptFile = inj.AppendSystemPromptFile
-		claudeAdapter.SettingsPath = inj.SettingsPath
-		claudeAdapter.ProjectDir = inj.ProjectDir
-		// Bare BuildArgs emits --add-dir from claudeAdapter.ProjectDir;
-		// prepared.Argv[1:] would double it. Suppress the splice.
-	} else if len(prepared.Argv) > 1 {
+	if len(prepared.Argv) > 1 {
 		bootDirExtraArgs = append([]string(nil), prepared.Argv[1:]...)
 	}
 

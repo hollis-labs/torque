@@ -22,8 +22,8 @@ import (
 //
 // Per-provider runtime-kind support:
 //
-//   - claude:      Subprocess (bare), PTY. Bare is the production
-//     default; PTY remains an operator escape hatch.
+//   - claude:      Retired (bare + PTY removed 2026-05-16). Use
+//     claude-code for the streaming-stdio claude path.
 //   - claude-code: StreamingStdio only. Other kinds error — claude-code
 //     is a long-lived NDJSON-over-stdin shape, not a
 //     print-mode subprocess.
@@ -36,48 +36,18 @@ import (
 //   - gemini:      Unsupported (PTY adapter removed in go-providers
 //     v0.12.0).
 //   - copilot:     Unsupported (same as gemini).
-//
-// Subprocess-per-turn (non-PTY/non-long-lived) claude paths use the
-// v0.9.1+ bare-mode constructors. Bare mode emits --bare plus four
-// explicit-injection flags (--mcp-config / --append-system-prompt-file
-// / --settings / --add-dir) and skips the CLI's auto-discovery of
-// operator config (~/.claude/settings.json, ~/.claude.json, hooks,
-// plugins, MCP, OAuth, keychain, CLAUDE.md auto-find). This obsoletes
-// the operator-config-bleed-through class for bare consumers
-// (CW-20260508-0019).
-//
-// Bare-mode adapters returned here are pre-injection. Under the lib's
-// AutoPlantBootDir, agentsessions.preparePlant clones the adapter per
-// session and threads MCPConfigPath / AppendSystemPromptFile /
-// SettingsPath / ProjectDir from BareInjectionPaths(<plantedBootDir>,
-// opts.Workdir). The runtime-level adapter stays untouched, so
-// concurrent sessions don't race on shared adapter state.
 func adapterFor(profile config.AgentProfile, profileName string, kind RuntimeKind) (provider.CLIAdapter, agentsessions.Capabilities, error) {
 	baseCaps := capabilitiesForRuntimeKind(kind)
 
 	switch profile.Provider {
 	case "claude":
-		// claude supports Subprocess (bare) + PTY today. CheckpointResume +
-		// ProviderSessionID layer on top of the base caps regardless of kind.
-		caps := baseCaps
-		caps.ProviderSessionID = true
-		caps.CheckpointResume = true
-		dev := profileIsDevMode(profile)
-		switch kind {
-		case RuntimeKindPTY:
-			if dev {
-				return provider.NewClaudeAdapterDevPTY(), caps, nil
-			}
-			return provider.NewClaudeAdapterPTY(), caps, nil
-		case RuntimeKindSubprocess, "":
-			if dev {
-				return provider.NewClaudeAdapterDevBare(), caps, nil
-			}
-			return provider.NewClaudeAdapterBare(), caps, nil
-		default:
-			return nil, agentsessions.Capabilities{}, fmt.Errorf(
-				"claude provider does not support runtime kind %q; supported: subprocess, pty (use provider=claude-code for streaming-stdio)", string(kind))
-		}
+		// Bare-mode claude (subprocess-per-turn) and claude PTY were
+		// retired 2026-05-16. Bare mode's unsolved problem was the
+		// OAuth/"Not logged in" auth gap; claude-code (streaming-stdio)
+		// does not have it and is the supported claude path. PTY driving
+		// was never proven for the dogfooded providers.
+		return nil, agentsessions.Capabilities{}, fmt.Errorf(
+			"bare claude provider retired 2026-05-16; use provider=claude-code (streaming-stdio)")
 
 	case "claude-code":
 		// StreamingStdio long-lived NDJSON-over-stdin runtime (Anthropic's
