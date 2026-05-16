@@ -22,9 +22,14 @@ const torqueClientVersion = "0.1-dev"
 //     internal/app/codex.go::sendTurnJSONRPC (commit 08aa9b5) — the
 //     only working consumer reference shape for codex app-server today.
 //
-//   - subprocess / streaming-stdio / pty: classic plaintext SendInput.
-//     The lib's adapter / streaming-stdio runtimes write the bytes to
-//     stdin verbatim; the receiving CLI parses them as user input.
+//   - streaming-stdio: the turn is wrapped as a stream-json user
+//     message ({"type":"user","message":{"role":"user","content":...}})
+//     via encodeStreamJSONUserMessage — claude-code runs
+//     `--input-format stream-json` and rejects a raw plaintext line.
+//
+//   - subprocess / pty: classic plaintext SendInput. The lib writes the
+//     bytes to stdin verbatim; the receiving CLI parses them as user
+//     input.
 //
 // Callers route every turn-delivery (boot kickoff, HITL checkpoint
 // response, future per-turn user input) through this entry point so
@@ -42,14 +47,20 @@ func (m *Manager) SendTurn(ctx context.Context, sess *Session, text string) erro
 	switch RuntimeKind(sess.RuntimeKind) {
 	case RuntimeKindJsonRpcStdio:
 		return m.sendTurnJSONRPC(ctx, sess.ID, text)
+	case RuntimeKindStreamingStdio:
+		// claude-code runs `claude --input-format stream-json`: every
+		// line on stdin must be one JSON object. Wrap the plaintext turn
+		// as a stream-json user message — a raw line is rejected by
+		// claude's parser. The runtime appends the framing newline.
+		encoded, err := encodeStreamJSONUserMessage(text)
+		if err != nil {
+			return fmt.Errorf("encode streaming-stdio turn: %w", err)
+		}
+		return m.inner.SendInput(sess.ID, encoded)
 	default:
-		// subprocess, pty, streaming-stdio, empty all share the
-		// raw-stdin path. PTY runtime treats the bytes as if typed at
-		// the TUI; streaming-stdio expects NDJSON-encoded user
-		// messages (which the upstream agent-mux reference layers on
-		// top of SendInput, not here — torque's kickoffPayload
-		// pattern is `"Boot @./boot.md"` plaintext which claude-code
-		// parses as a user message verbatim).
+		// subprocess / pty / empty share the raw-stdin path. PTY treats
+		// the bytes as if typed at the TUI; subprocess passes them as the
+		// turn prompt.
 		return m.inner.SendInput(sess.ID, []byte(text))
 	}
 }

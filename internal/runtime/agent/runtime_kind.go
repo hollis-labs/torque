@@ -67,8 +67,10 @@ func (rk RuntimeKind) validate() error {
 //
 //     codex       → JsonRpcStdio  (app-server, JSON-RPC 2.0 over stdio)
 //     claude-code → StreamingStdio (NDJSON-over-stdin)
-//     claude      → Subprocess     (bare-mode subprocess-per-turn — config-bleed isolation requires bare)
 //     opencode    → Subprocess     (no long-lived adapter exists)
+//
+// `claude` (bare) was retired 2026-05-16 — it has no matrix entry and
+// adapterFor rejects it; use claude-code.
 //
 // post-2026-05-13:
 //
@@ -94,8 +96,6 @@ func selectRuntimeKind(provider string, profileKind string) (RuntimeKind, error)
 		return RuntimeKindJsonRpcStdio, nil
 	case "claude-code":
 		return RuntimeKindStreamingStdio, nil
-	case "claude":
-		return RuntimeKindSubprocess, nil
 	case "opencode":
 		return RuntimeKindSubprocess, nil
 	case "":

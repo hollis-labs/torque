@@ -336,15 +336,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	//     directly — the runtime splices it after adapter.BuildArgs) and
 	//     merge prepared.Env into the spawn env.
 	var bootDirExtraArgs []string
-	if claudeAdapter, ok := cliAdapter.(*provider.ClaudeAdapter); ok && claudeAdapter.Bare && capturedBootDir != "" {
-		inj := claudeAdapter.BareInjectionPaths(capturedBootDir, opts.Workdir)
-		claudeAdapter.MCPConfigPath = inj.MCPConfigPath
-		claudeAdapter.AppendSystemPromptFile = inj.AppendSystemPromptFile
-		claudeAdapter.SettingsPath = inj.SettingsPath
-		claudeAdapter.ProjectDir = inj.ProjectDir
-		// Bare BuildArgs emits --add-dir from claudeAdapter.ProjectDir;
-		// prepared.Argv[1:] would double it. Suppress the splice.
-	} else if len(prepared.Argv) > 1 {
+	if len(prepared.Argv) > 1 {
 		bootDirExtraArgs = append([]string(nil), prepared.Argv[1:]...)
 	}
 
@@ -530,6 +522,17 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		// kickoff body the lib's AutoPlantBootDir wrote into boot.md
 		// from StartOptions.BootContent.
 		firstTurnPayload = []byte(kickoffPayload(""))
+		// The streaming-stdio runtime (claude-code) feeds claude
+		// `--input-format stream-json`: the first-turn payload must be a
+		// JSON stream-json user message, not a raw line. subprocess / pty
+		// take the plaintext verbatim.
+		if runtimeKind == RuntimeKindStreamingStdio {
+			encoded, encErr := encodeStreamJSONUserMessage(kickoffPayload(""))
+			if encErr != nil {
+				return nil, fmt.Errorf("%w: encode streaming-stdio kickoff: %v", ErrBootFailed, encErr)
+			}
+			firstTurnPayload = encoded
+		}
 	}
 
 	// Stderr sidecar: forward to per-run sidecar log + tail buffer + the
