@@ -338,10 +338,10 @@ type fakeSession struct {
 	eventFanout chan<- llmtypes.StreamEvent
 
 	// notificationHook captures StartOptions.JsonRpcNotificationHook so
-	// fakeSession.Call can emit a `turn.completed` notification after
+	// fakeSession.Call can emit a `turn/completed` notification after
 	// recording a turn/start invocation. Mirrors the real codex
 	// app-server's notification stream — every successful turn ends with
-	// a turn.completed notification which agent.Boot ModeOneShot
+	// a turn/completed notification which agent.Boot ModeOneShot
 	// listens for to detect turn-complete.
 	notificationHook func(string, json.RawMessage)
 
@@ -439,9 +439,9 @@ func (s *fakeSession) SendInput(_ context.Context, data []byte) error {
 // tests can exercise SendTurn's full handshake. The fake records each
 // invocation (method + params) for assertions, returns scripted
 // responses when jsonRpcResponses has a match, and fires the
-// `turn.completed` notification hook on turn/start (mirroring the
+// `turn/completed` notification hook on turn/start (mirroring the
 // codex app-server's natural notification stream — every successful
-// turn ends with turn.completed). Methods without a scripted response
+// turn ends with turn/completed). Methods without a scripted response
 // return {} (the empty JSON object) so the SendTurn flow doesn't trip
 // on missing data; tests that care should set jsonRpcResponses
 // explicitly.
@@ -457,12 +457,12 @@ func (s *fakeSession) Call(_ context.Context, method string, params any) (json.R
 		resp = json.RawMessage(`{}`)
 	}
 	// Fire the notification hook AFTER recording but BEFORE returning,
-	// so observers see the call before the turn.completed notification
+	// so observers see the call before the turn/completed notification
 	// (mirrors the codex app-server: the RPC response and the
-	// turn.completed notification both arrive after the turn finishes,
+	// turn/completed notification both arrive after the turn finishes,
 	// but the notification is what signals turn-complete to consumers).
 	if method == "turn/start" && s.notificationHook != nil {
-		s.notificationHook("turn.completed", json.RawMessage(`{}`))
+		s.notificationHook("turn/completed", json.RawMessage(`{}`))
 	}
 	return resp, nil
 }

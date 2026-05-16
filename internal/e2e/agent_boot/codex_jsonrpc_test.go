@@ -26,7 +26,7 @@ import (
 //     invocation in order; we assert on the method sequence + on
 //     turn/start's threadId param (which must equal the cached id from
 //     thread/start's response).
-//  4. fakeSession.Call fires the `turn.completed` notification when
+//  4. fakeSession.Call fires the `turn/completed` notification when
 //     turn/start lands, which the JsonRpcNotificationHook wired by
 //     boot.go translates into the oneshotDone close — boot.go's
 //     ModeOneShot select unblocks and Stop+Wait finishes the lifecycle.
@@ -107,7 +107,7 @@ func TestBoot_ModeOneShot_CodexJsonRpcStdio_Handshake(t *testing.T) {
 
 	// Status reflects the successful turn-complete flow:
 	//   1. SendTurn fired the handshake + turn/start
-	//   2. fakeSession.Call fired turn.completed notification
+	//   2. fakeSession.Call fired turn/completed notification
 	//   3. boot.go's JsonRpcNotificationHook closed oneshotDone
 	//   4. ModeOneShot select returned, Stop+Wait finished
 	//   5. exitCode=0 → Status=Done
