@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/hollis-labs/torque/internal/service"
 	"github.com/stretchr/testify/assert"
@@ -91,7 +92,11 @@ func TestLoopbackBuilder_WorkerRequiresTaskID(t *testing.T) {
 		h, err := build("CW-20260516-9999", "")
 		assert.NoError(t, err)
 		if assert.NotNil(t, h) {
-			_ = h.Shutdown(context.Background())
+			// Bounded context so a stuck Shutdown fails the test instead
+			// of hanging it; assert the clean-close path returns no error.
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			assert.NoError(t, h.Shutdown(ctx))
 		}
 	})
 }
