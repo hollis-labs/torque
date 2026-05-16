@@ -67,7 +67,7 @@ func (m *Manager) SendTurn(ctx context.Context, sess *Session, text string) erro
 // subsequent turn on this session. turn/start delivers the actual user
 // message and returns when the call is accepted — NOT when the turn
 // is done. Turn-complete detection rides on the
-// `turn.completed` JSON-RPC notification, which torque wires via
+// `turn/completed` JSON-RPC notification, which torque wires via
 // StartOptions.JsonRpcNotificationHook in boot.go.
 func (m *Manager) sendTurnJSONRPC(ctx context.Context, sessID, text string) error {
 	threadID, cached := m.lookupCodexThread(sessID)

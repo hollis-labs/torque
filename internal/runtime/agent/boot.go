@@ -610,7 +610,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	}
 
 	// JSON-RPC notification hook. For codex JsonRpcStdio sessions, the
-	// `turn.completed` notification (emitted by the codex app-server
+	// `turn/completed` notification (emitted by the codex app-server
 	// after the turn finishes) is the turn-complete signal. Adapter
 	// .ParseLine returns nil for codex app-server mode (per
 	// go-providers v0.17.1 pty_codex.go) so streamFanout's EventDone
@@ -623,7 +623,14 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	if runtimeKind == RuntimeKindJsonRpcStdio && oneshotOnDone != nil {
 		hookOnDone := oneshotOnDone
 		jsonRpcNotificationHook = func(method string, _ json.RawMessage) {
-			if method == "turn.completed" {
+			// codex's app-server emits slash-style JSON-RPC method
+			// names (`thread/start`, `turn/start`, `turn/completed`);
+			// go-agent-sessions forwards frame.Method verbatim. This
+			// MUST match the wire method exactly — a mismatch never
+			// fires turn-complete, so ModeOneShot silently burns its
+			// full timeout budget then SIGTERMs a turn that already
+			// succeeded (CW: codex one-shot turn-complete detection).
+			if method == "turn/completed" {
 				hookOnDone()
 			}
 		}
@@ -811,7 +818,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	// ModeOneShot drives the turn synchronously: SendTurn delivers the
 	// kickoff, the select waits for turn-complete (oneshotDone fires
 	// from the streamFanout EventDone hook OR the JsonRpcNotificationHook
-	// on `turn.completed`) or ctx.Done() (the executor wraps ctx in
+	// on `turn/completed`) or ctx.Done() (the executor wraps ctx in
 	// context.WithTimeout(profile.TimeoutSeconds) — see the comment on
 	// the startCtx detachment branch above), then Stop tears down and
 	// WaitSession surfaces the exit code.
@@ -837,7 +844,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		// the plaintext Manager.SendInput path. Either way, the
 		// turn-complete signal arrives via oneshotDone (closed by the
 		// streamFanout EventDone hook for subprocess/streaming, or by
-		// the JsonRpcNotificationHook on `turn.completed` for
+		// the JsonRpcNotificationHook on `turn/completed` for
 		// JsonRpcStdio).
 		sendErr := mgr.SendTurn(ctx, sess, prompt)
 
