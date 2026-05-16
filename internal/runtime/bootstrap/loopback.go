@@ -107,6 +107,18 @@ func loopbackBuilder(svc *service.Service, sessionsRef func() *agent.Manager) ag
 			// torque_session_* + torque_plan_start work.
 			loopback = mcpadapter.New(svc, nil).WithSessions(sessionsRef())
 		} else {
+			// A worker-class loopback (the restricted self-task subset) is
+			// hard-bound to exactly one task: every tool call resolves to
+			// that task with no task_id parameter. Without a bound task
+			// there is nothing to resolve against — mcpadapter.NewLoopback
+			// panics on an empty taskID by contract ("a loopback adapter
+			// without a bound task is a programmer error"). Guard it here
+			// so a task-less worker session (a bare torque_session_launch
+			// or HTTP /sessions/launch with task_id omitted) fails Boot
+			// with a clear error instead of panicking the request handler.
+			if taskID == "" {
+				return nil, fmt.Errorf("agent: a worker session requires a task_id — the loopback adapter binds to exactly one task (role=%q)", role)
+			}
 			loopback = mcpadapter.NewLoopback(svc, taskID)
 		}
 
