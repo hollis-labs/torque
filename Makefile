@@ -10,9 +10,14 @@ build:
 
 build-all: build
 
+# install(1) unlinks the destination before writing, so every rebuild lands on
+# a fresh inode. A plain `cp` overwrites in place and reuses the inode; macOS
+# then SIGKILLs the new binary at exec ("Killed: 9") because the inode still
+# carries the kernel code-signing/provenance binding for the PREVIOUS build's
+# cdhash. (2026-05-16: an in-place rebuild broke `torque mcp` this way.)
 install: build-all
-	cp $(BINARY) ~/go/bin/$(BINARY)
-	cp $(APIKEY_HELPER) ~/go/bin/$(APIKEY_HELPER)
+	install -m 0755 $(BINARY) ~/go/bin/$(BINARY)
+	install -m 0755 $(APIKEY_HELPER) ~/go/bin/$(APIKEY_HELPER)
 
 test:
 	go test ./... -v -count=1
