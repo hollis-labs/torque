@@ -102,39 +102,40 @@ func TestBuildLaunchPlan_NoLaunchProfile_MatchesInline(t *testing.T) {
 
 // TestLaunchProfile_ResolvesAndCompiles_AllProviders covers requirement
 // (a): a task running through a launch profile resolves a valid plan for
-// claude, codex, AND opencode. It asserts on the resolved LaunchPlan and
-// the CompiledLaunch (provider id, runtime, workspace) without spawning a
-// real provider.
+// every torque-supported provider — claude-code, codex, AND opencode. It
+// asserts on the resolved LaunchPlan and the CompiledLaunch (provider id,
+// runtime, workspace) without spawning a real provider.
 func TestLaunchProfile_ResolvesAndCompiles_AllProviders(t *testing.T) {
 	cases := []struct {
-		name        string
-		provider    string
-		runtimeKind string
-		torqueRT    RuntimeKind
-		wantRuntime agentlaunch.RuntimeKind
+		name           string
+		providerID     string // launch-profile catalog provider id == resolved plan Provider.ID
+		torqueProvider string // torque profile Provider field — claude-code normalizes to the `claude` brand
+		runtimeKind    string
+		torqueRT       RuntimeKind
+		wantRuntime    agentlaunch.RuntimeKind
 	}{
-		{"claude", "claude", "subprocess", RuntimeKindSubprocess, agentlaunch.RuntimeSubprocess},
-		{"codex", "codex", "jsonrpc-stdio", RuntimeKindJsonRpcStdio, agentlaunch.RuntimeJsonRpcStdio},
-		{"opencode", "opencode", "subprocess", RuntimeKindSubprocess, agentlaunch.RuntimeSubprocess},
+		{"claude-code", "claude", "claude-code", "streaming-stdio", RuntimeKindStreamingStdio, agentlaunch.RuntimeStreamingStdio},
+		{"codex", "codex", "codex", "jsonrpc-stdio", RuntimeKindJsonRpcStdio, agentlaunch.RuntimeJsonRpcStdio},
+		{"opencode", "opencode", "opencode", "subprocess", RuntimeKindSubprocess, agentlaunch.RuntimeSubprocess},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Resolve the launch profile from an inline payload (the
 			// standalone, no-catalog-file path).
 			src, err := resolveLaunchProfile(resolveLaunchProfileInput{
-				InlinePayload: inlineCatalogYAML(tc.provider, tc.runtimeKind),
+				InlinePayload: inlineCatalogYAML(tc.providerID, tc.runtimeKind),
 			})
 			require.NoError(t, err)
 			require.NotNil(t, src)
-			assert.Equal(t, tc.provider, src.BasePlan.Provider.ID,
+			assert.Equal(t, tc.providerID, src.BasePlan.Provider.ID,
 				"base plan provider id comes from the launch profile")
 
 			// Overlay Torque's runtime-critical fields.
-			plan, err := buildLaunchPlan(launchPlanInputFor(t, tc.provider, tc.torqueRT, src))
+			plan, err := buildLaunchPlan(launchPlanInputFor(t, tc.torqueProvider, tc.torqueRT, src))
 			require.NoError(t, err)
 
 			// Provider id + runtime resolved correctly.
-			assert.Equal(t, tc.provider, plan.Provider.ID)
+			assert.Equal(t, tc.providerID, plan.Provider.ID)
 			assert.Equal(t, tc.wantRuntime, plan.Runtime)
 
 			// Workspace dirs are Torque's (overlay), mode is honored from
@@ -161,7 +162,7 @@ func TestLaunchProfile_ResolvesAndCompiles_AllProviders(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, compiled)
 			require.NotNil(t, compiled.Plan)
-			assert.Equal(t, tc.provider, compiled.Plan.Provider.ID)
+			assert.Equal(t, tc.providerID, compiled.Plan.Provider.ID)
 			assert.Equal(t, tc.wantRuntime, compiled.Plan.Runtime)
 			assert.Equal(t, agentlaunch.WorkspacePersistent, compiled.Plan.Workspace.Mode)
 		})

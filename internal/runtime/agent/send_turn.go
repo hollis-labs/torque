@@ -22,9 +22,14 @@ const torqueClientVersion = "0.1-dev"
 //     internal/app/codex.go::sendTurnJSONRPC (commit 08aa9b5) — the
 //     only working consumer reference shape for codex app-server today.
 //
-//   - subprocess / streaming-stdio / pty: classic plaintext SendInput.
-//     The lib's adapter / streaming-stdio runtimes write the bytes to
-//     stdin verbatim; the receiving CLI parses them as user input.
+//   - streaming-stdio: the turn is wrapped as a stream-json user
+//     message ({"type":"user","message":{"role":"user","content":...}})
+//     via encodeStreamJSONUserMessage — claude-code runs
+//     `--input-format stream-json` and rejects a raw plaintext line.
+//
+//   - subprocess / pty: classic plaintext SendInput. The lib writes the
+//     bytes to stdin verbatim; the receiving CLI parses them as user
+//     input.
 //
 // Callers route every turn-delivery (boot kickoff, HITL checkpoint
 // response, future per-turn user input) through this entry point so
