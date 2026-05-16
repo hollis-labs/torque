@@ -1,8 +1,10 @@
 package bootstrap
 
 import (
+	"context"
 	"testing"
 
+	"github.com/hollis-labs/torque/internal/service"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -54,6 +56,42 @@ func TestIsOrchestratorClassRole(t *testing.T) {
 			"end-agent",       // truncated
 		} {
 			assert.False(t, isOrchestratorClassRole(role), "role %q should NOT match orchestrator-class", role)
+		}
+	})
+}
+
+// TestLoopbackBuilder_WorkerRequiresTaskID is the regression guard for the
+// task-less worker session panic: a bare torque_session_launch / HTTP
+// /sessions/launch with task_id omitted reached mcpadapter.NewLoopback("")
+// and panicked the request handler ("NewLoopback requires non-empty
+// taskID"). The worker branch now returns a clean error instead.
+func TestLoopbackBuilder_WorkerRequiresTaskID(t *testing.T) {
+	// service.New(nil) is safe — it only composes domain-service structs
+	// around the (nil) store; the worker-branch guard returns before any
+	// store access, so a nil-store service is sufficient for this test.
+	build := loopbackBuilder(service.New(nil), nil)
+	if build == nil {
+		t.Fatal("loopbackBuilder returned nil for a non-nil service")
+	}
+
+	t.Run("worker role + empty taskID returns an error, not a panic", func(t *testing.T) {
+		h, err := build("", "")
+		assert.Error(t, err)
+		assert.Nil(t, h)
+		assert.Contains(t, err.Error(), "task_id")
+	})
+
+	t.Run("named worker profile + empty taskID also returns an error", func(t *testing.T) {
+		h, err := build("", "torque-backend")
+		assert.Error(t, err)
+		assert.Nil(t, h)
+	})
+
+	t.Run("worker role + a real taskID still builds a handle", func(t *testing.T) {
+		h, err := build("CW-20260516-9999", "")
+		assert.NoError(t, err)
+		if assert.NotNil(t, h) {
+			_ = h.Shutdown(context.Background())
 		}
 	})
 }
