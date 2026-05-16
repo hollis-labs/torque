@@ -42,14 +42,20 @@ func (m *Manager) SendTurn(ctx context.Context, sess *Session, text string) erro
 	switch RuntimeKind(sess.RuntimeKind) {
 	case RuntimeKindJsonRpcStdio:
 		return m.sendTurnJSONRPC(ctx, sess.ID, text)
+	case RuntimeKindStreamingStdio:
+		// claude-code runs `claude --input-format stream-json`: every
+		// line on stdin must be one JSON object. Wrap the plaintext turn
+		// as a stream-json user message — a raw line is rejected by
+		// claude's parser. The runtime appends the framing newline.
+		encoded, err := encodeStreamJSONUserMessage(text)
+		if err != nil {
+			return fmt.Errorf("encode streaming-stdio turn: %w", err)
+		}
+		return m.inner.SendInput(sess.ID, encoded)
 	default:
-		// subprocess, pty, streaming-stdio, empty all share the
-		// raw-stdin path. PTY runtime treats the bytes as if typed at
-		// the TUI; streaming-stdio expects NDJSON-encoded user
-		// messages (which the upstream agent-mux reference layers on
-		// top of SendInput, not here — torque's kickoffPayload
-		// pattern is `"Boot @./boot.md"` plaintext which claude-code
-		// parses as a user message verbatim).
+		// subprocess / pty / empty share the raw-stdin path. PTY treats
+		// the bytes as if typed at the TUI; subprocess passes them as the
+		// turn prompt.
 		return m.inner.SendInput(sess.ID, []byte(text))
 	}
 }

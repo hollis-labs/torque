@@ -1,5 +1,7 @@
 package agent
 
+import "encoding/json"
+
 // kickoffPayload returns the user-message body Boot fires (or planted as
 // FirstTurnPayload) for the session's first turn.
 //
@@ -63,4 +65,31 @@ func kickoffMarkdown(opts Options, role string) string {
 		body += extra + "\n"
 	}
 	return body
+}
+
+// encodeStreamJSONUserMessage wraps a plaintext user turn as the stream-json
+// frame the claude-code (streaming-stdio) runtime requires.
+//
+// claude-code runs `claude -p --input-format stream-json`: every line on
+// stdin must be one JSON object, NOT raw text. A bare line like
+// `Boot @./boot.md` makes claude's parser reject the input
+// ("JSON Parse error: Unexpected identifier"). The subprocess and pty
+// runtimes take the plaintext verbatim and must NOT use this — only the
+// streaming-stdio runtime needs the JSON envelope.
+//
+// The runtime appends the trailing newline (streaming-stdio SendInput frames
+// one JSON object per call), so this returns the bare JSON object.
+func encodeStreamJSONUserMessage(text string) ([]byte, error) {
+	type message struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	frame := struct {
+		Type    string  `json:"type"`
+		Message message `json:"message"`
+	}{
+		Type:    "user",
+		Message: message{Role: "user", Content: text},
+	}
+	return json.Marshal(frame)
 }

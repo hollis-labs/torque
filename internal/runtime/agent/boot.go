@@ -530,6 +530,17 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		// kickoff body the lib's AutoPlantBootDir wrote into boot.md
 		// from StartOptions.BootContent.
 		firstTurnPayload = []byte(kickoffPayload(""))
+		// The streaming-stdio runtime (claude-code) feeds claude
+		// `--input-format stream-json`: the first-turn payload must be a
+		// JSON stream-json user message, not a raw line. subprocess / pty
+		// take the plaintext verbatim.
+		if runtimeKind == RuntimeKindStreamingStdio {
+			encoded, encErr := encodeStreamJSONUserMessage(kickoffPayload(""))
+			if encErr != nil {
+				return nil, fmt.Errorf("%w: encode streaming-stdio kickoff: %v", ErrBootFailed, encErr)
+			}
+			firstTurnPayload = encoded
+		}
 	}
 
 	// Stderr sidecar: forward to per-run sidecar log + tail buffer + the
