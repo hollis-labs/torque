@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/oklog/ulid/v2"
 )
@@ -119,6 +120,15 @@ func (m *Manager) WithPidPollInterval(d time.Duration) *Manager {
 // can call Start without going through a public surface.
 func (m *Manager) innerManager() *agentsessions.Manager {
 	return m.inner
+}
+
+// KnownProfiles returns the currently loaded profiles.yaml registry snapshot
+// the manager was constructed with.
+func (m *Manager) KnownProfiles() config.ProfileMap {
+	if m == nil || m.deps == nil {
+		return nil
+	}
+	return config.CurrentProfiles(m.deps.Profiles)
 }
 
 // registerLoopback associates a per-session loopback handle so Stop / Wait

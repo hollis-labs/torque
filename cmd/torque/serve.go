@@ -126,8 +126,12 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	registry := executor.NewRegistry()
 	registry.Register(executor.NewMockExecutor())
 
-	// Load profiles (optional — missing file is OK for mock-only runs).
-	profiles := loadProfilesOrEmpty()
+	// Load profiles from the canonical path and keep a live source object so
+	// scheduler dispatch and session boots can observe reloads after startup.
+	profiles, err := loadProfilesOrEmpty(cfg)
+	if err != nil {
+		return err
+	}
 
 	// Service constructed early so the agent.Executor / agent.Boot path can
 	// claim it for per-task MCP loopback wiring (CW-20260427-0059). Same
@@ -265,7 +269,7 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	bridge := httpserver.NewSchedulerBridge(handler.SSEHub(), sched.EventBus())
 
 	var wg sync.WaitGroup
-	wg.Add(4)
+	wg.Add(5)
 	go func() {
 		defer wg.Done()
 		bridge.Run(runCtx)
@@ -287,6 +291,10 @@ func runServe(ctx context.Context, ln net.Listener) error {
 		if err := sched.Run(runCtx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Printf("scheduler: %v", err)
 		}
+	}()
+	go func() {
+		defer wg.Done()
+		watchProfiles(runCtx, profiles, time.Second)
 	}()
 
 	srv := &http.Server{Handler: handler}
@@ -335,28 +343,4 @@ func runServe(ctx context.Context, ln net.Listener) error {
 		return serveErr
 	}
 	return nil
-}
-
-// loadProfilesOrEmpty loads agent profiles from TORQUE_PROFILES_PATH if
-// set, or from "./profiles.yaml" if it exists. Missing files are NOT an
-// error: returns an empty ProfileMap so mock-only dev setups work out of the
-// box. Real-CLI runs require the file and will fail per-task at Validate time.
-func loadProfilesOrEmpty() config.ProfileMap {
-	path := os.Getenv("TORQUE_PROFILES_PATH")
-	if path == "" {
-		path = "profiles.yaml"
-	}
-
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		log.Printf("no profiles file at %s (using empty profile map)", path)
-		return config.ProfileMap{}
-	}
-
-	profiles, err := config.LoadProfiles(path)
-	if err != nil {
-		log.Printf("failed to load profiles from %s: %v (using empty profile map)", path, err)
-		return config.ProfileMap{}
-	}
-	log.Printf("loaded %d profile(s) from %s", len(profiles), path)
-	return profiles
 }

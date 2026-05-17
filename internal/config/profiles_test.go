@@ -154,6 +154,50 @@ func TestGetProfileOrDefault(t *testing.T) {
 	assert.Equal(t, "", p.Executor)
 }
 
+func TestProfileNames(t *testing.T) {
+	profiles := config.ProfileMap{
+		"zeta":    {},
+		"alpha":   {},
+		"default": {},
+	}
+	assert.Equal(t, []string{"alpha", "default", "zeta"}, config.ProfileNames(profiles))
+	assert.Equal(t, []string{}, config.ProfileNames(nil))
+}
+
+func TestValidateProfileName(t *testing.T) {
+	profiles := config.ProfileMap{
+		"default": {},
+		"fast":    {},
+	}
+
+	require.NoError(t, config.ValidateProfileName(profiles, "default"))
+
+	err := config.ValidateProfileName(profiles, "typo")
+	require.EqualError(t, err, "unknown agent_profile 'typo' in profiles.yaml agent_profiles registry — known: [default fast]")
+}
+
+func TestReloadableProfiles(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "profiles.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+agent_profiles:
+  default:
+    provider: claude
+    model: claude-sonnet-4-20250514
+`), 0644))
+
+	reloaded := config.NewReloadableProfiles(path, nil)
+	require.NoError(t, reloaded.Reload())
+
+	first := reloaded.CurrentProfiles()
+	assert.Equal(t, "claude-sonnet-4-20250514", first["default"].Model)
+
+	// Returned snapshots are defensive copies.
+	first["default"] = config.AgentProfile{Model: "mutated"}
+	second := reloaded.CurrentProfiles()
+	assert.Equal(t, "claude-sonnet-4-20250514", second["default"].Model)
+}
+
 // TestCatalogProviderID verifies the CLI-brand → catalog-provider alias
 // map (CW-20260510-0100). profiles.yaml uses "claude" / "codex" because
 // that's what the CLI invocation expects, but the models.dev catalog

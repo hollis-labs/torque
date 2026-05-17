@@ -186,9 +186,10 @@ func (s *Scheduler) resolveCost(profileName string, result *executor.ExecutionRe
 		estimate = s.Models.EstimateCost
 	}
 	var resolveProfile ProfileResolverFn
-	if s.Profiles != nil {
+	profiles := config.CurrentProfiles(s.Profiles)
+	if len(profiles) > 0 {
 		resolveProfile = func(name string) (string, string, bool) {
-			p, ok := s.Profiles[name]
+			p, ok := profiles[name]
 			if !ok {
 				return "", "", false
 			}

@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"sort"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
@@ -100,6 +102,81 @@ type AgentProfile struct {
 // ProfileMap is a named collection of agent profiles.
 type ProfileMap map[string]AgentProfile
 
+// CurrentProfiles returns a defensive copy of the map so callers cannot race
+// with a future reload by mutating the returned value.
+func (p ProfileMap) CurrentProfiles() ProfileMap {
+	return cloneProfileMap(p)
+}
+
+// ProfileSource exposes the current profiles.yaml snapshot. Plain ProfileMap
+// fixtures implement it directly; the serve daemon uses ReloadableProfiles so
+// the runtime can swap snapshots in place after startup.
+type ProfileSource interface {
+	CurrentProfiles() ProfileMap
+}
+
+// ReloadableProfiles holds the live profiles.yaml snapshot for long-lived
+// processes. Reads return clones so callers never share a mutable map with the
+// reloader goroutine.
+type ReloadableProfiles struct {
+	mu       sync.RWMutex
+	path     string
+	profiles ProfileMap
+}
+
+// NewReloadableProfiles constructs a live source with the provided initial
+// snapshot. initial may be nil.
+func NewReloadableProfiles(path string, initial ProfileMap) *ReloadableProfiles {
+	return &ReloadableProfiles{
+		path:     path,
+		profiles: cloneProfileMap(initial),
+	}
+}
+
+// Path returns the profiles.yaml path this source reloads from.
+func (r *ReloadableProfiles) Path() string {
+	if r == nil {
+		return ""
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.path
+}
+
+// CurrentProfiles returns the current snapshot.
+func (r *ReloadableProfiles) CurrentProfiles() ProfileMap {
+	if r == nil {
+		return ProfileMap{}
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return cloneProfileMap(r.profiles)
+}
+
+// Store replaces the live snapshot.
+func (r *ReloadableProfiles) Store(profiles ProfileMap) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.profiles = cloneProfileMap(profiles)
+}
+
+// Reload reads the configured path and swaps the snapshot on success.
+func (r *ReloadableProfiles) Reload() error {
+	if r == nil {
+		return fmt.Errorf("reload profiles: source is nil")
+	}
+	path := r.Path()
+	profiles, err := LoadProfiles(path)
+	if err != nil {
+		return err
+	}
+	r.Store(profiles)
+	return nil
+}
+
 // profilesFile is the top-level YAML structure.
 type profilesFile struct {
 	AgentProfiles ProfileMap `yaml:"agent_profiles"`
@@ -124,6 +201,15 @@ func LoadProfiles(path string) (ProfileMap, error) {
 	return f.AgentProfiles, nil
 }
 
+// CurrentProfiles returns a defensive-copy snapshot for any profile source.
+// Nil sources read as an empty registry.
+func CurrentProfiles(source ProfileSource) ProfileMap {
+	if source == nil {
+		return ProfileMap{}
+	}
+	return source.CurrentProfiles()
+}
+
 // GetProfileOrDefault returns the named profile, falling back to "default",
 // substrate-builtin profiles (CW-20260503-0019: reviewer-end-agent), and
 // finally a zero-value profile if none of those resolve.
@@ -134,7 +220,8 @@ func LoadProfiles(path string) (ProfileMap, error) {
 // matching name to their config. The fallback is the safety net so the
 // scheduler's lifecycle hooks still dispatch on a fresh install where
 // the user hasn't yet configured the substrate's automation roles.
-func GetProfileOrDefault(profiles ProfileMap, name string) AgentProfile {
+func GetProfileOrDefault(source ProfileSource, name string) AgentProfile {
+	profiles := CurrentProfiles(source)
 	if name != "" {
 		if p, ok := profiles[name]; ok {
 			return p
@@ -147,6 +234,52 @@ func GetProfileOrDefault(profiles ProfileMap, name string) AgentProfile {
 		return p
 	}
 	return AgentProfile{}
+}
+
+// ProfileNames returns the loaded profiles.yaml agent_profiles keys in
+// deterministic sorted order for UI/error reporting.
+func ProfileNames(source ProfileSource) []string {
+	profiles := CurrentProfiles(source)
+	if len(profiles) == 0 {
+		return []string{}
+	}
+	names := make([]string, 0, len(profiles))
+	for name := range profiles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// ValidateProfileName reports whether name exists in the loaded
+// profiles.yaml agent_profiles registry. It intentionally ignores builtin
+// substrate profiles: callers use this when a user names a profile from the
+// external registry and should get a typo-focused error instead of silently
+// falling through to a zero-value profile.
+func ValidateProfileName(source ProfileSource, name string) error {
+	profiles := CurrentProfiles(source)
+	if name == "" {
+		return nil
+	}
+	if _, ok := profiles[name]; ok {
+		return nil
+	}
+	return fmt.Errorf(
+		"unknown agent_profile '%s' in profiles.yaml agent_profiles registry — known: %v",
+		name,
+		ProfileNames(profiles),
+	)
+}
+
+func cloneProfileMap(in ProfileMap) ProfileMap {
+	if len(in) == 0 {
+		return ProfileMap{}
+	}
+	out := make(ProfileMap, len(in))
+	for name, profile := range in {
+		out[name] = profile
+	}
+	return out
 }
 
 // builtinProfiles is the substrate's stock set of internal-task agent

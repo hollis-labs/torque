@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/mcpadapter"
 	"github.com/hollis-labs/torque/internal/modelcatalog"
 	"github.com/hollis-labs/torque/internal/persistence/appdb"
@@ -47,7 +48,14 @@ func mcpCmd() *cobra.Command {
 			// when session-creating tools (torque_plan_start,
 			// torque_session_create) are invoked. Empty map is fine; per-
 			// task Validate will surface "profile not found" at dispatch.
-			profiles := loadProfilesOrEmpty()
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("load config: %w", err)
+			}
+			profiles, err := loadProfilesOrEmpty(cfg)
+			if err != nil {
+				return err
+			}
 
 			// Agent substrate (CW-20260509-0013): wire agent.Manager into the
 			// stdio MCP adapter so session-manager-dependent tools

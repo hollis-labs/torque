@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/hollis-labs/go-modelsdev/modelsdev"
+	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
@@ -200,10 +201,11 @@ func readAgentFile(path string) string {
 // Profiles fields, reads the agent file, and runs the policy. Returns
 // the result so the caller can decide between block and dispatch.
 func (s *Scheduler) precheckDispatch(task sqlstore.TaskRecord, opts PrecheckOptions) PrecheckResult {
-	if s.Profiles == nil {
+	profiles := config.CurrentProfiles(s.Profiles)
+	if len(profiles) == 0 {
 		return PrecheckResult{}
 	}
-	rawProfile, ok := s.Profiles[task.AgentProfile]
+	rawProfile, ok := profiles[task.AgentProfile]
 	if !ok {
 		return PrecheckResult{}
 	}
