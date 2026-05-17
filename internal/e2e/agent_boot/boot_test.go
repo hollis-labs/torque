@@ -18,7 +18,7 @@ import (
 // SendInput separately — that was the gap CW-20260507-0011 patched and
 // CW-20260508-0001 generalized via go-agent-sessions v0.6.0's flag).
 func TestBoot_ModeLongLived_AutoFiresFirstTurn(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude-code")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -63,7 +63,7 @@ func TestBoot_ModeLongLived_AutoFiresFirstTurn(t *testing.T) {
 // executor lifecycle: SendInput fires synchronously, the session is stopped
 // before Boot returns, and the per-task boot dir is cleaned inline.
 func TestBoot_ModeOneShot_SyncTurn(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: false}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: false}, "claude-code")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -90,8 +90,13 @@ func TestBoot_ModeOneShot_SyncTurn(t *testing.T) {
 		"OneShot must drive SendInput once with the kickoff body")
 	payloads := fakeSess.recordedSendInputs()
 	require.Len(t, payloads, 1)
-	assert.Equal(t, "do the thing", string(payloads[0]),
-		"Boot's OneShot path forwards Options.OneShotPrompt verbatim as the kickoff")
+	// claude-code runs `--input-format stream-json`, so SendTurn wraps the
+	// OneShotPrompt as a stream-json user message rather than writing it
+	// verbatim. Assert the prompt rides inside that envelope.
+	assert.JSONEq(t,
+		`{"type":"user","message":{"role":"user","content":"do the thing"}}`,
+		string(payloads[0]),
+		"Boot's OneShot path forwards Options.OneShotPrompt as a stream-json user message")
 
 	// Session is no longer running. Boot's OneShot path drives Stop+Wait
 	// inline, and WaitSession's return implies the watch goroutine recorded
@@ -118,7 +123,7 @@ func TestBoot_ModeOneShot_SyncTurn(t *testing.T) {
 func TestBoot_ModeOneShot_TimeoutFallsThrough(t *testing.T) {
 	cd := composeDeps(t,
 		fakeRuntimeConfig{PTY: false, SuppressTurnDoneOnSendInput: true},
-		"claude")
+		"claude-code")
 
 	// 250ms ctx — enough for Boot's setup (workspace + plant + Start +
 	// SendInput) to complete, then ctx.Done() fires inside the
@@ -163,7 +168,7 @@ func TestBoot_PreStartFailure_RemovesPlantedBootDir(t *testing.T) {
 	injected := errors.New("injected runtime-construction failure")
 	cd := composeDeps(t,
 		fakeRuntimeConfig{PTY: true, RuntimeFactoryErr: injected},
-		"claude")
+		"claude-code")
 
 	bootRoot := agent.DefaultBuildDirRoot()
 	before := dirEntrySet(t, bootRoot)
@@ -215,7 +220,7 @@ func dirEntrySet(t *testing.T, dir string) map[string]bool {
 // is stamped on the session row's metadata so Get/List can recover the
 // relationship.
 func TestBoot_ModeSubagent_StampsParent(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude-code")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -262,7 +267,7 @@ func TestBoot_ModeSubagent_StampsParent(t *testing.T) {
 // kickoff fires async via AutoFireFirstTurn; the call should not wait on
 // the first turn to complete.
 func TestBoot_ModeBackground_ReturnsImmediately(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude-code")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -294,7 +299,7 @@ func TestBoot_ModeBackground_ReturnsImmediately(t *testing.T) {
 // previously-persisted checkpoint's ResumeHint feeds StartOptions.SessionIDPreset
 // so the adapter can issue --resume <id> on its first turn.
 func TestBoot_ModeResume_LoadsCheckpoint(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude-code")
 
 	const providerSessionID = "claude-session-abc-123"
 	cpID := plantCheckpoint(t, cd.Store, "SES-PARENT-RESUME", providerSessionID)
@@ -338,7 +343,7 @@ func TestBoot_ModeResume_LoadsCheckpoint(t *testing.T) {
 // surface: ModeResume without a ResumeFromCheckpoint is rejected by
 // Validate before any side effects.
 func TestBoot_ModeResume_MissingCheckpointRejected(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude-code")
 
 	_, err := cd.Manager.Boot(context.Background(), agent.Options{
 		TaskID:       "CW-TEST-RES-MISS",

@@ -21,9 +21,37 @@
 # Legacy names keep working via `agent_profile_aliases` below — see that
 # section. The aliases are a backward-compat bridge, not a permanent
 # parallel naming scheme; new tasks should use the canonical names.
+# ── permission_mode (CW-20260517-0038 Variation 3) ──
+#
+# `permission_mode` controls the permission posture Torque plants into
+# the spawned claude agent's `.claude/settings.json`
+# (`permissions.defaultMode`). Valid values are Claude Code's
+# settings-schema vocabulary:
+#
+#   default           — interactive approval prompts. UNSAFE for
+#                        orchestrated runs: a torque-spawned claude has no
+#                        human at a TTY, so it hangs on the first prompt.
+#   acceptEdits       — auto-approve file edits, still gate destructive
+#                        shell ops. The safe non-interactive middle
+#                        ground; this is the DEFAULT when the key is
+#                        omitted.
+#   plan              — read-only plan mode.
+#   bypassPermissions — full bypass (settings-schema equivalent of the
+#                        legacy `--dangerously-skip-permissions` CLI flag).
+#
+# When a profile carries `--dangerously-skip-permissions` in `args`
+# (legacy dev flag), the spawned claude is launched in bypass mode and
+# the planted settings.json gets `bypassPermissions` regardless of any
+# `permission_mode` value — the legacy flag wins, for backward compat.
 agent_profiles:
   # Default dispatch identity. Claude Code over the long-lived NDJSON
   # streaming-stdio runtime.
+  #
+  # NOTE: this profile carries `--dangerously-skip-permissions`, so the
+  # spawned claude runs in full-bypass mode. To use the safer
+  # `acceptEdits` posture instead, drop that arg from `args` and either
+  # leave `permission_mode` unset (defaults to acceptEdits) or set it
+  # explicitly.
   default:
     executor: cli
     provider: claude-code
@@ -34,6 +62,7 @@ agent_profiles:
     timeout_seconds: 600
     max_agent_depth: 3
     runtime_kind: streaming-stdio
+    # permission_mode: acceptEdits  # see the permission_mode block above
 
   # Codex (OpenAI) over the app-server JSON-RPC runtime, long timeout.
   # This is the profile the legacy `torque-backend` / `torque-frontend`

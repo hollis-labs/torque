@@ -20,7 +20,7 @@ import (
 // PIDReporter directly (LivePID resets to 0 once Stop fires; LastPID is
 // retained for log-correlation parity with subprocess-per-turn semantics).
 func TestBoot_PIDReporter(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude-code")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -57,7 +57,7 @@ func TestBoot_PIDReporter(t *testing.T) {
 // the PTY runtime can fan typed events out to the caller. The fakeRuntime
 // captures the callback and the test fires it synthetically.
 func TestBoot_TypedEventCallback_FiresOnPTYPath(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude-code")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -98,7 +98,7 @@ func TestBoot_TypedEventCallback_FiresOnPTYPath(t *testing.T) {
 // preserved. PTY runtime enforces these natively (idle-kill, restart-on-crash,
 // watchdog) per go-agent-sessions v0.6.0.
 func TestBoot_SupervisorWiresOnPTYPath(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude-code")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -141,7 +141,7 @@ func TestBoot_SupervisorWiresOnPTYPath(t *testing.T) {
 // This is pass-through verification, NOT enforcement — the lib does not
 // drive idle-kill / restart-on-crash on the adapter runtime in v0.6.0.
 func TestBoot_SupervisorPassesThroughOnAdapterPath(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: false}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: false}, "claude-code")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -186,7 +186,7 @@ func TestBoot_ExitErrorCausePropagation(t *testing.T) {
 	cd := composeDeps(t, fakeRuntimeConfig{
 		PTY:         true,
 		WaitExitErr: xe,
-	}, "claude")
+	}, "claude-code")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -231,7 +231,7 @@ func TestBoot_ExitErrorCausePropagation(t *testing.T) {
 // per-task MCP loopback URL lives on 127.0.0.1; without AllowLoopback the
 // sandboxed process can't reach it.
 func TestBoot_SandboxAllowLoopback(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude-code")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

@@ -53,7 +53,7 @@ func createPlanTask(t *testing.T, store *sqlstore.Store, id, workdir string) *sq
 // + a fakeRuntime. AutoFireFirstTurn=true on the captured StartOptions is
 // the kickoff-fire assertion (replaces the prior SendInput-fire tracking).
 func TestPlanExecute_TriggerBootsOrchestratorSession(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude-code")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -107,7 +107,7 @@ func TestPlanExecute_TriggerBootsOrchestratorSession(t *testing.T) {
 // wrapping a Result whose SessionID points at the existing session — the
 // "Rerun" path the runbook documents.
 func TestPlanExecute_IdempotentWhileLive(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude-code")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -133,7 +133,7 @@ func TestPlanExecute_IdempotentWhileLive(t *testing.T) {
 // terminal-status plans are rejected with their dedicated sentinels —
 // backstop for the runbook's failure-mode notes.
 func TestPlanExecute_RejectsInvalidTargets(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude-code")
 	ctx := context.Background()
 
 	// Wrong kind.

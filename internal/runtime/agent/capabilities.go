@@ -19,11 +19,14 @@ import (
 //
 // Resume support matrix (sprint α — CW-20260512-0059):
 //
-//	claude   → true  (claude --resume <session-id>; documented in claude --help)
-//	codex    → true  (codex resume <session-id> subcommand; documented in codex --help)
-//	gemini   → false (no native resume primitive; falls back to fresh-boot)
-//	copilot  → false (no native resume; gemini-style fresh-boot fallback)
-//	opencode → false (no native resume primitive; falls back to fresh-boot)
+//	claude      → true  (claude --resume <session-id>; documented in claude --help)
+//	claude-code → true  (streaming-stdio claude; same --resume primitive — the
+//	                     bare "claude" provider was retired 2026-05-16 and
+//	                     claude-code is its supported successor)
+//	codex       → true  (codex resume <session-id> subcommand; documented in codex --help)
+//	gemini      → false (no native resume primitive; falls back to fresh-boot)
+//	copilot     → false (no native resume; gemini-style fresh-boot fallback)
+//	opencode    → false (no native resume primitive; falls back to fresh-boot)
 //
 // Unknown provider names report zero-value capabilities (all false). The
 // caller is expected to validate provider name separately via adapterFor at
@@ -42,7 +45,7 @@ func ProviderCapabilities(provider string) executor.ExecutorCapabilities {
 		SupportsPermissions: false,
 	}
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "claude", "codex":
+	case "claude", "claude-code", "codex":
 		caps.SupportsResume = true
 	case "gemini", "copilot", "opencode":
 		caps.SupportsResume = false

@@ -291,6 +291,33 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		capturedBootDir = prepared.PlantedBootDir
 	}
 
+	// Permission-mode post-processing (CW-20260517-0038 Variation 3 / P0).
+	// go-providers' claudeSettingsStub only plants permissions.defaultMode
+	// when the adapter's SkipPermissions flag is set (the dev /
+	// --dangerously-skip-permissions path). Without that flag the planted
+	// .claude/settings.json has NO permissions block, so the spawned
+	// claude falls back to its built-in `default` mode and hangs on the
+	// first approval prompt (no human at the TTY).
+	//
+	// applyPermissionMode merges permissions.defaultMode from the
+	// profile's PermissionMode (default "acceptEdits") into the planted
+	// file, preserving apiKeyHelper / any other keys. It is a no-op when
+	// the dev path already planted bypassPermissions, and a no-op for
+	// adapters with no boot dir. Only the claude family plants a
+	// .claude/settings.json — restrict to the claude-code provider so a
+	// codex/opencode boot dir is left untouched.
+	if capturedBootDir != "" && profile.Provider == "claude-code" {
+		if err := applyPermissionMode(
+			capturedBootDir,
+			profile.ResolvedPermissionMode(),
+			profileIsDevMode(profile),
+		); err != nil {
+			shutdownLoopbackHandle(loopback)
+			_ = os.RemoveAll(capturedBootDir)
+			return nil, fmt.Errorf("%w: %v", ErrBootFailed, err)
+		}
+	}
+
 	// Boot-dir leak guard (CW-20260515-0020 follow-up). Post Stage-2 the
 	// boot dir is planted to disk HERE, before runtime construction,
 	// runtime.Prepare, the ModeResume checkpoint lookup, encodeMeta, and
