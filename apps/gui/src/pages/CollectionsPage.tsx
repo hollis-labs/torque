@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Archive, Plus } from 'lucide-react'
+import { Archive, Plus, Trash2, FolderX } from 'lucide-react'
 import {
   DndContext,
   DragOverlay,
@@ -36,10 +36,14 @@ import {
 import { PageHeader } from '@/components/domain/page-header'
 import { CollectionCreateDialog } from '@/components/domain/collection-create-dialog'
 import { CollectionTaskRow } from '@/components/domain/collection-task-row'
+import { CollectionFilter } from '@/components/domain/collection-filter'
+import { CollectionMultiSelectActions } from '@/components/domain/collection-multi-select-actions'
+import { CollectionActions } from '@/components/domain/collection-actions'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
 import { notifyError, notifySuccess } from '@/lib/toast'
-import type { Collection, Task } from '@/lib/types'
+import { DEFAULT_ACTIVE_STATUSES, TASK_STATUSES } from '@/lib/constants'
+import type { Collection, Task, TaskStatus } from '@/lib/types'
 
 const SSE_EVENTS = [
   'collection.created',
@@ -53,640 +57,588 @@ const SSE_EVENTS = [
   'collection.inbox_added',
 ]
 
-/** Synthetic droppable ID for the inbox container (so dropping on empty
- * inbox space hits a target without needing a row to overlap). */
-const INBOX_CONTAINER_ID = 'container:inbox'
+/** Synthetic droppable ID for the inbox container (so dropping on empty space creates a task) */
+const INBOX_DROP_ID = '__inbox__'
 
-/** Prefix for per-collection container droppables. The id encodes the
- * collection id so onDragEnd can recover it without a separate map. */
-function collectionContainerID(collectionId: string): string {
-  return `container:${collectionId}`
-}
-
-/** Inverse of collectionContainerID. Returns null if the id isn't a
- * container token. Returns the synthetic "inbox" sentinel for the
- * inbox. */
-function parseContainerID(id: string): { kind: 'container'; collectionId: string | null } | null {
-  if (id === INBOX_CONTAINER_ID) return { kind: 'container', collectionId: null }
-  if (id.startsWith('container:')) return { kind: 'container', collectionId: id.slice('container:'.length) }
-  return null
-}
-
-function PageSkeleton() {
-  return (
-    <div className="flex flex-col gap-4 p-6">
-      <Skeleton className="h-32 w-full rounded-2xl" />
-      <Skeleton className="h-32 w-full rounded-2xl" />
-    </div>
-  )
-}
-
-interface CollectionHeaderProps {
-  collection: Collection
-  taskCount: number
-  onUpdate: (id: string, fields: { name?: string; description?: string }) => Promise<void>
-  onArchive: (id: string) => void
-}
-
-function CollectionHeader({ collection, taskCount, onUpdate, onArchive }: CollectionHeaderProps) {
-  // Drafts re-seed from the canonical collection whenever editing
-  // begins. When NOT editing, the displayed value is read directly
-  // from `collection`, so SSE / sibling-session edits flow through
-  // automatically. This avoids the React 19 setState-in-effect
-  // anti-pattern that an `editing` + sync-effect pair would create.
-  const [editingName, setEditingName] = useState(false)
-  const [editingDesc, setEditingDesc] = useState(false)
-  const [draftName, setDraftName] = useState(collection.name)
-  const [draftDesc, setDraftDesc] = useState(collection.description)
-
-  function startEditingName() {
-    setDraftName(collection.name)
-    setEditingName(true)
+/** Collision detection for drag-and-drop that prefers droppables over sortables */
+const collisionStrategy: CollisionDetection = (args) => {
+  // First, try the pointer-within algorithm for droppables
+  const pointerCollisions = pointerWithin(args)
+  if (pointerCollisions.length > 0) {
+    return pointerCollisions
   }
-  function startEditingDesc() {
-    setDraftDesc(collection.description)
-    setEditingDesc(true)
-  }
-
-  async function commitName() {
-    const trimmed = draftName.trim()
-    setEditingName(false)
-    if (!trimmed || trimmed === collection.name) {
-      setDraftName(collection.name)
-      return
-    }
-    try {
-      await onUpdate(collection.id, { name: trimmed })
-    } catch {
-      setDraftName(collection.name)
-    }
-  }
-
-  async function commitDesc() {
-    const trimmed = draftDesc.trim()
-    setEditingDesc(false)
-    if (trimmed === collection.description) return
-    try {
-      await onUpdate(collection.id, { description: trimmed })
-    } catch {
-      setDraftDesc(collection.description)
-    }
-  }
-
-  return (
-    <div className="flex items-start justify-between gap-3 px-4 pt-4 pb-2">
-      <div className="min-w-0 flex-1">
-        {editingName ? (
-          <Input
-            autoFocus
-            value={draftName}
-            onChange={(e) => setDraftName(e.target.value)}
-            onBlur={commitName}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                ;(e.target as HTMLInputElement).blur()
-              }
-              if (e.key === 'Escape') {
-                e.preventDefault()
-                setDraftName(collection.name)
-                setEditingName(false)
-              }
-            }}
-            className="h-8 text-base font-semibold"
-          />
-        ) : (
-          <button
-            type="button"
-            onClick={startEditingName}
-            className="text-left text-base font-semibold text-zinc-100 hover:text-zinc-50"
-            title="Click to rename"
-          >
-            {collection.name}
-            <span className="ml-2 text-[11px] font-normal text-zinc-500">
-              {taskCount} {taskCount === 1 ? 'task' : 'tasks'}
-            </span>
-          </button>
-        )}
-        {editingDesc ? (
-          <Textarea
-            autoFocus
-            value={draftDesc}
-            onChange={(e) => setDraftDesc(e.target.value)}
-            onBlur={commitDesc}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') {
-                e.preventDefault()
-                setDraftDesc(collection.description)
-                setEditingDesc(false)
-              }
-              // Cmd/Ctrl-Enter commits; bare Enter inserts a newline
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault()
-                ;(e.target as HTMLTextAreaElement).blur()
-              }
-            }}
-            rows={2}
-            className="mt-1 text-[12px]"
-            placeholder="Description"
-          />
-        ) : (
-          <button
-            type="button"
-            onClick={startEditingDesc}
-            className="mt-1 block text-left text-[12px] text-zinc-400 hover:text-zinc-300"
-            title="Click to edit description"
-          >
-            {collection.description || (
-              <span className="italic text-zinc-600">Add description…</span>
-            )}
-          </button>
-        )}
-      </div>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="text-zinc-400 hover:text-zinc-200"
-        onClick={() => onArchive(collection.id)}
-        aria-label={`Archive collection ${collection.name}`}
-        title="Archive collection"
-      >
-        <Archive className="h-4 w-4" />
-      </Button>
-    </div>
-  )
-}
-
-interface CollectionTaskTableProps {
-  /** null = inbox; string = collection id. Used to construct the
-   * container droppable id and (via the page-level lookups) recover
-   * which container a drop landed in. */
-  collectionKey: string | null
-  tasks: Task[]
-  emptyHint: string
-}
-
-/**
- * Renders one container's rows inside a SortableContext. The whole
- * container (rounded box) is registered as a droppable too — this is
- * what makes empty containers accept drops, and what gives a "drop at
- * end" target when the user releases over blank space inside a
- * non-empty container.
- *
- * Drag/drop intent is owned by the page; this component only renders.
- */
-function CollectionTaskTable({ collectionKey, tasks, emptyHint }: CollectionTaskTableProps) {
-  const containerId = collectionKey === null ? INBOX_CONTAINER_ID : collectionContainerID(collectionKey)
-  const { setNodeRef, isOver } = useDroppable({ id: containerId })
-
-  return (
-    <div
-      ref={setNodeRef}
-      className={`mx-4 mb-4 rounded-md border ${isOver ? 'border-zinc-500 bg-zinc-900/30' : 'border-zinc-800/80 bg-zinc-950'}`}
-      data-container-id={containerId}
-    >
-      <SortableContext items={tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
-        {tasks.length === 0 ? (
-          <div className="px-4 py-6 text-center text-[12px] text-zinc-600 italic">
-            {emptyHint}
-          </div>
-        ) : (
-          <table className="min-w-full">
-            <tbody className="divide-y divide-zinc-800/60">
-              {tasks.map((task) => (
-                <CollectionTaskRow key={task.id} task={task} />
-              ))}
-            </tbody>
-          </table>
-        )}
-      </SortableContext>
-    </div>
-  )
+  // Fall back to closest center for sortables
+  return closestCenter(args)
 }
 
 export default function CollectionsPage() {
   const api = useApi()
-  const { lastEvent } = useSSE(SSE_EVENTS)
-  const loadGeneration = useRef(0)
   const [collections, setCollections] = useState<Collection[]>([])
-  const [inboxTasks, setInboxTasks] = useState<Task[]>([])
-  const [tasksByCollection, setTasksByCollection] = useState<Record<string, Task[]>>({})
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [createOpen, setCreateOpen] = useState(false)
-  const [archiveTarget, setArchiveTarget] = useState<Collection | null>(null)
-  const [archiving, setArchiving] = useState(false)
-  /** id of the task currently mid-drag, used to render the DragOverlay
-   * clone. null when no drag is in flight. */
-  const [activeDragTaskId, setActiveDragTaskId] = useState<string | null>(null)
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [draggedTask, setDraggedTask] = useState<Task | null>(null)
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
+  const [collectionToDelete, setCollectionToDelete] = useState<Collection | null>(null)
+  
+  // Filter state
+  const [searchQuery, setSearchQuery] = useState('')
+  const [showInbox, setShowInbox] = useState(true)
+  const [selectedStatuses, setSelectedStatuses] = useState<TaskStatus[]>(DEFAULT_ACTIVE_STATUSES)
+  
+  // Multi-select state
+  const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([])
+  
+  // Clear actions confirmation
+  const [clearAllTasksOpen, setClearAllTasksOpen] = useState(false)
+  const [clearAllCollectionsOpen, setClearAllCollectionsOpen] = useState(false)
 
   const sensors = useSensors(
-    // 5px activation distance — prevents click-on-row from registering
-    // as a drag, which would block the title <Link> from navigating.
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
 
-  const load = useCallback(async () => {
-    const myGen = ++loadGeneration.current
-    setLoading(true)
-    setError(null)
-    try {
-      const [active, inbox] = await Promise.all([
-        api.listCollections('active'),
-        api.listInboxTasks(),
-      ])
-      if (myGen !== loadGeneration.current) return
-      const taskMap: Record<string, Task[]> = {}
-      // Fan out task fetches so each collection populates independently;
-      // cheaper than a single mega-endpoint and matches the backend
-      // shape (collection list and task list are separate resources).
-      const taskResults = await Promise.all(
-        active.map((c) => api.listCollectionTasks(c.id).then((t) => [c.id, t] as const)),
+  const filteredCollections = useMemo(() => {
+    let result = collections
+
+    // Filter by search query
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase()
+      result = result.filter(collection => 
+        collection.name.toLowerCase().includes(query) ||
+        collection.description?.toLowerCase().includes(query) ||
+        collection.tasks.some(task => 
+          task.title.toLowerCase().includes(query) ||
+          task.description?.toLowerCase().includes(query)
+        )
       )
-      if (myGen !== loadGeneration.current) return
-      for (const [id, t] of taskResults) {
-        taskMap[id] = t
-      }
-      setCollections(active)
-      setInboxTasks(inbox)
-      setTasksByCollection(taskMap)
-    } catch (err) {
-      if (myGen !== loadGeneration.current) return
-      setError(err instanceof Error ? err.message : 'Failed to load collections')
+    }
+
+    // Filter collection tasks by status and inbox
+    result = result.map(collection => ({
+      ...collection,
+      tasks: collection.tasks.filter(task => {
+        // Status filter
+        if (!selectedStatuses.includes(task.status)) return false
+        
+        // Inbox filter  
+        if (!showInbox && task.inbox) return false
+        
+        return true
+      })
+    }))
+
+    return result
+  }, [collections, searchQuery, selectedStatuses, showInbox])
+
+  const allTasks = useMemo(() => 
+    filteredCollections.flatMap(c => c.tasks), 
+    [filteredCollections]
+  )
+
+  async function fetchCollections() {
+    setLoading(true)
+    try {
+      const data = await api.get<Collection[]>('/collections/with-tasks')
+      setCollections(data)
+    } catch (error) {
+      console.error('Failed to fetch collections:', error)
+      notifyError('Failed to load collections')
     } finally {
-      if (myGen === loadGeneration.current) setLoading(false)
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchCollections()
+  }, [api])
+
+  useSSE(SSE_EVENTS, fetchCollections)
+
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    const task = allTasks.find(t => t.id === event.active.id)
+    if (task) setDraggedTask(task)
+  }, [allTasks])
+
+  const handleDragEnd = useCallback(async (event: DragEndEvent) => {
+    setDraggedTask(null)
+    
+    const { active, over } = event
+    if (!over) return
+
+    const activeTaskId = active.id as string
+    const overId = over.id as string
+
+    // Handle dropping on inbox
+    if (overId === INBOX_DROP_ID) {
+      try {
+        await api.post(`/collections/inbox/tasks/${activeTaskId}`)
+        fetchCollections()
+        notifySuccess('Task moved to inbox')
+      } catch (error) {
+        console.error('Failed to move task to inbox:', error)
+        notifyError('Failed to move task to inbox')
+      }
+      return
+    }
+
+    // Handle dropping on collection
+    if (overId.startsWith('collection-')) {
+      const targetCollectionId = overId.replace('collection-', '')
+      try {
+        await api.post(`/collections/${targetCollectionId}/tasks/${activeTaskId}`)
+        fetchCollections()
+        notifySuccess('Task moved to collection')
+      } catch (error) {
+        console.error('Failed to move task to collection:', error)
+        notifyError('Failed to move task to collection')
+      }
+      return
+    }
+
+    // Handle reordering within collection
+    const activeTask = allTasks.find(t => t.id === activeTaskId)
+    const overTask = allTasks.find(t => t.id === overId)
+    
+    if (!activeTask || !overTask) return
+    if (activeTask.collection_id !== overTask.collection_id) return
+
+    const collection = collections.find(c => c.id === activeTask.collection_id)
+    if (!collection) return
+
+    const oldIndex = collection.tasks.findIndex(t => t.id === activeTaskId)
+    const newIndex = collection.tasks.findIndex(t => t.id === overId)
+    
+    if (oldIndex === newIndex) return
+
+    try {
+      await api.post(`/collections/${collection.id}/reorder`, {
+        task_id: activeTaskId,
+        new_position: newIndex,
+      })
+      fetchCollections()
+    } catch (error) {
+      console.error('Failed to reorder tasks:', error)
+      notifyError('Failed to reorder tasks')
+    }
+  }, [allTasks, collections, api])
+
+  const handleStatusToggle = useCallback((status: TaskStatus) => {
+    setSelectedStatuses(prev => 
+      prev.includes(status) 
+        ? prev.filter(s => s !== status)
+        : [...prev, status]
+    )
+  }, [])
+
+  const handleTaskTransition = useCallback(async (taskId: string, status: TaskStatus) => {
+    try {
+      await api.patch(`/tasks/${taskId}`, { status })
+      fetchCollections()
+      notifySuccess(`Task marked as ${status}`)
+    } catch (error) {
+      console.error('Failed to transition task:', error)
+      notifyError('Failed to update task status')
     }
   }, [api])
 
-  useEffect(() => {
-    void load()
-  }, [load])
+  const handleTaskSelect = useCallback((taskId: string, selected: boolean) => {
+    setSelectedTaskIds(prev => 
+      selected 
+        ? [...prev, taskId]
+        : prev.filter(id => id !== taskId)
+    )
+  }, [])
 
-  // SSE refetch — collections fire a wide event surface and the refetch
-  // is cheap (one collections list + one inbox + N per-collection task
-  // lists, all parallel), so a blanket reload keeps the page honest
-  // without optimistic-state bookkeeping for events from sibling
-  // sessions.
-  useEffect(() => {
-    if (!lastEvent) return
-    void load()
-  }, [lastEvent, load])
+  const handleClearFilters = useCallback(() => {
+    setSearchQuery('')
+    setSelectedStatuses(DEFAULT_ACTIVE_STATUSES)
+    setShowInbox(true)
+  }, [])
 
-  const handleUpdateCollection = useCallback(
-    async (id: string, fields: { name?: string; description?: string }) => {
-      try {
-        const updated = await api.updateCollection(id, fields)
-        setCollections((prev) => prev.map((c) => (c.id === id ? updated : c)))
-        notifySuccess('Collection updated')
-      } catch (err) {
-        notifyError(err, 'Failed to update collection')
-        throw err
-      }
-    },
-    [api],
-  )
-
-  function requestArchive(id: string) {
-    const c = collections.find((c) => c.id === id)
-    if (c) setArchiveTarget(c)
-  }
-
-  async function confirmArchive() {
-    if (!archiveTarget) return
-    setArchiving(true)
+  const handleClearAllTasks = useCallback(async () => {
     try {
-      await api.archiveCollection(archiveTarget.id)
-      notifySuccess(`Archived ${archiveTarget.name}`)
-      setArchiveTarget(null)
-      void load()
-    } catch (err) {
-      notifyError(err, 'Failed to archive collection')
+      await api.post('/collections/clear-all-tasks')
+      fetchCollections()
+      setSelectedTaskIds([])
+      notifySuccess('All tasks cleared from collections')
+      setClearAllTasksOpen(false)
+    } catch (error) {
+      console.error('Failed to clear all tasks:', error)
+      notifyError('Failed to clear tasks')
+    }
+  }, [api])
+
+  const handleClearAllCollections = useCallback(async (clearTasks: boolean) => {
+    try {
+      await api.post('/collections/clear-all', { clear_tasks: clearTasks })
+      fetchCollections()
+      setSelectedTaskIds([])
+      notifySuccess(clearTasks ? 'All collections and tasks cleared' : 'All collections cleared')
+      setClearAllCollectionsOpen(false)
+    } catch (error) {
+      console.error('Failed to clear all collections:', error)
+      notifyError('Failed to clear collections')
+    }
+  }, [api])
+
+  const { setNodeRef: setInboxRef, isOver: inboxIsOver } = useDroppable({
+    id: INBOX_DROP_ID,
+  })
+
+  function handleDeleteCollection(collection: Collection) {
+    setCollectionToDelete(collection)
+    setConfirmDeleteOpen(true)
+  }
+
+  async function confirmDelete() {
+    if (!collectionToDelete) return
+    
+    try {
+      await api.delete(`/collections/${collectionToDelete.id}`)
+      fetchCollections()
+      notifySuccess('Collection deleted')
+    } catch (error) {
+      console.error('Failed to delete collection:', error)
+      notifyError('Failed to delete collection')
     } finally {
-      setArchiving(false)
+      setConfirmDeleteOpen(false)
+      setCollectionToDelete(null)
     }
   }
 
-  /** Resolve which container ("inbox" or a collection id) holds the
-   * given task right now. Returns undefined if the task isn't in any
-   * tracked container — shouldn't happen in normal flow. */
-  const findContainerForTask = useCallback(
-    (taskId: string): { collectionId: string | null } | undefined => {
-      if (inboxTasks.some((t) => t.id === taskId)) return { collectionId: null }
-      for (const [colId, tasks] of Object.entries(tasksByCollection)) {
-        if (tasks.some((t) => t.id === taskId)) return { collectionId: colId }
-      }
-      return undefined
-    },
-    [inboxTasks, tasksByCollection],
-  )
-
-  /** Resolve a `over.id` (either a task id or a `container:` token)
-   * down to a target container + relative task id. The container is
-   * always known; the relTaskId is non-null only when the user
-   * released over a specific row. */
-  const resolveDropTarget = useCallback(
-    (overId: string): { collectionId: string | null; relTaskId: string | null } | null => {
-      const asContainer = parseContainerID(overId)
-      if (asContainer) {
-        return { collectionId: asContainer.collectionId, relTaskId: null }
-      }
-      // overId is a task id — find which container holds it.
-      const where = findContainerForTask(overId)
-      if (!where) return null
-      return { collectionId: where.collectionId, relTaskId: overId }
-    },
-    [findContainerForTask],
-  )
-
-  /**
-   * Custom collision detection: prefer pointer-within (so the user's
-   * cursor position decides), fall back to closest-center for keyboard
-   * sensor (which lacks a pointer). Without this, dropping on the
-   * empty space of a container can match an unrelated row above it.
-   */
-  const collisionDetection: CollisionDetection = useCallback(
-    (args) => {
-      const pointerCollisions = pointerWithin(args)
-      if (pointerCollisions.length > 0) return pointerCollisions
-      return closestCenter(args)
-    },
-    [],
-  )
-
-  const handleDragStart = useCallback((event: DragStartEvent) => {
-    setActiveDragTaskId(String(event.active.id))
-  }, [])
-
-  /**
-   * The single drop dispatcher. Translates a (source, target) pair into
-   * the smallest-correct API call:
-   *
-   *   - reorder within the same collection → reorderCollectionTasks
-   *   - source inbox → target collection   → moveTask
-   *   - source collection → target inbox   → removeTaskFromCollection
-   *   - source A → target B (both real)    → moveTask
-   *
-   * Optimistic update on the local state; refetch on error so the user
-   * sees the canonical order from the server.
-   */
-  const handleDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      setActiveDragTaskId(null)
-      const { active, over } = event
-      if (!over) return
-
-      const taskId = String(active.id)
-      const overId = String(over.id)
-
-      const source = findContainerForTask(taskId)
-      if (!source) return
-
-      const target = resolveDropTarget(overId)
-      if (!target) return
-
-      const sameContainer = source.collectionId === target.collectionId
-
-      // Compute target index in the destination list. When dropping on
-      // a row, place AT that row's index — splice(index, 0, moved) puts
-      // the moved task BEFORE the target row, pushing it down by one.
-      // When dropping on a container with no row target, append.
-      const destList: Task[] =
-        target.collectionId === null
-          ? inboxTasks
-          : (tasksByCollection[target.collectionId] ?? [])
-
-      let destIndex: number
-      if (target.relTaskId === null) {
-        destIndex = destList.length
-      } else {
-        const i = destList.findIndex((t) => t.id === target.relTaskId)
-        destIndex = i < 0 ? destList.length : i
-      }
-
-      // ---- 1. same container reorder --------------------------------
-      if (sameContainer) {
-        if (target.collectionId === null) {
-          // Inbox is virtual — reordering within the inbox has no
-          // backend representation in v1. Bail silently; UI keeps the
-          // server order on next refetch.
-          return
-        }
-        const list = [...destList]
-        const fromIdx = list.findIndex((t) => t.id === taskId)
-        if (fromIdx < 0) return
-        let to = destIndex
-        // When dragging downward, removing the source first shifts the
-        // target index down by one — adjust before splicing back in.
-        if (fromIdx < to) to -= 1
-        if (fromIdx === to) return
-        const [moved] = list.splice(fromIdx, 1)
-        list.splice(to, 0, moved)
-        setTasksByCollection((prev) => ({ ...prev, [target.collectionId as string]: list }))
-        api
-          .reorderCollectionTasks(target.collectionId as string, list.map((t) => t.id))
-          .catch((err) => {
-            notifyError(err, 'Failed to reorder')
-            void load()
-          })
-        return
-      }
-
-      // ---- 2. cross-container moves ---------------------------------
-      const sourceList: Task[] =
-        source.collectionId === null
-          ? inboxTasks
-          : (tasksByCollection[source.collectionId] ?? [])
-      const moved = sourceList.find((t) => t.id === taskId)
-      if (!moved) return
-
-      const newSource = sourceList.filter((t) => t.id !== taskId)
-      const newDest = [...destList]
-      newDest.splice(destIndex, 0, moved)
-
-      // Apply optimistic state.
-      if (source.collectionId === null) {
-        setInboxTasks(newSource)
-      } else {
-        setTasksByCollection((prev) => ({ ...prev, [source.collectionId as string]: newSource }))
-      }
-      if (target.collectionId === null) {
-        setInboxTasks(newDest)
-      } else {
-        setTasksByCollection((prev) => ({ ...prev, [target.collectionId as string]: newDest }))
-      }
-
-      // Pick the right backend call.
-      const onError = (err: unknown) => {
-        notifyError(err, 'Failed to move task')
-        void load()
-      }
-
-      if (source.collectionId !== null && target.collectionId === null) {
-        // collection → inbox: scoped DELETE so the route is authoritative
-        // (rejects 409 if the task isn't actually in source.collectionId).
-        api.removeTaskFromCollection(source.collectionId, taskId).catch(onError)
-      } else if (target.collectionId !== null) {
-        // inbox → collection OR collection A → collection B.
-        //
-        // Two-step to keep server-side ordering bulletproof:
-        //   1. moveTask with no explicit position → backend appends
-        //      (max(collection_position)+1 in the target collection).
-        //   2. reorderCollectionTasks with the full destination order
-        //      atomically rewrites collection_position 1..N matching
-        //      the optimistic UI.
-        //
-        // Why not pass `destIndex` directly to moveTask? Two reasons:
-        //   - destIndex is 0-based; the backend's `position` field is
-        //     1-based with `<=0` meaning append. The math mismatch alone
-        //     would silently land tasks in the wrong slot.
-        //   - MoveTaskToCollection SETs the position without shifting
-        //     other rows, so even with correct math, an explicit
-        //     position would collide with an existing task at that
-        //     slot. ORDER BY tie-broke on created_at, and the visual
-        //     order drifted on the next refetch. The reorder step
-        //     rewrites the whole collection's positions atomically.
-        const targetCollectionID = target.collectionId
-        const orderedIDs = newDest.map((t) => t.id)
-        api
-          .moveTask(taskId, targetCollectionID)
-          .then(() =>
-            api.reorderCollectionTasks(targetCollectionID, orderedIDs),
-          )
-          .catch(onError)
-      }
-    },
-    [api, inboxTasks, tasksByCollection, load, findContainerForTask, resolveDropTarget],
-  )
-
-  const handleDragCancel = useCallback(() => {
-    setActiveDragTaskId(null)
-  }, [])
-
-  const sortedCollections = useMemo(
-    () => [...collections].sort((a, b) => a.created_at.localeCompare(b.created_at)),
-    [collections],
-  )
-
-  const activeDragTask = useMemo<Task | null>(() => {
-    if (!activeDragTaskId) return null
-    if (inboxTasks) {
-      const inboxHit = inboxTasks.find((t) => t.id === activeDragTaskId)
-      if (inboxHit) return inboxHit
-    }
-    for (const tasks of Object.values(tasksByCollection)) {
-      const hit = tasks.find((t) => t.id === activeDragTaskId)
-      if (hit) return hit
-    }
-    return null
-  }, [activeDragTaskId, inboxTasks, tasksByCollection])
+  if (loading) {
+    return (
+      <div className="max-w-7xl mx-auto p-6 space-y-8">
+        <Skeleton className="h-8 w-48" />
+        <div className="space-y-4">
+          <Skeleton className="h-32 w-full" />
+          <Skeleton className="h-32 w-full" />
+          <Skeleton className="h-32 w-full" />
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={collisionDetection}
+    <DndContext 
+      sensors={sensors} 
+      collisionDetection={collisionStrategy}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
-      onDragCancel={handleDragCancel}
     >
-      <div className="flex h-full min-h-0 flex-col">
-        <PageHeader title="Collections">
-          <Button size="sm" onClick={() => setCreateOpen(true)}>
-            <Plus className="mr-1 h-3.5 w-3.5" />
-            New collection
-          </Button>
-        </PageHeader>
+      <div className="max-w-7xl mx-auto p-6 space-y-6">
+        {/* Page Header */}
+        <PageHeader 
+          title="Collections"
+          subtitle={`${filteredCollections.length} collection${filteredCollections.length !== 1 ? 's' : ''}, ${allTasks.length} task${allTasks.length !== 1 ? 's' : ''}`}
+          action={
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setClearAllTasksOpen(true)}
+                className="text-orange-400 border-orange-400/30 hover:bg-orange-400/10"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Clear All Tasks
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setClearAllCollectionsOpen(true)}
+                className="text-red-400 border-red-400/30 hover:bg-red-400/10"
+              >
+                <FolderX className="h-4 w-4 mr-2" />
+                Clear All Collections
+              </Button>
+              <Button onClick={() => setCreateDialogOpen(true)}>
+                <Plus className="h-4 w-4 mr-2" />
+                New Collection
+              </Button>
+            </div>
+          }
+        />
 
-        {loading && collections.length === 0 ? (
-          <PageSkeleton />
-        ) : error ? (
-          <div className="m-6 rounded-md border border-rose-900/60 bg-rose-950/30 p-4 text-[13px] text-rose-300">
-            {error}
+        {/* Filter Header */}
+        <CollectionFilter
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          showInbox={showInbox}
+          onInboxToggle={setShowInbox}
+          selectedStatuses={selectedStatuses}
+          onStatusToggle={handleStatusToggle}
+          onClearFilters={handleClearFilters}
+        />
+
+        {/* Multi-select Actions */}
+        <CollectionMultiSelectActions
+          selectedTaskIds={selectedTaskIds}
+          collections={collections}
+          onSelectionChange={setSelectedTaskIds}
+          onTasksChanged={fetchCollections}
+        />
+
+        {/* Collections List */}
+        <div className="space-y-6">
+          {filteredCollections.map(collection => (
+            <CollectionCard
+              key={collection.id}
+              collection={collection}
+              collections={collections}
+              selectedTaskIds={selectedTaskIds}
+              onTaskSelect={handleTaskSelect}
+              onTaskTransition={handleTaskTransition}
+              onTasksChanged={fetchCollections}
+              onCollectionDelete={() => handleDeleteCollection(collection)}
+            />
+          ))}
+        </div>
+
+        {/* Inbox Drop Zone */}
+        <div 
+          ref={setInboxRef}
+          className={`
+            min-h-[120px] rounded-lg border-2 border-dashed transition-all
+            flex items-center justify-center
+            ${inboxIsOver 
+              ? 'border-blue-400 bg-blue-400/10 text-blue-400' 
+              : 'border-zinc-700 text-zinc-400 hover:border-zinc-600'
+            }
+          `}
+        >
+          <div className="text-center">
+            <Archive className="h-8 w-8 mx-auto mb-2 opacity-40" />
+            <p className="text-sm font-medium">
+              {inboxIsOver ? 'Drop to move to inbox' : 'Inbox'}
+            </p>
+            <p className="text-xs opacity-60">
+              Drag tasks here to remove from collections
+            </p>
           </div>
-        ) : (
-          <div className="flex-1 overflow-auto">
-            <section className="pb-2 pt-4">
-              <div className="flex items-baseline justify-between gap-3 px-4 pb-2">
-                <div>
-                  <h2 className="text-base font-semibold text-zinc-100">Inbox</h2>
-                  <p className="text-[12px] text-zinc-500">tasks awaiting organization</p>
-                </div>
-                <span className="text-[11px] text-zinc-500">
-                  {inboxTasks.length} {inboxTasks.length === 1 ? 'task' : 'tasks'}
-                </span>
-              </div>
-              <CollectionTaskTable
-                collectionKey={null}
-                tasks={inboxTasks}
-                emptyHint="Inbox is empty. Drop tasks here to clear collection assignment."
-              />
-            </section>
+        </div>
 
-            {sortedCollections.map((collection) => (
-              <section key={collection.id} className="border-t border-zinc-800/60">
-                <CollectionHeader
-                  collection={collection}
-                  taskCount={tasksByCollection[collection.id]?.length ?? 0}
-                  onUpdate={handleUpdateCollection}
-                  onArchive={requestArchive}
-                />
-                <CollectionTaskTable
-                  collectionKey={collection.id}
-                  tasks={tasksByCollection[collection.id] ?? []}
-                  emptyHint="Drop tasks here to add them to this collection."
-                />
-              </section>
-            ))}
-
-            {sortedCollections.length === 0 && (
-              <div className="mx-4 my-6 rounded-md border border-dashed border-zinc-800 px-6 py-10 text-center text-[13px] text-zinc-500">
-                No active collections yet. Create one to start organizing tasks.
-              </div>
+        {/* Empty State */}
+        {filteredCollections.length === 0 && (
+          <div className="text-center py-12 text-zinc-400">
+            <Archive className="h-12 w-12 mx-auto mb-4 opacity-40" />
+            <h3 className="text-lg font-medium mb-2">No collections found</h3>
+            <p className="text-sm opacity-60 mb-6">
+              {searchQuery ? 'Try adjusting your search criteria' : 'Create your first collection to get started'}
+            </p>
+            {!searchQuery && (
+              <Button onClick={() => setCreateDialogOpen(true)}>
+                <Plus className="h-4 w-4 mr-2" />
+                Create Collection
+              </Button>
             )}
           </div>
         )}
-
-        <CollectionCreateDialog
-          open={createOpen}
-          onOpenChange={setCreateOpen}
-          onCreated={() => void load()}
-        />
-
-        <AlertDialog open={archiveTarget !== null} onOpenChange={(open) => !open && setArchiveTarget(null)}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Archive this collection?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Archiving{' '}
-                <span className="font-mono text-zinc-300">{archiveTarget?.name}</span>{' '}
-                hides it from the active list. Tasks already in it stay assigned;
-                you can unarchive later via the API if needed.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={archiving}>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={confirmArchive} disabled={archiving}>
-                {archiving ? 'Archiving…' : 'Archive'}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
       </div>
 
-      {/* DragOverlay renders the drag preview as a positioned clone
-          following the pointer. Wrapping the row clone in a table is
-          required because <tr> can't be a top-level child outside a
-          table — without this the browser unwraps the row and the
-          overlay is blank. */}
+      {/* Drag Overlay */}
       <DragOverlay>
-        {activeDragTask ? (
-          <table className="min-w-full">
+        {draggedTask && (
+          <div className="bg-zinc-800 border border-zinc-700 rounded-lg p-3 shadow-lg">
+            <div className="font-medium text-sm">{draggedTask.title}</div>
+            <div className="text-xs text-zinc-400 mt-1">
+              Moving task...
+            </div>
+          </div>
+        )}
+      </DragOverlay>
+
+      {/* Dialogs */}
+      <CollectionCreateDialog
+        open={createDialogOpen}
+        onOpenChange={setCreateDialogOpen}
+        onSuccess={() => {
+          fetchCollections()
+          setCreateDialogOpen(false)
+        }}
+      />
+
+      {/* Delete Confirmation */}
+      <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Collection</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete "{collectionToDelete?.name}"? 
+              Tasks in this collection will be moved back to the inbox.
+              This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete} className="bg-red-600 hover:bg-red-700">
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Clear All Tasks Confirmation */}
+      <AlertDialog open={clearAllTasksOpen} onOpenChange={setClearAllTasksOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear All Tasks</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to clear all tasks from all collections? 
+              Tasks will be moved back to the inbox. Collections will remain empty but intact.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleClearAllTasks} className="bg-orange-600 hover:bg-orange-700">
+              Clear All Tasks
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Clear All Collections Confirmation */}
+      <AlertDialog open={clearAllCollectionsOpen} onOpenChange={setClearAllCollectionsOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear All Collections</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete all collections? What would you like to do with the tasks?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={() => handleClearAllCollections(false)} 
+              className="bg-orange-600 hover:bg-orange-700"
+            >
+              Keep Tasks (move to inbox)
+            </AlertDialogAction>
+            <AlertDialogAction 
+              onClick={() => handleClearAllCollections(true)} 
+              className="bg-red-600 hover:bg-red-700"
+            >
+              Delete All Tasks Too
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </DndContext>
+  )
+}
+
+interface CollectionCardProps {
+  collection: Collection
+  collections: Collection[]
+  selectedTaskIds: string[]
+  onTaskSelect: (taskId: string, selected: boolean) => void
+  onTaskTransition: (taskId: string, status: TaskStatus) => void
+  onTasksChanged: () => void
+  onCollectionDelete: () => void
+}
+
+function CollectionCard({ 
+  collection, 
+  collections,
+  selectedTaskIds,
+  onTaskSelect,
+  onTaskTransition,
+  onTasksChanged,
+  onCollectionDelete,
+}: CollectionCardProps) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `collection-${collection.id}`,
+  })
+
+  return (
+    <div
+      ref={setNodeRef} 
+      className={`
+        bg-zinc-950/80 border rounded-lg overflow-hidden transition-all
+        ${isOver 
+          ? 'border-blue-400 bg-blue-400/5' 
+          : 'border-zinc-800/60 hover:border-zinc-700'
+        }
+      `}
+    >
+      {/* Collection Header */}
+      <div className="px-4 py-3 border-b border-zinc-800/60">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-medium text-lg">{collection.name}</h3>
+            {collection.description && (
+              <p className="text-sm text-zinc-400 mt-1">{collection.description}</p>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-zinc-400">
+              {collection.tasks.length} task{collection.tasks.length !== 1 ? 's' : ''}
+            </span>
+            <CollectionActions
+              collection={collection}
+              taskCount={collection.tasks.length}
+              onCollectionChange={onTasksChanged}
+              onCollectionDelete={onCollectionDelete}
+              onClearTasks={onTasksChanged}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Tasks Table - Borderless like BoardPage */}
+      {collection.tasks.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-zinc-800/60 text-left">
+                <th className="px-4 py-3 text-xs font-medium text-zinc-400 uppercase tracking-wider">
+                  <input
+                    type="checkbox"
+                    checked={collection.tasks.every(task => selectedTaskIds.includes(task.id))}
+                    onChange={(e) => {
+                      const allSelected = collection.tasks.every(task => selectedTaskIds.includes(task.id))
+                      collection.tasks.forEach(task => {
+                        onTaskSelect(task.id, !allSelected)
+                      })
+                    }}
+                    className="rounded border-zinc-700"
+                  />
+                </th>
+                <th className="px-4 py-3 text-xs font-medium text-zinc-400 uppercase tracking-wider">Task</th>
+                <th className="px-4 py-3 text-xs font-medium text-zinc-400 uppercase tracking-wider">Status</th>
+                <th className="px-4 py-3 text-xs font-medium text-zinc-400 uppercase tracking-wider">Priority</th>
+                <th className="px-4 py-3 text-xs font-medium text-zinc-400 uppercase tracking-wider">Date</th>
+                <th className="px-4 py-3 text-xs font-medium text-zinc-400 uppercase tracking-wider">Actions</th>
+              </tr>
+            </thead>
             <tbody>
-              <CollectionTaskRow task={activeDragTask} asOverlay />
+              <SortableContext 
+                items={collection.tasks.map(t => t.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                {collection.tasks.map(task => (
+                  <CollectionTaskRow
+                    key={task.id}
+                    task={task}
+                    collections={collections}
+                    currentCollectionId={collection.id}
+                    selected={selectedTaskIds.includes(task.id)}
+                    onSelect={onTaskSelect}
+                    onTransition={onTaskTransition}
+                    onTasksChanged={onTasksChanged}
+                  />
+                ))}
+              </SortableContext>
             </tbody>
           </table>
-        ) : null}
-      </DragOverlay>
-    </DndContext>
+        </div>
+      ) : (
+        <div className="px-4 py-8 text-center text-zinc-400">
+          <Archive className="h-8 w-8 mx-auto mb-2 opacity-40" />
+          <p className="text-sm">
+            {isOver ? 'Drop tasks here to add to collection' : 'No tasks in this collection'}
+          </p>
+        </div>
+      )}
+    </div>
   )
 }
