@@ -89,10 +89,10 @@ func mcpCmd() *cobra.Command {
 			//
 			// Scheduler is intentionally NOT wired here. The stdio mcp does
 			// NOT dispatch kind=agent / kind=internal tasks (that's the
-			// `torque serve` daemon's role). MCP scheduler_* tools will
-			// surface a `not running` error when called against this stdio
-			// instance, matching the HTTP 503 contract documented in
-			// mcpadapter.New's nil-sched godoc.
+			// `torque serve` daemon's role). torque_scheduler_status now
+			// proxies read-only state from the local serve process, while
+			// torque_scheduler_toggle remains unavailable because this
+			// process does not own the scheduler instance.
 			agentDeps, agentDepsClose, err := bootstrap.AgentDeps(store, profiles, svc, nil, nil, nil)
 			if err != nil {
 				return fmt.Errorf("bootstrap agent deps: %w", err)

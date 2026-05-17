@@ -12,7 +12,7 @@ import (
 func (a *Adapter) registerSprintTools() {
 	a.addTool(mcp.NewTool("torque_sprint_create",
 		mcp.WithDescription(`Create a sprint (feature-flagged: requires features.sprints). Returns the SprintRecord.
-Use to scope a cohort of tasks under a common approval_mode + cost budget; prefer torque_epic_create for long-running multi-sprint initiatives, torque_project_create for infrastructure grouping.
+Use to scope a cohort of tasks under a common approval_mode + cost budget; prefer torque_epic_create for long-running multi-sprint initiatives, torque_project_create for infrastructure grouping. approval_mode=approve_sprint is a completion gate, not a kickoff action: start work by promoting the first sprint tasks to manual=false via torque_task_update, then let the scheduler dispatch them.
 Response shape: data = {<SprintRecord fields>} — singleton.
 Example: {"name":"Sprint 17","goal":"Land Phase C","approval_mode":"approve_each","cost_budget":"50"}`),
 		mcp.WithString("name", mcp.Required(), mcp.Description("Sprint name")),
@@ -64,7 +64,7 @@ Example: {"status":"active"}`),
 
 	a.addTool(mcp.NewTool("torque_sprint_approve",
 		mcp.WithDescription(`Approve tasks in a sprint. With task_id, approves one task; without, approves every task currently in review.
-Use for sprint-level review-gate closures; torque_task_transition for single-task control and torque_task_bulk_transition when approving outside a sprint.
+Use for sprint-level review-gate closures after tasks have already run and reached review; this does NOT start dispatch for an approve_sprint sprint. To kick off work, promote one or more sprint tasks to manual=false via torque_task_update, confirm scheduler state with torque_scheduler_status, then use torque_sprint_approve later to move review tasks to done.
 Response shape: data = {sprint_id, task_id?, approved: count, message}.
 Example: {"id":"SP-17"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Sprint ID")),

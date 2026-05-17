@@ -40,7 +40,7 @@ func parseManualFilter(v string) *bool {
 func (a *Adapter) registerTaskTools() {
 	a.addTool(mcp.NewTool("torque_task_create",
 		mcp.WithDescription(`Create a new task in Torque; returns the full TaskRecord with its assigned ID.
-Use for ad-hoc work items — prefer torque_task_create_from_template when a matching template exists, and torque_plan_create for multi-phase work. Safety override forces manual=true on every create (CW-20260417-0133); promote to manual=false via torque_task_update after review.
+Use for ad-hoc work items — prefer torque_task_create_from_template when a matching template exists, and torque_plan_create for multi-phase work. Safety override forces manual=true on every create (CW-20260417-0133), even when callers pass manual=false or omit the field; promote to manual=false via torque_task_update after review when you actually want scheduler dispatch.
 Response shape: data = {<TaskRecord fields>, Tags[]} — singleton, PascalCase keys.
 Example: {"title":"Fix auth bug","description":"Login returns 500","priority":"2","tags":"[\"backend\"]"}`),
 		mcp.WithString("title", mcp.Required(), mcp.Description("Task title")),
@@ -56,7 +56,7 @@ Example: {"title":"Fix auth bug","description":"Login returns 500","priority":"2
 		mcp.WithString("on_fail", mcp.Description("Hook on fail")),
 		mcp.WithString("on_done_merge", mcp.Description("Merge hook on done")),
 		mcp.WithString("depends_on", mcp.Description("JSON array of dependency task IDs")),
-		mcp.WithBoolean("manual", mcp.Description("Whether the task is manual")),
+		mcp.WithBoolean("manual", mcp.Description("Requested manual flag on create. Tool-surface safety override currently coerces every create to manual=true (CW-20260417-0133); use torque_task_update manual=false later to queue reviewed work.")),
 		mcp.WithString("sprint_id", mcp.Description("Sprint ID to associate this task with (requires features.sprints)")),
 		mcp.WithString("project_id", mcp.Description("Project ID to associate this task with (requires features.projects)")),
 		mcp.WithString("epic_id", mcp.Description("Epic ID to associate this task with (requires features.epics)")),
