@@ -85,8 +85,15 @@ type SchedulerConfig struct {
 	// runs can never collide and human git ops on the main tree can't
 	// silently hijack agent state.
 	WorktreePerRun   bool
-	WorktreeRoot     string // empty means "${repoRoot}-worktrees"
+	WorktreeRoot     string // empty means a true sibling of the repo root
 	WorktreeKeepDays int
+	// WorktreePrecheck is the dispatch-time git-repo gate mode: off / warn /
+	// block. When per-run worktrees are enabled it verifies a task's working
+	// dir resolves to a git repo before dispatch, so a non-git working dir
+	// blocks cleanly instead of falling back mid-dispatch. Sourced from
+	// TORQUE_WORKTREE_PRECHECK; empty/unset lets the scheduler default apply
+	// (block — see scheduler.DefaultPrecheckOptions).
+	WorktreePrecheck string
 
 	// DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
 	// ProjectAllowlist is a stopgap for the shared-DB cross-project
@@ -130,6 +137,7 @@ func Load() (*Config, error) {
 			WorktreePerRun:   envBool("TORQUE_WORKTREE_PER_RUN", false),
 			WorktreeRoot:     os.Getenv("TORQUE_WORKTREE_ROOT"),
 			WorktreeKeepDays: envInt("TORQUE_WORKTREE_KEEP_DAYS", 7),
+			WorktreePrecheck: os.Getenv("TORQUE_WORKTREE_PRECHECK"),
 			// DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
 			ProjectAllowlist: envProjectAllowlist(),
 		},

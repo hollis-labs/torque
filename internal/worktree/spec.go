@@ -38,8 +38,11 @@ type Spec struct {
 	// ModeShared in Resolve.
 	Mode Mode
 
-	// Root is the parent directory for per-run worktrees (ModeWorktree only).
-	// Empty means "${repoRoot}-worktrees", matching PerRunOptions.Root.
+	// Root is the explicit TORQUE_WORKTREE_ROOT override for per-run worktree
+	// placement (ModeWorktree only), matching PerRunOptions.Root. Empty means
+	// the per-run worktree is placed as a true sibling of the repo root at the
+	// same directory depth (so relative go.mod replace directives resolve
+	// identically) — see PerRunPath.
 	Root string
 
 	// KeepDays is the TTL for orphaned (dirty) worktrees, forwarded to

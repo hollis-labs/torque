@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -16,8 +17,11 @@ type PerRunOptions struct {
 	// Enabled is checked by callers; SetupPerRun does not gate on it.
 	Enabled bool
 
-	// Root is the parent directory where per-run worktrees are created.
-	// If empty, defaults to "${repoRoot}-worktrees".
+	// Root is the explicit parent directory where per-run worktrees are
+	// created (the TORQUE_WORKTREE_ROOT operator override). When empty the
+	// per-run worktree is placed as a true sibling of the repo root at the
+	// SAME directory depth — see PerRunPath. When set, it is honoured as-is
+	// and the worktree leaf is "${Root}/run-<id>".
 	Root string
 
 	// KeepDays is the TTL for orphaned worktrees retained because they had
@@ -46,9 +50,40 @@ func FindRepoRoot(start string) (string, error) {
 	}
 }
 
-// SetupPerRun creates a per-run worktree under opts.Root for the given runID.
-// It fetches origin and creates the worktree at origin/main. The agent is
-// expected to create their own task branch from this clean checkout.
+// PerRunPath computes the absolute path of the per-run worktree for the given
+// repo root, explicit root override, and run ID.
+//
+//   - root == "" (default): the worktree is a TRUE SIBLING of the repo, at the
+//     SAME directory depth — "${repoParent}/${repoName}-worktrees-run-<id>".
+//     This is the placement that keeps relative go.mod replace directives
+//     ("replace ../../x => ...") resolving identically from the worktree's
+//     go.mod and from the repo's go.mod, because both go.mod files sit at the
+//     same depth under a common parent.
+//   - root != "" (TORQUE_WORKTREE_ROOT override): honoured as-is — the leaf is
+//     "${root}/run-<id>". Operators who set this take responsibility for the
+//     depth; the relative-replace guard (see CheckRelativeReplaceSafe) flags
+//     the case where this override would mis-resolve relative replaces.
+func PerRunPath(repoRoot, root string, runID int64) string {
+	if root != "" {
+		return filepath.Join(root, fmt.Sprintf("run-%d", runID))
+	}
+	repoParent := filepath.Dir(repoRoot)
+	repoName := filepath.Base(repoRoot)
+	return filepath.Join(repoParent, fmt.Sprintf("%s-worktrees-run-%d", repoName, runID))
+}
+
+// SetupPerRun creates a per-run worktree for the given runID. It fetches
+// origin and creates the worktree at origin/main. The agent is expected to
+// create their own task branch from this clean checkout.
+//
+// Placement: with an empty opts.Root the worktree is a true sibling of the
+// repo root (same directory depth — see PerRunPath); with opts.Root set the
+// leaf is "${opts.Root}/run-<id>".
+//
+// Before creating the worktree, SetupPerRun runs the relative-replace guard
+// (CheckRelativeReplaceSafe): if the repo's go.mod carries relative ("../")
+// replace directives and the chosen placement would NOT preserve them, it
+// returns a clear blocking error instead of silently mis-resolving.
 //
 // Returns the worktree path on success. On any git failure the caller should
 // fall back to running in workingDir directly — the run must not be blocked
@@ -58,21 +93,76 @@ func SetupPerRun(opts PerRunOptions, workingDir string, runID int64) (string, er
 	if err != nil {
 		return "", err
 	}
-	root := opts.Root
-	if root == "" {
-		root = repoRoot + "-worktrees"
+	wtPath := PerRunPath(repoRoot, opts.Root, runID)
+	if err := CheckRelativeReplaceSafe(repoRoot, wtPath); err != nil {
+		return "", err
 	}
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		return "", fmt.Errorf("create worktree root %s: %w", root, err)
+	if err := os.MkdirAll(filepath.Dir(wtPath), 0o755); err != nil {
+		return "", fmt.Errorf("create worktree parent %s: %w", filepath.Dir(wtPath), err)
 	}
 	if err := runGit(repoRoot, "fetch", "origin"); err != nil {
 		return "", fmt.Errorf("fetch origin: %w", err)
 	}
-	wtPath := filepath.Join(root, fmt.Sprintf("run-%d", runID))
 	if err := runGit(repoRoot, "worktree", "add", "--detach", wtPath, "origin/main"); err != nil {
 		return "", fmt.Errorf("worktree add: %w", err)
 	}
 	return wtPath, nil
+}
+
+// goModReplaceRelRe matches a relative ("../" or "./") replace TARGET in a
+// go.mod replace directive. It is intentionally permissive: any line that
+// looks like "replace ... => <rel-path>" or a "=> <rel-path>" entry inside a
+// replace block. The guard only needs to know "are there relative replaces".
+var goModReplaceRelRe = regexp.MustCompile(`=>\s+(\.\.?/[^\s]*)`)
+
+// hasRelativeReplace reports whether the go.mod text contains at least one
+// replace directive whose target is a relative path ("../" or "./"). Relative
+// targets are the only ones whose resolution depends on the depth of the
+// go.mod file, so they are the only ones the worktree-depth guard cares about.
+func hasRelativeReplace(goModText string) bool {
+	return goModReplaceRelRe.MatchString(goModText)
+}
+
+// CheckRelativeReplaceSafe is the relative-replace guard. It parses the repo's
+// go.mod and, if that go.mod contains replace directives with relative ("../")
+// targets, verifies the chosen worktree placement preserves them — i.e. the
+// worktree's go.mod sits at the SAME directory depth as the repo's go.mod, so
+// a relative replace resolves to the same tree from both.
+//
+// Decision rule: a placement is safe for relative replaces iff the worktree
+// directory and the repo root share the same parent directory (they are true
+// siblings). The default placement (PerRunPath with empty root) always
+// satisfies this. An explicit TORQUE_WORKTREE_ROOT override may not — when it
+// doesn't, this returns a clear blocking error naming the problem rather than
+// letting the worktree silently mis-resolve its relative replaces.
+//
+// When the repo has no go.mod, or its go.mod has no relative replaces, the
+// guard is a no-op and returns nil — any placement is safe.
+func CheckRelativeReplaceSafe(repoRoot, wtPath string) error {
+	b, err := os.ReadFile(filepath.Join(repoRoot, "go.mod"))
+	if err != nil {
+		// No go.mod (or unreadable) — nothing depth-sensitive to protect.
+		return nil
+	}
+	if !hasRelativeReplace(string(b)) {
+		return nil
+	}
+	repoParent := filepath.Dir(filepath.Clean(repoRoot))
+	wtParent := filepath.Dir(filepath.Clean(wtPath))
+	if repoParent == wtParent {
+		// Worktree is a true sibling of the repo: same depth, relative
+		// replaces resolve identically. Safe.
+		return nil
+	}
+	return fmt.Errorf(
+		"per-run worktree placement %s would break relative go.mod replace directives: "+
+			"its go.mod sits at a different directory depth than the repo go.mod at %s "+
+			"(worktree parent %s != repo parent %s). "+
+			"A relative \"replace ../...\" target would resolve to the wrong tree. "+
+			"Unset TORQUE_WORKTREE_ROOT to use the default sibling placement, or set it "+
+			"to a directory at the same depth as the repo so the worktree is a true sibling",
+		wtPath, repoRoot, wtParent, repoParent,
+	)
 }
 
 // CleanupPerRun removes the per-run worktree at wtPath if it has no
@@ -103,31 +193,39 @@ func CleanupPerRun(workingDir, wtPath string) (bool, error) {
 	return true, nil
 }
 
-// SweepPerRun removes worktrees under root whose mtime is older than
-// keepDays AND whose worktree is clean (no commits ahead of origin/main,
-// no uncommitted work). keepDays <= 0 disables the sweep. Errors on
-// individual worktrees are logged via the returned error slice but do not
-// abort the sweep.
+// SweepPerRun removes orphaned per-run worktrees older than keepDays whose
+// worktree is clean (no commits ahead of origin/main, no uncommitted work).
+// keepDays <= 0 disables the sweep.
+//
+// Placement-aware: when root is empty, per-run worktrees are true siblings of
+// the repo named "${repoName}-worktrees-run-*" under the repo's parent
+// directory; when root is set they are "run-*" leaves directly under root.
+// SweepPerRun scans the matching location/prefix accordingly. Errors on
+// individual worktrees are collected in the returned slice but do not abort
+// the sweep.
 func SweepPerRun(repoRoot, root string, keepDays int, now time.Time) (removed []string, errs []error) {
 	if keepDays <= 0 {
 		return nil, nil
 	}
+	scanDir := root
+	prefix := "run-"
 	if root == "" {
-		root = repoRoot + "-worktrees"
+		scanDir = filepath.Dir(filepath.Clean(repoRoot))
+		prefix = filepath.Base(filepath.Clean(repoRoot)) + "-worktrees-run-"
 	}
-	entries, err := os.ReadDir(root)
+	entries, err := os.ReadDir(scanDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, []error{fmt.Errorf("read worktree root %s: %w", root, err)}
+		return nil, []error{fmt.Errorf("read worktree scan dir %s: %w", scanDir, err)}
 	}
 	cutoff := now.Add(-time.Duration(keepDays) * 24 * time.Hour)
 	for _, e := range entries {
-		if !e.IsDir() || !strings.HasPrefix(e.Name(), "run-") {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), prefix) {
 			continue
 		}
-		path := filepath.Join(root, e.Name())
+		path := filepath.Join(scanDir, e.Name())
 		info, err := e.Info()
 		if err != nil {
 			errs = append(errs, fmt.Errorf("stat %s: %w", path, err))

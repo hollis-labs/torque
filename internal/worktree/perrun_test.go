@@ -95,12 +95,100 @@ func TestSetupPerRunCreatesCleanWorktreeAtOriginMain(t *testing.T) {
 func TestSetupPerRunDefaultRoot(t *testing.T) {
 	repoRoot := setupOriginAndClone(t)
 
-	// No Root supplied — should default to ${repoRoot}-worktrees.
+	// No Root supplied — the per-run worktree must be a TRUE SIBLING of the
+	// repo root at the SAME directory depth: <repoParent>/<repoName>-worktrees-run-<id>.
 	wtPath, err := worktree.SetupPerRun(worktree.PerRunOptions{}, repoRoot, 7)
 	require.NoError(t, err)
-	defer os.RemoveAll(filepath.Dir(wtPath))
+	defer os.RemoveAll(wtPath)
 
-	assert.Equal(t, filepath.Join(repoRoot+"-worktrees", "run-7"), wtPath)
+	repoParent := filepath.Dir(repoRoot)
+	repoName := filepath.Base(repoRoot)
+	want := filepath.Join(repoParent, repoName+"-worktrees-run-7")
+	assert.Equal(t, want, wtPath)
+
+	// Sibling-depth invariant: the worktree's parent dir == the repo's parent
+	// dir, so a relative "../" go.mod replace resolves identically from both.
+	assert.Equal(t, filepath.Dir(repoRoot), filepath.Dir(wtPath),
+		"per-run worktree must sit at the same directory depth as the repo root")
+}
+
+// TestPerRunPathSiblingDepth: PerRunPath with an empty root places the
+// worktree as a true sibling of the repo (same depth).
+func TestPerRunPathSiblingDepth(t *testing.T) {
+	got := worktree.PerRunPath("/home/dev/myrepo", "", 42)
+	assert.Equal(t, "/home/dev/myrepo-worktrees-run-42", got)
+	assert.Equal(t, "/home/dev", filepath.Dir(got),
+		"worktree parent must equal repo parent")
+}
+
+// TestPerRunPathExplicitRootHonored: PerRunPath with an explicit root
+// (TORQUE_WORKTREE_ROOT override) places the leaf under that root as-is.
+func TestPerRunPathExplicitRootHonored(t *testing.T) {
+	got := worktree.PerRunPath("/home/dev/myrepo", "/var/torque/wt", 9)
+	assert.Equal(t, "/var/torque/wt/run-9", got)
+}
+
+// TestSetupPerRunSiblingDepthPreservesRelativeReplace: a repo whose go.mod
+// has a relative "../" replace passes the guard cleanly under the default
+// sibling-depth placement, and the worktree is created.
+func TestSetupPerRunSiblingDepthPreservesRelativeReplace(t *testing.T) {
+	repoRoot := setupOriginAndClone(t)
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "go.mod"),
+		[]byte("module example.com/x\n\ngo 1.26\n\nreplace example.com/lib => ../lib\n"), 0644))
+
+	wtPath, err := worktree.SetupPerRun(worktree.PerRunOptions{}, repoRoot, 5)
+	require.NoError(t, err, "default sibling-depth placement must pass the relative-replace guard")
+	defer os.RemoveAll(wtPath)
+
+	assert.Equal(t, filepath.Dir(repoRoot), filepath.Dir(wtPath))
+}
+
+// TestSetupPerRunBlocksRelativeReplaceAtWrongDepth: when the repo's go.mod
+// has a relative replace AND an explicit root puts the worktree at a
+// different depth, SetupPerRun returns a blocking error instead of silently
+// mis-resolving the replace.
+func TestSetupPerRunBlocksRelativeReplaceAtWrongDepth(t *testing.T) {
+	repoRoot := setupOriginAndClone(t)
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "go.mod"),
+		[]byte("module example.com/x\n\ngo 1.26\n\nreplace example.com/lib => ../../lib\n"), 0644))
+
+	// Explicit root at an unrelated location — worktree parent != repo parent.
+	badRoot := filepath.Join(t.TempDir(), "elsewhere", "deeper")
+	_, err := worktree.SetupPerRun(worktree.PerRunOptions{Root: badRoot}, repoRoot, 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "relative go.mod replace")
+}
+
+// TestCheckRelativeReplaceSafe covers the guard decision directly.
+func TestCheckRelativeReplaceSafe(t *testing.T) {
+	// No go.mod → safe regardless of placement.
+	repoNoMod := t.TempDir()
+	assert.NoError(t, worktree.CheckRelativeReplaceSafe(repoNoMod, "/anywhere/run-1"))
+
+	// go.mod with no replace → safe.
+	repoPlain := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoPlain, "go.mod"),
+		[]byte("module m\n\ngo 1.26\n"), 0644))
+	assert.NoError(t, worktree.CheckRelativeReplaceSafe(repoPlain, "/anywhere/run-1"))
+
+	// go.mod with an ABSOLUTE replace → not depth-sensitive → safe.
+	repoAbs := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoAbs, "go.mod"),
+		[]byte("module m\n\ngo 1.26\n\nreplace m/lib => /opt/lib\n"), 0644))
+	assert.NoError(t, worktree.CheckRelativeReplaceSafe(repoAbs, "/anywhere/run-1"))
+
+	// go.mod with a relative replace + sibling placement → safe.
+	repoRel := filepath.Join(t.TempDir(), "repo")
+	require.NoError(t, os.MkdirAll(repoRel, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(repoRel, "go.mod"),
+		[]byte("module m\n\ngo 1.26\n\nreplace m/lib => ../lib\n"), 0644))
+	sibling := worktree.PerRunPath(repoRel, "", 1)
+	assert.NoError(t, worktree.CheckRelativeReplaceSafe(repoRel, sibling))
+
+	// go.mod with a relative replace + wrong-depth placement → blocking error.
+	err := worktree.CheckRelativeReplaceSafe(repoRel, "/somewhere/else/run-1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "relative go.mod replace")
 }
 
 func TestSetupPerRunRejectsNonRepo(t *testing.T) {
