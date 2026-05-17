@@ -23,6 +23,7 @@ Torque is still early. The docs in this repo are intentionally light and only co
 ```bash
 torque serve
 torque mcp
+torque profiles lint
 torque version
 ```
 
@@ -30,6 +31,8 @@ torque version
 
 `torque mcp` starts the MCP server over stdio. In that mode there is no in-process scheduler instance, so scheduler MCP tools report that the scheduler is not running in that process.
 Opt-in MCP tool groups are registered when the MCP process starts, based on persisted `features.*` settings in the backing DB. If you enable a new feature such as `features.collections`, restart the MCP process so `tools/list` picks up the new `torque_collection_*` tools.
+
+`torque profiles lint` validates `profiles.yaml` as an execution-template registry against Torque's current executor/provider catalog. It fails on unknown fields, missing or unsupported providers, and dishonest profile names that omit or misstate the provider binding. Use `make profiles-lint` in CI or pre-commit.
 
 ## Configuration
 
