@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hollis-labs/torque/internal/httpserver/webui"
 	"github.com/hollis-labs/torque/internal/worktree"
 )
 
@@ -67,7 +68,18 @@ func isLocalRequest(r *http.Request) bool {
 // returns the hash + duration. Rate-limited in-process to one run per
 // cooldown window. The 60s timeout covers clean and cold-cache builds on
 // the dev machine; slower hardware will need to revisit this.
+//
+// Only meaningful for a non-embedded (dev) binary that serves the GUI from
+// disk. A `build-prod` / -tags embedgui binary carries the GUI compiled in;
+// this endpoint then returns 409 — updating the GUI means rebuilding and
+// redeploying the binary.
 func (s *Server) restartFrontend(w http.ResponseWriter, r *http.Request) {
+	if webui.Embedded() {
+		writeError(w, http.StatusConflict,
+			"GUI is embedded in this binary; rebuild with `make build-prod` and redeploy to update it")
+		return
+	}
+
 	restartFrontendMu.Lock()
 	if time.Since(restartFrontendLast) < restartFrontendCooldown {
 		remaining := restartFrontendCooldown - time.Since(restartFrontendLast)

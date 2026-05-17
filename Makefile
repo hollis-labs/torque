@@ -1,14 +1,32 @@
-.PHONY: build build-all test test-scheduler lint profiles-lint clean install
+.PHONY: build build-all build-prod gui test test-scheduler lint profiles-lint clean install
 
 BINARY=torque
 APIKEY_HELPER=torque-apikey-helper
 MODULE=github.com/hollis-labs/torque
+GUI_DIR=apps/gui
+EMBED_DIR=internal/httpserver/webui/dist
 
 build:
 	go build -o $(BINARY) ./cmd/torque
 	go build -o $(APIKEY_HELPER) ./cmd/torque-apikey-helper
 
 build-all: build
+
+# gui compiles the React frontend bundle into apps/gui/dist.
+gui:
+	cd $(GUI_DIR) && npm install --no-audit --no-fund && npm run build
+
+# build-prod compiles the GUI bundle INTO the torque binary via the
+# `embedgui` build tag, producing a self-contained artifact: one binary
+# serves the API and the GUI on a single port (8990) with no apps/gui/dist
+# dependency on disk. This is the target the Cerberus torque-api-service
+# resource builds. A plain `make build` stays GUI-less and fast for dev.
+build-prod: gui
+	rm -rf $(EMBED_DIR)
+	mkdir -p $(EMBED_DIR)
+	cp -R $(GUI_DIR)/dist/ $(EMBED_DIR)/
+	go build -tags embedgui -o $(BINARY) ./cmd/torque
+	go build -o $(APIKEY_HELPER) ./cmd/torque-apikey-helper
 
 # install(1) unlinks the destination before writing, so every rebuild lands on
 # a fresh inode. A plain `cp` overwrites in place and reuses the inode; macOS
