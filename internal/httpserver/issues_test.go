@@ -19,7 +19,8 @@ func setupIssueProject(t *testing.T, baseURL string) string {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	resp.Body.Close()
 
-	resp, err = http.Post(baseURL+"/api/v1/projects", "application/json", bytes.NewBufferString(`{"name":"Issue Project","repo_path":"/tmp/issues"}`))
+	repoPath := t.TempDir()
+	resp, err = http.Post(baseURL+"/api/v1/projects", "application/json", bytes.NewBufferString(`{"name":"Issue Project","repo_path":"`+repoPath+`"}`))
 	require.NoError(t, err)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 	var project map[string]interface{}
