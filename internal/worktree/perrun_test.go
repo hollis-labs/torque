@@ -197,6 +197,30 @@ func TestSetupPerRunRejectsNonRepo(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestSetupPerRunLocalRepoNoOrigin pins the no-origin fallback: a git repo
+// with NO `origin` remote must still get a per-run worktree (branched from
+// local HEAD) instead of failing `git fetch origin` and silently degrading
+// to shared mode.
+func TestSetupPerRunLocalRepoNoOrigin(t *testing.T) {
+	repoRoot := t.TempDir()
+	gitInWt(t, repoRoot, "init", "-b", "main")
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "README.md"), []byte("# Local"), 0644))
+	gitInWt(t, repoRoot, "add", ".")
+	gitInWt(t, repoRoot, "commit", "-m", "initial")
+
+	wtPath, err := worktree.SetupPerRun(worktree.PerRunOptions{}, repoRoot, 1)
+	require.NoError(t, err, "local-only repo (no origin) must still get a worktree")
+
+	info, statErr := os.Stat(wtPath)
+	require.NoError(t, statErr, "worktree dir must exist")
+	assert.True(t, info.IsDir())
+
+	// Worktree HEAD matches the repo's local HEAD — the fallback base ref.
+	repoHEAD := gitInWt(t, repoRoot, "rev-parse", "HEAD")
+	wtHEAD := gitInWt(t, wtPath, "rev-parse", "HEAD")
+	assert.Equal(t, repoHEAD, wtHEAD, "worktree should be detached at local HEAD")
+}
+
 func TestCleanupPerRunRemovesCleanWorktree(t *testing.T) {
 	repoRoot := setupOriginAndClone(t)
 	root := filepath.Join(t.TempDir(), "wt-root")

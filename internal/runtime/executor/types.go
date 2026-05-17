@@ -112,6 +112,12 @@ type ExecutionResult struct {
 	Tokens    TokenUsage
 	Cost      float64
 	Duration  time.Duration
+
+	// ExitCode is the agent subprocess exit code, when the executor can
+	// resolve one. nil means "no exit code available" (e.g. a setup failure
+	// before the subprocess ran). The scheduler persists it onto the run
+	// record so operators see a definitive exit signal rather than NULL.
+	ExitCode *int
 }
 
 // ExecutorCapabilities declares what features an executor supports.

@@ -721,6 +721,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 				PromptTokens:     result.Tokens.PromptTokens,
 				CompletionTokens: result.Tokens.CompletionTokens,
 				Cost:             result.Cost,
+				ExitCode:         result.ExitCode,
 			}); err != nil {
 				return err
 			}

@@ -498,6 +498,45 @@ func TestComposeEnv(t *testing.T) {
 	assert.Equal(t, "yes", asMap["TORQUE_TEST_MARKER"])
 	assert.Equal(t, "secret-should-survive", asMap["ANTHROPIC_API_KEY"],
 		"ANTHROPIC_API_KEY must survive composeEnv per CW-20260509-0011 (provider-auth passthrough)")
+
+	// No Workdir on this Options — the work-root pointers must be absent
+	// rather than set to an empty string.
+	_, hasWork := asMap["TORQUE_WORK_ROOT"]
+	assert.False(t, hasWork, "TORQUE_WORK_ROOT must be omitted when Workdir is empty")
+}
+
+// TestComposeEnvWorkRoots pins the TORQUE_WORK_ROOT / TORQUE_REPO_ROOT
+// pointers: an agent's process cwd is the ephemeral boot dir, so these vars
+// are how a run learns where its work_root actually is. In worktree mode
+// (RepoRoot set distinct from Workdir) the two vars must differ.
+func TestComposeEnvWorkRoots(t *testing.T) {
+	envMap := func(out []string) map[string]string {
+		m := map[string]string{}
+		for _, kv := range out {
+			if i := strings.Index(kv, "="); i >= 0 {
+				m[kv[:i]] = kv[i+1:]
+			}
+		}
+		return m
+	}
+
+	// Shared mode: no RepoRoot → both pointers resolve to Workdir.
+	shared := envMap(composeEnv(config.AgentProfile{}, Options{
+		TaskID:  "CW-1",
+		Workdir: "/repo/checkout",
+	}, nil))
+	assert.Equal(t, "/repo/checkout", shared["TORQUE_WORK_ROOT"])
+	assert.Equal(t, "/repo/checkout", shared["TORQUE_REPO_ROOT"])
+
+	// Worktree mode: Workdir is the per-run worktree, RepoRoot the canonical
+	// checkout — the two pointers must be distinct.
+	wt := envMap(composeEnv(config.AgentProfile{}, Options{
+		TaskID:   "CW-1",
+		Workdir:  "/repo/checkout-worktrees-run-7",
+		RepoRoot: "/repo/checkout",
+	}, nil))
+	assert.Equal(t, "/repo/checkout-worktrees-run-7", wt["TORQUE_WORK_ROOT"])
+	assert.Equal(t, "/repo/checkout", wt["TORQUE_REPO_ROOT"])
 }
 
 // TestResolveTimeout exercises the priority chain: metadata override →

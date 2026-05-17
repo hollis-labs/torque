@@ -16,9 +16,33 @@ investigation and rationale behind each rule live in
 Every run resolves four roots — `repo_root`, `work_root`, `workspace_dir`,
 `build_dir`. They are defined in [`workspace-model.md`](./workspace-model.md);
 that document is authoritative for the model itself. This page only covers
-the two things that were unpredictable: **which `work_root` the agent gets**
-(shared dir vs. per-run worktree) and **the permission posture it boots
-with**.
+the things that were unpredictable: **which `work_root` the agent gets**
+(shared dir vs. per-run worktree), **how the agent learns where that is**, and
+**the permission posture it boots with**.
+
+### Spawn cwd vs. work_root — the `TORQUE_WORK_ROOT` contract
+
+A spawned agent's process working directory is the **planted boot dir** — an
+ephemeral directory (`.claude/settings.json`, `AGENTS.md`, MCP config, …) that
+is reaped after the run. It is deliberately *not* the run's `work_root`: the
+provider CLI auto-loads its planted config from cwd, so cwd must be the boot
+dir.
+
+Consequently a prompt that tells the agent to "create a file" with a
+**relative** path writes into the boot dir and the output is lost when the dir
+is reaped. To make the real target predictable, Torque injects two env vars
+into every spawned agent (alongside `TORQUE_TASK_ID` / `TORQUE_RUN_ID`):
+
+| Env var | Value |
+|---|---|
+| `TORQUE_WORK_ROOT` | the run's `work_root` — the per-run worktree in worktree mode, else the repo checkout. **Deliverables belong here.** |
+| `TORQUE_REPO_ROOT` | the canonical repo checkout (`repo_root`). Equals `TORQUE_WORK_ROOT` in shared mode. |
+
+Agents (and the prompts that drive them) should resolve output paths against
+`$TORQUE_WORK_ROOT` rather than relying on cwd. codex additionally receives
+`--cd $work_root`, so its *effective* directory already is the work_root;
+claude only receives `--add-dir $work_root` (an access grant, not a cwd
+change), so for claude the env var is the authoritative pointer.
 
 ## Per-run worktree contract
 
@@ -71,6 +95,17 @@ the run starts. A non-git working dir produces a clean blocked-task reason up
 front rather than a silent mid-dispatch fallback. Mode is `block` by default
 (a non-git dir with worktrees enabled is an unambiguous misconfiguration);
 `warn` or `off` relax it via `TORQUE_WORKTREE_PRECHECK`.
+
+### Base-ref selection
+
+The per-run worktree is detached at the first ref that resolves, in order:
+`origin/main` → `origin/HEAD` → local `HEAD`. When the repo has an `origin`
+remote it is refreshed first (`git fetch origin`, best-effort). A repo with
+**no `origin` remote**, an offline fetch, or a default branch that is not
+`main` therefore changes only the *freshness* of the checkout — it never
+abandons worktree isolation. Branching from local `HEAD` is the fallback, not
+a silent degradation to shared mode. (A missing `origin/main` previously made
+`SetupPerRun` fail outright and the run silently fell back to shared mode.)
 
 ## Permission-mode contract
 

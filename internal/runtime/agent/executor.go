@@ -177,7 +177,12 @@ func (e *Executor) Run(ctx context.Context, job *executor.ExecutionJob, cb execu
 		result.Reason = "agent.Boot returned nil session without error"
 		return result, nil
 	case sess.Status == StatusDone && (sess.ExitCode == nil || *sess.ExitCode == 0):
+		// A clean ModeOneShot completion: the turn ran and the subprocess
+		// exited 0 (or the runtime reported no non-zero code). Record a
+		// definitive exit 0 so the run row carries a real signal, not NULL.
 		result.Status = "done"
+		zero := 0
+		result.ExitCode = &zero
 		return result, nil
 	default:
 		exit := -1
@@ -191,6 +196,7 @@ func (e *Executor) Run(ctx context.Context, job *executor.ExecutionJob, cb execu
 		reasons = append(reasons, fmt.Sprintf("exit %d", exit))
 		result.Status = "failed"
 		result.Reason = strings.Join(reasons, " | ")
+		result.ExitCode = &exit
 		return result, nil
 	}
 }

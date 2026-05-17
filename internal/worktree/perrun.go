@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -72,9 +73,11 @@ func PerRunPath(repoRoot, root string, runID int64) string {
 	return filepath.Join(repoParent, fmt.Sprintf("%s-worktrees-run-%d", repoName, runID))
 }
 
-// SetupPerRun creates a per-run worktree for the given runID. It fetches
-// origin and creates the worktree at origin/main. The agent is expected to
-// create their own task branch from this clean checkout.
+// SetupPerRun creates a per-run worktree for the given runID. When the repo
+// has an `origin` remote it refreshes it and branches the worktree from the
+// freshest published ref; a local-only repo (no `origin`) branches from the
+// repo's local HEAD instead. The agent is expected to create their own task
+// branch from this clean checkout.
 //
 // Placement: with an empty opts.Root the worktree is a true sibling of the
 // repo root (same directory depth — see PerRunPath); with opts.Root set the
@@ -84,6 +87,14 @@ func PerRunPath(repoRoot, root string, runID int64) string {
 // (CheckRelativeReplaceSafe): if the repo's go.mod carries relative ("../")
 // replace directives and the chosen placement would NOT preserve them, it
 // returns a clear blocking error instead of silently mis-resolving.
+//
+// Base-ref policy: the worktree is detached at the first of `origin/main`,
+// `origin/HEAD`, or local `HEAD` that resolves (see perRunBaseRef). A missing
+// `origin` remote, an offline `git fetch`, or a default branch that isn't
+// `main` therefore degrades the *freshness* of the checkout — never whether
+// the run gets an isolated worktree at all. This is deliberate: silently
+// abandoning worktree isolation for a no-origin repo is exactly the kind of
+// unpredictable per-run surprise the per-run-worktree contract exists to kill.
 //
 // Returns the worktree path on success. On any git failure the caller should
 // fall back to running in workingDir directly — the run must not be blocked
@@ -100,13 +111,40 @@ func SetupPerRun(opts PerRunOptions, workingDir string, runID int64) (string, er
 	if err := os.MkdirAll(filepath.Dir(wtPath), 0o755); err != nil {
 		return "", fmt.Errorf("create worktree parent %s: %w", filepath.Dir(wtPath), err)
 	}
-	if err := runGit(repoRoot, "fetch", "origin"); err != nil {
-		return "", fmt.Errorf("fetch origin: %w", err)
+	// Refresh origin when the repo has one — best-effort. A fetch failure
+	// (offline, auth) must not block dispatch: perRunBaseRef falls back to a
+	// local ref below.
+	if hasOriginRemote(repoRoot) {
+		_ = runGit(repoRoot, "fetch", "origin")
 	}
-	if err := runGit(repoRoot, "worktree", "add", "--detach", wtPath, "origin/main"); err != nil {
-		return "", fmt.Errorf("worktree add: %w", err)
+	base := perRunBaseRef(repoRoot)
+	if err := runGit(repoRoot, "worktree", "add", "--detach", wtPath, base); err != nil {
+		return "", fmt.Errorf("worktree add (base %s): %w", base, err)
 	}
 	return wtPath, nil
+}
+
+// hasOriginRemote reports whether the repo has a remote named "origin".
+func hasOriginRemote(repoRoot string) bool {
+	out, err := runGitOutput(repoRoot, "remote")
+	if err != nil {
+		return false
+	}
+	return slices.Contains(strings.Fields(out), "origin")
+}
+
+// perRunBaseRef picks the ref a per-run worktree is detached at. Preference
+// order: the freshly-fetched `origin/main`, then origin's published default
+// branch (`origin/HEAD`), then the repo's local `HEAD`. The fallbacks ensure
+// a worktree is always createable — for a local-only repo, an offline clone,
+// or a repo whose default branch is not `main`.
+func perRunBaseRef(repoRoot string) string {
+	for _, ref := range []string{"origin/main", "origin/HEAD"} {
+		if runGit(repoRoot, "rev-parse", "--verify", "--quiet", ref) == nil {
+			return ref
+		}
+	}
+	return "HEAD"
 }
 
 // goModReplaceRelRe matches a relative ("../" or "./") replace TARGET in a

@@ -123,10 +123,13 @@ launches:
 
 // providerBinary maps a provider id to the expected binary path / name so the
 // smoke can pre-flight a missing-binary BLOCKED before attempting Boot.
+// The "claude-code" provider id is the streaming-stdio claude path; its
+// binary on PATH is still `claude`. The bare "claude" provider was retired
+// 2026-05-16 (see adapterFor) — the smoke must drive claude-code.
 var providerBinary = map[string]string{
-	"claude":   "claude",
-	"codex":    "codex",
-	"opencode": "opencode",
+	"claude-code": "claude",
+	"codex":       "codex",
+	"opencode":    "opencode",
 }
 
 // binaryAvailable reports whether the provider binary resolves on PATH.
@@ -153,7 +156,7 @@ func TestLiveSmoke_LaunchProfile(t *testing.T) {
 	// claude ignore it.
 	apiKeyHelper := buildApiKeyHelper(t)
 
-	for _, provider := range []string{"claude", "codex", "opencode"} {
+	for _, provider := range []string{"claude-code", "codex", "opencode"} {
 		provider := provider
 		t.Run(provider, func(t *testing.T) {
 			binPath, ok := binaryAvailable(provider)
@@ -163,7 +166,7 @@ func TestLiveSmoke_LaunchProfile(t *testing.T) {
 			t.Logf("provider=%s binary=%s", provider, binPath)
 
 			cd := composeLiveDeps(t, provider)
-			if provider == "claude" && apiKeyHelper != "" {
+			if provider == "claude-code" && apiKeyHelper != "" {
 				cd.Deps.ApiKeyHelperPath = apiKeyHelper
 				t.Logf("claude: ApiKeyHelperPath=%s (bare-mode keychain auth)", apiKeyHelper)
 			}
@@ -200,7 +203,7 @@ func TestLiveSmoke_LaunchProfile(t *testing.T) {
 func TestLiveSmoke_NoLaunchProfile(t *testing.T) {
 	apiKeyHelper := buildApiKeyHelper(t)
 
-	for _, provider := range []string{"claude", "codex", "opencode"} {
+	for _, provider := range []string{"claude-code", "codex", "opencode"} {
 		provider := provider
 		t.Run(provider, func(t *testing.T) {
 			binPath, ok := binaryAvailable(provider)
@@ -210,7 +213,7 @@ func TestLiveSmoke_NoLaunchProfile(t *testing.T) {
 			t.Logf("provider=%s binary=%s (A/B baseline — no launch profile)", provider, binPath)
 
 			cd := composeLiveDeps(t, provider)
-			if provider == "claude" && apiKeyHelper != "" {
+			if provider == "claude-code" && apiKeyHelper != "" {
 				cd.Deps.ApiKeyHelperPath = apiKeyHelper
 			}
 
