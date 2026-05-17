@@ -78,9 +78,19 @@ func adapterFor(profile config.AgentProfile, profileName string, kind RuntimeKin
 		// reuse). Conservative default; revisit when the long-lived resume
 		// path is empirically validated.
 		if profileIsDevMode(profile) {
+			// Dev profiles carry --dangerously-skip-permissions; the dev
+			// adapter sets SkipPermissions, which go-providers plants as
+			// permissions.defaultMode=bypassPermissions. Leave PermissionMode
+			// unset so that back-compat path stands.
 			return provider.NewClaudeAdapterDevStreamingStdio(), caps, nil
 		}
-		return provider.NewClaudeAdapterStreamingStdio(), caps, nil
+		// Thread the profile's permission mode into the adapter. Since
+		// go-providers v0.19.0, ClaudeAdapter.PermissionMode plants
+		// permissions.defaultMode directly into the .claude/settings.json —
+		// no post-Plant settings.json rewrite needed (CW-20260517-0038).
+		claudeAdapter := provider.NewClaudeAdapterStreamingStdio()
+		claudeAdapter.PermissionMode = string(profile.ResolvedPermissionMode())
+		return claudeAdapter, caps, nil
 
 	case "codex":
 		// codex supports Subprocess (print-mode: `codex exec`) and
