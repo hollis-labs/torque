@@ -6,7 +6,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.38.0
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/google/uuid v1.6.0
-	github.com/hollis-labs/go-agent-launch v0.3.2
+	github.com/hollis-labs/go-agent-launch v0.3.5
 	github.com/hollis-labs/go-agent-sessions v0.9.5
 	github.com/hollis-labs/go-llm-types v0.1.0
 	github.com/hollis-labs/go-mcp-sanitize v0.1.0
