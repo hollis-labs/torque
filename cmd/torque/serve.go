@@ -262,8 +262,16 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	if raw, _ := svc.Settings.Get("scheduler.precheck_capabilities"); raw != "" {
 		sched.Precheck.Capabilities = scheduler.PrecheckMode(raw)
 	}
-	log.Printf("[serve] scheduler precheck: window=%s (threshold %.0f%%) capabilities=%s",
-		sched.Precheck.Window, sched.Precheck.WindowThreshold*100, sched.Precheck.Capabilities)
+	// Worktree git-repo gate: TORQUE_WORKTREE_PRECHECK (config) wins, then the
+	// scheduler.precheck_worktree setting; otherwise the DefaultPrecheckOptions
+	// value (block) applies.
+	if cfg.Scheduler.WorktreePrecheck != "" {
+		sched.Precheck.Worktree = scheduler.PrecheckMode(cfg.Scheduler.WorktreePrecheck)
+	} else if raw, _ := svc.Settings.Get("scheduler.precheck_worktree"); raw != "" {
+		sched.Precheck.Worktree = scheduler.PrecheckMode(raw)
+	}
+	log.Printf("[serve] scheduler precheck: window=%s (threshold %.0f%%) capabilities=%s worktree=%s",
+		sched.Precheck.Window, sched.Precheck.WindowThreshold*100, sched.Precheck.Capabilities, sched.Precheck.Worktree)
 
 	// SSE bridge: scheduler.EventBus → httpserver.SSEHub
 	bridge := httpserver.NewSchedulerBridge(handler.SSEHub(), sched.EventBus())

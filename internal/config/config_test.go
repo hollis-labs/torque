@@ -57,18 +57,21 @@ func TestPerRunWorktreeDefaults(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.False(t, cfg.Scheduler.WorktreePerRun, "per-run worktrees default off")
-	assert.Equal(t, "", cfg.Scheduler.WorktreeRoot, "empty root means '${repo}-worktrees'")
+	assert.Equal(t, "", cfg.Scheduler.WorktreeRoot, "empty root means a true sibling of the repo")
 	assert.Equal(t, 7, cfg.Scheduler.WorktreeKeepDays)
+	assert.Equal(t, "", cfg.Scheduler.WorktreePrecheck, "unset lets the scheduler default apply")
 }
 
 func TestPerRunWorktreeFromEnv(t *testing.T) {
 	os.Setenv("TORQUE_WORKTREE_PER_RUN", "true")
 	os.Setenv("TORQUE_WORKTREE_ROOT", "/var/torque/worktrees")
 	os.Setenv("TORQUE_WORKTREE_KEEP_DAYS", "14")
+	os.Setenv("TORQUE_WORKTREE_PRECHECK", "warn")
 	defer func() {
 		os.Unsetenv("TORQUE_WORKTREE_PER_RUN")
 		os.Unsetenv("TORQUE_WORKTREE_ROOT")
 		os.Unsetenv("TORQUE_WORKTREE_KEEP_DAYS")
+		os.Unsetenv("TORQUE_WORKTREE_PRECHECK")
 	}()
 
 	cfg, err := config.Load()
@@ -77,6 +80,7 @@ func TestPerRunWorktreeFromEnv(t *testing.T) {
 	assert.True(t, cfg.Scheduler.WorktreePerRun)
 	assert.Equal(t, "/var/torque/worktrees", cfg.Scheduler.WorktreeRoot)
 	assert.Equal(t, 14, cfg.Scheduler.WorktreeKeepDays)
+	assert.Equal(t, "warn", cfg.Scheduler.WorktreePrecheck)
 }
 
 // DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.

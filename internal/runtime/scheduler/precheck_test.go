@@ -2,6 +2,8 @@ package scheduler_test
 
 import (
 	"database/sql"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -181,4 +183,53 @@ func TestPrecheck_CapabilitySkipsWhenTaskHasNoTools(t *testing.T) {
 		scheduler.NewProfileForPrecheck("openai", "no-tools-model", ""), "", lookup,
 		scheduler.PrecheckOptions{Capabilities: scheduler.PrecheckBlock})
 	assert.Empty(t, res.BlockReason, "no tools requested = no capability check needed")
+}
+
+// --- Worktree git-repo gate ---------------------------------------------
+
+func TestWorktreePrecheck_OffIsNoop(t *testing.T) {
+	res := scheduler.WorktreePrecheck("/definitely/not/a/repo", true, scheduler.PrecheckOff)
+	assert.Empty(t, res.BlockReason)
+	assert.Empty(t, res.Warnings)
+
+	// Zero-value mode is also off.
+	res = scheduler.WorktreePrecheck("/definitely/not/a/repo", true, scheduler.PrecheckMode(""))
+	assert.Empty(t, res.BlockReason)
+	assert.Empty(t, res.Warnings)
+}
+
+func TestWorktreePrecheck_SkipsWhenWorktreeDisabled(t *testing.T) {
+	// Per-run worktrees off — the gate has nothing to protect even in block mode.
+	res := scheduler.WorktreePrecheck("/definitely/not/a/repo", false, scheduler.PrecheckBlock)
+	assert.Empty(t, res.BlockReason)
+}
+
+func TestWorktreePrecheck_SkipsEmptyWorkingDir(t *testing.T) {
+	res := scheduler.WorktreePrecheck("", true, scheduler.PrecheckBlock)
+	assert.Empty(t, res.BlockReason, "no working dir = nothing to gate on")
+}
+
+func TestWorktreePrecheck_BlocksNonGitWorkingDir(t *testing.T) {
+	notARepo := t.TempDir()
+	res := scheduler.WorktreePrecheck(notARepo, true, scheduler.PrecheckBlock)
+	assert.NotEmpty(t, res.BlockReason)
+	assert.Contains(t, res.BlockReason, "not a git repo")
+}
+
+func TestWorktreePrecheck_WarnsNonGitWorkingDir(t *testing.T) {
+	notARepo := t.TempDir()
+	res := scheduler.WorktreePrecheck(notARepo, true, scheduler.PrecheckWarn)
+	assert.Empty(t, res.BlockReason, "warn mode never blocks")
+	assert.Len(t, res.Warnings, 1)
+	assert.Contains(t, res.Warnings[0], "not a git repo")
+}
+
+func TestWorktreePrecheck_PassesGitWorkingDir(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	res := scheduler.WorktreePrecheck(repo, true, scheduler.PrecheckBlock)
+	assert.Empty(t, res.BlockReason)
+	assert.Empty(t, res.Warnings)
 }

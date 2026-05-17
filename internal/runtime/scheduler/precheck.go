@@ -8,6 +8,7 @@ import (
 	"github.com/hollis-labs/go-modelsdev/modelsdev"
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/worktree"
 )
 
 // PrecheckMode is the per-check enforcement level. Tri-state by design — a
@@ -29,14 +30,18 @@ const (
 )
 
 // DefaultPrecheckOptions returns the recommended starting point: warn-only
-// on both gates, with the window threshold at 80%. Warn mode is harmless to
-// real traffic while still surfacing problems in logs, so flipping it on by
-// default is safer than off-by-default (which gives ops nothing to trust).
+// on the model gates, with the window threshold at 80%, and block on the
+// worktree gate. Warn mode is harmless to real traffic while still surfacing
+// problems in logs, so flipping it on by default is safer than off-by-default
+// (which gives ops nothing to trust). The worktree gate defaults to block
+// because a non-git working dir is an unambiguous setup error — silently
+// falling back mid-dispatch hides a misconfiguration the operator should fix.
 func DefaultPrecheckOptions() PrecheckOptions {
 	return PrecheckOptions{
 		Window:          PrecheckWarn,
 		WindowThreshold: 0.8,
 		Capabilities:    PrecheckWarn,
+		Worktree:        PrecheckBlock,
 	}
 }
 
@@ -57,6 +62,13 @@ type PrecheckOptions struct {
 	// task dispatched to a tool-incapable model logs but proceeds; in block
 	// mode it refuses.
 	Capabilities PrecheckMode
+	// Worktree controls the git-repo gate. It only runs when per-run worktrees
+	// are enabled (TORQUE_WORKTREE_PER_RUN): it verifies the task's working dir
+	// resolves to a git repo BEFORE dispatch. In warn mode a non-git working
+	// dir logs but proceeds (SetupPerRun would then fall back to the working
+	// dir); in block mode it refuses dispatch with a clear reason instead of a
+	// silent mid-dispatch fallback.
+	Worktree PrecheckMode
 }
 
 // PrecheckResult is the policy decision. BlockReason non-empty means refuse
@@ -150,6 +162,39 @@ func Precheck(
 	return res
 }
 
+// WorktreePrecheck is the git-repo gate. When per-run worktrees are enabled
+// it verifies that workingDir resolves to a git repo (FindRepoRoot succeeds)
+// before dispatch, so a non-git working dir produces a clean blocked-task
+// reason rather than a silent mid-dispatch fallback in SetupPerRun.
+//
+//   - mode off (or zero value): no-op, returns an empty result.
+//   - worktreeEnabled false: no-op — the worktree path won't run, nothing to
+//     check.
+//   - mode warn: a non-git working dir adds a warning but dispatch proceeds.
+//   - mode block: a non-git working dir sets BlockReason.
+//
+// An empty workingDir is treated as "no working dir to check" — the per-run
+// worktree path itself is gated on a non-empty working dir, so there is
+// nothing to refuse.
+func WorktreePrecheck(workingDir string, worktreeEnabled bool, mode PrecheckMode) PrecheckResult {
+	res := PrecheckResult{}
+	if !modeEnforced(mode) || !worktreeEnabled || strings.TrimSpace(workingDir) == "" {
+		return res
+	}
+	if _, err := worktree.FindRepoRoot(workingDir); err != nil {
+		msg := fmt.Sprintf(
+			"per-run worktrees are enabled but working dir %q is not a git repo: %v",
+			workingDir, err,
+		)
+		if mode == PrecheckBlock {
+			res.BlockReason = msg
+			return res
+		}
+		res.Warnings = append(res.Warnings, msg)
+	}
+	return res
+}
+
 // ProfileForPrecheck is the subset of config.AgentProfile that Precheck reads.
 // Defining it locally keeps the dependency one-way and gives tests a small
 // public type to construct without dragging in the full AgentProfile.
@@ -198,16 +243,25 @@ func readAgentFile(path string) string {
 }
 
 // precheckDispatch is the Scheduler-instance shim. Pulls Models +
-// Profiles fields, reads the agent file, and runs the policy. Returns
-// the result so the caller can decide between block and dispatch.
+// Profiles fields, reads the agent file, runs the model policy, and runs the
+// worktree git-repo gate. Returns the merged result so the caller can decide
+// between block and dispatch.
 func (s *Scheduler) precheckDispatch(task sqlstore.TaskRecord, opts PrecheckOptions) PrecheckResult {
+	// Worktree git-repo gate runs independently of the model checks — it does
+	// not need a resolvable profile/model, only the per-run-worktree config
+	// and the task's working dir. Run it first; a block here short-circuits.
+	wt := WorktreePrecheck(task.WorkingDir, s.worktreeSpec().WorktreeEnabled(), opts.Worktree)
+	if wt.BlockReason != "" {
+		return wt
+	}
+
 	profiles := config.CurrentProfiles(s.Profiles)
 	if len(profiles) == 0 {
-		return PrecheckResult{}
+		return wt
 	}
 	rawProfile, ok := profiles[task.AgentProfile]
 	if !ok {
-		return PrecheckResult{}
+		return wt
 	}
 	prof := ProfileForPrecheck{
 		Provider:     rawProfile.Provider,
@@ -218,5 +272,7 @@ func (s *Scheduler) precheckDispatch(task sqlstore.TaskRecord, opts PrecheckOpti
 	if s.Models != nil {
 		lookup = s.Models.Get
 	}
-	return Precheck(task, prof, readAgentFile(task.AgentFile), lookup, opts)
+	res := Precheck(task, prof, readAgentFile(task.AgentFile), lookup, opts)
+	res.Warnings = append(wt.Warnings, res.Warnings...)
+	return res
 }
