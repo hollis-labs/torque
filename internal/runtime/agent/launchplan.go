@@ -109,6 +109,25 @@ func buildLaunchPlan(in buildLaunchPlanInput) (agentlaunch.LaunchPlan, error) {
 		projectID = "unscoped"
 	}
 
+	// Permission posture — claude only. Threaded onto the plan so the
+	// go-agent-launch v0.3.4 compile guard (ErrHeadlessClaudeNeedsPermission)
+	// is a real backstop for the headless Mode below: a claude launch that
+	// reaches Compile with no posture fails fast, instead of dispatching a
+	// run structurally guaranteed to hang on the first approval prompt.
+	// This is guard input only — the posture is actually delivered to the
+	// spawned agent by the adapter (factory.go: ClaudeAdapter.PermissionMode),
+	// since Torque plants via providerplant.WithAdapter, not DefaultResolver.
+	// codex is left empty: the guard exempts it (go-providers defaults codex
+	// approval_policy to the non-interactive "never").
+	var permission string
+	if in.Profile.Provider == "claude-code" {
+		if profileIsDevMode(in.Profile) {
+			permission = string(config.PermissionModeBypass)
+		} else {
+			permission = string(in.Profile.ResolvedPermissionMode())
+		}
+	}
+
 	return agentlaunch.LaunchPlan{
 		Project: agentlaunch.ProjectSpec{
 			ID:   projectID,
@@ -126,6 +145,7 @@ func buildLaunchPlan(in buildLaunchPlanInput) (agentlaunch.LaunchPlan, error) {
 			// "claude" — normalize it here so matrix.Lookup resolves.
 			ID:            mapProviderID(in.Profile.Provider),
 			ModelOverride: in.Profile.Model,
+			Permission:    permission,
 			// Flags intentionally empty — see the function godoc.
 		},
 		Runtime: rtKind,
@@ -148,7 +168,10 @@ func buildLaunchPlan(in buildLaunchPlanInput) (agentlaunch.LaunchPlan, error) {
 		Injection: agentlaunch.InjectionSpec{
 			NativeFiles: nativeFilesForLaunch(in.AgentFile),
 		},
-		Mode: agentlaunch.LaunchInteractive,
+		// Torque autonomous dispatch is headless — no human at a TTY.
+		// `background` (not `interactive`) is the honest lifecycle stance
+		// and arms the v0.3.4 ErrHeadlessClaudeNeedsPermission compile guard.
+		Mode: agentlaunch.LaunchBackground,
 		Metadata: agentlaunch.Metadata{
 			Annotations: map[string]string{
 				"torque.agent_profile": in.AgentProfile,
