@@ -122,8 +122,9 @@ func LintProfilesYAML(data []byte) ([]ProfileLintProblem, error) {
 	}
 
 	problems := make([]ProfileLintProblem, 0)
-	topAllowed := map[string]struct{}{"agent_profiles": {}}
+	topAllowed := map[string]struct{}{"agent_profiles": {}, "agent_profile_aliases": {}}
 	var profilesNode *yaml.Node
+	var aliasesNode *yaml.Node
 	for i := 0; i < len(doc.Content); i += 2 {
 		keyNode := doc.Content[i]
 		valNode := doc.Content[i+1]
@@ -136,8 +137,11 @@ func LintProfilesYAML(data []byte) ([]ProfileLintProblem, error) {
 			})
 			continue
 		}
-		if key == "agent_profiles" {
+		switch key {
+		case "agent_profiles":
 			profilesNode = valNode
+		case "agent_profile_aliases":
+			aliasesNode = valNode
 		}
 	}
 	if profilesNode == nil {
@@ -153,10 +157,12 @@ func LintProfilesYAML(data []byte) ([]ProfileLintProblem, error) {
 	}
 
 	allowedFields := allowedAgentProfileFields()
+	profileNames := make(map[string]struct{})
 	for i := 0; i < len(profilesNode.Content); i += 2 {
 		nameNode := profilesNode.Content[i]
 		bodyNode := profilesNode.Content[i+1]
 		name := strings.TrimSpace(nameNode.Value)
+		profileNames[name] = struct{}{}
 		basePath := "agent_profiles." + name
 
 		if bodyNode.Kind != yaml.MappingNode {
@@ -190,6 +196,40 @@ func LintProfilesYAML(data []byte) ([]ProfileLintProblem, error) {
 			continue
 		}
 		problems = append(problems, lintProfileDefinition(nameNode.Line, name, profile)...)
+	}
+
+	// agent_profile_aliases (EDGE 3, CW-20260517-0011): each alias must
+	// map to a defined agent_profiles entry and must not shadow one.
+	if aliasesNode != nil {
+		if aliasesNode.Kind != yaml.MappingNode {
+			problems = append(problems, ProfileLintProblem{
+				Line:    aliasesNode.Line,
+				Path:    "agent_profile_aliases",
+				Message: "must be a mapping of alias names to agent_profiles keys",
+			})
+		} else {
+			for i := 0; i < len(aliasesNode.Content); i += 2 {
+				aliasKeyNode := aliasesNode.Content[i]
+				aliasValNode := aliasesNode.Content[i+1]
+				alias := strings.TrimSpace(aliasKeyNode.Value)
+				target := strings.TrimSpace(aliasValNode.Value)
+				path := "agent_profile_aliases." + alias
+				if _, shadow := profileNames[alias]; shadow {
+					problems = append(problems, ProfileLintProblem{
+						Line:    aliasKeyNode.Line,
+						Path:    path,
+						Message: "alias name collides with an agent_profiles entry",
+					})
+				}
+				if _, ok := profileNames[target]; !ok {
+					problems = append(problems, ProfileLintProblem{
+						Line:    aliasValNode.Line,
+						Path:    path,
+						Message: fmt.Sprintf("alias target %q is not a defined agent_profiles entry", target),
+					})
+				}
+			}
+		}
 	}
 
 	sort.SliceStable(problems, func(i, j int) bool {

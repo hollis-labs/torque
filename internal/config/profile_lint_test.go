@@ -86,3 +86,35 @@ agent_profiles: {}
 	require.Len(t, problems, 1)
 	assert.Contains(t, problems[0].String(), "profiles_version: unknown top-level field")
 }
+
+func TestLintProfilesYAML_AllowsValidAgentProfileAliases(t *testing.T) {
+	problems, err := config.LintProfilesYAML([]byte(`
+agent_profiles:
+  codex-long:
+    executor: cli
+    provider: codex
+    model: gpt-5.4
+agent_profile_aliases:
+  torque-backend: codex-long
+`))
+	require.NoError(t, err)
+	assert.Empty(t, problems)
+}
+
+func TestLintProfilesYAML_FlagsAliasDrift(t *testing.T) {
+	problems, err := config.LintProfilesYAML([]byte(`
+agent_profiles:
+  codex-long:
+    executor: cli
+    provider: codex
+    model: gpt-5.4
+agent_profile_aliases:
+  dangling: no-such-profile
+  codex-long: codex-long
+`))
+	require.NoError(t, err)
+	require.Len(t, problems, 2)
+	joined := problems[0].String() + "\n" + problems[1].String()
+	assert.Contains(t, joined, `alias target "no-such-profile" is not a defined agent_profiles entry`)
+	assert.Contains(t, joined, "alias name collides with an agent_profiles entry")
+}
