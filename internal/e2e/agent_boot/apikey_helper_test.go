@@ -28,7 +28,7 @@ import (
 // by BuildArgs; the SettingsPath argv flag points the subprocess at
 // the planted file, but the helper field lives inside that file.
 func TestBoot_ApiKeyHelperPath_ThreadsIntoSettings(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{}, "claude-code")
 
 	// Boot revalidates ApiKeyHelperPath at dispatch time (executable-
 	// regular-file check). Use a real fake helper file so the validation
@@ -87,9 +87,16 @@ func TestBoot_ApiKeyHelperPath_ThreadsIntoSettings(t *testing.T) {
 		"planted settings.json must be valid JSON; got:\n%s", string(raw))
 	assert.Equal(t, helperPath, settings["apiKeyHelper"],
 		"planted settings.json apiKeyHelper field should match Deps.ApiKeyHelperPath; got:\n%s", string(raw))
-	// Sanity: the existing stub keys still ride along.
-	assert.Contains(t, settings, "mcpServers")
-	assert.Contains(t, settings, "approvedTools")
+	// Torque's permission-mode post-processing (CW-20260517-0038 V3)
+	// merges permissions.defaultMode into the planted file alongside
+	// apiKeyHelper — the merge must not drop the apiKeyHelper key. The
+	// torque-backend fixture profile sets no permission_mode, so the
+	// default (acceptEdits) is planted.
+	perms, ok := settings["permissions"].(map[string]any)
+	require.True(t, ok,
+		"planted settings.json must carry a permissions object after post-processing; got:\n%s", string(raw))
+	assert.Equal(t, "acceptEdits", perms["defaultMode"],
+		"permission-mode post-processing must plant the default acceptEdits mode; got:\n%s", string(raw))
 }
 
 // TestBoot_ApiKeyHelperPath_AbsentWhenDepsEmpty pins the negative case:
@@ -98,7 +105,7 @@ func TestBoot_ApiKeyHelperPath_ThreadsIntoSettings(t *testing.T) {
 // compat with the v0.9.1 stub shape — bare mode then requires
 // ANTHROPIC_API_KEY in env per the existing CW-20260509-0011 contract.
 func TestBoot_ApiKeyHelperPath_AbsentWhenDepsEmpty(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{}, "claude-code")
 	// Deps.ApiKeyHelperPath defaults to "" — explicit assert for clarity.
 	require.Empty(t, cd.Deps.ApiKeyHelperPath)
 

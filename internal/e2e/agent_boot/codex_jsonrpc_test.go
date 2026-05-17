@@ -159,10 +159,11 @@ func TestBoot_ModeLongLived_CodexJsonRpcStdio_PostStartKickoff(t *testing.T) {
 
 // TestSendTurn_RoutesNonJsonRpcThroughSendInput covers the negative
 // case: subprocess / streaming-stdio sessions skip the JSON-RPC
-// handshake entirely. SendTurn writes plaintext bytes via SendInput;
-// no Call() invocations land.
+// handshake entirely. SendTurn delivers the turn via SendInput (the
+// streaming-stdio path wraps it as a stream-json user message); no
+// Call() invocations land.
 func TestSendTurn_RoutesNonJsonRpcThroughSendInput(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: false}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: false}, "claude-code")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -177,21 +178,24 @@ func TestSendTurn_RoutesNonJsonRpcThroughSendInput(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, sess)
 
-	assert.Equal(t, "subprocess", sess.RuntimeKind,
-		"claude profile default should resolve to subprocess (bare-mode)")
+	assert.Equal(t, "streaming-stdio", sess.RuntimeKind,
+		"claude-code profile default should resolve to streaming-stdio")
 
 	fakeSess := cd.Runtime.lastSession()
 	require.NotNil(t, fakeSess)
 
 	assert.Equal(t, int32(1), fakeSess.recordedSendInputCount(),
-		"claude (subprocess) SendTurn must route through SendInput, fired exactly once for the kickoff")
+		"claude-code (streaming-stdio) SendTurn must route through SendInput, fired exactly once for the kickoff")
 	calls := fakeSess.recordedJsonRpcCalls()
 	assert.Empty(t, calls,
-		"claude (subprocess) must NOT invoke JsonRpcCaller.Call; routing should bypass the JSON-RPC path")
+		"claude-code (streaming-stdio) must NOT invoke JsonRpcCaller.Call; routing should bypass the JSON-RPC path")
 
 	payloads := fakeSess.recordedSendInputs()
 	require.Len(t, payloads, 1)
-	assert.Equal(t, "hello there", string(payloads[0]))
+	// streaming-stdio wraps the turn as a stream-json user message.
+	assert.JSONEq(t,
+		`{"type":"user","message":{"role":"user","content":"hello there"}}`,
+		string(payloads[0]))
 }
 
 // methodsOf is a small helper for the require.Len failure-message

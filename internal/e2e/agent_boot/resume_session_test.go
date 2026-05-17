@@ -45,7 +45,7 @@ func plantSessionForResume(t *testing.T, store *sqlstore.Store, sessID, provider
 // the sessions row and threads it into StartOptions.SessionIDPreset so the
 // claude adapter prepends `--resume <id>` on the first turn.
 func TestResumeSession_Claude_ThreadsProviderSessionID(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude-code")
 
 	const providerSessionID = "claude-session-aaaa-bbbb-cccc"
 	plantSessionForResume(t, cd.Store, "SES-RESUME-CLAUDE", "claude", providerSessionID, t.TempDir(), "torque-backend")
@@ -66,11 +66,13 @@ func TestResumeSession_Claude_ThreadsProviderSessionID(t *testing.T) {
 	assert.Equal(t, providerSessionID, *preset,
 		"ResumeSession must thread the persisted resume_hint bytes into StartOptions.SessionIDPreset")
 
-	// AgentProfile + Workdir + Provider rehydrated from the original row.
+	// AgentProfile + Workdir rehydrated from the original row; the new
+	// session row's Provider comes from the resolved agent profile
+	// (torque-backend → claude-code), not the planted row's value.
 	rec, err := cd.Store.GetSession(sess.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "torque-backend", rec.AgentProfile)
-	assert.Equal(t, "claude", rec.Provider)
+	assert.Equal(t, "claude-code", rec.Provider)
 }
 
 // TestResumeSession_Codex_ThreadsProviderSessionID covers the second
@@ -125,7 +127,7 @@ func TestResumeSession_Opencode_FreshBoot(t *testing.T) {
 // TestResumeSession_UnknownSessionID surfaces the typed not-found error so
 // callers (reactor harness) can branch on errors.Is(ErrSessionNotFound).
 func TestResumeSession_UnknownSessionID(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude-code")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -139,7 +141,7 @@ func TestResumeSession_UnknownSessionID(t *testing.T) {
 // TestResumeSession_EmptySessionID rejects the bad input before touching
 // the store.
 func TestResumeSession_EmptySessionID(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude-code")
 
 	_, err := cd.Manager.ResumeSession(context.Background(), "", agent.ResumeOptions{})
 	require.Error(t, err)
@@ -153,7 +155,7 @@ func TestResumeSession_EmptySessionID(t *testing.T) {
 // up there. Without this contract, α.5's "the previous turn went silent"
 // framing would never reach the LLM.
 func TestResumeSession_DiagnosticNote_FlowsIntoSystemPrompt(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude-code")
 
 	plantSessionForResume(t, cd.Store, "SES-RESUME-DIAG", "claude", "claude-session-diag", t.TempDir(), "torque-backend")
 
@@ -224,7 +226,7 @@ func TestResumeSession_FreshBoot_RehydratesFields(t *testing.T) {
 // invocation. Without this loop, ResumeSession would have nothing to
 // resume from on the first resume of a session.
 func TestResumeSession_StatePersistence_OnSessionID_FlowsToResumeHint(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude-code")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

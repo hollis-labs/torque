@@ -81,7 +81,7 @@ func addr(role string) gomsg.Address {
 //     manager's view of session lifecycle) without re-running the lib's
 //     watch-goroutine teardown.
 func TestSubstrate_HelloWorld(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude-code")
 
 	// SQLite Store wired into the broker — same DB the agent.Manager owns,
 	// so envelope rows sit alongside session rows and migrations cover both.

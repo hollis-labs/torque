@@ -19,7 +19,7 @@ import (
 // Reproduces CW-20260509-0008 in the failure mode (pid=0 throughout the
 // session lifetime) and verifies the per-session poller closes the gap.
 func TestPidPoller_RecordsLivePIDChanges(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: false}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: false}, "claude-code")
 	cd.Manager.WithPidPollInterval(10 * time.Millisecond)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -64,7 +64,7 @@ func TestPidPoller_RecordsLivePIDChanges(t *testing.T) {
 // turns). Without this, dashboards see a frozen last_activity for the
 // entire orchestrator run.
 func TestPidPoller_BumpsLastActivity(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: false}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: false}, "claude-code")
 	cd.Manager.WithPidPollInterval(10 * time.Millisecond)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -96,7 +96,7 @@ func TestPidPoller_BumpsLastActivity(t *testing.T) {
 //
 // Direct repro of the cosmetic regression in CW-20260509-0008.
 func TestPidPoller_TerminalStateOnAliveFalse(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: false}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: false}, "claude-code")
 	cd.Manager.WithPidPollInterval(10 * time.Millisecond)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -129,7 +129,7 @@ func TestPidPoller_TerminalStateOnAliveFalse(t *testing.T) {
 // when the session terminates. A leak here would compound across every
 // long-lived session a daemon spawns over its lifetime.
 func TestPidPoller_NoGoroutineLeak(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: false}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: false}, "claude-code")
 	cd.Manager.WithPidPollInterval(10 * time.Millisecond)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

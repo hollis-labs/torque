@@ -40,9 +40,10 @@ type composedDeps struct {
 
 // composeDeps materializes the substrate. cfg picks the fakeRuntime's caps
 // + failure injection; profileProvider is the agent profile's provider name
-// (drives Boot's adapterFor / shouldUsePTY decisions; tests typically pick
-// "claude" because its BootDirSpec is fully concrete and sets the PTY-on
-// matrix default).
+// (drives Boot's adapterFor / runtime-kind decisions; tests typically pick
+// "claude-code" because its BootDirSpec is fully concrete and it resolves to
+// the streaming-stdio runtime kind — the bare "claude" provider was retired
+// 2026-05-16 and adapterFor now rejects it).
 func composeDeps(t *testing.T, cfg fakeRuntimeConfig, profileProvider string) *composedDeps {
 	t.Helper()
 	dir := t.TempDir()

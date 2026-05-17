@@ -41,7 +41,7 @@ launches:
 // payload) boots successfully through the same Compile/Prepare/Plant
 // flow. The fake runtime stands in for the real provider.
 func TestBoot_LaunchProfile_InlinePayload(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude-code")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -55,7 +55,7 @@ func TestBoot_LaunchProfile_InlinePayload(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, sess)
-	assert.Equal(t, "claude", sess.Provider,
+	assert.Equal(t, "claude-code", sess.Provider,
 		"session provider stays Torque's profile provider")
 
 	// The workspace dir still flowed through — workspace ownership stays
@@ -74,7 +74,7 @@ func TestBoot_LaunchProfile_InlinePayload(t *testing.T) {
 // at the Boot level: a task with no launch-profile reference boots
 // exactly as before — the default inline path.
 func TestBoot_NoLaunchProfile_DefaultPathUnchanged(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude-code")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -88,7 +88,7 @@ func TestBoot_NoLaunchProfile_DefaultPathUnchanged(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, sess)
-	assert.Equal(t, "claude", sess.Provider)
+	assert.Equal(t, "claude-code", sess.Provider)
 	require.NotNil(t, cd.Runtime.workspaceDir.Load())
 }
 
@@ -97,7 +97,7 @@ func TestBoot_NoLaunchProfile_DefaultPathUnchanged(t *testing.T) {
 // errors.Is-matchable error — Boot returns ErrBootFailed wrapping
 // ErrLaunchProfile, not a panic.
 func TestBoot_LaunchProfile_MalformedFailsCleanly(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "claude-code")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -134,7 +134,7 @@ func TestBoot_LaunchProfile_MalformedFailsCleanly(t *testing.T) {
 // path works for ModeOneShot too — the scheduler-dispatched executor
 // lifecycle is the most common Torque task shape.
 func TestBoot_LaunchProfile_OneShotResolvesPlan(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: false}, "claude")
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: false}, "claude-code")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

@@ -72,6 +72,37 @@ type AgentProfile struct {
 	RuntimeKind      string   `yaml:"runtime_kind,omitempty"`
 	EnvStripPrefixes []string `yaml:"env_strip_prefixes,omitempty"`
 
+	// PermissionMode is the permission posture Torque plants into the
+	// spawned agent's `.claude/settings.json` (`permissions.defaultMode`).
+	// It uses Claude Code's settings-schema vocabulary:
+	//
+	//   "default"           — Claude Code's built-in mode; every tool that
+	//                         needs approval triggers an interactive prompt.
+	//                         UNSAFE for orchestrated runs: a torque-spawned
+	//                         claude has no human at a TTY to answer, so the
+	//                         run hangs (CW-20260517-0038 Variation 3).
+	//   "acceptEdits"       — auto-approve file edits, still gate genuinely
+	//                         destructive shell operations. The safe,
+	//                         non-interactive middle ground — and Torque's
+	//                         default when this field is unset.
+	//   "plan"              — plan mode (read-only; the agent proposes but
+	//                         does not execute).
+	//   "bypassPermissions" — full bypass (the settings-schema equivalent of
+	//                         the legacy `--dangerously-skip-permissions`
+	//                         CLI flag). The dev path that carries that flag
+	//                         already plants this value; setting it here is
+	//                         the non-dev way to opt into the same posture.
+	//
+	// Empty (yaml absent) resolves to "acceptEdits" via
+	// ResolvedPermissionMode. Validated at load time
+	// (validatePermissionMode); an unknown value is a load-time error.
+	//
+	// This is disjoint from internal/permission's Mode type — that engine
+	// governs MCP tools Torque itself hosts via its toolrouter/toolbroker;
+	// this field governs the spawned `claude` subprocess's own permission
+	// posture. The two systems do not share state.
+	PermissionMode string `yaml:"permission_mode,omitempty"`
+
 	// LaunchProfile optionally opts this agent profile into a shared
 	// go-agent-launch launch profile (CW-20260515-0021). Empty (the
 	// default) keeps the pure agent-profile behavior — Boot builds the
@@ -99,6 +130,74 @@ type AgentProfile struct {
 	Tools        []string `yaml:"tools,omitempty"`
 	BaseURL      string   `yaml:"base_url,omitempty"`
 	APIKey       string   `yaml:"api_key,omitempty"`
+}
+
+// PermissionMode is the Claude Code settings-schema permission vocabulary
+// Torque plants into the spawned agent's `.claude/settings.json`. It is
+// deliberately a distinct type from internal/permission.Mode: the two
+// systems are disjoint (see AgentProfile.PermissionMode) and
+// internal/permission uses a different spelling ("accept-edits", "yolo").
+type PermissionMode string
+
+const (
+	// PermissionModeDefault is Claude Code's built-in mode — interactive
+	// approval prompts. Unsafe for torque-orchestrated runs (no TTY).
+	PermissionModeDefault PermissionMode = "default"
+	// PermissionModeAcceptEdits auto-approves file edits, still gates
+	// destructive shell ops. Torque's default when permission_mode is unset.
+	PermissionModeAcceptEdits PermissionMode = "acceptEdits"
+	// PermissionModePlan is read-only plan mode.
+	PermissionModePlan PermissionMode = "plan"
+	// PermissionModeBypass is full bypass — the settings-schema equivalent
+	// of the legacy --dangerously-skip-permissions CLI flag.
+	PermissionModeBypass PermissionMode = "bypassPermissions"
+)
+
+// DefaultPermissionMode is the value Torque plants when a profile leaves
+// permission_mode unset: the safe, non-interactive middle ground for
+// orchestrated runs (CW-20260517-0038 Variation 3).
+const DefaultPermissionMode = PermissionModeAcceptEdits
+
+// validPermissionModes is the set of accepted permission_mode values, used
+// by both validatePermissionMode and its error message.
+var validPermissionModes = []PermissionMode{
+	PermissionModeDefault,
+	PermissionModeAcceptEdits,
+	PermissionModePlan,
+	PermissionModeBypass,
+}
+
+// validatePermissionMode reports an error when raw is neither empty (the
+// "use the default" sentinel) nor one of the four known modes. The error
+// names the profile and lists the valid set — consistent with the
+// registry-naming error style elsewhere in this file.
+func validatePermissionMode(profileName, raw string) error {
+	if raw == "" {
+		return nil
+	}
+	for _, m := range validPermissionModes {
+		if PermissionMode(raw) == m {
+			return nil
+		}
+	}
+	valid := make([]string, len(validPermissionModes))
+	for i, m := range validPermissionModes {
+		valid[i] = string(m)
+	}
+	return fmt.Errorf(
+		"agent_profiles[%q]: invalid permission_mode %q — valid values: %s",
+		profileName, raw, strings.Join(valid, ", "))
+}
+
+// ResolvedPermissionMode returns the profile's PermissionMode, substituting
+// DefaultPermissionMode when the field is empty. Callers should use this
+// rather than reading PermissionMode directly so the unset-means-acceptEdits
+// contract lives in one place.
+func (p AgentProfile) ResolvedPermissionMode() PermissionMode {
+	if p.PermissionMode == "" {
+		return DefaultPermissionMode
+	}
+	return PermissionMode(p.PermissionMode)
 }
 
 // ProfileMap is a named collection of agent profiles.
@@ -232,6 +331,16 @@ func LoadProfilesFile(path string) (Profiles, error) {
 	out := Profiles{Profiles: f.AgentProfiles, Aliases: f.Aliases}
 	if out.Profiles == nil {
 		out.Profiles = ProfileMap{}
+	}
+
+	// Validate per-profile permission_mode at load time so an operator
+	// typo (e.g. "accept-edits", "skip") surfaces here, naming the file
+	// and profile, instead of silently planting an unrecognized value
+	// into the spawned agent's .claude/settings.json (CW-20260517-0038).
+	for name, prof := range out.Profiles {
+		if err := validatePermissionMode(name, prof.PermissionMode); err != nil {
+			return Profiles{}, fmt.Errorf("parse profiles %s: %w", path, err)
+		}
 	}
 
 	// An alias pointing at a missing canonical profile is an operator
