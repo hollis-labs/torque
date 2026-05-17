@@ -2,8 +2,10 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 
 	"gopkg.in/yaml.v3"
@@ -178,27 +180,91 @@ func (r *ReloadableProfiles) Reload() error {
 }
 
 // profilesFile is the top-level YAML structure.
+//
+// `agent_profile_aliases` (EDGE 3, CW-20260517-0011) maps a legacy or
+// shorthand name to a canonical key in `agent_profiles`. It exists so a
+// provider-honest rename of a profile (e.g. `torque-backend` →
+// `codex-gpt5-long`) does not break in-flight tasks or operator muscle
+// memory: the old name keeps resolving via the alias. Aliases are
+// resolved at lookup time (GetProfileOrDefault / ResolveProfile), not
+// flattened into the map, so `torque profiles` listings show only the
+// canonical set.
 type profilesFile struct {
-	AgentProfiles ProfileMap `yaml:"agent_profiles"`
+	AgentProfiles ProfileMap        `yaml:"agent_profiles"`
+	Aliases       map[string]string `yaml:"agent_profile_aliases"`
 }
 
-// LoadProfiles reads agent profiles from a YAML file.
+// Profiles is the fully-loaded profile configuration: the canonical
+// profile map plus the alias table. Callers that only need the map can
+// keep using the bare ProfileMap returned by LoadProfiles; callers that
+// want alias-aware resolution use LoadProfilesFile + ResolveProfile.
+type Profiles struct {
+	Profiles ProfileMap
+	Aliases  map[string]string
+}
+
+// LoadProfiles reads agent profiles from a YAML file. Aliases declared in
+// the file are folded in so a lookup of an alias name against the
+// returned map succeeds — this keeps the legacy ProfileMap-only callers
+// working after an EDGE 3 rename. Use LoadProfilesFile when you need to
+// distinguish a canonical name from an alias (e.g. for listings or lint).
 func LoadProfiles(path string) (ProfileMap, error) {
+	pf, err := LoadProfilesFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return pf.flattened(), nil
+}
+
+// LoadProfilesFile reads agent profiles plus the alias table from a YAML
+// file, keeping the two separate.
+func LoadProfilesFile(path string) (Profiles, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("load profiles %s: %w", path, err)
+		return Profiles{}, fmt.Errorf("load profiles %s: %w", path, err)
 	}
 
 	var f profilesFile
 	if err := yaml.Unmarshal(data, &f); err != nil {
-		return nil, fmt.Errorf("parse profiles %s: %w", path, err)
+		return Profiles{}, fmt.Errorf("parse profiles %s: %w", path, err)
 	}
 
-	if f.AgentProfiles == nil {
-		return ProfileMap{}, nil
+	out := Profiles{Profiles: f.AgentProfiles, Aliases: f.Aliases}
+	if out.Profiles == nil {
+		out.Profiles = ProfileMap{}
 	}
 
-	return f.AgentProfiles, nil
+	// An alias pointing at a missing canonical profile is an operator
+	// mistake that would otherwise surface much later as a confusing
+	// empty-provider error; reject it at load time, naming the file.
+	for alias, target := range out.Aliases {
+		if _, ok := out.Profiles[target]; !ok {
+			return Profiles{}, fmt.Errorf(
+				"parse profiles %s: agent_profile_aliases[%q] points at %q, which is not a key in agent_profiles",
+				path, alias, target)
+		}
+	}
+
+	return out, nil
+}
+
+// flattened returns a ProfileMap with each alias added as an additional
+// key resolving to its canonical profile. A canonical key always wins
+// over an alias of the same name.
+func (p Profiles) flattened() ProfileMap {
+	if len(p.Aliases) == 0 {
+		return p.Profiles
+	}
+	out := make(ProfileMap, len(p.Profiles)+len(p.Aliases))
+	for alias, target := range p.Aliases {
+		if prof, ok := p.Profiles[target]; ok {
+			out[alias] = prof
+		}
+	}
+	for name, prof := range p.Profiles {
+		out[name] = prof
+	}
+	return out
 }
 
 // CurrentProfiles returns a defensive-copy snapshot for any profile source.
@@ -233,19 +299,82 @@ func GetProfileOrDefault(source ProfileSource, name string) AgentProfile {
 	if p, ok := profiles["default"]; ok {
 		return p
 	}
+	// EDGE 1 (CW-20260517-0011): the bare zero-value fallback used to be
+	// fully silent — a misspelled or wrong-registry agent_profile name
+	// sailed through here and only blew up much later as the misleading
+	// "adapter not registered for provider: profile has empty provider".
+	// We still return the zero value (the substrate's lifecycle hooks
+	// depend on a non-erroring resolver), but we now log loudly and name
+	// the registry so the failure is traceable. Callers on the
+	// operator-facing dispatch path should prefer ResolveProfile, which
+	// returns a real error instead of this zero value.
+	if name != "" {
+		log.Printf("[config] WARNING: agent_profile %q not found in agent_profiles (profiles.yaml) "+
+			"and no \"default\" profile is configured; falling back to an empty profile. "+
+			"Known agent_profiles: %s", name, profileNameList(profiles))
+	}
 	return AgentProfile{}
 }
 
-// ProfileNames returns the loaded profiles.yaml agent_profiles keys in
-// deterministic sorted order for UI/error reporting.
-func ProfileNames(source ProfileSource) []string {
-	profiles := CurrentProfiles(source)
-	if len(profiles) == 0 {
-		return []string{}
+// UnknownProfileError reports an agent_profile name that did not resolve
+// against the agent_profiles registry in profiles.yaml. It is
+// deliberately specific about WHICH registry it consulted — EDGE 1 of
+// CW-20260517-0011 is that three unrelated registries all look like "the
+// profile", so an unqualified "profile not found" is unhelpful.
+type UnknownProfileError struct {
+	// Name is the agent_profile value that failed to resolve.
+	Name string
+	// Known is the sorted list of valid canonical agent_profiles names.
+	Known []string
+}
+
+func (e *UnknownProfileError) Error() string {
+	if len(e.Known) == 0 {
+		return fmt.Sprintf("agent_profile %q not found: the agent_profiles registry "+
+			"(profiles.yaml) is empty — add a profile, or set TORQUE_PROFILES_PATH", e.Name)
 	}
+	return fmt.Sprintf("agent_profile %q not found in the agent_profiles registry (profiles.yaml). "+
+		"Valid agent_profiles: %s. "+
+		"NOTE: this arg resolves ONLY against profiles.yaml agent_profiles — "+
+		"it does NOT accept Tether catalog boot-profile ids (e.g. nanite.backend.main) "+
+		"or catalog agent/launch names.",
+		e.Name, strings.Join(e.Known, ", "))
+}
+
+// ResolveProfile looks up an agent_profile name and returns a real error
+// when it misses, instead of GetProfileOrDefault's silent zero value.
+// This is the resolver the operator-facing dispatch path (session
+// launch, executor precheck) should use so a bad name fails fast with a
+// registry-named, value-listing message.
+//
+// An empty name resolves to the "default" profile when one exists;
+// substrate builtin profiles (reviewer-end-agent, planner, orchestrator)
+// resolve the same way GetProfileOrDefault treats them.
+func ResolveProfile(profiles ProfileMap, name string) (AgentProfile, error) {
+	if name != "" {
+		if p, ok := profiles[name]; ok {
+			return p, nil
+		}
+		if p, ok := builtinProfiles[name]; ok {
+			return p, nil
+		}
+		return AgentProfile{}, &UnknownProfileError{
+			Name:  name,
+			Known: ProfileNames(profiles),
+		}
+	}
+	if p, ok := profiles["default"]; ok {
+		return p, nil
+	}
+	return AgentProfile{}, &UnknownProfileError{Name: "default", Known: ProfileNames(profiles)}
+}
+
+// ProfileNames returns the sorted list of profile keys for error
+// messages and listings.
+func ProfileNames(profiles ProfileMap) []string {
 	names := make([]string, 0, len(profiles))
-	for name := range profiles {
-		names = append(names, name)
+	for k := range profiles {
+		names = append(names, k)
 	}
 	sort.Strings(names)
 	return names
@@ -269,6 +398,16 @@ func ValidateProfileName(source ProfileSource, name string) error {
 		name,
 		ProfileNames(profiles),
 	)
+}
+
+// profileNameList is the comma-joined form of ProfileNames, or a
+// placeholder when the registry is empty.
+func profileNameList(profiles ProfileMap) string {
+	names := ProfileNames(profiles)
+	if len(names) == 0 {
+		return "(none configured)"
+	}
+	return strings.Join(names, ", ")
 }
 
 func cloneProfileMap(in ProfileMap) ProfileMap {
