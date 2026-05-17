@@ -154,6 +154,50 @@ func TestGetProfileOrDefault(t *testing.T) {
 	assert.Equal(t, "", p.Executor)
 }
 
+func TestProfileNames(t *testing.T) {
+	profiles := config.ProfileMap{
+		"zeta":    {},
+		"alpha":   {},
+		"default": {},
+	}
+	assert.Equal(t, []string{"alpha", "default", "zeta"}, config.ProfileNames(profiles))
+	assert.Equal(t, []string{}, config.ProfileNames(nil))
+}
+
+func TestValidateProfileName(t *testing.T) {
+	profiles := config.ProfileMap{
+		"default": {},
+		"fast":    {},
+	}
+
+	require.NoError(t, config.ValidateProfileName(profiles, "default"))
+
+	err := config.ValidateProfileName(profiles, "typo")
+	require.EqualError(t, err, "unknown agent_profile 'typo' in profiles.yaml agent_profiles registry — known: [default fast]")
+}
+
+func TestReloadableProfiles(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "profiles.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+agent_profiles:
+  default:
+    provider: claude
+    model: claude-sonnet-4-20250514
+`), 0644))
+
+	reloaded := config.NewReloadableProfiles(path, nil)
+	require.NoError(t, reloaded.Reload())
+
+	first := reloaded.CurrentProfiles()
+	assert.Equal(t, "claude-sonnet-4-20250514", first["default"].Model)
+
+	// Returned snapshots are defensive copies.
+	first["default"] = config.AgentProfile{Model: "mutated"}
+	second := reloaded.CurrentProfiles()
+	assert.Equal(t, "claude-sonnet-4-20250514", second["default"].Model)
+}
+
 // TestCatalogProviderID verifies the CLI-brand → catalog-provider alias
 // map (CW-20260510-0100). profiles.yaml uses "claude" / "codex" because
 // that's what the CLI invocation expects, but the models.dev catalog
@@ -181,6 +225,108 @@ func TestCatalogProviderID(t *testing.T) {
 			assert.Equal(t, tc.want, config.CatalogProviderID(tc.in))
 		})
 	}
+}
+
+// TestLoadProfilesAliases verifies EDGE 3 of CW-20260517-0011: an
+// agent_profile_aliases table lets a legacy name resolve to a renamed
+// canonical profile. LoadProfiles folds aliases into the returned map so
+// legacy ProfileMap-only callers keep working after a provider-honest
+// rename.
+func TestLoadProfilesAliases(t *testing.T) {
+	yaml := `
+agent_profiles:
+  codex-long:
+    executor: cli
+    provider: codex
+    command: codex
+    model: gpt-5.4
+    timeout_seconds: 10800
+
+agent_profile_aliases:
+  torque-backend: codex-long
+  torque-frontend: codex-long
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "profiles.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(yaml), 0644))
+
+	// LoadProfiles (legacy map-only): aliases fold in as extra keys.
+	profiles, err := config.LoadProfiles(path)
+	require.NoError(t, err)
+	assert.Len(t, profiles, 3, "1 canonical + 2 aliases")
+	assert.Equal(t, "gpt-5.4", profiles["codex-long"].Model)
+	assert.Equal(t, "gpt-5.4", profiles["torque-backend"].Model, "legacy alias resolves")
+	assert.Equal(t, "gpt-5.4", profiles["torque-frontend"].Model, "legacy alias resolves")
+
+	// LoadProfilesFile keeps canonical and alias tables separate.
+	pf, err := config.LoadProfilesFile(path)
+	require.NoError(t, err)
+	assert.Len(t, pf.Profiles, 1, "only canonical profiles")
+	assert.Equal(t, "codex-long", pf.Aliases["torque-backend"])
+}
+
+// TestLoadProfilesAliasDangling rejects an alias that points at a
+// missing canonical profile — an operator typo that would otherwise
+// surface much later as a confusing empty-provider error.
+func TestLoadProfilesAliasDangling(t *testing.T) {
+	yaml := `
+agent_profiles:
+  codex-long:
+    executor: cli
+    provider: codex
+agent_profile_aliases:
+  torque-backend: codex-lonng
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "profiles.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(yaml), 0644))
+
+	_, err := config.LoadProfiles(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "torque-backend")
+	assert.Contains(t, err.Error(), "codex-lonng")
+}
+
+// TestResolveProfile covers EDGE 1 of CW-20260517-0011: ResolveProfile
+// returns a registry-named, value-listing error on a miss instead of
+// GetProfileOrDefault's silent zero value.
+func TestResolveProfile(t *testing.T) {
+	profiles := config.ProfileMap{
+		"default":    {Executor: "cli", Provider: "claude-code", Model: "claude-sonnet-4-5"},
+		"codex-long": {Executor: "cli", Provider: "codex", Model: "gpt-5.4"},
+	}
+
+	// Named profile resolves.
+	p, err := config.ResolveProfile(profiles, "codex-long")
+	require.NoError(t, err)
+	assert.Equal(t, "gpt-5.4", p.Model)
+
+	// Empty name resolves to default.
+	p, err = config.ResolveProfile(profiles, "")
+	require.NoError(t, err)
+	assert.Equal(t, "claude-sonnet-4-5", p.Model)
+
+	// Unknown name errors, naming the registry and listing valid values.
+	_, err = config.ResolveProfile(profiles, "nanite.backend.main")
+	require.Error(t, err)
+	var upErr *config.UnknownProfileError
+	require.ErrorAs(t, err, &upErr)
+	assert.Equal(t, "nanite.backend.main", upErr.Name)
+	assert.Equal(t, []string{"codex-long", "default"}, upErr.Known)
+	assert.Contains(t, err.Error(), "agent_profiles registry")
+	assert.Contains(t, err.Error(), "profiles.yaml")
+	assert.Contains(t, err.Error(), "codex-long")
+	assert.Contains(t, err.Error(), "Tether catalog", "error must disambiguate the three registries")
+
+	// Builtin substrate profile resolves without a user config.
+	p, err = config.ResolveProfile(config.ProfileMap{}, "reviewer-end-agent")
+	require.NoError(t, err)
+	assert.Equal(t, "cli", p.Executor)
+
+	// Empty registry, no default → error names the empty registry.
+	_, err = config.ResolveProfile(config.ProfileMap{}, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty")
 }
 
 // CW-20260503-0019 (S2.3) — substrate builtins fill in for internal-

@@ -29,6 +29,7 @@ Current behavior:
 - Polls on an interval
 - Tracks worker heartbeats
 - Supports session-scoped enable/disable
+- Exposes read-only live state to stdio MCP clients via `torque_scheduler_status`, which proxies `torque serve`'s `/api/v1/scheduler/status` when no in-process scheduler exists
 - Applies a max-per-project concurrency limit
 - Can run with optional per-run worktrees
 - Uses a project allowlist stopgap from env vars today

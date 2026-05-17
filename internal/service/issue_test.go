@@ -10,7 +10,7 @@ import (
 func TestIssueCreate_MinimalFields(t *testing.T) {
 	svc := setupService(t)
 	require.NoError(t, svc.Feature.Enable("projects"))
-	project, err := svc.Project.Create(service.ProjectCreateInput{Name: "Issues Project", RepoPath: "/tmp/issues"})
+	project, err := svc.Project.Create(service.ProjectCreateInput{Name: "Issues Project", RepoPath: t.TempDir()})
 	require.NoError(t, err)
 
 	issue, err := svc.Issue.Create(service.IssueCreateInput{
@@ -54,7 +54,7 @@ func TestIssueCreate_RequiresProject(t *testing.T) {
 func TestIssueListAndSearchAreKindScoped(t *testing.T) {
 	svc := setupService(t)
 	require.NoError(t, svc.Feature.Enable("projects"))
-	project, err := svc.Project.Create(service.ProjectCreateInput{Name: "Issues Project", RepoPath: "/tmp/issues"})
+	project, err := svc.Project.Create(service.ProjectCreateInput{Name: "Issues Project", RepoPath: t.TempDir()})
 	require.NoError(t, err)
 
 	issue, err := svc.Issue.Create(service.IssueCreateInput{

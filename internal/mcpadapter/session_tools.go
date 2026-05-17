@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -116,6 +117,9 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req mcp.CallToolReque
 	mgr, err := a.requireSessionMgr()
 	if err != nil {
 		return errResult(ErrCodeDomain, err.Error(), "")
+	}
+	if err := config.ValidateProfileName(mgr.KnownProfiles(), reqStr(req, "agent_profile")); err != nil {
+		return errResult(ErrCodeArgInvalid, err.Error(), "agent_profile")
 	}
 	sess, err := mgr.Boot(ctx, agent.Options{
 		Mode:         agent.ModeLongLived,

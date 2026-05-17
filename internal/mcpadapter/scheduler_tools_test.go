@@ -2,6 +2,10 @@ package mcpadapter_test
 
 import (
 	"context"
+	"encoding/json"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 
@@ -116,21 +120,72 @@ func TestSchedulerToggle_Idempotent(t *testing.T) {
 	assert.False(t, sched.Status().Enabled)
 }
 
-// TestSchedulerTools_NoScheduler verifies the nil-sched path — mirrors the
-// HTTP 503 contract. The stdio mcp subcommand runs without a scheduler
-// instance, so agents calling these tools there must see a clear error
-// rather than a zero-value status or a nil panic.
-func TestSchedulerTools_NoScheduler(t *testing.T) {
-	// Use the regular setupAdapter which passes nil for sched.
+func TestSchedulerStatus_ProxyFromServeProcess(t *testing.T) {
 	a := setupAdapter(t)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/v1/scheduler/status", r.URL.Path)
+		require.Equal(t, http.MethodGet, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"enabled":                           true,
+			"max_workers":                       3,
+			"active_workers":                    1,
+			"queue_depth":                       2,
+			"telemetry_queue_depth":             0,
+			"total_cost":                        12.5,
+			"subscribers":                       4,
+			"stale_heartbeat_threshold_seconds": 300,
+		}))
+	}))
+	defer ts.Close()
+
+	host, port := splitHostPort(t, ts.Listener.Addr().String())
+	require.Equal(t, "127.0.0.1", host, "proxy is hard-wired to loopback")
+	t.Setenv("TORQUE_HTTP_PORT", port)
+
+	text, isErr := callTool(t, a, "torque_scheduler_status", map[string]interface{}{})
+	require.False(t, isErr, "status proxy should succeed: %s", text)
+
+	var status map[string]interface{}
+	parseData(t, text, &status)
+	assert.Equal(t, true, status["enabled"])
+	assert.Equal(t, float64(3), status["max_workers"])
+	assert.Equal(t, float64(2), status["queue_depth"])
+}
+
+// TestSchedulerTools_NoScheduler verifies the nil-sched path — mirrors the
+// stdio mcp subcommand runs without a scheduler instance, so toggle must
+// fail clearly and status must surface a useful proxy error when no local
+// serve process is available.
+func TestSchedulerTools_NoScheduler(t *testing.T) {
+	a := setupAdapter(t)
+
+	_, port := reserveUnusedLocalPort(t)
+	t.Setenv("TORQUE_HTTP_PORT", port)
 
 	text, isErr := callTool(t, a, "torque_scheduler_status", map[string]interface{}{})
 	assert.True(t, isErr, "status without scheduler should error: %s", text)
-	assert.Contains(t, text, "scheduler not running")
+	assert.Contains(t, text, "scheduler status unavailable")
 
 	text, isErr = callTool(t, a, "torque_scheduler_toggle", map[string]interface{}{
 		"enabled": true,
 	})
 	assert.True(t, isErr, "toggle without scheduler should error: %s", text)
-	assert.Contains(t, text, "scheduler not running")
+	assert.Contains(t, text, "read-only")
+}
+
+func splitHostPort(t *testing.T, addr string) (host, port string) {
+	t.Helper()
+	host, port, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	return host, port
+}
+
+func reserveUnusedLocalPort(t *testing.T) (host, port string) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+	return splitHostPort(t, ln.Addr().String())
 }

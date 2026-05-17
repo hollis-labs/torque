@@ -146,6 +146,7 @@ func errResult(code ErrorCode, message, field string) (*mcp.CallToolResult, erro
 //   - sqlstore "not found" sentinels → not_found
 //   - *service.NotFoundError → not_found
 //   - *service.ValidationError → arg_invalid (with field)
+//   - *service.RepoPathError → arg_invalid (field=repo_path)
 //   - *service.TransitionError → conflict
 //   - *service.ConflictError → conflict (also catches ErrTemplateReferenced
 //     via the string-match tier below since the sqlstore error isn't a typed
@@ -185,6 +186,14 @@ func mapServiceError(err error) (ErrorCode, string, string) {
 	var ve *service.ValidationError
 	if errors.As(err, &ve) {
 		return ErrCodeArgInvalid, err.Error(), ve.Field
+	}
+	// repo_path drift (CW-20260517-0011 edge 7): a stale/missing project
+	// repo_path is a caller-correctable input fault — map to arg_invalid
+	// with field=repo_path so agents can self-correct deterministically
+	// (fix the path) rather than parse the free-text message.
+	var rpe *service.RepoPathError
+	if errors.As(err, &rpe) {
+		return ErrCodeArgInvalid, err.Error(), "repo_path"
 	}
 	var te *service.TransitionError
 	if errors.As(err, &te) {

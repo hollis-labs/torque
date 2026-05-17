@@ -39,7 +39,7 @@ import (
 // callers can call it unconditionally without nil-checking.
 func AgentDeps(
 	store *sqlstore.Store,
-	profiles config.ProfileMap,
+	profiles config.ProfileSource,
 	svc *service.Service,
 	tools *toolbroker.ToolRouter,
 	bus *scheduler.EventBus,

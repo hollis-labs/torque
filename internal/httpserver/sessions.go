@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
 )
 
@@ -59,6 +60,12 @@ func (s *Server) launchSession(w http.ResponseWriter, r *http.Request) {
 	if err := readJSON(r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
+	}
+	if s.sessions != nil && s.sessions.KnownProfiles() != nil {
+		if err := config.ValidateProfileName(s.sessions.KnownProfiles(), body.AgentProfile); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	envMap := envSliceToMap(body.Env)
 	sess, err := s.sessions.Boot(r.Context(), agent.Options{

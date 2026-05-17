@@ -1,0 +1,81 @@
+# Torque agent profiles.
+#
+# `torque serve` loads this file from the working directory (or from
+# TORQUE_PROFILES_PATH if set). It defines the agent identities that
+# `torque_session_launch`'s `agent_profile` arg resolves against.
+#
+# ── EDGE 3 of CW-20260517-0011: profile names are now provider-honest ──
+#
+# Profile names used to imply a project+stack binding that did not exist:
+# `torque-backend` / `torque-frontend` were never bound to the Torque
+# repo or to a "backend"/"frontend" stack — they were just "codex
+# subprocess, a given model, a given timeout". Worse, `nanite-backend` /
+# `nanite-frontend` ran the *opencode* provider, not codex, so the
+# provider was invisible until you read this YAML.
+#
+# Profiles are now named  <provider>[-<model-or-shape>][-<runtime-shape>].
+# The provider is the FIRST token of every name, so the executor that
+# will actually run is obvious from the name alone. No name encodes a
+# project binding, because Torque agent profiles have none.
+#
+# Legacy names keep working via `agent_profile_aliases` below — see that
+# section. The aliases are a backward-compat bridge, not a permanent
+# parallel naming scheme; new tasks should use the canonical names.
+agent_profiles:
+  # Default dispatch identity. Claude Code over the long-lived NDJSON
+  # streaming-stdio runtime.
+  default:
+    executor: cli
+    provider: claude-code
+    command: claude
+    model: claude-sonnet-4-5
+    args: ["--dangerously-skip-permissions"]
+    output_format: stream-json
+    timeout_seconds: 600
+    max_agent_depth: 3
+    runtime_kind: streaming-stdio
+
+  # Codex (OpenAI) over the app-server JSON-RPC runtime, long timeout.
+  # This is the profile the legacy `torque-backend` / `torque-frontend`
+  # names pointed at — same codex subprocess, same model, same 3h budget.
+  # The legacy names implied a Torque-repo + stack binding that never
+  # existed; this name states only what is real: provider + budget shape.
+  codex-long:
+    executor: cli
+    provider: codex
+    command: codex
+    model: gpt-5.4
+    output_format: stream-json
+    timeout_seconds: 10800
+    runtime_kind: jsonrpc-stdio
+    env_strip_prefixes: ["ANTHROPIC_"]
+
+  # opencode CLI, subprocess runtime. This is what the legacy
+  # `nanite-backend` / `nanite-frontend` names resolved to — they ran
+  # opencode, NOT codex, despite carrying no provider hint. The name now
+  # leads with the provider so that surprise is gone.
+  opencode-default:
+    executor: cli
+    provider: opencode
+    command: opencode
+    output_format: print
+    timeout_seconds: 1800
+    runtime_kind: subprocess
+
+# ── Backward-compatible aliases (EDGE 3, CW-20260517-0011) ──
+#
+# Each key is a legacy / shorthand name; the value is a canonical key in
+# `agent_profiles` above. Aliases are resolved at lookup time, so a task
+# created before the rename — or an operator with the old name in muscle
+# memory — keeps dispatching correctly. `torque profiles` listings show
+# only the canonical set.
+#
+# The `torque-*` names are DELIBERATELY collapsed onto a single codex
+# profile: `-backend` / `-frontend` never carried a real stack binding,
+# so preserving them as distinct profiles would re-introduce the EDGE 3
+# confusion. Likewise `nanite-*` collapse onto the opencode profile.
+agent_profile_aliases:
+  torque-backend: codex-long
+  torque-frontend: codex-long
+  nanite-backend: opencode-default
+  nanite-frontend: opencode-default

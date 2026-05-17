@@ -96,7 +96,7 @@ type Scheduler struct {
 	// nil the backfill code paths bail and cost is recorded as-reported.
 	// Tests that don't exercise cost paths can leave them unset.
 	Models   *modelcatalog.Catalog
-	Profiles config.ProfileMap
+	Profiles config.ProfileSource
 	// CostBackfillDisabled is the emergency off-switch for the models.dev
 	// cost backfill. Default zero-value (false) means backfill runs whenever
 	// the natural pre-conditions are met: Models + Profiles wired, executor

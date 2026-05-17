@@ -3,6 +3,7 @@ package service_test
 import (
 	"testing"
 
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -245,6 +246,71 @@ func TestSprintDelete(t *testing.T) {
 
 	_, err = svc.Sprint.Get(sprint.ID)
 	assert.Error(t, err)
+}
+
+// TestSprintStart covers CW-20260517-0011 edge 5: Start promotes the
+// sprint's parked (manual=true) tasks to manual=false so the scheduler can
+// dispatch them, and is idempotent on a second call.
+func TestSprintStart(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("sprints")
+
+	sprint, _ := svc.Sprint.Create(service.SprintCreateInput{
+		Name:         "Start Sprint",
+		ApprovalMode: "approve_sprint",
+	})
+
+	// Three tasks in the sprint. Task.Create force-sets manual=true on every
+	// create (CW-20260417-0133), so all three start parked; we promote one
+	// back to manual=false via Update to exercise the AlreadyEligible path.
+	parked1, _ := svc.Task.Create(service.TaskCreateInput{
+		Title: "Parked 1", Description: "x", SprintID: sprint.ID,
+	})
+	parked2, _ := svc.Task.Create(service.TaskCreateInput{
+		Title: "Parked 2", Description: "x", SprintID: sprint.ID,
+	})
+	eligible, _ := svc.Task.Create(service.TaskCreateInput{
+		Title: "Eligible", Description: "x", SprintID: sprint.ID,
+	})
+	manualFalse := false
+	require.NoError(t, svc.Task.Update(eligible.ID, service.TaskUpdateInput{
+		TaskUpdate: sqlstore.TaskUpdate{Manual: &manualFalse},
+	}))
+
+	res, err := svc.Sprint.Start(sprint.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.Promoted)
+	assert.Equal(t, 1, res.AlreadyEligible)
+	assert.ElementsMatch(t, []string{parked1.ID, parked2.ID}, res.PromotedIDs)
+	assert.Empty(t, res.Skipped)
+
+	// Tasks are now manual=false and pickable.
+	for _, id := range []string{parked1.ID, parked2.ID, eligible.ID} {
+		got, _ := svc.Task.Get(id)
+		assert.False(t, got.Manual, "task %s should be manual=false after start", id)
+	}
+
+	// Idempotent second call.
+	res2, err := svc.Sprint.Start(sprint.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 0, res2.Promoted)
+	assert.Equal(t, 3, res2.AlreadyEligible)
+}
+
+func TestSprintStartRequiresFeature(t *testing.T) {
+	svc := setupService(t)
+
+	_, err := svc.Sprint.Start("SP-1")
+	require.Error(t, err)
+	assert.IsType(t, &service.FeatureDisabledError{}, err)
+}
+
+func TestSprintStartUnknownSprint(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("sprints")
+
+	_, err := svc.Sprint.Start("SP-does-not-exist")
+	require.Error(t, err)
 }
 
 // Helper

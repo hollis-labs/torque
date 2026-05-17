@@ -21,7 +21,7 @@ import (
 // vendorClient. The executor is the registry's `api` slot; per-vendor logic
 // lives behind clientFor(profile).
 type APIExecutor struct {
-	profiles config.ProfileMap
+	profiles config.ProfileSource
 	tools    *toolbroker.ToolRouter
 	// clientFactory is overridable for tests; production path uses clientFor.
 	clientFactory func(profile config.AgentProfile) (vendorClient, error)
@@ -43,7 +43,7 @@ func WithClientFactory(f func(profile config.AgentProfile) (vendorClient, error)
 // local permission engine + audit log. Production callers (bootstrap.Executors)
 // supply a real router; tests may pass nil when they don't exercise tool
 // calls.
-func New(profiles config.ProfileMap, tools *toolbroker.ToolRouter, opts ...Option) *APIExecutor {
+func New(profiles config.ProfileSource, tools *toolbroker.ToolRouter, opts ...Option) *APIExecutor {
 	e := &APIExecutor{
 		profiles:      profiles,
 		tools:         tools,

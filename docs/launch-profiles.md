@@ -30,15 +30,27 @@ Add a `launch_profile` field to an entry in `agent_profiles`:
 
 ```yaml
 agent_profiles:
-  torque-backend:
+  codex-launch:
     executor: cli
-    provider: claude
-    model: claude-sonnet-4-5
+    provider: codex
+    model: gpt-5.4
     launch_profile: /etc/torque/catalog#backend-launch
 ```
 
 Every task that resolves to this agent profile boots through the
 referenced launch profile.
+
+> **Profile naming.** Since CW-20260517-0011 (edge 3), `agent_profiles`
+> keys are *provider-honest* — the provider is the first token of the
+> name (`codex-long`, `opencode-default`, `default`). Names no longer
+> imply a project or stack binding, because Torque agent profiles carry
+> none. The bare `claude` provider was retired on 2026-05-16; use
+> `claude-code` (streaming-stdio). Legacy names (`torque-backend`,
+> `nanite-backend`, …) still resolve via `agent_profile_aliases` — see
+> the header of `profiles.yaml`. This `agent_profiles` registry is the
+> *only* one `torque_session_launch`'s `agent_profile` arg accepts; it
+> does not accept Tether catalog boot-profile ids or catalog agent
+> names. See `artifacts/CW-20260517-0011/profile-registry-design.md`.
 
 ### From a Boot request (per-task override)
 
@@ -191,10 +203,10 @@ unless you have a reason to share the launch definition. To migrate:
 
    ```yaml
    agent_profiles:
-     torque-backend:
+     codex-launch:
        executor: cli
-       provider: claude
-       model: claude-sonnet-4-5
+       provider: codex
+       model: gpt-5.4
        launch_profile: /srv/catalogs/my-catalog.yaml#my-launch
    ```
 

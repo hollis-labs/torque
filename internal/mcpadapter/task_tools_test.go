@@ -531,7 +531,7 @@ func TestFullStack_TaskList_FilterByProjectID(t *testing.T) {
 	// distinct paths keep the two projects unambiguously separate fixtures.
 	text, isErr := callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":      "Alpha",
-		"repo_path": "/tmp/torque-test/alpha",
+		"repo_path": t.TempDir(),
 	})
 	require.False(t, isErr, "create project Alpha: %s", text)
 	var projAlpha map[string]interface{}
@@ -540,7 +540,7 @@ func TestFullStack_TaskList_FilterByProjectID(t *testing.T) {
 
 	text, isErr = callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":      "Beta",
-		"repo_path": "/tmp/torque-test/beta",
+		"repo_path": t.TempDir(),
 	})
 	require.False(t, isErr, "create project Beta: %s", text)
 	var projBeta map[string]interface{}
@@ -686,7 +686,7 @@ func TestFullStack_TaskList_CombinedSearchAndProjectID(t *testing.T) {
 	// projects; the test exercises combined search+project_id filtering, not validation edges.
 	text, isErr := callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":      "Alpha",
-		"repo_path": "/tmp/torque-test/alpha",
+		"repo_path": t.TempDir(),
 	})
 	require.False(t, isErr)
 	var projAlpha map[string]interface{}
@@ -695,7 +695,7 @@ func TestFullStack_TaskList_CombinedSearchAndProjectID(t *testing.T) {
 
 	text, isErr = callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":      "Beta",
-		"repo_path": "/tmp/torque-test/beta",
+		"repo_path": t.TempDir(),
 	})
 	require.False(t, isErr)
 	var projBeta map[string]interface{}

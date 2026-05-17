@@ -1,4 +1,4 @@
-.PHONY: build build-all test test-scheduler lint clean install
+.PHONY: build build-all test test-scheduler lint profiles-lint clean install
 
 BINARY=torque
 APIKEY_HELPER=torque-apikey-helper
@@ -27,6 +27,9 @@ test-scheduler:
 
 lint:
 	go vet ./...
+
+profiles-lint:
+	go run ./cmd/torque profiles lint
 
 clean:
 	rm -f $(BINARY)

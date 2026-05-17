@@ -225,7 +225,7 @@ func TestProjectToolsViaMCP(t *testing.T) {
 	text, isErr := callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":        "Test Project",
 		"description": "A test project",
-		"repo_path":   "/tmp/test-project",
+		"repo_path":   t.TempDir(),
 	})
 	require.False(t, isErr, "project_create should succeed: %s", text)
 
@@ -376,7 +376,7 @@ func TestTaskAssociationUpdateViaMCP(t *testing.T) {
 	require.False(t, isErr)
 	projectText, isErr := callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":      "Project",
-		"repo_path": "/tmp/torque-test/task-association",
+		"repo_path": t.TempDir(),
 	})
 	require.False(t, isErr)
 	epicText, isErr := callTool(t, a, "torque_epic_create", map[string]interface{}{"name": "Epic"})
@@ -432,7 +432,7 @@ func TestSprintCreateProjectIDViaMCP(t *testing.T) {
 	// Create project to associate with
 	projectText, isErr := callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":      "Project for sprint",
-		"repo_path": "/tmp/torque-test/sprint-project-id",
+		"repo_path": t.TempDir(),
 	})
 	require.False(t, isErr)
 	var pr map[string]interface{}
@@ -472,7 +472,7 @@ func TestSprintUpdateProjectIDViaMCP(t *testing.T) {
 
 	projectText, isErr := callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":      "Project for update",
-		"repo_path": "/tmp/torque-test/sprint-update-project",
+		"repo_path": t.TempDir(),
 	})
 	require.False(t, isErr)
 	var pr map[string]interface{}
@@ -518,7 +518,7 @@ func TestSprintUpdateProjectIDClearViaMCP(t *testing.T) {
 
 	projectText, isErr := callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":      "Project for sprint clear",
-		"repo_path": "/tmp/torque-test/sprint-clear-project",
+		"repo_path": t.TempDir(),
 	})
 	require.False(t, isErr)
 	var pr map[string]interface{}
@@ -562,7 +562,7 @@ func TestEpicCreateProjectIDViaMCP(t *testing.T) {
 
 	projectText, isErr := callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":      "Project for epic",
-		"repo_path": "/tmp/torque-test/epic-project-id",
+		"repo_path": t.TempDir(),
 	})
 	require.False(t, isErr)
 	var pr map[string]interface{}
@@ -600,7 +600,7 @@ func TestEpicUpdateProjectIDViaMCP(t *testing.T) {
 
 	projectText, isErr := callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":      "Project for epic update",
-		"repo_path": "/tmp/torque-test/epic-update-project",
+		"repo_path": t.TempDir(),
 	})
 	require.False(t, isErr)
 	var pr map[string]interface{}
@@ -641,7 +641,7 @@ func TestEpicUpdateProjectIDClearViaMCP(t *testing.T) {
 
 	projectText, isErr := callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name":      "Project for epic clear",
-		"repo_path": "/tmp/torque-test/epic-clear-project",
+		"repo_path": t.TempDir(),
 	})
 	require.False(t, isErr)
 	var pr map[string]interface{}

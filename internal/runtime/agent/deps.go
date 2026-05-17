@@ -42,7 +42,7 @@ type Dependencies struct {
 
 	// Profiles maps agent_profile names → AgentProfile shape (provider,
 	// args, model, env policy, ...).
-	Profiles config.ProfileMap
+	Profiles config.ProfileSource
 
 	// Loopback constructs the per-task MCP loopback handle (closure-bound
 	// to the booted task — no task_id parameter required or accepted by

@@ -73,7 +73,15 @@ func runCostBackfill(ctx context.Context, since time.Duration, includePositiveUn
 	}
 	defer store.Close()
 
-	profiles := loadProfilesOrEmpty()
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	profileSource, err := loadProfilesOrEmpty(cfg)
+	if err != nil {
+		return err
+	}
+	profiles := config.CurrentProfiles(profileSource)
 	catalog := modelcatalog.New()
 	refreshErr := catalog.Refresh(ctx)
 	if refreshErr != nil && catalog.LastFetchedAt().IsZero() {
