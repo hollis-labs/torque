@@ -64,12 +64,20 @@ Example: {"status":"active"}`),
 
 	a.addTool(mcp.NewTool("torque_sprint_approve",
 		mcp.WithDescription(`Approve tasks in a sprint. With task_id, approves one task; without, approves every task currently in review.
-Use for sprint-level review-gate closures after tasks have already run and reached review; this does NOT start dispatch for an approve_sprint sprint. To kick off work, promote one or more sprint tasks to manual=false via torque_task_update, confirm scheduler state with torque_scheduler_status, then use torque_sprint_approve later to move review tasks to done.
+Use for sprint-level review-gate closures (CLOSING the cohort) after tasks have already run and reached review; this does NOT start dispatch. torque_sprint_start OPENS the dispatch gate. Confirm scheduler state with torque_scheduler_status. Use torque_task_transition for single-task control and torque_task_bulk_transition when approving outside a sprint.
 Response shape: data = {sprint_id, task_id?, approved: count, message}.
 Example: {"id":"SP-17"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Sprint ID")),
 		mcp.WithString("task_id", mcp.Description("Specific task ID (omit for approve-all-in-review)")),
 	), a.handleSprintApprove)
+
+	a.addTool(mcp.NewTool("torque_sprint_start",
+		mcp.WithDescription(`Open the dispatch gate for a sprint: promote every parked (manual=true) task in it to manual=false so the scheduler can begin dispatching them.
+Use this to "start" a sprint under approval_mode=approve_sprint — torque_sprint_approve only CLOSES the review gate (review->done) and reports "0 tasks approved" on a fresh sprint. Mental model: Torque has ONE dispatch gate, the per-task manual flag; approval_mode is workflow metadata, not a scheduler gate. Starting a sprint = bulk-promoting its tasks. Idempotent: already-eligible tasks are left alone.
+Response shape: data = {sprint_id, promoted: count, promoted_ids[], already_eligible: count, skipped[]?, message}.
+Example: {"id":"SP-17"}`),
+		mcp.WithString("id", mcp.Required(), mcp.Description("Sprint ID")),
+	), a.handleSprintStart)
 }
 
 func (a *Adapter) handleSprintCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -209,4 +217,47 @@ func (a *Adapter) handleSprintApprove(ctx context.Context, req mcp.CallToolReque
 		"approved":  count,
 		"message":   fmt.Sprintf("%d tasks approved in sprint %s", count, sprintID),
 	})
+}
+
+// handleSprintStart opens a sprint's dispatch gate. See SprintService.Start
+// and the torque_sprint_start description for the mental model: this is the
+// missing "begin the sprint" action for approval_mode=approve_sprint
+// (CW-20260517-0011 edge 5).
+func (a *Adapter) handleSprintStart(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	sprintID := reqStr(req, "id")
+
+	res, err := a.svc.Sprint.Start(sprintID)
+	if err != nil {
+		return errFromService(err)
+	}
+
+	promotedIDs := res.PromotedIDs
+	if promotedIDs == nil {
+		promotedIDs = []string{}
+	}
+
+	var message string
+	switch {
+	case res.Promoted > 0:
+		message = fmt.Sprintf("Sprint %s started: promoted %d task(s) to manual=false — the scheduler will now dispatch them in priority order as dependencies clear. %d task(s) were already dispatch-eligible.",
+			sprintID, res.Promoted, res.AlreadyEligible)
+	case res.AlreadyEligible > 0:
+		message = fmt.Sprintf("Sprint %s already started: all %d task(s) are dispatch-eligible (manual=false). No changes made.",
+			sprintID, res.AlreadyEligible)
+	default:
+		message = fmt.Sprintf("Sprint %s has no tasks to start — add tasks with sprint_id=%s, then call torque_sprint_start again. (Reminder: torque_task_create force-sets manual=true; this tool clears it for the whole cohort.)",
+			sprintID, sprintID)
+	}
+
+	data := map[string]any{
+		"sprint_id":        sprintID,
+		"promoted":         res.Promoted,
+		"promoted_ids":     promotedIDs,
+		"already_eligible": res.AlreadyEligible,
+		"message":          message,
+	}
+	if len(res.Skipped) > 0 {
+		data["skipped"] = res.Skipped
+	}
+	return okResult(data)
 }

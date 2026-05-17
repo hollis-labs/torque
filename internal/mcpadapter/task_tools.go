@@ -40,8 +40,8 @@ func parseManualFilter(v string) *bool {
 func (a *Adapter) registerTaskTools() {
 	a.addTool(mcp.NewTool("torque_task_create",
 		mcp.WithDescription(`Create a new task in Torque; returns the full TaskRecord with its assigned ID.
-Use for ad-hoc work items — prefer torque_task_create_from_template when a matching template exists, and torque_plan_create for multi-phase work. Safety override forces manual=true on every create (CW-20260417-0133), even when callers pass manual=false or omit the field; promote to manual=false via torque_task_update after review when you actually want scheduler dispatch.
-Response shape: data = {<TaskRecord fields>, Tags[]} — singleton, PascalCase keys.
+Use for ad-hoc work items — prefer torque_task_create_from_template when a matching template exists, and torque_plan_create for multi-phase work. Safety override forces manual=true on every create (CW-20260417-0133), even when callers pass manual=false or omit the field: the task will NOT dispatch until you promote it with torque_task_update {"id":...,"manual":false}.
+Response shape: data = {<TaskRecord fields>, Tags[], dispatch_notice} — singleton, PascalCase keys. dispatch_notice spells out the manual state and the exact promotion call.
 Example: {"title":"Fix auth bug","description":"Login returns 500","priority":"2","tags":"[\"backend\"]"}`),
 		mcp.WithString("title", mcp.Required(), mcp.Description("Task title")),
 		mcp.WithString("description", mcp.Required(), mcp.Description("Task description")),
@@ -219,6 +219,61 @@ func (a *Adapter) taskResult(task *sqlstore.TaskRecord) (*mcp.CallToolResult, er
 	return okResult(taskWithTags{TaskRecord: task, Tags: tags})
 }
 
+// createdTaskResult is the torque_task_create response shape. It is the
+// normal taskWithTags record plus a dispatch_notice block that makes the
+// manual-flag state — and how to clear it — discoverable inline.
+//
+// CW-20260517-0011 edge 8: torque_task_create force-sets manual=true (the
+// CW-20260417-0133 safety override). The papercut is that a freshly created
+// task silently never dispatches until someone remembers the separate
+// torque_task_update manual=false promotion. Surfacing the state and the
+// exact promotion call in the create response removes the "why isn't my
+// task running?" dead end.
+type createdTaskResult struct {
+	*taskWithTags
+	DispatchNotice dispatchNotice `json:"dispatch_notice"`
+}
+
+// dispatchNotice explains, in the create response, whether the new task is
+// dispatch-eligible and — when it is not — exactly how to make it so.
+type dispatchNotice struct {
+	// Manual is the persisted manual flag of the created task.
+	Manual bool `json:"manual"`
+	// Dispatchable is true only when the scheduler can pick the task up
+	// without further action (manual=false).
+	Dispatchable bool `json:"dispatchable"`
+	// Message is a human-readable explanation of the current state.
+	Message string `json:"message"`
+	// PromoteWith, when set, is the literal MCP call that flips the task to
+	// dispatch-eligible. Empty when the task is already dispatchable.
+	PromoteWith string `json:"promote_with,omitempty"`
+}
+
+// createdTaskResultFor builds the createdTaskResult envelope for a freshly
+// created task, loading its tags the same way taskResult does.
+func (a *Adapter) createdTaskResultFor(task *sqlstore.TaskRecord) (*mcp.CallToolResult, error) {
+	tags, err := a.svc.Task.ListTags(task.ID)
+	if err != nil {
+		return errFromService(err)
+	}
+	if tags == nil {
+		tags = []sqlstore.TagRecord{}
+	}
+	notice := dispatchNotice{Manual: task.Manual, Dispatchable: !task.Manual}
+	if task.Manual {
+		notice.Message = "This task was created with manual=true (the CW-20260417-0133 safety default — every torque_task_create starts manual). " +
+			"While manual, the scheduler will NEVER dispatch it; it stays in todo until you promote it. " +
+			"To make it dispatch-eligible, run the promote_with call below; after that the picker will schedule it once status=todo, dependencies are done, and an agent_profile is set."
+		notice.PromoteWith = fmt.Sprintf(`torque_task_update {"id":"%s","manual":false}`, task.ID)
+	} else {
+		notice.Message = "This task is manual=false and dispatch-eligible: the scheduler will pick it up once status=todo, dependencies are done, and (for agent tasks) an agent_profile is set."
+	}
+	return okResult(createdTaskResult{
+		taskWithTags:   &taskWithTags{TaskRecord: task, Tags: tags},
+		DispatchNotice: notice,
+	})
+}
+
 func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Safety override per CW-20260417-0133: force manual=true on every task
 	// create until portfolio callers stop shipping manual=false (explicitly or
@@ -279,7 +334,9 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest)
 	if err != nil {
 		return errFromService(err)
 	}
-	return a.taskResult(task)
+	// Edge 8 (CW-20260517-0011): return the create-specific envelope so the
+	// manual-flag state and the exact promotion call are discoverable inline.
+	return a.createdTaskResultFor(task)
 }
 
 func (a *Adapter) handleTaskGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

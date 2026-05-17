@@ -49,6 +49,12 @@ func (s *ProjectService) Create(input ProjectCreateInput) (*sqlstore.ProjectReco
 	if input.RepoPath == "" {
 		return nil, &ValidationError{Field: "repo_path", Message: "repo_path is required"}
 	}
+	// repo_path drift guard (CW-20260517-0011 edge 7): reject a project whose
+	// repo_path does not resolve to an existing directory at create time, so
+	// stale metadata can never be born. ~ is expanded before the stat.
+	if err := validateRepoPath(input.RepoPath); err != nil {
+		return nil, err
+	}
 
 	id, err := s.store.NextProjectID()
 	if err != nil {
@@ -116,8 +122,17 @@ func (s *ProjectService) Update(id string, update sqlstore.ProjectUpdate) error 
 			}
 		}
 	}
-	if update.RepoPath != nil && *update.RepoPath == "" {
-		return &ValidationError{Field: "repo_path", Message: "repo_path is required"}
+	if update.RepoPath != nil {
+		if *update.RepoPath == "" {
+			return &ValidationError{Field: "repo_path", Message: "repo_path is required"}
+		}
+		// repo_path drift guard (CW-20260517-0011 edge 7): an update that
+		// sets repo_path must point at an existing directory. This also
+		// gives operators a clear path to *fix* a stale project — the
+		// update fails loudly until repo_path names a real directory.
+		if err := validateRepoPath(*update.RepoPath); err != nil {
+			return err
+		}
 	}
 	return s.store.UpdateProject(id, update)
 }

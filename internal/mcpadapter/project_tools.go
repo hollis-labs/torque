@@ -12,11 +12,12 @@ func (a *Adapter) registerProjectTools() {
 	a.addTool(mcp.NewTool("torque_project_create",
 		mcp.WithDescription(`Create a project (feature-flagged: requires features.projects). Returns the ProjectRecord.
 Use to group long-lived work by repo/app; sprints scope short-cycle execution, epics scope multi-sprint initiatives.
+repo_path must resolve to an existing directory (~ is expanded) — a missing path returns error.code=arg_invalid, field=repo_path, so stale metadata can never be created.
 Response shape: data = {<ProjectRecord fields>} — singleton.
 Example: {"name":"Torque","repo_path":"/Users/me/Projects/torque"}`),
 		mcp.WithString("name", mcp.Required(), mcp.Description("Project name")),
 		mcp.WithString("description", mcp.Description("Project description")),
-		mcp.WithString("repo_path", mcp.Description("Repository path (absolute)")),
+		mcp.WithString("repo_path", mcp.Description("Repository path — absolute or ~-prefixed; must point at an existing directory")),
 	), a.handleProjectCreate)
 
 	a.addTool(mcp.NewTool("torque_project_list",

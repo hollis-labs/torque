@@ -85,7 +85,7 @@ func TestTaskCreateWithAllAssociations(t *testing.T) {
 	svc.Feature.Enable("epics")
 
 	sprint, _ := svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint"})
-	project, _ := svc.Project.Create(service.ProjectCreateInput{Name: "Project", RepoPath: "/tmp/project"})
+	project, _ := svc.Project.Create(service.ProjectCreateInput{Name: "Project", RepoPath: t.TempDir()})
 	epic, _ := svc.Epic.Create(service.EpicCreateInput{Name: "Epic"})
 
 	task, err := svc.Task.Create(service.TaskCreateInput{

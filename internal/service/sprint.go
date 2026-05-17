@@ -201,6 +201,75 @@ func (s *SprintService) ApproveAll(sprintID string) (int, error) {
 	return count, nil
 }
 
+// SprintStartResult reports the outcome of Start: which of the sprint's
+// parked (manual=true) tasks were promoted to dispatch-eligible, and which
+// were skipped (already manual=false, or a per-task update error).
+type SprintStartResult struct {
+	// Promoted is the count of tasks flipped manual=true → manual=false.
+	Promoted int
+	// PromotedIDs lists the task IDs that were promoted, for the caller's
+	// confirmation message.
+	PromotedIDs []string
+	// AlreadyEligible is the count of sprint tasks that were already
+	// manual=false (left untouched, not an error).
+	AlreadyEligible int
+	// Skipped lists task IDs whose promotion update failed, paired with the
+	// error text; promotion is best-effort per task (mirrors ApproveAll).
+	Skipped []string
+}
+
+// Start "opens the gate" for a sprint under approval_mode=approve_sprint.
+//
+// CW-20260517-0011 edge 5: with approve_sprint there was no obvious action
+// that begins dispatch. torque_sprint_approve only moves tasks already in
+// review → done; it does nothing for a fresh sprint whose tasks are parked
+// in todo with manual=true. There was no torque_sprint_start, so callers
+// had no way to satisfy the sprint-level gate.
+//
+// The mental model Start encodes: Torque has exactly one dispatch gate —
+// the per-task manual flag. The scheduler picks up a task only when
+// manual=false (see scheduler.Picker). A sprint's approval_mode is workflow
+// metadata, NOT a separate scheduler gate; "the sprint-level gate" is the
+// cohort of manual=true tasks. Starting the sprint = promoting every parked
+// task in it to manual=false in one call, so the picker can begin
+// dispatching the first eligible task (lowest priority, deps met).
+//
+// Start is idempotent: tasks already manual=false are counted as
+// AlreadyEligible and left alone. Per-task update failures are collected in
+// Skipped rather than aborting the whole operation.
+func (s *SprintService) Start(sprintID string) (*SprintStartResult, error) {
+	if err := s.feature.Require("sprints"); err != nil {
+		return nil, err
+	}
+
+	// Confirm the sprint exists (and surface a clean not-found otherwise).
+	if _, err := s.store.GetSprint(sprintID); err != nil {
+		return nil, err
+	}
+
+	tasks, err := s.store.ListTasks(sqlstore.TaskFilter{SprintID: sprintID})
+	if err != nil {
+		return nil, err
+	}
+
+	result := &SprintStartResult{}
+	manualFalse := false
+	for _, t := range tasks {
+		if !t.Manual {
+			result.AlreadyEligible++
+			continue
+		}
+		update := sqlstore.TaskUpdate{Manual: &manualFalse}
+		if err := s.task.Update(t.ID, TaskUpdateInput{TaskUpdate: update}); err != nil {
+			result.Skipped = append(result.Skipped, t.ID+": "+err.Error())
+			continue
+		}
+		result.Promoted++
+		result.PromotedIDs = append(result.PromotedIDs, t.ID)
+	}
+	return result, nil
+}
+
 // ApproveTask transitions a specific task in a sprint from "review" to "done".
 // Validates the task belongs to the specified sprint.
 func (s *SprintService) ApproveTask(sprintID, taskID string) error {
