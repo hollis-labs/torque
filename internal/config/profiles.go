@@ -103,26 +103,6 @@ type AgentProfile struct {
 	// posture. The two systems do not share state.
 	PermissionMode string `yaml:"permission_mode,omitempty"`
 
-	// LaunchProfile optionally opts this agent profile into a shared
-	// go-agent-launch launch profile (CW-20260515-0021). Empty (the
-	// default) keeps the pure agent-profile behavior — Boot builds the
-	// LaunchPlan inline from the profile fields. When set, Boot resolves
-	// the launch profile into a base LaunchPlan and overlays Torque's
-	// runtime-critical fields on top (see runtime/agent/launchprofile.go
-	// and buildLaunchPlanFromProfile for the precedence rules).
-	//
-	// Value forms:
-	//
-	//   - "<path>"            — a single-launch YAML file, or a catalog
-	//     directory / global.yaml carrying exactly one launch entry.
-	//   - "<path>#<launchID>" — a catalog directory / global.yaml; the
-	//     named launch entry is resolved.
-	//
-	// Resolution is standalone: a local file path is sufficient and no
-	// Tether daemon or Tether catalog is required. See
-	// docs/launch-profiles.md.
-	LaunchProfile string `yaml:"launch_profile,omitempty"`
-
 	// API-specific fields
 	Temperature  float64  `yaml:"temperature,omitempty"`
 	MaxTokens    int      `yaml:"max_tokens,omitempty"`

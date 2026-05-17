@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -188,25 +187,6 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	// env amendments, and the project-dir argv flow into the existing
 	// StartOptions; everything downstream (kickoff, teardown, one-shot
 	// turn wait) is unchanged.
-	// Optional launch profile (CW-20260515-0021). When the agent profile
-	// or Options opts into a shared go-agent-launch launch profile, resolve
-	// it into a base LaunchPlan; buildLaunchPlan overlays Torque's
-	// runtime-critical fields on top. When nothing is referenced
-	// (the default), launchProfileSrc stays nil and buildLaunchPlan runs
-	// the pure-inline path — byte-identical to the pre-Stage-3 behavior.
-	launchProfileSrc, err := resolveLaunchProfile(resolveLaunchProfileInput{
-		ProfileRef:    profile.LaunchProfile,
-		OptionsRef:    opts.LaunchProfile,
-		InlinePayload: opts.LaunchProfileInline,
-	})
-	if err != nil {
-		shutdownLoopbackHandle(loopback)
-		// errors.Join keeps BOTH sentinels matchable: ErrBootFailed (the
-		// Boot-failed contract) and ErrLaunchProfile (the more specific
-		// cause carried by err). A plain "%w: ...: %v" would drop the
-		// ErrLaunchProfile chain.
-		return nil, errors.Join(ErrBootFailed, fmt.Errorf("resolve launch profile: %w", err))
-	}
 	plan, err := buildLaunchPlan(buildLaunchPlanInput{
 		Profile:       profile,
 		AgentProfile:  opts.AgentProfile,
@@ -221,23 +201,12 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		SystemPrompt:  systemPrompt,
 		KickoffMD:     kickoffMD,
 		LoopbackURL:   loopbackURL,
-		LaunchProfile: launchProfileSrc,
 	})
 	if err != nil {
 		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: build launch plan: %v", ErrBootFailed, err)
 	}
-	// Thread catalog provenance into Compile when the plan came from a
-	// launch-profile catalog path (empty for the inline / no-profile
-	// paths, leaving Compile's zero-value default in place).
-	var compileOpts []launcher.CompileOption
-	if launchProfileSrc != nil && launchProfileSrc.SourceCatalog != "" {
-		compileOpts = append(compileOpts, launcher.WithSourceCatalog(
-			launchProfileSrc.SourceCatalog,
-			launchProfileSrc.SourceCatalogVersion,
-		))
-	}
-	compiled, err := launcher.Compile(ctx, plan, compileOpts...)
+	compiled, err := launcher.Compile(ctx, plan)
 	if err != nil {
 		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: compile launch: %v", ErrBootFailed, err)
