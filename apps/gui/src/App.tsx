@@ -59,7 +59,7 @@ function NavItem({
 
 function AppShell() {
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-zinc-950 text-zinc-100">
+    <div className="flex h-full w-full overflow-hidden bg-zinc-950 text-zinc-100">
       {/* Nav rail */}
       <nav className="flex w-14 flex-col items-center gap-2 border-r border-zinc-800 bg-zinc-950 py-4">
         {/* Logo */}
