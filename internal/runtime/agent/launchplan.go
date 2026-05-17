@@ -10,10 +10,8 @@ import (
 )
 
 // buildLaunchPlanInput bundles every Torque-side value the LaunchPlan
-// constructor needs. Extracted into a struct (rather than a long
-// parameter list) so Stage 3's optional launch-profile path — which
-// will populate BootProfile.CatalogPath instead of the inline body —
-// can reuse the same constructor with a different BootProfile source.
+// constructor needs, gathered into a struct rather than a long
+// parameter list.
 type buildLaunchPlanInput struct {
 	// Profile is the resolved torque agent profile (provider, args,
 	// model, env policy).
@@ -53,13 +51,6 @@ type buildLaunchPlanInput struct {
 	// LoopbackURL is the task-scoped MCP loopback URL (empty when the
 	// loopback is disabled — the test path).
 	LoopbackURL string
-
-	// LaunchProfile, when non-nil, is the resolved optional launch
-	// profile (CW-20260515-0021). It supplies the BASE LaunchPlan;
-	// buildLaunchPlan overlays every Torque runtime-critical field on
-	// top of it. Nil is the default — the pure-inline path below runs
-	// and the output is byte-identical to the pre-Stage-3 behavior.
-	LaunchProfile *launchProfileSource
 }
 
 // buildLaunchPlan assembles an agentlaunch.LaunchPlan from Torque
@@ -79,8 +70,7 @@ type buildLaunchPlanInput struct {
 //     per-turn argv via composeBuildArgs, unchanged.
 //
 //   - BootProfile is supplied inline (BootPrompt = composed system
-//     prompt, BootContent = kickoff markdown). Stage 3 swaps this for
-//     a CatalogPath-resolved profile; the rest of the plan is stable.
+//     prompt, BootContent = kickoff markdown).
 //
 //   - Workspace.Mode is WorkspacePersistent — Torque owns the
 //     workspace dir tree (Stage 1's WorkspaceCreate); the launcher
@@ -99,22 +89,6 @@ type buildLaunchPlanInput struct {
 //     Tether's shared_launch.go), keeping daemon-scoped runtime values
 //     out of the persisted-at-rest plan.
 func buildLaunchPlan(in buildLaunchPlanInput) (agentlaunch.LaunchPlan, error) {
-	// Launch-profile path (CW-20260515-0021): when an optional launch
-	// profile was resolved, start from its BASE plan and overlay Torque's
-	// runtime-critical fields. When no launch profile is referenced
-	// (in.LaunchProfile == nil) the pure-inline path below runs unchanged
-	// — the output is byte-identical to the pre-Stage-3 behavior.
-	if in.LaunchProfile != nil {
-		return buildLaunchPlanFromProfile(in)
-	}
-	return buildInlineLaunchPlan(in)
-}
-
-// buildInlineLaunchPlan is the default, pure-inline LaunchPlan
-// constructor. It is exactly the Stage 2 buildLaunchPlan body, extracted
-// verbatim so the no-launch-profile path stays byte-identical when
-// Stage 3's launch-profile branch is skipped.
-func buildInlineLaunchPlan(in buildLaunchPlanInput) (agentlaunch.LaunchPlan, error) {
 	rtKind, err := mapRuntimeKind(in.RuntimeKind)
 	if err != nil {
 		return agentlaunch.LaunchPlan{}, err
@@ -182,176 +156,6 @@ func buildInlineLaunchPlan(in buildLaunchPlanInput) (agentlaunch.LaunchPlan, err
 			},
 		},
 	}, nil
-}
-
-// buildLaunchPlanFromProfile builds the LaunchPlan for the optional
-// launch-profile path (CW-20260515-0021). It starts from the launch
-// profile's BASE plan and overlays every Torque runtime-critical field.
-//
-// # Precedence
-//
-// The launch profile contributes BASE values only; Torque always wins on
-// the fields it owns. Concretely:
-//
-//   - From the launch profile (base): Provider.ID (when Torque's profile
-//     does not name one), Runtime (when Torque's resolved kind is empty),
-//     Workspace.Mode raw token, Mode, MCP.Allowlist, Metadata labels +
-//     annotations.
-//
-//   - ALWAYS overlaid by Torque (a launch profile can NOT override
-//     these — doing so would break loopback auth, workspace ownership,
-//     or boot-prompt planting):
-//
-//     * BootProfile — Torque's composed system prompt + kickoff markdown
-//       (inline, BootModePlanted). The launch profile's boot_profile
-//       reference is intentionally dropped: Torque owns boot-prompt
-//       composition (role + agent-file + project context).
-//     * Workspace.Workdir / WorkspaceDir / TempPrefix — Stage 1's
-//       WorkspaceLayout dirs. Workspace ownership stays with Torque.
-//     * MCP.LoopbackURL — the task-scoped MCP loopback URL Torque
-//       constructed + authorized.
-//     * Project.ID / Project.Root — Torque's project + workdir.
-//     * Agent.ID / Agent.Name / Agent.RoleFile — Torque's agent profile
-//       identity + agent-file provenance.
-//     * Provider.ModelOverride — Torque's profile model, when set.
-//     * Provider.Flags — forced empty (see buildInlineLaunchPlan godoc;
-//       Torque rebuilds argv per turn).
-//     * Injection.NativeFiles — Torque's agent-file projection.
-//
-//   - The resolved runtime kind: Torque's resolveRuntimeKind chain
-//     (Options override → profile.RuntimeKind → per-provider matrix)
-//     wins. The launch profile's runtime only shows through when Torque
-//     produced no explicit kind AND the per-provider default would also
-//     be empty — which never happens today (the matrix always returns a
-//     concrete kind). In practice Torque's runtime kind is authoritative.
-//
-// Secrets are never read from the launch profile: Injection.BootDirOverlay
-// and Provider.Env from the base plan are deliberately discarded here, so
-// a persisted-at-rest launch profile cannot smuggle secret-bearing env or
-// file content into the boot dir.
-func buildLaunchPlanFromProfile(in buildLaunchPlanInput) (agentlaunch.LaunchPlan, error) {
-	rtKind, err := mapRuntimeKind(in.RuntimeKind)
-	if err != nil {
-		return agentlaunch.LaunchPlan{}, err
-	}
-
-	// Start from the launch profile's base plan (value copy — the source
-	// plan is not mutated).
-	plan := in.LaunchProfile.BasePlan
-
-	// --- Provider ----------------------------------------------------
-	// Torque's profile provider wins when it names one; otherwise the
-	// launch profile's provider id stands. ModelOverride + Flags are
-	// always Torque-owned.
-	if mapped := mapProviderID(in.Profile.Provider); mapped != "" {
-		plan.Provider.ID = mapped
-	}
-	plan.Provider.ModelOverride = in.Profile.Model
-	plan.Provider.Flags = nil // see buildInlineLaunchPlan godoc.
-
-	// --- Runtime -----------------------------------------------------
-	// Torque's resolved runtime kind is authoritative. The launch
-	// profile's runtime only survives if Torque produced an empty kind
-	// (mapRuntimeKind maps RuntimeKindSubprocess|"" → RuntimeSubprocess,
-	// so rtKind is always concrete here — this branch is defensive).
-	if rtKind != "" {
-		plan.Runtime = rtKind
-	}
-	if !plan.Runtime.Valid() {
-		plan.Runtime = agentlaunch.RuntimeSubprocess
-	}
-
-	// --- Project -----------------------------------------------------
-	// Torque owns the project identity + workdir. LaunchPlan.Validate
-	// rejects an empty Project.ID; mirror the inline path's "unscoped"
-	// fallback.
-	projectID := in.ProjectID
-	if projectID == "" {
-		projectID = "unscoped"
-	}
-	plan.Project.ID = projectID
-	plan.Project.Root = in.Workdir
-
-	// --- Agent -------------------------------------------------------
-	// Torque owns the agent identity + agent-file provenance. The launch
-	// profile's labels (if any) are preserved, with Torque's role label
-	// layered on top.
-	plan.Agent.ID = in.AgentProfile
-	plan.Agent.Name = in.AgentProfile
-	plan.Agent.RoleFile = in.AgentFilePath
-	if in.Role != "" {
-		if plan.Agent.Labels == nil {
-			plan.Agent.Labels = map[string]string{}
-		} else {
-			// Copy so the source plan's map is not mutated.
-			cp := make(map[string]string, len(plan.Agent.Labels)+1)
-			for k, v := range plan.Agent.Labels {
-				cp[k] = v
-			}
-			plan.Agent.Labels = cp
-		}
-		plan.Agent.Labels["torque.role"] = in.Role
-	}
-
-	// --- Workspace ---------------------------------------------------
-	// Torque owns the workspace dir tree (Stage 1's WorkspaceCreate).
-	// The launch profile's workspace MODE is honored as a base value,
-	// but the dirs themselves are always Torque's. Mode must be valid
-	// (Validate rejects an unknown/empty mode); fall back to the
-	// inline path's WorkspacePersistent when the profile left it unset.
-	if !plan.Workspace.Mode.Valid() {
-		plan.Workspace.Mode = agentlaunch.WorkspacePersistent
-	}
-	plan.Workspace.Workdir = in.Workdir
-	plan.Workspace.WorkspaceDir = in.WorkspaceDir
-	plan.Workspace.TempPrefix = in.BuildDirRoot
-
-	// --- BootProfile -------------------------------------------------
-	// Torque always owns boot-prompt composition. The launch profile's
-	// boot_profile reference is dropped — Torque's composed system
-	// prompt + kickoff markdown replace it inline.
-	plan.BootProfile = agentlaunch.BootProfileRef{
-		Inline: &agentlaunch.BootProfileInline{
-			BootPrompt:  in.SystemPrompt,
-			BootContent: in.KickoffMD,
-			BootMode:    agentlaunch.BootModePlanted,
-		},
-	}
-
-	// --- MCP ---------------------------------------------------------
-	// The task-scoped loopback URL is always Torque's. The launch
-	// profile's MCP allowlist is preserved as a base value.
-	plan.MCP.LoopbackURL = in.LoopbackURL
-
-	// --- Injection ---------------------------------------------------
-	// Torque owns the native-file projection. The base plan's
-	// Injection (BootDirOverlay / NativeFiles) is discarded so a
-	// persisted-at-rest launch profile cannot smuggle secret-bearing
-	// content into the boot dir.
-	plan.Injection = agentlaunch.InjectionSpec{
-		NativeFiles: nativeFilesForLaunch(in.AgentFile),
-	}
-
-	// --- Metadata ----------------------------------------------------
-	// Preserve the launch profile's labels/annotations and layer
-	// Torque's provenance annotations on top.
-	if plan.Metadata.Annotations == nil {
-		plan.Metadata.Annotations = map[string]string{}
-	} else {
-		cp := make(map[string]string, len(plan.Metadata.Annotations)+3)
-		for k, v := range plan.Metadata.Annotations {
-			cp[k] = v
-		}
-		plan.Metadata.Annotations = cp
-	}
-	plan.Metadata.Annotations["torque.agent_profile"] = in.AgentProfile
-	plan.Metadata.Annotations["torque.role"] = in.Role
-	plan.Metadata.Annotations["torque.launch_profile"] = "true"
-
-	if err := plan.Validate(); err != nil {
-		return agentlaunch.LaunchPlan{}, fmt.Errorf("%w: overlaid plan invalid: %v", ErrLaunchProfile, err)
-	}
-	return plan, nil
 }
 
 // mapProviderID normalizes a Torque provider name to the provider id
@@ -439,9 +243,9 @@ func mergePreparedEnv(base []string, amendments map[string]string) []string {
 // placeholder: Torque's agent-file persona already flows into the
 // planted CLAUDE.md/AGENTS.md via the composed SystemPrompt (BootPrompt
 // → PlantContext.SystemPrompt), so there is nothing to inject as a
-// separate native file. The hook exists so Stage 3 (catalog launch
-// profiles) and any future per-agent skill/extra-context-file feature
-// can populate it without re-threading the plumbing.
+// separate native file. The hook exists so a future per-agent
+// skill/extra-context-file feature can populate it without
+// re-threading the plumbing.
 //
 // When this starts returning entries, secrets must NOT appear in
 // NativeFile.Content — InjectionSpec is persisted at rest.

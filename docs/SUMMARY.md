@@ -10,7 +10,6 @@ Use these first:
 - [surfaces.md](surfaces.md)
 - [architecture/sqlite-concurrency-pattern.md](architecture/sqlite-concurrency-pattern.md)
 - [hitl-workflows.md](hitl-workflows.md)
-- [launch-profiles.md](launch-profiles.md)
 - [agent-execution-environment.md](agent-execution-environment.md)
 - [architecture/sqlite-test-infra.md](architecture/sqlite-test-infra.md)
 
