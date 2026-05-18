@@ -54,6 +54,22 @@ const (
 	// planner task. Lower than the reviewer's budget because V0 only
 	// reads the plan and emits a single response — no iterative work.
 	defaultBudget = 0.30
+
+	// OnDonePolicy is the canonical `on_done` hook for a planner task.
+	// It MUST be "close": the planner is kind=internal, so no reviewer
+	// end-agent is enqueued when it finishes. With on_done=review the
+	// planner would transition `doing -> review` and stall there forever
+	// — and the orchestrator's polling protocol waits for `done`, so the
+	// whole plan stalls (CW-20260518-0038). "close" makes the planner go
+	// `doing -> done`, which is exactly what the orchestrator waits on.
+	//
+	// This constant is the single source of truth for BOTH planner-task
+	// creation paths: BuildTask (the canonical Go builder, used by the
+	// plan-start trigger) and the hand-rolled torque_task_create payload
+	// documented in the orchestrator template's Step 2. The orchestrator
+	// package's template regression test asserts the template embeds
+	// `on_done="` + OnDonePolicy + `"` so the two paths cannot drift.
+	OnDonePolicy = "close"
 )
 
 //go:embed templates/default-planner.md
@@ -169,7 +185,7 @@ func BuildTask(opts BuildOptions) (*sqlstore.TaskRecord, error) {
 		AgentProfile:         Profile,
 		SystemPrompt:         template,
 		MaxRetries:           0,
-		OnDone:               "close",
+		OnDone:               OnDonePolicy,
 		OnFail:               "block",
 		OnReview:             "pause",
 		OnDoneMerge:          "none",
