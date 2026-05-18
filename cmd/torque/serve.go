@@ -27,6 +27,7 @@ import (
 	"github.com/hollis-labs/torque/internal/runtime/executor"
 	"github.com/hollis-labs/torque/internal/runtime/queue"
 	"github.com/hollis-labs/torque/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/runtime/steering"
 	"github.com/hollis-labs/torque/internal/runtime/waitpoll"
 	"github.com/hollis-labs/torque/internal/runtime/writeq"
 	"github.com/hollis-labs/torque/internal/service"
@@ -163,11 +164,19 @@ func runServe(ctx context.Context, ln net.Listener) error {
 			cfg.Scheduler.ProjectAllowlist)
 	}
 
+	// Opt-in inbox-poll registry (CW-20260518-0042, messaging epic A):
+	// shared state between the steering bridge (skips inject-at-turn for
+	// recipients that have opted in) and the torque_inbox_poll MCP tool
+	// (records the opt-in). Created here so both the agent substrate's
+	// loopback adapters and the steering bridge below receive the same
+	// instance.
+	pollRegistry := steering.NewPollRegistry(steering.DefaultPollTTL)
+
 	// Unified agent substrate (CW-20260508-0001 — replaces cliexec + sessionmgr).
 	// Constructs Dependencies + Manager, runs the orphan sweep, and is the
 	// single root every Boot caller (planstart, scheduler dispatch, end-agent,
 	// HTTP/MCP) reaches into.
-	agentDeps, agentDepsClose, err := bootstrap.AgentDeps(store, profiles, svc, tools, sched.EventBus(), stateWriter)
+	agentDeps, agentDepsClose, err := bootstrap.AgentDeps(store, profiles, svc, tools, sched.EventBus(), stateWriter, pollRegistry)
 	if err != nil {
 		return fmt.Errorf("bootstrap agent deps: %w", err)
 	}
@@ -229,7 +238,7 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// agent.Manager.SendTurn) — the inject-at-turn-boundary default locked
 	// in torque-messaging-design.md. This is what carries a user's steering
 	// message into a running orchestrator.
-	steeringClose, err := bootstrap.SteeringBridge(runCtx, envBroker, agentDeps.Sessions)
+	steeringClose, err := bootstrap.SteeringBridge(runCtx, envBroker, agentDeps.Sessions, pollRegistry)
 	if err != nil {
 		return fmt.Errorf("bootstrap steering bridge: %w", err)
 	}

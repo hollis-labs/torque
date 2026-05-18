@@ -10,6 +10,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/hollis-labs/torque/internal/broker"
+	"github.com/hollis-labs/torque/internal/runtime/steering"
 )
 
 // registerBrokerTools surfaces the typed envelope broker (CW-20260503-0013)
@@ -61,6 +62,30 @@ Example: {"to":"msg://agent/test/alice","limit":"20"}`),
 		mcp.WithString("thread_id", mcp.Description("Filter by thread")),
 		mcp.WithString("limit", mcp.Description("Max envelopes (integer; 0 = unlimited)")),
 	), a.handleBrokerInbox)
+
+	a.addTool(mcp.NewTool("torque_inbox_poll",
+		mcp.WithDescription(`Opt into mid-session inbox polling AND drain your inbox in one call (CW-20260518-0042).
+By default Torque delivers envelopes addressed to a live agent by injecting them as the agent's next turn (inject-at-turn-boundary). An agent that is actively communicating can instead PULL its own inbox between tool calls: each torque_inbox_poll call records a polling opt-in for the 'to' URN, and while that opt-in is fresh the steering bridge stops injecting turns for that recipient — so a steering message is handled exactly once, by your poll.
+The opt-in is time-bounded: it lapses after poll_ttl_seconds (returned in the response) unless you poll again. Keep polling on a cadence shorter than the TTL to stay opted in; stop polling (or pass release=true) to revert to inject-at-turn. 'to' MUST be your own address and match how senders address you (e.g. msg://agent/<authority>/<your-task-id>).
+Response shape: data = {to, polling, poll_ttl_seconds, count, envelopes:[<Envelope>...], drain_hint?}.
+Example: {"to":"msg://agent/local/CW-20260518-0042","limit":"20"}`),
+		mcp.WithString("to", mcp.Required(), mcp.Description("Your own recipient URN (msg://kind/authority/id[/subid])")),
+		mcp.WithString("kind", mcp.Description("Filter drained envelopes by kind (comma-separated for multi)")),
+		mcp.WithString("channel", mcp.Description("Filter drained envelopes by channel (comma-separated for multi)")),
+		mcp.WithString("thread_id", mcp.Description("Filter drained envelopes by thread")),
+		mcp.WithString("limit", mcp.Description("Max envelopes to drain (integer; 0 = unlimited)")),
+		mcp.WithBoolean("release", mcp.Description("If true, drop the polling opt-in (revert to inject-at-turn) instead of refreshing it; a final drain is still returned")),
+	), a.handleInboxPoll)
+}
+
+// requirePollRegistry returns the opt-in inbox-poll registry or a domain
+// error when none is wired — mirroring requireBroker's contract for MCP
+// hosts that do not run the steering bridge in-process.
+func (a *Adapter) requirePollRegistry() (*steering.PollRegistry, error) {
+	if a.pollRegistry == nil {
+		return nil, errors.New("inbox polling not available on this MCP host (no steering bridge wired)")
+	}
+	return a.pollRegistry, nil
 }
 
 func (a *Adapter) requireBroker() (*broker.Broker, error) {
@@ -185,6 +210,70 @@ func (a *Adapter) handleBrokerInbox(ctx context.Context, req mcp.CallToolRequest
 		return brokerErrResult(err)
 	}
 	return okResult(map[string]interface{}{"envelopes": envs})
+}
+
+// handleInboxPoll records a polling opt-in for the caller's address and,
+// when a broker is wired, drains its inbox in the same call. The opt-in
+// is what makes mid-session polling exclusive with the steering bridge's
+// inject-at-turn default: while the opt-in is fresh, the bridge skips
+// turn injection for this recipient (see internal/runtime/steering).
+func (a *Adapter) handleInboxPoll(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	reg, err := a.requirePollRegistry()
+	if err != nil {
+		return errResult(ErrCodeDomain, err.Error(), "")
+	}
+	to, err := gomsg.ParseURN(reqStr(req, "to"))
+	if err != nil {
+		return errResult(ErrCodeArgInvalid, "to: "+err.Error(), "to")
+	}
+	// Canonical URN — the exact string the steering bridge keys on as
+	// env.To.URN(), so opt-in and bridge-side check agree.
+	urn := to.URN()
+
+	release := reqBool(req, "release")
+	if release {
+		reg.Release(urn)
+	} else {
+		reg.MarkPolling(urn)
+	}
+
+	resp := map[string]interface{}{
+		"to":               urn,
+		"polling":          !release,
+		"poll_ttl_seconds": int(reg.TTL().Seconds()),
+	}
+
+	// Draining is a convenience bundled onto the opt-in. An MCP host that
+	// has the registry but no broker wired still records the opt-in; the
+	// agent then drains through torque_broker_inbox separately.
+	if a.broker == nil {
+		resp["count"] = 0
+		resp["envelopes"] = []gomsg.Envelope{}
+		resp["drain_hint"] = "envelope broker not wired on this MCP host — drain via torque_broker_inbox"
+		return okResult(resp)
+	}
+
+	filter := gomsg.Filter{
+		ThreadID: reqStr(req, "thread_id"),
+		Limit:    reqInt(req, "limit"),
+	}
+	if raw := reqStr(req, "kind"); raw != "" {
+		for _, k := range splitCSV(raw) {
+			filter.Kind = append(filter.Kind, gomsg.Kind(k))
+		}
+	}
+	if raw := reqStr(req, "channel"); raw != "" {
+		for _, c := range splitCSV(raw) {
+			filter.Channel = append(filter.Channel, gomsg.Channel(c))
+		}
+	}
+	envs, err := a.broker.Inbox(ctx, to, filter)
+	if err != nil {
+		return brokerErrResult(err)
+	}
+	resp["count"] = len(envs)
+	resp["envelopes"] = envs
+	return okResult(resp)
 }
 
 // brokerErrResult maps broker / gomsg error sentinels to dual-surface MCP

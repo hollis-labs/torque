@@ -12,6 +12,7 @@ import (
 	"github.com/hollis-labs/torque/internal/broker"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
 	"github.com/hollis-labs/torque/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/runtime/steering"
 	"github.com/hollis-labs/torque/internal/service"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -36,6 +37,11 @@ type Adapter struct {
 	// broker wires the typed envelope dispatcher (CW-20260503-0013, S1.3).
 	// Nil disables torque_broker_* tools the same way.
 	broker *broker.Broker
+	// pollRegistry wires the opt-in inbox-poll registry (CW-20260518-0042)
+	// shared with the steering bridge. Nil disables the opt-in side of
+	// torque_inbox_poll — the tool then reports polling as unavailable on
+	// this MCP host, mirroring the nil-broker contract.
+	pollRegistry *steering.PollRegistry
 	// Logger receives go-mcp-sanitize warn telemetry when the middleware
 	// auto-cleans malformed agent tool-call XML in free-text params (see
 	// CW-20260509-0033, mirrors vanta-conduit's Pattern A install). Nil
@@ -80,6 +86,16 @@ func (a *Adapter) WithSessions(mgr *agent.Manager) *Adapter {
 // tools surface real data. Same pre-flight contract as WithSessionMgr.
 func (a *Adapter) WithBroker(b *broker.Broker) *Adapter {
 	a.broker = b
+	return a
+}
+
+// WithPollRegistry attaches the opt-in inbox-poll registry (CW-20260518-0042)
+// so torque_inbox_poll can record an agent's polling opt-in and the
+// steering bridge can observe it. Same pre-flight contract as WithBroker
+// (must be set before any MCP requests are served). Optional — leaving it
+// nil makes torque_inbox_poll report polling unavailable on this host.
+func (a *Adapter) WithPollRegistry(reg *steering.PollRegistry) *Adapter {
+	a.pollRegistry = reg
 	return a
 }
 

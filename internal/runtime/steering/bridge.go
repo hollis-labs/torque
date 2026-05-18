@@ -12,9 +12,16 @@
 // the default delivery mode is INJECT-AT-TURN-BOUNDARY — an inbound
 // envelope addressed to a live session is delivered as that agent's next
 // turn via SendTurn. An interrupt that pre-empts the current turn is
-// deferred; opt-in mid-run inbox polling is a separate task
-// (CW-20260518-0042). This package implements only the inject-at-turn
-// default.
+// deferred.
+//
+// Opt-in inbox polling (CW-20260518-0042) layers onto this: an agent
+// that is actively communicating may opt into pulling its own inbox
+// between tool calls instead of having turns injected. The opt-in is
+// recorded in a PollRegistry (see polling.go); the bridge consults it
+// and SKIPS turn injection for any recipient that has opted in
+// (OutcomePolling), leaving the envelope durable for the agent's own
+// poll to drain. The default — for every recipient that has NOT opted
+// in — stays inject-at-turn.
 //
 // Layering: steering sits ON TOP of internal/broker (envelope transport)
 // and BESIDE internal/runtime/reactor (the kind-driven action router).
@@ -93,6 +100,13 @@ const (
 	// an error. Result.Err carries it; the envelope is left unconsumed so
 	// a retry path (operator resend, future catch-up) can pick it up.
 	OutcomeFailed Outcome = "failed"
+
+	// OutcomePolling: the recipient has opted into mid-session inbox
+	// polling (CW-20260518-0042), so the bridge does NOT inject a turn —
+	// the agent pulls its own inbox between tool calls. The envelope is
+	// left durable and unconsumed for that poll to drain. No error: this
+	// is the opt-in path working as designed, not a delivery miss.
+	OutcomePolling Outcome = "polling"
 )
 
 // DeliveryResult describes a single Deliver call. Side effects (the turn
@@ -114,12 +128,23 @@ type DeliveryResult struct {
 type Bridge struct {
 	gw       SessionGateway
 	consumer EnvelopeConsumer
+	polling  *PollRegistry
 }
 
 // New returns a Bridge wired to gw. consumer may be nil — the bridge then
 // skips consumed-marking and logs that the lifecycle write was skipped.
 func New(gw SessionGateway, consumer EnvelopeConsumer) *Bridge {
 	return &Bridge{gw: gw, consumer: consumer}
+}
+
+// WithPolling attaches the opt-in poll registry (CW-20260518-0042). When
+// set, Deliver skips turn injection for any recipient that has opted into
+// inbox polling (OutcomePolling). reg may be nil — the bridge then treats
+// every recipient as inject-at-turn (the default), since all PollRegistry
+// methods are nil-safe. Returns the receiver for chaining.
+func (b *Bridge) WithPolling(reg *PollRegistry) *Bridge {
+	b.polling = reg
+	return b
 }
 
 // steerableKinds is the closed set of envelope kinds the bridge injects
@@ -167,6 +192,20 @@ func Steerable(env gomsg.Envelope) bool {
 func (b *Bridge) Deliver(ctx context.Context, env gomsg.Envelope) DeliveryResult {
 	res := DeliveryResult{Outcome: OutcomeNotAddressed, EnvelopeID: env.ID}
 	if !Steerable(env) {
+		return res
+	}
+
+	// Opt-in inbox polling (CW-20260518-0042): a recipient that is
+	// actively polling its own inbox between tool calls has opted out of
+	// inject-at-turn. Skip injection and leave the envelope durable +
+	// unconsumed so the agent's next torque_inbox_poll drains it. This
+	// check is keyed by the recipient URN — the same string the poll tool
+	// records via PollRegistry.MarkPolling — and is nil-safe, so a bridge
+	// with no registry wired treats every recipient as inject-at-turn.
+	if b.polling.IsPolling(env.To.URN()) {
+		log.Printf("[steering] recipient %s opted into inbox polling — env=%s left for durable pull",
+			env.To.URN(), env.ID)
+		res.Outcome = OutcomePolling
 		return res
 	}
 
