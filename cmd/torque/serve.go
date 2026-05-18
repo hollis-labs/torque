@@ -198,7 +198,19 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// Durable messaging substrate (CW-20260503-0012, S1.2). Same SQLite DB
 	// the rest of the runtime uses; migration 022_messages.sql created the
 	// tables. Broker layer (S1.3) sits on top of this Store.
-	msgStore := clockmsg.NewStore(db)
+	sqlMsgStore := clockmsg.NewStore(db)
+
+	// Authority-routing decorator (CW-20260518-0046, ph-4 Federation):
+	// dispatches each Store call by the URN `authority` segment — local
+	// authority -> the SQLite Store, foreign authority -> a registered
+	// remote Store. A standalone install registers no foreign routes
+	// (catch-all mode), so the Router is a transparent passthrough and
+	// messaging behaves exactly as today. The foreign-route registry is
+	// populated by the later federation tasks.
+	msgStore, err := clockmsg.NewRouter(clockmsg.RouterConfig{Local: sqlMsgStore})
+	if err != nil {
+		return fmt.Errorf("messaging router: %w", err)
+	}
 	handler.SetMessaging(msgStore)
 
 	// Typed envelope broker (CW-20260503-0013, S1.3) — Torque-specific
