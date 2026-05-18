@@ -1,12 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Save } from 'lucide-react'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
-import { DetailHeader } from '@/components/domain/detail-header'
-import { EmptyState } from '@/components/domain/empty-state'
+import { Skeleton, Button, Input, Textarea, DetailHeader, EmptyState } from '@hollis-labs/sysop-ui'
 import { ScopeFormField } from '@/components/domain/scope-form-field'
 import { useApi } from '@/hooks/use-api'
 import { notifyError, notifySuccess } from '@/lib/toast'
@@ -95,14 +90,14 @@ export default function SprintEditPage() {
   if (error || !sprint) {
     return (
       <div className="p-6">
-        <EmptyState variant="error" description={error ?? 'Sprint not found.'} />
+        <EmptyState variant="error" title="Something went wrong" description={error ?? 'Sprint not found.'} />
       </div>
     )
   }
 
   return (
     <div className="flex h-full flex-col">
-      <DetailHeader title={`Edit ${sprint.name}`} backTo={`/sprints/${sprint.id}`} backLabel="Sprint" id={sprint.id} status={sprint.status} />
+      <DetailHeader title={`Edit ${sprint.name}`} backHref={`/sprints/${sprint.id}`} backLabel="Sprint" id={sprint.id} status={sprint.status} />
       <div className="flex-1 overflow-auto p-6">
         <div className="grid gap-4 md:grid-cols-2">
           <ScopeFormField label="Name">

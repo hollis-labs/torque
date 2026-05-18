@@ -3,8 +3,7 @@ import { Check, CircleAlert, Pencil, Plus, Trash2, X } from 'lucide-react'
 import { useApi } from '@/hooks/use-api'
 import { notifyError } from '@/lib/toast'
 import { cn } from '@/lib/utils'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { Button, Input } from '@hollis-labs/sysop-ui'
 import type { Subtodo } from '@/lib/types'
 
 interface SubtodosPanelProps {

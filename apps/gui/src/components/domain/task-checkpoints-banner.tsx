@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { AlertCircle } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Button } from '@hollis-labs/sysop-ui'
 import { CheckpointRespondDialog } from './checkpoint-respond-dialog'
 import { CheckpointCancelDialog } from './checkpoint-cancel-dialog'
 import { useApi } from '@/hooks/use-api'

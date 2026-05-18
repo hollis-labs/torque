@@ -8,9 +8,8 @@ import {
   CommandItem,
   CommandList,
   CommandSeparator,
-} from '@/components/ui/command'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { ScrollArea } from '@/components/ui/scroll-area'
+} from '@hollis-labs/sysop-ui'
+import { Popover, PopoverContent, PopoverTrigger, ScrollArea } from '@hollis-labs/sysop-ui'
 
 export interface FilterEntityComboboxItem {
   id: string

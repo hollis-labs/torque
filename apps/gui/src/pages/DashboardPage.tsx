@@ -1,11 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Card, CardContent } from '@/components/ui/card'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { PageHeader } from '@/components/domain/page-header'
-import { SummaryCards } from '@/components/domain/summary-cards'
-import { EmptyState } from '@/components/domain/empty-state'
+import { Card, CardContent, Skeleton, Tabs, TabsContent, TabsList, TabsTrigger, PageHeader, SummaryCards, EmptyState } from '@hollis-labs/sysop-ui'
 import { RestartFrontendButton } from '@/components/domain/restart-frontend-button'
 import {
   ActivityHeatmap,
@@ -234,6 +229,7 @@ export default function DashboardPage() {
         </PageHeader>
         <EmptyState
           variant="error"
+          title="Something went wrong"
           description={error}
           action={{ label: 'Retry', onClick: () => window.location.reload() }}
         />

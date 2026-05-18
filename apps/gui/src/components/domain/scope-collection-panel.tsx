@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { ProgressBar } from '@/components/domain/progress-bar'
+import { ProgressBar } from '@hollis-labs/sysop-ui'
 import { StatusBadge } from '@/components/domain/status-badge'
 
 interface ScopeCollectionItem {

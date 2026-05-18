@@ -1,8 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Skeleton, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, EmptyState } from '@hollis-labs/sysop-ui'
 import { RunCard } from '@/components/domain/run-card'
-import { EmptyState } from '@/components/domain/empty-state'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
 import type { Run } from '@/lib/types'
@@ -108,7 +106,7 @@ export default function RunsPage() {
             ))}
           </div>
         ) : error ? (
-          <EmptyState variant="error" description={error} action={{ label: 'Retry', onClick: () => load() }} />
+          <EmptyState variant="error" title="Something went wrong" description={error} action={{ label: 'Retry', onClick: () => load() }} />
         ) : filtered.length === 0 ? (
           <EmptyState
             variant="no-results"

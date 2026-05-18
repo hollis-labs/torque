@@ -1,11 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useSearchParams, useLocation, useNavigate } from 'react-router-dom'
-import { Skeleton } from '@/components/ui/skeleton'
-import { PageHeader } from '@/components/domain/page-header'
-import { SummaryCards } from '@/components/domain/summary-cards'
+import { Skeleton, PageHeader, SummaryCards, EmptyState, Button } from '@hollis-labs/sysop-ui'
 import { FilterBar } from '@/components/domain/filter-bar'
 import { TaskTable } from '@/components/domain/task-table'
-import { EmptyState } from '@/components/domain/empty-state'
 import { ProjectCreateDialog } from '@/components/domain/project-create-dialog'
 import { EpicCreateDialog } from '@/components/domain/epic-create-dialog'
 import { SprintCreateDialog } from '@/components/domain/sprint-create-dialog'
@@ -13,7 +10,6 @@ import { TagCreateDialog } from '@/components/domain/tag-create-dialog'
 import { RestartFrontendButton } from '@/components/domain/restart-frontend-button'
 import { SchedulerToggleButton } from '@/components/domain/scheduler-toggle-button'
 import { ScopeManagerDialog } from '@/components/domain/scope-manager-dialog'
-import { Button } from '@/components/ui/button'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
 import { notifyError } from '@/lib/toast'
@@ -604,6 +600,7 @@ export default function BoardPage() {
         ) : error ? (
           <EmptyState
             variant="error"
+            title="Something went wrong"
             description={error}
             action={{ label: 'Retry', onClick: fetchTasks }}
           />

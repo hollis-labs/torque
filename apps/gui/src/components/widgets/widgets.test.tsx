@@ -140,7 +140,7 @@ describe('TokenThroughput', () => {
 describe('RunStatusDistribution', () => {
   it('renders empty state with no runs', () => {
     const html = renderToStaticMarkup(<RunStatusDistribution runs={[]} />)
-    expect(html).toContain('No runs recorded')
+    expect(html).toContain('No data recorded')
   })
 
   it('classifies statuses into buckets', () => {
@@ -190,7 +190,7 @@ describe('Pulse24h', () => {
       makeRun({ id: 2, started_at: new Date(Date.now() - 3 * 60 * 60_000).toISOString() }),
     ]
     const html = renderToStaticMarkup(<Pulse24h runs={runs} />)
-    expect(html).toContain('2 runs')
+    expect(html).toContain('2 ·')
   })
 })
 

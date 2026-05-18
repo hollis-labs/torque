@@ -78,7 +78,7 @@ function renderRow(opts: {
     connected: true,
   }
   const utils = render(
-    <ApiProvider baseUrl="/api/v1">
+    <ApiProvider>
       <ActiveRunsContext.Provider value={activeRuns}>
         <MemoryRouter initialEntries={[`/tasks?view=list`]}>
           <Routes>

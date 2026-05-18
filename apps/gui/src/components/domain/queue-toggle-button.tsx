@@ -1,4 +1,4 @@
-import { Button } from '@/components/ui/button'
+import { Button } from '@hollis-labs/sysop-ui'
 import type { Task, TaskStatus } from '@/lib/types'
 
 const QUEUE_ELIGIBLE_STATUSES: TaskStatus[] = ['backlog', 'todo', 'queued', 'blocked', 'paused']

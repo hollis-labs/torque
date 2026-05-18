@@ -1,7 +1,20 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { EmptyState } from '@hollis-labs/sysop-ui'
 import { TaskRow } from './task-row'
-import { EmptyState } from './empty-state'
 import type { Task, TaskStatus } from '@/lib/types'
+
+const EMPTY_COPY = {
+  'no-tasks': {
+    variant: 'empty' as const,
+    title: 'No tasks yet',
+    description: 'Create your first task to get started.',
+  },
+  'no-results': {
+    variant: 'no-results' as const,
+    title: 'No results found',
+    description: 'Try adjusting your filters or search query.',
+  },
+}
 
 type SortKey = 'status' | 'priority' | 'title' | 'updated_at'
 type SortDir = 'asc' | 'desc'
@@ -118,7 +131,8 @@ export function TaskTable({
   }, [hasMore, sorted.length, scrollRootRef])
 
   if (tasks.length === 0) {
-    return <EmptyState variant={emptyVariant} />
+    const copy = EMPTY_COPY[emptyVariant]
+    return <EmptyState variant={copy.variant} title={copy.title} description={copy.description} />
   }
 
   const allSelected = visible.length > 0 && visible.every((t) => selected.has(t.id))

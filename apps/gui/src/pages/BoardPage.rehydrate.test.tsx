@@ -107,7 +107,7 @@ function renderAppShell(
   const root = createRoot(container)
   act(() => {
     root.render(
-      <ApiProvider baseUrl="/api/v1">
+      <ApiProvider>
         <MemoryRouter initialEntries={[initialEntry]}>
           <Routes>
             <Route path="/operations" element={<BoardPage />} />
@@ -244,7 +244,7 @@ describe('BoardPage filter rehydration on remount', () => {
     let observedSearch = ''
     act(() => {
       root.render(
-        <ApiProvider baseUrl="/api/v1">
+        <ApiProvider>
           <MemoryRouter initialEntries={['/operations']}>
             <BoardPage />
             <LocationTap onChange={(s) => (observedSearch = s)} />

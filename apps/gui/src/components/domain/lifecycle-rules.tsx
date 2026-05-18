@@ -1,14 +1,12 @@
 import { useMemo } from 'react'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
+import { Input, Textarea, CollapsibleSection } from '@hollis-labs/sysop-ui'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import { DetailSection } from './detail-section'
+} from '@hollis-labs/sysop-ui'
 import type { Task, OnDone, OnFail, OnReview, OnDoneMerge } from '@/lib/types'
 
 const ON_DONE_OPTIONS: OnDone[] = ['close', 'review', 'notify']
@@ -32,7 +30,7 @@ export function LifecycleRules({ task, editing, draft, onDraftChange }: Lifecycl
   )
 
   return (
-    <DetailSection label="Lifecycle Rules" accent="amber" summary={summary}>
+    <CollapsibleSection label="Lifecycle Rules" accent="amber" summary={summary}>
       <div className="flex flex-col gap-4">
         <div className="grid grid-cols-2 gap-x-4 gap-y-3">
           <EnumField
@@ -110,7 +108,7 @@ export function LifecycleRules({ task, editing, draft, onDraftChange }: Lifecycl
           )}
         </FieldRow>
       </div>
-    </DetailSection>
+    </CollapsibleSection>
   )
 }
 

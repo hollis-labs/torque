@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { StatusBadge } from './status-badge'
-import { TooltipProvider } from '@/components/ui/tooltip'
+import { TooltipProvider } from '@hollis-labs/sysop-ui'
 
 describe('StatusBadge', () => {
   it('renders without tooltip when none is provided', () => {

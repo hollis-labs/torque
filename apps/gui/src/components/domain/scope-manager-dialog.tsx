@@ -7,12 +7,8 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
+} from '@hollis-labs/sysop-ui'
+import { Tabs, TabsContent, TabsList, TabsTrigger, Button, Input, Label, Textarea } from '@hollis-labs/sysop-ui'
 import { useApi } from '@/hooks/use-api'
 import { isHtmlApiFallbackError } from '@/lib/api'
 import { notifyError, notifySuccess } from '@/lib/toast'

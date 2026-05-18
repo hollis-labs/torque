@@ -1,7 +1,6 @@
-import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { LayoutList, Play, BarChart3, Settings, Cog, FileText, Inbox, FolderTree, Sparkles, FolderKanban } from 'lucide-react'
-import { TooltipProvider } from '@/components/ui/tooltip'
-import { Toaster } from '@/components/ui/sonner'
+import { NavRail, TooltipProvider, Toaster, type NavRailItem } from '@hollis-labs/sysop-ui'
 import { ApiProvider } from '@/hooks/use-api'
 import { ActiveRunsProvider } from '@/hooks/use-active-runs'
 import BoardPage from '@/pages/BoardPage'
@@ -26,86 +25,41 @@ import PlansPage from '@/pages/PlansPage'
 import PlanDetailPage from '@/pages/PlanDetailPage'
 import ModelsPage from '@/pages/ModelsPage'
 import CollectionsPage from '@/pages/CollectionsPage'
-import { cn } from '@/lib/utils'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined
-
-function NavItem({
-  to,
-  label,
-  children,
-}: {
-  to: string
-  label: string
-  children: React.ReactNode
-}) {
-  return (
-    <NavLink
-      to={to}
-      end={to === '/operations'}
-      title={label}
-      className={({ isActive }) =>
-        cn(
-          'flex h-9 w-9 items-center justify-center rounded-md transition-colors',
-          'text-zinc-500 hover:bg-zinc-900 hover:text-zinc-100',
-          isActive && 'bg-zinc-900 text-zinc-100'
-        )
-      }
-    >
-      {children}
-    </NavLink>
-  )
-}
+const NAV_DESTINATIONS = [
+  { key: 'operations', to: '/operations', label: 'Operations', icon: <LayoutList className="h-4 w-4" /> },
+  { key: 'collections', to: '/collections', label: 'Collections', icon: <FolderKanban className="h-4 w-4" /> },
+  { key: 'plans', to: '/plans', label: 'Plans', icon: <FolderTree className="h-4 w-4" /> },
+  { key: 'templates', to: '/templates', label: 'Templates', icon: <FileText className="h-4 w-4" /> },
+  { key: 'checkpoints', to: '/checkpoints', label: 'Checkpoints', icon: <Inbox className="h-4 w-4" /> },
+  { key: 'runs', to: '/runs', label: 'Runs', icon: <Play className="h-4 w-4" /> },
+  { key: 'dashboard', to: '/dashboard', label: 'Dashboard', icon: <BarChart3 className="h-4 w-4" /> },
+  { key: 'models', to: '/models', label: 'Models', icon: <Sparkles className="h-4 w-4" /> },
+  { key: 'settings', to: '/settings', label: 'Settings', icon: <Settings className="h-4 w-4" />, footer: true },
+] as const
 
 function AppShell() {
+  const navigate = useNavigate()
+  const location = useLocation()
+
+  const navItems: NavRailItem[] = NAV_DESTINATIONS.map((dest) => ({
+    key: dest.key,
+    label: dest.label,
+    icon: dest.icon,
+    footer: 'footer' in dest ? dest.footer : undefined,
+    active:
+      dest.to === '/operations'
+        ? location.pathname === '/operations' || location.pathname === '/'
+        : location.pathname.startsWith(dest.to),
+    onSelect: () => navigate(dest.to),
+  }))
+
   return (
-    <div className="flex h-full w-full overflow-hidden bg-zinc-950 text-zinc-100">
-      {/* Nav rail */}
-      <nav className="flex w-14 flex-col items-center gap-2 border-r border-zinc-800 bg-zinc-950 py-4">
-        {/* Logo */}
-        <div
-          className="mb-2 flex h-9 w-9 items-center justify-center rounded-md border border-zinc-800 bg-zinc-900 text-zinc-300"
-          title="Torque"
-        >
-          <Cog className="h-5 w-5" />
-        </div>
-
-        <div className="h-px w-8 bg-zinc-800 mb-1" />
-
-        <NavItem to="/operations" label="Operations">
-          <LayoutList className="h-4 w-4" />
-        </NavItem>
-        <NavItem to="/collections" label="Collections">
-          <FolderKanban className="h-4 w-4" />
-        </NavItem>
-        <NavItem to="/plans" label="Plans">
-          <FolderTree className="h-4 w-4" />
-        </NavItem>
-        <NavItem to="/templates" label="Templates">
-          <FileText className="h-4 w-4" />
-        </NavItem>
-        <NavItem to="/checkpoints" label="Checkpoints">
-          <Inbox className="h-4 w-4" />
-        </NavItem>
-        <NavItem to="/runs" label="Runs">
-          <Play className="h-4 w-4" />
-        </NavItem>
-        <NavItem to="/dashboard" label="Dashboard">
-          <BarChart3 className="h-4 w-4" />
-        </NavItem>
-        <NavItem to="/models" label="Models">
-          <Sparkles className="h-4 w-4" />
-        </NavItem>
-
-        <div className="mt-auto" />
-
-        <NavItem to="/settings" label="Settings">
-          <Settings className="h-4 w-4" />
-        </NavItem>
-      </nav>
+    <div className="flex h-full w-full overflow-hidden bg-bg text-foreground">
+      <NavRail items={navItems} logo={<Cog className="h-5 w-5" />} logoLabel="Torque" />
 
       {/* Main content */}
-      <main className="flex-1 overflow-auto bg-zinc-950">
+      <main className="flex-1 overflow-auto bg-bg">
         <Routes>
           <Route path="/" element={<Navigate to="/operations" replace />} />
           <Route path="/operations" element={<BoardPage />} />
@@ -138,7 +92,7 @@ function AppShell() {
 
 export default function App() {
   return (
-    <ApiProvider baseUrl={API_BASE_URL}>
+    <ApiProvider>
       <ActiveRunsProvider>
         <TooltipProvider>
           <BrowserRouter>

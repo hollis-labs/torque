@@ -1,7 +1,6 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { StatusBadge } from './status-badge'
-import { PriorityBadge } from './priority-badge'
-import { CopyableId } from './copyable-id'
+import { PriorityBadge, CopyableId } from '@hollis-labs/sysop-ui'
 import { TaskActionsMenu } from './task-actions-menu'
 import { CollectionBadge } from './collection-badge'
 import { ActiveRunPulse } from './active-run-pulse'

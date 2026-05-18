@@ -1,17 +1,14 @@
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { Trash2, Plus } from 'lucide-react'
-import { Input } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
-import { Button } from '@/components/ui/button'
+import { Input, Switch, Button, CollapsibleSection } from '@hollis-labs/sysop-ui'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import { DetailSection } from './detail-section'
+} from '@hollis-labs/sysop-ui'
 import type { Task, Deliverable, DeliverableType } from '@/lib/types'
 
 const DELIVERABLE_TYPES: DeliverableType[] = [
@@ -52,7 +49,7 @@ export function DeliverablesAndDeps({
   }, [source.deliverables.length, source.depends_on.length])
 
   return (
-    <DetailSection label="Deliverables & Dependencies" accent="red" summary={summary}>
+    <CollapsibleSection label="Deliverables & Dependencies" accent="red" summary={summary}>
       <div className="flex flex-col gap-4">
         <FieldRow label="Depends On">
           {editing ? (
@@ -107,7 +104,7 @@ export function DeliverablesAndDeps({
           )}
         </FieldRow>
       </div>
-    </DetailSection>
+    </CollapsibleSection>
   )
 }
 

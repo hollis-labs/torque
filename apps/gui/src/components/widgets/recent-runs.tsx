@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { cn } from '@/lib/utils'
+import { RecentList } from '@hollis-labs/sysop-ui'
 import type { Run } from '@/lib/types'
 
 export interface RecentRunsProps {
@@ -48,6 +48,10 @@ function shortId(s: string): string {
   return s.length > 12 ? `${s.slice(0, 4)}…${s.slice(-4)}` : s
 }
 
+/**
+ * Recent-runs list — a thin wrapper over the kit's RecentList. Torque sorts
+ * newest-first and supplies the run-row renderer; the kit owns the shell.
+ */
 export function RecentRuns({
   runs,
   limit = 12,
@@ -55,81 +59,50 @@ export function RecentRuns({
   title = 'Recent runs',
   onSelect,
 }: RecentRunsProps) {
-  const items = useMemo(
+  const sorted = useMemo(
     () =>
-      runs
-        .slice()
-        .sort((a, b) => {
-          const ta = a.started_at ? new Date(a.started_at).getTime() : 0
-          const tb = b.started_at ? new Date(b.started_at).getTime() : 0
-          return tb - ta
-        })
-        .slice(0, limit),
-    [runs, limit]
+      runs.slice().sort((a, b) => {
+        const ta = a.started_at ? new Date(a.started_at).getTime() : 0
+        const tb = b.started_at ? new Date(b.started_at).getTime() : 0
+        return tb - ta
+      }),
+    [runs],
   )
 
   return (
-    <div className={cn('flex flex-col gap-2', className)} aria-label={title}>
-      <div className="flex items-center justify-between">
-        <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-muted-foreground">
-          {title}
-        </span>
-        <span className="font-mono text-[10px] text-muted-foreground/80 tabular-nums">
-          {items.length} shown
-        </span>
-      </div>
-
-      {items.length === 0 ? (
-        <div className="flex items-center justify-center rounded-sm border border-border/60 bg-muted/20 px-3 py-6 font-mono text-[10px] text-muted-foreground">
-          No runs yet
-        </div>
-      ) : (
-        <ul className="flex flex-col divide-y divide-border/40">
-          {items.map((r) => {
-            const tokens = (r.prompt_tokens ?? 0) + (r.completion_tokens ?? 0)
-            const dotColor = classifyDotColor(r.status)
-            const row = (
-              <div className="flex items-center gap-2 px-1 py-1.5 text-[11px]">
-                <span
-                  className="inline-block h-2 w-2 shrink-0 rounded-sm"
-                  style={{ backgroundColor: dotColor }}
-                  aria-hidden
-                />
-                <span className="font-mono tabular-nums text-muted-foreground/80">
-                  #{r.id}
-                </span>
-                <span className="min-w-0 flex-1 truncate font-mono text-muted-foreground/90">
-                  {shortId(r.task_id)}
-                </span>
-                <span className="hidden font-mono text-[10px] text-muted-foreground/60 sm:inline">
-                  {r.agent_profile || r.executor || '—'}
-                </span>
-                <span className="font-mono tabular-nums text-muted-foreground">
-                  {formatTokens(tokens)}
-                </span>
-                <span className="w-10 text-right font-mono tabular-nums text-muted-foreground/70">
-                  {relativeTime(r.started_at)}
-                </span>
-              </div>
-            )
-            return (
-              <li key={r.id}>
-                {onSelect ? (
-                  <button
-                    type="button"
-                    onClick={() => onSelect(r)}
-                    className="w-full rounded-sm text-left transition-colors hover:bg-accent/40 focus:bg-accent/40 focus:outline-none"
-                  >
-                    {row}
-                  </button>
-                ) : (
-                  row
-                )}
-              </li>
-            )
-          })}
-        </ul>
-      )}
-    </div>
+    <RecentList<Run>
+      items={sorted}
+      getKey={(r) => r.id}
+      limit={limit}
+      title={title}
+      onSelect={onSelect}
+      emptyLabel="No runs yet"
+      className={className}
+      renderItem={(r) => {
+        const tokens = (r.prompt_tokens ?? 0) + (r.completion_tokens ?? 0)
+        return (
+          <div className="flex items-center gap-2 px-1 py-1.5 text-[11px]">
+            <span
+              className="inline-block h-2 w-2 shrink-0 rounded-sm"
+              style={{ backgroundColor: classifyDotColor(r.status) }}
+              aria-hidden
+            />
+            <span className="font-mono tabular-nums text-muted-foreground/80">#{r.id}</span>
+            <span className="min-w-0 flex-1 truncate font-mono text-muted-foreground/90">
+              {shortId(r.task_id)}
+            </span>
+            <span className="hidden font-mono text-[10px] text-muted-foreground/60 sm:inline">
+              {r.agent_profile || r.executor || '—'}
+            </span>
+            <span className="font-mono tabular-nums text-muted-foreground">
+              {formatTokens(tokens)}
+            </span>
+            <span className="w-10 text-right font-mono tabular-nums text-muted-foreground/70">
+              {relativeTime(r.started_at)}
+            </span>
+          </div>
+        )
+      }}
+    />
   )
 }

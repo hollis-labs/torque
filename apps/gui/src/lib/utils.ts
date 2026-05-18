@@ -1,30 +1,7 @@
-import { clsx, type ClassValue } from "clsx"
-import { twMerge } from "tailwind-merge"
-
 import type { TaskCostSource } from './types'
 
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs))
-}
-
-/**
- * Format a date string as relative time (e.g. "3m ago", "2h ago", "5d ago")
- */
-export function formatRelativeTime(dateStr: string): string {
-  const now = Date.now()
-  const then = new Date(dateStr).getTime()
-  const diffMs = now - then
-  const diffSec = Math.floor(diffMs / 1000)
-  const diffMin = Math.floor(diffSec / 60)
-  const diffHr = Math.floor(diffMin / 60)
-  const diffDay = Math.floor(diffHr / 24)
-
-  if (diffSec < 60) return `${diffSec}s ago`
-  if (diffMin < 60) return `${diffMin}m ago`
-  if (diffHr < 24) return `${diffHr}h ago`
-  if (diffDay < 30) return `${diffDay}d ago`
-  return new Date(dateStr).toLocaleDateString()
-}
+// `cn` + `formatRelativeTime` are generic — the kit owns them now.
+export { cn, formatRelativeTime } from '@hollis-labs/sysop-ui'
 
 /**
  * Format a cost value in dollars (e.g. "$0.0042"). Source-aware: when the

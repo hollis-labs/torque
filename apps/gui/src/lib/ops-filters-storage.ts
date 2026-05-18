@@ -1,6 +1,5 @@
+import { createScopedStorage } from '@hollis-labs/sysop-ui'
 import type { TaskStatus } from './types'
-
-const KEY = 'torque:ops:filters:v1'
 
 /**
  * Manual-flag filter tri-state.
@@ -37,49 +36,47 @@ export interface OpsFilters {
   includeInternal: boolean
 }
 
-export function saveOpsFilters(filters: OpsFilters): void {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(filters))
-  } catch {
-    // localStorage may be unavailable (private mode / quota) — fail quiet
+/** Validates / sanitizes a raw stored blob into a well-formed `OpsFilters`. */
+function parseOpsFilters(raw: unknown): OpsFilters | null {
+  if (!raw || typeof raw !== 'object') return null
+  const f = raw as Record<string, unknown>
+  const statuses = Array.isArray(f.statuses)
+    ? ((f.statuses as unknown[]).filter((s): s is TaskStatus => typeof s === 'string') as TaskStatus[])
+    : []
+  const priorities = Array.isArray(f.priorities)
+    ? (f.priorities as unknown[]).filter((p): p is number => typeof p === 'number')
+    : []
+  return {
+    statuses,
+    priorities,
+    projectId: typeof f.projectId === 'string' ? f.projectId : null,
+    sprintId: typeof f.sprintId === 'string' ? f.sprintId : null,
+    epicId: typeof f.epicId === 'string' ? f.epicId : null,
+    tagSlug: typeof f.tagSlug === 'string' ? f.tagSlug : null,
+    manual: parseManualFilter(f.manual),
+    search: typeof f.search === 'string' ? f.search : '',
+    // Default false on parse so legacy blobs (pre-CW-20260503-0011)
+    // surface internal=hidden, matching the backend default.
+    includeInternal: f.includeInternal === true,
   }
+}
+
+// localStorage-backed persistence — the kit's `createScopedStorage` owns the
+// fail-quiet web-storage mechanics; Torque keeps the `OpsFilters` shape +
+// its `parse` validator local.
+const storage = createScopedStorage<OpsFilters>('torque:ops:filters:v1', {
+  area: 'local',
+  parse: parseOpsFilters,
+})
+
+export function saveOpsFilters(filters: OpsFilters): void {
+  storage.write(filters)
 }
 
 export function readOpsFilters(): OpsFilters | null {
-  try {
-    const raw = localStorage.getItem(KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as unknown
-    if (!parsed || typeof parsed !== 'object') return null
-    const f = parsed as Record<string, unknown>
-    const statuses = Array.isArray(f.statuses)
-      ? (f.statuses as unknown[]).filter((s): s is TaskStatus => typeof s === 'string') as TaskStatus[]
-      : []
-    const priorities = Array.isArray(f.priorities)
-      ? (f.priorities as unknown[]).filter((p): p is number => typeof p === 'number')
-      : []
-    return {
-      statuses,
-      priorities,
-      projectId: typeof f.projectId === 'string' ? f.projectId : null,
-      sprintId: typeof f.sprintId === 'string' ? f.sprintId : null,
-      epicId: typeof f.epicId === 'string' ? f.epicId : null,
-      tagSlug: typeof f.tagSlug === 'string' ? f.tagSlug : null,
-      manual: parseManualFilter(f.manual),
-      search: typeof f.search === 'string' ? f.search : '',
-      // Default false on parse so legacy blobs (pre-CW-20260503-0011)
-      // surface internal=hidden, matching the backend default.
-      includeInternal: f.includeInternal === true,
-    }
-  } catch {
-    return null
-  }
+  return storage.read()
 }
 
 export function clearOpsFilters(): void {
-  try {
-    localStorage.removeItem(KEY)
-  } catch {
-    // ignore
-  }
+  storage.clear()
 }

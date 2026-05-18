@@ -2,12 +2,8 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
 import { useActiveRun } from '@/hooks/active-runs-context'
 import { Plus } from 'lucide-react'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Textarea } from '@/components/ui/textarea'
-import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger, listCursorNeighbors, Textarea, Button, Skeleton, EmptyState, CollapsibleSection } from '@hollis-labs/sysop-ui'
 import { CommentList } from '@/components/domain/comment-list'
-import { EmptyState } from '@/components/domain/empty-state'
 import { ArtifactCard } from '@/components/domain/artifact-card'
 import { ActivityTimeline } from '@/components/domain/activity-timeline'
 import { SubtodosPanel } from '@/components/domain/subtodos-panel'
@@ -19,7 +15,6 @@ import {
 import { TaskDetailHeader } from '@/components/domain/task-detail-header'
 import { ParentPlanLink } from '@/components/domain/parent-plan-link'
 import { BlockedReasonAlert } from '@/components/domain/blocked-reason-alert'
-import { DetailSection } from '@/components/domain/detail-section'
 import { TaskProperties } from '@/components/domain/task-properties'
 import { TaskFacets } from '@/components/domain/task-facets'
 import { ExecutionContext } from '@/components/domain/execution-context'
@@ -118,7 +113,8 @@ export default function TaskDetailPage() {
   const cursor = useMemo(() => readTaskListCursor(), [id])
   const cursorIds = cursor.ids
   const cursorFilter = cursor.filter
-  const cursorIndex = id ? cursorIds.indexOf(id) : -1
+  const cursorNeighbors = id ? listCursorNeighbors(cursorIds, id) : null
+  const cursorIndex = cursorNeighbors?.index ?? -1
 
   const navigateToAdjacent = useCallback(
     (delta: -1 | 1) => {
@@ -144,14 +140,14 @@ export default function TaskDetailPage() {
       if (!cursorFilter || cursorFilter.statuses.length === 0) return
       if (cursorFilter.statuses.includes(newStatus)) return
       if (cursorIndex < 0) return
-      const nextId = cursorIds[cursorIndex + 1]
+      const nextId = cursorNeighbors?.nextId
       if (nextId) {
         navigate(`/tasks/${nextId}`)
       } else {
         navigate('/operations')
       }
     },
-    [cursorFilter, cursorIds, cursorIndex, navigate],
+    [cursorFilter, cursorNeighbors, cursorIndex, navigate],
   )
 
   // Initialize/reset draft when editing starts, or clear when it ends
@@ -407,7 +403,7 @@ export default function TaskDetailPage() {
   if (error || !task) {
     return (
       <div className="p-4">
-        <EmptyState variant="error" description={error ?? 'Task not found.'} />
+        <EmptyState variant="error" title="Something went wrong" description={error ?? 'Task not found.'} />
       </div>
     )
   }
@@ -502,7 +498,7 @@ export default function TaskDetailPage() {
               pickersLoading={pickersLoading}
             />
 
-            <DetailSection label="Description" accent="zinc" collapsible={false}>
+            <CollapsibleSection label="Description" accent="neutral" collapsible={false}>
               <Textarea
                 value={displayDraft.description}
                 onChange={(e) => updateDraft('description', e.target.value)}
@@ -510,7 +506,7 @@ export default function TaskDetailPage() {
                 className="text-[13px]"
                 placeholder="Task description"
               />
-            </DetailSection>
+            </CollapsibleSection>
 
             <ExecutionContext
               task={task}
@@ -569,13 +565,13 @@ export default function TaskDetailPage() {
 
                 <TaskFacets task={task} />
 
-                <DetailSection label="Description" accent="zinc" collapsible={false}>
+                <CollapsibleSection label="Description" accent="neutral" collapsible={false}>
                   {task.description ? (
                     <p className="text-[13px] text-zinc-300 whitespace-pre-wrap">{task.description}</p>
                   ) : (
                     <span className="text-[13px] italic text-zinc-600">—</span>
                   )}
-                </DetailSection>
+                </CollapsibleSection>
 
                 <ExecutionContext
                   task={task}

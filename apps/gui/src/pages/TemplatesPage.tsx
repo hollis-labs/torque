@@ -1,11 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Skeleton } from '@/components/ui/skeleton'
-import { PageHeader } from '@/components/domain/page-header'
-import { SummaryCards } from '@/components/domain/summary-cards'
-import { CopyableId } from '@/components/domain/copyable-id'
-import { RowActions } from '@/components/domain/row-actions'
-import { EmptyState } from '@/components/domain/empty-state'
+import { Skeleton, PageHeader, SummaryCards, CopyableId, RowActionMenu, EmptyState } from '@hollis-labs/sysop-ui'
 import { useApi } from '@/hooks/use-api'
 import { notifyError, notifySuccess } from '@/lib/toast'
 import type { Template } from '@/lib/types'
@@ -137,12 +132,13 @@ export default function TemplatesPage() {
         ) : error ? (
           <EmptyState
             variant="error"
+            title="Something went wrong"
             description={error}
             action={{ label: 'Retry', onClick: fetchTemplates }}
           />
         ) : templates.length === 0 ? (
           <EmptyState
-            variant="no-tasks"
+            variant="empty"
             title="No templates yet"
             description="Create templates via MCP or the HTTP API to see them here."
           />
@@ -222,16 +218,16 @@ export default function TemplatesPage() {
                       )}
                     </td>
                     <td className="px-2 py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
-                      <RowActions
+                      <RowActionMenu
                         actions={[
                           {
                             label: 'Instantiate',
-                            onClick: () => navigate(`/templates/${tpl.id}?action=instantiate`),
+                            onSelect: () => navigate(`/templates/${tpl.id}?action=instantiate`),
                           },
                           {
                             label: 'Delete',
-                            onClick: () => handleDelete(tpl.id),
-                            variant: 'destructive',
+                            onSelect: () => handleDelete(tpl.id),
+                            destructive: true,
                           },
                         ]}
                       />

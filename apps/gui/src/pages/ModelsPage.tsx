@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Sparkles } from 'lucide-react'
 import { useApi } from '@/hooks/use-api'
 import { notifyError } from '@/lib/toast'
-import { PageHeader } from '@/components/domain/page-header'
+import { PageHeader } from '@hollis-labs/sysop-ui'
 import { FilterEntityCombobox } from '@/components/domain/filter-bar/filter-entity-combobox'
 import type { ModelEntry } from '@/lib/types'
 
