@@ -1,0 +1,36 @@
+# Profiles fixture for the live serve smoke (serve_live_smoke_test.go).
+#
+# This is a TEST FIXTURE — not an operator config. The smoke points
+# TORQUE_PROFILES_PATH at this file so it runs hermetically, independent of
+# whatever profiles the host's daemon has. The daemon's real profiles file is
+# <DataDir>/profiles.yaml (i.e. .torque/profiles.yaml); the repo carries no
+# top-level profiles.yaml.
+#
+# Must define exactly the two profiles serve_live_smoke_test.go's
+# `liveProviders` exercises: `default` (claude) and `codex-long` (codex).
+
+agent_profiles:
+  # claude-code over the long-lived NDJSON streaming-stdio runtime.
+  # --dangerously-skip-permissions → full bypass, so the headless smoke run
+  # never blocks on an approval prompt.
+  default:
+    executor: cli
+    provider: claude-code
+    command: claude
+    model: claude-sonnet-4-5
+    args: ["--dangerously-skip-permissions"]
+    output_format: stream-json
+    timeout_seconds: 600
+    max_agent_depth: 3
+    runtime_kind: streaming-stdio
+
+  # codex over the app-server JSON-RPC runtime.
+  codex-long:
+    executor: cli
+    provider: codex
+    command: codex
+    model: gpt-5.4
+    output_format: stream-json
+    timeout_seconds: 10800
+    runtime_kind: jsonrpc-stdio
+    env_strip_prefixes: ["ANTHROPIC_"]
