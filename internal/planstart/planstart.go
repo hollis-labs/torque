@@ -201,6 +201,114 @@ func Start(ctx context.Context, store Store, mgr SessionManager, planID string, 
 	}, nil
 }
 
+// Redispatch re-boots the Orchestrator session for a plan whose previous
+// orchestrator session has exited/paused — the recovery path after a HITL
+// checkpoint on a child task is responded (CW-20260518 orchestrator
+// checkpoint-redispatch fix).
+//
+// Difference from Start: Start is the operator-driven first launch and is
+// gated to plans in `todo`/`review`. Redispatch is the substrate-driven
+// continuation of a plan the orchestrator was already walking — the plan is
+// typically still `doing` (the orchestrator emitted a session-complete
+// marker and exited mid-walk while waiting on a checkpoint). Redispatch is
+// therefore NOT gated on plan status; it only refuses terminal plans
+// (done/blocked/abandoned), where re-running is meaningless.
+//
+// Idempotency: if metadata.plan.orchestrator_session_id names a session
+// that is still live, Redispatch returns ErrAlreadyOrchestrating wrapping a
+// Result (same shape as Start) — the live orchestrator will pick up the
+// checkpoint response via its own redispatch-preflight poll, so a second
+// boot would be a duplicate walker.
+//
+// On a fresh boot Redispatch re-stamps metadata.plan.orchestrator_session_id
+// and leaves the plan's status untouched (a plan mid-walk is already in the
+// right status; Start's todo→doing transition does not apply here).
+func Redispatch(ctx context.Context, store Store, mgr SessionManager, planID string, opts Options) (*Result, error) {
+	if mgr == nil {
+		return nil, ErrSessionMgrMissing
+	}
+	plan, err := store.GetTask(planID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrPlanNotFound, err)
+	}
+	if plan.Kind != "plan" {
+		return nil, fmt.Errorf("%w: kind=%q", ErrPlanNotFound, plan.Kind)
+	}
+	if terminalStatus(plan.Status) {
+		return nil, fmt.Errorf("%w: status=%q", ErrPlanWrongStatus, plan.Status)
+	}
+
+	// Idempotency: a still-live orchestrator session needs no redispatch —
+	// it will see the checkpoint response on its next preflight poll.
+	if existing, ok := readOrchestratorSessionID(plan); ok && existing != "" {
+		if rec, err := store.GetSession(existing); err == nil && !sessionTerminal(rec.State) {
+			return &Result{
+				SessionID: existing,
+				PlanID:    planID,
+				StartedAt: rec.CreatedAt,
+			}, fmt.Errorf("%w: session=%s", ErrAlreadyOrchestrating, existing)
+		}
+		// Stale/terminal/missing session row — proceed with a fresh boot.
+	}
+
+	workdir := opts.Workdir
+	if workdir == "" {
+		workdir = plan.WorkingDir
+	}
+	if workdir == "" {
+		return nil, ErrWorkdirRequired
+	}
+	if plan.WorkingDir != workdir {
+		if err := store.UpdateTask(planID, sqlstore.TaskUpdate{WorkingDir: &workdir}); err != nil {
+			return nil, fmt.Errorf("planstart: persist workdir on plan %s: %w", planID, err)
+		}
+	}
+
+	bootOpts := agent.Options{
+		Mode:         agent.ModeLongLived,
+		AgentProfile: orchestrator.Profile,
+		Role:         orchestrator.SessionMetaRoleValue,
+		Workdir:      workdir,
+		ProjectID:    nullStr(plan.ProjectID),
+		TaskID:       planID,
+		SystemPrompt: orchestrator.SystemPromptForPlan(planID, ""),
+		Env:          envSliceToMap(opts.Env),
+		SessionMeta: map[string]string{
+			orchestrator.SessionMetaRole:   orchestrator.SessionMetaRoleValue,
+			orchestrator.SessionMetaPlanID: planID,
+		},
+	}
+
+	sess, err := mgr.Boot(ctx, bootOpts)
+	if err != nil {
+		return nil, fmt.Errorf("planstart: redispatch orchestrator: %w", err)
+	}
+
+	if err := writeOrchestratorSessionID(store, plan, sess.ID); err != nil {
+		return nil, fmt.Errorf("planstart: stamp session_id on plan %s: %w", planID, err)
+	}
+
+	startedAt := sess.CreatedAt
+	if startedAt.IsZero() {
+		startedAt = time.Now().UTC()
+	}
+	return &Result{
+		SessionID: sess.ID,
+		PlanID:    planID,
+		StartedAt: startedAt,
+	}, nil
+}
+
+// terminalStatus reports whether a plan status is a lifecycle sink where a
+// redispatch is meaningless.
+func terminalStatus(s string) bool {
+	switch s {
+	case "done", "blocked", "abandoned", "cancelled":
+		return true
+	}
+	return false
+}
+
 // startableStatus is the closed set of plan statuses that permit a fresh
 // orchestrator boot. `doing` is excluded because that's the idempotency
 // case (handled separately upstream); `done` / `blocked` / `abandoned` are

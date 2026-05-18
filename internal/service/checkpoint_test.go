@@ -837,3 +837,125 @@ func TestCheckpointService_Respond_NilDispatcher_LegacyPath(t *testing.T) {
 	assert.Equal(t, "todo", task.Status,
 		"nil-dispatcher path matches pre-α.4: review → todo, scheduler does the fresh-boot")
 }
+
+// --- Orchestrator redispatch (CW-20260518) --------------------------------
+
+// fakeOrchestratorRedispatcher records every RedispatchForCheckpointResponse
+// call so tests can assert the checkpoint→orchestrator-redispatch wiring.
+type fakeOrchestratorRedispatcher struct {
+	mu    sync.Mutex
+	calls []service.OrchestratorRedispatch
+	err   error
+}
+
+func (f *fakeOrchestratorRedispatcher) RedispatchForCheckpointResponse(
+	_ context.Context, in service.OrchestratorRedispatch,
+) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, in)
+	return f.err
+}
+
+func (f *fakeOrchestratorRedispatcher) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
+}
+
+func (f *fakeOrchestratorRedispatcher) lastCall() service.OrchestratorRedispatch {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.calls) == 0 {
+		return service.OrchestratorRedispatch{}
+	}
+	return f.calls[len(f.calls)-1]
+}
+
+// When an OrchestratorRedispatcher is wired, Respond must invoke it for a
+// responded checkpoint even though the checkpoint's task is NOT parked on
+// the correlation. This is the live-bug scenario: a pr_review checkpoint
+// emitted on a CHILD task already in `review` is never re-parked by Emit
+// (ParkTaskOnCheckpoint only fires on status=doing), so the parked-gated
+// resume path is skipped — but the Orchestrator on the parent plan still
+// must be woken. The redispatch hook is therefore unconditional.
+func TestCheckpointService_Respond_InvokesOrchestratorRedispatch_WhenNotParked(t *testing.T) {
+	svc := setupService(t)
+	redispatcher := &fakeOrchestratorRedispatcher{}
+	svc.Checkpoint.WithOrchestratorRedispatcher(redispatcher)
+
+	// A child task in `review` — NOT parked on any checkpoint correlation.
+	rec, err := svc.Task.Create(service.TaskCreateInput{
+		Title:          "child task at review",
+		Description:    "reviewer end-agent emitted a pr_review checkpoint here",
+		Kind:           "agent",
+		CheckpointMode: "none",
+		Manual:         true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
+	require.NoError(t, svc.Task.Transition(rec.ID, "review"))
+
+	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID: rec.ID, Type: "pr_review", PayloadJSON: `{"pr":"#42"}`, EmitterSourceType: "system",
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+		CorrelationID:       out.CorrelationID,
+		ResponseJSON:        `{"decision":"approve"}`,
+		ResponderSourceType: "user",
+		ResponderSourceRef:  "chrispian",
+	}))
+
+	require.Equal(t, 1, redispatcher.callCount(),
+		"orchestrator redispatch must fire even when the checkpoint task is not parked")
+	got := redispatcher.lastCall()
+	assert.Equal(t, rec.ID, got.TaskID)
+	assert.Equal(t, out.CorrelationID, got.CorrelationID)
+	assert.JSONEq(t, `{"decision":"approve"}`, got.ResponseJSON)
+}
+
+// A redispatcher error must NOT fail the operator's Respond call — the
+// checkpoint is already responded and the response is already attached to
+// task metadata; a redispatch failure is logged, not surfaced.
+func TestCheckpointService_Respond_RedispatchError_DoesNotFailRespond(t *testing.T) {
+	svc := setupService(t)
+	redispatcher := &fakeOrchestratorRedispatcher{err: errors.New("boom")}
+	svc.Checkpoint.WithOrchestratorRedispatcher(redispatcher)
+
+	taskID := createBlockingDecisionTask(t, svc)
+	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID: taskID, Type: "collect_data", PayloadJSON: `{}`, EmitterSourceType: "system",
+	})
+	require.NoError(t, err)
+
+	// Respond succeeds despite the redispatcher returning an error.
+	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+		CorrelationID:       out.CorrelationID,
+		ResponseJSON:        `{"answer":"y"}`,
+		ResponderSourceType: "user",
+	}))
+	assert.Equal(t, 1, redispatcher.callCount())
+
+	cp, err := svc.Checkpoint.Get(out.CorrelationID)
+	require.NoError(t, err)
+	assert.Equal(t, "responded", cp.Status, "checkpoint is responded even when redispatch fails")
+}
+
+// With no OrchestratorRedispatcher wired (legacy/test composition roots),
+// Respond behaves exactly as before — no redispatch step, no error.
+func TestCheckpointService_Respond_NoRedispatcher_NoOp(t *testing.T) {
+	svc := setupService(t)
+	// Explicitly DO NOT wire an orchestrator redispatcher.
+	taskID := createBlockingDecisionTask(t, svc)
+	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID: taskID, Type: "collect_data", PayloadJSON: `{}`, EmitterSourceType: "system",
+	})
+	require.NoError(t, err)
+	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+		CorrelationID:       out.CorrelationID,
+		ResponseJSON:        `{"answer":"y"}`,
+		ResponderSourceType: "user",
+	}))
+}
