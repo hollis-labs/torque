@@ -27,6 +27,7 @@ import type {
   MessageEnvelope,
   SendMessageRequest,
   MessageFilter,
+  BrokerRequest,
 } from './types'
 
 export class ApiError extends Error {
@@ -1005,6 +1006,33 @@ export class TorqueApiClient {
    */
   async brokerSend(req: SendMessageRequest): Promise<MessageEnvelope> {
     return this.post<MessageEnvelope>('/broker/send', req)
+  }
+
+  /**
+   * Send a `request` envelope and block until the addressed peer answers
+   * (`POST /broker/request`). Resolves with the response envelope; rejects
+   * with a 504 if the peer stays silent past `timeout_seconds`.
+   */
+  async brokerRequest(req: BrokerRequest): Promise<MessageEnvelope> {
+    return this.post<MessageEnvelope>('/broker/request', req)
+  }
+
+  /**
+   * Drain the broker inbox for a recipient URN (`GET /broker/inbox`).
+   *
+   * Destructive like getInbox — the broker marks every returned envelope
+   * `delivered` for `to` and publishes an `envelope.delivered` SSE frame,
+   * so callers should MERGE results into accumulated state, not replace.
+   */
+  async brokerInbox(to: string, filter?: MessageFilter): Promise<MessageEnvelope[]> {
+    const res = await this.get<{ envelopes: MessageEnvelope[] | null }>('/broker/inbox', {
+      to,
+      kind: filter?.kind,
+      channel: filter?.channel,
+      thread_id: filter?.thread_id,
+      limit: filter?.limit,
+    })
+    return res.envelopes ?? []
   }
 
   /**

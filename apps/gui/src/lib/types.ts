@@ -654,3 +654,19 @@ export interface MessageFilter {
   thread_id?: string
   limit?: number
 }
+
+/**
+ * Body for POST /api/v1/broker/request — a synchronous request/response
+ * exchange. The broker fixes `kind` to `request`, so it is omitted here.
+ * `timeout_seconds` bounds the wait; the route 504s if the peer is silent.
+ */
+export interface BrokerRequest {
+  from: string
+  to: string
+  thread_id?: string
+  channel?: string
+  payload?: unknown
+  content_type?: string
+  metadata?: Record<string, string>
+  timeout_seconds?: number
+}
