@@ -223,6 +223,18 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	}
 	defer reactorClose()
 
+	// Steering bridge (CW-20260518-0041, messaging epic A): subscribes to
+	// the broker's envelope stream and injects envelopes addressed to a
+	// live agent/session into that session's loop as its next turn (via
+	// agent.Manager.SendTurn) — the inject-at-turn-boundary default locked
+	// in torque-messaging-design.md. This is what carries a user's steering
+	// message into a running orchestrator.
+	steeringClose, err := bootstrap.SteeringBridge(runCtx, envBroker, agentDeps.Sessions)
+	if err != nil {
+		return fmt.Errorf("bootstrap steering bridge: %w", err)
+	}
+	defer steeringClose()
+
 	// Scheduler cost backfill (Phase 2): wire the catalog + profiles so the
 	// cost-record block can fall back to models.dev pricing when the executor
 	// stream doesn't emit cost_usd. Gated on the scheduler.cost_backfill_enabled
