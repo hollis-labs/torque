@@ -22,7 +22,12 @@ func mcpCmd() *cobra.Command {
 		Use:   "mcp",
 		Short: "Start Torque MCP server (stdio transport)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			db, driver, err := appdb.Open(cmd.Context())
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("load config: %w", err)
+			}
+
+			db, driver, err := appdb.Open(cmd.Context(), cfg.DBPath)
 			if err != nil {
 				return fmt.Errorf("open database: %w", err)
 			}
@@ -43,15 +48,11 @@ func mcpCmd() *cobra.Command {
 			svc.Models = modelcatalog.New()
 			svc.Models.Start(cmd.Context())
 
-			// Profile config (TORQUE_PROFILES_PATH or ./profiles.yaml) —
-			// required by agent.Boot to resolve provider + adapter selection
+			// Profile config (TORQUE_PROFILES_PATH or <ConfigDir>/profiles.yaml)
+			// — required by agent.Boot to resolve provider + adapter selection
 			// when session-creating tools (torque_plan_start,
 			// torque_session_create) are invoked. Empty map is fine; per-
 			// task Validate will surface "profile not found" at dispatch.
-			cfg, err := config.Load()
-			if err != nil {
-				return fmt.Errorf("load config: %w", err)
-			}
 			profiles, err := loadProfilesOrEmpty(cfg)
 			if err != nil {
 				return err

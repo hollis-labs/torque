@@ -13,17 +13,14 @@ import (
 	"github.com/hollis-labs/torque/internal/config"
 )
 
-// loadProfilesOrEmpty resolves the canonical profiles.yaml location,
-// reconciles the legacy clockwork path onto it when applicable, and returns a
-// live source object. Missing files are not an error: mock-only/dev setups can
-// still boot and real task dispatch will fail later at Validate time.
+// loadProfilesOrEmpty resolves the canonical profiles.yaml location and
+// returns a live source object. Missing files are not an error: mock-only/dev
+// setups can still boot and real task dispatch will fail later at Validate
+// time.
 func loadProfilesOrEmpty(cfg *config.Config) (*config.ReloadableProfiles, error) {
 	path, err := resolveProfilesPath(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("resolve profiles path: %w", err)
-	}
-	if err := reconcileLegacyProfilesPath(path); err != nil {
-		return nil, fmt.Errorf("reconcile profiles path: %w", err)
 	}
 
 	profiles := config.ProfileMap{}
@@ -42,6 +39,9 @@ func loadProfilesOrEmpty(cfg *config.Config) (*config.ReloadableProfiles, error)
 	return config.NewReloadableProfiles(path, profiles), nil
 }
 
+// resolveProfilesPath returns the profiles.yaml path: an explicit
+// TORQUE_PROFILES_PATH wins, otherwise cfg.ProfilesPath
+// (<ConfigDir>/profiles.yaml, resolved via go-apppaths in config.Load).
 func resolveProfilesPath(cfg *config.Config) (string, error) {
 	if raw := os.Getenv("TORQUE_PROFILES_PATH"); raw != "" {
 		return filepath.Abs(raw)
@@ -49,116 +49,10 @@ func resolveProfilesPath(cfg *config.Config) (string, error) {
 	if cfg == nil {
 		return "", fmt.Errorf("config is nil")
 	}
-	return filepath.Abs(filepath.Join(cfg.DataDir, "profiles.yaml"))
-}
-
-func reconcileLegacyProfilesPath(canonicalPath string) error {
-	legacyPath, ok := legacyProfilesPathForCanonical(canonicalPath)
-	if !ok || legacyPath == canonicalPath {
-		return nil
+	if cfg.ProfilesPath == "" {
+		return "", fmt.Errorf("config has no profiles path")
 	}
-
-	canonInfo, canonErr := os.Lstat(canonicalPath)
-	legacyInfo, legacyErr := os.Lstat(legacyPath)
-
-	switch {
-	case errors.Is(canonErr, os.ErrNotExist) && errors.Is(legacyErr, os.ErrNotExist):
-		return nil
-	case errors.Is(canonErr, os.ErrNotExist):
-		if err := ensureParentDir(canonicalPath); err != nil {
-			return err
-		}
-		if err := copyFile(canonicalPath, legacyPath, fileModeOrDefault(legacyInfo)); err != nil {
-			return err
-		}
-		log.Printf("[profiles] migrated legacy clockwork profiles to canonical path %s", canonicalPath)
-	case canonErr == nil && legacyErr == nil:
-		canonBytes, err := os.ReadFile(canonicalPath)
-		if err != nil {
-			return err
-		}
-		legacyBytes, err := os.ReadFile(legacyPath)
-		if err != nil {
-			return err
-		}
-		if !bytes.Equal(canonBytes, legacyBytes) {
-			// Preserve whichever copy was edited most recently, but always land
-			// the winning contents at the canonical torque path.
-			if legacyInfo.ModTime().After(canonInfo.ModTime()) {
-				if err := os.WriteFile(canonicalPath, legacyBytes, fileModeOrDefault(canonInfo)); err != nil {
-					return err
-				}
-				log.Printf("[profiles] reconciled divergent legacy profiles by promoting newer %s to %s", legacyPath, canonicalPath)
-			} else {
-				log.Printf("[profiles] reconciled divergent legacy profiles by keeping newer canonical copy at %s", canonicalPath)
-			}
-		}
-	case canonErr == nil && errors.Is(legacyErr, os.ErrNotExist):
-		// Fall through to symlink creation below.
-	default:
-		if canonErr != nil {
-			return canonErr
-		}
-		if legacyErr != nil {
-			return legacyErr
-		}
-	}
-
-	return ensureCompatSymlink(legacyPath, canonicalPath)
-}
-
-func legacyProfilesPathForCanonical(canonicalPath string) (string, bool) {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return "", false
-	}
-	torqueRoot := filepath.Join(home, ".torque")
-	rel, err := filepath.Rel(torqueRoot, canonicalPath)
-	if err != nil || rel == ".." || len(rel) >= 3 && rel[:3] == ".."+string(filepath.Separator) {
-		return "", false
-	}
-	return filepath.Join(home, ".clockwork", rel), true
-}
-
-func ensureCompatSymlink(legacyPath, canonicalPath string) error {
-	if legacyPath == "" {
-		return nil
-	}
-	if err := ensureParentDir(legacyPath); err != nil {
-		return err
-	}
-	if target, err := os.Readlink(legacyPath); err == nil {
-		if filepath.Clean(target) == filepath.Clean(canonicalPath) {
-			return nil
-		}
-	}
-	if err := os.RemoveAll(legacyPath); err != nil {
-		return err
-	}
-	if err := os.Symlink(canonicalPath, legacyPath); err != nil {
-		return err
-	}
-	log.Printf("[profiles] compatibility path %s -> %s", legacyPath, canonicalPath)
-	return nil
-}
-
-func ensureParentDir(path string) error {
-	return os.MkdirAll(filepath.Dir(path), 0o755)
-}
-
-func copyFile(dst, src string, mode os.FileMode) error {
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(dst, data, mode)
-}
-
-func fileModeOrDefault(info os.FileInfo) os.FileMode {
-	if info == nil {
-		return 0o644
-	}
-	return info.Mode().Perm()
+	return filepath.Abs(cfg.ProfilesPath)
 }
 
 func watchProfiles(ctx context.Context, profiles *config.ReloadableProfiles, interval time.Duration) {

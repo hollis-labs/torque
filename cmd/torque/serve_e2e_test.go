@@ -16,6 +16,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// isolateTorquePaths points HOME and the four XDG roots at subdirectories of
+// dir so config.Load resolves Torque's go-apppaths layout — DataDir, StateDir
+// (where queue.db lives), CacheDir, ConfigDir — entirely inside the test's
+// temp dir, never the developer's real home.
+func isolateTorquePaths(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(dir, "xdg-data"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "xdg-state"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "xdg-cache"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "xdg-config"))
+}
+
 // TestServeE2EMockTaskCompletes spins up the full serve stack (HTTP server
 // plus scheduler plus SSE bridge) against an isolated temp DB, creates a task
 // bound to the mock executor, and polls the HTTP API until the task reaches a
@@ -25,7 +38,9 @@ func TestServeE2EMockTaskCompletes(t *testing.T) {
 	dir := t.TempDir()
 
 	// Isolate all persistent state inside the temp dir so the test does not
-	// touch the dev/prod torque.db or data dir.
+	// touch the dev/prod torque.db, data dir, or the go-apppaths XDG roots
+	// (queue.db now resolves under StateDir).
+	isolateTorquePaths(t, dir)
 	t.Setenv("TORQUE_DB_PATH", filepath.Join(dir, "test.db"))
 	t.Setenv("TORQUE_DATA_DIR", dir)
 	t.Setenv("TORQUE_POSTGRES_DSN", "") // force sqlite even if the dev env sets it
@@ -150,6 +165,7 @@ func TestServeE2EMockTaskCompletes(t *testing.T) {
 // left the shutdown goroutine blocked on <-ctx.Done() forever.
 func TestRunServeUnblocksOnListenerClose(t *testing.T) {
 	dir := t.TempDir()
+	isolateTorquePaths(t, dir)
 	t.Setenv("TORQUE_DB_PATH", filepath.Join(dir, "test.db"))
 	t.Setenv("TORQUE_DATA_DIR", dir)
 	t.Setenv("TORQUE_POSTGRES_DSN", "")

@@ -12,33 +12,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestResolveProfilesPathDefaultsToTorqueDataDir(t *testing.T) {
-	cfg := &config.Config{DataDir: filepath.Join(t.TempDir(), "dogfood")}
+func TestResolveProfilesPathUsesConfigProfilesPath(t *testing.T) {
+	want := filepath.Join(t.TempDir(), "torque", "profiles.yaml")
+	cfg := &config.Config{ProfilesPath: want}
 	t.Setenv("TORQUE_PROFILES_PATH", "")
 
 	path, err := resolveProfilesPath(cfg)
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(cfg.DataDir, "profiles.yaml"), path)
+	assert.Equal(t, want, path)
 }
 
-func TestReconcileLegacyProfilesPathPromotesCanonicalAndLinksLegacy(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+func TestResolveProfilesPathEnvOverrideWins(t *testing.T) {
+	override := filepath.Join(t.TempDir(), "explicit-profiles.yaml")
+	cfg := &config.Config{ProfilesPath: filepath.Join(t.TempDir(), "ignored.yaml")}
+	t.Setenv("TORQUE_PROFILES_PATH", override)
 
-	canonical := filepath.Join(home, ".torque", "dogfood", "profiles.yaml")
-	legacy := filepath.Join(home, ".clockwork", "dogfood", "profiles.yaml")
-	require.NoError(t, os.MkdirAll(filepath.Dir(legacy), 0o755))
-	require.NoError(t, os.WriteFile(legacy, []byte("agent_profiles:\n  default:\n    provider: codex\n"), 0o644))
-
-	require.NoError(t, reconcileLegacyProfilesPath(canonical))
-
-	got, err := os.ReadFile(canonical)
+	path, err := resolveProfilesPath(cfg)
 	require.NoError(t, err)
-	assert.Contains(t, string(got), "provider: codex")
-
-	target, err := os.Readlink(legacy)
-	require.NoError(t, err)
-	assert.Equal(t, canonical, target)
+	assert.Equal(t, override, path)
 }
 
 func TestWatchProfilesReloadsUpdatedFile(t *testing.T) {

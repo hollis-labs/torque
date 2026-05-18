@@ -57,7 +57,12 @@ func costBackfillCmd() *cobra.Command {
 }
 
 func runCostBackfill(ctx context.Context, since time.Duration, includePositiveUnknown bool, assumedModels map[string]string) error {
-	db, driver, err := appdb.Open(ctx)
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	db, driver, err := appdb.Open(ctx, cfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
@@ -73,10 +78,6 @@ func runCostBackfill(ctx context.Context, since time.Duration, includePositiveUn
 	}
 	defer store.Close()
 
-	cfg, err := config.Load()
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
 	profileSource, err := loadProfilesOrEmpty(cfg)
 	if err != nil {
 		return err

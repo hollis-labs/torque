@@ -81,8 +81,9 @@ func runServe(ctx context.Context, ln net.Listener) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	// DB + migrations + store
-	db, driver, err := appdb.Open(ctx)
+	// DB + migrations + store. DBPath is resolved via go-apppaths in
+	// config.Load (default XDG layout, TORQUE_DB_PATH still honored).
+	db, driver, err := appdb.Open(ctx, cfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
@@ -98,25 +99,20 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	}
 	defer store.Close()
 
-	// Queue (hot-write SQLite for scheduler jobs)
-	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
-		return fmt.Errorf("ensure data dir: %w", err)
+	// Queue (hot-write SQLite for scheduler jobs + telemetry). config
+	// resolves QueueDBPath to an absolute path under StateDir
+	// (~/.local/state/torque) — never CWD-relative.
+	queuePath := cfg.Concurrency.QueueDBPath
+	if err := os.MkdirAll(filepath.Dir(queuePath), 0o755); err != nil {
+		return fmt.Errorf("ensure queue dir: %w", err)
 	}
-	queuePath := filepath.Join(cfg.DataDir, "queue.db")
 	q, err := queue.Open(ctx, queuePath)
 	if err != nil {
 		return fmt.Errorf("open queue: %w", err)
 	}
 	defer q.Close()
 
-	telemetryQueuePath := cfg.Concurrency.QueueDBPath
-	if telemetryQueuePath == "" {
-		telemetryQueuePath = "queue.db"
-	}
-	if !filepath.IsAbs(telemetryQueuePath) {
-		telemetryQueuePath = filepath.Join(cfg.DataDir, telemetryQueuePath)
-	}
-	telemetryDB, err := writequeue.OpenDB(ctx, telemetryQueuePath)
+	telemetryDB, err := writequeue.OpenDB(ctx, queuePath)
 	if err != nil {
 		return fmt.Errorf("open telemetry queue: %w", err)
 	}

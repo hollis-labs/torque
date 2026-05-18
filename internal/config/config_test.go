@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/hollis-labs/torque/internal/config"
@@ -9,11 +10,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testRoots holds the per-test XDG base directories hermeticPaths installs.
+type testRoots struct {
+	data, state, cache, config string
+}
+
+// hermeticPaths points HOME and the four XDG roots at per-test temp dirs so
+// config.Load resolves (and materializes) Torque's layout under t.TempDir
+// rather than the developer's real home directory.
+func hermeticPaths(t *testing.T) testRoots {
+	t.Helper()
+	home := t.TempDir()
+	r := testRoots{
+		data:   filepath.Join(home, "data"),
+		state:  filepath.Join(home, "state"),
+		cache:  filepath.Join(home, "cache"),
+		config: filepath.Join(home, "config"),
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", r.data)
+	t.Setenv("XDG_STATE_HOME", r.state)
+	t.Setenv("XDG_CACHE_HOME", r.cache)
+	t.Setenv("XDG_CONFIG_HOME", r.config)
+	return r
+}
+
 func TestDefaultConfig(t *testing.T) {
+	r := hermeticPaths(t)
 	cfg, err := config.Load()
 	require.NoError(t, err)
 
-	assert.Equal(t, "torque.db", cfg.DBPath)
+	// DBPath resolves via go-apppaths to the default workspace's main.db.
+	assert.Equal(t, filepath.Join(r.data, "torque", "workspaces", "default", "main.db"), cfg.DBPath)
+	assert.Equal(t, filepath.Join(r.data, "torque"), cfg.DataDir)
+	assert.Equal(t, filepath.Join(r.state, "torque"), cfg.StateDir)
+	assert.Equal(t, filepath.Join(r.config, "torque"), cfg.ConfigDir)
+	assert.Equal(t, filepath.Join(r.config, "torque", "profiles.yaml"), cfg.ProfilesPath)
 	assert.Equal(t, "", cfg.PostgresDSN)
 	assert.Equal(t, 8990, cfg.HTTPPort)
 	assert.Equal(t, 3, cfg.Scheduler.Workers)
@@ -23,6 +55,7 @@ func TestDefaultConfig(t *testing.T) {
 }
 
 func TestConcurrencyConfigDefaults(t *testing.T) {
+	r := hermeticPaths(t)
 	cfg, err := config.Load()
 	require.NoError(t, err)
 
@@ -31,10 +64,30 @@ func TestConcurrencyConfigDefaults(t *testing.T) {
 	assert.Equal(t, 256, cfg.Concurrency.WriteChannelSize)
 	assert.Equal(t, 50, cfg.Concurrency.DrainBatchSize)
 	assert.Equal(t, 1000, cfg.Concurrency.DrainIntervalMs)
-	assert.Equal(t, "queue.db", cfg.Concurrency.QueueDBPath)
+	// queue.db resolves under StateDir — never CWD-relative.
+	assert.Equal(t, filepath.Join(r.state, "torque", "queue.db"), cfg.Concurrency.QueueDBPath)
+}
+
+func TestQueueDBPathEnvOverride(t *testing.T) {
+	r := hermeticPaths(t)
+
+	t.Run("absolute override is used verbatim", func(t *testing.T) {
+		t.Setenv("TORQUE_QUEUE_DB_PATH", "/var/torque/q.db")
+		cfg, err := config.Load()
+		require.NoError(t, err)
+		assert.Equal(t, "/var/torque/q.db", cfg.Concurrency.QueueDBPath)
+	})
+
+	t.Run("relative override is anchored under StateDir", func(t *testing.T) {
+		t.Setenv("TORQUE_QUEUE_DB_PATH", "sub/q.db")
+		cfg, err := config.Load()
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(r.state, "torque", "sub", "q.db"), cfg.Concurrency.QueueDBPath)
+	})
 }
 
 func TestMergeConfigDefaults(t *testing.T) {
+	hermeticPaths(t)
 	cfg, err := config.Load()
 	require.NoError(t, err)
 
@@ -46,6 +99,7 @@ func TestMergeConfigDefaults(t *testing.T) {
 }
 
 func TestSchedulerWorktreeCleanupDefault(t *testing.T) {
+	hermeticPaths(t)
 	cfg, err := config.Load()
 	require.NoError(t, err)
 
@@ -53,6 +107,7 @@ func TestSchedulerWorktreeCleanupDefault(t *testing.T) {
 }
 
 func TestPerRunWorktreeDefaults(t *testing.T) {
+	hermeticPaths(t)
 	cfg, err := config.Load()
 	require.NoError(t, err)
 
@@ -63,6 +118,7 @@ func TestPerRunWorktreeDefaults(t *testing.T) {
 }
 
 func TestPerRunWorktreeFromEnv(t *testing.T) {
+	hermeticPaths(t)
 	os.Setenv("TORQUE_WORKTREE_PER_RUN", "true")
 	os.Setenv("TORQUE_WORKTREE_ROOT", "/var/torque/worktrees")
 	os.Setenv("TORQUE_WORKTREE_KEEP_DAYS", "14")
@@ -86,6 +142,8 @@ func TestPerRunWorktreeFromEnv(t *testing.T) {
 // DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
 // Covers the CW-20260417-0130 stopgap project-scope env-var parsing.
 func TestProjectAllowlistFromEnv(t *testing.T) {
+	hermeticPaths(t)
+
 	t.Run("unset = nil", func(t *testing.T) {
 		os.Unsetenv("TORQUE_PROJECT_ID")
 		os.Unsetenv("TORQUE_PROJECT_IDS")
@@ -139,6 +197,7 @@ func TestProjectAllowlistFromEnv(t *testing.T) {
 }
 
 func TestConfigFromEnv(t *testing.T) {
+	hermeticPaths(t)
 	os.Setenv("TORQUE_DB_PATH", "/tmp/test.db")
 	os.Setenv("TORQUE_HTTP_PORT", "9999")
 	os.Setenv("TORQUE_POSTGRES_DSN", "postgres://localhost/torque")
@@ -151,6 +210,7 @@ func TestConfigFromEnv(t *testing.T) {
 	cfg, err := config.Load()
 	require.NoError(t, err)
 
+	// go-apppaths honors TORQUE_DB_PATH as an explicit override.
 	assert.Equal(t, "/tmp/test.db", cfg.DBPath)
 	assert.Equal(t, 9999, cfg.HTTPPort)
 	assert.Equal(t, "postgres://localhost/torque", cfg.PostgresDSN)

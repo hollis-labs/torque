@@ -17,7 +17,12 @@ import (
 // single-connection writer pool with WAL, busy_timeout, and
 // _txlock=immediate baked into the DSN so every connection inherits them.
 // The pgx branch is left untouched.
-func Open(ctx context.Context) (*sql.DB, string, error) {
+//
+// sqlitePath is the caller-resolved main-database path (config.Config.DBPath,
+// resolved via go-apppaths). Open no longer reads TORQUE_DB_PATH or falls back
+// to a CWD-relative "torque.db" — that fallback was the data-loss footgun
+// CW-20260517-0060 removes; path resolution is now config's job alone.
+func Open(ctx context.Context, sqlitePath string) (*sql.DB, string, error) {
 	if dsn := os.Getenv("TORQUE_POSTGRES_DSN"); dsn != "" {
 		db, err := sql.Open("pgx", dsn)
 		if err != nil {
@@ -30,14 +35,13 @@ func Open(ctx context.Context) (*sql.DB, string, error) {
 		return db, "postgres", nil
 	}
 
-	path := os.Getenv("TORQUE_DB_PATH")
-	if path == "" {
-		path = "torque.db"
+	if sqlitePath == "" {
+		return nil, "", fmt.Errorf("open sqlite: empty database path")
 	}
 
-	db, err := sqlitekit.OpenWriter(ctx, path, sqlitekit.OpenOptions{CreateParentDir: true})
+	db, err := sqlitekit.OpenWriter(ctx, sqlitePath, sqlitekit.OpenOptions{CreateParentDir: true})
 	if err != nil {
-		return nil, "", fmt.Errorf("open sqlite %s: %w", path, err)
+		return nil, "", fmt.Errorf("open sqlite %s: %w", sqlitePath, err)
 	}
 	return db, "sqlite", nil
 }
