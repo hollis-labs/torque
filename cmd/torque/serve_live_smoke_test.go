@@ -64,10 +64,10 @@ const smokePrompt = "Create a file named " + markerFile + " containing exactly t
 	"inside the directory named by the TORQUE_WORK_ROOT environment variable. " +
 	"Do not create any other files, do not edit any other files, and do not run any other commands."
 
-// liveProviders maps a profiles.yaml agent-profile name to the binary it
-// requires and a human label. These profiles must exist in the repo's
-// profiles.yaml — `default` (claude-code, streaming-stdio) and `codex-long`
-// (codex, jsonrpc-stdio).
+// liveProviders maps an agent-profile name to the binary it requires and a
+// human label. These profiles are defined in the smoke's own fixture
+// testdata/serve-smoke-profiles.yaml — `default` (claude-code, streaming-stdio)
+// and `codex-long` (codex, jsonrpc-stdio).
 var liveProviders = []struct {
 	profile string
 	binary  string
@@ -81,10 +81,15 @@ var liveProviders = []struct {
 // and runs a marker-file task end-to-end through the scheduler for each live
 // provider, in both the shared and per-run-worktree dispatch shapes.
 func TestServeLiveSmoke(t *testing.T) {
-	repoRoot := repoRootFromTest(t)
-	profilesPath := filepath.Join(repoRoot, "profiles.yaml")
+	// The smoke's profile set is a dedicated fixture under testdata/. It does
+	// NOT depend on a profiles.yaml in the repo — the daemon's real profiles
+	// file is .torque/profiles.yaml, and the repo carries no top-level
+	// profiles.yaml. TORQUE_PROFILES_PATH (set per-subtest below) points the
+	// in-process serve stack at this fixture.
+	profilesPath, err := filepath.Abs(filepath.Join("testdata", "serve-smoke-profiles.yaml"))
+	require.NoError(t, err)
 	if _, err := os.Stat(profilesPath); err != nil {
-		t.Fatalf("repo profiles.yaml not found at %s: %v", profilesPath, err)
+		t.Fatalf("smoke profiles fixture not found at %s: %v", profilesPath, err)
 	}
 
 	for _, p := range liveProviders {
@@ -406,22 +411,4 @@ func initGitRepoWithOrigin(t *testing.T, parent, workdir string) {
 	gitIn(workdir, "commit", "-q", "-m", "smoke: initial commit")
 	gitIn(workdir, "remote", "add", "origin", bare)
 	gitIn(workdir, "push", "-q", "origin", "main")
-}
-
-// repoRootFromTest walks up from the test working directory to the repo root
-// (the dir holding go.mod).
-func repoRootFromTest(t *testing.T) string {
-	t.Helper()
-	dir, err := os.Getwd()
-	require.NoError(t, err)
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatalf("repoRootFromTest: go.mod not found walking up from %s", dir)
-		}
-		dir = parent
-	}
 }
