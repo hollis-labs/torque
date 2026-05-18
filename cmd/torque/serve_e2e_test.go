@@ -16,13 +16,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// isolateTorquePaths points HOME and the four XDG roots at subdirectories of
-// dir so config.Load resolves Torque's go-apppaths layout — DataDir, StateDir
-// (where queue.db lives), CacheDir, ConfigDir — entirely inside the test's
-// temp dir, never the developer's real home.
+// isolateTorquePaths points the four XDG roots at subdirectories of dir so
+// config.Load resolves Torque's go-apppaths layout — DataDir, StateDir (where
+// queue.db lives), CacheDir, ConfigDir — entirely inside the test's temp dir,
+// never the developer's real home. Setting all four $XDG_*_HOME vars makes
+// resolution independent of $HOME, so HOME is left untouched (the live smoke
+// runs real git, which needs the developer's ~/.gitconfig).
 func isolateTorquePaths(t *testing.T, dir string) {
 	t.Helper()
-	t.Setenv("HOME", dir)
 	t.Setenv("XDG_DATA_HOME", filepath.Join(dir, "xdg-data"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "xdg-state"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "xdg-cache"))

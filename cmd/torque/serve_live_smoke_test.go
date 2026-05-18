@@ -136,7 +136,9 @@ func runLiveServeSmoke(t *testing.T, profilesPath, profile, label string, worktr
 	}
 
 	// Isolate every persistent root inside the temp dir — never touch the
-	// dev/prod torque.db or .torque data dir.
+	// dev/prod torque.db, the go-apppaths XDG roots, or the live daemon's
+	// queue.db (which now resolves under StateDir).
+	isolateTorquePaths(t, dir)
 	t.Setenv("TORQUE_DB_PATH", filepath.Join(dir, "live.db"))
 	t.Setenv("TORQUE_DATA_DIR", dir)
 	t.Setenv("TORQUE_POSTGRES_DSN", "") // force sqlite even if the dev env sets it
