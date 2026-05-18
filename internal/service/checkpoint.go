@@ -58,6 +58,43 @@ type CheckpointResponseDispatch struct {
 	ResponseJSON  string
 }
 
+// OrchestratorRedispatcher is the hook CheckpointService.Respond calls after
+// a checkpoint is responded so a paused/exited Orchestrator session walking
+// the task's parent plan gets redispatched (CW-20260518 orchestrator
+// checkpoint-redispatch fix).
+//
+// Why this is a SEPARATE hook from CheckpointResponseDispatcher: the α.4
+// CheckpointResponseDispatcher resumes the *checkpoint task's own* session.
+// That is the right behavior when the checkpoint task is the live worker
+// (an executor parked mid-run). But a `pr_review` checkpoint emitted on a
+// CHILD task by the reviewer end-agent is a different shape entirely — the
+// child's worker is long gone, and the session that must wake up is the
+// Orchestrator running on the *parent plan*, a different task with a
+// different session. The α.4 dispatcher cannot see that plan; this hook
+// owns the task → plan-ancestor walk and the orchestrator redispatch.
+//
+// RedispatchForCheckpointResponse is called for EVERY responded checkpoint
+// (not gated on the checkpoint task being parked) because a child task that
+// is already in `review` when its checkpoint is emitted is never re-parked
+// by Emit's ParkTaskOnCheckpoint (that UPDATE only fires on status=doing).
+// The implementation is responsible for being a cheap no-op when the task
+// has no plan ancestor with an orchestrator session.
+//
+// nil redispatcher (default; legacy/test callers): Respond skips the
+// orchestrator-redispatch step entirely — pre-fix behavior.
+type OrchestratorRedispatcher interface {
+	RedispatchForCheckpointResponse(ctx context.Context, in OrchestratorRedispatch) error
+}
+
+// OrchestratorRedispatch is the payload handed to an OrchestratorRedispatcher.
+// TaskID is the checkpoint's task (the child, in the bug case); the
+// implementation walks up to the kind=plan ancestor itself.
+type OrchestratorRedispatch struct {
+	TaskID        string
+	CorrelationID string
+	ResponseJSON  string
+}
+
 // CheckpointService owns the emit/respond/cancel/list flows for checkpoints.
 // Scheduler and lifecycle wiring (parking on blocking emit, resume on respond)
 // live in their own packages and consume CheckpointService.
@@ -66,8 +103,9 @@ type CheckpointResponseDispatch struct {
 // drives an in-process resume+send_input dispatch instead of the legacy
 // review→todo handoff to the scheduler. See CheckpointResponseDispatcher.
 type CheckpointService struct {
-	store              *sqlstore.Store
-	responseDispatcher CheckpointResponseDispatcher
+	store                    *sqlstore.Store
+	responseDispatcher       CheckpointResponseDispatcher
+	orchestratorRedispatcher OrchestratorRedispatcher
 }
 
 // WithResponseDispatcher wires a CheckpointResponseDispatcher into the
@@ -76,6 +114,15 @@ type CheckpointService struct {
 // Not goroutine-safe with concurrent Respond calls; wire once at startup.
 func (s *CheckpointService) WithResponseDispatcher(d CheckpointResponseDispatcher) *CheckpointService {
 	s.responseDispatcher = d
+	return s
+}
+
+// WithOrchestratorRedispatcher wires an OrchestratorRedispatcher into the
+// service. Returns s so the bootstrap composition root can chain. Calling
+// with nil clears the hook. Not goroutine-safe with concurrent Respond
+// calls; wire once at startup.
+func (s *CheckpointService) WithOrchestratorRedispatcher(d OrchestratorRedispatcher) *CheckpointService {
+	s.orchestratorRedispatcher = d
 	return s
 }
 
@@ -303,6 +350,17 @@ func requiredWorkflowPolicyForTask(task *sqlstore.TaskRecord) (hitl.RequiredWork
 //
 // If the task isn't parked on this correlation (e.g. non_blocking mode, or a
 // responder racing the executor), only the metadata is attached.
+//
+// Orchestrator redispatch (CW-20260518): independent of the parked check
+// and of on_checkpoint_response, every responded checkpoint is offered to
+// the OrchestratorRedispatcher. This is the fix for the live bug where a
+// `pr_review` checkpoint emitted on a CHILD task was responded but the
+// Orchestrator paused on the parent PLAN never woke up. The child is never
+// re-parked (Emit's ParkTaskOnCheckpoint only fires on status=doing, and
+// the child is already in `review` when its checkpoint is emitted), so the
+// parked-gated dispatch path above can't be relied on to redispatch the
+// orchestrator. The redispatcher walks task → plan ancestor itself and is
+// a cheap no-op when there is no orchestrated plan above the task.
 func (s *CheckpointService) applyOnCheckpointResponse(ctx context.Context, cp *sqlstore.CheckpointRecord, responseJSON string) error {
 	task, err := s.store.GetTask(cp.TaskID)
 	if err != nil {
@@ -311,18 +369,48 @@ func (s *CheckpointService) applyOnCheckpointResponse(ctx context.Context, cp *s
 	if err := s.attachCheckpointResponseToMetadata(task, cp.CorrelationID, responseJSON); err != nil {
 		return err
 	}
+
 	parked := task.Status == "review" && strings.Contains(task.BlockedReason, cp.CorrelationID)
-	if !parked {
-		return nil
+	if parked {
+		switch task.OnCheckpointResponse {
+		case "resume":
+			if err := s.dispatchResumeOrFallback(ctx, cp, responseJSON); err != nil {
+				return err
+			}
+		case "review", "custom":
+			// Stay parked. Human (or plugin hook) resolves.
+		}
 	}
-	switch task.OnCheckpointResponse {
-	case "resume":
-		return s.dispatchResumeOrFallback(ctx, cp, responseJSON)
-	case "review", "custom":
-		// Stay parked. Human (or plugin hook) resolves.
-		return nil
-	}
+
+	// Orchestrator redispatch runs whether or not the checkpoint task was
+	// parked: a checkpoint emitted on a child task that walked a plan needs
+	// to wake the Orchestrator regardless of the child's own lifecycle.
+	s.redispatchOrchestrator(ctx, cp, responseJSON)
 	return nil
+}
+
+// redispatchOrchestrator offers the responded checkpoint to the wired
+// OrchestratorRedispatcher. Errors are logged, never returned — a redispatch
+// failure must not fail the operator's Respond call (the checkpoint row is
+// already responded and the response is already attached to task metadata;
+// a stuck orchestrator is recoverable by a manual plan re-start, a failed
+// Respond is a worse operator experience). A nil redispatcher (legacy/test
+// composition roots) makes this a no-op.
+func (s *CheckpointService) redispatchOrchestrator(ctx context.Context, cp *sqlstore.CheckpointRecord, responseJSON string) {
+	if s.orchestratorRedispatcher == nil {
+		return
+	}
+	dispatchCtx, cancel := context.WithTimeout(ctx, checkpointDispatchTimeout)
+	defer cancel()
+	err := s.orchestratorRedispatcher.RedispatchForCheckpointResponse(dispatchCtx, OrchestratorRedispatch{
+		TaskID:        cp.TaskID,
+		CorrelationID: cp.CorrelationID,
+		ResponseJSON:  responseJSON,
+	})
+	if err != nil {
+		log.Printf("[checkpoint] orchestrator redispatch for task=%s corr=%s failed: %v",
+			cp.TaskID, cp.CorrelationID, err)
+	}
 }
 
 // checkpointDispatchTimeout bounds the resume+send_input dispatch path so a

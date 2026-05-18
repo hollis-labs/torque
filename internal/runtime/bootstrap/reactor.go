@@ -48,6 +48,12 @@ func Reactor(
 	// keep their behavior.
 	if sessions != nil {
 		svc.Checkpoint.WithResponseDispatcher(NewCheckpointResponseDispatcher(store, sessions))
+		// CW-20260518: wire the orchestrator-redispatch hook so a checkpoint
+		// responded on a child task wakes the Orchestrator paused on the
+		// parent plan. Independent of the α.4 response dispatcher above —
+		// that one resumes the checkpoint task's own session; this one
+		// re-boots the plan's orchestrator session.
+		svc.Checkpoint.WithOrchestratorRedispatcher(NewOrchestratorRedispatcher(store, sessions))
 	}
 
 	deps := reactor.Deps{
