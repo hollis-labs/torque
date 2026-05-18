@@ -14,3 +14,4 @@ Files are numbered sequentially (`NNNN-short-slug.md`). Each ADR carries a
 | ADR | Title | Status |
 |-----|-------|--------|
 | [0001](0001-torque-messaging-design-lock.md) | Torque Messaging — design lock (steering + federation contracts) | Accepted |
+| [0002](0002-federation-hop-auth-trust.md) | Federation hop — auth & trust model (mTLS + authority allowlist) | Accepted |
