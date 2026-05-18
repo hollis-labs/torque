@@ -226,7 +226,7 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// (→HITL checkpoint), status_update:blocked (→pause+block), request
 	// (→peer fanout), handoff (→reassignment). Everything else routes to
 	// noop+log inside reactor.Dispatch.
-	reactorClose, err := bootstrap.Reactor(runCtx, store, envBroker, svc, agentDeps.Sessions, sched.EventBus())
+	reactorDispatcher, reactorClose, err := bootstrap.Reactor(runCtx, store, envBroker, svc, agentDeps.Sessions, sched.EventBus())
 	if err != nil {
 		return fmt.Errorf("bootstrap reactor: %w", err)
 	}
@@ -243,6 +243,17 @@ func runServe(ctx context.Context, ln net.Listener) error {
 		return fmt.Errorf("bootstrap steering bridge: %w", err)
 	}
 	defer steeringClose()
+
+	// Stuck-probe watcher (CW-20260518-0043, messaging epic A): the real
+	// trigger for the previously-dead stuck.Probe. Periodically scans
+	// running sessions and fires the recovery probe for any that have gone
+	// idle past the configured threshold. A probed agent's status_update
+	// envelope routes back through the reactor dispatcher above.
+	stuckClose, err := bootstrap.StuckWatcher(runCtx, agentDeps.Sessions, envBroker, reactorDispatcher, cfg.Stuck)
+	if err != nil {
+		return fmt.Errorf("bootstrap stuck watcher: %w", err)
+	}
+	defer stuckClose()
 
 	// Scheduler cost backfill (Phase 2): wire the catalog + profiles so the
 	// cost-record block can fall back to models.dev pricing when the executor

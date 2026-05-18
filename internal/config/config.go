@@ -52,12 +52,9 @@ func ResolveLayout(extra ...paths.Option) (paths.Layout, error) {
 }
 
 // StuckConfig holds tunables for the agentic-execution stuck-task recovery
-// probe (CW-20260512-0063, sprint α.5). The probe state machine lives in
-// internal/runtime/stuck; this struct just exposes the operator knobs.
-//
-// Trigger wireup status: no upstream "stuck signal" exists today — the
-// probe is callable but unwired. When that wireup lands (separate ticket),
-// this is where its tuning lives.
+// probe (CW-20260512-0063, sprint α.5) and its trigger watcher
+// (CW-20260518-0043, messaging epic A). The probe state machine lives in
+// internal/runtime/stuck; this struct exposes the operator knobs.
 type StuckConfig struct {
 	// WaitSeconds is the WAIT-phase timeout. The probe sends the
 	// "are you stuck?" user-turn input and then waits up to this many
@@ -67,9 +64,24 @@ type StuckConfig struct {
 	// Default 90 (the midpoint of the sprint-α α.5 60–120s range). Set
 	// TORQUE_STUCK_WAIT_SECONDS to override. The stuck package also
 	// exports a DefaultWaitTimeout that callers passing a zero
-	// ProbeInput.WaitTimeout inherit directly; this config field is for
-	// the production trigger wireup once that lands.
+	// ProbeInput.WaitTimeout inherit directly.
 	WaitSeconds int
+
+	// WatcherEnabled gates the stuck-probe trigger watcher
+	// (stuck.Watcher / bootstrap.StuckWatcher). When true the daemon runs a
+	// background scan that fires the probe for idle running sessions; when
+	// false the probe stays callable but has no automatic trigger.
+	// Default true; set TORQUE_STUCK_WATCHER=false to disable.
+	WatcherEnabled bool
+
+	// IdleThresholdSeconds — a running session whose last_activity is older
+	// than this is probed. Default 600 (10 min): conservative, since a
+	// probe costs the agent a turn. Set TORQUE_STUCK_IDLE_SECONDS.
+	IdleThresholdSeconds int
+
+	// ScanIntervalSeconds — how often the watcher scans running sessions.
+	// Default 60. Set TORQUE_STUCK_SCAN_SECONDS.
+	ScanIntervalSeconds int
 }
 
 type ConcurrencyConfig struct {
@@ -202,7 +214,10 @@ func Load() (*Config, error) {
 		Stuck: StuckConfig{
 			// 90s = midpoint of the sprint-α α.5 60–120s range. Tuning
 			// notes on StuckConfig.WaitSeconds.
-			WaitSeconds: envInt("TORQUE_STUCK_WAIT_SECONDS", 90),
+			WaitSeconds:          envInt("TORQUE_STUCK_WAIT_SECONDS", 90),
+			WatcherEnabled:       envBool("TORQUE_STUCK_WATCHER", true),
+			IdleThresholdSeconds: envInt("TORQUE_STUCK_IDLE_SECONDS", 600),
+			ScanIntervalSeconds:  envInt("TORQUE_STUCK_SCAN_SECONDS", 60),
 		},
 	}
 	return cfg, nil

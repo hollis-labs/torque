@@ -3,10 +3,19 @@
 // broker envelopes by Kind and dispatches each to a deterministic
 // in-process action.
 //
-// Scope (V0, sprint α): four envelope kinds route to actions; everything
+// Scope (V0, sprint α): six envelope kinds route to actions; everything
 // else is noop+log. Per sprint-α D5, the dispatch table is a struct +
 // switch — not a registry, not pluggable yet. V1 may extract once shapes
 // settle.
+//
+// notice / response (CW-20260518-0043, messaging epic A): these two kinds
+// are SHARED with the steering bridge (internal/runtime/steering), and the
+// split is by recipient address. The steering bridge owns notice/response
+// addressed to a live agent/session (turn injection); the reactor owns
+// notice/response addressed to a user — the agent→operator relay — and
+// surfaces them as an operator event. service/workflow recipients have no
+// V0 routing. The two routers never double-handle a single envelope
+// because the address axes are disjoint (see handleOperatorRelay).
 //
 // Layering: this package sits ON TOP of internal/broker (which owns
 // transport + typing) and BESIDE internal/runtime/scheduler (which owns
@@ -58,6 +67,15 @@ const (
 	// AgentProfile is updated to the handoff target so the scheduler's
 	// next pick routes to the new assignee.
 	ActionReassign Action = "reassign"
+
+	// ActionOperatorNotify fires for kind=notice or kind=response addressed
+	// to a user: the agent→operator relay. An operator event
+	// ("envelope.notice" / "envelope.response") is published via the
+	// configured OperatorNotifier so UIs see a routed, typed signal
+	// distinct from the broker's generic envelope.created. notice/response
+	// addressed to an agent/session is NOT this action — that is the
+	// steering bridge's turn-injection job, and routes to ActionNoop here.
+	ActionOperatorNotify Action = "operator_notify"
 )
 
 // DispatchResult is the outcome of a single Dispatch call. The fields are
@@ -173,13 +191,57 @@ func (d *Dispatcher) Dispatch(ctx context.Context, env gomsg.Envelope) DispatchR
 		return d.handleRequest(ctx, env, res)
 	case gomsg.MsgKindHandoff:
 		return d.handleHandoff(env, res)
+	case gomsg.MsgKindNotice:
+		return d.handleOperatorRelay(env, res, "envelope.notice")
+	case gomsg.MsgKindResponse:
+		return d.handleOperatorRelay(env, res, "envelope.response")
 	default:
-		// V0 routes exactly four kinds; everything else (notice, response,
-		// future kinds gomsg may add) lands here as a noop+log. Per sprint-α
-		// D2: do not invent extras.
+		// V0 routes six kinds; any future kind gomsg may add lands here as a
+		// noop+log. Per sprint-α D2: do not invent extras.
 		logNoop(env, "unrouted envelope kind")
 		return res
 	}
+}
+
+// handleOperatorRelay routes kind=notice and kind=response — the
+// agent→operator relay half of notice/response handling (CW-20260518-0043).
+//
+// The notice/response kinds are SHARED with the steering bridge; the split
+// is by recipient address kind, which keeps the two routers from ever
+// double-handling one envelope:
+//
+//   - To.Kind == user  → this reactor path. The envelope is an operational
+//     message or an answer destined for a human operator. We publish an
+//     operator event (eventType) via the OperatorNotifier so the GUI sees a
+//     routed, typed signal. Action = ActionOperatorNotify.
+//   - To.Kind == agent/session → the steering bridge's job (inject the
+//     envelope into the live session as its next turn). The reactor leaves
+//     it alone: noop+log.
+//   - To.Kind == service/workflow → no V0 routing: noop+log.
+//
+// task_id is read from env.Metadata when present (notices are not always
+// task-bound, so an empty task_id is normal and not a routing miss). The
+// envelope payload itself is NOT inlined into the event — operator UIs
+// fetch the body via /broker/{id}, mirroring broker.publish's contract.
+func (d *Dispatcher) handleOperatorRelay(env gomsg.Envelope, res DispatchResult, eventType string) DispatchResult {
+	if env.To.Kind != gomsg.KindUser {
+		logNoop(env, "notice/response not addressed to a user — steering-bridge territory or unrouted recipient kind")
+		return res
+	}
+	res.TaskID = metadataString(env, "task_id")
+	if d.deps.Notifier == nil {
+		logNoop(env, "operator-relay surface (OperatorNotifier) not wired")
+		return res
+	}
+	d.deps.Notifier.Notify(eventType, res.TaskID, map[string]any{
+		"envelope_id": env.ID,
+		"kind":        string(env.Kind),
+		"from":        env.From.URN(),
+		"to":          env.To.URN(),
+		"in_reply_to": env.InReplyTo,
+	})
+	res.Action = ActionOperatorNotify
+	return res
 }
 
 // handleEscalation routes kind=escalation to a HITL checkpoint emit. The
