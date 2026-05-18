@@ -13,14 +13,22 @@
 # next time. See the "Torque/Cerberus data-path hardening" task.
 #
 # Env (all optional):
-#   TORQUE_DB_PATH               canonical DB to back up
+#   TORQUE_DB_PATH               canonical DB to back up (overrides the
+#                                go-apppaths-resolved path below)
+#   TORQUE_BIN                   torque binary used to resolve the DB path
+#                                (default ./torque, run from the repo dir)
 #   TORQUE_BACKUP_DIR            destination directory
 #   TORQUE_BACKUP_INTERVAL       seconds between snapshots (default 3600)
 #   TORQUE_BACKUP_HOURLY_KEEP    most-recent snapshots kept regardless of age
 #   TORQUE_BACKUP_DAILY_KEEP_DAYS days to keep one-per-day beyond the hourly tier
+#
+# The DB path is resolved from `torque path` (go-apppaths) so the backup
+# always follows the DB to its real home — no hardcoded ~/.torque default,
+# which is the stale location CW-20260517-0060 retired.
 set -uo pipefail
 
-DB="${TORQUE_DB_PATH:-$HOME/.torque/torque.db}"
+TORQUE_BIN="${TORQUE_BIN:-./torque}"
+DB="${TORQUE_DB_PATH:-$("$TORQUE_BIN" path 2>/dev/null | awk '/^main-db/{print $2}')}"
 DEST="${TORQUE_BACKUP_DIR:-$HOME/dev/backups/torque}"
 INTERVAL="${TORQUE_BACKUP_INTERVAL:-3600}"
 HOURLY_KEEP="${TORQUE_BACKUP_HOURLY_KEEP:-48}"

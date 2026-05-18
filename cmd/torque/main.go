@@ -26,6 +26,7 @@ func main() {
 	root.AddCommand(mcpCmd())
 	root.AddCommand(newPluginCmd())
 	root.AddCommand(newProfilesCmd())
+	root.AddCommand(pathCmd())
 	root.AddCommand(serveCmd())
 	root.AddCommand(costBackfillCmd())
 

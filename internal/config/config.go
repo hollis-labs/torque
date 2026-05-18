@@ -1,22 +1,54 @@
 package config
 
 import (
+	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/hollis-labs/go-apppaths/paths"
 )
 
+// appName is Torque's go-apppaths application identity. It drives the XDG
+// roots (~/.local/share/torque, ~/.local/state/torque, ~/.config/torque) and
+// the TORQUE_* env-var prefix go-apppaths reads natively (TORQUE_DB_PATH,
+// TORQUE_WORKSPACE).
+const appName = "torque"
+
+// legacyAppName is Torque's pre-rename identity. WithLegacyNames adopts a
+// stale ~/.local/share/clockwork (and sibling XDG roots) onto the torque
+// roots on resolve — idempotent, move-if-target-absent. It does NOT migrate
+// the interim hand-made ~/.torque/ layout: that is a one-time operational
+// data move (see CW-20260517-0060), not something the path lib can do.
+const legacyAppName = "clockwork"
+
 type Config struct {
-	DBPath      string
-	PostgresDSN string
-	HTTPPort    int
-	RepoRoot    string
-	DataDir     string
+	DBPath       string
+	PostgresDSN  string
+	HTTPPort     int
+	RepoRoot     string
+	DataDir      string
+	StateDir     string
+	ConfigDir    string
+	ProfilesPath string
+	// Paths is the go-apppaths Layout this Config was resolved from. It backs
+	// the `torque path` introspection subcommand.
+	Paths       paths.Layout
 	Scheduler   SchedulerConfig
 	Concurrency ConcurrencyConfig
 	Merge       MergeConfig
 	Stuck       StuckConfig
+}
+
+// ResolveLayout resolves Torque's on-disk layout via go-apppaths in the
+// default (XDG) mode. Project mode is deliberately not used — the CWD-local
+// layout is the data-loss failure mode CW-20260517-0060 removes. Callers that
+// only introspect (the `torque path` subcommand) pass paths.WithoutMaterialize().
+func ResolveLayout(extra ...paths.Option) (paths.Layout, error) {
+	opts := append([]paths.Option{paths.WithLegacyNames(legacyAppName)}, extra...)
+	return paths.Resolve(appName, opts...)
 }
 
 // StuckConfig holds tunables for the agentic-execution stuck-task recovery
@@ -107,12 +139,23 @@ type SchedulerConfig struct {
 }
 
 func Load() (*Config, error) {
+	layout, err := ResolveLayout()
+	if err != nil {
+		return nil, fmt.Errorf("resolve app paths: %w", err)
+	}
+
 	cfg := &Config{
-		DBPath:      envOr("TORQUE_DB_PATH", "torque.db"),
-		PostgresDSN: os.Getenv("TORQUE_POSTGRES_DSN"),
-		HTTPPort:    envInt("TORQUE_HTTP_PORT", 8990),
-		RepoRoot:    os.Getenv("TORQUE_REPO"),
-		DataDir:     envOr("TORQUE_DATA_DIR", ".torque"),
+		// DBPath resolves via go-apppaths, which already honors an explicit
+		// TORQUE_DB_PATH env override; no extra envOr needed here.
+		DBPath:       layout.MainDB(),
+		PostgresDSN:  os.Getenv("TORQUE_POSTGRES_DSN"),
+		HTTPPort:     envInt("TORQUE_HTTP_PORT", 8990),
+		RepoRoot:     os.Getenv("TORQUE_REPO"),
+		DataDir:      envOr("TORQUE_DATA_DIR", layout.DataDir()),
+		StateDir:     layout.StateDir(),
+		ConfigDir:    layout.ConfigDir(),
+		ProfilesPath: filepath.Join(layout.ConfigDir(), "profiles.yaml"),
+		Paths:        layout,
 		Scheduler: SchedulerConfig{
 			Workers:                  envInt("TORQUE_SCHED_WORKERS", 3),
 			IntervalSeconds:          envInt("TORQUE_SCHED_INTERVAL", 10),
@@ -147,7 +190,7 @@ func Load() (*Config, error) {
 			WriteChannelSize: envInt("TORQUE_WRITE_CHANNEL_SIZE", 256),
 			DrainBatchSize:   envInt("TORQUE_DRAIN_BATCH_SIZE", 50),
 			DrainIntervalMs:  envInt("TORQUE_DRAIN_INTERVAL_MS", 1000),
-			QueueDBPath:      envOr("TORQUE_QUEUE_DB_PATH", "queue.db"),
+			QueueDBPath:      resolveQueueDBPath(layout.StateDir()),
 		},
 		Merge: MergeConfig{
 			ResolutionExecutor:    envOr("TORQUE_MERGE_EXECUTOR", "cli"),
@@ -163,6 +206,22 @@ func Load() (*Config, error) {
 		},
 	}
 	return cfg, nil
+}
+
+// resolveQueueDBPath resolves the scheduler/telemetry queue database path.
+// It defaults to <StateDir>/queue.db; TORQUE_QUEUE_DB_PATH overrides it, and
+// a relative override is anchored under StateDir rather than the process CWD
+// (a CWD-relative path is exactly the data-loss footgun CW-20260517-0060
+// removes).
+func resolveQueueDBPath(stateDir string) string {
+	v := strings.TrimSpace(os.Getenv("TORQUE_QUEUE_DB_PATH"))
+	if v == "" {
+		return filepath.Join(stateDir, "queue.db")
+	}
+	if filepath.IsAbs(v) {
+		return v
+	}
+	return filepath.Join(stateDir, v)
 }
 
 func envOr(key, fallback string) string {
