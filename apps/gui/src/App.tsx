@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom'
-import { LayoutList, Play, BarChart3, Settings, Cog, FileText, Inbox, FolderTree, Sparkles, FolderKanban } from 'lucide-react'
+import { LayoutList, Play, BarChart3, Settings, Cog, FileText, Inbox, FolderTree, Sparkles, FolderKanban, MessagesSquare } from 'lucide-react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster } from '@/components/ui/sonner'
 import { ApiProvider } from '@/hooks/use-api'
@@ -26,6 +26,7 @@ import PlansPage from '@/pages/PlansPage'
 import PlanDetailPage from '@/pages/PlanDetailPage'
 import ModelsPage from '@/pages/ModelsPage'
 import CollectionsPage from '@/pages/CollectionsPage'
+import MessagingPage from '@/pages/MessagingPage'
 import { cn } from '@/lib/utils'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined
@@ -87,6 +88,9 @@ function AppShell() {
         <NavItem to="/checkpoints" label="Checkpoints">
           <Inbox className="h-4 w-4" />
         </NavItem>
+        <NavItem to="/messaging" label="Messaging">
+          <MessagesSquare className="h-4 w-4" />
+        </NavItem>
         <NavItem to="/runs" label="Runs">
           <Play className="h-4 w-4" />
         </NavItem>
@@ -125,6 +129,7 @@ function AppShell() {
           <Route path="/templates" element={<TemplatesPage />} />
           <Route path="/templates/:id" element={<TemplateDetailPage />} />
           <Route path="/checkpoints" element={<CheckpointsPage />} />
+          <Route path="/messaging" element={<MessagingPage />} />
           <Route path="/runs" element={<RunsPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/dashboard/_widget-preview" element={<WidgetPreviewPage />} />
