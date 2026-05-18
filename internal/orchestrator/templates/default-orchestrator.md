@@ -180,14 +180,31 @@ torque_task_create(
   agent_profile="planner",
   executor="cli",
   manual=false,
+  source_type="agent",
+  on_done="close",
+  on_fail="block",
   parent_id="<plan_id>",
   metadata="{\"planner\":{\"target_plan_id\":\"<plan_id>\"}}"
 )
 ```
 
-(In runtime: `internal/planner.BuildTask` is the canonical builder
-the trigger calls before handing you the session — but if you're
-spawning planner mid-execution, the shape above matches.)
+**`on_done="close"` is mandatory — do NOT omit it.** The planner is a
+`kind=internal` task, so when it finishes NO reviewer end-agent is
+enqueued to advance it. If `on_done` is left unset it defaults to
+`review`, and the planner transitions `doing -> review` and stalls
+there permanently. The polling step below waits for the planner to
+reach `done` — with the default `review` hook that never happens and
+the whole plan stalls at its first step (CW-20260518-0038).
+`on_done="close"` makes the planner go `doing -> done`, which is
+exactly what the polling step waits on.
+
+This payload is the canonical planner-task shape. It MUST stay
+identical to `internal/planner.BuildTask` (the Go builder the
+plan-start trigger calls before handing you the session) — same
+`kind=internal`, `source_type=agent`, `manual=false`,
+`agent_profile=planner`, `on_done=close`, `on_fail=block`. If you
+ever need to change a planner-task field, change BuildTask and this
+payload together; they are two views of one contract.
 
 > Note: `working_dir` auto-inherits from `parent_id` when omitted on
 > sub-task creation (CW-20260508-0004). You don't need to set it here;

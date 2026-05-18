@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/hollis-labs/torque/internal/orchestrator"
+	"github.com/hollis-labs/torque/internal/planner"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -130,6 +131,44 @@ func TestOrchestrator_TemplateEscalationPreconditionTaskStatusGate(t *testing.T)
 		"escalation must mark inferring crash from session_list/session_get as FORBIDDEN")
 	assert.Contains(t, content, "[system/end-agent]",
 		"escalation must reference the [system/end-agent] failed comment as the corroborating crash signal")
+}
+
+// TestOrchestrator_TemplatePlannerTaskTerminatesAtDone guards the
+// CW-20260518-0038 fix: the hand-rolled torque_task_create payload the
+// orchestrator uses to spawn the Planner MUST set on_done="close". The
+// planner is kind=internal, so no reviewer end-agent advances it — with
+// the default on_done=review it stalls at `review`, and the
+// orchestrator's polling protocol (which waits for `done`) never
+// proceeds, stalling the whole plan at its first step.
+//
+// The asserted value is pinned to planner.OnDonePolicy — the single
+// source of truth shared with internal/planner.BuildTask. If the
+// canonical policy ever changes, this test forces the template to be
+// updated in lockstep so the two planner-creation paths cannot drift.
+func TestOrchestrator_TemplatePlannerTaskTerminatesAtDone(t *testing.T) {
+	t.Setenv(orchestrator.TemplateEnvVar, "/nonexistent/path")
+	t.Setenv("HOME", "/nonexistent/home")
+
+	content, _ := orchestrator.LoadTemplate()
+
+	// The planner torque_task_create payload must carry the canonical
+	// on_done hook so the planner terminates at `done`, not `review`.
+	assert.Equal(t, "close", planner.OnDonePolicy,
+		"sanity: planner on_done policy must be close")
+	assert.Contains(t, content, `on_done="`+planner.OnDonePolicy+`"`,
+		"Step 2 planner payload must set on_done explicitly to the canonical policy")
+
+	// The template must teach WHY: planner is kind=internal with no
+	// reviewer, so the default on_done=review would stall it.
+	assert.Contains(t, content, "mandatory",
+		"template must mark on_done on the planner payload as mandatory")
+	assert.Contains(t, content, "stalls",
+		"template must explain that omitting on_done stalls the plan")
+
+	// The reconciliation note must point at BuildTask so future edits
+	// keep the two planner-creation paths in sync.
+	assert.Contains(t, content, "internal/planner.BuildTask",
+		"template must reference the canonical Go builder it mirrors")
 }
 
 func TestOrchestrator_TemplateIncludesHITLCheckpointProtocol(t *testing.T) {

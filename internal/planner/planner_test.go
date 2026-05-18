@@ -53,7 +53,12 @@ func TestPlanner_BuildTaskShape(t *testing.T) {
 	assert.Equal(t, "cli", rec.Executor)
 	assert.Equal(t, planner.Profile, rec.AgentProfile)
 	assert.Equal(t, "STUB TEMPLATE", rec.SystemPrompt)
-	assert.Equal(t, "close", rec.OnDone)
+	// on_done MUST be "close": the planner is kind=internal, so no
+	// reviewer end-agent advances it. on_done=review would strand it at
+	// `review` and stall the orchestrator's `done` poll (CW-20260518-0038).
+	assert.Equal(t, planner.OnDonePolicy, rec.OnDone)
+	assert.Equal(t, "close", rec.OnDone, "planner must terminate at done")
+	assert.NotEqual(t, "review", rec.OnDone, "planner must NOT default to the review hook")
 	assert.Equal(t, "block", rec.OnFail)
 	assert.Equal(t, 0, rec.MaxRetries, "AC: no retry in V0")
 	assert.True(t, rec.CostBudget.Valid)
