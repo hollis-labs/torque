@@ -268,6 +268,19 @@ func (b *Broker) Cancel(ctx context.Context, id string) error {
 	return b.d.Cancel(ctx, id)
 }
 
+// Consume advances ConsumedAt for (envelope, recipient) — the terminal
+// "handled" lifecycle state, distinct from Inbox's "delivered". Pass-through
+// to the underlying Store.
+//
+// The steering bridge (internal/runtime/steering) calls this after it
+// injects a steering envelope into a live agent's loop: the messaging
+// Store's Consume inserts a delivery row, which also excludes the envelope
+// from any future Inbox drain — so a steered envelope is never re-delivered
+// by an opt-in inbox poll.
+func (b *Broker) Consume(ctx context.Context, id string, recipient gomsg.Address) error {
+	return b.d.Consume(ctx, id, recipient)
+}
+
 // Subscribe streams envelopes addressed to `to` — pass-through to the
 // underlying Store. Caller cancels via ctx.
 func (b *Broker) Subscribe(ctx context.Context, to gomsg.Address, f gomsg.Filter) (<-chan gomsg.Envelope, error) {
