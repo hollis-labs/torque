@@ -1,7 +1,6 @@
 import { Link } from 'react-router-dom'
 import { Clock, Cpu, DollarSign, AlertCircle, CheckCircle2, Loader2, CalendarClock } from 'lucide-react'
-import { Card, CardContent, CardHeader } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
+import { Card, CardContent, CardHeader, Badge } from '@hollis-labs/sysop-ui'
 import { formatCost, formatTokens, formatDuration } from '@/lib/utils'
 import type { Run } from '@/lib/types'
 

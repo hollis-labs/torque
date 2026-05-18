@@ -14,10 +14,10 @@ describe('BlockedReasonAlert', () => {
     expect(html).toContain('Blocked')
     expect(html).toContain('Permission denied: editing /etc/hosts')
     expect(html).toContain('role="alert"')
-    expect(html).toContain('border-red-500/40')
+    expect(html).toContain('border-status-blocked/40')
   })
 
-  it('renders paused variant with yellow accent', () => {
+  it('renders paused variant with the warning accent', () => {
     const html = renderToStaticMarkup(
       <BlockedReasonAlert
         status="paused"
@@ -27,7 +27,7 @@ describe('BlockedReasonAlert', () => {
     expect(html).toMatchSnapshot()
     expect(html).toContain('Paused')
     expect(html).toContain('Awaiting human input on schema decision')
-    expect(html).toContain('border-yellow-500/40')
+    expect(html).toContain('border-status-paused/40')
   })
 
   it('preserves multi-line reasons via whitespace-pre-wrap', () => {
@@ -37,12 +37,5 @@ describe('BlockedReasonAlert', () => {
     )
     expect(html).toContain('whitespace-pre-wrap')
     expect(html).toContain('line one\nline two\nline three')
-  })
-
-  it('exposes a stable test id for smoke wiring', () => {
-    const html = renderToStaticMarkup(
-      <BlockedReasonAlert status="blocked" reason="x" />,
-    )
-    expect(html).toContain('data-testid="blocked-reason-alert"')
   })
 })

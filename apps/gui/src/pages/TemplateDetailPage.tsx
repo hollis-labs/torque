@@ -1,16 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Button } from '@/components/ui/button'
+import { Skeleton, Button, DetailHeader, EmptyState } from '@hollis-labs/sysop-ui'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import { DetailHeader } from '@/components/domain/detail-header'
-import { EmptyState } from '@/components/domain/empty-state'
+} from '@hollis-labs/sysop-ui'
 import { InstantiateTemplateDialog } from '@/components/domain/instantiate-template-dialog'
 import { useApi } from '@/hooks/use-api'
 import { notifyError, notifySuccess } from '@/lib/toast'
@@ -149,7 +146,7 @@ export default function TemplateDetailPage() {
   if (error || !template) {
     return (
       <div className="p-6">
-        <EmptyState variant="error" description={error ?? 'Template not found.'} />
+        <EmptyState variant="error" title="Something went wrong" description={error ?? 'Template not found.'} />
       </div>
     )
   }
@@ -158,7 +155,7 @@ export default function TemplateDetailPage() {
     <div className="flex h-full flex-col">
       <DetailHeader
         title={template.name}
-        backTo="/templates"
+        backHref="/templates"
         backLabel="Templates"
         id={template.id}
         status={template.is_archived ? 'archived' : 'active'}

@@ -1,16 +1,13 @@
 import { useMemo } from 'react'
 import { Trash2, Plus } from 'lucide-react'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
-import { Button } from '@/components/ui/button'
+import { Input, Textarea, Button, CollapsibleSection } from '@hollis-labs/sysop-ui'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import { DetailSection } from './detail-section'
+} from '@hollis-labs/sysop-ui'
 import { formatDurationMs, formatTokenBudget } from '@/lib/sentinel-display'
 import { UNLIMITED, type Task } from '@/lib/types'
 
@@ -34,7 +31,7 @@ export function ExecutionContext({ task, editing, draft, onDraftChange }: Execut
   }, [source])
 
   return (
-    <DetailSection label="Execution Context" accent="violet" summary={summary}>
+    <CollapsibleSection label="Execution Context" accent="violet" summary={summary}>
       <div className="flex flex-col gap-4">
         {/* system_prompt */}
         <FieldRow label="System Prompt">
@@ -122,7 +119,7 @@ export function ExecutionContext({ task, editing, draft, onDraftChange }: Execut
           )}
         </FieldRow>
       </div>
-    </DetailSection>
+    </CollapsibleSection>
   )
 }
 

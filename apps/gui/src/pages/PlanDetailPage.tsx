@@ -8,15 +8,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import { PageHeader } from '@/components/domain/page-header'
-import { EmptyState } from '@/components/domain/empty-state'
-import { CopyableId } from '@/components/domain/copyable-id'
+} from '@hollis-labs/sysop-ui'
+import { Skeleton, Button, Input, Label, Textarea, PageHeader, EmptyState, CopyableId } from '@hollis-labs/sysop-ui'
 import { StatusBadge } from '@/components/domain/status-badge'
 import { useApi } from '@/hooks/use-api'
 import { notifyError, notifySuccess } from '@/lib/toast'
@@ -126,7 +119,7 @@ export default function PlanDetailPage() {
     return (
       <div className="flex h-full flex-col">
         <PageHeader title="Plan" />
-        <EmptyState variant="error" description={error ?? 'Plan not found.'} />
+        <EmptyState variant="error" title="Something went wrong" description={error ?? 'Plan not found.'} />
       </div>
     )
   }

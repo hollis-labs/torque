@@ -59,7 +59,7 @@ describe('ScopeManagerDialog', () => {
   function renderDialog() {
     return render(
       <MemoryRouter>
-        <ApiProvider baseUrl="/api/v1">
+        <ApiProvider>
           <ScopeManagerDialog
             open
             onOpenChange={() => {}}

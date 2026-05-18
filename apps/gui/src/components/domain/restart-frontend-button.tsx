@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { RefreshCw } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Button } from '@hollis-labs/sysop-ui'
 import { useApi } from '@/hooks/use-api'
 import { notifyError, notifySuccess } from '@/lib/toast'
 

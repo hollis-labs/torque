@@ -8,7 +8,7 @@ import {
   Package,
   Play,
 } from 'lucide-react'
-import { EmptyState } from './empty-state'
+import { EmptyState } from '@hollis-labs/sysop-ui'
 import { formatCost, formatTokens, formatRelativeTime } from '@/lib/utils'
 import { useActiveRun, type ActivityItem } from '@/hooks/active-runs-context'
 import type { Run, Comment, Artifact } from '@/lib/types'

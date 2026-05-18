@@ -1,10 +1,10 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { applyTheme, getInitialTheme } from '@hollis-labs/sysop-ui'
 import './index.css'
 import App from './App.tsx'
 
-// Set dark mode as default
-document.documentElement.classList.add('dark')
+applyTheme(getInitialTheme())
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

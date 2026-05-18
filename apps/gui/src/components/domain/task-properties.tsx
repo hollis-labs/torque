@@ -1,15 +1,13 @@
 import { Link } from 'react-router-dom'
 import { BookOpen, Calendar, Folder } from 'lucide-react'
-import { Input } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
+import { Input, Switch, CollapsibleSection } from '@hollis-labs/sysop-ui'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import { DetailSection } from './detail-section'
+} from '@hollis-labs/sysop-ui'
 import { FilterEntityCombobox } from './filter-bar/filter-entity-combobox'
 import { formatCostBudget } from '@/lib/sentinel-display'
 import { UNLIMITED, type Task, type Project, type Sprint, type Epic } from '@/lib/types'
@@ -38,7 +36,7 @@ export function TaskProperties({
   const source = editing ? draft : task
 
   return (
-    <DetailSection label="Properties" accent="blue" collapsible={false}>
+    <CollapsibleSection label="Properties" accent="blue" collapsible={false}>
       <dl className="grid grid-cols-3 gap-x-4 gap-y-3">
         <Field label="Executor">
           {editing ? (
@@ -169,7 +167,7 @@ export function TaskProperties({
           )}
         </Field>
       </dl>
-    </DetailSection>
+    </CollapsibleSection>
   )
 }
 

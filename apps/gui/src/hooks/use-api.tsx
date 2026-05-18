@@ -1,26 +1,9 @@
-import { createContext, useContext, useMemo, type ReactNode } from 'react'
+import { createApiContext } from '@hollis-labs/sysop-ui'
 import { TorqueApiClient } from '@/lib/api'
 
-const ApiContext = createContext<TorqueApiClient | null>(null)
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined
 
-interface ApiProviderProps {
-  baseUrl?: string
-  children: ReactNode
-}
+/** The default Torque API client; tests can override via `<ApiProvider client>`. */
+export const apiClient = new TorqueApiClient(API_BASE_URL)
 
-export function ApiProvider({ baseUrl, children }: ApiProviderProps) {
-  const client = useMemo(
-    () => new TorqueApiClient(baseUrl),
-    [baseUrl]
-  )
-
-  return <ApiContext.Provider value={client}>{children}</ApiContext.Provider>
-}
-
-export function useApi(): TorqueApiClient {
-  const client = useContext(ApiContext)
-  if (!client) {
-    throw new Error('useApi must be used within an ApiProvider')
-  }
-  return client
-}
+export const { ApiProvider, useApi } = createApiContext(apiClient)

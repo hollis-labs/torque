@@ -1,4 +1,4 @@
-import { DetailSection } from './detail-section'
+import { CollapsibleSection } from '@hollis-labs/sysop-ui'
 import type { Task, TemplateRef } from '@/lib/types'
 
 interface TaskFacetsProps {
@@ -9,7 +9,7 @@ export function TaskFacets({ task }: TaskFacetsProps) {
   const templateRef = readTemplateRef(task.metadata)
 
   return (
-    <DetailSection label="Facets" accent="teal" collapsible={false}>
+    <CollapsibleSection label="Facets" accent="green" collapsible={false}>
       <dl className="grid grid-cols-3 gap-x-4 gap-y-3">
         <FacetField label="Kind">
           <Chip>{task.kind}</Chip>
@@ -50,7 +50,7 @@ export function TaskFacets({ task }: TaskFacetsProps) {
           </FacetField>
         )}
       </dl>
-    </DetailSection>
+    </CollapsibleSection>
   )
 }
 

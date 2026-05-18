@@ -130,7 +130,7 @@ describe('TaskHITLRequestDialog', () => {
   it('emits a typed checkpoint with the editable prefilled payload', async () => {
     const onRequested = vi.fn()
     render(
-      <ApiProvider baseUrl="/api/v1">
+      <ApiProvider>
         <TaskHITLRequestDialog
           task={makeTask()}
           artifacts={[makeArtifact()]}
@@ -166,7 +166,7 @@ describe('TaskHITLRequestDialog', () => {
 
   it('requires payload JSON to be an object', async () => {
     render(
-      <ApiProvider baseUrl="/api/v1">
+      <ApiProvider>
         <TaskHITLRequestDialog
           task={makeTask()}
           artifacts={[makeArtifact()]}

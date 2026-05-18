@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ExternalLink, Pencil } from 'lucide-react'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Button } from '@/components/ui/button'
-import { DetailHeader } from '@/components/domain/detail-header'
-import { EmptyState } from '@/components/domain/empty-state'
+import { Skeleton, Button, DetailHeader, EmptyState } from '@hollis-labs/sysop-ui'
 import { ScopeDetailHero } from '@/components/domain/scope-detail-hero'
 import { ScopeMetaCard } from '@/components/domain/scope-meta-card'
 import { ScopeTaskPanel } from '@/components/domain/scope-task-panel'
@@ -77,14 +74,14 @@ export default function SprintDetailPage() {
   if (error || !sprint) {
     return (
       <div className="p-6">
-        <EmptyState variant="error" description={error ?? 'Sprint not found.'} />
+        <EmptyState variant="error" title="Something went wrong" description={error ?? 'Sprint not found.'} />
       </div>
     )
   }
 
   return (
     <div className="flex h-full flex-col">
-      <DetailHeader title={sprint.name} backTo="/sprints" backLabel="Sprints" id={sprint.id} status={sprint.status} />
+      <DetailHeader title={sprint.name} backHref="/sprints" backLabel="Sprints" id={sprint.id} status={sprint.status} />
       <div className="flex-1 overflow-auto p-6">
         <div className="flex flex-col gap-6">
           <ScopeDetailHero

@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ExternalLink, FileText, FolderOpen, Pencil } from 'lucide-react'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Button } from '@/components/ui/button'
-import { DetailHeader } from '@/components/domain/detail-header'
-import { EmptyState } from '@/components/domain/empty-state'
+import { Skeleton, Button, DetailHeader, EmptyState } from '@hollis-labs/sysop-ui'
 import { ScopeDetailHero } from '@/components/domain/scope-detail-hero'
 import { ScopeMetaCard } from '@/components/domain/scope-meta-card'
 import { ScopeCollectionPanel } from '@/components/domain/scope-collection-panel'
@@ -107,14 +104,14 @@ export default function ProjectDetailPage() {
   if (error || !project) {
     return (
       <div className="p-6">
-        <EmptyState variant="error" description={error ?? 'Project not found.'} />
+        <EmptyState variant="error" title="Something went wrong" description={error ?? 'Project not found.'} />
       </div>
     )
   }
 
   return (
     <div className="flex h-full flex-col">
-      <DetailHeader title={project.name} backTo="/projects" backLabel="Projects" id={project.id} status={project.status} />
+      <DetailHeader title={project.name} backHref="/projects" backLabel="Projects" id={project.id} status={project.status} />
       <div className="flex-1 overflow-auto p-6">
         <div className="flex flex-col gap-6">
           <ScopeDetailHero

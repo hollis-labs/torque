@@ -1,6 +1,5 @@
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { LiveDot, Tooltip, TooltipContent, TooltipTrigger, useElapsed } from '@hollis-labs/sysop-ui'
 import { useActiveRun } from '@/hooks/active-runs-context'
-import { useElapsed } from '@/hooks/use-elapsed'
 
 interface ActiveRunPulseProps {
   taskId: string
@@ -18,11 +17,13 @@ function truncate(text: string, max = 80): string {
   return `${text.slice(0, max - 1)}…`
 }
 
-// ActiveRunPulse renders a small pulsing amber dot next to the status pill
-// when the given task has a live run. The tooltip carries elapsed time and
-// the most recent note text so overview scanners can tell which runs are
-// actually making progress without opening the detail page. Hidden whenever
-// the task has no active run, so it's safe to render unconditionally inline.
+// ActiveRunPulse renders a small pulsing dot next to the status pill when the
+// given task has a live run. The tooltip carries elapsed time and the most
+// recent note text so overview scanners can tell which runs are actually
+// making progress without opening the detail page. Hidden whenever the task
+// has no active run, so it's safe to render unconditionally inline. The dot +
+// elapsed tick are the kit's `LiveDot` / `useElapsed`; the run lookup and
+// tooltip copy stay domain-local.
 export function ActiveRunPulse({ taskId }: ActiveRunPulseProps) {
   const activeRun = useActiveRun(taskId)
   const elapsed = useElapsed(activeRun?.startedAt ?? null)
@@ -37,22 +38,19 @@ export function ActiveRunPulse({ taskId }: ActiveRunPulseProps) {
     <Tooltip>
       <TooltipTrigger
         render={(props) => (
-          <span
-            {...props}
-            tabIndex={0}
-            aria-label={`Run in progress, elapsed ${formatElapsed(elapsed)}`}
-            className="relative inline-flex h-2 w-2 items-center justify-center"
-          >
-            <span className="absolute inset-0 animate-ping rounded-full bg-amber-400/80" />
-            <span className="relative inline-block h-1.5 w-1.5 rounded-full bg-amber-400" />
+          <span {...props} tabIndex={0} className="inline-flex">
+            <LiveDot
+              tone="warning"
+              label={`Run in progress, elapsed ${formatElapsed(elapsed)}`}
+            />
           </span>
         )}
       />
       <TooltipContent className="max-w-sm whitespace-pre-wrap text-left">
-        <div className="text-[11px] uppercase tracking-[.14em] text-zinc-300">
+        <div className="text-[11px] uppercase tracking-[.14em] text-text-muted">
           elapsed {formatElapsed(elapsed)}
         </div>
-        <div className="mt-0.5 text-[11px] text-zinc-400">{noteLine}</div>
+        <div className="mt-0.5 text-[11px] text-text-soft">{noteLine}</div>
       </TooltipContent>
     </Tooltip>
   )

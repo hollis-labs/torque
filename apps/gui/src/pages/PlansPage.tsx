@@ -1,11 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus } from 'lucide-react'
-import { PageHeader } from '@/components/domain/page-header'
-import { EmptyState } from '@/components/domain/empty-state'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Button } from '@/components/ui/button'
-import { CopyableId } from '@/components/domain/copyable-id'
+import { PageHeader, EmptyState, Skeleton, Button, CopyableId } from '@hollis-labs/sysop-ui'
 import { CreatePlanDialog } from '@/components/domain/create-plan-dialog'
 import { useApi } from '@/hooks/use-api'
 import type { PlanDetail, Task } from '@/lib/types'
@@ -86,10 +82,10 @@ export default function PlansPage() {
         {loading ? (
           <PlansSkeleton />
         ) : error ? (
-          <EmptyState variant="error" description={error} action={{ label: 'Retry', onClick: fetchPlans }} />
+          <EmptyState variant="error" title="Something went wrong" description={error} action={{ label: 'Retry', onClick: fetchPlans }} />
         ) : rows.length === 0 ? (
           <EmptyState
-            variant="no-tasks"
+            variant="empty"
             title="No plans yet"
             description="Plans group phase-scoped execution children. Click New plan to create one."
             action={{ label: 'New plan', onClick: () => setDialogOpen(true) }}

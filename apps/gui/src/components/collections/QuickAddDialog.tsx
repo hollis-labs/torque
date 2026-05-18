@@ -8,15 +8,15 @@ import {
   CommandItem,
   CommandList,
   CommandSeparator,
-} from '@/components/ui/command'
+} from '@hollis-labs/sysop-ui'
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog'
-import { Skeleton } from '@/components/ui/skeleton'
+} from '@hollis-labs/sysop-ui'
+import { Skeleton } from '@hollis-labs/sysop-ui'
 import { useApi } from '@/hooks/use-api'
 import { notifyError } from '@/lib/toast'
 import type { Collection, Task } from '@/lib/types'
