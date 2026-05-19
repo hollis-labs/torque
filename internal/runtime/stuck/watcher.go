@@ -39,7 +39,7 @@ import (
 // SessionLister projects agent.Session onto this; tests construct it
 // directly.
 type LiveSession struct {
-	// SessionID is the Torque session id — the PROBE-phase SendInput target
+	// SessionID is the Torque session id — the PROBE-phase SendTurn target
 	// and the RESUME-phase ResumeSession target.
 	SessionID string
 
@@ -74,7 +74,7 @@ type SessionLister interface {
 // silently never recover anything.
 type WatcherDeps struct {
 	Lister     SessionLister
-	Sender     InputSender
+	Sender     TurnSender
 	Source     EnvelopeSource
 	Dispatch   EnvelopeDispatcher
 	Resume     ResumeManager
@@ -115,10 +115,9 @@ const (
 //
 // Concurrency. Each scan launches at most one probe goroutine per stuck
 // session. An in-flight set keys by session id so a probe that outlives the
-// scan interval is never re-triggered. A natural cooldown layers on top:
-// Probe's PROBE phase SendInputs the target session, and agent.Manager.
-// SendInput touches last_activity — so a just-probed session reads as
-// "active" on the next scan and is not immediately re-probed.
+// scan interval is never re-triggered — the claim is held for the whole
+// Probe call (PROBE → WAIT → RESPOND|RESUME), so a probe in progress is the
+// sole re-probe guard while it runs.
 type Watcher struct {
 	deps WatcherDeps
 	cfg  WatcherConfig

@@ -24,25 +24,25 @@ type fakeSender struct {
 	calls  []sendCall
 	err    error
 	delay  time.Duration
-	notify chan struct{} // closed once SendInput has been called at least once
+	notify chan struct{} // closed once SendTurn has been called at least once
 }
 
 type sendCall struct {
 	SessionID string
-	Payload   []byte
+	Text      string
 }
 
 func newFakeSender() *fakeSender {
 	return &fakeSender{notify: make(chan struct{})}
 }
 
-func (f *fakeSender) SendInput(sessID string, payload []byte) error {
+func (f *fakeSender) SendTurn(_ context.Context, sessID, text string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.delay > 0 {
 		time.Sleep(f.delay)
 	}
-	f.calls = append(f.calls, sendCall{SessionID: sessID, Payload: append([]byte(nil), payload...)})
+	f.calls = append(f.calls, sendCall{SessionID: sessID, Text: text})
 	if len(f.calls) == 1 {
 		close(f.notify)
 	}
@@ -232,11 +232,11 @@ func TestProbe_ResponseBranch_RoutesEnvelopeAndReturnsResponded(t *testing.T) {
 	assert.Empty(t, res.ResumedSessionID)
 	assert.Empty(t, res.CheckpointID)
 
-	// Verify primitives — SendInput fired with the probe message, dispatcher
+	// Verify primitives — SendTurn fired with the probe message, dispatcher
 	// got the envelope, resume + checkpoint did NOT fire.
 	require.Len(t, sender.calls, 1)
 	assert.Equal(t, "SESS-1", sender.calls[0].SessionID)
-	assert.Contains(t, string(sender.calls[0].Payload), "status_update")
+	assert.Contains(t, sender.calls[0].Text, "status_update")
 
 	require.Len(t, disp.calls, 1)
 	assert.Equal(t, "E-1", disp.calls[0].Env.ID)
@@ -270,7 +270,7 @@ func TestProbe_SilenceBranch_CheckpointsAndResumesWithDiagnostic(t *testing.T) {
 	assert.Nil(t, res.Dispatch)
 	assert.NoError(t, res.Err)
 
-	require.Len(t, sender.calls, 1, "PROBE phase should SendInput once")
+	require.Len(t, sender.calls, 1, "PROBE phase should SendTurn once")
 	require.Len(t, cp.calls, 1, "silence branch must checkpoint")
 	require.Len(t, resume.calls, 1, "silence branch must resume")
 	assert.Empty(t, disp.calls, "no envelope arrived; dispatcher must not be called")
@@ -364,7 +364,7 @@ func TestProbe_EnvelopeChannelClosed_FallsThroughToResume(t *testing.T) {
 
 // --- error paths ------------------------------------------------------
 
-func TestProbe_SendInputError_HaltsBeforeWait(t *testing.T) {
+func TestProbe_SendTurnError_HaltsBeforeWait(t *testing.T) {
 	in, sender, _, disp, resume, cp := newProbeInput()
 	sender.err = errors.New("input pipe closed")
 
@@ -372,7 +372,7 @@ func TestProbe_SendInputError_HaltsBeforeWait(t *testing.T) {
 
 	assert.Equal(t, stuck.OutcomeFailed, res.Outcome)
 	require.Error(t, res.Err)
-	assert.Contains(t, res.Err.Error(), "send_input")
+	assert.Contains(t, res.Err.Error(), "send_turn")
 	assert.Contains(t, res.Err.Error(), "input pipe closed")
 
 	assert.Empty(t, disp.calls)
@@ -390,7 +390,7 @@ func TestProbe_SubscribeError_HaltsBeforeProbe(t *testing.T) {
 	require.Error(t, res.Err)
 	assert.Contains(t, res.Err.Error(), "subscribe")
 
-	// Critical: SendInput must NOT have fired — we couldn't subscribe,
+	// Critical: SendTurn must NOT have fired — we couldn't subscribe,
 	// so probing the agent would produce a status_update we can't hear.
 	assert.Empty(t, sender.calls)
 	assert.Empty(t, disp.calls)
@@ -518,7 +518,7 @@ func TestProbe_DefaultsApplyWhenEmpty(t *testing.T) {
 	res := stuck.Probe(context.Background(), in)
 
 	require.Len(t, sender.calls, 1)
-	assert.Contains(t, string(sender.calls[0].Payload), stuck.DefaultProbeMessage)
+	assert.Contains(t, sender.calls[0].Text, stuck.DefaultProbeMessage)
 
 	require.Len(t, resume.calls, 1)
 	assert.Contains(t, resume.calls[0].DiagnosticNote, "went silent")
