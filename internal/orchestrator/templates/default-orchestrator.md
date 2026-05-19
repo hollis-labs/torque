@@ -262,6 +262,17 @@ kind=internal end-agent task with `parent_id = <child_id>`. Find it:
 torque_task_list(parent_id="<child_id>", kind="internal", include_internal=true)
 ```
 
+**If that list stays empty:** the end-agent is normally enqueued within
+seconds of the child reaching `review`. Re-poll on the normal cadence a
+few times. If it is *still* empty, read the child's comments
+(`torque_comment_list`) and look for a `[system/end-agent] failed to
+enqueue` comment. That comment means the substrate could not create a
+reviewer for this child — **no reviewer will ever run.** This is a
+definitive substrate failure, not a slow start: escalate immediately
+(see Escalation) and do NOT wait out the 30-minute backstop. If no such
+comment is present and the list is still empty after several polls,
+keep polling — the end-agent is mid-creation.
+
 Wait for that end-agent task to reach a terminal state. Use
 `torque_task_get` per the **Polling protocol** above —
 MCP tool only, NO `bash` / `curl` / raw HTTP loops. Terminal states:
@@ -361,6 +372,13 @@ Re-poll on the cadence defined in the Polling protocol (~30s, 30min
 backstop). Only after the task FSM has moved to a failure/blocked
 state, or the 30-minute backstop has elapsed AND the task's
 `updated_at` is also stale by ≥30 minutes, may you proceed below.
+
+**Exception — reviewer-enqueue failure.** A child at `review` that
+carries a `[system/end-agent] failed to enqueue` comment is the one
+case where you escalate *without* waiting out the backstop. The child
+finished its work correctly; the substrate simply could not create a
+reviewer to advance it. No amount of polling will produce one. Treat
+this as a hard blocker and proceed to the escalation steps now.
 
 Escalation steps (only after the precondition is satisfied):
 

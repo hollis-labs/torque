@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hollis-labs/go-sqlite/txutil"
@@ -441,6 +442,92 @@ func (w *WriteTx) SetTaskEscalationStep(id string, step int) error {
 // SetTaskAgentProfile updates agent_profile for the task.
 func (w *WriteTx) SetTaskAgentProfile(id, agentProfile string) error {
 	res, err := w.tx.Exec(`UPDATE tasks SET agent_profile = ?, updated_at = ? WHERE id = ?`, agentProfile, time.Now().UTC(), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("task %s not found", id)
+	}
+	return nil
+}
+
+// NextTaskID allocates the next sequential task ID inside the write
+// transaction. Unlike Store.NextTaskID — which runs SELECT MAX(id) on a
+// connection that is released before the caller's subsequent INSERT — this
+// runs under the transaction's held writer lock. When paired with CreateTask
+// in the same WriteTx, the SELECT-MAX and the INSERT are atomic against every
+// other writer (writeq-serialized or direct), so two concurrent allocations
+// can never collide on the same ID.
+func (w *WriteTx) NextTaskID() (string, error) {
+	prefix := "CW-" + time.Now().UTC().Format("20060102") + "-"
+
+	var maxID sql.NullString
+	if err := w.tx.QueryRow(`SELECT MAX(id) FROM tasks WHERE id LIKE ?`, prefix+"%").Scan(&maxID); err != nil {
+		return "", err
+	}
+
+	seq := 1
+	if maxID.Valid && maxID.String != "" {
+		parts := strings.Split(maxID.String, "-")
+		if len(parts) == 3 {
+			_, _ = fmt.Sscanf(parts[2], "%d", &seq)
+			seq++
+		}
+	}
+	return fmt.Sprintf("%s%04d", prefix, seq), nil
+}
+
+// CreateTask inserts a task row inside the write transaction. It mirrors
+// Store.CreateTask field-for-field (including applyDefaults, which rewrites
+// MaxRetries==0 to 3) so behavior is identical regardless of which path
+// creates the task. The only difference is that the INSERT runs under the
+// transaction's held writer lock — callers that allocate the ID with
+// NextTaskID in the same WriteTx get a collision-free create.
+func (w *WriteTx) CreateTask(t *TaskRecord) error {
+	applyDefaults(t)
+	now := time.Now().UTC()
+	t.CreatedAt = now
+	t.UpdatedAt = now
+
+	var manual int
+	if t.Manual {
+		manual = 1
+	}
+
+	const q = `INSERT INTO tasks (
+		id, title, description, status, priority, manual,
+		executor, agent_profile, working_dir, tools, permissions, environment,
+		system_prompt, agent_file, files, cost_budget, max_retries, max_duration_ms, token_budget,
+		on_done, on_fail, on_review, escalation_chain, quality_gates, deliverables,
+		deliverable_preset, on_done_merge, depends_on, blocked_reason, metadata,
+		sprint_id, project_id, epic_id,
+		kind, source_type, source_ref, trust, checkpoint_mode, on_checkpoint_response,
+		parent_id
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+
+	_, err := w.tx.Exec(q,
+		t.ID, t.Title, t.Description, t.Status, t.Priority, manual,
+		t.Executor, t.AgentProfile, t.WorkingDir, t.Tools, t.Permissions, t.Environment,
+		t.SystemPrompt, t.AgentFile, t.Files, t.CostBudget, t.MaxRetries, t.MaxDurationMs, t.TokenBudget,
+		t.OnDone, t.OnFail, t.OnReview, t.EscalationChain, t.QualityGates, t.Deliverables,
+		t.DeliverablePreset, t.OnDoneMerge, t.DependsOn, t.BlockedReason, t.Metadata,
+		t.SprintID, t.ProjectID, t.EpicID,
+		t.Kind, t.SourceType, t.SourceRef, t.Trust, t.CheckpointMode, t.OnCheckpointResponse,
+		t.ParentID,
+	)
+	return err
+}
+
+// SetTaskMaxRetries overwrites max_retries inside the write transaction. It
+// is the pointer-to-zero counterpart to the MaxRetries==0→3 rewrite inside
+// applyDefaults: callers that genuinely want a zero-retry task call this
+// after CreateTask in the same transaction.
+func (w *WriteTx) SetTaskMaxRetries(id string, maxRetries int) error {
+	res, err := w.tx.Exec(`UPDATE tasks SET max_retries = ?, updated_at = ? WHERE id = ?`, maxRetries, time.Now().UTC(), id)
 	if err != nil {
 		return err
 	}
