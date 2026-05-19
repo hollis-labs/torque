@@ -74,6 +74,16 @@ Use the existing `torque_task_create` or `POST /tasks` with:
 
 The plan GUI's "Add task to phase" action pre-fills both fields.
 
+## Branch & PR strategy
+
+A plan must also pick how its children integrate with `main` — per-task
+branches vs. one shared branch, and continuous merges vs. PRs deferred to
+program end. [plan-branch-strategies.md](plan-branch-strategies.md) is the
+canonical reference. In particular, a plan that uses **option-4** (a shared
+long-lived branch with PRs opened at program end) MUST include a terminal
+reconcile-and-build task as its final child — a clean textual merge is not a
+working merge.
+
 ## Non-goals in v1
 
 - No auto-inject of plan context into child task prompts (deferred to v2).
