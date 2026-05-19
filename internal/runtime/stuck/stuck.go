@@ -6,8 +6,10 @@
 // scoped per sprint-α D2), Probe runs the deterministic three-state
 // recovery loop:
 //
-//  1. PROBE   — SendInput a user-turn message asking the agent to emit a
-//     status_update envelope describing its state.
+//  1. PROBE   — SendTurn a user-turn message asking the agent to emit a
+//     status_update envelope describing its state. The turn is framed per
+//     the session's RuntimeKind — a raw stdin write crashes a streaming-
+//     stdio worker's JSON parser (CW-20260519-0122).
 //  2. WAIT    — Subscribe to the broker filtered to MsgKindStatusUpdate and
 //     wait up to WaitTimeout for an envelope tagged with
 //     metadata.task_id == TaskID. The first match wins.
@@ -165,11 +167,17 @@ type ResumeManager interface {
 	ResumeSession(ctx context.Context, sessionID, diagnosticNote string) (newSessionID string, err error)
 }
 
-// InputSender is the narrow surface Probe needs from
-// agent.Manager.SendInput. Same shape; defined as an interface for
-// test seam parity with ResumeManager.
-type InputSender interface {
-	SendInput(sessionID string, payload []byte) error
+// TurnSender is the narrow surface Probe needs to deliver the PROBE-phase
+// user-turn message to a live session. Production wires an adapter over
+// agent.Manager.SendTurn, which frames the turn per the target session's
+// RuntimeKind. This framing is load-bearing: a streaming-stdio session runs
+// claude `--input-format stream-json`, where every stdin line MUST be a
+// single JSON object — a raw probe line fails the worker's streaming-input
+// parser and kills the process mid-task (CW-20260519-0122). The raw
+// agent.Manager.SendInput surface must NOT be used here. Defined as an
+// interface for test-seam parity with ResumeManager.
+type TurnSender interface {
+	SendTurn(ctx context.Context, sessionID, text string) error
 }
 
 // CheckpointMaker is the narrow surface Probe needs to persist a
@@ -241,7 +249,7 @@ type ProbeInput struct {
 	// in-process primitives. All required; nil triggers an
 	// OutcomeFailed with a descriptive error so partial wireup doesn't
 	// silently degrade.
-	Sender     InputSender
+	Sender     TurnSender
 	Source     EnvelopeSource
 	Dispatch   EnvelopeDispatcher
 	Resume     ResumeManager
@@ -310,10 +318,13 @@ func Probe(ctx context.Context, in ProbeInput) Result {
 		return res
 	}
 
-	// PROBE phase — SendInput. Failure here halts the probe; we have no
-	// signal to wait on if the input never reached the agent.
-	if err := in.Sender.SendInput(in.SessionID, []byte(probeMsg)); err != nil {
-		res.Err = fmt.Errorf("stuck.Probe send_input: %w", err)
+	// PROBE phase — SendTurn. The probe message is delivered as a runtime-
+	// kind-framed turn, NOT a raw stdin write: a streaming-stdio worker runs
+	// claude `--input-format stream-json` and a raw line crashes its parser
+	// (CW-20260519-0122). Failure here halts the probe; we have no signal to
+	// wait on if the turn never reached the agent.
+	if err := in.Sender.SendTurn(ctx, in.SessionID, probeMsg); err != nil {
+		res.Err = fmt.Errorf("stuck.Probe send_turn: %w", err)
 		return res
 	}
 

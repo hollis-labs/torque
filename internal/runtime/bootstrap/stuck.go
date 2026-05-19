@@ -53,8 +53,8 @@ func StuckWatcher(
 
 	deps := stuck.WatcherDeps{
 		Lister:     &managerSessionLister{mgr: sessions},
-		Sender:     sessions, // *agent.Manager satisfies stuck.InputSender directly
-		Source:     brk,      // *broker.Broker satisfies stuck.EnvelopeSource directly
+		Sender:     &managerSenderAdapter{mgr: sessions},
+		Source:     brk, // *broker.Broker satisfies stuck.EnvelopeSource directly
 		Dispatch:   stuckDispatchAdapter{d: dispatcher},
 		Resume:     &managerResumeAdapter{mgr: sessions},
 		Checkpoint: &managerCheckpointAdapter{mgr: sessions},
@@ -102,6 +102,31 @@ func (l *managerSessionLister) RunningSessions() ([]stuck.LiveSession, error) {
 		})
 	}
 	return out, nil
+}
+
+// managerSenderAdapter bridges stuck.TurnSender to agent.Manager.SendTurn.
+//
+// This adapter is the CW-20260519-0122 fix. Before it, the watcher wired
+// *agent.Manager directly as the probe's Sender, so the PROBE phase reached
+// the agent via the raw agent.Manager.SendInput surface — a verbatim stdin
+// write. A streaming-stdio worker runs claude `--input-format stream-json`,
+// where every stdin line must be one JSON object; the raw probe line failed
+// the worker's streaming-input parser and killed the process mid-task.
+//
+// SendTurn frames the turn per the session's RuntimeKind (stream-json user
+// message for streaming-stdio, JSON-RPC turn/start for jsonrpc-stdio, raw
+// bytes only for subprocess/pty). It needs the *agent.Session, so the
+// adapter resolves it by id via Manager.Get before delegating.
+type managerSenderAdapter struct {
+	mgr *agent.Manager
+}
+
+func (a *managerSenderAdapter) SendTurn(ctx context.Context, sessionID, text string) error {
+	sess, err := a.mgr.Get(sessionID)
+	if err != nil {
+		return fmt.Errorf("resolve session %s: %w", sessionID, err)
+	}
+	return a.mgr.SendTurn(ctx, sess, text)
 }
 
 // stuckDispatchAdapter bridges stuck.EnvelopeDispatcher to the
