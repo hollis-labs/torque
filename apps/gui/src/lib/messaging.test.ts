@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  correspondentKey,
   extraPayloadFields,
   messageBody,
   messageScope,
@@ -127,5 +128,27 @@ describe('threadKey', () => {
   })
   it('falls back to the message id', () => {
     expect(threadKey(env({ id: 'm7' }))).toBe('m7')
+  })
+})
+
+describe('correspondentKey', () => {
+  const self = 'msg://user/local/operator'
+  it('inbound message keys on the sender', () => {
+    const m = env({ from: 'msg://agent/local/orchestrator', to: self })
+    expect(correspondentKey(m, self)).toBe('msg://agent/local/orchestrator')
+  })
+  it('outbound message keys on the recipient', () => {
+    const m = env({ from: self, to: 'msg://agent/local/orchestrator' })
+    expect(correspondentKey(m, self)).toBe('msg://agent/local/orchestrator')
+  })
+  it('groups inbound and outbound to the same correspondent', () => {
+    const other = 'msg://session/host/abc/turn-2'
+    const inbound = env({ id: 'a', from: other, to: self })
+    const outbound = env({ id: 'b', from: self, to: other })
+    expect(correspondentKey(inbound, self)).toBe(correspondentKey(outbound, self))
+  })
+  it('ignores surrounding whitespace on self and the URNs', () => {
+    const m = env({ from: ' msg://user/local/operator ', to: ' msg://agent/local/x ' })
+    expect(correspondentKey(m, '  msg://user/local/operator  ')).toBe('msg://agent/local/x')
   })
 })
