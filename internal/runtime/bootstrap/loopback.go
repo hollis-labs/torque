@@ -9,6 +9,7 @@ import (
 
 	"github.com/hollis-labs/torque/internal/mcpadapter"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
+	"github.com/hollis-labs/torque/internal/runtime/steering"
 	"github.com/hollis-labs/torque/internal/service"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -78,7 +79,14 @@ func (h *loopbackHandle) Shutdown(ctx context.Context) error {
 // May be nil for callers that don't need orchestrator support; orchestrator-
 // role loopbacks then fall back to NewLoopback (restricted subset) and the
 // orchestrator will self-block per CW-20260509-0018.
-func loopbackBuilder(svc *service.Service, sessionsRef func() *agent.Manager) agent.LoopbackBuilder {
+//
+// pollReg is the opt-in inbox-poll registry (CW-20260518-0042). It is
+// attached to the orchestrator-class loopback adapter (via WithPollRegistry)
+// so the torque_inbox_poll tool shares opt-in state with the steering
+// bridge. nil disables the tool's opt-in side (it reports polling as
+// unavailable). Worker-class loopbacks never carry the tool — the
+// restricted NewLoopback subset omits the broker tools entirely.
+func loopbackBuilder(svc *service.Service, sessionsRef func() *agent.Manager, pollReg *steering.PollRegistry) agent.LoopbackBuilder {
 	if svc == nil {
 		return nil
 	}
@@ -105,7 +113,14 @@ func loopbackBuilder(svc *service.Service, sessionsRef func() *agent.Manager) ag
 			// tasks), not just its own. The orchestrator template already
 			// uses the explicit-id forms verbatim. Sessions wired so
 			// torque_session_* + torque_plan_start work.
-			loopback = mcpadapter.New(svc, nil).WithSessions(sessionsRef())
+			//
+			// WithPollRegistry shares the opt-in inbox-poll state
+			// (CW-20260518-0042) with the in-process steering bridge so an
+			// orchestrator — the archetypal "actively communicating" agent —
+			// can opt into pulling its inbox via torque_inbox_poll.
+			loopback = mcpadapter.New(svc, nil).
+				WithSessions(sessionsRef()).
+				WithPollRegistry(pollReg)
 		} else {
 			// A worker-class loopback (the restricted self-task subset) is
 			// hard-bound to exactly one task: every tool call resolves to

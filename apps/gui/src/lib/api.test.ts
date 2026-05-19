@@ -268,3 +268,125 @@ describe('TorqueApiClient HTML fallback errors', () => {
     await expect(promise).rejects.toThrow(/returned HTML instead of JSON/i)
   })
 })
+
+describe('TorqueApiClient messaging client', () => {
+  const client = new TorqueApiClient('/api/v1')
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  const ENVELOPE = {
+    id: 'msg-1',
+    kind: 'notice',
+    from: 'msg://user/local/operator',
+    to: 'msg://agent/local/orchestrator',
+    created_at: '2026-05-18T00:00:00Z',
+    delivered_at: null,
+    consumed_at: null,
+  }
+
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('getInbox drains GET /messages/inbox and unwraps {messages}', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ messages: [ENVELOPE] }))
+    const out = await client.getInbox('msg://user/local/operator')
+    expect(out).toHaveLength(1)
+    expect(out[0].id).toBe('msg-1')
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      '/api/v1/messages/inbox?to=msg%3A%2F%2Fuser%2Flocal%2Foperator',
+    )
+  })
+
+  it('getInbox returns [] when the envelope key is null', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ messages: null }))
+    await expect(client.getInbox('msg://user/local/operator')).resolves.toEqual([])
+  })
+
+  it('getThread passes filter params to GET /messages/thread/{id}', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ messages: [ENVELOPE] }))
+    await client.getThread('thread-1', { kind: 'response', limit: 10 })
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      '/api/v1/messages/thread/thread-1?kind=response&limit=10',
+    )
+  })
+
+  it('sendMessage POSTs the envelope to /messages', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(ENVELOPE, { status: 201 }))
+    await client.sendMessage({
+      kind: 'notice',
+      from: 'msg://user/local/operator',
+      to: 'msg://agent/local/orchestrator',
+      payload: { body: 'hi' },
+    })
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/messages')
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' })
+  })
+
+  it('cancelMessage POSTs to /messages/{id}/cancel', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({}))
+    await client.cancelMessage('msg-1')
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/messages/msg-1/cancel')
+  })
+
+  it('consumeMessage POSTs the recipient to /messages/{id}/consume', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({}))
+    await client.consumeMessage('msg-1', 'msg://agent/local/orchestrator')
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/messages/msg-1/consume')
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify({ recipient: 'msg://agent/local/orchestrator' }),
+    })
+  })
+
+  it('brokerSend POSTs the envelope to /broker/send', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(ENVELOPE, { status: 201 }))
+    await client.brokerSend({
+      kind: 'notice',
+      from: 'msg://user/local/operator',
+      to: 'msg://agent/local/orchestrator',
+    })
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/broker/send')
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' })
+  })
+
+  it('brokerRequest POSTs a request body to /broker/request', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(ENVELOPE))
+    const out = await client.brokerRequest({
+      from: 'msg://user/local/operator',
+      to: 'msg://agent/local/orchestrator',
+      payload: { q: 'status?' },
+      timeout_seconds: 15,
+    })
+    expect(out.id).toBe('msg-1')
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/broker/request')
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify({
+        from: 'msg://user/local/operator',
+        to: 'msg://agent/local/orchestrator',
+        payload: { q: 'status?' },
+        timeout_seconds: 15,
+      }),
+    })
+  })
+
+  it('brokerInbox drains GET /broker/inbox and unwraps {envelopes}', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ envelopes: [ENVELOPE] }))
+    const out = await client.brokerInbox('msg://agent/local/orchestrator', { limit: 5 })
+    expect(out).toHaveLength(1)
+    expect(out[0].id).toBe('msg-1')
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      '/api/v1/broker/inbox?to=msg%3A%2F%2Fagent%2Flocal%2Forchestrator&limit=5',
+    )
+  })
+
+  it('brokerInbox returns [] when the envelope key is null', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ envelopes: null }))
+    await expect(client.brokerInbox('msg://agent/local/orchestrator')).resolves.toEqual([])
+  })
+})

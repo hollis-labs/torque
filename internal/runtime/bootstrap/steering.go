@@ -23,18 +23,24 @@ import (
 // (escalation/status_update/request/handoff), the bridge by recipient
 // Address (envelopes addressed to a live agent/session).
 //
+// polling is the opt-in inbox-poll registry (CW-20260518-0042) shared with
+// the torque_inbox_poll MCP tool. When non-nil, the bridge skips turn
+// injection for any recipient that has opted into polling. nil is
+// tolerated — every recipient then uses the inject-at-turn default.
+//
 // Returns (closer, error). closer is always non-nil — call at shutdown to
 // drain the loop goroutine. On error the bridge was not started.
 func SteeringBridge(
 	ctx context.Context,
 	brk *broker.Broker,
 	sessions *agent.Manager,
+	polling *steering.PollRegistry,
 ) (func(), error) {
 	if brk == nil {
 		return func() {}, fmt.Errorf("steering bridge bootstrap: broker is required")
 	}
 
-	bridge := steering.New(managerGateway{mgr: sessions}, brk)
+	bridge := steering.New(managerGateway{mgr: sessions}, brk).WithPolling(polling)
 	// System-wide subscription (zero Address, empty Filter): the Bridge
 	// itself encodes the steerable-address rule, so the loop sees every
 	// envelope and lets non-steerable ones fall through cheaply.

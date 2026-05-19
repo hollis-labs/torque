@@ -24,6 +24,10 @@ import type {
   PlanPhaseInput,
   SchedulerStatus,
   ModelEntry,
+  MessageEnvelope,
+  SendMessageRequest,
+  MessageFilter,
+  BrokerRequest,
 } from './types'
 
 export class ApiError extends Error {
@@ -940,6 +944,139 @@ export class TorqueApiClient {
 
   async restartFrontend(): Promise<{ hash: string; duration_ms: number }> {
     return this.post<{ hash: string; duration_ms: number }>('/admin/restart-frontend')
+  }
+
+  // -------------------------
+  // Messaging
+  // -------------------------
+
+  /**
+   * Drain the inbox for a recipient URN via `GET /messages/inbox`.
+   *
+   * NOTE: this is destructive in the go-messaging sense — the backend marks
+   * every returned envelope `delivered` for `to`, so a subsequent call
+   * returns only envelopes that arrived since. The messaging page therefore
+   * MERGES results into accumulated state rather than replacing them, and
+   * the action is operator-initiated (not auto-polled) so it does not
+   * silently consume delivery on an agent's behalf.
+   */
+  async getInbox(to: string, filter?: MessageFilter): Promise<MessageEnvelope[]> {
+    const res = await this.get<{ messages: MessageEnvelope[] | null }>('/messages/inbox', {
+      to,
+      kind: filter?.kind,
+      channel: filter?.channel,
+      thread_id: filter?.thread_id,
+      limit: filter?.limit,
+    })
+    return res.messages ?? []
+  }
+
+  /** Read a thread by id — non-destructive (`GET /messages/thread/{id}`). */
+  async getThread(threadId: string, filter?: MessageFilter): Promise<MessageEnvelope[]> {
+    const res = await this.get<{ messages: MessageEnvelope[] | null }>(
+      `/messages/thread/${encodeURIComponent(threadId)}`,
+      { kind: filter?.kind, channel: filter?.channel, limit: filter?.limit },
+    )
+    return res.messages ?? []
+  }
+
+  /** Fetch a single envelope by id — non-destructive. */
+  async getMessage(id: string): Promise<MessageEnvelope> {
+    return this.get<MessageEnvelope>(`/messages/${encodeURIComponent(id)}`)
+  }
+
+  /** Send an envelope through the messaging store (`POST /messages`). */
+  async sendMessage(req: SendMessageRequest): Promise<MessageEnvelope> {
+    return this.post<MessageEnvelope>('/messages', req)
+  }
+
+  /** Retract an undelivered message (`POST /messages/{id}/cancel`). */
+  async cancelMessage(id: string): Promise<void> {
+    await this.post<void>(`/messages/${encodeURIComponent(id)}/cancel`)
+  }
+
+  /** Mark a message consumed for a recipient (`POST /messages/{id}/consume`). */
+  async consumeMessage(id: string, recipient: string): Promise<void> {
+    await this.post<void>(`/messages/${encodeURIComponent(id)}/consume`, { recipient })
+  }
+
+  /**
+   * Send a typed envelope through the broker (`POST /broker/send`) — adds
+   * validation, a payload size cap, and SSE publication on top of the store.
+   */
+  async brokerSend(req: SendMessageRequest): Promise<MessageEnvelope> {
+    return this.post<MessageEnvelope>('/broker/send', req)
+  }
+
+  /**
+   * Send a `request` envelope and block until the addressed peer answers
+   * (`POST /broker/request`). Resolves with the response envelope; rejects
+   * with a 504 if the peer stays silent past `timeout_seconds`.
+   */
+  async brokerRequest(req: BrokerRequest): Promise<MessageEnvelope> {
+    return this.post<MessageEnvelope>('/broker/request', req)
+  }
+
+  /**
+   * Drain the broker inbox for a recipient URN (`GET /broker/inbox`).
+   *
+   * Destructive like getInbox — the broker marks every returned envelope
+   * `delivered` for `to` and publishes an `envelope.delivered` SSE frame,
+   * so callers should MERGE results into accumulated state, not replace.
+   */
+  async brokerInbox(to: string, filter?: MessageFilter): Promise<MessageEnvelope[]> {
+    const res = await this.get<{ envelopes: MessageEnvelope[] | null }>('/broker/inbox', {
+      to,
+      kind: filter?.kind,
+      channel: filter?.channel,
+      thread_id: filter?.thread_id,
+      limit: filter?.limit,
+    })
+    return res.envelopes ?? []
+  }
+
+  /**
+   * Open a live SSE stream of envelopes addressed to `to`
+   * (`GET /messages/subscribe`). The backend emits `event: message` frames;
+   * returns an unsubscribe fn. Reconnects with a fixed backoff on error.
+   */
+  subscribeMessages(
+    to: string,
+    onMessage: (env: MessageEnvelope) => void,
+    onStatus?: (status: 'connecting' | 'live' | 'error') => void,
+  ): () => void {
+    const url = this.url(`/messages/subscribe?to=${encodeURIComponent(to)}`)
+    let es: EventSource | null = null
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+    let stopped = false
+
+    function connect() {
+      onStatus?.('connecting')
+      es = new EventSource(url)
+      es.onopen = () => onStatus?.('live')
+      es.onmessage = (e: MessageEvent) => {
+        try {
+          onMessage(JSON.parse(e.data as string) as MessageEnvelope)
+        } catch {
+          // malformed frame — ignore
+        }
+      }
+      es.onerror = () => {
+        es?.close()
+        if (!stopped) {
+          onStatus?.('error')
+          reconnectTimer = setTimeout(connect, 3000)
+        }
+      }
+    }
+
+    connect()
+
+    return () => {
+      stopped = true
+      if (reconnectTimer !== null) clearTimeout(reconnectTimer)
+      es?.close()
+    }
   }
 
   // -------------------------

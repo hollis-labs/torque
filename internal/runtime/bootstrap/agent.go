@@ -11,6 +11,7 @@ import (
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
 	"github.com/hollis-labs/torque/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/runtime/steering"
 	"github.com/hollis-labs/torque/internal/runtime/writeq"
 	"github.com/hollis-labs/torque/internal/service"
 	"github.com/hollis-labs/torque/internal/toolbroker"
@@ -37,6 +38,12 @@ import (
 // (CW-20260509-0028 layers 1 + 2). When the hook is opted out (any of bus,
 // store, sessions nil — e.g. test wirings), closer is a safe no-op so
 // callers can call it unconditionally without nil-checking.
+//
+// pollReg is the opt-in inbox-poll registry (CW-20260518-0042) shared
+// with the steering bridge. It is threaded into the orchestrator-class
+// MCP loopback adapter so the torque_inbox_poll tool and the bridge
+// agree on which recipients have opted into polling. nil is tolerated —
+// the loopback adapter then reports polling as unavailable.
 func AgentDeps(
 	store *sqlstore.Store,
 	profiles config.ProfileSource,
@@ -44,6 +51,7 @@ func AgentDeps(
 	tools *toolbroker.ToolRouter,
 	bus *scheduler.EventBus,
 	stateWriter writeq.Writer,
+	pollReg *steering.PollRegistry,
 ) (*agent.Dependencies, func(), error) {
 	if store == nil {
 		return nil, nil, fmt.Errorf("agent deps bootstrap: store is nil")
@@ -79,7 +87,7 @@ func AgentDeps(
 	// by reference; deps.Sessions is read at handle-construction time
 	// (per-Boot call), which always happens AFTER NewManager has set it.
 	// This breaks the cycle without a two-phase construction.
-	deps.Loopback = loopbackBuilder(svc, func() *agent.Manager { return deps.Sessions })
+	deps.Loopback = loopbackBuilder(svc, func() *agent.Manager { return deps.Sessions }, pollReg)
 	deps.Sessions = agent.NewManager(deps)
 
 	// Orphan sweep: mirror the prior sessionmgr.Sweep behavior. Any

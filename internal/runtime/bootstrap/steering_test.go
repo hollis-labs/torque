@@ -14,7 +14,7 @@ import (
 )
 
 func TestSteeringBridge_NilBrokerErrors(t *testing.T) {
-	closer, err := bootstrap.SteeringBridge(context.Background(), nil, nil)
+	closer, err := bootstrap.SteeringBridge(context.Background(), nil, nil, nil)
 	assert.Error(t, err)
 	require.NotNil(t, closer, "closer is always non-nil so the caller can defer it")
 	closer() // must not panic
@@ -29,7 +29,7 @@ func TestSteeringBridge_StartsAndCloses(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	closer, err := bootstrap.SteeringBridge(ctx, brk, nil)
+	closer, err := bootstrap.SteeringBridge(ctx, brk, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, closer)
 

@@ -412,29 +412,102 @@ func TestDispatch_Handoff_MalformedPayload_Noop(t *testing.T) {
 	assert.Empty(t, ar.calls)
 }
 
-// --- unknown / unrouted -----------------------------------------------
+// --- notice / response operator relay ---------------------------------
 
-func TestDispatch_UnknownKind_NoopNoPanic(t *testing.T) {
-	deps, cp, bl, ss, pf, ar, nt := newDeps()
+func TestDispatch_Notice_ToUser_OperatorNotify(t *testing.T) {
+	deps, _, _, _, _, _, nt := newDeps()
 	d := reactor.New(deps)
 
 	env := gomsg.Envelope{
-		ID:   "N1",
-		Kind: gomsg.MsgKindNotice, // V0 does NOT route notice
-		From: addr(gomsg.KindAgent, "test", "alice"),
+		ID:       "NOT-1",
+		Kind:     gomsg.MsgKindNotice,
+		From:     addr(gomsg.KindAgent, "test", "alice"),
+		To:       addr(gomsg.KindUser, "test", "operator"),
+		Payload:  json.RawMessage(`{"text":"deploy finished"}`),
+		Metadata: map[string]string{"task_id": "T-700"},
+	}
+
+	res := d.Dispatch(context.Background(), env)
+	assert.Equal(t, reactor.ActionOperatorNotify, res.Action)
+	assert.Equal(t, "T-700", res.TaskID)
+	assert.NoError(t, res.Err)
+
+	require.Len(t, nt.calls, 1)
+	assert.Equal(t, "envelope.notice", nt.calls[0].Type)
+	assert.Equal(t, "T-700", nt.calls[0].TaskID)
+	assert.Equal(t, "NOT-1", nt.calls[0].Data["envelope_id"])
+}
+
+func TestDispatch_Response_ToUser_OperatorNotify(t *testing.T) {
+	deps, _, _, _, _, _, nt := newDeps()
+	d := reactor.New(deps)
+
+	env := gomsg.Envelope{
+		ID:        "RSP-1",
+		Kind:      gomsg.MsgKindResponse,
+		From:      addr(gomsg.KindAgent, "test", "bob"),
+		To:        addr(gomsg.KindUser, "test", "operator"),
+		InReplyTo: "REQ-9",
+	}
+
+	res := d.Dispatch(context.Background(), env)
+	assert.Equal(t, reactor.ActionOperatorNotify, res.Action)
+	assert.NoError(t, res.Err)
+
+	require.Len(t, nt.calls, 1)
+	assert.Equal(t, "envelope.response", nt.calls[0].Type)
+	assert.Equal(t, "REQ-9", nt.calls[0].Data["in_reply_to"])
+}
+
+// notice/response addressed to an agent/session is the steering bridge's
+// turn-injection job — the reactor must NOT act on it (no double-handling).
+func TestDispatch_Notice_ToAgent_NoopForSteering(t *testing.T) {
+	deps, _, _, _, _, _, nt := newDeps()
+	d := reactor.New(deps)
+
+	env := gomsg.Envelope{
+		ID:   "NOT-2",
+		Kind: gomsg.MsgKindNotice,
+		From: addr(gomsg.KindUser, "test", "operator"),
 		To:   addr(gomsg.KindAgent, "test", "bob"),
 	}
 
 	res := d.Dispatch(context.Background(), env)
 	assert.Equal(t, reactor.ActionNoop, res.Action)
 	assert.NoError(t, res.Err)
-	assert.Empty(t, cp.calls)
-	assert.Empty(t, bl.calls)
-	assert.Empty(t, ss.stopped)
-	assert.Empty(t, pf.sent)
-	assert.Empty(t, ar.calls)
 	assert.Empty(t, nt.calls)
 }
+
+func TestDispatch_Response_ToSession_NoopForSteering(t *testing.T) {
+	deps, _, _, _, _, _, nt := newDeps()
+	d := reactor.New(deps)
+
+	env := gomsg.Envelope{
+		ID:   "RSP-2",
+		Kind: gomsg.MsgKindResponse,
+		To:   addr(gomsg.KindSession, "test", "sess-9"),
+	}
+
+	res := d.Dispatch(context.Background(), env)
+	assert.Equal(t, reactor.ActionNoop, res.Action)
+	assert.Empty(t, nt.calls)
+}
+
+func TestDispatch_Notice_ToUser_NilNotifier_Noop(t *testing.T) {
+	d := reactor.New(reactor.Deps{}) // Notifier nil
+
+	env := gomsg.Envelope{
+		ID:   "NOT-3",
+		Kind: gomsg.MsgKindNotice,
+		To:   addr(gomsg.KindUser, "test", "operator"),
+	}
+
+	res := d.Dispatch(context.Background(), env)
+	assert.Equal(t, reactor.ActionNoop, res.Action)
+	assert.NoError(t, res.Err)
+}
+
+// --- unknown / unrouted -----------------------------------------------
 
 func TestDispatch_TotallyUnknownKind_NoopNoPanic(t *testing.T) {
 	deps, _, _, _, _, _, _ := newDeps()

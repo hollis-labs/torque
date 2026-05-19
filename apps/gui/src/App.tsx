@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
-import { LayoutList, Play, BarChart3, Settings, Cog, FileText, Inbox, FolderTree, Sparkles, FolderKanban } from 'lucide-react'
+import { LayoutList, Play, BarChart3, Settings, Cog, FileText, Inbox, FolderTree, Sparkles, FolderKanban, MessagesSquare } from 'lucide-react'
 import { NavRail, TooltipProvider, Toaster, type NavRailItem } from '@hollis-labs/sysop-ui'
 import { ApiProvider } from '@/hooks/use-api'
 import { ActiveRunsProvider } from '@/hooks/use-active-runs'
@@ -25,6 +25,7 @@ import PlansPage from '@/pages/PlansPage'
 import PlanDetailPage from '@/pages/PlanDetailPage'
 import ModelsPage from '@/pages/ModelsPage'
 import CollectionsPage from '@/pages/CollectionsPage'
+import MessagingPage from '@/pages/MessagingPage'
 
 const NAV_DESTINATIONS = [
   { key: 'operations', to: '/operations', label: 'Operations', icon: <LayoutList className="h-4 w-4" /> },
@@ -32,6 +33,7 @@ const NAV_DESTINATIONS = [
   { key: 'plans', to: '/plans', label: 'Plans', icon: <FolderTree className="h-4 w-4" /> },
   { key: 'templates', to: '/templates', label: 'Templates', icon: <FileText className="h-4 w-4" /> },
   { key: 'checkpoints', to: '/checkpoints', label: 'Checkpoints', icon: <Inbox className="h-4 w-4" /> },
+  { key: 'messaging', to: '/messaging', label: 'Messaging', icon: <MessagesSquare className="h-4 w-4" /> },
   { key: 'runs', to: '/runs', label: 'Runs', icon: <Play className="h-4 w-4" /> },
   { key: 'dashboard', to: '/dashboard', label: 'Dashboard', icon: <BarChart3 className="h-4 w-4" /> },
   { key: 'models', to: '/models', label: 'Models', icon: <Sparkles className="h-4 w-4" /> },
@@ -79,6 +81,7 @@ function AppShell() {
           <Route path="/templates" element={<TemplatesPage />} />
           <Route path="/templates/:id" element={<TemplateDetailPage />} />
           <Route path="/checkpoints" element={<CheckpointsPage />} />
+          <Route path="/messaging" element={<MessagingPage />} />
           <Route path="/runs" element={<RunsPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/dashboard/_widget-preview" element={<WidgetPreviewPage />} />

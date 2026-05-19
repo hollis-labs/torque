@@ -1,0 +1,26 @@
+{
+  "listen_addr": ":8443",
+  "local_authorities": ["torque-a"],
+  "identity": {
+    "cert_file": "federation/this-install.crt",
+    "key_file": "federation/this-install.key"
+  },
+  "peers": [
+    {
+      "label": "torque-b-prod",
+      "fingerprints": [
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      ],
+      "authorities": ["torque-b"]
+    }
+  ],
+  "foreign_routes": [
+    {
+      "authority": "torque-b",
+      "endpoint": "https://torque-b.example:8443",
+      "server_pins": [
+        "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+      ]
+    }
+  ]
+}

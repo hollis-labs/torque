@@ -25,8 +25,13 @@ import (
 // escalation / status_update / request / handoff. Everything else routes
 // to noop+log inside reactor.Dispatch.
 //
-// Returns (closer, error). closer is always non-nil — call at shutdown to
-// drain the loop goroutine. On error the reactor was not started.
+// Returns (dispatcher, closer, error). The dispatcher is returned so the
+// stuck-probe watcher (bootstrap.StuckWatcher) can route a probed agent's
+// status_update envelope through the SAME V0 dispatch table — Dispatcher is
+// stateless and safe for concurrent use, so one instance serves both the
+// reactor Loop and the probe. closer is always non-nil — call at shutdown
+// to drain the loop goroutine. On error the reactor was not started and the
+// dispatcher is nil.
 func Reactor(
 	ctx context.Context,
 	store *sqlstore.Store,
@@ -34,9 +39,9 @@ func Reactor(
 	svc *service.Service,
 	sessions *agent.Manager,
 	bus *scheduler.EventBus,
-) (func(), error) {
+) (*reactor.Dispatcher, func(), error) {
 	if store == nil || brk == nil || svc == nil {
-		return func() {}, fmt.Errorf("reactor bootstrap: store, broker, and service are required")
+		return nil, func() {}, fmt.Errorf("reactor bootstrap: store, broker, and service are required")
 	}
 
 	// Sprint α.4 (CW-20260512-0062): wire the in-process checkpoint
@@ -67,12 +72,12 @@ func Reactor(
 	d := reactor.New(deps)
 	// V0 production wiring: subscribe system-wide (zero Address) with an
 	// empty Filter so every kind reaches Dispatch, which itself encodes
-	// the four-kind table. Future sprints may scope per authority.
+	// the six-kind table. Future sprints may scope per authority.
 	loop := reactor.NewLoop(brk, d, gomsg.Address{}, gomsg.Filter{})
 	if err := loop.Start(ctx); err != nil {
-		return func() {}, fmt.Errorf("reactor loop start: %w", err)
+		return nil, func() {}, fmt.Errorf("reactor loop start: %w", err)
 	}
-	return loop.Close, nil
+	return d, loop.Close, nil
 }
 
 // --- adapters ---------------------------------------------------------

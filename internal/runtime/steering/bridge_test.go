@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	gomsg "github.com/hollis-labs/go-messaging"
 	"github.com/stretchr/testify/assert"
@@ -210,6 +211,69 @@ func TestDeliver_NilConsumer_StillDelivers(t *testing.T) {
 
 	assert.Equal(t, steering.OutcomeDelivered, res.Outcome)
 	require.Len(t, gw.deliveredTurns(), 1)
+}
+
+func TestDeliver_RecipientPolling_SkipsInjection(t *testing.T) {
+	// CW-20260518-0042: a recipient that has opted into inbox polling must
+	// NOT get a turn injected — the bridge yields the envelope to the
+	// agent's own poll.
+	to := sessionAddr("SES-POLL")
+	gw := &fakeGateway{live: map[string]string{to.URN(): "SES-POLL"}}
+	cons := &fakeConsumer{}
+	reg := steering.NewPollRegistry(time.Hour)
+	reg.MarkPolling(to.URN())
+	b := steering.New(gw, cons).WithPolling(reg)
+
+	env := gomsg.Envelope{ID: "ENV-POLL", Kind: gomsg.MsgKindNotice, To: to, Payload: []byte(`"steer"`)}
+	res := b.Deliver(context.Background(), env)
+
+	assert.Equal(t, steering.OutcomePolling, res.Outcome)
+	assert.NoError(t, res.Err)
+	assert.Empty(t, gw.deliveredTurns(), "a polling recipient gets no injected turn")
+	assert.Empty(t, cons.ids(), "the envelope is left unconsumed for the agent's own poll to drain")
+}
+
+func TestDeliver_PollingReleased_ResumesInjection(t *testing.T) {
+	// Releasing the opt-in reverts the recipient to the inject-at-turn default.
+	to := sessionAddr("SES-REL")
+	gw := &fakeGateway{live: map[string]string{to.URN(): "SES-REL"}}
+	reg := steering.NewPollRegistry(time.Hour)
+	reg.MarkPolling(to.URN())
+	reg.Release(to.URN())
+	b := steering.New(gw, &fakeConsumer{}).WithPolling(reg)
+
+	env := gomsg.Envelope{ID: "ENV-REL", Kind: gomsg.MsgKindNotice, To: to, Payload: []byte(`"steer"`)}
+	res := b.Deliver(context.Background(), env)
+
+	assert.Equal(t, steering.OutcomeDelivered, res.Outcome, "after release the inject-at-turn default resumes")
+	require.Len(t, gw.deliveredTurns(), 1)
+}
+
+func TestDeliver_NoPollRegistry_DefaultsToInjection(t *testing.T) {
+	// A bridge with no poll registry wired treats every recipient as
+	// inject-at-turn — the default holds when the opt-in path is absent.
+	to := sessionAddr("SES-NOREG")
+	gw := &fakeGateway{live: map[string]string{to.URN(): "SES-NOREG"}}
+	b := steering.New(gw, &fakeConsumer{}) // no WithPolling
+
+	env := gomsg.Envelope{ID: "ENV-NOREG", Kind: gomsg.MsgKindNotice, To: to, Payload: []byte(`"steer"`)}
+	res := b.Deliver(context.Background(), env)
+
+	assert.Equal(t, steering.OutcomeDelivered, res.Outcome)
+	require.Len(t, gw.deliveredTurns(), 1)
+}
+
+func TestDeliver_PollingNonSteerable_StillNoop(t *testing.T) {
+	// The polling check sits behind the Steerable gate: a non-steerable
+	// envelope (wrong kind) is OutcomeNotAddressed regardless of opt-in.
+	to := sessionAddr("SES-NS")
+	reg := steering.NewPollRegistry(time.Hour)
+	reg.MarkPolling(to.URN())
+	b := steering.New(&fakeGateway{}, &fakeConsumer{}).WithPolling(reg)
+
+	env := gomsg.Envelope{ID: "ENV-NS", Kind: gomsg.MsgKindEscalation, To: to, Payload: []byte(`"x"`)}
+	res := b.Deliver(context.Background(), env)
+	assert.Equal(t, steering.OutcomeNotAddressed, res.Outcome)
 }
 
 func TestDeliver_AgentAddress_Resolves(t *testing.T) {

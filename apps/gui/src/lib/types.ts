@@ -590,3 +590,83 @@ export interface CheckpointEmitRequest {
   emitter_source_ref?: string
   timeout_at?: string
 }
+
+// ── Messaging ──────────────────────────────────────────────────────────────
+// Wire shapes mirror go-messaging's Envelope (github.com/hollis-labs/go-messaging).
+// `from` / `to` are canonical URN strings: msg://<kind>/<authority>/<id>[/<subid>].
+
+/** Closed Envelope.Kind enum — what the message IS (routable). */
+export type MessageKind =
+  | 'request'
+  | 'response'
+  | 'notice'
+  | 'status_update'
+  | 'handoff'
+  | 'escalation'
+
+export const MESSAGE_KINDS: MessageKind[] = [
+  'request',
+  'response',
+  'notice',
+  'status_update',
+  'handoff',
+  'escalation',
+]
+
+/** Address.Kind — what a URN points at. Drives the user/agent tab split. */
+export type MessageAddressKind = 'agent' | 'user' | 'service' | 'session' | 'workflow'
+
+/** A messaging Envelope as the `/api/v1/messages/*` routes serialize it. */
+export interface MessageEnvelope {
+  id: string
+  kind: MessageKind
+  channel?: string
+  from: string
+  to: string
+  thread_id?: string
+  in_reply_to?: string
+  /** Inline payload — object, string, or any JSON value. */
+  payload?: unknown
+  content_type?: string
+  metadata?: Record<string, string>
+  created_at: string
+  delivered_at: string | null
+  consumed_at: string | null
+}
+
+/** Body for POST /api/v1/messages and /api/v1/broker/send. */
+export interface SendMessageRequest {
+  kind: MessageKind
+  from: string
+  to: string
+  thread_id?: string
+  in_reply_to?: string
+  channel?: string
+  payload?: unknown
+  content_type?: string
+  metadata?: Record<string, string>
+}
+
+/** Narrows Inbox / Thread result sets — mirrors go-messaging's Filter. */
+export interface MessageFilter {
+  kind?: MessageKind
+  channel?: string
+  thread_id?: string
+  limit?: number
+}
+
+/**
+ * Body for POST /api/v1/broker/request — a synchronous request/response
+ * exchange. The broker fixes `kind` to `request`, so it is omitted here.
+ * `timeout_seconds` bounds the wait; the route 504s if the peer is silent.
+ */
+export interface BrokerRequest {
+  from: string
+  to: string
+  thread_id?: string
+  channel?: string
+  payload?: unknown
+  content_type?: string
+  metadata?: Record<string, string>
+  timeout_seconds?: number
+}
