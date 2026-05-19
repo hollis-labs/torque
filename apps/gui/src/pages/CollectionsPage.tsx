@@ -19,10 +19,7 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
+import { Skeleton, Button, Input, Textarea, PageHeader } from '@hollis-labs/sysop-ui'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -32,8 +29,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
-import { PageHeader } from '@/components/domain/page-header'
+} from '@hollis-labs/sysop-ui'
 import { CollectionCreateDialog } from '@/components/domain/collection-create-dialog'
 import { CollectionTaskRow } from '@/components/domain/collection-task-row'
 import { useApi } from '@/hooks/use-api'

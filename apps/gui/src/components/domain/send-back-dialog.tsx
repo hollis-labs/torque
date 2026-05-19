@@ -6,10 +6,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
-import { Textarea } from '@/components/ui/textarea'
-import { Label } from '@/components/ui/label'
+} from '@hollis-labs/sysop-ui'
+import { Button, Textarea, Label } from '@hollis-labs/sysop-ui'
 
 const MAX_FEEDBACK_LENGTH = 2000
 

@@ -1,9 +1,6 @@
 import { useState } from 'react'
 import { Send } from 'lucide-react'
-import { Card, CardContent, CardHeader } from '@/components/ui/card'
-import { Textarea } from '@/components/ui/textarea'
-import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Card, CardContent, CardHeader, Textarea, Button, Skeleton } from '@hollis-labs/sysop-ui'
 import { formatRelativeTime } from '@/lib/utils'
 import type { Comment } from '@/lib/types'
 

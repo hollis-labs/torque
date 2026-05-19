@@ -1,11 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ExternalLink, Pencil, Plus } from 'lucide-react'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Button } from '@/components/ui/button'
-import { PageHeader } from '@/components/domain/page-header'
-import { SummaryCards } from '@/components/domain/summary-cards'
-import { EmptyState } from '@/components/domain/empty-state'
+import { Skeleton, Button, PageHeader, SummaryCards, EmptyState } from '@hollis-labs/sysop-ui'
 import { ProjectCreateDialog } from '@/components/domain/project-create-dialog'
 import { ScopeOverviewCard } from '@/components/domain/scope-overview-card'
 import { useApi } from '@/hooks/use-api'
@@ -116,12 +112,13 @@ export default function ProjectsPage() {
           <PageSkeleton />
         ) : error ? (
           <div className="p-6">
-            <EmptyState variant="error" description={error} action={{ label: 'Retry', onClick: load }} />
+            <EmptyState variant="error" title="Something went wrong" description={error} action={{ label: 'Retry', onClick: load }} />
           </div>
         ) : projectCards.length === 0 ? (
           <div className="p-6">
             <EmptyState
-              variant="no-tasks"
+              variant="empty"
+              title="No projects yet"
               description="No projects exist yet."
               action={{ label: 'Create project', onClick: () => setCreateOpen(true) }}
             />

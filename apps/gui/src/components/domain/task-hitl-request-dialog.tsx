@@ -6,18 +6,15 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+} from '@hollis-labs/sysop-ui'
+import { Button, Input, Label, Textarea } from '@hollis-labs/sysop-ui'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import { Textarea } from '@/components/ui/textarea'
+} from '@hollis-labs/sysop-ui'
 import { useApi } from '@/hooks/use-api'
 import { buildHITLCheckpointPayload } from '@/lib/hitl-request'
 import { HITL_WORKFLOW_PRESETS, lookupHITLWorkflowDefinition } from '@/lib/hitl-workflows'

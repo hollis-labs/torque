@@ -1,3 +1,10 @@
+/**
+ * @vitest-environment jsdom
+ *
+ * The persistence layer now runs on the kit's `createScopedStorage`, which
+ * reads `window.localStorage`. The jsdom environment provides `window`; the
+ * memory shim below still replaces the storage impl per test.
+ */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { saveOpsFilters, readOpsFilters, clearOpsFilters, type OpsFilters } from './ops-filters-storage'
 

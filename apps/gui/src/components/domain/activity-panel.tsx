@@ -12,7 +12,7 @@ import {
   Wrench,
 } from 'lucide-react'
 import { useActiveRun, type ActivityItem } from '@/hooks/active-runs-context'
-import { useElapsed } from '@/hooks/use-elapsed'
+import { useElapsed } from '@hollis-labs/sysop-ui'
 
 // renderToolIcon returns a JSX element for the given tool name. Matching is
 // case-insensitive so FE renders the right glyph whether the agent calls

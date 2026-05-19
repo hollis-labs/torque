@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { PageHeader } from '@/components/domain/page-header'
+import { PageHeader } from '@hollis-labs/sysop-ui'
 import {
   ActivityHeatmap,
   RunsChart,

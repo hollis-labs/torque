@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { FolderOpen, ExternalLink, Trash2 } from 'lucide-react'
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogTitle } from '@hollis-labs/sysop-ui'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -10,7 +10,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+} from '@hollis-labs/sysop-ui'
 import { useApi } from '@/hooks/use-api'
 import type { Artifact } from '@/lib/types'
 

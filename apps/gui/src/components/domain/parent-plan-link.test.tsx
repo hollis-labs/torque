@@ -56,7 +56,7 @@ describe('ParentPlanLink', () => {
   it('renders nothing when parent_id is null', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
-        <ApiProvider baseUrl="/api/v1">
+        <ApiProvider>
           <ParentPlanLink task={makeTask({ parent_id: null })} />
         </ApiProvider>
       </MemoryRouter>,
@@ -71,7 +71,7 @@ describe('ParentPlanLink', () => {
   it('renders nothing when parent_id is undefined on the task', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
-        <ApiProvider baseUrl="/api/v1">
+        <ApiProvider>
           <ParentPlanLink task={makeTask({})} />
         </ApiProvider>
       </MemoryRouter>,

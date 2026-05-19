@@ -1,7 +1,6 @@
+import { createListCursor } from '@hollis-labs/sysop-ui'
 import type { TaskStatus } from './types'
 import { parseManualFilter, type ManualFilter } from './ops-filters-storage'
-
-const KEY = 'torque:task-list-cursor'
 
 export interface CursorFilter {
   statuses: TaskStatus[]
@@ -19,46 +18,16 @@ export interface TaskListCursor {
   filter: CursorFilter | null
 }
 
-export function saveTaskListCursor(ids: string[], filter: CursorFilter | null = null): void {
-  try {
-    const payload: TaskListCursor = { ids, filter }
-    sessionStorage.setItem(KEY, JSON.stringify(payload))
-  } catch {
-    // sessionStorage may be unavailable (private mode / quota) — fail quiet
-  }
-}
-
-export function readTaskListCursor(): TaskListCursor {
-  const empty: TaskListCursor = { ids: [], filter: null }
-  try {
-    const raw = sessionStorage.getItem(KEY)
-    if (!raw) return empty
-    const parsed = JSON.parse(raw) as unknown
-    if (!parsed || typeof parsed !== 'object') return empty
-    const obj = parsed as Record<string, unknown>
-    const ids = Array.isArray(obj.ids)
-      ? (obj.ids as unknown[]).filter((v): v is string => typeof v === 'string')
-      : []
-    const filter = parseFilter(obj.filter)
-    return { ids, filter }
-  } catch {
-    return empty
-  }
-}
-
-export function clearTaskListCursor(): void {
-  try {
-    sessionStorage.removeItem(KEY)
-  } catch {
-    // ignore
-  }
-}
+// Session-scoped task-list cursor — the kit's `createListCursor` owns the
+// session-storage mechanics; Torque keeps the `CursorFilter` shape + its
+// validator local.
+const cursor = createListCursor<CursorFilter>('torque:task-list-cursor')
 
 function parseFilter(raw: unknown): CursorFilter | null {
   if (!raw || typeof raw !== 'object') return null
   const f = raw as Record<string, unknown>
   const statuses = Array.isArray(f.statuses)
-    ? (f.statuses as unknown[]).filter((s): s is TaskStatus => typeof s === 'string') as TaskStatus[]
+    ? ((f.statuses as unknown[]).filter((s): s is TaskStatus => typeof s === 'string') as TaskStatus[])
     : []
   const priorities = Array.isArray(f.priorities)
     ? (f.priorities as unknown[]).filter((p): p is number => typeof p === 'number')
@@ -73,4 +42,17 @@ function parseFilter(raw: unknown): CursorFilter | null {
     manual: parseManualFilter(f.manual),
     search: typeof f.search === 'string' ? f.search : '',
   }
+}
+
+export function saveTaskListCursor(ids: string[], filter: CursorFilter | null = null): void {
+  cursor.save(ids, filter)
+}
+
+export function readTaskListCursor(): TaskListCursor {
+  const stored = cursor.read()
+  return { ids: stored.ids, filter: parseFilter(stored.filter) }
+}
+
+export function clearTaskListCursor(): void {
+  cursor.clear()
 }

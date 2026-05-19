@@ -1,11 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Button } from '@/components/ui/button'
-import { PageHeader } from '@/components/domain/page-header'
-import { SummaryCards } from '@/components/domain/summary-cards'
-import { CopyableId } from '@/components/domain/copyable-id'
-import { EmptyState } from '@/components/domain/empty-state'
+import { Skeleton, Button, PageHeader, SummaryCards, CopyableId, EmptyState } from '@hollis-labs/sysop-ui'
 import { CheckpointRespondDialog } from '@/components/domain/checkpoint-respond-dialog'
 import { CheckpointCancelDialog } from '@/components/domain/checkpoint-cancel-dialog'
 import { useApi } from '@/hooks/use-api'
@@ -108,12 +103,13 @@ export default function CheckpointsPage() {
             ) : error ? (
               <EmptyState
                 variant="error"
+                title="Something went wrong"
                 description={error}
                 action={{ label: 'Retry', onClick: fetchPending }}
               />
             ) : checkpoints.length === 0 ? (
               <EmptyState
-                variant="no-tasks"
+                variant="empty"
                 title="Inbox is empty"
                 description="No pending checkpoints waiting for a response."
               />

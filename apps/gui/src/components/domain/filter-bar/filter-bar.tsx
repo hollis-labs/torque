@@ -1,19 +1,22 @@
 import type { ReactNode } from 'react'
 import { Folder, Calendar, BookOpen, Hash, SlidersHorizontal } from 'lucide-react'
-import { FilterEntityCombobox } from './filter-entity-combobox'
-import { FilterSearchInput } from './filter-search-input'
+import {
+  FilterCycleToggle,
+  FilterEntityCombobox,
+  FilterSearchInput,
+  type CycleOption,
+} from '@hollis-labs/sysop-ui'
 import { STATUS_COLORS, DEFAULT_STATUS_COLOR, PRIORITIES, TASK_STATUSES } from '@/lib/constants'
 import type { ManualFilter } from '@/lib/ops-filters-storage'
 import type { Epic, Project, Sprint, Tag, TaskStatus } from '@/lib/types'
-import { FilterCycleToggle, type CycleOption } from './filter-cycle-toggle'
 
 const MANUAL_CYCLE_OPTIONS: readonly [
   CycleOption<ManualFilter>,
   ...CycleOption<ManualFilter>[],
 ] = [
-  { value: 'both', label: 'Both', dotColor: 'bg-zinc-400', title: 'All tasks (no manual filter)' },
-  { value: 'auto', label: 'Auto', dotColor: 'bg-blue-400', title: 'Scheduler-eligible (manual=false)' },
-  { value: 'manual', label: 'Manual', dotColor: 'bg-amber-400', title: 'Held for review (manual=true)' },
+  { value: 'both', label: 'Both', dotColor: 'bg-text-subtle', title: 'All tasks (no manual filter)' },
+  { value: 'auto', label: 'Auto', dotColor: 'bg-status-doing', title: 'Scheduler-eligible (manual=false)' },
+  { value: 'manual', label: 'Manual', dotColor: 'bg-status-paused', title: 'Held for review (manual=true)' },
 ]
 
 interface FilterBarProps {
@@ -106,7 +109,7 @@ export function FilterBar({
     <div className="flex flex-wrap items-center gap-3 text-xs">
       {/* Status chips */}
       <div className="flex flex-wrap items-center gap-1">
-        <span className="mr-1 text-[10px] uppercase tracking-wider text-zinc-500">Status:</span>
+        <span className="mr-1 text-[10px] uppercase tracking-wider text-text-subtle">Status:</span>
         {availableStatuses.map((status) => {
           const active = activeStatuses.includes(status)
           const colors = STATUS_COLORS[status] ?? DEFAULT_STATUS_COLOR
@@ -118,7 +121,7 @@ export function FilterBar({
               className={`rounded border px-2 py-0.5 text-[10px] uppercase tracking-wider transition-all ${
                 active
                   ? `${colors.border} ${colors.bg} ${colors.text} ring-1 ring-white/20`
-                  : 'border-zinc-800 bg-zinc-900/50 text-zinc-600 hover:text-zinc-400 opacity-50'
+                  : 'border-border bg-panel-2/50 text-text-subtle opacity-50 hover:text-text-soft'
               }`}
             >
               {status}
@@ -130,7 +133,7 @@ export function FilterBar({
       {/* Priority chips */}
       {onPriorityToggle && (
         <div className="flex items-center gap-1">
-          <span className="mr-1 text-[10px] uppercase tracking-wider text-zinc-500">Priority:</span>
+          <span className="mr-1 text-[10px] uppercase tracking-wider text-text-subtle">Priority:</span>
           {PRIORITIES.map(({ value, label }) => {
             const active = activePriorities.includes(value)
             return (
@@ -140,8 +143,8 @@ export function FilterBar({
                 onClick={() => onPriorityToggle(value)}
                 className={`rounded border px-2 py-0.5 text-[10px] font-medium tracking-wider transition-all ${
                   active
-                    ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
-                    : 'border-zinc-800 bg-zinc-900/50 text-zinc-600 hover:text-zinc-400'
+                    ? 'border-status-paused/40 bg-status-paused/10 text-status-paused'
+                    : 'border-border bg-panel-2/50 text-text-subtle hover:text-text-soft'
                 }`}
               >
                 {label}
@@ -153,8 +156,8 @@ export function FilterBar({
 
       {/* Manual cycle */}
       {onManualFilterChange && (
-        <div className="flex items-center gap-1 border-l border-zinc-800 pl-3">
-          <span className="mr-1 text-[10px] uppercase tracking-wider text-zinc-500">Manual:</span>
+        <div className="flex items-center gap-1 border-l border-border pl-3">
+          <span className="mr-1 text-[10px] uppercase tracking-wider text-text-subtle">Manual:</span>
           <FilterCycleToggle
             options={MANUAL_CYCLE_OPTIONS}
             value={manualFilter ?? 'both'}
@@ -166,8 +169,8 @@ export function FilterBar({
 
       {/* System toggle (kind=internal) — CW-20260503-0011 */}
       {onIncludeInternalChange && (
-        <div className="flex items-center gap-1 border-l border-zinc-800 pl-3">
-          <span className="mr-1 text-[10px] uppercase tracking-wider text-zinc-500">System:</span>
+        <div className="flex items-center gap-1 border-l border-border pl-3">
+          <span className="mr-1 text-[10px] uppercase tracking-wider text-text-subtle">System:</span>
           <button
             type="button"
             onClick={() => onIncludeInternalChange(!includeInternal)}
@@ -179,8 +182,8 @@ export function FilterBar({
             }
             className={`rounded border px-2 py-0.5 text-[10px] uppercase tracking-wider transition-all ${
               includeInternal
-                ? 'border-violet-500/40 bg-violet-500/10 text-violet-200 ring-1 ring-white/20'
-                : 'border-zinc-800 bg-zinc-900/50 text-zinc-600 hover:text-zinc-400'
+                ? 'border-status-review/40 bg-status-review/10 text-status-review ring-1 ring-white/20'
+                : 'border-border bg-panel-2/50 text-text-subtle hover:text-text-soft'
             }`}
           >
             {includeInternal ? 'Shown' : 'Hidden'}
@@ -190,7 +193,7 @@ export function FilterBar({
 
       {/* Group combobox pills */}
       {showGroups && (
-        <div className="flex flex-wrap items-center gap-2 border-l border-zinc-800 pl-3">
+        <div className="flex flex-wrap items-center gap-2 border-l border-border pl-3">
           {onProjectChange && (
             <FilterEntityCombobox
               icon={<Folder className="h-3.5 w-3.5" />}
@@ -261,16 +264,16 @@ export function FilterBar({
     }
 
     return (
-      <div className="flex flex-col border-b border-zinc-800/80 bg-zinc-950">
+      <div className="flex flex-col border-b border-border bg-panel">
         {/* Row 1: search hero + summary + clear */}
         <div className="flex items-center gap-3 px-4 py-2">
           <FilterSearchInput value={searchQuery ?? ''} onChange={onSearchChange!} />
-          <div className="inline-flex h-8 items-center gap-1.5 rounded border border-zinc-800 bg-zinc-900/50 px-2 text-[10px] uppercase tracking-wider text-zinc-400">
+          <div className="inline-flex h-8 items-center gap-1.5 rounded border border-border bg-panel-2/50 px-2 text-[10px] uppercase tracking-wider text-text-soft">
             <SlidersHorizontal className="h-3.5 w-3.5" />
             {activeFilterCount}
           </div>
           {showSummary && (
-            <span className="whitespace-nowrap text-[10px] uppercase tracking-wider text-zinc-500">
+            <span className="whitespace-nowrap text-[10px] uppercase tracking-wider text-text-subtle">
               {summaryText}
             </span>
           )}
@@ -279,21 +282,21 @@ export function FilterBar({
               type="button"
               onClick={onClear}
               aria-label="Clear all filters and search"
-              className="rounded border border-zinc-700 bg-transparent px-2 py-1 text-[10px] uppercase tracking-wider text-zinc-300 transition-colors hover:border-zinc-500 hover:text-zinc-100"
+              className="rounded border border-border-strong bg-transparent px-2 py-1 text-[10px] uppercase tracking-wider text-text-muted transition-colors hover:border-border-strong hover:text-text"
             >
               Clear
             </button>
           )}
         </div>
         {/* Row 2: compact chip row */}
-        <div className="border-t border-zinc-800/80 px-4 py-2">{chipRow}</div>
+        <div className="border-t border-border px-4 py-2">{chipRow}</div>
       </div>
     )
   }
 
   // Single-row (legacy) layout for detail pages.
   return (
-    <div className="flex flex-wrap items-center gap-3 border-b border-zinc-800/80 bg-zinc-950 px-4 py-2.5">
+    <div className="flex flex-wrap items-center gap-3 border-b border-border bg-panel px-4 py-2.5">
       {chipRow}
       {children && <div className="ml-auto flex items-center gap-2">{children}</div>}
     </div>

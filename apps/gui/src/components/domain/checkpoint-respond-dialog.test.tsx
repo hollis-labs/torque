@@ -37,7 +37,7 @@ function jsonResponse(body: unknown): Response {
 
 function renderDialog(checkpoint: Checkpoint) {
   return render(
-    <ApiProvider baseUrl="/api/v1">
+    <ApiProvider>
       <CheckpointRespondDialog
         checkpoint={checkpoint}
         open

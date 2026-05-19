@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Bot, Inbox, RefreshCw, Send, User, X } from 'lucide-react'
-import { PageHeader } from '@/components/domain/page-header'
-import { SummaryCards } from '@/components/domain/summary-cards'
-import { EmptyState } from '@/components/domain/empty-state'
-import { CopyableId } from '@/components/domain/copyable-id'
+import {
+  PageHeader,
+  SummaryCards,
+  EmptyState,
+  CopyableId,
+  Button,
+  Input,
+  Textarea,
+  Skeleton,
+} from '@hollis-labs/sysop-ui'
 import { ComposeMessageDialog } from '@/components/domain/compose-message-dialog'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
-import { Skeleton } from '@/components/ui/skeleton'
 import { useApi } from '@/hooks/use-api'
 import { notifyError, notifySuccess } from '@/lib/toast'
 import { cn } from '@/lib/utils'
@@ -301,6 +303,7 @@ export default function MessagingPage() {
             ) : error ? (
               <EmptyState
                 variant="error"
+                title="Couldn't load inbox"
                 description={error}
                 action={{
                   label: 'Retry',
@@ -517,6 +520,7 @@ function ThreadPanel({ message, onClose, onChanged }: ThreadPanelProps) {
         ) : threadError ? (
           <EmptyState
             variant="error"
+            title="Couldn't load thread"
             description={threadError}
             action={{ label: 'Retry', onClick: fetchThread }}
           />

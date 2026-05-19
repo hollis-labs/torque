@@ -1,16 +1,18 @@
 import { Link } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, Flag } from 'lucide-react'
-import { Input } from '@/components/ui/input'
-import { Button } from '@/components/ui/button'
+import {
+  Input,
+  Button,
+  PriorityBadge,
+  CopyableId,
+  FilterEntityCombobox,
+} from '@hollis-labs/sysop-ui'
 import { StatusBadge } from './status-badge'
-import { PriorityBadge } from './priority-badge'
 import { TagChip } from './tag-chip'
-import { CopyableId } from './copyable-id'
 import { TaskActionsMenu } from './task-actions-menu'
 import { CollectionBadge } from './collection-badge'
 import { QueueToggleButton } from './queue-toggle-button'
 import { TaskStatsStrip } from './task-stats'
-import { FilterEntityCombobox } from './filter-bar/filter-entity-combobox'
 import { TASK_STATUSES, PRIORITIES } from '@/lib/constants'
 import { hasBlockedReason, truncateBlockedReason } from '@/lib/blocked-reason'
 import type { Task, TaskStatus, Tag } from '@/lib/types'

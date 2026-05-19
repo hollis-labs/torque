@@ -5,8 +5,7 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import type { DraggableSyntheticListeners } from '@dnd-kit/core'
 import { StatusBadge } from './status-badge'
-import { PriorityBadge } from './priority-badge'
-import { CopyableId } from './copyable-id'
+import { PriorityBadge, CopyableId } from '@hollis-labs/sysop-ui'
 import type { Task } from '@/lib/types'
 
 /**

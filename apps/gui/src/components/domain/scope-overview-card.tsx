@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { StatusBadge } from '@/components/domain/status-badge'
-import { ProgressBar } from '@/components/domain/progress-bar'
+import { ProgressBar } from '@hollis-labs/sysop-ui'
 
 interface ScopeOverviewCardProps {
   kindLabel: string
