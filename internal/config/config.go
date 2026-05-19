@@ -190,15 +190,24 @@ func Load() (*Config, error) {
 			HeartbeatSeconds:         envInt("TORQUE_SCHED_HEARTBEAT", 15),
 			HeartbeatProgressSeconds: envInt("TORQUE_PROGRESS_HEARTBEAT_SECONDS", 30),
 			// StaleSeconds is the staleness threshold for worker heartbeats.
-			// A row in worker_heartbeats whose last_heartbeat is older than
-			// this gets logged, published on the bus as worker.stale, and
-			// deleted by the next scheduler tick (CW-20260418-0003 cleanup
-			// and CW-20260418-0018 gauge/config). Default 300s (5 min) —
-			// long enough to tolerate a slow CLI executor pause, short
-			// enough that a crashed worker doesn't linger in the table
-			// across a whole session. Tune down for faster feedback in
-			// dev/test, not recommended below ~30s in production.
-			StaleSeconds:     envInt("TORQUE_SCHED_STALE", 300),
+			// A row in worker_heartbeats whose last_heartbeat is older
+			// than this is classified by the scheduler's stale-handling
+			// pass: live workers (still in the cancelRegistry) get a
+			// heartbeat refresh; confirmed-dead orphans get auto-recovery
+			// (run failed, task `doing → todo`, worktree cleaned). See
+			// scheduler.Tick / recoverOrphanedWorker (CW-20260519-0079).
+			//
+			// Default 900s (15 min). Bumped from 300s because real code
+			// executors routinely run 5–10 min without producing events
+			// — `go test` on a moderate module, a long `go build`, an
+			// agent stuck on a multi-minute tool call — and the old 300s
+			// false-positived on those (CW-20260519-0079 run 904
+			// observation). The orphan recovery's liveness check is the
+			// real safety net against re-queuing a live worker; the
+			// threshold just controls how quickly a truly dead worker
+			// gets reclaimed. Tune down for faster feedback in dev/test,
+			// not recommended below ~60s in production.
+			StaleSeconds:     envInt("TORQUE_SCHED_STALE", 900),
 			Enabled:          envBool("TORQUE_SCHED_ENABLED", true),
 			MaxPerProject:    envInt("TORQUE_SCHED_MAX_PER_PROJECT", 2),
 			DefaultMerge:     envOr("TORQUE_SCHED_DEFAULT_MERGE", "none"),

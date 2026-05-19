@@ -393,32 +393,64 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 		}
 	}
 
-	// Check for stale workers. Zombie heartbeat rows (from a crashed or
-	// force-killed serve where Deregister never ran) are logged, published on
-	// the bus, and then deleted in the same pass. Without the delete, each
-	// tick re-logs the same zombies indefinitely, and across sessions the
-	// table accumulates noise that obscures real staleness signals
-	// (CW-20260418-0003 secondary fix).
+	// Check for stale workers. Each row is classified by a real liveness
+	// check against the in-process cancelRegistry before any recovery
+	// action (CW-20260519-0079). The old "log + bulk DeleteStale" pass
+	// conflated two distinct cases:
+	//
+	//   1. live-but-slow worker (no recent executor events for >threshold
+	//      seconds, e.g. mid-`go test`). Deleting the row dropped a healthy
+	//      worker from the gauge AND its task never auto-re-queued — the
+	//      worker eventually finished fine but observability lied
+	//      mid-flight. Recovery here just refreshes the heartbeat in place.
+	//
+	//   2. genuine orphan (the previous serve crashed; the worker process
+	//      is gone). Deleting the row left the task pinned at `doing`
+	//      forever — manual recovery only (the run 864 / CW-20260515-0133
+	//      incident, ~1h47m zombie). Recovery here forces task `doing →
+	//      todo`, fails the run row, and best-effort cleans the per-run
+	//      worktree so the picker re-dispatches without an operator nudge.
+	//
+	// The split key is cancelRegistry.has(taskID): the registry is the
+	// authoritative set of workers actually running in THIS scheduler
+	// process. A stale heartbeat with no cancelRegistry entry can ONLY be
+	// an orphan, because the worker closure's defer chain removes the
+	// heartbeat row BEFORE removing the cancelRegistry entry (so there is
+	// no race where a completing worker briefly looks orphaned).
 	staleThreshold := time.Duration(s.cfg.StaleSeconds) * time.Second
 	stale, err := s.heartbeat.FindStale(staleThreshold)
 	if err != nil {
 		log.Printf("[scheduler] stale check error: %v", err)
 	}
 	for _, w := range stale {
-		log.Printf("[scheduler] stale worker detected: %s (task %s)", w.WorkerID, w.TaskID)
+		if s.cancels.has(w.TaskID) {
+			// False-positive class: the worker is alive in this process,
+			// just not producing executor events fast enough to keep its
+			// DB heartbeat fresh. Refresh in place so the gauge stays
+			// honest and the row isn't reconsidered every tick. NEVER
+			// re-queue a live worker.
+			log.Printf("[scheduler] stale heartbeat for live worker %s (task %s) — refreshing (executor quiet, run still active)", w.WorkerID, w.TaskID)
+			if berr := s.heartbeat.Beat(w.WorkerID); berr != nil {
+				log.Printf("[scheduler] live-worker heartbeat refresh failed for %s: %v", w.WorkerID, berr)
+			}
+			s.bus.Publish(SchedulerEvent{
+				Type:   "worker.stale.live",
+				TaskID: w.TaskID,
+				Data:   map[string]interface{}{"worker_id": w.WorkerID, "run_id": w.RunID, "reason": "live_worker_refreshed"},
+			})
+			continue
+		}
+
+		// Confirmed-dead orphan: stale heartbeat AND no in-process worker
+		// holds the task. Either the previous serve crashed or the worker
+		// died without going through Deregister. Auto-recover.
+		log.Printf("[scheduler] orphaned worker detected: %s (task %s run %d) — auto-recovering", w.WorkerID, w.TaskID, w.RunID)
 		s.bus.Publish(SchedulerEvent{
 			Type:   "worker.stale",
 			TaskID: w.TaskID,
-			Data:   map[string]interface{}{"worker_id": w.WorkerID},
+			Data:   map[string]interface{}{"worker_id": w.WorkerID, "run_id": w.RunID},
 		})
-	}
-	if len(stale) > 0 {
-		deleted, derr := s.heartbeat.DeleteStale(staleThreshold)
-		if derr != nil {
-			log.Printf("[scheduler] stale cleanup error: %v", derr)
-		} else if deleted > 0 {
-			log.Printf("[scheduler] cleaned up %d stale heartbeat row(s)", deleted)
-		}
+		s.recoverOrphanedWorker(ctx, w)
 	}
 
 	// Per-tick heartbeat gauge (CW-20260418-0018). One info-level line per
@@ -437,6 +469,109 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 
 	s.bus.Publish(SchedulerEvent{Type: "scheduler.tick"})
 	return nil
+}
+
+// recoverOrphanedWorker reclaims a worker whose heartbeat is stale AND
+// which is not present in the scheduler's cancel registry — i.e. the
+// worker process is gone (a previous serve crashed; a worker died
+// without Deregister). Without recovery the task pins at `doing`
+// indefinitely (the run 864 / CW-20260515-0133 zombie). Steps:
+//
+//  1. Fail the run row (status=failed, error_message structured for
+//     log search) if it is still in a non-terminal state.
+//  2. Force task `doing → todo` so the next picker tick re-dispatches
+//     it. No retry-count bump — this wasn't a real failure, it was a
+//     runtime accident, and counting it against the retry budget would
+//     unfairly burn the task's remaining attempts.
+//  3. Best-effort cleanup of the per-run worktree (deterministic
+//     path via worktree.PerRunPath), so the next dispatch isn't blocked
+//     by a stale worktree on the next free runID.
+//  4. Delete the heartbeat row so it stops re-firing every tick.
+//
+// Each phase is best-effort: an error in one phase logs but doesn't
+// block the others. Partial recovery (e.g. task re-queued but stale row
+// undeletable) is strictly better than no recovery.
+func (s *Scheduler) recoverOrphanedWorker(ctx context.Context, w StaleWorker) {
+	task, terr := s.store.GetTask(w.TaskID)
+	if terr != nil {
+		log.Printf("[scheduler] orphan recovery: get task %s: %v (deleting heartbeat row only)", w.TaskID, terr)
+		if derr := s.heartbeat.Deregister(w.WorkerID); derr != nil {
+			log.Printf("[scheduler] orphan recovery: delete heartbeat row %s: %v", w.WorkerID, derr)
+		}
+		return
+	}
+
+	// 1. Fail the run row if it's still marked running. We deliberately
+	//    skip non-running rows (a manual transition may have already
+	//    stamped canceled/superseded/killed; respect that — see
+	//    sqlstore.IsOperatorTerminalRunStatus).
+	if w.RunID > 0 {
+		if run, rerr := s.store.GetRun(w.RunID); rerr != nil {
+			log.Printf("[scheduler] orphan recovery: get run %d: %v", w.RunID, rerr)
+		} else if run.Status == "running" {
+			if werr := s.stateWriter.Submit(ctx, "scheduler_orphan_recovery", func(tx *sqlstore.WriteTx) error {
+				if err := tx.CompleteRun(w.RunID, sqlstore.RunCompletion{
+					Status:       "failed",
+					ErrorMessage: "orphaned: worker process gone, auto-recovered by scheduler",
+				}); err != nil {
+					return err
+				}
+				_, err := tx.AppendRunEvent(&sqlstore.RunEventRecord{
+					RunID:   sql.NullInt64{Int64: w.RunID, Valid: true},
+					TaskID:  w.TaskID,
+					Type:    "run_orphan_recovered",
+					Payload: `{"reason":"worker_process_gone"}`,
+				})
+				return err
+			}); werr != nil {
+				log.Printf("[scheduler] orphan recovery: fail run %d: %v", w.RunID, werr)
+			}
+		}
+	}
+
+	// 2. Re-queue the task only if it's still in `doing`. Any other
+	//    status means an operator (or another path) has already moved
+	//    it; touching it would clobber that intent — same guard the
+	//    lifecycle manager applies for late-arriving results.
+	if task.Status == "doing" {
+		if err := s.stateWriter.Submit(ctx, "scheduler_orphan_requeue", func(tx *sqlstore.WriteTx) error {
+			return tx.TransitionTask(w.TaskID, "todo")
+		}); err != nil {
+			log.Printf("[scheduler] orphan recovery: transition %s doing→todo: %v", w.TaskID, err)
+		} else {
+			log.Printf("[scheduler] orphan recovery: %s re-queued (run %d)", w.TaskID, w.RunID)
+			s.bus.Publish(SchedulerEvent{
+				Type:   "task.transitioned",
+				TaskID: w.TaskID,
+				Data:   map[string]interface{}{"from": "doing", "to": "todo", "reason": "orphan_recovery"},
+			})
+		}
+	} else {
+		log.Printf("[scheduler] orphan recovery: %s in status %s, skipping re-queue", w.TaskID, task.Status)
+	}
+
+	// 3. Worktree cleanup. PerRunPath is deterministic from
+	//    (repo_root, root, runID), so we can derive the path without
+	//    persisting it; CleanupPerRun is idempotent and safe when the
+	//    path doesn't exist. Only attempted when per-run worktree
+	//    dispatch is on AND the task carried a working_dir.
+	if spec := s.worktreeSpec(); spec.WorktreeEnabled() && task.WorkingDir != "" && w.RunID > 0 {
+		wtPath := worktree.PerRunPath(task.WorkingDir, spec.Root, w.RunID)
+		removed, werr := worktree.CleanupPerRun(task.WorkingDir, wtPath)
+		switch {
+		case werr != nil:
+			log.Printf("[scheduler] orphan recovery: worktree cleanup failed for %s run %d at %s: %v", w.TaskID, w.RunID, wtPath, werr)
+		case removed:
+			log.Printf("[scheduler] orphan recovery: worktree removed for %s run %d at %s", w.TaskID, w.RunID, wtPath)
+		default:
+			log.Printf("[scheduler] orphan recovery: worktree preserved for %s run %d at %s (commits or uncommitted work present)", w.TaskID, w.RunID, wtPath)
+		}
+	}
+
+	// 4. Delete the heartbeat row.
+	if derr := s.heartbeat.Deregister(w.WorkerID); derr != nil {
+		log.Printf("[scheduler] orphan recovery: delete heartbeat row %s: %v", w.WorkerID, derr)
+	}
 }
 
 // worktreeSpec projects the scheduler's worktree-related config onto a

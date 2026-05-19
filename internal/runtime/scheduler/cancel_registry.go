@@ -78,6 +78,19 @@ func (r *cancelRegistry) cancelWithCause(taskID string, cause error) bool {
 	return ok
 }
 
+// has reports whether a cancel function is currently registered for taskID.
+// Used by the stale-heartbeat sweep as a liveness check: a heartbeat row
+// whose task is still in the registry means the worker is alive in this
+// scheduler process, just not producing executor events fast enough to
+// keep its DB heartbeat fresh (CW-20260519-0079 false-positive #2:
+// run 904 mid-`go test`).
+func (r *cancelRegistry) has(taskID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.cancels[taskID]
+	return ok
+}
+
 // cancelAll invokes every registered cancel and clears the map. Called by
 // Scheduler.Stop so no worker leaks through a shutdown. Safe to call on
 // an already-empty registry.
