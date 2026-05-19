@@ -16,6 +16,7 @@ import (
 
 	"github.com/hollis-labs/torque/internal/broker"
 	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/federation"
 	"github.com/hollis-labs/torque/internal/httpserver"
 	clockmsg "github.com/hollis-labs/torque/internal/messaging"
 	"github.com/hollis-labs/torque/internal/modelcatalog"
@@ -200,14 +201,43 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// tables. Broker layer (S1.3) sits on top of this Store.
 	sqlMsgStore := clockmsg.NewStore(db)
 
+	// Cross-host federation (CW-20260518-0048, ph-4 — ADR-0002). Enable loads
+	// the federation config file (TORQUE_FEDERATION_CONFIG, else
+	// <ConfigDir>/federation.json). An absent file leaves fed nil and Torque
+	// fully standalone — no listener, no foreign routes, zero extra config and
+	// zero new attack surface.
+	fedConfigPath := os.Getenv("TORQUE_FEDERATION_CONFIG")
+	if fedConfigPath == "" {
+		fedConfigPath = filepath.Join(cfg.ConfigDir, "federation.json")
+	}
+	fed, err := federation.Enable(fedConfigPath, sqlMsgStore)
+	if err != nil {
+		return fmt.Errorf("federation: %w", err)
+	}
+
 	// Authority-routing decorator (CW-20260518-0046, ph-4 Federation):
 	// dispatches each Store call by the URN `authority` segment — local
 	// authority -> the SQLite Store, foreign authority -> a registered
-	// remote Store. A standalone install registers no foreign routes
-	// (catch-all mode), so the Router is a transparent passthrough and
-	// messaging behaves exactly as today. The foreign-route registry is
-	// populated by the later federation tasks.
-	msgStore, err := clockmsg.NewRouter(clockmsg.RouterConfig{Local: sqlMsgStore})
+	// remote Store. With no federation config the Router is a catch-all
+	// passthrough and messaging behaves exactly as today. With federation
+	// enabled it runs in strict mode over the declared local authorities and
+	// the mTLS-secured foreign routes drawn from the config (ADR-0002 §8.8).
+	routerCfg := clockmsg.RouterConfig{Local: sqlMsgStore}
+	if fed != nil {
+		routerCfg.LocalAuthorities = fed.LocalAuthorities()
+		routes, err := fed.ForeignRoutes()
+		if err != nil {
+			return fmt.Errorf("federation foreign routes: %w", err)
+		}
+		reg, err := clockmsg.NewRegistry(routes...)
+		if err != nil {
+			return fmt.Errorf("federation registry: %w", err)
+		}
+		routerCfg.ForeignRoutes = reg.ForeignStores()
+		log.Printf("[serve] federation enabled: %d local authorities, %d foreign routes, mTLS listener %s",
+			len(routerCfg.LocalAuthorities), len(routerCfg.ForeignRoutes), fed.ListenAddr())
+	}
+	msgStore, err := clockmsg.NewRouter(routerCfg)
 	if err != nil {
 		return fmt.Errorf("messaging router: %w", err)
 	}
@@ -344,6 +374,20 @@ func runServe(ctx context.Context, ln net.Listener) error {
 		defer wg.Done()
 		watchProfiles(runCtx, profiles, time.Second)
 	}()
+
+	// Federation mTLS listener (CW-20260518-0048, ADR-0002 §5): a dedicated
+	// listener for the cross-host hop, physically separate from the plaintext
+	// GUI/API server below. Started only when federation is configured — a
+	// standalone install runs no federation listener at all.
+	if fed != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := fed.Run(runCtx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Printf("[serve] federation listener stopped: %v", err)
+			}
+		}()
+	}
 
 	srv := &http.Server{Handler: handler}
 
