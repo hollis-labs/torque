@@ -661,7 +661,13 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		// exits successfully after honoring its grace window. We detect
 		// this by checking the dispatch context FIRST — if it's been
 		// cancelled we treat the run as cancelled UNLESS the executor
-		// returned a definitive result (Status set + err==nil).
+		// returned a definitive result (non-nil result with Status set).
+		// `err` deliberately does NOT factor into the test: the mock
+		// executor in TestCancel_* returns (nil, err) on ctx cancel and
+		// MUST still flow through the cancel-write branch; a real long-
+		// lived worker that returned (resultWithStatus, ctxErr) — e.g.
+		// SendInput failed during teardown but the worker had already
+		// classified its outcome — should bypass it.
 		//
 		// Why the carve-out (CW-20260519-0095): ModeLongLived workers
 		// signal completion by self-transitioning their task out of
@@ -672,12 +678,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		// long-lived executor's wait loop disambiguates the two cases
 		// (peeking at task.Status when ctx fires) and reports the right
 		// Status; we honor that here rather than overwriting with
-		// "canceled". The override fires only when exec.Run did NOT
-		// produce a definitive result (nil result or empty Status) —
-		// that's the genuine "external cancel before the worker could
-		// conclude" case the cancel-write path was built for. The mock
-		// executor in TestCancel_* hits this branch by returning
-		// (nil, err) on ctx cancel; real long-lived workers don't.
+		// "canceled".
 		if capturedDispatchCtx.Err() != nil && (result == nil || result.Status == "") {
 			reason := "task_transition_out_of_doing"
 			if err := s.stateWriter.Submit(context.Background(), "scheduler_run_canceled", func(tx *sqlstore.WriteTx) error {

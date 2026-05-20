@@ -129,7 +129,11 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 	// terminal-state hook) closes the stream fanout, which drains any
 	// pending events into our local fanout chan; once Stop returns we can
 	// close our chan and join the drain goroutine.
-	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	//
+	// stopGraceWindow is the package-shared 5s bound on Stop calls; reuse
+	// it here so the long-lived path uses the same Stop-grace semantics
+	// as session_lifecycle_hook's manager-side teardown.
+	stopCtx, cancel := context.WithTimeout(context.Background(), stopGraceWindow)
 	if err := e.deps.Sessions.Stop(stopCtx, sess.ID); err != nil && !errors.Is(err, ErrSessionNotRunning) {
 		log.Printf("agent: runLongLived stop session %s failed: %v", sess.ID, err)
 	}
@@ -163,7 +167,14 @@ type longLivedOutcome struct {
 	// CeilingAt is the threshold that fired for Kind=hardCeiling.
 	CeilingAt time.Duration
 
-	// CauseErr is the wrapped error for Kind=ctxCanceled (context.Cause).
+	// CauseErr captures the ctx error for Kind=ctxCanceled. Populated
+	// from ctx.Err() (not context.Cause(ctx)) because the callers that
+	// cancel us today — pool shutdown, scheduler stop, dispatchCtx
+	// transition cancel — do not thread a cause-bearing ctx.WithCancel
+	// Cause variant. If a future caller wants causal errors here, swap
+	// the populating call to context.Cause(ctx); the consumer
+	// (toExecutionResult) just renders the Error() string and is
+	// agnostic to either source.
 	CauseErr error
 }
 

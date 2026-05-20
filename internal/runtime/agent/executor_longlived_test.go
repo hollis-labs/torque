@@ -2,17 +2,15 @@ package agent
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
-	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	_ "modernc.org/sqlite"
 )
 
 // TestModeForJob exercises the Kind→Mode dispatch matrix. The intent is to
@@ -365,17 +363,12 @@ func TestAwaitLongLivedCompletion_CtxCancelAfterSelfTransition(t *testing.T) {
 	assert.Equal(t, "review", out.TaskStatus)
 }
 
-// newTestStoreForLongLived opens an in-memory sqlite store with all
-// migrations applied. Mirrors the build_job_test helper but local to the
-// agent package so we don't import scheduler test wiring.
+// newTestStoreForLongLived opens a temp-file-backed sqlite store with all
+// migrations applied. Routes through the shared sqlitetest fixture so
+// these tests exercise the same pooled-connection + busy-timeout shape
+// production uses — the older ":memory:" path silently hid SQLite_BUSY
+// behavior that bites under concurrent writer load.
 func newTestStoreForLongLived(t *testing.T) *sqlstore.Store {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Close() })
-	require.NoError(t, migrations.Run(db))
-	store, err := sqlstore.New(db, "sqlite")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = store.Close() })
-	return store
+	return sqlitetest.OpenStore(t)
 }
