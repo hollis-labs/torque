@@ -33,6 +33,42 @@ The plan_id is the `kind=plan` task you're orchestrating.
   `review`. The substrate (CW-20260503-0019) enqueues a kind=internal
   end-agent. You wait for it to complete; you do NOT enqueue it.
 
+## Plan scope — what counts as a gating child
+
+The plan's executable scope is the union of children referenced by
+`metadata.plan.phases[i].task_ids` — i.e., children with
+`metadata.phase_id` set to a phase id present in
+`metadata.plan.phases[]`. Phase-less children (parent_id matches the
+plan but `metadata.phase_id` is unset, empty, or points to no phase
+in `metadata.plan.phases[]`) are **out of scope** for plan gating and
+MUST NOT stand the plan down.
+
+Apply this rule everywhere blocker analysis happens:
+
+- **Iteration.** Walk phases via `metadata.plan.phases[i].task_ids`
+  (Step 3 below), NOT `torque_plan_list_children(plan_id=<plan_id>)`
+  with no phase filter. The phases array is authoritative for "which
+  children does this plan own."
+- **Blocker scan.** When reasoning about "is the plan blocked?" or
+  "what's blocking the plan?", consider only children whose
+  `metadata.phase_id` matches a phase id in
+  `metadata.plan.phases[]`. A phase-less child in `blocked` /
+  `failed` / `cancelled` is NOT a plan blocker — it was either
+  intentionally decoupled from the plan (phase_id cleared) or never
+  in scope to begin with.
+- **If you must call plan_list_children.** Either narrow per phase
+  (`torque_plan_list_children(plan_id=<id>, phase_id=<phase_id>)`)
+  and union, OR call it un-narrowed and filter out children whose
+  `metadata.phase_id` is not in `metadata.plan.phases[].id`. Never
+  treat the un-narrowed list as the plan's scope.
+
+This rule is the fix for CW-20260519-0097: the orchestrator stood the
+plan down because a child (CW-20260519-0095) was in a blocking state
+with `parent_id` still pointing at the plan, even though its
+`metadata.phase_id` had been cleared to intentionally decouple it.
+With this rule, that child is out-of-scope and the plan advances to
+the next phase normally.
+
 ## HITL checkpoint protocol
 
 Typed human-in-the-loop checkpoints are the durable user interaction
@@ -226,7 +262,11 @@ plan; comment on the plan task that planner failed.
 
 ### 3. Walk phases
 
-For each phase in `metadata.plan.phases` (in author-order):
+For each phase in `metadata.plan.phases` (in author-order). The phases
+array is the authoritative iteration source — do NOT substitute
+`torque_plan_list_children(plan_id=<plan_id>)` for it (that returns
+phase-less children too, which are out-of-scope per the **Plan scope**
+section above):
 
 #### 3a. Mark phase doing
 
@@ -340,6 +380,14 @@ hard-error paths where the plan never reaches a terminal status.
 
 When you can't make forward progress (reviewer fail, child stuck at
 review with audit misses, executor permanently blocked):
+
+**Scope-fence the blocker analysis first.** The blocker must be a
+child in scope per the **Plan scope** section above — i.e., its
+`metadata.phase_id` is in `metadata.plan.phases[].id`. A phase-less
+child in `blocked`/`failed`/`cancelled` does NOT escalate the plan;
+it was intentionally decoupled (or never in scope). If your candidate
+blocker has `metadata.phase_id` unset/empty/foreign, drop it from the
+analysis and keep walking phases.
 
 **Hard precondition before declaring a child "crashed" or escalating
 on a child-liveness diagnosis.** You MUST verify, via
