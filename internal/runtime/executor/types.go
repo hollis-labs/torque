@@ -124,6 +124,49 @@ type ExecutionResult struct {
 	// before the subprocess ran). The scheduler persists it onto the run
 	// record so operators see a definitive exit signal rather than NULL.
 	ExitCode *int
+
+	// ToolUseHistogram tallies the worker's file-mutating tool calls
+	// (Edit / Write / Bash / MultiEdit / NotebookEdit, plus whatever else
+	// the stream emitted). Populated by the long-lived executor's
+	// engine-side completion verification (CW-20260519-0095 Phase 3); the
+	// scheduler surfaces it on the run_completed event so operators can
+	// see "what did the agent actually do?" at a glance. Empty for
+	// ModeOneShot dispatches and for ModeLongLived sessions that exited
+	// before any tool fired.
+	ToolUseHistogram map[string]int
+
+	// VerificationSkipReason carries the operator-facing explanation when
+	// engine-side completion verification was skipped (shared mode, the
+	// per-run worktree was already cleaned up, or the stream.jsonl was
+	// missing). Empty when verification ran. Surfaced on the run_completed
+	// event so monitors see the skip rather than silently believing the
+	// engine verified.
+	VerificationSkipReason string
+
+	// CommitsOnRunBranch is the number of commits the worker landed on
+	// the per-run worktree's branch ahead of base. Populated by Phase 3
+	// verification; zero for ModeOneShot dispatches and ModeLongLived
+	// runs where verification was skipped (see VerificationSkipReason).
+	CommitsOnRunBranch int
+
+	// VerificationRan reports whether Phase 3 engine-side completion
+	// verification produced a verdict for this run (including a skip
+	// verdict). False for ModeOneShot dispatches and any ModeLongLived
+	// run that exited before reaching the verification step (idle reap,
+	// hard ceiling, ctx cancel — outcomes whose result already carries
+	// a definitive Status/Reason that verification would only obscure).
+	//
+	// Why a separate flag rather than "CommitsOnRunBranch > 0" or
+	// "ToolUseHistogram != nil": both of those are content signals and
+	// either can legitimately be zero/empty on a verified run (a worker
+	// that committed nothing because the task was malformed, a worker
+	// that committed via a non-tool path the histogram doesn't see).
+	// VerificationRan is the unambiguous "engine looked at this run"
+	// signal the SSE / run_completed payload keys off when deciding
+	// whether to include the commits_on_run_branch field — so a
+	// 0-commit verified failure becomes distinguishable from a
+	// "verification didn't run" baseline.
+	VerificationRan bool
 }
 
 // ExecutorCapabilities declares what features an executor supports.

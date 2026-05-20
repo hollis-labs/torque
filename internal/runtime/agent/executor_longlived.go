@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"path/filepath"
 	"sync"
 	"time"
 
 	llmtypes "github.com/hollis-labs/go-llm-types"
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
 )
 
 // statusPollInterval is the cadence at which runLongLived re-reads the
@@ -19,6 +21,14 @@ import (
 // liveness budgets and would just stress the SQLite WAL. Exposed as a var
 // (not const) so the existing test path can shrink it for fast-test runs.
 var statusPollInterval = 5 * time.Second
+
+// workerVerifyTimeout bounds the engine-side completion-verification git
+// invocation so scheduler shutdown / per-task cancel can tear the work
+// down. Generous (30s) because a healthy `git rev-list --count` is
+// sub-second but a worktree on a slow filesystem or with index-lock
+// contention can stretch to seconds; we want to absorb that without
+// punishing every healthy run with a tighter bound.
+const workerVerifyTimeout = 30 * time.Second
 
 // runLongLived dispatches a kind=agent worker as a long-lived agent.Boot
 // session, then drives the worker's completion via three signals: an
@@ -141,7 +151,44 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 	close(fanout)
 	fanoutWG.Wait()
 
-	return outcome.toExecutionResult(result, streamErr), nil
+	res := outcome.toExecutionResult(result, streamErr)
+
+	// Phase 3 — engine-side completion verification. Only meaningful when
+	// the worker self-transitioned its task out of doing (we have a real
+	// completion to verify); idle reap / hard ceiling / ctx cancellation
+	// already produce concrete blocked/failed results that need no
+	// engine-side check. We run verification for ANY transition outcome
+	// (review/done/blocked/...) so the histogram lands on the run_completed
+	// event uniformly — but ApplyTo only overrides on the failure verdicts,
+	// so a worker who self-transitioned straight to blocked stays blocked.
+	if outcome.Kind == outcomeTransition {
+		// Bound the git invocation so a stuck repo (lock, NFS hang)
+		// cannot wedge verification forever. workerVerifyTimeout is
+		// generous — `git rev-list --count` is sub-second on a healthy
+		// repo, but we'd rather not race the scheduler shutdown.
+		verifyCtx, verifyCancel := context.WithTimeout(context.Background(), workerVerifyTimeout)
+		verdict := scheduler.VerifyWorkerCompletion(verifyCtx, opts.RepoRoot, opts.Workdir, filepath.Join(sess.WorkspaceDir, "logs"), "")
+		verifyCancel()
+		res.ToolUseHistogram = verdict.ToolUseHistogram
+		res.CommitsOnRunBranch = verdict.CommitCount
+		res.VerificationSkipReason = verdict.SkipReason
+		// VerificationRan disambiguates "engine counted 0 commits" from
+		// "engine never ran" on the downstream run_completed event. Set
+		// true whenever we surfaced a verdict at all (including skip);
+		// the SSE/run_completed emitter keys off this flag (not off
+		// CommitsOnRunBranch>0) so 0-commit verifications still produce
+		// commits_on_run_branch=0 in the payload — the failure-mode
+		// signal monitors most want to see.
+		res.VerificationRan = true
+		// Only override the success path. A worker that self-transitioned
+		// to blocked/failed has already explained why; the engine's view
+		// is supplemental, not authoritative.
+		if outcome.TaskStatus == "review" || outcome.TaskStatus == "done" {
+			res.Status, res.Reason = verdict.ApplyTo(res.Status, res.Reason)
+		}
+	}
+
+	return res, nil
 }
 
 // longLivedOutcome captures the wait-loop's verdict on why a long-lived
