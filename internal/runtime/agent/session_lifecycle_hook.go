@@ -253,12 +253,25 @@ func (h *SessionLifecycleHook) ObserveComment(_ context.Context, c *sqlstore.Com
 		}
 		// CW-20260510-0064: belt-and-suspenders against a hallucinated
 		// session-complete marker. If the orchestrator emits the marker
-		// while one of its children is still progressing (task.status ∈
-		// {doing, review}), suppress the stop and log a WARN. The template
-		// fix is the primary guard; this is the substrate-side safety net
-		// against future LLM behavior drift.
+		// while a child's executor is still active (task.status=doing),
+		// suppress the stop and log a WARN. The template fix is the
+		// primary guard; this is the substrate-side safety net against
+		// future LLM behavior drift.
+		//
+		// CW-20260519-0132: the guard formerly also suppressed on
+		// review-status children, on the theory that "the reviewer
+		// end-agent will close it." That over-extended the protection:
+		// the reviewer end-agent runs in its OWN session, independent
+		// of the orchestrator. The orchestrator standing down with
+		// children in review is the canonical happy path (orchestrator
+		// finished its dispatch work and trusts the reviewer to close
+		// async), and suppressing here trapped sessions in
+		// Status=running, Terminal=false until an operator manually
+		// POSTed /api/v1/sessions/{id}/stop. Narrow the guard to `doing`
+		// only — `review` is in flight on the REVIEWER's session, not
+		// on the orchestrator's.
 		if h.hasInProgressChild(entityID) {
-			log.Printf("[lifecycle] WARN: suppressing layer-2 stop for plan=%s sess=%s — child task still in progress (doing/review). marker likely false-positive.",
+			log.Printf("[lifecycle] WARN: suppressing layer-2 stop for plan=%s sess=%s — child task still doing. marker likely false-positive.",
 				entityID, sessID)
 			return
 		}
@@ -271,18 +284,26 @@ func (h *SessionLifecycleHook) ObserveComment(_ context.Context, c *sqlstore.Com
 }
 
 // hasInProgressChild returns true when the plan task has at least one
-// direct child whose status indicates active work (doing or review). Used
+// direct child whose executor is actively running (status=doing). Used
 // by the layer-2 marker observer to guard against premature self-stop in
 // the face of a hallucinated session-complete signal — see
 // CW-20260510-0064 for the incident that motivated the check.
 //
-// The status set is deliberately narrow: `doing` (executor active) and
-// `review` (reviewer end-agent will close it). `todo` is intentionally
-// EXCLUDED — a child still at todo means the orchestrator hasn't
-// dispatched it yet, and the orchestrator emitting session-complete with
-// pending todos is a legitimate "I'm done with this slice" signal (e.g.
-// orchestrator self-block / cancelled-by-user paths). The guard fires
-// only when work is actively in flight.
+// The status set is deliberately narrow: only `doing` (executor active
+// on the child's own session). Other statuses are EXCLUDED:
+//   - `todo`: child not yet dispatched. The orchestrator emitting
+//     session-complete with pending todos is a legitimate "I'm done with
+//     this slice" signal (orchestrator self-block / cancelled-by-user).
+//   - `review`: child's executor finished; the reviewer end-agent is
+//     auditing it on a SEPARATE session. The orchestrator standing down
+//     with children at review is the canonical happy path (CW-20260519-0132
+//     widened the prior `doing|review` guard, which trapped sessions in
+//     Status=running until an operator manually POSTed /stop).
+//   - terminal states (done/failed/blocked/cancelled/abandoned): the
+//     child is closed; no reason to keep the orchestrator alive.
+//
+// The guard fires only when work is actively in flight on a child's
+// executor session.
 func (h *SessionLifecycleHook) hasInProgressChild(planID string) bool {
 	if planID == "" {
 		return false
@@ -295,8 +316,7 @@ func (h *SessionLifecycleHook) hasInProgressChild(planID string) bool {
 		return false
 	}
 	for i := range children {
-		switch children[i].Status {
-		case "doing", "review":
+		if children[i].Status == "doing" {
 			return true
 		}
 	}
