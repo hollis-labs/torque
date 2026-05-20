@@ -42,6 +42,13 @@ type Adapter struct {
 	// torque_inbox_poll — the tool then reports polling as unavailable on
 	// this MCP host, mirroring the nil-broker contract.
 	pollRegistry *steering.PollRegistry
+	// reminderRegistry wires the turn-boundary reminder registry
+	// (CW-20260519-0065) shared with the steering bridge. When set,
+	// torque_steering_dismiss can ack injected envelopes so the runtime
+	// stops re-surfacing them at turn boundaries. Nil disables the
+	// dismiss tool's effect — it then reports the dismiss as unavailable
+	// (no envelopes to ack against on this host).
+	reminderRegistry *steering.ReminderRegistry
 	// Logger receives go-mcp-sanitize warn telemetry when the middleware
 	// auto-cleans malformed agent tool-call XML in free-text params (see
 	// CW-20260509-0033, mirrors vanta-conduit's Pattern A install). Nil
@@ -96,6 +103,16 @@ func (a *Adapter) WithBroker(b *broker.Broker) *Adapter {
 // nil makes torque_inbox_poll report polling unavailable on this host.
 func (a *Adapter) WithPollRegistry(reg *steering.PollRegistry) *Adapter {
 	a.pollRegistry = reg
+	return a
+}
+
+// WithReminderRegistry attaches the turn-boundary reminder registry
+// (CW-20260519-0065) so torque_steering_dismiss can mark injected
+// envelopes ack'd and stop the runtime's re-surfacing pass. Same
+// pre-flight contract as WithPollRegistry. Optional — leaving it nil
+// makes torque_steering_dismiss report the dismiss as unavailable.
+func (a *Adapter) WithReminderRegistry(reg *steering.ReminderRegistry) *Adapter {
+	a.reminderRegistry = reg
 	return a
 }
 

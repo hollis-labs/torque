@@ -94,13 +94,15 @@ func mcpCmd() *cobra.Command {
 			// proxies read-only state from the local serve process, while
 			// torque_scheduler_toggle remains unavailable because this
 			// process does not own the scheduler instance.
-			// pollReg is nil: the opt-in inbox-poll registry
-			// (CW-20260518-0042) is only meaningful in the same process as
+			// pollReg / reminderReg are nil: the opt-in inbox-poll registry
+			// (CW-20260518-0042) and the turn-boundary reminder registry
+			// (CW-20260519-0065) are only meaningful in the same process as
 			// the steering bridge, which runs under `torque serve` — not in
-			// this stdio MCP process. torque_inbox_poll therefore reports
-			// polling unavailable here; agents reach the live registry via
-			// the in-process orchestrator loopback adapter instead.
-			agentDeps, agentDepsClose, err := bootstrap.AgentDeps(store, profiles, svc, nil, nil, nil, nil)
+			// this stdio MCP process. torque_inbox_poll / torque_steering_
+			// dismiss therefore report unavailable here; agents reach the
+			// live registries via the in-process orchestrator loopback
+			// adapter instead.
+			agentDeps, agentDepsClose, err := bootstrap.AgentDeps(store, profiles, svc, nil, nil, nil, nil, nil)
 			if err != nil {
 				return fmt.Errorf("bootstrap agent deps: %w", err)
 			}

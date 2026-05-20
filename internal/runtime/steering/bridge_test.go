@@ -19,6 +19,7 @@ import (
 type fakeGateway struct {
 	mu       sync.Mutex
 	live     map[string]string // recipient URN -> session ID
+	tasks    map[string]string // sessionID -> task ID (for TaskIDForSession)
 	steerErr error
 	turns    []steeredTurn
 }
@@ -32,6 +33,16 @@ func (g *fakeGateway) LiveSession(addr gomsg.Address) (string, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	id, ok := g.live[addr.URN()]
+	return id, ok
+}
+
+func (g *fakeGateway) TaskIDForSession(sessionID string) (string, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.tasks == nil {
+		return "", false
+	}
+	id, ok := g.tasks[sessionID]
 	return id, ok
 }
 
@@ -274,6 +285,90 @@ func TestDeliver_PollingNonSteerable_StillNoop(t *testing.T) {
 	env := gomsg.Envelope{ID: "ENV-NS", Kind: gomsg.MsgKindEscalation, To: to, Payload: []byte(`"x"`)}
 	res := b.Deliver(context.Background(), env)
 	assert.Equal(t, steering.OutcomeNotAddressed, res.Outcome)
+}
+
+func TestDeliver_RemindersRecordedOnSuccessfulDelivery(t *testing.T) {
+	// CW-20260519-0065: the bridge records every successful injection
+	// against the recipient's task id so the long-lived runtime can
+	// re-surface unaddressed envelopes at the next turn boundary.
+	to := sessionAddr("SES-REMIND")
+	gw := &fakeGateway{
+		live:  map[string]string{to.URN(): "SES-REMIND"},
+		tasks: map[string]string{"SES-REMIND": "CW-TASK-1"},
+	}
+	reg := steering.NewReminderRegistry()
+	b := steering.New(gw, &fakeConsumer{}).WithReminder(reg)
+
+	env := gomsg.Envelope{
+		ID:      "ENV-REMIND",
+		Kind:    gomsg.MsgKindNotice,
+		From:    userAddr(),
+		To:      to,
+		Payload: []byte(`"please look"`),
+	}
+	res := b.Deliver(context.Background(), env)
+	assert.Equal(t, steering.OutcomeDelivered, res.Outcome)
+
+	snap := reg.Snapshot("CW-TASK-1")
+	require.Len(t, snap, 1, "successful delivery must be recorded for the bound task")
+	assert.Equal(t, "ENV-REMIND", snap[0].EnvelopeID)
+	assert.Equal(t, "please look", snap[0].Subject)
+}
+
+func TestDeliver_NoReminderRegistry_StillDelivers(t *testing.T) {
+	// A bridge with no reminder registry wired must still deliver and
+	// consume — the reminder pass is purely additive.
+	to := sessionAddr("SES-NORE")
+	gw := &fakeGateway{
+		live:  map[string]string{to.URN(): "SES-NORE"},
+		tasks: map[string]string{"SES-NORE": "CW-TASK-2"},
+	}
+	cons := &fakeConsumer{}
+	b := steering.New(gw, cons) // no WithReminder
+
+	env := gomsg.Envelope{ID: "ENV-NORE", Kind: gomsg.MsgKindNotice, To: to, From: userAddr(), Payload: []byte(`"x"`)}
+	res := b.Deliver(context.Background(), env)
+	assert.Equal(t, steering.OutcomeDelivered, res.Outcome)
+	assert.Equal(t, []string{"ENV-NORE"}, cons.ids())
+}
+
+func TestDeliver_RemindersSkippedWhenNoTaskBinding(t *testing.T) {
+	// A live session that has no task binding (manual session, test
+	// fixture) records nothing — the reminder registry needs a task id
+	// to key against; absence is a no-op, not an error.
+	to := sessionAddr("SES-NOTASK")
+	gw := &fakeGateway{
+		live: map[string]string{to.URN(): "SES-NOTASK"},
+		// tasks: nil — gateway returns ok=false on TaskIDForSession
+	}
+	reg := steering.NewReminderRegistry()
+	b := steering.New(gw, &fakeConsumer{}).WithReminder(reg)
+
+	env := gomsg.Envelope{ID: "ENV-NOTASK", Kind: gomsg.MsgKindNotice, To: to, From: userAddr(), Payload: []byte(`"x"`)}
+	res := b.Deliver(context.Background(), env)
+	assert.Equal(t, steering.OutcomeDelivered, res.Outcome)
+
+	// No task id ↔ no record. The Snapshot of the empty taskID is nil.
+	assert.Nil(t, reg.Snapshot(""))
+}
+
+func TestDeliver_FailedSteer_DoesNotRecordReminder(t *testing.T) {
+	// An OutcomeFailed delivery must not pollute the reminder registry —
+	// the envelope never landed in the agent's loop, so there is nothing
+	// to nag about.
+	to := sessionAddr("SES-FAIL")
+	gw := &fakeGateway{
+		live:     map[string]string{to.URN(): "SES-FAIL"},
+		tasks:    map[string]string{"SES-FAIL": "CW-TASK-FAIL"},
+		steerErr: errors.New("pipe closed"),
+	}
+	reg := steering.NewReminderRegistry()
+	b := steering.New(gw, &fakeConsumer{}).WithReminder(reg)
+
+	env := gomsg.Envelope{ID: "ENV-FAIL", Kind: gomsg.MsgKindNotice, To: to, From: userAddr(), Payload: []byte(`"x"`)}
+	res := b.Deliver(context.Background(), env)
+	assert.Equal(t, steering.OutcomeFailed, res.Outcome)
+	assert.Nil(t, reg.Snapshot("CW-TASK-FAIL"), "failed delivery must not be recorded")
 }
 
 func TestDeliver_AgentAddress_Resolves(t *testing.T) {
