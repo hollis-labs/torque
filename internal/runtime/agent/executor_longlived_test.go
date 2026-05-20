@@ -3,11 +3,14 @@ package agent
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
+	gomsg "github.com/hollis-labs/go-messaging"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/steering"
 	"github.com/hollis-labs/torque/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -371,4 +374,198 @@ func TestAwaitLongLivedCompletion_CtxCancelAfterSelfTransition(t *testing.T) {
 func newTestStoreForLongLived(t *testing.T) *sqlstore.Store {
 	t.Helper()
 	return sqlitetest.OpenStore(t)
+}
+
+// fakeTurnSender records SendTurn invocations for assertions on the
+// reminder pump. send errors are injectable via SendErr; once exhausted
+// the next call returns nil. Safe for concurrent calls.
+type fakeTurnSender struct {
+	mu      sync.Mutex
+	sends   []string
+	sendErr error
+}
+
+func (f *fakeTurnSender) SendTurn(_ context.Context, _ *Session, text string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.sendErr != nil {
+		err := f.sendErr
+		f.sendErr = nil
+		return err
+	}
+	f.sends = append(f.sends, text)
+	return nil
+}
+
+func (f *fakeTurnSender) all() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.sends...)
+}
+
+func reminderTestEnvelope(id, body string) gomsg.Envelope {
+	return gomsg.Envelope{
+		ID:          id,
+		Kind:        gomsg.MsgKindNotice,
+		From:        gomsg.Address{Kind: gomsg.KindUser, Authority: "local", ID: "operator"},
+		To:          gomsg.Address{Kind: gomsg.KindSession, Authority: "local", ID: "SES-PUMP"},
+		Payload:     []byte(body),
+		ContentType: "application/json",
+	}
+}
+
+// TestRunReminderPump_DeliversReminderOnTurnDoneAfterInjection covers the
+// happy path: an injection arrives, the turn ends, the pump runs the
+// reminder. The pump's MarkReminded step is observed by feeding a second
+// turn-done with no new injection — no further sends fire.
+func TestRunReminderPump_DeliversReminderOnTurnDoneAfterInjection(t *testing.T) {
+	reg := steering.NewReminderRegistry()
+	const taskID = "CW-TEST-PUMP-1"
+	reg.RecordDelivery(taskID, reminderTestEnvelope("ENV-1", `"hi"`))
+
+	sender := &fakeTurnSender{}
+	sess := &Session{ID: "SES-PUMP"}
+	ch := make(chan struct{}, 4)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go runReminderPump(context.Background(), sender, reg, taskID, sess, ch, &wg)
+
+	ch <- struct{}{} // first turn boundary — has injection, should remind
+	// Loop until the pump has acted; bounded by a 2s safety budget.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(sender.all()) > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	close(ch)
+	wg.Wait()
+
+	sends := sender.all()
+	require.Len(t, sends, 1, "first turn boundary with pending must produce exactly one reminder")
+	assert.Contains(t, sends[0], "envelope=ENV-1")
+	assert.Contains(t, sends[0], "1 unaddressed message")
+
+	// And the envelope is now marked reminded — Snapshot reflects it.
+	snap := reg.Snapshot(taskID)
+	require.Len(t, snap, 1)
+	assert.True(t, snap[0].Reminded)
+}
+
+// TestRunReminderPump_NoInjectionMeansNoReminder covers the spec's
+// "if a message was injected during THIS turn" gate: a turn boundary
+// without an intervening injection produces no reminder even if pending
+// envelopes exist from prior turns. (The pending envelopes were already
+// reminded once and the "stop nagging" rule keeps them silent.)
+func TestRunReminderPump_NoInjectionMeansNoReminder(t *testing.T) {
+	reg := steering.NewReminderRegistry()
+	const taskID = "CW-TEST-PUMP-2"
+
+	sender := &fakeTurnSender{}
+	sess := &Session{ID: "SES-PUMP"}
+	ch := make(chan struct{}, 4)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go runReminderPump(context.Background(), sender, reg, taskID, sess, ch, &wg)
+
+	ch <- struct{}{} // turn boundary, no prior injection
+	time.Sleep(75 * time.Millisecond)
+	close(ch)
+	wg.Wait()
+
+	assert.Empty(t, sender.all(), "turn boundary with no injection must produce no reminder")
+}
+
+// TestRunReminderPump_DismissedEnvelopeSilenced verifies the
+// torque_steering_dismiss path: an envelope that has been dismissed by
+// the agent must not surface in the reminder even when the turn had a
+// fresh injection of a different envelope.
+func TestRunReminderPump_DismissedEnvelopeSilenced(t *testing.T) {
+	reg := steering.NewReminderRegistry()
+	const taskID = "CW-TEST-PUMP-3"
+	reg.RecordDelivery(taskID, reminderTestEnvelope("ENV-OLD", `"old"`))
+	reg.Dismiss(taskID, "ENV-OLD")
+	reg.RecordDelivery(taskID, reminderTestEnvelope("ENV-NEW", `"new"`))
+
+	sender := &fakeTurnSender{}
+	sess := &Session{ID: "SES-PUMP"}
+	ch := make(chan struct{}, 4)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go runReminderPump(context.Background(), sender, reg, taskID, sess, ch, &wg)
+
+	ch <- struct{}{}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(sender.all()) > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(ch)
+	wg.Wait()
+
+	sends := sender.all()
+	require.Len(t, sends, 1)
+	assert.NotContains(t, sends[0], "ENV-OLD")
+	assert.Contains(t, sends[0], "ENV-NEW")
+}
+
+// TestRunReminderPump_NilRegistryDrainsCleanly is the degraded-wiring
+// guarantee: with no reminder registry the pump must still consume
+// turn-done signals and exit on close. Otherwise the drain goroutine
+// would back up and we'd be worse off than before the feature.
+func TestRunReminderPump_NilRegistryDrainsCleanly(t *testing.T) {
+	sender := &fakeTurnSender{}
+	sess := &Session{ID: "SES-PUMP"}
+	ch := make(chan struct{}, 4)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go runReminderPump(context.Background(), sender, nil, "CW-TEST-PUMP-4", sess, ch, &wg)
+
+	for i := 0; i < 3; i++ {
+		ch <- struct{}{}
+	}
+	close(ch)
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		// ok
+	case <-time.After(2 * time.Second):
+		t.Fatal("pump did not exit on channel close with nil registry")
+	}
+
+	assert.Empty(t, sender.all(), "nil registry must not send anything")
+}
+
+// TestRunReminderPump_SendFailureLeavesEnvelopeUnreminded covers the
+// retry guarantee: a SendTurn error must NOT MarkReminded, so the next
+// turn boundary that sees an injection retries the surface.
+func TestRunReminderPump_SendFailureLeavesEnvelopeUnreminded(t *testing.T) {
+	reg := steering.NewReminderRegistry()
+	const taskID = "CW-TEST-PUMP-5"
+	reg.RecordDelivery(taskID, reminderTestEnvelope("ENV-FAIL", `"x"`))
+
+	sender := &fakeTurnSender{sendErr: errors.New("pipe closed")}
+	sess := &Session{ID: "SES-PUMP"}
+	ch := make(chan struct{}, 4)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go runReminderPump(context.Background(), sender, reg, taskID, sess, ch, &wg)
+
+	ch <- struct{}{}
+	time.Sleep(75 * time.Millisecond)
+	close(ch)
+	wg.Wait()
+
+	snap := reg.Snapshot(taskID)
+	require.Len(t, snap, 1)
+	assert.False(t, snap[0].Reminded, "send failure must leave the envelope unreminded so the next turn retries")
 }

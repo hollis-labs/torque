@@ -164,6 +164,29 @@ Example: {"type":"%s","payload_json":"{\"title\":\"Need DB creds\",\"prompt\":\"
 		mcp.WithString("timeout_at", mcp.Description("Optional RFC3339 timestamp for the timeout sweeper")),
 	), a.handleLoopbackCheckpointEmit)
 
+	// torque_steering_dismiss (CW-20260519-0065): the agent's "ack, I saw
+	// these steering messages" signal. The substrate records every
+	// successfully injected steering envelope and re-surfaces unaddressed
+	// ones at the next turn boundary; calling this tool with the envelope
+	// IDs the agent has handled (or consciously chosen to ignore) stops
+	// the re-reminder for those envelopes. Idempotent and tolerant of
+	// unknown ids — the response reports which IDs were actually present
+	// in the registry so the agent knows what was acked vs. silently
+	// dropped (e.g. a stale id from a prior process). Always registered
+	// in the loopback subset; when no registry is wired (test paths) the
+	// tool returns a "feature disabled" error rather than panicking.
+	a.addTool(mcp.NewTool("torque_steering_dismiss",
+		mcp.WithDescription(`Acknowledge ("dismiss") one or more injected steering envelopes so the substrate stops re-surfacing them at turn boundaries (CW-20260519-0065). Pass the envelope IDs the substrate listed in its "[steering reminder · N unaddressed messages]" turn — those IDs appear as "envelope=ENV-XXX" in the reminder body.
+Dismissal is per-envelope and permanent for this task: a dismissed envelope is never re-surfaced even if the operator sends new steering messages. Dismissing is the agent's "I saw this and chose not to act" signal; an envelope you've already replied to or otherwise handled should also be dismissed to keep the registry clean.
+Response shape: data = {dismissed: [<envelope-id>...], unknown: [<envelope-id>...]} — dismissed lists IDs that were actually present in the registry; unknown lists IDs that were absent (stale, already dismissed, or never injected).
+Example: {"envelope_ids":["01HK...","01HJ..."]}`),
+		mcp.WithArray("envelope_ids",
+			mcp.Required(),
+			mcp.Description("Envelope IDs to dismiss (as listed in the reminder body)"),
+			mcp.Items(map[string]any{"type": "string"}),
+		),
+	), a.handleLoopbackSteeringDismiss)
+
 	a.addTool(mcp.NewTool("torque_task_checkpoint_respond",
 		mcp.WithDescription(`CREATE a response on a still-pending checkpoint that lives on your own task. Transitions the checkpoint from status=pending → status=responded. Only checkpoints whose task_id matches the loopback's bound task are accepted — passing a correlation_id for another task's checkpoint returns an error. Responding to a non-pending checkpoint (already responded, canceled, or timed out) returns a conflict error.
 This tool exists for narrow self-service cases where a worker decides on its own behalf — e.g. an automated approval flow where the worker handles both sides of the loop. The typical worker DOES NOT call this: when a human operator responds to your help-asking checkpoint from a dashboard, the substrate parks the response in task.metadata.checkpoint_responses[correlation_id] and redispatches you automatically. Read it from torque_task_get and act on it; do NOT call respond to "consume" or "acknowledge" — there is no acknowledge primitive, and calling respond on a checkpoint someone else already responded to will fail with conflict.
@@ -364,4 +387,46 @@ func (a *Adapter) handleLoopbackCheckpointRespond(ctx context.Context, req mcp.C
 		return errFromService(err)
 	}
 	return a.checkpointResultByCorr(corr)
+}
+
+// handleLoopbackSteeringDismiss acks injected steering envelopes against
+// the loopback's bound task (CW-20260519-0065). The handler returns
+// {dismissed, unknown} so the agent gets a precise account of what
+// landed vs. what was already gone — an unknown id is not an error
+// (stale id from a prior process, already dismissed, etc.).
+//
+// Returns a "feature disabled" error when no ReminderRegistry was
+// attached to this adapter — the dismiss only makes sense paired with a
+// runtime that tracks injections. Mirrors the nil-broker contract.
+func (a *Adapter) handleLoopbackSteeringDismiss(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if a.reminderRegistry == nil {
+		return errResult(ErrCodeDomain, "steering reminder registry not configured on this MCP host", "")
+	}
+	envelopeIDs, err := reqStrSlice(req, "envelope_ids")
+	if err != nil {
+		return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid envelope_ids: %v", err), "envelope_ids")
+	}
+	if len(envelopeIDs) == 0 {
+		return errResult(ErrCodeArgInvalid, "envelope_ids is required and must not be empty", "envelope_ids")
+	}
+	dismissed := a.reminderRegistry.Dismiss(a.loopbackTaskID, envelopeIDs...)
+
+	// Compute the unknown set as input \ dismissed (preserving caller
+	// order). The agent uses this to distinguish "I acked successfully"
+	// from "the substrate had no record (already dismissed or stale)".
+	known := make(map[string]bool, len(dismissed))
+	for _, id := range dismissed {
+		known[id] = true
+	}
+	unknown := make([]string, 0, len(envelopeIDs))
+	for _, id := range envelopeIDs {
+		if !known[id] {
+			unknown = append(unknown, id)
+		}
+	}
+
+	return okResult(map[string]interface{}{
+		"dismissed": dismissed,
+		"unknown":   unknown,
+	})
 }
