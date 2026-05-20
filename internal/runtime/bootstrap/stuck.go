@@ -60,9 +60,10 @@ func StuckWatcher(
 		Checkpoint: &managerCheckpointAdapter{mgr: sessions},
 	}
 	w, err := stuck.New(deps, stuck.WatcherConfig{
-		IdleThreshold: time.Duration(cfg.IdleThresholdSeconds) * time.Second,
-		ScanInterval:  time.Duration(cfg.ScanIntervalSeconds) * time.Second,
-		WaitTimeout:   time.Duration(cfg.WaitSeconds) * time.Second,
+		IdleThreshold:     time.Duration(cfg.IdleThresholdSeconds) * time.Second,
+		ScanInterval:      time.Duration(cfg.ScanIntervalSeconds) * time.Second,
+		WaitTimeout:       time.Duration(cfg.WaitSeconds) * time.Second,
+		PostProbeCooldown: time.Duration(cfg.PostProbeCooldownSeconds) * time.Second,
 	})
 	if err != nil {
 		return func() {}, fmt.Errorf("stuck watcher: %w", err)

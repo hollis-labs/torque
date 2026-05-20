@@ -257,6 +257,11 @@ func TestWatcher_InFlightDedup(t *testing.T) {
 
 // Once a probe completes, the session becomes eligible again — the next
 // scan re-probes it if it is still stuck.
+//
+// PostProbeCooldown is set to -1 here to disable the post-probe cooldown
+// gate; this test isolates the in-flight-claim release semantic. The
+// cooldown gate is exercised separately by
+// TestWatcher_PostProbeCooldown_BlocksImmediateReprobe.
 func TestWatcher_ReprobesAfterCompletion(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	lister := &fakeLister{}
@@ -269,8 +274,9 @@ func TestWatcher_ReprobesAfterCompletion(t *testing.T) {
 	rp := newRecordingProbe() // release nil — probes return immediately
 
 	w, err := stuck.New(newWatcherDeps(lister), stuck.WatcherConfig{
-		IdleThreshold: 10 * time.Minute,
-		ScanInterval:  20 * time.Millisecond,
+		IdleThreshold:     10 * time.Minute,
+		ScanInterval:      20 * time.Millisecond,
+		PostProbeCooldown: -1, // disable cooldown for this test
 	})
 	require.NoError(t, err)
 	w.WithProbeFunc(rp.fn).WithNowFunc(func() time.Time { return now })
@@ -285,6 +291,110 @@ func TestWatcher_ReprobesAfterCompletion(t *testing.T) {
 		case <-rp.fired:
 		case <-time.After(time.Second):
 			t.Fatalf("expected re-probe %d after completion", i+1)
+		}
+	}
+}
+
+// CW-20260519-0125 regression. After a probe completes, the same session
+// must NOT be re-probed on the very next scan tick — the in-flight claim
+// alone is not enough, because PR #76's SendTurn-based PROBE phase no
+// longer bumps last_activity (the old SendInput path did via
+// Manager.SendInput.TouchSession). The post-probe cooldown is the
+// explicit guard that closes that gap.
+func TestWatcher_PostProbeCooldown_BlocksImmediateReprobe(t *testing.T) {
+	var mu sync.Mutex
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	clock := func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return now
+	}
+	advance := func(d time.Duration) {
+		mu.Lock()
+		now = now.Add(d)
+		mu.Unlock()
+	}
+
+	// LastActivity is fixed in the lister — it does NOT advance with the
+	// clock — modeling the post-PR-#76 reality: SendTurn does not call
+	// TouchSession, so a probed session whose pid_poller / stream events
+	// have not yet fired stays at its pre-probe LastActivity.
+	lastActivity := now.Add(-30 * time.Minute)
+	lister := &fakeLister{}
+	lister.set(stuck.LiveSession{
+		SessionID:    "SESS-1",
+		TaskID:       "T-1",
+		LastActivity: lastActivity,
+	})
+
+	rp := newRecordingProbe() // release nil — probes return immediately
+
+	w, err := stuck.New(newWatcherDeps(lister), stuck.WatcherConfig{
+		IdleThreshold:     10 * time.Minute,
+		ScanInterval:      20 * time.Millisecond,
+		PostProbeCooldown: 5 * time.Minute,
+	})
+	require.NoError(t, err)
+	w.WithProbeFunc(rp.fn).WithNowFunc(clock)
+
+	w.Start(context.Background())
+	defer w.Close()
+
+	// First probe fires.
+	select {
+	case <-rp.fired:
+	case <-time.After(time.Second):
+		t.Fatal("first probe never fired")
+	}
+
+	// Several scan ticks elapse with the wall clock unchanged (cooldown
+	// has not begun to elapse). The session is still stuck per
+	// LastActivity, but the cooldown gate must block re-probe.
+	time.Sleep(120 * time.Millisecond)
+	assert.Equal(t, 1, rp.count(), "session was re-probed before cooldown elapsed")
+
+	// Advance the clock past the cooldown. The next scan tick must
+	// re-probe (the session is still stuck, the cooldown has lifted).
+	advance(6 * time.Minute)
+	select {
+	case <-rp.fired:
+	case <-time.After(time.Second):
+		t.Fatal("session was not re-probed after cooldown elapsed")
+	}
+}
+
+// A negative PostProbeCooldown is the explicit opt-out (preserves the
+// legacy "release immediately re-arms" semantic for callers that have
+// their own re-eligibility gating). Verifies the New-time normalization
+// keeps the negative value instead of folding it to the default.
+func TestWatcher_PostProbeCooldown_NegativeDisables(t *testing.T) {
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	lister := &fakeLister{}
+	lister.set(stuck.LiveSession{
+		SessionID:    "SESS-1",
+		TaskID:       "T-1",
+		LastActivity: now.Add(-30 * time.Minute),
+	})
+
+	rp := newRecordingProbe()
+
+	w, err := stuck.New(newWatcherDeps(lister), stuck.WatcherConfig{
+		IdleThreshold:     10 * time.Minute,
+		ScanInterval:      20 * time.Millisecond,
+		PostProbeCooldown: -1,
+	})
+	require.NoError(t, err)
+	w.WithProbeFunc(rp.fn).WithNowFunc(func() time.Time { return now })
+
+	w.Start(context.Background())
+	defer w.Close()
+
+	// Two probes back-to-back with no clock advance — cooldown disabled.
+	for i := 0; i < 2; i++ {
+		select {
+		case <-rp.fired:
+		case <-time.After(time.Second):
+			t.Fatalf("expected probe %d (cooldown disabled)", i+1)
 		}
 	}
 }
