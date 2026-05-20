@@ -27,7 +27,8 @@ Two adjacent surfaces already exist in Torque:
   `status_update`, `handoff`, `escalation`, `request`, `response`, plus
   per-envelope `envelope.sent` / `envelope.delivered` SSE.
 
-A scoped audit of Nanite (`/Users/chrispian/dev/hollis-labs/apps/nanite/`)
+A scoped audit of the sibling Nanite codebase (separate repo; sibling
+checkout under `apps/nanite/` in development setups)
 found that Nanite's event surface is **mature for intra-app observability**
 (plugin events, session_events table, store events) but **not designed for
 cross-host coordination** — there is no URN scheme, no mux bridge, and the
@@ -63,7 +64,7 @@ fields a cross-host consumer needs to disambiguate sources.
 // internal/runtime/scheduler/canonical_event.go
 type CanonicalEvent struct {
     SchemaVersion int                    `json:"schema_version"`
-    EventID       string                 `json:"id"`        // ULID
+    EventID       string                 `json:"id"`        // "evt_" + 24-char random hex (12 bytes)
     Kind          string                 `json:"kind"`      // e.g. "task.transitioned"
     Source        string                 `json:"source"`    // "torque"
     URN           string                 `json:"urn"`       // urn:torque:<entity>:<id>
@@ -94,7 +95,9 @@ high-frequency and would flood mux).
 | `urn:torque:run:42` | A run by integer RunID |
 | `urn:torque:session:<UUID>` | An agent session |
 | `urn:torque:plan:CW-...` | A kind=plan task (same as task URN; ambiguity intentional, callers know the kind from `kind:` of the event) |
-| `urn:torque:daemon:<pid>@<host>` | The serve process itself |
+| `urn:torque:daemon:<pid>` | The serve process itself (PID known) |
+| `urn:torque:daemon:default` | Daemon-scoped event with no PID in payload (e.g. `scheduler.tick`) |
+| `urn:torque:daemon:unknown` | `URNForDaemon(pid)` called with pid ≤ 0 |
 | `urn:nanite:session:<UUID>` | (Future) a Nanite session |
 
 Host segment ASCII-lowercase, alphanumeric + `-`. Entity segment is one of
@@ -130,8 +133,8 @@ only.
 |---|---|---|
 | `plan.phase_added` | `PlanService.AddPhase` | `{phase_id, phase_name, order}` |
 | `plan.phase_removed` | `PlanService.RemovePhase` | `{phase_id}` |
-| `daemon.up` | serve.go startup | `{pid, version, binary_mtime, started_at}` |
-| `scheduler.dispatch_skipped` | per-tick, after picker | `{counts:{<reason>:<n>}, candidates, picked}` |
+| `daemon.up` | serve.go startup | `{pid, started_at}` + optional `{binary_path, binary_mtime}` (best-effort; populated when `os.Executable` + `os.Stat` succeed) |
+| `scheduler.dispatch_skipped` | per-tick, after picker (suppressed when no skips) | `{tick, candidates, picked, counts:{<reason>:<n>}}` |
 | `scheduler.toggled` | settings update of `scheduler.enabled` | `{enabled: bool, by}` |
 
 **Deferred (Phase 4+):**
@@ -146,20 +149,24 @@ only.
 
 ### Why these five for Phase 3
 
-1. **`plan.phase_added` / `plan.phase_removed`** — the directly named gap
-   from the 2026-05-19 orchestrator stand-down. The orchestrator (and
-   future Project Manager / Architect agents) need to react to plan
-   structural change without polling `torque_plan_get`.
-2. **`daemon.up`** — durable agents need to know when the harness
+1. **`plan.phase_added`** — the directly named gap from the 2026-05-19
+   orchestrator stand-down. The orchestrator (and future Project Manager
+   / Architect agents) need to react to plan structural change without
+   polling `torque_plan_get`.
+2. **`plan.phase_removed`** — symmetric to `plan.phase_added`; the
+   stand-down failure mode was specifically *no event told the
+   orchestrator that ph-1 had been removed*, so removal is the
+   higher-priority half of the pair.
+3. **`daemon.up`** — durable agents need to know when the harness
    restarted so they can re-fetch state and clear stale assumptions. PID
    + binary mtime is enough to distinguish "same process" from
    "redeployed binary".
-3. **`scheduler.dispatch_skipped`** — operators today read the per-tick
+4. **`scheduler.dispatch_skipped`** — operators today read the per-tick
    `[picker] tick=N candidates=C picked=P skipped_by_reason=map[...]` log
    line to answer "why isn't anything dispatching?" Surfacing the same
    counts onto the bus makes the GUI / supervisor surfaces queryable
    without log-scraping.
-4. **`scheduler.toggled`** — `torque_scheduler_toggle` exists; emitting
+5. **`scheduler.toggled`** — `torque_scheduler_toggle` exists; emitting
    on toggle lets supervisors react to the operator pause-button.
 
 ### Observer/emitter wiring for service-layer emissions
