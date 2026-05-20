@@ -2,17 +2,15 @@ package agent
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 	"time"
 
 	llmtypes "github.com/hollis-labs/go-llm-types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	_ "modernc.org/sqlite"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
-	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/hollis-labs/torque/internal/testutil/sqlitetest"
 )
 
 // TestObserveStreamEvent_ErrorFrameFreezesActivity covers the freeze trigger:
@@ -191,15 +189,13 @@ func TestTeardownSession_ClearsActivityGate(t *testing.T) {
 		"teardownSession must drop the activity-gate entry alongside the other per-session maps")
 }
 
+// newGateTestStore opens the repo-standard sqlite test store. The previous
+// in-place ":memory:" + manual-migrations fixture forced single-connection
+// semantics and hid pooled/concurrency behavior (Copilot review on PR #78);
+// sqlitetest.OpenStore matches production DB layering.
 func newGateTestStore(t *testing.T) *sqlstore.Store {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	require.NoError(t, err)
-	require.NoError(t, migrations.Run(db))
-	store, err := sqlstore.New(db, "sqlite")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = store.Close() })
-	return store
+	return sqlitetest.OpenStore(t)
 }
 
 func readLastActivity(t *testing.T, store *sqlstore.Store, sessID string) time.Time {

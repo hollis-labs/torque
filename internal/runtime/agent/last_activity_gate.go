@@ -12,10 +12,20 @@ import (
 // CLI emits 401 responses as text deltas in some failure modes, so the wrapper
 // process stays alive and the PID poller keeps heartbeating with no real
 // activity behind it. CW-20260519-0130.
+//
+// Markers are deliberately specific phrases rather than the bare token "401"
+// — model output can mention "401" innocuously (e.g. "401k", "RFC 401",
+// version numbers) and a bare-substring match false-positive-freezes healthy
+// sessions (Copilot review on PR #78). The four phrases below cover the
+// surfaces actually observed in production (Pass-2 / Pass-6 / Pass-11 /
+// Pass-20 incidents this arc): "Invalid API key · Fix external API key"
+// (OAuth-expiry class), "Failed to authenticate. API Error: 401 Invalid
+// authentication credentials" (resume-401 class), and the bare-HTTP form.
 var authErrorMarkers = []string{
-	"401",
 	"Invalid API key",
 	"Invalid authentication",
+	"API Error: 401",
+	"401 Unauthorized",
 }
 
 // observeStreamEvent flips the per-session last_activity freeze gate based on
