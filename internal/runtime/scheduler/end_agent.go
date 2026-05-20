@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"log"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"time"
@@ -64,6 +65,18 @@ const (
 	// SQLITE_BUSY). After the last attempt fails the enqueue takes the
 	// observable failure path instead of silently leaving the target stuck.
 	endAgentEnqueueMaxAttempts = 3
+
+	// endAgentEnqueueBaseDelay seeds the exponential backoff between retry
+	// attempts. Without it the tight 3-attempt loop can burn the entire
+	// retry budget in microseconds and miss a transient SQLITE_BUSY that
+	// would have cleared in milliseconds (Copilot review on PR #77). The
+	// per-attempt delay doubles each time and is capped at maxDelay; jitter
+	// is drawn from [0, baseDelay) so concurrent retriers don't synchronise
+	// onto the same retry instant. Worst-case total backoff before falling
+	// to the observable failure path is bounded by (attempts-1) × maxDelay,
+	// so the budget can't deadlock lifecycle processing.
+	endAgentEnqueueBaseDelay = 10 * time.Millisecond
+	endAgentEnqueueMaxDelay  = 200 * time.Millisecond
 )
 
 //go:embed templates/default-end-agent.md
@@ -190,6 +203,17 @@ func (lm *LifecycleManager) enqueueEndAgent(target *sqlstore.TaskRecord) {
 		}
 		log.Printf("[end-agent] enqueue attempt %d/%d for target=%s: %v",
 			attempt, endAgentEnqueueMaxAttempts, target.ID, lastErr)
+		if attempt < endAgentEnqueueMaxAttempts {
+			// Backoff between retries with exponential progression + jitter.
+			// Gives the writer lock a chance to clear instead of burning the
+			// budget on back-to-back failures (Copilot review on PR #77).
+			backoff := endAgentEnqueueBaseDelay << (attempt - 1)
+			if backoff > endAgentEnqueueMaxDelay {
+				backoff = endAgentEnqueueMaxDelay
+			}
+			backoff += time.Duration(rand.Int63n(int64(endAgentEnqueueBaseDelay)))
+			time.Sleep(backoff)
+		}
 	}
 	if lastErr != nil {
 		lm.failEndAgentEnqueue(target, lastErr.Error())
