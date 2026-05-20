@@ -70,7 +70,7 @@ func TestLoopbackBuilder_WorkerRequiresTaskID(t *testing.T) {
 	// service.New(nil) is safe — it only composes domain-service structs
 	// around the (nil) store; the worker-branch guard returns before any
 	// store access, so a nil-store service is sufficient for this test.
-	build := loopbackBuilder(service.New(nil), nil, nil)
+	build := loopbackBuilder(service.New(nil), nil, nil, nil)
 	if build == nil {
 		t.Fatal("loopbackBuilder returned nil for a non-nil service")
 	}

@@ -373,7 +373,108 @@ torque_comment_add(
 Your session ends. The substrate records `session.state_changed` →
 `done`.
 
-### 5. Before exiting — emit the session-complete marker
+### 5. Open a session-wrap summary task for the user
+
+Before emitting the session-complete marker, open a `kind=issue` task
+in the same project as the plan summarizing what the session
+accomplished. This is the operator's visibility ping — they filter on
+`kind=issue, status=review` (and/or the `agent-closed` tag the
+reviewer applies to closed children) to find recent agent activity
+without re-reading the whole task tree.
+
+**Fire this step in every termination path** — happy path (all phases
+done), early exit (escalation, user cancellation), and self-block.
+The summary should reflect whatever progress was actually made.
+
+```
+torque_task_create(
+  title="Session wrap — <project_name>: <theme>",
+  description="<wrap_body — see template below>",
+  kind="issue",
+  project_id="<plan.project_id>",
+  source_type="agent",
+  on_done="close",
+  manual=true,
+  metadata="{\"session_wrap\":{\"plan_id\":\"<plan_id>\"}}"
+)
+```
+
+Then walk the new task to `review` so it surfaces in the operator's
+review queue. The task FSM does not permit `todo → review` directly
+(legal transitions out of `todo` are `doing | blocked | paused |
+archived`); use the two-step path `todo → doing → review`:
+
+```
+torque_task_transition(id="<wrap_task_id>", status="doing")
+torque_task_transition(id="<wrap_task_id>", status="review")
+```
+
+Notes:
+- `kind=issue` does NOT auto-enqueue a reviewer end-agent. The
+  `review` status here is purely a UI-visibility signal — the brief
+  `doing` traversal is a pure FSM walk, not actual execution.
+- `manual=true` is the safety-override default and is fine — the
+  task is informational; the picker won't dispatch a `kind=issue`
+  task even if it were `manual=false`.
+- The `metadata.session_wrap.plan_id` back-pointer lets the operator
+  jump from a wrap task to the plan that produced it.
+
+#### Wrap-body template
+
+Terse, scannable, and **always use absolute file paths** (the
+operator may open them from anywhere). Required structure:
+
+```
+# Session wrap — <project_name>: <theme>
+
+**Project:** <project_name>
+**Plan:** <plan_id> — <plan title>
+**Phases:** <N of M phases completed>
+**Duration:** <session duration, e.g. "2h 15m">
+**Outcome:** <"complete" | "partial (early exit)" | "cancelled" | "blocked">
+
+## Tickets addressed
+
+- <CW-...> — <one-line: what was done>
+- <CW-...> — <one-line: what was done>
+- ...
+
+## Reports & output
+
+- /full/path/to/report.md — <one-line: what's in it>
+- /full/path/to/output.json — <one-line>
+
+## Open follow-ups
+
+- <CW-...> — <one-line: what's deferred or filed for later>
+- ...
+
+## Notes
+
+<optional: one paragraph of context the operator should see —
+escalation reason if early exit, surprises if any>
+```
+
+Fill the fields per session:
+
+- **`<project_name>`** is the human-readable project name. Look it up
+  via `torque_project_get(id=plan.project_id)` if you don't have it
+  cached.
+- **`<theme>`** is one-to-three words capturing what the session was
+  about — e.g. "Stability hardening", "Plan 0097 ph-3 cutover",
+  "OAuth rollout to Nanite". The plan's title is a fine starting
+  point; tighten as appropriate.
+- **Tickets addressed**: every child that reached `done` during your
+  walk, plus children that reached `review` with audit findings.
+  Include the audit outcome inline if the child stayed at `review`
+  ("CW-... — implementer landed PR; reviewer parked with 1 follow-up").
+- **Reports & output**: any durable artifacts the worker(s) produced
+  that aren't already linked from the task itself. Skip the section
+  if none.
+- **Open follow-ups**: tasks filed during this session that are still
+  `manual=true todo`. Skip the section if none.
+
+### 6. Before exiting — emit the session-complete marker
 
 ALWAYS, as your last action before stopping, emit a session-complete
 marker comment on your plan task. The substrate observes this marker
@@ -450,8 +551,10 @@ Escalation steps (only after the precondition is satisfied):
    updates the offending child to `done` so you can continue.
 
 If the user transitions the plan to `cancelled`, stop your walk and
-emit a final `[system/orchestrator] cancelled by user` comment, then
-follow Step 5 above to emit the `session-complete` marker.
+emit a final `[system/orchestrator] cancelled by user` comment. Then
+file the wrap task (Step 5 — Outcome: "cancelled") and emit the
+session-complete marker (Step 6). Both fire on every termination
+path, including cancellation.
 
 ## Out of scope (V2+)
 

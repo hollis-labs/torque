@@ -35,12 +35,15 @@ func SteeringBridge(
 	brk *broker.Broker,
 	sessions *agent.Manager,
 	polling *steering.PollRegistry,
+	reminder *steering.ReminderRegistry,
 ) (func(), error) {
 	if brk == nil {
 		return func() {}, fmt.Errorf("steering bridge bootstrap: broker is required")
 	}
 
-	bridge := steering.New(managerGateway{mgr: sessions}, brk).WithPolling(polling)
+	bridge := steering.New(managerGateway{mgr: sessions}, brk).
+		WithPolling(polling).
+		WithReminder(reminder)
 	// System-wide subscription (zero Address, empty Filter): the Bridge
 	// itself encodes the steerable-address rule, so the loop sees every
 	// envelope and lets non-steerable ones fall through cheaply.
@@ -92,6 +95,22 @@ func (g managerGateway) LiveSession(addr gomsg.Address) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+// TaskIDForSession returns the task id sessionID is bound to so the
+// reminder registry (CW-20260519-0065) can key per-task. A missing
+// session, lookup error, or session record with no task binding yields
+// ok=false — the bridge then skips reminder bookkeeping for this
+// envelope, degrading to the prior fire-and-forget behavior.
+func (g managerGateway) TaskIDForSession(sessionID string) (string, bool) {
+	if g.mgr == nil || sessionID == "" {
+		return "", false
+	}
+	sess, err := g.mgr.Get(sessionID)
+	if err != nil || sess == nil || sess.TaskID == "" {
+		return "", false
+	}
+	return sess.TaskID, true
 }
 
 // SteerTurn injects text into the running session as its next turn,
