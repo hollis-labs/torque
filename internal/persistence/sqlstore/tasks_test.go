@@ -1,9 +1,12 @@
 package sqlstore_test
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/testutil/sqlitetest"
@@ -563,4 +566,45 @@ func TestNextTaskID(t *testing.T) {
 	id2, err := store.NextTaskID()
 	require.NoError(t, err)
 	assert.True(t, strings.HasSuffix(id2, "-0002"), "expected suffix -0002, got %s", id2)
+}
+
+// TestNextTaskID_AboveLexCeiling guards against the lex-MAX(id) ceiling at
+// suffix 9999. Before the CAST-to-INTEGER fix, MAX(id) over the string id
+// kept returning "...-9999" because lexicographic comparison sorts "9999"
+// greater than "10000". This froze allocation at -10000 and produced
+// UNIQUE-constraint failures on every subsequent insert. Both the
+// auto-commit and the in-transaction allocators must now step past 9999.
+func TestNextTaskID_AboveLexCeiling(t *testing.T) {
+	store := setupTestStore(t)
+
+	today := time.Now().UTC().Format("20060102")
+	prefix := "CW-" + today + "-"
+
+	// Seed the highest 4-digit row and a 5-digit row, plus a 7-digit row
+	// that lexicographically sorts below "9999" but is numerically the true
+	// max. A lex-MAX implementation would return "9999" and re-allocate
+	// "10000"; a numeric MAX returns 10000000 and allocates 10000001.
+	seed := []string{
+		prefix + "9999",
+		prefix + "10000",
+		prefix + "10000000",
+	}
+	for _, id := range seed {
+		require.NoError(t, store.CreateTask(sampleTask(id)))
+	}
+
+	want := fmt.Sprintf("%s%04d", prefix, 10000001)
+
+	id, err := store.NextTaskID()
+	require.NoError(t, err)
+	assert.Equal(t, want, id, "Store.NextTaskID must use numeric MAX, not lex MAX")
+
+	// Same contract for the in-transaction variant used by the writeq path.
+	tx, err := store.BeginWriteTx(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+
+	txID, err := tx.NextTaskID()
+	require.NoError(t, err)
+	assert.Equal(t, want, txID, "WriteTx.NextTaskID must use numeric MAX, not lex MAX")
 }

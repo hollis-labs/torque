@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/hollis-labs/go-sqlite/txutil"
@@ -456,27 +455,34 @@ func (w *WriteTx) SetTaskAgentProfile(id, agentProfile string) error {
 }
 
 // NextTaskID allocates the next sequential task ID inside the write
-// transaction. Unlike Store.NextTaskID — which runs SELECT MAX(id) on a
+// transaction. Unlike Store.NextTaskID — which runs the lookup on a
 // connection that is released before the caller's subsequent INSERT — this
 // runs under the transaction's held writer lock. When paired with CreateTask
-// in the same WriteTx, the SELECT-MAX and the INSERT are atomic against every
+// in the same WriteTx, the SELECT and the INSERT are atomic against every
 // other writer (writeq-serialized or direct), so two concurrent allocations
 // can never collide on the same ID.
+//
+// The suffix lookup CASTs the numeric tail to INTEGER so MAX tracks the true
+// highest sequence regardless of suffix width. A plain MAX(id) would be a
+// lexicographic max over the formatted id, which only sorts correctly while
+// every suffix is the same width — once any day's count crosses 9999, the
+// 4-digit pad expands and string "9999" sorts greater than "10000", so MAX
+// would freeze at the highest 4-digit row and re-allocate it on every call
+// (UNIQUE-constraint failures on every insert).
 func (w *WriteTx) NextTaskID() (string, error) {
 	prefix := "CW-" + time.Now().UTC().Format("20060102") + "-"
 
-	var maxID sql.NullString
-	if err := w.tx.QueryRow(`SELECT MAX(id) FROM tasks WHERE id LIKE ?`, prefix+"%").Scan(&maxID); err != nil {
+	var maxSeq sql.NullInt64
+	if err := w.tx.QueryRow(
+		`SELECT MAX(CAST(substr(id, ?) AS INTEGER)) FROM tasks WHERE id LIKE ?`,
+		len(prefix)+1, prefix+"%",
+	).Scan(&maxSeq); err != nil {
 		return "", err
 	}
 
-	seq := 1
-	if maxID.Valid && maxID.String != "" {
-		parts := strings.Split(maxID.String, "-")
-		if len(parts) == 3 {
-			_, _ = fmt.Sscanf(parts[2], "%d", &seq)
-			seq++
-		}
+	seq := int64(1)
+	if maxSeq.Valid {
+		seq = maxSeq.Int64 + 1
 	}
 	return fmt.Sprintf("%s%04d", prefix, seq), nil
 }

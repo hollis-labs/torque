@@ -749,28 +749,29 @@ func (s *Store) SearchTasks(query string) ([]TaskRecord, error) {
 	return tasks, rows.Err()
 }
 
-// NextTaskID generates an ID in CW-YYYYMMDD-NNNN format.
+// NextTaskID generates an ID in CW-YYYYMMDD-NNNN format. The suffix lookup
+// CASTs the numeric tail to INTEGER so MAX tracks the true highest sequence
+// regardless of suffix width — see the WriteTx.NextTaskID comment for the
+// lex-MAX pitfall this guards against once a day crosses 9999 tasks. For
+// concurrent allocations under writer contention, prefer WriteTx.NextTaskID
+// + CreateTask in one transaction; this auto-commit variant releases the
+// reader between SELECT and the caller's INSERT.
 func (s *Store) NextTaskID() (string, error) {
 	today := time.Now().UTC().Format("20060102")
 	prefix := "CW-" + today + "-"
 
-	var maxID sql.NullString
+	var maxSeq sql.NullInt64
 	err := s.db.QueryRow(
-		`SELECT MAX(id) FROM tasks WHERE id LIKE ?`,
-		prefix+"%",
-	).Scan(&maxID)
+		`SELECT MAX(CAST(substr(id, ?) AS INTEGER)) FROM tasks WHERE id LIKE ?`,
+		len(prefix)+1, prefix+"%",
+	).Scan(&maxSeq)
 	if err != nil {
 		return "", err
 	}
 
-	seq := 1
-	if maxID.Valid && maxID.String != "" {
-		parts := strings.Split(maxID.String, "-")
-		if len(parts) == 3 {
-			_, _ = fmt.Sscanf(parts[2], "%d", &seq)
-			seq++
-		}
+	seq := int64(1)
+	if maxSeq.Valid {
+		seq = maxSeq.Int64 + 1
 	}
-
 	return fmt.Sprintf("%s%04d", prefix, seq), nil
 }
