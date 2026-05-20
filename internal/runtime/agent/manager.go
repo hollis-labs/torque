@@ -503,6 +503,24 @@ func (m *Manager) LivePID(id string) int {
 	return snap.Health.PID
 }
 
+// IsAlive reports whether the named session is currently registered with
+// this manager's underlying agentsessions.Manager. False when the session
+// has been Stop'd / its watch goroutine unregistered it, or when the row
+// belongs to a prior daemon process that hasn't been swept yet
+// (state-row says `running` / `launching` but no in-memory entry exists).
+//
+// Used by planstart.Redispatch to disambiguate a still-live orchestrator
+// from a stale-running row (CW-20260519-0082) — when the session row
+// claims it's running but the lib doesn't know about it, redispatch must
+// proceed with a fresh boot rather than returning ErrAlreadyOrchestrating.
+func (m *Manager) IsAlive(id string) bool {
+	if m == nil || m.inner == nil {
+		return false
+	}
+	_, ok := m.inner.Health(id)
+	return ok
+}
+
 // Boot is the convenience that drives package-level Boot with this
 // Manager's bound Dependencies. HTTP handlers, MCP tools, and planstart
 // call this to avoid threading *Dependencies separately. Equivalent to

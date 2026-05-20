@@ -81,8 +81,15 @@ type Store interface {
 // SessionManager is the narrowed agent.Manager surface. The real
 // *agent.Manager implements it; tests pass a stub. Boot drives the
 // orchestrator session — no separate SendInput kickoff step.
+//
+// IsAlive returns true when the named session is in the manager's live
+// in-memory registry. Redispatch uses it to distinguish a truly-live
+// orchestrator (idempotent no-op) from a stale-running row whose process
+// is gone but the DB still says `running`/`launching` (CW-20260519-0082)
+// — the latter must proceed with a fresh boot.
 type SessionManager interface {
 	Boot(ctx context.Context, opts agent.Options) (*agent.Session, error)
+	IsAlive(sessionID string) bool
 }
 
 // Start validates a plan, idempotency-checks any existing orchestrator
@@ -110,17 +117,28 @@ func Start(ctx context.Context, store Store, mgr SessionManager, planID string, 
 	}
 
 	// Idempotency: existing session still alive?
+	//
+	// The row state alone is not authoritative (CW-20260519-0082): a row
+	// that says `running`/`launching` can be stale — the lifecycle hook's
+	// in-progress-child guard may have suppressed Stop after the
+	// orchestrator emitted session-complete (the legitimate-done case),
+	// the lib's state-sink write may have been dropped, or a prior daemon
+	// died before updating the row. Without a registry cross-check, every
+	// such case 409s the operator forever (the "stale running record
+	// makes /plans/start return 409" symptom). Treat the row as live ONLY
+	// when state is non-terminal AND the manager has the session in its
+	// in-memory registry.
 	if existing, ok := readOrchestratorSessionID(plan); ok && existing != "" {
-		if rec, err := store.GetSession(existing); err == nil && !sessionTerminal(rec.State) {
+		if rec, err := store.GetSession(existing); err == nil && !sessionTerminal(rec.State) && mgr.IsAlive(existing) {
 			return &Result{
 				SessionID: existing,
 				PlanID:    planID,
 				StartedAt: rec.CreatedAt,
 			}, fmt.Errorf("%w: session=%s", ErrAlreadyOrchestrating, existing)
 		}
-		// Stale or missing session row — drop the metadata and proceed
-		// with a fresh boot. Avoids leaving the plan stuck on a
-		// crashed/orphaned session id forever.
+		// Stale / missing / unregistered session row — drop the
+		// metadata and proceed with a fresh boot. Avoids leaving the
+		// plan stuck on a crashed/orphaned session id forever.
 	}
 
 	workdir := opts.Workdir
@@ -239,16 +257,30 @@ func Redispatch(ctx context.Context, store Store, mgr SessionManager, planID str
 	}
 
 	// Idempotency: a still-live orchestrator session needs no redispatch —
-	// it will see the checkpoint response on its next preflight poll.
+	// it will see the checkpoint response when it next boots (the
+	// orchestrator's redispatch-preflight reads
+	// plan.metadata.checkpoint_responses on first turn after boot).
+	//
+	// Liveness check (CW-20260519-0082): the row state alone is not
+	// authoritative. A row that says `running` or `launching` can be stale
+	// — the orchestrator's lifecycle hook may have been suppressed (e.g.
+	// child parked on HITL), the lib's state-sink write may have been
+	// dropped, or a prior daemon process may have died without updating
+	// the row. Cross-check with the manager's live registry: only treat
+	// the session as still-live when the row says non-terminal AND the
+	// manager actually has it in memory. Otherwise the row is stale and we
+	// must proceed with a fresh boot (re-stamping orchestrator_session_id
+	// further down).
 	if existing, ok := readOrchestratorSessionID(plan); ok && existing != "" {
-		if rec, err := store.GetSession(existing); err == nil && !sessionTerminal(rec.State) {
+		if rec, err := store.GetSession(existing); err == nil && !sessionTerminal(rec.State) && mgr.IsAlive(existing) {
 			return &Result{
 				SessionID: existing,
 				PlanID:    planID,
 				StartedAt: rec.CreatedAt,
 			}, fmt.Errorf("%w: session=%s", ErrAlreadyOrchestrating, existing)
 		}
-		// Stale/terminal/missing session row — proceed with a fresh boot.
+		// Stale / terminal / missing / not-in-registry — proceed with a
+		// fresh boot below.
 	}
 
 	workdir := opts.Workdir

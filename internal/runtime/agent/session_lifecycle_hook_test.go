@@ -463,9 +463,16 @@ func TestSessionLifecycleHook_ObserveComment_SuppressedWhenChildStillDoing(t *te
 }
 
 // TestSessionLifecycleHook_ObserveComment_SuppressedWhenChildAtReview is
-// the same gate as the doing case; review is also in-flight (the reviewer
-// end-agent is closing it). The orchestrator should not be stopped while
-// the reviewer is still working.
+// the same gate as the doing case; review without a HITL-park reason
+// means the reviewer end-agent is closing it. The orchestrator should
+// not be stopped while the reviewer is still working.
+//
+// CW-20260519-0082 contrast: a `review` child PARKED on a checkpoint
+// (blocked_reason="awaiting checkpoint ...") is gated on HITL, not on
+// any active worker, and the orchestrator session-complete in that state
+// is the canonical "redispatch me on response" signal — see
+// TestSessionLifecycleHook_ObserveComment_AllowedWhenChildParkedOnCheckpoint
+// below.
 func TestSessionLifecycleHook_ObserveComment_SuppressedWhenChildAtReview(t *testing.T) {
 	store := newHookTestStore(t)
 	bus := scheduler.NewEventBus()
@@ -486,6 +493,87 @@ func TestSessionLifecycleHook_ObserveComment_SuppressedWhenChildAtReview(t *test
 	time.Sleep(100 * time.Millisecond)
 	assert.Equal(t, int32(0), stopper.StopCount(),
 		"layer-2 stop must be suppressed while a child is at review (reviewer end-agent in flight)")
+}
+
+// TestSessionLifecycleHook_ObserveComment_AllowedWhenChildParkedOnCheckpoint
+// is the CW-20260519-0082 regression: a child task parked in review by a
+// blocking HITL checkpoint (blocked_reason="awaiting checkpoint <corr>")
+// is gated on operator response, not on any worker the orchestrator is
+// waiting for. The orchestrator emitting session-complete in that state
+// is the canonical "I'm done with this iteration — redispatch me when
+// the HITL response lands" signal, and the layer-2 stop MUST fire so
+// the session row transitions to terminal. Without this, the row stays
+// `running`, planstart.Redispatch's idempotency check returns
+// ErrAlreadyOrchestrating, the redispatch hook records already_live=true
+// without re-booting, and the plan stalls forever.
+func TestSessionLifecycleHook_ObserveComment_AllowedWhenChildParkedOnCheckpoint(t *testing.T) {
+	store := newHookTestStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	stopper := &stubStopper{getStatus: StatusRunning}
+	hook := NewSessionLifecycleHook(bus, store, stopper)
+
+	writePlanWithSession(t, store, "CW-PLAN-RD-PARKED", "doing", "SES-RD-PARKED")
+	// Child is in review AND parked on a HITL checkpoint — the exact
+	// shape CheckpointService.Emit's ParkTaskOnCheckpoint produces.
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID:            "CW-CHILD-RD-PARKED",
+		Title:         "CW-CHILD-RD-PARKED",
+		Kind:          "agent",
+		Status:        "review",
+		Priority:      1,
+		ParentID:      sql.NullString{Valid: true, String: "CW-PLAN-RD-PARKED"},
+		BlockedReason: "awaiting checkpoint 01HK_CORR_PARKED",
+	}))
+
+	hook.ObserveComment(context.Background(), &sqlstore.CommentRecord{
+		EntityType: sqlstore.EntityTypeTask,
+		EntityID:   "CW-PLAN-RD-PARKED",
+		Author:     "[system/orchestrator/v0]",
+		Content:    "[system/orchestrator/session-complete] waiting on operator response",
+	})
+
+	require.Eventually(t, func() bool {
+		return stopper.StopCount() == 1
+	}, time.Second, 10*time.Millisecond,
+		"layer-2 stop MUST fire when the in-review child is parked on a HITL checkpoint")
+	assert.Equal(t, []string{"SES-RD-PARKED"}, stopper.StopCalled())
+}
+
+// TestSessionLifecycleHook_HasInProgressChild_MixedChildren pins the
+// per-child semantics of the parked-on-checkpoint exclusion: a doing
+// child plus a parked-on-checkpoint review child still produces TRUE
+// (doing keeps the guard armed); only review-parked-on-checkpoint
+// children are excluded, never doing or actively-reviewing.
+func TestSessionLifecycleHook_HasInProgressChild_MixedChildren(t *testing.T) {
+	store := newHookTestStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	stopper := &stubStopper{getStatus: StatusRunning}
+	hook := NewSessionLifecycleHook(bus, store, stopper)
+
+	writePlanWithSession(t, store, "CW-PLAN-MIX", "doing", "SES-MIX")
+
+	// Parked-on-checkpoint child alone → false (excluded from the guard).
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-CHILD-MIX-PARKED", Title: "parked", Kind: "agent",
+		Status:        "review",
+		ParentID:      sql.NullString{Valid: true, String: "CW-PLAN-MIX"},
+		BlockedReason: "awaiting checkpoint 01HK_MIX",
+	}))
+	assert.False(t, hook.hasInProgressChild("CW-PLAN-MIX"),
+		"parked-on-checkpoint review child must be excluded from the in-progress guard")
+
+	// Add an actively-reviewing child (no parked reason) → true again.
+	writeChildTask(t, store, "CW-CHILD-MIX-REVIEW", "CW-PLAN-MIX", "review")
+	assert.True(t, hook.hasInProgressChild("CW-PLAN-MIX"),
+		"a review child without a HITL-park reason still counts as in-progress")
+
+	// Replace with a doing child → true.
+	require.NoError(t, store.DeleteTask("CW-CHILD-MIX-REVIEW"))
+	writeChildTask(t, store, "CW-CHILD-MIX-DOING", "CW-PLAN-MIX", "doing")
+	assert.True(t, hook.hasInProgressChild("CW-PLAN-MIX"),
+		"doing children are never excluded, regardless of any other parked siblings")
 }
 
 // TestSessionLifecycleHook_ObserveComment_AllowedWhenChildrenTerminal

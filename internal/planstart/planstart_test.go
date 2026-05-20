@@ -83,6 +83,11 @@ type stubMgr struct {
 	bootErr     error
 	lastOpts    agent.Options
 	bootCalls   int
+	// aliveIDs is the set of session ids the stub manager considers live
+	// (in-registry). Empty = nothing is live. Tests that exercise
+	// Redispatch's stale-running guard (CW-20260519-0082) populate this
+	// to distinguish a truly-live session from a stale row.
+	aliveIDs map[string]bool
 }
 
 func (s *stubMgr) Boot(_ context.Context, opts agent.Options) (*agent.Session, error) {
@@ -92,6 +97,13 @@ func (s *stubMgr) Boot(_ context.Context, opts agent.Options) (*agent.Session, e
 		return nil, s.bootErr
 	}
 	return s.bootSession, nil
+}
+
+// IsAlive implements planstart.SessionManager. Used by Redispatch's
+// liveness check to disambiguate stale-running rows from real live
+// sessions (CW-20260519-0082).
+func (s *stubMgr) IsAlive(id string) bool {
+	return s.aliveIDs[id]
 }
 
 // AC1+AC4: happy path — plan validates, orchestrator session boots,
@@ -213,6 +225,10 @@ func TestPlanstart_BadStatus(t *testing.T) {
 // AC5: idempotency — already-running session returns ErrAlreadyOrchestrating
 // wrapped, and the existing session id surfaces in Result so handlers can
 // redirect to the live session view rather than show a hard error.
+//
+// CW-20260519-0082: "running" alone is not enough — Start now also
+// requires the session to be in the manager's live registry. Tests that
+// want the idempotent path must mark the session alive on the stub.
 func TestPlanstart_IdempotentBeforeNewLaunch(t *testing.T) {
 	store := newStubStore()
 	store.tasks["CW-PLAN-004"] = &sqlstore.TaskRecord{
@@ -225,7 +241,10 @@ func TestPlanstart_IdempotentBeforeNewLaunch(t *testing.T) {
 	store.sessions["SES-LIVE"] = &sqlstore.SessionRecord{
 		ID: "SES-LIVE", State: "running", CreatedAt: time.Now().Add(-time.Minute),
 	}
-	mgr := &stubMgr{bootSession: &agent.Session{ID: "SES-NEW"}}
+	mgr := &stubMgr{
+		bootSession: &agent.Session{ID: "SES-NEW"},
+		aliveIDs:    map[string]bool{"SES-LIVE": true},
+	}
 
 	res, err := planstart.Start(context.Background(), store, mgr, "CW-PLAN-004", planstart.Options{})
 	assert.ErrorIs(t, err, planstart.ErrAlreadyOrchestrating)
@@ -233,6 +252,34 @@ func TestPlanstart_IdempotentBeforeNewLaunch(t *testing.T) {
 	assert.Equal(t, "SES-LIVE", res.SessionID)
 	assert.Zero(t, mgr.bootCalls, "no fresh boot fires while live session exists")
 	assert.Empty(t, store.transitions, "no transition fires on idempotent path")
+}
+
+// CW-20260519-0082: a session row that says `running` but whose session
+// is no longer in the manager's live registry is stale — Start must
+// treat it like the terminal-state case and proceed with a fresh boot
+// rather than 409ing the operator with ErrAlreadyOrchestrating forever.
+func TestPlanstart_StaleRunningRowRefires(t *testing.T) {
+	store := newStubStore()
+	store.tasks["CW-PLAN-STALE-RUNNING"] = &sqlstore.TaskRecord{
+		ID: "CW-PLAN-STALE-RUNNING", Kind: "plan", Status: "todo", WorkingDir: "/tmp",
+		Metadata: sql.NullString{
+			String: `{"plan":{"orchestrator_session_id":"SES-STALE"}}`,
+			Valid:  true,
+		},
+	}
+	store.sessions["SES-STALE"] = &sqlstore.SessionRecord{
+		ID: "SES-STALE", State: "running",
+	}
+	// aliveIDs is intentionally empty — the row says running but no live
+	// session backs it (orchestrator session-complete was suppressed, lib
+	// dropped a state write, or daemon died mid-transition).
+	mgr := &stubMgr{bootSession: &agent.Session{ID: "SES-FRESH"}}
+
+	res, err := planstart.Start(context.Background(), store, mgr, "CW-PLAN-STALE-RUNNING", planstart.Options{})
+	require.NoError(t, err, "stale-running row must not 409 — Start should re-boot")
+	require.NotNil(t, res)
+	assert.Equal(t, "SES-FRESH", res.SessionID, "fresh boot must replace the stale session id")
+	assert.Equal(t, 1, mgr.bootCalls, "Boot must fire to recover from a stale running row")
 }
 
 // When the recorded session is stale (terminal state), drop the metadata
@@ -376,4 +423,110 @@ func TestPlanstart_PersistsWhenStoredWorkdirEmpty(t *testing.T) {
 	}
 	require.NotNil(t, workdirUpdate, "expected an UpdateTask with WorkingDir set")
 	assert.Equal(t, "/tmp/from-options", *workdirUpdate)
+}
+
+// Redispatch unit tests (CW-20260519-0082). Redispatch is the substrate-
+// driven continuation of an exited orchestrator session — the runtime
+// path the bootstrap.OrchestratorRedispatcher hook calls when a HITL
+// checkpoint affecting a plan is responded.
+
+// Terminal session row → Redispatch boots fresh and re-stamps the plan's
+// orchestrator_session_id. The orchestrator's redispatch-preflight will
+// read plan.metadata.checkpoint_responses on its first turn after boot.
+func TestPlanstart_Redispatch_TerminalSessionBootsFresh(t *testing.T) {
+	store := newStubStore()
+	store.tasks["CW-PLAN-RD-1"] = &sqlstore.TaskRecord{
+		ID: "CW-PLAN-RD-1", Kind: "plan", Status: "doing", WorkingDir: "/tmp",
+		Metadata: sql.NullString{
+			String: `{"plan":{"orchestrator_session_id":"SES-DONE"}}`,
+			Valid:  true,
+		},
+	}
+	store.sessions["SES-DONE"] = &sqlstore.SessionRecord{
+		ID: "SES-DONE", State: "done",
+	}
+	mgr := &stubMgr{bootSession: &agent.Session{ID: "SES-RESPAWN"}}
+
+	res, err := planstart.Redispatch(context.Background(), store, mgr, "CW-PLAN-RD-1", planstart.Options{})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, "SES-RESPAWN", res.SessionID)
+	assert.Equal(t, 1, mgr.bootCalls)
+
+	// Plan metadata re-stamped with the new session id; no FSM transition
+	// (Redispatch does not flip status — the plan stays doing).
+	post, _ := store.GetTask("CW-PLAN-RD-1")
+	assert.Contains(t, post.Metadata.String, "SES-RESPAWN")
+	assert.Empty(t, store.transitions, "Redispatch must not transition the plan")
+}
+
+// Truly live session (state non-terminal AND in manager registry) →
+// idempotent no-op via ErrAlreadyOrchestrating. The live orchestrator
+// will pick up the checkpoint response on its next boot.
+func TestPlanstart_Redispatch_LiveSessionIsIdempotent(t *testing.T) {
+	store := newStubStore()
+	store.tasks["CW-PLAN-RD-2"] = &sqlstore.TaskRecord{
+		ID: "CW-PLAN-RD-2", Kind: "plan", Status: "doing", WorkingDir: "/tmp",
+		Metadata: sql.NullString{
+			String: `{"plan":{"orchestrator_session_id":"SES-LIVE-RD"}}`,
+			Valid:  true,
+		},
+	}
+	store.sessions["SES-LIVE-RD"] = &sqlstore.SessionRecord{
+		ID: "SES-LIVE-RD", State: "running",
+	}
+	mgr := &stubMgr{
+		bootSession: &agent.Session{ID: "SES-SHOULDNT-FIRE"},
+		aliveIDs:    map[string]bool{"SES-LIVE-RD": true},
+	}
+
+	res, err := planstart.Redispatch(context.Background(), store, mgr, "CW-PLAN-RD-2", planstart.Options{})
+	assert.ErrorIs(t, err, planstart.ErrAlreadyOrchestrating)
+	require.NotNil(t, res)
+	assert.Equal(t, "SES-LIVE-RD", res.SessionID)
+	assert.Zero(t, mgr.bootCalls, "live session must not be re-booted")
+}
+
+// Stale-running row (state=running but NOT in the manager's registry) →
+// Redispatch treats the row as terminal and boots fresh. This is the
+// core bug fix: bug 2 (session record stuck at running after the
+// orchestrator emitted session-complete) directly produces this state,
+// and without the registry cross-check Redispatch no-ops with
+// ErrAlreadyOrchestrating, stalling the plan forever.
+func TestPlanstart_Redispatch_StaleRunningRowBootsFresh(t *testing.T) {
+	store := newStubStore()
+	store.tasks["CW-PLAN-RD-3"] = &sqlstore.TaskRecord{
+		ID: "CW-PLAN-RD-3", Kind: "plan", Status: "doing", WorkingDir: "/tmp",
+		Metadata: sql.NullString{
+			String: `{"plan":{"orchestrator_session_id":"SES-STALE-RD"}}`,
+			Valid:  true,
+		},
+	}
+	store.sessions["SES-STALE-RD"] = &sqlstore.SessionRecord{
+		ID: "SES-STALE-RD", State: "running",
+	}
+	// aliveIDs is empty — the row says running but the manager has no
+	// memory of it.
+	mgr := &stubMgr{bootSession: &agent.Session{ID: "SES-FRESH-RD"}}
+
+	res, err := planstart.Redispatch(context.Background(), store, mgr, "CW-PLAN-RD-3", planstart.Options{})
+	require.NoError(t, err, "stale-running row must not return ErrAlreadyOrchestrating — Redispatch must boot fresh")
+	require.NotNil(t, res)
+	assert.Equal(t, "SES-FRESH-RD", res.SessionID, "fresh boot must replace the stale session id")
+	assert.Equal(t, 1, mgr.bootCalls)
+
+	post, _ := store.GetTask("CW-PLAN-RD-3")
+	assert.Contains(t, post.Metadata.String, "SES-FRESH-RD",
+		"plan metadata must re-stamp with the new session id after the stale-row recovery")
+}
+
+// Terminal plan (done/blocked/abandoned/cancelled) → ErrPlanWrongStatus.
+// Re-running a finished plan is a separate V1.1 concern.
+func TestPlanstart_Redispatch_RefusesTerminalPlan(t *testing.T) {
+	store := newStubStore()
+	store.tasks["CW-PLAN-RD-DONE"] = &sqlstore.TaskRecord{
+		ID: "CW-PLAN-RD-DONE", Kind: "plan", Status: "done", WorkingDir: "/tmp",
+	}
+	_, err := planstart.Redispatch(context.Background(), store, &stubMgr{}, "CW-PLAN-RD-DONE", planstart.Options{})
+	assert.ErrorIs(t, err, planstart.ErrPlanWrongStatus)
 }

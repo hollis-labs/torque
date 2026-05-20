@@ -283,6 +283,18 @@ func (h *SessionLifecycleHook) ObserveComment(_ context.Context, c *sqlstore.Com
 // pending todos is a legitimate "I'm done with this slice" signal (e.g.
 // orchestrator self-block / cancelled-by-user paths). The guard fires
 // only when work is actively in flight.
+//
+// CW-20260519-0082 refinement: a `review` child that is parked on a
+// pending HITL checkpoint is NOT "in progress" — its blocked_reason
+// starts with "awaiting checkpoint <corr>" (set by
+// CheckpointService.Emit's ParkTaskOnCheckpoint) and the work is gated on
+// an operator response, not on any worker the orchestrator could be
+// waiting for. The orchestrator emitting session-complete in that state
+// is the canonical "I'm done with this iteration; redispatch me when the
+// HITL response lands" signal. Without this exclusion, the orchestrator
+// session lingers in `state=running`, planstart.Redispatch sees the
+// non-terminal row, returns ErrAlreadyOrchestrating, and the redispatch
+// hook records `already_live=true` — the plan stalls forever.
 func (h *SessionLifecycleHook) hasInProgressChild(planID string) bool {
 	if planID == "" {
 		return false
@@ -296,11 +308,33 @@ func (h *SessionLifecycleHook) hasInProgressChild(planID string) bool {
 	}
 	for i := range children {
 		switch children[i].Status {
-		case "doing", "review":
+		case "doing":
 			return true
+		case "review":
+			if !isParkedOnCheckpoint(&children[i]) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// checkpointParkPrefix is the literal blocked_reason prefix
+// CheckpointService.Emit's ParkTaskOnCheckpoint stamps when a blocking
+// HITL checkpoint parks its task in review. A match here means the task
+// is awaiting an operator response, not actively executing work.
+const checkpointParkPrefix = "awaiting checkpoint "
+
+// isParkedOnCheckpoint reports whether the task is in review because a
+// blocking HITL checkpoint parked it (vs. an end-agent reviewer actively
+// driving review work). The signal is the blocked_reason prefix —
+// matched exactly so unrelated review reasons (manual operator park,
+// reviewer-set custom reason) don't get misclassified as HITL-gated.
+func isParkedOnCheckpoint(t *sqlstore.TaskRecord) bool {
+	if t == nil || t.Status != "review" {
+		return false
+	}
+	return strings.HasPrefix(t.BlockedReason, checkpointParkPrefix)
 }
 
 // spawnObserver runs fn in a tracked goroutine using the hook's internal ctx.

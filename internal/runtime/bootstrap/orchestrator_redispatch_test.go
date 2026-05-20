@@ -205,18 +205,31 @@ func TestOrchestratorRedispatcher_ChildCheckpoint_PropagatesAndRedispatches(t *t
 	}
 }
 
-// TestOrchestratorRedispatcher_LiveOrchestrator_IsIdempotentNoOp: when the
-// orchestrator session is still live, the redispatcher must not boot a
-// second walker — it just propagates the response (the live orchestrator
-// picks it up on its own preflight poll) and records an already_live
-// breadcrumb.
-func TestOrchestratorRedispatcher_LiveOrchestrator_IsIdempotentNoOp(t *testing.T) {
+// TestOrchestratorRedispatcher_StaleRunningRow_AttemptsRedispatch is the
+// CW-20260519-0082 regression: a session row that says `running` but
+// whose session is no longer in the manager's live registry is STALE,
+// not live. The pre-fix behavior was to read the row alone and emit an
+// already_live breadcrumb without re-booting — which is exactly how
+// plan CW-20260519-0057 stalled after the orchestrator emitted
+// session-complete (lifecycle hook suppressed by parked-on-checkpoint
+// child; session row never transitioned). Post-fix planstart.Redispatch
+// cross-checks the manager's registry: a row that says running but is
+// not in the registry must be treated like the terminal case, and
+// re-boot must be attempted.
+//
+// In this test composition the Boot call will fail (no executor
+// runtime), but the contract pinned here is that a redispatch was
+// ATTEMPTED — the breadcrumb's AlreadyLive must be FALSE, and either
+// NewSessionID or Error must be populated.
+func TestOrchestratorRedispatcher_StaleRunningRow_AttemptsRedispatch(t *testing.T) {
 	store := sqlitetest.OpenStore(t)
 	deps := &agent.Dependencies{Store: store}
 	deps.Sessions = agent.NewManager(deps)
 	d := bootstrap.NewOrchestratorRedispatcher(store, deps.Sessions)
 
-	const orchSessID = "SES-ORCH-LIVE"
+	const orchSessID = "SES-ORCH-STALE"
+	// State=running row but the manager has no in-memory session backing
+	// it — the exact shape the bug produces.
 	require.NoError(t, store.CreateSession(&sqlstore.SessionRecord{
 		ID:           orchSessID,
 		AgentProfile: "orchestrator",
@@ -224,40 +237,50 @@ func TestOrchestratorRedispatcher_LiveOrchestrator_IsIdempotentNoOp(t *testing.T
 		RuntimeID:    "torque-cli/claude",
 		RuntimeKind:  "cli",
 		Workdir:      t.TempDir(),
-		State:        "running", // still live
-		TaskID:       sql.NullString{String: "CW-PLAN-LIVE", Valid: true},
+		State:        "running",
+		TaskID:       sql.NullString{String: "CW-PLAN-STALE", Valid: true},
 	}))
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
-		ID: "CW-PLAN-LIVE", Title: "plan", Status: "doing", Kind: "plan",
+		ID: "CW-PLAN-STALE", Title: "plan", Status: "doing", Kind: "plan",
 		WorkingDir: t.TempDir(),
 		Metadata:   sql.NullString{String: planMetadataWithOrchestrator(orchSessID), Valid: true},
 	}))
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
-		ID: "CW-CHILD-LIVE", Title: "child", Status: "review", Kind: "agent",
-		ParentID: sql.NullString{String: "CW-PLAN-LIVE", Valid: true},
+		ID: "CW-CHILD-STALE", Title: "child", Status: "review", Kind: "agent",
+		ParentID:      sql.NullString{String: "CW-PLAN-STALE", Valid: true},
+		BlockedReason: "awaiting checkpoint 01HK_CORR_STALE",
 	}))
 
-	err := d.RedispatchForCheckpointResponse(context.Background(), service.OrchestratorRedispatch{
-		TaskID:        "CW-CHILD-LIVE",
-		CorrelationID: "01HK_CORR_LIVE",
+	_ = d.RedispatchForCheckpointResponse(context.Background(), service.OrchestratorRedispatch{
+		TaskID:        "CW-CHILD-STALE",
+		CorrelationID: "01HK_CORR_STALE",
 		ResponseJSON:  `{"decision":"approve"}`,
 	})
-	require.NoError(t, err, "a live orchestrator needs no re-boot — idempotent no-op")
 
-	// Response still propagated so the live orchestrator's preflight sees it.
-	planResponses := readCheckpointResponses(t, store, "CW-PLAN-LIVE")
+	// Response was propagated onto the plan task's metadata as a
+	// pre-condition for the orchestrator's redispatch-preflight.
+	planResponses := readCheckpointResponses(t, store, "CW-PLAN-STALE")
 	require.NotNil(t, planResponses)
-	assert.Contains(t, planResponses, "01HK_CORR_LIVE")
+	assert.Contains(t, planResponses, "01HK_CORR_STALE")
 
+	// Exactly one breadcrumb, recording an ATTEMPTED redispatch
+	// (already_live MUST be false — the stale row is not live).
 	events, err := store.ListRunEvents(sqlstore.RunEventFilter{
-		TaskID: "CW-PLAN-LIVE",
+		TaskID: "CW-PLAN-STALE",
 		Types:  []string{"checkpoint.orchestrator_redispatched"},
 	})
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	var payload struct {
-		AlreadyLive bool `json:"already_live"`
+		PriorSessionID string `json:"prior_session_id"`
+		NewSessionID   string `json:"new_session_id"`
+		AlreadyLive    bool   `json:"already_live"`
+		Error          string `json:"error"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(events[0].Payload), &payload))
-	assert.True(t, payload.AlreadyLive, "live orchestrator → already_live breadcrumb, no second boot")
+	assert.Equal(t, orchSessID, payload.PriorSessionID)
+	assert.False(t, payload.AlreadyLive,
+		"stale-running row must NOT be misclassified as live — Redispatch must attempt a re-boot")
+	assert.True(t, payload.NewSessionID != "" || payload.Error != "",
+		"breadcrumb records either a new session id or the boot error")
 }
