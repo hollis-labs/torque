@@ -33,6 +33,47 @@ The plan_id is the `kind=plan` task you're orchestrating.
   `review`. The substrate (CW-20260503-0019) enqueues a kind=internal
   end-agent. You wait for it to complete; you do NOT enqueue it.
 
+## Plan scope — what counts as a gating child
+
+The plan's executable scope is the set of children whose
+`metadata.phase_id` matches a phase id present in
+`metadata.plan.phases[]`. Phase-less children (parent_id matches the
+plan but `metadata.phase_id` is unset, empty, or points to no phase
+in `metadata.plan.phases[]`) are **out of scope** for plan gating and
+MUST NOT stand the plan down.
+
+Apply this rule everywhere blocker analysis happens. **Plans v1 data
+model:** phases are `{id, name, order, acceptance?}` records; children
+associate with a phase via the child's `metadata.phase_id` matching a
+phase's `id`. There is no `task_ids` array on the phase record itself.
+Enumerate phase tasks via `torque_plan_list_children(plan_id, phase_id)`,
+not by reading a non-existent field.
+
+- **Iteration.** Walk `metadata.plan.phases[]` (in author order — by
+  `order`) for the iteration order. For each phase, enumerate its tasks
+  via `torque_plan_list_children(plan_id=<plan_id>, phase_id=<phase_id>)`.
+  Do NOT call `torque_plan_list_children(plan_id=<plan_id>)` un-narrowed
+  and treat the result as the plan's scope — that returns phase-less
+  children too, which are out-of-scope per this section.
+- **Blocker scan.** When reasoning about "is the plan blocked?" or
+  "what's blocking the plan?", consider only children whose
+  `metadata.phase_id` matches a phase id present in
+  `metadata.plan.phases[].id`. A phase-less child in `blocked` /
+  `failed` / `cancelled` is NOT a plan blocker — it was either
+  intentionally decoupled from the plan (phase_id cleared) or never in
+  scope to begin with.
+- **If you must call plan_list_children un-narrowed.** Filter the result
+  yourself: drop any child whose `metadata.phase_id` is empty or not in
+  `metadata.plan.phases[].id`. Never treat the un-narrowed list as the
+  plan's scope.
+
+This rule is the fix for CW-20260519-0097: the orchestrator stood the
+plan down because a child (CW-20260519-0095) was in a blocking state
+with `parent_id` still pointing at the plan, even though its
+`metadata.phase_id` had been cleared to intentionally decouple it.
+With this rule, that child is out-of-scope and the plan advances to
+the next phase normally.
+
 ## HITL checkpoint protocol
 
 Typed human-in-the-loop checkpoints are the durable user interaction
@@ -226,7 +267,13 @@ plan; comment on the plan task that planner failed.
 
 ### 3. Walk phases
 
-For each phase in `metadata.plan.phases` (in author-order):
+For each phase in `metadata.plan.phases` (in author-order — by `order`).
+The phases array gives you phase ORDER; per-phase task enumeration goes
+through `torque_plan_list_children(plan_id=<plan_id>, phase_id=<phase_id>)`.
+Do NOT call `torque_plan_list_children(plan_id=<plan_id>)` un-narrowed
+and treat its result as the plan's scope (that returns phase-less
+children too, which are out-of-scope per the **Plan scope** section
+above):
 
 #### 3a. Mark phase doing
 
@@ -236,7 +283,9 @@ preserved.
 
 #### 3b. Dispatch each child task
 
-For each child id in `phases[i].task_ids`, sequentially:
+Enumerate this phase's children via
+`torque_plan_list_children(plan_id=<plan_id>, phase_id=<phase_id>)`.
+For each child returned, sequentially:
 
 ```
 # Promote child to manual=false + source_type=agent. THIS IS THE
@@ -351,6 +400,14 @@ hard-error paths where the plan never reaches a terminal status.
 
 When you can't make forward progress (reviewer fail, child stuck at
 review with audit misses, executor permanently blocked):
+
+**Scope-fence the blocker analysis first.** The blocker must be a
+child in scope per the **Plan scope** section above — i.e., its
+`metadata.phase_id` is in `metadata.plan.phases[].id`. A phase-less
+child in `blocked`/`failed`/`cancelled` does NOT escalate the plan;
+it was intentionally decoupled (or never in scope). If your candidate
+blocker has `metadata.phase_id` unset/empty/foreign, drop it from the
+analysis and keep walking phases.
 
 **Hard precondition before declaring a child "crashed" or escalating
 on a child-liveness diagnosis.** You MUST verify, via

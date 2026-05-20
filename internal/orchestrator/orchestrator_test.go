@@ -171,6 +171,34 @@ func TestOrchestrator_TemplatePlannerTaskTerminatesAtDone(t *testing.T) {
 		"template must reference the canonical Go builder it mirrors")
 }
 
+// TestOrchestrator_TemplatePlanScopeRule guards the CW-20260519-0097 fix:
+// the orchestrator's blocker analysis must scope-fence to children whose
+// metadata.phase_id is in metadata.plan.phases[].id. A child parked
+// blocked with phase_id cleared was observed standing the plan down
+// because the orchestrator agent treated torque_plan_list_children's
+// un-narrowed parent_id list as the plan's scope. The fix is an
+// explicit Plan scope section in the template; lock the key invariants
+// in with a test so the rule doesn't silently drift.
+func TestOrchestrator_TemplatePlanScopeRule(t *testing.T) {
+	t.Setenv(orchestrator.TemplateEnvVar, "/nonexistent/path")
+	t.Setenv("HOME", "/nonexistent/home")
+
+	content, _ := orchestrator.LoadTemplate()
+
+	assert.Contains(t, content, "Plan scope",
+		"template must contain a Plan scope section that fences blocker analysis")
+	assert.Contains(t, content, "metadata.phase_id",
+		"Plan scope rule must name metadata.phase_id as the scope key")
+	assert.Contains(t, content, "metadata.plan.phases",
+		"Plan scope rule must name metadata.plan.phases as the authoritative scope source")
+	assert.Contains(t, content, "Phase-less children",
+		"Plan scope rule must explicitly call out phase-less children as out-of-scope")
+	assert.Contains(t, content, "out of scope",
+		"Plan scope rule must declare phase-less children out of scope for plan gating")
+	assert.Contains(t, content, "CW-20260519-0097",
+		"Plan scope section must cite the originating incident so future edits keep the rationale")
+}
+
 func TestOrchestrator_TemplateIncludesHITLCheckpointProtocol(t *testing.T) {
 	t.Setenv(orchestrator.TemplateEnvVar, "/nonexistent/path")
 	t.Setenv("HOME", "/nonexistent/home")
