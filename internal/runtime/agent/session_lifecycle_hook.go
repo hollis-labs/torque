@@ -296,9 +296,12 @@ func (h *SessionLifecycleHook) ObserveComment(_ context.Context, c *sqlstore.Com
 //     this slice" signal (orchestrator self-block / cancelled-by-user).
 //   - `review`: child's executor finished; the reviewer end-agent is
 //     auditing it on a SEPARATE session. The orchestrator standing down
-//     with children at review is the canonical happy path (CW-20260519-0132
-//     widened the prior `doing|review` guard, which trapped sessions in
-//     Status=running until an operator manually POSTed /stop).
+//     with children at review is the canonical happy path
+//     (CW-20260519-0132 narrowed the prior `doing|review` guard to
+//     `doing` only — the broader guard trapped sessions in
+//     Status=running until an operator manually POSTed /stop, because
+//     children at `review` keep the guard tripped indefinitely while
+//     the reviewer end-agent is the one driving them forward).
 //   - terminal states (done/failed/blocked/cancelled/abandoned): the
 //     child is closed; no reason to keep the orchestrator alive.
 //
