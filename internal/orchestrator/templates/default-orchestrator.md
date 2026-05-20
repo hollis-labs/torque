@@ -35,9 +35,8 @@ The plan_id is the `kind=plan` task you're orchestrating.
 
 ## Plan scope — what counts as a gating child
 
-The plan's executable scope is the union of children referenced by
-`metadata.plan.phases[i].task_ids` — i.e., children with
-`metadata.phase_id` set to a phase id present in
+The plan's executable scope is the set of children whose
+`metadata.phase_id` matches a phase id present in
 `metadata.plan.phases[]`. Phase-less children (parent_id matches the
 plan but `metadata.phase_id` is unset, empty, or points to no phase
 in `metadata.plan.phases[]`) are **out of scope** for plan gating and
