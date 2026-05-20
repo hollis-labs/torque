@@ -26,6 +26,29 @@ import (
 //
 // Errors are returned unwrapped so callers can apply whatever
 // PermanentError semantics are appropriate at their executor boundary.
+// RequireExistingDir stat()s an already-resolved working_dir path and
+// returns an error if it is missing or not a directory. Callers (executor
+// Validate hooks) wrap the result in PermanentError; this helper stays
+// classification-neutral so it can be reused outside the dispatch path.
+//
+// Empty input is a no-op (mirrors ResolveWorkingDir's "empty preserved"
+// shape) — executors that require a non-empty working_dir must check that
+// separately. Distinguishes "does not exist" from "exists but is a regular
+// file" so the blocked_reason an operator sees points at the actual cause.
+func RequireExistingDir(path string) error {
+	if path == "" {
+		return nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("working_dir %q: not a directory", path)
+	}
+	return nil
+}
+
 func ResolveWorkingDir(raw string) (string, error) {
 	if raw == "" {
 		return "", nil

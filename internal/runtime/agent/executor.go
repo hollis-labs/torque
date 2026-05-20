@@ -79,8 +79,20 @@ func (e *Executor) Validate(job *executor.ExecutionJob) error {
 	if _, _, err := adapterFor(profile, job.AgentProfile, kind); err != nil {
 		return executor.NewPermanentError(err)
 	}
-	if _, err := executor.ResolveWorkingDir(job.WorkingDir); err != nil {
+	resolvedWD, err := executor.ResolveWorkingDir(job.WorkingDir)
+	if err != nil {
 		return executor.NewPermanentError(fmt.Errorf("resolve working_dir: %w", err))
+	}
+	// A well-shaped working_dir that points at a missing path or a
+	// non-directory is also permanent — the path is recorded on the task
+	// and no retry can make a file system entry appear. Empty resolvedWD
+	// is left to Run() to surface, mirroring the existing "blocked: working_dir
+	// is required" path so we don't change behavior for executors that
+	// dispatch with project_context-only working_dir resolution.
+	if resolvedWD != "" {
+		if err := executor.RequireExistingDir(resolvedWD); err != nil {
+			return executor.NewPermanentError(fmt.Errorf("working_dir %q: %w", job.WorkingDir, err))
+		}
 	}
 	return nil
 }

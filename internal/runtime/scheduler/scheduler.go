@@ -433,10 +433,18 @@ func (s *Scheduler) worktreeSpec() worktree.Spec {
 }
 
 func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) error {
-	// Look up executor
+	// Look up executor. An unknown executor name is a config-permanent
+	// failure: retrying every tick can't conjure a registration that the
+	// daemon was started without (CW-20260520-0003, the canonical instance
+	// was executor="opencode" surviving across a daemon that no longer
+	// loaded the opencode adapter). Route through the same block-no-retry
+	// path PermanentError-from-Validate uses so the task transitions to
+	// blocked with a clear blocked_reason and stops wedging the picker on
+	// per-project contention.
 	exec, err := s.registry.Get(task.Executor)
 	if err != nil {
-		return fmt.Errorf("executor %q: %w", task.Executor, err)
+		return s.handlePermanentValidationError(task,
+			fmt.Errorf("dispatch refused: executor %q not registered", task.Executor))
 	}
 
 	// Pre-dispatch validation (CW-20260418-0010). Building the job here
