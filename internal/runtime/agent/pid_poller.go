@@ -97,6 +97,12 @@ func pollPid(mgr *Manager, sessID string, interval time.Duration, stop <-chan st
 		// so dashboards see the row is alive. UpdateSessionState with pid=0
 		// does not overwrite the stored pid (sqlstore COALESCE behavior), so
 		// the most-recent live pid is preserved for the sweep liveness check.
-		_ = mgr.deps.TouchSession(context.Background(), sessID)
+		//
+		// touchSessionUnlessFrozen suppresses the heartbeat write when the
+		// stream fanout has observed an error / auth-dead frame and no
+		// content-bearing event has lifted the gate yet (CW-20260519-0130).
+		// Monitors then see last_activity stall to reflect real liveness
+		// instead of the bare wrapper-process heartbeat.
+		mgr.touchSessionUnlessFrozen(context.Background(), sessID)
 	}
 }

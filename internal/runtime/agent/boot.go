@@ -583,7 +583,15 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	var streamFanout chan llmtypes.StreamEvent
 	closeStreamFanout := func() {}
 	if !caps.PTY {
-		streamFanout, closeStreamFanout = startStreamFanout(ws.LogDir, streamFanoutDepth, opts.eventFanout, oneshotOnDone)
+		// last_activity gate: the drain calls Manager.observeStreamEvent for
+		// every stream event so error / auth-dead frames freeze the PID
+		// poller's heartbeat-driven TouchSession until a content-bearing
+		// event arrives. teardownSession clears the gate entry on terminal
+		// state. CW-20260519-0130.
+		onActivityEvent := func(ev llmtypes.StreamEvent) {
+			mgr.observeStreamEvent(sessID, ev)
+		}
+		streamFanout, closeStreamFanout = startStreamFanout(ws.LogDir, streamFanoutDepth, opts.eventFanout, oneshotOnDone, onActivityEvent)
 	}
 
 	// JSON-RPC notification hook. For codex JsonRpcStdio sessions, the
