@@ -629,14 +629,24 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 			if capturedWorktree == "" {
 				return
 			}
-			removed, err := worktree.CleanupPerRun(capturedRepoHint, capturedWorktree)
+			// Best-effort PR-state fetch: the squash-merge case (PR merged,
+			// local branch still has the unsquashed commits "ahead of
+			// origin/main") would otherwise preserve the worktree forever
+			// because worktreeHasWork sees those commits. A nil mergedSet
+			// (gh missing/unauthed/timed out) collapses to the existing
+			// CleanupPerRun behaviour — never blocks completion.
+			mergedSet, mergedErr := worktree.FetchMergedHeadRefs(capturedRepoHint, 0)
+			if mergedErr != nil {
+				log.Printf("[scheduler] merged-PR lookup failed for %s run %d: %v (falling back to plain cleanup)", capturedTaskID, capturedRunID, mergedErr)
+			}
+			removed, err := worktree.CleanupMergedPerRun(capturedRepoHint, capturedWorktree, mergedSet)
 			switch {
 			case err != nil:
 				log.Printf("[scheduler] per-run worktree cleanup failed for %s run %d at %s: %v", capturedTaskID, capturedRunID, capturedWorktree, err)
 			case removed:
 				log.Printf("[scheduler] per-run worktree removed for %s run %d at %s", capturedTaskID, capturedRunID, capturedWorktree)
 			default:
-				log.Printf("[scheduler] per-run worktree preserved for %s run %d at %s (commits or uncommitted work present)", capturedTaskID, capturedRunID, capturedWorktree)
+				log.Printf("[scheduler] per-run worktree preserved for %s run %d at %s (commits or uncommitted work present, no merged PR)", capturedTaskID, capturedRunID, capturedWorktree)
 			}
 		}()
 
@@ -942,13 +952,44 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	// Best-effort sweep of orphaned per-run worktrees on startup. Requires
 	// TORQUE_REPO so we know which repo's admin to prune against; if the
 	// operator hasn't set it, the sweep is silently skipped.
-	if spec := s.worktreeSpec(); spec.WorktreeEnabled() && spec.KeepDays > 0 && envRepoRoot() != "" {
-		removed, errs := worktree.SweepPerRun(envRepoRoot(), spec.Root, spec.KeepDays, time.Now())
-		for _, p := range removed {
-			log.Printf("[scheduler] swept stale worktree %s", p)
+	//
+	// Three passes, all best-effort and degrading silently when their
+	// preconditions aren't met:
+	//   1. SweepMergedPerRun — force-remove worktrees whose branch's PR is
+	//      MERGED. Closes the false-preserve from squash-merge.
+	//   2. SweepPerRun — the existing TTL-based sweep for dirty orphans.
+	//   3. SweepMergedBranches — delete local branches whose PR is MERGED
+	//      and which no worktree holds. Closes the "merged branch never
+	//      pruned" leak.
+	if spec := s.worktreeSpec(); spec.WorktreeEnabled() && envRepoRoot() != "" {
+		mergedSet, mergedErr := worktree.FetchMergedHeadRefs(envRepoRoot(), 0)
+		if mergedErr != nil {
+			log.Printf("[scheduler] merged-PR lookup failed on startup sweep: %v", mergedErr)
 		}
-		for _, e := range errs {
-			log.Printf("[scheduler] worktree sweep error: %v", e)
+		if removed, errs := worktree.SweepMergedPerRun(envRepoRoot(), spec.Root, mergedSet); len(removed) > 0 || len(errs) > 0 {
+			for _, p := range removed {
+				log.Printf("[scheduler] swept merged-PR worktree %s", p)
+			}
+			for _, e := range errs {
+				log.Printf("[scheduler] merged-PR worktree sweep error: %v", e)
+			}
+		}
+		if spec.KeepDays > 0 {
+			removed, errs := worktree.SweepPerRun(envRepoRoot(), spec.Root, spec.KeepDays, time.Now())
+			for _, p := range removed {
+				log.Printf("[scheduler] swept stale worktree %s", p)
+			}
+			for _, e := range errs {
+				log.Printf("[scheduler] worktree sweep error: %v", e)
+			}
+		}
+		if deleted, errs := worktree.SweepMergedBranches(envRepoRoot(), nil, mergedSet); len(deleted) > 0 || len(errs) > 0 {
+			for _, b := range deleted {
+				log.Printf("[scheduler] swept merged-PR branch %s", b)
+			}
+			for _, e := range errs {
+				log.Printf("[scheduler] merged-PR branch sweep error: %v", e)
+			}
 		}
 	}
 

@@ -56,6 +56,14 @@ type SessionGateway interface {
 	// pickup rather than dropping it.
 	LiveSession(addr gomsg.Address) (sessionID string, ok bool)
 
+	// TaskIDForSession returns the task id that sessionID is bound to.
+	// ok=false when the session id is unknown or carries no task binding
+	// (manual session, test fixture, …). The bridge calls this on each
+	// successful injection so the ReminderRegistry can key per-task —
+	// see WithReminder. Implementations should be cheap (cache or direct
+	// store lookup); nil receivers are tolerated.
+	TaskIDForSession(sessionID string) (taskID string, ok bool)
+
 	// SteerTurn delivers text into the running session identified by
 	// sessionID as its next turn. Production routes through
 	// agent.Manager.SendTurn, which frames the turn per the session's
@@ -129,6 +137,7 @@ type Bridge struct {
 	gw       SessionGateway
 	consumer EnvelopeConsumer
 	polling  *PollRegistry
+	reminder *ReminderRegistry
 }
 
 // New returns a Bridge wired to gw. consumer may be nil — the bridge then
@@ -144,6 +153,18 @@ func New(gw SessionGateway, consumer EnvelopeConsumer) *Bridge {
 // methods are nil-safe. Returns the receiver for chaining.
 func (b *Bridge) WithPolling(reg *PollRegistry) *Bridge {
 	b.polling = reg
+	return b
+}
+
+// WithReminder attaches the turn-boundary reminder registry
+// (CW-20260519-0065). When set, every successful injection (OutcomeDelivered)
+// is recorded against the recipient's task id so the long-lived runtime can
+// re-surface unaddressed envelopes at the next turn boundary. reg may be
+// nil — the bridge then degrades to fire-and-forget delivery (the prior
+// behavior), since all ReminderRegistry methods are nil-safe. Returns the
+// receiver for chaining.
+func (b *Bridge) WithReminder(reg *ReminderRegistry) *Bridge {
+	b.reminder = reg
 	return b
 }
 
@@ -241,6 +262,18 @@ func (b *Bridge) Deliver(ctx context.Context, env gomsg.Envelope) DeliveryResult
 		}
 	} else {
 		log.Printf("[steering] no consumer wired — env=%s delivered but not marked consumed", env.ID)
+	}
+
+	// Reminder bookkeeping (CW-20260519-0065): record the delivery
+	// against the recipient's task id so the long-lived runtime can
+	// re-surface this envelope at the next turn boundary if the agent
+	// doesn't act on it. Best-effort: a missing task binding (test
+	// gateway, manual session) skips the record — the prior fire-and-
+	// forget behavior — without affecting OutcomeDelivered.
+	if b.reminder != nil {
+		if taskID, ok := b.gw.TaskIDForSession(sessionID); ok {
+			b.reminder.RecordDelivery(taskID, env)
+		}
 	}
 
 	log.Printf("[steering] delivered env=%s kind=%s -> session=%s", env.ID, env.Kind, sessionID)

@@ -97,6 +97,28 @@ type WatcherConfig struct {
 	// WAIT silence window. Zero leaves ProbeInput.WaitTimeout zero, so Probe
 	// itself falls back to DefaultWaitTimeout.
 	WaitTimeout time.Duration
+
+	// PostProbeCooldown — minimum interval between back-to-back probes of
+	// the same session, measured from when the previous Probe call returned.
+	// Zero falls back to DefaultPostProbeCooldown. Negative disables the
+	// cooldown (tests that exercise the legacy "release immediately
+	// re-arms" semantics pass -1).
+	//
+	// Why this exists (CW-20260519-0125). The in-flight claim is dropped
+	// the instant Probe returns; without a cooldown, a session whose
+	// last_activity was not bumped by the probe is eligible for immediate
+	// re-probe on the very next scan tick. Two paths produce that gap:
+	//   - SendTurn (PR #76, PROBE-phase delivery for streaming-stdio
+	//     workers) calls m.inner.SendInput directly and does NOT invoke
+	//     Manager.SendInput's TouchSession side effect.
+	//   - The silence branch's ResumeSession creates a NEW session row but
+	//     does not mutate the original row's last_activity, so the OLD
+	//     row (still state=running until teardown) stays stale.
+	// last_activity is updated only via the pid_poller's 5s heartbeat and
+	// via content-bearing stream events — neither is guaranteed to fire
+	// before the next scan. The cooldown closes that gap explicitly so we
+	// don't rely on an incidental side effect.
+	PostProbeCooldown time.Duration
 }
 
 // DefaultIdleThreshold / DefaultScanInterval back the zero-value
@@ -104,20 +126,37 @@ type WatcherConfig struct {
 // the probe costs the agent a turn, so a false positive on a slow-but-
 // progressing agent should be rare. 10 minutes is well past any normal
 // turn-to-turn gap.
+//
+// DefaultPostProbeCooldown gives a recovered session a meaningful window
+// to produce activity (RESPOND-branch) or for the resumed session's pid
+// poller / stream events to start bumping last_activity (RESUME-branch)
+// before the Watcher reconsiders it. 5 minutes is half the idle threshold:
+// long enough to absorb a slow resume boot + first-turn settle, short
+// enough that a session that genuinely re-hung after recovery is still
+// eligible for another probe within a reasonable window.
 const (
-	DefaultIdleThreshold = 10 * time.Minute
-	DefaultScanInterval  = 60 * time.Second
+	DefaultIdleThreshold     = 10 * time.Minute
+	DefaultScanInterval      = 60 * time.Second
+	DefaultPostProbeCooldown = 5 * time.Minute
 )
 
 // Watcher periodically scans running sessions and fires stuck.Probe for any
 // that look stuck. One goroutine per Watcher; construct via New, drive with
 // Start, drain with Close.
 //
-// Concurrency. Each scan launches at most one probe goroutine per stuck
-// session. An in-flight set keys by session id so a probe that outlives the
-// scan interval is never re-triggered — the claim is held for the whole
-// Probe call (PROBE → WAIT → RESPOND|RESUME), so a probe in progress is the
-// sole re-probe guard while it runs.
+// Concurrency + re-probe guards. Each scan launches at most one probe
+// goroutine per stuck session. Two layered guards prevent re-probing the
+// same session too aggressively:
+//
+//  1. The in-flight set: keys by session id, held for the whole Probe call
+//     (PROBE → WAIT → RESPOND|RESUME). Blocks stacking a second probe on
+//     top of an in-flight one.
+//  2. The post-probe cooldown: stamped on each session when the in-flight
+//     claim is released. Blocks immediate re-probe on the very next scan
+//     tick when last_activity has not yet been bumped by the probed
+//     session — see WatcherConfig.PostProbeCooldown for why this matters
+//     after CW-20260519-0122 / PR #76 (SendTurn does not call
+//     TouchSession the way the old SendInput path did).
 type Watcher struct {
 	deps WatcherDeps
 	cfg  WatcherConfig
@@ -127,10 +166,11 @@ type Watcher struct {
 	now   func() time.Time
 	probe func(context.Context, ProbeInput) Result
 
-	mu       sync.Mutex
-	inflight map[string]bool
-	cancel   context.CancelFunc
-	done     chan struct{}
+	mu           sync.Mutex
+	inflight     map[string]bool
+	lastProbedAt map[string]time.Time
+	cancel       context.CancelFunc
+	done         chan struct{}
 }
 
 // New constructs a Watcher. Returns an error when any WatcherDeps surface
@@ -157,12 +197,21 @@ func New(deps WatcherDeps, cfg WatcherConfig) (*Watcher, error) {
 	if cfg.ScanInterval <= 0 {
 		cfg.ScanInterval = DefaultScanInterval
 	}
+	// PostProbeCooldown: zero → default; negative → caller explicitly
+	// opted out (preserved for the legacy "release immediately re-arms"
+	// test semantic). We don't normalize the negative value to zero here
+	// so the check in scan can still distinguish "disabled" from
+	// "default applied".
+	if cfg.PostProbeCooldown == 0 {
+		cfg.PostProbeCooldown = DefaultPostProbeCooldown
+	}
 	return &Watcher{
-		deps:     deps,
-		cfg:      cfg,
-		now:      time.Now,
-		probe:    Probe,
-		inflight: make(map[string]bool),
+		deps:         deps,
+		cfg:          cfg,
+		now:          time.Now,
+		probe:        Probe,
+		inflight:     make(map[string]bool),
+		lastProbedAt: make(map[string]time.Time),
 	}, nil
 }
 
@@ -254,9 +303,17 @@ func (w *Watcher) scan(ctx context.Context) {
 		log.Printf("[stuck] watcher scan: list running sessions: %v", err)
 		return
 	}
-	cutoff := w.now().Add(-w.cfg.IdleThreshold)
+	now := w.now()
+	cutoff := now.Add(-w.cfg.IdleThreshold)
 	for _, sess := range sessions {
 		if !w.isStuck(sess, cutoff) {
+			continue
+		}
+		if w.inCooldown(sess.SessionID, now) {
+			// A probe for this session completed recently and we have
+			// not yet given the session a meaningful window to make
+			// progress (or stay silent). Skip to avoid re-probing on
+			// the very next scan tick.
 			continue
 		}
 		if !w.claim(sess.SessionID) {
@@ -266,6 +323,7 @@ func (w *Watcher) scan(ctx context.Context) {
 		}
 		go w.runProbe(ctx, sess)
 	}
+	w.pruneCooldown(now)
 }
 
 // isStuck reports whether sess should be probed: it must carry a TaskID
@@ -319,10 +377,52 @@ func (w *Watcher) claim(sessionID string) bool {
 	return true
 }
 
+// release clears the in-flight claim AND stamps the per-session
+// last-probed-at timestamp that powers the post-probe cooldown. The
+// stamp is taken on release (probe-end) rather than claim (probe-start)
+// so the cooldown window starts from when the Probe actually returned,
+// not from when it was first launched — a long-running probe (e.g. the
+// full WaitTimeout silence window) should not have its cooldown
+// half-consumed by its own elapsed time.
 func (w *Watcher) release(sessionID string) {
 	w.mu.Lock()
 	delete(w.inflight, sessionID)
+	w.lastProbedAt[sessionID] = w.now()
 	w.mu.Unlock()
+}
+
+// inCooldown reports whether sessionID was probed recently enough that
+// the post-probe cooldown still bars another probe. A negative
+// PostProbeCooldown disables the gate (used by tests that exercise the
+// legacy "release immediately re-arms" semantic).
+func (w *Watcher) inCooldown(sessionID string, now time.Time) bool {
+	if w.cfg.PostProbeCooldown < 0 {
+		return false
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	t, ok := w.lastProbedAt[sessionID]
+	if !ok {
+		return false
+	}
+	return now.Sub(t) < w.cfg.PostProbeCooldown
+}
+
+// pruneCooldown drops lastProbedAt entries whose cooldown has already
+// elapsed. Bounds the map size against long daemon uptimes — without
+// this, a session probed once would sit in the map forever even after
+// it's no longer in the running set.
+func (w *Watcher) pruneCooldown(now time.Time) {
+	if w.cfg.PostProbeCooldown < 0 {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for id, t := range w.lastProbedAt {
+		if now.Sub(t) >= w.cfg.PostProbeCooldown {
+			delete(w.lastProbedAt, id)
+		}
+	}
 }
 
 // errNilDep is the construction-time error for a missing WatcherDeps field.

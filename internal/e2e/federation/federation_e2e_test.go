@@ -379,6 +379,14 @@ func (g *fakeGateway) LiveSession(addr gomsg.Address) (string, bool) {
 	return id, ok
 }
 
+// TaskIDForSession is required by steering.SessionGateway
+// (CW-20260519-0065); the federation E2E does not exercise the reminder
+// registry path, so we return ok=false uniformly — the bridge then
+// skips reminder bookkeeping for these test injections.
+func (g *fakeGateway) TaskIDForSession(_ string) (string, bool) {
+	return "", false
+}
+
 func (g *fakeGateway) SteerTurn(_ context.Context, sessionID, text string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()

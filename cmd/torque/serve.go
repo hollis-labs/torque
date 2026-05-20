@@ -173,11 +173,19 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// instance.
 	pollRegistry := steering.NewPollRegistry(steering.DefaultPollTTL)
 
+	// Turn-boundary reminder registry (CW-20260519-0065): shared state
+	// between the steering bridge (records every successful injection per
+	// task) and the long-lived agent runtime (re-surfaces unaddressed
+	// injections at the next turn boundary). The mcpadapter loopback's
+	// torque_steering_dismiss tool also writes to this registry to mark
+	// envelopes ack'd.
+	reminderRegistry := steering.NewReminderRegistry()
+
 	// Unified agent substrate (CW-20260508-0001 — replaces cliexec + sessionmgr).
 	// Constructs Dependencies + Manager, runs the orphan sweep, and is the
 	// single root every Boot caller (planstart, scheduler dispatch, end-agent,
 	// HTTP/MCP) reaches into.
-	agentDeps, agentDepsClose, err := bootstrap.AgentDeps(store, profiles, svc, tools, sched.EventBus(), stateWriter, pollRegistry)
+	agentDeps, agentDepsClose, err := bootstrap.AgentDeps(store, profiles, svc, tools, sched.EventBus(), stateWriter, pollRegistry, reminderRegistry)
 	if err != nil {
 		return fmt.Errorf("bootstrap agent deps: %w", err)
 	}
@@ -280,7 +288,7 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// agent.Manager.SendTurn) — the inject-at-turn-boundary default locked
 	// in torque-messaging-design.md. This is what carries a user's steering
 	// message into a running orchestrator.
-	steeringClose, err := bootstrap.SteeringBridge(runCtx, envBroker, agentDeps.Sessions, pollRegistry)
+	steeringClose, err := bootstrap.SteeringBridge(runCtx, envBroker, agentDeps.Sessions, pollRegistry, reminderRegistry)
 	if err != nil {
 		return fmt.Errorf("bootstrap steering bridge: %w", err)
 	}
