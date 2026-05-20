@@ -108,9 +108,12 @@ func TestHealthScanBoot_LeavesLiveTaskAlone(t *testing.T) {
 // TestHealthScanTick_SurfacesTaskDoingWithoutHeartbeat covers the
 // blind-spot the staleness sweep cannot see: a task pinned at `doing`
 // with NO heartbeat row at all. The tick scan must surface it on the
-// bus so observability isn't blind. Recovery is intentionally NOT
-// performed — RECOVER for this class pairs with the session-recovery
-// work and would clobber operator intent if blanket-applied here.
+// bus so observability isn't blind. The freshly-created task is
+// protected from auto-recovery by the StuckGraceSeconds grace window
+// (CW-20260519-0084) — recovery only fires once tasks.updated_at has
+// aged past the grace. Mid-dispatch races between TransitionTask(doing)
+// and HeartbeatMonitor.Register are exactly what this grace exists to
+// suppress.
 func TestHealthScanTick_SurfacesTaskDoingWithoutHeartbeat(t *testing.T) {
 	sched, store := setupRecoveryScheduler(t)
 
@@ -146,9 +149,13 @@ func TestHealthScanTick_SurfacesTaskDoingWithoutHeartbeat(t *testing.T) {
 	assert.True(t, found,
 		"tick scan must publish health.anomaly task_doing_no_worker for a task in doing with no heartbeat row")
 
-	// Detect-only: task status must not have been touched.
+	// Grace-protected: a freshly-created task's updated_at is well inside
+	// the default 60s grace window, so the session-recovery primitive
+	// defers and leaves the task in `doing`. The backdated-recovery test
+	// below proves the same primitive DOES reclaim the same shape once
+	// tasks.updated_at has aged past the grace.
 	task, err := store.GetTask("CW-DOING-GHOST")
 	require.NoError(t, err)
 	assert.Equal(t, "doing", task.Status,
-		"detect-only — tick scan must not mutate task status for task_doing_no_worker")
+		"fresh task within StuckGraceSeconds must be left alone — grace covers the dispatch-vs-register race")
 }

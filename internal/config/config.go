@@ -133,6 +133,16 @@ type SchedulerConfig struct {
 	HeartbeatSeconds         int
 	HeartbeatProgressSeconds int
 	StaleSeconds             int
+	// StuckGraceSeconds gates the session-recovery RECOVER primitive that
+	// auto-reclaims tasks-pinned-at-`doing` and runs-pinned-at-`running`
+	// with no worker_heartbeats row (healthscan's task_doing_no_worker /
+	// run_running_no_worker classes). The grace window is measured against
+	// tasks.updated_at / runs.started_at — a row younger than this is left
+	// alone so a mid-dispatch race between TransitionTask(doing) and
+	// HeartbeatMonitor.Register doesn't trigger spurious recovery. Default
+	// 60s (Nanite's pid-zero-grace floor). Set TORQUE_SCHED_STUCK_GRACE to
+	// override.
+	StuckGraceSeconds        int
 	Enabled                  bool
 	MaxPerProject            int
 	DefaultMerge             string
@@ -208,6 +218,14 @@ func Load() (*Config, error) {
 			// gets reclaimed. Tune down for faster feedback in dev/test,
 			// not recommended below ~60s in production.
 			StaleSeconds:     envInt("TORQUE_SCHED_STALE", 900),
+			// 60s grace before auto-reclaiming a stuck `doing` task or a
+			// `running` run with no heartbeat — matches Nanite's
+			// pid-zero-grace floor (internal/runtime/agent/orphan_sweep.go).
+			// The grace window covers the legitimate races
+			// (dispatch-vs-register, mid-completion-vs-deregister); anything
+			// older is genuinely zombied. Tune down in tests; production
+			// safe range is roughly [60, 300].
+			StuckGraceSeconds: envInt("TORQUE_SCHED_STUCK_GRACE", 60),
 			Enabled:          envBool("TORQUE_SCHED_ENABLED", true),
 			MaxPerProject:    envInt("TORQUE_SCHED_MAX_PER_PROJECT", 2),
 			DefaultMerge:     envOr("TORQUE_SCHED_DEFAULT_MERGE", "none"),

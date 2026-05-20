@@ -25,9 +25,12 @@
 // The scanner reports anomalies; it does NOT mutate state. The
 // scheduler decides what to do with each Anomaly — boot-mode results
 // are routed through the existing recoverOrphanedWorker primitive
-// (CW-20260519-0079 owns RECOVER for the orphan-worker case); tick-mode
-// `task_doing_no_worker` / `run_running_no_worker` anomalies are
-// detect-only today and paired with the session-recovery work.
+// (CW-20260519-0079 owns RECOVER for the orphan-worker case);
+// `task_doing_no_worker` / `run_running_no_worker` anomalies are routed
+// through the session-recovery reclaim primitive (CW-20260519-0084,
+// Nanite-pattern port) once the underlying state row has aged past a
+// grace window — see ObservedAt and the scheduler's StuckGraceSeconds
+// config.
 //
 // Surface: New(store, liveness, cfg) → Scan(ctx, mode) → Result. The
 // Liveness interface is satisfied by scheduler.cancelRegistry; tests
@@ -96,15 +99,19 @@ const (
 	// matching worker_heartbeats row. The heartbeat lifecycle has
 	// already deregistered, but the task never transitioned out of
 	// `doing`. Invisible to the staleness sweep (nothing to find
-	// stale). Detect-only today; the RECOVER half is tracked
-	// separately.
+	// stale). The scheduler's RECOVER primitive re-queues these once
+	// tasks.updated_at has aged past StuckGraceSeconds (Nanite-pattern
+	// port, CW-20260519-0084).
 	AnomalyTaskDoingNoWorker AnomalyKind = "task_doing_no_worker"
 
 	// AnomalyRunRunningNoWorker — a runs row at status='running' with
 	// NO matching worker_heartbeats row keyed by run_id. The run never
 	// reached CompleteRun. Same blind-spot class as
 	// task_doing_no_worker but keyed off the runs table — a task may
-	// have moved on while its prior run row was abandoned.
+	// have moved on while its prior run row was abandoned. The
+	// scheduler's RECOVER primitive marks these failed (and re-queues
+	// the parent task if it is still `doing`) once runs.started_at has
+	// aged past StuckGraceSeconds.
 	AnomalyRunRunningNoWorker AnomalyKind = "run_running_no_worker"
 )
 
@@ -118,6 +125,14 @@ type Anomaly struct {
 	WorkerID      string
 	Executor      string
 	LastHeartbeat time.Time
+	// ObservedAt is the timestamp on the state row that produced this
+	// anomaly: tasks.updated_at for AnomalyTaskDoingNoWorker, runs.started_at
+	// for AnomalyRunRunningNoWorker, and worker_heartbeats.last_heartbeat for
+	// AnomalyOrphanWorker (mirroring LastHeartbeat). RECOVER paths consult
+	// it to apply a grace window — a row that just transitioned into the
+	// observed state should not be reclaimed before the dispatcher has had a
+	// chance to register the worker (Nanite's pid-zero-grace pattern).
+	ObservedAt time.Time
 	// Detail is a free-form human-readable note. Logged verbatim by the
 	// scheduler; not part of the structured wire shape.
 	Detail string
@@ -269,6 +284,7 @@ func (s *Scanner) scanHeartbeats(ctx context.Context, mode Mode, now time.Time) 
 			WorkerID:      workerID,
 			Executor:      executor,
 			LastHeartbeat: lastHB,
+			ObservedAt:    lastHB,
 			Detail:        detail,
 		})
 	}
@@ -281,7 +297,7 @@ func (s *Scanner) scanHeartbeats(ctx context.Context, mode Mode, now time.Time) 
 // indexed on task_id by the scheduler's lookup path).
 func (s *Scanner) scanTasksDoingNoWorker(ctx context.Context) ([]Anomaly, error) {
 	rows, err := s.store.DB().QueryContext(ctx,
-		`SELECT t.id, t.executor
+		`SELECT t.id, t.executor, t.updated_at
 		 FROM tasks t
 		 LEFT JOIN worker_heartbeats h ON h.task_id = t.id
 		 WHERE t.status = 'doing' AND h.task_id IS NULL`)
@@ -292,15 +308,19 @@ func (s *Scanner) scanTasksDoingNoWorker(ctx context.Context) ([]Anomaly, error)
 
 	var out []Anomaly
 	for rows.Next() {
-		var taskID, executor string
-		if err := rows.Scan(&taskID, &executor); err != nil {
+		var (
+			taskID, executor string
+			updatedAt        time.Time
+		)
+		if err := rows.Scan(&taskID, &executor, &updatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, Anomaly{
-			Kind:     AnomalyTaskDoingNoWorker,
-			TaskID:   taskID,
-			Executor: executor,
-			Detail:   "task is `doing` but no worker_heartbeats row exists",
+			Kind:       AnomalyTaskDoingNoWorker,
+			TaskID:     taskID,
+			Executor:   executor,
+			ObservedAt: updatedAt,
+			Detail:     "task is `doing` but no worker_heartbeats row exists",
 		})
 	}
 	return out, rows.Err()
@@ -312,7 +332,7 @@ func (s *Scanner) scanTasksDoingNoWorker(ctx context.Context) ([]Anomaly, error)
 // run_id is a true "no worker is keeping this run alive" signal.
 func (s *Scanner) scanRunsRunningNoWorker(ctx context.Context) ([]Anomaly, error) {
 	rows, err := s.store.DB().QueryContext(ctx,
-		`SELECT r.id, r.task_id, r.executor
+		`SELECT r.id, r.task_id, r.executor, r.started_at
 		 FROM runs r
 		 LEFT JOIN worker_heartbeats h ON h.run_id = r.id
 		 WHERE r.status = 'running' AND h.run_id IS NULL`)
@@ -326,16 +346,18 @@ func (s *Scanner) scanRunsRunningNoWorker(ctx context.Context) ([]Anomaly, error
 		var (
 			runID            int64
 			taskID, executor string
+			startedAt        time.Time
 		)
-		if err := rows.Scan(&runID, &taskID, &executor); err != nil {
+		if err := rows.Scan(&runID, &taskID, &executor, &startedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, Anomaly{
-			Kind:     AnomalyRunRunningNoWorker,
-			TaskID:   taskID,
-			RunID:    runID,
-			Executor: executor,
-			Detail:   "run is `running` but no worker_heartbeats row keyed by run_id",
+			Kind:       AnomalyRunRunningNoWorker,
+			TaskID:     taskID,
+			RunID:      runID,
+			Executor:   executor,
+			ObservedAt: startedAt,
+			Detail:     "run is `running` but no worker_heartbeats row keyed by run_id",
 		})
 	}
 	return out, rows.Err()
