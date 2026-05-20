@@ -180,6 +180,11 @@ func loopbackBuilder(svc *service.Service, sessionsRef func() *agent.Manager, po
 // profiles, since doing so would silently widen the worker's MCP surface
 // to the cross-task set. V1 trusts the operator to reserve the names; V2
 // can add stricter validation at task-create time.
+//
+// Mirror in internal/runtime/agent/prompt.go: isOrchestratorClassRoleForPrompt
+// keeps an identical role list so the default-worker boot template
+// (CW-20260519-0095 Phase 2) is applied to exactly the roles that DON'T
+// match this predicate. If you add a role here, add it there too.
 func isOrchestratorClassRole(role string) bool {
 	switch role {
 	case "orchestrator",
