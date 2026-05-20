@@ -245,12 +245,7 @@ func SweepPerRun(repoRoot, root string, keepDays int, now time.Time) (removed []
 	if keepDays <= 0 {
 		return nil, nil
 	}
-	scanDir := root
-	prefix := "run-"
-	if root == "" {
-		scanDir = filepath.Dir(filepath.Clean(repoRoot))
-		prefix = filepath.Base(filepath.Clean(repoRoot)) + "-worktrees-run-"
-	}
+	scanDir, prefix := perRunScanLocation(repoRoot, root)
 	entries, err := os.ReadDir(scanDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -287,6 +282,21 @@ func SweepPerRun(repoRoot, root string, keepDays int, now time.Time) (removed []
 		removed = append(removed, path)
 	}
 	return removed, errs
+}
+
+// perRunScanLocation returns the (scanDir, leafPrefix) pair the per-run
+// sweepers walk to find per-run worktrees. Placement-aware: with an empty
+// `root` the worktrees are true siblings of the repo, so the parent dir is
+// scanned for `${repoName}-worktrees-run-*` leaves; with `root` set the
+// scan is direct children of that root with a `run-` prefix. Centralized
+// so SweepPerRun (TTL-based) and SweepMergedPerRun (PR-state-based) cannot
+// drift from each other's placement assumptions.
+func perRunScanLocation(repoRoot, root string) (scanDir, prefix string) {
+	if root != "" {
+		return root, "run-"
+	}
+	parent := filepath.Dir(filepath.Clean(repoRoot))
+	return parent, filepath.Base(filepath.Clean(repoRoot)) + "-worktrees-run-"
 }
 
 // worktreeHasWork returns true if the worktree at path has uncommitted
