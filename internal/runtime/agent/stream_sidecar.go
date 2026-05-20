@@ -127,6 +127,13 @@ func (s *streamSidecar) Close() {
 // to fall back to a fixed timeout. sync.Once-guarded so multiple `done`
 // events don't double-fire.
 //
+// `onEvent`, when non-nil, fires for every event the drain observes BEFORE
+// the sidecar write + downstream forward. The Manager uses this to flip its
+// per-session last_activity freeze gate (CW-20260519-0130) so the PID poller
+// stops bumping the row when the stream surfaces an error / auth-dead frame
+// and the wrapper process keeps heartbeating with no real activity behind
+// it. Best-effort — onEvent must not block; the drain calls it inline.
+//
 // `closer` shuts down the drain by closing `in` and waiting for the goroutine
 // to flush + close the sidecar file. Idempotent (sync.Once). Closing
 // downstream is the caller's concern — the drain never closes it.
@@ -136,7 +143,7 @@ func (s *streamSidecar) Close() {
 // closed by its owner (executor.Run's `close(fanout)` after Boot returns) —
 // dropped events are still recorded in the sidecar, so forensic visibility
 // is preserved.
-func startStreamFanout(workspaceLogDir string, depth int, downstream chan<- llmtypes.StreamEvent, onDone func()) (in chan llmtypes.StreamEvent, closer func()) {
+func startStreamFanout(workspaceLogDir string, depth int, downstream chan<- llmtypes.StreamEvent, onDone func(), onEvent func(llmtypes.StreamEvent)) (in chan llmtypes.StreamEvent, closer func()) {
 	sidecar := openStreamSidecar(workspaceLogDir)
 	in = make(chan llmtypes.StreamEvent, depth)
 
@@ -154,6 +161,9 @@ func startStreamFanout(workspaceLogDir string, depth int, downstream chan<- llmt
 		defer wg.Done()
 		defer sidecar.Close()
 		for ev := range in {
+			if onEvent != nil {
+				onEvent(ev)
+			}
 			sidecar.Write(ev)
 			if downstream != nil {
 				forwardEventNonBlocking(downstream, ev)

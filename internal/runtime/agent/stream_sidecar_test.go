@@ -127,7 +127,7 @@ func TestStartStreamFanout_DrainAndForward(t *testing.T) {
 	logDir := filepath.Join(dir, "logs")
 
 	downstream := make(chan llmtypes.StreamEvent, 8)
-	in, closer := startStreamFanout(logDir, 8, downstream, nil)
+	in, closer := startStreamFanout(logDir, 8, downstream, nil, nil)
 
 	in <- llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "first"}
 	in <- llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "second"}
@@ -159,7 +159,7 @@ func TestStartStreamFanout_NilDownstream(t *testing.T) {
 	dir := t.TempDir()
 	logDir := filepath.Join(dir, "logs")
 
-	in, closer := startStreamFanout(logDir, 4, nil, nil)
+	in, closer := startStreamFanout(logDir, 4, nil, nil, nil)
 	in <- llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "only-sidecar"}
 	closer()
 
@@ -175,7 +175,7 @@ func TestStartStreamFanout_DownstreamClosedNoPanic(t *testing.T) {
 	logDir := filepath.Join(dir, "logs")
 
 	downstream := make(chan llmtypes.StreamEvent, 4)
-	in, closer := startStreamFanout(logDir, 4, downstream, nil)
+	in, closer := startStreamFanout(logDir, 4, downstream, nil, nil)
 
 	// Close downstream BEFORE feeding events. The drain goroutine's
 	// forwardEventNonBlocking should recover the send-on-closed-chan panic.
@@ -202,7 +202,7 @@ func TestStartStreamFanout_DownstreamFullDrops(t *testing.T) {
 	downstream := make(chan llmtypes.StreamEvent, 1)
 	downstream <- llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "filler"}
 
-	in, closer := startStreamFanout(logDir, 4, downstream, nil)
+	in, closer := startStreamFanout(logDir, 4, downstream, nil, nil)
 
 	const extra = 5
 	for i := 0; i < extra; i++ {
@@ -231,7 +231,7 @@ func TestStartStreamFanout_CloserIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	logDir := filepath.Join(dir, "logs")
 
-	in, closer := startStreamFanout(logDir, 4, nil, nil)
+	in, closer := startStreamFanout(logDir, 4, nil, nil, nil)
 	in <- llmtypes.StreamEvent{Type: llmtypes.EventDone}
 
 	closer()
@@ -245,7 +245,7 @@ func TestStartStreamFanout_ConcurrentWriters(t *testing.T) {
 	dir := t.TempDir()
 	logDir := filepath.Join(dir, "logs")
 
-	in, closer := startStreamFanout(logDir, 64, nil, nil)
+	in, closer := startStreamFanout(logDir, 64, nil, nil, nil)
 
 	const writers = 8
 	const perWriter = 25
@@ -279,7 +279,7 @@ func TestStartStreamFanout_OnDoneFiresOnceOnEventDone(t *testing.T) {
 	var doneCount atomic.Int32
 	in, closer := startStreamFanout(logDir, 8, nil, func() {
 		doneCount.Add(1)
-	})
+	}, nil)
 
 	in <- llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "first"}
 	in <- llmtypes.StreamEvent{Type: llmtypes.EventDone}
@@ -303,7 +303,7 @@ func TestStartStreamFanout_OnDoneNotFiredWithoutEventDone(t *testing.T) {
 	var doneCount atomic.Int32
 	in, closer := startStreamFanout(logDir, 4, nil, func() {
 		doneCount.Add(1)
-	})
+	}, nil)
 
 	in <- llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "no-done-coming"}
 	closer()

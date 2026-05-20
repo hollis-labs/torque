@@ -44,11 +44,12 @@ type Manager struct {
 	mu         sync.RWMutex
 	stopped    bool
 	inner      *agentsessions.Manager
-	loopbacks  map[string]LoopbackHandle // sessID → handle; shut down in Stop
-	stderrs    map[string]func()         // sessID → close() for the per-session stderr sidecar
-	streams    map[string]func()         // sessID → close() for the per-session stream sidecar (CW-20260509-0001)
-	bootDirs   map[string]string         // sessID → ephemeral boot dir; os.RemoveAll in Stop
-	pidPollers map[string]func()         // sessID → close() for the per-session PID poller (CW-20260509-0008)
+	loopbacks      map[string]LoopbackHandle // sessID → handle; shut down in Stop
+	stderrs        map[string]func()         // sessID → close() for the per-session stderr sidecar
+	streams        map[string]func()         // sessID → close() for the per-session stream sidecar (CW-20260509-0001)
+	bootDirs       map[string]string         // sessID → ephemeral boot dir; os.RemoveAll in Stop
+	pidPollers     map[string]func()         // sessID → close() for the per-session PID poller (CW-20260509-0008)
+	activityFrozen map[string]struct{}       // sessID → suppress heartbeat TouchSession after an error/auth frame; lifted by content-bearing stream events or teardown (CW-20260519-0130)
 
 	// codexThreads caches per-session codex thread IDs for the
 	// JsonRpcStdio runtime kind. Populated lazily by sendTurnJSONRPC
@@ -78,6 +79,7 @@ func NewManager(deps *Dependencies) *Manager {
 		streams:         make(map[string]func()),
 		bootDirs:        make(map[string]string),
 		pidPollers:      make(map[string]func()),
+		activityFrozen:  make(map[string]struct{}),
 	}
 	emitter := NewSchedulerEmitter(deps.Bus)
 	stateSink := &storeStateSink{deps: deps}
@@ -236,6 +238,11 @@ func (m *Manager) teardownSession(sessID string) {
 	// Drop the codex thread cache entry (if any). No-op for non-JsonRpcStdio
 	// sessions; safe to fire unconditionally.
 	m.forgetCodexThread(sessID)
+	// Clear the activity-gate entry AFTER the stream closer has drained any
+	// buffered events — closing the fanout flushes pending observeStreamEvent
+	// callbacks, which could otherwise re-mark a session as frozen behind a
+	// premature delete and leak the map entry. CW-20260519-0130.
+	m.clearActivityFrozen(sessID)
 }
 
 // Get returns the persisted session record. Combines store state with any
