@@ -20,6 +20,7 @@ import (
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/persistence/writequeue"
 	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/healthscan"
 	"github.com/hollis-labs/torque/internal/runtime/queue"
 	"github.com/hollis-labs/torque/internal/runtime/waitpoll"
 	"github.com/hollis-labs/torque/internal/runtime/writeq"
@@ -63,6 +64,7 @@ type Scheduler struct {
 	lifecycle         *LifecycleManager
 	cost              *CostTracker
 	heartbeat         *HeartbeatMonitor
+	healthscanner     *healthscan.Scanner
 	bus               *EventBus
 	progressThrottler *progressThrottler
 	progressHeartbeat *progressHeartbeat
@@ -174,6 +176,18 @@ func New(
 	s.lifecycle.SetTelemetryWriter(s.telemetryWriter)
 	s.cost.SetTelemetryWriter(s.telemetryWriter)
 	s.lifecycle.SetStateWriter(s.stateWriter)
+
+	// System-health scanner (CW-20260519-0083). DETECT half of the
+	// orphan / stuck-task remediation pair. The scanner uses the
+	// cancelRegistry as its Liveness signal so a heartbeat row whose
+	// worker is still active in THIS process is correctly classified
+	// as live; the existing FindStale path uses the same source-of-
+	// truth. The boot sweep below routes any pre-existing heartbeat
+	// row (i.e. from a previous serve that didn't deregister) through
+	// recoverOrphanedWorker without waiting for the staleness timer.
+	s.healthscanner = healthscan.New(store, s.cancels, healthscan.Config{
+		StaleHeartbeat: time.Duration(cfg.StaleSeconds) * time.Second,
+	})
 
 	// Subscribe to DB-driven task transitions so that a manual / external
 	// task_transition out of "doing" cancels the in-flight worker's
@@ -467,8 +481,80 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 			counts.Live, counts.Stale, s.cfg.StaleSeconds)
 	}
 
+	// System-health periodic sweep (CW-20260519-0083). Surfaces gaps
+	// the staleness-keyed FindStale path above cannot see — chiefly
+	// tasks pinned at `doing` with no worker_heartbeats row at all,
+	// and runs at `running` with the same blind-spot. Detect-only at
+	// the tick: the FindStale + recoverOrphanedWorker pair above
+	// already handles the stale-heartbeat-with-no-cancel class, so
+	// runHealthScan emits its own AnomalyOrphanWorker entries
+	// alongside but does NOT double-recover (idempotent: the
+	// heartbeat row was already deleted by recoverOrphanedWorker).
+	s.runHealthScan(ctx, healthscan.ModeTick)
+
 	s.bus.Publish(SchedulerEvent{Type: "scheduler.tick"})
 	return nil
+}
+
+// runHealthScan executes one DETECT pass over canonical state and
+// publishes the result. In ModeBoot, AnomalyOrphanWorker entries are
+// routed through recoverOrphanedWorker so a daemon restart reclaims
+// stranded heartbeat rows immediately (CW-20260519-0083 boot sweep,
+// addressing the run 864 / CW-20260515-0133 ~1h47m zombie). In
+// ModeTick the same kind is logged + published but NOT auto-recovered
+// — the FindStale + recoverOrphanedWorker call earlier in Tick is the
+// canonical recovery path for that class, and a second pass would
+// either be idempotent (heartbeat row already gone) or wrongly second-
+// guess the threshold guard. The other two anomaly kinds
+// (task_doing_no_worker, run_running_no_worker) are detect-only in
+// both modes; RECOVER for those classes pairs with the session-
+// recovery work.
+func (s *Scheduler) runHealthScan(ctx context.Context, mode healthscan.Mode) {
+	if s.healthscanner == nil {
+		return
+	}
+	res, err := s.healthscanner.Scan(ctx, mode)
+	if err != nil {
+		log.Printf("[healthscan] %s scan error: %v", mode, err)
+		return
+	}
+	if len(res.Anomalies) == 0 {
+		if mode == healthscan.ModeBoot {
+			log.Printf("[healthscan] boot scan clean")
+		}
+		return
+	}
+	log.Printf("[healthscan] %s scan found %d anomaly(ies)", mode, len(res.Anomalies))
+	for _, a := range res.Anomalies {
+		log.Printf("[healthscan] %s kind=%s task=%s run=%d worker=%s — %s",
+			mode, a.Kind, a.TaskID, a.RunID, a.WorkerID, a.Detail)
+		s.bus.Publish(SchedulerEvent{
+			Type:   "health.anomaly",
+			TaskID: a.TaskID,
+			RunID:  a.RunID,
+			Data: map[string]interface{}{
+				"mode":           string(mode),
+				"kind":           string(a.Kind),
+				"worker_id":      a.WorkerID,
+				"executor":       a.Executor,
+				"last_heartbeat": a.LastHeartbeat,
+				"detail":         a.Detail,
+			},
+		})
+
+		if mode == healthscan.ModeBoot && a.Kind == healthscan.AnomalyOrphanWorker {
+			// Boot-time recovery uses the same primitive the tick-time
+			// stale sweep uses, just on a wider input set (every
+			// surviving heartbeat row, not just stale ones).
+			s.recoverOrphanedWorker(ctx, StaleWorker{
+				WorkerID:      a.WorkerID,
+				TaskID:        a.TaskID,
+				RunID:         a.RunID,
+				Executor:      a.Executor,
+				LastHeartbeat: a.LastHeartbeat,
+			})
+		}
+	}
 }
 
 // recoverOrphanedWorker reclaims a worker whose heartbeat is stale AND
@@ -1215,6 +1301,19 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			}
 		}
 	}
+
+	// System-health boot sweep (CW-20260519-0083). cancelRegistry is
+	// empty by construction in a fresh process, so any worker_heartbeats
+	// row that survived the previous serve is an orphan-by-definition;
+	// the sweep routes each one through recoverOrphanedWorker without
+	// waiting for last_heartbeat to age past the staleness threshold.
+	// This closes the run 864 / CW-20260515-0133 gap (a zombie run sat
+	// dead for ~1h47m because the new serve waited a full StaleSeconds
+	// before reclaiming it). Tasks-in-doing-with-no-heartbeat and
+	// runs-in-running-with-no-heartbeat are logged + published but
+	// detect-only — RECOVER for those classes pairs with the session-
+	// recovery work.
+	s.runHealthScan(ctx, healthscan.ModeBoot)
 
 	for {
 		select {
