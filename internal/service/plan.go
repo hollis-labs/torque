@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -74,8 +75,17 @@ type PlanDetail struct {
 // PlanService wraps TaskService with plan-specific conveniences. Plans are
 // stored as kind=plan tasks; phase metadata lives in task.metadata.plan.
 type PlanService struct {
-	store *sqlstore.Store
-	tasks *TaskService
+	store    *sqlstore.Store
+	tasks    *TaskService
+	observer PlanPhaseObserver // optional; nil disables the observer hook
+}
+
+// SetPhaseObserver installs a PlanPhaseObserver that runs after every
+// successful AddPhase / RemovePhase. nil clears the observer. Not
+// goroutine-safe with concurrent phase ops; install once at bootstrap
+// before serving traffic. Mirrors CommentService.SetObserver.
+func (s *PlanService) SetPhaseObserver(o PlanPhaseObserver) {
+	s.observer = o
 }
 
 // Create builds a kind=plan task with phases[] prefilled into metadata.plan.
@@ -154,15 +164,25 @@ func (s *PlanService) AddPhase(planID, name, acceptance string) (string, error) 
 	}
 
 	phaseID := nextPhaseID(plan.Phases)
+	order := nextPhaseOrder(plan.Phases)
 	plan.Phases = append(plan.Phases, PlanPhase{
 		ID:         phaseID,
 		Name:       name,
-		Order:      nextPhaseOrder(plan.Phases),
+		Order:      order,
 		Acceptance: acceptance,
 	})
 
 	if err := s.writePlanMetadata(task, plan); err != nil {
 		return "", err
+	}
+	if s.observer != nil {
+		s.observer.ObservePlanPhase(context.Background(), PlanPhaseEvent{
+			Kind:      "added",
+			PlanID:    planID,
+			PhaseID:   phaseID,
+			PhaseName: name,
+			Order:     order,
+		})
 	}
 	return phaseID, nil
 }
@@ -211,7 +231,17 @@ func (s *PlanService) RemovePhase(planID, phaseID string) error {
 		return &ValidationError{Field: "phase_id", Message: "phase not found: " + phaseID}
 	}
 	plan.Phases = filtered
-	return s.writePlanMetadata(task, plan)
+	if err := s.writePlanMetadata(task, plan); err != nil {
+		return err
+	}
+	if s.observer != nil {
+		s.observer.ObservePlanPhase(context.Background(), PlanPhaseEvent{
+			Kind:    "removed",
+			PlanID:  planID,
+			PhaseID: phaseID,
+		})
+	}
+	return nil
 }
 
 // ListChildren returns tasks whose parent_id = planID, optionally narrowed to

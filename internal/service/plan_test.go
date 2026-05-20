@@ -1,13 +1,37 @@
 package service_test
 
 import (
+	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/hollis-labs/torque/internal/service"
 )
+
+// recordingPlanPhaseObserver is a test fake that captures every
+// ObservePlanPhase call. Used to verify the observer hook fires on
+// AddPhase / RemovePhase with the expected event shape.
+type recordingPlanPhaseObserver struct {
+	mu     sync.Mutex
+	events []service.PlanPhaseEvent
+}
+
+func (r *recordingPlanPhaseObserver) ObservePlanPhase(_ context.Context, ev service.PlanPhaseEvent) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, ev)
+}
+
+func (r *recordingPlanPhaseObserver) snapshot() []service.PlanPhaseEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]service.PlanPhaseEvent, len(r.events))
+	copy(out, r.events)
+	return out
+}
 
 // TestPlanCreate_ShapeAndMetadata verifies that CreatePlan builds a
 // kind=plan task whose metadata.plan contains the expected phase list
@@ -169,4 +193,63 @@ func TestPlanProgress_Rollup(t *testing.T) {
 	roll := prog.ByPhase["ph-1"]
 	require.Equal(t, 2, roll.Total)
 	require.Equal(t, 1, roll.Done)
+}
+
+// TestPlanPhaseObserver_FiresOnAddAndRemove verifies that an installed
+// PlanPhaseObserver is invoked once per successful AddPhase / RemovePhase
+// with the expected event kind, plan id, phase id, and (for added) name +
+// order. Powers the daemon-side bridge that publishes plan.phase_added /
+// plan.phase_removed onto the scheduler.EventBus (CW-20260519-0126).
+func TestPlanPhaseObserver_FiresOnAddAndRemove(t *testing.T) {
+	svc := setupService(t)
+
+	rec := &recordingPlanPhaseObserver{}
+	svc.Plan.SetPhaseObserver(rec)
+
+	plan, err := svc.Plan.Create(service.PlanCreateInput{
+		Title:  "p",
+		Phases: []service.PlanPhaseInput{{Name: "Foundation"}},
+	})
+	require.NoError(t, err)
+
+	// Adding a phase fires "added" with the new phase id + name + order.
+	id, err := svc.Plan.AddPhase(plan.ID, "Integration", "")
+	require.NoError(t, err)
+
+	events := rec.snapshot()
+	require.Len(t, events, 1, "AddPhase should fire one observer event")
+	require.Equal(t, "added", events[0].Kind)
+	require.Equal(t, plan.ID, events[0].PlanID)
+	require.Equal(t, id, events[0].PhaseID)
+	require.Equal(t, "Integration", events[0].PhaseName)
+	require.Equal(t, 2, events[0].Order, "second phase appends with order=2")
+
+	// Removing a phase fires "removed" with the phase id; name+order are zero.
+	require.NoError(t, svc.Plan.RemovePhase(plan.ID, id))
+
+	events = rec.snapshot()
+	require.Len(t, events, 2, "RemovePhase should fire a second observer event")
+	require.Equal(t, "removed", events[1].Kind)
+	require.Equal(t, plan.ID, events[1].PlanID)
+	require.Equal(t, id, events[1].PhaseID)
+	require.Equal(t, "", events[1].PhaseName)
+	require.Equal(t, 0, events[1].Order)
+}
+
+// TestPlanPhaseObserver_NotFiredOnFailedAdd verifies that the observer
+// does NOT fire when AddPhase fails validation. The observer hook runs
+// only after the metadata write succeeds.
+func TestPlanPhaseObserver_NotFiredOnFailedAdd(t *testing.T) {
+	svc := setupService(t)
+
+	rec := &recordingPlanPhaseObserver{}
+	svc.Plan.SetPhaseObserver(rec)
+
+	plan, err := svc.Plan.Create(service.PlanCreateInput{Title: "p"})
+	require.NoError(t, err)
+
+	// Empty name → validation error → observer must not fire.
+	_, err = svc.Plan.AddPhase(plan.ID, "", "")
+	require.Error(t, err)
+	require.Empty(t, rec.snapshot())
 }
