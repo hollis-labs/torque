@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -237,15 +236,17 @@ func TestEndAgent_SuccessLeavesNoFailureComment(t *testing.T) {
 	assert.Empty(t, comments, "no system-failure comment on success path")
 }
 
-// CW-20260510-0109: the embedded V1 template must include a 6th audit
-// check that gates `review→done` on PR-merge state for PR-gated tasks.
-// Without it, cleanup-implementer T1s auto-promote to `done` before the
-// human merges the PR (anomaly A1 in 2026-05-10 overnight log).
+// V2 reviewer template (CW-20260519-0118 direction): the template must
+// carry the new PR-aware contract — alignment check (5), design skim (6),
+// follow-up filing (7), and a close-out flow that merges the PR on a
+// clean audit + tags `agent-closed`. Replaces the V1 PR-merge-gate test
+// (CW-20260510-0109) which pinned the V1 contract where the reviewer left
+// PR-gated tasks at `review` waiting for human merge.
 //
 // This is a template-content assertion only. The end-agent is an LLM
 // driven by the template at runtime; Go-side hooks (enqueue,
 // failure-comment, retry-suppression) don't change behaviorally.
-func TestEndAgent_TemplateIncludesPRMergeCheck(t *testing.T) {
+func TestEndAgent_TemplateIncludesPRAlignmentAndAutoMerge(t *testing.T) {
 	store := setupEndAgentStore(t)
 	bus := scheduler.NewEventBus()
 	defer bus.Close()
@@ -270,49 +271,48 @@ func TestEndAgent_TemplateIncludesPRMergeCheck(t *testing.T) {
 	require.Len(t, internals, 1)
 	prompt := internals[0].SystemPrompt
 
-	// Check 6 must be enumerated as a miss-severity audit step. The exact
-	// wording can drift, but the key contract elements must be present.
-	assert.Contains(t, prompt, "6. **PR-gated tasks:",
-		"check 6 (PR-merge gate) must be present in the audit checklist")
+	// V2 check 5 — PR alignment — replaces V1's check 6 PR-merge gate.
+	// The reviewer now reads the diff and checks scope match; merge moves
+	// to the close-out flow (only fires when the audit is clean).
+	assert.Contains(t, prompt, "5. PR alignment",
+		"V2 check 5 (PR alignment) must be present in the audit checklist")
 
-	// Tighten: ensure severity:miss is specifically attached to check 6's
-	// section heading, not just present somewhere in the template (checks
-	// 1/2/4/5 are also miss-severity, so a bare Contains on
-	// "*(severity: miss)*" would pass even if check 6 were rewritten as
-	// advisory or stripped of severity entirely).
-	check6MissRE := regexp.MustCompile(`(?s)6\.\s+\*\*PR-gated tasks:.*?\*\(severity: miss\)\*`)
-	assert.Regexp(t, check6MissRE, prompt,
-		"check 6 must carry severity:miss in its own section heading")
-
-	// Detection signal: artifact-shape, not agent_profile name. The ticket
-	// confirmed real-world data uses generic profiles for PR-producing
-	// roles, so name-matching would silently miss most cases.
+	// Detection signal: artifact-shape, not agent_profile name. Carried
+	// forward from V1 — real-world data uses generic profiles for
+	// PR-producing roles, so name-matching would silently miss most cases.
 	assert.Contains(t, prompt, "torque_artifact_list",
 		"template must point the agent at the artifact list MCP tool")
 	assert.Contains(t, prompt, "/pull/",
 		"template must describe GitHub PR URL shape for detection")
-	assert.Contains(t, prompt, "agent_profile",
-		"template must explicitly note that profile-name is unreliable")
 
-	// Verification mechanism: gh pr view --json state,mergedAt.
+	// Verification mechanism: gh pr view for the diff inspection.
 	assert.Contains(t, prompt, "gh pr view",
-		"template must specify the gh CLI verification command")
-	assert.Contains(t, prompt, "state,mergedAt",
-		"template must request both state + mergedAt fields")
-	assert.Contains(t, prompt, "MERGED",
-		"template must define the merged-state pass condition")
+		"template must specify the gh CLI inspection command")
+	assert.Contains(t, prompt, "gh pr diff",
+		"template must specify gh pr diff for scope verification")
 
-	// Closeout: PR-gated tasks must not auto-transition while OPEN.
-	assert.Contains(t, prompt, "PR-gated tasks (check 6) are a hard short-circuit",
-		"closeout section must call out the PR-merge short-circuit")
-	assert.Contains(t, prompt, "Never auto-transition a PR-gated task",
-		"closeout must explicitly forbid auto-promote on unmerged PR")
+	// Close-out: clean audit ⇒ apply agent-closed tag + auto-merge the PR.
+	assert.Contains(t, prompt, "`agent-closed`",
+		"close-out must instruct the reviewer to apply the agent-closed tag")
+	assert.Contains(t, prompt, "gh pr merge",
+		"close-out must instruct the reviewer to merge clean PRs")
+	assert.Contains(t, prompt, "--squash",
+		"close-out must default the merge strategy to squash")
+	assert.Contains(t, prompt, "If the merge fails",
+		"close-out must handle the merge-failure path explicitly")
+
+	// V2 check 6 — sound design — replaces V1's no-code-review stance.
+	assert.Contains(t, prompt, "6. Sound design",
+		"V2 check 6 (sound design skim) must be present")
 }
 
-// CW-20260510-0109: the original 5 disposition checks must continue to
-// be enumerated — check 6 is additive, not a replacement. Regression
-// guard against accidental rewrite.
-func TestEndAgent_TemplatePreservesOriginalFiveChecks(t *testing.T) {
+// V2 reviewer template enumerates the audit checks in a renumbered shape:
+// status/on_done sanity, blocked_reason, agent_profile, updated_at, PR
+// alignment, sound design, follow-up filing. Replaces the V1 five-check
+// regression guard (CW-20260510-0109) which pinned the V1 wording. This
+// test locks the V2 enumeration so future edits to the template don't
+// silently drop or renumber the contract.
+func TestEndAgent_TemplateEnumeratesV2Checks(t *testing.T) {
 	store := setupEndAgentStore(t)
 	bus := scheduler.NewEventBus()
 	defer bus.Close()
@@ -337,13 +337,15 @@ func TestEndAgent_TemplatePreservesOriginalFiveChecks(t *testing.T) {
 	require.Len(t, internals, 1)
 	prompt := internals[0].SystemPrompt
 
-	// Numbered enumeration markers — drift-detection only. If someone
-	// renumbers, this test fails loudly and the renumbering is reviewed.
-	assert.Contains(t, prompt, "1. **Status matches declared `on_done` mode.**")
-	assert.Contains(t, prompt, "2. **`blocked_reason` is empty unless status=`blocked`.**")
-	assert.Contains(t, prompt, "3. **If kind=agent and the executor succeeded: at least one artifact.**")
-	assert.Contains(t, prompt, "4. **`agent_profile` is set.**")
-	assert.Contains(t, prompt, "5. **`updated_at` post-dates the executor's last run.**")
+	// Numbered enumeration markers — drift-detection. If the V2 checks get
+	// renumbered or one is silently dropped, this test fails loudly.
+	assert.Contains(t, prompt, "1. Status + on_done sanity")
+	assert.Contains(t, prompt, "2. `blocked_reason` empty unless blocked")
+	assert.Contains(t, prompt, "3. `agent_profile` set if kind=agent")
+	assert.Contains(t, prompt, "4. `updated_at` post-dates last run")
+	assert.Contains(t, prompt, "5. PR alignment")
+	assert.Contains(t, prompt, "6. Sound design")
+	assert.Contains(t, prompt, "7. Follow-up filing")
 }
 
 func TestEndAgent_TemplateIncludesHITLCheckpointProtocol(t *testing.T) {
