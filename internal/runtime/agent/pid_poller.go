@@ -2,9 +2,11 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
 // defaultPidPollInterval is the per-session poller cadence in production.
@@ -61,8 +63,18 @@ func pollPid(mgr *Manager, sessID string, interval time.Duration, stop <-chan st
 		snap, ok := mgr.inner.Health(sessID)
 		if !ok {
 			// Session no longer registered: the lib's watch goroutine has
-			// already torn down. teardownSession will fire the closer; just
-			// exit.
+			// already torn down. teardownSession will fire the closer.
+			//
+			// CW-20260519-0082 defensive write: the lib's recordState
+			// drops StateSink errors on the floor (manager.go:272), so a
+			// transient DB lock / write-queue stall during the terminal
+			// transition can leave the row stuck at running/launching.
+			// Reconcile here before the goroutine exits — if the row
+			// still claims to be non-terminal, force it to `failed` so
+			// planstart.Redispatch's idempotency check sees an honest
+			// state and a fresh /plans/start doesn't 409 against a
+			// stranded row.
+			reconcileTerminalRow(mgr, sessID)
 			return
 		}
 
@@ -105,4 +117,30 @@ func pollPid(mgr *Manager, sessID string, interval time.Duration, stop <-chan st
 		// instead of the bare wrapper-process heartbeat.
 		mgr.touchSessionUnlessFrozen(context.Background(), sessID)
 	}
+}
+
+// reconcileTerminalRow forces a non-terminal session row to `failed` when
+// the lib has unregistered the session but the StateSink write was lost.
+// Idempotent — a row already in a terminal state is left alone. Defensive
+// against the lib's recordState swallowing StateSink errors
+// (CW-20260519-0082): without this, a transient write failure during the
+// terminal transition strands the row forever, blocking the operator's
+// /plans/start retry with 409 and the redispatch hook's idempotency check
+// with a phantom "already-orchestrating" verdict.
+func reconcileTerminalRow(mgr *Manager, sessID string) {
+	if mgr == nil || mgr.deps == nil || mgr.deps.Store == nil {
+		return
+	}
+	rec, err := mgr.deps.Store.GetSession(sessID)
+	if err != nil {
+		if errors.Is(err, sqlstore.ErrSessionNotFound) {
+			return
+		}
+		return
+	}
+	if Status(rec.State).Terminal() {
+		return
+	}
+	exit := -1
+	_ = mgr.deps.UpdateSessionState(context.Background(), sessID, string(StatusFailed), 0, &exit)
 }

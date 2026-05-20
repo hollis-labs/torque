@@ -301,7 +301,9 @@ func (h *SessionLifecycleHook) ObserveComment(_ context.Context, c *sqlstore.Com
 //     `doing` only — the broader guard trapped sessions in
 //     Status=running until an operator manually POSTed /stop, because
 //     children at `review` keep the guard tripped indefinitely while
-//     the reviewer end-agent is the one driving them forward).
+//     the reviewer end-agent is the one driving them forward — including
+//     children parked on a pending HITL checkpoint, whose blocked_reason
+//     starts with "awaiting checkpoint <corr>").
 //   - terminal states (done/failed/blocked/cancelled/abandoned): the
 //     child is closed; no reason to keep the orchestrator alive.
 //
