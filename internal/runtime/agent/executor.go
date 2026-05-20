@@ -13,9 +13,22 @@ import (
 	"github.com/hollis-labs/torque/internal/toolbroker"
 )
 
-// Executor adapts agent.Boot(Mode=ModeOneShot) to the executor.Executor
-// contract used by the scheduler's worker pool. Registered as "cli" — the
-// slot the legacy cliexec.CLIExecutor occupied.
+// Executor adapts agent.Boot to the executor.Executor contract used by the
+// scheduler's worker pool. Registered as "cli" — the slot the legacy
+// cliexec.CLIExecutor occupied.
+//
+// Dual-mode dispatch (CW-20260519-0095). The Mode picked per job is derived
+// from job.Kind, not hardcoded:
+//
+//   - kind=agent  → ModeLongLived. Worker stays resident; completion is
+//     signaled by the worker self-transitioning its task to `review` (or
+//     `blocked`). Idle reap fires on heartbeat staleness (default 30m, per-
+//     task override metadata.inactivity_threshold_seconds). A hard ceiling
+//     (default 12h, metadata.hard_ceiling_seconds) is the safety net.
+//
+//   - anything else → ModeOneShot. Single turn, auto-stop on return. The
+//     planner / reviewer-end-agent (kind=internal) and any bounded-mechanical
+//     callers keep the legacy lifecycle.
 //
 // One instance is shared across all CLI tasks; goroutine-safe.
 type Executor struct {
@@ -100,10 +113,13 @@ func (e *Executor) Validate(job *executor.ExecutionJob) error {
 // Run executes the job. Internally:
 //
 //  1. Resolves the working dir (PermanentError on bad shape).
-//  2. Builds an Options from the job and calls agent.Boot(Mode=ModeOneShot).
-//  3. Boot drives Start + SendInput + Stop synchronously; events flow
-//     through eventFanout into the translation goroutine.
-//  4. Returns an ExecutionResult shaped per the lifecycle manager's contract
+//  2. Picks a Mode from job.Kind (kind=agent → ModeLongLived; else ModeOneShot).
+//  3. ModeOneShot: Boot drives Start + SendInput + Stop synchronously; events
+//     flow through eventFanout into the translation goroutine.
+//  4. ModeLongLived: Boot returns once Start succeeds; runLongLived blocks
+//     on the worker's completion signal (task self-transition out of doing),
+//     heartbeat-driven idle reap, or hard ceiling — whichever fires first.
+//  5. Returns an ExecutionResult shaped per the lifecycle manager's contract
 //     (status: done / failed / blocked; reason; tokens).
 //
 // Cancellation: the supplied ctx is honored by Boot via the inner manager.
@@ -119,9 +135,24 @@ func (e *Executor) Run(ctx context.Context, job *executor.ExecutionJob, cb execu
 			executor.NewPermanentError(errors.New("agent.Executor: working_dir is required"))
 	}
 
-	// Allocate the per-call event fanout chan + drain goroutine. cliexec used
-	// 64 deep; preserve. The drain goroutine accumulates token usage on the
-	// result and forwards LogEvent / ToolUseEvent / TokenEvent through cb.
+	mode := modeForJob(job)
+	opts := optsFromJob(job, resolvedWD)
+	opts.Mode = mode
+	profile := config.GetProfileOrDefault(e.deps.Profiles, job.AgentProfile)
+
+	switch mode {
+	case ModeLongLived:
+		return e.runLongLived(ctx, profile, opts, cb)
+	default:
+		return e.runOneShot(ctx, profile, opts, cb)
+	}
+}
+
+// runOneShot drives the legacy single-turn dispatch lifecycle: a per-job
+// timeout, an event-fanout drain goroutine that accumulates token usage and
+// forwards events to cb, then Boot blocking on the turn completing. Forked
+// from the pre-CW-20260519-0095 Run body — no behavior change for this Mode.
+func (e *Executor) runOneShot(ctx context.Context, profile config.AgentProfile, opts Options, cb executor.EventCallback) (*executor.ExecutionResult, error) {
 	const fanoutDepth = 64
 	fanout := make(chan llmtypes.StreamEvent, fanoutDepth)
 
@@ -141,32 +172,15 @@ func (e *Executor) Run(ctx context.Context, job *executor.ExecutionJob, cb execu
 		}
 	}()
 
-	// Apply a per-job timeout (matches cliexec.Run's resolveTimeout).
-	profile := config.GetProfileOrDefault(e.deps.Profiles, job.AgentProfile)
-	opts := optsFromJob(job, resolvedWD).withEventFanout(fanout)
+	opts = opts.withEventFanout(fanout)
 	timeout := resolveTimeout(profile, opts)
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Boot drives Start + SendInput + Stop synchronously for ModeOneShot.
-	// Returns once the turn has run; sess.ExitCode + sess.Status reflect
-	// the outcome.
 	sess, bootErr := Boot(runCtx, e.deps, opts)
 
-	// Drain the fanout. Boot's inner Stop closes the inner read loop; the
-	// lib-side fanout chan stops receiving once Stop returns. We close the
-	// chan from this side; the goroutine sees the close and exits.
 	close(fanout)
 	fanoutWG.Wait()
-
-	// Token accounting: the drain goroutine populates result.Tokens.
-	// PromptTokens / CompletionTokens. The TokenUsage struct also has a
-	// Cost field but nothing in the bare-mode pipeline ever assigns to it
-	// (the lib's stream events don't expose a per-event cost), so the
-	// previous `result.Cost = result.Tokens.Cost` line was a no-op that
-	// implied otherwise. Removed in CW-20260510-0100; the canonical cost
-	// figure is computed downstream via scheduler.resolveCost using the
-	// models.dev catalog.
 
 	switch {
 	case errors.Is(runCtx.Err(), context.DeadlineExceeded):
@@ -174,8 +188,6 @@ func (e *Executor) Run(ctx context.Context, job *executor.ExecutionJob, cb execu
 		result.Reason = "execution timeout"
 		return result, nil
 	case bootErr != nil:
-		// Boot wraps with ErrBootFailed for any setup failure (loopback,
-		// boot dir, workspace, runtime) — surface the message directly.
 		result.Status = "failed"
 		result.Reason = bootErr.Error()
 		if streamErr != nil {
@@ -183,15 +195,10 @@ func (e *Executor) Run(ctx context.Context, job *executor.ExecutionJob, cb execu
 		}
 		return result, nil
 	case sess == nil:
-		// Defensive — Boot returns either (sess, nil) or (nil, err); this
-		// branch shouldn't fire but keeps the type-switch honest.
 		result.Status = "failed"
 		result.Reason = "agent.Boot returned nil session without error"
 		return result, nil
 	case sess.Status == StatusDone && (sess.ExitCode == nil || *sess.ExitCode == 0):
-		// A clean ModeOneShot completion: the turn ran and the subprocess
-		// exited 0 (or the runtime reported no non-zero code). Record a
-		// definitive exit 0 so the run row carries a real signal, not NULL.
 		result.Status = "done"
 		zero := 0
 		result.ExitCode = &zero
@@ -210,6 +217,28 @@ func (e *Executor) Run(ctx context.Context, job *executor.ExecutionJob, cb execu
 		result.Reason = strings.Join(reasons, " | ")
 		result.ExitCode = &exit
 		return result, nil
+	}
+}
+
+// modeForJob picks the dispatch Mode from the job's Kind. CW-20260519-0095
+// fixed the previous "always ModeOneShot" default, which silently truncated
+// multi-turn kind=agent tickets at the end of one turn (the worker auto-
+// stopped on end_of_turn and the task was left a zombie). kind=internal
+// (planner, reviewer-end-agent) and the empty / unrecognized cases stay on
+// ModeOneShot — those callers are bounded-mechanical by design.
+//
+// New Kind values get an explicit branch here; the default is conservative
+// (ModeOneShot) so adding a new kind doesn't accidentally promote it to
+// long-lived workers.
+func modeForJob(job *executor.ExecutionJob) Mode {
+	if job == nil {
+		return ModeOneShot
+	}
+	switch job.Kind {
+	case "agent":
+		return ModeLongLived
+	default:
+		return ModeOneShot
 	}
 }
 
