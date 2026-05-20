@@ -5,21 +5,38 @@ import (
 	"strings"
 
 	"github.com/hollis-labs/torque/internal/agentfile"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
 )
 
 // composeSystemPrompt assembles the system prompt for the spawned agent.
-// Stack order: agent-file persona first, options-supplied task framing
-// second, inherited project context last (when present in opts.Metadata).
+// Stack order:
+//
+//  1. agent-file persona (when supplied)
+//  2. default-worker boot contract — ONLY for ModeLongLived worker-class
+//     sessions (kind=agent dispatches; CW-20260519-0095 Phase 2). The
+//     orchestrator / planner / reviewer-end-agent already have their own
+//     baked-in templates and skip this prepend.
+//  3. options-supplied task framing (per-task SystemPrompt)
+//  4. checkpoint-redispatch protocol
+//  5. inherited project context (when present in opts.Metadata)
 //
 // Forked from internal/runtime/cliexec/prompt.go's composeSystemPrompt.
-// Behavior change: source is now Options instead of executor.ExecutionJob,
-// so ModeLongLived callers (orchestrator / planner / reviewer-end-agent)
-// thread their template content through Options.SystemPrompt instead of
-// LaunchRequest.SystemPrompt.
+// Behavior change vs. cliexec: source is now Options instead of
+// executor.ExecutionJob, so ModeLongLived callers (orchestrator / planner
+// / reviewer-end-agent) thread their template content through
+// Options.SystemPrompt instead of LaunchRequest.SystemPrompt; AND
+// ModeLongLived worker-class sessions get the substrate-side worker
+// contract prepended automatically (the bit that historically was
+// missing — the worker's boot context told it nothing about completion).
 func composeSystemPrompt(opts Options, agent *agentfile.AgentFile) string {
-	parts := make([]string, 0, 3)
+	parts := make([]string, 0, 5)
 	if agent != nil && strings.TrimSpace(agent.SystemPrompt) != "" {
 		parts = append(parts, strings.TrimSpace(agent.SystemPrompt))
+	}
+	if shouldApplyWorkerTemplate(opts) {
+		if tmpl := strings.TrimSpace(scheduler.DefaultWorkerTemplate()); tmpl != "" {
+			parts = append(parts, tmpl)
+		}
 	}
 	if strings.TrimSpace(opts.SystemPrompt) != "" {
 		parts = append(parts, strings.TrimSpace(opts.SystemPrompt))
@@ -29,6 +46,47 @@ func composeSystemPrompt(opts Options, agent *agentfile.AgentFile) string {
 		parts = append(parts, inherited)
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+// shouldApplyWorkerTemplate reports whether opts describes a ModeLongLived
+// worker-class session that should receive the default-worker contract.
+// Two conditions, both must hold:
+//
+//   - opts.Mode is ModeLongLived (the contract talks about session
+//     resident-until-self-signals — irrelevant for ModeOneShot dispatches).
+//   - The effective role is NOT in the orchestrator-class set
+//     (orchestrator / planner / reviewer-end-agent already carry their
+//     own templates; double-stacking would be confusing and inflate the
+//     context window for no benefit).
+//
+// Returns false for ModeSubagent and ModeBackground today — those are
+// nested / fire-and-forget shapes whose contracts differ from the
+// worker's. If a future caller wants the same treatment, lift the
+// condition rather than overloading worker semantics here.
+func shouldApplyWorkerTemplate(opts Options) bool {
+	if opts.Mode != ModeLongLived {
+		return false
+	}
+	role := opts.Role
+	if role == "" {
+		role = opts.AgentProfile
+	}
+	return !isOrchestratorClassRoleForPrompt(role)
+}
+
+// isOrchestratorClassRoleForPrompt mirrors bootstrap/loopback.go's
+// isOrchestratorClassRole. Duplicated here on purpose: the agent package
+// cannot import bootstrap (bootstrap imports agent). Keep the list in
+// sync with the loopback's identical check — both functions answer the
+// same question ("is this role one that gets the full cross-task
+// surface + its own canned template?"). If you add a role to one, add
+// it to the other.
+func isOrchestratorClassRoleForPrompt(role string) bool {
+	switch role {
+	case "orchestrator", "planner", "reviewer-end-agent":
+		return true
+	}
+	return false
 }
 
 const checkpointRedispatchPrompt = `Checkpoint redispatch protocol:
