@@ -4,9 +4,28 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// taskIDRange returns the half-open range [lo, hi) covering all task IDs that
+// start with the given prefix. The prefix is expected to end in '-' (0x2D);
+// hi replaces that trailing '-' with '.' (0x2E) so the range upper bound
+// excludes any longer id starting with the prefix. This lets NextTaskID issue
+// `WHERE id >= ? AND id < ?` queries that SQLite can satisfy with a range
+// scan on the PRIMARY KEY index, with early exit when paired with MAX(id).
+func taskIDRange(prefix string) (lo, hi string) {
+	if prefix == "" {
+		return "", ""
+	}
+	// Bump the final byte by 1. For our case the final byte is always '-'
+	// (0x2D), so hi ends in '.' (0x2E). Done generically to keep the
+	// helper safe if callers ever pass a different terminator.
+	b := []byte(prefix)
+	b[len(b)-1]++
+	return prefix, string(b)
+}
 
 // ErrTaskNotFound is returned wrapped by GetTask when the task ID does not
 // exist. Callers should use errors.Is(err, ErrTaskNotFound) to distinguish
@@ -749,29 +768,42 @@ func (s *Store) SearchTasks(query string) ([]TaskRecord, error) {
 	return tasks, rows.Err()
 }
 
-// NextTaskID generates an ID in CW-YYYYMMDD-NNNN format. The suffix lookup
-// CASTs the numeric tail to INTEGER so MAX tracks the true highest sequence
-// regardless of suffix width — see the WriteTx.NextTaskID comment for the
-// lex-MAX pitfall this guards against once a day crosses 9999 tasks. For
-// concurrent allocations under writer contention, prefer WriteTx.NextTaskID
-// + CreateTask in one transaction; this auto-commit variant releases the
-// reader between SELECT and the caller's INSERT.
+// NextTaskID generates an ID in CW-YYYYMMDD-NNNN format. See
+// WriteTx.NextTaskID for the lex-MAX pitfall at the 9999→10000 boundary and
+// why the lookup uses a half-open range with a width-bucketed MAX(id) instead
+// of CAST(substr(id, n) AS INTEGER). For concurrent allocations under writer
+// contention, prefer WriteTx.NextTaskID + CreateTask in one transaction; this
+// auto-commit variant releases the reader between SELECT and the caller's
+// INSERT.
 func (s *Store) NextTaskID() (string, error) {
 	today := time.Now().UTC().Format("20060102")
 	prefix := "CW-" + today + "-"
+	lo, hi := taskIDRange(prefix)
 
-	var maxSeq sql.NullInt64
-	err := s.db.QueryRow(
-		`SELECT MAX(CAST(substr(id, ?) AS INTEGER)) FROM tasks WHERE id LIKE ?`,
-		len(prefix)+1, prefix+"%",
-	).Scan(&maxSeq)
-	if err != nil {
+	var maxLen sql.NullInt64
+	if err := s.db.QueryRow(
+		`SELECT MAX(LENGTH(id)) FROM tasks WHERE id >= ? AND id < ?`,
+		lo, hi,
+	).Scan(&maxLen); err != nil {
 		return "", err
 	}
 
 	seq := int64(1)
-	if maxSeq.Valid {
-		seq = maxSeq.Int64 + 1
+	if maxLen.Valid {
+		var maxID sql.NullString
+		if err := s.db.QueryRow(
+			`SELECT MAX(id) FROM tasks WHERE id >= ? AND id < ? AND LENGTH(id) = ?`,
+			lo, hi, maxLen.Int64,
+		).Scan(&maxID); err != nil {
+			return "", err
+		}
+		if maxID.Valid && len(maxID.String) > len(prefix) {
+			n, err := strconv.ParseInt(maxID.String[len(prefix):], 10, 64)
+			if err != nil {
+				return "", fmt.Errorf("NextTaskID: parsing suffix of %q: %w", maxID.String, err)
+			}
+			seq = n + 1
+		}
 	}
 	return fmt.Sprintf("%s%04d", prefix, seq), nil
 }

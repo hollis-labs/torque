@@ -577,13 +577,23 @@ func TestNextTaskID(t *testing.T) {
 func TestNextTaskID_AboveLexCeiling(t *testing.T) {
 	store := setupTestStore(t)
 
+	// Skip if we're inside a UTC-midnight rollover window. Both the test
+	// seeds and the allocators under test derive "today" from time.Now(),
+	// so if the day flips between the two calls, the prefixes diverge and
+	// the assertion fails for reasons unrelated to the lex-MAX fix.
+	// 30s gives the rest of the test plenty of headroom on slow CI.
+	if untilMidnight := timeUntilUTCMidnight(); untilMidnight < 30*time.Second {
+		t.Skipf("skipping near UTC midnight (in %s) to avoid date-rollover flake", untilMidnight)
+	}
+
 	today := time.Now().UTC().Format("20060102")
 	prefix := "CW-" + today + "-"
 
-	// Seed the highest 4-digit row and a 5-digit row, plus a 7-digit row
-	// that lexicographically sorts below "9999" but is numerically the true
-	// max. A lex-MAX implementation would return "9999" and re-allocate
-	// "10000"; a numeric MAX returns 10000000 and allocates 10000001.
+	// Seed the highest 4-digit row, a 5-digit row, and an 8-digit row
+	// (10000000) that lexicographically sorts below "9999" but is numerically
+	// the true max. A lex-MAX implementation would return "9999" and
+	// re-allocate "10000"; the index-friendly width-bucketed MAX returns
+	// 10000000 and allocates 10000001.
 	seed := []string{
 		prefix + "9999",
 		prefix + "10000",
@@ -607,4 +617,13 @@ func TestNextTaskID_AboveLexCeiling(t *testing.T) {
 	txID, err := tx.NextTaskID()
 	require.NoError(t, err)
 	assert.Equal(t, want, txID, "WriteTx.NextTaskID must use numeric MAX, not lex MAX")
+}
+
+// timeUntilUTCMidnight returns the duration from now until the next UTC
+// midnight. Used by tests that seed task IDs based on today's date so they
+// can skip rather than flake when "today" might change mid-test.
+func timeUntilUTCMidnight() time.Duration {
+	now := time.Now().UTC()
+	nextMidnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+	return nextMidnight.Sub(now)
 }
