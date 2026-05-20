@@ -44,6 +44,13 @@ import (
 // MCP loopback adapter so the torque_inbox_poll tool and the bridge
 // agree on which recipients have opted into polling. nil is tolerated —
 // the loopback adapter then reports polling as unavailable.
+//
+// reminderReg is the turn-boundary reminder registry (CW-20260519-0065)
+// shared with the steering bridge. Threaded into every MCP loopback
+// adapter (worker and orchestrator class) so the torque_steering_dismiss
+// tool can mark envelopes ack'd, and onto agent.Dependencies so the
+// long-lived executor can re-surface unaddressed envelopes at turn
+// boundaries. nil disables the reminder pass entirely.
 func AgentDeps(
 	store *sqlstore.Store,
 	profiles config.ProfileSource,
@@ -52,6 +59,7 @@ func AgentDeps(
 	bus *scheduler.EventBus,
 	stateWriter writeq.Writer,
 	pollReg *steering.PollRegistry,
+	reminderReg *steering.ReminderRegistry,
 ) (*agent.Dependencies, func(), error) {
 	if store == nil {
 		return nil, nil, fmt.Errorf("agent deps bootstrap: store is nil")
@@ -78,6 +86,7 @@ func AgentDeps(
 		MuxCommand:       muxCfg.Command,
 		MuxArgs:          muxCfg.Args,
 		MuxEnv:           muxCfg.Env,
+		Reminder:         reminderReg,
 		// WorkspacesRoot defaults to $HOME/.torque/workspaces inside
 		// agent.WorkspaceCreate when left empty.
 	}
@@ -87,7 +96,7 @@ func AgentDeps(
 	// by reference; deps.Sessions is read at handle-construction time
 	// (per-Boot call), which always happens AFTER NewManager has set it.
 	// This breaks the cycle without a two-phase construction.
-	deps.Loopback = loopbackBuilder(svc, func() *agent.Manager { return deps.Sessions }, pollReg)
+	deps.Loopback = loopbackBuilder(svc, func() *agent.Manager { return deps.Sessions }, pollReg, reminderReg)
 	deps.Sessions = agent.NewManager(deps)
 
 	// Orphan sweep: mirror the prior sessionmgr.Sweep behavior. Any

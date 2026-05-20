@@ -70,28 +70,129 @@ Operators reading this run later need a single place to see "yes, the
 work was verified" without re-running anything. The closing comment
 is that place.
 
-## 5. The completion call
+## 5. Submit the PR and let Copilot review
 
-Signal completion by self-transitioning your task to `review` via the
-loopback:
+If your task produces code (the common case), push your branch and
+open a PR **before** self-transitioning. Tasks that produce only
+documentation, comments, or pure-config changes can skip this section
+— commit, comment with the deliverable summary, and proceed to
+section 6.
+
+### 5.1 Open the PR
+
+```bash
+git push -u origin <branch>
+gh pr create \
+  --title "<conventional-commit-style title — match recent merged PRs in this repo>" \
+  --body "$(cat <<'EOF'
+## Summary
+<one paragraph: what this PR does, why>
+
+## Task
+<Torque task id + one-line of what it asked for>
+
+## Verification
+<short build + test output, or a pointer to the closing verification
+comment on the task>
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+)" \
+  --base main
+```
+
+PR title should match the repo's recent convention (`feat(scope):`,
+`fix(scope):`, `refactor(scope):`). Check `gh pr list --state merged
+--limit 10` to confirm the shape. Copilot reviews are configured to
+fire automatically on PR open in this org — you do NOT need to add
+Copilot as a reviewer explicitly.
+
+### 5.2 Poll for Copilot review (up to 10 minutes)
+
+Poll every 60 seconds; cap at 10 iterations. As soon as a Copilot
+review lands, break and address it.
+
+```bash
+PR=<pr-number>
+for i in $(seq 1 10); do
+  n=$(gh pr view "$PR" --json reviews \
+        -q '[.reviews[] | select(.author.login == "Copilot" or .author.login == "copilot-pull-request-reviewer[bot]")] | length')
+  if [ "${n:-0}" -gt 0 ]; then break; fi
+  sleep 60
+done
+```
+
+### 5.3 Address Copilot findings (single round)
+
+If Copilot posted a review, read its findings:
+
+```bash
+gh pr view "$PR" --json reviews,comments
+```
+
+For each actionable finding:
+
+1. Make the change in the worktree, commit on the same branch, push.
+2. Reply on the thread noting your disposition. Use
+   `gh pr comment` for a general response, or `gh pr review --body
+   "Fixed in <SHA>: <one-line>"` to reply on the review.
+3. If you decline a finding, comment with the reason and file a
+   follow-up Torque task via `torque_task_create` so it isn't lost.
+
+You do **one** round of fixes here. Do not loop on Copilot — the
+reviewer end-agent does the final alignment pass. If Copilot keeps
+posting, address what is actionable and move on.
+
+If Copilot returns a purely positive review, or no review by the
+10-minute cap, proceed without changes.
+
+### 5.4 Failure path
+
+If `git push` or `gh pr create` fails (auth, conflict, protected
+branch, network), emit an `approval` checkpoint with the failure and
+**do not** self-transition. Operators need visibility; the engine
+will park the task at `blocked` if you idle out instead.
 
 ```
-torque_task_review(reason="Implementation complete; tests green; PR <url> opened.")
+torque_task_checkpoint_emit(
+  type="approval",
+  payload_json='{"title":"PR submission failed","prompt":"git push returned: <stderr> — manual intervention needed.","context":{"branch":"<name>","stderr":"..."}}'
+)
+```
+
+## 6. The completion call
+
+Signal completion by self-transitioning your task to `review` via the
+loopback. Match the `reason` string to what actually happened — if
+section 5 was skipped (doc / comment / config-only task), do NOT name
+a PR URL or Copilot count.
+
+PR-producing task:
+
+```
+torque_task_review(reason="Implementation complete; tests green; PR <url> opened; addressed N Copilot findings.")
+```
+
+Non-PR task (section 5 skipped — committed locally, summary in
+verification comment):
+
+```
+torque_task_review(reason="Deliverable committed; verification recorded in closing comment; no PR (doc/config-only).")
 ```
 
 This is the ModeLongLived equivalent of "end_of_turn". The substrate
-observes the transition, stops your session cleanly, and the existing
-reviewer end-agent pipeline picks up the audit. Do NOT exit your
-session by going silent — there is no quiet-exit signal; the
-scheduler will idle-reap you and the task will land in `blocked`
-instead of `review`.
+observes the transition, stops your session cleanly, and the reviewer
+end-agent (V2 — PR-aware) picks up the alignment + design audit. Do
+NOT exit your session by going silent — there is no quiet-exit
+signal; the scheduler will idle-reap you and the task will land in
+`blocked` instead of `review`.
 
 If your task's `on_done="close"` rule applies (rare — bounded
-mechanical tasks), you may transition straight to `done` semantically
-via the same `torque_task_review` call; the lifecycle manager's
-on_done rule resolves the final state.
+mechanical tasks that don't produce code), you may transition
+straight to `done` semantically via the same `torque_task_review`
+call; the lifecycle manager's on_done rule resolves the final state.
 
-## 6. The help-asking protocol
+## 7. The help-asking protocol
 
 Workers MUST NOT give up silently. If you are blocked, scope-
 mismatched, or need a human decision, EMIT a checkpoint via the

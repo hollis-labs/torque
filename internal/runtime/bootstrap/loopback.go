@@ -86,7 +86,13 @@ func (h *loopbackHandle) Shutdown(ctx context.Context) error {
 // bridge. nil disables the tool's opt-in side (it reports polling as
 // unavailable). Worker-class loopbacks never carry the tool — the
 // restricted NewLoopback subset omits the broker tools entirely.
-func loopbackBuilder(svc *service.Service, sessionsRef func() *agent.Manager, pollReg *steering.PollRegistry) agent.LoopbackBuilder {
+//
+// reminderReg is the turn-boundary reminder registry (CW-20260519-0065)
+// attached to BOTH worker- and orchestrator-class loopbacks (via
+// WithReminderRegistry) so the torque_steering_dismiss tool dismisses
+// against the same shared state the steering bridge populates. nil
+// disables the dismiss tool entirely.
+func loopbackBuilder(svc *service.Service, sessionsRef func() *agent.Manager, pollReg *steering.PollRegistry, reminderReg *steering.ReminderRegistry) agent.LoopbackBuilder {
 	if svc == nil {
 		return nil
 	}
@@ -120,7 +126,8 @@ func loopbackBuilder(svc *service.Service, sessionsRef func() *agent.Manager, po
 			// can opt into pulling its inbox via torque_inbox_poll.
 			loopback = mcpadapter.New(svc, nil).
 				WithSessions(sessionsRef()).
-				WithPollRegistry(pollReg)
+				WithPollRegistry(pollReg).
+				WithReminderRegistry(reminderReg)
 		} else {
 			// A worker-class loopback (the restricted self-task subset) is
 			// hard-bound to exactly one task: every tool call resolves to
@@ -134,7 +141,8 @@ func loopbackBuilder(svc *service.Service, sessionsRef func() *agent.Manager, po
 			if taskID == "" {
 				return nil, fmt.Errorf("agent: a worker session requires a task_id — the loopback adapter binds to exactly one task (role=%q)", role)
 			}
-			loopback = mcpadapter.NewLoopback(svc, taskID)
+			loopback = mcpadapter.NewLoopback(svc, taskID).
+				WithReminderRegistry(reminderReg)
 		}
 
 		ln, err := net.Listen("tcp", "127.0.0.1:0")

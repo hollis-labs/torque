@@ -5,6 +5,7 @@ import (
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/runtime/steering"
 	"github.com/hollis-labs/torque/internal/runtime/writeq"
 	"github.com/hollis-labs/torque/internal/toolbroker"
 )
@@ -132,4 +133,13 @@ type Dependencies struct {
 	// the rare future case where an isolated env (e.g. a per-Mux
 	// scoped API key) is required.
 	MuxEnv []string
+
+	// Reminder is the shared turn-boundary reminder registry
+	// (CW-20260519-0065): the steering bridge records every successful
+	// injection into it; the long-lived runtime re-surfaces unaddressed
+	// envelopes at the next turn boundary; the mcpadapter loopback's
+	// torque_steering_dismiss tool writes dismissals into it. nil is
+	// tolerated — the runtime then skips the reminder pass, degrading to
+	// the prior fire-and-forget delivery behavior.
+	Reminder *steering.ReminderRegistry
 }

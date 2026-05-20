@@ -13,6 +13,7 @@ import (
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/runtime/executor"
 	"github.com/hollis-labs/torque/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/runtime/steering"
 )
 
 // statusPollInterval is the cadence at which runLongLived re-reads the
@@ -83,6 +84,21 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 	// not the count.
 	activityCh := make(chan struct{}, 1)
 
+	// turnDoneCh signals the reminder goroutine on every EventDone the
+	// drain observes — the turn-boundary signal for streaming-stdio
+	// workers (the substrate's primary kind=agent runtime today). A
+	// modest buffer absorbs back-to-back turns while the reminder
+	// goroutine is running its check + SendTurn; if the buffer fills
+	// (operator floods + slow consumer), we drop additional signals —
+	// the same turn boundary is still observable on the next non-dropped
+	// event so no envelope is silently stranded. JsonRpc-stdio support
+	// is a follow-up: that runtime's `turn/completed` notification is
+	// not currently fanned into the stream, so codex long-lived workers
+	// receive no reminder pass (they would silently see no nudges, not
+	// a regression — they had none before).
+	const turnDoneBuf = 8
+	turnDoneCh := make(chan struct{}, turnDoneBuf)
+
 	// streamErr captures the first turn-terminal EventError so the run
 	// result can surface it in the Reason when the wait loop ends on a
 	// non-completion branch (idle reap / hard ceiling). Mirrors the OneShot
@@ -107,6 +123,16 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 			}, func(s string) {
 				streamErrOnce.Do(func() { streamErr = errors.New(s) })
 			})
+			// EventDone is the turn-boundary signal — non-blocking
+			// publish so the reminder goroutine can act on it. A full
+			// channel just drops the extra signal (see turnDoneCh
+			// comment above).
+			if ev.Type == llmtypes.EventDone {
+				select {
+				case turnDoneCh <- struct{}{}:
+				default:
+				}
+			}
 		}
 	}()
 
@@ -133,6 +159,16 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 	inactivityThreshold := resolveInactivityThreshold(opts)
 	hardCeiling := resolveHardCeiling(opts)
 
+	// Turn-boundary reminder pump (CW-20260519-0065). Starts here so
+	// sess.ID and opts.TaskID are bound; the drain goroutine has been
+	// signaling turnDoneCh since Boot's first EventDone, with the
+	// buffered channel absorbing anything that fired before we got here.
+	// Survives the wait loop's exit and is joined below after Stop has
+	// drained the fanout.
+	var reminderWG sync.WaitGroup
+	reminderWG.Add(1)
+	go runReminderPump(ctx, managerTurnSender{mgr: e.deps.Sessions}, e.deps.Reminder, opts.TaskID, sess, turnDoneCh, &reminderWG)
+
 	outcome := awaitLongLivedCompletion(ctx, e.deps, opts.TaskID, sess.ID, activityCh, inactivityThreshold, hardCeiling)
 
 	// Stop the live session. teardownSession (registered as the lib's
@@ -150,6 +186,20 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 	cancel()
 	close(fanout)
 	fanoutWG.Wait()
+
+	// Drain order is load-bearing: the drain goroutine is the sole
+	// writer to turnDoneCh, so closing it here (after fanoutWG.Wait)
+	// guarantees the reminder goroutine sees a clean close and exits.
+	close(turnDoneCh)
+	reminderWG.Wait()
+
+	// Per-task registry cleanup: a re-dispatch of this task creates a
+	// fresh long-lived run with no inherited dismissals, matching the
+	// per-process semantics already implicit in steering.Bridge (which
+	// marks each delivered envelope `consumed`, so the same envelope id
+	// is never re-injected anyway). Forget is nil-safe; calling it
+	// unconditionally keeps the cleanup path uniform.
+	e.deps.Reminder.Forget(opts.TaskID)
 
 	res := outcome.toExecutionResult(result, streamErr)
 
@@ -399,4 +449,118 @@ func (o longLivedOutcome) toExecutionResult(result *executor.ExecutionResult, st
 		result.Reason = streamErr.Error()
 	}
 	return result
+}
+
+// turnSender is the narrow surface runReminderPump needs from the agent
+// Manager — just SendTurn, the same primitive the steering bridge uses.
+// Defined here so the pump can be unit-tested with a fake without
+// standing up a real session manager.
+type turnSender interface {
+	SendTurn(ctx context.Context, sess *Session, text string) error
+}
+
+// managerTurnSender adapts *Manager to turnSender. Trivial wrapper kept
+// as a named type so production wiring reads as
+// runReminderPump(..., managerTurnSender{mgr: e.deps.Sessions}, ...).
+type managerTurnSender struct{ mgr *Manager }
+
+func (m managerTurnSender) SendTurn(ctx context.Context, sess *Session, text string) error {
+	if m.mgr == nil {
+		return errors.New("agent: turn sender has no manager")
+	}
+	return m.mgr.SendTurn(ctx, sess, text)
+}
+
+// runReminderPump consumes turn-boundary signals from the stream-fanout
+// drain and re-surfaces unaddressed steering envelopes to the agent via
+// SendTurn (CW-20260519-0065). It exits when turnDoneCh is closed by the
+// caller (after the fanout has drained).
+//
+// Nil-safety: when reminder is nil OR sender is nil OR taskID is empty
+// OR sess is nil, the loop drains turnDoneCh without ever building a
+// reminder — the runtime degrades cleanly to the prior fire-and-forget
+// behavior. We do drain rather than return early because a stuck
+// channel writer (the drain goroutine) would block on its non-blocking
+// publish forever if nothing read; the drain's select-default-drop
+// guard already covers that, but the explicit drain keeps semantics
+// symmetric with the active path.
+//
+// Per-turn behavior: for every signal,
+//  1. Ask the registry for any unaddressed envelopes injected since the
+//     last turn boundary.
+//  2. If pending and the turn actually saw an injection, render a
+//     reminder turn body and SendTurn it back into the live session.
+//  3. Mark the listed envelopes as reminded so the next turn boundary
+//     doesn't re-nag them. (Dismissal is a separate signal from the
+//     torque_steering_dismiss MCP tool.)
+//
+// A SendTurn error is logged but does NOT mark the envelopes reminded —
+// the next turn that sees an injection will retry the surface so a
+// transient session-pipe glitch doesn't strand a reminder.
+//
+// ctx cancellation is observed cooperatively: the drain goroutine will
+// also stop signaling soon after, and the close of turnDoneCh remains
+// the authoritative exit.
+func runReminderPump(
+	ctx context.Context,
+	sender turnSender,
+	reminder *steering.ReminderRegistry,
+	taskID string,
+	sess *Session,
+	turnDoneCh <-chan struct{},
+	wg *sync.WaitGroup,
+) {
+	defer wg.Done()
+
+	for {
+		select {
+		case <-ctx.Done():
+			// Drain anything still in the channel so the writer
+			// (drain goroutine) doesn't have to retry select-default-
+			// drop on every event after ctx death; the close below
+			// will eventually exit us cleanly.
+			for {
+				select {
+				case _, ok := <-turnDoneCh:
+					if !ok {
+						return
+					}
+				default:
+					return
+				}
+			}
+		case _, ok := <-turnDoneCh:
+			if !ok {
+				return
+			}
+		}
+
+		// Cheap guards: nil reminder/sender, empty taskID, or nil
+		// session means we have nothing to do this turn. We still
+		// wanted to consume the signal to keep the channel drained.
+		if reminder == nil || sender == nil || taskID == "" || sess == nil {
+			continue
+		}
+
+		pending, hadInjection := reminder.PendingForTurnBoundary(taskID)
+		if !hadInjection || len(pending) == 0 {
+			continue
+		}
+
+		text := steering.RenderReminder(pending, time.Now())
+		if text == "" {
+			continue
+		}
+
+		if err := sender.SendTurn(ctx, sess, text); err != nil {
+			log.Printf("agent: turn-boundary reminder SendTurn failed task=%s session=%s: %v (will retry next turn boundary)", taskID, sess.ID, err)
+			continue
+		}
+
+		ids := make([]string, 0, len(pending))
+		for _, pe := range pending {
+			ids = append(ids, pe.EnvelopeID)
+		}
+		reminder.MarkReminded(taskID, ids...)
+	}
 }

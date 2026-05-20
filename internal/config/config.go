@@ -82,6 +82,20 @@ type StuckConfig struct {
 	// ScanIntervalSeconds — how often the watcher scans running sessions.
 	// Default 60. Set TORQUE_STUCK_SCAN_SECONDS.
 	ScanIntervalSeconds int
+
+	// PostProbeCooldownSeconds — minimum interval between back-to-back
+	// probes of the same session, measured from when the previous Probe
+	// returned. Default 300 (5 min). Set
+	// TORQUE_STUCK_POST_PROBE_COOLDOWN_SECONDS to override; pass a negative
+	// value (e.g. -1) to disable the gate entirely. CW-20260519-0125.
+	//
+	// The cooldown closes a re-probe-race window introduced by PR #76: the
+	// PROBE phase now uses SendTurn (to avoid crashing streaming-stdio
+	// workers, CW-20260519-0122), which does NOT bump last_activity the
+	// way the old SendInput path did. Without this gate, a probe whose
+	// completion did not happen to coincide with the pid_poller's 5s
+	// heartbeat could be re-triggered on the very next scan tick.
+	PostProbeCooldownSeconds int
 }
 
 type ConcurrencyConfig struct {
@@ -215,9 +229,10 @@ func Load() (*Config, error) {
 			// 90s = midpoint of the sprint-α α.5 60–120s range. Tuning
 			// notes on StuckConfig.WaitSeconds.
 			WaitSeconds:          envInt("TORQUE_STUCK_WAIT_SECONDS", 90),
-			WatcherEnabled:       envBool("TORQUE_STUCK_WATCHER", true),
-			IdleThresholdSeconds: envInt("TORQUE_STUCK_IDLE_SECONDS", 600),
-			ScanIntervalSeconds:  envInt("TORQUE_STUCK_SCAN_SECONDS", 60),
+			WatcherEnabled:           envBool("TORQUE_STUCK_WATCHER", true),
+			IdleThresholdSeconds:     envInt("TORQUE_STUCK_IDLE_SECONDS", 600),
+			ScanIntervalSeconds:      envInt("TORQUE_STUCK_SCAN_SECONDS", 60),
+			PostProbeCooldownSeconds: envInt("TORQUE_STUCK_POST_PROBE_COOLDOWN_SECONDS", 300),
 		},
 	}
 	return cfg, nil
