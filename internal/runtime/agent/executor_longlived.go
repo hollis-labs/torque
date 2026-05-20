@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"path/filepath"
 	"sync"
 	"time"
 
 	llmtypes "github.com/hollis-labs/go-llm-types"
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
 )
 
 // statusPollInterval is the cadence at which runLongLived re-reads the
@@ -141,7 +143,30 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 	close(fanout)
 	fanoutWG.Wait()
 
-	return outcome.toExecutionResult(result, streamErr), nil
+	res := outcome.toExecutionResult(result, streamErr)
+
+	// Phase 3 — engine-side completion verification. Only meaningful when
+	// the worker self-transitioned its task out of doing (we have a real
+	// completion to verify); idle reap / hard ceiling / ctx cancellation
+	// already produce concrete blocked/failed results that need no
+	// engine-side check. We run verification for ANY transition outcome
+	// (review/done/blocked/...) so the histogram lands on the run_completed
+	// event uniformly — but ApplyTo only overrides on the failure verdicts,
+	// so a worker who self-transitioned straight to blocked stays blocked.
+	if outcome.Kind == outcomeTransition {
+		verdict := scheduler.VerifyWorkerCompletion(opts.RepoRoot, opts.Workdir, filepath.Join(sess.WorkspaceDir, "logs"), "")
+		res.ToolUseHistogram = verdict.ToolUseHistogram
+		res.CommitsOnRunBranch = verdict.CommitCount
+		res.VerificationSkipReason = verdict.SkipReason
+		// Only override the success path. A worker that self-transitioned
+		// to blocked/failed has already explained why; the engine's view
+		// is supplemental, not authoritative.
+		if outcome.TaskStatus == "review" || outcome.TaskStatus == "done" {
+			res.Status, res.Reason = verdict.ApplyTo(res.Status, res.Reason)
+		}
+	}
+
+	return res, nil
 }
 
 // longLivedOutcome captures the wait-loop's verdict on why a long-lived

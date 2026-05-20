@@ -737,6 +737,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 			return nil, err
 		}
 
+		runCompletedPayload := runCompletedEventPayload(result)
 		if err := s.stateWriter.Submit(context.Background(), "scheduler_run_completed", func(tx *sqlstore.WriteTx) error {
 			if err := tx.CompleteRun(capturedRunID, sqlstore.RunCompletion{
 				Status:           result.Status,
@@ -751,7 +752,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 				RunID:   sql.NullInt64{Int64: capturedRunID, Valid: true},
 				TaskID:  capturedTaskID,
 				Type:    "run_completed",
-				Payload: fmt.Sprintf(`{"status":%q,"cost":%v}`, result.Status, result.Cost),
+				Payload: runCompletedPayload,
 			})
 			return err
 		}); err != nil {
@@ -777,14 +778,24 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 			Source:           source,
 		})
 
+		runCompletedSSE := map[string]interface{}{
+			"status": result.Status,
+			"cost":   result.Cost,
+		}
+		if len(result.ToolUseHistogram) > 0 {
+			runCompletedSSE["tool_use_histogram"] = result.ToolUseHistogram
+		}
+		if result.CommitsOnRunBranch > 0 {
+			runCompletedSSE["commits_on_run_branch"] = result.CommitsOnRunBranch
+		}
+		if result.VerificationSkipReason != "" {
+			runCompletedSSE["verification_skip_reason"] = result.VerificationSkipReason
+		}
 		s.bus.Publish(SchedulerEvent{
 			Type:   "run.completed",
 			TaskID: capturedTaskID,
 			RunID:  capturedRunID,
-			Data: map[string]interface{}{
-				"status": result.Status,
-				"cost":   result.Cost,
-			},
+			Data:   runCompletedSSE,
 		})
 
 		return result, nil
@@ -1192,6 +1203,37 @@ func mergeStringMaps(base map[string]string, overlay map[string]string) map[stri
 		out[k] = v
 	}
 	return out
+}
+
+// runCompletedEventPayload renders the run_completed run_event payload as
+// JSON. Carries the canonical status/cost plus the Phase 3 worker-
+// verification observability fields (tool_use_histogram, commits_on_run_
+// branch, verification_skip_reason) when populated by the long-lived
+// executor. Operators inspecting run history see "did the worker actually
+// commit, and what did it touch?" without having to re-derive from
+// stream.jsonl.
+func runCompletedEventPayload(result *executor.ExecutionResult) string {
+	payload := map[string]any{
+		"status": result.Status,
+		"cost":   result.Cost,
+	}
+	if len(result.ToolUseHistogram) > 0 {
+		payload["tool_use_histogram"] = result.ToolUseHistogram
+	}
+	if result.CommitsOnRunBranch > 0 {
+		payload["commits_on_run_branch"] = result.CommitsOnRunBranch
+	}
+	if result.VerificationSkipReason != "" {
+		payload["verification_skip_reason"] = result.VerificationSkipReason
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		// Fallback to the pre-Phase-3 minimal shape so observers always
+		// see something parseable. The marshal failure is logged
+		// upstream by the caller via writeq's error path.
+		return fmt.Sprintf(`{"status":%q,"cost":%v}`, result.Status, result.Cost)
+	}
+	return string(b)
 }
 
 // formatSkipCounts renders a PickDecisions.Counts map as a stable
