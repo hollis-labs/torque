@@ -1,11 +1,19 @@
 package executor
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+// ErrNotADirectory is the context-neutral sentinel returned by
+// RequireExistingDir when the path exists but is not a directory. Callers
+// add their own context (e.g. `working_dir %q:`); the helper does not, so
+// callers wrapping with their own context don't produce duplicated error
+// strings (Copilot review on PR #80).
+var ErrNotADirectory = errors.New("not a directory")
 
 // ResolveWorkingDir normalizes a task's raw working_dir string into an
 // absolute path suitable for os/exec.Cmd.Dir. The scheduler stores
@@ -26,6 +34,34 @@ import (
 //
 // Errors are returned unwrapped so callers can apply whatever
 // PermanentError semantics are appropriate at their executor boundary.
+// RequireExistingDir stat()s an already-resolved working_dir path and
+// returns an error if it is missing or not a directory. Callers (executor
+// Validate hooks) wrap the result in PermanentError + their own
+// `working_dir %q:` context; this helper stays classification-neutral
+// AND context-neutral so it can be reused outside the dispatch path
+// without producing duplicated `working_dir "/x": working_dir "/x":` error
+// strings (Copilot review on PR #80).
+//
+// Empty input is a no-op (mirrors ResolveWorkingDir's "empty preserved"
+// shape) — executors that require a non-empty working_dir must check that
+// separately. Distinguishes "does not exist" (passed through as the
+// underlying os.Stat error, which `errors.Is(err, fs.ErrNotExist)` still
+// satisfies) from "exists but is a regular file" (ErrNotADirectory) so
+// the blocked_reason an operator sees points at the actual cause.
+func RequireExistingDir(path string) error {
+	if path == "" {
+		return nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return ErrNotADirectory
+	}
+	return nil
+}
+
 func ResolveWorkingDir(raw string) (string, error) {
 	if raw == "" {
 		return "", nil

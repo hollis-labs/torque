@@ -209,3 +209,74 @@ func TestPickerSkipsAgentTaskWithEmptyProfile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, runs, 0, "no run rows should exist for a task the picker never selected")
 }
+
+// TestSchedulerUnknownExecutorBlocksWithoutRetries is the regression for
+// CW-20260520-0003: a task referencing an executor name that is not in the
+// registry must transition straight to "blocked" on the first dispatch
+// attempt, not loop on the picker every tick. Before this fix the scheduler
+// logged "failed to dispatch ... executor X not found" every 10s, the picker
+// re-selected the same task each tick (claiming the project's slot, starving
+// same-project siblings with project_contention), and the task stayed in
+// todo until an operator manually parked it.
+func TestSchedulerUnknownExecutorBlocksWithoutRetries(t *testing.T) {
+	store, sched, mock := setupPermErrorScheduler(t)
+
+	store.CreateTask(&sqlstore.TaskRecord{
+		ID:           "CW-PERM-0004",
+		Title:        "Unknown executor",
+		Description:  "task references an executor name not registered in this daemon",
+		Status:       "todo",
+		Priority:     1,
+		Kind:         "agent",
+		Executor:     "opencode", // deliberately NOT registered
+		AgentProfile: "some-profile",
+		OnFail:       "retry",
+		MaxRetries:   3,
+	})
+
+	// Three ticks: a transient-retry treatment would burn the budget and
+	// leave three runs rows. The assertions prove the fix routes through
+	// the block-no-retry path on the very first tick.
+	for i := 0; i < 3; i++ {
+		require.NoError(t, sched.Tick(context.Background()))
+		sched.DrainResults()
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	task, err := store.GetTask("CW-PERM-0004")
+	require.NoError(t, err)
+	assert.Equal(t, "blocked", task.Status,
+		"unknown executor must be classified permanent and block the task")
+	assert.NotEmpty(t, task.BlockedReason, "blocked_reason must be set")
+	assert.Contains(t, task.BlockedReason, "opencode",
+		"blocked_reason must name the missing executor so the operator can fix it")
+	assert.Contains(t, task.BlockedReason, "not registered",
+		"blocked_reason must clearly identify the dispatch-refusal class")
+
+	// Retry budget must remain intact — permanent classification skips retries.
+	var retryCount int
+	require.NoError(t, store.DB().QueryRow(
+		"SELECT retry_count FROM tasks WHERE id = ?", "CW-PERM-0004",
+	).Scan(&retryCount))
+	assert.Equal(t, 0, retryCount, "permanent errors must not consume the retry budget")
+
+	// At most one audit run row (status=blocked) — never three.
+	runs, err := store.ListRuns("CW-PERM-0004")
+	require.NoError(t, err)
+	assert.LessOrEqual(t, len(runs), 1,
+		"permanent error path must not create more than one run row; got %d", len(runs))
+	if len(runs) == 1 {
+		assert.Equal(t, "blocked", runs[0].Status)
+		assert.Contains(t, runs[0].ErrorMessage, "not registered")
+	}
+
+	// Neither Validate nor Run on the registered mock executor should have
+	// been invoked — the registry-lookup failure short-circuits dispatch
+	// before the executor is asked anything.
+	for _, j := range mock.ValidatedJobs() {
+		assert.NotEqual(t, "CW-PERM-0004", j.TaskID,
+			"Validate() must not be invoked when the executor name is not in the registry")
+	}
+	assert.Equal(t, 0, mock.RunCount(),
+		"Run() must not be invoked for tasks that fail executor lookup")
+}
