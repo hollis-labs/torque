@@ -8,7 +8,13 @@ import (
 // ExecutionJob is the self-contained execution contract passed to an executor.
 // Built from a TaskRecord's fields by the scheduler.
 type ExecutionJob struct {
-	TaskID       string
+	TaskID string
+	// Kind mirrors the task's kind column (agent, internal, plan, ...). The
+	// agent.Executor branches on this to pick a Mode: kind=agent dispatches
+	// default to ModeLongLived (workers stay resident; explicit completion
+	// signal + heartbeat-driven idle reap), other kinds default to ModeOneShot
+	// (planner / reviewer-end-agent / bounded mechanical work).
+	Kind         string
 	RunID        int64
 	Description  string
 	SystemPrompt string

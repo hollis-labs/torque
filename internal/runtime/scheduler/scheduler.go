@@ -660,12 +660,25 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		// down, the executor's Run returns either a context error or
 		// exits successfully after honoring its grace window. We detect
 		// this by checking the dispatch context FIRST — if it's been
-		// cancelled we treat the run as cancelled regardless of what err
-		// is (the executor may return a legitimate result if it finished
-		// a stream between the cancel fire and the check). Marking
-		// status=canceled with a structured reason keeps retry budgets
-		// intact and gives operators a clear signal.
-		if capturedDispatchCtx.Err() != nil {
+		// cancelled we treat the run as cancelled UNLESS the executor
+		// returned a definitive result (Status set + err==nil).
+		//
+		// Why the carve-out (CW-20260519-0095): ModeLongLived workers
+		// signal completion by self-transitioning their task out of
+		// "doing", which fires the scheduler's global transition hook
+		// and cancels the dispatch ctx as a side-effect — semantically
+		// the same machinery that handles external operator cancels,
+		// but the worker's exit is success, not cancellation. The
+		// long-lived executor's wait loop disambiguates the two cases
+		// (peeking at task.Status when ctx fires) and reports the right
+		// Status; we honor that here rather than overwriting with
+		// "canceled". The override fires only when exec.Run did NOT
+		// produce a definitive result (nil result or empty Status) —
+		// that's the genuine "external cancel before the worker could
+		// conclude" case the cancel-write path was built for. The mock
+		// executor in TestCancel_* hits this branch by returning
+		// (nil, err) on ctx cancel; real long-lived workers don't.
+		if capturedDispatchCtx.Err() != nil && (result == nil || result.Status == "") {
 			reason := "task_transition_out_of_doing"
 			if err := s.stateWriter.Submit(context.Background(), "scheduler_run_canceled", func(tx *sqlstore.WriteTx) error {
 				if err := tx.CompleteRun(capturedRunID, sqlstore.RunCompletion{
@@ -978,6 +991,7 @@ func (s *Scheduler) publishProgress(taskID string, runID int64, event executor.E
 func (s *Scheduler) buildJob(task sqlstore.TaskRecord, runID int64) *executor.ExecutionJob {
 	job := &executor.ExecutionJob{
 		TaskID:       task.ID,
+		Kind:         task.Kind,
 		RunID:        runID,
 		Description:  task.Description,
 		SystemPrompt: task.SystemPrompt,
