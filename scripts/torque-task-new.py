@@ -90,9 +90,13 @@ def main() -> int:
     p.add_argument("--sprint-id")
     p.add_argument("--parent-id")
     p.add_argument("--phase-id")
-    p.add_argument("--executor", default=PIPELINE_DEFAULTS["executor"])
-    # --profile defaults are resolved AFTER --no-pipeline so an explicit value
-    # the user passes always wins. None here means "use the per-pipeline default".
+    # --executor and --profile default to None sentinels so we can distinguish
+    # "user passed it" from "use the per-kind default". The API rejects a
+    # non-empty executor for kind=issue / kind=external; we only include
+    # executor in the payload when (a) the user passed --executor explicitly,
+    # or (b) kind is one of the executable kinds (agent/internal). Same logic
+    # protects --profile from being applied to non-executable kinds.
+    p.add_argument("--executor", default=None)
     p.add_argument("--profile", default=None)
     p.add_argument("--priority", type=int, default=PIPELINE_DEFAULTS["priority"])
     p.add_argument("--kind", default=PIPELINE_DEFAULTS["kind"])
@@ -114,21 +118,45 @@ def main() -> int:
     if args.no_pipeline:
         payload.update(NO_PIPELINE_OVERRIDES)
 
-    # Resolve profile: explicit --profile wins, otherwise use the resolved
-    # default (which is already correct in payload after --no-pipeline merge).
-    resolved_profile = args.profile if args.profile is not None else payload["agent_profile"]
+    # Executable kinds run a process; non-executable kinds (issue, plan,
+    # parent, external, …) MUST NOT carry an executor/profile or the API
+    # rejects them.
+    is_executable_kind = args.kind in ("agent", "internal")
+
+    # Resolve executor and profile: explicit --executor / --profile always
+    # wins; otherwise use the per-kind default. For non-executable kinds
+    # we omit both fields entirely.
+    if args.executor is not None:
+        resolved_executor = args.executor
+    elif is_executable_kind:
+        resolved_executor = payload["executor"]
+    else:
+        resolved_executor = None
+
+    if args.profile is not None:
+        resolved_profile = args.profile
+    elif is_executable_kind:
+        resolved_profile = payload["agent_profile"]
+    else:
+        resolved_profile = None
 
     payload.update({
         "title": args.title,
         "description": args.description or args.prompt,
         "system_prompt": args.prompt,
         "working_dir": args.working_dir,
-        "executor": args.executor,
-        "agent_profile": resolved_profile,
         "priority": args.priority,
         "kind": args.kind,
         "project_id": args.project_id,
     })
+    if resolved_executor is not None:
+        payload["executor"] = resolved_executor
+    else:
+        payload.pop("executor", None)
+    if resolved_profile is not None:
+        payload["agent_profile"] = resolved_profile
+    else:
+        payload.pop("agent_profile", None)
 
     metadata = {}
     if args.phase_id:

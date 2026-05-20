@@ -399,18 +399,23 @@ torque_task_create(
 )
 ```
 
-Then transition the new task to `review` immediately so it surfaces
-in the operator's review queue:
+Then walk the new task to `review` so it surfaces in the operator's
+review queue. The task FSM does not permit `todo → review` directly
+(legal transitions out of `todo` are `doing | blocked | paused |
+archived`); use the two-step path `todo → doing → review`:
 
 ```
+torque_task_transition(id="<wrap_task_id>", status="doing")
 torque_task_transition(id="<wrap_task_id>", status="review")
 ```
 
 Notes:
 - `kind=issue` does NOT auto-enqueue a reviewer end-agent. The
-  `review` status here is purely a UI-visibility signal.
+  `review` status here is purely a UI-visibility signal — the brief
+  `doing` traversal is a pure FSM walk, not actual execution.
 - `manual=true` is the safety-override default and is fine — the
-  task is informational; the operator won't dispatch it.
+  task is informational; the picker won't dispatch a `kind=issue`
+  task even if it were `manual=false`.
 - The `metadata.session_wrap.plan_id` back-pointer lets the operator
   jump from a wrap task to the plan that produced it.
 

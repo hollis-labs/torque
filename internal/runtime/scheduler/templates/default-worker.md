@@ -163,10 +163,21 @@ torque_task_checkpoint_emit(
 ## 6. The completion call
 
 Signal completion by self-transitioning your task to `review` via the
-loopback:
+loopback. Match the `reason` string to what actually happened — if
+section 5 was skipped (doc / comment / config-only task), do NOT name
+a PR URL or Copilot count.
+
+PR-producing task:
 
 ```
 torque_task_review(reason="Implementation complete; tests green; PR <url> opened; addressed N Copilot findings.")
+```
+
+Non-PR task (section 5 skipped — committed locally, summary in
+verification comment):
+
+```
+torque_task_review(reason="Deliverable committed; verification recorded in closing comment; no PR (doc/config-only).")
 ```
 
 This is the ModeLongLived equivalent of "end_of_turn". The substrate

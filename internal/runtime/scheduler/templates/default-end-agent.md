@@ -120,6 +120,10 @@ gating this PR ("we should refactor X in a separate PR", "the test
 for Y is thin but not blocking"), file new Torque tasks via the
 loopback's `torque_task_create`:
 
+The MCP tool surface requires `metadata` and `tags` to be passed as
+**JSON-encoded strings**, not native maps/arrays — the same shape the
+orchestrator template uses for planner creation. Example:
+
 ```
 torque_task_create(
   title="Follow-up: <short description>",
@@ -127,7 +131,7 @@ torque_task_create(
   kind="agent",
   project_id="<target's project_id>",
   agent_profile="implementer-long",
-  metadata={"source": "reviewer-followup", "source_task": "<target-id>"}
+  metadata="{\"source\":\"reviewer-followup\",\"source_task\":\"<target-id>\"}"
 )
 ```
 
@@ -143,11 +147,19 @@ advisory), close the target out **in this order**:
 
 ### Step 1: Apply the `agent-closed` tag
 
+`torque_task_get` returns an `{ok, data}` envelope with PascalCase
+fields under `data` — including `Data.Tags` for the existing tag
+list. `torque_task_update` expects `tags` as a **JSON-encoded string
+of the full replacement tag array** (it replaces, not appends).
+Compute the union, JSON-encode, and pass it as a string:
+
 ```
-target = torque_task_get(id="<target>")
-existing_tags = target.tags or []
+response = torque_task_get(id="<target>")
+existing_tags = response.data.Tags or []
 new_tags = sorted(set(existing_tags + ["agent-closed"]))
-torque_task_update(id="<target>", tags=new_tags)
+# Encode as a JSON-array string for the MCP tool:
+tags_json = json.dumps(new_tags)   # e.g. '["agent-closed","stability"]'
+torque_task_update(id="<target>", tags=tags_json)
 ```
 
 The tag is the filter the operator uses to find agent-completed work.
