@@ -84,7 +84,7 @@ const (
 	VerdictPassedNoEditsExpected
 )
 
-// EditingToolNames are the tool names whose presence-or-absence in the
+// editingToolNames are the tool names whose presence-or-absence in the
 // stream classifies a verdict. Mirrors the claude-code-side names; codex
 // uses identical tool labels for these primitives (Edit, Write, Bash,
 // MultiEdit, NotebookEdit). A worker that hasn't called ANY of these did
@@ -93,7 +93,21 @@ const (
 // Read-only tools (Read, Grep, Glob) are intentionally NOT in this list —
 // a worker that only read files and then signaled done deserves the
 // VerdictBlockedNoAction route because reading is not delivery.
-var EditingToolNames = []string{"Edit", "Write", "Bash", "MultiEdit", "NotebookEdit"}
+//
+// Unexported var (was EditingToolNames pre-review): external callers
+// could otherwise mutate the slice at runtime and silently change the
+// verdict classification. Use EditingTools() if a caller outside this
+// package legitimately needs to read the list.
+var editingToolNames = []string{"Edit", "Write", "Bash", "MultiEdit", "NotebookEdit"}
+
+// EditingTools returns a fresh copy of the canonical editing-tool name
+// list. Reserved for documentation / tooling consumers; the verdict
+// classification path consults editingToolNames directly.
+func EditingTools() []string {
+	out := make([]string, len(editingToolNames))
+	copy(out, editingToolNames)
+	return out
+}
 
 // VerifyWorkerCompletion is the engine-side completion check that fires
 // when a ModeLongLived worker self-transitions to "review". It does two
@@ -114,15 +128,38 @@ var EditingToolNames = []string{"Edit", "Write", "Bash", "MultiEdit", "NotebookE
 //     us — that itself implies the worktree had no work, but classifying
 //     here is unsafe because we cannot read the stream.jsonl).
 //   - stream.jsonl is missing or unreadable (forensic data unavailable;
-//     downgrade to no-verdict so we don't false-flag a working agent).
+//     downgrade to no-verdict so we don't false-flag a working agent
+//     whose stream sidecar degraded to no-op).
 //
-// Soft-error policy throughout. Failure to read git/stream is logged
-// upstream by the caller; the verifier never returns an error — bad
-// state collapses to SkipReason. The lifecycle then proceeds as if the
-// verification passed, preserving the pre-Phase-3 behavior on
+// Soft-error policy throughout. Failure to read git/stream is reported
+// via SkipReason; the verifier never returns an error — bad state
+// collapses to skipped-with-reason. The lifecycle then proceeds as if
+// the verification passed, preserving the pre-Phase-3 behavior on
 // environments where verification can't run.
-func VerifyWorkerCompletion(workdirRepoRoot, worktreePath, workspaceLogDir, base string) WorkerVerdict {
-	hist := readToolHistogram(workspaceLogDir)
+//
+// ctx bounds the git invocation so scheduler shutdown / per-task cancel
+// can tear the verifier down promptly. A nil ctx falls back to
+// context.Background; pass context.Background explicitly when the
+// caller has no ctx of its own.
+func VerifyWorkerCompletion(ctx context.Context, workdirRepoRoot, worktreePath, workspaceLogDir, base string) WorkerVerdict {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	hist, histOK := readToolHistogram(workspaceLogDir)
+	// histOK=false means we couldn't read stream.jsonl reliably (open
+	// failure, mid-read scan error). Treat as "forensic data
+	// unavailable" — the doc above promises we skip rather than
+	// classify on a degraded signal. Without this guard the empty-
+	// histogram path would force VerdictBlockedNoAction on every
+	// no-commit run, false-flagging working agents whose sidecar
+	// degraded to no-op.
+	if !histOK {
+		return WorkerVerdict{
+			Kind:             VerdictPassed,
+			ToolUseHistogram: hist,
+			SkipReason:       fmt.Sprintf("stream.jsonl at %s missing or unreadable; engine-side commit verification skipped", workspaceLogDir),
+		}
+	}
 	if worktreePath == "" {
 		return WorkerVerdict{
 			Kind:             VerdictPassed,
@@ -137,7 +174,7 @@ func VerifyWorkerCompletion(workdirRepoRoot, worktreePath, workspaceLogDir, base
 			SkipReason:       fmt.Sprintf("per-run worktree %s no longer present; engine-side commit verification skipped", worktreePath),
 		}
 	}
-	count, countErr := countCommitsOnRunBranch(worktreePath, base)
+	count, countErr := countCommitsOnRunBranch(ctx, worktreePath, base)
 	if countErr != nil {
 		return WorkerVerdict{
 			Kind:             VerdictPassed,
@@ -195,10 +232,14 @@ func (v WorkerVerdict) ApplyTo(currentStatus, currentReason string) (status, rea
 // returns the count instead of a boolean. Falls back through the same
 // preference order perRunBaseRef uses: origin/main → origin/HEAD → HEAD
 // when the supplied base doesn't resolve.
-func countCommitsOnRunBranch(worktreePath, base string) (int, error) {
+//
+// ctx bounds every git invocation in the fallback chain; callers
+// typically pass a short context.WithTimeout so a stuck-`git` (lock
+// contention, NFS hang) cannot wedge completion verification forever.
+func countCommitsOnRunBranch(ctx context.Context, worktreePath, base string) (int, error) {
 	candidates := preferredBases(base)
 	for _, ref := range candidates {
-		count, err := revListCount(worktreePath, ref+"..HEAD")
+		count, err := revListCount(ctx, worktreePath, ref+"..HEAD")
 		if err == nil {
 			return count, nil
 		}
@@ -224,8 +265,8 @@ func preferredBases(base string) []string {
 	return bases
 }
 
-func revListCount(worktreePath, rangeArg string) (int, error) {
-	cmd := exec.CommandContext(context.Background(), "git", "rev-list", "--count", rangeArg)
+func revListCount(ctx context.Context, worktreePath, rangeArg string) (int, error) {
+	cmd := exec.CommandContext(ctx, "git", "rev-list", "--count", rangeArg)
 	cmd.Dir = worktreePath
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -239,20 +280,32 @@ func revListCount(worktreePath, rangeArg string) (int, error) {
 }
 
 // readToolHistogram parses the worker's stream.jsonl file and returns a
-// map of tool name → invocation count. Best-effort: missing file, partial
-// reads, and malformed JSONL lines collapse to a zero/empty histogram —
-// the verification path treats an empty histogram as "no editing tools
-// fired", which is the conservative classification (routes to blocked
-// not failed).
-func readToolHistogram(workspaceLogDir string) map[string]int {
+// map of tool name → invocation count plus an `ok` flag reporting whether
+// the read completed cleanly. ok=true means the histogram is
+// authoritative — every tool_use line was either counted or
+// deliberately skipped (malformed JSON). ok=false means the data is
+// degraded:
+//
+//   - workspaceLogDir is empty (no log dir at all).
+//   - stream.jsonl could not be opened (missing, permissions, etc).
+//   - scanner.Err() returned a non-nil read error (I/O failure,
+//     ErrTooLong on a line exceeding maxStreamLine) — partial counts
+//     are useless for the classifier, which depends on completeness to
+//     distinguish "worker did nothing" from "we lost the data".
+//
+// Callers consult ok to skip verification rather than classifying on
+// a possibly-truncated histogram. The empty-histogram-as-no-action
+// heuristic from pre-review code false-flagged workers whose sidecar
+// degraded; the explicit ok signal closes that gap.
+func readToolHistogram(workspaceLogDir string) (map[string]int, bool) {
 	hist := map[string]int{}
 	if workspaceLogDir == "" {
-		return hist
+		return hist, false
 	}
 	p := filepath.Join(workspaceLogDir, "stream.jsonl")
 	f, err := os.Open(p)
 	if err != nil {
-		return hist
+		return hist, false
 	}
 	defer f.Close()
 	scanner := bufio.NewScanner(f)
@@ -271,6 +324,9 @@ func readToolHistogram(workspaceLogDir string) map[string]int {
 			} `json:"tool_use,omitempty"`
 		}
 		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
+			// Per-line JSON parse failures are tolerated — JSONL streams
+			// can have a partial trailing line on crash, and individual
+			// malformed lines don't invalidate the rest of the stream.
 			continue
 		}
 		if line.Type != "tool_use" || line.ToolUse == nil || line.ToolUse.Name == "" {
@@ -278,13 +334,20 @@ func readToolHistogram(workspaceLogDir string) map[string]int {
 		}
 		hist[line.ToolUse.Name]++
 	}
-	return hist
+	if err := scanner.Err(); err != nil {
+		// Any scanner error (I/O, ErrTooLong) means we have partial
+		// data. The classifier needs completeness to be honest — fall
+		// through to skip-with-reason rather than report incomplete
+		// counts as authoritative.
+		return hist, false
+	}
+	return hist, true
 }
 
 // sumEditingTools returns the total invocations of file-mutating tools.
 func sumEditingTools(hist map[string]int) int {
 	total := 0
-	for _, name := range EditingToolNames {
+	for _, name := range editingToolNames {
 		total += hist[name]
 	}
 	return total
@@ -307,7 +370,7 @@ func formatHistogram(hist map[string]int) string {
 	// the explicit sort the trailing extras would shuffle per call.
 	ordered := make([]string, 0, len(keys))
 	seen := map[string]struct{}{}
-	for _, k := range EditingToolNames {
+	for _, k := range editingToolNames {
 		if _, ok := hist[k]; ok {
 			ordered = append(ordered, k)
 			seen[k] = struct{}{}

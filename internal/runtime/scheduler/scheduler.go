@@ -782,14 +782,21 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 			"status": result.Status,
 			"cost":   result.Cost,
 		}
-		if len(result.ToolUseHistogram) > 0 {
-			runCompletedSSE["tool_use_histogram"] = result.ToolUseHistogram
-		}
-		if result.CommitsOnRunBranch > 0 {
+		// VerificationRan is the gate for the Phase 3 observability
+		// fields. Keying off VerificationRan (not off the content
+		// values being non-zero) preserves the 0-commit failure
+		// signal — without it, "engine counted 0 commits and the
+		// worker failed" would be indistinguishable from "engine
+		// didn't run" because the field would be omitted in both.
+		if result.VerificationRan {
+			runCompletedSSE["verification_ran"] = true
 			runCompletedSSE["commits_on_run_branch"] = result.CommitsOnRunBranch
-		}
-		if result.VerificationSkipReason != "" {
-			runCompletedSSE["verification_skip_reason"] = result.VerificationSkipReason
+			if result.ToolUseHistogram != nil {
+				runCompletedSSE["tool_use_histogram"] = result.ToolUseHistogram
+			}
+			if result.VerificationSkipReason != "" {
+				runCompletedSSE["verification_skip_reason"] = result.VerificationSkipReason
+			}
 		}
 		s.bus.Publish(SchedulerEvent{
 			Type:   "run.completed",
@@ -1207,24 +1214,33 @@ func mergeStringMaps(base map[string]string, overlay map[string]string) map[stri
 
 // runCompletedEventPayload renders the run_completed run_event payload as
 // JSON. Carries the canonical status/cost plus the Phase 3 worker-
-// verification observability fields (tool_use_histogram, commits_on_run_
-// branch, verification_skip_reason) when populated by the long-lived
-// executor. Operators inspecting run history see "did the worker actually
-// commit, and what did it touch?" without having to re-derive from
-// stream.jsonl.
+// verification observability fields (verification_ran, commits_on_run_
+// branch, tool_use_histogram, verification_skip_reason) when populated
+// by the long-lived executor. Operators inspecting run history see "did
+// the worker actually commit, and what did it touch?" without having to
+// re-derive from stream.jsonl.
+//
+// Gating: the verification fields are included iff result.VerificationRan
+// is true. Keying off the flag (not off the content values being
+// non-zero) preserves the 0-commit failure signal — a verified failure
+// with commits_on_run_branch=0 is exactly the signal monitors want to
+// see; omitting the field whenever it's 0 would make that case
+// indistinguishable from a ModeOneShot run where verification didn't
+// fire at all.
 func runCompletedEventPayload(result *executor.ExecutionResult) string {
 	payload := map[string]any{
 		"status": result.Status,
 		"cost":   result.Cost,
 	}
-	if len(result.ToolUseHistogram) > 0 {
-		payload["tool_use_histogram"] = result.ToolUseHistogram
-	}
-	if result.CommitsOnRunBranch > 0 {
+	if result.VerificationRan {
+		payload["verification_ran"] = true
 		payload["commits_on_run_branch"] = result.CommitsOnRunBranch
-	}
-	if result.VerificationSkipReason != "" {
-		payload["verification_skip_reason"] = result.VerificationSkipReason
+		if result.ToolUseHistogram != nil {
+			payload["tool_use_histogram"] = result.ToolUseHistogram
+		}
+		if result.VerificationSkipReason != "" {
+			payload["verification_skip_reason"] = result.VerificationSkipReason
+		}
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {

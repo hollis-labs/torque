@@ -1,10 +1,12 @@
 package scheduler
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,7 +25,7 @@ func TestVerifyWorkerCompletion_Passed(t *testing.T) {
 		{Tool: "Bash"},
 	})
 
-	verdict := VerifyWorkerCompletion("" /*repoRoot unused*/, worktreePath, logDir, "")
+	verdict := VerifyWorkerCompletion(context.Background(), "" /*repoRoot unused*/, worktreePath, logDir, "")
 	assert.Equal(t, VerdictPassed, verdict.Kind)
 	assert.Equal(t, 2, verdict.CommitCount)
 	assert.Equal(t, 2, verdict.ToolUseHistogram["Edit"])
@@ -42,7 +44,7 @@ func TestVerifyWorkerCompletion_FailedNoCommitsWithEdits(t *testing.T) {
 		{Tool: "Bash"},
 	})
 
-	verdict := VerifyWorkerCompletion("", worktreePath, logDir, "")
+	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "")
 	assert.Equal(t, VerdictFailedNoCommitsWithEdits, verdict.Kind)
 	assert.Equal(t, 0, verdict.CommitCount)
 	assert.Contains(t, verdict.Reason, "edits but no commits")
@@ -60,7 +62,7 @@ func TestVerifyWorkerCompletion_BlockedNoAction(t *testing.T) {
 		{Tool: "Grep"},
 	})
 
-	verdict := VerifyWorkerCompletion("", worktreePath, logDir, "")
+	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "")
 	assert.Equal(t, VerdictBlockedNoAction, verdict.Kind)
 	assert.Equal(t, 0, verdict.CommitCount)
 	assert.Contains(t, verdict.Reason, "scope unclear or task malformed")
@@ -72,7 +74,7 @@ func TestVerifyWorkerCompletion_BlockedNoAction(t *testing.T) {
 // the run_completed event has tool-use data.
 func TestVerifyWorkerCompletion_SkipsOnSharedMode(t *testing.T) {
 	logDir := writeStreamJSONL(t, []toolUseEntry{{Tool: "Edit"}})
-	verdict := VerifyWorkerCompletion("", "", logDir, "")
+	verdict := VerifyWorkerCompletion(context.Background(), "", "", logDir, "")
 	assert.Equal(t, VerdictPassed, verdict.Kind)
 	assert.NotEmpty(t, verdict.SkipReason)
 	assert.Equal(t, 1, verdict.ToolUseHistogram["Edit"])
@@ -85,22 +87,26 @@ func TestVerifyWorkerCompletion_SkipsOnSharedMode(t *testing.T) {
 // than mark the worker failed for an absent path.
 func TestVerifyWorkerCompletion_SkipsOnMissingWorktree(t *testing.T) {
 	logDir := writeStreamJSONL(t, []toolUseEntry{{Tool: "Edit"}})
-	verdict := VerifyWorkerCompletion("", filepath.Join(t.TempDir(), "does-not-exist"), logDir, "")
+	verdict := VerifyWorkerCompletion(context.Background(), "", filepath.Join(t.TempDir(), "does-not-exist"), logDir, "")
 	assert.Equal(t, VerdictPassed, verdict.Kind)
 	assert.Contains(t, verdict.SkipReason, "no longer present")
 }
 
 // TestVerifyWorkerCompletion_SkipsOnMissingStreamLog covers the "forensic
-// data unavailable" path: the worktree exists but stream.jsonl is
-// missing. Histogram comes back empty, but verification still runs and
-// classifies based on commits alone — which means a worker that
-// committed gets VerdictPassed even without histogram evidence.
-func TestVerifyWorkerCompletion_PassedEvenWithMissingStreamLog(t *testing.T) {
+// data unavailable" path: stream.jsonl is missing or unreadable, so the
+// histogram can't be authoritative. Per the readToolHistogram ok-false
+// contract, this short-circuits to VerdictPassed with a SkipReason —
+// the verifier refuses to classify on partial data. Even a worker that
+// landed commits ends up in the skip branch here, because we hit the
+// histogram check before counting commits; that's deliberate — without
+// histogram completeness, a 0-commit run can't be safely classified
+// either, and treating the two paths uniformly avoids a footgun.
+func TestVerifyWorkerCompletion_SkipsOnMissingStreamLog(t *testing.T) {
 	worktreePath := makeGitRepoWithCommits(t, 1)
 
-	verdict := VerifyWorkerCompletion("", worktreePath, filepath.Join(t.TempDir(), "no-logs"), "")
+	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, filepath.Join(t.TempDir(), "no-logs"), "")
 	assert.Equal(t, VerdictPassed, verdict.Kind)
-	assert.Equal(t, 1, verdict.CommitCount)
+	assert.Contains(t, verdict.SkipReason, "missing or unreadable")
 	assert.Empty(t, verdict.ToolUseHistogram)
 }
 
@@ -153,9 +159,31 @@ not-json-at-all
 {"type":"tool_use","tool_use":{"name":"Edit"}}
 `
 	require.NoError(t, os.WriteFile(logPath, []byte(content), 0o644))
-	hist := readToolHistogram(dir)
+	hist, ok := readToolHistogram(dir)
+	assert.True(t, ok, "malformed JSONL lines should not fail the scanner — per-line parse errors are swallowed")
 	assert.Equal(t, 2, hist["Edit"])
 	assert.Equal(t, 1, hist["Bash"])
+}
+
+// TestReadToolHistogram_ReportsMissingFile pins the ok=false contract for
+// the "stream sidecar degraded to no-op" case. Without this, the verifier
+// would treat the empty histogram as authoritative and false-flag the
+// run as VerdictBlockedNoAction.
+func TestReadToolHistogram_ReportsMissingFile(t *testing.T) {
+	dir := t.TempDir() // no stream.jsonl written
+	hist, ok := readToolHistogram(dir)
+	assert.False(t, ok, "missing stream.jsonl must surface as ok=false so the caller can skip")
+	assert.Empty(t, hist)
+}
+
+// TestReadToolHistogram_ReportsEmptyDir locks the empty-log-dir branch:
+// no log dir at all (test fixture or shared mode) must also surface
+// ok=false — the caller can't distinguish "worker did nothing" from
+// "we have no log to read" without it.
+func TestReadToolHistogram_ReportsEmptyDir(t *testing.T) {
+	hist, ok := readToolHistogram("")
+	assert.False(t, ok)
+	assert.Empty(t, hist)
 }
 
 // TestFormatHistogram_StableOrdering checks the histogram renders
@@ -179,9 +207,12 @@ type toolUseEntry struct {
 	Tool string
 }
 
-// writeStreamJSONL materializes a fake stream.jsonl in a tempdir's
-// logs/ subdir. Returns the LOGS DIR path (matching the shape Verify
-// WorkerCompletion expects — it joins "stream.jsonl" itself).
+// writeStreamJSONL materializes a fake stream.jsonl directly in a
+// tempdir and returns that dir as the LOGS DIR path the verifier should
+// consult. Production routes through <workspace>/logs/stream.jsonl;
+// the test fixture collapses the nesting because VerifyWorkerCompletion
+// joins "stream.jsonl" onto whatever path it gets — so the fixture's
+// flat tempdir is byte-equivalent to a logs/ subdir for the read.
 func writeStreamJSONL(t *testing.T, entries []toolUseEntry) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -231,10 +262,11 @@ func makeGitRepoWithCommits(t *testing.T, commits int) string {
 		mustGit(t, dir, "checkout", "-b", "fix/test-branch")
 	}
 	for i := 0; i < commits; i++ {
-		fname := filepath.Join(dir, "file-"+intToStr(i)+".txt")
-		require.NoError(t, os.WriteFile(fname, []byte("c"+intToStr(i)+"\n"), 0o644))
+		idx := strconv.Itoa(i)
+		fname := filepath.Join(dir, "file-"+idx+".txt")
+		require.NoError(t, os.WriteFile(fname, []byte("c"+idx+"\n"), 0o644))
 		mustGit(t, dir, "add", fname)
-		mustGit(t, dir, "commit", "-m", "test commit "+intToStr(i))
+		mustGit(t, dir, "commit", "-m", "test commit "+idx)
 	}
 	return dir
 }
@@ -245,10 +277,4 @@ func mustGit(t *testing.T, dir string, args ...string) {
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	require.NoErrorf(t, err, "git %v failed: %s", args, string(out))
-}
-
-func intToStr(i int) string {
-	// Tiny utility — avoid pulling strconv in for one call site (clarity
-	// > optimization).
-	return string(rune('0' + i))
 }
