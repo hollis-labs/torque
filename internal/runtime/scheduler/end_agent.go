@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"log"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"time"
@@ -55,6 +56,27 @@ const (
 	// so lifecycle processing cannot hang indefinitely on a stuck telemetry
 	// worker.
 	endAgentFailureCommentTimeout = 5 * time.Second
+
+	// endAgentEnqueueMaxAttempts bounds the retry loop around the serialized
+	// end-agent enqueue. The atomic NextTaskID+CreateTask inside one write
+	// transaction already eliminates the ID-collision race that made enqueue
+	// intermittent (CW-20260519-0081); the retry is belt-and-suspenders for a
+	// genuinely transient store error (e.g. a checkpointer-induced
+	// SQLITE_BUSY). After the last attempt fails the enqueue takes the
+	// observable failure path instead of silently leaving the target stuck.
+	endAgentEnqueueMaxAttempts = 3
+
+	// endAgentEnqueueBaseDelay seeds the exponential backoff between retry
+	// attempts. Without it the tight 3-attempt loop can burn the entire
+	// retry budget in microseconds and miss a transient SQLITE_BUSY that
+	// would have cleared in milliseconds (Copilot review on PR #77). The
+	// per-attempt delay doubles each time and is capped at maxDelay; jitter
+	// is drawn from [0, baseDelay) so concurrent retriers don't synchronise
+	// onto the same retry instant. Worst-case total backoff before falling
+	// to the observable failure path is bounded by (attempts-1) × maxDelay,
+	// so the budget can't deadlock lifecycle processing.
+	endAgentEnqueueBaseDelay = 10 * time.Millisecond
+	endAgentEnqueueMaxDelay  = 200 * time.Millisecond
 )
 
 //go:embed templates/default-end-agent.md
@@ -80,22 +102,37 @@ func shouldEnqueueEndAgent(task *sqlstore.TaskRecord, newStatus string) bool {
 }
 
 // enqueueEndAgent creates and inserts a kind=internal end-agent task
-// targeting `target`. Failures are logged but do NOT propagate — the
-// caller's transition has already committed and we'd otherwise leave
-// the target stuck at review on a transient enqueue error.
+// targeting `target`. Every kind=agent task that reaches `review` MUST get
+// exactly one reviewer enqueued, or the orchestrator stalls indefinitely
+// (CW-20260519-0081). Two properties make that deterministic:
+//
+//  1. Reliable enqueue. ID allocation and the INSERT run in ONE
+//     writeq-serialized transaction (NextTaskID + CreateTask inside a single
+//     stateWriter.Submit). The previous implementation called
+//     store.NextTaskID() and store.CreateTask() as two separate auto-commit
+//     statements: another concurrent task creation could claim the same
+//     MAX(id)+1 between them, and the losing INSERT failed a UNIQUE
+//     constraint. That error was logged and swallowed — the intermittent
+//     "ph-1 reviewer fired, ph-2 did not" signature. Holding the writer lock
+//     across SELECT-MAX and INSERT closes the race against every other
+//     writer.
+//
+//  2. Observable failure. If the enqueue still cannot be persisted after a
+//     bounded retry, failEndAgentEnqueue posts a `[system/end-agent] failed
+//     to enqueue` comment on the target and emits an
+//     `end_agent_enqueue_failed` run_event. The orchestrator greps target
+//     comments for the `[system/end-agent]` prefix, so this turns a silent
+//     stall into a signal it can escalate on.
+//
+// Failures never propagate to the caller: the target's transition to
+// `review` has already committed and must stand.
 //
 // Bypasses service.Task.Create on purpose: that path force-flips
 // manual=true (CW-20260417-0133 safety override) and the end-agent
-// must auto-dispatch. Direct store.CreateTask with audited fields is
+// must auto-dispatch. A writeq-serialized CreateTask with audited fields is
 // the only correct insertion point here.
 func (lm *LifecycleManager) enqueueEndAgent(target *sqlstore.TaskRecord) {
 	template, templatePath := loadEndAgentTemplate()
-
-	endID, err := lm.store.NextTaskID()
-	if err != nil {
-		log.Printf("[end-agent] next task id: %v", err)
-		return
-	}
 
 	meta, err := json.Marshal(map[string]any{
 		"end_agent": endAgentMetadata{
@@ -104,12 +141,11 @@ func (lm *LifecycleManager) enqueueEndAgent(target *sqlstore.TaskRecord) {
 		},
 	})
 	if err != nil {
-		log.Printf("[end-agent] marshal metadata for %s: %v", target.ID, err)
+		lm.failEndAgentEnqueue(target, "marshal metadata: "+err.Error())
 		return
 	}
 
 	rec := &sqlstore.TaskRecord{
-		ID:                   endID,
 		Title:                "end-agent: " + target.ID,
 		Description:          "Disposition audit for " + target.ID + ". V1 reviewer (CW-20260503-0019).",
 		Status:               "todo",
@@ -137,20 +173,85 @@ func (lm *LifecycleManager) enqueueEndAgent(target *sqlstore.TaskRecord) {
 		EpicID:               target.EpicID,
 	}
 
-	if err := lm.store.CreateTask(rec); err != nil {
-		log.Printf("[end-agent] enqueue for target=%s: %v", target.ID, err)
+	var (
+		endID   string
+		lastErr error
+	)
+	for attempt := 1; attempt <= endAgentEnqueueMaxAttempts; attempt++ {
+		lastErr = lm.stateWriter.Submit(context.Background(), "lifecycle_enqueue_end_agent", func(tx *sqlstore.WriteTx) error {
+			id, err := tx.NextTaskID()
+			if err != nil {
+				return err
+			}
+			rec.ID = id
+			if err := tx.CreateTask(rec); err != nil {
+				return err
+			}
+			// applyDefaults inside CreateTask rewrites MaxRetries=0 → 3 (an
+			// int field can't distinguish "explicitly zero" from "use
+			// default"). Stamp the real 0 back in the SAME transaction so
+			// AC5 (no retry on reviewer failure) holds atomically with the
+			// insert.
+			if err := tx.SetTaskMaxRetries(id, 0); err != nil {
+				return err
+			}
+			endID = id
+			return nil
+		})
+		if lastErr == nil {
+			break
+		}
+		log.Printf("[end-agent] enqueue attempt %d/%d for target=%s: %v",
+			attempt, endAgentEnqueueMaxAttempts, target.ID, lastErr)
+		if attempt < endAgentEnqueueMaxAttempts {
+			// Backoff between retries with exponential progression + jitter.
+			// Gives the writer lock a chance to clear instead of burning the
+			// budget on back-to-back failures (Copilot review on PR #77).
+			backoff := endAgentEnqueueBaseDelay << (attempt - 1)
+			if backoff > endAgentEnqueueMaxDelay {
+				backoff = endAgentEnqueueMaxDelay
+			}
+			backoff += time.Duration(rand.Int63n(int64(endAgentEnqueueBaseDelay)))
+			time.Sleep(backoff)
+		}
+	}
+	if lastErr != nil {
+		lm.failEndAgentEnqueue(target, lastErr.Error())
 		return
 	}
-	// applyDefaults rewrites MaxRetries=0 → 3 inside CreateTask (the
-	// store can't distinguish "explicitly zero" from "use default"
-	// across an int field). Stamp the real 0 back via UpdateTask, which
-	// uses *int and respects pointer-to-zero. AC5: no retry on reviewer
-	// failure.
-	zero := 0
-	if err := lm.store.UpdateTask(endID, sqlstore.TaskUpdate{MaxRetries: &zero}); err != nil {
-		log.Printf("[end-agent] zero-retry override for %s: %v", endID, err)
-	}
 	log.Printf("[end-agent] enqueued %s for target=%s (template=%s)", endID, target.ID, templatePath)
+}
+
+// failEndAgentEnqueue is the observable failure path for an end-agent that
+// could not be enqueued. It posts the canonical `[system/end-agent] failed to
+// enqueue` comment on the target — the same author prefix the orchestrator
+// greps for end-agent activity — and emits an `end_agent_enqueue_failed`
+// run_event for postmortem + SSE observers. Without this the target would sit
+// at `review` with no reviewer and no signal, and the orchestrator would
+// stall until its 30-minute backstop (CW-20260519-0081 incident).
+func (lm *LifecycleManager) failEndAgentEnqueue(target *sqlstore.TaskRecord, reason string) {
+	log.Printf("[end-agent] ENQUEUE FAILED for target=%s: %s", target.ID, reason)
+
+	content := EndAgentAuthor + " failed to enqueue reviewer for " + target.ID
+	if reason != "" {
+		content += ": " + reason
+	}
+	content += " — target stays at `review`; no reviewer will run. Orchestrator/human follow-up required."
+	ctx, cancel := context.WithTimeout(context.Background(), endAgentFailureCommentTimeout)
+	defer cancel()
+	if err := lm.telemetry.AddComment(ctx, &sqlstore.CommentRecord{
+		EntityType: sqlstore.EntityTypeTask,
+		EntityID:   target.ID,
+		Author:     EndAgentAuthor,
+		Content:    content,
+	}); err != nil {
+		log.Printf("[end-agent] add enqueue-failure comment for target=%s: %v", target.ID, err)
+	}
+
+	writeRunEvent(context.Background(), lm.telemetry, 0, target.ID, "end_agent_enqueue_failed", map[string]any{
+		"target_task_id": target.ID,
+		"reason":         reason,
+	})
 }
 
 // loadEndAgentTemplate resolves the V1 reviewer template content. Lookup
