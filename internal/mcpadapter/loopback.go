@@ -153,7 +153,8 @@ Example: {} or {"id":"<your-own-task-id>"}`),
 
 	a.addTool(mcp.NewTool("torque_task_checkpoint_emit",
 		mcp.WithDescription(fmt.Sprintf(`Emit a typed HITL checkpoint on your own task — the help-asking primitive. The task_id is implicit (loopback context).
-Use when blocked, when scope is unclear, or when a decision needs a human. Workers MUST NOT exit silently — emit a checkpoint and the substrate will redispatch you with the operator response. Cancel with torque_task_checkpoint_respond once the answer is consumed.
+Use when blocked, when scope is unclear, or when a decision needs a human. Workers MUST NOT exit silently — emit a checkpoint and wait for the operator to respond (or cancel) from a dashboard. The substrate then redispatches you with the response in task.metadata.checkpoint_responses[correlation_id]; read it on your next turn with torque_task_get and incorporate it into your next action.
+Lifecycle: emit (status=pending) → operator responds via the cross-task tool (status=responded) OR operator cancels (status=canceled) → substrate redispatches you with the response (if any) parked on your task metadata. The worker does NOT call torque_task_checkpoint_respond to acknowledge or close — that tool CREATES the response on a still-pending checkpoint and is intended for the dashboard / operator side.
 Canonical HITL types: %s, %s, %s. Payload contracts: pr_review={pr_url,title?,summary?,branch?,checklist?}; approval={title,prompt,context?,options?}; message={subject?,message,severity?,context?}.
 Response shape: data = {<CheckpointRecord fields>} — singleton with correlation_id, status="pending".
 Example: {"type":"%s","payload_json":"{\"title\":\"Need DB creds\",\"prompt\":\"Should I block until provided or skip the migration step?\"}"}`,
@@ -164,12 +165,12 @@ Example: {"type":"%s","payload_json":"{\"title\":\"Need DB creds\",\"prompt\":\"
 	), a.handleLoopbackCheckpointEmit)
 
 	a.addTool(mcp.NewTool("torque_task_checkpoint_respond",
-		mcp.WithDescription(`Resolve a pending checkpoint on your own task with a JSON response. Only checkpoints whose task_id matches the loopback's bound task are accepted — passing a correlation_id for another task's checkpoint returns an error.
-Use to consume a checkpoint response after you have acted on it (so a later redispatch does not re-process the same response). Most workers do NOT need this — the substrate parks responses in task.metadata.checkpoint_responses[corr] and the redispatch contract documents how to handle them; respond is for workers that explicitly close the loop.
+		mcp.WithDescription(`CREATE a response on a still-pending checkpoint that lives on your own task. Transitions the checkpoint from status=pending → status=responded. Only checkpoints whose task_id matches the loopback's bound task are accepted — passing a correlation_id for another task's checkpoint returns an error. Responding to a non-pending checkpoint (already responded, canceled, or timed out) returns a conflict error.
+This tool exists for narrow self-service cases where a worker decides on its own behalf — e.g. an automated approval flow where the worker handles both sides of the loop. The typical worker DOES NOT call this: when a human operator responds to your help-asking checkpoint from a dashboard, the substrate parks the response in task.metadata.checkpoint_responses[correlation_id] and redispatches you automatically. Read it from torque_task_get and act on it; do NOT call respond to "consume" or "acknowledge" — there is no acknowledge primitive, and calling respond on a checkpoint someone else already responded to will fail with conflict.
 Typed response contracts: pr_review={decision:"approve|request_changes|comment",summary?,comments?,required_changes?}; approval={decision:"approved|rejected|needs_info",comment?}; message={acknowledged:boolean,reply?}.
 Response shape: data = {<CheckpointRecord fields>} — singleton, status="responded".
 Example: {"correlation_id":"01HK...","response_json":"{\"decision\":\"approved\",\"comment\":\"Proceeding.\"}"}`),
-		mcp.WithString("correlation_id", mcp.Required(), mcp.Description("Checkpoint correlation_id (ULID)")),
+		mcp.WithString("correlation_id", mcp.Required(), mcp.Description("Checkpoint correlation_id (ULID); must point at a still-pending checkpoint on the loopback's bound task")),
 		mcp.WithString("response_json", mcp.Required(), mcp.Description("JSON response matching the checkpoint type's HITL response schema")),
 	), a.handleLoopbackCheckpointRespond)
 }

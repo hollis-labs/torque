@@ -107,10 +107,18 @@ torque_task_checkpoint_emit(
 Use `type="pr_review"` for PR review/merge decisions, `type="approval"`
 for explicit approve/reject decisions, and `type="message"` for FYI
 gates. The checkpoint is durable — operators see it in their dashboard
-and respond via `torque_task_checkpoint_respond`. The response lands
-in your `task.metadata.checkpoint_responses` and the substrate
-redispatches you (`CW-20260518-0064`) so you can read the response and
-proceed.
+and respond from there. The response then lands in your
+`task.metadata.checkpoint_responses` (keyed by correlation_id) and the
+substrate redispatches you (`CW-20260518-0064`). On your next turn,
+call `torque_task_get` and read that map; act on each response you
+have not already handled.
+
+DO NOT call `torque_task_checkpoint_respond` yourself to "acknowledge"
+or "consume" the response — there is no acknowledge primitive. Respond
+CREATES the response on a still-pending checkpoint and is for
+self-service flows only (e.g. a worker that handles both sides of an
+automated approval); calling it on a checkpoint someone else already
+responded to fails with a conflict error.
 
 Fallback for non-decision blockers (e.g. environmental issues):
 prefix a `torque_comment_add` with `[help-requested]` so operators see
