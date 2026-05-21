@@ -407,12 +407,16 @@ func writeChildTask(t *testing.T, store *sqlstore.Store, childID, planID, status
 
 // TestSessionLifecycleHook_ObserveComment_SuppressedWhenChildStillDoing
 // is the CW-20260510-0064 acceptance test: the layer-2 marker observer
-// must NOT stop the orchestrator session when a child task is still in
-// progress (`doing` or `review`). The orchestrator on the agentic-execution
+// must NOT stop the orchestrator session when a child task's executor is
+// still active (status=doing). The orchestrator on the agentic-execution
 // run at 2026-05-10T05:18-05:21 emitted session-complete on the false
 // signal that its only-active child had crashed; the substrate had no
 // child-progress check and obediently SIGTERM'd the orchestrator,
 // abandoning 5 of 6 phase-1 children. This test pins the fix.
+//
+// CW-20260519-0132 narrowed the guard: `review` children no longer
+// suppress (see TestSessionLifecycleHook_ObserveComment_AllowedWhenChildAtReview).
+// `doing` remains a hallucination-shape and is still suppressed here.
 func TestSessionLifecycleHook_ObserveComment_SuppressedWhenChildStillDoing(t *testing.T) {
 	store := newHookTestStore(t)
 	bus := scheduler.NewEventBus()
@@ -458,34 +462,39 @@ func TestSessionLifecycleHook_ObserveComment_SuppressedWhenChildStillDoing(t *te
 		"WARN must name the plan id for forensic traceability")
 	assert.Contains(t, out, "SES-CW0064-1",
 		"WARN must name the session id for forensic traceability")
-	assert.Contains(t, out, "child task still in progress",
+	assert.Contains(t, out, "child task still doing",
 		"WARN must explain WHY the stop was suppressed")
 }
 
-// TestSessionLifecycleHook_ObserveComment_SuppressedWhenChildAtReview is
-// the same gate as the doing case; review is also in-flight (the reviewer
-// end-agent is closing it). The orchestrator should not be stopped while
-// the reviewer is still working.
-func TestSessionLifecycleHook_ObserveComment_SuppressedWhenChildAtReview(t *testing.T) {
+// TestSessionLifecycleHook_ObserveComment_AllowedWhenChildAtReview pins
+// the CW-20260519-0132 narrowing of the CW-20260510-0064 guard. Children
+// in `review` are being audited by the reviewer end-agent on a SEPARATE
+// session; the orchestrator standing down at that point is the canonical
+// happy path (dispatch work complete, async review will close them).
+// Suppressing here previously trapped sessions in Status=running,
+// Terminal=false until an operator manually POSTed /stop.
+func TestSessionLifecycleHook_ObserveComment_AllowedWhenChildAtReview(t *testing.T) {
 	store := newHookTestStore(t)
 	bus := scheduler.NewEventBus()
 	defer bus.Close()
 	stopper := &stubStopper{getStatus: StatusRunning}
 	hook := NewSessionLifecycleHook(bus, store, stopper)
 
-	writePlanWithSession(t, store, "CW-PLAN-CW0064-2", "doing", "SES-CW0064-2")
-	writeChildTask(t, store, "CW-CHILD-CW0064-2", "CW-PLAN-CW0064-2", "review")
+	writePlanWithSession(t, store, "CW-PLAN-CW0132-1", "doing", "SES-CW0132-1")
+	writeChildTask(t, store, "CW-CHILD-CW0132-1", "CW-PLAN-CW0132-1", "review")
 
 	hook.ObserveComment(context.Background(), &sqlstore.CommentRecord{
 		EntityType: sqlstore.EntityTypeTask,
-		EntityID:   "CW-PLAN-CW0064-2",
+		EntityID:   "CW-PLAN-CW0132-1",
 		Author:     "[system/orchestrator/v0]",
-		Content:    "[system/orchestrator/session-complete] premature exit",
+		Content:    "[system/orchestrator/session-complete] dispatch done; reviewer will close",
 	})
 
-	time.Sleep(100 * time.Millisecond)
-	assert.Equal(t, int32(0), stopper.StopCount(),
-		"layer-2 stop must be suppressed while a child is at review (reviewer end-agent in flight)")
+	require.Eventually(t, func() bool {
+		return stopper.StopCount() == 1
+	}, time.Second, 10*time.Millisecond,
+		"layer-2 stop must fire when only review children remain (reviewer end-agent runs in its own session)")
+	assert.Equal(t, []string{"SES-CW0132-1"}, stopper.StopCalled())
 }
 
 // TestSessionLifecycleHook_ObserveComment_AllowedWhenChildrenTerminal
@@ -582,7 +591,7 @@ func TestSessionLifecycleHook_HasInProgressChild_DBErrorIsConservative(t *testin
 		"empty planID must not trigger suppression (independent of DB state)")
 
 	// Tag this assertion onto strings for stable greppability.
-	const inProgressMarker = "child task still in progress"
+	const inProgressMarker = "child task still doing"
 	assert.True(t, strings.HasPrefix(inProgressMarker, "child"),
 		"sentinel string for grep traceability")
 }
