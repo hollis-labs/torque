@@ -36,8 +36,8 @@ github.com/hollis-labs/go-agent-context v0.1.0 h1:P1iobN0NSzZrARqD6Ui7290Vc14HyL
 github.com/hollis-labs/go-agent-context v0.1.0/go.mod h1:P2HWny4uyq96KAMS7eWMhs24sGooAuVJNvXN+3FrvKU=
 github.com/hollis-labs/go-agent-launch v0.3.5 h1:YNffpuMtA/n0l1gaBSQxgtoyIFlBRTE8kgAqBgKxUYg=
 github.com/hollis-labs/go-agent-launch v0.3.5/go.mod h1:LKS9xKT+zyckf42FMbUqfcLl7OwqEBEz/MgOXDc2aVs=
-github.com/hollis-labs/go-agent-sessions v0.9.5 h1:fGNtF4Ewtu20Wq1YUwwMu32ZjrTg3yBl9Cm02PnF+AE=
-github.com/hollis-labs/go-agent-sessions v0.9.5/go.mod h1:43q5MrOpmLhPviKG9/s4VX0hq4+XPv+dOqiBtI++6Po=
+github.com/hollis-labs/go-agent-sessions v0.10.0 h1:8Mtywo+miEIiINxttljJqffOsHI3j46KLbnFkbqaQj0=
+github.com/hollis-labs/go-agent-sessions v0.10.0/go.mod h1:43q5MrOpmLhPviKG9/s4VX0hq4+XPv+dOqiBtI++6Po=
 github.com/hollis-labs/go-apppaths v0.1.0 h1:LJQv483BhOoizLL4qKwsLcCbM0lQoVrNvksJ1thycd4=
 github.com/hollis-labs/go-apppaths v0.1.0/go.mod h1:b3gOdAFgSYY9ZT7VUooAczFdb6o0C2xSGQa7ktcyw30=
 github.com/hollis-labs/go-llm-contracts v0.1.0 h1:AzN35sz1vwXzClgHpx3SWede+U5TiRTGdwIuS7XHYEw=
@@ -50,8 +50,8 @@ github.com/hollis-labs/go-messaging v0.2.0 h1:JypqjXMcgyFBbLmX+NlwTxJuwIAAjKd/3Q
 github.com/hollis-labs/go-messaging v0.2.0/go.mod h1:tMiHRx7QHV1GWw5pZ1khnursbIQuzikScSRXWVdP8nk=
 github.com/hollis-labs/go-modelsdev v0.1.0 h1:z2w23Si1Oquv/MzgXdefL6p4NxGVNROj97tbsLXiQNU=
 github.com/hollis-labs/go-modelsdev v0.1.0/go.mod h1:NIdXwrU1i/vq8dnKCbI2SQ7FfnH2jKSYpC8nhK0QVaM=
-github.com/hollis-labs/go-providers v0.21.0 h1:HmM5jz5JbdVJSbiyEkIf7wWJ6OlvGWvp03uDKowKUAw=
-github.com/hollis-labs/go-providers v0.21.0/go.mod h1:Y0WQHyW7gIj0ooxyvq2uDqnEHAyOOqVhB2miNiajZ2Q=
+github.com/hollis-labs/go-providers v0.23.0 h1:Ujd+jwhQ7JvpYoH0miZnRnwHxSFpX7j3BhUCbQz2xLM=
+github.com/hollis-labs/go-providers v0.23.0/go.mod h1:Y0WQHyW7gIj0ooxyvq2uDqnEHAyOOqVhB2miNiajZ2Q=
 github.com/hollis-labs/go-queue v0.1.1 h1:dJ8i4XB0DtUznzI4Kh6RkUBzHYOV4VCa4SYNfZq/+d8=
 github.com/hollis-labs/go-queue v0.1.1/go.mod h1:wAP95gDz9kxAhcCWaR4e07Jz54OvFpiNEq+5ERgt2/E=
 github.com/hollis-labs/go-runner v0.4.0 h1:NtfdvcugeOtCBzKnjIPNq7oMWhvcaQ3nWveyHWqX+CA=
