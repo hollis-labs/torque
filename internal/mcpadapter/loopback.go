@@ -35,6 +35,8 @@ func timeParseRFC3339(s string) (time.Time, error) { return time.Parse(time.RFC3
 //   - torque_task_subtodo_done               — task_id implicit
 //   - torque_task_checkpoint_emit            — ask-for-help (CW-20260519-0095 Phase 2)
 //   - torque_task_checkpoint_respond         — respond to own checkpoint
+//   - torque_aar_submit                      — file the run's After-Action
+//     Report (CW-20260519-0088)
 //
 // Deterministic lifecycle (started, exited, timeout) is NOT in this catalog
 // — the executor wrapper drives those off go-runner events.
@@ -186,6 +188,8 @@ Example: {"envelope_ids":["01HK...","01HJ..."]}`),
 			mcp.Items(map[string]any{"type": "string"}),
 		),
 	), a.handleLoopbackSteeringDismiss)
+
+	a.registerLoopbackAARTool()
 
 	a.addTool(mcp.NewTool("torque_task_checkpoint_respond",
 		mcp.WithDescription(`CREATE a response on a still-pending checkpoint that lives on your own task. Transitions the checkpoint from status=pending → status=responded. Only checkpoints whose task_id matches the loopback's bound task are accepted — passing a correlation_id for another task's checkpoint returns an error. Responding to a non-pending checkpoint (already responded, canceled, or timed out) returns a conflict error.

@@ -11,6 +11,7 @@ Start with:
 - [architecture/sqlite-concurrency-pattern.md](architecture/sqlite-concurrency-pattern.md) — the production SQLite concurrency pattern and reuse guidance
 - [hitl-workflows.md](hitl-workflows.md) — typed human-in-the-loop checkpoint workflow contracts
 - [agent-execution-environment.md](agent-execution-environment.md) — the per-run worktree + permission-mode contract for orchestrated agent runs
+- [aar-system.md](aar-system.md) — After-Action Report schema, submission protocol, and `torque aar` query CLI
 - [architecture/sqlite-test-infra.md](architecture/sqlite-test-infra.md) — why shared SQLite fixtures default to pooled temp-file databases
 
 Older files under `docs/architecture/` and `docs/superpowers/` are historical design notes, working specs, or prior-art research. They are not the canonical source for current behavior unless a fresh doc links to them explicitly.

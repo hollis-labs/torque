@@ -25,7 +25,12 @@ type loopbackFixture struct {
 	loopback *mcpadapter.Adapter
 	global   *mcpadapter.Adapter
 	taskID   string
+	storeRef *sqlstore.Store
 }
+
+// store exposes the underlying sqlstore.Store for tests that need to seed
+// rows directly (runs, artifacts) ahead of exercising a loopback tool.
+func (fix *loopbackFixture) store() *sqlstore.Store { return fix.storeRef }
 
 func setupLoopback(t *testing.T) *loopbackFixture {
 	t.Helper()
@@ -54,6 +59,7 @@ func setupLoopback(t *testing.T) *loopbackFixture {
 		loopback: mcpadapter.NewLoopback(svc, taskID),
 		global:   global,
 		taskID:   taskID,
+		storeRef: store,
 	}
 }
 
