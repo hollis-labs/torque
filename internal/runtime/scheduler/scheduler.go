@@ -341,6 +341,28 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 	log.Printf("[picker] tick=%d candidates=%d picked=%d skipped_by_reason=%s",
 		tickN, decisions.Candidates, len(tasks), formatSkipCounts(decisions.Counts))
 
+	// scheduler.dispatch_skipped — surface the same per-tick counts to
+	// the EventBus so GUI / supervisor agents can answer "why isn't
+	// anything dispatching?" without log-scraping. Suppressed when nothing
+	// was skipped to avoid steady-state event churn (steady-state idle
+	// scheduler is already covered by scheduler.tick).
+	// CW-20260519-0126.
+	if len(decisions.Counts) > 0 {
+		counts := make(map[string]interface{}, len(decisions.Counts))
+		for k, v := range decisions.Counts {
+			counts[k] = v
+		}
+		s.bus.Publish(SchedulerEvent{
+			Type: "scheduler.dispatch_skipped",
+			Data: map[string]interface{}{
+				"tick":       tickN,
+				"candidates": decisions.Candidates,
+				"picked":     len(tasks),
+				"counts":     counts,
+			},
+		})
+	}
+
 	// Per-task debug log: one line per skipped candidate. Gated behind
 	// TORQUE_SCHEDULER_DEBUG so steady-state operators don't drown in
 	// per-tick noise.

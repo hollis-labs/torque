@@ -27,6 +27,29 @@ type TaskTransitionObserver interface {
 	ObserveTaskTransition(ctx context.Context, taskID, fromStatus, toStatus string)
 }
 
+// PlanPhaseEvent describes a structural change to a plan's phases[]. Kind
+// is one of "added" | "removed". For "added", Name and Order carry the
+// new phase's metadata; for "removed" they are empty. Used by
+// CW-20260519-0126 so durable agents (orchestrator, project manager) can
+// react to plan structural changes without polling torque_plan_get.
+type PlanPhaseEvent struct {
+	Kind      string // "added" | "removed"
+	PlanID    string
+	PhaseID   string
+	PhaseName string // populated for "added"
+	Order     int    // populated for "added"
+}
+
+// PlanPhaseObserver is invoked synchronously after PlanService.AddPhase or
+// PlanService.RemovePhase successfully writes the updated plan metadata.
+// Implementations must be non-blocking — the observer fires on the
+// request path. Mirrors the TaskTransitionObserver / CommentObserver
+// pattern so the daemon can bridge service-layer events onto the
+// scheduler.EventBus.
+type PlanPhaseObserver interface {
+	ObservePlanPhase(ctx context.Context, ev PlanPhaseEvent)
+}
+
 // CommentService provides business logic for entity comments.
 //
 // As of CW-20260503-0003 the comments table is polymorphic — comments are

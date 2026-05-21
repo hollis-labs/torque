@@ -351,6 +351,12 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	log.Printf("[serve] scheduler precheck: window=%s (threshold %.0f%%) capabilities=%s worktree=%s",
 		sched.Precheck.Window, sched.Precheck.WindowThreshold*100, sched.Precheck.Capabilities, sched.Precheck.Worktree)
 
+	// daemon.up — emitted once at serve startup so durable agents
+	// reacting to harness restarts can re-fetch state and clear stale
+	// assumptions. PID + binary mtime are enough to distinguish "same
+	// process" from "redeployed binary" (CW-20260519-0126).
+	publishDaemonUp(sched.EventBus())
+
 	// SSE bridge: scheduler.EventBus → httpserver.SSEHub
 	bridge := httpserver.NewSchedulerBridge(handler.SSEHub(), sched.EventBus())
 
@@ -443,4 +449,36 @@ func runServe(ctx context.Context, ln net.Listener) error {
 		return serveErr
 	}
 	return nil
+}
+
+// publishDaemonUp emits a one-shot `daemon.up` SchedulerEvent so durable
+// agents reacting to harness restarts know a new serve process is alive.
+// Payload carries pid + binary_mtime + started_at; the binary mtime is a
+// best-effort fingerprint that distinguishes "same process restarted" from
+// "redeployed binary" without requiring a build-stamped version constant
+// to flow through here. Errors resolving the executable path are tolerated
+// silently — the event still publishes with the pid + start time, which
+// is enough signal for "the daemon is up" reactions. CW-20260519-0126.
+func publishDaemonUp(bus *scheduler.EventBus) {
+	if bus == nil {
+		return
+	}
+	pid := os.Getpid()
+	startedAt := time.Now().UTC().Format(time.RFC3339Nano)
+
+	payload := map[string]interface{}{
+		"pid":        pid,
+		"started_at": startedAt,
+	}
+	if exe, err := os.Executable(); err == nil && exe != "" {
+		if info, err := os.Stat(exe); err == nil {
+			payload["binary_path"] = exe
+			payload["binary_mtime"] = info.ModTime().UTC().Format(time.RFC3339Nano)
+		}
+	}
+
+	bus.Publish(scheduler.SchedulerEvent{
+		Type: "daemon.up",
+		Data: payload,
+	})
 }

@@ -138,6 +138,17 @@ func AgentDeps(
 			}
 		}
 	}
+
+	// CW-20260519-0126 — plan structural-change emission. AddPhase /
+	// RemovePhase fire service.PlanPhaseObserver, which the emitter
+	// bridges onto the scheduler.EventBus as plan.phase_added /
+	// plan.phase_removed. Closes the 2026-05-19 orchestrator stand-down
+	// gap (no event told it ph-1 had been removed).
+	if bus != nil && svc != nil && svc.Plan != nil {
+		if emitter := agent.NewPlanPhaseEmitter(bus); emitter != nil {
+			svc.Plan.SetPhaseObserver(emitter)
+		}
+	}
 	return deps, closer, nil
 }
 
