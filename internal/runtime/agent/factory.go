@@ -110,7 +110,21 @@ func adapterFor(profile config.AgentProfile, profileName string, kind RuntimeKin
 		// JSON-RPC raw-bytes escape hatch).
 		switch kind {
 		case RuntimeKindJsonRpcStdio:
-			return provider.NewCodexAdapterAppServer(), baseCaps, nil
+			appServer := provider.NewCodexAdapterAppServer()
+			// bypassPermissions → codex no-sandbox (danger-full-access).
+			// codex's default workspace-write sandbox blocks the MCP
+			// loopback (HTTP) + mux unix socket, so an orchestrated agent
+			// can't reach mux_message_send / torque_task_review
+			// (CW-20260521-0024 GAP C). codex's approval/sandbox vocab is
+			// disjoint from Claude's permission_mode (see config.go), so
+			// this is an explicit cross-map: when the operator opts out of
+			// permission gating via permission_mode: bypassPermissions,
+			// honor it for codex's sandbox too. Leaves the default
+			// (workspace-write) intact for non-bypass profiles.
+			if profile.ResolvedPermissionMode() == config.PermissionModeBypass {
+				appServer.SandboxMode = "danger-full-access"
+			}
+			return appServer, baseCaps, nil
 		case RuntimeKindSubprocess, "":
 			return provider.NewCodexAdapter(), baseCaps, nil
 		default:
