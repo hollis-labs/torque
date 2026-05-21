@@ -314,6 +314,30 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		bootDirExtraArgs = append([]string(nil), prepared.Argv[1:]...)
 	}
 
+	// opencode serve-http hot-fix: `opencode serve` does NOT accept
+	// `--dir <path>` (that's an `opencode run` flag) and exits printing
+	// help-to-stderr when an unknown flag arrives, producing the
+	// "process exited before printing listen URL" failure mode at the
+	// go-agent-sessions serve-http startup gate. The providerplant
+	// resolver currently emits OpencodeBootDirSpec.ProjectDirArg
+	// ("--dir {{.ProjectDir}}") unconditionally regardless of runtime;
+	// for serve-http mode the projectDir is already conveyed via
+	// spawnWorkdir (cwd) + OPENCODE_CONFIG_DIR env, so dropping the
+	// bootdir-derived argv splice is safe.
+	//
+	// Discovered 2026-05-21 during the PR #92 smoke test of profile
+	// opencode-claude-long against opencode 1.15.6 (4 consecutive
+	// runs failed ~300ms each before this fix).
+	//
+	// Substrate-side follow-up: providerplant.DefaultResolver should
+	// suppress ProjectDirArg when plan.Runtime == RuntimeServeHTTP
+	// (a go-agent-launch matrix or providerplant patch). When that
+	// lands, this Torque-side branch becomes redundant and can be
+	// removed.
+	if profile.Provider == "opencode" && runtimeKind == RuntimeKindServeHTTP {
+		bootDirExtraArgs = nil
+	}
+
 	// Merge the bootdir-derived env amendments (CODEX_HOME /
 	// OPENCODE_CONFIG_DIR) that providerplant.Plant resolved into
 	// prepared.Env. Torque's composeEnv already produced the base
