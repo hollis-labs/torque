@@ -25,7 +25,7 @@ parked in `blocked` even if you signaled `review`.
 
 ## 2. What "done" means
 
-"Done" is a four-part contract. All four must be true before you
+"Done" is a five-part contract. All five must be true before you
 signal completion:
 
 1. **Changes are committed** on a branch in the worktree. Edits
@@ -38,7 +38,10 @@ signal completion:
    for Go repos; `npm run build && npm test` for JS; whatever the
    repo's CONTRIBUTING / CLAUDE.md / README says). The captured
    output goes into your closing comment (see step 4).
-4. **You self-transitioned the task** via the loopback (see step 5).
+4. **You filed an After-Action Report** via `torque_aar_submit` (see
+   step 6). The AAR is the team's queryable substrate for DX / process
+   feedback — every run, even a clean one.
+5. **You self-transitioned the task** via the loopback (see step 7).
    The session continues running until you signal — there is no
    end-of-turn auto-exit.
 
@@ -160,7 +163,44 @@ torque_task_checkpoint_emit(
 )
 ```
 
-## 6. The completion call
+## 6. File the After-Action Report
+
+Before you signal completion, file an After-Action Report via the
+loopback's `torque_aar_submit` tool. The AAR captures process / DX
+feedback the operator cannot infer from commits, comments, or error logs
+— what was clunky, what could be automated, what manual step the system
+should have done, sharp edges, and concrete suggestions for the next run.
+See `docs/aar-system.md` for the full schema and storage convention
+(`CW-20260519-0088`).
+
+The substrate auto-fills run identity (task_id, run_id, agent_profile,
+project/sprint/epic, timestamps, title); you supply the structured
+reflection answers. Submit exactly once per run, AFTER your verification
+comment and BEFORE `torque_task_review` / `torque_task_blocked`. Empty
+reflection strings are acceptable for sections you have nothing to say
+about — a "no friction" AAR is still a queryable signal — but every key
+MUST be present so the document shape stays uniform.
+
+```
+torque_aar_submit(reflection_json='{
+  "summary": "Stood up X; tests green; PR opened.",
+  "outcome": "success",
+  "clunky": "<what was clunky, confusing, or surprising>",
+  "automatable": "<what could become a deterministic harness step>",
+  "manual_should_be_auto": "<what manual step should the system have done>",
+  "sharp_edges": "<sharp edges hit and workarounds>",
+  "suggestions": "<concrete suggestions for the next run (system/DX/process)>",
+  "errors": ["transient gh rate limit on first push"]
+}')
+```
+
+Valid outcomes: `success` | `partial` | `blocked` | `failed` (empty
+defaults to `success`). The tool returns the created artifact record so
+you can reference its id in your review-note if useful. If the submission
+fails (validation, store error), surface it via a comment but do NOT
+block completion on it — the AAR is post-hoc reflection, not a gate.
+
+## 7. The completion call
 
 Signal completion by self-transitioning your task to `review` via the
 loopback. Match the `reason` string to what actually happened — if
@@ -192,7 +232,7 @@ mechanical tasks that don't produce code), you may transition
 straight to `done` semantically via the same `torque_task_review`
 call; the lifecycle manager's on_done rule resolves the final state.
 
-## 7. The help-asking protocol
+## 8. The help-asking protocol
 
 Workers MUST NOT give up silently. If you are blocked, scope-
 mismatched, or need a human decision, EMIT a checkpoint via the
@@ -227,7 +267,7 @@ it on the task. The substrate doesn't auto-redispatch on this signal,
 so use it for "I'm taking a different path" disclosures rather than
 "please answer before I can proceed."
 
-## 7. The scope-mismatch protocol
+## 9. The scope-mismatch protocol
 
 If the task description is unclear, contradicts the codebase, or you
 cannot identify a concrete action within your first few tool calls,
@@ -246,7 +286,7 @@ the engine's signal that the task was malformed; the Phase 3
 verification will park it as `blocked` with reason "scope unclear or
 task malformed". Asking is always better than silently failing.
 
-## 8. In-flight steering
+## 10. In-flight steering
 
 The operator may inject a user-turn message into your live session at
 any point during your run (the steering bridge,
@@ -255,7 +295,7 @@ real user turn: respond, act on it, then continue. Examples include
 "have you committed yet?", "skip the migration step", or
 "the third test is flaky — try again."
 
-## 9. Reading your own task
+## 11. Reading your own task
 
 To read your own task record (including
 `metadata.checkpoint_responses`), use the loopback's `torque_task_get`
@@ -266,7 +306,7 @@ Inspect `metadata.checkpoint_responses` before doing unrelated work
 on each turn — it is a map keyed by checkpoint correlation_id and
 contains responses you have not yet incorporated.
 
-## 10. Failure modes to avoid (the hall of shame)
+## 12. Failure modes to avoid (the hall of shame)
 
 - **Edits without commits** → engine reports "edits but no commits";
   task → blocked. Always commit before signaling.
@@ -280,3 +320,7 @@ contains responses you have not yet incorporated.
 - **Working in `RepoRoot` instead of `Workdir`** → your edits land
   outside the per-run worktree and engine verification sees no
   commits on the run-branch.
+- **Skipping the After-Action Report** → the team loses the run's DX
+  / process signal. The AAR (`torque_aar_submit`) is the team's
+  queryable reflection log; missing AARs degrade aggregation and the
+  reviewer end-agent may flag them.

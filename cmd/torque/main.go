@@ -29,6 +29,7 @@ func main() {
 	root.AddCommand(pathCmd())
 	root.AddCommand(serveCmd())
 	root.AddCommand(costBackfillCmd())
+	root.AddCommand(aarCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
