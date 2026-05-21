@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
+	"strconv"
 	"time"
 
 	"github.com/hollis-labs/go-sqlite/txutil"
@@ -456,26 +456,56 @@ func (w *WriteTx) SetTaskAgentProfile(id, agentProfile string) error {
 }
 
 // NextTaskID allocates the next sequential task ID inside the write
-// transaction. Unlike Store.NextTaskID — which runs SELECT MAX(id) on a
+// transaction. Unlike Store.NextTaskID — which runs the lookup on a
 // connection that is released before the caller's subsequent INSERT — this
 // runs under the transaction's held writer lock. When paired with CreateTask
-// in the same WriteTx, the SELECT-MAX and the INSERT are atomic against every
+// in the same WriteTx, the SELECT and the INSERT are atomic against every
 // other writer (writeq-serialized or direct), so two concurrent allocations
 // can never collide on the same ID.
+//
+// Implementation note (PR #86 follow-up): we do not wrap the id column in
+// CAST(substr(id, ?) AS INTEGER) for MAX, because doing so prevents SQLite
+// from using the PRIMARY KEY index for early termination — it forces a full
+// scan over every matching prefix row to evaluate the expression. Instead,
+// we use a two-step query, both bounded by a half-open range on id
+// (id >= prefix AND id < prefix_upper) so SQLite picks the
+// sqlite_autoindex_tasks_1 covering index. Step 1 finds the widest suffix
+// width for today (`MAX(LENGTH(id))`); step 2 finds `MAX(id)` restricted to
+// that width — within a single suffix width, lex order == numeric order, so
+// MAX(id) is correct AND the optimizer can run it as a reverse scan with
+// early exit on first match. EXPLAIN QUERY PLAN shows
+// `SEARCH ... USING COVERING INDEX (id>? AND id<?)` for both steps.
+//
+// A plain MAX(id) would still misbehave at the 9999→10000 boundary because
+// lex order says "9999" > "10000" when widths differ; the length filter in
+// step 2 keeps us within a single width and avoids that pitfall.
 func (w *WriteTx) NextTaskID() (string, error) {
 	prefix := "CW-" + time.Now().UTC().Format("20060102") + "-"
+	lo, hi := taskIDRange(prefix)
 
-	var maxID sql.NullString
-	if err := w.tx.QueryRow(`SELECT MAX(id) FROM tasks WHERE id LIKE ?`, prefix+"%").Scan(&maxID); err != nil {
+	var maxLen sql.NullInt64
+	if err := w.tx.QueryRow(
+		`SELECT MAX(LENGTH(id)) FROM tasks WHERE id >= ? AND id < ?`,
+		lo, hi,
+	).Scan(&maxLen); err != nil {
 		return "", err
 	}
 
-	seq := 1
-	if maxID.Valid && maxID.String != "" {
-		parts := strings.Split(maxID.String, "-")
-		if len(parts) == 3 {
-			_, _ = fmt.Sscanf(parts[2], "%d", &seq)
-			seq++
+	seq := int64(1)
+	if maxLen.Valid {
+		var maxID sql.NullString
+		if err := w.tx.QueryRow(
+			`SELECT MAX(id) FROM tasks WHERE id >= ? AND id < ? AND LENGTH(id) = ?`,
+			lo, hi, maxLen.Int64,
+		).Scan(&maxID); err != nil {
+			return "", err
+		}
+		if maxID.Valid && len(maxID.String) > len(prefix) {
+			n, err := strconv.ParseInt(maxID.String[len(prefix):], 10, 64)
+			if err != nil {
+				return "", fmt.Errorf("NextTaskID: parsing suffix of %q: %w", maxID.String, err)
+			}
+			seq = n + 1
 		}
 	}
 	return fmt.Sprintf("%s%04d", prefix, seq), nil

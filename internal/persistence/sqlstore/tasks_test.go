@@ -1,9 +1,12 @@
 package sqlstore_test
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/testutil/sqlitetest"
@@ -563,4 +566,64 @@ func TestNextTaskID(t *testing.T) {
 	id2, err := store.NextTaskID()
 	require.NoError(t, err)
 	assert.True(t, strings.HasSuffix(id2, "-0002"), "expected suffix -0002, got %s", id2)
+}
+
+// TestNextTaskID_AboveLexCeiling guards against the lex-MAX(id) ceiling at
+// suffix 9999. Before the CAST-to-INTEGER fix, MAX(id) over the string id
+// kept returning "...-9999" because lexicographic comparison sorts "9999"
+// greater than "10000". This froze allocation at -10000 and produced
+// UNIQUE-constraint failures on every subsequent insert. Both the
+// auto-commit and the in-transaction allocators must now step past 9999.
+func TestNextTaskID_AboveLexCeiling(t *testing.T) {
+	store := setupTestStore(t)
+
+	// Skip if we're inside a UTC-midnight rollover window. Both the test
+	// seeds and the allocators under test derive "today" from time.Now(),
+	// so if the day flips between the two calls, the prefixes diverge and
+	// the assertion fails for reasons unrelated to the lex-MAX fix.
+	// 30s gives the rest of the test plenty of headroom on slow CI.
+	if untilMidnight := timeUntilUTCMidnight(); untilMidnight < 30*time.Second {
+		t.Skipf("skipping near UTC midnight (in %s) to avoid date-rollover flake", untilMidnight)
+	}
+
+	today := time.Now().UTC().Format("20060102")
+	prefix := "CW-" + today + "-"
+
+	// Seed the highest 4-digit row, a 5-digit row, and an 8-digit row
+	// (10000000) that lexicographically sorts below "9999" but is numerically
+	// the true max. A lex-MAX implementation would return "9999" and
+	// re-allocate "10000"; the index-friendly width-bucketed MAX returns
+	// 10000000 and allocates 10000001.
+	seed := []string{
+		prefix + "9999",
+		prefix + "10000",
+		prefix + "10000000",
+	}
+	for _, id := range seed {
+		require.NoError(t, store.CreateTask(sampleTask(id)))
+	}
+
+	want := fmt.Sprintf("%s%04d", prefix, 10000001)
+
+	id, err := store.NextTaskID()
+	require.NoError(t, err)
+	assert.Equal(t, want, id, "Store.NextTaskID must use numeric MAX, not lex MAX")
+
+	// Same contract for the in-transaction variant used by the writeq path.
+	tx, err := store.BeginWriteTx(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+
+	txID, err := tx.NextTaskID()
+	require.NoError(t, err)
+	assert.Equal(t, want, txID, "WriteTx.NextTaskID must use numeric MAX, not lex MAX")
+}
+
+// timeUntilUTCMidnight returns the duration from now until the next UTC
+// midnight. Used by tests that seed task IDs based on today's date so they
+// can skip rather than flake when "today" might change mid-test.
+func timeUntilUTCMidnight() time.Duration {
+	now := time.Now().UTC()
+	nextMidnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+	return nextMidnight.Sub(now)
 }
