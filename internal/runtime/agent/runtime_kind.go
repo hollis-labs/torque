@@ -142,12 +142,14 @@ func resolveRuntimeKind(profile config.AgentProfile, opts Options) (RuntimeKind,
 // specific extras (e.g. claude's CheckpointResume) are layered on top in
 // adapterFor.
 //
-// The lib's Runtime selector reads exactly one of {PTY, StreamingStdio,
-// JsonRpcStdio, ServeHTTP} from Capabilities to pick which session
-// implementation to spawn — they're mutually exclusive (enforced in
-// go-agent-sessions v0.10.0's Capabilities.Validate). All five kinds set
-// BinaryRequired=true here (every adapter today shells out to a CLI
-// binary).
+// The lib's Runtime selector reads at most one of {PTY, StreamingStdio,
+// JsonRpcStdio, ServeHTTP} from Capabilities to pick which long-lived
+// session implementation to spawn — those four are mutually exclusive
+// (enforced in go-agent-sessions v0.10.0's Capabilities.Validate).
+// Subprocess sets none of the lifecycle flags — it's the fallback shape
+// (one-shot fork-exec per turn), distinguished by absence rather than a
+// dedicated flag. All five kinds set BinaryRequired=true here (every
+// adapter today shells out to a CLI binary).
 func capabilitiesForRuntimeKind(kind RuntimeKind) agentsessions.Capabilities {
 	switch kind {
 	case RuntimeKindPTY:
