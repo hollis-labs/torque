@@ -31,8 +31,13 @@ import (
 //     The default per selectRuntimeKind is JsonRpcStdio;
 //     operators can opt back to print-mode by setting
 //     profile.RuntimeKind: subprocess.
-//   - opencode:    Subprocess only. No long-lived adapter exists in
-//     go-providers today.
+//   - opencode:    Subprocess (default, `opencode run --agent <name>`)
+//     or ServeHTTP (opt-in via profile.RuntimeKind=
+//     serve-http; spawns `opencode serve` and attaches
+//     via the child's HTTP API for long-lived multi-
+//     turn workers). The default per selectRuntimeKind
+//     stays Subprocess for back-compat; operators flip
+//     to ServeHTTP per-profile.
 //   - gemini:      Unsupported (PTY adapter removed in go-providers
 //     v0.12.0).
 //   - copilot:     Unsupported (same as gemini).
@@ -132,22 +137,41 @@ func adapterFor(profile config.AgentProfile, profileName string, kind RuntimeKin
 			return nil, agentsessions.Capabilities{}, fmt.Errorf(
 				"opencode provider requires Options.AgentProfile to be set (maps to opencode --agent)")
 		}
-		if kind != RuntimeKindSubprocess && kind != "" {
+		switch kind {
+		case RuntimeKindSubprocess, "":
+			// Subprocess (default): one-shot `opencode run --agent <name>`
+			// per turn. Suitable for bounded mechanical tasks
+			// (--no-pipeline). For V2-pipeline multi-turn workers use
+			// the ServeHTTP runtime instead.
+			adapter := provider.NewOpencodeAdapter()
+			adapter.Agent = profileName
+			// Thread profile.Model through so OpencodeAdapter.BuildArgs
+			// emits `--model <X>` BEFORE the positional prompt — opencode
+			// requires the model flag to precede the message arg. The
+			// generic `--model` suffix in agent.Boot's BuildArgs wrapper
+			// is suppressed for opencode (see boot.go's skipModelSuffix
+			// branch); without this assignment opencode would launch
+			// with whatever default the agent's opencode.json declares,
+			// ignoring the profile's Model field entirely.
+			adapter.Model = profile.Model
+			return adapter, baseCaps, nil
+		case RuntimeKindServeHTTP:
+			// Long-lived: spawn `opencode serve --port 0 --hostname
+			// 127.0.0.1`; go-agent-sessions' serveHttpSession (v0.10.0)
+			// captures the bound port from stdout, then attaches via
+			// the child's HTTP API for session + message endpoints +
+			// SSE streaming. The adapter (go-providers v0.23.0's
+			// NewOpencodeAdapterServeHTTP) only owns the argv shape;
+			// the I/O loop, attach fan-out, and session-id handling
+			// live in the consumer runtime.
+			adapter := provider.NewOpencodeAdapterServeHTTP()
+			adapter.Agent = profileName
+			adapter.Model = profile.Model
+			return adapter, baseCaps, nil
+		default:
 			return nil, agentsessions.Capabilities{}, fmt.Errorf(
-				"opencode provider only supports runtime kind subprocess; got %q (no long-lived adapter in go-providers today)", string(kind))
+				"opencode provider does not support runtime kind %q; supported: subprocess, serve-http", string(kind))
 		}
-		adapter := provider.NewOpencodeAdapter()
-		adapter.Agent = profileName
-		// Thread profile.Model through so OpencodeAdapter.BuildArgs emits
-		// `--model <X>` BEFORE the positional prompt — opencode requires
-		// the model flag to precede the message arg. The generic
-		// `--model` suffix in agent.Boot's BuildArgs wrapper is suppressed
-		// for opencode (see boot.go's skipModelSuffix branch); without
-		// this assignment opencode would launch with whatever default
-		// the agent's opencode.json declares, ignoring the profile's
-		// Model field entirely.
-		adapter.Model = profile.Model
-		return adapter, baseCaps, nil
 
 	case "":
 		return nil, agentsessions.Capabilities{}, fmt.Errorf(

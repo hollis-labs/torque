@@ -199,6 +199,12 @@ func mapProviderID(torqueProvider string) string {
 // (Torque's predates the shared one); this is the single conversion
 // point. An unrecognized kind is a hard error — Boot must not silently
 // downgrade to subprocess.
+//
+// agentlaunch.RuntimeServeHTTP added in v0.4.0 alongside go-agent-sessions
+// v0.10.0 (serve_http_session.go) + go-providers v0.23.0
+// (NewOpencodeAdapterServeHTTP). Without this case, profiles opting into
+// serve-http would fail Boot here with "unmappable runtime kind" before
+// the session is started.
 func mapRuntimeKind(k RuntimeKind) (agentlaunch.RuntimeKind, error) {
 	switch k {
 	case RuntimeKindSubprocess, "":
@@ -209,6 +215,8 @@ func mapRuntimeKind(k RuntimeKind) (agentlaunch.RuntimeKind, error) {
 		return agentlaunch.RuntimeStreamingStdio, nil
 	case RuntimeKindJsonRpcStdio:
 		return agentlaunch.RuntimeJsonRpcStdio, nil
+	case RuntimeKindServeHTTP:
+		return agentlaunch.RuntimeServeHTTP, nil
 	default:
 		return "", fmt.Errorf("unmappable runtime kind %q", string(k))
 	}

@@ -165,6 +165,11 @@ func TestSelectRuntimeKind(t *testing.T) {
 		{"profile override: codex subprocess (escape hatch)", "codex", "subprocess", RuntimeKindSubprocess, false},
 		{"profile override: claude pty (experiment)", "claude", "pty", RuntimeKindPTY, false},
 		{"profile override: claude-code streaming-stdio (explicit but redundant)", "claude-code", "streaming-stdio", RuntimeKindStreamingStdio, false},
+		// opencode long-lived opt-in: ServeHTTP via profile.RuntimeKind override.
+		// Default for opencode stays Subprocess (line above); this is the
+		// V2-pipeline multi-turn-worker opt-in path. Added 2026-05-21 with
+		// go-providers v0.23.0 + go-agent-sessions v0.10.0.
+		{"profile override: opencode serve-http (long-lived opt-in)", "opencode", "serve-http", RuntimeKindServeHTTP, false},
 
 		// Invalid profile kind.
 		{"invalid kind → error", "codex", "tui", "", true},
@@ -327,6 +332,58 @@ func TestAdapterFor_OpencodeWiring(t *testing.T) {
 			require.True(t, ok, "adapter should be *provider.OpencodeAdapter, got %T", adapter)
 			assert.Equal(t, tc.profileName, oa.Agent, "Agent should be set from profileName")
 			assert.Equal(t, tc.model, oa.Model, "Model should be threaded from profile.Model")
+		})
+	}
+}
+
+// TestAdapterFor_OpencodeServeHTTP verifies the long-lived opencode path:
+// when RuntimeKind=serve-http, adapterFor returns the go-providers
+// NewOpencodeAdapterServeHTTP() variant (which emits `opencode serve
+// --port 0 --hostname 127.0.0.1` argv) with go-agent-sessions Caps.ServeHTTP
+// set so the lib's session selector spawns serveHttpSession.
+//
+// Counterpart to TestAdapterFor_OpencodeWiring which covers the default
+// Subprocess (`opencode run --agent <name>`) path. Added 2026-05-21
+// alongside the Torque integration for the multi-provider rollout (Phase 1
+// follow-up — go-providers v0.23.0 + go-agent-sessions v0.10.0).
+func TestAdapterFor_OpencodeServeHTTP(t *testing.T) {
+	profile := config.AgentProfile{Provider: "opencode", Model: "opencode/big-pickle"}
+	adapter, caps, err := adapterFor(profile, "executor", RuntimeKindServeHTTP)
+	require.NoError(t, err)
+
+	// Caps shape: ServeHTTP=true; mutually exclusive with the other
+	// lifecycle flags (StreamingStdio/JsonRpcStdio/PTY). go-agent-sessions
+	// v0.10.0's Capabilities.Validate enforces the at-most-one rule.
+	assert.True(t, caps.BinaryRequired, "every adapter shells out to a CLI binary")
+	assert.True(t, caps.ServeHTTP, "ServeHTTP must be set so the lib spawns serveHttpSession")
+	assert.True(t, caps.ProviderSessionID, "ServeHTTP runtimes carry a provider-side session id (opencode `attach -c <id>`)")
+	assert.False(t, caps.StreamingStdio, "serve-http and streaming-stdio are mutually exclusive")
+	assert.False(t, caps.JsonRpcStdio, "serve-http and jsonrpc-stdio are mutually exclusive")
+	assert.False(t, caps.PTY, "serve-http and PTY are mutually exclusive")
+
+	// Adapter shape: go-providers v0.23.0's NewOpencodeAdapterServeHTTP
+	// returns *OpencodeAdapter (same type as the subprocess variant —
+	// the runtime-mode field is internal). Agent + Model are wired the
+	// same way as the subprocess path.
+	oa, ok := adapter.(*provider.OpencodeAdapter)
+	require.True(t, ok, "adapter should be *provider.OpencodeAdapter, got %T", adapter)
+	assert.Equal(t, "executor", oa.Agent, "Agent should be set from profileName")
+	assert.Equal(t, "opencode/big-pickle", oa.Model, "Model should be threaded from profile.Model")
+}
+
+// TestAdapterFor_OpencodeUnsupportedRuntimeKind locks the gate: opencode
+// only supports Subprocess + ServeHTTP. Other RuntimeKinds (e.g.
+// StreamingStdio, JsonRpcStdio, PTY) error with a clear message naming
+// the supported set — operator-actionable rather than a silent fall-
+// through.
+func TestAdapterFor_OpencodeUnsupportedRuntimeKind(t *testing.T) {
+	profile := config.AgentProfile{Provider: "opencode", Model: "opencode/big-pickle"}
+	for _, kind := range []RuntimeKind{RuntimeKindStreamingStdio, RuntimeKindJsonRpcStdio, RuntimeKindPTY} {
+		t.Run(string(kind), func(t *testing.T) {
+			_, _, err := adapterFor(profile, "executor", kind)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "supported: subprocess, serve-http",
+				"error should name the supported runtime kinds for operator triage")
 		})
 	}
 }

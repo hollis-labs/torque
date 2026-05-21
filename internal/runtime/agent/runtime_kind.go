@@ -28,6 +28,13 @@ import (
 //     `turn/start` per turn — SendInput's raw-bytes path will NOT work
 //     because the codex app-server rejects unframed JSON-RPC. Use
 //     SendTurn (in this package) which routes by RuntimeKind.
+//   - ServeHTTP: long-lived child exposing an HTTP API with server-
+//     sent events (opencode `serve`). go-agent-sessions spawns
+//     `opencode serve --port 0 --hostname 127.0.0.1`, captures the
+//     bound port from stdout, then attaches via the child's HTTP API
+//     for session + message endpoints. Added 2026-05-21 alongside
+//     go-providers v0.23.0 (NewOpencodeAdapterServeHTTP) +
+//     go-agent-sessions v0.10.0 (serve_http_session.go).
 //
 // The substrate's per-provider matrix lives in selectRuntimeKind below;
 // operators override per-profile via `profile.RuntimeKind: <kind>`.
@@ -38,6 +45,7 @@ const (
 	RuntimeKindPTY            RuntimeKind = "pty"
 	RuntimeKindStreamingStdio RuntimeKind = "streaming-stdio"
 	RuntimeKindJsonRpcStdio   RuntimeKind = "jsonrpc-stdio"
+	RuntimeKindServeHTTP      RuntimeKind = "serve-http"
 )
 
 // validate reports whether the value is a known kind. Empty is the
@@ -46,10 +54,10 @@ const (
 // non-default kind check string equality directly.
 func (rk RuntimeKind) validate() error {
 	switch rk {
-	case "", RuntimeKindSubprocess, RuntimeKindPTY, RuntimeKindStreamingStdio, RuntimeKindJsonRpcStdio:
+	case "", RuntimeKindSubprocess, RuntimeKindPTY, RuntimeKindStreamingStdio, RuntimeKindJsonRpcStdio, RuntimeKindServeHTTP:
 		return nil
 	default:
-		return fmt.Errorf("unknown runtime kind %q (expected: subprocess|pty|streaming-stdio|jsonrpc-stdio or empty for per-provider default)", string(rk))
+		return fmt.Errorf("unknown runtime kind %q (expected: subprocess|pty|streaming-stdio|jsonrpc-stdio|serve-http or empty for per-provider default)", string(rk))
 	}
 }
 
@@ -67,7 +75,9 @@ func (rk RuntimeKind) validate() error {
 //
 //     codex       → JsonRpcStdio  (app-server, JSON-RPC 2.0 over stdio)
 //     claude-code → StreamingStdio (NDJSON-over-stdin)
-//     opencode    → Subprocess     (no long-lived adapter exists)
+//     opencode    → Subprocess     (default; ServeHTTP is opt-in via
+//                                    profile.RuntimeKind=serve-http for
+//                                    long-lived multi-turn workers)
 //
 // `claude` (bare) was retired 2026-05-16 — it has no matrix entry and
 // adapterFor rejects it; use claude-code.
@@ -132,10 +142,14 @@ func resolveRuntimeKind(profile config.AgentProfile, opts Options) (RuntimeKind,
 // specific extras (e.g. claude's CheckpointResume) are layered on top in
 // adapterFor.
 //
-// The lib's Runtime selector reads exactly one of {PTY, StreamingStdio,
-// JsonRpcStdio} from Capabilities to pick which session implementation
-// to spawn. All four kinds set BinaryRequired=true here (every adapter
-// today shells out to a CLI binary).
+// The lib's Runtime selector reads at most one of {PTY, StreamingStdio,
+// JsonRpcStdio, ServeHTTP} from Capabilities to pick which long-lived
+// session implementation to spawn — those four are mutually exclusive
+// (enforced in go-agent-sessions v0.10.0's Capabilities.Validate).
+// Subprocess sets none of the lifecycle flags — it's the fallback shape
+// (one-shot fork-exec per turn), distinguished by absence rather than a
+// dedicated flag. All five kinds set BinaryRequired=true here (every
+// adapter today shells out to a CLI binary).
 func capabilitiesForRuntimeKind(kind RuntimeKind) agentsessions.Capabilities {
 	switch kind {
 	case RuntimeKindPTY:
@@ -155,6 +169,12 @@ func capabilitiesForRuntimeKind(kind RuntimeKind) agentsessions.Capabilities {
 			BinaryRequired:    true,
 			ProviderSessionID: true,
 			JsonRpcStdio:      true,
+		}
+	case RuntimeKindServeHTTP:
+		return agentsessions.Capabilities{
+			BinaryRequired:    true,
+			ProviderSessionID: true,
+			ServeHTTP:         true,
 		}
 	default:
 		// Subprocess + empty default both land here.
