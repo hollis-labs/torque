@@ -37,7 +37,7 @@ signal completion:
    repo's standard pipeline (e.g. `go build ./... && go test ./...`
    for Go repos; `npm run build && npm test` for JS; whatever the
    repo's CONTRIBUTING / CLAUDE.md / README says). The captured
-   output goes into your closing comment (see step 4).
+   output goes into your closing comment (see section 4).
 4. **You filed an After-Action Report** via `torque_aar_submit` (see
    step 6). The AAR is the team's queryable substrate for DX / process
    feedback — every run, even a clean one.

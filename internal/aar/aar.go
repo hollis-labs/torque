@@ -218,6 +218,27 @@ func Render(id Identity, r Reflection) string {
 	return b.String()
 }
 
+// NonEmptyErrors returns the subset of r.Errors that survives trimming —
+// i.e. entries whose strings.TrimSpace value is non-empty. This is the
+// canonical definition of "errors that actually render" used both by
+// Render (which drops empty/whitespace-only entries in the bulleted list)
+// and by downstream metadata bookkeeping (errors_count,
+// reflection-section "populated" predicate) so the markdown body and the
+// metadata blob stay in lockstep.
+func NonEmptyErrors(r Reflection) []string {
+	if len(r.Errors) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(r.Errors))
+	for _, e := range r.Errors {
+		if strings.TrimSpace(e) == "" {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
 // sectionBody returns the rendered body for a given reflection section. The
 // `errors` section renders as a bulleted list; everything else is the raw
 // string. Trailing whitespace is left to the renderer.
@@ -236,14 +257,12 @@ func sectionBody(r Reflection, key string) string {
 	case "suggestions":
 		return r.Suggestions
 	case "errors":
-		if len(r.Errors) == 0 {
+		errs := NonEmptyErrors(r)
+		if len(errs) == 0 {
 			return ""
 		}
 		var b strings.Builder
-		for _, e := range r.Errors {
-			if strings.TrimSpace(e) == "" {
-				continue
-			}
+		for _, e := range errs {
 			b.WriteString("- " + e + "\n")
 		}
 		return b.String()

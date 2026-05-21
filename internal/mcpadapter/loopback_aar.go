@@ -165,6 +165,12 @@ func (a *Adapter) handleLoopbackAARSubmit(ctx context.Context, req mcp.CallToolR
 
 	// Build the metadata blob. Anything queryable downstream lives here so
 	// the CLI aggregator can filter without parsing the markdown body.
+	//
+	// errors_count uses aar.NonEmptyErrors so it agrees with what Render
+	// actually emits (empty / whitespace-only entries are dropped from the
+	// bulleted list). reflection_populated uses the same predicate for the
+	// errors-section "is this populated" bit so the metadata and the
+	// markdown body stay in lockstep.
 	meta := map[string]any{
 		"schema":               aar.Schema,
 		"outcome":              string(outcome),
@@ -172,10 +178,18 @@ func (a *Adapter) handleLoopbackAARSubmit(ctx context.Context, req mcp.CallToolR
 		"project_id":           id.ProjectID,
 		"sprint_id":            id.SprintID,
 		"epic_id":              id.EpicID,
-		"started_at":           id.StartedAt.UTC().Format(time.RFC3339),
-		"ended_at":             id.EndedAt.UTC().Format(time.RFC3339),
 		"reflection_populated": reflectionPopulated(reflection),
-		"errors_count":         len(reflection.Errors),
+		"errors_count":         len(aar.NonEmptyErrors(reflection)),
+	}
+	// Timestamps: when no run record exists, both started_at and ended_at
+	// are meaningless (started_at would render as the zero time
+	// "0001-01-01T00:00:00Z" and ended_at would be a synthetic now() with
+	// no run to bracket). Omit them in that case so the metadata stays
+	// truthful — the artifact row's own created_at captures "when filed"
+	// already, and the run_lookup field below signals the gap.
+	if runRecordExisted {
+		meta["started_at"] = id.StartedAt.UTC().Format(time.RFC3339)
+		meta["ended_at"] = id.EndedAt.UTC().Format(time.RFC3339)
 	}
 	if !runRecordExisted {
 		meta["run_lookup"] = "missing_or_unavailable"
@@ -204,6 +218,12 @@ func (a *Adapter) handleLoopbackAARSubmit(ctx context.Context, req mcp.CallToolR
 // reflectionPopulated counts how many reflection sections the agent filled
 // with non-empty content. Stored in the artifact metadata as a quick "is
 // this a substantive AAR or a no-op submission" signal for CLI aggregation.
+//
+// The errors section is treated as populated only when at least one entry
+// survives aar.NonEmptyErrors (matching how aar.Render emits the bulleted
+// list — empty / whitespace-only entries are dropped). Without this
+// alignment a reflection with Errors=[""] would be counted as populated
+// while the rendered markdown body shows "_(none)_" for that section.
 func reflectionPopulated(r aar.Reflection) int {
 	n := 0
 	for _, s := range []string{
@@ -218,7 +238,7 @@ func reflectionPopulated(r aar.Reflection) int {
 			n++
 		}
 	}
-	if len(r.Errors) > 0 {
+	if len(aar.NonEmptyErrors(r)) > 0 {
 		n++
 	}
 	return n

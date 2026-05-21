@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -430,11 +431,10 @@ func parseDurationDays(s string) (time.Duration, error) {
 	return time.ParseDuration(s)
 }
 
+// parseInt64 parses a string into an int64 and rejects inputs with trailing
+// non-numeric characters (e.g. "123abc"). strconv.ParseInt requires the
+// whole string to consume successfully, unlike fmt.Sscanf("%d"), which
+// stops at the first non-digit and silently accepts the prefix.
 func parseInt64(s string) (int64, error) {
-	var n int64
-	_, err := fmt.Sscanf(strings.TrimSpace(s), "%d", &n)
-	if err != nil {
-		return 0, err
-	}
-	return n, nil
+	return strconv.ParseInt(strings.TrimSpace(s), 10, 64)
 }
