@@ -24,6 +24,9 @@ type buildLaunchPlanInput struct {
 	// Role is the human-readable role tag.
 	Role string
 
+	// SessionID is Torque's local agent session id for this boot.
+	SessionID string
+
 	// AgentFile is the parsed agent-file (nil when none supplied).
 	AgentFile *agentfile.AgentFile
 
@@ -51,6 +54,10 @@ type buildLaunchPlanInput struct {
 	// LoopbackURL is the task-scoped MCP loopback URL (empty when the
 	// loopback is disabled — the test path).
 	LoopbackURL string
+
+	// Options carries task identity and context fields used to plant
+	// worker-readable boot context files.
+	Options Options
 }
 
 // buildLaunchPlan assembles an agentlaunch.LaunchPlan from Torque
@@ -166,7 +173,7 @@ func buildLaunchPlan(in buildLaunchPlanInput) (agentlaunch.LaunchPlan, error) {
 			LoopbackURL: in.LoopbackURL,
 		},
 		Injection: agentlaunch.InjectionSpec{
-			NativeFiles: nativeFilesForLaunch(in.AgentFile),
+			NativeFiles: nativeFilesForLaunch(in),
 		},
 		// Torque autonomous dispatch is headless — no human at a TTY.
 		// `background` (not `interactive`) is the honest lifecycle stance
@@ -269,17 +276,17 @@ func mergePreparedEnv(base []string, amendments map[string]string) []string {
 	return out
 }
 
-// nativeFilesForLaunch projects Torque agent-file extras onto the
-// shared InjectionSpec.NativeFiles surface. Today this is a no-op
-// placeholder: Torque's agent-file persona already flows into the
-// planted CLAUDE.md/AGENTS.md via the composed SystemPrompt (BootPrompt
-// → PlantContext.SystemPrompt), so there is nothing to inject as a
-// separate native file. The hook exists so a future per-agent
-// skill/extra-context-file feature can populate it without
-// re-threading the plumbing.
+// nativeFilesForLaunch projects Torque-owned boot context onto the
+// shared InjectionSpec.NativeFiles surface. Agent-file persona still flows
+// into CLAUDE.md/AGENTS.md via BootPrompt; the raw context files here are
+// task-local facts the worker should not have to rediscover over MCP.
 //
-// When this starts returning entries, secrets must NOT appear in
-// NativeFile.Content — InjectionSpec is persisted at rest.
-func nativeFilesForLaunch(_ *agentfile.AgentFile) []agentlaunch.NativeFile {
-	return nil
+// Secrets must NOT appear in NativeFile.Content — InjectionSpec is persisted at
+// rest as part of the launch plan.
+func nativeFilesForLaunch(in buildLaunchPlanInput) []agentlaunch.NativeFile {
+	files := taskContextNativeFiles(in)
+	if len(files) == 0 {
+		return nil
+	}
+	return files
 }

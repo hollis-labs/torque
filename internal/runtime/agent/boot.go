@@ -191,6 +191,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		Profile:       profile,
 		AgentProfile:  opts.AgentProfile,
 		Role:          role,
+		SessionID:     sessID,
 		AgentFile:     agentFile,
 		AgentFilePath: opts.AgentFile,
 		RuntimeKind:   runtimeKind,
@@ -201,6 +202,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		SystemPrompt:  systemPrompt,
 		KickoffMD:     kickoffMD,
 		LoopbackURL:   loopbackURL,
+		Options:       opts,
 	})
 	if err != nil {
 		shutdownLoopbackHandle(loopback)

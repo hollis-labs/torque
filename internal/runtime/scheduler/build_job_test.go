@@ -48,6 +48,46 @@ func TestBuildJob_NilMetadataWhenInvalidJSON(t *testing.T) {
 	assert.Nil(t, job.Metadata)
 }
 
+func TestBuildJob_PopulatesPlantedBootIdentityFields(t *testing.T) {
+	sched, _ := setupBuildJobScheduler(t)
+	task := sqlstore.TaskRecord{
+		ID:          "CW-T-BOOT",
+		Title:       "Fix worker boot context",
+		Description: "Plant task context for workers.",
+		Status:      "doing",
+		Priority:    3,
+		Kind:        "agent",
+		ProjectID:   sql.NullString{String: "PRJ-BOOT", Valid: true},
+		ParentID:    sql.NullString{String: "CW-PARENT", Valid: true},
+		SprintID:    sql.NullString{String: "SPR-1", Valid: true},
+		EpicID:      sql.NullString{String: "EPIC-1", Valid: true},
+		DependsOn:   sql.NullString{String: `["CW-DEP-1","CW-DEP-2"]`, Valid: true},
+	}
+	job := sched.buildJob(task, 42)
+	assert.Equal(t, "CW-T-BOOT", job.TaskID)
+	assert.Equal(t, "Fix worker boot context", job.TaskTitle)
+	assert.Equal(t, "agent", job.Kind)
+	assert.Equal(t, "doing", job.TaskStatus)
+	assert.Equal(t, 3, job.TaskPriority)
+	assert.Equal(t, "PRJ-BOOT", job.ProjectID)
+	assert.Equal(t, "CW-PARENT", job.ParentID)
+	assert.Equal(t, "SPR-1", job.SprintID)
+	assert.Equal(t, "EPIC-1", job.EpicID)
+	assert.Equal(t, []string{"CW-DEP-1", "CW-DEP-2"}, job.DependsOn)
+}
+
+func TestBuildJob_InvalidDependsOnDoesNotPartiallyPopulate(t *testing.T) {
+	sched, _ := setupBuildJobScheduler(t)
+	task := sqlstore.TaskRecord{
+		ID:        "CW-T-BAD-DEPS",
+		Title:     "bad deps",
+		DependsOn: sql.NullString{String: `["CW-DEP-1",`, Valid: true},
+	}
+
+	job := sched.buildJob(task, 42)
+	assert.Nil(t, job.DependsOn)
+}
+
 func TestBuildJob_InheritsProjectContext(t *testing.T) {
 	sched, store := setupBuildJobScheduler(t)
 	project := &sqlstore.ProjectRecord{
