@@ -334,7 +334,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	// (a go-agent-launch matrix or providerplant patch). When that
 	// lands, this Torque-side branch becomes redundant and can be
 	// removed.
-	if profile.Provider == "opencode" && runtimeKind == RuntimeKindServeHTTP {
+	if shouldDropBootDirExtraArgs(profile.Provider, runtimeKind) {
 		bootDirExtraArgs = nil
 	}
 
@@ -639,10 +639,14 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 			if streamFanout == nil {
 				return
 			}
-			select {
-			case streamFanout <- ev:
-			default:
-			}
+			// forwardEventNonBlocking guards send-on-closed (defer recover)
+			// AND is non-blocking: a late codex JSON-RPC notification can be
+			// delivered by the reader goroutine after closeStreamFanout()
+			// has run during teardown — a raw `select { case streamFanout
+			// <- ev }` would panic the daemon on the closed channel. It also
+			// must never block the single jsonrpc reader goroutine on a full
+			// buffer. (Copilot PR #93.)
+			forwardEventNonBlocking(streamFanout, ev)
 		}
 		// codex thread/tokenUsage totals are cumulative; track the last
 		// seen values so each update emits a per-update delta

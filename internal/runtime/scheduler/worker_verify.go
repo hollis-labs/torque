@@ -100,6 +100,13 @@ const (
 // package legitimately needs to read the list.
 var editingToolNames = []string{"Edit", "Write", "Bash", "MultiEdit", "NotebookEdit"}
 
+// runtimeKindJsonRpcStdio mirrors agent.RuntimeKindJsonRpcStdio. It is
+// duplicated as a string literal here (not imported) because the agent
+// package imports this scheduler package for VerifyWorkerCompletion;
+// importing back would be a cycle. Keep in sync with
+// internal/runtime/agent/runtime_kind.go.
+const runtimeKindJsonRpcStdio = "jsonrpc-stdio"
+
 // EditingTools returns a fresh copy of the canonical editing-tool name
 // list. Reserved for documentation / tooling consumers; the verdict
 // classification path consults editingToolNames directly.
@@ -141,6 +148,15 @@ func EditingTools() []string {
 // can tear the verifier down promptly. A nil ctx falls back to
 // context.Background; pass context.Background explicitly when the
 // caller has no ctx of its own.
+//
+// runtimeKind is the session's RuntimeKind (e.g. "jsonrpc-stdio",
+// "streaming-stdio", "subprocess"; see internal/runtime/agent/runtime_kind.go),
+// passed by the caller from Session.RuntimeKind. It selects runtime-specific
+// classification: codex (runtimeKindJsonRpcStdio) has an unreliable
+// worktree-HEAD commit count, so a 0-commit reading is classified off the
+// projected tool histogram rather than treated as failure (see the
+// count==0 branch below). Empty / any other value uses the
+// runtime-agnostic path.
 func VerifyWorkerCompletion(ctx context.Context, workdirRepoRoot, worktreePath, workspaceLogDir, base, runtimeKind string) WorkerVerdict {
 	if ctx == nil {
 		ctx = context.Background()
@@ -202,7 +218,7 @@ func VerifyWorkerCompletion(ctx context.Context, workdirRepoRoot, worktreePath, 
 	// genuinely empty histogram still falls through to BlockedNoAction
 	// (truly idle worker). The commit-count gate above (count>0 → Passed)
 	// is unchanged and runtime-agnostic.
-	if runtimeKind == "jsonrpc-stdio" && len(hist) > 0 {
+	if runtimeKind == runtimeKindJsonRpcStdio && len(hist) > 0 {
 		v.Kind = VerdictPassed
 		v.SkipReason = "jsonrpc-stdio runtime: worktree-HEAD commit count unreliable for codex; tool activity present, trusting worker self-transition (CW-20260521-0024)"
 		return v

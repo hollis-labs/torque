@@ -198,6 +198,25 @@ func adapterFor(profile config.AgentProfile, profileName string, kind RuntimeKin
 	}
 }
 
+// shouldDropBootDirExtraArgs reports whether the bootdir-derived ExtraArgs
+// (providerplant's prepared.Argv[1:], e.g. opencode's `--dir <projectDir>`)
+// must be suppressed for the given provider + runtime kind before they are
+// spliced onto StartOptions.ExtraArgs.
+//
+// opencode serve-http is the only case today: `opencode serve` rejects the
+// `--dir` flag (a `run`-only flag) and exits printing help-to-stderr, which
+// surfaces as the go-agent-sessions "serve-http start: process exited before
+// printing listen URL" failure. The projectDir is already conveyed via spawn
+// cwd + OPENCODE_CONFIG_DIR, so dropping the splice is safe. Subprocess
+// opencode (and every other provider/runtime) keeps its ExtraArgs.
+//
+// The proper substrate fix is suppressing ProjectDirArg in go-agent-launch
+// providerplant when Runtime==ServeHTTP; this predicate is the Torque-side
+// interim and the single place the decision lives. Refs CW-20260521-0022.
+func shouldDropBootDirExtraArgs(provider string, kind RuntimeKind) bool {
+	return provider == "opencode" && kind == RuntimeKindServeHTTP
+}
+
 // profileIsDevMode reports whether the profile opts into Claude's
 // `--dangerously-skip-permissions` developer-mode flag. Forked from
 // cliexec.ProfileIsDevMode (which is being deleted in P6).
