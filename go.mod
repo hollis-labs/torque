@@ -7,7 +7,7 @@ require (
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/google/uuid v1.6.0
 	github.com/hollis-labs/go-agent-launch v0.4.0
-	github.com/hollis-labs/go-agent-sessions v0.10.1-0.20260522032905-c33167e7cf23
+	github.com/hollis-labs/go-agent-sessions v0.10.1-0.20260522041113-dc8abd91d712
 	github.com/hollis-labs/go-apppaths v0.1.0
 	github.com/hollis-labs/go-llm-types v0.1.0
 	github.com/hollis-labs/go-mcp-sanitize v0.1.0
