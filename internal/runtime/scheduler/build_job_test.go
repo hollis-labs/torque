@@ -76,6 +76,18 @@ func TestBuildJob_PopulatesPlantedBootIdentityFields(t *testing.T) {
 	assert.Equal(t, []string{"CW-DEP-1", "CW-DEP-2"}, job.DependsOn)
 }
 
+func TestBuildJob_InvalidDependsOnDoesNotPartiallyPopulate(t *testing.T) {
+	sched, _ := setupBuildJobScheduler(t)
+	task := sqlstore.TaskRecord{
+		ID:        "CW-T-BAD-DEPS",
+		Title:     "bad deps",
+		DependsOn: sql.NullString{String: `["CW-DEP-1",`, Valid: true},
+	}
+
+	job := sched.buildJob(task, 42)
+	assert.Nil(t, job.DependsOn)
+}
+
 func TestBuildJob_InheritsProjectContext(t *testing.T) {
 	sched, store := setupBuildJobScheduler(t)
 	project := &sqlstore.ProjectRecord{

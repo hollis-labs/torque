@@ -1116,9 +1116,7 @@ func (s *Scheduler) buildJob(task sqlstore.TaskRecord, runID int64) *executor.Ex
 	if task.Deliverables.Valid && task.Deliverables.String != "" {
 		json.Unmarshal([]byte(task.Deliverables.String), &job.Deliverables)
 	}
-	if task.DependsOn.Valid && task.DependsOn.String != "" {
-		json.Unmarshal([]byte(task.DependsOn.String), &job.DependsOn)
-	}
+	job.DependsOn = decodeStringSlice(task.DependsOn)
 	if task.Metadata.Valid && task.Metadata.String != "" {
 		var md map[string]any
 		if err := json.Unmarshal([]byte(task.Metadata.String), &md); err == nil {

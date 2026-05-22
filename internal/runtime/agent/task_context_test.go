@@ -30,12 +30,16 @@ func TestTaskContextNativeFiles_PlantsMarkdownAndJSON(t *testing.T) {
 			SessionMeta:  map[string]string{"plan_id": "CW-PLAN"},
 			Metadata: map[string]any{
 				"origin": "test",
+				"secret": "do-not-plant",
 				"project_context": map[string]any{
 					"name":          "Torque",
 					"repo_path":     "/repo",
 					"context_paths": []any{"docs/runtime.md"},
 					"artifacts": []any{
-						map[string]any{"file_path": "docs/overview.md"},
+						map[string]any{
+							"file_path": "docs/overview.md",
+							"metadata":  map[string]any{"secret": "do-not-plant"},
+						},
 					},
 				},
 			},
@@ -66,7 +70,10 @@ func TestTaskContextNativeFiles_PlantsMarkdownAndJSON(t *testing.T) {
 	assert.Equal(t, "/repo", decoded.RepoRoot)
 	assert.Equal(t, []string{"CW-DEP"}, decoded.DependsOn)
 	assert.Equal(t, "CW-PLAN", decoded.SessionMeta["plan_id"])
-	assert.Equal(t, "test", decoded.Metadata["origin"])
+	assert.Equal(t, "Torque", decoded.ProjectContext["name"])
+	assert.NotContains(t, decoded.ProjectContext, "permissions")
+	assert.NotContains(t, decoded.ProjectContext, "metadata")
+	assert.NotContains(t, string(files[2].Content), "do-not-plant")
 }
 
 func TestTaskContextNativeFiles_SkipsWhenNoTask(t *testing.T) {
@@ -75,4 +82,19 @@ func TestTaskContextNativeFiles_SkipsWhenNoTask(t *testing.T) {
 		Options:      Options{Workdir: "/work"},
 	})
 	assert.Nil(t, files)
+}
+
+func TestTaskContextNativeFiles_SanitizesTaskIDPathSegment(t *testing.T) {
+	files := taskContextNativeFiles(buildLaunchPlanInput{
+		AgentProfile: "implementer",
+		Options: Options{
+			TaskID:  "../bad/task",
+			Workdir: "/work",
+		},
+	})
+
+	require.Len(t, files, 4)
+	assert.Equal(t, "tasks/"+safeTaskBundleSegment("../bad/task")+"/task.md", files[1].RelPath)
+	assert.Contains(t, files[0].Content, "task_id: `../bad/task`")
+	assert.Contains(t, files[1].Content, "task_id: `../bad/task`")
 }

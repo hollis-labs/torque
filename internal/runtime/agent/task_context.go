@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -14,26 +16,26 @@ const (
 )
 
 type plantedTaskContext struct {
-	TaskID       string            `json:"task_id"`
-	Title        string            `json:"title,omitempty"`
-	Kind         string            `json:"kind,omitempty"`
-	Status       string            `json:"status,omitempty"`
-	Priority     int               `json:"priority,omitempty"`
-	Description  string            `json:"description,omitempty"`
-	ProjectID    string            `json:"project_id,omitempty"`
-	ParentID     string            `json:"parent_id,omitempty"`
-	SprintID     string            `json:"sprint_id,omitempty"`
-	EpicID       string            `json:"epic_id,omitempty"`
-	DependsOn    []string          `json:"depends_on,omitempty"`
-	RunID        int64             `json:"run_id,omitempty"`
-	SessionID    string            `json:"session_id,omitempty"`
-	AgentProfile string            `json:"agent_profile,omitempty"`
-	Role         string            `json:"role,omitempty"`
-	WorkRoot     string            `json:"work_root,omitempty"`
-	RepoRoot     string            `json:"repo_root,omitempty"`
-	LoopbackURL  string            `json:"loopback_url,omitempty"`
-	SessionMeta  map[string]string `json:"session_meta,omitempty"`
-	Metadata     map[string]any    `json:"metadata,omitempty"`
+	TaskID         string            `json:"task_id"`
+	Title          string            `json:"title,omitempty"`
+	Kind           string            `json:"kind,omitempty"`
+	Status         string            `json:"status,omitempty"`
+	Priority       int               `json:"priority,omitempty"`
+	Description    string            `json:"description,omitempty"`
+	ProjectID      string            `json:"project_id,omitempty"`
+	ParentID       string            `json:"parent_id,omitempty"`
+	SprintID       string            `json:"sprint_id,omitempty"`
+	EpicID         string            `json:"epic_id,omitempty"`
+	DependsOn      []string          `json:"depends_on,omitempty"`
+	RunID          int64             `json:"run_id,omitempty"`
+	SessionID      string            `json:"session_id,omitempty"`
+	AgentProfile   string            `json:"agent_profile,omitempty"`
+	Role           string            `json:"role,omitempty"`
+	WorkRoot       string            `json:"work_root,omitempty"`
+	RepoRoot       string            `json:"repo_root,omitempty"`
+	LoopbackURL    string            `json:"loopback_url,omitempty"`
+	SessionMeta    map[string]string `json:"session_meta,omitempty"`
+	ProjectContext map[string]any    `json:"project_context,omitempty"`
 }
 
 func taskContextNativeFiles(in buildLaunchPlanInput) []agentlaunch.NativeFile {
@@ -45,12 +47,13 @@ func taskContextNativeFiles(in buildLaunchPlanInput) []agentlaunch.NativeFile {
 	if err != nil {
 		return nil
 	}
-	taskDir := taskBundleRoot + "/" + ctx.TaskID
+	taskSegment := safeTaskBundleSegment(ctx.TaskID)
+	taskDir := taskBundleRoot + "/" + taskSegment
 	return []agentlaunch.NativeFile{
 		{
 			Kind:    agentlaunch.NativeFileRaw,
 			RelPath: taskBundleReadmePath,
-			Content: renderTaskBundleReadme(ctx),
+			Content: renderTaskBundleReadme(ctx, taskSegment),
 		},
 		{
 			Kind:    agentlaunch.NativeFileRaw,
@@ -73,26 +76,26 @@ func taskContextNativeFiles(in buildLaunchPlanInput) []agentlaunch.NativeFile {
 func taskContextFromLaunch(in buildLaunchPlanInput) plantedTaskContext {
 	opts := in.Options
 	return plantedTaskContext{
-		TaskID:       opts.TaskID,
-		Title:        opts.TaskTitle,
-		Kind:         opts.TaskKind,
-		Status:       opts.TaskStatus,
-		Priority:     opts.TaskPriority,
-		Description:  opts.Description,
-		ProjectID:    opts.ProjectID,
-		ParentID:     opts.ParentID,
-		SprintID:     opts.SprintID,
-		EpicID:       opts.EpicID,
-		DependsOn:    append([]string(nil), opts.DependsOn...),
-		RunID:        opts.RunID,
-		SessionID:    in.SessionID,
-		AgentProfile: in.AgentProfile,
-		Role:         in.Role,
-		WorkRoot:     opts.Workdir,
-		RepoRoot:     resolveRepoRoot(opts),
-		LoopbackURL:  in.LoopbackURL,
-		SessionMeta:  copyStringMap(opts.SessionMeta),
-		Metadata:     opts.Metadata,
+		TaskID:         opts.TaskID,
+		Title:          opts.TaskTitle,
+		Kind:           opts.TaskKind,
+		Status:         opts.TaskStatus,
+		Priority:       opts.TaskPriority,
+		Description:    opts.Description,
+		ProjectID:      opts.ProjectID,
+		ParentID:       opts.ParentID,
+		SprintID:       opts.SprintID,
+		EpicID:         opts.EpicID,
+		DependsOn:      append([]string(nil), opts.DependsOn...),
+		RunID:          opts.RunID,
+		SessionID:      in.SessionID,
+		AgentProfile:   in.AgentProfile,
+		Role:           in.Role,
+		WorkRoot:       opts.Workdir,
+		RepoRoot:       resolveRepoRoot(opts),
+		LoopbackURL:    in.LoopbackURL,
+		SessionMeta:    copyStringMap(opts.SessionMeta),
+		ProjectContext: safeProjectContext(opts.Metadata),
 	}
 }
 
@@ -127,24 +130,25 @@ func renderTaskContextMarkdown(ctx plantedTaskContext) string {
 	writeMarkdownKV(&b, "work_root", ctx.WorkRoot)
 	writeMarkdownKV(&b, "repo_root", ctx.RepoRoot)
 	writeMarkdownKV(&b, "loopback_url", ctx.LoopbackURL)
-	writeProjectContextMarkdown(&b, ctx.Metadata)
+	writeProjectContextMarkdown(&b, ctx.ProjectContext)
 	b.WriteString("\nMachine-readable copy: `task.json`. Worker process: `process.md`.\n")
 	return b.String()
 }
 
-func renderTaskBundleReadme(ctx plantedTaskContext) string {
+func renderTaskBundleReadme(ctx plantedTaskContext, taskSegment string) string {
 	var b strings.Builder
 	b.WriteString("# Planted Torque Tasks\n\n")
 	b.WriteString("Torque planted the task bundle for this boot so you can start without discovery calls. Read the assigned task files first; use MCP only for fresh state, checkpoints, or task updates.\n\n")
 	b.WriteString("## Assigned\n\n")
+	writeMarkdownKV(&b, "task_id", ctx.TaskID)
 	b.WriteString("- `")
-	b.WriteString(ctx.TaskID)
+	b.WriteString(taskSegment)
 	b.WriteString("/task.md`\n")
 	b.WriteString("- `")
-	b.WriteString(ctx.TaskID)
+	b.WriteString(taskSegment)
 	b.WriteString("/task.json`\n")
 	b.WriteString("- `")
-	b.WriteString(ctx.TaskID)
+	b.WriteString(taskSegment)
 	b.WriteString("/process.md`\n")
 	return b.String()
 }
@@ -173,23 +177,19 @@ func renderTaskProcessMarkdown(ctx plantedTaskContext) string {
 	return b.String()
 }
 
-func writeProjectContextMarkdown(b *strings.Builder, metadata map[string]any) {
-	if len(metadata) == 0 {
-		return
-	}
-	raw, ok := metadata["project_context"].(map[string]any)
-	if !ok || len(raw) == 0 {
+func writeProjectContextMarkdown(b *strings.Builder, projectContext map[string]any) {
+	if len(projectContext) == 0 {
 		return
 	}
 	b.WriteString("\n## Project Context\n\n")
-	writeMarkdownKV(b, "project_name", stringFromAny(raw["name"]))
-	writeMarkdownKV(b, "project_repo_path", stringFromAny(raw["repo_path"]))
-	writeMarkdownKV(b, "project_agent_path", stringFromAny(raw["agent_path"]))
-	writeMarkdownList(b, "read_paths", stringSliceFromAny(raw["read_paths"]))
-	writeMarkdownList(b, "write_paths", stringSliceFromAny(raw["write_paths"]))
-	writeMarkdownList(b, "context_paths", stringSliceFromAny(raw["context_paths"]))
-	writeMarkdownList(b, "rules", stringSliceFromAny(raw["rules"]))
-	writeArtifactPathsMarkdown(b, raw["artifacts"])
+	writeMarkdownKV(b, "project_name", stringFromAny(projectContext["name"]))
+	writeMarkdownKV(b, "project_repo_path", stringFromAny(projectContext["repo_path"]))
+	writeMarkdownKV(b, "project_agent_path", stringFromAny(projectContext["agent_path"]))
+	writeMarkdownList(b, "read_paths", stringSliceFromAny(projectContext["read_paths"]))
+	writeMarkdownList(b, "write_paths", stringSliceFromAny(projectContext["write_paths"]))
+	writeMarkdownList(b, "context_paths", stringSliceFromAny(projectContext["context_paths"]))
+	writeMarkdownList(b, "rules", stringSliceFromAny(projectContext["rules"]))
+	writeArtifactPathsMarkdown(b, projectContext["artifacts"])
 }
 
 func writeArtifactPathsMarkdown(b *strings.Builder, raw any) {
@@ -208,6 +208,31 @@ func writeArtifactPathsMarkdown(b *strings.Builder, raw any) {
 		}
 	}
 	writeMarkdownList(b, "artifact_paths", values)
+}
+
+func safeTaskBundleSegment(taskID string) string {
+	if safeBundlePathSegment(taskID) {
+		return taskID
+	}
+	sum := sha256.Sum256([]byte(taskID))
+	return "task-" + hex.EncodeToString(sum[:])[:12]
+}
+
+func safeBundlePathSegment(s string) bool {
+	if s == "" || s == "." || s == ".." {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z',
+			r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9',
+			r == '.', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func writeMarkdownKV(b *strings.Builder, key, value string) {
@@ -250,12 +275,79 @@ func copyStringMap(in map[string]string) map[string]string {
 	return out
 }
 
+func safeProjectContext(metadata map[string]any) map[string]any {
+	if len(metadata) == 0 {
+		return nil
+	}
+	raw, ok := metadata["project_context"].(map[string]any)
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	out := map[string]any{}
+	copyStringField(out, raw, "project_id")
+	copyStringField(out, raw, "name")
+	copyStringField(out, raw, "repo_path")
+	copyStringField(out, raw, "agent_path")
+	copyStringListField(out, raw, "read_paths")
+	copyStringListField(out, raw, "write_paths")
+	copyStringListField(out, raw, "context_paths")
+	copyStringListField(out, raw, "rules")
+	if artifacts := safeProjectArtifacts(raw["artifacts"]); len(artifacts) > 0 {
+		out["artifacts"] = artifacts
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func safeProjectArtifacts(raw any) []any {
+	items, ok := raw.([]any)
+	if !ok || len(items) == 0 {
+		return nil
+	}
+	out := make([]any, 0, len(items))
+	for _, item := range items {
+		artifact, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		clean := map[string]any{}
+		copyStringField(clean, artifact, "id")
+		copyStringField(clean, artifact, "entry_type")
+		copyStringField(clean, artifact, "title")
+		copyStringField(clean, artifact, "description")
+		copyStringField(clean, artifact, "file_path")
+		copyStringField(clean, artifact, "url")
+		copyStringListField(clean, artifact, "rules")
+		if len(clean) > 0 {
+			out = append(out, clean)
+		}
+	}
+	return out
+}
+
+func copyStringField(out, in map[string]any, key string) {
+	if s := stringFromAny(in[key]); s != "" {
+		out[key] = s
+	}
+}
+
+func copyStringListField(out, in map[string]any, key string) {
+	if values := stringSliceFromAny(in[key]); len(values) > 0 {
+		out[key] = values
+	}
+}
+
 func stringFromAny(v any) string {
 	s, _ := v.(string)
 	return s
 }
 
 func stringSliceFromAny(raw any) []string {
+	if values, ok := raw.([]string); ok {
+		return append([]string(nil), values...)
+	}
 	items, ok := raw.([]any)
 	if !ok || len(items) == 0 {
 		return nil
