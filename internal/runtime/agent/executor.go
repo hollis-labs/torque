@@ -249,6 +249,8 @@ func modeForJob(job *executor.ExecutionJob) Mode {
 //   - RepoRoot carries the canonical checkout (job.RepoRoot) when the scheduler
 //     resolved a per-run worktree; empty otherwise, leaving Boot's fallback to
 //     Workdir in effect (shared mode, work_root == repo_root).
+//   - Task identity and relationship fields carry through for planted boot
+//     context files, avoiding first-turn MCP calls just to rediscover IDs.
 //   - SystemPrompt = job.SystemPrompt (agent_file persona stacks on top inside
 //     composeSystemPrompt at Boot time).
 //   - Description carries through as the user-prompt body for the OneShot turn.
@@ -259,8 +261,16 @@ func optsFromJob(job *executor.ExecutionJob, resolvedWD string) Options {
 		AgentProfile: job.AgentProfile,
 		Workdir:      resolvedWD,
 		RepoRoot:     job.RepoRoot,
-		ProjectID:    "", // ExecutionJob doesn't currently carry ProjectID
+		ProjectID:    job.ProjectID,
 		TaskID:       job.TaskID,
+		TaskTitle:    job.TaskTitle,
+		TaskKind:     job.Kind,
+		TaskStatus:   job.TaskStatus,
+		TaskPriority: job.TaskPriority,
+		ParentID:     job.ParentID,
+		SprintID:     job.SprintID,
+		EpicID:       job.EpicID,
+		DependsOn:    append([]string(nil), job.DependsOn...),
 		RunID:        job.RunID,
 		SystemPrompt: job.SystemPrompt,
 		AgentFile:    job.AgentFile,

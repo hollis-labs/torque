@@ -46,6 +46,17 @@ type Options struct {
 	// `torque_session_list project_id=...` returns this session.
 	ProjectID string
 	TaskID    string
+	// TaskTitle / TaskKind / TaskStatus / TaskPriority and relationship IDs
+	// are planted into the boot dir so a worker can start without using MCP
+	// only to rediscover the task it was just assigned.
+	TaskTitle    string
+	TaskKind     string
+	TaskStatus   string
+	TaskPriority int
+	ParentID     string
+	SprintID     string
+	EpicID       string
+	DependsOn    []string
 
 	// RunID identifies the dispatching run; it keys the stderr sidecar log
 	// and the TORQUE_RUN_ID env var. Zero means "no run dispatched this boot".

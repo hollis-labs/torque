@@ -1081,13 +1081,20 @@ func (s *Scheduler) publishProgress(taskID string, runID int64, event executor.E
 func (s *Scheduler) buildJob(task sqlstore.TaskRecord, runID int64) *executor.ExecutionJob {
 	job := &executor.ExecutionJob{
 		TaskID:       task.ID,
+		TaskTitle:    task.Title,
 		Kind:         task.Kind,
+		TaskStatus:   task.Status,
+		TaskPriority: task.Priority,
 		RunID:        runID,
 		Description:  task.Description,
 		SystemPrompt: task.SystemPrompt,
 		AgentFile:    task.AgentFile,
 		WorkingDir:   task.WorkingDir,
 		AgentProfile: task.AgentProfile,
+		ProjectID:    nullStringValue(task.ProjectID),
+		ParentID:     nullStringValue(task.ParentID),
+		SprintID:     nullStringValue(task.SprintID),
+		EpicID:       nullStringValue(task.EpicID),
 		Limits: executor.ExecutionLimits{
 			MaxRetries: task.MaxRetries,
 		},
@@ -1108,6 +1115,9 @@ func (s *Scheduler) buildJob(task sqlstore.TaskRecord, runID int64) *executor.Ex
 	}
 	if task.Deliverables.Valid && task.Deliverables.String != "" {
 		json.Unmarshal([]byte(task.Deliverables.String), &job.Deliverables)
+	}
+	if task.DependsOn.Valid && task.DependsOn.String != "" {
+		json.Unmarshal([]byte(task.DependsOn.String), &job.DependsOn)
 	}
 	if task.Metadata.Valid && task.Metadata.String != "" {
 		var md map[string]any
@@ -1197,6 +1207,13 @@ func (s *Scheduler) applyProjectContext(task *sqlstore.TaskRecord, job *executor
 		"rules":         rules,
 		"artifacts":     artifactPayload,
 	}
+}
+
+func nullStringValue(ns sql.NullString) string {
+	if !ns.Valid {
+		return ""
+	}
+	return ns.String
 }
 
 func decodeStringSlice(ns sql.NullString) []string {

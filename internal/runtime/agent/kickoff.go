@@ -53,6 +53,9 @@ func kickoffMarkdown(opts Options, role string) string {
 	}
 	body += "\n"
 	body += "Use the `torque_loopback` MCP server's task-scoped tools (no `task_id` parameter required) for self-task operations. Prefer them over `mcp__mux__torque_*` for the booted task.\n\n"
+	if opts.TaskID != "" {
+		body += "Your assigned task bundle is already planted under `tasks/`. Start with `tasks/README.md` and the task's `task.md`, `task.json`, and `process.md` files instead of calling MCP just to look up task, run, project, or session IDs.\n\n"
+	}
 	if opts.OneShotPrompt != "" {
 		body += "## First turn\n\n"
 		body += opts.OneShotPrompt + "\n"

@@ -9,12 +9,17 @@ import (
 // Built from a TaskRecord's fields by the scheduler.
 type ExecutionJob struct {
 	TaskID string
+	// TaskTitle mirrors the task title so CLI agent boot can plant the assigned
+	// task context without making the worker discover it over MCP.
+	TaskTitle string
 	// Kind mirrors the task's kind column (agent, internal, plan, ...). The
 	// agent.Executor branches on this to pick a Mode: kind=agent dispatches
 	// default to ModeLongLived (workers stay resident; explicit completion
 	// signal + heartbeat-driven idle reap), other kinds default to ModeOneShot
 	// (planner / reviewer-end-agent / bounded mechanical work).
 	Kind         string
+	TaskStatus   string
+	TaskPriority int
 	RunID        int64
 	Description  string
 	SystemPrompt string
@@ -32,6 +37,11 @@ type ExecutionJob struct {
 	// so the canonical checkout is not lost behind the worktree path. Empty
 	// when no worktree resolution happened (executors fall back to WorkingDir).
 	RepoRoot     string
+	ProjectID    string
+	ParentID     string
+	SprintID     string
+	EpicID       string
+	DependsOn    []string
 	AgentProfile string
 	Tools        []string
 	Permissions  map[string]string
