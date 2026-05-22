@@ -68,29 +68,39 @@ func TestVerifyWorkerCompletion_BlockedNoAction(t *testing.T) {
 	assert.Contains(t, verdict.Reason, "scope unclear or task malformed")
 }
 
-// TestVerifyWorkerCompletion_JsonRpcStdioSkipsNoActionBlock covers the
-// codex (jsonrpc-stdio) path: Torque does not project codex's JSON-RPC
-// item/* tool activity into stream.jsonl, so an empty histogram + zero
-// commits is "activity not observable", NOT "no action". The verifier
-// must NOT return VerdictBlockedNoAction here — that false-flagged a real
-// codex run that committed + pushed + opened a PR (CW-20260519-0103). It
-// skips instead, letting the worker's self-transition stand. The
-// commit-count gate is unaffected: a codex run with commits still passes
-// normally (covered by the count>0 branch, runtime-agnostic).
-func TestVerifyWorkerCompletion_JsonRpcStdioSkipsNoActionBlock(t *testing.T) {
+// TestVerifyWorkerCompletion_JsonRpcStdioSkipsWhenActivityPresent covers the
+// codex (jsonrpc-stdio) 0-commit path WITH tool activity in the histogram.
+// codex's worktree-HEAD commit count is unreliable (its branch handling can
+// leave HEAD at base after a real commit+push+PR — CW-20260519-0103), so
+// when activity is present the verifier trusts the worker's self-transition
+// and skips rather than returning a failure verdict. The commit-count gate
+// is unaffected: a codex run with commits passes via the count>0 branch.
+func TestVerifyWorkerCompletion_JsonRpcStdioSkipsWhenActivityPresent(t *testing.T) {
 	worktreePath := makeGitRepoWithCommits(t, 0)
 	logDir := writeStreamJSONL(t, []toolUseEntry{
-		{Tool: "Read"},
-		{Tool: "Grep"},
+		{Tool: "Bash"}, // codex commandExecution projects to "Bash"
 	})
 
-	// Same inputs as TestVerifyWorkerCompletion_BlockedNoAction, but with
-	// the jsonrpc-stdio runtime: the verdict flips from blocked to skip.
 	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", "jsonrpc-stdio")
 	assert.Equal(t, VerdictPassed, verdict.Kind)
 	assert.Equal(t, 0, verdict.CommitCount)
 	assert.Contains(t, verdict.SkipReason, "jsonrpc-stdio")
 	assert.Empty(t, verdict.Reason)
+}
+
+// TestVerifyWorkerCompletion_JsonRpcStdioBlocksWhenIdle confirms the codex
+// guard is not a blanket pass: a jsonrpc-stdio run with ZERO commits AND an
+// empty histogram (codex took no action at all) still blocks. The projected
+// item/* events mean a working codex run always has histogram entries, so an
+// empty histogram on this runtime is a genuinely idle worker.
+func TestVerifyWorkerCompletion_JsonRpcStdioBlocksWhenIdle(t *testing.T) {
+	worktreePath := makeGitRepoWithCommits(t, 0)
+	logDir := writeStreamJSONL(t, nil) // no tool activity recorded
+
+	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", "jsonrpc-stdio")
+	assert.Equal(t, VerdictBlockedNoAction, verdict.Kind)
+	assert.Equal(t, 0, verdict.CommitCount)
+	assert.Contains(t, verdict.Reason, "scope unclear or task malformed")
 }
 
 // TestVerifyWorkerCompletion_SkipsOnSharedMode confirms an empty worktree

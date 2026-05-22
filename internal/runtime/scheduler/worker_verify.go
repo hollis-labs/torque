@@ -190,27 +190,27 @@ func VerifyWorkerCompletion(ctx context.Context, workdirRepoRoot, worktreePath, 
 		v.Kind = VerdictPassed
 		return v
 	}
+	// codex (jsonrpc-stdio): the worktree-HEAD commit count is unreliable —
+	// codex's branch/commit handling can leave the worktree HEAD at base
+	// even after it committed + pushed + opened a PR (observed:
+	// CW-20260519-0103 produced a real merged PR yet rev-list read 0). And
+	// codex self-transitions explicitly (torque_task_review) before this
+	// runs. So on a 0-commit reading, classify off the projected tool
+	// histogram (codex item/* → stream.jsonl, CW-20260521-0024) instead of
+	// the commit count: any recorded activity means codex took action —
+	// trust the self-transition rather than override it with a failure. A
+	// genuinely empty histogram still falls through to BlockedNoAction
+	// (truly idle worker). The commit-count gate above (count>0 → Passed)
+	// is unchanged and runtime-agnostic.
+	if runtimeKind == "jsonrpc-stdio" && len(hist) > 0 {
+		v.Kind = VerdictPassed
+		v.SkipReason = "jsonrpc-stdio runtime: worktree-HEAD commit count unreliable for codex; tool activity present, trusting worker self-transition (CW-20260521-0024)"
+		return v
+	}
 	edits := sumEditingTools(hist)
 	if edits > 0 {
 		v.Kind = VerdictFailedNoCommitsWithEdits
 		v.Reason = fmt.Sprintf("worker exited with edits but no commits on run-branch (tool calls: %s)", formatHistogram(hist))
-		return v
-	}
-	// codex (jsonrpc-stdio): Torque does not yet project codex's JSON-RPC
-	// item/* tool activity into stream.jsonl, and codex's tool vocabulary
-	// (exec_command, …) is disjoint from editingToolNames anyway. So an
-	// empty histogram on this runtime means "activity not observable", NOT
-	// "no action" — classifying it as VerdictBlockedNoAction false-flags a
-	// codex worker that committed + pushed + opened a PR (observed:
-	// CW-20260519-0103 Glyph dogfood produced a real merged PR yet was
-	// blocked here). The commit-count gate above (count>0 → Passed) still
-	// applies; when it also reads 0 we cannot tell idle from invisible, so
-	// we skip rather than block and let the worker's self-transition stand.
-	// Removing this branch is correct once codex item/* notifications are
-	// projected into stream.jsonl (CW-20260521-0024 telemetry follow-up).
-	if runtimeKind == "jsonrpc-stdio" {
-		v.Kind = VerdictPassed
-		v.SkipReason = "jsonrpc-stdio runtime: tool activity not projected to stream.jsonl; histogram-based no-action verdict skipped (CW-20260521-0024)"
 		return v
 	}
 	v.Kind = VerdictBlockedNoAction

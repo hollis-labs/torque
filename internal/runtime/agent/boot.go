@@ -629,18 +629,75 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	// routes idempotent: whichever signal arrives first wins, the
 	// other is a no-op.
 	var jsonRpcNotificationHook func(string, json.RawMessage)
-	if runtimeKind == RuntimeKindJsonRpcStdio && oneshotOnDone != nil {
-		hookOnDone := oneshotOnDone
-		jsonRpcNotificationHook = func(method string, _ json.RawMessage) {
-			// codex's app-server emits slash-style JSON-RPC method
-			// names (`thread/start`, `turn/start`, `turn/completed`);
-			// go-agent-sessions forwards frame.Method verbatim. This
-			// MUST match the wire method exactly — a mismatch never
-			// fires turn-complete, so ModeOneShot silently burns its
-			// full timeout budget then SIGTERMs a turn that already
-			// succeeded (CW: codex one-shot turn-complete detection).
-			if method == "turn/completed" {
-				hookOnDone()
+	if runtimeKind == RuntimeKindJsonRpcStdio {
+		hookOnDone := oneshotOnDone // nil for non-oneshot modes
+		// emit projects a codex-derived StreamEvent into the stream fanout
+		// (→ stream.jsonl histogram + downstream cost accumulator +
+		// last_activity gate). Non-blocking: the jsonrpc reader goroutine
+		// drives this hook and must never block on a full fanout buffer.
+		emit := func(ev llmtypes.StreamEvent) {
+			if streamFanout == nil {
+				return
+			}
+			select {
+			case streamFanout <- ev:
+			default:
+			}
+		}
+		// codex thread/tokenUsage totals are cumulative; track the last
+		// seen values so each update emits a per-update delta
+		// (translateStreamEvent sums InputTokens/OutputTokens). Closure-
+		// captured and only touched from the single jsonrpc reader
+		// goroutine, so no lock is needed.
+		var prevInput, prevOutput, prevCacheRead int
+		jsonRpcNotificationHook = func(method string, params json.RawMessage) {
+			switch method {
+			case "turn/completed":
+				// codex's app-server emits slash-style JSON-RPC method
+				// names (`thread/start`, `turn/start`, `turn/completed`)
+				// verbatim. This MUST match the wire method exactly — a
+				// mismatch never fires turn-complete, so ModeOneShot burns
+				// its full timeout budget then SIGTERMs a turn that
+				// already succeeded.
+				if hookOnDone != nil {
+					hookOnDone()
+				}
+			case "item/completed":
+				// Tool calls (commandExecution/fileChange) + assistant
+				// text → stream.jsonl histogram + transcript + liveness.
+				// CW-20260521-0024.
+				if ev, ok := codexItemCompletedEvent(params); ok {
+					emit(ev)
+				}
+			case "thread/tokenUsage/updated":
+				// Cumulative totals → per-update delta → EventUsage so the
+				// run record accrues codex's real token/cost (was $0/0).
+				in, out, cacheRead, ok := codexTokenUsageTotals(params)
+				if !ok {
+					return
+				}
+				dIn, dOut, dCache := in-prevInput, out-prevOutput, cacheRead-prevCacheRead
+				prevInput, prevOutput, prevCacheRead = in, out, cacheRead
+				if dIn < 0 {
+					dIn = 0
+				}
+				if dOut < 0 {
+					dOut = 0
+				}
+				if dCache < 0 {
+					dCache = 0
+				}
+				if dIn == 0 && dOut == 0 && dCache == 0 {
+					return
+				}
+				emit(llmtypes.StreamEvent{
+					Type: llmtypes.EventUsage,
+					Usage: &llmtypes.Usage{
+						InputTokens:     dIn,
+						OutputTokens:    dOut,
+						CacheReadTokens: dCache,
+					},
+				})
 			}
 		}
 	}
