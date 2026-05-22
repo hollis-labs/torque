@@ -34,6 +34,16 @@ Current behavior:
 - Can run with optional per-run worktrees
 - Uses a project allowlist stopgap from env vars today
 
+At dispatch time the scheduler builds an `ExecutionJob` from the canonical task
+record. Besides the prompt fields, the job carries task identity fields used by
+the CLI agent boot path: title, status-at-dispatch, priority, project/parent/
+sprint/epic IDs, dependency IDs, run ID, working dir, repo root, agent profile,
+and sanitized project context. `agent.Boot` plants those into the provider boot
+dir as the `tasks/` bundle described in
+[`agent-execution-environment.md`](agent-execution-environment.md#planted-task-bundle).
+This is a launch optimization for workers: it reduces first-turn MCP discovery
+calls while preserving MCP as the source for fresh state and updates.
+
 Important env vars:
 
 - `TORQUE_SCHED_WORKERS`

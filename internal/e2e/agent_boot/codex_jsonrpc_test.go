@@ -44,10 +44,11 @@ func TestBoot_ModeOneShot_CodexJsonRpcStdio_Handshake(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	workdir := t.TempDir()
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID:        "CW-TEST-CODEX-001",
 		AgentProfile:  "torque-backend",
-		Workdir:       t.TempDir(),
+		Workdir:       workdir,
 		Mode:          agent.ModeOneShot,
 		OneShotPrompt: "audit the thing",
 	})
@@ -91,6 +92,14 @@ func TestBoot_ModeOneShot_CodexJsonRpcStdio_Handshake(t *testing.T) {
 	require.True(t, ok, "clientInfo missing from initialize params: %v", initParams)
 	assert.Equal(t, "torque", clientInfo["name"])
 	assert.NotEmpty(t, clientInfo["version"], "initialize.clientInfo.version must be populated")
+
+	// thread/start must bind the Codex thread to Torque's work_root.
+	// codex app-server otherwise captures the spawned process cwd, which
+	// is the planted boot dir for codex BootDirSpec sessions.
+	threadParams, ok := calls[1].Params.(map[string]any)
+	require.True(t, ok, "thread/start params should be map[string]any, got %T", calls[1].Params)
+	assert.Equal(t, workdir, threadParams["cwd"],
+		"thread/start.cwd must equal the run work_root, not the planted boot dir")
 
 	// turn/start carries the cached thread id from thread/start's
 	// response + wraps the user input as [{type:"text", text:"..."}].

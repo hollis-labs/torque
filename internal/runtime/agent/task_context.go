@@ -130,6 +130,9 @@ func renderTaskContextMarkdown(ctx plantedTaskContext) string {
 	writeMarkdownKV(&b, "work_root", ctx.WorkRoot)
 	writeMarkdownKV(&b, "repo_root", ctx.RepoRoot)
 	writeMarkdownKV(&b, "loopback_url", ctx.LoopbackURL)
+	if strings.TrimSpace(ctx.WorkRoot) != "" {
+		b.WriteString("\n`work_root` is the authoritative writable workspace for this run. Use it for shell commands and file edits, including when MCP task metadata reports a different `working_dir` or `repo_root`.\n")
+	}
 	writeProjectContextMarkdown(&b, ctx.ProjectContext)
 	b.WriteString("\nMachine-readable copy: `task.json`. Worker process: `process.md`.\n")
 	return b.String()
@@ -156,8 +159,13 @@ func renderTaskBundleReadme(ctx plantedTaskContext, taskSegment string) string {
 func renderTaskProcessMarkdown(ctx plantedTaskContext) string {
 	var b strings.Builder
 	b.WriteString("# Worker Process\n\n")
+	if strings.TrimSpace(ctx.WorkRoot) != "" {
+		b.WriteString("Authoritative workspace: `")
+		b.WriteString(ctx.WorkRoot)
+		b.WriteString("`. Start there before inspecting or editing files. A different task `working_dir`/`repo_root` value is the source checkout pointer, not the writable run workspace.\n\n")
+	}
 	b.WriteString("Keep the process minimal:\n\n")
-	b.WriteString("1. Read `task.md` and inspect the relevant project files in `work_root`.\n")
+	b.WriteString("1. Read `task.md`, then inspect files from `work_root` (`$TORQUE_WORK_ROOT`).\n")
 	b.WriteString("2. Make the smallest complete change for the assigned task.\n")
 	b.WriteString("3. Run focused verification that matches the change.\n")
 	b.WriteString("4. Use the `torque_loopback` MCP task-scoped tools to report the result. Do not pass a `task_id`; this boot is already bound to `")

@@ -38,6 +38,35 @@ is planted by go-agent-launch's `providerplant.Plant` (basename
 `agentlaunch-bootdir-*`) before the session starts, so `agent.Boot` captures it
 up-front rather than via a post-`Start` callback.
 
+## What Torque plants in `build_dir`
+
+Provider adapters plant their native boot files first (`CLAUDE.md`,
+`AGENTS.md`, `boot.md`, MCP config, provider settings, etc.). Torque then uses
+the shared launch `InjectionSpec.NativeFiles` path for Torque-owned boot
+context.
+
+For task-bound scheduler dispatches, Torque plants a task bundle:
+
+```text
+tasks/
+  README.md
+  <safe-task-segment>/
+    task.md
+    task.json
+    process.md
+```
+
+This bundle is boot-time context only. It lets the worker begin from local
+facts instead of calling MCP just to learn its assigned task ID, run ID, project
+ID, session ID, relationship IDs, work root, repo root, and sanitized project
+context. The task-scoped loopback remains the source for fresh state and all
+task mutations.
+
+The `build_dir` is ephemeral. Do not put deliverables there, and do not treat
+the planted task bundle as durable audit storage. Deliverables belong under
+`work_root`; durable logs and session metadata belong under `workspace_dir` or
+the database.
+
 ## `work_root` selection — `worktree.Spec`
 
 Whether a run gets its own git worktree is expressed by `worktree.Spec`

@@ -10,7 +10,7 @@ Start with:
 - [surfaces.md](surfaces.md) — the current HTTP and MCP surfaces at a high level
 - [architecture/sqlite-concurrency-pattern.md](architecture/sqlite-concurrency-pattern.md) — the production SQLite concurrency pattern and reuse guidance
 - [hitl-workflows.md](hitl-workflows.md) — typed human-in-the-loop checkpoint workflow contracts
-- [agent-execution-environment.md](agent-execution-environment.md) — the per-run worktree + permission-mode contract for orchestrated agent runs
+- [agent-execution-environment.md](agent-execution-environment.md) — the boot dir, planted task bundle, per-run worktree, and permission-mode contract for orchestrated agent runs
 - [aar-system.md](aar-system.md) — After-Action Report schema, submission protocol, and `torque aar` query CLI
 - [architecture/sqlite-test-infra.md](architecture/sqlite-test-infra.md) — why shared SQLite fixtures default to pooled temp-file databases
 
