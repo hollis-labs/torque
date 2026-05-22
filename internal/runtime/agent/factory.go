@@ -110,7 +110,21 @@ func adapterFor(profile config.AgentProfile, profileName string, kind RuntimeKin
 		// JSON-RPC raw-bytes escape hatch).
 		switch kind {
 		case RuntimeKindJsonRpcStdio:
-			return provider.NewCodexAdapterAppServer(), baseCaps, nil
+			appServer := provider.NewCodexAdapterAppServer()
+			// bypassPermissions → codex no-sandbox (danger-full-access).
+			// codex's default workspace-write sandbox blocks the MCP
+			// loopback (HTTP) + mux unix socket, so an orchestrated agent
+			// can't reach mux_message_send / torque_task_review
+			// (CW-20260521-0024 GAP C). codex's approval/sandbox vocab is
+			// disjoint from Claude's permission_mode (see config.go), so
+			// this is an explicit cross-map: when the operator opts out of
+			// permission gating via permission_mode: bypassPermissions,
+			// honor it for codex's sandbox too. Leaves the default
+			// (workspace-write) intact for non-bypass profiles.
+			if profile.ResolvedPermissionMode() == config.PermissionModeBypass {
+				appServer.SandboxMode = "danger-full-access"
+			}
+			return appServer, baseCaps, nil
 		case RuntimeKindSubprocess, "":
 			return provider.NewCodexAdapter(), baseCaps, nil
 		default:
@@ -182,6 +196,25 @@ func adapterFor(profile config.AgentProfile, profileName string, kind RuntimeKin
 			"unknown provider %q; agent.Boot accepts: claude, claude-code, codex, gemini, copilot, opencode",
 			profile.Provider)
 	}
+}
+
+// shouldDropBootDirExtraArgs reports whether the bootdir-derived ExtraArgs
+// (providerplant's prepared.Argv[1:], e.g. opencode's `--dir <projectDir>`)
+// must be suppressed for the given provider + runtime kind before they are
+// spliced onto StartOptions.ExtraArgs.
+//
+// opencode serve-http is the only case today: `opencode serve` rejects the
+// `--dir` flag (a `run`-only flag) and exits printing help-to-stderr, which
+// surfaces as the go-agent-sessions "serve-http start: process exited before
+// printing listen URL" failure. The projectDir is already conveyed via spawn
+// cwd + OPENCODE_CONFIG_DIR, so dropping the splice is safe. Subprocess
+// opencode (and every other provider/runtime) keeps its ExtraArgs.
+//
+// The proper substrate fix is suppressing ProjectDirArg in go-agent-launch
+// providerplant when Runtime==ServeHTTP; this predicate is the Torque-side
+// interim and the single place the decision lives. Refs CW-20260521-0022.
+func shouldDropBootDirExtraArgs(provider string, kind RuntimeKind) bool {
+	return provider == "opencode" && kind == RuntimeKindServeHTTP
 }
 
 // profileIsDevMode reports whether the profile opts into Claude's

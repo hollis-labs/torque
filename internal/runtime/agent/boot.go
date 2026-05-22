@@ -314,6 +314,30 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		bootDirExtraArgs = append([]string(nil), prepared.Argv[1:]...)
 	}
 
+	// opencode serve-http hot-fix: `opencode serve` does NOT accept
+	// `--dir <path>` (that's an `opencode run` flag) and exits printing
+	// help-to-stderr when an unknown flag arrives, producing the
+	// "process exited before printing listen URL" failure mode at the
+	// go-agent-sessions serve-http startup gate. The providerplant
+	// resolver currently emits OpencodeBootDirSpec.ProjectDirArg
+	// ("--dir {{.ProjectDir}}") unconditionally regardless of runtime;
+	// for serve-http mode the projectDir is already conveyed via
+	// spawnWorkdir (cwd) + OPENCODE_CONFIG_DIR env, so dropping the
+	// bootdir-derived argv splice is safe.
+	//
+	// Discovered 2026-05-21 during the PR #92 smoke test of profile
+	// opencode-claude-long against opencode 1.15.6 (4 consecutive
+	// runs failed ~300ms each before this fix).
+	//
+	// Substrate-side follow-up: providerplant.DefaultResolver should
+	// suppress ProjectDirArg when plan.Runtime == RuntimeServeHTTP
+	// (a go-agent-launch matrix or providerplant patch). When that
+	// lands, this Torque-side branch becomes redundant and can be
+	// removed.
+	if shouldDropBootDirExtraArgs(profile.Provider, runtimeKind) {
+		bootDirExtraArgs = nil
+	}
+
 	// Merge the bootdir-derived env amendments (CODEX_HOME /
 	// OPENCODE_CONFIG_DIR) that providerplant.Plant resolved into
 	// prepared.Env. Torque's composeEnv already produced the base
@@ -605,18 +629,79 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	// routes idempotent: whichever signal arrives first wins, the
 	// other is a no-op.
 	var jsonRpcNotificationHook func(string, json.RawMessage)
-	if runtimeKind == RuntimeKindJsonRpcStdio && oneshotOnDone != nil {
-		hookOnDone := oneshotOnDone
-		jsonRpcNotificationHook = func(method string, _ json.RawMessage) {
-			// codex's app-server emits slash-style JSON-RPC method
-			// names (`thread/start`, `turn/start`, `turn/completed`);
-			// go-agent-sessions forwards frame.Method verbatim. This
-			// MUST match the wire method exactly — a mismatch never
-			// fires turn-complete, so ModeOneShot silently burns its
-			// full timeout budget then SIGTERMs a turn that already
-			// succeeded (CW: codex one-shot turn-complete detection).
-			if method == "turn/completed" {
-				hookOnDone()
+	if runtimeKind == RuntimeKindJsonRpcStdio {
+		hookOnDone := oneshotOnDone // nil for non-oneshot modes
+		// emit projects a codex-derived StreamEvent into the stream fanout
+		// (→ stream.jsonl histogram + downstream cost accumulator +
+		// last_activity gate). Non-blocking: the jsonrpc reader goroutine
+		// drives this hook and must never block on a full fanout buffer.
+		emit := func(ev llmtypes.StreamEvent) {
+			if streamFanout == nil {
+				return
+			}
+			// forwardEventNonBlocking guards send-on-closed (defer recover)
+			// AND is non-blocking: a late codex JSON-RPC notification can be
+			// delivered by the reader goroutine after closeStreamFanout()
+			// has run during teardown — a raw `select { case streamFanout
+			// <- ev }` would panic the daemon on the closed channel. It also
+			// must never block the single jsonrpc reader goroutine on a full
+			// buffer. (Copilot PR #93.)
+			forwardEventNonBlocking(streamFanout, ev)
+		}
+		// codex thread/tokenUsage totals are cumulative; track the last
+		// seen values so each update emits a per-update delta
+		// (translateStreamEvent sums InputTokens/OutputTokens). Closure-
+		// captured and only touched from the single jsonrpc reader
+		// goroutine, so no lock is needed.
+		var prevInput, prevOutput, prevCacheRead int
+		jsonRpcNotificationHook = func(method string, params json.RawMessage) {
+			switch method {
+			case "turn/completed":
+				// codex's app-server emits slash-style JSON-RPC method
+				// names (`thread/start`, `turn/start`, `turn/completed`)
+				// verbatim. This MUST match the wire method exactly — a
+				// mismatch never fires turn-complete, so ModeOneShot burns
+				// its full timeout budget then SIGTERMs a turn that
+				// already succeeded.
+				if hookOnDone != nil {
+					hookOnDone()
+				}
+			case "item/completed":
+				// Tool calls (commandExecution/fileChange) + assistant
+				// text → stream.jsonl histogram + transcript + liveness.
+				// CW-20260521-0024.
+				if ev, ok := codexItemCompletedEvent(params); ok {
+					emit(ev)
+				}
+			case "thread/tokenUsage/updated":
+				// Cumulative totals → per-update delta → EventUsage so the
+				// run record accrues codex's real token/cost (was $0/0).
+				in, out, cacheRead, ok := codexTokenUsageTotals(params)
+				if !ok {
+					return
+				}
+				dIn, dOut, dCache := in-prevInput, out-prevOutput, cacheRead-prevCacheRead
+				prevInput, prevOutput, prevCacheRead = in, out, cacheRead
+				if dIn < 0 {
+					dIn = 0
+				}
+				if dOut < 0 {
+					dOut = 0
+				}
+				if dCache < 0 {
+					dCache = 0
+				}
+				if dIn == 0 && dOut == 0 && dCache == 0 {
+					return
+				}
+				emit(llmtypes.StreamEvent{
+					Type: llmtypes.EventUsage,
+					Usage: &llmtypes.Usage{
+						InputTokens:     dIn,
+						OutputTokens:    dOut,
+						CacheReadTokens: dCache,
+					},
+				})
 			}
 		}
 	}

@@ -388,6 +388,76 @@ func TestAdapterFor_OpencodeUnsupportedRuntimeKind(t *testing.T) {
 	}
 }
 
+// TestShouldDropBootDirExtraArgs pins the opencode serve-http ExtraArgs
+// suppression: bootdir-derived args (e.g. `--dir`) are dropped ONLY for
+// opencode + serve-http (where `opencode serve` rejects `--dir`), and
+// preserved for opencode subprocess + every other provider/runtime. Refs
+// CW-20260521-0022. (Copilot PR #93.)
+func TestShouldDropBootDirExtraArgs(t *testing.T) {
+	cases := []struct {
+		provider string
+		kind     RuntimeKind
+		want     bool
+	}{
+		{"opencode", RuntimeKindServeHTTP, true},
+		{"opencode", RuntimeKindSubprocess, false},
+		{"opencode", "", false},
+		{"codex", RuntimeKindServeHTTP, false}, // only opencode serve-http
+		{"codex", RuntimeKindJsonRpcStdio, false},
+		{"claude-code", RuntimeKindStreamingStdio, false},
+		{"claude-code", RuntimeKindServeHTTP, false}, // provider must also match
+		{"", RuntimeKindServeHTTP, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.provider+"/"+string(tc.kind), func(t *testing.T) {
+			assert.Equal(t, tc.want, shouldDropBootDirExtraArgs(tc.provider, tc.kind))
+		})
+	}
+}
+
+// TestAdapterFor_CodexSandboxMode locks the security-sensitive sandbox map:
+// codex's OS sandbox is disabled (danger-full-access) ONLY when the operator
+// explicitly opted into bypassPermissions, and only on the app-server
+// (jsonrpc-stdio) path. Non-bypass profiles must keep codex's default
+// sandbox; the subprocess path is unaffected. Easy to break on a refactor,
+// so pinned. (Copilot PR #93.)
+func TestAdapterFor_CodexSandboxMode(t *testing.T) {
+	t.Run("bypass → danger-full-access", func(t *testing.T) {
+		profile := config.AgentProfile{Provider: "codex", PermissionMode: "bypassPermissions"}
+		adapter, _, err := adapterFor(profile, "executor", RuntimeKindJsonRpcStdio)
+		require.NoError(t, err)
+		ca, ok := adapter.(*provider.CodexAdapter)
+		require.True(t, ok, "adapter should be *provider.CodexAdapter, got %T", adapter)
+		assert.Equal(t, "danger-full-access", ca.SandboxMode,
+			"bypassPermissions must map to codex no-sandbox so the MCP loopback is reachable")
+	})
+
+	// Non-bypass profiles keep codex's default sandbox (empty SandboxMode →
+	// go-providers resolves it to workspace-write). The sandbox must NOT be
+	// disabled implicitly.
+	for _, pm := range []string{"", "acceptEdits", "default"} {
+		t.Run("non-bypass keeps default sandbox: "+pm, func(t *testing.T) {
+			profile := config.AgentProfile{Provider: "codex", PermissionMode: pm}
+			adapter, _, err := adapterFor(profile, "executor", RuntimeKindJsonRpcStdio)
+			require.NoError(t, err)
+			ca, ok := adapter.(*provider.CodexAdapter)
+			require.True(t, ok)
+			assert.Empty(t, ca.SandboxMode,
+				"non-bypass profile must not disable codex's sandbox")
+		})
+	}
+
+	t.Run("subprocess path unaffected", func(t *testing.T) {
+		profile := config.AgentProfile{Provider: "codex", PermissionMode: "bypassPermissions"}
+		adapter, _, err := adapterFor(profile, "executor", RuntimeKindSubprocess)
+		require.NoError(t, err)
+		ca, ok := adapter.(*provider.CodexAdapter)
+		require.True(t, ok)
+		assert.Empty(t, ca.SandboxMode,
+			"the bypass→sandbox map is only on the jsonrpc-stdio app-server path")
+	})
+}
+
 // TestComposeBuildArgs_OpencodeModelOrder pins the per-provider
 // --model placement contract.
 //

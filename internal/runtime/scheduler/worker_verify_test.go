@@ -25,7 +25,7 @@ func TestVerifyWorkerCompletion_Passed(t *testing.T) {
 		{Tool: "Bash"},
 	})
 
-	verdict := VerifyWorkerCompletion(context.Background(), "" /*repoRoot unused*/, worktreePath, logDir, "")
+	verdict := VerifyWorkerCompletion(context.Background(), "" /*repoRoot unused*/, worktreePath, logDir, "", "")
 	assert.Equal(t, VerdictPassed, verdict.Kind)
 	assert.Equal(t, 2, verdict.CommitCount)
 	assert.Equal(t, 2, verdict.ToolUseHistogram["Edit"])
@@ -44,7 +44,7 @@ func TestVerifyWorkerCompletion_FailedNoCommitsWithEdits(t *testing.T) {
 		{Tool: "Bash"},
 	})
 
-	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "")
+	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", "")
 	assert.Equal(t, VerdictFailedNoCommitsWithEdits, verdict.Kind)
 	assert.Equal(t, 0, verdict.CommitCount)
 	assert.Contains(t, verdict.Reason, "edits but no commits")
@@ -62,7 +62,42 @@ func TestVerifyWorkerCompletion_BlockedNoAction(t *testing.T) {
 		{Tool: "Grep"},
 	})
 
-	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "")
+	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", "")
+	assert.Equal(t, VerdictBlockedNoAction, verdict.Kind)
+	assert.Equal(t, 0, verdict.CommitCount)
+	assert.Contains(t, verdict.Reason, "scope unclear or task malformed")
+}
+
+// TestVerifyWorkerCompletion_JsonRpcStdioSkipsWhenActivityPresent covers the
+// codex (jsonrpc-stdio) 0-commit path WITH tool activity in the histogram.
+// codex's worktree-HEAD commit count is unreliable (its branch handling can
+// leave HEAD at base after a real commit+push+PR — CW-20260519-0103), so
+// when activity is present the verifier trusts the worker's self-transition
+// and skips rather than returning a failure verdict. The commit-count gate
+// is unaffected: a codex run with commits passes via the count>0 branch.
+func TestVerifyWorkerCompletion_JsonRpcStdioSkipsWhenActivityPresent(t *testing.T) {
+	worktreePath := makeGitRepoWithCommits(t, 0)
+	logDir := writeStreamJSONL(t, []toolUseEntry{
+		{Tool: "Bash"}, // codex commandExecution projects to "Bash"
+	})
+
+	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", "jsonrpc-stdio")
+	assert.Equal(t, VerdictPassed, verdict.Kind)
+	assert.Equal(t, 0, verdict.CommitCount)
+	assert.Contains(t, verdict.SkipReason, "jsonrpc-stdio")
+	assert.Empty(t, verdict.Reason)
+}
+
+// TestVerifyWorkerCompletion_JsonRpcStdioBlocksWhenIdle confirms the codex
+// guard is not a blanket pass: a jsonrpc-stdio run with ZERO commits AND an
+// empty histogram (codex took no action at all) still blocks. The projected
+// item/* events mean a working codex run always has histogram entries, so an
+// empty histogram on this runtime is a genuinely idle worker.
+func TestVerifyWorkerCompletion_JsonRpcStdioBlocksWhenIdle(t *testing.T) {
+	worktreePath := makeGitRepoWithCommits(t, 0)
+	logDir := writeStreamJSONL(t, nil) // no tool activity recorded
+
+	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", "jsonrpc-stdio")
 	assert.Equal(t, VerdictBlockedNoAction, verdict.Kind)
 	assert.Equal(t, 0, verdict.CommitCount)
 	assert.Contains(t, verdict.Reason, "scope unclear or task malformed")
@@ -74,7 +109,7 @@ func TestVerifyWorkerCompletion_BlockedNoAction(t *testing.T) {
 // the run_completed event has tool-use data.
 func TestVerifyWorkerCompletion_SkipsOnSharedMode(t *testing.T) {
 	logDir := writeStreamJSONL(t, []toolUseEntry{{Tool: "Edit"}})
-	verdict := VerifyWorkerCompletion(context.Background(), "", "", logDir, "")
+	verdict := VerifyWorkerCompletion(context.Background(), "", "", logDir, "", "")
 	assert.Equal(t, VerdictPassed, verdict.Kind)
 	assert.NotEmpty(t, verdict.SkipReason)
 	assert.Equal(t, 1, verdict.ToolUseHistogram["Edit"])
@@ -87,7 +122,7 @@ func TestVerifyWorkerCompletion_SkipsOnSharedMode(t *testing.T) {
 // than mark the worker failed for an absent path.
 func TestVerifyWorkerCompletion_SkipsOnMissingWorktree(t *testing.T) {
 	logDir := writeStreamJSONL(t, []toolUseEntry{{Tool: "Edit"}})
-	verdict := VerifyWorkerCompletion(context.Background(), "", filepath.Join(t.TempDir(), "does-not-exist"), logDir, "")
+	verdict := VerifyWorkerCompletion(context.Background(), "", filepath.Join(t.TempDir(), "does-not-exist"), logDir, "", "")
 	assert.Equal(t, VerdictPassed, verdict.Kind)
 	assert.Contains(t, verdict.SkipReason, "no longer present")
 }
@@ -104,7 +139,7 @@ func TestVerifyWorkerCompletion_SkipsOnMissingWorktree(t *testing.T) {
 func TestVerifyWorkerCompletion_SkipsOnMissingStreamLog(t *testing.T) {
 	worktreePath := makeGitRepoWithCommits(t, 1)
 
-	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, filepath.Join(t.TempDir(), "no-logs"), "")
+	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, filepath.Join(t.TempDir(), "no-logs"), "", "")
 	assert.Equal(t, VerdictPassed, verdict.Kind)
 	assert.Contains(t, verdict.SkipReason, "missing or unreadable")
 	assert.Empty(t, verdict.ToolUseHistogram)

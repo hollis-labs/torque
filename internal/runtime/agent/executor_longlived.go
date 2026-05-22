@@ -217,7 +217,7 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 		// generous — `git rev-list --count` is sub-second on a healthy
 		// repo, but we'd rather not race the scheduler shutdown.
 		verifyCtx, verifyCancel := context.WithTimeout(context.Background(), workerVerifyTimeout)
-		verdict := scheduler.VerifyWorkerCompletion(verifyCtx, opts.RepoRoot, opts.Workdir, filepath.Join(sess.WorkspaceDir, "logs"), "")
+		verdict := scheduler.VerifyWorkerCompletion(verifyCtx, opts.RepoRoot, opts.Workdir, filepath.Join(sess.WorkspaceDir, "logs"), "", sess.RuntimeKind)
 		verifyCancel()
 		res.ToolUseHistogram = verdict.ToolUseHistogram
 		res.CommitsOnRunBranch = verdict.CommitCount

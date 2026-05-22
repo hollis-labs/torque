@@ -100,6 +100,13 @@ const (
 // package legitimately needs to read the list.
 var editingToolNames = []string{"Edit", "Write", "Bash", "MultiEdit", "NotebookEdit"}
 
+// runtimeKindJsonRpcStdio mirrors agent.RuntimeKindJsonRpcStdio. It is
+// duplicated as a string literal here (not imported) because the agent
+// package imports this scheduler package for VerifyWorkerCompletion;
+// importing back would be a cycle. Keep in sync with
+// internal/runtime/agent/runtime_kind.go.
+const runtimeKindJsonRpcStdio = "jsonrpc-stdio"
+
 // EditingTools returns a fresh copy of the canonical editing-tool name
 // list. Reserved for documentation / tooling consumers; the verdict
 // classification path consults editingToolNames directly.
@@ -141,7 +148,16 @@ func EditingTools() []string {
 // can tear the verifier down promptly. A nil ctx falls back to
 // context.Background; pass context.Background explicitly when the
 // caller has no ctx of its own.
-func VerifyWorkerCompletion(ctx context.Context, workdirRepoRoot, worktreePath, workspaceLogDir, base string) WorkerVerdict {
+//
+// runtimeKind is the session's RuntimeKind (e.g. "jsonrpc-stdio",
+// "streaming-stdio", "subprocess"; see internal/runtime/agent/runtime_kind.go),
+// passed by the caller from Session.RuntimeKind. It selects runtime-specific
+// classification: codex (runtimeKindJsonRpcStdio) has an unreliable
+// worktree-HEAD commit count, so a 0-commit reading is classified off the
+// projected tool histogram rather than treated as failure (see the
+// count==0 branch below). Empty / any other value uses the
+// runtime-agnostic path.
+func VerifyWorkerCompletion(ctx context.Context, workdirRepoRoot, worktreePath, workspaceLogDir, base, runtimeKind string) WorkerVerdict {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -188,6 +204,23 @@ func VerifyWorkerCompletion(ctx context.Context, workdirRepoRoot, worktreePath, 
 	}
 	if count > 0 {
 		v.Kind = VerdictPassed
+		return v
+	}
+	// codex (jsonrpc-stdio): the worktree-HEAD commit count is unreliable —
+	// codex's branch/commit handling can leave the worktree HEAD at base
+	// even after it committed + pushed + opened a PR (observed:
+	// CW-20260519-0103 produced a real merged PR yet rev-list read 0). And
+	// codex self-transitions explicitly (torque_task_review) before this
+	// runs. So on a 0-commit reading, classify off the projected tool
+	// histogram (codex item/* → stream.jsonl, CW-20260521-0024) instead of
+	// the commit count: any recorded activity means codex took action —
+	// trust the self-transition rather than override it with a failure. A
+	// genuinely empty histogram still falls through to BlockedNoAction
+	// (truly idle worker). The commit-count gate above (count>0 → Passed)
+	// is unchanged and runtime-agnostic.
+	if runtimeKind == runtimeKindJsonRpcStdio && len(hist) > 0 {
+		v.Kind = VerdictPassed
+		v.SkipReason = "jsonrpc-stdio runtime: worktree-HEAD commit count unreliable for codex; tool activity present, trusting worker self-transition (CW-20260521-0024)"
 		return v
 	}
 	edits := sumEditingTools(hist)
