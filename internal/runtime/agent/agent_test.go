@@ -233,6 +233,7 @@ func TestKickoffMarkdown(t *testing.T) {
 		AgentProfile:  "orchestrator",
 		TaskID:        "CW-PLAN-001",
 		Workdir:       "/repo/x",
+		RepoRoot:      "/repo/source",
 		OneShotPrompt: "Walk the plan.",
 		SessionMeta:   map[string]string{"plan_id": "CW-PLAN-001"},
 	}, "orchestrator")
@@ -240,6 +241,10 @@ func TestKickoffMarkdown(t *testing.T) {
 	assert.Contains(t, body, "`orchestrator`")
 	assert.Contains(t, body, "CW-PLAN-001")
 	assert.Contains(t, body, "/repo/x")
+	assert.Contains(t, body, "Work root")
+	assert.Contains(t, body, "/repo/source")
+	assert.Contains(t, body, "$TORQUE_WORK_ROOT")
+	assert.Contains(t, body, "Do not edit the source checkout")
 	assert.Contains(t, body, "Walk the plan.")
 	assert.Contains(t, body, "torque_loopback")
 

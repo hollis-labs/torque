@@ -46,7 +46,7 @@ func (m *Manager) SendTurn(ctx context.Context, sess *Session, text string) erro
 	}
 	switch RuntimeKind(sess.RuntimeKind) {
 	case RuntimeKindJsonRpcStdio:
-		return m.sendTurnJSONRPC(ctx, sess.ID, text)
+		return m.sendTurnJSONRPC(ctx, sess.ID, sess.Workdir, text)
 	case RuntimeKindStreamingStdio:
 		// claude-code runs `claude --input-format stream-json`: every
 		// line on stdin must be one JSON object. Wrap the plaintext turn
@@ -80,7 +80,7 @@ func (m *Manager) SendTurn(ctx context.Context, sess *Session, text string) erro
 // is done. Turn-complete detection rides on the
 // `turn/completed` JSON-RPC notification, which torque wires via
 // StartOptions.JsonRpcNotificationHook in boot.go.
-func (m *Manager) sendTurnJSONRPC(ctx context.Context, sessID, text string) error {
+func (m *Manager) sendTurnJSONRPC(ctx context.Context, sessID, cwd, text string) error {
 	threadID, cached := m.lookupCodexThread(sessID)
 	if !cached {
 		initParams := map[string]any{
@@ -92,7 +92,11 @@ func (m *Manager) sendTurnJSONRPC(ctx context.Context, sessID, text string) erro
 		if _, err := m.inner.JsonRpcCall(ctx, sessID, "initialize", initParams); err != nil {
 			return fmt.Errorf("jsonrpc initialize: %w", err)
 		}
-		startRes, err := m.inner.JsonRpcCall(ctx, sessID, "thread/start", map[string]any{})
+		startParams := map[string]any{}
+		if cwd != "" {
+			startParams["cwd"] = cwd
+		}
+		startRes, err := m.inner.JsonRpcCall(ctx, sessID, "thread/start", startParams)
 		if err != nil {
 			return fmt.Errorf("jsonrpc thread/start: %w", err)
 		}

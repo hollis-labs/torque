@@ -144,7 +144,7 @@ type Session struct {
 	Provider        string            `json:"Provider"`
 	RuntimeID       string            `json:"RuntimeID"`
 	RuntimeKind     string            `json:"RuntimeKind"`
-	Workdir         string            `json:"Workdir"`      // spawned process cwd (boot dir for claude/codex; project dir for opencode)
+	Workdir         string            `json:"Workdir"`      // Torque work_root: the writable project/worktree path for tools and turns.
 	BootDir         string            `json:"BootDir"`      // ephemeral per-task tempdir
 	WorkspaceDir    string            `json:"WorkspaceDir"` // persistent ~/.torque/workspaces/<project>/<sessID>/
 	ProjectID       string            `json:"ProjectID"`

@@ -39,10 +39,60 @@ into every spawned agent (alongside `TORQUE_TASK_ID` / `TORQUE_RUN_ID`):
 | `TORQUE_REPO_ROOT` | the canonical repo checkout (`repo_root`). Equals `TORQUE_WORK_ROOT` in shared mode. |
 
 Agents (and the prompts that drive them) should resolve output paths against
-`$TORQUE_WORK_ROOT` rather than relying on cwd. codex additionally receives
-`--cd $work_root`, so its *effective* directory already is the work_root;
-claude only receives `--add-dir $work_root` (an access grant, not a cwd
-change), so for claude the env var is the authoritative pointer.
+`$TORQUE_WORK_ROOT` rather than relying on cwd. codex binds the thread to
+`work_root` (`thread/start.cwd` for `jsonrpc-stdio`; `--cd` for exec mode), so
+its *effective* directory is the work_root. claude only receives
+`--add-dir $work_root` (an access grant, not a cwd change), so for claude the
+env var is the authoritative pointer.
+
+## Planted task bundle
+
+For scheduler-dispatched tasks, Torque also plants a task bundle into the
+provider boot dir before the agent starts. This is intentionally local,
+read-only boot context: workers should not burn first-turn MCP calls merely to
+rediscover the task, run, project, or session IDs they were just booted with.
+
+Current layout:
+
+```text
+tasks/
+  README.md
+  <safe-task-segment>/
+    task.md
+    task.json
+    process.md
+```
+
+`task.md` is the human-readable task brief. `task.json` is the structured
+copy. `process.md` is the minimal worker process and completion guidance.
+`tasks/README.md` points to the assigned bundle.
+
+The bundle includes the original `task_id`, title, description, task kind,
+status-at-boot, priority, run id, local Torque session id, agent profile, role,
+relationship IDs (`project_id`, `parent_id`, `sprint_id`, `epic_id`,
+`depends_on`), `work_root`, `repo_root`, and the task-scoped loopback URL. When
+project context is available, Torque plants a sanitized subset:
+project identity, repo/agent paths, read/write/context paths, rules, and
+artifact summaries. Arbitrary task metadata is not planted because native boot
+files are persisted in the launch plan and must not carry secrets.
+
+The directory name under `tasks/` is a safe path segment derived from the task
+ID. Normal Torque IDs are used as-is; any task ID that is not safe as one
+filename segment is replaced with a stable hash-based segment. The original
+task ID remains inside `task.md`, `task.json`, and `process.md`.
+
+Provider cwd matters:
+
+- Claude and Codex resolve `tasks/README.md` relative to the boot dir during
+  boot file loading.
+- Opencode runs with process cwd set to the project dir, so use
+  `$OPENCODE_CONFIG_DIR/tasks/` to inspect the planted bundle from tools or
+  shell commands.
+
+Fresh task state and mutations still go through the task-scoped
+`torque_loopback` MCP server. The planted bundle is the boot-time assignment,
+not a replacement for updates, checkpoints, summaries, review transitions, or
+blocked transitions.
 
 ## Per-run worktree contract
 
