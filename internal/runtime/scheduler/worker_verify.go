@@ -141,7 +141,7 @@ func EditingTools() []string {
 // can tear the verifier down promptly. A nil ctx falls back to
 // context.Background; pass context.Background explicitly when the
 // caller has no ctx of its own.
-func VerifyWorkerCompletion(ctx context.Context, workdirRepoRoot, worktreePath, workspaceLogDir, base string) WorkerVerdict {
+func VerifyWorkerCompletion(ctx context.Context, workdirRepoRoot, worktreePath, workspaceLogDir, base, runtimeKind string) WorkerVerdict {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -194,6 +194,23 @@ func VerifyWorkerCompletion(ctx context.Context, workdirRepoRoot, worktreePath, 
 	if edits > 0 {
 		v.Kind = VerdictFailedNoCommitsWithEdits
 		v.Reason = fmt.Sprintf("worker exited with edits but no commits on run-branch (tool calls: %s)", formatHistogram(hist))
+		return v
+	}
+	// codex (jsonrpc-stdio): Torque does not yet project codex's JSON-RPC
+	// item/* tool activity into stream.jsonl, and codex's tool vocabulary
+	// (exec_command, …) is disjoint from editingToolNames anyway. So an
+	// empty histogram on this runtime means "activity not observable", NOT
+	// "no action" — classifying it as VerdictBlockedNoAction false-flags a
+	// codex worker that committed + pushed + opened a PR (observed:
+	// CW-20260519-0103 Glyph dogfood produced a real merged PR yet was
+	// blocked here). The commit-count gate above (count>0 → Passed) still
+	// applies; when it also reads 0 we cannot tell idle from invisible, so
+	// we skip rather than block and let the worker's self-transition stand.
+	// Removing this branch is correct once codex item/* notifications are
+	// projected into stream.jsonl (CW-20260521-0024 telemetry follow-up).
+	if runtimeKind == "jsonrpc-stdio" {
+		v.Kind = VerdictPassed
+		v.SkipReason = "jsonrpc-stdio runtime: tool activity not projected to stream.jsonl; histogram-based no-action verdict skipped (CW-20260521-0024)"
 		return v
 	}
 	v.Kind = VerdictBlockedNoAction
