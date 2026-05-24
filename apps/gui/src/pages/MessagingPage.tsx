@@ -16,6 +16,7 @@ import { useApi } from '@/hooks/use-api'
 import { notifyError, notifySuccess } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import {
+  backfillThreadKeys,
   correspondentKey,
   extraPayloadFields,
   formatRelativeTime,
@@ -30,6 +31,7 @@ import {
 import type { MessageEnvelope } from '@/lib/types'
 
 type ScopeKey = 'user' | 'agent'
+type DisplayMessageStatus = MessageStatus | 'canceled'
 
 const SCOPES: { key: ScopeKey; label: string; icon: typeof User; placeholder: string }[] = [
   {
@@ -69,13 +71,14 @@ function persistAddresses(addrs: Record<ScopeKey, string>) {
   }
 }
 
-const STATUS_STYLES: Record<MessageStatus, string> = {
+const STATUS_STYLES: Record<DisplayMessageStatus, string> = {
   pending: 'border-amber-500/40 bg-amber-500/10 text-amber-200',
   delivered: 'border-blue-500/40 bg-blue-500/10 text-blue-200',
   consumed: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200',
+  canceled: 'border-zinc-600 bg-zinc-800/50 text-zinc-300',
 }
 
-function MessageStatusBadge({ status }: { status: MessageStatus }) {
+function MessageStatusBadge({ status }: { status: DisplayMessageStatus }) {
   return (
     <span
       className={cn(
@@ -472,6 +475,7 @@ function ConversationPanel({
   const [reply, setReply] = useState('')
   const [sending, setSending] = useState(false)
   const [cancelingId, setCancelingId] = useState<string | null>(null)
+  const [canceledIds, setCanceledIds] = useState<Set<string>>(() => new Set())
   const [backfilling, setBackfilling] = useState(false)
   const [backfillError, setBackfillError] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
@@ -496,17 +500,14 @@ function ConversationPanel({
     let cancelled = false
     // Captured from the mount render — the panel is keyed by correspondent,
     // so a new conversation remounts it with its own initial message set.
-    const tids = new Set<string>()
-    for (const m of messages) {
-      if (m.thread_id && m.thread_id.trim()) tids.add(m.thread_id.trim())
-    }
-    if (tids.size === 0) return
+    const tids = backfillThreadKeys(messages)
+    if (tids.length === 0) return
     // eslint-disable-next-line react-hooks/set-state-in-effect -- backfill status reflects the effect-owned async request.
     setBackfilling(true)
     setBackfillError(null)
     ;(async () => {
       try {
-        const results = await Promise.all([...tids].map((tid) => api.getThread(tid)))
+        const results = await Promise.all(tids.map((tid) => api.getThread(tid)))
         if (cancelled) return
         const union = results.flat()
         if (union.length > 0) onChanged(union)
@@ -561,9 +562,7 @@ function ConversationPanel({
     try {
       await api.cancelMessage(m.id)
       notifySuccess('Message canceled')
-      // Re-pull the thread so the updated status flows back through props.
-      const envs = await api.getThread(threadKey(m))
-      if (envs.length > 0) onChanged(envs)
+      setCanceledIds((prev) => new Set(prev).add(m.id))
     } catch (err) {
       notifyError(err, 'Failed to cancel message')
     } finally {
@@ -609,7 +608,9 @@ function ConversationPanel({
         ) : (
           displayed.map((m) => {
             const isSelf = m.from.trim() === selfTrim
-            const status = messageStatus(m)
+            const status: DisplayMessageStatus = canceledIds.has(m.id)
+              ? 'canceled'
+              : messageStatus(m)
             const linked = sourceTaskId(m)
             const details = extraPayloadFields(m)
             return (

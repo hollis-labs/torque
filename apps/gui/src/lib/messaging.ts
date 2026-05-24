@@ -126,7 +126,26 @@ export function formatRelativeTime(iso: string): string {
 
 /** Stable thread key for an envelope — explicit thread_id, else its own id. */
 export function threadKey(m: MessageEnvelope): string {
-  return m.thread_id || m.id
+  return m.thread_id?.trim() || m.id
+}
+
+/**
+ * Thread IDs worth backfilling for a rolled-up correspondent conversation.
+ * Explicit `thread_id` wins; legacy/root envelopes with an empty thread use
+ * their own id because replies sent from the GUI use that id as `thread_id`.
+ */
+export function backfillThreadKeys(
+  messages: MessageEnvelope[],
+  limit = 25,
+): string[] {
+  const keys = new Set<string>()
+  for (const m of messages) {
+    const key = threadKey(m)
+    if (!key) continue
+    keys.add(key)
+    if (keys.size >= limit) break
+  }
+  return [...keys]
 }
 
 /**

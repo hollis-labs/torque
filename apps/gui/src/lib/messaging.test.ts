@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  backfillThreadKeys,
   correspondentKey,
   extraPayloadFields,
   messageBody,
@@ -126,8 +127,37 @@ describe('threadKey', () => {
   it('uses thread_id when present', () => {
     expect(threadKey(env({ thread_id: 'th-9' }))).toBe('th-9')
   })
+  it('trims thread_id before using it', () => {
+    expect(threadKey(env({ thread_id: ' th-9 ' }))).toBe('th-9')
+  })
   it('falls back to the message id', () => {
     expect(threadKey(env({ id: 'm7' }))).toBe('m7')
+  })
+})
+
+describe('backfillThreadKeys', () => {
+  it('uses explicit thread ids and falls back to envelope ids', () => {
+    expect(
+      backfillThreadKeys([
+        env({ id: 'm1', thread_id: 'T-1' }),
+        env({ id: 'm2', thread_id: '' }),
+        env({ id: 'm3' }),
+      ]),
+    ).toEqual(['T-1', 'm2', 'm3'])
+  })
+
+  it('deduplicates and caps keys in message order', () => {
+    expect(
+      backfillThreadKeys(
+        [
+          env({ id: 'm1', thread_id: 'T-1' }),
+          env({ id: 'm2', thread_id: 'T-1' }),
+          env({ id: 'm3', thread_id: '' }),
+          env({ id: 'm4', thread_id: '' }),
+        ],
+        2,
+      ),
+    ).toEqual(['T-1', 'm3'])
   })
 })
 
