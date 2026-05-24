@@ -24,7 +24,7 @@ const torqueClientVersion = "0.1-dev"
 //
 //   - streaming-stdio: the turn is wrapped as a stream-json user
 //     message ({"type":"user","message":{"role":"user","content":...}})
-//     via encodeStreamJSONUserMessage — claude-code runs
+//     via go-agent-runtime/turn.Frame — claude-code runs
 //     `--input-format stream-json` and rejects a raw plaintext line.
 //
 //   - subprocess / pty: classic plaintext SendInput. The lib writes the
