@@ -1,6 +1,10 @@
 package agent
 
-import "encoding/json"
+import (
+	"path/filepath"
+
+	"github.com/hollis-labs/go-agent-runtime/turn"
+)
 
 // kickoffPayload returns the user-message body Boot fires (or planted as
 // FirstTurnPayload) for the session's first turn.
@@ -20,6 +24,17 @@ func kickoffPayload(kickoffFileName string) string {
 		return "Boot @./boot.md"
 	}
 	return "Boot @./" + kickoffFileName
+}
+
+// kickoffPayloadForBootDir returns a boot-file pointer that survives runtimes
+// whose thread cwd is intentionally not the planted boot dir. JSON-RPC Codex
+// binds cwd to the work root so tools operate in the right tree; the first
+// turn therefore needs an absolute boot.md path.
+func kickoffPayloadForBootDir(bootDir string) string {
+	if bootDir == "" {
+		return kickoffPayload("")
+	}
+	return "Boot @" + filepath.Join(bootDir, "boot.md")
 }
 
 // kickoffMarkdown returns the content planted into <bootDir>/boot.md. Read by
@@ -89,16 +104,5 @@ func kickoffMarkdown(opts Options, role string) string {
 // The runtime appends the trailing newline (streaming-stdio SendInput frames
 // one JSON object per call), so this returns the bare JSON object.
 func encodeStreamJSONUserMessage(text string) ([]byte, error) {
-	type message struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	}
-	frame := struct {
-		Type    string  `json:"type"`
-		Message message `json:"message"`
-	}{
-		Type:    "user",
-		Message: message{Role: "user", Content: text},
-	}
-	return json.Marshal(frame)
+	return turn.ClaudeStreamingUserFrame(text)
 }

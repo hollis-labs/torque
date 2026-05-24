@@ -225,6 +225,12 @@ func TestKickoffPayload(t *testing.T) {
 	assert.Equal(t, "Boot @./custom.md", kickoffPayload("custom.md"))
 }
 
+func TestKickoffPayloadForBootDir(t *testing.T) {
+	assert.Equal(t, "Boot @./boot.md", kickoffPayloadForBootDir(""))
+	assert.Equal(t, "Boot @/tmp/torque-boot/agentlaunch-bootdir-123/boot.md",
+		kickoffPayloadForBootDir("/tmp/torque-boot/agentlaunch-bootdir-123"))
+}
+
 // TestKickoffMarkdown verifies the planted boot.md content carries the
 // task framing the LLM needs on its first turn (and after compaction
 // when re-reading the file).

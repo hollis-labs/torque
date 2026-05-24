@@ -164,6 +164,17 @@ func TestBoot_ModeLongLived_CodexJsonRpcStdio_PostStartKickoff(t *testing.T) {
 	assert.Equal(t, "initialize", calls[0].Method)
 	assert.Equal(t, "thread/start", calls[1].Method)
 	assert.Equal(t, "turn/start", calls[2].Method)
+
+	turnParams, ok := calls[2].Params.(map[string]any)
+	require.True(t, ok, "turn/start params should be map[string]any, got %T", calls[2].Params)
+	input, ok := turnParams["input"].([]map[string]any)
+	require.True(t, ok, "turn/start.input should be []map[string]any, got %T", turnParams["input"])
+	require.Len(t, input, 1, "turn/start.input must wrap a single text block")
+	text, _ := input[0]["text"].(string)
+	assert.Contains(t, text, "Boot @/")
+	assert.Contains(t, text, "/boot.md")
+	assert.NotContains(t, text, "Boot @./boot.md",
+		"JSON-RPC long-lived kickoff must point at the absolute planted boot.md because thread cwd is the work root")
 }
 
 // TestSendTurn_RoutesNonJsonRpcThroughSendInput covers the negative

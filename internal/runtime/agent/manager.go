@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	runtimeturn "github.com/hollis-labs/go-agent-runtime/turn"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -41,9 +42,9 @@ type Manager struct {
 	nowFn           func() time.Time
 	pidPollInterval time.Duration
 
-	mu         sync.RWMutex
-	stopped    bool
-	inner      *agentsessions.Manager
+	mu             sync.RWMutex
+	stopped        bool
+	inner          *agentsessions.Manager
 	loopbacks      map[string]LoopbackHandle // sessID → handle; shut down in Stop
 	stderrs        map[string]func()         // sessID → close() for the per-session stderr sidecar
 	streams        map[string]func()         // sessID → close() for the per-session stream sidecar (CW-20260509-0001)
@@ -51,13 +52,11 @@ type Manager struct {
 	pidPollers     map[string]func()         // sessID → close() for the per-session PID poller (CW-20260509-0008)
 	activityFrozen map[string]struct{}       // sessID → suppress heartbeat TouchSession after an error/auth frame; lifted by content-bearing stream events or teardown (CW-20260519-0130)
 
-	// codexThreads caches per-session codex thread IDs for the
-	// JsonRpcStdio runtime kind. Populated lazily by sendTurnJSONRPC
-	// after thread/start succeeds; dropped by teardownSession when
-	// the session reaches terminal state. sync.Map because the access
-	// pattern is write-once-read-many (cache hit after first turn) and
-	// the per-session SendTurn calls fire on independent goroutines.
-	codexThreads sync.Map
+	// codexTurns caches per-session Codex app-server thread state for the
+	// JsonRpcStdio runtime kind. Populated lazily by SendTurn after
+	// thread/start succeeds; dropped by teardownSession when the session
+	// reaches terminal state.
+	codexTurns runtimeturn.CodexAppServerCache
 }
 
 // NewManager constructs a Manager bound to deps. Caller invokes Sweep()
@@ -237,7 +236,7 @@ func (m *Manager) teardownSession(sessID string) {
 	}
 	// Drop the codex thread cache entry (if any). No-op for non-JsonRpcStdio
 	// sessions; safe to fire unconditionally.
-	m.forgetCodexThread(sessID)
+	m.codexTurns.Forget(sessID)
 	// Clear the activity-gate entry AFTER the stream closer has drained any
 	// buffered events — closing the fanout flushes pending observeStreamEvent
 	// callbacks, which could otherwise re-mark a session as frozen behind a
