@@ -126,5 +126,40 @@ export function formatRelativeTime(iso: string): string {
 
 /** Stable thread key for an envelope — explicit thread_id, else its own id. */
 export function threadKey(m: MessageEnvelope): string {
-  return m.thread_id || m.id
+  return m.thread_id?.trim() || m.id
+}
+
+/**
+ * Thread IDs worth backfilling for a rolled-up correspondent conversation.
+ * Explicit `thread_id` wins; legacy/root envelopes with an empty thread use
+ * their own id because replies sent from the GUI use that id as `thread_id`.
+ */
+export function backfillThreadKeys(
+  messages: MessageEnvelope[],
+  limit = 25,
+): string[] {
+  const keys = new Set<string>()
+  for (const m of messages) {
+    const key = threadKey(m)
+    if (!key) continue
+    keys.add(key)
+    if (keys.size >= limit) break
+  }
+  return [...keys]
+}
+
+/**
+ * The "other party" in a message relative to `self` — the correspondent the
+ * conversation rollup groups by. Outbound messages (self → x) key on `to`;
+ * inbound messages (x → self) key on `from`. Both sides are trimmed so stray
+ * whitespace cannot split one correspondent into two conversations.
+ *
+ * Note: this is deliberately NOT `threadKey`. Many envelopes carry an empty
+ * `thread_id` (migration 022 defaults it to ''), so grouping by thread would
+ * explode into per-message singletons; grouping by correspondent gives the
+ * one-row-per-session/agent rollup the messaging view wants.
+ */
+export function correspondentKey(m: MessageEnvelope, self: string): string {
+  const me = (self ?? '').trim()
+  return m.from.trim() === me ? m.to.trim() : m.from.trim()
 }
