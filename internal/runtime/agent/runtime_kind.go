@@ -2,7 +2,9 @@ package agent
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/hollis-labs/go-agent-runtime/runtimekind"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 	"github.com/hollis-labs/torque/internal/config"
 )
@@ -41,11 +43,11 @@ import (
 type RuntimeKind string
 
 const (
-	RuntimeKindSubprocess     RuntimeKind = "subprocess"
-	RuntimeKindPTY            RuntimeKind = "pty"
-	RuntimeKindStreamingStdio RuntimeKind = "streaming-stdio"
-	RuntimeKindJsonRpcStdio   RuntimeKind = "jsonrpc-stdio"
-	RuntimeKindServeHTTP      RuntimeKind = "serve-http"
+	RuntimeKindSubprocess     RuntimeKind = RuntimeKind(runtimekind.Subprocess)
+	RuntimeKindPTY            RuntimeKind = RuntimeKind(runtimekind.PTY)
+	RuntimeKindStreamingStdio RuntimeKind = RuntimeKind(runtimekind.StreamingStdio)
+	RuntimeKindJsonRpcStdio   RuntimeKind = RuntimeKind(runtimekind.JSONRPCStdio)
+	RuntimeKindServeHTTP      RuntimeKind = RuntimeKind(runtimekind.ServeHTTP)
 )
 
 // validate reports whether the value is a known kind. Empty is the
@@ -76,8 +78,8 @@ func (rk RuntimeKind) validate() error {
 //     codex       → JsonRpcStdio  (app-server, JSON-RPC 2.0 over stdio)
 //     claude-code → StreamingStdio (NDJSON-over-stdin)
 //     opencode    → Subprocess     (default; ServeHTTP is opt-in via
-//                                    profile.RuntimeKind=serve-http for
-//                                    long-lived multi-turn workers)
+//     profile.RuntimeKind=serve-http for
+//     long-lived multi-turn workers)
 //
 // `claude` (bare) was retired 2026-05-16 — it has no matrix entry and
 // adapterFor rejects it; use claude-code.
@@ -94,12 +96,12 @@ func (rk RuntimeKind) validate() error {
 //     feedback_no_compat_shims — pre-launch, no operator config relied
 //     on the old field name.
 func selectRuntimeKind(provider string, profileKind string) (RuntimeKind, error) {
-	kind := RuntimeKind(profileKind)
-	if err := kind.validate(); err != nil {
+	kind := runtimeKindFromConfigValue(profileKind)
+	if err := RuntimeKind(kind).validate(); err != nil {
 		return "", err
 	}
 	if kind != "" {
-		return kind, nil
+		return RuntimeKind(kind), nil
 	}
 	switch provider {
 	case "codex":
@@ -120,6 +122,19 @@ func selectRuntimeKind(provider string, profileKind string) (RuntimeKind, error)
 		// wrap the error.
 		return RuntimeKindSubprocess, nil
 	}
+}
+
+func runtimeKindFromConfigValue(raw string) RuntimeKind {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	normalized = strings.ReplaceAll(normalized, "_", "-")
+	if normalized == "" {
+		return ""
+	}
+	parsed := runtimekind.Parse(normalized)
+	if parsed == runtimekind.Unknown || string(parsed) != normalized {
+		return RuntimeKind(normalized)
+	}
+	return RuntimeKind(parsed)
 }
 
 // resolveRuntimeKind composes the runtime-kind resolution chain: the

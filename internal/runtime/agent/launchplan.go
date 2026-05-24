@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/hollis-labs/go-agent-launch/agentlaunch"
+	runtimebootdir "github.com/hollis-labs/go-agent-runtime/bootdir"
 	"github.com/hollis-labs/torque/internal/agentfile"
 	"github.com/hollis-labs/torque/internal/config"
 )
@@ -116,6 +117,15 @@ func buildLaunchPlan(in buildLaunchPlanInput) (agentlaunch.LaunchPlan, error) {
 		projectID = "unscoped"
 	}
 
+	injection, _, err := runtimebootdir.BuildInjection(runtimebootdir.Request{
+		Provider:    mapProviderID(in.Profile.Provider),
+		Runtime:     rtKind,
+		NativeFiles: nativeFilesForLaunch(in),
+	})
+	if err != nil {
+		return agentlaunch.LaunchPlan{}, err
+	}
+
 	// Permission posture — claude only. Threaded onto the plan so the
 	// go-agent-launch v0.3.4 compile guard (ErrHeadlessClaudeNeedsPermission)
 	// is a real backstop for the headless Mode below: a claude launch that
@@ -172,9 +182,7 @@ func buildLaunchPlan(in buildLaunchPlanInput) (agentlaunch.LaunchPlan, error) {
 		MCP: agentlaunch.MCPSpec{
 			LoopbackURL: in.LoopbackURL,
 		},
-		Injection: agentlaunch.InjectionSpec{
-			NativeFiles: nativeFilesForLaunch(in),
-		},
+		Injection: injection,
 		// Torque autonomous dispatch is headless — no human at a TTY.
 		// `background` (not `interactive`) is the honest lifecycle stance
 		// and arms the v0.3.4 ErrHeadlessClaudeNeedsPermission compile guard.
@@ -255,23 +263,22 @@ func muxEnvSliceToMap(in []string) map[string]string {
 }
 
 // mergePreparedEnv appends the bootdir-derived env amendments
-// providerplant.Plant resolved (prepared.Env — e.g. CODEX_HOME,
-// OPENCODE_CONFIG_DIR) onto Torque's composed env slice. The amendments
-// are appended last so they take precedence; os/exec resolves a
-// duplicate KEY to the last occurrence, and go-agent-sessions forwards
-// the slice verbatim. Iteration order of the map is non-deterministic
-// but harmless — each key is distinct (the per-provider amendments
-// never collide with each other) and last-wins holds regardless.
-func mergePreparedEnv(base []string, amendments map[string]string) []string {
+// sessionshim.ToSessionLaunch resolved from PreparedLaunch.Env (e.g.
+// CODEX_HOME, OPENCODE_CONFIG_DIR) onto Torque's composed env slice. The
+// amendments are appended last so they take precedence; os/exec resolves a
+// duplicate KEY to the last occurrence, and go-agent-sessions forwards the
+// slice verbatim.
+func mergePreparedEnv(base []string, amendments []string) []string {
 	if len(amendments) == 0 {
 		return base
 	}
 	out := append([]string(nil), base...)
-	for k, v := range amendments {
-		if k == "" {
+	for _, kv := range amendments {
+		key, _, found := strings.Cut(kv, "=")
+		if !found || key == "" {
 			continue
 		}
-		out = append(out, k+"="+v)
+		out = append(out, kv)
 	}
 	return out
 }

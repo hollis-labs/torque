@@ -12,6 +12,9 @@ import (
 
 	"github.com/hollis-labs/go-agent-launch/agentlaunch/launcher"
 	"github.com/hollis-labs/go-agent-launch/agentlaunch/providerplant"
+	"github.com/hollis-labs/go-agent-launch/agentlaunch/sessionshim"
+	"github.com/hollis-labs/go-agent-runtime/sessionkit"
+	"github.com/hollis-labs/go-agent-runtime/turn"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 	llmtypes "github.com/hollis-labs/go-llm-types"
 	"github.com/hollis-labs/go-providers/provider"
@@ -253,6 +256,11 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 			return nil, fmt.Errorf("%w: plant boot dir: %v", ErrBootFailed, err)
 		}
 	}
+	sessionLaunch, err := sessionshim.ToSessionLaunch(prepared)
+	if err != nil {
+		shutdownLoopbackHandle(loopback)
+		return nil, fmt.Errorf("%w: convert prepared launch: %v", ErrBootFailed, err)
+	}
 	// capturedBootDir is the planted dir; "" for adapters with no
 	// BootDirSpec (gemini/copilot — unsupported in Torque today, but the
 	// branch keeps Boot generic). Planting already happened, so this is
@@ -312,9 +320,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	//     directly — the runtime splices it after adapter.BuildArgs) and
 	//     merge prepared.Env into the spawn env.
 	var bootDirExtraArgs []string
-	if len(prepared.Argv) > 1 {
-		bootDirExtraArgs = append([]string(nil), prepared.Argv[1:]...)
-	}
+	bootDirExtraArgs = append([]string(nil), sessionLaunch.Options.ExtraArgs...)
 
 	// opencode serve-http hot-fix: `opencode serve` does NOT accept
 	// `--dir <path>` (that's an `opencode run` flag) and exits printing
@@ -344,14 +350,14 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	// OPENCODE_CONFIG_DIR) that providerplant.Plant resolved into
 	// prepared.Env. Torque's composeEnv already produced the base
 	// "K=V" slice; append the amendments last so they win.
-	env = mergePreparedEnv(env, prepared.Env)
+	env = mergePreparedEnv(env, sessionLaunch.Options.Env)
 
 	// Spawn cwd: providerplant.Plant set prepared.Workdir to the spec's
 	// SpawnWorkdir (bootDir for claude/codex, projectDir for opencode).
 	// Fall back to opts.Workdir when no boot dir was planted.
 	spawnWorkdir := opts.Workdir
-	if capturedBootDir != "" && prepared.Workdir != "" {
-		spawnWorkdir = prepared.Workdir
+	if capturedBootDir != "" && sessionLaunch.Options.Workdir != "" {
+		spawnWorkdir = sessionLaunch.Options.Workdir
 	}
 
 	// opencode's argv shape requires `--model <X>` BEFORE the positional
@@ -517,22 +523,22 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		opts.Mode == ModeBackground) && runtimeKind != RuntimeKindJsonRpcStdio
 	var firstTurnPayload []byte
 	if autoFire {
-		// kickoffPayload("") returns the canonical "Boot @./boot.md"
-		// — claude resolves the @-reference inline, reading the
-		// kickoff body the lib's AutoPlantBootDir wrote into boot.md
-		// from StartOptions.BootContent.
-		firstTurnPayload = []byte(kickoffPayload(""))
-		// The streaming-stdio runtime (claude-code) feeds claude
-		// `--input-format stream-json`: the first-turn payload must be a
-		// JSON stream-json user message, not a raw line. subprocess / pty
-		// take the plaintext verbatim.
-		if runtimeKind == RuntimeKindStreamingStdio {
-			encoded, encErr := encodeStreamJSONUserMessage(kickoffPayload(""))
-			if encErr != nil {
-				return nil, fmt.Errorf("%w: encode streaming-stdio kickoff: %v", ErrBootFailed, encErr)
-			}
-			firstTurnPayload = encoded
+		firstTurnOpts := agentsessions.StartOptions{}
+		turnRuntime, err := mapRuntimeKind(runtimeKind)
+		if err != nil {
+			return nil, fmt.Errorf("%w: map first-turn runtime: %v", ErrBootFailed, err)
 		}
+		if err := sessionkit.ApplyFirstTurnPolicy(&firstTurnOpts, sessionkit.FirstTurnPolicy{
+			Mode:   sessionkit.AutoFireFirstTurn,
+			Prompt: kickoffPayload(""),
+			Turn: turn.Options{
+				Provider: profile.Provider,
+				Runtime:  turnRuntime,
+			},
+		}); err != nil {
+			return nil, fmt.Errorf("%w: frame first turn: %v", ErrBootFailed, err)
+		}
+		firstTurnPayload = firstTurnOpts.FirstTurnPayload
 	}
 
 	// Stderr sidecar: forward to per-run sidecar log + tail buffer + the
@@ -752,6 +758,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 			TypedEventCallback:      opts.TypedEventCallback,
 			AutoPlantBootDir:        false,
 			ExtraArgs:               bootDirExtraArgs,
+			PlantContext:            sessionLaunch.Options.PlantContext,
 			JsonRpcNotificationHook: jsonRpcNotificationHook,
 		},
 		SessionMeta: opts.SessionMeta,
@@ -875,7 +882,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	if opts.Mode != ModeOneShot && runtimeKind == RuntimeKindJsonRpcStdio && !isResume {
 		kickoff := composeUserPrompt(opts)
 		if kickoff == "" {
-			kickoff = kickoffPayload("")
+			kickoff = kickoffPayloadForBootDir(capturedBootDir)
 		}
 		if err := mgr.SendTurn(context.WithoutCancel(ctx), sess, kickoff); err != nil {
 			log.Printf("agent.Boot: long-lived JsonRpcStdio kickoff failed (session=%s): %v", sessID, err)
@@ -908,7 +915,11 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 
 		prompt := composeUserPrompt(opts)
 		if prompt == "" {
-			prompt = kickoffPayload("")
+			if runtimeKind == RuntimeKindJsonRpcStdio {
+				prompt = kickoffPayloadForBootDir(capturedBootDir)
+			} else {
+				prompt = kickoffPayload("")
+			}
 		}
 		// SendTurn routes by runtime kind: JsonRpcStdio runs the
 		// initialize+thread/start+turn/start handshake (with thread_id

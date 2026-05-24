@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	agentlaunch "github.com/hollis-labs/go-agent-launch/agentlaunch"
+	"github.com/hollis-labs/go-agent-runtime/turn"
 )
 
 // torqueClientVersion is the value the JSON-RPC initialize call
@@ -15,16 +18,13 @@ const torqueClientVersion = "0.1-dev"
 // SendTurn delivers a user-message turn to a running agent session.
 // The delivery path is selected by the session's RuntimeKind:
 //
-//   - jsonrpc-stdio: lazy JSON-RPC handshake (initialize + thread/start
-//     on the first turn; cache the thread id) followed by turn/start
-//     with the cached threadId + the input wrapped as
-//     [{type:"text", text:"..."}]. Mirrors agent-mux v005-07's
-//     internal/app/codex.go::sendTurnJSONRPC (commit 08aa9b5) — the
-//     only working consumer reference shape for codex app-server today.
+//   - jsonrpc-stdio: go-agent-runtime's Codex app-server helper runs
+//     the lazy initialize + thread/start handshake, caches thread.id,
+//     and sends turn/start with a single text input block.
 //
 //   - streaming-stdio: the turn is wrapped as a stream-json user
 //     message ({"type":"user","message":{"role":"user","content":...}})
-//     via encodeStreamJSONUserMessage — claude-code runs
+//     via go-agent-runtime/turn.Frame — claude-code runs
 //     `--input-format stream-json` and rejects a raw plaintext line.
 //
 //   - subprocess / pty: classic plaintext SendInput. The lib writes the
@@ -46,13 +46,20 @@ func (m *Manager) SendTurn(ctx context.Context, sess *Session, text string) erro
 	}
 	switch RuntimeKind(sess.RuntimeKind) {
 	case RuntimeKindJsonRpcStdio:
-		return m.sendTurnJSONRPC(ctx, sess.ID, sess.Workdir, text)
+		return m.codexTurns.SendTurn(ctx, sess.ID, codexRPCSender{mgr: m, sessID: sess.ID}, text, turn.CodexAppServerOptions{
+			ClientName:    "torque",
+			ClientVersion: torqueClientVersion,
+			CWD:           sess.Workdir,
+		})
 	case RuntimeKindStreamingStdio:
 		// claude-code runs `claude --input-format stream-json`: every
 		// line on stdin must be one JSON object. Wrap the plaintext turn
 		// as a stream-json user message — a raw line is rejected by
 		// claude's parser. The runtime appends the framing newline.
-		encoded, err := encodeStreamJSONUserMessage(text)
+		encoded, err := turn.Frame(text, turn.Options{
+			Provider: "claude",
+			Runtime:  agentlaunch.RuntimeKind(sess.RuntimeKind),
+		})
 		if err != nil {
 			return fmt.Errorf("encode streaming-stdio turn: %w", err)
 		}
@@ -65,88 +72,11 @@ func (m *Manager) SendTurn(ctx context.Context, sess *Session, text string) erro
 	}
 }
 
-// sendTurnJSONRPC implements the codex app-server turn-delivery shape.
-// Lazy initialize + thread/start on the first call for a session,
-// caches the thread id on the Manager, and issues turn/start with the
-// cached id + the user input. Reference: agent-mux v005-07
-// internal/app/codex.go (commit 08aa9b5).
-//
-// initialize is fire-and-cache: we only need it once per session for
-// the app-server to know who's calling. thread/start opens a fresh
-// thread (codex CLI manages thread persistence in-memory for 30 min
-// idle); the returned thread.id is cached and reused for every
-// subsequent turn on this session. turn/start delivers the actual user
-// message and returns when the call is accepted — NOT when the turn
-// is done. Turn-complete detection rides on the
-// `turn/completed` JSON-RPC notification, which torque wires via
-// StartOptions.JsonRpcNotificationHook in boot.go.
-func (m *Manager) sendTurnJSONRPC(ctx context.Context, sessID, cwd, text string) error {
-	threadID, cached := m.lookupCodexThread(sessID)
-	if !cached {
-		initParams := map[string]any{
-			"clientInfo": map[string]any{
-				"name":    "torque",
-				"version": torqueClientVersion,
-			},
-		}
-		if _, err := m.inner.JsonRpcCall(ctx, sessID, "initialize", initParams); err != nil {
-			return fmt.Errorf("jsonrpc initialize: %w", err)
-		}
-		startParams := map[string]any{}
-		if cwd != "" {
-			startParams["cwd"] = cwd
-		}
-		startRes, err := m.inner.JsonRpcCall(ctx, sessID, "thread/start", startParams)
-		if err != nil {
-			return fmt.Errorf("jsonrpc thread/start: %w", err)
-		}
-		var parsed struct {
-			Thread struct {
-				ID string `json:"id"`
-			} `json:"thread"`
-		}
-		if err := json.Unmarshal(startRes, &parsed); err != nil {
-			return fmt.Errorf("decode thread/start response: %w", err)
-		}
-		if parsed.Thread.ID == "" {
-			return fmt.Errorf("thread/start returned empty thread.id")
-		}
-		threadID = parsed.Thread.ID
-		m.cacheCodexThread(sessID, threadID)
-	}
-	if _, err := m.inner.JsonRpcCall(ctx, sessID, "turn/start", map[string]any{
-		"threadId": threadID,
-		"input": []map[string]any{
-			{"type": "text", "text": text},
-		},
-	}); err != nil {
-		return fmt.Errorf("jsonrpc turn/start: %w", err)
-	}
-	return nil
+type codexRPCSender struct {
+	mgr    *Manager
+	sessID string
 }
 
-// lookupCodexThread returns the cached codex thread id for sessID, or
-// the empty string + false when no thread has been started yet.
-func (m *Manager) lookupCodexThread(sessID string) (string, bool) {
-	v, ok := m.codexThreads.Load(sessID)
-	if !ok {
-		return "", false
-	}
-	id, _ := v.(string)
-	return id, id != ""
-}
-
-// cacheCodexThread records the codex thread id for sessID. Idempotent:
-// repeated calls with the same id no-op; calls with a different id
-// (shouldn't happen — thread/start fires once per session) overwrite,
-// matching the agent-mux reference's sync.Map.Store semantics.
-func (m *Manager) cacheCodexThread(sessID, threadID string) {
-	m.codexThreads.Store(sessID, threadID)
-}
-
-// forgetCodexThread drops the cached thread id for sessID. Called by
-// the Manager's teardown path when a session reaches terminal state so
-// the map doesn't grow without bound across long daemon uptimes.
-func (m *Manager) forgetCodexThread(sessID string) {
-	m.codexThreads.Delete(sessID)
+func (s codexRPCSender) Call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	return s.mgr.inner.JsonRpcCall(ctx, s.sessID, method, params)
 }
