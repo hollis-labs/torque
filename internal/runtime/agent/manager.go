@@ -132,6 +132,20 @@ func (m *Manager) KnownProfiles() config.ProfileMap {
 	return config.CurrentProfiles(m.deps.Profiles)
 }
 
+// ProviderForProfile resolves a profile name to the provider Boot will use
+// when that profile is supplied via Options.AgentProfile. Callers that gate
+// resume/preset wiring on the BOOTED provider (e.g. planstart.Redispatch — the
+// orchestrator profile's provider may differ from a prior session's recorded
+// provider after an operator profile switch) read this before composing
+// Options. Returns the configured fallback when the named profile is missing,
+// mirroring config.GetProfileOrDefault's lookup.
+func (m *Manager) ProviderForProfile(name string) string {
+	if m == nil || m.deps == nil {
+		return ""
+	}
+	return config.GetProfileOrDefault(m.deps.Profiles, name).Provider
+}
+
 // registerLoopback associates a per-session loopback handle so Stop / Wait
 // completion can shut it down deterministically. Caller takes ownership of
 // the lifetime when registerLoopback returns; Boot for ModeOneShot bypasses

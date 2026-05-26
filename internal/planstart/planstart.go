@@ -94,8 +94,14 @@ type RedispatchStore interface {
 // SessionManager is the narrowed agent.Manager surface. The real
 // *agent.Manager implements it; tests pass a stub. Boot drives the
 // orchestrator session — no separate SendInput kickoff step.
+//
+// ProviderForProfile resolves a profile name to the provider Boot would use
+// for it. Redispatch consults this BEFORE wiring a resume hint so the gate
+// reflects the actually-booted provider (not the recorded prior provider,
+// which can diverge after an operator profile switch).
 type SessionManager interface {
 	Boot(ctx context.Context, opts agent.Options) (*agent.Session, error)
+	ProviderForProfile(name string) string
 }
 
 // Start validates a plan, idempotency-checks any existing orchestrator
@@ -325,20 +331,57 @@ func Redispatch(ctx context.Context, store RedispatchStore, mgr SessionManager, 
 		},
 	}
 
+	// Provider-session resume, layered on top of the recovery pack. When the
+	// prior orchestrator session is genuinely resumable (claude today — NOT
+	// codex; see agent.GenuinelyResumableProvider) and persisted a provider
+	// session-id, thread it via ProviderSessionIDOverride so the fresh boot
+	// restores the real transcript via `--resume` IN ADDITION to the bounded
+	// recovered-context block. The kickoff still fires (autoFire is independent
+	// of the override for StreamingStdio), so the resumed orchestrator wakes and
+	// continues. The recovery pack remains the universal floor: it is the sole
+	// mechanism for providers that can't resume, and the safety net if `--resume`
+	// can't restore (history rotated/pruned).
+	//
+	// The gate has THREE requirements. The booted-provider check is load-bearing:
+	// orchestrator.Profile resolves through the current config, so its provider
+	// may differ from priorSession.Provider after an operator profile switch
+	// (e.g. claude→codex). Setting ProviderSessionIDOverride on a JsonRpcStdio
+	// (codex) boot would flip isResume in agent.Boot and SKIP its post-Start
+	// kickoff — Redispatch sends no follow-up turn, so the orchestrator would
+	// boot silent. Requiring priorSession.Provider == bootedProvider (and
+	// genuine resume on the booted side) keeps that mismatch from ever firing.
+	bootedProvider := mgr.ProviderForProfile(orchestrator.Profile)
+	usedResume := false
+	if priorSession != nil &&
+		priorSession.Provider == bootedProvider &&
+		agent.GenuinelyResumableProvider(bootedProvider) &&
+		len(priorSession.ResumeHint) > 0 {
+		bootOpts.ProviderSessionIDOverride = string(priorSession.ResumeHint)
+		usedResume = true
+	}
+
 	sess, err := mgr.Boot(ctx, bootOpts)
 	if err != nil {
 		return nil, fmt.Errorf("planstart: redispatch orchestrator: %w", err)
 	}
+	if usedResume {
+		log.Printf("planstart: threaded provider resume for plan=%s session=%s prior_session=%s",
+			planID, sess.ID, priorSessionID(priorSession))
+	}
 
 	// Plant the full pack to <bootDir>/recovery.md as a re-readable pointer and
-	// emit the recovery.pack_planted breadcrumb. Both best-effort: a failed
-	// write/emit must not roll back an already-running orchestrator.
+	// emit the recovery.pack_planted breadcrumb (carrying used_resume). Both
+	// best-effort: a failed write/emit must not roll back an already-running
+	// orchestrator. The breadcrumb fires when recovery did something — a pack
+	// was planted and/or a provider resume was threaded.
 	if recoveryPack != "" {
 		if packPath, werr := agent.WriteRecoveryPackFile(sess.BootDir, recoveryPack); werr != nil {
 			log.Printf("planstart: write recovery.md for plan=%s session=%s path=%s: %v",
 				planID, sess.ID, packPath, werr)
 		}
-		emitRecoveryPackPlanted(store, planID, sess.ID, priorSessionID(priorSession), recoveryTurns)
+	}
+	if recoveryPack != "" || usedResume {
+		emitRecoveryPackPlanted(store, planID, sess.ID, priorSessionID(priorSession), recoveryTurns, usedResume)
 	}
 
 	if err := writeOrchestratorSessionID(store, plan, sess.ID); err != nil {
@@ -366,24 +409,28 @@ func priorSessionID(rec *sqlstore.SessionRecord) string {
 
 // recoveryPackPlantedPayload is the JSON shape stored on the run_events
 // breadcrumb for a planted recovery pack. Postmortem queries grep by
-// type="recovery.pack_planted".
+// type="recovery.pack_planted". UsedResume records whether the redispatch also
+// threaded a genuine provider `--resume` on top of the pack (true only for
+// genuinely-resumable providers with a persisted session-id — claude today).
 type recoveryPackPlantedPayload struct {
 	PlanID         string `json:"plan_id"`
 	NewSessionID   string `json:"new_session_id"`
 	PriorSessionID string `json:"prior_session_id,omitempty"`
 	Turns          int    `json:"turns"`
+	UsedResume     bool   `json:"used_resume"`
 }
 
 // emitRecoveryPackPlanted appends a recovery.pack_planted run_events row so the
 // cold-boot recovery is queryable. Mirrors nanite's recovery_pack_planted
 // LogEvent. Failure to append is logged but never propagated — observability
 // must not block the redispatch.
-func emitRecoveryPackPlanted(store RedispatchStore, planID, newSessionID, priorSessionID string, turns int) {
+func emitRecoveryPackPlanted(store RedispatchStore, planID, newSessionID, priorSessionID string, turns int, usedResume bool) {
 	body, err := json.Marshal(recoveryPackPlantedPayload{
 		PlanID:         planID,
 		NewSessionID:   newSessionID,
 		PriorSessionID: priorSessionID,
 		Turns:          turns,
+		UsedResume:     usedResume,
 	})
 	if err != nil {
 		log.Printf("planstart: marshal recovery.pack_planted for plan=%s: %v", planID, err)
