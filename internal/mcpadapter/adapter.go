@@ -9,8 +9,9 @@ import (
 
 	mcpsanitize "github.com/hollis-labs/go-mcp-sanitize"
 	feotel "github.com/hollis-labs/go-otel"
-	"github.com/hollis-labs/go-otel/propagation"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	otelprop "go.opentelemetry.io/otel/propagation"
 
 	"github.com/hollis-labs/torque/internal/broker"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
@@ -150,17 +151,25 @@ func (a *Adapter) addTool(t mcp.Tool, h server.ToolHandlerFunc) {
 	}
 	inner := mcpsanitize.Middleware(logger)(h)
 	toolName := t.Name
-	traced := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Only override ctx when the caller actually sent trace headers —
-		// propagation.ExtractMCP starts from context.Background() unconditionally,
-		// so using its return blindly would discard the MCP-server-provided ctx
-		// (values + deadlines) for untraced calls. Untraced calls still get a
-		// span; it just has no inbound parent. Arguments is typed `any` here
-		// (mcp-go's transport-level shape) — a non-map call payload simply
-		// can't carry trace headers, so we skip extraction safely.
+	traced := func(ctx context.Context, req mcp.CallToolRequest) (result *mcp.CallToolResult, err error) {
+		// Extract MCP-encoded trace context (_traceparent / _tracestate) INTO
+		// the inbound ctx — do NOT use propagation.ExtractMCP here: that helper
+		// starts from context.Background() and discards the MCP-server-provided
+		// ctx (cancellation, deadlines, transport-scoped values). Using
+		// otel.GetTextMapPropagator().Extract(ctx, ...) attaches the remote
+		// span context onto the existing ctx, preserving everything else.
+		// Arguments is typed `any` here (mcp-go's transport-level shape); a
+		// non-map payload can't carry trace headers, so we skip safely.
 		if args, ok := req.Params.Arguments.(map[string]any); ok {
 			if _, hasTP := args["_traceparent"]; hasTP {
-				ctx = propagation.ExtractMCP(args)
+				carrier := otelprop.MapCarrier{}
+				if tp, ok := args["_traceparent"].(string); ok {
+					carrier.Set("traceparent", tp)
+				}
+				if ts, ok := args["_tracestate"].(string); ok {
+					carrier.Set("tracestate", ts)
+				}
+				ctx = otel.GetTextMapPropagator().Extract(ctx, carrier)
 			}
 		}
 		ctx, span := feotel.StartSpan(ctx, "torque.mcp.call")
@@ -168,19 +177,25 @@ func (a *Adapter) addTool(t mcp.Tool, h server.ToolHandlerFunc) {
 			attribute.String("hollis.app", "torque"),
 			attribute.String("hollis.tool.name", toolName),
 		)
-		result, err := inner(ctx, req)
-		if err != nil {
-			span.RecordError(err)
-		} else if result != nil && result.IsError {
-			// CallToolResult.IsError conflates validation rejects and infra
-			// faults at the mcpadapter layer (errResult/toolError both set it).
-			// Per the OTel guide's policy-not-infra guidance, surface as an
-			// attribute rather than span.Error so an operator can grep for
-			// failed tool calls without those drowning out real faults.
-			span.SetAttributes(attribute.Bool("torque.mcp.result_error", true))
-		}
-		span.End()
-		return result, err
+		// Named returns + defer keep span lifecycle panic-safe: if the
+		// inner handler (or sanitize middleware) panics, the deferred End
+		// still fires, so spans never leak. The result/err inspection runs
+		// against the actual return values (or zero values on panic).
+		defer func() {
+			if err != nil {
+				span.RecordError(err)
+			} else if result != nil && result.IsError {
+				// CallToolResult.IsError conflates validation rejects and
+				// infra faults at the mcpadapter layer (errResult/toolError
+				// both set it). Per the OTel guide's policy-not-infra
+				// guidance, surface as an attribute rather than span.Error
+				// so an operator can grep failed tool calls without those
+				// drowning out real faults.
+				span.SetAttributes(attribute.Bool("torque.mcp.result_error", true))
+			}
+			span.End()
+		}()
+		return inner(ctx, req)
 	}
 	a.server.AddTool(t, traced)
 }

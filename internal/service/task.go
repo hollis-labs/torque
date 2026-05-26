@@ -710,13 +710,16 @@ func (s *TaskService) DeleteSubtodo(taskID, itemID string) ([]sqlstore.Subtodo, 
 	return nil, &ValidationError{Field: "id", Message: "subtodo not found: " + itemID}
 }
 
-// BulkTransition applies the same status transition to multiple tasks.
-// It returns the count of successful transitions and a slice of errors for failures.
-func (s *TaskService) BulkTransition(ctx context.Context, ids []string, newStatus string) (int, []error) {
+// BulkTransition applies the same status transition to multiple tasks. It
+// returns the slice of task IDs that successfully transitioned (in input
+// order, with failures dropped) plus a slice of errors for the failures. The
+// caller needs the actual successful IDs — not just a count — to broadcast
+// per-task SSE events or otherwise act per-item on the partial-success case.
+func (s *TaskService) BulkTransition(ctx context.Context, ids []string, newStatus string) ([]string, []error) {
 	// Wrapping span: per-item torque.task.transition spans nest under this so
 	// an operator sees "BulkTransition of N tasks" as one unit, with each task
 	// drilldown still available. Bulk operations don't expose a single err
-	// (callers see partial-success: success count + []error), so the wrapper
+	// (callers see partial-success: succeeded IDs + []error), so the wrapper
 	// span doesn't RecordError; per-item spans capture individual faults.
 	ctx, span := feotel.StartSpan(ctx, "torque.task.transition.bulk")
 	span.SetAttributes(
@@ -727,17 +730,17 @@ func (s *TaskService) BulkTransition(ctx context.Context, ids []string, newStatu
 	defer span.End()
 
 	var errs []error
-	success := 0
+	succeeded := make([]string, 0, len(ids))
 	for _, id := range ids {
 		if err := s.Transition(ctx, id, newStatus); err != nil {
 			errs = append(errs, err)
 		} else {
-			success++
+			succeeded = append(succeeded, id)
 		}
 	}
 	span.SetAttributes(
-		attribute.Int("torque.task.bulk_success", success),
+		attribute.Int("torque.task.bulk_success", len(succeeded)),
 		attribute.Int("torque.task.bulk_failed", len(errs)),
 	)
-	return success, errs
+	return succeeded, errs
 }
