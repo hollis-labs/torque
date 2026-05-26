@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -13,6 +14,9 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	feotel "github.com/hollis-labs/go-otel"
+	"github.com/hollis-labs/go-otel/propagation"
 
 	"github.com/hollis-labs/torque/internal/broker"
 	"github.com/hollis-labs/torque/internal/config"
@@ -82,6 +86,31 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+
+	// Initialize OpenTelemetry tracing + a trace-correlated slog handler.
+	// Init installs the global TracerProvider + W3C trace-context propagation
+	// so downstream HTTP / agent / scheduler spans nest correctly; the OTLP
+	// HTTP exporter targets OTEL_EXPORTER_OTLP_ENDPOINT (default
+	// localhost:4318). HOLLIS_OTEL_DISABLED / TORQUE_OTEL_DISABLED skip init
+	// entirely (useful for local CLI invocations); the slog handler installs
+	// regardless because it's a no-op for untraced contexts and harmless when
+	// OTel is off.
+	if os.Getenv("HOLLIS_OTEL_DISABLED") != "1" && os.Getenv("TORQUE_OTEL_DISABLED") != "1" {
+		otelCtx := context.Background()
+		shutdown, otelErr := feotel.Init(
+			otelCtx,
+			feotel.WithServiceName("torque"),
+			feotel.WithServiceVersion(version),
+			feotel.WithServiceNamespace("hollis"),
+			feotel.WithEnvironment(torqueEnvironment()),
+		)
+		if otelErr != nil {
+			log.Printf("warning: OTel init failed: %v", otelErr)
+		} else {
+			defer func() { _ = shutdown(otelCtx) }()
+		}
+	}
+	slog.SetDefault(slog.New(feotel.NewLogHandler(slog.NewTextHandler(os.Stderr, nil))))
 
 	// DB + migrations + store. DBPath is resolved via go-apppaths in
 	// config.Load (default XDG layout, TORQUE_DB_PATH still honored).
@@ -403,7 +432,12 @@ func runServe(ctx context.Context, ln net.Listener) error {
 		}()
 	}
 
-	srv := &http.Server{Handler: handler}
+	// propagation.HTTPMiddleware wraps every inbound HTTP request in a server
+	// span and extracts W3C trace context from the request headers so calls
+	// from other Hollis apps (Nanite / Tether / Hadron / Torque-MCP clients)
+	// continue the same trace. Sits outside the chi router's CORS step so
+	// preflights are also visible.
+	srv := &http.Server{Handler: propagation.HTTPMiddleware(handler)}
 
 	// Graceful HTTP shutdown is driven by runCtx, which fires when either the
 	// parent ctx is cancelled (normal SIGINT/SIGTERM path) OR when we call
@@ -449,6 +483,20 @@ func runServe(ctx context.Context, ln net.Listener) error {
 		return serveErr
 	}
 	return nil
+}
+
+// torqueEnvironment resolves the deployment-environment tag (dev / staging /
+// uat / prod ...) for OTel resource attributes. TORQUE_ENV wins; HOLLIS_ENV
+// is the portfolio-wide fallback; "dev" is the safe default when neither is
+// set so unconfigured operator boxes don't masquerade as production.
+func torqueEnvironment() string {
+	if v := os.Getenv("TORQUE_ENV"); v != "" {
+		return v
+	}
+	if v := os.Getenv("HOLLIS_ENV"); v != "" {
+		return v
+	}
+	return "dev"
 }
 
 // publishDaemonUp emits a one-shot `daemon.up` SchedulerEvent so durable
