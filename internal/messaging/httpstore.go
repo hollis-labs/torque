@@ -37,6 +37,7 @@ import (
 	"time"
 
 	messaging "github.com/hollis-labs/go-messaging"
+	"github.com/hollis-labs/go-otel/propagation"
 )
 
 // Compile-time assertion: *HTTPStore satisfies messaging.Store, so it is
@@ -232,6 +233,13 @@ func (s *HTTPStore) do(ctx context.Context, method, relPath string, body any, wa
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")
+	// Inject W3C trace context into outgoing federation calls so the peer
+	// install's propagation.HTTPMiddleware can continue the same trace —
+	// otherwise a Send / Get / Thread / Consume / Cancel that hops to a
+	// peer would appear as two disconnected traces. Header injection is
+	// silently a no-op when the ctx carries no active span (which is
+	// correct: untraced contexts shouldn't manufacture trace headers).
+	propagation.InjectHTTP(ctx, req)
 
 	resp, err := s.client.Do(req)
 	if err != nil {
