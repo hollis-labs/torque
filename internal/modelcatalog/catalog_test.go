@@ -19,7 +19,7 @@ func minimalCatalog() map[string]modelsdev.Provider {
 		"anthropic": {
 			ID:   "anthropic",
 			Name: "Anthropic",
-			Env:  "ANTHROPIC_API_KEY",
+			Env:  []string{"ANTHROPIC_API_KEY"},
 			Models: map[string]modelsdev.Model{
 				"claude-sonnet-4-6": {
 					ID:     "claude-sonnet-4-6",
