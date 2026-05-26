@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -158,6 +159,38 @@ func TestReconstructTurnsFromStream_TrailingTrim(t *testing.T) {
 	assert.Equal(t, "tool", turns[0].Role)
 	assert.Contains(t, turns[0].Text, "t2")
 	assert.Equal(t, "turn3", turns[1].Text)
+}
+
+// TestReconstructTurnsFromStream_LongStreamKeepsNewest guards the trailing-window
+// semantics on a long stream: a session with far more turns than the window must
+// recover its MOST RECENT turns, not its opening ones. (Regression test for a
+// head-capped scan that returned the oldest turns for long-lived sessions —
+// exactly the recovery target.)
+func TestReconstructTurnsFromStream_LongStreamKeepsNewest(t *testing.T) {
+	dir := t.TempDir()
+	// 500 distinct assistant turns, each separated by a tool_use so they don't
+	// coalesce. Window of 3 must yield the last three (turn498..turn499 around
+	// the trailing tool calls), never turn0/turn1.
+	const total = 500
+	lines := make([]string, 0, total*2)
+	for i := 0; i < total; i++ {
+		lines = append(lines, fmt.Sprintf(`{"type":"delta","content":"turn%d"}`, i))
+		lines = append(lines, fmt.Sprintf(`{"type":"tool_use","tool_use":{"name":"t%d"}}`, i))
+	}
+	p := writeStream(t, dir, lines...)
+
+	turns, err := ReconstructTurnsFromStream(p, 3)
+	require.NoError(t, err)
+	require.Len(t, turns, 3)
+	// Trailing three of [..., turn499, t499] are [t498, turn499, t499].
+	assert.Contains(t, turns[0].Text, "t498")
+	assert.Equal(t, "turn499", turns[1].Text)
+	assert.Contains(t, turns[2].Text, "t499")
+	// The opening turns must NOT appear in the recovered window.
+	for _, tn := range turns {
+		assert.NotContains(t, tn.Text, "turn0")
+		assert.NotContains(t, tn.Text, "turn1")
+	}
 }
 
 // TestReconstructTurnsFromStream_MissingFile is best-effort: a missing stream

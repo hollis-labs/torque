@@ -66,13 +66,6 @@ const (
 	// written to, so the agent can reread recovered context on demand.
 	// Matches nanite's recoveryPackFileName.
 	recoveryPackFileName = "recovery.md"
-
-	// recoveryStreamScanLines caps how many trailing JSONL lines we scan
-	// from stream.jsonl. A long session's stream can be tens of thousands of
-	// events; we only need enough to reconstruct the last
-	// recoveryHistoryTurns turns. Generous bound — coalescing many deltas
-	// into one turn means the real read is usually well under this.
-	recoveryStreamScanLines = 5000
 )
 
 // RecoveryTurn is one reconstructed turn from a prior session's stream trace.
@@ -136,11 +129,24 @@ func ReconstructTurnsFromStream(streamPath string, maxTurns int) ([]RecoveryTurn
 
 	var turns []RecoveryTurn
 	var pendingAssistant strings.Builder
+	// appendTurn appends a completed turn and rolling-trims to the trailing
+	// maxTurns. Trimming as we go (rather than once at the end) bounds memory to
+	// the window we'll return without capping how far we scan — so the window
+	// always reflects the MOST RECENT turns even for a long-lived session whose
+	// stream has many thousands of events. Completed turns are immutable, so
+	// trimming them never loses context still being accumulated (that lives in
+	// pendingAssistant, which is independent of this slice).
+	appendTurn := func(t RecoveryTurn) {
+		turns = append(turns, t)
+		if maxTurns > 0 && len(turns) > maxTurns {
+			turns = turns[len(turns)-maxTurns:]
+		}
+	}
 	flushAssistant := func() {
 		text := strings.TrimSpace(pendingAssistant.String())
 		pendingAssistant.Reset()
 		if text != "" {
-			turns = append(turns, RecoveryTurn{Role: "assistant", Text: text})
+			appendTurn(RecoveryTurn{Role: "assistant", Text: text})
 		}
 	}
 
@@ -148,14 +154,7 @@ func ReconstructTurnsFromStream(streamPath string, maxTurns int) ([]RecoveryTurn
 	// Stream lines can hold a full assistant message; widen the token buffer
 	// well past bufio's 64KiB default so a long delta line isn't dropped.
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	scanned := 0
 	for scanner.Scan() {
-		scanned++
-		if scanned > recoveryStreamScanLines {
-			// Defensive cap; the trailing-trim below keeps the last maxTurns
-			// regardless, so an over-long stream just stops being scanned.
-			break
-		}
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
@@ -176,7 +175,7 @@ func ReconstructTurnsFromStream(streamPath string, maxTurns int) ([]RecoveryTurn
 			if name == "" {
 				name = "(tool)"
 			}
-			turns = append(turns, RecoveryTurn{Role: "tool", Text: "called " + name})
+			appendTurn(RecoveryTurn{Role: "tool", Text: "called " + name})
 		default:
 			// usage / done / error / session_id / thinking — no content.
 		}
