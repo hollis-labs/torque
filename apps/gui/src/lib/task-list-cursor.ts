@@ -1,4 +1,4 @@
-import { createListCursor } from '@hollis-labs/sysop-ui'
+import { createListCursor } from '@hollis-labs/sysop-ui/api'
 import type { TaskStatus } from './types'
 import { parseManualFilter, type ManualFilter } from './ops-filters-storage'
 

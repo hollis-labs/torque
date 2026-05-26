@@ -1,16 +1,7 @@
 import { Link } from 'react-router-dom'
 import { BookOpen, Calendar, Folder } from 'lucide-react'
-import {
-  Input,
-  Switch,
-  CollapsibleSection,
-  FilterEntityCombobox,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@hollis-labs/sysop-ui'
+import { Input, Switch, CollapsibleSection, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@hollis-labs/sysop-ui'
+import { FilterEntityCombobox } from '@hollis-labs/sysop-ui/data'
 import { formatCostBudget } from '@/lib/sentinel-display'
 import { UNLIMITED, type Task, type Project, type Sprint, type Epic } from '@/lib/types'
 

@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { BarMeter, type BarMeterRow } from '@hollis-labs/sysop-ui'
+import { BarMeter, type BarMeterRow } from '@hollis-labs/sysop-ui/widgets'
 import { STATUS_COLOR_VAR, STATUS_LABEL } from '@/lib/constants'
 import type { Task, TaskStatus } from '@/lib/types'
 

@@ -1,12 +1,7 @@
 import { Link } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, Flag } from 'lucide-react'
-import {
-  Input,
-  Button,
-  PriorityBadge,
-  CopyableId,
-  FilterEntityCombobox,
-} from '@hollis-labs/sysop-ui'
+import { Input, Button, PriorityBadge, CopyableId } from '@hollis-labs/sysop-ui'
+import { FilterEntityCombobox } from '@hollis-labs/sysop-ui/data'
 import { StatusBadge } from './status-badge'
 import { TagChip } from './tag-chip'
 import { TaskActionsMenu } from './task-actions-menu'

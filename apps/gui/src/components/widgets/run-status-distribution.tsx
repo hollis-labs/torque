@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { DonutChart, type DonutSegment } from '@hollis-labs/sysop-ui'
+import { DonutChart, type DonutSegment } from '@hollis-labs/sysop-ui/widgets'
 import type { Run } from '@/lib/types'
 
 export interface RunStatusDistributionProps {

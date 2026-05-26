@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { ActivityHeatmap as KitActivityHeatmap } from '@hollis-labs/sysop-ui'
+import { ActivityHeatmap as KitActivityHeatmap } from '@hollis-labs/sysop-ui/widgets'
 import type { Run, Task } from '@/lib/types'
 
 export interface ActivityHeatmapProps {

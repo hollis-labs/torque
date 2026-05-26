@@ -1,4 +1,4 @@
-import { HourlyPulse } from '@hollis-labs/sysop-ui'
+import { HourlyPulse } from '@hollis-labs/sysop-ui/widgets'
 import type { Run } from '@/lib/types'
 
 export interface Pulse24hProps {

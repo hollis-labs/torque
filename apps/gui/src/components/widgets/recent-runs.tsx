@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { RecentList } from '@hollis-labs/sysop-ui'
+import { RecentList } from '@hollis-labs/sysop-ui/widgets'
 import type { Run } from '@/lib/types'
 
 export interface RecentRunsProps {

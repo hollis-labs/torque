@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
-import { Skeleton, Button, DetailHeader, EmptyState } from '@hollis-labs/sysop-ui'
+import { Skeleton, Button, EmptyState } from '@hollis-labs/sysop-ui'
+import { DetailHeader } from '@hollis-labs/sysop-ui/layout'
 import {
   Select,
   SelectContent,

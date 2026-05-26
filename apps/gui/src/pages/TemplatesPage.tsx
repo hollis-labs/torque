@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Skeleton, PageHeader, SummaryCards, CopyableId, RowActionMenu, EmptyState } from '@hollis-labs/sysop-ui'
+import { Skeleton, PageHeader, SummaryCards, CopyableId, EmptyState } from '@hollis-labs/sysop-ui'
+import { RowActionMenu } from '@hollis-labs/sysop-ui/data'
 import { useApi } from '@/hooks/use-api'
 import { notifyError, notifySuccess } from '@/lib/toast'
 import type { Template } from '@/lib/types'
