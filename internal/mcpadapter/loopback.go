@@ -229,7 +229,7 @@ func (a *Adapter) handleLoopbackBlocked(ctx context.Context, req mcp.CallToolReq
 	}); err != nil {
 		return errFromService(err)
 	}
-	if err := a.svc.Task.Transition(a.loopbackTaskID, "blocked"); err != nil {
+	if err := a.svc.Task.Transition(ctx, a.loopbackTaskID, "blocked"); err != nil {
 		return errFromService(err)
 	}
 	return okResult(map[string]interface{}{
@@ -246,7 +246,7 @@ func (a *Adapter) handleLoopbackReview(ctx context.Context, req mcp.CallToolRequ
 			return errFromService(err)
 		}
 	}
-	if err := a.svc.Task.Transition(a.loopbackTaskID, "review"); err != nil {
+	if err := a.svc.Task.Transition(ctx, a.loopbackTaskID, "review"); err != nil {
 		return errFromService(err)
 	}
 	return okResult(map[string]interface{}{

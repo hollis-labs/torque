@@ -627,7 +627,7 @@ func (a *Adapter) handleTaskTransition(ctx context.Context, req mcp.CallToolRequ
 	if reqBool(req, "force") {
 		transition = a.svc.Task.ForceTransition
 	}
-	if err := transition(id, status); err != nil {
+	if err := transition(ctx, id, status); err != nil {
 		return errFromService(err)
 	}
 	task, err := a.svc.Task.Get(id)
@@ -701,7 +701,7 @@ func (a *Adapter) handleTaskBulkTransition(ctx context.Context, req mcp.CallTool
 		return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid ids JSON: %v", err), "ids")
 	}
 	status := reqStr(req, "status")
-	success, errs := a.svc.Task.BulkTransition(ids, status)
+	success, errs := a.svc.Task.BulkTransition(ctx, ids, status)
 
 	var errMsgs []string
 	for _, e := range errs {

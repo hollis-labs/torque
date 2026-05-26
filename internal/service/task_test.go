@@ -1,6 +1,7 @@
 package service_test
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"strings"
@@ -138,7 +139,7 @@ func TestTaskTransitionValid(t *testing.T) {
 	task, err := svc.Task.Create(service.TaskCreateInput{Title: "Transition test"})
 	require.NoError(t, err)
 
-	err = svc.Task.Transition(task.ID, "doing")
+	err = svc.Task.Transition(context.Background(), task.ID, "doing")
 	require.NoError(t, err)
 
 	updated, err := svc.Task.Get(task.ID)
@@ -153,7 +154,7 @@ func TestTaskTransitionInvalid(t *testing.T) {
 	require.NoError(t, err)
 
 	// todo → done is not a valid transition
-	err = svc.Task.Transition(task.ID, "done")
+	err = svc.Task.Transition(context.Background(), task.ID, "done")
 	require.Error(t, err)
 
 	var te *service.TransitionError
@@ -167,7 +168,7 @@ func TestTaskForceTransition(t *testing.T) {
 	require.NoError(t, err)
 
 	// todo → done is FSM-invalid; ForceTransition bypasses the rules.
-	require.NoError(t, svc.Task.ForceTransition(task.ID, "done"))
+	require.NoError(t, svc.Task.ForceTransition(context.Background(), task.ID, "done"))
 
 	updated, err := svc.Task.Get(task.ID)
 	require.NoError(t, err)

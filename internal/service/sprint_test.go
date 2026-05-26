@@ -1,6 +1,7 @@
 package service_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -164,10 +165,10 @@ func TestSprintApproveAll(t *testing.T) {
 	task2, _ := svc.Task.Create(service.TaskCreateInput{
 		Title: "Task 2", Description: "Do thing 2", SprintID: sprint.ID,
 	})
-	svc.Task.Transition(task1.ID, "doing")
-	svc.Task.Transition(task1.ID, "review")
-	svc.Task.Transition(task2.ID, "doing")
-	svc.Task.Transition(task2.ID, "review")
+	svc.Task.Transition(context.Background(), task1.ID, "doing")
+	svc.Task.Transition(context.Background(), task1.ID, "review")
+	svc.Task.Transition(context.Background(), task2.ID, "doing")
+	svc.Task.Transition(context.Background(), task2.ID, "review")
 
 	// Approve all tasks in the sprint at once
 	count, err := svc.Sprint.ApproveAll(sprint.ID)
@@ -194,8 +195,8 @@ func TestSprintApproveTask(t *testing.T) {
 	task, _ := svc.Task.Create(service.TaskCreateInput{
 		Title: "Task 1", Description: "Do thing", SprintID: sprint.ID,
 	})
-	svc.Task.Transition(task.ID, "doing")
-	svc.Task.Transition(task.ID, "review")
+	svc.Task.Transition(context.Background(), task.ID, "doing")
+	svc.Task.Transition(context.Background(), task.ID, "review")
 
 	// Approve single task
 	err := svc.Sprint.ApproveTask(sprint.ID, task.ID)
@@ -216,8 +217,8 @@ func TestSprintApproveTaskWrongSprint(t *testing.T) {
 	task, _ := svc.Task.Create(service.TaskCreateInput{
 		Title: "Unattached task", Description: "No sprint",
 	})
-	svc.Task.Transition(task.ID, "doing")
-	svc.Task.Transition(task.ID, "review")
+	svc.Task.Transition(context.Background(), task.ID, "doing")
+	svc.Task.Transition(context.Background(), task.ID, "review")
 
 	err := svc.Sprint.ApproveTask(sprint.ID, task.ID)
 	assert.Error(t, err)

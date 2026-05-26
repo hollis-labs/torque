@@ -78,7 +78,7 @@ func createBlockingDecisionTask(t *testing.T, svc *service.Service) string {
 	})
 	require.NoError(t, err)
 	// Move to doing so a checkpoint emit has a meaningful parking transition.
-	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
+	require.NoError(t, svc.Task.Transition(context.Background(), rec.ID, "doing"))
 	return rec.ID
 }
 
@@ -191,7 +191,7 @@ func TestCheckpointService_Emit_NonBlocking_LeavesTaskRunning(t *testing.T) {
 		Executor:       "cli",
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
+	require.NoError(t, svc.Task.Transition(context.Background(), rec.ID, "doing"))
 
 	_, err = svc.Checkpoint.Emit(service.CheckpointEmitInput{
 		TaskID: rec.ID, Type: "progress", PayloadJSON: `{}`, EmitterSourceType: "system",
@@ -370,7 +370,7 @@ func TestCheckpointService_Respond_RequiredWorkflowRejectsDisallowedResponder(t 
 		},
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
+	require.NoError(t, svc.Task.Transition(context.Background(), rec.ID, "doing"))
 	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
 		TaskID:            rec.ID,
 		Type:              hitl.TypeApproval,
@@ -565,7 +565,7 @@ func TestCheckpointService_Respond_StaysInReview_OnReviewMode(t *testing.T) {
 		Manual:               true,
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
+	require.NoError(t, svc.Task.Transition(context.Background(), rec.ID, "doing"))
 
 	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
 		TaskID: rec.ID, Type: "x", PayloadJSON: `{}`, EmitterSourceType: "system",
@@ -606,7 +606,7 @@ func TestCheckpointService_Respond_UnparkedTask_NoStateChange(t *testing.T) {
 		Executor:       "cli",
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
+	require.NoError(t, svc.Task.Transition(context.Background(), rec.ID, "doing"))
 
 	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
 		TaskID: rec.ID, Type: "x", PayloadJSON: `{}`, EmitterSourceType: "system",
@@ -782,7 +782,7 @@ func TestCheckpointService_Respond_ReviewMode_SkipsDispatcher(t *testing.T) {
 		Manual:               true,
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
+	require.NoError(t, svc.Task.Transition(context.Background(), rec.ID, "doing"))
 
 	dispatcher := &fakeResponseDispatcher{}
 	svc.Checkpoint.WithResponseDispatcher(dispatcher)
@@ -893,8 +893,8 @@ func TestCheckpointService_Respond_InvokesOrchestratorRedispatch_WhenNotParked(t
 		Manual:         true,
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
-	require.NoError(t, svc.Task.Transition(rec.ID, "review"))
+	require.NoError(t, svc.Task.Transition(context.Background(), rec.ID, "doing"))
+	require.NoError(t, svc.Task.Transition(context.Background(), rec.ID, "review"))
 
 	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
 		TaskID: rec.ID, Type: "pr_review", PayloadJSON: `{"pr":"#42"}`, EmitterSourceType: "system",

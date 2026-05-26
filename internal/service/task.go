@@ -3,7 +3,11 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log"
+
+	feotel "github.com/hollis-labs/go-otel"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/hollis-labs/torque/internal/agentfile"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -525,11 +529,36 @@ func (s *TaskService) ListTags(taskID string) ([]sqlstore.TagRecord, error) {
 }
 
 // Transition moves a task to a new status if the FSM allows it.
-func (s *TaskService) Transition(id, newStatus string) error {
+//
+// ctx carries the inbound HTTP/MCP server span (when called from an
+// instrumented surface) so torque.task.transition nests under it; tests pass
+// context.Background() and trace as a root span.
+func (s *TaskService) Transition(ctx context.Context, id, newStatus string) (err error) {
+	ctx, span := feotel.StartSpan(ctx, "torque.task.transition")
+	span.SetAttributes(
+		attribute.String("hollis.app", "torque"),
+		attribute.String("hollis.task.id", id),
+		attribute.String("torque.task.to_status", newStatus),
+		attribute.Bool("torque.task.forced", false),
+	)
+	defer func() {
+		// TransitionError ("unknown source status" / "transition not permitted")
+		// is a POLICY reject the caller surfaces as 422 — not an infra fault.
+		// Skip RecordError for those; real store / GetTask errors still record.
+		if err != nil {
+			var terr *TransitionError
+			if !errors.As(err, &terr) {
+				span.RecordError(err)
+			}
+		}
+		span.End()
+	}()
+
 	task, err := s.store.GetTask(id)
 	if err != nil {
 		return err
 	}
+	span.SetAttributes(attribute.String("torque.task.from_status", task.Status))
 
 	allowed, ok := validTransitions[task.Status]
 	if !ok {
@@ -540,7 +569,7 @@ func (s *TaskService) Transition(id, newStatus string) error {
 			if err := s.store.TransitionTask(id, newStatus); err != nil {
 				return err
 			}
-			s.notifyTransition(id, task.Status, newStatus)
+			s.notifyTransition(ctx, id, task.Status, newStatus)
 			return nil
 		}
 	}
@@ -555,23 +584,38 @@ func (s *TaskService) Transition(id, newStatus string) error {
 // for explicit user-initiated cleanup (e.g., dispositioning a stuck task that
 // an agent left mid-flight); programmatic callers must use Transition. The
 // store still validates that the status string is a recognized value.
-func (s *TaskService) ForceTransition(id, newStatus string) error {
+func (s *TaskService) ForceTransition(ctx context.Context, id, newStatus string) (err error) {
+	ctx, span := feotel.StartSpan(ctx, "torque.task.transition")
+	span.SetAttributes(
+		attribute.String("hollis.app", "torque"),
+		attribute.String("hollis.task.id", id),
+		attribute.String("torque.task.to_status", newStatus),
+		attribute.Bool("torque.task.forced", true),
+	)
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+		}
+		span.End()
+	}()
+
 	task, err := s.store.GetTask(id)
 	if err != nil {
 		return err
 	}
+	span.SetAttributes(attribute.String("torque.task.from_status", task.Status))
 	if err := s.store.TransitionTask(id, newStatus); err != nil {
 		return err
 	}
-	s.notifyTransition(id, task.Status, newStatus)
+	s.notifyTransition(ctx, id, task.Status, newStatus)
 	return nil
 }
 
-func (s *TaskService) notifyTransition(id, from, to string) {
+func (s *TaskService) notifyTransition(ctx context.Context, id, from, to string) {
 	if s.transitionObserver == nil {
 		return
 	}
-	s.transitionObserver.ObserveTaskTransition(context.Background(), id, from, to)
+	s.transitionObserver.ObserveTaskTransition(ctx, id, from, to)
 }
 
 // Search performs a text search over tasks.
@@ -668,15 +712,32 @@ func (s *TaskService) DeleteSubtodo(taskID, itemID string) ([]sqlstore.Subtodo, 
 
 // BulkTransition applies the same status transition to multiple tasks.
 // It returns the count of successful transitions and a slice of errors for failures.
-func (s *TaskService) BulkTransition(ids []string, newStatus string) (int, []error) {
+func (s *TaskService) BulkTransition(ctx context.Context, ids []string, newStatus string) (int, []error) {
+	// Wrapping span: per-item torque.task.transition spans nest under this so
+	// an operator sees "BulkTransition of N tasks" as one unit, with each task
+	// drilldown still available. Bulk operations don't expose a single err
+	// (callers see partial-success: success count + []error), so the wrapper
+	// span doesn't RecordError; per-item spans capture individual faults.
+	ctx, span := feotel.StartSpan(ctx, "torque.task.transition.bulk")
+	span.SetAttributes(
+		attribute.String("hollis.app", "torque"),
+		attribute.Int("torque.task.bulk_count", len(ids)),
+		attribute.String("torque.task.to_status", newStatus),
+	)
+	defer span.End()
+
 	var errs []error
 	success := 0
 	for _, id := range ids {
-		if err := s.Transition(id, newStatus); err != nil {
+		if err := s.Transition(ctx, id, newStatus); err != nil {
 			errs = append(errs, err)
 		} else {
 			success++
 		}
 	}
+	span.SetAttributes(
+		attribute.Int("torque.task.bulk_success", success),
+		attribute.Int("torque.task.bulk_failed", len(errs)),
+	)
 	return success, errs
 }

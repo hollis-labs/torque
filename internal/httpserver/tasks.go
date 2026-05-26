@@ -813,7 +813,7 @@ func (s *Server) transitionTask(w http.ResponseWriter, r *http.Request) {
 	if req.Force {
 		transition = s.svc.Task.ForceTransition
 	}
-	if err := transition(id, req.Status); err != nil {
+	if err := transition(r.Context(), id, req.Status); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
@@ -854,7 +854,7 @@ func (s *Server) bulkTransitionTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, _ := s.svc.Task.BulkTransition(req.IDs, req.Status)
+	updated, _ := s.svc.Task.BulkTransition(r.Context(), req.IDs, req.Status)
 	for _, id := range req.IDs[:updated] {
 		s.sse.Broadcast("task.transitioned", map[string]interface{}{"task_id": id, "status": req.Status})
 	}
