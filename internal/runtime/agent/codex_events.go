@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 
+	"github.com/hollis-labs/go-agent-runtime/turn"
 	llmtypes "github.com/hollis-labs/go-llm-types"
 )
 
@@ -20,25 +21,18 @@ import (
 // $0 / 0 tokens, an empty tool histogram (false "no action" blocks), and
 // no liveness heartbeat. CW-20260521-0024.
 //
-// Wire shapes (codex-cli 0.132, captured empirically):
-//
-//	item/completed:
-//	  {"item":{"type":"commandExecution","id":"call_…","command":"…",
-//	           "exitCode":0,…}, "threadId":…, "turnId":…}
-//	  {"item":{"type":"agentMessage","id":"msg_…","text":"…",
-//	           "phase":"commentary"}, …}
-//	  {"item":{"type":"userMessage",…}, …}            (input echo; ignored)
-//	  {"item":{"type":"fileChange",…}, …}             (defensive; → Edit)
-//
-//	thread/tokenUsage/updated:
-//	  {"tokenUsage":{"total":{"inputTokens":N,"outputTokens":N,
-//	                          "cachedInputTokens":N,…}, "last":{…}}}
-//	  total is CUMULATIVE over the thread — callers must delta it before
-//	  feeding translateStreamEvent (which SUMS InputTokens/OutputTokens).
+// The notification *parsing* (wire-shape unmarshal + cumulative→delta math)
+// now lives upstream in go-agent-runtime/turn (v0.5.0): turn.ParseCodexItemCompleted,
+// turn.ParseCodexTokenUsageTotals, turn.CodexTokenUsageDelta, and the
+// turn.Codex* method-name constants. Torque keeps only the app-specific
+// *projection* of the parsed item onto llmtypes.StreamEvent (the tool-name
+// mapping below) — which the upstream README explicitly leaves to apps.
 
-// codexItemCompletedEvent maps a codex `item/completed` notification's
-// params onto a StreamEvent. Returns ok=false for item types that carry no
-// downstream-relevant signal (userMessage input echoes, unknown types).
+// codexItemCompletedEvent projects a parsed codex `item/completed`
+// notification (via turn.ParseCodexItemCompleted) onto a StreamEvent.
+// Returns ok=false for item types that carry no downstream-relevant signal
+// (userMessage input echoes, empty assistant text, unknown types, malformed
+// JSON) — all dropped by the upstream parser.
 //
 // Tool-name mapping is deliberate: commandExecution → "Bash" and
 // fileChange → "Edit" reuse the canonical editing-tool labels the
@@ -46,78 +40,38 @@ import (
 // so codex tool activity registers in the completion histogram the same
 // way claude/opencode activity does.
 func codexItemCompletedEvent(params json.RawMessage) (llmtypes.StreamEvent, bool) {
-	var p struct {
-		Item struct {
-			Type    string `json:"type"`
-			ID      string `json:"id"`
-			Command string `json:"command"`
-			Text    string `json:"text"`
-		} `json:"item"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
+	item, ok := turn.ParseCodexItemCompleted(params)
+	if !ok {
 		return llmtypes.StreamEvent{}, false
 	}
-	switch p.Item.Type {
+	switch item.Type {
 	case "commandExecution":
 		return llmtypes.StreamEvent{
 			Type: llmtypes.EventToolUse,
 			ToolUse: &llmtypes.ToolUseBlock{
-				ID:    p.Item.ID,
+				ID:    item.ID,
 				Name:  "Bash",
-				Input: map[string]any{"command": p.Item.Command},
+				Input: map[string]any{"command": item.Command},
 			},
 		}, true
 	case "fileChange":
 		return llmtypes.StreamEvent{
 			Type: llmtypes.EventToolUse,
 			ToolUse: &llmtypes.ToolUseBlock{
-				ID:   p.Item.ID,
+				ID:   item.ID,
 				Name: "Edit",
 			},
 		}, true
 	case "agentMessage":
-		if p.Item.Text == "" {
-			return llmtypes.StreamEvent{}, false
-		}
-		// Assistant text — surfaced as a delta so it lands in the
-		// transcript log and clears the last_activity gate. Not a tool,
-		// so it doesn't affect the histogram.
+		// Non-empty assistant text (the parser already dropped the empty
+		// case) — surfaced as a delta so it lands in the transcript log and
+		// clears the last_activity gate. Not a tool, so it doesn't affect
+		// the histogram.
 		return llmtypes.StreamEvent{
 			Type:    llmtypes.EventDelta,
-			Content: p.Item.Text + "\n",
+			Content: item.Text + "\n",
 		}, true
 	default:
-		// userMessage (input echo), reasoning, and any future/unknown
-		// item types carry no downstream signal worth projecting.
 		return llmtypes.StreamEvent{}, false
 	}
-}
-
-// codexTokenUsageTotals extracts the CUMULATIVE token counts from a
-// `thread/tokenUsage/updated` notification. The caller must delta these
-// against the previous cumulative values before emitting an EventUsage,
-// because translateStreamEvent sums InputTokens/OutputTokens and codex
-// reports running totals (not per-update increments).
-//
-// inputTokens is codex's full prompt count (cachedInputTokens is the
-// cached subset, surfaced separately as CacheReadTokens for forensics; it
-// is NOT subtracted here so PromptTokens reflects the billed prompt size).
-func codexTokenUsageTotals(params json.RawMessage) (input, output, cacheRead int, ok bool) {
-	var p struct {
-		TokenUsage struct {
-			Total struct {
-				InputTokens       int `json:"inputTokens"`
-				OutputTokens      int `json:"outputTokens"`
-				CachedInputTokens int `json:"cachedInputTokens"`
-			} `json:"total"`
-		} `json:"tokenUsage"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return 0, 0, 0, false
-	}
-	t := p.TokenUsage.Total
-	if t.InputTokens == 0 && t.OutputTokens == 0 {
-		return 0, 0, 0, false
-	}
-	return t.InputTokens, t.OutputTokens, t.CachedInputTokens, true
 }
