@@ -123,6 +123,16 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req mcp.CallToolReque
 	}
 	launchProfile := reqStr(req, "launch_profile")
 	agentProfile := reqStr(req, "agent_profile")
+	// At least one selector must be provided. agent.Options.Validate
+	// enforces the same invariant downstream, but surfacing it here as
+	// ErrCodeArgInvalid (with a clear field hint) lets MCP clients
+	// self-correct rather than seeing the failure wrapped as a generic
+	// domain error from Boot.
+	if launchProfile == "" && agentProfile == "" {
+		return errResult(ErrCodeArgInvalid,
+			"at least one of launch_profile or agent_profile is required",
+			"launch_profile")
+	}
 	// Validate legacy agent_profile only when launch_profile is empty; the
 	// resolver's legacy-compat path handles agent_profile values without
 	// requiring registry membership.

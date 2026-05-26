@@ -278,10 +278,8 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		KickoffMD:      kickoffMD,
 		LoopbackURL:    loopbackURL,
 		PermissionMode: resolveLaunchPermissionMode(profile),
-		NativeFiles:    nativeFiles,
 		Injection:      injection,
 	})
-	_ = agentFile // retained for future agent-file overlay routing
 
 	compiled, err := launcher.Compile(ctx, plan)
 	if err != nil {

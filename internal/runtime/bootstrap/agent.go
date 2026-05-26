@@ -180,7 +180,7 @@ func AgentDeps(
 func resolveApiKeyHelperPath() string {
 	override := os.Getenv("TORQUE_APIKEY_HELPER")
 	if override == "" {
-		log.Printf("[bootstrap] apiKeyHelper opt-out (TORQUE_APIKEY_HELPER unset) — planted .claude/settings.json omits apiKeyHelper; claude uses default keychain/env discovery")
+		log.Printf("[bootstrap] apiKeyHelper disabled (TORQUE_APIKEY_HELPER not set) — planted .claude/settings.json omits apiKeyHelper; claude uses default keychain/env discovery. Set TORQUE_APIKEY_HELPER=<absolute path> to opt in for ANTHROPIC_API_KEY-style deployments.")
 		return ""
 	}
 	// Normalize to absolute + symlink-resolved so the doc-promised

@@ -72,15 +72,12 @@ type TaskLaunchOverlay struct {
 	// it. agentlaunch's compile guard reads this on claude launches.
 	PermissionMode string
 
-	// NativeFiles is the planted boot-context surface — task bundle files
-	// the worker should not have to rediscover over MCP. Composed by the
-	// caller via taskContextNativeFiles. nil/empty disables the planted
-	// surface for this boot.
-	NativeFiles []agentlaunch.NativeFile
-
 	// Injection is the runtime-bootdir injection spec the caller resolved
-	// from the agent runtime's bootdir builder. Carries NativeFiles and
-	// per-runtime injection metadata. Required.
+	// from the agent runtime's bootdir builder. Carries the planted
+	// task-bundle NativeFiles + per-runtime injection metadata. Required.
+	// The caller (typically agent.Boot) composes the bundle and feeds it
+	// through runtimebootdir.BuildInjection before assembly so this
+	// package stays free of runtime-package dependencies.
 	Injection agentlaunch.InjectionSpec
 }
 
@@ -117,15 +114,15 @@ type TaskLaunchOverlay struct {
 //     filled onto PreparedLaunch.PlantContext after Prepare, keeping
 //     daemon-scoped runtime values out of the persisted-at-rest plan.
 func BuildLaunchPlan(compiled CompiledLaunchProfile, overlay TaskLaunchOverlay) agentlaunch.LaunchPlan {
-	// Labels — combine the launch profile's role tag with any
-	// caller-supplied annotations on LaunchProfile itself.
-	labels := map[string]string{}
+	// Labels carry only the role tag — short, runtime-meaningful
+	// identifiers the launcher / agentkit downstream may grep on.
+	// LaunchProfile.Annotations are documented as plan-metadata
+	// annotations (forensic / catalog material) and ride on
+	// Metadata.Annotations below, not here, so a noisy annotation set
+	// cannot inject label keys the launcher doesn't expect.
+	var labels map[string]string
 	if overlay.Role != "" {
-		labels["torque.role"] = overlay.Role
-	}
-	maps.Copy(labels, compiled.Profile.Annotations)
-	if len(labels) == 0 {
-		labels = nil
+		labels = map[string]string{"torque.role": overlay.Role}
 	}
 
 	// LaunchPlan.Validate rejects an empty Project.ID. Torque sessions
@@ -139,7 +136,10 @@ func BuildLaunchPlan(compiled CompiledLaunchProfile, overlay TaskLaunchOverlay) 
 	}
 
 	// Annotations — record both the legacy agent_profile (for back-
-	// compat forensic queries) and the new launch_profile.
+	// compat forensic queries) and the new launch_profile. Caller-
+	// supplied LaunchProfile.Annotations are merged in last so an
+	// operator-set annotation can override the substrate defaults if
+	// they truly mean to.
 	annotations := map[string]string{
 		"torque.agent_profile":  compiled.AgentProfileName,
 		"torque.launch_profile": compiled.Profile.ID,

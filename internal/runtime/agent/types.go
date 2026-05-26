@@ -140,7 +140,7 @@ func (s Status) Terminal() bool {
 type Session struct {
 	ID              string            `json:"ID"`
 	Mode            Mode              `json:"Mode"`
-	LaunchProfile   string            `json:"LaunchProfile,omitempty"`
+	LaunchProfile   string            `json:"LaunchProfile"`
 	AgentProfile    string            `json:"AgentProfile"`
 	Provider        string            `json:"Provider"`
 	RuntimeID       string            `json:"RuntimeID"`

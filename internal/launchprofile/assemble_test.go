@@ -47,8 +47,12 @@ func TestBuildLaunchPlan_StampsAnnotationsAndIdentity(t *testing.T) {
 	assert.Equal(t, "orchestrator", plan.Agent.ID)
 	assert.Equal(t, "orchestrator", plan.Agent.Name)
 	assert.Equal(t, "agents/orchestrator.md", plan.Agent.RoleFile)
+	// Labels carry ONLY the role tag — LaunchProfile.Annotations are
+	// metadata annotations and must not bleed into AgentSpec.Labels.
 	assert.Equal(t, "orchestrator", plan.Agent.Labels["torque.role"])
-	assert.Equal(t, "orchestrator", plan.Agent.Labels["torque.family"])
+	_, family := plan.Agent.Labels["torque.family"]
+	assert.False(t, family,
+		"LaunchProfile.Annotations must not leak into AgentSpec.Labels")
 	assert.Equal(t, "opencode", plan.Provider.ID)
 	assert.Equal(t, "opencode/big-pickle", plan.Provider.ModelOverride)
 	assert.Equal(t, agentlaunch.RuntimeSubprocess, plan.Runtime)
