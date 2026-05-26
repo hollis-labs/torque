@@ -7,6 +7,8 @@ import (
 
 	agentlaunch "github.com/hollis-labs/go-agent-launch/agentlaunch"
 	"github.com/hollis-labs/go-agent-runtime/turn"
+	feotel "github.com/hollis-labs/go-otel"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // torqueClientVersion is the value the JSON-RPC initialize call
@@ -37,13 +39,38 @@ const torqueClientVersion = "0.1-dev"
 // Manager.SendInput surface stays available for callers that
 // specifically need pre-framed bytes (none today outside SendTurn
 // itself).
-func (m *Manager) SendTurn(ctx context.Context, sess *Session, text string) error {
+func (m *Manager) SendTurn(ctx context.Context, sess *Session, text string) (err error) {
 	if sess == nil {
 		return fmt.Errorf("agent.Manager.SendTurn: nil session")
 	}
 	if sess.ID == "" {
 		return fmt.Errorf("agent.Manager.SendTurn: session has empty ID")
 	}
+
+	// Trace the per-turn drive — the unit of work for "I asked this session
+	// to do another turn." Distinct from torque.agent.boot (one-shot session
+	// setup); each long-lived session has one boot span + N turn spans. text
+	// is NEVER added as an attribute (per the OTel coverage guide's redaction
+	// rules: prompts/completions stay off spans); only its length goes on.
+	ctx, span := feotel.StartSpan(ctx, "torque.agent.turn")
+	span.SetAttributes(
+		attribute.String("hollis.app", "torque"),
+		attribute.String("hollis.agent.id", sess.ID),
+		attribute.String("hollis.task.id", sess.TaskID),
+		attribute.String("hollis.provider", sess.Provider),
+		attribute.String("hollis.runtime.kind", sess.RuntimeKind),
+		attribute.Int("torque.turn.text_length", len(text)),
+	)
+	if sess.ProjectID != "" {
+		span.SetAttributes(attribute.String("hollis.project.id", sess.ProjectID))
+	}
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+		}
+		span.End()
+	}()
+
 	switch RuntimeKind(sess.RuntimeKind) {
 	case RuntimeKindJsonRpcStdio:
 		return m.codexTurns.SendTurn(ctx, sess.ID, codexRPCSender{mgr: m, sessID: sess.ID}, text, turn.CodexAppServerOptions{
