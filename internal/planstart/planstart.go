@@ -23,6 +23,9 @@ import (
 	"log"
 	"time"
 
+	feotel "github.com/hollis-labs/go-otel"
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/hollis-labs/torque/internal/orchestrator"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
@@ -113,10 +116,31 @@ type SessionManager interface {
 // set AND the named session is still live (state launching|running),
 // Start returns ErrAlreadyOrchestrating wrapping a Result so callers
 // can surface the existing session_id (HTTP 409).
-func Start(ctx context.Context, store Store, mgr SessionManager, planID string, opts Options) (*Result, error) {
+func Start(ctx context.Context, store Store, mgr SessionManager, planID string, opts Options) (res *Result, err error) {
 	if mgr == nil {
 		return nil, ErrSessionMgrMissing
 	}
+	// Trace the orchestrator launch from the point we have a real plan id to
+	// attach to. The child torque.agent.boot span nests under this; SSE +
+	// run_events callers (HTTP / MCP plan-start tools) supply ctx with an
+	// inbound HTTP server span, so the trace already has a parent at this
+	// point in production. ErrAlreadyOrchestrating returns successfully (a
+	// 409 is a valid policy decision, not a failure) — RecordError gates
+	// on err only via the defer.
+	ctx, span := feotel.StartSpan(ctx, "torque.plan.start")
+	span.SetAttributes(
+		attribute.String("hollis.app", "torque"),
+		attribute.String("hollis.task.id", planID),
+	)
+	defer func() {
+		if err != nil && !errors.Is(err, ErrAlreadyOrchestrating) {
+			span.RecordError(err)
+		}
+		if res != nil {
+			span.SetAttributes(attribute.String("hollis.agent.id", res.SessionID))
+		}
+		span.End()
+	}()
 	plan, err := store.GetTask(planID)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrPlanNotFound, err)
@@ -242,10 +266,29 @@ func Start(ctx context.Context, store Store, mgr SessionManager, planID string, 
 // On a fresh boot Redispatch re-stamps metadata.plan.orchestrator_session_id
 // and leaves the plan's status untouched (a plan mid-walk is already in the
 // right status; Start's todo→doing transition does not apply here).
-func Redispatch(ctx context.Context, store RedispatchStore, mgr SessionManager, planID string, opts Options) (*Result, error) {
+func Redispatch(ctx context.Context, store RedispatchStore, mgr SessionManager, planID string, opts Options) (res *Result, err error) {
 	if mgr == nil {
 		return nil, ErrSessionMgrMissing
 	}
+	// Trace the redispatch — analogous to torque.plan.start but for the
+	// cold-boot/HITL-response re-launch path. Records the recovery-pack /
+	// genuine-resume decision once it lands (set below near the gate).
+	// ErrAlreadyOrchestrating is policy, not failure (idempotent return when
+	// the prior session is still live) — gated out of RecordError.
+	ctx, span := feotel.StartSpan(ctx, "torque.plan.redispatch")
+	span.SetAttributes(
+		attribute.String("hollis.app", "torque"),
+		attribute.String("hollis.task.id", planID),
+	)
+	defer func() {
+		if err != nil && !errors.Is(err, ErrAlreadyOrchestrating) {
+			span.RecordError(err)
+		}
+		if res != nil {
+			span.SetAttributes(attribute.String("hollis.agent.id", res.SessionID))
+		}
+		span.End()
+	}()
 	plan, err := store.GetTask(planID)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrPlanNotFound, err)
@@ -359,6 +402,16 @@ func Redispatch(ctx context.Context, store RedispatchStore, mgr SessionManager, 
 		bootOpts.ProviderSessionIDOverride = string(priorSession.ResumeHint)
 		usedResume = true
 	}
+
+	// Annotate the trace with the recovery-pack / genuine-resume decision so
+	// operators can grep "torque.plan.redispatch where used_resume=true" or
+	// see at-a-glance whether a recovered-context block went out. recoveryTurns
+	// is the count of prior turns reconstructed from stream.jsonl.
+	span.SetAttributes(
+		attribute.Bool("torque.recovery.used_resume", usedResume),
+		attribute.Bool("torque.recovery.pack_planted", recoveryPack != ""),
+		attribute.Int("torque.recovery.turns_recovered", recoveryTurns),
+	)
 
 	sess, err := mgr.Boot(ctx, bootOpts)
 	if err != nil {

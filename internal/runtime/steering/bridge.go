@@ -38,6 +38,8 @@ import (
 	"log"
 
 	gomsg "github.com/hollis-labs/go-messaging"
+	feotel "github.com/hollis-labs/go-otel"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // SessionGateway resolves a steering envelope's recipient address to a
@@ -212,6 +214,30 @@ func Steerable(env gomsg.Envelope) bool {
 // consumed. A SteerTurn failure leaves the envelope unconsumed.
 func (b *Bridge) Deliver(ctx context.Context, env gomsg.Envelope) DeliveryResult {
 	res := DeliveryResult{Outcome: OutcomeNotAddressed, EnvelopeID: env.ID}
+	// Trace the steering attempt — the outcome attribute distinguishes the
+	// five paths (not_addressed / polling / no_live_session / delivered /
+	// failed) so an operator can grep "torque.steering.deliver where
+	// outcome=no_live_session" without log-scraping. Outcomes that aren't
+	// errors (the first four) are surfaced as attributes per the OTel
+	// coverage guide's policy-vs-infra guidance; only OutcomeFailed
+	// (b.gw.SteerTurn returned err) is recorded as a span error.
+	ctx, span := feotel.StartSpan(ctx, "torque.steering.deliver")
+	span.SetAttributes(
+		attribute.String("hollis.app", "torque"),
+		attribute.String("hollis.message.id", env.ID),
+		attribute.String("torque.message.kind", string(env.Kind)),
+		attribute.String("torque.message.to", env.To.URN()),
+	)
+	defer func() {
+		span.SetAttributes(attribute.String("torque.steering.outcome", string(res.Outcome)))
+		if res.SessionID != "" {
+			span.SetAttributes(attribute.String("hollis.agent.id", res.SessionID))
+		}
+		if res.Outcome == OutcomeFailed && res.Err != nil {
+			span.RecordError(res.Err)
+		}
+		span.End()
+	}()
 	if !Steerable(env) {
 		return res
 	}

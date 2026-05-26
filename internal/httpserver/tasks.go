@@ -813,7 +813,7 @@ func (s *Server) transitionTask(w http.ResponseWriter, r *http.Request) {
 	if req.Force {
 		transition = s.svc.Task.ForceTransition
 	}
-	if err := transition(id, req.Status); err != nil {
+	if err := transition(r.Context(), id, req.Status); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
@@ -854,11 +854,16 @@ func (s *Server) bulkTransitionTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, _ := s.svc.Task.BulkTransition(req.IDs, req.Status)
-	for _, id := range req.IDs[:updated] {
+	succeeded, _ := s.svc.Task.BulkTransition(r.Context(), req.IDs, req.Status)
+	// Broadcast only the IDs that actually transitioned. The prior code
+	// took req.IDs[:n], which on partial failure broadcast the WRONG ids
+	// (the first n input ids, regardless of which actually succeeded) —
+	// Copilot review on PR #104 found this; BulkTransition's signature
+	// changed at the same time to return succeeded IDs.
+	for _, id := range succeeded {
 		s.sse.Broadcast("task.transitioned", map[string]interface{}{"task_id": id, "status": req.Status})
 	}
-	writeJSON(w, http.StatusOK, map[string]int{"updated": updated})
+	writeJSON(w, http.StatusOK, map[string]int{"updated": len(succeeded)})
 }
 
 func (s *Server) searchTasks(w http.ResponseWriter, r *http.Request) {

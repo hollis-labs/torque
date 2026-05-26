@@ -12,6 +12,9 @@ import (
 	"sync"
 	"time"
 
+	feotel "github.com/hollis-labs/go-otel"
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/modelcatalog"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -454,7 +457,32 @@ func (s *Scheduler) worktreeSpec() worktree.Spec {
 	}
 }
 
-func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) error {
+func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) (err error) {
+	// Trace per-task dispatch — the unit of work for "scheduler picked a task
+	// and tried to launch its run." Wraps the executor lookup, pre-dispatch
+	// validation, doing-transition, run-row insert, and worker enqueue.
+	// Status is "todo" or "review" at this point (the picker filters to
+	// startable states); the doing-transition fires inside the dispatch path
+	// below. PermanentError-paths (unknown executor, validation reject) still
+	// land here and get recorded — they are real dispatch failures.
+	ctx, span := feotel.StartSpan(ctx, "torque.scheduler.dispatch")
+	span.SetAttributes(
+		attribute.String("hollis.app", "torque"),
+		attribute.String("hollis.task.id", task.ID),
+		attribute.String("torque.task.executor", task.Executor),
+		attribute.String("torque.task.kind", task.Kind),
+		attribute.String("torque.task.status", task.Status),
+	)
+	if task.ProjectID.Valid {
+		span.SetAttributes(attribute.String("hollis.project.id", task.ProjectID.String))
+	}
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+		}
+		span.End()
+	}()
+
 	// Look up executor. An unknown executor name is a config-permanent
 	// failure: retrying every tick can't conjure a registration that the
 	// daemon was started without (CW-20260520-0003, the canonical instance

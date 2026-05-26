@@ -1,6 +1,7 @@
 package scheduler_test
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 	"time"
@@ -46,7 +47,7 @@ func createDecisionTaskDoing(t *testing.T, svc *service.Service) string {
 		Manual:               true,
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
+	require.NoError(t, svc.Task.Transition(context.Background(), rec.ID, "doing"))
 	return rec.ID
 }
 

@@ -78,7 +78,7 @@ func createBlockingDecisionTask(t *testing.T, svc *service.Service) string {
 	})
 	require.NoError(t, err)
 	// Move to doing so a checkpoint emit has a meaningful parking transition.
-	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
+	require.NoError(t, svc.Task.Transition(context.Background(), rec.ID, "doing"))
 	return rec.ID
 }
 
@@ -191,7 +191,7 @@ func TestCheckpointService_Emit_NonBlocking_LeavesTaskRunning(t *testing.T) {
 		Executor:       "cli",
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
+	require.NoError(t, svc.Task.Transition(context.Background(), rec.ID, "doing"))
 
 	_, err = svc.Checkpoint.Emit(service.CheckpointEmitInput{
 		TaskID: rec.ID, Type: "progress", PayloadJSON: `{}`, EmitterSourceType: "system",
@@ -264,7 +264,7 @@ func TestCheckpointService_Respond(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = svc.Checkpoint.Respond(service.CheckpointRespondInput{
+	err = svc.Checkpoint.Respond(context.Background(), service.CheckpointRespondInput{
 		CorrelationID:       out.CorrelationID,
 		ResponseJSON:        `{"answer":"yes"}`,
 		ResponderSourceType: "user",
@@ -302,7 +302,7 @@ func TestCheckpointService_PRReviewContractRoundTrip(t *testing.T) {
 		Summary:  "Looks good.",
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+	require.NoError(t, svc.Checkpoint.Respond(context.Background(), service.CheckpointRespondInput{
 		CorrelationID:       out.CorrelationID,
 		ResponseJSON:        string(responseJSON),
 		ResponderSourceType: "user",
@@ -329,13 +329,13 @@ func TestCheckpointService_Respond_AlreadyTerminal_Conflict(t *testing.T) {
 		TaskID: taskID, Type: "x", PayloadJSON: `{}`, EmitterSourceType: "system",
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+	require.NoError(t, svc.Checkpoint.Respond(context.Background(), service.CheckpointRespondInput{
 		CorrelationID:       out.CorrelationID,
 		ResponseJSON:        `{}`,
 		ResponderSourceType: "user",
 	}))
 
-	err = svc.Checkpoint.Respond(service.CheckpointRespondInput{
+	err = svc.Checkpoint.Respond(context.Background(), service.CheckpointRespondInput{
 		CorrelationID:       out.CorrelationID,
 		ResponseJSON:        `{}`,
 		ResponderSourceType: "user",
@@ -370,7 +370,7 @@ func TestCheckpointService_Respond_RequiredWorkflowRejectsDisallowedResponder(t 
 		},
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
+	require.NoError(t, svc.Task.Transition(context.Background(), rec.ID, "doing"))
 	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
 		TaskID:            rec.ID,
 		Type:              hitl.TypeApproval,
@@ -379,7 +379,7 @@ func TestCheckpointService_Respond_RequiredWorkflowRejectsDisallowedResponder(t 
 	})
 	require.NoError(t, err)
 
-	err = svc.Checkpoint.Respond(service.CheckpointRespondInput{
+	err = svc.Checkpoint.Respond(context.Background(), service.CheckpointRespondInput{
 		CorrelationID:       out.CorrelationID,
 		ResponseJSON:        `{"decision":"approved"}`,
 		ResponderSourceType: "agent",
@@ -396,7 +396,7 @@ func TestCheckpointService_Respond_RequiredWorkflowRejectsDisallowedResponder(t 
 	require.NoError(t, err)
 	assert.Equal(t, "review", got.Status, "task stays parked until a satisfying response arrives")
 
-	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+	require.NoError(t, svc.Checkpoint.Respond(context.Background(), service.CheckpointRespondInput{
 		CorrelationID:       out.CorrelationID,
 		ResponseJSON:        `{"decision":"approved"}`,
 		ResponderSourceType: "user",
@@ -530,7 +530,7 @@ func TestCheckpointService_Respond_TransitionsTaskToTodo_OnResume(t *testing.T) 
 	require.NoError(t, store.TransitionTaskWithReason(taskID, "review",
 		"awaiting checkpoint "+out.CorrelationID))
 
-	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+	require.NoError(t, svc.Checkpoint.Respond(context.Background(), service.CheckpointRespondInput{
 		CorrelationID:       out.CorrelationID,
 		ResponseJSON:        `{"answer":"yes"}`,
 		ResponderSourceType: "user",
@@ -565,7 +565,7 @@ func TestCheckpointService_Respond_StaysInReview_OnReviewMode(t *testing.T) {
 		Manual:               true,
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
+	require.NoError(t, svc.Task.Transition(context.Background(), rec.ID, "doing"))
 
 	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
 		TaskID: rec.ID, Type: "x", PayloadJSON: `{}`, EmitterSourceType: "system",
@@ -575,7 +575,7 @@ func TestCheckpointService_Respond_StaysInReview_OnReviewMode(t *testing.T) {
 	require.NoError(t, store.TransitionTaskWithReason(rec.ID, "review",
 		"awaiting checkpoint "+out.CorrelationID))
 
-	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+	require.NoError(t, svc.Checkpoint.Respond(context.Background(), service.CheckpointRespondInput{
 		CorrelationID:       out.CorrelationID,
 		ResponseJSON:        `{"answer":"maybe"}`,
 		ResponderSourceType: "user",
@@ -606,14 +606,14 @@ func TestCheckpointService_Respond_UnparkedTask_NoStateChange(t *testing.T) {
 		Executor:       "cli",
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
+	require.NoError(t, svc.Task.Transition(context.Background(), rec.ID, "doing"))
 
 	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
 		TaskID: rec.ID, Type: "x", PayloadJSON: `{}`, EmitterSourceType: "system",
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+	require.NoError(t, svc.Checkpoint.Respond(context.Background(), service.CheckpointRespondInput{
 		CorrelationID:       out.CorrelationID,
 		ResponseJSON:        `{"answer":"n"}`,
 		ResponderSourceType: "user",
@@ -664,7 +664,7 @@ func TestCheckpointService_Respond_DispatchesResume_OnResumeMode(t *testing.T) {
 		"awaiting checkpoint "+out.CorrelationID))
 
 	respJSON := `{"answer":"ship-it"}`
-	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+	require.NoError(t, svc.Checkpoint.Respond(context.Background(), service.CheckpointRespondInput{
 		CorrelationID:       out.CorrelationID,
 		ResponseJSON:        respJSON,
 		ResponderSourceType: "user",
@@ -722,7 +722,7 @@ func TestCheckpointService_Respond_FallsBackToTodo_OnDispatcherNoLiveSession(t *
 	require.NoError(t, store.TransitionTaskWithReason(taskID, "review",
 		"awaiting checkpoint "+out.CorrelationID))
 
-	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+	require.NoError(t, svc.Checkpoint.Respond(context.Background(), service.CheckpointRespondInput{
 		CorrelationID:       out.CorrelationID,
 		ResponseJSON:        `{"answer":"y"}`,
 		ResponderSourceType: "user",
@@ -755,7 +755,7 @@ func TestCheckpointService_Respond_FallsBackToTodo_OnDispatcherError(t *testing.
 	require.NoError(t, store.TransitionTaskWithReason(taskID, "review",
 		"awaiting checkpoint "+out.CorrelationID))
 
-	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+	require.NoError(t, svc.Checkpoint.Respond(context.Background(), service.CheckpointRespondInput{
 		CorrelationID:       out.CorrelationID,
 		ResponseJSON:        `{"answer":"y"}`,
 		ResponderSourceType: "user",
@@ -782,7 +782,7 @@ func TestCheckpointService_Respond_ReviewMode_SkipsDispatcher(t *testing.T) {
 		Manual:               true,
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
+	require.NoError(t, svc.Task.Transition(context.Background(), rec.ID, "doing"))
 
 	dispatcher := &fakeResponseDispatcher{}
 	svc.Checkpoint.WithResponseDispatcher(dispatcher)
@@ -794,7 +794,7 @@ func TestCheckpointService_Respond_ReviewMode_SkipsDispatcher(t *testing.T) {
 	require.NoError(t, store.TransitionTaskWithReason(rec.ID, "review",
 		"awaiting checkpoint "+out.CorrelationID))
 
-	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+	require.NoError(t, svc.Checkpoint.Respond(context.Background(), service.CheckpointRespondInput{
 		CorrelationID:       out.CorrelationID,
 		ResponseJSON:        `{"answer":"maybe"}`,
 		ResponderSourceType: "user",
@@ -826,7 +826,7 @@ func TestCheckpointService_Respond_NilDispatcher_LegacyPath(t *testing.T) {
 	require.NoError(t, store.TransitionTaskWithReason(taskID, "review",
 		"awaiting checkpoint "+out.CorrelationID))
 
-	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+	require.NoError(t, svc.Checkpoint.Respond(context.Background(), service.CheckpointRespondInput{
 		CorrelationID:       out.CorrelationID,
 		ResponseJSON:        `{"answer":"y"}`,
 		ResponderSourceType: "user",
@@ -893,15 +893,15 @@ func TestCheckpointService_Respond_InvokesOrchestratorRedispatch_WhenNotParked(t
 		Manual:         true,
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
-	require.NoError(t, svc.Task.Transition(rec.ID, "review"))
+	require.NoError(t, svc.Task.Transition(context.Background(), rec.ID, "doing"))
+	require.NoError(t, svc.Task.Transition(context.Background(), rec.ID, "review"))
 
 	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
 		TaskID: rec.ID, Type: "pr_review", PayloadJSON: `{"pr":"#42"}`, EmitterSourceType: "system",
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+	require.NoError(t, svc.Checkpoint.Respond(context.Background(), service.CheckpointRespondInput{
 		CorrelationID:       out.CorrelationID,
 		ResponseJSON:        `{"decision":"approve"}`,
 		ResponderSourceType: "user",
@@ -931,7 +931,7 @@ func TestCheckpointService_Respond_RedispatchError_DoesNotFailRespond(t *testing
 	require.NoError(t, err)
 
 	// Respond succeeds despite the redispatcher returning an error.
-	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+	require.NoError(t, svc.Checkpoint.Respond(context.Background(), service.CheckpointRespondInput{
 		CorrelationID:       out.CorrelationID,
 		ResponseJSON:        `{"answer":"y"}`,
 		ResponderSourceType: "user",
@@ -953,7 +953,7 @@ func TestCheckpointService_Respond_NoRedispatcher_NoOp(t *testing.T) {
 		TaskID: taskID, Type: "collect_data", PayloadJSON: `{}`, EmitterSourceType: "system",
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+	require.NoError(t, svc.Checkpoint.Respond(context.Background(), service.CheckpointRespondInput{
 		CorrelationID:       out.CorrelationID,
 		ResponseJSON:        `{"answer":"y"}`,
 		ResponderSourceType: "user",

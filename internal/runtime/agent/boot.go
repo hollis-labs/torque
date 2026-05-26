@@ -17,10 +17,12 @@ import (
 	"github.com/hollis-labs/go-agent-runtime/turn"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 	llmtypes "github.com/hollis-labs/go-llm-types"
+	feotel "github.com/hollis-labs/go-otel"
 	"github.com/hollis-labs/go-providers/provider"
 	"github.com/hollis-labs/go-sandbox/sandbox"
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // Boot is the unified entry point for spawning an agent session. Replaces
@@ -37,7 +39,7 @@ import (
 // On error: any partially-created boot dir is os.RemoveAll'd, the loopback
 // (if it was opened) is shut down, and any session row created in this call
 // is marked failed before the error returns.
-func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, error) {
+func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session, err error) {
 	if err := opts.Validate(); err != nil {
 		return nil, err
 	}
@@ -78,6 +80,32 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 	if role == "" {
 		role = opts.AgentProfile
 	}
+
+	// Trace the boot. Spans start AFTER the cheap preflight (validate / deps
+	// guard / profile / runtime / adapter / sessID) so failed early returns
+	// don't generate empty boot spans for misconfiguration churn; the deferred
+	// RecordError below picks up anything thrown from here onward (loopback
+	// setup, providerplant, agentsessions.Start, the jsonrpc kickoff). Domain
+	// attrs use the hollis.* portfolio namespace; torque-specific axes (Mode,
+	// profile, role) use torque.*. boot_dir is set later once captured.
+	ctx, span := feotel.StartSpan(ctx, "torque.agent.boot")
+	span.SetAttributes(
+		attribute.String("hollis.app", "torque"),
+		attribute.String("hollis.agent.id", sessID),
+		attribute.String("hollis.task.id", opts.TaskID),
+		attribute.String("hollis.project.id", opts.ProjectID),
+		attribute.String("hollis.provider", profile.Provider),
+		attribute.String("hollis.runtime.kind", string(runtimeKind)),
+		attribute.String("torque.agent.mode", opts.Mode.String()),
+		attribute.String("torque.agent.profile", opts.AgentProfile),
+		attribute.String("torque.agent.role", role),
+	)
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+		}
+		span.End()
+	}()
 
 	// Agent file (resolves + parses; nil when Options.AgentFile is empty).
 	agentFile, err := loadAgentFile(opts)
@@ -830,7 +858,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (*Session, erro
 		mgr.registerPidPoller(sessID, startPidPoller(mgr, sessID, mgr.pidPollInterval))
 	}
 
-	sess := &Session{
+	sess = &Session{
 		ID:              sessID,
 		Mode:            opts.Mode,
 		AgentProfile:    opts.AgentProfile,

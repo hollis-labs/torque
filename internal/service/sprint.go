@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -194,7 +195,7 @@ func (s *SprintService) ApproveAll(sprintID string) (int, error) {
 
 	count := 0
 	for _, t := range tasks {
-		if err := s.task.Transition(t.ID, "done"); err == nil {
+		if err := s.task.Transition(context.Background(), t.ID, "done"); err == nil {
 			count++
 		}
 	}
@@ -297,5 +298,5 @@ func (s *SprintService) ApproveTask(sprintID, taskID string) error {
 		}
 	}
 
-	return s.task.Transition(taskID, "done")
+	return s.task.Transition(context.Background(), taskID, "done")
 }

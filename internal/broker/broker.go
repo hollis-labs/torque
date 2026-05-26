@@ -13,6 +13,8 @@ import (
 	"fmt"
 
 	gomsg "github.com/hollis-labs/go-messaging"
+	feotel "github.com/hollis-labs/go-otel"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // MaxPayloadBytes caps every envelope payload. 256 KiB is well above
@@ -105,11 +107,41 @@ var (
 // /broker/send route, MCP torque_broker_send tool). Prefer the
 // typed helpers (Notice / Escalation / Handoff / StatusUpdate) when
 // constructing an envelope from primitives.
-func (b *Broker) Send(ctx context.Context, env gomsg.Envelope) (gomsg.Envelope, error) {
+func (b *Broker) Send(ctx context.Context, env gomsg.Envelope) (sent gomsg.Envelope, err error) {
+	// Trace the canonical send path. Higher-level helpers (Notice, Request,
+	// Reply, Escalation, Handoff, StatusUpdate) all fan through here, so this
+	// one span covers the whole envelope lifecycle; kind / from / to attrs
+	// distinguish them. Validation errors still RecordError — broker validation
+	// is a real fault (malformed envelope), not a policy reject.
+	ctx, span := feotel.StartSpan(ctx, "torque.message.send")
+	span.SetAttributes(
+		attribute.String("hollis.app", "torque"),
+		attribute.String("torque.message.kind", string(env.Kind)),
+		attribute.String("torque.message.from", env.From.URN()),
+		attribute.String("torque.message.to", env.To.URN()),
+	)
+	if env.ThreadID != "" {
+		span.SetAttributes(attribute.String("torque.message.thread_id", env.ThreadID))
+	}
+	if env.InReplyTo != "" {
+		span.SetAttributes(attribute.String("torque.message.in_reply_to", env.InReplyTo))
+	}
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+		} else {
+			// The store-assigned envelope id is the load-bearing handle for
+			// downstream correlation (consume / cancel / get / federation
+			// hop). Surface it AFTER Send so operators can grep the trace.
+			span.SetAttributes(attribute.String("hollis.message.id", sent.ID))
+		}
+		span.End()
+	}()
+
 	if err := validate(env); err != nil {
 		return gomsg.Envelope{}, err
 	}
-	sent, err := b.d.Send(ctx, env)
+	sent, err = b.d.Send(ctx, env)
 	if err != nil {
 		return gomsg.Envelope{}, err
 	}
@@ -277,7 +309,24 @@ func (b *Broker) Cancel(ctx context.Context, id string) error {
 // Store's Consume inserts a delivery row, which also excludes the envelope
 // from any future Inbox drain — so a steered envelope is never re-delivered
 // by an opt-in inbox poll.
-func (b *Broker) Consume(ctx context.Context, id string, recipient gomsg.Address) error {
+func (b *Broker) Consume(ctx context.Context, id string, recipient gomsg.Address) (err error) {
+	// Consume is the lifecycle close — once an envelope is consumed by its
+	// recipient (or by the steering bridge on behalf of a live session) it's
+	// excluded from future Inbox drains. Tracing it lets operators see the
+	// full envelope path: send → optional federation hop → deliver →
+	// consume, all under one trace when callers propagate ctx through.
+	ctx, span := feotel.StartSpan(ctx, "torque.message.consume")
+	span.SetAttributes(
+		attribute.String("hollis.app", "torque"),
+		attribute.String("hollis.message.id", id),
+		attribute.String("torque.message.recipient", recipient.URN()),
+	)
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+		}
+		span.End()
+	}()
 	return b.d.Consume(ctx, id, recipient)
 }
 

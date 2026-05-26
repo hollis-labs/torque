@@ -1,6 +1,7 @@
 package scheduler_test
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"testing"
@@ -54,7 +55,7 @@ func TestE2E_Checkpoint_Emit_RespondService_TaskResumes(t *testing.T) {
 		Manual:         true,
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
+	require.NoError(t, svc.Task.Transition(context.Background(), rec.ID, "doing"))
 
 	runID, err := store.CreateRun(&sqlstore.RunRecord{
 		TaskID:   rec.ID,
@@ -77,7 +78,7 @@ func TestE2E_Checkpoint_Emit_RespondService_TaskResumes(t *testing.T) {
 	assert.Equal(t, "review", parked.Status)
 	assert.Contains(t, parked.BlockedReason, corr)
 
-	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+	require.NoError(t, svc.Checkpoint.Respond(context.Background(), service.CheckpointRespondInput{
 		CorrelationID:       corr,
 		ResponseJSON:        `{"pick":"a"}`,
 		ResponderSourceType: "user",
@@ -117,7 +118,7 @@ func TestE2E_Checkpoint_TimeoutSweep_ParkedTaskBlocks(t *testing.T) {
 		Manual:         true,
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
+	require.NoError(t, svc.Task.Transition(context.Background(), rec.ID, "doing"))
 
 	runID, err := store.CreateRun(&sqlstore.RunRecord{
 		TaskID: rec.ID, Executor: "cli", Status: "running",
@@ -166,7 +167,7 @@ func TestE2E_Checkpoint_Cancel_TaskStaysInReview(t *testing.T) {
 		Manual:         true,
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.Task.Transition(rec.ID, "doing"))
+	require.NoError(t, svc.Task.Transition(context.Background(), rec.ID, "doing"))
 
 	runID, err := store.CreateRun(&sqlstore.RunRecord{
 		TaskID: rec.ID, Executor: "cli", Status: "running",

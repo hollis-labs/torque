@@ -182,8 +182,8 @@ func TestPlanProgress_Rollup(t *testing.T) {
 	require.NoError(t, err)
 
 	// Progress → c1→doing→done, c2 stays todo.
-	require.NoError(t, svc.Task.Transition(c1.ID, "doing"))
-	require.NoError(t, svc.Task.Transition(c1.ID, "done"))
+	require.NoError(t, svc.Task.Transition(context.Background(), c1.ID, "doing"))
+	require.NoError(t, svc.Task.Transition(context.Background(), c1.ID, "done"))
 
 	prog, err := svc.Plan.Progress(plan.ID)
 	require.NoError(t, err)

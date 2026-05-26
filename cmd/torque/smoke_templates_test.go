@@ -214,7 +214,7 @@ func TestSmoke_Criterion3_DecisionCheckpoint_RespondAndCancel(t *testing.T) {
 			TemplateID: "decision-checkpoint", Title: "decide-respond",
 		})
 		require.NoError(t, err)
-		require.NoError(t, stack.svc.Task.Transition(task.ID, "doing"))
+		require.NoError(t, stack.svc.Task.Transition(context.Background(), task.ID, "doing"))
 
 		runID, err := stack.store.CreateRun(&sqlstore.RunRecord{
 			TaskID: task.ID, Executor: "cli", Status: "running",
@@ -231,7 +231,7 @@ func TestSmoke_Criterion3_DecisionCheckpoint_RespondAndCancel(t *testing.T) {
 		got, _ := stack.store.GetTask(task.ID)
 		assert.Equal(t, "review", got.Status, "blocking checkpoint parks task in review")
 
-		require.NoError(t, stack.svc.Checkpoint.Respond(service.CheckpointRespondInput{
+		require.NoError(t, stack.svc.Checkpoint.Respond(context.Background(), service.CheckpointRespondInput{
 			CorrelationID:       emitOut.CorrelationID,
 			ResponseJSON:        `{"pick":"a"}`,
 			ResponderSourceType: "user",
@@ -245,7 +245,7 @@ func TestSmoke_Criterion3_DecisionCheckpoint_RespondAndCancel(t *testing.T) {
 			TemplateID: "decision-checkpoint", Title: "decide-cancel",
 		})
 		require.NoError(t, err)
-		require.NoError(t, stack.svc.Task.Transition(task.ID, "doing"))
+		require.NoError(t, stack.svc.Task.Transition(context.Background(), task.ID, "doing"))
 
 		runID, err := stack.store.CreateRun(&sqlstore.RunRecord{
 			TaskID: task.ID, Executor: "cli", Status: "running",
@@ -337,8 +337,8 @@ func TestSmoke_Criterion5_External_ManualTransition(t *testing.T) {
 	require.True(t, task.Deliverables.Valid)
 
 	// Manual transition path.
-	require.NoError(t, stack.svc.Task.Transition(task.ID, "doing"))
-	require.NoError(t, stack.svc.Task.Transition(task.ID, "done"))
+	require.NoError(t, stack.svc.Task.Transition(context.Background(), task.ID, "doing"))
+	require.NoError(t, stack.svc.Task.Transition(context.Background(), task.ID, "done"))
 
 	got, _ := stack.store.GetTask(task.ID)
 	assert.Equal(t, "done", got.Status)
