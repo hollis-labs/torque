@@ -193,6 +193,32 @@ func TestReconstructTurnsFromStream_LongStreamKeepsNewest(t *testing.T) {
 	}
 }
 
+// TestReconstructTurnsFromStream_OversizedLineDoesNotPoisonScan guards the
+// bufio.Reader switch: a single oversized stream line (e.g. a tool_use with a
+// multi-MiB payload) must NOT stop reconstruction of subsequent (more recent)
+// turns. bufio.Scanner's fixed max-token limit would silently drop everything
+// past the first overlong line — exactly the trailing turns the recovery
+// targets. The Reader.ReadString loop has no fixed line cap.
+func TestReconstructTurnsFromStream_OversizedLineDoesNotPoisonScan(t *testing.T) {
+	dir := t.TempDir()
+	// 5 MiB padding — comfortably exceeds the prior Scanner buffer cap.
+	huge := strings.Repeat("a", 5*1024*1024)
+	lines := []string{
+		`{"type":"delta","content":"turn0"}`,
+		fmt.Sprintf(`{"type":"tool_use","tool_use":{"name":"BigTool"},"payload":"%s"}`, huge),
+		`{"type":"delta","content":"turn-final"}`,
+	}
+	p := writeStream(t, dir, lines...)
+
+	turns, err := ReconstructTurnsFromStream(p, 10)
+	require.NoError(t, err)
+	require.Len(t, turns, 3, "all three turns must reconstruct past the oversized middle line")
+	assert.Equal(t, "turn0", turns[0].Text)
+	assert.Contains(t, turns[1].Text, "BigTool")
+	assert.Equal(t, "turn-final", turns[2].Text,
+		"the turn AFTER the oversized line must appear (regression: bufio.Scanner would have dropped it)")
+}
+
 // TestReconstructTurnsFromStream_MissingFile is best-effort: a missing stream
 // file returns (nil, nil) so a brand-new session falls through to a normal
 // cold boot.
@@ -248,6 +274,10 @@ func TestBuildRecoveryPackForPriorSession_ColdBootWithHistory(t *testing.T) {
 	assert.Contains(t, pack, "torque_task_transition")
 	assert.Contains(t, pack, "SES-PRIOR")
 	assert.Contains(t, pack, "orchestrator")
+	// The high-level helper now threads PackPath=recoveryPackFileName so the
+	// inlined block points the agent at the on-disk copy in its cwd (the boot
+	// dir post-Boot). Use a literal here, not the unexported const.
+	assert.Contains(t, pack, "recovery.md")
 }
 
 func TestBuildRecoveryPackForPriorSession_NoWorkspace(t *testing.T) {

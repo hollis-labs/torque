@@ -77,9 +77,17 @@ type Store interface {
 	UpdateTask(id string, u sqlstore.TaskUpdate) error
 	TransitionTask(id, newStatus string) error
 	GetSession(id string) (*sqlstore.SessionRecord, error)
+}
+
+// RedispatchStore extends Store with the recovery-pack telemetry sink. Split
+// out from Store so Start's callers/tests don't carry AppendRunEvent — only
+// Redispatch emits the recovery.pack_planted breadcrumb. Production
+// *sqlstore.Store satisfies both.
+type RedispatchStore interface {
+	Store
 	// AppendRunEvent records the recovery.pack_planted breadcrumb on the
-	// Redispatch cold-boot path. Errors are non-fatal (logged, never block
-	// the redispatch) — observability must not gate recovery.
+	// Redispatch cold-boot path. Errors are non-fatal (logged, never block the
+	// redispatch) — observability must not gate recovery.
 	AppendRunEvent(evt *sqlstore.RunEventRecord) (int64, error)
 }
 
@@ -228,7 +236,7 @@ func Start(ctx context.Context, store Store, mgr SessionManager, planID string, 
 // On a fresh boot Redispatch re-stamps metadata.plan.orchestrator_session_id
 // and leaves the plan's status untouched (a plan mid-walk is already in the
 // right status; Start's todo→doing transition does not apply here).
-func Redispatch(ctx context.Context, store Store, mgr SessionManager, planID string, opts Options) (*Result, error) {
+func Redispatch(ctx context.Context, store RedispatchStore, mgr SessionManager, planID string, opts Options) (*Result, error) {
 	if mgr == nil {
 		return nil, ErrSessionMgrMissing
 	}
@@ -370,7 +378,7 @@ type recoveryPackPlantedPayload struct {
 // cold-boot recovery is queryable. Mirrors nanite's recovery_pack_planted
 // LogEvent. Failure to append is logged but never propagated — observability
 // must not block the redispatch.
-func emitRecoveryPackPlanted(store Store, planID, newSessionID, priorSessionID string, turns int) {
+func emitRecoveryPackPlanted(store RedispatchStore, planID, newSessionID, priorSessionID string, turns int) {
 	body, err := json.Marshal(recoveryPackPlantedPayload{
 		PlanID:         planID,
 		NewSessionID:   newSessionID,

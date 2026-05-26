@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -150,43 +151,50 @@ func ReconstructTurnsFromStream(streamPath string, maxTurns int) ([]RecoveryTurn
 		}
 	}
 
-	scanner := bufio.NewScanner(f)
-	// Stream lines can hold a full assistant message; widen the token buffer
-	// well past bufio's 64KiB default so a long delta line isn't dropped.
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
+	// bufio.Reader (not Scanner): a single tool_use line can carry a large JSON
+	// payload (multi-MiB file diffs, etc.). bufio.Scanner has a fixed max token
+	// size and STOPS PERMANENTLY when a line exceeds it — for a long-lived
+	// session that's exactly the recovery target, the trailing turns (the ones
+	// we most want) would be silently dropped. Reader.ReadString grows its
+	// internal buffer as needed and reports EOF cleanly. A single oversized line
+	// still costs that line's worth of memory, but it doesn't poison the rest of
+	// the scan, and unparseable lines are skipped individually as before.
+	reader := bufio.NewReader(f)
+	for {
+		line, err := reader.ReadString('\n')
+		if s := strings.TrimSpace(line); s != "" {
+			var ev streamEventForRecovery
+			if jerr := json.Unmarshal([]byte(s), &ev); jerr == nil {
+				switch ev.Type {
+				case "delta":
+					pendingAssistant.WriteString(ev.Content)
+				case "tool_use":
+					flushAssistant()
+					name := ""
+					if ev.ToolUse != nil {
+						name = strings.TrimSpace(ev.ToolUse.Name)
+					}
+					if name == "" {
+						name = "(tool)"
+					}
+					appendTurn(RecoveryTurn{Role: "tool", Text: "called " + name})
+				default:
+					// usage / done / error / session_id / thinking — no content.
+				}
+			}
+			// malformed JSON — skip the individual line (matches the prior
+			// scanner behavior; tests assert this).
 		}
-		var ev streamEventForRecovery
-		if err := json.Unmarshal([]byte(line), &ev); err != nil {
-			continue
-		}
-		switch ev.Type {
-		case "delta":
-			pendingAssistant.WriteString(ev.Content)
-		case "tool_use":
+		if err != nil {
 			flushAssistant()
-			name := ""
-			if ev.ToolUse != nil {
-				name = strings.TrimSpace(ev.ToolUse.Name)
+			if err == io.EOF {
+				return trailingTurns(turns, maxTurns), nil
 			}
-			if name == "" {
-				name = "(tool)"
-			}
-			appendTurn(RecoveryTurn{Role: "tool", Text: "called " + name})
-		default:
-			// usage / done / error / session_id / thinking — no content.
+			// Partial reconstruction is still useful; return what we have plus
+			// the error so the caller can log it.
+			return trailingTurns(turns, maxTurns), err
 		}
 	}
-	flushAssistant()
-	if err := scanner.Err(); err != nil {
-		// Partial reconstruction is still useful; return what we have plus the
-		// error so the caller can log it.
-		return trailingTurns(turns, maxTurns), err
-	}
-	return trailingTurns(turns, maxTurns), nil
 }
 
 // trailingTurns returns the last maxTurns entries (chronological order
@@ -293,17 +301,6 @@ func WriteRecoveryPackFile(bootDir, pack string) (string, error) {
 	return packPath, nil
 }
 
-// RecoveryPackPath returns the path recovery.md would be written to for a given
-// boot dir, without writing it. Used to embed the pointer in the pack body
-// before the file is written (Boot plants boot.md from Options.SystemPrompt
-// before the bootDir-relative recovery.md exists).
-func RecoveryPackPath(bootDir string) string {
-	if strings.TrimSpace(bootDir) == "" {
-		return ""
-	}
-	return filepath.Join(bootDir, recoveryPackFileName)
-}
-
 // priorSessionStreamPath resolves the stream.jsonl path for a prior session
 // from its persisted SessionMeta (torque.workspace_dir). Returns "" when the
 // workspace dir is not recorded (predates the stamping convention, or the
@@ -332,11 +329,12 @@ func priorSessionStreamPath(rec *sqlstore.SessionRecord) string {
 // non-empty pack may still be returned alongside (partial reconstruction is
 // useful). Callers should log the error and use the pack regardless.
 //
-// PackPath is left empty here because the new boot's bootDir is not known until
-// after Boot returns; the caller writes <bootDir>/recovery.md post-Boot via
-// WriteRecoveryPackFile. The "full pack at ..." pointer line is therefore
-// omitted from the inlined block (the agent still has the full block in
-// boot.md), matching nanite's nil-PackPath handling.
+// PackPath is set to the bare filename (recoveryPackFileName) — a RELATIVE
+// pointer. The new boot's absolute bootDir is not known until after Boot
+// returns, but the planted agent's cwd IS that bootDir, so "recovery.md"
+// resolves correctly from the agent's perspective. The caller writes
+// <bootDir>/recovery.md post-Boot via WriteRecoveryPackFile; the inlined block's
+// "full pack at `recovery.md`" pointer then matches.
 func BuildRecoveryPackForPriorSession(prior *sqlstore.SessionRecord, reason string) (pack string, turnCount int, err error) {
 	if prior == nil {
 		return "", 0, nil
@@ -354,6 +352,7 @@ func BuildRecoveryPackForPriorSession(prior *sqlstore.SessionRecord, reason stri
 		Provider:       prior.Provider,
 		Role:           role,
 		Reason:         reason,
+		PackPath:       recoveryPackFileName,
 		PriorSessionID: prior.ID,
 		History:        turns,
 	})
