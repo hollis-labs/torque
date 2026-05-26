@@ -22,6 +22,7 @@ func templateJSON(t *sqlstore.TemplateRecord) map[string]interface{} {
 		"kind":                   t.Kind,
 		"auto_execute":           t.AutoExecute,
 		"executor":               nullStr(t.Executor),
+		"launch_profile":         nullStr(t.LaunchProfile),
 		"agent_profile":          nullStr(t.AgentProfile),
 		"system_prompt":          nullStr(t.SystemPrompt),
 		"working_dir":            nullStr(t.WorkingDir),
@@ -57,6 +58,7 @@ type templateCreateRequest struct {
 	Kind                 string                `json:"kind"`
 	AutoExecute          *bool                 `json:"auto_execute,omitempty"`
 	Executor             string                `json:"executor,omitempty"`
+	LaunchProfile        string                `json:"launch_profile,omitempty"`
 	AgentProfile         string                `json:"agent_profile,omitempty"`
 	SystemPrompt         string                `json:"system_prompt,omitempty"`
 	WorkingDir           string                `json:"working_dir,omitempty"`
@@ -87,6 +89,7 @@ type templateUpdateRequest struct {
 	Kind                 string                `json:"kind,omitempty"`
 	AutoExecute          *bool                 `json:"auto_execute,omitempty"`
 	Executor             *string               `json:"executor,omitempty"`
+	LaunchProfile        *string               `json:"launch_profile,omitempty"`
 	AgentProfile         *string               `json:"agent_profile,omitempty"`
 	SystemPrompt         *string               `json:"system_prompt,omitempty"`
 	WorkingDir           *string               `json:"working_dir,omitempty"`
@@ -136,6 +139,7 @@ func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request) {
 		Kind:                 req.Kind,
 		AutoExecute:          true, // default; overridden below if explicit
 		Executor:             req.Executor,
+		LaunchProfile:        req.LaunchProfile,
 		AgentProfile:         req.AgentProfile,
 		SystemPrompt:         req.SystemPrompt,
 		WorkingDir:           req.WorkingDir,
@@ -184,6 +188,7 @@ func (s *Server) updateTemplate(w http.ResponseWriter, r *http.Request) {
 		Kind:                 req.Kind,
 		AutoExecute:          req.AutoExecute,
 		Executor:             req.Executor,
+		LaunchProfile:        req.LaunchProfile,
 		AgentProfile:         req.AgentProfile,
 		SystemPrompt:         req.SystemPrompt,
 		WorkingDir:           req.WorkingDir,

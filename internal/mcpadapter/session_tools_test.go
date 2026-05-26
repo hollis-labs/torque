@@ -38,3 +38,34 @@ func TestHandleSessionCreate_UnknownAgentProfile(t *testing.T) {
 	assert.Contains(t, text.Text, `"code": "arg_invalid"`)
 	assert.Contains(t, text.Text, "unknown agent_profile 'typo' in profiles.yaml agent_profiles registry — known: [default fast]")
 }
+
+// TestHandleSessionCreate_NoSelectorSurfacesArgInvalid pins the MCP
+// adapter's explicit pre-Boot check that at least one of launch_profile
+// or agent_profile is supplied. agent.Options.Validate enforces the same
+// invariant downstream, but surfacing it here as ErrCodeArgInvalid (with
+// the field hint) lets clients self-correct rather than seeing the
+// failure wrapped as a generic domain error.
+func TestHandleSessionCreate_NoSelectorSurfacesArgInvalid(t *testing.T) {
+	a := &Adapter{
+		sessions: agent.NewManager(&agent.Dependencies{
+			Profiles: config.ProfileMap{"default": {}},
+		}),
+	}
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"workdir": t.TempDir(),
+	}
+
+	res, err := a.handleSessionCreate(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.True(t, res.IsError, "missing selector must surface as IsError")
+	require.Len(t, res.Content, 1)
+
+	text, ok := res.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+	assert.Contains(t, text.Text, `"code": "arg_invalid"`)
+	assert.Contains(t, text.Text, "launch_profile")
+	assert.Contains(t, text.Text, "at least one of launch_profile or agent_profile is required")
+}

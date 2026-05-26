@@ -872,8 +872,15 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	// any earlier step (transition, run create, worktree setup) never
 	// produces a misleading "dispatched" entry. Pairs with the
 	// run.completed event emitted by the worker closure on finish.
+	// Profile column prefers launch_profile (the first-class selector); falls
+	// back to legacy agent_profile so log lines from compat-path tasks stay
+	// meaningful during migration.
+	profileLabel := task.LaunchProfile
+	if profileLabel == "" {
+		profileLabel = task.AgentProfile
+	}
 	log.Printf("[scheduler] dispatched task=%s run=%d executor=%s profile=%s worker=%s",
-		task.ID, runID, task.Executor, task.AgentProfile, workerID)
+		task.ID, runID, task.Executor, profileLabel, workerID)
 
 	return nil
 }
@@ -1108,21 +1115,22 @@ func (s *Scheduler) publishProgress(taskID string, runID int64, event executor.E
 
 func (s *Scheduler) buildJob(task sqlstore.TaskRecord, runID int64) *executor.ExecutionJob {
 	job := &executor.ExecutionJob{
-		TaskID:       task.ID,
-		TaskTitle:    task.Title,
-		Kind:         task.Kind,
-		TaskStatus:   task.Status,
-		TaskPriority: task.Priority,
-		RunID:        runID,
-		Description:  task.Description,
-		SystemPrompt: task.SystemPrompt,
-		AgentFile:    task.AgentFile,
-		WorkingDir:   task.WorkingDir,
-		AgentProfile: task.AgentProfile,
-		ProjectID:    nullStringValue(task.ProjectID),
-		ParentID:     nullStringValue(task.ParentID),
-		SprintID:     nullStringValue(task.SprintID),
-		EpicID:       nullStringValue(task.EpicID),
+		TaskID:        task.ID,
+		TaskTitle:     task.Title,
+		Kind:          task.Kind,
+		TaskStatus:    task.Status,
+		TaskPriority:  task.Priority,
+		RunID:         runID,
+		Description:   task.Description,
+		SystemPrompt:  task.SystemPrompt,
+		AgentFile:     task.AgentFile,
+		WorkingDir:    task.WorkingDir,
+		LaunchProfile: task.LaunchProfile,
+		AgentProfile:  task.AgentProfile,
+		ProjectID:     nullStringValue(task.ProjectID),
+		ParentID:      nullStringValue(task.ParentID),
+		SprintID:      nullStringValue(task.SprintID),
+		EpicID:        nullStringValue(task.EpicID),
 		Limits: executor.ExecutionLimits{
 			MaxRetries: task.MaxRetries,
 		},

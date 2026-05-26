@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/agentkit/agentsessions"
 )
 
 // defaultPidPollInterval is the per-session poller cadence in production.

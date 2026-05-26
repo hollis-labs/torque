@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
-	runtimeturn "github.com/hollis-labs/go-agent-runtime/turn"
-	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	runtimeturn "github.com/hollis-labs/agentkit/agentruntime/turn"
+	"github.com/hollis-labs/agentkit/agentsessions"
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/oklog/ulid/v2"
@@ -575,6 +575,10 @@ func (m *Manager) Resume(ctx context.Context, req ResumeRequest) (string, error)
 		}
 	}
 
+	launchProfile := req.LaunchProfile
+	if launchProfile == "" {
+		launchProfile = src.LaunchProfile
+	}
 	profile := req.AgentProfile
 	if profile == "" {
 		profile = src.AgentProfile
@@ -598,6 +602,7 @@ func (m *Manager) Resume(ctx context.Context, req ResumeRequest) (string, error)
 
 	sess, err := Boot(ctx, m.deps, Options{
 		Mode:                 ModeResume,
+		LaunchProfile:        launchProfile,
 		AgentProfile:         profile,
 		Workdir:              workdir,
 		ResumeFromCheckpoint: cp.ID,
@@ -669,19 +674,20 @@ const (
 func sessionFromRecord(rec *sqlstore.SessionRecord) *Session {
 	meta := decodeMeta(rec.MetaJSON)
 	s := &Session{
-		ID:           rec.ID,
-		AgentProfile: rec.AgentProfile,
-		Provider:     rec.Provider,
-		RuntimeID:    rec.RuntimeID,
-		RuntimeKind:  rec.RuntimeKind,
-		Workdir:      rec.Workdir,
-		Status:       Status(rec.State),
-		PID:          rec.PID,
-		ResumeHint:   rec.ResumeHint,
-		Meta:         meta,
-		CreatedAt:    rec.CreatedAt,
-		UpdatedAt:    rec.UpdatedAt,
-		LastActivity: rec.LastActivity,
+		ID:            rec.ID,
+		LaunchProfile: rec.LaunchProfile,
+		AgentProfile:  rec.AgentProfile,
+		Provider:      rec.Provider,
+		RuntimeID:     rec.RuntimeID,
+		RuntimeKind:   rec.RuntimeKind,
+		Workdir:       rec.Workdir,
+		Status:        Status(rec.State),
+		PID:           rec.PID,
+		ResumeHint:    rec.ResumeHint,
+		Meta:          meta,
+		CreatedAt:     rec.CreatedAt,
+		UpdatedAt:     rec.UpdatedAt,
+		LastActivity:  rec.LastActivity,
 	}
 	if meta != nil {
 		s.Mode = parseModeString(meta[metaKeyMode])

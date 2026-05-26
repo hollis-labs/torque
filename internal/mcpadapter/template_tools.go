@@ -22,7 +22,8 @@ Example: {"id":"backend-fix","name":"Backend Fix","description":"Fix {{issue}}",
 		mcp.WithString("kind", mcp.Required(), mcp.Description("agent|external|wait|decision|parent")),
 		mcp.WithBoolean("auto_execute", mcp.Description("Default true — whether the scheduler picks up instantiated tasks")),
 		mcp.WithString("executor", mcp.Description("Executor name for agent-kind tasks")),
-		mcp.WithString("agent_profile", mcp.Description("Agent profile override")),
+		mcp.WithString("launch_profile", mcp.Description("Torque launch_profile id default — preferred over agent_profile.")),
+		mcp.WithString("agent_profile", mcp.Description("Legacy agent_profile override. Honored when launch_profile is empty.")),
 		mcp.WithString("system_prompt", mcp.Description("System prompt (supports {{var}})")),
 		mcp.WithString("working_dir", mcp.Description("Task working directory (supports {{var}})")),
 		mcp.WithString("tools", mcp.Description("JSON array of tool names")),
@@ -62,6 +63,7 @@ Example: {"id":"backend-fix","description":"Fix {{issue}} in {{component}}"}`),
 		mcp.WithString("kind", mcp.Description("New kind")),
 		mcp.WithBoolean("auto_execute"),
 		mcp.WithString("executor"),
+		mcp.WithString("launch_profile"),
 		mcp.WithString("agent_profile"),
 		mcp.WithString("system_prompt"),
 		mcp.WithString("working_dir"),
@@ -134,6 +136,7 @@ func (a *Adapter) handleTemplateCreate(ctx context.Context, req mcp.CallToolRequ
 		Description:          reqStr(req, "description"),
 		Kind:                 reqStr(req, "kind"),
 		Executor:             reqStr(req, "executor"),
+		LaunchProfile:        reqStr(req, "launch_profile"),
 		AgentProfile:         reqStr(req, "agent_profile"),
 		SystemPrompt:         reqStr(req, "system_prompt"),
 		WorkingDir:           reqStr(req, "working_dir"),
@@ -235,6 +238,10 @@ func (a *Adapter) handleTemplateUpdate(ctx context.Context, req mcp.CallToolRequ
 	if _, ok := args["executor"]; ok {
 		v := reqStr(req, "executor")
 		in.Executor = &v
+	}
+	if _, ok := args["launch_profile"]; ok {
+		v := reqStr(req, "launch_profile")
+		in.LaunchProfile = &v
 	}
 	if _, ok := args["agent_profile"]; ok {
 		v := reqStr(req, "agent_profile")

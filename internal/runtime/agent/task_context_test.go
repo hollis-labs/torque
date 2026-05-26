@@ -9,11 +9,11 @@ import (
 )
 
 func TestTaskContextNativeFiles_PlantsMarkdownAndJSON(t *testing.T) {
-	files := taskContextNativeFiles(buildLaunchPlanInput{
-		AgentProfile: "implementer",
-		Role:         "worker",
-		SessionID:    "sess-1",
-		LoopbackURL:  "http://127.0.0.1:1234/mcp",
+	files := taskContextNativeFiles(taskContextInput{
+		AgentProfileName: "implementer",
+		Role:             "worker",
+		SessionID:        "sess-1",
+		LoopbackURL:      "http://127.0.0.1:1234/mcp",
 		Options: Options{
 			TaskID:       "CW-T-1",
 			TaskTitle:    "Plant task context",
@@ -81,16 +81,16 @@ func TestTaskContextNativeFiles_PlantsMarkdownAndJSON(t *testing.T) {
 }
 
 func TestTaskContextNativeFiles_SkipsWhenNoTask(t *testing.T) {
-	files := taskContextNativeFiles(buildLaunchPlanInput{
-		AgentProfile: "planner",
-		Options:      Options{Workdir: "/work"},
+	files := taskContextNativeFiles(taskContextInput{
+		AgentProfileName: "planner",
+		Options:          Options{Workdir: "/work"},
 	})
 	assert.Nil(t, files)
 }
 
 func TestTaskContextNativeFiles_SanitizesTaskIDPathSegment(t *testing.T) {
-	files := taskContextNativeFiles(buildLaunchPlanInput{
-		AgentProfile: "implementer",
+	files := taskContextNativeFiles(taskContextInput{
+		AgentProfileName: "implementer",
 		Options: Options{
 			TaskID:  "../bad/task",
 			Workdir: "/work",

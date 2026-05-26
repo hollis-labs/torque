@@ -3,7 +3,7 @@ package agent
 import (
 	"encoding/json"
 
-	"github.com/hollis-labs/go-agent-runtime/turn"
+	"github.com/hollis-labs/agentkit/agentruntime/turn"
 	llmtypes "github.com/hollis-labs/go-llm-types"
 )
 

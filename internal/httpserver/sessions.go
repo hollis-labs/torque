@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/agentkit/agentsessions"
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
 )
@@ -43,13 +43,14 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 type launchSessionBody struct {
-	AgentProfile string            `json:"agent_profile"`
-	Workdir      string            `json:"workdir"`
-	ProjectID    string            `json:"project_id,omitempty"`
-	TaskID       string            `json:"task_id,omitempty"`
-	SystemPrompt string            `json:"system_prompt,omitempty"`
-	Env          []string          `json:"env,omitempty"`
-	Meta         map[string]string `json:"meta,omitempty"`
+	LaunchProfile string            `json:"launch_profile,omitempty"`
+	AgentProfile  string            `json:"agent_profile,omitempty"`
+	Workdir       string            `json:"workdir"`
+	ProjectID     string            `json:"project_id,omitempty"`
+	TaskID        string            `json:"task_id,omitempty"`
+	SystemPrompt  string            `json:"system_prompt,omitempty"`
+	Env           []string          `json:"env,omitempty"`
+	Meta          map[string]string `json:"meta,omitempty"`
 }
 
 func (s *Server) launchSession(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +62,10 @@ func (s *Server) launchSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	if s.sessions != nil && s.sessions.KnownProfiles() != nil {
+	// Validate the legacy agent_profile only when launch_profile is empty —
+	// when launch_profile is supplied it drives the resolver's compatibility
+	// path directly, and an empty agent_profile is the expected shape.
+	if body.LaunchProfile == "" && s.sessions != nil && s.sessions.KnownProfiles() != nil {
 		if err := config.ValidateProfileName(s.sessions.KnownProfiles(), body.AgentProfile); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -69,14 +73,15 @@ func (s *Server) launchSession(w http.ResponseWriter, r *http.Request) {
 	}
 	envMap := envSliceToMap(body.Env)
 	sess, err := s.sessions.Boot(r.Context(), agent.Options{
-		Mode:         agent.ModeLongLived,
-		AgentProfile: body.AgentProfile,
-		Workdir:      body.Workdir,
-		ProjectID:    body.ProjectID,
-		TaskID:       body.TaskID,
-		SystemPrompt: body.SystemPrompt,
-		Env:          envMap,
-		SessionMeta:  body.Meta,
+		Mode:          agent.ModeLongLived,
+		LaunchProfile: body.LaunchProfile,
+		AgentProfile:  body.AgentProfile,
+		Workdir:       body.Workdir,
+		ProjectID:     body.ProjectID,
+		TaskID:        body.TaskID,
+		SystemPrompt:  body.SystemPrompt,
+		Env:           envMap,
+		SessionMeta:   body.Meta,
 	})
 	if err != nil {
 		// Distinguish caller-fault validation (400) from server-side Boot
@@ -288,11 +293,12 @@ func (s *Server) listSessionCheckpoints(w http.ResponseWriter, r *http.Request) 
 }
 
 type resumeBody struct {
-	CheckpointID string   `json:"checkpoint_id,omitempty"`
-	AgentProfile string   `json:"agent_profile,omitempty"`
-	Workdir      string   `json:"workdir,omitempty"`
-	SystemPrompt string   `json:"system_prompt,omitempty"`
-	Env          []string `json:"env,omitempty"`
+	CheckpointID  string   `json:"checkpoint_id,omitempty"`
+	LaunchProfile string   `json:"launch_profile,omitempty"`
+	AgentProfile  string   `json:"agent_profile,omitempty"`
+	Workdir       string   `json:"workdir,omitempty"`
+	SystemPrompt  string   `json:"system_prompt,omitempty"`
+	Env           []string `json:"env,omitempty"`
 }
 
 func (s *Server) resumeSession(w http.ResponseWriter, r *http.Request) {
@@ -306,12 +312,13 @@ func (s *Server) resumeSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	newID, err := s.sessions.Resume(r.Context(), agent.ResumeRequest{
-		SessionID:    id,
-		CheckpointID: body.CheckpointID,
-		AgentProfile: body.AgentProfile,
-		Workdir:      body.Workdir,
-		SystemPrompt: body.SystemPrompt,
-		Env:          body.Env,
+		SessionID:     id,
+		CheckpointID:  body.CheckpointID,
+		LaunchProfile: body.LaunchProfile,
+		AgentProfile:  body.AgentProfile,
+		Workdir:       body.Workdir,
+		SystemPrompt:  body.SystemPrompt,
+		Env:           body.Env,
 	})
 	if err != nil {
 		switch {

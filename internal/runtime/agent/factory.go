@@ -3,9 +3,9 @@ package agent
 import (
 	"fmt"
 
-	"github.com/hollis-labs/go-agent-runtime/runtimebind"
-	"github.com/hollis-labs/go-agent-runtime/runtimekind"
-	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/agentkit/agentruntime/runtimebind"
+	"github.com/hollis-labs/agentkit/agentruntime/runtimekind"
+	"github.com/hollis-labs/agentkit/agentsessions"
 	"github.com/hollis-labs/go-providers/provider"
 	"github.com/hollis-labs/torque/internal/config"
 )

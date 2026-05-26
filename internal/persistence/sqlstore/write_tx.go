@@ -196,10 +196,10 @@ func (w *WriteTx) CreateSession(rec *SessionRecord) error {
 	}
 	_, err := w.tx.Exec(`
 		INSERT INTO sessions (
-			id, agent_profile, provider, runtime_id, runtime_kind,
+			id, launch_profile, agent_profile, provider, runtime_id, runtime_kind,
 			workdir, project_id, task_id, state, pid, meta
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		rec.ID, rec.AgentProfile, rec.Provider, rec.RuntimeID, rec.RuntimeKind,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		rec.ID, rec.LaunchProfile, rec.AgentProfile, rec.Provider, rec.RuntimeID, rec.RuntimeKind,
 		rec.Workdir, rec.ProjectID, rec.TaskID, state, rec.PID, meta,
 	)
 	if err != nil {
@@ -530,18 +530,18 @@ func (w *WriteTx) CreateTask(t *TaskRecord) error {
 
 	const q = `INSERT INTO tasks (
 		id, title, description, status, priority, manual,
-		executor, agent_profile, working_dir, tools, permissions, environment,
+		executor, launch_profile, agent_profile, working_dir, tools, permissions, environment,
 		system_prompt, agent_file, files, cost_budget, max_retries, max_duration_ms, token_budget,
 		on_done, on_fail, on_review, escalation_chain, quality_gates, deliverables,
 		deliverable_preset, on_done_merge, depends_on, blocked_reason, metadata,
 		sprint_id, project_id, epic_id,
 		kind, source_type, source_ref, trust, checkpoint_mode, on_checkpoint_response,
 		parent_id
-	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
 	_, err := w.tx.Exec(q,
 		t.ID, t.Title, t.Description, t.Status, t.Priority, manual,
-		t.Executor, t.AgentProfile, t.WorkingDir, t.Tools, t.Permissions, t.Environment,
+		t.Executor, t.LaunchProfile, t.AgentProfile, t.WorkingDir, t.Tools, t.Permissions, t.Environment,
 		t.SystemPrompt, t.AgentFile, t.Files, t.CostBudget, t.MaxRetries, t.MaxDurationMs, t.TokenBudget,
 		t.OnDone, t.OnFail, t.OnReview, t.EscalationChain, t.QualityGates, t.Deliverables,
 		t.DeliverablePreset, t.OnDoneMerge, t.DependsOn, t.BlockedReason, t.Metadata,

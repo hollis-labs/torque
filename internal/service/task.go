@@ -32,6 +32,7 @@ type TaskCreateInput struct {
 	Tags              []string
 	Manual            bool
 	Executor          string
+	LaunchProfile     string
 	AgentProfile      string
 	WorkingDir        string
 	Tools             []string
@@ -271,6 +272,7 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		Priority:             priority,
 		Manual:               input.Manual,
 		Executor:             effectiveExecutor,
+		LaunchProfile:        input.LaunchProfile,
 		AgentProfile:         input.AgentProfile,
 		WorkingDir:           input.WorkingDir,
 		SystemPrompt:         input.SystemPrompt,

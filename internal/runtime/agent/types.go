@@ -140,6 +140,7 @@ func (s Status) Terminal() bool {
 type Session struct {
 	ID              string            `json:"ID"`
 	Mode            Mode              `json:"Mode"`
+	LaunchProfile   string            `json:"LaunchProfile"`
 	AgentProfile    string            `json:"AgentProfile"`
 	Provider        string            `json:"Provider"`
 	RuntimeID       string            `json:"RuntimeID"`
@@ -216,12 +217,13 @@ type CheckpointRequest struct {
 // checkpoint. Only the lifecycle path; the boot-time entry uses
 // agent.Boot(Mode=ModeResume, ResumeFromCheckpoint=...) instead.
 type ResumeRequest struct {
-	SessionID    string
-	CheckpointID string // optional — empty means latest checkpoint
-	AgentProfile string
-	Workdir      string
-	SystemPrompt string
-	Env          []string
+	SessionID     string
+	CheckpointID  string // optional — empty means latest checkpoint
+	LaunchProfile string // preferred — drives launchprofile.Resolve
+	AgentProfile  string // legacy compat; ignored when LaunchProfile is set
+	Workdir       string
+	SystemPrompt  string
+	Env           []string
 }
 
 // ResumeOptions parametrizes Manager.ResumeSession (CW-20260512-0060,

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // TestResolveApiKeyHelperPath_Override pins that the
@@ -35,9 +34,10 @@ func TestResolveApiKeyHelperPath_Override(t *testing.T) {
 }
 
 // TestResolveApiKeyHelperPath_Override_NonExecutable pins that an
-// override pointing at a non-executable file is ignored (logged and
-// skipped). Defends against a misconfigured cerberus deployment that
-// sets the env var but didn't chmod +x.
+// override pointing at a non-executable file is rejected (logged and
+// dropped). Defends against a misconfigured deployment that sets the
+// env var but didn't chmod +x. Post 2026-05-26 the function has no
+// fallback path, so the rejection produces an empty string.
 func TestResolveApiKeyHelperPath_Override_NonExecutable(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "non-exec")
@@ -45,56 +45,20 @@ func TestResolveApiKeyHelperPath_Override_NonExecutable(t *testing.T) {
 		t.Fatalf("write non-exec: %v", err)
 	}
 	t.Setenv("TORQUE_APIKEY_HELPER", path)
-	// Suppress the PATH fallback so we get a deterministic empty
-	// answer when the override is rejected.
-	t.Setenv("PATH", "/this/path/does/not/exist")
 	got := resolveApiKeyHelperPath()
-	// The override is rejected; sibling-binary lookup runs but the
-	// test binary's sibling almost certainly isn't named
-	// torque-apikey-helper. Empty is the expected outcome on a
-	// clean test run.
-	if got != "" && got != path {
-		t.Logf("resolveApiKeyHelperPath = %q (test-binary sibling resolution may have hit; not an error)", got)
-	}
-	// Most important assertion: the override path is not returned
-	// when it's not executable.
-	if got == path {
-		t.Errorf("non-executable override should be rejected, got %q", got)
-	}
+	assert.Empty(t, got, "non-executable override must be rejected; got %q", got)
 }
 
-// TestResolveApiKeyHelperPath_NoHelperReturnsEmpty pins the
-// graceful-fallback contract: when no resolution path hits, return ""
-// so Boot skips the apiKeyHelper field. This is the existing
-// contract for ANTHROPIC_API_KEY-only deployments.
-//
-// Sibling-binary resolution is tested separately
-// (TestResolveApiKeyHelperPath_SiblingBinary). Here we want to assert
-// the negative-path: env override empty, sibling absent, PATH lookup
-// fails. To make the sibling-binary check fail we need the test
-// binary's directory to NOT contain a `torque-apikey-helper` file —
-// `go test` runs against a tempdir-built binary, so that's the default
-// and we can assert directly.
-func TestResolveApiKeyHelperPath_NoHelperReturnsEmpty(t *testing.T) {
+// TestResolveApiKeyHelperPath_NoOverrideReturnsEmpty pins the opt-in
+// contract: with TORQUE_APIKEY_HELPER unset, the function returns ""
+// so Boot omits the apiKeyHelper field from .claude/settings.json and
+// claude uses its default keychain/env discovery. This is the
+// subscription-OAuth-friendly default introduced 2026-05-26.
+func TestResolveApiKeyHelperPath_NoOverrideReturnsEmpty(t *testing.T) {
 	t.Setenv("TORQUE_APIKEY_HELPER", "")
-	t.Setenv("PATH", "/this/path/does/not/exist")
-
-	// Defensive: confirm the test binary's sibling-dir genuinely lacks a
-	// torque-apikey-helper. If a developer happens to drop the binary
-	// into the test tempdir, the assertion below would erroneously fail.
-	exe, exeErr := os.Executable()
-	require.NoError(t, exeErr, "os.Executable should resolve in tests")
-	if eval, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = eval
-	}
-	siblingCandidate := filepath.Join(filepath.Dir(exe), "torque-apikey-helper")
-	if isExecutableFile(siblingCandidate) {
-		t.Skipf("sibling torque-apikey-helper exists at %s; skipping the negative-path assertion (env-clean precondition fails)", siblingCandidate)
-	}
-
 	got := resolveApiKeyHelperPath()
 	assert.Empty(t, got,
-		"resolveApiKeyHelperPath must return \"\" when no resolution path hits; got %q", got)
+		"resolveApiKeyHelperPath must return \"\" when TORQUE_APIKEY_HELPER is unset; got %q", got)
 }
 
 // TestIsExecutableFile pins the predicate's behavior: regular file +

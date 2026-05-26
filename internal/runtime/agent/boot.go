@@ -10,17 +10,19 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hollis-labs/go-agent-launch/agentlaunch/launcher"
-	"github.com/hollis-labs/go-agent-launch/agentlaunch/providerplant"
-	"github.com/hollis-labs/go-agent-launch/agentlaunch/sessionshim"
-	"github.com/hollis-labs/go-agent-runtime/sessionkit"
-	"github.com/hollis-labs/go-agent-runtime/turn"
-	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/agentkit/agentlaunch/launcher"
+	"github.com/hollis-labs/agentkit/agentlaunch/providerplant"
+	"github.com/hollis-labs/agentkit/agentlaunch/sessionshim"
+	runtimebootdir "github.com/hollis-labs/agentkit/agentruntime/bootdir"
+	"github.com/hollis-labs/agentkit/agentruntime/sessionkit"
+	"github.com/hollis-labs/agentkit/agentruntime/turn"
+	"github.com/hollis-labs/agentkit/agentsessions"
 	llmtypes "github.com/hollis-labs/go-llm-types"
 	feotel "github.com/hollis-labs/go-otel"
 	"github.com/hollis-labs/go-providers/provider"
 	"github.com/hollis-labs/go-sandbox/sandbox"
 	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/launchprofile"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -52,7 +54,17 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		return nil, err
 	}
 
-	profile := config.GetProfileOrDefault(deps.Profiles, opts.AgentProfile)
+	// Resolve the launch profile (and the underlying config.AgentProfile) up
+	// front. LaunchProfile is the first-class user-facing selector; when
+	// empty, AgentProfile flows through the legacy-compat path inside the
+	// resolver (which may map to a builtin family or pass through verbatim).
+	resolved := launchprofile.Resolve(launchprofile.ResolveRequest{
+		LaunchProfile:      opts.LaunchProfile,
+		LegacyAgentProfile: opts.AgentProfile,
+		Source:             deps.Profiles,
+	})
+	profile := resolved.AgentProfile
+	agentProfileName := resolved.AgentProfileName
 
 	// Runtime kind selection drives BOTH the adapter constructor AND the
 	// capability set the lib reads to pick the session implementation
@@ -65,12 +77,14 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		return nil, fmt.Errorf("%w: runtime kind: %v", ErrAdapterNotFound, err)
 	}
 
-	cliAdapter, caps, err := adapterFor(profile, opts.AgentProfile, runtimeKind)
+	cliAdapter, caps, err := adapterFor(profile, agentProfileName, runtimeKind)
 	if err != nil {
 		return nil, fmt.Errorf("%w: adapter: %v", ErrAdapterNotFound, err)
 	}
 
-	// Session ID + role (used for SessionMeta + boot.md content).
+	// Session ID + role (used for SessionMeta + boot.md content). Role
+	// precedence: explicit Options.Role > LaunchProfile.Role > legacy
+	// agent_profile name (mirrors pre-refactor behavior).
 	idFn := opts.IDFn
 	if idFn == nil {
 		idFn = mgr.idFn
@@ -78,7 +92,10 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	sessID := idFn()
 	role := opts.Role
 	if role == "" {
-		role = opts.AgentProfile
+		role = resolved.Profile.Role
+	}
+	if role == "" {
+		role = agentProfileName
 	}
 
 	// Trace the boot. Spans start AFTER the cheap preflight (validate / deps
@@ -97,7 +114,8 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		attribute.String("hollis.provider", profile.Provider),
 		attribute.String("hollis.runtime.kind", string(runtimeKind)),
 		attribute.String("torque.agent.mode", opts.Mode.String()),
-		attribute.String("torque.agent.profile", opts.AgentProfile),
+		attribute.String("torque.agent.profile", agentProfileName),
+		attribute.String("torque.launch_profile", resolved.Profile.ID),
 		attribute.String("torque.agent.role", role),
 	)
 	defer func() {
@@ -218,27 +236,51 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	// env amendments, and the project-dir argv flow into the existing
 	// StartOptions; everything downstream (kickoff, teardown, one-shot
 	// turn wait) is unchanged.
-	plan, err := buildLaunchPlan(buildLaunchPlanInput{
-		Profile:       profile,
-		AgentProfile:  opts.AgentProfile,
-		Role:          role,
-		SessionID:     sessID,
-		AgentFile:     agentFile,
-		AgentFilePath: opts.AgentFile,
-		RuntimeKind:   runtimeKind,
-		ProjectID:     opts.ProjectID,
-		Workdir:       opts.Workdir,
-		WorkspaceDir:  ws.WorkspaceDir,
-		BuildDirRoot:  ws.BuildDirRoot,
-		SystemPrompt:  systemPrompt,
-		KickoffMD:     kickoffMD,
-		LoopbackURL:   loopbackURL,
-		Options:       opts,
+	// Map Torque's runtime-kind / provider-id enums onto the agentlaunch
+	// taxonomy and compose the planted task-bundle native files. These are
+	// agent-package internals (factory.go selects the adapter; task_context.go
+	// composes the bundle), so they are resolved here rather than inside the
+	// launchprofile package — the overlay carries the already-mapped values
+	// into the shared assembly seam.
+	rtKind, err := mapRuntimeKind(runtimeKind)
+	if err != nil {
+		shutdownLoopbackHandle(loopback)
+		return nil, fmt.Errorf("%w: map runtime kind: %v", ErrBootFailed, err)
+	}
+	nativeFiles := taskContextNativeFiles(taskContextInput{
+		Options:          opts,
+		SessionID:        sessID,
+		AgentProfileName: agentProfileName,
+		Role:             role,
+		LoopbackURL:      loopbackURL,
+	})
+	injection, _, err := runtimebootdir.BuildInjection(runtimebootdir.Request{
+		Provider:    mapProviderID(profile.Provider),
+		Runtime:     rtKind,
+		NativeFiles: nativeFiles,
 	})
 	if err != nil {
 		shutdownLoopbackHandle(loopback)
-		return nil, fmt.Errorf("%w: build launch plan: %v", ErrBootFailed, err)
+		return nil, fmt.Errorf("%w: build injection: %v", ErrBootFailed, err)
 	}
+
+	plan := launchprofile.BuildLaunchPlan(resolved, launchprofile.TaskLaunchOverlay{
+		SessionID:      sessID,
+		Role:           role,
+		AgentFilePath:  opts.AgentFile,
+		RuntimeKind:    rtKind,
+		ProviderID:     mapProviderID(profile.Provider),
+		ProjectID:      opts.ProjectID,
+		Workdir:        opts.Workdir,
+		WorkspaceDir:   ws.WorkspaceDir,
+		BuildDirRoot:   ws.BuildDirRoot,
+		SystemPrompt:   systemPrompt,
+		KickoffMD:      kickoffMD,
+		LoopbackURL:    loopbackURL,
+		PermissionMode: resolveLaunchPermissionMode(profile),
+		Injection:      injection,
+	})
+
 	compiled, err := launcher.Compile(ctx, plan)
 	if err != nil {
 		shutdownLoopbackHandle(loopback)
@@ -268,9 +310,9 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	// (deps.MuxCommand/MuxArgs/MuxEnv). These are runtime values, kept
 	// off the persisted-at-rest LaunchPlan deliberately.
 	prepared.PlantContext.MCPLoopbackURL = loopbackURL
-	prepared.PlantContext.MuxCommand = deps.MuxCommand
-	prepared.PlantContext.MuxArgs = append([]string(nil), deps.MuxArgs...)
-	prepared.PlantContext.MuxEnv = muxEnvSliceToMap(deps.MuxEnv)
+	prepared.PlantContext.SelfMCPCommand = deps.MuxCommand
+	prepared.PlantContext.SelfMCPArgs = append([]string(nil), deps.MuxArgs...)
+	prepared.PlantContext.SelfMCPEnv = muxEnvSliceToMap(deps.MuxEnv)
 	// Plant the provider boot dir. WithAdapter pins the exact adapter
 	// Torque resolved (adapterFor) — critically the BARE-mode claude
 	// adapter, which providerplant's DefaultResolver would not select
@@ -503,17 +545,18 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		return nil, fmt.Errorf("%w: encode session meta: %v", ErrBootFailed, err)
 	}
 	rec := &sqlstore.SessionRecord{
-		ID:           sessID,
-		AgentProfile: opts.AgentProfile,
-		Provider:     profile.Provider,
-		RuntimeID:    runtime.ID(),
-		RuntimeKind:  runtime.Kind(),
-		Workdir:      opts.Workdir,
-		ProjectID:    nullableString(opts.ProjectID),
-		TaskID:       nullableString(opts.TaskID),
-		State:        string(StatusLaunching),
-		ResumeHint:   resumeHint,
-		MetaJSON:     metaJSON,
+		ID:            sessID,
+		LaunchProfile: resolved.Profile.ID,
+		AgentProfile:  agentProfileName,
+		Provider:      profile.Provider,
+		RuntimeID:     runtime.ID(),
+		RuntimeKind:   runtime.Kind(),
+		Workdir:       opts.Workdir,
+		ProjectID:     nullableString(opts.ProjectID),
+		TaskID:        nullableString(opts.TaskID),
+		State:         string(StatusLaunching),
+		ResumeHint:    resumeHint,
+		MetaJSON:      metaJSON,
 	}
 	if err := deps.CreateSession(context.Background(), rec); err != nil {
 		shutdownLoopbackHandle(loopback)
@@ -861,7 +904,8 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	sess = &Session{
 		ID:              sessID,
 		Mode:            opts.Mode,
-		AgentProfile:    opts.AgentProfile,
+		LaunchProfile:   resolved.Profile.ID,
+		AgentProfile:    agentProfileName,
 		Provider:        profile.Provider,
 		RuntimeID:       runtime.ID(),
 		RuntimeKind:     runtime.Kind(),

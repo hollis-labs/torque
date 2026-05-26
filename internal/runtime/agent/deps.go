@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/agentkit/agentsessions"
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/runtime/scheduler"
@@ -83,17 +83,28 @@ type Dependencies struct {
 	// claude's planted .claude/settings.json as `apiKeyHelper: <path>`.
 	// Bare-mode claude invokes the helper per request and consumes its
 	// first line of stdout as the bearer token used for the API call.
-	// Closes CW-20260509-0016: bare mode disables OAuth/keychain
-	// auto-resolution, so subscription users (no ANTHROPIC_API_KEY in
-	// env) need an explicit hook. The composition root resolves this
-	// path at startup (typically `<dir(os.Executable())>/torque-
-	// apikey-helper`) and falls back to the empty string when the
-	// helper is absent — bare mode then requires ANTHROPIC_API_KEY in
-	// env (the existing CW-20260509-0011 contract). Empty here is
-	// safe; non-empty paths are re-validated at Boot time (executable-
-	// regular-file check). If the path was valid at startup but has
-	// since been removed/replaced, Boot logs the misconfig and falls
-	// back to the env-key path rather than failing the dispatch.
+	//
+	// Opt-in only as of 2026-05-26. The composition root populates this
+	// from the TORQUE_APIKEY_HELPER env var (see resolveApiKeyHelperPath
+	// in internal/runtime/bootstrap) and leaves it empty by default.
+	// Empty → planted settings.json omits the apiKeyHelper field and
+	// claude falls through to its default keychain/env discovery (the
+	// path subscription OAuth users need; matches Nanite's layout).
+	// Non-empty paths are re-validated at Boot time (executable-regular-
+	// file check) so a stale resolved path does not silently corrupt
+	// auth — Boot logs the misconfig and falls back to env-based
+	// discovery rather than failing the dispatch.
+	//
+	// Historical note: CW-20260509-0016 originally added this with
+	// sibling-binary + PATH auto-resolution to close an auth gap for
+	// subscription users. Claude CLI 2.1.x then changed semantics so the
+	// helper's output is treated as an Anthropic API key — and the
+	// keychain payload for subscription users is an OAuth access token
+	// (sk-ant-oat01-…) that the helper would return but claude rejects.
+	// The 2026-05-26 opt-in flip makes subscription auth work out of
+	// the box while preserving the helper path for operators dispatching
+	// against an ANTHROPIC_API_KEY-style helper script (export
+	// TORQUE_APIKEY_HELPER=<path>).
 	ApiKeyHelperPath string
 
 	// MuxCommand, when non-empty, is the absolute path to the Mux

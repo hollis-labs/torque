@@ -54,6 +54,7 @@ func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, agg *sqlstore.T
 		"tags":               tagsJSON(tags),
 		"manual":             t.Manual,
 		"executor":           t.Executor,
+		"launch_profile":     t.LaunchProfile,
 		"agent_profile":      t.AgentProfile,
 		"working_dir":        t.WorkingDir,
 		"tools":              parseStringArray(t.Tools),
@@ -251,6 +252,7 @@ type TaskCreateRequest struct {
 	Tags              []string              `json:"tags,omitempty"`
 	Manual            bool                  `json:"manual,omitempty"`
 	Executor          string                `json:"executor,omitempty"`
+	LaunchProfile     string                `json:"launch_profile,omitempty"`
 	AgentProfile      string                `json:"agent_profile,omitempty"`
 	WorkingDir        string                `json:"working_dir,omitempty"`
 	Tools             []string              `json:"tools,omitempty"`
@@ -302,6 +304,7 @@ type TaskUpdateRequest struct {
 	Tags              *[]string              `json:"tags,omitempty"`
 	Manual            *bool                  `json:"manual,omitempty"`
 	Executor          *string                `json:"executor,omitempty"`
+	LaunchProfile     *string                `json:"launch_profile,omitempty"`
 	AgentProfile      *string                `json:"agent_profile,omitempty"`
 	WorkingDir        *string                `json:"working_dir,omitempty"`
 	Tools             *[]string              `json:"tools,omitempty"`
@@ -588,6 +591,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		Tags:              req.Tags,
 		Manual:            req.Manual,
 		Executor:          req.Executor,
+		LaunchProfile:     req.LaunchProfile,
 		AgentProfile:      req.AgentProfile,
 		WorkingDir:        req.WorkingDir,
 		Tools:             req.Tools,
@@ -673,6 +677,7 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 		Priority:          req.Priority,
 		Manual:            req.Manual,
 		Executor:          req.Executor,
+		LaunchProfile:     req.LaunchProfile,
 		AgentProfile:      req.AgentProfile,
 		WorkingDir:        req.WorkingDir,
 		SystemPrompt:      req.SystemPrompt,

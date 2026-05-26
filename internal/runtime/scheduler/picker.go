@@ -199,16 +199,17 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, PickDecisions, error) {
 		}
 
 		// Defense-in-depth for CW-20260418-0010: an agent or internal
-		// task with no agent_profile has no actionable CLI/provider to
-		// dispatch. Even with the scheduler's pre-dispatch Validate hook
-		// in place, skip these at the picker so they don't burn a tick-
-		// worth of heartbeat noise or block other eligible tasks for the
-		// same project slot. The task stays `todo` with its current
-		// blocked_reason; an operator (or MCP update) must populate
-		// agent_profile before it becomes eligible. (CW-20260503-0011
-		// extends this guard to kind=internal — the Reviewer / future
-		// System / PM agents need profiles too.)
-		if (task.Kind == "agent" || task.Kind == "internal") && task.AgentProfile == "" {
+		// task with no profile selector has no actionable CLI/provider to
+		// dispatch. Either launch_profile (the first-class selector) or
+		// agent_profile (legacy compat) must be set. Both empty → skip at
+		// the picker so the task doesn't burn a tick-worth of heartbeat
+		// noise or block other eligible tasks for the same project slot.
+		// The task stays `todo` with its current blocked_reason; an
+		// operator (or MCP update) must populate one of the fields before
+		// it becomes eligible. (CW-20260503-0011 extends this guard to
+		// kind=internal; launch_profile addition is the 2026-05-26
+		// launch-profile refactor.)
+		if (task.Kind == "agent" || task.Kind == "internal") && task.AgentProfile == "" && task.LaunchProfile == "" {
 			record(task.ID, SkipReasonEmptyProfile)
 			continue
 		}

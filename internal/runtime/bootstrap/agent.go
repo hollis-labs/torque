@@ -152,73 +152,54 @@ func AgentDeps(
 	return deps, closer, nil
 }
 
-// resolveApiKeyHelperPath returns the absolute path to the
-// torque-apikey-helper binary that ships next to the daemon, or an
-// empty string when the helper is absent.
+// resolveApiKeyHelperPath returns the absolute path to a Torque
+// apiKeyHelper binary when the operator has explicitly opted in via the
+// TORQUE_APIKEY_HELPER env var, or an empty string otherwise.
 //
-// Resolution order:
+// Opt-in only as of 2026-05-26. Previous behavior auto-resolved a sibling
+// binary or PATH lookup so the helper threaded onto .claude/settings.json
+// by default. That auto-wire was correct for ANTHROPIC_API_KEY-style keys
+// (sk-ant-api03-…) but actively broke subscription OAuth users: claude
+// CLI 2.1.x treats apiKeyHelper output as an API key, and the keychain
+// payload for subscription users is an OAuth access token (sk-ant-oat01-…)
+// that claude rejects as "Invalid API key" once the planted settings.json
+// declares apiKeyHelper. With auto-resolve removed, the planted settings
+// omits the field and claude falls through to its default discovery chain
+// (env → keychain), matching the Nanite layout (which never threads
+// apiKeyHelper) and the working behavior for OAuth subscription users.
 //
-//  1. TORQUE_APIKEY_HELPER env var (operator override; useful for
-//     dev sessions where the helper was built into a separate dir).
-//  2. <dir(os.Executable())>/torque-apikey-helper — the production
-//     deployment shape: cerberus_resource_apply syncs both binaries
-//     into the same artifact dir.
-//  3. exec.LookPath equivalent against the daemon's PATH — fallback
-//     for non-cerberus deployments where the helper is on PATH.
+// Operators dispatching against an ANTHROPIC_API_KEY-style helper opt in
+// explicitly via TORQUE_APIKEY_HELPER=<absolute path>. Empty/unset → no
+// helper threaded → claude reads keychain/env auth directly.
 //
-// Returns "" (empty path) when none of the above resolve. Boot then
-// skips the apiKeyHelper field in .claude/settings.json and bare-mode
-// claude falls back to ANTHROPIC_API_KEY in env (the existing
-// CW-20260509-0011 contract). A clear `log.Printf` notes the
-// resolution outcome at startup so operators can correlate auth
-// failures with helper availability.
-//
-// CW-20260509-0016. Closes the auth gap for subscription users
-// dispatching bare-mode claude without an API key in the daemon env.
+// CW-20260509-0016 closed the original auth gap; this 2026-05-26 change
+// inverts the default (was: auto-on, opt-out via env unset) so the more
+// common subscription path is the default. ANTHROPIC_API_KEY-only
+// deployments are unchanged (claude reads the env directly, the helper
+// is only one of several discovery paths).
 func resolveApiKeyHelperPath() string {
-	if override := os.Getenv("TORQUE_APIKEY_HELPER"); override != "" {
-		// Normalize to absolute + symlink-resolved so the doc-promised
-		// "absolute path" contract holds even when an operator sets a
-		// relative path or routes through a symlink. Failures fall back to
-		// the unresolved override; the executable-file check below catches
-		// outright bogus paths regardless.
-		resolved := override
-		if abs, err := filepath.Abs(resolved); err == nil {
-			resolved = abs
-		}
-		if eval, err := filepath.EvalSymlinks(resolved); err == nil {
-			resolved = eval
-		}
-		if isExecutableFile(resolved) {
-			log.Printf("[bootstrap] apiKeyHelper resolved via TORQUE_APIKEY_HELPER=%s", resolved)
-			return resolved
-		}
-		log.Printf("[bootstrap] TORQUE_APIKEY_HELPER=%s (resolved=%s) set but path is not an executable file; ignoring", override, resolved)
+	override := os.Getenv("TORQUE_APIKEY_HELPER")
+	if override == "" {
+		log.Printf("[bootstrap] apiKeyHelper disabled (TORQUE_APIKEY_HELPER not set) — planted .claude/settings.json omits apiKeyHelper; claude uses default keychain/env discovery. Set TORQUE_APIKEY_HELPER=<absolute path> to opt in for ANTHROPIC_API_KEY-style deployments.")
+		return ""
 	}
-
-	exe, err := os.Executable()
-	if err == nil {
-		// Resolve symlinks so an artifact-dir helper is found even when the
-		// daemon was launched via a symlink. EvalSymlinks errors fall back
-		// to the unresolved path.
-		if resolved, rerr := filepath.EvalSymlinks(exe); rerr == nil {
-			exe = resolved
-		}
-		candidate := filepath.Join(filepath.Dir(exe), "torque-apikey-helper")
-		if isExecutableFile(candidate) {
-			log.Printf("[bootstrap] apiKeyHelper resolved next to daemon binary at %s", candidate)
-			return candidate
-		}
+	// Normalize to absolute + symlink-resolved so the doc-promised
+	// "absolute path" contract holds even when an operator sets a
+	// relative path or routes through a symlink. Failures fall back to
+	// the unresolved override; the executable-file check below catches
+	// outright bogus paths regardless.
+	resolved := override
+	if abs, err := filepath.Abs(resolved); err == nil {
+		resolved = abs
 	}
-
-	// PATH lookup as a last resort — homebrew installs, dev `go install`
-	// targets, etc. Match the helper binary name.
-	if path, lookErr := lookExecOnPath("torque-apikey-helper"); lookErr == nil {
-		log.Printf("[bootstrap] apiKeyHelper resolved on PATH at %s", path)
-		return path
+	if eval, err := filepath.EvalSymlinks(resolved); err == nil {
+		resolved = eval
 	}
-
-	log.Printf("[bootstrap] apiKeyHelper NOT resolved (no TORQUE_APIKEY_HELPER override, no sibling binary, no PATH match) — bare-mode claude will require ANTHROPIC_API_KEY in env")
+	if isExecutableFile(resolved) {
+		log.Printf("[bootstrap] apiKeyHelper resolved via TORQUE_APIKEY_HELPER=%s", resolved)
+		return resolved
+	}
+	log.Printf("[bootstrap] TORQUE_APIKEY_HELPER=%s (resolved=%s) set but path is not an executable file; ignoring (claude uses default keychain/env discovery)", override, resolved)
 	return ""
 }
 

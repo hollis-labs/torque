@@ -3,7 +3,7 @@ package agent
 import (
 	"path/filepath"
 
-	"github.com/hollis-labs/go-agent-runtime/turn"
+	"github.com/hollis-labs/agentkit/agentruntime/turn"
 )
 
 // kickoffPayload returns the user-message body Boot fires (or planted as
