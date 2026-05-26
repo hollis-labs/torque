@@ -8,6 +8,9 @@ import (
 	"strconv"
 
 	mcpsanitize "github.com/hollis-labs/go-mcp-sanitize"
+	feotel "github.com/hollis-labs/go-otel"
+	"github.com/hollis-labs/go-otel/propagation"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/hollis-labs/torque/internal/broker"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
@@ -125,18 +128,61 @@ func (a *Adapter) WithLogger(l *slog.Logger) *Adapter {
 	return a
 }
 
-// addTool wraps every MCP tool handler with the go-mcp-sanitize middleware,
-// which auto-cleans malformed agent tool-call XML in free-text params before
-// the handler runs. Clean calls are silent; cleaned calls emit one warn-level
-// slog line (see github.com/hollis-labs/go-mcp-sanitize). All registerXxx
-// helpers (and NewLoopback's registerLoopbackTools) must call a.addTool(...)
-// instead of a.server.AddTool(...) directly so the protection stays uniform.
+// addTool wraps every MCP tool handler with two pieces of middleware:
+//
+//  1. The OTel tracing wrapper: extracts MCP-encoded trace context from the
+//     call args (_traceparent / _tracestate set by Hollis-app callers via
+//     propagation.InjectMCP) so inbound calls continue the same trace, and
+//     opens a torque.mcp.call span for the handler's duration with
+//     hollis.tool.name attached. Outermost so the trace covers sanitize too.
+//  2. The go-mcp-sanitize middleware, which auto-cleans malformed agent
+//     tool-call XML in free-text params before the handler runs. Clean calls
+//     are silent; cleaned calls emit one warn-level slog line (see
+//     github.com/hollis-labs/go-mcp-sanitize).
+//
+// All registerXxx helpers (and NewLoopback's registerLoopbackTools) must call
+// a.addTool(...) instead of a.server.AddTool(...) directly so both the trace
+// and the sanitize protection stay uniform across the 100+ tool surface.
 func (a *Adapter) addTool(t mcp.Tool, h server.ToolHandlerFunc) {
 	logger := a.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	a.server.AddTool(t, mcpsanitize.Middleware(logger)(h))
+	inner := mcpsanitize.Middleware(logger)(h)
+	toolName := t.Name
+	traced := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		// Only override ctx when the caller actually sent trace headers —
+		// propagation.ExtractMCP starts from context.Background() unconditionally,
+		// so using its return blindly would discard the MCP-server-provided ctx
+		// (values + deadlines) for untraced calls. Untraced calls still get a
+		// span; it just has no inbound parent. Arguments is typed `any` here
+		// (mcp-go's transport-level shape) — a non-map call payload simply
+		// can't carry trace headers, so we skip extraction safely.
+		if args, ok := req.Params.Arguments.(map[string]any); ok {
+			if _, hasTP := args["_traceparent"]; hasTP {
+				ctx = propagation.ExtractMCP(args)
+			}
+		}
+		ctx, span := feotel.StartSpan(ctx, "torque.mcp.call")
+		span.SetAttributes(
+			attribute.String("hollis.app", "torque"),
+			attribute.String("hollis.tool.name", toolName),
+		)
+		result, err := inner(ctx, req)
+		if err != nil {
+			span.RecordError(err)
+		} else if result != nil && result.IsError {
+			// CallToolResult.IsError conflates validation rejects and infra
+			// faults at the mcpadapter layer (errResult/toolError both set it).
+			// Per the OTel guide's policy-not-infra guidance, surface as an
+			// attribute rather than span.Error so an operator can grep for
+			// failed tool calls without those drowning out real faults.
+			span.SetAttributes(attribute.Bool("torque.mcp.result_error", true))
+		}
+		span.End()
+		return result, err
+	}
+	a.server.AddTool(t, traced)
 }
 
 func (a *Adapter) registerCoreTools() {
