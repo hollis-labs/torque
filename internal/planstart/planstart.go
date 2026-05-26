@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/hollis-labs/torque/internal/orchestrator"
@@ -76,6 +77,18 @@ type Store interface {
 	UpdateTask(id string, u sqlstore.TaskUpdate) error
 	TransitionTask(id, newStatus string) error
 	GetSession(id string) (*sqlstore.SessionRecord, error)
+}
+
+// RedispatchStore extends Store with the recovery-pack telemetry sink. Split
+// out from Store so Start's callers/tests don't carry AppendRunEvent — only
+// Redispatch emits the recovery.pack_planted breadcrumb. Production
+// *sqlstore.Store satisfies both.
+type RedispatchStore interface {
+	Store
+	// AppendRunEvent records the recovery.pack_planted breadcrumb on the
+	// Redispatch cold-boot path. Errors are non-fatal (logged, never block the
+	// redispatch) — observability must not gate recovery.
+	AppendRunEvent(evt *sqlstore.RunEventRecord) (int64, error)
 }
 
 // SessionManager is the narrowed agent.Manager surface. The real
@@ -223,7 +236,7 @@ func Start(ctx context.Context, store Store, mgr SessionManager, planID string, 
 // On a fresh boot Redispatch re-stamps metadata.plan.orchestrator_session_id
 // and leaves the plan's status untouched (a plan mid-walk is already in the
 // right status; Start's todo→doing transition does not apply here).
-func Redispatch(ctx context.Context, store Store, mgr SessionManager, planID string, opts Options) (*Result, error) {
+func Redispatch(ctx context.Context, store RedispatchStore, mgr SessionManager, planID string, opts Options) (*Result, error) {
 	if mgr == nil {
 		return nil, ErrSessionMgrMissing
 	}
@@ -240,13 +253,24 @@ func Redispatch(ctx context.Context, store Store, mgr SessionManager, planID str
 
 	// Idempotency: a still-live orchestrator session needs no redispatch —
 	// it will see the checkpoint response on its next preflight poll.
+	//
+	// priorSession captures the EXITED orchestrator session row (when present
+	// and terminal) so the cold-boot recovery pack below can replay its
+	// trailing turns into the freshly-booted orchestrator. This is torque's
+	// cold-boot-with-prior-history path: Redispatch re-boots a session whose
+	// process is gone, on a plan it was mid-walk.
+	var priorSession *sqlstore.SessionRecord
 	if existing, ok := readOrchestratorSessionID(plan); ok && existing != "" {
-		if rec, err := store.GetSession(existing); err == nil && !sessionTerminal(rec.State) {
-			return &Result{
-				SessionID: existing,
-				PlanID:    planID,
-				StartedAt: rec.CreatedAt,
-			}, fmt.Errorf("%w: session=%s", ErrAlreadyOrchestrating, existing)
+		if rec, err := store.GetSession(existing); err == nil {
+			if !sessionTerminal(rec.State) {
+				return &Result{
+					SessionID: existing,
+					PlanID:    planID,
+					StartedAt: rec.CreatedAt,
+				}, fmt.Errorf("%w: session=%s", ErrAlreadyOrchestrating, existing)
+			}
+			// Terminal prior session — eligible for recovery replay.
+			priorSession = rec
 		}
 		// Stale/terminal/missing session row — proceed with a fresh boot.
 	}
@@ -264,6 +288,28 @@ func Redispatch(ctx context.Context, store Store, mgr SessionManager, planID str
 		}
 	}
 
+	systemPrompt := orchestrator.SystemPromptForPlan(planID, "")
+
+	// Cold-boot recovery pack. When the prior orchestrator session is terminal
+	// and left a turn trace, build a bounded recovered-context block and
+	// prepend it to the orchestrator's system prompt so the fresh boot resumes
+	// from recovered context instead of starting blind. The pack lands in the
+	// planted boot.md (composeSystemPrompt → kickoffMarkdown surfaces
+	// Options.SystemPrompt under "Task framing"), the agent reads on first
+	// turn, and the full pack is also written to <bootDir>/recovery.md
+	// post-Boot below. Best-effort — a read error never blocks the redispatch.
+	recoveryPack, recoveryTurns, recErr := agent.BuildRecoveryPackForPriorSession(
+		priorSession,
+		"orchestrator redispatch after prior session exited (cold boot with prior history)",
+	)
+	if recErr != nil {
+		log.Printf("planstart: recovery pack read for plan=%s prior_session=%s: %v",
+			planID, priorSessionID(priorSession), recErr)
+	}
+	if recoveryPack != "" {
+		systemPrompt = recoveryPack + "\n\n" + systemPrompt
+	}
+
 	bootOpts := agent.Options{
 		Mode:         agent.ModeLongLived,
 		AgentProfile: orchestrator.Profile,
@@ -271,7 +317,7 @@ func Redispatch(ctx context.Context, store Store, mgr SessionManager, planID str
 		Workdir:      workdir,
 		ProjectID:    nullStr(plan.ProjectID),
 		TaskID:       planID,
-		SystemPrompt: orchestrator.SystemPromptForPlan(planID, ""),
+		SystemPrompt: systemPrompt,
 		Env:          envSliceToMap(opts.Env),
 		SessionMeta: map[string]string{
 			orchestrator.SessionMetaRole:   orchestrator.SessionMetaRoleValue,
@@ -282,6 +328,17 @@ func Redispatch(ctx context.Context, store Store, mgr SessionManager, planID str
 	sess, err := mgr.Boot(ctx, bootOpts)
 	if err != nil {
 		return nil, fmt.Errorf("planstart: redispatch orchestrator: %w", err)
+	}
+
+	// Plant the full pack to <bootDir>/recovery.md as a re-readable pointer and
+	// emit the recovery.pack_planted breadcrumb. Both best-effort: a failed
+	// write/emit must not roll back an already-running orchestrator.
+	if recoveryPack != "" {
+		if packPath, werr := agent.WriteRecoveryPackFile(sess.BootDir, recoveryPack); werr != nil {
+			log.Printf("planstart: write recovery.md for plan=%s session=%s path=%s: %v",
+				planID, sess.ID, packPath, werr)
+		}
+		emitRecoveryPackPlanted(store, planID, sess.ID, priorSessionID(priorSession), recoveryTurns)
 	}
 
 	if err := writeOrchestratorSessionID(store, plan, sess.ID); err != nil {
@@ -297,6 +354,48 @@ func Redispatch(ctx context.Context, store Store, mgr SessionManager, planID str
 		PlanID:    planID,
 		StartedAt: startedAt,
 	}, nil
+}
+
+// priorSessionID returns the prior session id for logging, "" when nil.
+func priorSessionID(rec *sqlstore.SessionRecord) string {
+	if rec == nil {
+		return ""
+	}
+	return rec.ID
+}
+
+// recoveryPackPlantedPayload is the JSON shape stored on the run_events
+// breadcrumb for a planted recovery pack. Postmortem queries grep by
+// type="recovery.pack_planted".
+type recoveryPackPlantedPayload struct {
+	PlanID         string `json:"plan_id"`
+	NewSessionID   string `json:"new_session_id"`
+	PriorSessionID string `json:"prior_session_id,omitempty"`
+	Turns          int    `json:"turns"`
+}
+
+// emitRecoveryPackPlanted appends a recovery.pack_planted run_events row so the
+// cold-boot recovery is queryable. Mirrors nanite's recovery_pack_planted
+// LogEvent. Failure to append is logged but never propagated — observability
+// must not block the redispatch.
+func emitRecoveryPackPlanted(store RedispatchStore, planID, newSessionID, priorSessionID string, turns int) {
+	body, err := json.Marshal(recoveryPackPlantedPayload{
+		PlanID:         planID,
+		NewSessionID:   newSessionID,
+		PriorSessionID: priorSessionID,
+		Turns:          turns,
+	})
+	if err != nil {
+		log.Printf("planstart: marshal recovery.pack_planted for plan=%s: %v", planID, err)
+		return
+	}
+	if _, err := store.AppendRunEvent(&sqlstore.RunEventRecord{
+		TaskID:  planID,
+		Type:    "recovery.pack_planted",
+		Payload: string(body),
+	}); err != nil {
+		log.Printf("planstart: append recovery.pack_planted for plan=%s: %v", planID, err)
+	}
 }
 
 // terminalStatus reports whether a plan status is a lifecycle sink where a
