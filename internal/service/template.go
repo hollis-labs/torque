@@ -26,6 +26,7 @@ type TemplateCreateInput struct {
 	Kind                 string
 	AutoExecute          bool
 	Executor             string
+	LaunchProfile        string
 	AgentProfile         string
 	SystemPrompt         string
 	WorkingDir           string // supports {{var}} resolution at Instantiate
@@ -59,6 +60,7 @@ type TemplateUpdateInput struct {
 	Kind                 string
 	AutoExecute          *bool
 	Executor             *string
+	LaunchProfile        *string
 	AgentProfile         *string
 	SystemPrompt         *string
 	WorkingDir           *string // pointer so empty-vs-unset is distinguishable
@@ -318,6 +320,9 @@ func (s *TemplateService) applyTemplateToInput(tpl *sqlstore.TemplateRecord, in 
 	if tpl.Executor.Valid {
 		input.Executor = tpl.Executor.String
 	}
+	if tpl.LaunchProfile.Valid {
+		input.LaunchProfile = tpl.LaunchProfile.String
+	}
 	if tpl.AgentProfile.Valid {
 		input.AgentProfile = tpl.AgentProfile.String
 	}
@@ -425,6 +430,9 @@ func applyOverrides(input *TaskCreateInput, overrides map[string]any) {
 	if v, ok := overrides["executor"].(string); ok && v != "" {
 		input.Executor = v
 	}
+	if v, ok := overrides["launch_profile"].(string); ok && v != "" {
+		input.LaunchProfile = v
+	}
 	if v, ok := overrides["agent_profile"].(string); ok && v != "" {
 		input.AgentProfile = v
 	}
@@ -461,6 +469,9 @@ func buildTemplateRecord(in TemplateCreateInput, id string, version int) *sqlsto
 	}
 	if in.Executor != "" {
 		rec.Executor = sql.NullString{String: in.Executor, Valid: true}
+	}
+	if in.LaunchProfile != "" {
+		rec.LaunchProfile = sql.NullString{String: in.LaunchProfile, Valid: true}
 	}
 	if in.AgentProfile != "" {
 		rec.AgentProfile = sql.NullString{String: in.AgentProfile, Valid: true}
@@ -531,6 +542,9 @@ func mergeTemplateUpdate(prev *sqlstore.TemplateRecord, in TemplateUpdateInput) 
 	}
 	if in.Executor != nil {
 		next.Executor = sql.NullString{String: *in.Executor, Valid: *in.Executor != ""}
+	}
+	if in.LaunchProfile != nil {
+		next.LaunchProfile = sql.NullString{String: *in.LaunchProfile, Valid: *in.LaunchProfile != ""}
 	}
 	if in.AgentProfile != nil {
 		next.AgentProfile = sql.NullString{String: *in.AgentProfile, Valid: *in.AgentProfile != ""}

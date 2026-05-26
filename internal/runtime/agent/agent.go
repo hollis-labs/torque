@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/agentkit/agentsessions"
 	llmtypes "github.com/hollis-labs/go-llm-types"
 	"github.com/hollis-labs/go-providers/provider"
 	"github.com/hollis-labs/go-sandbox/sandbox"
@@ -14,10 +14,21 @@ type Options struct {
 	// Mode is the lifecycle policy. Defaults to ModeLongLived (zero-value).
 	Mode Mode
 
-	// AgentProfile is the torque agent profile name. Resolves through
+	// LaunchProfile is the first-class launch family selector
+	// (internal/launchprofile). Preferred over AgentProfile — when set, it
+	// drives the stable launch family resolution and the underlying
+	// config.AgentProfile lookup. Empty falls back to AgentProfile via the
+	// legacy-compat path.
+	LaunchProfile string
+
+	// AgentProfile is the legacy agent_profile name. Honored when
+	// LaunchProfile is empty for backward compatibility. Resolves through
 	// config.GetProfileOrDefault — operators register profiles in
 	// profiles.yaml; the substrate ships builtins for orchestrator / planner
 	// / reviewer-end-agent / cli.
+	//
+	// Deprecated: prefer LaunchProfile. AgentProfile is retained as a
+	// migration aid and may be removed in a future release.
 	AgentProfile string
 
 	// Role is a human-readable role tag persisted in SessionMeta and the
@@ -179,8 +190,8 @@ func (o Options) withEventFanout(c chan<- llmtypes.StreamEvent) Options {
 
 // Validate enforces cross-Mode constraints. Called by Boot before any work.
 func (o Options) Validate() error {
-	if o.AgentProfile == "" {
-		return errAgentProfileRequired
+	if o.LaunchProfile == "" && o.AgentProfile == "" {
+		return errLaunchProfileRequired
 	}
 	if o.Workdir == "" {
 		return ErrWorkdirRequired
@@ -204,8 +215,8 @@ func (o Options) Validate() error {
 
 // errors that aren't part of the public sentinel surface (compile-time only).
 var (
-	errAgentProfileRequired = errStr("agent: Options.AgentProfile is required")
-	errInvalidMode          = errStr("agent: Options.Mode is not a recognized value")
+	errLaunchProfileRequired = errStr("agent: Options.LaunchProfile or Options.AgentProfile is required")
+	errInvalidMode           = errStr("agent: Options.Mode is not a recognized value")
 )
 
 // errStr is a minimal error used for never-public sentinel cases. Avoids

@@ -9,6 +9,7 @@ import (
 
 	llmtypes "github.com/hollis-labs/go-llm-types"
 	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/launchprofile"
 	"github.com/hollis-labs/torque/internal/runtime/executor"
 	"github.com/hollis-labs/torque/internal/toolbroker"
 )
@@ -80,7 +81,15 @@ func (e *Executor) Validate(job *executor.ExecutionJob) error {
 	if err := job.Validate(); err != nil {
 		return err
 	}
-	profile := config.GetProfileOrDefault(e.deps.Profiles, job.AgentProfile)
+	// Resolve via the same launchprofile.Resolve seam Boot uses so a job
+	// carrying only launch_profile validates the resolved underlying
+	// agent_profile, not the empty legacy field.
+	resolved := launchprofile.Resolve(launchprofile.ResolveRequest{
+		LaunchProfile:      job.LaunchProfile,
+		LegacyAgentProfile: job.AgentProfile,
+		Source:             e.deps.Profiles,
+	})
+	profile := resolved.AgentProfile
 	// Resolve the kind via the same matrix Boot uses (profile override →
 	// per-provider default). Validate then exercises adapterFor with the
 	// resolved kind so unsupported provider/kind combinations surface as
@@ -89,7 +98,7 @@ func (e *Executor) Validate(job *executor.ExecutionJob) error {
 	if kindErr != nil {
 		return executor.NewPermanentError(kindErr)
 	}
-	if _, _, err := adapterFor(profile, job.AgentProfile, kind); err != nil {
+	if _, _, err := adapterFor(profile, resolved.AgentProfileName, kind); err != nil {
 		return executor.NewPermanentError(err)
 	}
 	resolvedWD, err := executor.ResolveWorkingDir(job.WorkingDir)
@@ -138,7 +147,12 @@ func (e *Executor) Run(ctx context.Context, job *executor.ExecutionJob, cb execu
 	mode := modeForJob(job)
 	opts := optsFromJob(job, resolvedWD)
 	opts.Mode = mode
-	profile := config.GetProfileOrDefault(e.deps.Profiles, job.AgentProfile)
+	resolved := launchprofile.Resolve(launchprofile.ResolveRequest{
+		LaunchProfile:      job.LaunchProfile,
+		LegacyAgentProfile: job.AgentProfile,
+		Source:             e.deps.Profiles,
+	})
+	profile := resolved.AgentProfile
 
 	switch mode {
 	case ModeLongLived:
@@ -257,26 +271,27 @@ func modeForJob(job *executor.ExecutionJob) Mode {
 //   - Env / Metadata pass through.
 func optsFromJob(job *executor.ExecutionJob, resolvedWD string) Options {
 	return Options{
-		Mode:         ModeOneShot,
-		AgentProfile: job.AgentProfile,
-		Workdir:      resolvedWD,
-		RepoRoot:     job.RepoRoot,
-		ProjectID:    job.ProjectID,
-		TaskID:       job.TaskID,
-		TaskTitle:    job.TaskTitle,
-		TaskKind:     job.Kind,
-		TaskStatus:   job.TaskStatus,
-		TaskPriority: job.TaskPriority,
-		ParentID:     job.ParentID,
-		SprintID:     job.SprintID,
-		EpicID:       job.EpicID,
-		DependsOn:    append([]string(nil), job.DependsOn...),
-		RunID:        job.RunID,
-		SystemPrompt: job.SystemPrompt,
-		AgentFile:    job.AgentFile,
-		Env:          job.Environment,
-		Description:  job.Description,
-		Metadata:     job.Metadata,
+		Mode:          ModeOneShot,
+		LaunchProfile: job.LaunchProfile,
+		AgentProfile:  job.AgentProfile,
+		Workdir:       resolvedWD,
+		RepoRoot:      job.RepoRoot,
+		ProjectID:     job.ProjectID,
+		TaskID:        job.TaskID,
+		TaskTitle:     job.TaskTitle,
+		TaskKind:      job.Kind,
+		TaskStatus:    job.TaskStatus,
+		TaskPriority:  job.TaskPriority,
+		ParentID:      job.ParentID,
+		SprintID:      job.SprintID,
+		EpicID:        job.EpicID,
+		DependsOn:     append([]string(nil), job.DependsOn...),
+		RunID:         job.RunID,
+		SystemPrompt:  job.SystemPrompt,
+		AgentFile:     job.AgentFile,
+		Env:           job.Environment,
+		Description:   job.Description,
+		Metadata:      job.Metadata,
 	}
 }
 

@@ -41,9 +41,10 @@ type ExecutionJob struct {
 	ParentID     string
 	SprintID     string
 	EpicID       string
-	DependsOn    []string
-	AgentProfile string
-	Tools        []string
+	DependsOn     []string
+	LaunchProfile string
+	AgentProfile  string
+	Tools         []string
 	Permissions  map[string]string
 	Environment  map[string]string
 	Files        []string

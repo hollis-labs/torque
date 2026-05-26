@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hollis-labs/go-agent-launch/agentlaunch"
+	"github.com/hollis-labs/agentkit/agentlaunch"
 )
 
 const (
@@ -38,7 +38,31 @@ type plantedTaskContext struct {
 	ProjectContext map[string]any    `json:"project_context,omitempty"`
 }
 
-func taskContextNativeFiles(in buildLaunchPlanInput) []agentlaunch.NativeFile {
+// taskContextInput is the input shape for taskContextNativeFiles. It carries
+// only the fields the planted task bundle reads, decoupled from the broader
+// launch-plan input so the launchprofile package can compose the same files
+// without dragging the entire boot context through its API.
+type taskContextInput struct {
+	// Options is the per-boot caller options (task identity, description,
+	// metadata, dependencies, session meta).
+	Options Options
+
+	// SessionID is Torque's local session id for this boot.
+	SessionID string
+
+	// AgentProfileName is the resolved low-level agent_profile registry key
+	// (e.g. "default", "orchestrator"). Stamped into the planted JSON / MD
+	// for forensic tooling.
+	AgentProfileName string
+
+	// Role is the human-readable role tag.
+	Role string
+
+	// LoopbackURL is the task-scoped MCP loopback URL.
+	LoopbackURL string
+}
+
+func taskContextNativeFiles(in taskContextInput) []agentlaunch.NativeFile {
 	ctx := taskContextFromLaunch(in)
 	if ctx.TaskID == "" {
 		return nil
@@ -73,7 +97,7 @@ func taskContextNativeFiles(in buildLaunchPlanInput) []agentlaunch.NativeFile {
 	}
 }
 
-func taskContextFromLaunch(in buildLaunchPlanInput) plantedTaskContext {
+func taskContextFromLaunch(in taskContextInput) plantedTaskContext {
 	opts := in.Options
 	return plantedTaskContext{
 		TaskID:         opts.TaskID,
@@ -89,7 +113,7 @@ func taskContextFromLaunch(in buildLaunchPlanInput) plantedTaskContext {
 		DependsOn:      append([]string(nil), opts.DependsOn...),
 		RunID:          opts.RunID,
 		SessionID:      in.SessionID,
-		AgentProfile:   in.AgentProfile,
+		AgentProfile:   in.AgentProfileName,
 		Role:           in.Role,
 		WorkRoot:       opts.Workdir,
 		RepoRoot:       resolveRepoRoot(opts),

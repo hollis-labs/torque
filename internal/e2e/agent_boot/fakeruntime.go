@@ -9,7 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/agentkit/agentsessions"
 	llmtypes "github.com/hollis-labs/go-llm-types"
 	"github.com/hollis-labs/go-providers/provider"
 	"github.com/hollis-labs/go-providers/provider/events"

@@ -20,7 +20,8 @@ Use to spawn an agent (Reviewer end-agent, Orchestrator, planner, etc.) whose li
 Pair with torque_session_checkpoint mid-run and torque_session_resume to seed a fresh session from prior checkpoint state.
 Response shape: data = <Session> singleton — ID, status, runtime descriptors, project/task soft-FKs, Mode, BootDir, WorkspaceDir, ParentSessionID.
 Example: {"agent_profile":"default","workdir":"/tmp/sess","task_id":"T-123"}`),
-		mcp.WithString("agent_profile", mcp.Required(), mcp.Description("Torque agent profile name")),
+		mcp.WithString("launch_profile", mcp.Description("Torque launch_profile id (preferred). When set, drives the stable launch family resolution.")),
+		mcp.WithString("agent_profile", mcp.Description("Legacy agent_profile name. Honored when launch_profile is empty.")),
 		mcp.WithString("workdir", mcp.Required(), mcp.Description("Spawned process working directory (boot dir for claude)")),
 		mcp.WithString("project_id", mcp.Description("Optional project soft-FK")),
 		mcp.WithString("task_id", mcp.Description("Optional task soft-FK")),
@@ -35,7 +36,8 @@ Example: {"agent_profile":"default","workdir":"/tmp/sess","task_id":"T-123"}`),
 Kept distinct in the registry so create-then-launch can split into two phases without a breaking rename. Today both names route to the same handler.
 Response shape: data = <Session> singleton.
 Example: {"agent_profile":"default","workdir":"/tmp/sess"}`),
-		mcp.WithString("agent_profile", mcp.Required()),
+		mcp.WithString("launch_profile"),
+		mcp.WithString("agent_profile"),
 		mcp.WithString("workdir", mcp.Required()),
 		mcp.WithString("project_id"),
 		mcp.WithString("task_id"),
@@ -100,6 +102,7 @@ Response shape: data = <Session> for the new id (status=running on success).
 Example: {"id":"SES-...","checkpoint_id":"SCP-..."}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Source session ID")),
 		mcp.WithString("checkpoint_id", mcp.Description("Optional — defaults to latest")),
+		mcp.WithString("launch_profile", mcp.Description("Torque launch_profile id override (preferred over agent_profile)")),
 		mcp.WithString("agent_profile"),
 		mcp.WithString("workdir"),
 		mcp.WithString("system_prompt"),
@@ -118,16 +121,24 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req mcp.CallToolReque
 	if err != nil {
 		return errResult(ErrCodeDomain, err.Error(), "")
 	}
-	if err := config.ValidateProfileName(mgr.KnownProfiles(), reqStr(req, "agent_profile")); err != nil {
-		return errResult(ErrCodeArgInvalid, err.Error(), "agent_profile")
+	launchProfile := reqStr(req, "launch_profile")
+	agentProfile := reqStr(req, "agent_profile")
+	// Validate legacy agent_profile only when launch_profile is empty; the
+	// resolver's legacy-compat path handles agent_profile values without
+	// requiring registry membership.
+	if launchProfile == "" {
+		if err := config.ValidateProfileName(mgr.KnownProfiles(), agentProfile); err != nil {
+			return errResult(ErrCodeArgInvalid, err.Error(), "agent_profile")
+		}
 	}
 	sess, err := mgr.Boot(ctx, agent.Options{
-		Mode:         agent.ModeLongLived,
-		AgentProfile: reqStr(req, "agent_profile"),
-		Workdir:      reqStr(req, "workdir"),
-		ProjectID:    reqStr(req, "project_id"),
-		TaskID:       reqStr(req, "task_id"),
-		SystemPrompt: reqStr(req, "system_prompt"),
+		Mode:          agent.ModeLongLived,
+		LaunchProfile: launchProfile,
+		AgentProfile:  agentProfile,
+		Workdir:       reqStr(req, "workdir"),
+		ProjectID:     reqStr(req, "project_id"),
+		TaskID:        reqStr(req, "task_id"),
+		SystemPrompt:  reqStr(req, "system_prompt"),
 	})
 	if err != nil {
 		return errResult(ErrCodeDomain, err.Error(), "")
@@ -230,11 +241,12 @@ func (a *Adapter) handleSessionResume(ctx context.Context, req mcp.CallToolReque
 		return errResult(ErrCodeDomain, err.Error(), "")
 	}
 	newID, err := mgr.Resume(ctx, agent.ResumeRequest{
-		SessionID:    reqStr(req, "id"),
-		CheckpointID: reqStr(req, "checkpoint_id"),
-		AgentProfile: reqStr(req, "agent_profile"),
-		Workdir:      reqStr(req, "workdir"),
-		SystemPrompt: reqStr(req, "system_prompt"),
+		SessionID:     reqStr(req, "id"),
+		CheckpointID:  reqStr(req, "checkpoint_id"),
+		LaunchProfile: reqStr(req, "launch_profile"),
+		AgentProfile:  reqStr(req, "agent_profile"),
+		Workdir:       reqStr(req, "workdir"),
+		SystemPrompt:  reqStr(req, "system_prompt"),
 	})
 	if err != nil {
 		switch {

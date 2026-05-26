@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	agentlaunch "github.com/hollis-labs/go-agent-launch/agentlaunch"
-	"github.com/hollis-labs/go-agent-runtime/turn"
+	agentlaunch "github.com/hollis-labs/agentkit/agentlaunch"
+	"github.com/hollis-labs/agentkit/agentruntime/turn"
 	feotel "github.com/hollis-labs/go-otel"
 	"go.opentelemetry.io/otel/attribute"
 )

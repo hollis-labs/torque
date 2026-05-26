@@ -48,7 +48,8 @@ Example: {"title":"Fix auth bug","description":"Login returns 500","priority":"2
 		mcp.WithString("priority", mcp.Description("Priority 1-5 (integer, default 2)")),
 		mcp.WithString("tags", mcp.Description("JSON array of tag strings")),
 		mcp.WithString("executor", mcp.Description("Executor type (default cli)")),
-		mcp.WithString("agent_profile", mcp.Description("Agent profile name")),
+		mcp.WithString("launch_profile", mcp.Description("Torque launch_profile id (preferred). Drives the stable launch family at dispatch.")),
+		mcp.WithString("agent_profile", mcp.Description("Legacy agent_profile name. Honored when launch_profile is empty.")),
 		mcp.WithString("working_dir", mcp.Description("Working directory. Auto-inherits from parent_id when omitted (CW-20260508-0004); pass explicitly only to override the parent's value.")),
 		mcp.WithString("system_prompt", mcp.Description("System prompt override")),
 		mcp.WithString("agent_file", mcp.Description("Absolute or working_dir-relative path to a YAML agent spec; loaded at dispatch")),
@@ -114,7 +115,8 @@ Example: {"id":"T-123","priority":"1","tags":"[\"p0\",\"backend\"]"}`),
 		mcp.WithString("priority", mcp.Description("New priority (integer 1-5)")),
 		mcp.WithBoolean("manual", mcp.Description("Manual flag")),
 		mcp.WithString("executor", mcp.Description("Executor type")),
-		mcp.WithString("agent_profile", mcp.Description("Agent profile name")),
+		mcp.WithString("launch_profile", mcp.Description("Torque launch_profile id (preferred). Empty string clears.")),
+		mcp.WithString("agent_profile", mcp.Description("Legacy agent_profile name.")),
 		mcp.WithString("working_dir", mcp.Description("Working directory")),
 		mcp.WithString("system_prompt", mcp.Description("System prompt override")),
 		mcp.WithString("agent_file", mcp.Description("Absolute or working_dir-relative path to a YAML agent spec; pass empty string to clear")),
@@ -293,6 +295,7 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest)
 		Description:          reqStr(req, "description"),
 		Priority:             reqInt(req, "priority"),
 		Executor:             reqStr(req, "executor"),
+		LaunchProfile:        reqStr(req, "launch_profile"),
 		AgentProfile:         reqStr(req, "agent_profile"),
 		WorkingDir:           reqStr(req, "working_dir"),
 		SystemPrompt:         reqStr(req, "system_prompt"),
@@ -417,6 +420,10 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 	if _, ok := args["executor"]; ok {
 		v := reqStr(req, "executor")
 		update.Executor = &v
+	}
+	if _, ok := args["launch_profile"]; ok {
+		v := reqStr(req, "launch_profile")
+		update.LaunchProfile = &v
 	}
 	if _, ok := args["agent_profile"]; ok {
 		v := reqStr(req, "agent_profile")

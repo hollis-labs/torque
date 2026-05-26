@@ -15,26 +15,27 @@ var ErrSessionNotFound = errors.New("session not found")
 // Soft-FK fields (ProjectID, TaskID) are stored as nullable strings since
 // SQLite does not enforce foreign keys by default in this codebase.
 type SessionRecord struct {
-	ID           string
-	AgentProfile string
-	Provider     string
-	RuntimeID    string
-	RuntimeKind  string
-	Workdir      string
-	ProjectID    sql.NullString
-	TaskID       sql.NullString
-	State        string
-	PID          int
-	ExitCode     sql.NullInt64
-	ResumeHint   []byte
-	MetaJSON     string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	LastActivity time.Time
-	EndedAt      sql.NullTime
+	ID            string
+	LaunchProfile string
+	AgentProfile  string
+	Provider      string
+	RuntimeID     string
+	RuntimeKind   string
+	Workdir       string
+	ProjectID     sql.NullString
+	TaskID        sql.NullString
+	State         string
+	PID           int
+	ExitCode      sql.NullInt64
+	ResumeHint    []byte
+	MetaJSON      string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	LastActivity  time.Time
+	EndedAt       sql.NullTime
 }
 
-const sessionSelectCols = `id, agent_profile, provider, runtime_id, runtime_kind,
+const sessionSelectCols = `id, launch_profile, agent_profile, provider, runtime_id, runtime_kind,
 	workdir, project_id, task_id, state, pid, exit_code, resume_hint, meta,
 	created_at, updated_at, last_activity, ended_at`
 
@@ -43,7 +44,7 @@ func scanSession(row interface {
 }) (*SessionRecord, error) {
 	s := &SessionRecord{}
 	err := row.Scan(
-		&s.ID, &s.AgentProfile, &s.Provider, &s.RuntimeID, &s.RuntimeKind,
+		&s.ID, &s.LaunchProfile, &s.AgentProfile, &s.Provider, &s.RuntimeID, &s.RuntimeKind,
 		&s.Workdir, &s.ProjectID, &s.TaskID, &s.State, &s.PID, &s.ExitCode,
 		&s.ResumeHint, &s.MetaJSON, &s.CreatedAt, &s.UpdatedAt, &s.LastActivity,
 		&s.EndedAt,
@@ -71,10 +72,10 @@ func (s *Store) CreateSession(rec *SessionRecord) error {
 	}
 	_, err := s.db.Exec(`
 		INSERT INTO sessions (
-			id, agent_profile, provider, runtime_id, runtime_kind,
+			id, launch_profile, agent_profile, provider, runtime_id, runtime_kind,
 			workdir, project_id, task_id, state, pid, meta
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		rec.ID, rec.AgentProfile, rec.Provider, rec.RuntimeID, rec.RuntimeKind,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		rec.ID, rec.LaunchProfile, rec.AgentProfile, rec.Provider, rec.RuntimeID, rec.RuntimeKind,
 		rec.Workdir, rec.ProjectID, rec.TaskID, state, rec.PID, meta,
 	)
 	if err != nil {
