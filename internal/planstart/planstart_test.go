@@ -88,10 +88,11 @@ func (s *stubStore) AppendRunEvent(evt *sqlstore.RunEventRecord) (int64, error) 
 // sessions pile in. Replaces the prior sessionmgr.Manager-shaped stub
 // after CW-20260508-0001 collapsed Launch + SendInput into Boot.
 type stubMgr struct {
-	bootSession *agent.Session
-	bootErr     error
-	lastOpts    agent.Options
-	bootCalls   int
+	bootSession    *agent.Session
+	bootErr        error
+	lastOpts       agent.Options
+	bootCalls      int
+	bootedProvider string // returned from ProviderForProfile; default "" disables resume
 }
 
 func (s *stubMgr) Boot(_ context.Context, opts agent.Options) (*agent.Session, error) {
@@ -102,6 +103,12 @@ func (s *stubMgr) Boot(_ context.Context, opts agent.Options) (*agent.Session, e
 	}
 	return s.bootSession, nil
 }
+
+// ProviderForProfile lets tests dictate what provider the booted profile would
+// resolve to (planstart.Redispatch gates resume on the booted provider matching
+// the prior session's, not just on the prior provider). Default "" leaves the
+// stub provider-less; tests that exercise resume wire it explicitly.
+func (s *stubMgr) ProviderForProfile(_ string) string { return s.bootedProvider }
 
 // AC1+AC4: happy path — plan validates, orchestrator session boots,
 // metadata stamps, plan transitions todo → doing.
@@ -357,6 +364,133 @@ func TestPlanstart_RedispatchNoPriorHistorySkipsRecovery(t *testing.T) {
 	for _, e := range store.runEvents {
 		assert.NotEqual(t, "recovery.pack_planted", e.Type, "no recovery breadcrumb without prior history")
 	}
+}
+
+// writePriorSessionWithStream is a test helper: registers a terminal prior
+// orchestrator session for planID's metadata with a two-line stream.jsonl trace
+// and the given provider + resume hint, and returns a stub mgr whose boot lands
+// in a known boot dir. Mirrors TestPlanstart_RedispatchPlantsRecoveryPack setup.
+func writePriorSessionWithStream(t *testing.T, store *stubStore, planID, priorID, provider, resumeHint string) *stubMgr {
+	t.Helper()
+	store.tasks[planID] = &sqlstore.TaskRecord{
+		ID: planID, Kind: "plan", Status: "doing", WorkingDir: "/tmp/plan",
+		Metadata: sql.NullString{
+			String: `{"plan":{"orchestrator_session_id":"` + priorID + `"}}`,
+			Valid:  true,
+		},
+	}
+	priorWS := t.TempDir()
+	logDir := filepath.Join(priorWS, "logs")
+	require.NoError(t, os.MkdirAll(logDir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(logDir, "stream.jsonl"),
+		[]byte(`{"type":"delta","content":"mid-plan progress"}`+"\n"), 0o644))
+	store.sessions[priorID] = &sqlstore.SessionRecord{
+		ID:         priorID,
+		Provider:   provider,
+		State:      "crashed",
+		ResumeHint: []byte(resumeHint),
+		MetaJSON:   `{"torque.workspace_dir":"` + priorWS + `","role":"orchestrator"}`,
+	}
+	// Default to a booted-provider that matches the prior provider so the
+	// existing resume tests' happy path holds. Tests that exercise a profile
+	// switch (claude prior → codex booted) override bootedProvider on the
+	// returned stub.
+	return &stubMgr{
+		bootSession:    &agent.Session{ID: priorID + "-NEW", BootDir: t.TempDir()},
+		bootedProvider: provider,
+	}
+}
+
+// Redispatch threads a genuine provider --resume on top of the recovery pack
+// when the prior session is genuinely resumable (claude) and persisted a
+// provider session-id: ProviderSessionIDOverride is set, the pack is still
+// planted as the floor, and the breadcrumb records used_resume=true.
+func TestPlanstart_RedispatchResumesGenuineProvider(t *testing.T) {
+	store := newStubStore()
+	mgr := writePriorSessionWithStream(t, store, "CW-PLAN-RES", "SES-CLAUDE", "claude", "claude-sess-xyz")
+
+	res, err := planstart.Redispatch(context.Background(), store, mgr, "CW-PLAN-RES", planstart.Options{})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	// Genuine --resume threaded through to Boot.
+	assert.Equal(t, "claude-sess-xyz", mgr.lastOpts.ProviderSessionIDOverride,
+		"claude prior session with a resume hint must thread ProviderSessionIDOverride")
+	// Recovery pack is still the floor — threaded into the system prompt.
+	assert.Contains(t, mgr.lastOpts.SystemPrompt, "<recovered-session-context>")
+
+	// Breadcrumb records the resume.
+	var found *sqlstore.RunEventRecord
+	for _, e := range store.runEvents {
+		if e.Type == "recovery.pack_planted" {
+			found = e
+		}
+	}
+	require.NotNil(t, found)
+	assert.Contains(t, found.Payload, `"used_resume":true`)
+}
+
+// Redispatch does NOT thread a provider resume for codex even though it has a
+// persisted hint — codex's app-server runtime silently no-ops a session-id
+// preset (see agent.GenuinelyResumableProvider). The recovery pack still planted
+// as the provider-agnostic floor; the breadcrumb records used_resume=false.
+func TestPlanstart_RedispatchSkipsResumeForCodex(t *testing.T) {
+	store := newStubStore()
+	mgr := writePriorSessionWithStream(t, store, "CW-PLAN-CDX", "SES-CODEX", "codex", "codex-thread-abc")
+
+	res, err := planstart.Redispatch(context.Background(), store, mgr, "CW-PLAN-CDX", planstart.Options{})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	// No resume threaded for codex.
+	assert.Empty(t, mgr.lastOpts.ProviderSessionIDOverride,
+		"codex must not thread a resume — its runtime ignores the preset")
+	// Recovery pack still planted as the floor.
+	assert.Contains(t, mgr.lastOpts.SystemPrompt, "<recovered-session-context>")
+
+	var found *sqlstore.RunEventRecord
+	for _, e := range store.runEvents {
+		if e.Type == "recovery.pack_planted" {
+			found = e
+		}
+	}
+	require.NotNil(t, found)
+	assert.Contains(t, found.Payload, `"used_resume":false`)
+}
+
+// Redispatch must NOT thread a resume when the orchestrator profile's BOOTED
+// provider differs from the prior session's recorded provider — that mismatch
+// is the path that would have set ProviderSessionIDOverride on a JsonRpcStdio
+// (codex) boot, flipping isResume in agent.Boot and silently skipping its
+// post-Start kickoff. Scenario: operator switched orchestrator.Profile from
+// claude → codex; the prior claude session has a hint, but the new boot would
+// be codex. The pack still plants as the floor.
+func TestPlanstart_RedispatchSkipsResumeOnProviderSwitch(t *testing.T) {
+	store := newStubStore()
+	mgr := writePriorSessionWithStream(t, store, "CW-PLAN-SW", "SES-CLAUDE-OLD", "claude", "claude-sess-old")
+	// Simulate the operator profile switch: orchestrator profile now boots codex.
+	mgr.bootedProvider = "codex"
+
+	res, err := planstart.Redispatch(context.Background(), store, mgr, "CW-PLAN-SW", planstart.Options{})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	// Critical: the override MUST be empty so agent.Boot's JsonRpcStdio kickoff
+	// fires (Redispatch sends no follow-up SendTurn; a skipped kickoff = silent
+	// orchestrator).
+	assert.Empty(t, mgr.lastOpts.ProviderSessionIDOverride,
+		"provider mismatch (claude prior → codex boot) must not thread ProviderSessionIDOverride")
+	// Pack still planted as the floor.
+	assert.Contains(t, mgr.lastOpts.SystemPrompt, "<recovered-session-context>")
+
+	var found *sqlstore.RunEventRecord
+	for _, e := range store.runEvents {
+		if e.Type == "recovery.pack_planted" {
+			found = e
+		}
+	}
+	require.NotNil(t, found)
+	assert.Contains(t, found.Payload, `"used_resume":false`)
 }
 
 // Nil session manager → ErrSessionMgrMissing.

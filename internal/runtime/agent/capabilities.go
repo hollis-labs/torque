@@ -57,3 +57,32 @@ func ProviderCapabilities(provider string) executor.ExecutorCapabilities {
 	}
 	return caps
 }
+
+// GenuinelyResumableProvider reports whether threading a persisted provider
+// session-id via Options.ProviderSessionIDOverride actually restores prior
+// context across a process death — i.e. the adapter consumes the preset and the
+// provider rehydrates its own transcript on the next turn.
+//
+// This is deliberately NARROWER than ProviderCapabilities(provider).SupportsResume.
+// That matrix reports codex as resume-capable (the `codex resume` subcommand
+// exists), but on the current go-providers/go-agent-runtime pins codex runs in
+// app-server (JSON-RPC) mode whose handshake (initialize → thread/start →
+// turn/start) never issues thread/resume and ignores SessionIDPreset — so a
+// codex "resume" silently starts a fresh thread (see boot.go's JsonRpcStdio
+// kickoff branch and Options.ProviderSessionIDOverride's doc). Only
+// claude/claude-code genuinely resume today (claude --resume reads ~/.claude
+// project history, which survives the prior process).
+//
+// Callers that thread a resume hint for fidelity ON TOP OF the provider-agnostic
+// recovery pack (e.g. planstart.Redispatch) must gate on THIS, not the
+// aspirational SupportsResume matrix, so they don't claim a resume that codex
+// won't honor. When go-agent-runtime gains a thread/resume wireup (followups.
+// torque.codex_jsonrpc_resume_wireup) codex moves here too.
+func GenuinelyResumableProvider(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "claude", "claude-code":
+		return true
+	default:
+		return false
+	}
+}

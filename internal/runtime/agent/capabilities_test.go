@@ -40,6 +40,41 @@ func TestProviderCapabilities_Resume(t *testing.T) {
 	}
 }
 
+// TestGenuinelyResumableProvider locks down the NARROWER resume gate used by
+// callers that thread a real --resume on top of the recovery pack
+// (planstart.Redispatch). Unlike SupportsResume, codex is excluded here: its
+// app-server runtime ignores the session-id preset on the current pins, so a
+// "resume" silently no-ops. claude/claude-code only, until the codex JSON-RPC
+// thread/resume wireup lands.
+func TestGenuinelyResumableProvider(t *testing.T) {
+	cases := []struct {
+		provider string
+		want     bool
+	}{
+		{"claude", true},
+		{"claude-code", true},
+		{"CLAUDE", true}, // case-insensitive + padding, like ProviderCapabilities
+		{"  claude-code ", true},
+		{"codex", false}, // SupportsResume=true but runtime no-ops the preset
+		{"gemini", false},
+		{"copilot", false},
+		{"opencode", false},
+		{"", false},
+		{"unknown", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.provider, func(t *testing.T) {
+			assert.Equal(t, tc.want, GenuinelyResumableProvider(tc.provider))
+		})
+	}
+	// Invariant: genuine resume implies the matrix also reports SupportsResume
+	// (genuine is a strict subset). The reverse need not hold (codex).
+	for _, p := range []string{"claude", "claude-code"} {
+		assert.True(t, ProviderCapabilities(p).SupportsResume,
+			"GenuinelyResumableProvider(%q) must be a subset of SupportsResume", p)
+	}
+}
+
 // TestProviderCapabilities_CaseInsensitive verifies provider name matching
 // tolerates the same normalization clientFor applies (mixed case, padding).
 // Profile loading doesn't normalize provider strings, so this is the load-
