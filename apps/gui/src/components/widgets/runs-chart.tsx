@@ -1,4 +1,4 @@
-import { TimeSeriesChart } from '@hollis-labs/sysop-ui'
+import { TimeSeriesChart } from '@hollis-labs/sysop-ui/charts'
 import type { Run } from '@/lib/types'
 
 export interface RunsChartProps {

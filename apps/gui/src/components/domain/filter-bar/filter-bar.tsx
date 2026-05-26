@@ -1,11 +1,6 @@
 import type { ReactNode } from 'react'
 import { Folder, Calendar, BookOpen, Hash, SlidersHorizontal } from 'lucide-react'
-import {
-  FilterCycleToggle,
-  FilterEntityCombobox,
-  FilterSearchInput,
-  type CycleOption,
-} from '@hollis-labs/sysop-ui'
+import { FilterCycleToggle, FilterEntityCombobox, FilterSearchInput, type CycleOption } from '@hollis-labs/sysop-ui/data'
 import { STATUS_COLORS, DEFAULT_STATUS_COLOR, PRIORITIES, TASK_STATUSES } from '@/lib/constants'
 import type { ManualFilter } from '@/lib/ops-filters-storage'
 import type { Epic, Project, Sprint, Tag, TaskStatus } from '@/lib/types'

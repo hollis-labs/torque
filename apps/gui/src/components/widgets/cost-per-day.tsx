@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { TimeSeriesChart } from '@hollis-labs/sysop-ui'
+import { TimeSeriesChart } from '@hollis-labs/sysop-ui/charts'
 import { cn } from '@/lib/utils'
 import type { Run } from '@/lib/types'
 

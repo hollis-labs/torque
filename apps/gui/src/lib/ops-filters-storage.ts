@@ -1,4 +1,4 @@
-import { createScopedStorage } from '@hollis-labs/sysop-ui'
+import { createScopedStorage } from '@hollis-labs/sysop-ui/api'
 import type { TaskStatus } from './types'
 
 /**

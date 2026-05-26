@@ -1,4 +1,4 @@
-import { createApiContext } from '@hollis-labs/sysop-ui'
+import { createApiContext } from '@hollis-labs/sysop-ui/api'
 import { TorqueApiClient } from '@/lib/api'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined
