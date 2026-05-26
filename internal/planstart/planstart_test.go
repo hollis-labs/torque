@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +26,7 @@ type stubStore struct {
 	sessions    map[string]*sqlstore.SessionRecord
 	updates     []sqlstore.TaskUpdate
 	transitions []string
+	runEvents   []*sqlstore.RunEventRecord
 }
 
 func newStubStore() *stubStore {
@@ -71,6 +75,11 @@ func (s *stubStore) GetSession(id string) (*sqlstore.SessionRecord, error) {
 		return nil, errors.New("session not found")
 	}
 	return rec, nil
+}
+
+func (s *stubStore) AppendRunEvent(evt *sqlstore.RunEventRecord) (int64, error) {
+	s.runEvents = append(s.runEvents, evt)
+	return int64(len(s.runEvents)), nil
 }
 
 // stubMgr captures Boot invocations and lets tests dictate what each
@@ -255,6 +264,99 @@ func TestPlanstart_StaleSessionRefires(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "SES-FRESH", res.SessionID)
 	assert.Equal(t, "CW-PLAN-005", mgr.lastOpts.TaskID, "fresh boot should fire")
+}
+
+// Redispatch cold-boot recovery: a terminal prior orchestrator session with a
+// stream trace yields a recovery pack threaded into the fresh boot's
+// SystemPrompt, a recovery.md pointer in the new boot dir, and a
+// recovery.pack_planted run_events breadcrumb. This is torque's analog of
+// nanite's cold-boot-with-prior-history recovery pack.
+func TestPlanstart_RedispatchPlantsRecoveryPack(t *testing.T) {
+	store := newStubStore()
+	store.tasks["CW-PLAN-REC"] = &sqlstore.TaskRecord{
+		ID: "CW-PLAN-REC", Kind: "plan", Status: "doing", WorkingDir: "/tmp/plan",
+		Metadata: sql.NullString{
+			String: `{"plan":{"orchestrator_session_id":"SES-DEAD"}}`,
+			Valid:  true,
+		},
+	}
+
+	// Prior orchestrator session: terminal, with a stream.jsonl trace under its
+	// recorded workspace dir. The meta key torque.workspace_dir is the
+	// substrate-internal convention agent.Boot stamps.
+	priorWS := t.TempDir()
+	logDir := filepath.Join(priorWS, "logs")
+	require.NoError(t, os.MkdirAll(logDir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(logDir, "stream.jsonl"),
+		[]byte(strings.Join([]string{
+			`{"type":"delta","content":"merged PR #7, advancing to phase 2"}`,
+			`{"type":"tool_use","tool_use":{"name":"torque_task_transition"}}`,
+		}, "\n")+"\n"), 0o644))
+	store.sessions["SES-DEAD"] = &sqlstore.SessionRecord{
+		ID:       "SES-DEAD",
+		Provider: "claude",
+		State:    "crashed",
+		MetaJSON: `{"torque.workspace_dir":"` + priorWS + `","role":"orchestrator"}`,
+	}
+
+	// Fresh boot lands in a known bootDir so recovery.md is written there.
+	newBootDir := t.TempDir()
+	mgr := &stubMgr{bootSession: &agent.Session{ID: "SES-RESUMED", BootDir: newBootDir}}
+
+	res, err := planstart.Redispatch(context.Background(), store, mgr, "CW-PLAN-REC", planstart.Options{})
+	require.NoError(t, err)
+	assert.Equal(t, "SES-RESUMED", res.SessionID)
+
+	// Recovery pack threaded into the fresh boot's SystemPrompt (lands in boot.md).
+	assert.Contains(t, mgr.lastOpts.SystemPrompt, "<recovered-session-context>")
+	assert.Contains(t, mgr.lastOpts.SystemPrompt, "merged PR #7, advancing to phase 2")
+	assert.Contains(t, mgr.lastOpts.SystemPrompt, "SES-DEAD")
+	// The orchestrator system prompt still follows the recovery block.
+	recIdx := strings.Index(mgr.lastOpts.SystemPrompt, "<recovered-session-context>")
+	endIdx := strings.Index(mgr.lastOpts.SystemPrompt, "</recovered-session-context>")
+	require.GreaterOrEqual(t, recIdx, 0)
+	require.Greater(t, endIdx, recIdx)
+
+	// recovery.md pointer written into the new boot dir.
+	b, err := os.ReadFile(filepath.Join(newBootDir, "recovery.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(b), "<recovered-session-context>")
+
+	// recovery.pack_planted breadcrumb emitted on the plan.
+	var found *sqlstore.RunEventRecord
+	for _, e := range store.runEvents {
+		if e.Type == "recovery.pack_planted" {
+			found = e
+		}
+	}
+	require.NotNil(t, found, "recovery.pack_planted breadcrumb must be emitted")
+	assert.Equal(t, "CW-PLAN-REC", found.TaskID)
+	assert.Contains(t, found.Payload, "SES-RESUMED")
+	assert.Contains(t, found.Payload, "SES-DEAD")
+}
+
+// Redispatch with no prior session trace (brand-new orchestration / no recorded
+// workspace) skips the recovery pack entirely — a clean cold boot.
+func TestPlanstart_RedispatchNoPriorHistorySkipsRecovery(t *testing.T) {
+	store := newStubStore()
+	store.tasks["CW-PLAN-REC2"] = &sqlstore.TaskRecord{
+		ID: "CW-PLAN-REC2", Kind: "plan", Status: "doing", WorkingDir: "/tmp/plan",
+		Metadata: sql.NullString{
+			String: `{"plan":{"orchestrator_session_id":"SES-EMPTY"}}`,
+			Valid:  true,
+		},
+	}
+	store.sessions["SES-EMPTY"] = &sqlstore.SessionRecord{
+		ID: "SES-EMPTY", State: "crashed", MetaJSON: "{}",
+	}
+	mgr := &stubMgr{bootSession: &agent.Session{ID: "SES-NEW2", BootDir: t.TempDir()}}
+
+	_, err := planstart.Redispatch(context.Background(), store, mgr, "CW-PLAN-REC2", planstart.Options{})
+	require.NoError(t, err)
+	assert.NotContains(t, mgr.lastOpts.SystemPrompt, "<recovered-session-context>")
+	for _, e := range store.runEvents {
+		assert.NotEqual(t, "recovery.pack_planted", e.Type, "no recovery breadcrumb without prior history")
+	}
 }
 
 // Nil session manager → ErrSessionMgrMissing.
