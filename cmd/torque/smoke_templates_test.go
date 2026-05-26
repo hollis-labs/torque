@@ -231,7 +231,7 @@ func TestSmoke_Criterion3_DecisionCheckpoint_RespondAndCancel(t *testing.T) {
 		got, _ := stack.store.GetTask(task.ID)
 		assert.Equal(t, "review", got.Status, "blocking checkpoint parks task in review")
 
-		require.NoError(t, stack.svc.Checkpoint.Respond(service.CheckpointRespondInput{
+		require.NoError(t, stack.svc.Checkpoint.Respond(context.Background(), service.CheckpointRespondInput{
 			CorrelationID:       emitOut.CorrelationID,
 			ResponseJSON:        `{"pick":"a"}`,
 			ResponderSourceType: "user",

@@ -383,7 +383,7 @@ func (a *Adapter) handleLoopbackCheckpointRespond(ctx context.Context, req mcp.C
 	if cp.TaskID != a.loopbackTaskID {
 		return errResult(ErrCodeArgInvalid, fmt.Sprintf("loopback checkpoint_respond is pinned to %s; correlation_id %s belongs to task %s", a.loopbackTaskID, corr, cp.TaskID), "correlation_id")
 	}
-	if err := a.svc.Checkpoint.Respond(service.CheckpointRespondInput{
+	if err := a.svc.Checkpoint.Respond(ctx, service.CheckpointRespondInput{
 		CorrelationID:       corr,
 		ResponseJSON:        reqStr(req, "response_json"),
 		ResponderSourceType: "agent",

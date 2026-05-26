@@ -103,7 +103,7 @@ func (a *Adapter) handleCheckpointEmit(ctx context.Context, req mcp.CallToolRequ
 }
 
 func (a *Adapter) handleCheckpointRespond(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	err := a.svc.Checkpoint.Respond(service.CheckpointRespondInput{
+	err := a.svc.Checkpoint.Respond(ctx, service.CheckpointRespondInput{
 		CorrelationID:       reqStr(req, "correlation_id"),
 		ResponseJSON:        reqStr(req, "response_json"),
 		ResponderSourceType: reqStr(req, "responder_source_type"),

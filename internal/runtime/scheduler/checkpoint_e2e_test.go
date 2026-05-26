@@ -1,6 +1,7 @@
 package scheduler_test
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"testing"
@@ -77,7 +78,7 @@ func TestE2E_Checkpoint_Emit_RespondService_TaskResumes(t *testing.T) {
 	assert.Equal(t, "review", parked.Status)
 	assert.Contains(t, parked.BlockedReason, corr)
 
-	require.NoError(t, svc.Checkpoint.Respond(service.CheckpointRespondInput{
+	require.NoError(t, svc.Checkpoint.Respond(context.Background(), service.CheckpointRespondInput{
 		CorrelationID:       corr,
 		ResponseJSON:        `{"pick":"a"}`,
 		ResponderSourceType: "user",

@@ -9,7 +9,9 @@ import (
 	"strings"
 	"time"
 
+	feotel "github.com/hollis-labs/go-otel"
 	"github.com/oklog/ulid/v2"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/hollis-labs/torque/internal/hitl"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -248,7 +250,34 @@ func (s *CheckpointService) Emit(in CheckpointEmitInput) (*CheckpointEmitOutput,
 // if the checkpoint is already terminal (responded/canceled/timed_out).
 // Downstream task resume (on_checkpoint_response) is the lifecycle
 // manager's responsibility (B7).
-func (s *CheckpointService) Respond(in CheckpointRespondInput) error {
+//
+// ctx carries the inbound HTTP / MCP server span (when called from an
+// instrumented surface) so torque.checkpoint.respond nests under it; tests
+// pass context.Background() and trace as a root span.
+func (s *CheckpointService) Respond(ctx context.Context, in CheckpointRespondInput) (err error) {
+	ctx, span := feotel.StartSpan(ctx, "torque.checkpoint.respond")
+	span.SetAttributes(
+		attribute.String("hollis.app", "torque"),
+		attribute.String("torque.checkpoint.correlation_id", in.CorrelationID),
+		attribute.String("torque.checkpoint.responder_source_type", in.ResponderSourceType),
+	)
+	defer func() {
+		// Validation rejects (bad input, invalid responder type) and
+		// ConflictError ("checkpoint already responded/canceled/timed_out") are
+		// policy decisions the caller surfaces as 422 / 409 — not infrastructure
+		// failures. RecordError only on real persistence / dispatcher faults so
+		// span status reflects what actually went wrong vs what the operator
+		// just couldn't do.
+		if err != nil {
+			var verr *ValidationError
+			var cerr *ConflictError
+			if !errors.As(err, &verr) && !errors.As(err, &cerr) {
+				span.RecordError(err)
+			}
+		}
+		span.End()
+	}()
+
 	if in.CorrelationID == "" {
 		return &ValidationError{Field: "correlation_id", Message: "correlation_id required"}
 	}
@@ -262,6 +291,7 @@ func (s *CheckpointService) Respond(in CheckpointRespondInput) error {
 	if err != nil {
 		return err
 	}
+	span.SetAttributes(attribute.String("hollis.task.id", cp.TaskID))
 	if cp.Status != "pending" {
 		return &ConflictError{Message: "checkpoint " + cp.Status}
 	}
@@ -279,7 +309,7 @@ func (s *CheckpointService) Respond(in CheckpointRespondInput) error {
 	); err != nil {
 		return err
 	}
-	return s.applyOnCheckpointResponse(context.Background(), cp, in.ResponseJSON)
+	return s.applyOnCheckpointResponse(ctx, cp, in.ResponseJSON)
 }
 
 func validateRequiredWorkflowResponse(task *sqlstore.TaskRecord, cp *sqlstore.CheckpointRecord, responderSourceType string) error {

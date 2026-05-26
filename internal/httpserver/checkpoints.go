@@ -105,7 +105,7 @@ func (s *Server) respondCheckpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	if err := s.svc.Checkpoint.Respond(service.CheckpointRespondInput{
+	if err := s.svc.Checkpoint.Respond(r.Context(), service.CheckpointRespondInput{
 		CorrelationID:       corr,
 		ResponseJSON:        req.ResponseJSON,
 		ResponderSourceType: req.ResponderSourceType,
