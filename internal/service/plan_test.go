@@ -113,9 +113,13 @@ func TestPlanRemovePhase_BlocksWhenChildrenReferencePhase(t *testing.T) {
 
 	err = svc.Plan.RemovePhase(plan.ID, "ph-1")
 	require.Error(t, err)
-	var vErr *service.ValidationError
-	require.ErrorAs(t, err, &vErr)
-	require.Equal(t, "phase_id", vErr.Field)
+	// ConflictError, not ValidationError: this is a state-dependent
+	// rejection (children still referencing the phase), not a malformed
+	// argument. Matches torque_plan_remove_phase's documented
+	// error.code=conflict contract (mcpadapter.mapServiceError maps
+	// ConflictError -> conflict, ValidationError -> arg_invalid).
+	var cErr *service.ConflictError
+	require.ErrorAs(t, err, &cErr)
 
 	// Phase with no children removes cleanly.
 	require.NoError(t, svc.Plan.RemovePhase(plan.ID, "ph-2"))

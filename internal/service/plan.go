@@ -48,6 +48,21 @@ type PlanCreateInput struct {
 	Tags        []string
 }
 
+// PlanUpdateInput is the writable plan field set for PlanService.Update. Nil
+// means unchanged. Phases are edited via AddPhase/RemovePhase, not through
+// Update — mirrors PlanCreateInput's fields minus Phases (structural, not a
+// scalar edit) and plus Tags (settable on create, so settable on update too,
+// matching Task/Issue's tag-replace convention).
+type PlanUpdateInput struct {
+	Title       *string
+	Description *string
+	Priority    *int
+	ProjectID   *string
+	SprintID    *string
+	EpicID      *string
+	Tags        *[]string // nil = no change; non-nil = replace all linked tags
+}
+
 // PlanProgress is the roll-up returned alongside a plan for GUI display.
 // ByPhase is keyed by phase_id (or "" for children with no phase_id set).
 type PlanProgress struct {
@@ -143,6 +158,78 @@ func (s *PlanService) Get(planID string) (*PlanDetail, error) {
 	return &PlanDetail{Task: task, Plan: plan, Progress: progress}, nil
 }
 
+// List returns plan rows (kind=plan) matching filter. filter.Kind is
+// force-set to "plan" regardless of what the caller passes — mirrors
+// IssueService.List's kind-scoping so callers can't widen the result set by
+// smuggling a different Kind through. All of TaskFilter's other fields
+// (pagination, sort, cursor, project/sprint/epic scoping, search, ...) pass
+// through unchanged, so torque_plan_list (mcpadapter) gets PRIM-001/PRIM-002
+// for free by building the same filter shape torque_task_list does.
+func (s *PlanService) List(filter sqlstore.TaskFilter) ([]sqlstore.TaskRecord, error) {
+	filter.Kind = "plan"
+	return s.tasks.List(filter)
+}
+
+// requirePlan fetches a task by id and rejects it with a ValidationError if
+// its kind is not "plan" — the shared kind-guard for Update/Delete. Mirrors
+// the inline check Get/AddPhase/RemovePhase already use; pulled into a
+// helper here rather than backfilling those (out of scope — this task adds
+// Update/Delete, it doesn't refactor already-working methods).
+func (s *PlanService) requirePlan(id string) (*sqlstore.TaskRecord, error) {
+	task, err := s.tasks.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	if task.Kind != "plan" {
+		return nil, &ValidationError{Field: "kind", Message: "task " + id + " is not a plan"}
+	}
+	return task, nil
+}
+
+// Update applies a partial edit to a plan's own fields and rejects non-plan
+// task ids (kind guard via requirePlan). Phases are edited via
+// AddPhase/RemovePhase, not here.
+func (s *PlanService) Update(id string, input PlanUpdateInput) error {
+	if _, err := s.requirePlan(id); err != nil {
+		return err
+	}
+
+	update := sqlstore.TaskUpdate{}
+	if input.Title != nil {
+		update.Title = input.Title
+	}
+	if input.Description != nil {
+		update.Description = input.Description
+	}
+	if input.Priority != nil {
+		update.Priority = input.Priority
+	}
+	if input.ProjectID != nil {
+		update.ProjectID = &sql.NullString{String: *input.ProjectID, Valid: *input.ProjectID != ""}
+	}
+	if input.SprintID != nil {
+		update.SprintID = &sql.NullString{String: *input.SprintID, Valid: *input.SprintID != ""}
+	}
+	if input.EpicID != nil {
+		update.EpicID = &sql.NullString{String: *input.EpicID, Valid: *input.EpicID != ""}
+	}
+
+	taskInput := TaskUpdateInput{TaskUpdate: update}
+	if input.Tags != nil {
+		taskInput.Tags = input.Tags
+	}
+	return s.tasks.Update(id, taskInput)
+}
+
+// Delete removes a plan task row (and its linkage — runs, artifacts,
+// comments cascade via TaskService.Delete) and rejects non-plan task ids.
+func (s *PlanService) Delete(id string) error {
+	if _, err := s.requirePlan(id); err != nil {
+		return err
+	}
+	return s.tasks.Delete(id)
+}
+
 // AddPhase appends a phase to metadata.plan.phases with an auto-generated id
 // and a monotonic order. Returns the new phase id.
 func (s *PlanService) AddPhase(planID, name, acceptance string) (string, error) {
@@ -208,8 +295,14 @@ func (s *PlanService) RemovePhase(planID, phaseID string) error {
 		return err
 	}
 	if len(children) > 0 {
-		return &ValidationError{
-			Field:   "phase_id",
+		// ConflictError (not ValidationError): this is a state-dependent
+		// rejection — the phase_id argument itself is well-formed, it's the
+		// current DB state (children still referencing it) that blocks the
+		// op. torque_plan_remove_phase's docstring documents
+		// error.code=conflict for exactly this case; ValidationError would
+		// map to arg_invalid instead (mcpadapter.mapServiceError), breaking
+		// that contract.
+		return &ConflictError{
 			Message: fmt.Sprintf("cannot remove phase %s: %d child task(s) still reference it", phaseID, len(children)),
 		}
 	}
