@@ -231,7 +231,7 @@ func TestSprintList(t *testing.T) {
 	svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint 1"})
 	svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint 2"})
 
-	sprints, err := svc.Sprint.List("", "", false)
+	sprints, err := svc.Sprint.List(sqlstore.SprintFilter{})
 	require.NoError(t, err)
 	assert.Len(t, sprints, 2)
 }
@@ -271,14 +271,96 @@ func TestSprintListExcludesArchivedByDefault(t *testing.T) {
 	s2, _ := svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint 2"})
 	require.NoError(t, svc.Sprint.Archive(s2.ID))
 
-	sprints, err := svc.Sprint.List("", "", false)
+	sprints, err := svc.Sprint.List(sqlstore.SprintFilter{})
 	require.NoError(t, err)
 	require.Len(t, sprints, 1)
 	assert.Equal(t, s1.ID, sprints[0].ID)
 
-	all, err := svc.Sprint.List("", "", true)
+	all, err := svc.Sprint.List(sqlstore.SprintFilter{IncludeArchived: true})
 	require.NoError(t, err)
 	assert.Len(t, all, 2)
+}
+
+// TestSprintBulkUpdate covers PRIM-003's pattern applied to Sprint: the same
+// field update lands on every id, and a not-found id fails independently
+// without blocking the others (partial success is not an error).
+func TestSprintBulkUpdate(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("sprints")
+
+	s1, _ := svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint A"})
+	s2, _ := svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint B"})
+
+	newGoal := "Shared goal"
+	succeeded, failed := svc.Sprint.BulkUpdate(
+		[]string{s1.ID, s2.ID, "SP-does-not-exist"},
+		sqlstore.SprintUpdate{Goal: &newGoal},
+		"",
+	)
+	assert.ElementsMatch(t, []string{s1.ID, s2.ID}, succeeded)
+	require.Len(t, failed, 1)
+	assert.Equal(t, "SP-does-not-exist", failed[0].ID)
+
+	got1, _ := svc.Sprint.Get(s1.ID)
+	got2, _ := svc.Sprint.Get(s2.ID)
+	assert.Equal(t, "Shared goal", got1.Goal)
+	assert.Equal(t, "Shared goal", got2.Goal)
+}
+
+// TestSprintBulkUpdateWithStatus covers the combined status-transition +
+// field-update path handleSprintBulkUpdate exercises, mirroring
+// handleSprintUpdate's single-item semantics (transition first, then field
+// update).
+func TestSprintBulkUpdateWithStatus(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("sprints")
+
+	s1, _ := svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint A"})
+	s2, _ := svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint B"})
+
+	succeeded, failed := svc.Sprint.BulkUpdate(
+		[]string{s1.ID, s2.ID},
+		sqlstore.SprintUpdate{},
+		"inactive",
+	)
+	assert.ElementsMatch(t, []string{s1.ID, s2.ID}, succeeded)
+	assert.Empty(t, failed)
+
+	got1, _ := svc.Sprint.Get(s1.ID)
+	got2, _ := svc.Sprint.Get(s2.ID)
+	assert.Equal(t, "inactive", got1.Status)
+	assert.Equal(t, "inactive", got2.Status)
+}
+
+// TestSprintBulkUpdateRequiresFeature verifies a disabled "sprints" feature
+// fails every id uniformly (BulkTag's shared-precondition precedent), rather
+// than each id individually erroring out through Transition/Update.
+func TestSprintBulkUpdateRequiresFeature(t *testing.T) {
+	svc := setupService(t)
+
+	succeeded, failed := svc.Sprint.BulkUpdate([]string{"SP-1", "SP-2"}, sqlstore.SprintUpdate{}, "")
+	assert.Empty(t, succeeded)
+	require.Len(t, failed, 2)
+	assert.IsType(t, &service.FeatureDisabledError{}, failed[0].Err)
+	assert.IsType(t, &service.FeatureDisabledError{}, failed[1].Err)
+}
+
+// TestSprintListCostBudgetRange and TestSprintListOverBudget exercise
+// ENT-SPRINT's budget-range filter through the service layer (store-layer
+// coverage lives in sqlstore/sprints_test.go).
+func TestSprintListCostBudgetRange(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("sprints")
+
+	svc.Sprint.Create(service.SprintCreateInput{Name: "Cheap", CostBudget: floatPtr(5.0)})
+	svc.Sprint.Create(service.SprintCreateInput{Name: "Mid", CostBudget: floatPtr(25.0)})
+	svc.Sprint.Create(service.SprintCreateInput{Name: "NoBudget"})
+
+	min := 10.0
+	sprints, err := svc.Sprint.List(sqlstore.SprintFilter{CostBudgetMin: &min})
+	require.NoError(t, err)
+	require.Len(t, sprints, 1)
+	assert.Equal(t, "Mid", sprints[0].Name)
 }
 
 func TestSprintDelete(t *testing.T) {
