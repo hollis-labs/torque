@@ -566,6 +566,35 @@ func (w *WriteTx) CreateTask(t *TaskRecord) error {
 	return err
 }
 
+// UpdateTask applies non-nil pointer fields to the task row inside the write
+// transaction. Delegates to updateTaskExec (tasks.go) — the same
+// field-mapping logic Store.UpdateTask uses — so a multi-field update (e.g.
+// title + tags + depends_on) commits atomically with
+// SetTaskTags/SetTaskDependencies in the same WriteTx instead of as
+// independent calls (FIX-007).
+func (w *WriteTx) UpdateTask(id string, u TaskUpdate) error {
+	return updateTaskExec(w.tx, id, u)
+}
+
+// SetTaskTags replaces all tags linked to the given task inside the write
+// transaction. Delegates to setTaskTagsExec (tags.go) — the same
+// delete+reinsert logic Store.SetTaskTags uses — so it can be composed with
+// UpdateTask/CreateTask/SetTaskDependencies in one WriteTx (FIX-007) instead
+// of running (and committing) in its own separate transaction.
+func (w *WriteTx) SetTaskTags(taskID string, slugs []string) error {
+	return setTaskTagsExec(w.tx, taskID, slugs)
+}
+
+// SetTaskDependencies replaces all dependency edges for the given task
+// inside the write transaction. Delegates to setTaskDependenciesExec
+// (task_dependencies.go) — the same delete+reinsert logic
+// Store.SetTaskDependencies uses — so it can be composed with
+// CreateTask/UpdateTask/SetTaskTags in one WriteTx (FIX-007) instead of
+// running (and committing) in its own separate transaction.
+func (w *WriteTx) SetTaskDependencies(taskID string, depIDs []string) error {
+	return setTaskDependenciesExec(w.tx, taskID, depIDs)
+}
+
 // SetTaskMaxRetries overwrites max_retries inside the write transaction. It
 // is the pointer-to-zero counterpart to the MaxRetries==0→3 rewrite inside
 // applyDefaults: callers that genuinely want a zero-retry task call this
