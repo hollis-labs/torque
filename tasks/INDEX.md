@@ -27,9 +27,9 @@ Status values: `todo` · `blocked` · `in-progress` · `done` · `skipped`
 
 | ID | Title | Status | Depends on | Blocks |
 |---|---|---|---|---|
-| [DEC-001](phase-0-decisions/DEC-001-pagination-strategy.md) | Pagination strategy: cursor vs offset | in-progress (proposed: hybrid — offset+has_more now) | — | PRIM-001 |
-| [DEC-002](phase-0-decisions/DEC-002-feature-flag-gating.md) | Feature-flag gating vs always-on for Project/Epic/Sprint tools | in-progress (proposed: keep current gating) | — | ENT-PROJECT, ENT-EPIC, ENT-SPRINT |
-| [DEC-003](phase-0-decisions/DEC-003-depends-on-normalization.md) | `depends_on` normalization: join table vs documented JSON blob | in-progress (proposed: join table, split into new task) | — | ENT-TASK |
+| [DEC-001](phase-0-decisions/DEC-001-pagination-strategy.md) | Pagination strategy: cursor vs offset | done (decided: cursor/keyset, all 7 list tools) | — | PRIM-001 |
+| [DEC-002](phase-0-decisions/DEC-002-feature-flag-gating.md) | Feature-flag gating vs always-on for Project/Epic/Sprint tools | done (decided: keep current gating) | — | ENT-PROJECT, ENT-EPIC, ENT-SPRINT |
+| [DEC-003](phase-0-decisions/DEC-003-depends-on-normalization.md) | `depends_on` normalization: join table vs documented JSON blob | done (decided: join table, split into FK-003) | — | ENT-TASK, FK-003 |
 
 ## Phase 1 — Locked bug fixes (independent, parallelizable, no Phase 0 dependency)
 
@@ -39,6 +39,7 @@ Status values: `todo` · `blocked` · `in-progress` · `done` · `skipped`
 | [FIX-002](phase-1-bugfixes/FIX-002-subtodo-id-autogen.md) | Auto-generate Subtodo IDs | done | — | ENT-SUBTODO, ENT-TASK |
 | [FIX-003](phase-1-bugfixes/FIX-003-epic-status-vocabulary-bug.md) | Fix Epic status vocabulary bug | done | — | ENT-EPIC |
 | [FIX-004](phase-1-bugfixes/FIX-004-docstring-order-mismatches.md) | Fix docstring/order mismatches (Task, Epic, Sprint, Project) | done | — | ENT-TASK, ENT-EPIC, ENT-SPRINT, ENT-PROJECT |
+| [FIX-005](phase-1-bugfixes/FIX-005-delete-cleanup-transaction-atomicity.md) | Wrap Sprint/Project/Epic delete-time task cleanup in a transaction | todo | — | — |
 
 ## Phase 2 — Shared primitives
 
@@ -55,6 +56,7 @@ Status values: `todo` · `blocked` · `in-progress` · `done` · `skipped`
 |---|---|---|---|---|
 | [FK-001](phase-3-fk-migration/FK-001-orphan-backfill-cleanup.md) | Backfill/cleanup orphaned sprint_id/project_id/epic_id refs | done | — | FK-002 |
 | [FK-002](phase-3-fk-migration/FK-002-promote-real-foreign-keys.md) | Promote sprint_id/project_id/epic_id to real FKs | todo | FK-001 | — |
+| [FK-003](phase-3-fk-migration/FK-003-depends-on-join-table.md) | Normalize `depends_on` into a real join table (fixes scheduler deadlock bug) | todo | DEC-003 | — |
 
 ## Phase 4 — Per-entity rollout
 

@@ -1,7 +1,7 @@
 # DEC-002 — Feature-flag gating vs always-on for Project/Epic/Sprint tools
 
 **Phase:** 0 — Decisions
-**Status:** in-progress
+**Status:** done
 **Depends on:** none
 **Blocks:** ENT-PROJECT, ENT-EPIC, ENT-SPRINT
 **Source:** ADR-0004 §6 (Open questions)
@@ -46,7 +46,7 @@ into — this is an MCP-scoped ADR (ADR-0004 §title).
 
 ## Outcome
 
-**PROPOSED — pending user sign-off**
+**DECIDED — accepted as proposed by the project owner.**
 
 ### Decision: Option 1 — keep current gating
 

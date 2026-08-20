@@ -1,7 +1,7 @@
 # DEC-003 — `depends_on` normalization: join table vs documented JSON blob
 
 **Phase:** 0 — Decisions
-**Status:** in-progress
+**Status:** done
 **Depends on:** none
 **Blocks:** ENT-TASK
 **Source:** ADR-0004 §4 (Task field reference), §6 (Open questions)
@@ -46,12 +46,11 @@ Implementation — that lands in ENT-TASK (option 2) or a newly-split task
 
 ## Outcome
 
-**PROPOSED — pending user sign-off**
+**DECIDED — accepted as proposed by the project owner.**
 
-### Recommendation: Option 1 — normalize to a real join table
+### Decision: Option 1 — normalize to a real join table
 
-Split out of ENT-TASK into its own task file (details below). This is a
-recommendation only; the project owner has not reviewed it yet.
+Split out of ENT-TASK into its own task file: [FK-003](../phase-3-fk-migration/FK-003-depends-on-join-table.md).
 
 ### Grounding in the current implementation
 

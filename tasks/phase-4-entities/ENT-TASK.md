@@ -46,9 +46,15 @@ service layer but `torque_task_create`'s MCP schema doesn't expose them:
 atomically posting a comment with the status change (single call instead of
 transition + separate comment add).
 
-**`depends_on`**: apply whatever DEC-003 decided — either the docstring
-staleness note (if JSON-blob was kept) or point to the split-out
-normalization task (if a join table was chosen there).
+**`depends_on`**: DEC-003 decided to normalize `depends_on` into a real
+join table, split out into
+[FK-003](../phase-3-fk-migration/FK-003-depends-on-join-table.md).
+This task does **not** touch `depends_on` — no field-exposure work needed
+here since it's already a full field on `torque_task_create`/`update`
+today (just JSON-blob-backed); FK-003 changes the storage underneath
+without changing this tool's request/response contract. If FK-003 hasn't
+landed yet when this task is picked up, no interim docstring caveat is
+needed either — FK-003 is scheduled, not deferred indefinitely.
 
 ## Acceptance criteria
 
