@@ -1,6 +1,7 @@
 package mcpadapter_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -71,6 +72,37 @@ func TestSubtodoRoundTrip_AddListDone(t *testing.T) {
 	assert.Equal(t, true, env.Items[0]["done"])
 	assert.Equal(t, "commit-abc123", env.Items[0]["evidence"])
 	assert.Equal(t, false, env.Items[1]["done"])
+}
+
+// TestSubtodoAdd_OmittedIDAutoGenerates covers FIX-002 at the MCP layer:
+// torque_task_subtodo_add with id omitted succeeds and returns a
+// server-generated id.
+func TestSubtodoAdd_OmittedIDAutoGenerates(t *testing.T) {
+	a := setupAdapter(t)
+	text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "auto id",
+	})
+	var created map[string]interface{}
+	parseData(t, text, &created)
+	taskID, _ := created["ID"].(string)
+
+	addText, isErr := callTool(t, a, "torque_task_subtodo_add", map[string]interface{}{
+		"task_id": taskID, "text": "no id supplied",
+	})
+	require.False(t, isErr, addText)
+
+	var items []map[string]interface{}
+	parseData(t, addText, &items)
+	require.Len(t, items, 1)
+	genID, _ := items[0]["id"].(string)
+	assert.NotEmpty(t, genID)
+	assert.True(t, strings.HasPrefix(genID, "sub_"), "generated id %q should carry the sub_ prefix", genID)
+
+	// The generated id can be used to mark the item done like any other id.
+	_, isErr = callTool(t, a, "torque_task_subtodo_done", map[string]interface{}{
+		"task_id": taskID, "id": genID,
+	})
+	require.False(t, isErr)
 }
 
 func TestSubtodoAdd_RejectsDuplicateID(t *testing.T) {

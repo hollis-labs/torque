@@ -21,9 +21,10 @@ Example: {"task_id":"T-123"}`),
 		mcp.WithDescription(`Append a subtodo item to a task's checklist. required=true means the task cannot transition past review until the item is ticked off.
 Use for structural gating; torque_task_subtodo_done marks completion, torque_task_subtodo_list reads. Prefer torque_comment_add for non-gating discussion.
 Response shape: data = [<Subtodo>...] — returns the updated full checklist.
-Example: {"task_id":"T-123","id":"check-1","text":"write regression test","required":true}`),
+Example: {"task_id":"T-123","id":"check-1","text":"write regression test","required":true}
+Example, id omitted (server generates one): {"task_id":"T-123","text":"write regression test","required":true}`),
 		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Item id (unique per task)")),
+		mcp.WithString("id", mcp.Description("Item id (unique per task). Omit to auto-generate a server-assigned id; supply a meaningful slug (e.g. \"check-auth-flow\") to keep it deterministic across repeated emits")),
 		mcp.WithString("text", mcp.Required(), mcp.Description("Human-readable description")),
 		mcp.WithBoolean("required", mcp.Description("If true, blocks done until ticked off (default false)")),
 	), a.handleSubtodoAdd)

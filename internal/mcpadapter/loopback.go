@@ -124,8 +124,9 @@ Example: {"content":"Investigating the auth flow; see file X for context."}`),
 		mcp.WithDescription(`Append a subtodo item to the current task's checklist. required=true means the task cannot transition past review until the item is ticked off.
 The current task is implicit (loopback context).
 Response shape: data = [<Subtodo>...] — returns the updated full checklist.
-Example: {"id":"check-1","text":"write regression test","required":true}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Item id (unique per task)")),
+Example: {"id":"check-1","text":"write regression test","required":true}
+Example, id omitted (server generates one): {"text":"write regression test","required":true}`),
+		mcp.WithString("id", mcp.Description("Item id (unique per task). Omit to auto-generate a server-assigned id; supply a meaningful slug (e.g. \"check-auth-flow\") to keep it deterministic across repeated emits")),
 		mcp.WithString("text", mcp.Required(), mcp.Description("Human-readable description")),
 		mcp.WithBoolean("required", mcp.Description("If true, blocks done until ticked off (default false)")),
 	), a.handleLoopbackSubtodoAdd)
@@ -287,9 +288,6 @@ func (a *Adapter) handleLoopbackCommentAdd(ctx context.Context, req mcp.CallTool
 func (a *Adapter) handleLoopbackSubtodoAdd(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	id := reqStr(req, "id")
 	text := reqStr(req, "text")
-	if id == "" {
-		return errResult(ErrCodeArgInvalid, "id is required", "id")
-	}
 	if text == "" {
 		return errResult(ErrCodeArgInvalid, "text is required", "text")
 	}
