@@ -32,6 +32,108 @@ func taskIDRange(prefix string) (lo, hi string) {
 // missing tasks from other storage errors.
 var ErrTaskNotFound = errors.New("task not found")
 
+// SQLiteDatetimeLayout is the Go time layout matching SQLite's own
+// CURRENT_TIMESTAMP output ("YYYY-MM-DD HH:MM:SS", space-separated, UTC, no
+// zone suffix, whole-second precision) — see updatedAtNow's doc comment for
+// why every tasks.updated_at write uses this exact layout. Exported so
+// mcpadapter's taskSortValue (the encode side of PRIM-001's cursor for the
+// updated_at/created_at sort columns) formats using the identical layout
+// taskCursorArg parses/binds on the decode side.
+const SQLiteDatetimeLayout = "2006-01-02 15:04:05"
+
+// updatedAtNow returns the current UTC instant, whole-second precision,
+// pre-formatted as a plain string in SQLite's native CURRENT_TIMESTAMP
+// layout, for writing to tasks.updated_at.
+//
+// Why a pre-formatted STRING instead of a time.Time (PRIM-002 fix,
+// discovered while adding "updated_at" to the sort_by allow-list):
+// tasks.created_at/updated_at are DATETIME columns with no explicit value in
+// CreateTask's INSERT column list, so a freshly created row's timestamps
+// come from SQLite's own `DEFAULT CURRENT_TIMESTAMP` — stored as the literal
+// text "YYYY-MM-DD HH:MM:SS" (confirmed via `quote(updated_at)`; no 'T', no
+// 'Z', no zone suffix, whole-second only). Every UPDATE site used to bind
+// time.Now().UTC() directly as a time.Time; modernc.org/sqlite's write path
+// (conn.go's bindText/formatTime) renders an unconverted time.Time via Go's
+// time.Time.String(), which is "YYYY-MM-DD HH:MM:SS.ffffff +0000 UTC" — a
+// COMPLETELY different text shape (space AND a trailing zone name, not just
+// a missing fractional part) from what CURRENT_TIMESTAMP writes. Two
+// different formats coexisting in one column silently breaks plain TEXT
+// comparison — SQLite's date/time functions (julianday(), datetime()) can't
+// even parse the t.String() shape at all, and raw byte comparison between
+// the two shapes has no meaningful relationship to chronological order.
+// (Reading is unaffected by any of this: modernc.org/sqlite's read path
+// auto-parses any DATE/DATETIME/TIMESTAMP-declared column through its own
+// permissive parser regardless of which of these shapes was written, which
+// is exactly why this inconsistency was invisible until cursor pagination
+// started comparing raw column text directly.) Binding a pre-formatted
+// string (not a time.Time) sidesteps formatTime entirely — Go's database/sql
+// driver binds a string arg as-is (conn.go's bindText, no reformatting) — so
+// every write, whichever call site, produces byte-identical formatting to
+// CURRENT_TIMESTAMP's own output for the same instant.
+func updatedAtNow() string {
+	return time.Now().UTC().Truncate(time.Second).Format(SQLiteDatetimeLayout)
+}
+
+// ErrInvalidCursor wraps a decode/type-conversion failure when turning a
+// PRIM-001/DEC-001 cursor's opaque, string-encoded sort value into the
+// correctly-typed SQL bind argument for its sort column (e.g. a non-numeric
+// value where "priority" expects an integer). This only happens for a
+// malformed or tampered cursor token — mcpadapter.mapServiceError maps it to
+// arg_invalid rather than internal, since it's a caller input fault, not a
+// server fault.
+var ErrInvalidCursor = errors.New("invalid cursor")
+
+// taskSortColumn maps a sort_by value to its backing SQL column for
+// ListTasks. The MCP layer validates sort_by against an explicit allow-list
+// (internal/service/pagination.ValidateSortBy) before ever reaching here, so
+// this is a closed, trusted set — but ListTasks stays defensive: an empty or
+// unrecognized sort_by both return "", which ListTasks treats identically as
+// "no sort_by supplied" and falls back to the original hardcoded
+// `priority ASC, created_at ASC` order. That fallback is what keeps callers
+// that haven't adopted the sort/cursor primitive (HTTP /api/v1/tasks,
+// scheduler internals) working unchanged.
+func taskSortColumn(sortBy string) string {
+	switch sortBy {
+	case "priority", "status", "updated_at", "created_at":
+		return sortBy
+	default:
+		return ""
+	}
+}
+
+// taskCursorArg converts a cursor's string-encoded sort value (DEC-001's
+// `sv` field) into the correctly-typed SQL bind argument for sortBy's
+// column.
+//
+// updated_at/created_at are validated by parsing as SQLiteDatetimeLayout,
+// but the ORIGINAL STRING sv — not a re-derived time.Time — is what gets
+// bound. Binding a time.Time here would route through modernc.org/sqlite's
+// own time.Time formatting (conn.go's bindText/formatTime), which renders
+// as "YYYY-MM-DD HH:MM:SS.ffffff +0000 UTC" — NOT the "YYYY-MM-DD HH:MM:SS"
+// shape the column actually holds (see updatedAtNow's doc comment for the
+// full story). Binding sv as a plain string sidesteps that reformatting
+// entirely, so the WHERE-clause comparison is byte-for-byte TEXT vs TEXT
+// against what's actually stored.
+func taskCursorArg(sortBy, sv string) (any, error) {
+	switch sortBy {
+	case "priority":
+		n, err := strconv.Atoi(sv)
+		if err != nil {
+			return nil, fmt.Errorf("%w: sort value for priority must be an integer: %v", ErrInvalidCursor, err)
+		}
+		return n, nil
+	case "status":
+		return sv, nil
+	case "updated_at", "created_at":
+		if _, err := time.Parse(SQLiteDatetimeLayout, sv); err != nil {
+			return nil, fmt.Errorf("%w: sort value for %s must match %q: %v", ErrInvalidCursor, sortBy, SQLiteDatetimeLayout, err)
+		}
+		return sv, nil
+	default:
+		return nil, fmt.Errorf("%w: unsupported sort_by %q", ErrInvalidCursor, sortBy)
+	}
+}
+
 // TaskRecord mirrors the tasks table row.
 type TaskRecord struct {
 	ID                string
@@ -109,7 +211,15 @@ type TaskFilter struct {
 	TagSlugs  []string // AND-match: task must have all listed tags
 	Search    string   // case-insensitive substring match on id, title, or description
 	Limit     int
-	Offset    int
+
+	// Offset is legacy offset-based pagination. Dead from the MCP surface's
+	// perspective as of PRIM-001 (torque_task_list now uses cursor
+	// pagination — see SortBy/SortDir/AfterSortValue/AfterID below) but NOT
+	// dead code overall: internal/httpserver/tasks.go's `/api/v1/tasks`
+	// handler still sets this directly from its own `?offset=` query param,
+	// independent of ADR-0004/MCP-ergonomics scope. Left in place rather
+	// than removed — see PRIM-001's execution notes for the full rationale.
+	Offset int
 
 	// Facet filters (migration 007)
 	Kind           string
@@ -136,6 +246,27 @@ type TaskFilter struct {
 	// supplies an explicit Kind filter, that exact-match takes precedence
 	// over the exclusion.
 	ExcludeInternal bool
+
+	// Sort + cursor pagination (PRIM-002 / PRIM-001, DEC-001's binding
+	// spec). SortBy/SortDir are expected to already be validated by the
+	// caller (mcpadapter validates against an explicit allow-list via
+	// internal/service/pagination.ValidateSortBy/ValidateSortDir before
+	// this filter is built) — ListTasks does not itself reject an
+	// unrecognized SortBy, it just treats it the same as "" (see
+	// taskSortColumn). Leaving SortBy empty preserves the original
+	// hardcoded `priority ASC, created_at ASC` order for callers that
+	// haven't adopted the primitive (HTTP /api/v1/tasks, scheduler
+	// internals, parent-rollup, etc).
+	//
+	// AfterSortValue/AfterID decode DEC-001's opaque cursor token: the
+	// string-encoded sort-column value and id of the last row the caller
+	// already saw. Both empty means "first page". ListTasks tuple-compares
+	// (SortBy column, id) > (AfterSortValue, AfterID) for asc (flipped for
+	// desc), always tiebreaking on id ascending regardless of SortDir.
+	SortBy         string
+	SortDir        string
+	AfterSortValue string
+	AfterID        string
 }
 
 // TaskUpdate holds optional fields to update; nil pointer = no change.
@@ -310,7 +441,13 @@ func (s *Store) GetTask(id string) (*TaskRecord, error) {
 	return t, err
 }
 
-// ListTasks returns tasks matching the filter, ordered by priority ASC, created_at ASC.
+// ListTasks returns tasks matching the filter. Default order (f.SortBy ==
+// "") is priority ASC, created_at ASC — the order FIX-004 confirmed
+// torque_task_list's docstring should describe. When f.SortBy is set
+// (PRIM-002), order becomes `<sort column> <SortDir>, id ASC` and, if
+// f.AfterID is also set, results are additionally filtered to rows after
+// the cursor's (sort value, id) position (PRIM-001/DEC-001 keyset
+// pagination).
 func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 	var where []string
 	var args []any
@@ -403,11 +540,41 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 		args = append(args, pattern, pattern, pattern)
 	}
 
+	// PRIM-002 sort column + PRIM-001 cursor predicate. sortCol == "" means
+	// "no sort_by supplied" (or an unrecognized one slipping past the MCP
+	// layer's validation, defensively treated the same) — preserves the
+	// original hardcoded default order below rather than the cursor path.
+	sortCol := taskSortColumn(f.SortBy)
+	desc := strings.EqualFold(f.SortDir, "desc")
+	if sortCol != "" && f.AfterID != "" {
+		arg, err := taskCursorArg(f.SortBy, f.AfterSortValue)
+		if err != nil {
+			return nil, err
+		}
+		cmp := ">"
+		if desc {
+			cmp = "<"
+		}
+		// Tuple comparison (sortCol, id) > (arg, AfterID), or the two-clause
+		// equivalent below — tiebreak on id ascending regardless of
+		// SortDir, per DEC-001.
+		where = append(where, fmt.Sprintf("(%s %s ? OR (%s = ? AND id > ?))", sortCol, cmp, sortCol))
+		args = append(args, arg, arg, f.AfterID)
+	}
+
 	q := `SELECT ` + taskSelectCols + ` FROM tasks`
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
-	q += " ORDER BY priority ASC, created_at ASC"
+	if sortCol != "" {
+		dir := "ASC"
+		if desc {
+			dir = "DESC"
+		}
+		q += fmt.Sprintf(" ORDER BY %s %s, id ASC", sortCol, dir)
+	} else {
+		q += " ORDER BY priority ASC, created_at ASC"
+	}
 	if f.Limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", f.Limit)
 	}
@@ -600,7 +767,7 @@ func (s *Store) UpdateTask(id string, u TaskUpdate) error {
 
 	// Always update updated_at
 	setClauses = append(setClauses, "updated_at = ?")
-	args = append(args, time.Now().UTC())
+	args = append(args, updatedAtNow())
 	args = append(args, id)
 
 	q := `UPDATE tasks SET ` + strings.Join(setClauses, ", ") + ` WHERE id = ?`
@@ -678,12 +845,12 @@ func (s *Store) transitionTaskTx(id, newStatus string, reason *string) (string, 
 	if reason != nil {
 		res, err = tx.Exec(
 			`UPDATE tasks SET status = ?, blocked_reason = ?, updated_at = ? WHERE id = ?`,
-			newStatus, *reason, time.Now().UTC(), id,
+			newStatus, *reason, updatedAtNow(), id,
 		)
 	} else {
 		res, err = tx.Exec(
 			`UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?`,
-			newStatus, time.Now().UTC(), id,
+			newStatus, updatedAtNow(), id,
 		)
 	}
 	if err != nil {
@@ -716,7 +883,7 @@ func (s *Store) ParkTaskOnCheckpoint(id, reason string) (bool, error) {
 	res, err := s.db.Exec(
 		`UPDATE tasks SET status = 'review', blocked_reason = ?, updated_at = ?
 		 WHERE id = ? AND status = 'doing' AND checkpoint_mode = 'blocking'`,
-		reason, time.Now().UTC(), id,
+		reason, updatedAtNow(), id,
 	)
 	if err != nil {
 		return false, err

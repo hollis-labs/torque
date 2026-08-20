@@ -6,11 +6,35 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 	"github.com/mark3labs/mcp-go/mcp"
+)
+
+// taskSortAllowList is torque_task_list's sort_by allow-list (PRIM-002).
+// Order here also drives the arg_invalid error message via
+// pagination.ValidateSortBy.
+var taskSortAllowList = []string{"priority", "status", "updated_at", "created_at"}
+
+// taskSortDefaultBy/taskSortDefaultDir are torque_task_list's default
+// sort_by/sort_dir when the caller omits both — chosen to preserve
+// FIX-004's locked default order ("ordered priority ASC, created_at ASC")
+// as closely as the cursor mechanism allows.
+//
+// DEC-001's cursor design requires a single sort column tiebroken on `id`
+// (not FIX-004's original two-column priority+created_at order). CW task
+// IDs are date-prefixed and assigned monotonically per day (see
+// NextTaskID), so `id ASC` and `created_at ASC` produce the same practical
+// ordering for same-priority ties — switching the tiebreak from created_at
+// to id doesn't change the observable default view an agent sees, it only
+// changes which column backs the tiebreak internally.
+const (
+	taskSortDefaultBy  = "priority"
+	taskSortDefaultDir = "asc"
 )
 
 // parseManualFilter translates the `manual` MCP string param to a *bool for
@@ -80,10 +104,11 @@ Example: {"id":"T-123"}`),
 	), a.handleTaskGet)
 
 	a.addTool(mcp.NewTool("torque_task_list",
-		mcp.WithDescription(`List tasks with optional status/priority/facet filters; ordered priority ASC, created_at ASC.
+		mcp.WithDescription(`List tasks with optional status/priority/facet filters; ordered priority ASC (tiebreak id ASC) by default. Pass sort_by (priority|status|updated_at|created_at) and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid.
 Use for browsing or filtered cohorts; prefer torque_task_search for free-text queries and torque_task_get when you already know the ID. Default returns ~150B briefTask records (lowercase JSON) so large fan-outs fit under the 100KB cap; pass verbose="true" for full TaskRecord columns.
-Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, hint?}}.
-Example: {"status":"doing","limit":"50"}`),
+Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under — pass a different sort_by/sort_dir without dropping cursor and you get error.code=arg_invalid.
+Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
+Example: {"status":"doing","limit":"50","sort_by":"updated_at","sort_dir":"desc"}`),
 		mcp.WithString("status", mcp.Description("Filter by status")),
 		mcp.WithString("priority", mcp.Description("Filter by priority (integer 1-5)")),
 		mcp.WithString("executor", mcp.Description("Filter by executor")),
@@ -102,6 +127,9 @@ Example: {"status":"doing","limit":"50"}`),
 		mcp.WithString("search", mcp.Description("Substring match on title + description (case-insensitive)")),
 		mcp.WithString("limit", mcp.Description("Max results (integer, default 50, max 200)")),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
+		mcp.WithString("sort_by", mcp.Description("Sort field: priority|status|updated_at|created_at (default priority)")),
+		mcp.WithString("sort_dir", mcp.Description("Sort direction: asc|desc (default asc)")),
+		mcp.WithString("cursor", mcp.Description("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
 	), a.handleTaskList)
 
 	a.addTool(mcp.NewTool("torque_task_update",
@@ -383,6 +411,43 @@ func (a *Adapter) handleTaskGet(ctx context.Context, req mcp.CallToolRequest) (*
 func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	limit := clampLimit(reqInt(req, "limit"), 50, maxTaskListLimit)
 	verbose := reqStrBool(req, "verbose")
+
+	// PRIM-002: sort_by/sort_dir, allow-list validated. Omitted values fall
+	// back to FIX-004's locked default order (see taskSortDefaultBy/Dir's
+	// doc comment for why the tiebreak column differs from FIX-004's
+	// original wording without changing the observable order).
+	sortBy := taskSortDefaultBy
+	if raw := reqStr(req, "sort_by"); raw != "" {
+		v, err := pagination.ValidateSortBy(raw, taskSortAllowList...)
+		if err != nil {
+			return errResult(ErrCodeArgInvalid, err.Error(), "sort_by")
+		}
+		sortBy = v
+	}
+	sortDir := taskSortDefaultDir
+	if raw := reqStr(req, "sort_dir"); raw != "" {
+		v, err := pagination.ValidateSortDir(raw)
+		if err != nil {
+			return errResult(ErrCodeArgInvalid, err.Error(), "sort_dir")
+		}
+		sortDir = v
+	}
+
+	// PRIM-001: decode + validate the incoming cursor, if any, against this
+	// request's (now-resolved) sort_by/sort_dir. DEC-001: cursors aren't
+	// portable across sort orders.
+	var afterSortValue, afterID string
+	if raw := reqStr(req, "cursor"); raw != "" {
+		c, err := pagination.Decode(raw)
+		if err != nil {
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid cursor: %v", err), "cursor")
+		}
+		if err := c.Validate(sortBy, sortDir); err != nil {
+			return errResult(ErrCodeArgInvalid, err.Error(), "cursor")
+		}
+		afterSortValue, afterID = c.SortValue, c.ID
+	}
+
 	filter := sqlstore.TaskFilter{
 		Status:         reqStr(req, "status"),
 		Priority:       reqInt(req, "priority"),
@@ -397,7 +462,15 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 		EpicID:         reqStr(req, "epic_id"),
 		Search:         reqStr(req, "search"),
 		Manual:         parseManualFilter(reqStr(req, "manual")),
-		Limit:          limit,
+		// Fetch one extra row beyond limit so has_more can be determined
+		// without a separate COUNT(*) query (DEC-001's cheaper-default
+		// choice). handleTaskList trims the extra row before building the
+		// response envelope.
+		Limit:          limit + 1,
+		SortBy:         sortBy,
+		SortDir:        sortDir,
+		AfterSortValue: afterSortValue,
+		AfterID:        afterID,
 		// kind=internal default-exclude (CW-20260503-0011): user-facing
 		// list calls hide internal automation tasks unless include_internal
 		// is truthy. An explicit kind filter takes precedence at the SQL
@@ -421,7 +494,67 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 	if err != nil {
 		return errFromService(err)
 	}
-	return a.tasksToEnvelope(tasks, limit, verbose)
+
+	hasMoreFromQuery := len(tasks) > limit
+	if hasMoreFromQuery {
+		tasks = tasks[:limit]
+	}
+	return a.taskListCursorEnvelope(tasks, limit, verbose, sortBy, sortDir, hasMoreFromQuery)
+}
+
+// taskSortValue formats a TaskRecord's sortBy column into the string
+// encoding PRIM-001's cursor uses for meta.next_cursor (DEC-001's `sv`
+// field). updated_at/created_at use sqlstore.SQLiteDatetimeLayout — the
+// exact text shape SQLite's own CURRENT_TIMESTAMP writes and
+// sqlstore.taskCursorArg parses/binds on the decode side — NOT
+// time.RFC3339Nano; see sqlstore.updatedAtNow's doc comment for why the two
+// diverge (RFC3339 with a 'T'/'Z' vs the actual "YYYY-MM-DD HH:MM:SS" stored
+// shape) and why that mismatch would otherwise silently break the
+// WHERE-clause comparison.
+func taskSortValue(t sqlstore.TaskRecord, sortBy string) string {
+	switch sortBy {
+	case "priority":
+		return strconv.Itoa(t.Priority)
+	case "status":
+		return t.Status
+	case "updated_at":
+		return t.UpdatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayout)
+	case "created_at":
+		return t.CreatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayout)
+	default:
+		return ""
+	}
+}
+
+// taskListCursorEnvelope builds torque_task_list's {items, meta} cursor-
+// pagination response (PRIM-001/PRIM-002 reference implementation). tasks
+// must already be trimmed to at most `limit` records — handleTaskList
+// over-fetches limit+1 to compute hasMoreFromQuery, then drops the extra row
+// before calling this, so cappedCursorJSONResult's byte-size trim (if it
+// triggers) is the only further truncation next_cursor needs to account for.
+func (a *Adapter) taskListCursorEnvelope(tasks []sqlstore.TaskRecord, limit int, verbose bool, sortBy, sortDir string, hasMoreFromQuery bool) (*mcp.CallToolResult, error) {
+	items := make([]any, 0, len(tasks))
+	for _, t := range tasks {
+		if verbose {
+			tags, err := a.svc.Task.ListTags(t.ID)
+			if err != nil {
+				return errFromService(err)
+			}
+			if tags == nil {
+				tags = []sqlstore.TagRecord{}
+			}
+			// Copy struct to take address of a fresh local rather than loop var.
+			rec := t
+			items = append(items, taskWithTags{TaskRecord: &rec, Tags: tags})
+		} else {
+			items = append(items, toBriefTask(t, briefTagSlugs(a.svc, t.ID)))
+		}
+	}
+
+	cursorAt := func(i int) (sortValue, id string) {
+		return taskSortValue(tasks[i], sortBy), tasks[i].ID
+	}
+	return cappedCursorJSONResult(items, limit, sortBy, sortDir, hasMoreFromQuery, cursorAt)
 }
 
 // buildTaskUpdateInput turns a torque_task_update-shaped request's

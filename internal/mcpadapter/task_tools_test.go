@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1212,4 +1214,260 @@ func TestFullStack_TaskUpdate_BoolCoercionVariants(t *testing.T) {
 				"manual=%v (%T) should coerce to %v", tc.input, tc.input, tc.want)
 		})
 	}
+}
+
+// taskListCursorEnvelope mirrors torque_task_list's PRIM-001/PRIM-002
+// {items, meta} response shape for test parsing.
+type taskListCursorEnvelope struct {
+	Items []map[string]interface{} `json:"items"`
+	Meta  struct {
+		Truncated  bool    `json:"truncated"`
+		Returned   int     `json:"returned"`
+		Limit      int     `json:"limit"`
+		HasMore    bool    `json:"has_more"`
+		NextCursor *string `json:"next_cursor"`
+	} `json:"meta"`
+}
+
+// TestFullStack_TaskList_CursorPagination_NoDuplicatesOrSkips is PRIM-001's
+// acceptance criterion: paging through torque_task_list via meta.next_cursor
+// must visit every row exactly once, even when many rows share the same
+// default sort_by (priority) value — the id tiebreak (DEC-001) is what makes
+// that true; without it, ties in the sort column would make page boundaries
+// nondeterministic and duplicate/skip rows.
+func TestFullStack_TaskList_CursorPagination_NoDuplicatesOrSkips(t *testing.T) {
+	a := setupAdapter(t)
+
+	const total = 9
+	created := make(map[string]bool, total)
+	for i := 0; i < total; i++ {
+		text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+			"title":       fmt.Sprintf("task %d", i),
+			"description": "x",
+			// Priority omitted so every task defaults to priority=2 —
+			// forces every page boundary to rely on the id tiebreak rather
+			// than a naturally-distinct sort value.
+		})
+		require.False(t, isErr, "create should not error: %s", text)
+		var rec map[string]interface{}
+		parseData(t, text, &rec)
+		created[rec["ID"].(string)] = true
+	}
+
+	seen := map[string]bool{}
+	cursor := ""
+	for pages := 0; ; pages++ {
+		require.LessOrEqual(t, pages, total, "too many pages — likely an infinite loop from a broken cursor")
+
+		args := map[string]interface{}{"limit": "4"}
+		if cursor != "" {
+			args["cursor"] = cursor
+		}
+		text, isErr := callTool(t, a, "torque_task_list", args)
+		require.False(t, isErr, "list should not error: %s", text)
+
+		var env taskListCursorEnvelope
+		parseData(t, text, &env)
+
+		for _, item := range env.Items {
+			id := item["id"].(string)
+			require.False(t, seen[id], "duplicate id %s seen across pages", id)
+			seen[id] = true
+		}
+
+		if !env.Meta.HasMore {
+			require.Nil(t, env.Meta.NextCursor, "next_cursor must be null once exhausted")
+			break
+		}
+		require.NotNil(t, env.Meta.NextCursor, "next_cursor must be set when has_more=true")
+		cursor = *env.Meta.NextCursor
+	}
+
+	require.Len(t, seen, total, "expected every created task to appear exactly once across pages")
+	for id := range created {
+		require.True(t, seen[id], "task %s missing from paged results", id)
+	}
+}
+
+// TestFullStack_TaskList_HasMoreAndNextCursorAccuracy is PRIM-001's
+// acceptance criterion: meta.has_more/next_cursor must accurately reflect
+// whether more rows exist, verified against a dataset large enough to need
+// a second page (total > limit).
+func TestFullStack_TaskList_HasMoreAndNextCursorAccuracy(t *testing.T) {
+	a := setupAdapter(t)
+
+	const total = 7
+	const pageSize = 5
+	for i := 0; i < total; i++ {
+		_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+			"title":       fmt.Sprintf("task %d", i),
+			"description": "x",
+		})
+		require.False(t, isErr)
+	}
+
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
+		"limit": fmt.Sprintf("%d", pageSize),
+	})
+	require.False(t, isErr, "list should not error: %s", text)
+	var page1 taskListCursorEnvelope
+	parseData(t, text, &page1)
+	require.Equal(t, pageSize, page1.Meta.Returned)
+	require.Equal(t, pageSize, page1.Meta.Limit)
+	require.True(t, page1.Meta.HasMore, "7 rows over a limit of 5 must report has_more=true")
+	require.NotNil(t, page1.Meta.NextCursor)
+	require.Len(t, page1.Items, pageSize)
+
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{
+		"limit":  fmt.Sprintf("%d", pageSize),
+		"cursor": *page1.Meta.NextCursor,
+	})
+	require.False(t, isErr, "list should not error: %s", text)
+	var page2 taskListCursorEnvelope
+	parseData(t, text, &page2)
+	require.Equal(t, total-pageSize, page2.Meta.Returned)
+	require.False(t, page2.Meta.HasMore, "remaining 2 rows exactly fill the last page")
+	require.Nil(t, page2.Meta.NextCursor, "next_cursor must be null once exhausted")
+	require.Len(t, page2.Items, total-pageSize)
+
+	seen := map[string]bool{}
+	for _, it := range page1.Items {
+		seen[it["id"].(string)] = true
+	}
+	for _, it := range page2.Items {
+		id := it["id"].(string)
+		require.False(t, seen[id], "task %s appeared on both pages", id)
+	}
+}
+
+// TestFullStack_TaskList_InvalidSortBy is PRIM-002's acceptance criterion:
+// an unrecognized sort_by must return a clean error.code=arg_invalid rather
+// than silently ignoring the value or erroring at the SQL layer.
+func TestFullStack_TaskList_InvalidSortBy(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
+		"sort_by": "not_a_real_field",
+	})
+	require.True(t, isErr, "list should error on invalid sort_by: %s", text)
+
+	code, _, field := parseError(t, text)
+	require.Equal(t, "arg_invalid", code)
+	require.Equal(t, "sort_by", field)
+}
+
+// TestFullStack_TaskList_InvalidSortDir mirrors
+// TestFullStack_TaskList_InvalidSortBy for sort_dir.
+func TestFullStack_TaskList_InvalidSortDir(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
+		"sort_dir": "sideways",
+	})
+	require.True(t, isErr, "list should error on invalid sort_dir: %s", text)
+
+	code, _, field := parseError(t, text)
+	require.Equal(t, "arg_invalid", code)
+	require.Equal(t, "sort_dir", field)
+}
+
+// TestFullStack_TaskList_CursorSortMismatchRejected verifies DEC-001's
+// cursor/sort binding: a cursor issued under one sort_by/sort_dir is
+// rejected with arg_invalid if replayed against a different sort_by or
+// sort_dir, since the WHERE-clause tuple comparison it encodes is only
+// meaningful for the exact order it was built against.
+func TestFullStack_TaskList_CursorSortMismatchRejected(t *testing.T) {
+	a := setupAdapter(t)
+
+	for i := 0; i < 2; i++ {
+		_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+			"title":       fmt.Sprintf("task %d", i),
+			"description": "x",
+		})
+		require.False(t, isErr)
+	}
+
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
+		"limit":    "1",
+		"sort_by":  "priority",
+		"sort_dir": "asc",
+	})
+	require.False(t, isErr, "list should not error: %s", text)
+	var env taskListCursorEnvelope
+	parseData(t, text, &env)
+	require.NotNil(t, env.Meta.NextCursor)
+
+	// Same cursor, different sort_dir — must be rejected.
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{
+		"limit":    "1",
+		"sort_by":  "priority",
+		"sort_dir": "desc",
+		"cursor":   *env.Meta.NextCursor,
+	})
+	require.True(t, isErr, "list should error on cursor/sort_dir mismatch: %s", text)
+	code, _, field := parseError(t, text)
+	require.Equal(t, "arg_invalid", code)
+	require.Equal(t, "cursor", field)
+
+	// Same cursor, different sort_by — must also be rejected.
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{
+		"limit":    "1",
+		"sort_by":  "status",
+		"sort_dir": "asc",
+		"cursor":   *env.Meta.NextCursor,
+	})
+	require.True(t, isErr, "list should error on cursor/sort_by mismatch: %s", text)
+	code, _, field = parseError(t, text)
+	require.Equal(t, "arg_invalid", code)
+	require.Equal(t, "cursor", field)
+}
+
+// TestFullStack_TaskList_SortByUpdatedAtDesc exercises a non-default sort
+// column (a timestamp) end to end, guarding against the
+// sqlstore.SQLiteDatetimeLayout encode/decode round-trip
+// (mcpadapter.taskSortValue <-> sqlstore.taskCursorArg) silently
+// mis-comparing against what's actually stored in the column.
+func TestFullStack_TaskList_SortByUpdatedAtDesc(t *testing.T) {
+	a := setupAdapter(t)
+
+	var ids []string
+	for i := 0; i < 5; i++ {
+		text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+			"title":       fmt.Sprintf("task %d", i),
+			"description": "x",
+		})
+		require.False(t, isErr)
+		var rec map[string]interface{}
+		parseData(t, text, &rec)
+		ids = append(ids, rec["ID"].(string))
+	}
+
+	// updated_at is whole-second precision (see sqlstore.updatedAtNow's doc
+	// comment) — sleep past a full second before the update so it lands in
+	// a strictly later second than the batch of creates above, rather than
+	// relying on the id tiebreak to (accidentally) produce the expected
+	// order.
+	time.Sleep(1100 * time.Millisecond)
+
+	// Touch the first-created task last so its updated_at becomes the
+	// newest — desc order should surface it first despite being created
+	// first.
+	_, isErr := callTool(t, a, "torque_task_update", map[string]interface{}{
+		"id":    ids[0],
+		"title": "touched",
+	})
+	require.False(t, isErr)
+
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
+		"sort_by":  "updated_at",
+		"sort_dir": "desc",
+		"limit":    "10",
+	})
+	require.False(t, isErr, "list should not error: %s", text)
+	var env taskListCursorEnvelope
+	parseData(t, text, &env)
+	require.Len(t, env.Items, 5)
+	require.Equal(t, ids[0], env.Items[0]["id"], "most recently updated task should sort first under updated_at desc")
+	require.False(t, env.Meta.HasMore)
+	require.Nil(t, env.Meta.NextCursor)
 }
