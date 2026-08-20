@@ -394,8 +394,21 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 	return a.tasksToEnvelope(tasks, limit, verbose)
 }
 
-func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	id := reqStr(req, "id")
+// buildTaskUpdateInput turns a torque_task_update-shaped request's
+// arguments into a service.TaskUpdateInput using presence-in-payload
+// semantics: a key only changes its field when the caller actually sent it
+// (checked via args[key], not the decoded zero value) — so an explicit
+// empty string clears a nullable scalar while an omitted key leaves the
+// field untouched (FIX-001). This is the single source of truth for what
+// "presence in payload" means for Task's update fields; handleTaskUpdate
+// (single-id, below) and handleTaskBulkUpdate (task_bulk_tools.go,
+// PRIM-003) both call it so single- and bulk-update can never drift apart
+// on semantics.
+//
+// On a validation failure (malformed JSON in one of the blob fields), the
+// second return value is non-nil and the caller must return it as-is
+// without inspecting the (zero-value) TaskUpdateInput.
+func buildTaskUpdateInput(req mcp.CallToolRequest) (service.TaskUpdateInput, *mcp.CallToolResult) {
 	update := sqlstore.TaskUpdate{}
 	args := req.GetArguments()
 
@@ -509,12 +522,14 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 	var scratchObj map[string]any
 	for _, k := range []string{"tools", "files", "escalation_chain", "quality_gates", "deliverables", "depends_on"} {
 		if err := unmarshalBlob(k, &scratchArr); err != nil {
-			return errResult(ErrCodeArgInvalid, err.Error(), k)
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), k)
+			return service.TaskUpdateInput{}, res
 		}
 	}
 	for _, k := range []string{"permissions", "environment", "metadata"} {
 		if err := unmarshalBlob(k, &scratchObj); err != nil {
-			return errResult(ErrCodeArgInvalid, err.Error(), k)
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), k)
+			return service.TaskUpdateInput{}, res
 		}
 	}
 	if ns := nullFromRaw("tools"); ns != nil {
@@ -602,11 +617,21 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 	if reqHasArg(req, "tags") {
 		slugs, err := reqStrSlice(req, "tags")
 		if err != nil {
-			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
+			res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
+			return service.TaskUpdateInput{}, res
 		}
 		if slugs != nil {
 			input.Tags = &slugs
 		}
+	}
+	return input, nil
+}
+
+func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id := reqStr(req, "id")
+	input, errRes := buildTaskUpdateInput(req)
+	if errRes != nil {
+		return errRes, nil
 	}
 
 	if err := a.svc.Task.Update(id, input); err != nil {
