@@ -172,30 +172,38 @@ func (a *Adapter) handleSprintGet(ctx context.Context, req mcp.CallToolRequest) 
 // field was actually set (hasUpdate). Shared by the single-id and bulk
 // handlers (PRIM-003) so their field semantics can never drift apart.
 //
-// Field-detection semantics are preserved exactly as they were before this
-// helper was extracted: name/goal/approval_mode/cost_budget are value-based
-// (a zero value means "not provided" — cost_budget in particular can't be
-// cleared to 0 this way), project_id is presence-based via reqHasArg (an
-// explicit empty string clears it). This mismatch predates ENT-SPRINT and
-// mirrors Task's pre-FIX-001 behavior; fixing it is out of this task's scope
-// (FIX-001 was Task-specific).
+// SWEEP-001: name/goal/approval_mode/cost_budget were previously value-based
+// (a zero value meant "not provided" — cost_budget in particular could never
+// be cleared/set to 0 this way), diverging from project_id's presence-based
+// reqHasArg handling on the same tool and from FIX-001's presence-in-payload
+// rule for Task. Converted to presence-based detection so every field on
+// this tool now follows the same "key present in the call = change this"
+// semantics. name cannot be cleared to empty (SprintService.Update rejects
+// it with a ValidationError, mirroring Task's title guard); goal and
+// approval_mode/cost_budget accept an explicit empty/zero value like their
+// Task counterparts (approval_mode="" is rejected downstream by the existing
+// validApprovalModes check).
 func buildSprintUpdate(req mcp.CallToolRequest) (sqlstore.SprintUpdate, bool) {
 	update := sqlstore.SprintUpdate{}
 	hasUpdate := false
 
-	if v := reqStr(req, "name"); v != "" {
+	if reqHasArg(req, "name") {
+		v := reqStr(req, "name")
 		update.Name = &v
 		hasUpdate = true
 	}
-	if v := reqStr(req, "goal"); v != "" {
+	if reqHasArg(req, "goal") {
+		v := reqStr(req, "goal")
 		update.Goal = &v
 		hasUpdate = true
 	}
-	if v := reqStr(req, "approval_mode"); v != "" {
+	if reqHasArg(req, "approval_mode") {
+		v := reqStr(req, "approval_mode")
 		update.ApprovalMode = &v
 		hasUpdate = true
 	}
-	if v := reqFloat(req, "cost_budget"); v > 0 {
+	if reqHasArg(req, "cost_budget") {
+		v := reqFloat(req, "cost_budget")
 		update.CostBudget = &v
 		hasUpdate = true
 	}

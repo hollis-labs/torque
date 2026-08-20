@@ -79,6 +79,44 @@ func TestEpicUpdateInvalidStatus(t *testing.T) {
 	assert.IsType(t, &service.ValidationError{}, err)
 }
 
+// TestEpicUpdateNameCannotBeCleared verifies EpicService.Update rejects an
+// explicit empty name with a clean ValidationError (SWEEP-001, mirroring
+// TaskService.Update's title guard added for FIX-001) rather than silently
+// persisting an empty name.
+func TestEpicUpdateNameCannotBeCleared(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("epics")
+
+	epic, _ := svc.Epic.Create(service.EpicCreateInput{Name: "Epic"})
+
+	empty := ""
+	err := svc.Epic.Update(epic.ID, service.EpicUpdateInput{Name: &empty})
+	require.Error(t, err)
+	ve, ok := err.(*service.ValidationError)
+	require.True(t, ok, "expected *service.ValidationError, got %T", err)
+	assert.Equal(t, "name", ve.Field)
+
+	got, _ := svc.Epic.Get(epic.ID)
+	assert.Equal(t, "Epic", got.Name, "name must be unchanged after rejected clear")
+}
+
+// TestEpicUpdateDescriptionClear verifies an explicit empty description
+// actually clears the field (SWEEP-001: buildEpicUpdateInput used to treat
+// any empty string as "not provided", silently dropping an explicit clear —
+// same bug class FIX-001 fixed for Task).
+func TestEpicUpdateDescriptionClear(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("epics")
+
+	epic, _ := svc.Epic.Create(service.EpicCreateInput{Name: "Epic", Description: "Some description"})
+
+	empty := ""
+	require.NoError(t, svc.Epic.Update(epic.ID, service.EpicUpdateInput{Description: &empty}))
+
+	got, _ := svc.Epic.Get(epic.ID)
+	assert.Equal(t, "", got.Description)
+}
+
 func TestEpicList(t *testing.T) {
 	svc := setupService(t)
 	svc.Feature.Enable("epics")

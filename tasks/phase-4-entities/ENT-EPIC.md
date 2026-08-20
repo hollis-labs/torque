@@ -94,6 +94,12 @@ confirmed to genuinely pre-exist in `main` — none were rebuilt.
   were left on their existing value-based detection (empty string = not
   provided) — fixing that too was not in this task's acceptance criteria
   and would have been unrelated scope creep.
+  **Update (SWEEP-001):** this mismatch was flagged by the Phase 5
+  consistency sweep and fixed there — `buildEpicUpdateInput` is now
+  presence-based (`reqHasArg`) for name/description/status too, matching
+  Task's FIX-001 semantics, with a new `EpicService.Update` guard rejecting
+  `name=""` (mirroring Task's title guard); see
+  `tasks/phase-5-consistency/SWEEP-001-envelope-and-error-taxonomy-audit.md`.
 - **`archive`/`unarchive`**: new `torque_epic_archive`/
   `torque_epic_unarchive` MCP tools wired onto `EpicService.Archive`/
   `Unarchive`, which already existed (PRIM-004, unchanged by this task).

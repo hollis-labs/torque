@@ -114,6 +114,15 @@ func (s *SprintService) Update(id string, update sqlstore.SprintUpdate) error {
 	if err := s.feature.Require("sprints"); err != nil {
 		return err
 	}
+	// name is the one truly-required field (mirrors Create's implicit
+	// requirement — torque_sprint_create requires it). Now that the MCP
+	// layer detects name presence-based (SWEEP-001, mirroring FIX-001's fix
+	// for Task's title), an explicit "name": "" reaches here and must be
+	// rejected with a clean ValidationError rather than silently persisting
+	// an empty name.
+	if update.Name != nil && *update.Name == "" {
+		return &ValidationError{Field: "name", Message: "name cannot be cleared to empty"}
+	}
 	if update.ApprovalMode != nil && !validApprovalModes[*update.ApprovalMode] {
 		return &ValidationError{
 			Field:   "approval_mode",

@@ -75,6 +75,58 @@ func TestFullStack_EpicUpdate_Priority(t *testing.T) {
 	assert.Equal(t, float64(3), epicRecordPriority(t, got))
 }
 
+// TestFullStack_EpicUpdate_DescriptionClear verifies torque_epic_update's
+// presence-based field detection (SWEEP-001, mirroring FIX-001's fix for
+// Task): an explicit "description": "" must actually clear the field, not
+// be silently dropped as "not provided" the way the pre-fix value-based
+// check (`if v != ""`) did.
+func TestFullStack_EpicUpdate_DescriptionClear(t *testing.T) {
+	a := setupAdapterWithFeatures(t)
+
+	text, isErr := callTool(t, a, "torque_epic_create", map[string]interface{}{
+		"name":        "Epic",
+		"description": "Some description",
+	})
+	require.False(t, isErr)
+	var created map[string]interface{}
+	parseData(t, text, &created)
+	id := created["ID"].(string)
+
+	text, isErr = callTool(t, a, "torque_epic_update", map[string]interface{}{
+		"id":          id,
+		"description": "",
+	})
+	require.False(t, isErr, "update with empty description should succeed: %s", text)
+
+	text, isErr = callTool(t, a, "torque_epic_get", map[string]interface{}{"id": id})
+	require.False(t, isErr)
+	var got map[string]interface{}
+	parseData(t, text, &got)
+	assert.Equal(t, "", got["Description"], "description must clear to empty string")
+}
+
+// TestFullStack_EpicUpdate_NameCannotBeCleared verifies an explicit
+// "name": "" is rejected with error.code=arg_invalid rather than silently
+// persisting (SWEEP-001, mirroring Task's title-cannot-be-cleared guard).
+func TestFullStack_EpicUpdate_NameCannotBeCleared(t *testing.T) {
+	a := setupAdapterWithFeatures(t)
+
+	text, isErr := callTool(t, a, "torque_epic_create", map[string]interface{}{"name": "Named Epic"})
+	require.False(t, isErr)
+	var created map[string]interface{}
+	parseData(t, text, &created)
+	id := created["ID"].(string)
+
+	text, isErr = callTool(t, a, "torque_epic_update", map[string]interface{}{
+		"id":   id,
+		"name": "",
+	})
+	require.True(t, isErr, "update with empty name should fail")
+	code, _, field := parseError(t, text)
+	assert.Equal(t, "arg_invalid", code)
+	assert.Equal(t, "name", field)
+}
+
 // TestFullStack_EpicList_Search is ENT-EPIC's "merged search" acceptance
 // criterion end to end: no separate _search tool, search lives on list.
 func TestFullStack_EpicList_Search(t *testing.T) {

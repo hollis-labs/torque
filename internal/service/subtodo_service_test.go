@@ -213,9 +213,11 @@ func TestTaskService_UpdateSubtodo(t *testing.T) {
 	_, err = svc.Task.UpdateSubtodo(task.ID, "a", &empty, nil)
 	require.Error(t, err)
 
-	// Unknown id rejected.
+	// Unknown id rejected — SWEEP-001: must be *service.NotFoundError (maps
+	// to error.code=not_found), not *service.ValidationError (arg_invalid).
 	_, err = svc.Task.UpdateSubtodo(task.ID, "missing", &newText, nil)
 	require.Error(t, err)
+	assert.IsType(t, &service.NotFoundError{}, err)
 }
 
 func TestTaskService_DeleteSubtodo(t *testing.T) {
@@ -237,7 +239,9 @@ func TestTaskService_DeleteSubtodo(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, got)
 
-	// Unknown id rejected.
+	// Unknown id rejected — SWEEP-001: must be *service.NotFoundError (maps
+	// to error.code=not_found), not *service.ValidationError (arg_invalid).
 	_, err = svc.Task.DeleteSubtodo(task.ID, "missing")
 	require.Error(t, err)
+	assert.IsType(t, &service.NotFoundError{}, err)
 }

@@ -307,6 +307,46 @@ func TestSprintBulkUpdate(t *testing.T) {
 	assert.Equal(t, "Shared goal", got2.Goal)
 }
 
+// TestSprintUpdateNameCannotBeCleared verifies SprintService.Update rejects
+// an explicit empty name with a clean ValidationError (SWEEP-001, mirroring
+// TaskService.Update's title guard added for FIX-001) rather than silently
+// persisting an empty name or falling through to a raw DB error.
+func TestSprintUpdateNameCannotBeCleared(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("sprints")
+
+	s1, _ := svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint A"})
+
+	empty := ""
+	err := svc.Sprint.Update(s1.ID, sqlstore.SprintUpdate{Name: &empty})
+	require.Error(t, err)
+	ve, ok := err.(*service.ValidationError)
+	require.True(t, ok, "expected *service.ValidationError, got %T", err)
+	assert.Equal(t, "name", ve.Field)
+
+	got, _ := svc.Sprint.Get(s1.ID)
+	assert.Equal(t, "Sprint A", got.Name, "name must be unchanged after rejected clear")
+}
+
+// TestSprintUpdateCostBudgetExplicitZero verifies cost_budget can be set to
+// an explicit 0 via SprintService.Update (SWEEP-001: buildSprintUpdate used
+// to treat any zero value as "not provided", so an explicit 0 was silently
+// dropped — same bug class FIX-001 fixed for Task).
+func TestSprintUpdateCostBudgetExplicitZero(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("sprints")
+
+	budget := 50.0
+	s1, _ := svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint A", CostBudget: &budget})
+
+	zero := 0.0
+	require.NoError(t, svc.Sprint.Update(s1.ID, sqlstore.SprintUpdate{CostBudget: &zero}))
+
+	got, _ := svc.Sprint.Get(s1.ID)
+	require.True(t, got.CostBudget.Valid)
+	assert.Equal(t, 0.0, got.CostBudget.Float64)
+}
+
 // TestSprintBulkUpdateWithStatus covers the combined status-transition +
 // field-update path handleSprintBulkUpdate exercises, mirroring
 // handleSprintUpdate's single-item semantics (transition first, then field
