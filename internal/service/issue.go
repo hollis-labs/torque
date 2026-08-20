@@ -65,31 +65,56 @@ func (s *IssueService) Get(id string) (*sqlstore.TaskRecord, error) {
 	return task, nil
 }
 
-// List returns issue rows, optionally narrowed to one project.
-func (s *IssueService) List(projectID string) ([]sqlstore.TaskRecord, error) {
-	if projectID != "" {
-		if err := s.requireProject(projectID); err != nil {
-			return nil, err
-		}
-	}
-	return s.tasks.List(sqlstore.TaskFilter{Kind: "issue", ProjectID: projectID})
+// IssueListInput is the merged list/search filter for issues (ADR-0004 §3:
+// "Search folds into list where it's the same query" — Issue's `_search`
+// tool ran the identical query `_list`'s `search` param already ran, same
+// redundancy pattern as Task). Query is optional: empty means a pure
+// filtered list; non-empty adds a substring match over id/title/description
+// (sqlstore.TaskFilter.Search semantics), exactly what the old dedicated
+// Search method did.
+type IssueListInput struct {
+	ProjectID string
+	Status    string
+	Query     string
+
+	// Limit is always pushed to the DB layer (sqlstore.TaskFilter.Limit) —
+	// fixing the pre-merge bug where List never set Limit and the MCP
+	// adapter fetched every row before truncating in Go. Limit<=0 means
+	// "no limit" (sqlstore.ListTasks only applies LIMIT when > 0),
+	// preserving the HTTP layer's existing unbounded-list behavior.
+	Limit int
+
+	// Sort + cursor pagination (PRIM-001/PRIM-002). Callers that don't pass
+	// these get sqlstore.ListTasks' hardcoded `priority ASC, created_at ASC`
+	// default order, matching pre-merge List/Search behavior.
+	SortBy         string
+	SortDir        string
+	AfterSortValue string
+	AfterID        string
 }
 
-// Search returns issue rows whose ID, title, or body match query.
-func (s *IssueService) Search(query, projectID string, limit int) ([]sqlstore.TaskRecord, error) {
-	if query == "" {
-		return nil, &ValidationError{Field: "query", Message: "query is required"}
-	}
-	if projectID != "" {
-		if err := s.requireProject(projectID); err != nil {
+// List returns issue rows honoring the project/status filters and optional
+// substring search, with PRIM-001/PRIM-002 cursor pagination and sort —
+// merged replacement for the former List(projectID)/Search(query,
+// projectID, limit) pair (ADR-0004 §3; no compat guarantee has been made to
+// external callers yet per the ADR's Consequences section, so the redundant
+// pair is removed rather than kept alongside this).
+func (s *IssueService) List(input IssueListInput) ([]sqlstore.TaskRecord, error) {
+	if input.ProjectID != "" {
+		if err := s.requireProject(input.ProjectID); err != nil {
 			return nil, err
 		}
 	}
 	return s.tasks.List(sqlstore.TaskFilter{
-		Kind:      "issue",
-		ProjectID: projectID,
-		Search:    query,
-		Limit:     limit,
+		Kind:           "issue",
+		ProjectID:      input.ProjectID,
+		Status:         input.Status,
+		Search:         input.Query,
+		Limit:          input.Limit,
+		SortBy:         input.SortBy,
+		SortDir:        input.SortDir,
+		AfterSortValue: input.AfterSortValue,
+		AfterID:        input.AfterID,
 	})
 }
 
@@ -121,6 +146,18 @@ func (s *IssueService) Update(id string, input IssueUpdateInput) error {
 		update.ProjectID = &sql.NullString{String: *input.ProjectID, Valid: true}
 	}
 	return s.tasks.Update(id, TaskUpdateInput{TaskUpdate: update})
+}
+
+// BulkUpdate applies the same partial update to many issues (PRIM-003,
+// mirroring TaskService.BulkUpdate in task_bulk.go). Per-item semantics are
+// identical to Update — including its kind=issue scoping via Get, so an id
+// that names a non-issue task row fails that item with a domain error
+// rather than silently editing it — and a failure on one id does not stop
+// the rest.
+func (s *IssueService) BulkUpdate(ids []string, input IssueUpdateInput) ([]string, []BulkItemError) {
+	return RunBulk(ids, func(id string) error {
+		return s.Update(id, input)
+	})
 }
 
 func (s *IssueService) requireProject(projectID string) error {
