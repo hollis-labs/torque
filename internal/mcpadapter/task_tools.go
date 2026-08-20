@@ -80,7 +80,7 @@ Example: {"id":"T-123"}`),
 	), a.handleTaskGet)
 
 	a.addTool(mcp.NewTool("torque_task_list",
-		mcp.WithDescription(`List tasks with optional status/priority/facet filters; ordered updated_at DESC.
+		mcp.WithDescription(`List tasks with optional status/priority/facet filters; ordered priority ASC, created_at ASC.
 Use for browsing or filtered cohorts; prefer torque_task_search for free-text queries and torque_task_get when you already know the ID. Default returns ~150B briefTask records (lowercase JSON) so large fan-outs fit under the 100KB cap; pass verbose="true" for full TaskRecord columns.
 Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, hint?}}.
 Example: {"status":"doing","limit":"50"}`),

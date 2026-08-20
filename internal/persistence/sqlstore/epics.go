@@ -60,7 +60,7 @@ func (s *Store) GetEpic(id string) (*EpicRecord, error) {
 	return e, err
 }
 
-// ListEpics returns epics matching the filter, ordered by created_at DESC.
+// ListEpics returns epics matching the filter, ordered by updated_at DESC.
 func (s *Store) ListEpics(f EpicFilter) ([]EpicRecord, error) {
 	query := `SELECT id, name, description, status, priority, project_id, created_at, updated_at FROM epics`
 
@@ -79,7 +79,7 @@ func (s *Store) ListEpics(f EpicFilter) ([]EpicRecord, error) {
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
-	query += " ORDER BY created_at DESC"
+	query += " ORDER BY updated_at DESC"
 
 	if f.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", f.Limit)
