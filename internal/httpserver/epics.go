@@ -36,7 +36,7 @@ func epicsJSON(epics []sqlstore.EpicRecord) []map[string]interface{} {
 func (s *Server) listEpics(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	projectID := r.URL.Query().Get("project_id")
-	epics, err := s.svc.Epic.List(status, projectID)
+	epics, err := s.svc.Epic.List(status, projectID, false)
 	if err != nil {
 		if _, ok := err.(*service.FeatureDisabledError); ok {
 			writeError(w, http.StatusNotFound, err.Error())

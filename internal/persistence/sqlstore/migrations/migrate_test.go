@@ -294,4 +294,34 @@ func TestMigrationsApply(t *testing.T) {
 	// Existing epics columns (priority, project_id from 004) must survive the rebuild.
 	_, err = db.Exec(`SELECT id, name, description, status, priority, project_id, created_at, updated_at FROM epics LIMIT 0`)
 	require.NoError(t, err, "epics columns should be intact after migration 027's table rebuild")
+
+	// Verify 030 added nullable archived_at to projects, epics, sprints
+	// (PRIM-004 archive primitive). NULL = active; existing rows are
+	// unaffected (no backfill).
+	_, err = db.Exec(`SELECT archived_at FROM projects LIMIT 0`)
+	require.NoError(t, err, "projects.archived_at should exist after migration 030")
+	_, err = db.Exec(`SELECT archived_at FROM epics LIMIT 0`)
+	require.NoError(t, err, "epics.archived_at should exist after migration 030")
+	_, err = db.Exec(`SELECT archived_at FROM sprints LIMIT 0`)
+	require.NoError(t, err, "sprints.archived_at should exist after migration 030")
+
+	_, err = db.Exec(`INSERT INTO projects (id, name, repo_path) VALUES ('T27-P', 'p', '/tmp')`)
+	require.NoError(t, err)
+	var archivedAt sql.NullTime
+	err = db.QueryRow(`SELECT archived_at FROM projects WHERE id = 'T27-P'`).Scan(&archivedAt)
+	require.NoError(t, err)
+	require.False(t, archivedAt.Valid, "new project rows should default to NULL archived_at")
+
+	archIdxRows, err := db.Query(`SELECT name, tbl_name FROM sqlite_master WHERE type='index' AND tbl_name IN ('projects', 'epics', 'sprints')`)
+	require.NoError(t, err)
+	defer archIdxRows.Close()
+	archIdx := map[string]bool{}
+	for archIdxRows.Next() {
+		var n, tbl string
+		require.NoError(t, archIdxRows.Scan(&n, &tbl))
+		archIdx[n] = true
+	}
+	require.True(t, archIdx["idx_projects_archived"], "idx_projects_archived should exist")
+	require.True(t, archIdx["idx_epics_archived"], "idx_epics_archived should exist")
+	require.True(t, archIdx["idx_sprints_archived"], "idx_sprints_archived should exist")
 }

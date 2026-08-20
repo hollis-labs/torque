@@ -97,11 +97,13 @@ func (s *SprintService) Get(id string) (*sqlstore.SprintRecord, error) {
 }
 
 // List returns sprints optionally filtered by status and projectID.
-func (s *SprintService) List(status, projectID string) ([]sqlstore.SprintRecord, error) {
+// includeArchived=false (the default) excludes archived rows; pass true to
+// surface them too.
+func (s *SprintService) List(status, projectID string, includeArchived bool) ([]sqlstore.SprintRecord, error) {
 	if err := s.feature.Require("sprints"); err != nil {
 		return nil, err
 	}
-	return s.store.ListSprints(sqlstore.SprintFilter{Status: status, ProjectID: projectID})
+	return s.store.ListSprints(sqlstore.SprintFilter{Status: status, ProjectID: projectID, IncludeArchived: includeArchived})
 }
 
 // Update applies a partial update to a sprint.
@@ -124,6 +126,23 @@ func (s *SprintService) Delete(id string) error {
 		return err
 	}
 	return s.store.DeleteSprint(id)
+}
+
+// Archive soft-deletes a sprint by setting archived_at. Does not change
+// status — archiving is orthogonal to the sprint's workflow state.
+func (s *SprintService) Archive(id string) error {
+	if err := s.feature.Require("sprints"); err != nil {
+		return err
+	}
+	return s.store.ArchiveSprint(id)
+}
+
+// Unarchive restores a previously archived sprint.
+func (s *SprintService) Unarchive(id string) error {
+	if err := s.feature.Require("sprints"); err != nil {
+		return err
+	}
+	return s.store.UnarchiveSprint(id)
 }
 
 // Transition moves a sprint to a new status if the FSM allows it.

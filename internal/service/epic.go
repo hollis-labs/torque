@@ -80,11 +80,13 @@ func (s *EpicService) Get(id string) (*sqlstore.EpicRecord, error) {
 }
 
 // List returns epics optionally filtered by status and projectID.
-func (s *EpicService) List(status, projectID string) ([]sqlstore.EpicRecord, error) {
+// includeArchived=false (the default) excludes archived rows; pass true to
+// surface them too.
+func (s *EpicService) List(status, projectID string, includeArchived bool) ([]sqlstore.EpicRecord, error) {
 	if err := s.feature.Require("epics"); err != nil {
 		return nil, err
 	}
-	return s.store.ListEpics(sqlstore.EpicFilter{Status: status, ProjectID: projectID})
+	return s.store.ListEpics(sqlstore.EpicFilter{Status: status, ProjectID: projectID, IncludeArchived: includeArchived})
 }
 
 // Update applies a partial update to an epic.
@@ -116,4 +118,21 @@ func (s *EpicService) Delete(id string) error {
 		return err
 	}
 	return s.store.DeleteEpic(id)
+}
+
+// Archive soft-deletes an epic by setting archived_at. Does not change
+// status — archiving an epic isn't the same fact as the epic being "done".
+func (s *EpicService) Archive(id string) error {
+	if err := s.feature.Require("epics"); err != nil {
+		return err
+	}
+	return s.store.ArchiveEpic(id)
+}
+
+// Unarchive restores a previously archived epic.
+func (s *EpicService) Unarchive(id string) error {
+	if err := s.feature.Require("epics"); err != nil {
+		return err
+	}
+	return s.store.UnarchiveEpic(id)
 }

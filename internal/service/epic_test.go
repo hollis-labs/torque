@@ -86,7 +86,7 @@ func TestEpicList(t *testing.T) {
 	svc.Epic.Create(service.EpicCreateInput{Name: "Epic A"})
 	svc.Epic.Create(service.EpicCreateInput{Name: "Epic B"})
 
-	epics, err := svc.Epic.List("", "")
+	epics, err := svc.Epic.List("", "", false)
 	require.NoError(t, err)
 	assert.Len(t, epics, 2)
 }
@@ -100,10 +100,56 @@ func TestEpicListFilterStatus(t *testing.T) {
 	inactive := "inactive"
 	svc.Epic.Update(e2.ID, service.EpicUpdateInput{Status: &inactive})
 
-	epics, err := svc.Epic.List("active", "")
+	epics, err := svc.Epic.List("active", "", false)
 	require.NoError(t, err)
 	assert.Len(t, epics, 1)
 	assert.Equal(t, "Active Epic", epics[0].Name)
+}
+
+// TestEpicArchiveDoesNotChangeStatus covers PRIM-004 AC: archiving is
+// independent of status — archiving an epic isn't the same fact as the
+// epic being "done".
+func TestEpicArchiveDoesNotChangeStatus(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("epics")
+
+	epic, err := svc.Epic.Create(service.EpicCreateInput{Name: "Epic 1"})
+	require.NoError(t, err)
+	require.Equal(t, "active", epic.Status)
+
+	require.NoError(t, svc.Epic.Archive(epic.ID))
+
+	got, err := svc.Epic.Get(epic.ID)
+	require.NoError(t, err)
+	assert.True(t, got.ArchivedAt.Valid)
+	assert.Equal(t, "active", got.Status)
+
+	require.NoError(t, svc.Epic.Unarchive(epic.ID))
+
+	got, err = svc.Epic.Get(epic.ID)
+	require.NoError(t, err)
+	assert.False(t, got.ArchivedAt.Valid)
+	assert.Equal(t, "active", got.Status)
+}
+
+// TestEpicListExcludesArchivedByDefault covers PRIM-004 AC: list filters
+// default to excluding archived rows unless include_archived is passed.
+func TestEpicListExcludesArchivedByDefault(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("epics")
+
+	e1, _ := svc.Epic.Create(service.EpicCreateInput{Name: "Epic A"})
+	e2, _ := svc.Epic.Create(service.EpicCreateInput{Name: "Epic B"})
+	require.NoError(t, svc.Epic.Archive(e2.ID))
+
+	epics, err := svc.Epic.List("", "", false)
+	require.NoError(t, err)
+	require.Len(t, epics, 1)
+	assert.Equal(t, e1.ID, epics[0].ID)
+
+	all, err := svc.Epic.List("", "", true)
+	require.NoError(t, err)
+	assert.Len(t, all, 2)
 }
 
 func TestEpicDelete(t *testing.T) {

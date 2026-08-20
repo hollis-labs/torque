@@ -7,7 +7,9 @@ import (
 	"time"
 )
 
-// SprintRecord mirrors the sprints table row.
+// SprintRecord mirrors the sprints table row. ArchivedAt is NULL for active
+// sprints; non-NULL means the sprint is archived (kept for audit, hidden
+// from active filters). Archiving is independent of Status.
 type SprintRecord struct {
 	ID           string
 	Name         string
@@ -18,16 +20,20 @@ type SprintRecord struct {
 	ProjectID    sql.NullString
 	StartedAt    sql.NullTime
 	EndedAt      sql.NullTime
+	ArchivedAt   sql.NullTime
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
 
 // SprintFilter holds optional filter criteria for ListSprints.
+// IncludeArchived defaults to false: archived rows (archived_at IS NOT
+// NULL) are excluded unless the caller explicitly asks for them.
 type SprintFilter struct {
-	Status    string
-	ProjectID string
-	Limit     int
-	Offset    int
+	Status          string
+	ProjectID       string
+	IncludeArchived bool
+	Limit           int
+	Offset          int
 }
 
 // SprintUpdate holds optional fields to update; nil pointer = no change.
@@ -62,11 +68,11 @@ func (s *Store) GetSprint(id string) (*SprintRecord, error) {
 	sp := &SprintRecord{}
 	err := s.ReadDB().QueryRow(`SELECT
 		id, name, goal, status, approval_mode, cost_budget, project_id,
-		started_at, ended_at, created_at, updated_at
+		started_at, ended_at, archived_at, created_at, updated_at
 	FROM sprints WHERE id = ?`, id).Scan(
 		&sp.ID, &sp.Name, &sp.Goal, &sp.Status, &sp.ApprovalMode,
 		&sp.CostBudget, &sp.ProjectID, &sp.StartedAt, &sp.EndedAt,
-		&sp.CreatedAt, &sp.UpdatedAt,
+		&sp.ArchivedAt, &sp.CreatedAt, &sp.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("sprint %s not found", id)
@@ -75,9 +81,11 @@ func (s *Store) GetSprint(id string) (*SprintRecord, error) {
 }
 
 // ListSprints returns sprints matching the filter, ordered by updated_at DESC.
+// Archived rows (archived_at IS NOT NULL) are excluded unless
+// f.IncludeArchived is true.
 func (s *Store) ListSprints(f SprintFilter) ([]SprintRecord, error) {
 	query := `SELECT id, name, goal, status, approval_mode, cost_budget, project_id,
-		started_at, ended_at, created_at, updated_at FROM sprints`
+		started_at, ended_at, archived_at, created_at, updated_at FROM sprints`
 
 	var conditions []string
 	var args []interface{}
@@ -89,6 +97,9 @@ func (s *Store) ListSprints(f SprintFilter) ([]SprintRecord, error) {
 	if f.ProjectID != "" {
 		conditions = append(conditions, "project_id = ?")
 		args = append(args, f.ProjectID)
+	}
+	if !f.IncludeArchived {
+		conditions = append(conditions, "archived_at IS NULL")
 	}
 
 	if len(conditions) > 0 {
@@ -115,7 +126,7 @@ func (s *Store) ListSprints(f SprintFilter) ([]SprintRecord, error) {
 		if err := rows.Scan(
 			&sp.ID, &sp.Name, &sp.Goal, &sp.Status, &sp.ApprovalMode,
 			&sp.CostBudget, &sp.ProjectID, &sp.StartedAt, &sp.EndedAt,
-			&sp.CreatedAt, &sp.UpdatedAt,
+			&sp.ArchivedAt, &sp.CreatedAt, &sp.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -183,6 +194,41 @@ func (s *Store) TransitionSprint(id, newStatus string) error {
 		return err
 	}
 	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("sprint %s not found", id)
+	}
+	return nil
+}
+
+// ArchiveSprint sets archived_at = CURRENT_TIMESTAMP. Idempotent: calling
+// archive on an already-archived sprint refreshes the timestamp. Does not
+// touch status — archiving is orthogonal to the sprint's workflow state.
+func (s *Store) ArchiveSprint(id string) error {
+	res, err := s.db.Exec(
+		`UPDATE sprints SET archived_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("sprint %s not found", id)
+	}
+	return nil
+}
+
+// UnarchiveSprint clears archived_at, restoring the sprint to active
+// (in the archive sense; status is untouched).
+func (s *Store) UnarchiveSprint(id string) error {
+	res, err := s.db.Exec(
+		`UPDATE sprints SET archived_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
 	if n == 0 {
 		return fmt.Errorf("sprint %s not found", id)
 	}

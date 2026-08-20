@@ -53,7 +53,10 @@ func (a *Adapter) handleProjectCreate(ctx context.Context, req mcp.CallToolReque
 
 func (a *Adapter) handleProjectList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	verbose := reqStrBool(req, "verbose")
-	projects, err := a.svc.Project.List("")
+	// Wiring an include_archived param into this tool's schema is Phase 4's
+	// job (PRIM-004 scope note); default to excluding archived rows here,
+	// which is a no-op today since nothing can set archived_at yet.
+	projects, err := a.svc.Project.List("", false)
 	if err != nil {
 		return errFromService(err)
 	}

@@ -64,7 +64,7 @@ func projectsJSON(projects []sqlstore.ProjectRecord) []map[string]interface{} {
 
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
-	projects, err := s.svc.Project.List(status)
+	projects, err := s.svc.Project.List(status, false)
 	if err != nil {
 		if _, ok := err.(*service.FeatureDisabledError); ok {
 			writeError(w, http.StatusNotFound, err.Error())
