@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"time"
 )
 
 // Subtodo is one checklist entry on a task. See migration 011.
@@ -71,7 +70,7 @@ func (s *Store) SetSubtodos(taskID string, items []Subtodo) error {
 	}
 	res, err := s.db.Exec(
 		`UPDATE tasks SET subtodos = ?, updated_at = ? WHERE id = ?`,
-		arg, time.Now().UTC(), taskID,
+		arg, updatedAtNow(), taskID,
 	)
 	if err != nil {
 		return err

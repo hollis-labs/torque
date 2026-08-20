@@ -362,12 +362,12 @@ func (w *WriteTx) transitionTask(id, newStatus string, reason *string) (string, 
 	if reason != nil {
 		res, err = w.tx.Exec(
 			`UPDATE tasks SET status = ?, blocked_reason = ?, updated_at = ? WHERE id = ?`,
-			newStatus, *reason, time.Now().UTC(), id,
+			newStatus, *reason, updatedAtNow(), id,
 		)
 	} else {
 		res, err = w.tx.Exec(
 			`UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?`,
-			newStatus, time.Now().UTC(), id,
+			newStatus, updatedAtNow(), id,
 		)
 	}
 	if err != nil {
@@ -397,7 +397,7 @@ func (w *WriteTx) GetTaskRetryCount(id string) (int, error) {
 
 // IncrementTaskRetryCount bumps retry_count by one.
 func (w *WriteTx) IncrementTaskRetryCount(id string) error {
-	res, err := w.tx.Exec(`UPDATE tasks SET retry_count = retry_count + 1, updated_at = ? WHERE id = ?`, time.Now().UTC(), id)
+	res, err := w.tx.Exec(`UPDATE tasks SET retry_count = retry_count + 1, updated_at = ? WHERE id = ?`, updatedAtNow(), id)
 	if err != nil {
 		return err
 	}
@@ -425,7 +425,7 @@ func (w *WriteTx) GetTaskEscalationStep(id string) (int, error) {
 
 // SetTaskEscalationStep updates escalation_step.
 func (w *WriteTx) SetTaskEscalationStep(id string, step int) error {
-	res, err := w.tx.Exec(`UPDATE tasks SET escalation_step = ?, updated_at = ? WHERE id = ?`, step, time.Now().UTC(), id)
+	res, err := w.tx.Exec(`UPDATE tasks SET escalation_step = ?, updated_at = ? WHERE id = ?`, step, updatedAtNow(), id)
 	if err != nil {
 		return err
 	}
@@ -441,7 +441,7 @@ func (w *WriteTx) SetTaskEscalationStep(id string, step int) error {
 
 // SetTaskAgentProfile updates agent_profile for the task.
 func (w *WriteTx) SetTaskAgentProfile(id, agentProfile string) error {
-	res, err := w.tx.Exec(`UPDATE tasks SET agent_profile = ?, updated_at = ? WHERE id = ?`, agentProfile, time.Now().UTC(), id)
+	res, err := w.tx.Exec(`UPDATE tasks SET agent_profile = ?, updated_at = ? WHERE id = ?`, agentProfile, updatedAtNow(), id)
 	if err != nil {
 		return err
 	}
@@ -557,7 +557,7 @@ func (w *WriteTx) CreateTask(t *TaskRecord) error {
 // applyDefaults: callers that genuinely want a zero-retry task call this
 // after CreateTask in the same transaction.
 func (w *WriteTx) SetTaskMaxRetries(id string, maxRetries int) error {
-	res, err := w.tx.Exec(`UPDATE tasks SET max_retries = ?, updated_at = ? WHERE id = ?`, maxRetries, time.Now().UTC(), id)
+	res, err := w.tx.Exec(`UPDATE tasks SET max_retries = ?, updated_at = ? WHERE id = ?`, maxRetries, updatedAtNow(), id)
 	if err != nil {
 		return err
 	}

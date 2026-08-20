@@ -144,6 +144,8 @@ func errResult(code ErrorCode, message, field string) (*mcp.CallToolResult, erro
 //
 // Rules (applied in order; first match wins):
 //   - sqlstore "not found" sentinels → not_found
+//   - sqlstore.ErrInvalidCursor (PRIM-001/DEC-001 cursor pagination) →
+//     arg_invalid (field=cursor)
 //   - *service.NotFoundError → not_found
 //   - *service.ValidationError → arg_invalid (with field)
 //   - *service.RepoPathError → arg_invalid (field=repo_path)
@@ -176,6 +178,12 @@ func mapServiceError(err error) (ErrorCode, string, string) {
 	}
 	if errors.Is(err, sqlstore.ErrTemplateReferenced) {
 		return ErrCodeConflict, err.Error(), ""
+	}
+	// PRIM-001/DEC-001: a cursor whose sort value doesn't type-convert for
+	// its sort column (malformed/tampered token) is a caller input fault,
+	// not a server fault.
+	if errors.Is(err, sqlstore.ErrInvalidCursor) {
+		return ErrCodeArgInvalid, err.Error(), "cursor"
 	}
 
 	// Typed service errors.
