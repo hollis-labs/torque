@@ -28,9 +28,29 @@ type EpicRecord struct {
 type EpicFilter struct {
 	Status          string
 	ProjectID       string
+	Search          string // case-insensitive substring match on id, name, description
 	IncludeArchived bool
 	Limit           int
 	Offset          int
+
+	// Sort + cursor pagination (PRIM-002 / PRIM-001, DEC-001's binding
+	// spec), mirroring TaskFilter's SortBy/SortDir/AfterSortValue/AfterID
+	// (internal/persistence/sqlstore/tasks.go). SortBy/SortDir are expected
+	// to already be validated by the caller (mcpadapter validates against
+	// an explicit allow-list via internal/service/pagination.ValidateSortBy
+	// before this filter is built) — ListEpics does not itself reject an
+	// unrecognized SortBy, it just treats it the same as "" (see
+	// epicSortColumn). Leaving SortBy empty preserves the original
+	// hardcoded `updated_at DESC` order for callers that haven't adopted
+	// the primitive (HTTP /api/v1/epics).
+	//
+	// AfterSortValue/AfterID decode DEC-001's opaque cursor token: the
+	// string-encoded sort-column value and id of the last row the caller
+	// already saw. Both empty means "first page".
+	SortBy         string
+	SortDir        string
+	AfterSortValue string
+	AfterID        string
 }
 
 // EpicUpdate holds optional fields to update; nil pointer = no change.
@@ -66,9 +86,47 @@ func (s *Store) GetEpic(id string) (*EpicRecord, error) {
 	return e, err
 }
 
-// ListEpics returns epics matching the filter, ordered by updated_at DESC.
-// Archived rows (archived_at IS NOT NULL) are excluded unless
-// f.IncludeArchived is true.
+// epicSortColumn maps a validated sort_by value to its epics column name.
+// Returns "" for an empty or unrecognized sortBy — treated as "no sort_by
+// supplied", which preserves ListEpics' original hardcoded default order
+// (see the ORDER BY branch below). Allow-list matches PRIM-002's guidance
+// for Epic/Sprint/Project (name, status, updated_at, created_at) —
+// intentionally excludes priority, which is not on that documented list.
+func epicSortColumn(sortBy string) string {
+	switch sortBy {
+	case "name", "status", "updated_at", "created_at":
+		return sortBy
+	default:
+		return ""
+	}
+}
+
+// epicCursorArg converts a cursor's string-encoded sort value (DEC-001's
+// `sv` field) into the correctly-typed SQL bind argument for sortBy's
+// column. See taskCursorArg (tasks.go) for the full rationale on binding
+// updated_at/created_at as the original string rather than a re-derived
+// time.Time.
+func epicCursorArg(sortBy, sv string) (any, error) {
+	switch sortBy {
+	case "name", "status":
+		return sv, nil
+	case "updated_at", "created_at":
+		if _, err := time.Parse(SQLiteDatetimeLayout, sv); err != nil {
+			return nil, fmt.Errorf("%w: sort value for %s must match %q: %v", ErrInvalidCursor, sortBy, SQLiteDatetimeLayout, err)
+		}
+		return sv, nil
+	default:
+		return nil, fmt.Errorf("%w: unsupported sort_by %q", ErrInvalidCursor, sortBy)
+	}
+}
+
+// ListEpics returns epics matching the filter. Default order (f.SortBy ==
+// "") is updated_at DESC — the order torque_epic_list's docstring
+// describes. When f.SortBy is set (PRIM-002), order becomes `<sort column>
+// <SortDir>, id ASC` and, if f.AfterID is also set, results are
+// additionally filtered to rows after the cursor's (sort value, id)
+// position (PRIM-001/DEC-001 keyset pagination). Archived rows
+// (archived_at IS NOT NULL) are excluded unless f.IncludeArchived is true.
 func (s *Store) ListEpics(f EpicFilter) ([]EpicRecord, error) {
 	query := `SELECT id, name, description, status, priority, project_id, archived_at, created_at, updated_at FROM epics`
 
@@ -86,11 +144,45 @@ func (s *Store) ListEpics(f EpicFilter) ([]EpicRecord, error) {
 	if !f.IncludeArchived {
 		conditions = append(conditions, "archived_at IS NULL")
 	}
+	if f.Search != "" {
+		// SQLite's LIKE is case-insensitive for ASCII by default.
+		pattern := "%" + f.Search + "%"
+		conditions = append(conditions, "(id LIKE ? OR name LIKE ? OR description LIKE ?)")
+		args = append(args, pattern, pattern, pattern)
+	}
+
+	// PRIM-002 sort column + PRIM-001 cursor predicate.
+	sortCol := epicSortColumn(f.SortBy)
+	desc := strings.EqualFold(f.SortDir, "desc")
+	if sortCol != "" && f.AfterID != "" {
+		arg, err := epicCursorArg(f.SortBy, f.AfterSortValue)
+		if err != nil {
+			return nil, err
+		}
+		cmp := ">"
+		if desc {
+			cmp = "<"
+		}
+		// Tuple comparison (sortCol, id) > (arg, AfterID), or the two-clause
+		// equivalent below — tiebreak on id ascending regardless of
+		// SortDir, per DEC-001.
+		conditions = append(conditions, fmt.Sprintf("(%s %s ? OR (%s = ? AND id > ?))", sortCol, cmp, sortCol))
+		args = append(args, arg, arg, f.AfterID)
+	}
 
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
-	query += " ORDER BY updated_at DESC"
+
+	if sortCol != "" {
+		dir := "ASC"
+		if desc {
+			dir = "DESC"
+		}
+		query += fmt.Sprintf(" ORDER BY %s %s, id ASC", sortCol, dir)
+	} else {
+		query += " ORDER BY updated_at DESC"
+	}
 
 	if f.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", f.Limit)

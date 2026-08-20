@@ -2,7 +2,9 @@ package sqlstore_test
 
 import (
 	"database/sql"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/stretchr/testify/assert"
@@ -218,6 +220,98 @@ func TestDeleteEpicRollsBackOnTaskCleanupFailure(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, task.EpicID.Valid)
 	assert.Equal(t, "EP-20260407-0001", task.EpicID.String)
+}
+
+// TestListEpicsFilterBySearch is ENT-EPIC's "merged search" acceptance
+// criterion at the store layer: a case-insensitive substring match on
+// id/name/description.
+func TestListEpicsFilterBySearch(t *testing.T) {
+	store := setupTestStore(t)
+
+	store.CreateEpic(&sqlstore.EpicRecord{ID: "EP-20260407-0001", Name: "Auth Overhaul", Description: "Replace entire auth stack"})
+	store.CreateEpic(&sqlstore.EpicRecord{ID: "EP-20260407-0002", Name: "Billing Rewrite", Description: "New invoicing pipeline"})
+
+	epics, err := store.ListEpics(sqlstore.EpicFilter{Search: "auth"})
+	require.NoError(t, err)
+	require.Len(t, epics, 1)
+	assert.Equal(t, "EP-20260407-0001", epics[0].ID)
+
+	epics, err = store.ListEpics(sqlstore.EpicFilter{Search: "invoicing"})
+	require.NoError(t, err)
+	require.Len(t, epics, 1)
+	assert.Equal(t, "EP-20260407-0002", epics[0].ID)
+}
+
+// TestListEpics_DefaultOrderUnchangedWithoutSortBy locks the pre-PRIM-002
+// default (updated_at DESC) when no sort_by is supplied.
+func TestListEpics_DefaultOrderUnchangedWithoutSortBy(t *testing.T) {
+	store := setupTestStore(t)
+
+	require.NoError(t, store.CreateEpic(&sqlstore.EpicRecord{ID: "EP-20260407-0001", Name: "First"}))
+	time.Sleep(1100 * time.Millisecond)
+	require.NoError(t, store.CreateEpic(&sqlstore.EpicRecord{ID: "EP-20260407-0002", Name: "Second"}))
+
+	epics, err := store.ListEpics(sqlstore.EpicFilter{})
+	require.NoError(t, err)
+	require.Len(t, epics, 2)
+	assert.Equal(t, "EP-20260407-0002", epics[0].ID, "most recently updated epic first")
+	assert.Equal(t, "EP-20260407-0001", epics[1].ID)
+}
+
+// TestListEpics_SortByName_CursorTiebreakOnID is PRIM-001/PRIM-002's
+// acceptance criterion at the store layer: with SortBy="name" and many rows
+// sharing the same name, cursor pagination (AfterSortValue + AfterID) must
+// walk every row exactly once via the id tiebreak.
+func TestListEpics_SortByName_CursorTiebreakOnID(t *testing.T) {
+	store := setupTestStore(t)
+
+	const total = 7
+	var ids []string
+	for i := 0; i < total; i++ {
+		id := fmt.Sprintf("EP-20260407-%04d", i+1)
+		require.NoError(t, store.CreateEpic(&sqlstore.EpicRecord{ID: id, Name: "Same Name"}))
+		ids = append(ids, id)
+	}
+
+	var seen []string
+	filter := sqlstore.EpicFilter{SortBy: "name", SortDir: "asc", Limit: 3}
+	for {
+		page, err := store.ListEpics(filter)
+		require.NoError(t, err)
+		if len(page) == 0 {
+			break
+		}
+		for _, e := range page {
+			seen = append(seen, e.ID)
+		}
+		last := page[len(page)-1]
+		filter.AfterSortValue = last.Name
+		filter.AfterID = last.ID
+		if len(page) < filter.Limit {
+			break
+		}
+	}
+
+	assert.Equal(t, ids, seen, "cursor paging over duplicate name values must visit every row exactly once, in id order")
+}
+
+// TestListEpics_InvalidCursorSortValue verifies a malformed cursor sort
+// value (unparsable as SQLiteDatetimeLayout for the "updated_at" column)
+// surfaces as sqlstore.ErrInvalidCursor, which mcpadapter.mapServiceError
+// maps to arg_invalid rather than an internal error.
+func TestListEpics_InvalidCursorSortValue(t *testing.T) {
+	store := setupTestStore(t)
+
+	require.NoError(t, store.CreateEpic(&sqlstore.EpicRecord{ID: "EP-20260407-0001", Name: "Epic"}))
+
+	_, err := store.ListEpics(sqlstore.EpicFilter{
+		SortBy:         "updated_at",
+		SortDir:        "asc",
+		AfterSortValue: "not-a-timestamp",
+		AfterID:        "EP-20260407-0001",
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, sqlstore.ErrInvalidCursor)
 }
 
 func TestNextEpicID(t *testing.T) {

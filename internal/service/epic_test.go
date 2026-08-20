@@ -152,6 +152,103 @@ func TestEpicListExcludesArchivedByDefault(t *testing.T) {
 	assert.Len(t, all, 2)
 }
 
+// TestEpicListPaginatedSearch covers ENT-EPIC's merged-search acceptance
+// criterion at the service layer.
+func TestEpicListPaginatedSearch(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("epics")
+
+	svc.Epic.Create(service.EpicCreateInput{Name: "Auth Overhaul", Description: "Replace entire auth stack"})
+	svc.Epic.Create(service.EpicCreateInput{Name: "Billing Rewrite", Description: "New invoicing pipeline"})
+
+	epics, err := svc.Epic.ListPaginated(service.EpicListInput{Search: "auth"})
+	require.NoError(t, err)
+	require.Len(t, epics, 1)
+	assert.Equal(t, "Auth Overhaul", epics[0].Name)
+}
+
+// TestEpicListPaginatedSortByName covers PRIM-002's sort_by acceptance
+// criterion at the service layer.
+func TestEpicListPaginatedSortByName(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("epics")
+
+	svc.Epic.Create(service.EpicCreateInput{Name: "Zebra"})
+	svc.Epic.Create(service.EpicCreateInput{Name: "Alpha"})
+
+	epics, err := svc.Epic.ListPaginated(service.EpicListInput{SortBy: "name", SortDir: "asc"})
+	require.NoError(t, err)
+	require.Len(t, epics, 2)
+	assert.Equal(t, "Alpha", epics[0].Name)
+	assert.Equal(t, "Zebra", epics[1].Name)
+}
+
+// TestEpicListPaginatedIncludeArchived covers PRIM-004/PRIM-001 interplay:
+// ListPaginated defaults to excluding archived rows, matching List's
+// existing includeArchived semantics.
+func TestEpicListPaginatedIncludeArchived(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("epics")
+
+	e1, _ := svc.Epic.Create(service.EpicCreateInput{Name: "Epic A"})
+	e2, _ := svc.Epic.Create(service.EpicCreateInput{Name: "Epic B"})
+	require.NoError(t, svc.Epic.Archive(e2.ID))
+
+	epics, err := svc.Epic.ListPaginated(service.EpicListInput{})
+	require.NoError(t, err)
+	require.Len(t, epics, 1)
+	assert.Equal(t, e1.ID, epics[0].ID)
+
+	all, err := svc.Epic.ListPaginated(service.EpicListInput{IncludeArchived: true})
+	require.NoError(t, err)
+	assert.Len(t, all, 2)
+}
+
+// TestEpicCreateAndUpdatePriority covers ENT-EPIC's "priority settable"
+// acceptance criterion at the service layer: settable on create, changeable
+// on update.
+func TestEpicCreateAndUpdatePriority(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("epics")
+
+	prio := int64(1)
+	epic, err := svc.Epic.Create(service.EpicCreateInput{Name: "Epic", Priority: &prio})
+	require.NoError(t, err)
+	require.True(t, epic.Priority.Valid)
+	assert.Equal(t, int64(1), epic.Priority.Int64)
+
+	newPrio := int64(3)
+	err = svc.Epic.Update(epic.ID, service.EpicUpdateInput{Priority: &newPrio})
+	require.NoError(t, err)
+
+	got, err := svc.Epic.Get(epic.ID)
+	require.NoError(t, err)
+	require.True(t, got.Priority.Valid)
+	assert.Equal(t, int64(3), got.Priority.Int64)
+}
+
+// TestEpicBulkUpdate is PRIM-003's acceptance criterion applied to Epic:
+// partial success — one bad id fails without blocking the rest.
+func TestEpicBulkUpdate(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("epics")
+
+	e1, _ := svc.Epic.Create(service.EpicCreateInput{Name: "Epic A"})
+	e2, _ := svc.Epic.Create(service.EpicCreateInput{Name: "Epic B"})
+
+	inactive := "inactive"
+	succeeded, failed := svc.Epic.BulkUpdate([]string{e1.ID, e2.ID, "EP-nonexistent"}, service.EpicUpdateInput{Status: &inactive})
+
+	assert.ElementsMatch(t, []string{e1.ID, e2.ID}, succeeded)
+	require.Len(t, failed, 1)
+	assert.Equal(t, "EP-nonexistent", failed[0].ID)
+
+	got1, _ := svc.Epic.Get(e1.ID)
+	got2, _ := svc.Epic.Get(e2.ID)
+	assert.Equal(t, "inactive", got1.Status)
+	assert.Equal(t, "inactive", got2.Status)
+}
+
 func TestEpicDelete(t *testing.T) {
 	svc := setupService(t)
 	svc.Feature.Enable("epics")
