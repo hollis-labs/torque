@@ -80,8 +80,8 @@ func TestPickerSkipsBlockedDependencies(t *testing.T) {
 	picker := scheduler.NewPicker(store)
 
 	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0001", Title: "Prerequisite", Status: "todo", Priority: 1, Executor: "cli", AgentProfile: "cli-profile"})
-	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0002", Title: "Dependent", Status: "todo", Priority: 1, Executor: "cli", AgentProfile: "cli-profile",
-		DependsOn: sql.NullString{String: `["CW-0001"]`, Valid: true}})
+	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0002", Title: "Dependent", Status: "todo", Priority: 1, Executor: "cli", AgentProfile: "cli-profile"})
+	require.NoError(t, store.SetTaskDependencies("CW-0002", []string{"CW-0001"}))
 
 	tasks, _, err := picker.Pick(10)
 	require.NoError(t, err)
@@ -94,8 +94,8 @@ func TestPickerAllowsDependencyMet(t *testing.T) {
 	picker := scheduler.NewPicker(store)
 
 	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0001", Title: "Prerequisite", Status: "done", Priority: 1, Executor: "cli", AgentProfile: "cli-profile"})
-	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0002", Title: "Dependent", Status: "todo", Priority: 1, Executor: "cli", AgentProfile: "cli-profile",
-		DependsOn: sql.NullString{String: `["CW-0001"]`, Valid: true}})
+	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0002", Title: "Dependent", Status: "todo", Priority: 1, Executor: "cli", AgentProfile: "cli-profile"})
+	require.NoError(t, store.SetTaskDependencies("CW-0002", []string{"CW-0001"}))
 
 	tasks, _, err := picker.Pick(10)
 	require.NoError(t, err)
@@ -140,11 +140,12 @@ func TestPickerDecisionsMultiStateTick(t *testing.T) {
 		Priority: 5, Executor: "cli", AgentProfile: "cli-profile", Manual: true,
 	}))
 	for i := 1; i <= 2; i++ {
+		id := "CW-DEPUNMET-" + string(rune('0'+i))
 		require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
-			ID: "CW-DEPUNMET-" + string(rune('0'+i)), Title: "depunmet", Status: "todo",
+			ID: id, Title: "depunmet", Status: "todo",
 			Priority: 3, Executor: "cli", AgentProfile: "cli-profile",
-			DependsOn: sql.NullString{String: `["CW-DEP-BLOCKER"]`, Valid: true},
 		}))
+		require.NoError(t, store.SetTaskDependencies(id, []string{"CW-DEP-BLOCKER"}))
 	}
 
 	// 2 manual.

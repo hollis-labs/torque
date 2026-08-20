@@ -59,6 +59,10 @@ func (s *Server) issueJSON(task *sqlstore.TaskRecord) (map[string]interface{}, e
 	if err != nil {
 		return nil, err
 	}
+	deps, err := s.svc.Task.ListDependencyIDs(task.ID)
+	if err != nil {
+		return nil, err
+	}
 	agg, err := s.svc.Run.Aggregate(task.ID)
 	if err != nil {
 		return nil, err
@@ -67,7 +71,7 @@ func (s *Server) issueJSON(task *sqlstore.TaskRecord) (map[string]interface{}, e
 	if err != nil {
 		return nil, err
 	}
-	out := taskJSON(task, tags, agg, subs, s.collectionNameForTask(task))
+	out := taskJSON(task, tags, deps, agg, subs, s.collectionNameForTask(task))
 	out["body"] = task.Description
 	return out, nil
 }

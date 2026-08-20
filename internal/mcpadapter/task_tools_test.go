@@ -436,8 +436,15 @@ func TestFullStack_TaskUpdate_WritableFields(t *testing.T) {
 	expectNullStringJSON("EscalationChain", `["oncall","lead"]`)
 	expectNullStringJSON("QualityGates", `["lint","tests"]`)
 	expectNullStringJSON("Deliverables", `[{"type":"diff","required":true}]`)
-	expectNullStringJSON("DependsOn", `["`+depID+`"]`)
 	expectNullStringJSON("Metadata", `{"meta_key":"meta_val"}`)
+
+	// DependsOn (migration 027 / FK-003) is the one exception: it lives in
+	// the task_dependencies join table now, not a sql.NullString column, so
+	// it renders as a clean JSON array of task IDs instead of the
+	// {String, Valid} shape the other blob fields still use.
+	depsOut, ok := u2["DependsOn"].([]interface{})
+	require.True(t, ok, "DependsOn should be a plain JSON array, got %T", u2["DependsOn"])
+	require.Equal(t, []interface{}{depID}, depsOut)
 }
 
 // TestFullStack_TaskCreate_DescriptionOptional covers FIX-001 item 1: neither

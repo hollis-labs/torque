@@ -22,7 +22,7 @@ import (
 // client can always rely on the key being present. collectionName is
 // surfaced as null when the task has no collection_id or the lookup
 // missed (e.g. archived collection still referenced by a task).
-func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, agg *sqlstore.TaskRunAggregate, subtodos []sqlstore.Subtodo, collectionName string) map[string]interface{} {
+func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, dependsOn []string, agg *sqlstore.TaskRunAggregate, subtodos []sqlstore.Subtodo, collectionName string) map[string]interface{} {
 	stats := map[string]interface{}{
 		"run_count":         0,
 		"prompt_tokens":     0,
@@ -44,6 +44,9 @@ func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, agg *sqlstore.T
 	}
 	if subtodos == nil {
 		subtodos = []sqlstore.Subtodo{}
+	}
+	if dependsOn == nil {
+		dependsOn = []string{}
 	}
 	body := map[string]interface{}{
 		"id":                 t.ID,
@@ -75,7 +78,7 @@ func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, agg *sqlstore.T
 		"quality_gates":      parseStringArray(t.QualityGates),
 		"deliverables":       parseDeliverables(t.Deliverables),
 		"deliverable_preset": t.DeliverablePreset,
-		"depends_on":         parseStringArray(t.DependsOn),
+		"depends_on":         dependsOn,
 		"blocked_reason":     t.BlockedReason,
 		"metadata":           parseFreeMap(t.Metadata),
 		"sprint_id":          nullStr(t.SprintID),
@@ -147,6 +150,10 @@ func (s *Server) tasksJSON(tasks []sqlstore.TaskRecord) ([]map[string]interface{
 		if err != nil {
 			return nil, err
 		}
+		deps, err := s.svc.Task.ListDependencyIDs(tasks[i].ID)
+		if err != nil {
+			return nil, err
+		}
 		agg, err := s.svc.Run.Aggregate(tasks[i].ID)
 		if err != nil {
 			return nil, err
@@ -155,7 +162,7 @@ func (s *Server) tasksJSON(tasks []sqlstore.TaskRecord) ([]map[string]interface{
 		if err != nil {
 			return nil, err
 		}
-		out[i] = taskJSON(&tasks[i], tags, agg, subs, collectionNames[tasks[i].CollectionID.String])
+		out[i] = taskJSON(&tasks[i], tags, deps, agg, subs, collectionNames[tasks[i].CollectionID.String])
 	}
 	return out, nil
 }
@@ -548,6 +555,11 @@ func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	deps, err := s.svc.Task.ListDependencyIDs(task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	agg, err := s.svc.Run.Aggregate(task.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -558,7 +570,7 @@ func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, taskJSON(task, tags, agg, subs, s.collectionNameForTask(task)))
+	writeJSON(w, http.StatusOK, taskJSON(task, tags, deps, agg, subs, s.collectionNameForTask(task)))
 }
 
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
@@ -644,6 +656,11 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	deps, err := s.svc.Task.ListDependencyIDs(task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	// Auto-extracted subtodos are persisted during Create; fetch them so the
 	// client sees them on the very first response instead of needing a
 	// follow-up GET.
@@ -654,7 +671,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	}
 	s.sse.Broadcast("task.created", map[string]interface{}{"task_id": task.ID, "title": task.Title})
 	// Freshly created task has no collection_id yet, so pass empty name.
-	writeJSON(w, http.StatusCreated, taskJSON(task, tags, nil, subs, ""))
+	writeJSON(w, http.StatusCreated, taskJSON(task, tags, deps, nil, subs, ""))
 }
 
 func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
@@ -713,9 +730,6 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 	if req.Deliverables != nil {
 		update.Deliverables = nullJSONString(*req.Deliverables)
 	}
-	if req.DependsOn != nil {
-		update.DependsOn = nullJSONString(*req.DependsOn)
-	}
 	if req.Metadata != nil {
 		update.Metadata = nullJSONString(*req.Metadata)
 	}
@@ -757,7 +771,7 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 		update.ParentID = &sql.NullString{String: *req.ParentID, Valid: *req.ParentID != ""}
 	}
 
-	input := service.TaskUpdateInput{TaskUpdate: update, Tags: req.Tags}
+	input := service.TaskUpdateInput{TaskUpdate: update, Tags: req.Tags, DependsOn: req.DependsOn}
 
 	if err := s.svc.Task.Update(id, input); err != nil {
 		if _, ok := err.(*service.ValidationError); ok {
@@ -779,6 +793,11 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	deps, err := s.svc.Task.ListDependencyIDs(task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	agg, err := s.svc.Run.Aggregate(task.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -791,7 +810,7 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.sse.Broadcast("task.updated", map[string]interface{}{"task_id": id})
-	writeJSON(w, http.StatusOK, taskJSON(task, tags, agg, subs, s.collectionNameForTask(task)))
+	writeJSON(w, http.StatusOK, taskJSON(task, tags, deps, agg, subs, s.collectionNameForTask(task)))
 }
 
 func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
@@ -834,6 +853,11 @@ func (s *Server) transitionTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	deps, err := s.svc.Task.ListDependencyIDs(task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	agg, err := s.svc.Run.Aggregate(task.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -846,7 +870,7 @@ func (s *Server) transitionTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.sse.Broadcast("task.transitioned", map[string]interface{}{"task_id": id, "status": req.Status})
-	writeJSON(w, http.StatusOK, taskJSON(task, tags, agg, subs, s.collectionNameForTask(task)))
+	writeJSON(w, http.StatusOK, taskJSON(task, tags, deps, agg, subs, s.collectionNameForTask(task)))
 }
 
 func (s *Server) bulkTransitionTasks(w http.ResponseWriter, r *http.Request) {

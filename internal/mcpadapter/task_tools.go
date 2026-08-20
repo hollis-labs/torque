@@ -198,18 +198,26 @@ Example: {"ids":"[\"T-1\",\"T-2\",\"T-3\"]","status":"done"}`),
 }
 
 // taskWithTags is an MCP result shape that flattens a TaskRecord's fields
-// and appends a Tags key alongside them (via Go's embedded-struct JSON
-// marshaling). The MCP adapter marshals TaskRecord with Go's default
-// capitalization (no json tags on TaskRecord), so this struct keeps Tags
-// capitalized to stay consistent with the surrounding fields — this is
-// intentionally different from the HTTP API, which lowercases everything
-// via an explicit taskJSON builder.
+// and appends Tags/DependsOn keys alongside them (via Go's embedded-struct
+// JSON marshaling). The MCP adapter marshals TaskRecord with Go's default
+// capitalization (no json tags on TaskRecord), so this struct keeps Tags and
+// DependsOn capitalized to stay consistent with the surrounding fields —
+// this is intentionally different from the HTTP API, which lowercases
+// everything via an explicit taskJSON builder.
+//
+// DependsOn is populated from the task_dependencies join table (migration
+// 027 / FK-003), not a TaskRecord column — same shape as Tags. It renders as
+// a clean JSON array of task IDs here, an improvement over the pre-FK-003
+// shape (a sql.NullString column marshaled as its raw {String,Valid}
+// struct).
 type taskWithTags struct {
 	*sqlstore.TaskRecord
-	Tags []sqlstore.TagRecord `json:"Tags"`
+	Tags      []sqlstore.TagRecord `json:"Tags"`
+	DependsOn []string             `json:"DependsOn"`
 }
 
-// taskResult loads the linked tags for a task and returns a combined MCP result.
+// taskResult loads the linked tags and dependency IDs for a task and
+// returns a combined MCP result.
 func (a *Adapter) taskResult(task *sqlstore.TaskRecord) (*mcp.CallToolResult, error) {
 	tags, err := a.svc.Task.ListTags(task.ID)
 	if err != nil {
@@ -218,7 +226,14 @@ func (a *Adapter) taskResult(task *sqlstore.TaskRecord) (*mcp.CallToolResult, er
 	if tags == nil {
 		tags = []sqlstore.TagRecord{}
 	}
-	return okResult(taskWithTags{TaskRecord: task, Tags: tags})
+	deps, err := a.svc.Task.ListDependencyIDs(task.ID)
+	if err != nil {
+		return errFromService(err)
+	}
+	if deps == nil {
+		deps = []string{}
+	}
+	return okResult(taskWithTags{TaskRecord: task, Tags: tags, DependsOn: deps})
 }
 
 // createdTaskResult is the torque_task_create response shape. It is the
@@ -252,7 +267,8 @@ type dispatchNotice struct {
 }
 
 // createdTaskResultFor builds the createdTaskResult envelope for a freshly
-// created task, loading its tags the same way taskResult does.
+// created task, loading its tags and dependency IDs the same way taskResult
+// does.
 func (a *Adapter) createdTaskResultFor(task *sqlstore.TaskRecord) (*mcp.CallToolResult, error) {
 	tags, err := a.svc.Task.ListTags(task.ID)
 	if err != nil {
@@ -260,6 +276,13 @@ func (a *Adapter) createdTaskResultFor(task *sqlstore.TaskRecord) (*mcp.CallTool
 	}
 	if tags == nil {
 		tags = []sqlstore.TagRecord{}
+	}
+	deps, err := a.svc.Task.ListDependencyIDs(task.ID)
+	if err != nil {
+		return errFromService(err)
+	}
+	if deps == nil {
+		deps = []string{}
 	}
 	notice := dispatchNotice{Manual: task.Manual, Dispatchable: !task.Manual}
 	if task.Manual {
@@ -271,7 +294,7 @@ func (a *Adapter) createdTaskResultFor(task *sqlstore.TaskRecord) (*mcp.CallTool
 		notice.Message = "This task is manual=false and dispatch-eligible: the scheduler will pick it up once status=todo, dependencies are done, and (for agent tasks) an agent_profile is set."
 	}
 	return okResult(createdTaskResult{
-		taskWithTags:   &taskWithTags{TaskRecord: task, Tags: tags},
+		taskWithTags:   &taskWithTags{TaskRecord: task, Tags: tags, DependsOn: deps},
 		DispatchNotice: notice,
 	})
 }
@@ -322,10 +345,17 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest)
 	} else if tags != nil {
 		input.Tags = tags
 	}
-	if raw := reqStr(req, "depends_on"); raw != "" {
-		if err := json.Unmarshal([]byte(raw), &input.DependsOn); err != nil {
-			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid depends_on JSON: %v", err), "depends_on")
-		}
+	// depends_on: use reqStrSlice (like tags) rather than a raw json.Unmarshal
+	// on reqStr. go-mcp-sanitize's Pattern 4 only special-cases the literal
+	// "tags" key today, but reqStrSlice's []any tolerance is still cheap
+	// insurance against any MCP client/library that hands the argument over
+	// as a native array instead of a JSON-encoded string; a plain malformed
+	// string (e.g. "not-json-at-all") still hits reqStrSlice's json.Unmarshal
+	// fallback and reports the same arg_invalid/depends_on error as before.
+	if deps, err := reqStrSlice(req, "depends_on"); err != nil {
+		return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid depends_on JSON: %v", err), "depends_on")
+	} else if deps != nil {
+		input.DependsOn = deps
 	}
 	if raw := reqStr(req, "metadata"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &input.Metadata); err != nil {
@@ -513,9 +543,13 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 		return &sql.NullString{String: raw, Valid: true}
 	}
 	// Validate shape before persisting (reject malformed JSON early).
+	// depends_on is handled separately below via reqStrSlice (like tags),
+	// which tolerates both the raw-JSON-string and post-sanitize []any
+	// shapes — it is not a JSON-blob column since migration 027 / FK-003, so
+	// it doesn't belong in this raw-string-only validation loop.
 	var scratchArr []any
 	var scratchObj map[string]any
-	for _, k := range []string{"tools", "files", "escalation_chain", "quality_gates", "deliverables", "depends_on"} {
+	for _, k := range []string{"tools", "files", "escalation_chain", "quality_gates", "deliverables"} {
 		if err := unmarshalBlob(k, &scratchArr); err != nil {
 			return errResult(ErrCodeArgInvalid, err.Error(), k)
 		}
@@ -545,9 +579,6 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 	}
 	if ns := nullFromRaw("deliverables"); ns != nil {
 		update.Deliverables = ns
-	}
-	if ns := nullFromRaw("depends_on"); ns != nil {
-		update.DependsOn = ns
 	}
 	if ns := nullFromRaw("metadata"); ns != nil {
 		update.Metadata = ns
@@ -614,6 +645,18 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 		}
 		if slugs != nil {
 			input.Tags = &slugs
+		}
+	}
+	// depends_on (migration 027 / FK-003): same presence-sensitive shape as
+	// tags — nil means "no change" (existing edges left alone), non-nil
+	// slice replaces the full dependency set.
+	if reqHasArg(req, "depends_on") {
+		deps, err := reqStrSlice(req, "depends_on")
+		if err != nil {
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid depends_on JSON: %v", err), "depends_on")
+		}
+		if deps != nil {
+			input.DependsOn = &deps
 		}
 	}
 
@@ -699,9 +742,16 @@ func (a *Adapter) tasksToEnvelope(tasks []sqlstore.TaskRecord, limit int, verbos
 			if tags == nil {
 				tags = []sqlstore.TagRecord{}
 			}
+			deps, err := a.svc.Task.ListDependencyIDs(t.ID)
+			if err != nil {
+				return errFromService(err)
+			}
+			if deps == nil {
+				deps = []string{}
+			}
 			// Copy struct to take address of a fresh local rather than loop var.
 			rec := t
-			items = append(items, taskWithTags{TaskRecord: &rec, Tags: tags})
+			items = append(items, taskWithTags{TaskRecord: &rec, Tags: tags, DependsOn: deps})
 		} else {
 			items = append(items, toBriefTask(t, briefTagSlugs(a.svc, t.ID)))
 		}

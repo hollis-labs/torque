@@ -458,10 +458,13 @@ func extractCreateFields(input TaskCreateInput) (taskWriteFields, error) {
 // passed through — fields the caller didn't touch are left zero so the
 // validator skips them.
 //
-// JSON-blob fields (Deliverables, DependsOn) are unmarshaled here so the
-// validator can inspect their structured form. Malformed JSON returns a
+// Deliverables is a JSON-blob column and is unmarshaled here so the
+// validator can inspect its structured form; malformed JSON returns a
 // ValidationError immediately rather than being silently dropped, since the
-// caller has explicitly provided the field for validation.
+// caller has explicitly provided the field for validation. DependsOn (since
+// migration 027 / FK-003) is already a plain []string on TaskUpdateInput —
+// no unmarshal needed, it lives in the task_dependencies join table rather
+// than a JSON-string column.
 func extractUpdateFields(input TaskUpdateInput) (taskWriteFields, error) {
 	f := taskWriteFields{
 		OnDone:      input.OnDone,
@@ -469,6 +472,9 @@ func extractUpdateFields(input TaskUpdateInput) (taskWriteFields, error) {
 		OnReview:    input.OnReview,
 		OnDoneMerge: input.OnDoneMerge,
 		MaxRetries:  input.MaxRetries,
+	}
+	if input.DependsOn != nil {
+		f.DependsOn = *input.DependsOn
 	}
 
 	if input.CostBudget != nil && input.CostBudget.Valid {
@@ -493,16 +499,6 @@ func extractUpdateFields(input TaskUpdateInput) (taskWriteFields, error) {
 			}
 		}
 		f.Deliverables = dels
-	}
-	if input.DependsOn != nil && input.DependsOn.Valid && input.DependsOn.String != "" {
-		var deps []string
-		if err := unmarshalJSON([]byte(input.DependsOn.String), &deps); err != nil {
-			return taskWriteFields{}, &ValidationError{
-				Field:   "depends_on",
-				Message: "invalid depends_on payload: " + err.Error(),
-			}
-		}
-		f.DependsOn = deps
 	}
 
 	return f, nil

@@ -69,6 +69,10 @@ func (s *Server) planDetailJSON(detail *service.PlanDetail) (map[string]interfac
 	if err != nil {
 		return nil, err
 	}
+	deps, err := s.svc.Task.ListDependencyIDs(detail.Task.ID)
+	if err != nil {
+		return nil, err
+	}
 	agg, err := s.svc.Run.Aggregate(detail.Task.ID)
 	if err != nil {
 		return nil, err
@@ -78,7 +82,7 @@ func (s *Server) planDetailJSON(detail *service.PlanDetail) (map[string]interfac
 		return nil, err
 	}
 	return map[string]interface{}{
-		"task":     taskJSON(detail.Task, tags, agg, subs, s.collectionNameForTask(detail.Task)),
+		"task":     taskJSON(detail.Task, tags, deps, agg, subs, s.collectionNameForTask(detail.Task)),
 		"plan":     detail.Plan,
 		"progress": detail.Progress,
 	}, nil
