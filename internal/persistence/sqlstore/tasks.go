@@ -236,6 +236,39 @@ type TaskFilter struct {
 	// Manual-flag filter. Nil = no filter; otherwise matches manual=0/1.
 	Manual *bool
 
+	// created_at/updated_at range filters (ENT-TASK). Empty = no bound on
+	// that side. Values must already be formatted as SQLiteDatetimeLayout
+	// UTC text — the same shape updatedAtNow/every CreateTask/UpdateTask
+	// write actually stores in these columns (see updatedAtNow's doc
+	// comment) — so the WHERE-clause comparison stays a byte-for-byte TEXT
+	// compare, same reasoning as taskCursorArg's cursor-value binding.
+	// mcpadapter's handleTaskList is responsible for parsing caller-facing
+	// RFC3339 input into this layout before it reaches ListTasks.
+	CreatedAfter  string
+	CreatedBefore string
+	UpdatedAfter  string
+	UpdatedBefore string
+
+	// Budget/duration range filters (ENT-TASK) — "show me over-budget
+	// tasks" style queries. Nil = no bound on that side; a non-nil pointer
+	// with zero value still applies (distinguishes "filter at exactly 0"
+	// from "no filter"). Compared directly against the stored column, which
+	// is NULL for tasks that never set a budget — a NULL column never
+	// matches a Gte/Lte bound, so unset-budget tasks are naturally excluded
+	// rather than needing a separate "has budget" filter.
+	CostBudgetGte    *float64
+	CostBudgetLte    *float64
+	TokenBudgetGte   *int64
+	TokenBudgetLte   *int64
+	MaxDurationMsGte *int64
+	MaxDurationMsLte *int64
+	MaxRetriesGte    *int
+	MaxRetriesLte    *int
+
+	// agent_profile/launch_profile exact-match filters (ENT-TASK).
+	AgentProfile  string
+	LaunchProfile string
+
 	// ExcludeInternal, when true, suppresses kind='internal' rows from
 	// the result. Default zero-value (false) preserves prior behavior:
 	// no exclusion. Internal-call sites (picker, scheduler internals)
@@ -538,6 +571,62 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 		pattern := "%" + f.Search + "%"
 		where = append(where, "(id LIKE ? OR title LIKE ? OR description LIKE ?)")
 		args = append(args, pattern, pattern, pattern)
+	}
+	if f.AgentProfile != "" {
+		where = append(where, "agent_profile = ?")
+		args = append(args, f.AgentProfile)
+	}
+	if f.LaunchProfile != "" {
+		where = append(where, "launch_profile = ?")
+		args = append(args, f.LaunchProfile)
+	}
+	if f.CreatedAfter != "" {
+		where = append(where, "created_at >= ?")
+		args = append(args, f.CreatedAfter)
+	}
+	if f.CreatedBefore != "" {
+		where = append(where, "created_at <= ?")
+		args = append(args, f.CreatedBefore)
+	}
+	if f.UpdatedAfter != "" {
+		where = append(where, "updated_at >= ?")
+		args = append(args, f.UpdatedAfter)
+	}
+	if f.UpdatedBefore != "" {
+		where = append(where, "updated_at <= ?")
+		args = append(args, f.UpdatedBefore)
+	}
+	if f.CostBudgetGte != nil {
+		where = append(where, "cost_budget >= ?")
+		args = append(args, *f.CostBudgetGte)
+	}
+	if f.CostBudgetLte != nil {
+		where = append(where, "cost_budget <= ?")
+		args = append(args, *f.CostBudgetLte)
+	}
+	if f.TokenBudgetGte != nil {
+		where = append(where, "token_budget >= ?")
+		args = append(args, *f.TokenBudgetGte)
+	}
+	if f.TokenBudgetLte != nil {
+		where = append(where, "token_budget <= ?")
+		args = append(args, *f.TokenBudgetLte)
+	}
+	if f.MaxDurationMsGte != nil {
+		where = append(where, "max_duration_ms >= ?")
+		args = append(args, *f.MaxDurationMsGte)
+	}
+	if f.MaxDurationMsLte != nil {
+		where = append(where, "max_duration_ms <= ?")
+		args = append(args, *f.MaxDurationMsLte)
+	}
+	if f.MaxRetriesGte != nil {
+		where = append(where, "max_retries >= ?")
+		args = append(args, *f.MaxRetriesGte)
+	}
+	if f.MaxRetriesLte != nil {
+		where = append(where, "max_retries <= ?")
+		args = append(args, *f.MaxRetriesLte)
 	}
 
 	// PRIM-002 sort column + PRIM-001 cursor predicate. sortCol == "" means

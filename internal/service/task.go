@@ -112,6 +112,31 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		priority = 2
 	}
 
+	// subtodos[] seed list (ENT-TASK, torque_task_create): a caller-provided
+	// (non-nil) Subtodos list bypasses ExtractSubtodosFromDescription below,
+	// but unlike that auto-extract path (which always fills ID via a
+	// sequential "item-N" scheme) a caller-supplied list may omit IDs or
+	// even collide on one. Normalize up front — before NextTaskID/CreateTask
+	// run — so a bad seed list fails cleanly with no half-created task row,
+	// and every stored subtodo has the same non-empty-unique-ID guarantee
+	// AddSubtodo already gives a single torque_task_subtodo_add call.
+	if input.Subtodos != nil {
+		seen := make(map[string]bool, len(input.Subtodos))
+		for i := range input.Subtodos {
+			id := input.Subtodos[i].ID
+			if id == "" {
+				id = newSubtodoID()
+				for seen[id] {
+					id = newSubtodoID()
+				}
+				input.Subtodos[i].ID = id
+			} else if seen[id] {
+				return nil, &ValidationError{Field: "subtodos", Message: "duplicate subtodo id: " + id}
+			}
+			seen[id] = true
+		}
+	}
+
 	// Validate write-time invariants (enums, numeric bounds, deliverables, depends_on).
 	// Must run BEFORE the manual=true force below, because validation's
 	// external/decision-forbids-auto-execute rule (see task_validation.go)
@@ -715,6 +740,84 @@ func (s *TaskService) ForceTransition(ctx context.Context, id, newStatus string)
 	return nil
 }
 
+// TransitionWithComment moves a task to a new status and posts a comment in
+// the same SQL transaction (ENT-TASK / ADR-0004 §5) — the caller gets one
+// atomic operation instead of a transition call followed by a separate
+// torque_comment_add. force mirrors Transition/ForceTransition's contract:
+// false consults the FSM (validTransitions), true skips it. The FSM check
+// itself is read-then-validate against the same pre-transaction GetTask
+// Transition/ForceTransition already use — no additional race window is
+// introduced by adding the comment write.
+//
+// Only called when the caller actually supplied a comment; a plain
+// transition (no comment) keeps using Transition/ForceTransition unchanged
+// so the well-exercised no-comment path stays byte-for-byte as it was.
+func (s *TaskService) TransitionWithComment(ctx context.Context, id, newStatus, comment, author string, force bool) (err error) {
+	ctx, span := feotel.StartSpan(ctx, "torque.task.transition")
+	span.SetAttributes(
+		attribute.String("hollis.app", "torque"),
+		attribute.String("hollis.task.id", id),
+		attribute.String("torque.task.to_status", newStatus),
+		attribute.Bool("torque.task.forced", force),
+		attribute.Bool("torque.task.has_comment", true),
+	)
+	defer func() {
+		if err != nil {
+			var terr *TransitionError
+			if !errors.As(err, &terr) {
+				span.RecordError(err)
+			}
+		}
+		span.End()
+	}()
+
+	task, err := s.store.GetTask(id)
+	if err != nil {
+		return err
+	}
+	span.SetAttributes(attribute.String("torque.task.from_status", task.Status))
+
+	if !force {
+		allowed, ok := validTransitions[task.Status]
+		if !ok {
+			return &TransitionError{From: task.Status, To: newStatus, Message: "unknown source status"}
+		}
+		permitted := false
+		for _, a := range allowed {
+			if a == newStatus {
+				permitted = true
+				break
+			}
+		}
+		if !permitted {
+			return &TransitionError{From: task.Status, To: newStatus, Message: "transition not permitted"}
+		}
+	}
+
+	wtx, err := s.store.BeginWriteTx(ctx)
+	if err != nil {
+		return err
+	}
+	defer wtx.Rollback()
+
+	if err := wtx.TransitionTask(id, newStatus); err != nil {
+		return err
+	}
+	if err := wtx.AddComment(&sqlstore.CommentRecord{
+		EntityType: sqlstore.EntityTypeTask,
+		EntityID:   id,
+		Author:     author,
+		Content:    comment,
+	}); err != nil {
+		return err
+	}
+	if err := wtx.Commit(); err != nil {
+		return err
+	}
+	s.notifyTransition(ctx, id, task.Status, newStatus)
+	return nil
+}
+
 func (s *TaskService) notifyTransition(ctx context.Context, id, from, to string) {
 	if s.transitionObserver == nil {
 		return
@@ -935,14 +1038,22 @@ func (s *TaskService) DeleteSubtodo(taskID, itemID string) ([]sqlstore.Subtodo, 
 
 // BulkTransition applies the same status transition to multiple tasks. It
 // returns the slice of task IDs that successfully transitioned (in input
-// order, with failures dropped) plus a slice of errors for the failures. The
-// caller needs the actual successful IDs — not just a count — to broadcast
-// per-task SSE events or otherwise act per-item on the partial-success case.
-func (s *TaskService) BulkTransition(ctx context.Context, ids []string, newStatus string) ([]string, []error) {
+// order, with failures dropped) plus the per-item failures. The caller needs
+// the actual successful IDs — not just a count — to broadcast per-task SSE
+// events or otherwise act per-item on the partial-success case.
+//
+// PRIM-003 (ENT-TASK): this used to return a bare []error with no id
+// attached to each failure, which meant a caller couldn't tell which task a
+// given error belonged to, and the MCP handler hand-rolled a bespoke
+// {success, failed, errors} shape instead of the canonical bulk_* envelope
+// every other Task bulk verb (BulkUpdate/BulkDelete/BulkTag, task_bulk.go)
+// already uses. Routing through RunBulk fixes both: failures now carry
+// their id, and the response shape matches.
+func (s *TaskService) BulkTransition(ctx context.Context, ids []string, newStatus string) ([]string, []BulkItemError) {
 	// Wrapping span: per-item torque.task.transition spans nest under this so
 	// an operator sees "BulkTransition of N tasks" as one unit, with each task
 	// drilldown still available. Bulk operations don't expose a single err
-	// (callers see partial-success: succeeded IDs + []error), so the wrapper
+	// (callers see partial-success: succeeded IDs + failed[]), so the wrapper
 	// span doesn't RecordError; per-item spans capture individual faults.
 	ctx, span := feotel.StartSpan(ctx, "torque.task.transition.bulk")
 	span.SetAttributes(
@@ -952,18 +1063,12 @@ func (s *TaskService) BulkTransition(ctx context.Context, ids []string, newStatu
 	)
 	defer span.End()
 
-	var errs []error
-	succeeded := make([]string, 0, len(ids))
-	for _, id := range ids {
-		if err := s.Transition(ctx, id, newStatus); err != nil {
-			errs = append(errs, err)
-		} else {
-			succeeded = append(succeeded, id)
-		}
-	}
+	succeeded, failed := RunBulk(ids, func(id string) error {
+		return s.Transition(ctx, id, newStatus)
+	})
 	span.SetAttributes(
 		attribute.Int("torque.task.bulk_success", len(succeeded)),
-		attribute.Int("torque.task.bulk_failed", len(errs)),
+		attribute.Int("torque.task.bulk_failed", len(failed)),
 	)
-	return succeeded, errs
+	return succeeded, failed
 }
