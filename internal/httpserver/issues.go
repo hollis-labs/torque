@@ -89,7 +89,7 @@ func (s *Server) issuesJSON(tasks []sqlstore.TaskRecord) ([]map[string]interface
 }
 
 func (s *Server) listIssues(w http.ResponseWriter, r *http.Request) {
-	issues, err := s.svc.Issue.List(r.URL.Query().Get("project_id"))
+	issues, err := s.svc.Issue.List(service.IssueListInput{ProjectID: r.URL.Query().Get("project_id")})
 	if err != nil {
 		writeIssueError(w, err)
 		return
@@ -107,13 +107,26 @@ func (s *Server) listIssues(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) searchIssues(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
+	if q == "" {
+		// Preserve pre-merge behavior: IssueService.Search used to reject an
+		// empty query outright. The service-layer List/Search merge
+		// (ADR-0004 §3) makes Query optional for the MCP list surface, but
+		// this dedicated /issues/search HTTP endpoint keeps requiring one so
+		// existing external callers see the same contract.
+		writeError(w, http.StatusUnprocessableEntity, "query is required")
+		return
+	}
 	limit := 0
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			limit = n
 		}
 	}
-	issues, err := s.svc.Issue.Search(q, r.URL.Query().Get("project_id"), limit)
+	issues, err := s.svc.Issue.List(service.IssueListInput{
+		Query:     q,
+		ProjectID: r.URL.Query().Get("project_id"),
+		Limit:     limit,
+	})
 	if err != nil {
 		writeIssueError(w, err)
 		return

@@ -70,12 +70,12 @@ func TestIssueListAndSearchAreKindScoped(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	listed, err := svc.Issue.List(project.ID)
+	listed, err := svc.Issue.List(service.IssueListInput{ProjectID: project.ID})
 	require.NoError(t, err)
 	require.Len(t, listed, 1)
 	require.Equal(t, issue.ID, listed[0].ID)
 
-	found, err := svc.Issue.Search("Rocket", project.ID, 10)
+	found, err := svc.Issue.List(service.IssueListInput{Query: "Rocket", ProjectID: project.ID, Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, found, 1)
 	require.Equal(t, issue.ID, found[0].ID)
