@@ -77,6 +77,7 @@ Status values: `todo` · `blocked` · `in-progress` · `done` · `skipped`
 |---|---|---|---|---|
 | [SWEEP-001](phase-5-consistency/SWEEP-001-envelope-and-error-taxonomy-audit.md) | Envelope + error-taxonomy consistency pass across all 8 entities | done (found + fixed presence-detection regressions in Sprint/Epic, not_found mapping bug in Subtodo; spun out FIX-006) | all Phase 4 tasks | — |
 | [FIX-006](phase-5-consistency/FIX-006-task-list-search-merge.md) | Merge `torque_task_search` into `torque_task_list` (never actually done despite ADR-0004 scope) | done | — | — |
+| [FIX-007](phase-5-consistency/FIX-007-task-write-transaction-atomicity.md) | Wrap TaskService.Create/Update's multi-write paths in a transaction | todo | — | — |
 
 ## Explicitly not scheduled here
 
