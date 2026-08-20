@@ -1471,3 +1471,255 @@ func TestFullStack_TaskList_SortByUpdatedAtDesc(t *testing.T) {
 	require.False(t, env.Meta.HasMore)
 	require.Nil(t, env.Meta.NextCursor)
 }
+
+// TestFullStack_TaskList_FilterByStatuses verifies torque_task_list's
+// ENT-TASK statuses[] MCP wiring on top of the pre-existing store-layer OR
+// filter (TaskFilter.Statuses).
+func TestFullStack_TaskList_FilterByStatuses(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{"title": "s1", "description": "x"})
+	var t1 map[string]interface{}
+	parseData(t, text, &t1)
+	id1 := t1["ID"].(string)
+
+	text, _ = callTool(t, a, "torque_task_create", map[string]interface{}{"title": "s2", "description": "x"})
+	var t2 map[string]interface{}
+	parseData(t, text, &t2)
+	id2 := t2["ID"].(string)
+
+	text, _ = callTool(t, a, "torque_task_create", map[string]interface{}{"title": "s3", "description": "x"})
+	var t3 map[string]interface{}
+	parseData(t, text, &t3)
+	id3 := t3["ID"].(string)
+
+	_, isErr := callTool(t, a, "torque_task_transition", map[string]interface{}{"id": id1, "status": "doing"})
+	require.False(t, isErr)
+
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{
+		"statuses": `["doing","todo"]`,
+	})
+	require.False(t, isErr, "list should not error: %s", text)
+	var env taskListCursorEnvelope
+	parseData(t, text, &env)
+	var gotIDs []string
+	for _, item := range env.Items {
+		gotIDs = append(gotIDs, item["id"].(string))
+	}
+	require.ElementsMatch(t, []string{id1, id2, id3}, gotIDs)
+}
+
+// TestFullStack_TaskList_FilterByAgentAndLaunchProfile verifies the
+// ENT-TASK agent_profile/launch_profile MCP filters.
+func TestFullStack_TaskList_FilterByAgentAndLaunchProfile(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "profiled", "description": "x", "agent_profile": "reviewer", "launch_profile": "claude-code",
+	})
+	var created map[string]interface{}
+	parseData(t, text, &created)
+	id := created["ID"].(string)
+
+	_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "other-profile", "description": "x", "agent_profile": "builder",
+	})
+	require.False(t, isErr)
+
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{"agent_profile": "reviewer"})
+	require.False(t, isErr, "list should not error: %s", text)
+	var env taskListCursorEnvelope
+	parseData(t, text, &env)
+	require.Len(t, env.Items, 1)
+	require.Equal(t, id, env.Items[0]["id"])
+
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{"launch_profile": "claude-code"})
+	require.False(t, isErr, "list should not error: %s", text)
+	parseData(t, text, &env)
+	require.Len(t, env.Items, 1)
+	require.Equal(t, id, env.Items[0]["id"])
+}
+
+// TestFullStack_TaskList_FilterByBudgetRange verifies the ENT-TASK
+// cost_budget_gte/lte MCP filters — "show me over-budget tasks" style
+// queries. A task that never set cost_budget must never match either bound.
+func TestFullStack_TaskList_FilterByBudgetRange(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "pricey", "description": "x", "cost_budget": "500",
+	})
+	var pricey map[string]interface{}
+	parseData(t, text, &pricey)
+	priceyID := pricey["ID"].(string)
+
+	_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "no-budget", "description": "x",
+	})
+	require.False(t, isErr)
+
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{"cost_budget_gte": "100"})
+	require.False(t, isErr, "list should not error: %s", text)
+	var env taskListCursorEnvelope
+	parseData(t, text, &env)
+	require.Len(t, env.Items, 1, "the never-budgeted task must not match a numeric bound")
+	require.Equal(t, priceyID, env.Items[0]["id"])
+}
+
+// TestFullStack_TaskCreate_FieldExpansion verifies the ENT-TASK create-field
+// expansion: fields TaskCreateInput already accepted at the service layer
+// but torque_task_create's MCP schema didn't expose.
+func TestFullStack_TaskCreate_FieldExpansion(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":            "expanded fields",
+		"tools":            `["bash","read"]`,
+		"on_review":        "auto-approve",
+		"files":            `["a.go","b.go"]`,
+		"cost_budget":      "42.5",
+		"max_retries":      "7",
+		"permissions":      `{"network":"deny"}`,
+		"environment":      `{"FOO":"bar"}`,
+		"max_duration_ms":  "60000",
+		"token_budget":     "100000",
+		"escalation_chain": `["lead","manager"]`,
+		"quality_gates":    `["lint","tests"]`,
+		"deliverables":     `[{"type":"diff","required":true}]`,
+		"blocked_reason":   "waiting on legal",
+	})
+	require.False(t, isErr, "create should not error: %s", text)
+
+	var rec map[string]interface{}
+	parseData(t, text, &rec)
+	require.Equal(t, "auto-approve", rec["OnReview"])
+	require.Equal(t, "waiting on legal", rec["BlockedReason"])
+	require.Equal(t, float64(7), rec["MaxRetries"])
+
+	id := rec["ID"].(string)
+	text, isErr = callTool(t, a, "torque_task_get", map[string]interface{}{"id": id})
+	require.False(t, isErr)
+	var got map[string]interface{}
+	parseData(t, text, &got)
+	require.Equal(t, `["bash","read"]`, got["Tools"].(map[string]interface{})["String"])
+	require.Equal(t, `["a.go","b.go"]`, got["Files"].(map[string]interface{})["String"])
+	require.Equal(t, 42.5, got["CostBudget"].(map[string]interface{})["Float64"])
+	require.Equal(t, float64(60000), got["MaxDurationMs"].(map[string]interface{})["Int64"])
+	require.Equal(t, float64(100000), got["TokenBudget"].(map[string]interface{})["Int64"])
+}
+
+// TestFullStack_TaskCreate_SubtodosSeed verifies torque_task_create's
+// subtodos[] seed list creates the task and its checklist atomically, with
+// missing ids auto-generated (same guarantee torque_task_subtodo_add gives
+// a single append).
+func TestFullStack_TaskCreate_SubtodosSeed(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":    "seeded",
+		"subtodos": `[{"id":"check-1","text":"write test","required":true},{"text":"no id item"}]`,
+	})
+	require.False(t, isErr, "create should not error: %s", text)
+	var rec map[string]interface{}
+	parseData(t, text, &rec)
+	id := rec["ID"].(string)
+
+	text, isErr = callTool(t, a, "torque_task_subtodo_list", map[string]interface{}{"task_id": id, "verbose": "true"})
+	require.False(t, isErr, "subtodo_list should not error: %s", text)
+	var env struct {
+		Items []map[string]interface{} `json:"items"`
+	}
+	parseData(t, text, &env)
+	items := env.Items
+	require.Len(t, items, 2)
+	require.Equal(t, "check-1", items[0]["id"])
+	require.Equal(t, "write test", items[0]["text"])
+	require.Equal(t, true, items[0]["required"])
+	require.NotEmpty(t, items[1]["id"])
+	require.NotEqual(t, "check-1", items[1]["id"])
+	require.Equal(t, "no id item", items[1]["text"])
+}
+
+// TestFullStack_TaskCreate_SubtodosSeedDuplicateID verifies a caller-
+// supplied duplicate id in the seed list is rejected as arg-invalid-shaped
+// domain validation, not silently accepted.
+func TestFullStack_TaskCreate_SubtodosSeedDuplicateID(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":    "dup seed",
+		"subtodos": `[{"id":"dup","text":"first"},{"id":"dup","text":"second"}]`,
+	})
+	require.True(t, isErr, "duplicate subtodo id should error: %s", text)
+}
+
+// TestFullStack_TaskTransition_WithComment verifies torque_task_transition's
+// ENT-TASK comment param posts atomically with the status change: the
+// status changes AND the comment appears on the task's thread from one call.
+func TestFullStack_TaskTransition_WithComment(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "transition with comment", "description": "x",
+	})
+	require.False(t, isErr)
+	var created map[string]interface{}
+	parseData(t, text, &created)
+	id := created["ID"].(string)
+
+	text, isErr = callTool(t, a, "torque_task_transition", map[string]interface{}{
+		"id":             id,
+		"status":         "doing",
+		"comment":        "kicking this off",
+		"comment_author": "alice",
+	})
+	require.False(t, isErr, "transition with comment should not error: %s", text)
+	var got map[string]interface{}
+	parseData(t, text, &got)
+	require.Equal(t, "doing", got["Status"])
+
+	text, isErr = callTool(t, a, "torque_comment_list", map[string]interface{}{
+		"entity_type": "task", "entity_id": id, "verbose": "true",
+	})
+	require.False(t, isErr, "comment_list should not error: %s", text)
+	var env struct {
+		Items []map[string]interface{} `json:"items"`
+	}
+	parseData(t, text, &env)
+	require.Len(t, env.Items, 1)
+	require.Equal(t, "kicking this off", env.Items[0]["content"])
+	require.Equal(t, "alice", env.Items[0]["author"])
+}
+
+// TestFullStack_TaskTransition_WithComment_InvalidTransitionPostsNoComment
+// mirrors the service-layer invariant: an FSM-invalid transition must not
+// leave the comment behind either.
+func TestFullStack_TaskTransition_WithComment_InvalidTransitionPostsNoComment(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "invalid transition with comment", "description": "x",
+	})
+	require.False(t, isErr)
+	var created map[string]interface{}
+	parseData(t, text, &created)
+	id := created["ID"].(string)
+
+	// todo -> done is FSM-invalid.
+	text, isErr = callTool(t, a, "torque_task_transition", map[string]interface{}{
+		"id":      id,
+		"status":  "done",
+		"comment": "should not stick",
+	})
+	require.True(t, isErr, "invalid transition should error: %s", text)
+
+	text, isErr = callTool(t, a, "torque_comment_list", map[string]interface{}{
+		"entity_type": "task", "entity_id": id,
+	})
+	require.False(t, isErr)
+	var env struct {
+		Items []map[string]interface{} `json:"items"`
+	}
+	parseData(t, text, &env)
+	require.Empty(t, env.Items)
+}

@@ -262,6 +262,55 @@ func TestFullStack_TaskBulkTag_ArgErrors(t *testing.T) {
 	require.Equal(t, "arg_invalid", code)
 }
 
+// TestFullStack_TaskBulkTransition_PartialSuccess verifies torque_task_
+// bulk_transition (ENT-TASK) now returns the same {succeeded, failed}
+// PRIM-003 bulkResult envelope every other bulk_* verb uses, instead of its
+// old bespoke {success: int, failed: int, errors?: string} shape.
+func TestFullStack_TaskBulkTransition_PartialSuccess(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "bulk-transition-1", "description": "x",
+	})
+	var t1 map[string]interface{}
+	parseData(t, text, &t1)
+	id1 := t1["ID"].(string)
+
+	text, _ = callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "bulk-transition-2", "description": "x",
+	})
+	var t2 map[string]interface{}
+	parseData(t, text, &t2)
+	id2 := t2["ID"].(string)
+
+	// todo -> done is FSM-invalid (must go through doing/review first), so
+	// id2 fails while id1... also fails the same way. Force id1 into
+	// "review" first so it succeeds and id2 (still "todo") fails, giving a
+	// genuine partial-success mix.
+	text, isErr := callTool(t, a, "torque_task_transition", map[string]interface{}{"id": id1, "status": "doing"})
+	require.False(t, isErr, "seed transition should succeed: %s", text)
+	text, isErr = callTool(t, a, "torque_task_transition", map[string]interface{}{"id": id1, "status": "review"})
+	require.False(t, isErr, "seed transition should succeed: %s", text)
+
+	text, isErr = callTool(t, a, "torque_task_bulk_transition", map[string]interface{}{
+		"ids":    `["` + id1 + `","CW-does-not-exist","` + id2 + `"]`,
+		"status": "done",
+	})
+	require.False(t, isErr, "bulk_transition call itself must not be a call-level error: %s", text)
+
+	var resp bulkResponse
+	parseData(t, text, &resp)
+	require.Equal(t, []string{id1}, resp.Succeeded)
+	require.Len(t, resp.Failed, 2)
+	failedIDs := []string{resp.Failed[0].ID, resp.Failed[1].ID}
+	require.ElementsMatch(t, []string{"CW-does-not-exist", id2}, failedIDs)
+
+	text, _ = callTool(t, a, "torque_task_get", map[string]interface{}{"id": id1})
+	var got1 map[string]interface{}
+	parseData(t, text, &got1)
+	require.Equal(t, "done", got1["Status"])
+}
+
 // tagSlugs extracts the Tags[].Slug list from a taskWithTags-shaped
 // response (torque_task_get always includes linked tags).
 func tagSlugs(t *testing.T, task map[string]interface{}) []string {

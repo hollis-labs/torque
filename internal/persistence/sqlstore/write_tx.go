@@ -383,6 +383,20 @@ func (w *WriteTx) transitionTask(id, newStatus string, reason *string) (string, 
 	return oldStatus, nil
 }
 
+// AddComment inserts a comment row inside the write transaction, populating
+// ID + CreatedAt from the DB. Mirrors Store.AddComment field-for-field; used
+// by TaskService.TransitionWithComment (ENT-TASK) so a transition's status
+// UPDATE and its accompanying comment INSERT commit atomically in one
+// transaction instead of two separate calls.
+func (w *WriteTx) AddComment(c *CommentRecord) error {
+	if c.EntityType == "" {
+		c.EntityType = EntityTypeTask
+	}
+	const q = `INSERT INTO comments (entity_type, entity_id, author, content) VALUES (?, ?, ?, ?)
+		RETURNING id, created_at`
+	return w.tx.QueryRow(q, c.EntityType, c.EntityID, c.Author, c.Content).Scan(&c.ID, &c.CreatedAt)
+}
+
 // GetTaskRetryCount reads retry_count under the write transaction.
 func (w *WriteTx) GetTaskRetryCount(id string) (int, error) {
 	var retryCount int
