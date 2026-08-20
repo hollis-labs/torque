@@ -2,9 +2,13 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"log"
+	"time"
 
 	feotel "github.com/hollis-labs/go-otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -630,13 +634,12 @@ func (s *TaskService) ListSubtodos(taskID string) ([]sqlstore.Subtodo, error) {
 	return s.store.GetSubtodos(taskID)
 }
 
-// AddSubtodo appends a checklist item. Caller supplies the id to keep it
-// deterministic across repeated emits (e.g. "item-3"); duplicate ids are
-// rejected so downstream mark-done calls stay unambiguous.
+// AddSubtodo appends a checklist item. The caller may supply a meaningful
+// slug id (e.g. "check-auth-flow") to keep it deterministic across repeated
+// emits; when id is omitted, the server generates one (see newSubtodoID).
+// Duplicate ids — caller-supplied or generated — are rejected so downstream
+// mark-done calls stay unambiguous.
 func (s *TaskService) AddSubtodo(taskID string, item sqlstore.Subtodo) ([]sqlstore.Subtodo, error) {
-	if item.ID == "" {
-		return nil, &ValidationError{Field: "id", Message: "id is required"}
-	}
 	if item.Text == "" {
 		return nil, &ValidationError{Field: "text", Message: "text is required"}
 	}
@@ -644,16 +647,49 @@ func (s *TaskService) AddSubtodo(taskID string, item sqlstore.Subtodo) ([]sqlsto
 	if err != nil {
 		return nil, err
 	}
-	for _, e := range existing {
-		if e.ID == item.ID {
-			return nil, &ValidationError{Field: "id", Message: "duplicate subtodo id: " + item.ID}
+	if item.ID == "" {
+		item.ID = newSubtodoID()
+		// newSubtodoID is a 64-bit random value under a dedicated prefix, so
+		// a collision with an existing (generated or caller-supplied) id is
+		// vanishingly unlikely; regenerate defensively rather than fail.
+		for subtodoIDTaken(existing, item.ID) {
+			item.ID = newSubtodoID()
 		}
+	} else if subtodoIDTaken(existing, item.ID) {
+		return nil, &ValidationError{Field: "id", Message: "duplicate subtodo id: " + item.ID}
 	}
 	existing = append(existing, item)
 	if err := s.store.SetSubtodos(taskID, existing); err != nil {
 		return nil, err
 	}
 	return existing, nil
+}
+
+func subtodoIDTaken(items []sqlstore.Subtodo, id string) bool {
+	for _, e := range items {
+		if e.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// newSubtodoID returns a short random subtodo id under a dedicated "sub_"
+// prefix so generated ids can never collide with a caller-supplied
+// slug-style id (e.g. "check-auth-flow") — slugs are free to omit that
+// prefix entirely. Mirrors the crypto/rand + hex approach used by
+// internal/runtime/scheduler.newEventID: 8 random bytes (64 bits) is ample
+// for uniqueness within a single task's checklist (typically low tens of
+// items), and subtodos have no global/cross-task query surface that would
+// call for a date-bucketed sequential scheme like the other entity IDs.
+func newSubtodoID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// rand.Read never errors on a healthy OS RNG; fall back to a
+		// time-based id so the field is never empty.
+		return fmt.Sprintf("sub_%d", time.Now().UnixNano())
+	}
+	return "sub_" + hex.EncodeToString(b[:])
 }
 
 // MarkSubtodoDone ticks a single item and records its evidence.

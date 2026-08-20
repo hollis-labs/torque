@@ -1,6 +1,7 @@
 package service_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -40,15 +41,52 @@ func TestTaskService_AddSubtodoRejectsDuplicateID(t *testing.T) {
 	assert.Contains(t, err.Error(), "duplicate")
 }
 
-func TestTaskService_AddSubtodoRejectsMissingFields(t *testing.T) {
+func TestTaskService_AddSubtodoRejectsMissingText(t *testing.T) {
 	svc := setupService(t)
 	task, err := svc.Task.Create(service.TaskCreateInput{Title: "t1"})
 	require.NoError(t, err)
 
-	_, err = svc.Task.AddSubtodo(task.ID, sqlstore.Subtodo{Text: "no id"})
-	require.Error(t, err)
 	_, err = svc.Task.AddSubtodo(task.ID, sqlstore.Subtodo{ID: "a"})
 	require.Error(t, err)
+}
+
+// TestTaskService_AddSubtodoOmittedIDAutoGenerates covers FIX-002: id is now
+// optional. Omitting it generates a unique, distinctly-prefixed id ("sub_...")
+// so it can never collide with a caller-supplied slug-style id.
+func TestTaskService_AddSubtodoOmittedIDAutoGenerates(t *testing.T) {
+	svc := setupService(t)
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "t1"})
+	require.NoError(t, err)
+
+	got, err := svc.Task.AddSubtodo(task.ID, sqlstore.Subtodo{Text: "no id supplied"})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.NotEmpty(t, got[0].ID)
+	assert.True(t, strings.HasPrefix(got[0].ID, "sub_"), "generated id %q should carry the sub_ prefix", got[0].ID)
+
+	// A second omitted-id add gets a distinct generated id.
+	got, err = svc.Task.AddSubtodo(task.ID, sqlstore.Subtodo{Text: "no id again"})
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.NotEqual(t, got[0].ID, got[1].ID)
+}
+
+// TestTaskService_AddSubtodoExplicitIDStillWorks covers FIX-002 acceptance
+// criteria: supplying an explicit id still works and still rejects
+// duplicates within the same task.
+func TestTaskService_AddSubtodoExplicitIDStillWorks(t *testing.T) {
+	svc := setupService(t)
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "t1"})
+	require.NoError(t, err)
+
+	got, err := svc.Task.AddSubtodo(task.ID, sqlstore.Subtodo{ID: "check-auth-flow", Text: "meaningful slug"})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "check-auth-flow", got[0].ID)
+
+	_, err = svc.Task.AddSubtodo(task.ID, sqlstore.Subtodo{ID: "check-auth-flow", Text: "dup"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "duplicate")
 }
 
 func TestTaskService_MarkSubtodoDone(t *testing.T) {
