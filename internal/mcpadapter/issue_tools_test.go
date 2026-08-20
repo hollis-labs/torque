@@ -252,13 +252,10 @@ func TestFullStack_IssueBulkTransition_DelegatesToTaskFSM(t *testing.T) {
 		"ids": `["` + id + `"]`, "status": "todo",
 	})
 	require.False(t, isErr, "bulk_transition call itself must not be a call-level error: %s", text)
-	var fromBacklog struct {
-		Success int `json:"success"`
-		Failed  int `json:"failed"`
-	}
+	var fromBacklog bulkResponse
 	parseData(t, text, &fromBacklog)
-	require.Equal(t, 0, fromBacklog.Success)
-	require.Equal(t, 1, fromBacklog.Failed)
+	require.Empty(t, fromBacklog.Succeeded)
+	require.Len(t, fromBacklog.Failed, 1)
 
 	// Force it to todo (bypassing the FSM, same escape hatch the docstring
 	// documents), then bulk_transition through the real FSM should succeed.
@@ -271,15 +268,11 @@ func TestFullStack_IssueBulkTransition_DelegatesToTaskFSM(t *testing.T) {
 		"ids": `["` + id + `","CW-does-not-exist"]`, "status": "doing",
 	})
 	require.False(t, isErr, "bulk_transition call itself must not be a call-level error: %s", text)
-	var resp struct {
-		Success int    `json:"success"`
-		Failed  int    `json:"failed"`
-		Errors  string `json:"errors"`
-	}
+	var resp bulkResponse
 	parseData(t, text, &resp)
-	require.Equal(t, 1, resp.Success)
-	require.Equal(t, 1, resp.Failed)
-	require.NotEmpty(t, resp.Errors)
+	require.Equal(t, []string{id}, resp.Succeeded)
+	require.Len(t, resp.Failed, 1)
+	require.Equal(t, "CW-does-not-exist", resp.Failed[0].ID)
 
 	getText, isErr := callTool(t, a, "torque_issue_get", map[string]interface{}{"id": id})
 	require.False(t, isErr)

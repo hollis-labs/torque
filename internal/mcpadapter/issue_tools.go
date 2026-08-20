@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
@@ -279,8 +278,10 @@ func (a *Adapter) handleIssueBulkUpdate(ctx context.Context, req mcp.CallToolReq
 // (ADR-0004 §3: bulk_transition is kept as its own verb, not folded into
 // bulk_update, "only where a real FSM exists to protect — Task, and Issue
 // since it shares Task's FSM"). This mirrors handleTaskBulkTransition's
-// shape exactly; TaskService.BulkTransition itself is reused as-is, not
-// reimplemented (out of scope per ENT-ISSUE).
+// shape exactly, including ENT-TASK's fix routing BulkTransition through
+// the shared bulkResult envelope (see task_tools.go) instead of the old
+// bespoke {success, failed, errors} shape. TaskService.BulkTransition
+// itself is reused as-is, not reimplemented (out of scope per ENT-ISSUE).
 func (a *Adapter) handleIssueBulkTransition(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	raw := reqStr(req, "ids")
 	var ids []string
@@ -288,19 +289,6 @@ func (a *Adapter) handleIssueBulkTransition(ctx context.Context, req mcp.CallToo
 		return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid ids JSON: %v", err), "ids")
 	}
 	status := reqStr(req, "status")
-	succeeded, errs := a.svc.Task.BulkTransition(ctx, ids, status)
-
-	var errMsgs []string
-	for _, e := range errs {
-		errMsgs = append(errMsgs, e.Error())
-	}
-
-	result := map[string]interface{}{
-		"success": len(succeeded),
-		"failed":  len(errs),
-	}
-	if len(errMsgs) > 0 {
-		result["errors"] = strings.Join(errMsgs, "; ")
-	}
-	return okResult(result)
+	succeeded, failed := a.svc.Task.BulkTransition(ctx, ids, status)
+	return bulkResult(succeeded, failed)
 }
