@@ -282,4 +282,16 @@ func TestMigrationsApply(t *testing.T) {
 		_, err = db.Exec(`INSERT INTO sessions (id, state) VALUES (?, ?)`, "S23-"+st, st)
 		require.NoError(t, err, "sessions.state should accept %q", st)
 	}
+
+	// Verify 027 flipped epics.status DEFAULT from 'open' to 'active' (FIX-003).
+	_, err = db.Exec(`INSERT INTO epics (id, name) VALUES ('EP27-1', 'Default status epic')`)
+	require.NoError(t, err)
+	var epicStatus string
+	err = db.QueryRow(`SELECT status FROM epics WHERE id = 'EP27-1'`).Scan(&epicStatus)
+	require.NoError(t, err)
+	require.Equal(t, "active", epicStatus, "epics.status should default to 'active' after migration 027")
+
+	// Existing epics columns (priority, project_id from 004) must survive the rebuild.
+	_, err = db.Exec(`SELECT id, name, description, status, priority, project_id, created_at, updated_at FROM epics LIMIT 0`)
+	require.NoError(t, err, "epics columns should be intact after migration 027's table rebuild")
 }

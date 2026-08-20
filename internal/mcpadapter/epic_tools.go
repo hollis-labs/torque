@@ -29,19 +29,19 @@ Example: {"id":"EP-4"}`),
 
 	a.addTool(mcp.NewTool("torque_epic_update",
 		mcp.WithDescription(`Partial update of epic fields or status.
-Use for edits or open<->closed transitions. No dedicated epic approval flow — close via status=closed.
+Use for edits or active<->inactive transitions. No dedicated epic approval flow — close via status=inactive.
 Response shape: data = {id, updated: bool, message}.
-Example: {"id":"EP-4","status":"closed"}`),
+Example: {"id":"EP-4","status":"inactive"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Epic ID")),
 		mcp.WithString("name", mcp.Description("New name")),
 		mcp.WithString("description", mcp.Description("New description")),
-		mcp.WithString("status", mcp.Description("New status: open|closed|inactive")),
+		mcp.WithString("status", mcp.Description("New status: active|inactive")),
 		mcp.WithString("project_id", mcp.Description("Project ID to associate this epic with (requires features.projects); pass empty string to clear")),
 	), a.handleEpicUpdate)
 
 	a.addTool(mcp.NewTool("torque_epic_delete",
 		mcp.WithDescription(`Hard-delete an epic; linked tasks have epic_id cleared.
-Prefer torque_epic_update status=closed for audit. Similar surfaces: torque_sprint_delete, torque_project_delete.
+Prefer torque_epic_update status=inactive for audit. Similar surfaces: torque_sprint_delete, torque_project_delete.
 Response shape: data = {id, deleted: true, message}.
 Example: {"id":"EP-4"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Epic ID")),
@@ -51,8 +51,8 @@ Example: {"id":"EP-4"}`),
 		mcp.WithDescription(`List epics, optionally filtered by status; ordered updated_at DESC.
 Use for browsing; torque_epic_get when you know the ID. Default brief shape; pass verbose="true" for full records.
 Response shape: data = {items: [<briefEpic or EpicRecord>...], meta: {truncated, returned, limit, hint?}}.
-Example: {"status":"open"}`),
-		mcp.WithString("status", mcp.Description("Filter: open|closed|inactive")),
+Example: {"status":"active"}`),
+		mcp.WithString("status", mcp.Description("Filter: active|inactive")),
 		mcp.WithString("project_id", mcp.Description("Filter by project ID (requires features.projects)")),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleEpicList)
