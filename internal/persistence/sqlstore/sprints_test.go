@@ -155,6 +155,46 @@ func TestDeleteSprint(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestDeleteSprintRollsBackOnTaskCleanupFailure forces the reference-nulling
+// UPDATE inside DeleteSprint to fail (via a trigger that RAISE(ABORT)s on any
+// UPDATE touching tasks.sprint_id) and verifies the sprint's own DELETE never
+// runs: the sprint row still exists and the task's sprint_id is untouched.
+func TestDeleteSprintRollsBackOnTaskCleanupFailure(t *testing.T) {
+	store := setupTestStore(t)
+
+	require.NoError(t, store.CreateSprint(&sqlstore.SprintRecord{ID: "SP-20260407-0001", Name: "Sprint 1"}))
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID:       "CW-20260407-0001",
+		Title:    "Task in sprint",
+		Executor: "cli",
+	}))
+	sprintRef := sql.NullString{String: "SP-20260407-0001", Valid: true}
+	require.NoError(t, store.UpdateTask("CW-20260407-0001", sqlstore.TaskUpdate{SprintID: &sprintRef}))
+
+	_, err := store.DB().Exec(`
+		CREATE TRIGGER fail_sprint_cleanup
+		BEFORE UPDATE OF sprint_id ON tasks
+		BEGIN
+			SELECT RAISE(ABORT, 'forced failure for test');
+		END;
+	`)
+	require.NoError(t, err)
+
+	err = store.DeleteSprint("SP-20260407-0001")
+	require.Error(t, err)
+
+	// Sprint row must still exist — the DELETE must not have proceeded.
+	got, err := store.GetSprint("SP-20260407-0001")
+	require.NoError(t, err)
+	assert.Equal(t, "SP-20260407-0001", got.ID)
+
+	// Task's sprint_id must remain untouched — no partial state.
+	task, err := store.GetTask("CW-20260407-0001")
+	require.NoError(t, err)
+	assert.True(t, task.SprintID.Valid)
+	assert.Equal(t, "SP-20260407-0001", task.SprintID.String)
+}
+
 func TestSprintCostAccumulator(t *testing.T) {
 	store := setupTestStore(t)
 

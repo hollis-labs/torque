@@ -154,12 +154,23 @@ func (s *Store) UpdateEpic(id string, u EpicUpdate) error {
 	return nil
 }
 
-// DeleteEpic removes an epic and clears epic_id on associated tasks.
+// DeleteEpic removes an epic and clears epic_id on associated tasks. The
+// reference-nulling UPDATE and the epic's own DELETE run inside a single
+// transaction so a failed UPDATE (lock contention, disk full, etc.) can
+// never leave the epic deleted while tasks still point at it.
 func (s *Store) DeleteEpic(id string) error {
-	// Clear epic_id on any tasks referencing this epic
-	s.db.Exec("UPDATE tasks SET epic_id = NULL WHERE epic_id = ?", id)
+	tx, err := s.beginWriteTx()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 
-	result, err := s.db.Exec("DELETE FROM epics WHERE id = ?", id)
+	// Clear epic_id on any tasks referencing this epic
+	if _, err := tx.Exec("UPDATE tasks SET epic_id = NULL WHERE epic_id = ?", id); err != nil {
+		return err
+	}
+
+	result, err := tx.Exec("DELETE FROM epics WHERE id = ?", id)
 	if err != nil {
 		return err
 	}
@@ -167,7 +178,7 @@ func (s *Store) DeleteEpic(id string) error {
 	if n == 0 {
 		return fmt.Errorf("epic %s not found", id)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // NextEpicID generates the next sequential epic ID for today.

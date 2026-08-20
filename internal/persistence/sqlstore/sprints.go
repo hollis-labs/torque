@@ -190,11 +190,22 @@ func (s *Store) TransitionSprint(id, newStatus string) error {
 }
 
 // DeleteSprint removes a sprint and clears sprint_id on associated tasks.
+// The reference-nulling UPDATE and the sprint's own DELETE run inside a
+// single transaction so a failed UPDATE (lock contention, disk full, etc.)
+// can never leave the sprint deleted while tasks still point at it.
 func (s *Store) DeleteSprint(id string) error {
-	// Clear sprint_id on any tasks referencing this sprint
-	s.db.Exec("UPDATE tasks SET sprint_id = NULL WHERE sprint_id = ?", id)
+	tx, err := s.beginWriteTx()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 
-	result, err := s.db.Exec("DELETE FROM sprints WHERE id = ?", id)
+	// Clear sprint_id on any tasks referencing this sprint
+	if _, err := tx.Exec("UPDATE tasks SET sprint_id = NULL WHERE sprint_id = ?", id); err != nil {
+		return err
+	}
+
+	result, err := tx.Exec("DELETE FROM sprints WHERE id = ?", id)
 	if err != nil {
 		return err
 	}
@@ -202,7 +213,7 @@ func (s *Store) DeleteSprint(id string) error {
 	if n == 0 {
 		return fmt.Errorf("sprint %s not found", id)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // NextSprintID generates the next sequential sprint ID for today.
