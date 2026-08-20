@@ -396,6 +396,14 @@ type TaskUpdateInput struct {
 // Update applies a partial update to a task. If Tags is non-nil, linked
 // tags are resolved and replaced.
 func (s *TaskService) Update(id string, input TaskUpdateInput) error {
+	// title is the one truly-required field (mirrors Create's check). Now that
+	// the MCP layer detects title presence-based (FIX-001), an explicit
+	// "title": "" reaches here and must be rejected with a clean
+	// ValidationError rather than falling through to a raw DB NOT NULL error.
+	if input.Title != nil && *input.Title == "" {
+		return &ValidationError{Field: "title", Message: "title cannot be cleared to empty"}
+	}
+
 	fields, err := extractUpdateFields(input)
 	if err != nil {
 		return err
