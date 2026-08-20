@@ -26,6 +26,16 @@ import (
 // intervention required.
 func TestPickerDependencyCascadeOnDelete(t *testing.T) {
 	store := setupPickerStore(t)
+	// setupPickerStore disables FK enforcement package-wide (FK-002) so
+	// other picker/cost tests can use synthetic, non-existent sprint/
+	// project IDs without violating the new tasks.sprint_id/project_id/
+	// epic_id constraints. This test needs the opposite: it's exercising
+	// ON DELETE CASCADE on task_dependencies, which SQLite only enforces
+	// when foreign_keys is ON. Both tasks here are real rows with no
+	// synthetic sprint/project/epic references, so re-enabling FK
+	// enforcement locally is safe.
+	_, err := store.DB().Exec("PRAGMA foreign_keys = ON")
+	require.NoError(t, err)
 	picker := scheduler.NewPicker(store)
 
 	// The dependency task. Manual=true so it never becomes a picker
@@ -78,6 +88,10 @@ func TestPickerDependencyCascadeOnDelete(t *testing.T) {
 // (ON DELETE CASCADE on task_id, not just depends_on_task_id).
 func TestPickerDependencyCascadeOnDependentDelete(t *testing.T) {
 	store := setupPickerStore(t)
+	// See TestPickerDependencyCascadeOnDelete's comment: re-enable FK
+	// enforcement locally so ON DELETE CASCADE actually fires.
+	_, err := store.DB().Exec("PRAGMA foreign_keys = ON")
+	require.NoError(t, err)
 
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-KEEP-DEP", Title: "dependency", Status: "todo",

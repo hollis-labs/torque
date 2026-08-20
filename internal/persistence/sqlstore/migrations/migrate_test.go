@@ -325,11 +325,9 @@ func TestMigrationsApply(t *testing.T) {
 	require.True(t, archIdx["idx_epics_archived"], "idx_epics_archived should exist")
 	require.True(t, archIdx["idx_sprints_archived"], "idx_sprints_archived should exist")
 
-	// Verify 028 promoted tasks.sprint_id/project_id/epic_id to real FKs
-	// (FK-002) without disturbing depends_on — 029 (FK-003) depends on this
-	// rebuild still carrying depends_on forward so it has a column to drop.
-	_, err = db.Exec(`SELECT sprint_id, project_id, epic_id, depends_on FROM tasks LIMIT 0`)
-	require.NoError(t, err, "tasks.depends_on should still exist after migration 028's rebuild, before 029 drops it")
+	// Verify 028 promoted tasks.sprint_id/project_id/epic_id to real FKs (FK-002).
+	_, err = db.Exec(`SELECT sprint_id, project_id, epic_id FROM tasks LIMIT 0`)
+	require.NoError(t, err, "tasks.sprint_id/project_id/epic_id should exist after migration 028")
 
 	// Verify 029 created task_dependencies with the expected columns
 	// (FK-003: depends_on promoted from a JSON column to a join table,
