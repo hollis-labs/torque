@@ -231,9 +231,54 @@ func TestSprintList(t *testing.T) {
 	svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint 1"})
 	svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint 2"})
 
-	sprints, err := svc.Sprint.List("", "")
+	sprints, err := svc.Sprint.List("", "", false)
 	require.NoError(t, err)
 	assert.Len(t, sprints, 2)
+}
+
+// TestSprintArchiveDoesNotChangeStatus covers PRIM-004 AC: archiving is
+// independent of status.
+func TestSprintArchiveDoesNotChangeStatus(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("sprints")
+
+	sprint, err := svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint 1"})
+	require.NoError(t, err)
+	require.Equal(t, "active", sprint.Status)
+
+	require.NoError(t, svc.Sprint.Archive(sprint.ID))
+
+	got, err := svc.Sprint.Get(sprint.ID)
+	require.NoError(t, err)
+	assert.True(t, got.ArchivedAt.Valid)
+	assert.Equal(t, "active", got.Status)
+
+	require.NoError(t, svc.Sprint.Unarchive(sprint.ID))
+
+	got, err = svc.Sprint.Get(sprint.ID)
+	require.NoError(t, err)
+	assert.False(t, got.ArchivedAt.Valid)
+	assert.Equal(t, "active", got.Status)
+}
+
+// TestSprintListExcludesArchivedByDefault covers PRIM-004 AC: list filters
+// default to excluding archived rows unless include_archived is passed.
+func TestSprintListExcludesArchivedByDefault(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("sprints")
+
+	s1, _ := svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint 1"})
+	s2, _ := svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint 2"})
+	require.NoError(t, svc.Sprint.Archive(s2.ID))
+
+	sprints, err := svc.Sprint.List("", "", false)
+	require.NoError(t, err)
+	require.Len(t, sprints, 1)
+	assert.Equal(t, s1.ID, sprints[0].ID)
+
+	all, err := svc.Sprint.List("", "", true)
+	require.NoError(t, err)
+	assert.Len(t, all, 2)
 }
 
 func TestSprintDelete(t *testing.T) {

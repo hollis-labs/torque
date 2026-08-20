@@ -7,7 +7,9 @@ import (
 	"time"
 )
 
-// EpicRecord mirrors the epics table row.
+// EpicRecord mirrors the epics table row. ArchivedAt is NULL for active
+// epics; non-NULL means the epic is archived (kept for audit, hidden from
+// active filters). Archiving is independent of Status.
 type EpicRecord struct {
 	ID          string
 	Name        string
@@ -15,16 +17,20 @@ type EpicRecord struct {
 	Status      string
 	Priority    sql.NullInt64
 	ProjectID   sql.NullString
+	ArchivedAt  sql.NullTime
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
 
 // EpicFilter holds optional filter criteria for ListEpics.
+// IncludeArchived defaults to false: archived rows (archived_at IS NOT
+// NULL) are excluded unless the caller explicitly asks for them.
 type EpicFilter struct {
-	Status    string
-	ProjectID string
-	Limit     int
-	Offset    int
+	Status          string
+	ProjectID       string
+	IncludeArchived bool
+	Limit           int
+	Offset          int
 }
 
 // EpicUpdate holds optional fields to update; nil pointer = no change.
@@ -51,8 +57,8 @@ func (s *Store) CreateEpic(e *EpicRecord) error {
 // GetEpic fetches a single epic by ID.
 func (s *Store) GetEpic(id string) (*EpicRecord, error) {
 	e := &EpicRecord{}
-	err := s.ReadDB().QueryRow(`SELECT id, name, description, status, priority, project_id, created_at, updated_at FROM epics WHERE id = ?`, id).Scan(
-		&e.ID, &e.Name, &e.Description, &e.Status, &e.Priority, &e.ProjectID, &e.CreatedAt, &e.UpdatedAt,
+	err := s.ReadDB().QueryRow(`SELECT id, name, description, status, priority, project_id, archived_at, created_at, updated_at FROM epics WHERE id = ?`, id).Scan(
+		&e.ID, &e.Name, &e.Description, &e.Status, &e.Priority, &e.ProjectID, &e.ArchivedAt, &e.CreatedAt, &e.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("epic %s not found", id)
@@ -61,8 +67,10 @@ func (s *Store) GetEpic(id string) (*EpicRecord, error) {
 }
 
 // ListEpics returns epics matching the filter, ordered by created_at DESC.
+// Archived rows (archived_at IS NOT NULL) are excluded unless
+// f.IncludeArchived is true.
 func (s *Store) ListEpics(f EpicFilter) ([]EpicRecord, error) {
-	query := `SELECT id, name, description, status, priority, project_id, created_at, updated_at FROM epics`
+	query := `SELECT id, name, description, status, priority, project_id, archived_at, created_at, updated_at FROM epics`
 
 	var conditions []string
 	var args []interface{}
@@ -74,6 +82,9 @@ func (s *Store) ListEpics(f EpicFilter) ([]EpicRecord, error) {
 	if f.ProjectID != "" {
 		conditions = append(conditions, "project_id = ?")
 		args = append(args, f.ProjectID)
+	}
+	if !f.IncludeArchived {
+		conditions = append(conditions, "archived_at IS NULL")
 	}
 
 	if len(conditions) > 0 {
@@ -97,7 +108,7 @@ func (s *Store) ListEpics(f EpicFilter) ([]EpicRecord, error) {
 	var epics []EpicRecord
 	for rows.Next() {
 		var e EpicRecord
-		if err := rows.Scan(&e.ID, &e.Name, &e.Description, &e.Status, &e.Priority, &e.ProjectID, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.Name, &e.Description, &e.Status, &e.Priority, &e.ProjectID, &e.ArchivedAt, &e.CreatedAt, &e.UpdatedAt); err != nil {
 			return nil, err
 		}
 		epics = append(epics, e)
@@ -148,6 +159,42 @@ func (s *Store) UpdateEpic(id string, u EpicUpdate) error {
 		return err
 	}
 	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("epic %s not found", id)
+	}
+	return nil
+}
+
+// ArchiveEpic sets archived_at = CURRENT_TIMESTAMP. Idempotent: calling
+// archive on an already-archived epic refreshes the timestamp. Does not
+// touch status — archiving is orthogonal to the epic's workflow state
+// (an archived epic isn't the same fact as the epic being "done").
+func (s *Store) ArchiveEpic(id string) error {
+	res, err := s.db.Exec(
+		`UPDATE epics SET archived_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("epic %s not found", id)
+	}
+	return nil
+}
+
+// UnarchiveEpic clears archived_at, restoring the epic to active
+// (in the archive sense; status is untouched).
+func (s *Store) UnarchiveEpic(id string) error {
+	res, err := s.db.Exec(
+		`UPDATE epics SET archived_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
 	if n == 0 {
 		return fmt.Errorf("epic %s not found", id)
 	}

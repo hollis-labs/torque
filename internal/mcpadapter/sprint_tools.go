@@ -176,7 +176,10 @@ func (a *Adapter) handleSprintDelete(ctx context.Context, req mcp.CallToolReques
 
 func (a *Adapter) handleSprintList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	verbose := reqStrBool(req, "verbose")
-	sprints, err := a.svc.Sprint.List(reqStr(req, "status"), reqStr(req, "project_id"))
+	// Wiring an include_archived param into this tool's schema is Phase 4's
+	// job (PRIM-004 scope note); default to excluding archived rows here,
+	// which is a no-op today since nothing can set archived_at yet.
+	sprints, err := a.svc.Sprint.List(reqStr(req, "status"), reqStr(req, "project_id"), false)
 	if err != nil {
 		return errFromService(err)
 	}

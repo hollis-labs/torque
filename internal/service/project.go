@@ -101,12 +101,13 @@ func (s *ProjectService) Get(id string) (*sqlstore.ProjectRecord, error) {
 	return s.store.GetProject(id)
 }
 
-// List returns projects optionally filtered by status.
-func (s *ProjectService) List(status string) ([]sqlstore.ProjectRecord, error) {
+// List returns projects optionally filtered by status. includeArchived=false
+// (the default) excludes archived rows; pass true to surface them too.
+func (s *ProjectService) List(status string, includeArchived bool) ([]sqlstore.ProjectRecord, error) {
 	if err := s.feature.Require("projects"); err != nil {
 		return nil, err
 	}
-	return s.store.ListProjects(sqlstore.ProjectFilter{Status: status})
+	return s.store.ListProjects(sqlstore.ProjectFilter{Status: status, IncludeArchived: includeArchived})
 }
 
 // Update applies a partial update to a project.
@@ -143,6 +144,23 @@ func (s *ProjectService) Delete(id string) error {
 		return err
 	}
 	return s.store.DeleteProject(id)
+}
+
+// Archive soft-deletes a project by setting archived_at. Does not change
+// status — archiving is orthogonal to the project's workflow state.
+func (s *ProjectService) Archive(id string) error {
+	if err := s.feature.Require("projects"); err != nil {
+		return err
+	}
+	return s.store.ArchiveProject(id)
+}
+
+// Unarchive restores a previously archived project.
+func (s *ProjectService) Unarchive(id string) error {
+	if err := s.feature.Require("projects"); err != nil {
+		return err
+	}
+	return s.store.UnarchiveProject(id)
 }
 
 func (s *ProjectService) ListArtifacts(projectID string) ([]sqlstore.ProjectArtifactRecord, error) {

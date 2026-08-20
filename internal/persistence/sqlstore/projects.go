@@ -7,7 +7,9 @@ import (
 	"time"
 )
 
-// ProjectRecord mirrors the projects table row.
+// ProjectRecord mirrors the projects table row. ArchivedAt is NULL for
+// active projects; non-NULL means the project is archived (kept for
+// audit, hidden from active filters). Archiving is independent of Status.
 type ProjectRecord struct {
 	ID           string
 	Name         string
@@ -21,15 +23,19 @@ type ProjectRecord struct {
 	Rules        sql.NullString
 	Status       string
 	Icon         string
+	ArchivedAt   sql.NullTime
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
 
 // ProjectFilter holds optional filter criteria for ListProjects.
+// IncludeArchived defaults to false: archived rows (archived_at IS NOT
+// NULL) are excluded unless the caller explicitly asks for them.
 type ProjectFilter struct {
-	Status string
-	Limit  int
-	Offset int
+	Status          string
+	IncludeArchived bool
+	Limit           int
+	Offset          int
 }
 
 // ProjectUpdate holds optional fields to update; nil pointer = no change.
@@ -63,8 +69,8 @@ func (s *Store) CreateProject(p *ProjectRecord) error {
 // GetProject fetches a single project by ID.
 func (s *Store) GetProject(id string) (*ProjectRecord, error) {
 	p := &ProjectRecord{}
-	err := s.ReadDB().QueryRow(`SELECT id, name, description, repo_path, agent_path, read_paths, write_paths, context_paths, permissions, rules, status, icon, created_at, updated_at FROM projects WHERE id = ?`, id).Scan(
-		&p.ID, &p.Name, &p.Description, &p.RepoPath, &p.AgentPath, &p.ReadPaths, &p.WritePaths, &p.ContextPaths, &p.Permissions, &p.Rules, &p.Status, &p.Icon, &p.CreatedAt, &p.UpdatedAt,
+	err := s.ReadDB().QueryRow(`SELECT id, name, description, repo_path, agent_path, read_paths, write_paths, context_paths, permissions, rules, status, icon, archived_at, created_at, updated_at FROM projects WHERE id = ?`, id).Scan(
+		&p.ID, &p.Name, &p.Description, &p.RepoPath, &p.AgentPath, &p.ReadPaths, &p.WritePaths, &p.ContextPaths, &p.Permissions, &p.Rules, &p.Status, &p.Icon, &p.ArchivedAt, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("project %s not found", id)
@@ -73,8 +79,10 @@ func (s *Store) GetProject(id string) (*ProjectRecord, error) {
 }
 
 // ListProjects returns projects matching the filter, ordered by name.
+// Archived rows (archived_at IS NOT NULL) are excluded unless
+// f.IncludeArchived is true.
 func (s *Store) ListProjects(f ProjectFilter) ([]ProjectRecord, error) {
-	query := `SELECT id, name, description, repo_path, agent_path, read_paths, write_paths, context_paths, permissions, rules, status, icon, created_at, updated_at FROM projects`
+	query := `SELECT id, name, description, repo_path, agent_path, read_paths, write_paths, context_paths, permissions, rules, status, icon, archived_at, created_at, updated_at FROM projects`
 
 	var conditions []string
 	var args []interface{}
@@ -82,6 +90,9 @@ func (s *Store) ListProjects(f ProjectFilter) ([]ProjectRecord, error) {
 	if f.Status != "" {
 		conditions = append(conditions, "status = ?")
 		args = append(args, f.Status)
+	}
+	if !f.IncludeArchived {
+		conditions = append(conditions, "archived_at IS NULL")
 	}
 
 	if len(conditions) > 0 {
@@ -105,7 +116,7 @@ func (s *Store) ListProjects(f ProjectFilter) ([]ProjectRecord, error) {
 	var projects []ProjectRecord
 	for rows.Next() {
 		var p ProjectRecord
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.RepoPath, &p.AgentPath, &p.ReadPaths, &p.WritePaths, &p.ContextPaths, &p.Permissions, &p.Rules, &p.Status, &p.Icon, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.RepoPath, &p.AgentPath, &p.ReadPaths, &p.WritePaths, &p.ContextPaths, &p.Permissions, &p.Rules, &p.Status, &p.Icon, &p.ArchivedAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		projects = append(projects, p)
@@ -176,6 +187,42 @@ func (s *Store) UpdateProject(id string, u ProjectUpdate) error {
 		return err
 	}
 	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("project %s not found", id)
+	}
+	return nil
+}
+
+// ArchiveProject sets archived_at = CURRENT_TIMESTAMP. Idempotent: calling
+// archive on an already-archived project refreshes the timestamp. Does not
+// touch status — archiving is orthogonal to the project's active/inactive
+// workflow state.
+func (s *Store) ArchiveProject(id string) error {
+	res, err := s.db.Exec(
+		`UPDATE projects SET archived_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("project %s not found", id)
+	}
+	return nil
+}
+
+// UnarchiveProject clears archived_at, restoring the project to active
+// (in the archive sense; status is untouched).
+func (s *Store) UnarchiveProject(id string) error {
+	res, err := s.db.Exec(
+		`UPDATE projects SET archived_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
 	if n == 0 {
 		return fmt.Errorf("project %s not found", id)
 	}
