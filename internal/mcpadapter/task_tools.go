@@ -44,7 +44,7 @@ Use for ad-hoc work items — prefer torque_task_create_from_template when a mat
 Response shape: data = {<TaskRecord fields>, Tags[], dispatch_notice} — singleton, PascalCase keys. dispatch_notice spells out the manual state and the exact promotion call.
 Example: {"title":"Fix auth bug","description":"Login returns 500","priority":"2","tags":"[\"backend\"]"}`),
 		mcp.WithString("title", mcp.Required(), mcp.Description("Task title")),
-		mcp.WithString("description", mcp.Required(), mcp.Description("Task description")),
+		mcp.WithString("description", mcp.Description("Task description")),
 		mcp.WithString("priority", mcp.Description("Priority 1-5 (integer, default 2)")),
 		mcp.WithString("tags", mcp.Description("JSON array of tag strings")),
 		mcp.WithString("executor", mcp.Description("Executor type (default cli)")),
@@ -399,13 +399,21 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 	update := sqlstore.TaskUpdate{}
 	args := req.GetArguments()
 
-	if v := reqStr(req, "title"); v != "" {
+	// title/description/priority: presence-based detection, matching every
+	// other field on this tool (see args["..."] pattern below). Value-based
+	// detection (the prior `if v != ""` / `if v != 0` checks) meant an
+	// explicit "" could never clear title/description, and an explicit
+	// priority=0 was silently ignored as "not set" (FIX-001).
+	if _, ok := args["title"]; ok {
+		v := reqStr(req, "title")
 		update.Title = &v
 	}
-	if v := reqStr(req, "description"); v != "" {
+	if _, ok := args["description"]; ok {
+		v := reqStr(req, "description")
 		update.Description = &v
 	}
-	if v := reqInt(req, "priority"); v != 0 {
+	if _, ok := args["priority"]; ok {
+		v := reqInt(req, "priority")
 		update.Priority = &v
 	}
 

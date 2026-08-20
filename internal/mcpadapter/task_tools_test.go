@@ -440,6 +440,109 @@ func TestFullStack_TaskUpdate_WritableFields(t *testing.T) {
 	expectNullStringJSON("Metadata", `{"meta_key":"meta_val"}`)
 }
 
+// TestFullStack_TaskCreate_DescriptionOptional covers FIX-001 item 1: neither
+// the DB column nor TaskService.Create requires description, so the MCP
+// schema must not either. A create call that omits description entirely
+// (not "") must succeed.
+func TestFullStack_TaskCreate_DescriptionOptional(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "no description supplied",
+	})
+	require.False(t, isErr, "create without description should not error: %s", text)
+
+	var created map[string]interface{}
+	parseData(t, text, &created)
+	require.Equal(t, "no description supplied", created["Title"])
+	require.Equal(t, "", created["Description"])
+}
+
+// TestFullStack_TaskUpdate_PresenceBasedFields covers FIX-001 item 2: title,
+// description, and priority must use presence-based detection like every
+// other field on torque_task_update, not value-based detection. Regression
+// coverage for: (a) "description":"" actually clearing the column, verified
+// via a follow-up torque_task_get read of the persisted row rather than just
+// checking the update call's 200 response, and (b) "priority":0 being
+// detected as present and applied, not silently dropped as "unset".
+func TestFullStack_TaskUpdate_PresenceBasedFields(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":       "presence-based",
+		"description": "original description",
+		"priority":    3,
+	})
+	var created map[string]interface{}
+	parseData(t, text, &created)
+	id := created["ID"].(string)
+	require.Equal(t, float64(3), created["Priority"])
+
+	// description: "" must clear the column, not silently no-op.
+	text, isErr := callTool(t, a, "torque_task_update", map[string]interface{}{
+		"id":          id,
+		"description": "",
+	})
+	require.False(t, isErr, "clearing description should not error: %s", text)
+
+	// Verify against a fresh read of the persisted row, not just the update
+	// call's response.
+	text, isErr = callTool(t, a, "torque_task_get", map[string]interface{}{"id": id})
+	require.False(t, isErr, "get should not error: %s", text)
+	var fetched map[string]interface{}
+	parseData(t, text, &fetched)
+	require.Equal(t, "", fetched["Description"], "description should be cleared in the persisted row")
+	require.Equal(t, "presence-based", fetched["Title"], "title should be untouched")
+
+	// priority: 0 must be detected as present and applied.
+	text, isErr = callTool(t, a, "torque_task_update", map[string]interface{}{
+		"id":       id,
+		"priority": 0,
+	})
+	require.False(t, isErr, "setting priority=0 should not error: %s", text)
+	var updated map[string]interface{}
+	parseData(t, text, &updated)
+	require.Equal(t, float64(0), updated["Priority"], "priority=0 should be applied, not treated as unset")
+
+	text, isErr = callTool(t, a, "torque_task_get", map[string]interface{}{"id": id})
+	require.False(t, isErr, "get should not error: %s", text)
+	parseData(t, text, &fetched)
+	require.Equal(t, float64(0), fetched["Priority"], "priority=0 should persist in the DB row")
+}
+
+// TestFullStack_TaskUpdate_TitleCannotBeCleared covers FIX-001 item 3: once
+// title is presence-based, an explicit "title":"" reaches TaskService.Update
+// and must be rejected with a clean arg_invalid ValidationError, not a raw
+// SQLite NOT NULL failure.
+func TestFullStack_TaskUpdate_TitleCannotBeCleared(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":       "keep me",
+		"description": "x",
+	})
+	var created map[string]interface{}
+	parseData(t, text, &created)
+	id := created["ID"].(string)
+
+	text, isErr := callTool(t, a, "torque_task_update", map[string]interface{}{
+		"id":    id,
+		"title": "",
+	})
+	require.True(t, isErr, "clearing title should error: %s", text)
+	code, msg, field := parseError(t, text)
+	require.Equal(t, "arg_invalid", code)
+	require.Equal(t, "title", field)
+	require.NotContains(t, msg, "NOT NULL", "error should be a clean validation error, not a raw SQLite failure")
+
+	// Title must be unchanged.
+	text, isErr = callTool(t, a, "torque_task_get", map[string]interface{}{"id": id})
+	require.False(t, isErr, "get should not error: %s", text)
+	var fetched map[string]interface{}
+	parseData(t, text, &fetched)
+	require.Equal(t, "keep me", fetched["Title"])
+}
+
 func TestFullStack_TaskLifecycle(t *testing.T) {
 	a := setupAdapter(t)
 

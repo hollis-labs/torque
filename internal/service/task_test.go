@@ -133,6 +133,32 @@ func TestTaskCreateValidation(t *testing.T) {
 	require.ErrorAs(t, err, &ve)
 }
 
+// TestTaskUpdateTitleCannotBeCleared covers FIX-001 item 3: title is the one
+// truly-required field, so Update must reject an explicit empty title with a
+// clean ValidationError (mirroring Create's check) rather than let it fall
+// through to a raw DB NOT NULL failure.
+func TestTaskUpdateTitleCannotBeCleared(t *testing.T) {
+	svc := setupService(t)
+
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "keep me"})
+	require.NoError(t, err)
+
+	empty := ""
+	err = svc.Task.Update(task.ID, service.TaskUpdateInput{
+		TaskUpdate: sqlstore.TaskUpdate{Title: &empty},
+	})
+	require.Error(t, err)
+
+	var ve *service.ValidationError
+	require.ErrorAs(t, err, &ve)
+	require.Equal(t, "title", ve.Field)
+
+	// Title must be unchanged.
+	unchanged, err := svc.Task.Get(task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "keep me", unchanged.Title)
+}
+
 func TestTaskTransitionValid(t *testing.T) {
 	svc := setupService(t)
 

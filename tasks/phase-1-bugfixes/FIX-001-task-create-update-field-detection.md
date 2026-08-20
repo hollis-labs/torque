@@ -1,7 +1,7 @@
 # FIX-001 — Task create/update field-detection + required fixes
 
 **Phase:** 1 — Locked bug fixes
-**Status:** todo
+**Status:** done
 **Depends on:** none
 **Blocks:** ENT-TASK
 **Source:** ADR-0004 §1 items 1–2 (locked)
@@ -55,3 +55,59 @@ locked in ADR-0004 §1 as small and independent of the larger surface work.
   pick up only if it blocks something concrete.
 - Any of the create-field expansion in ENT-TASK (this task is the two
   narrow §1 bug fixes only).
+
+## Execution notes
+
+All three scope items implemented as specified; no deviations.
+
+1. **`torque_task_create` description no longer required** —
+   `internal/mcpadapter/task_tools.go`: dropped `mcp.Required()` from the
+   `description` param declaration (was the only over-requiring layer; DB
+   column is `NOT NULL DEFAULT ''` and `TaskService.Create` only checks
+   `Title`).
+2. **`handleTaskUpdate` field-detection fix** — same file, `handleTaskUpdate`:
+   switched `title`, `description`, and `priority` from value-based checks
+   (`if v := reqStr(...); v != ""` / `v != 0`) to presence-based checks
+   (`if _, ok := args["..."]; ok`), matching every other field on the tool.
+   Confirmed the store layer (`sqlstore.UpdateTask`) already builds its SQL
+   set-clauses off pointer-nil checks, so no downstream change was needed
+   there — the bug was isolated to the MCP handler.
+3. **`TaskService.Update` title-non-empty guard** —
+   `internal/service/task.go`: added a check at the top of `Update` that
+   rejects `input.Title != nil && *input.Title == ""` with a
+   `*ValidationError{Field: "title", ...}`, mirroring `Create`'s existing
+   check. This maps to `arg_invalid` via the adapter's existing
+   `mapServiceError`, so no adapter-side error-mapping change was required.
+
+**Test coverage added** (acceptance criteria: add coverage for the three
+presence-based fields if not already covered — it wasn't):
+- `internal/mcpadapter/task_tools_test.go`:
+  `TestFullStack_TaskCreate_DescriptionOptional` (create with description
+  omitted entirely succeeds), `TestFullStack_TaskUpdate_PresenceBasedFields`
+  (`description:""` clears the column, verified via a follow-up
+  `torque_task_get` read of the persisted row rather than trusting the
+  update call's 200; `priority:0` is applied and persists), and
+  `TestFullStack_TaskUpdate_TitleCannotBeCleared` (`title:""` returns
+  `arg_invalid`/field=`title`, message does not leak a raw `NOT NULL`
+  string, and the title is left unchanged).
+- `internal/service/task_test.go`: `TestTaskUpdateTitleCannotBeCleared`
+  exercises the new `TaskService.Update` guard directly (bypassing the MCP
+  layer) to pin the service-level contract independent of the adapter.
+
+**Verification:** `go build ./...`, `go vet ./...`, and `go test ./...`
+(full suite, `-count=1`) all pass — no existing test relied on the old
+value-based/required-description behavior, so nothing else needed updating.
+
+**Files touched:** `internal/mcpadapter/task_tools.go`,
+`internal/mcpadapter/task_tools_test.go`, `internal/service/task.go`,
+`internal/service/task_test.go`.
+
+**Judgment calls / notes:**
+- Kept the `ValidationError` message generic ("title cannot be cleared to
+  empty") rather than reusing Create's "title is required" wording, since
+  the update-path failure mode is conceptually "clearing," not "missing on
+  create" — purely cosmetic, easy to change if a reviewer prefers parity.
+- Did not touch the HTTP-side `createTask` handler in
+  `internal/httpserver/tasks.go` (mentioned only as a "parallel override" in
+  a comment) — out of scope per the task's explicit MCP-adapter-only file
+  citation.
