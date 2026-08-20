@@ -177,6 +177,10 @@ sentence.
   semantics, since fixing that mismatch for Sprint is out of this task's
   scope (FIX-001 was Task-specific) and changing single-item
   `torque_sprint_update`'s existing behavior wasn't asked for here.
+  **Update (SWEEP-001):** this exact mismatch was flagged by the Phase 5
+  consistency sweep and fixed there — `buildSprintUpdate` is now
+  presence-based (`reqHasArg`) for all five fields, matching Task's
+  FIX-001 semantics; see `tasks/phase-5-consistency/SWEEP-001-envelope-and-error-taxonomy-audit.md`.
 
 ### Registration (DEC-002)
 

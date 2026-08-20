@@ -151,25 +151,30 @@ func reqEpicPriorityPtr(req mcp.CallToolRequest) *int64 {
 
 // buildEpicUpdateInput turns a torque_epic_update-shaped request's
 // arguments into a service.EpicUpdateInput plus whether any field was
-// actually set. name/description/status keep the tool's existing
-// value-based detection (empty string means "not provided"); priority and
-// project_id are presence-based so an explicit priority=0 or project_id=""
-// round-trip correctly. Shared by handleEpicUpdate (single-id) and
-// handleEpicBulkUpdate (PRIM-003) so single- and bulk-update can never
-// drift apart on semantics — mirrors Task's buildTaskUpdateInput.
+// actually set. All fields are presence-based (SWEEP-001: name/description/
+// status previously used value-based detection — an empty string meant "not
+// provided" — which silently dropped an explicit clear, the same bug class
+// FIX-001 fixed for Task; status="" and name="" are now rejected downstream
+// by EpicService.Update's validation instead of being silently ignored).
+// Shared by handleEpicUpdate (single-id) and handleEpicBulkUpdate (PRIM-003)
+// so single- and bulk-update can never drift apart on semantics — mirrors
+// Task's buildTaskUpdateInput.
 func buildEpicUpdateInput(req mcp.CallToolRequest) (service.EpicUpdateInput, bool) {
 	input := service.EpicUpdateInput{}
 	hasUpdate := false
 
-	if v := reqStr(req, "name"); v != "" {
+	if reqHasArg(req, "name") {
+		v := reqStr(req, "name")
 		input.Name = &v
 		hasUpdate = true
 	}
-	if v := reqStr(req, "description"); v != "" {
+	if reqHasArg(req, "description") {
+		v := reqStr(req, "description")
 		input.Description = &v
 		hasUpdate = true
 	}
-	if v := reqStr(req, "status"); v != "" {
+	if reqHasArg(req, "status") {
+		v := reqStr(req, "status")
 		input.Status = &v
 		hasUpdate = true
 	}

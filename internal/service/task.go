@@ -1014,7 +1014,13 @@ func (s *TaskService) UpdateSubtodo(taskID, itemID string, text *string, require
 		}
 		return items, nil
 	}
-	return nil, &ValidationError{Field: "id", Message: "subtodo not found: " + itemID}
+	// SWEEP-001: an unknown itemID is a not_found condition (the referenced
+	// subtodo doesn't exist), not a caller-input-shape problem — previously
+	// returned as *ValidationError, which mapServiceError maps to
+	// arg_invalid ahead of the string-match "not found" tier, so it never
+	// reached not_found regardless of message text. Matches the audit's
+	// Artifact finding of a not_found falling through to the wrong code.
+	return nil, &NotFoundError{Entity: "subtodo", ID: itemID}
 }
 
 // DeleteSubtodo removes a checklist item by id. Returns the full updated
@@ -1033,7 +1039,8 @@ func (s *TaskService) DeleteSubtodo(taskID, itemID string) ([]sqlstore.Subtodo, 
 			return items, nil
 		}
 	}
-	return nil, &ValidationError{Field: "id", Message: "subtodo not found: " + itemID}
+	// SWEEP-001: same not_found fix as UpdateSubtodo above.
+	return nil, &NotFoundError{Entity: "subtodo", ID: itemID}
 }
 
 // BulkTransition applies the same status transition to multiple tasks. It

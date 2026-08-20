@@ -138,6 +138,15 @@ func (s *EpicService) Update(id string, input EpicUpdateInput) error {
 		return err
 	}
 
+	// name is the one truly-required field (mirrors Create's check). Now
+	// that the MCP layer detects name presence-based (SWEEP-001, mirroring
+	// FIX-001's fix for Task's title), an explicit "name": "" reaches here
+	// and must be rejected with a clean ValidationError rather than
+	// silently persisting an empty name.
+	if input.Name != nil && *input.Name == "" {
+		return &ValidationError{Field: "name", Message: "name cannot be cleared to empty"}
+	}
+
 	if input.Status != nil && !validEpicStatuses[*input.Status] {
 		return &ValidationError{
 			Field:   "status",

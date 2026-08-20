@@ -232,3 +232,34 @@ func TestSubtodoAdd_RejectsDuplicateID(t *testing.T) {
 	})
 	require.True(t, isErr, "duplicate id must error: %s", dup)
 }
+
+// TestSubtodoUpdateDelete_UnknownIDMapsToNotFound verifies SWEEP-001's fix:
+// an unknown subtodo id on torque_task_subtodo_update/_delete must map to
+// error.code=not_found (the referenced item doesn't exist), not
+// arg_invalid — TaskService.UpdateSubtodo/DeleteSubtodo previously returned
+// a bare *ValidationError for this case, which mapServiceError's typed
+// check matches ahead of the string-match "not found" tier regardless of
+// message text.
+func TestSubtodoUpdateDelete_UnknownIDMapsToNotFound(t *testing.T) {
+	a := setupAdapter(t)
+	text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "subtodo not-found check",
+	})
+	var created map[string]interface{}
+	parseData(t, text, &created)
+	taskID, _ := created["ID"].(string)
+
+	updateText, isErr := callTool(t, a, "torque_task_subtodo_update", map[string]interface{}{
+		"task_id": taskID, "id": "does-not-exist", "text": "new text",
+	})
+	require.True(t, isErr, "unknown id must error: %s", updateText)
+	code, _, _ := parseError(t, updateText)
+	assert.Equal(t, "not_found", code)
+
+	deleteText, isErr := callTool(t, a, "torque_task_subtodo_delete", map[string]interface{}{
+		"task_id": taskID, "id": "does-not-exist",
+	})
+	require.True(t, isErr, "unknown id must error: %s", deleteText)
+	code, _, _ = parseError(t, deleteText)
+	assert.Equal(t, "not_found", code)
+}
