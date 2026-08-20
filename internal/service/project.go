@@ -110,6 +110,20 @@ func (s *ProjectService) List(status string, includeArchived bool) ([]sqlstore.P
 	return s.store.ListProjects(sqlstore.ProjectFilter{Status: status, IncludeArchived: includeArchived})
 }
 
+// ListPage is List's Phase 4 (ENT-PROJECT) sibling: it passes the full
+// sqlstore.ProjectFilter through, including the SortBy/SortDir/
+// AfterSortValue/AfterID fields PRIM-001/PRIM-002 cursor pagination needs.
+// Kept separate from List (rather than changing List's signature) so the
+// HTTP handler's simpler status+includeArchived contract — and its
+// existing tests — don't have to change for a capability only
+// torque_project_list uses today.
+func (s *ProjectService) ListPage(filter sqlstore.ProjectFilter) ([]sqlstore.ProjectRecord, error) {
+	if err := s.feature.Require("projects"); err != nil {
+		return nil, err
+	}
+	return s.store.ListProjects(filter)
+}
+
 // Update applies a partial update to a project.
 func (s *ProjectService) Update(id string, update sqlstore.ProjectUpdate) error {
 	if err := s.feature.Require("projects"); err != nil {
