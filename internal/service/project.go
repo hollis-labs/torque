@@ -101,12 +101,27 @@ func (s *ProjectService) Get(id string) (*sqlstore.ProjectRecord, error) {
 	return s.store.GetProject(id)
 }
 
-// List returns projects optionally filtered by status.
-func (s *ProjectService) List(status string) ([]sqlstore.ProjectRecord, error) {
+// List returns projects optionally filtered by status. includeArchived=false
+// (the default) excludes archived rows; pass true to surface them too.
+func (s *ProjectService) List(status string, includeArchived bool) ([]sqlstore.ProjectRecord, error) {
 	if err := s.feature.Require("projects"); err != nil {
 		return nil, err
 	}
-	return s.store.ListProjects(sqlstore.ProjectFilter{Status: status})
+	return s.store.ListProjects(sqlstore.ProjectFilter{Status: status, IncludeArchived: includeArchived})
+}
+
+// ListPage is List's Phase 4 (ENT-PROJECT) sibling: it passes the full
+// sqlstore.ProjectFilter through, including the SortBy/SortDir/
+// AfterSortValue/AfterID fields PRIM-001/PRIM-002 cursor pagination needs.
+// Kept separate from List (rather than changing List's signature) so the
+// HTTP handler's simpler status+includeArchived contract — and its
+// existing tests — don't have to change for a capability only
+// torque_project_list uses today.
+func (s *ProjectService) ListPage(filter sqlstore.ProjectFilter) ([]sqlstore.ProjectRecord, error) {
+	if err := s.feature.Require("projects"); err != nil {
+		return nil, err
+	}
+	return s.store.ListProjects(filter)
 }
 
 // Update applies a partial update to a project.
@@ -143,6 +158,23 @@ func (s *ProjectService) Delete(id string) error {
 		return err
 	}
 	return s.store.DeleteProject(id)
+}
+
+// Archive soft-deletes a project by setting archived_at. Does not change
+// status — archiving is orthogonal to the project's workflow state.
+func (s *ProjectService) Archive(id string) error {
+	if err := s.feature.Require("projects"); err != nil {
+		return err
+	}
+	return s.store.ArchiveProject(id)
+}
+
+// Unarchive restores a previously archived project.
+func (s *ProjectService) Unarchive(id string) error {
+	if err := s.feature.Require("projects"); err != nil {
+		return err
+	}
+	return s.store.UnarchiveProject(id)
 }
 
 func (s *ProjectService) ListArtifacts(projectID string) ([]sqlstore.ProjectArtifactRecord, error) {

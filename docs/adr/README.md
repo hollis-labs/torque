@@ -15,3 +15,5 @@ Files are numbered sequentially (`NNNN-short-slug.md`). Each ADR carries a
 |-----|-------|--------|
 | [0001](0001-torque-messaging-design-lock.md) | Torque Messaging — design lock (steering + federation contracts) | Accepted |
 | [0002](0002-federation-hop-auth-trust.md) | Federation hop — auth & trust model (mTLS + authority allowlist) | Accepted |
+| [0003](0003-harness-emitted-coordination-events.md) | Harness-emitted coordination events | Proposed |
+| [0004](0004-mcp-data-entity-agent-ergonomics.md) | MCP data-entity ergonomics — target shape for Task/Project-level data | Proposed |

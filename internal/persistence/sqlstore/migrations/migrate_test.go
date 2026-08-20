@@ -282,4 +282,90 @@ func TestMigrationsApply(t *testing.T) {
 		_, err = db.Exec(`INSERT INTO sessions (id, state) VALUES (?, ?)`, "S23-"+st, st)
 		require.NoError(t, err, "sessions.state should accept %q", st)
 	}
+
+	// Verify 027 flipped epics.status DEFAULT from 'open' to 'active' (FIX-003).
+	_, err = db.Exec(`INSERT INTO epics (id, name) VALUES ('EP27-1', 'Default status epic')`)
+	require.NoError(t, err)
+	var epicStatus string
+	err = db.QueryRow(`SELECT status FROM epics WHERE id = 'EP27-1'`).Scan(&epicStatus)
+	require.NoError(t, err)
+	require.Equal(t, "active", epicStatus, "epics.status should default to 'active' after migration 027")
+
+	// Existing epics columns (priority, project_id from 004) must survive the rebuild.
+	_, err = db.Exec(`SELECT id, name, description, status, priority, project_id, created_at, updated_at FROM epics LIMIT 0`)
+	require.NoError(t, err, "epics columns should be intact after migration 027's table rebuild")
+
+	// Verify 030 added nullable archived_at to projects, epics, sprints
+	// (PRIM-004 archive primitive). NULL = active; existing rows are
+	// unaffected (no backfill).
+	_, err = db.Exec(`SELECT archived_at FROM projects LIMIT 0`)
+	require.NoError(t, err, "projects.archived_at should exist after migration 030")
+	_, err = db.Exec(`SELECT archived_at FROM epics LIMIT 0`)
+	require.NoError(t, err, "epics.archived_at should exist after migration 030")
+	_, err = db.Exec(`SELECT archived_at FROM sprints LIMIT 0`)
+	require.NoError(t, err, "sprints.archived_at should exist after migration 030")
+
+	_, err = db.Exec(`INSERT INTO projects (id, name, repo_path) VALUES ('T27-P', 'p', '/tmp')`)
+	require.NoError(t, err)
+	var archivedAt sql.NullTime
+	err = db.QueryRow(`SELECT archived_at FROM projects WHERE id = 'T27-P'`).Scan(&archivedAt)
+	require.NoError(t, err)
+	require.False(t, archivedAt.Valid, "new project rows should default to NULL archived_at")
+
+	archIdxRows, err := db.Query(`SELECT name, tbl_name FROM sqlite_master WHERE type='index' AND tbl_name IN ('projects', 'epics', 'sprints')`)
+	require.NoError(t, err)
+	defer archIdxRows.Close()
+	archIdx := map[string]bool{}
+	for archIdxRows.Next() {
+		var n, tbl string
+		require.NoError(t, archIdxRows.Scan(&n, &tbl))
+		archIdx[n] = true
+	}
+	require.True(t, archIdx["idx_projects_archived"], "idx_projects_archived should exist")
+	require.True(t, archIdx["idx_epics_archived"], "idx_epics_archived should exist")
+	require.True(t, archIdx["idx_sprints_archived"], "idx_sprints_archived should exist")
+
+	// Verify 028 promoted tasks.sprint_id/project_id/epic_id to real FKs (FK-002).
+	_, err = db.Exec(`SELECT sprint_id, project_id, epic_id FROM tasks LIMIT 0`)
+	require.NoError(t, err, "tasks.sprint_id/project_id/epic_id should exist after migration 028")
+
+	// Verify 029 created task_dependencies with the expected columns
+	// (FK-003: depends_on promoted from a JSON column to a join table,
+	// mirroring 005's tags -> task_tags promotion). Must run after 028's
+	// tasks rebuild (which still carries depends_on) — this migration is
+	// what actually drops it.
+	_, err = db.Exec(`SELECT task_id, depends_on_task_id, sort_order, created_at FROM task_dependencies LIMIT 0`)
+	require.NoError(t, err, "task_dependencies columns should exist after migration 029")
+
+	// Verify 029 dropped the legacy tasks.depends_on column.
+	_, err = db.Exec(`SELECT depends_on FROM tasks LIMIT 0`)
+	require.Error(t, err, "tasks.depends_on column should have been dropped by migration 029")
+
+	// Verify the composite PK rejects a duplicate (task_id, depends_on_task_id)
+	// pair. Cascade-delete behavior is exercised indirectly via sqlstore tests
+	// where Store.New() enables foreign_keys; this test uses a raw sql.Open so
+	// PRAGMA foreign_keys is OFF by default (same caveat as the 008 comment
+	// above).
+	_, err = db.Exec(`INSERT INTO tasks (id, title, status) VALUES ('T27-A', 'a', 'todo')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO tasks (id, title, status) VALUES ('T27-B', 'b', 'todo')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO task_dependencies (task_id, depends_on_task_id, sort_order, created_at)
+		VALUES ('T27-B', 'T27-A', 0, CURRENT_TIMESTAMP)`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO task_dependencies (task_id, depends_on_task_id, sort_order, created_at)
+		VALUES ('T27-B', 'T27-A', 1, CURRENT_TIMESTAMP)`)
+	require.Error(t, err, "task_dependencies (task_id, depends_on_task_id) should be a UNIQUE composite PK")
+
+	// Verify the depends_on_task_id index exists (mirrors idx_task_tags_tag_slug).
+	depIdxRows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='task_dependencies'`)
+	require.NoError(t, err)
+	defer depIdxRows.Close()
+	depIdx := map[string]bool{}
+	for depIdxRows.Next() {
+		var n string
+		require.NoError(t, depIdxRows.Scan(&n))
+		depIdx[n] = true
+	}
+	require.True(t, depIdx["idx_task_dependencies_depends_on_task_id"], "idx_task_dependencies_depends_on_task_id should exist")
 }

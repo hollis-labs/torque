@@ -2,9 +2,9 @@
 
 Established 2026-08-19 during a full tag/status audit of Nanite's Torque tasks.
 Portfolio-wide convention, not Nanite-specific — apply it to any project's
-tasks. Goal: make `torque_task_list`/`torque_task_search`'s `tags` filter (AND
-match) useful for slicing a large backlog by what kind of work it is, what
-subsystem it touches, and whether it's actually ready to dispatch.
+tasks. Goal: make `torque_task_list`'s `tags` filter (AND match) useful for
+slicing a large backlog by what kind of work it is, what subsystem it
+touches, and whether it's actually ready to dispatch.
 
 ## Four dimensions
 

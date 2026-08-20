@@ -36,9 +36,10 @@ const (
 	// field validation (e.g. feature not enabled, budget exhausted). Caller
 	// must change the surrounding environment, not just the args.
 	ErrCodeDomain ErrorCode = "domain"
-	// ErrCodePermission — reserved for future permission/auth paths. Phase C
-	// does not map any current errors onto this code; documented so the
-	// taxonomy is stable when auth lands.
+	// ErrCodePermission — the caller is not authorized to perform this
+	// operation on an entity that exists (contrast with ErrCodeNotFound).
+	// First mapped case: ENT-COMMENT's author-scoped
+	// torque_comment_update/torque_comment_delete (*service.PermissionError).
 	ErrCodePermission ErrorCode = "permission"
 	// ErrCodeInternal — uncategorized server-side failure (DB, marshal,
 	// unexpected state). Full context is logged server-side; caller sees
@@ -144,6 +145,8 @@ func errResult(code ErrorCode, message, field string) (*mcp.CallToolResult, erro
 //
 // Rules (applied in order; first match wins):
 //   - sqlstore "not found" sentinels → not_found
+//   - sqlstore.ErrInvalidCursor / sqlstore.ErrInvalidCommentCursor
+//     (PRIM-001/DEC-001 cursor pagination) → arg_invalid (field=cursor)
 //   - *service.NotFoundError → not_found
 //   - *service.ValidationError → arg_invalid (with field)
 //   - *service.RepoPathError → arg_invalid (field=repo_path)
@@ -152,6 +155,7 @@ func errResult(code ErrorCode, message, field string) (*mcp.CallToolResult, erro
 //     via the string-match tier below since the sqlstore error isn't a typed
 //     sentinel that service-layer wraps)
 //   - *service.FeatureDisabledError → domain
+//   - *service.PermissionError → permission
 //   - Plain `fmt.Errorf("sprint %s not found", ...)` (sprint/project/epic
 //     stores return untyped messages) → string-match tier → not_found
 //   - sqlstore.ErrTemplateReferenced → conflict
@@ -176,6 +180,15 @@ func mapServiceError(err error) (ErrorCode, string, string) {
 	}
 	if errors.Is(err, sqlstore.ErrTemplateReferenced) {
 		return ErrCodeConflict, err.Error(), ""
+	}
+	// PRIM-001/DEC-001: a cursor whose sort value doesn't type-convert for
+	// its sort column (malformed/tampered token) is a caller input fault,
+	// not a server fault. Comments use a distinct sentinel
+	// (ErrInvalidCommentCursor) from every other entity's ErrInvalidCursor —
+	// both must be checked or comment cursor faults fall through to the
+	// internal-error default below instead of arg_invalid.
+	if errors.Is(err, sqlstore.ErrInvalidCursor) || errors.Is(err, sqlstore.ErrInvalidCommentCursor) {
+		return ErrCodeArgInvalid, err.Error(), "cursor"
 	}
 
 	// Typed service errors.
@@ -206,6 +219,10 @@ func mapServiceError(err error) (ErrorCode, string, string) {
 	var fde *service.FeatureDisabledError
 	if errors.As(err, &fde) {
 		return ErrCodeDomain, err.Error(), ""
+	}
+	var pe *service.PermissionError
+	if errors.As(err, &pe) {
+		return ErrCodePermission, err.Error(), ""
 	}
 
 	// String-match tier for untyped "not found" errors from sprint/project/epic

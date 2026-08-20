@@ -69,6 +69,10 @@ func (s *Server) planDetailJSON(detail *service.PlanDetail) (map[string]interfac
 	if err != nil {
 		return nil, err
 	}
+	deps, err := s.svc.Task.ListDependencyIDs(detail.Task.ID)
+	if err != nil {
+		return nil, err
+	}
 	agg, err := s.svc.Run.Aggregate(detail.Task.ID)
 	if err != nil {
 		return nil, err
@@ -78,7 +82,7 @@ func (s *Server) planDetailJSON(detail *service.PlanDetail) (map[string]interfac
 		return nil, err
 	}
 	return map[string]interface{}{
-		"task":     taskJSON(detail.Task, tags, agg, subs, s.collectionNameForTask(detail.Task)),
+		"task":     taskJSON(detail.Task, tags, deps, agg, subs, s.collectionNameForTask(detail.Task)),
 		"plan":     detail.Plan,
 		"progress": detail.Progress,
 	}, nil
@@ -146,6 +150,15 @@ func (s *Server) removePlanPhase(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	phaseID := chi.URLParam(r, "phase_id")
 	if err := s.svc.Plan.RemovePhase(id, phaseID); err != nil {
+		// ConflictError before ValidationError (order matters — mirrors
+		// writeTemplateError/writeCheckpointError): PlanService.RemovePhase
+		// returns ConflictError when child tasks still reference the phase,
+		// which must map to 409, not fall through to the generic 500 below.
+		var cerr *service.ConflictError
+		if errors.As(err, &cerr) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		if _, ok := err.(*service.ValidationError); ok {
 			writeError(w, http.StatusUnprocessableEntity, err.Error())
 			return

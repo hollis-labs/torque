@@ -318,13 +318,18 @@ func (s *Server) instantiateTemplate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	deps, err := s.svc.Task.ListDependencyIDs(task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	subs, err := s.svc.Task.ListSubtodos(task.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	// Template-generated task is freshly created — no collection yet.
-	writeJSON(w, http.StatusCreated, taskJSON(task, tags, nil, subs, ""))
+	writeJSON(w, http.StatusCreated, taskJSON(task, tags, deps, nil, subs, ""))
 }
 
 // writeTemplateError maps template-related service errors to HTTP codes.

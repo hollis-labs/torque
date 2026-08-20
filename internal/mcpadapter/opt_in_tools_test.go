@@ -552,6 +552,113 @@ func TestSprintUpdateProjectIDClearViaMCP(t *testing.T) {
 	assert.False(t, projectField["Valid"].(bool), "project_id must clear to NULL (Valid=false), not empty string")
 }
 
+// TestSprintGet_UnknownIDMapsToNotFound is SWEEP-001's per-entity
+// error-taxonomy spot-check for Sprint: a get on an unknown sprint id must
+// map to error.code=not_found (via the string-match tier over
+// sqlstore's untyped "sprint %s not found" error), not fall through to
+// internal.
+func TestSprintGet_UnknownIDMapsToNotFound(t *testing.T) {
+	svc := setupServiceDirect(t)
+	require.NoError(t, svc.Feature.Enable("sprints"))
+	a := adapterFromService(svc)
+
+	text, isErr := callTool(t, a, "torque_sprint_get", map[string]interface{}{"id": "SP-does-not-exist"})
+	require.True(t, isErr, "get on unknown sprint id must error: %s", text)
+	code, _, _ := parseError(t, text)
+	assert.Equal(t, "not_found", code)
+}
+
+// TestSprintUpdateGoalClearViaMCP verifies torque_sprint_update presence-based
+// field detection (SWEEP-001, mirroring FIX-001's fix for Task): an explicit
+// "goal": "" must actually clear the goal, not be silently dropped as
+// "not provided" the way the pre-fix value-based check (`if v != ""`) did.
+func TestSprintUpdateGoalClearViaMCP(t *testing.T) {
+	svc := setupServiceDirect(t)
+	require.NoError(t, svc.Feature.Enable("sprints"))
+	a := adapterFromService(svc)
+
+	sprintText, isErr := callTool(t, a, "torque_sprint_create", map[string]interface{}{
+		"name": "Sprint with goal",
+		"goal": "Ship the thing",
+	})
+	require.False(t, isErr)
+	var sprint map[string]interface{}
+	parseData(t, sprintText, &sprint)
+	sprintID := sprint["ID"].(string)
+
+	_, isErr = callTool(t, a, "torque_sprint_update", map[string]interface{}{
+		"id":   sprintID,
+		"goal": "",
+	})
+	require.False(t, isErr, "sprint_update with empty goal should succeed")
+
+	text, isErr := callTool(t, a, "torque_sprint_get", map[string]interface{}{"id": sprintID})
+	require.False(t, isErr)
+	var resp map[string]interface{}
+	parseData(t, text, &resp)
+	got := resp["sprint"].(map[string]interface{})
+	assert.Equal(t, "", got["Goal"], "goal must clear to empty string")
+}
+
+// TestSprintUpdateCostBudgetZeroViaMCP verifies an explicit cost_budget=0
+// actually persists as 0, not silently dropped as "not provided" (SWEEP-001,
+// same value-based-detection bug class FIX-001 fixed for Task).
+func TestSprintUpdateCostBudgetZeroViaMCP(t *testing.T) {
+	svc := setupServiceDirect(t)
+	require.NoError(t, svc.Feature.Enable("sprints"))
+	a := adapterFromService(svc)
+
+	sprintText, isErr := callTool(t, a, "torque_sprint_create", map[string]interface{}{
+		"name":        "Sprint with budget",
+		"cost_budget": "50",
+	})
+	require.False(t, isErr)
+	var sprint map[string]interface{}
+	parseData(t, sprintText, &sprint)
+	sprintID := sprint["ID"].(string)
+
+	_, isErr = callTool(t, a, "torque_sprint_update", map[string]interface{}{
+		"id":          sprintID,
+		"cost_budget": "0",
+	})
+	require.False(t, isErr, "sprint_update with cost_budget=0 should succeed")
+
+	text, isErr := callTool(t, a, "torque_sprint_get", map[string]interface{}{"id": sprintID})
+	require.False(t, isErr)
+	var resp map[string]interface{}
+	parseData(t, text, &resp)
+	got := resp["sprint"].(map[string]interface{})
+	budgetField := got["CostBudget"].(map[string]interface{})
+	assert.True(t, budgetField["Valid"].(bool))
+	assert.Equal(t, float64(0), budgetField["Float64"])
+}
+
+// TestSprintUpdateNameCannotBeClearedViaMCP verifies an explicit "name": ""
+// is rejected with error.code=arg_invalid rather than silently persisting
+// (SWEEP-001, mirroring Task's title-cannot-be-cleared guard).
+func TestSprintUpdateNameCannotBeClearedViaMCP(t *testing.T) {
+	svc := setupServiceDirect(t)
+	require.NoError(t, svc.Feature.Enable("sprints"))
+	a := adapterFromService(svc)
+
+	sprintText, isErr := callTool(t, a, "torque_sprint_create", map[string]interface{}{
+		"name": "Named sprint",
+	})
+	require.False(t, isErr)
+	var sprint map[string]interface{}
+	parseData(t, sprintText, &sprint)
+	sprintID := sprint["ID"].(string)
+
+	text, isErr := callTool(t, a, "torque_sprint_update", map[string]interface{}{
+		"id":   sprintID,
+		"name": "",
+	})
+	require.True(t, isErr, "sprint_update with empty name should fail")
+	code, _, field := parseError(t, text)
+	assert.Equal(t, "arg_invalid", code)
+	assert.Equal(t, "name", field)
+}
+
 // TestEpicCreateProjectIDViaMCP verifies project_id is exposed and persisted on
 // the torque_epic_create tool. Same audit-gap class as the sprint fix above.
 func TestEpicCreateProjectIDViaMCP(t *testing.T) {

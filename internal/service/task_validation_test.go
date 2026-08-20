@@ -380,22 +380,16 @@ func TestUpdateRejectsInvalidDeliverablesJSON(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid")
 }
 
-// TestUpdateRejectsInvalidDependsOnJSON verifies extractUpdateFields surfaces
-// a ValidationError when the DependsOn NullString contains malformed JSON.
-func TestUpdateRejectsInvalidDependsOnJSON(t *testing.T) {
-	svc := setupTaskValidationTest(t)
-
-	task, err := svc.Task.Create(service.TaskCreateInput{Title: "Test"})
-	require.NoError(t, err)
-
-	bad := sql.NullString{String: "[unterminated", Valid: true}
-	err = svc.Task.Update(task.ID, service.TaskUpdateInput{
-		TaskUpdate: sqlstore.TaskUpdate{DependsOn: &bad},
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "depends_on")
-	assert.Contains(t, err.Error(), "invalid")
-}
+// NOTE: TestUpdateRejectsInvalidDependsOnJSON was removed by migration 027 /
+// FK-003. depends_on moved from a sql.NullString JSON-blob column to a plain
+// []string on TaskUpdateInput (backed by the task_dependencies join table),
+// so there is no longer a "malformed JSON inside the DependsOn column" state
+// reachable at the service layer — extractUpdateFields takes the slice
+// as-is, no unmarshal step to fail. Malformed-JSON coverage for depends_on
+// now lives entirely at the transport boundary that actually still parses a
+// JSON string: internal/mcpadapter/errors_integration_test.go's
+// TestError_ArgInvalid_BadJSON (MCP) and the HTTP layer's generic
+// invalid-JSON-body handling in readJSON.
 
 // ---- validateTaskKind rules (spec §3.5) ----
 

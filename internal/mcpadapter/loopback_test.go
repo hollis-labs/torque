@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -339,20 +340,41 @@ func TestLoopback_SubtodoAddBindsTaskID(t *testing.T) {
 	assert.Equal(t, true, items[0]["required"])
 }
 
-func TestLoopback_SubtodoAddRequiresIDAndText(t *testing.T) {
+// TestLoopback_SubtodoAddRequiresText covers FIX-002: id is now optional
+// (the server generates one when omitted), so the only remaining required
+// field is text.
+func TestLoopback_SubtodoAddRequiresText(t *testing.T) {
 	fix := setupLoopback(t)
 
 	text, isErr := callTool(t, fix.loopback, "torque_task_subtodo_add", map[string]interface{}{})
 	require.True(t, isErr)
 	code, _, field := parseError(t, text)
 	assert.Equal(t, string(mcpadapter.ErrCodeArgInvalid), code)
-	assert.Equal(t, "id", field)
+	assert.Equal(t, "text", field)
 
 	text, isErr = callTool(t, fix.loopback, "torque_task_subtodo_add", map[string]interface{}{"id": "x"})
 	require.True(t, isErr)
 	code, _, field = parseError(t, text)
 	assert.Equal(t, string(mcpadapter.ErrCodeArgInvalid), code)
 	assert.Equal(t, "text", field)
+}
+
+// TestLoopback_SubtodoAddOmittedIDAutoGenerates covers FIX-002: omitting id
+// succeeds and returns a server-generated id under the "sub_" prefix.
+func TestLoopback_SubtodoAddOmittedIDAutoGenerates(t *testing.T) {
+	fix := setupLoopback(t)
+
+	text, isErr := callTool(t, fix.loopback, "torque_task_subtodo_add", map[string]interface{}{
+		"text": "write regression test",
+	})
+	require.False(t, isErr, "subtodo add: %s", text)
+
+	var items []map[string]interface{}
+	parseData(t, text, &items)
+	require.Len(t, items, 1)
+	genID, _ := items[0]["id"].(string)
+	assert.True(t, strings.HasPrefix(genID, "sub_"), "generated id %q should carry the sub_ prefix", genID)
+	assert.Equal(t, "write regression test", items[0]["text"])
 }
 
 func TestLoopback_SubtodoDoneFlow(t *testing.T) {

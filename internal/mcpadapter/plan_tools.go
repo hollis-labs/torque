@@ -8,8 +8,25 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/planstart"
 	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/service/pagination"
+)
+
+// planSortAllowList is torque_plan_list's sort_by allow-list (PRIM-002).
+// Identical to Task's (taskSortAllowList) since plans are Task rows with the
+// same sortable columns — kept as its own var rather than sharing Task's so
+// Plan's list surface doesn't silently change if Task's allow-list evolves.
+var planSortAllowList = []string{"priority", "status", "updated_at", "created_at"}
+
+// planSortDefaultBy/planSortDefaultDir are torque_plan_list's default
+// sort_by/sort_dir when the caller omits both — mirrors taskSortDefaultBy/
+// Dir (see task_tools.go) so the two dedicated list tools behave
+// consistently for callers that don't specify an order.
+const (
+	planSortDefaultBy  = "priority"
+	planSortDefaultDir = "asc"
 )
 
 // registerPlanTools exposes the PlanService convenience operations over MCP.
@@ -39,6 +56,48 @@ Example: {"plan_id":"T-999"}`),
 		mcp.WithString("plan_id", mcp.Required(), mcp.Description("Plan task ID (kind=plan)")),
 	), a.handlePlanGet)
 
+	a.addTool(mcp.NewTool("torque_plan_list",
+		mcp.WithDescription(`List plans only (hard-scoped to kind=plan) — the dedicated analog to torque_task_list kind=plan. Ordered priority ASC (tiebreak id ASC) by default. Pass sort_by (priority|status|updated_at|created_at) and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid.
+Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under.
+Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
+Example: {"status":"todo","limit":"25","sort_by":"updated_at","sort_dir":"desc"}`),
+		mcp.WithString("status", mcp.Description("Filter by status")),
+		mcp.WithString("priority", mcp.Description("Filter by priority (integer 1-5)")),
+		mcp.WithString("project_id", mcp.Description("Filter by project ID (requires features.projects)")),
+		mcp.WithString("sprint_id", mcp.Description("Filter by sprint ID (requires features.sprints)")),
+		mcp.WithString("epic_id", mcp.Description("Filter by epic ID (requires features.epics)")),
+		mcp.WithString("tags", mcp.Description("JSON array of tag slugs — AND-match; plan must have all listed tags")),
+		mcp.WithString("search", mcp.Description("Substring match on title + description (case-insensitive)")),
+		mcp.WithString("limit", mcp.Description("Max results (integer, default 100, max 200)")),
+		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
+		mcp.WithString("sort_by", mcp.Description("Sort field: priority|status|updated_at|created_at (default priority)")),
+		mcp.WithString("sort_dir", mcp.Description("Sort direction: asc|desc (default asc)")),
+		mcp.WithString("cursor", mcp.Description("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
+	), a.handlePlanList)
+
+	a.addTool(mcp.NewTool("torque_plan_update",
+		mcp.WithDescription(`Partial update of a plan's own fields (title/description/priority/project/sprint/epic/tags); only supplied keys change. Rejects non-plan task ids with error.code=arg_invalid. Returns the updated plan.
+Use for editing plan metadata; torque_plan_add_phase/torque_plan_remove_phase for structural phase changes, torque_task_update for non-plan tasks.
+Response shape: data = {<PlanDetail>: task fields + decoded phases[] + child roll-up}.
+Example: {"plan_id":"T-999","title":"Auth refactor v2"}`),
+		mcp.WithString("plan_id", mcp.Required(), mcp.Description("Plan task ID (kind=plan)")),
+		mcp.WithString("title", mcp.Description("New plan title (cannot be cleared to empty)")),
+		mcp.WithString("description", mcp.Description("New plan description")),
+		mcp.WithString("priority", mcp.Description("New priority (integer 1-5)")),
+		mcp.WithString("project_id", mcp.Description("Project ID (requires features.projects); empty string unassigns")),
+		mcp.WithString("sprint_id", mcp.Description("Sprint ID (requires features.sprints); empty string unassigns")),
+		mcp.WithString("epic_id", mcp.Description("Epic ID (requires features.epics); empty string unassigns")),
+		mcp.WithString("tags", mcp.Description("JSON array of tag names/slugs — replaces the full linked tag set")),
+	), a.handlePlanUpdate)
+
+	a.addTool(mcp.NewTool("torque_plan_delete",
+		mcp.WithDescription(`Hard-delete a plan task row and its linkage (runs, artifacts, comments cascade). Rejects non-plan task ids with error.code=arg_invalid. Child tasks are NOT deleted — their parent_id is cleared (ON DELETE SET NULL).
+Use sparingly — prefer torque_task_transition to "abandoned" for audit-preserving closure. For non-plan tasks use torque_task_delete.
+Response shape: data = {id, deleted: true}.
+Example: {"plan_id":"T-999"}`),
+		mcp.WithString("plan_id", mcp.Required(), mcp.Description("Plan task ID (kind=plan)")),
+	), a.handlePlanDelete)
+
 	a.addTool(mcp.NewTool("torque_plan_add_phase",
 		mcp.WithDescription(`Append a phase to a plan's phases[]; returns the assigned phase_id (e.g. ph-3).
 Use to evolve a plan after creation; torque_plan_remove_phase to drop (refused if children still reference it), torque_plan_get to see the full ordered list.
@@ -65,6 +124,7 @@ Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated,
 Example: {"plan_id":"T-999","phase_id":"ph-1"}`),
 		mcp.WithString("plan_id", mcp.Required(), mcp.Description("Plan task ID")),
 		mcp.WithString("phase_id", mcp.Description("Optional phase_id filter")),
+		mcp.WithString("limit", mcp.Description("Max results (integer, default 100, max 200)")),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handlePlanListChildren)
 
@@ -118,6 +178,142 @@ func (a *Adapter) handlePlanGet(ctx context.Context, req mcp.CallToolRequest) (*
 	return okResult(detail)
 }
 
+// handlePlanList is torque_plan_list's handler — PRIM-001/PRIM-002 applied
+// to the dedicated plan list surface, mirroring handleTaskList's shape
+// (task_tools.go) as closely as possible: same sort/cursor validation
+// sequence, same limit+1 over-fetch to compute has_more without a COUNT(*),
+// and the same taskListCursorEnvelope response builder (plans are Task rows,
+// so the envelope needs no plan-specific variant).
+func (a *Adapter) handlePlanList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	limit := clampLimit(reqInt(req, "limit"), defaultGenericListLimit, maxTaskListLimit)
+	verbose := reqStrBool(req, "verbose")
+
+	sortBy := planSortDefaultBy
+	if raw := reqStr(req, "sort_by"); raw != "" {
+		v, err := pagination.ValidateSortBy(raw, planSortAllowList...)
+		if err != nil {
+			return errResult(ErrCodeArgInvalid, err.Error(), "sort_by")
+		}
+		sortBy = v
+	}
+	sortDir := planSortDefaultDir
+	if raw := reqStr(req, "sort_dir"); raw != "" {
+		v, err := pagination.ValidateSortDir(raw)
+		if err != nil {
+			return errResult(ErrCodeArgInvalid, err.Error(), "sort_dir")
+		}
+		sortDir = v
+	}
+
+	var afterSortValue, afterID string
+	if raw := reqStr(req, "cursor"); raw != "" {
+		c, err := pagination.Decode(raw)
+		if err != nil {
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid cursor: %v", err), "cursor")
+		}
+		if err := c.Validate(sortBy, sortDir); err != nil {
+			return errResult(ErrCodeArgInvalid, err.Error(), "cursor")
+		}
+		afterSortValue, afterID = c.SortValue, c.ID
+	}
+
+	filter := sqlstore.TaskFilter{
+		Status:    reqStr(req, "status"),
+		Priority:  reqInt(req, "priority"),
+		ProjectID: reqStr(req, "project_id"),
+		SprintID:  reqStr(req, "sprint_id"),
+		EpicID:    reqStr(req, "epic_id"),
+		Search:    reqStr(req, "search"),
+		// Fetch one extra row beyond limit so has_more can be determined
+		// without a separate COUNT(*) query (mirrors handleTaskList).
+		Limit:          limit + 1,
+		SortBy:         sortBy,
+		SortDir:        sortDir,
+		AfterSortValue: afterSortValue,
+		AfterID:        afterID,
+	}
+	if tags, err := reqStrSlice(req, "tags"); err != nil {
+		return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
+	} else if tags != nil {
+		filter.TagSlugs = tags
+	}
+
+	// PlanService.List force-sets filter.Kind = "plan" regardless of
+	// anything set here, so no explicit Kind field is needed above.
+	plans, err := a.svc.Plan.List(filter)
+	if err != nil {
+		return errFromService(err)
+	}
+
+	hasMoreFromQuery := len(plans) > limit
+	if hasMoreFromQuery {
+		plans = plans[:limit]
+	}
+	return a.taskListCursorEnvelope(plans, limit, verbose, sortBy, sortDir, hasMoreFromQuery)
+}
+
+// handlePlanUpdate is torque_plan_update's handler. Presence-based (not
+// zero-value-based) field detection via reqHasArg, so an explicit empty
+// string clears a nullable association (project/sprint/epic) the same way
+// torque_task_update does; title is validated non-empty downstream by
+// TaskService.Update (mirrors Create's requirement).
+func (a *Adapter) handlePlanUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	planID := reqStr(req, "plan_id")
+	input := service.PlanUpdateInput{}
+	if reqHasArg(req, "title") {
+		v := reqStr(req, "title")
+		input.Title = &v
+	}
+	if reqHasArg(req, "description") {
+		v := reqStr(req, "description")
+		input.Description = &v
+	}
+	if reqHasArg(req, "priority") {
+		v := reqInt(req, "priority")
+		input.Priority = &v
+	}
+	if reqHasArg(req, "project_id") {
+		v := reqStr(req, "project_id")
+		input.ProjectID = &v
+	}
+	if reqHasArg(req, "sprint_id") {
+		v := reqStr(req, "sprint_id")
+		input.SprintID = &v
+	}
+	if reqHasArg(req, "epic_id") {
+		v := reqStr(req, "epic_id")
+		input.EpicID = &v
+	}
+	if reqHasArg(req, "tags") {
+		tags, err := reqStrSlice(req, "tags")
+		if err != nil {
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
+		}
+		if tags != nil {
+			input.Tags = &tags
+		}
+	}
+
+	if err := a.svc.Plan.Update(planID, input); err != nil {
+		return errFromService(err)
+	}
+	detail, err := a.svc.Plan.Get(planID)
+	if err != nil {
+		return errFromService(err)
+	}
+	return okResult(detail)
+}
+
+// handlePlanDelete is torque_plan_delete's handler. PlanService.Delete
+// applies the kind guard (rejects non-plan task ids) before deleting.
+func (a *Adapter) handlePlanDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	planID := reqStr(req, "plan_id")
+	if err := a.svc.Plan.Delete(planID); err != nil {
+		return errFromService(err)
+	}
+	return okResult(map[string]any{"id": planID, "deleted": true})
+}
+
 func (a *Adapter) handlePlanAddPhase(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	phaseID, err := a.svc.Plan.AddPhase(
 		reqStr(req, "plan_id"),
@@ -144,13 +340,25 @@ func (a *Adapter) handlePlanRemovePhase(ctx context.Context, req mcp.CallToolReq
 }
 
 func (a *Adapter) handlePlanListChildren(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// limit was previously hardcoded to maxTaskListLimit (200, the system
+	// maximum) regardless of caller intent, with no actual truncation
+	// applied — tasksToEnvelope/cappedJSONResult don't slice items down to
+	// limit themselves (see handleIssueList for the established truncate-
+	// before-envelope pattern), so every call silently returned the FULL
+	// unbounded child set with meta.limit just stamped at 200. Now a real,
+	// caller-adjustable param with a sane default (matches the other
+	// generic list tools' default, response.go's defaultGenericListLimit).
+	limit := clampLimit(reqInt(req, "limit"), defaultGenericListLimit, maxTaskListLimit)
 	verbose := reqStrBool(req, "verbose")
 	children, err := a.svc.Plan.ListChildren(reqStr(req, "plan_id"), reqStr(req, "phase_id"))
 	if err != nil {
 		return errFromService(err)
 	}
+	if len(children) > limit {
+		children = children[:limit]
+	}
 	// Reuse the task envelope: plan children are just tasks.
-	return a.tasksToEnvelope(children, maxTaskListLimit, verbose)
+	return a.tasksToEnvelope(children, limit, verbose)
 }
 
 // handlePlanStart boots an Orchestrator session for a kind=plan task

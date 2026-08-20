@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -299,14 +301,15 @@ func TestFullStack_TaskList_DefaultExcludesInternal(t *testing.T) {
 	require.Len(t, internalOnly, 1)
 	require.Equal(t, "internal", internalOnly[0]["kind"])
 
-	// torque_task_search mirrors the same default-exclude.
-	text, _ = callTool(t, a, "torque_task_search", map[string]interface{}{
-		"query": "x",
+	// torque_task_list's search param mirrors the same default-exclude
+	// (FIX-006: formerly asserted via the now-removed torque_task_search).
+	text, _ = callTool(t, a, "torque_task_list", map[string]interface{}{
+		"search": "x",
 	})
 	require.Len(t, parseList(text), 1, "search default-excludes internal")
 
-	text, _ = callTool(t, a, "torque_task_search", map[string]interface{}{
-		"query":            "x",
+	text, _ = callTool(t, a, "torque_task_list", map[string]interface{}{
+		"search":           "x",
 		"include_internal": "1",
 	})
 	require.Len(t, parseList(text), 2, "search opt-in surfaces internal")
@@ -436,8 +439,118 @@ func TestFullStack_TaskUpdate_WritableFields(t *testing.T) {
 	expectNullStringJSON("EscalationChain", `["oncall","lead"]`)
 	expectNullStringJSON("QualityGates", `["lint","tests"]`)
 	expectNullStringJSON("Deliverables", `[{"type":"diff","required":true}]`)
-	expectNullStringJSON("DependsOn", `["`+depID+`"]`)
 	expectNullStringJSON("Metadata", `{"meta_key":"meta_val"}`)
+
+	// DependsOn (migration 027 / FK-003) is the one exception: it lives in
+	// the task_dependencies join table now, not a sql.NullString column, so
+	// it renders as a clean JSON array of task IDs instead of the
+	// {String, Valid} shape the other blob fields still use.
+	depsOut, ok := u2["DependsOn"].([]interface{})
+	require.True(t, ok, "DependsOn should be a plain JSON array, got %T", u2["DependsOn"])
+	require.Equal(t, []interface{}{depID}, depsOut)
+}
+
+// TestFullStack_TaskCreate_DescriptionOptional covers FIX-001 item 1: neither
+// the DB column nor TaskService.Create requires description, so the MCP
+// schema must not either. A create call that omits description entirely
+// (not "") must succeed.
+func TestFullStack_TaskCreate_DescriptionOptional(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "no description supplied",
+	})
+	require.False(t, isErr, "create without description should not error: %s", text)
+
+	var created map[string]interface{}
+	parseData(t, text, &created)
+	require.Equal(t, "no description supplied", created["Title"])
+	require.Equal(t, "", created["Description"])
+}
+
+// TestFullStack_TaskUpdate_PresenceBasedFields covers FIX-001 item 2: title,
+// description, and priority must use presence-based detection like every
+// other field on torque_task_update, not value-based detection. Regression
+// coverage for: (a) "description":"" actually clearing the column, verified
+// via a follow-up torque_task_get read of the persisted row rather than just
+// checking the update call's 200 response, and (b) "priority":0 being
+// detected as present and applied, not silently dropped as "unset".
+func TestFullStack_TaskUpdate_PresenceBasedFields(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":       "presence-based",
+		"description": "original description",
+		"priority":    3,
+	})
+	var created map[string]interface{}
+	parseData(t, text, &created)
+	id := created["ID"].(string)
+	require.Equal(t, float64(3), created["Priority"])
+
+	// description: "" must clear the column, not silently no-op.
+	text, isErr := callTool(t, a, "torque_task_update", map[string]interface{}{
+		"id":          id,
+		"description": "",
+	})
+	require.False(t, isErr, "clearing description should not error: %s", text)
+
+	// Verify against a fresh read of the persisted row, not just the update
+	// call's response.
+	text, isErr = callTool(t, a, "torque_task_get", map[string]interface{}{"id": id})
+	require.False(t, isErr, "get should not error: %s", text)
+	var fetched map[string]interface{}
+	parseData(t, text, &fetched)
+	require.Equal(t, "", fetched["Description"], "description should be cleared in the persisted row")
+	require.Equal(t, "presence-based", fetched["Title"], "title should be untouched")
+
+	// priority: 0 must be detected as present and applied.
+	text, isErr = callTool(t, a, "torque_task_update", map[string]interface{}{
+		"id":       id,
+		"priority": 0,
+	})
+	require.False(t, isErr, "setting priority=0 should not error: %s", text)
+	var updated map[string]interface{}
+	parseData(t, text, &updated)
+	require.Equal(t, float64(0), updated["Priority"], "priority=0 should be applied, not treated as unset")
+
+	text, isErr = callTool(t, a, "torque_task_get", map[string]interface{}{"id": id})
+	require.False(t, isErr, "get should not error: %s", text)
+	parseData(t, text, &fetched)
+	require.Equal(t, float64(0), fetched["Priority"], "priority=0 should persist in the DB row")
+}
+
+// TestFullStack_TaskUpdate_TitleCannotBeCleared covers FIX-001 item 3: once
+// title is presence-based, an explicit "title":"" reaches TaskService.Update
+// and must be rejected with a clean arg_invalid ValidationError, not a raw
+// SQLite NOT NULL failure.
+func TestFullStack_TaskUpdate_TitleCannotBeCleared(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":       "keep me",
+		"description": "x",
+	})
+	var created map[string]interface{}
+	parseData(t, text, &created)
+	id := created["ID"].(string)
+
+	text, isErr := callTool(t, a, "torque_task_update", map[string]interface{}{
+		"id":    id,
+		"title": "",
+	})
+	require.True(t, isErr, "clearing title should error: %s", text)
+	code, msg, field := parseError(t, text)
+	require.Equal(t, "arg_invalid", code)
+	require.Equal(t, "title", field)
+	require.NotContains(t, msg, "NOT NULL", "error should be a clean validation error, not a raw SQLite failure")
+
+	// Title must be unchanged.
+	text, isErr = callTool(t, a, "torque_task_get", map[string]interface{}{"id": id})
+	require.False(t, isErr, "get should not error: %s", text)
+	var fetched map[string]interface{}
+	parseData(t, text, &fetched)
+	require.Equal(t, "keep me", fetched["Title"])
 }
 
 func TestFullStack_TaskLifecycle(t *testing.T) {
@@ -491,7 +604,10 @@ func TestFullStack_Health(t *testing.T) {
 	require.Contains(t, text, "running")
 }
 
-func TestFullStack_SearchTasks(t *testing.T) {
+// TestFullStack_TaskList_Search is FIX-006's port of the former
+// torque_task_search's TestFullStack_SearchTasks — torque_task_list's search
+// param is now the only way to free-text search tasks.
+func TestFullStack_TaskList_Search(t *testing.T) {
 	a := setupAdapter(t)
 
 	// Create two tasks.
@@ -508,8 +624,8 @@ func TestFullStack_SearchTasks(t *testing.T) {
 	require.False(t, isErr)
 
 	// Search for "login".
-	text, isErr := callTool(t, a, "torque_task_search", map[string]interface{}{
-		"query": "login",
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
+		"search": "login",
 	})
 	require.False(t, isErr, "search should not error: %s", text)
 
@@ -730,8 +846,10 @@ func TestFullStack_TaskList_CombinedSearchAndProjectID(t *testing.T) {
 	require.Equal(t, "Auth bug in Alpha", envelope.Items[0]["title"])
 }
 
-// TestFullStack_TaskSearch_WithSprintID verifies task_search with sprint_id filter.
-func TestFullStack_TaskSearch_WithSprintID(t *testing.T) {
+// TestFullStack_TaskList_SearchWithSprintID is FIX-006's port of the former
+// torque_task_search's TestFullStack_TaskSearch_WithSprintID, verifying
+// torque_task_list's search+sprint_id combination.
+func TestFullStack_TaskList_SearchWithSprintID(t *testing.T) {
 	a := setupAdapterWithFeatures(t)
 
 	// Create sprints.
@@ -761,11 +879,11 @@ func TestFullStack_TaskSearch_WithSprintID(t *testing.T) {
 	})
 	require.False(t, isErr)
 
-	text, isErr = callTool(t, a, "torque_task_search", map[string]interface{}{
-		"query":     "refactor",
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{
+		"search":    "refactor",
 		"sprint_id": sp01ID,
 	})
-	require.False(t, isErr, "task_search with sprint_id should not error: %s", text)
+	require.False(t, isErr, "task_list search+sprint_id should not error: %s", text)
 
 	var envelope struct {
 		Items []map[string]interface{} `json:"items"`
@@ -775,20 +893,43 @@ func TestFullStack_TaskSearch_WithSprintID(t *testing.T) {
 	require.Equal(t, "Sprint task refactor", envelope.Items[0]["title"])
 }
 
-// TestFullStack_TaskSearch_EmptyQueryReturnsError verifies that task_search
-// rejects an empty query with a structured error.
-func TestFullStack_TaskSearch_EmptyQueryReturnsError(t *testing.T) {
+// TestFullStack_TaskList_EmptySearchIsNoOpFilter is FIX-006's repurposing of
+// the former torque_task_search's TestFullStack_TaskSearch_EmptyQueryReturnsError.
+// torque_task_search required a non-empty query and errored otherwise;
+// torque_task_list's search param has no such requirement — an empty (or
+// omitted) search is correct list semantics ("no substring filter"), not an
+// error, so this confirms the new, correct no-op-filter behavior rather than
+// porting the old error assertion 1:1.
+func TestFullStack_TaskList_EmptySearchIsNoOpFilter(t *testing.T) {
 	a := setupAdapter(t)
 
-	// task_search declares query as Required() so the MCP framework may reject
-	// it before the handler runs. Passing an explicit empty string instead.
-	text, isErr := callTool(t, a, "torque_task_search", map[string]interface{}{
-		"query": "",
+	_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":       "Fix login bug",
+		"description": "Login is broken",
 	})
-	require.True(t, isErr, "empty query should return error; got: %s", text)
-	code, _, field := parseError(t, text)
-	require.Equal(t, "arg_invalid", code)
-	require.Equal(t, "query", field)
+	require.False(t, isErr)
+
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
+		"search": "",
+	})
+	require.False(t, isErr, "empty search should not error: %s", text)
+
+	var envelope struct {
+		Items []map[string]interface{} `json:"items"`
+	}
+	parseData(t, text, &envelope)
+	require.Len(t, envelope.Items, 1, "empty search is a no-op filter — all tasks returned")
+}
+
+// TestFullStack_TaskSearchToolRemoved confirms torque_task_search no longer
+// exists as a separate tool — the merge into torque_task_list (ADR-0004 §3)
+// removes the old dual-tool redundancy entirely rather than keeping a
+// deprecated alias, matching Issue's already-merged pattern
+// (TestFullStack_IssueSearchToolRemoved in issue_tools_test.go, ENT-ISSUE).
+func TestFullStack_TaskSearchToolRemoved(t *testing.T) {
+	a := setupAdapter(t)
+	require.False(t, toolIsRegistered(t, a, "torque_task_search"), "torque_task_search must be removed, merged into torque_task_list")
+	require.True(t, toolIsRegistered(t, a, "torque_task_list"))
 }
 
 // TestFullStack_CommentSearch covers 7 sub-tests for torque_comment_search.
@@ -1102,4 +1243,512 @@ func TestFullStack_TaskUpdate_BoolCoercionVariants(t *testing.T) {
 				"manual=%v (%T) should coerce to %v", tc.input, tc.input, tc.want)
 		})
 	}
+}
+
+// taskListCursorEnvelope mirrors torque_task_list's PRIM-001/PRIM-002
+// {items, meta} response shape for test parsing.
+type taskListCursorEnvelope struct {
+	Items []map[string]interface{} `json:"items"`
+	Meta  struct {
+		Truncated  bool    `json:"truncated"`
+		Returned   int     `json:"returned"`
+		Limit      int     `json:"limit"`
+		HasMore    bool    `json:"has_more"`
+		NextCursor *string `json:"next_cursor"`
+	} `json:"meta"`
+}
+
+// TestFullStack_TaskList_CursorPagination_NoDuplicatesOrSkips is PRIM-001's
+// acceptance criterion: paging through torque_task_list via meta.next_cursor
+// must visit every row exactly once, even when many rows share the same
+// default sort_by (priority) value — the id tiebreak (DEC-001) is what makes
+// that true; without it, ties in the sort column would make page boundaries
+// nondeterministic and duplicate/skip rows.
+func TestFullStack_TaskList_CursorPagination_NoDuplicatesOrSkips(t *testing.T) {
+	a := setupAdapter(t)
+
+	const total = 9
+	created := make(map[string]bool, total)
+	for i := 0; i < total; i++ {
+		text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+			"title":       fmt.Sprintf("task %d", i),
+			"description": "x",
+			// Priority omitted so every task defaults to priority=2 —
+			// forces every page boundary to rely on the id tiebreak rather
+			// than a naturally-distinct sort value.
+		})
+		require.False(t, isErr, "create should not error: %s", text)
+		var rec map[string]interface{}
+		parseData(t, text, &rec)
+		created[rec["ID"].(string)] = true
+	}
+
+	seen := map[string]bool{}
+	cursor := ""
+	for pages := 0; ; pages++ {
+		require.LessOrEqual(t, pages, total, "too many pages — likely an infinite loop from a broken cursor")
+
+		args := map[string]interface{}{"limit": "4"}
+		if cursor != "" {
+			args["cursor"] = cursor
+		}
+		text, isErr := callTool(t, a, "torque_task_list", args)
+		require.False(t, isErr, "list should not error: %s", text)
+
+		var env taskListCursorEnvelope
+		parseData(t, text, &env)
+
+		for _, item := range env.Items {
+			id := item["id"].(string)
+			require.False(t, seen[id], "duplicate id %s seen across pages", id)
+			seen[id] = true
+		}
+
+		if !env.Meta.HasMore {
+			require.Nil(t, env.Meta.NextCursor, "next_cursor must be null once exhausted")
+			break
+		}
+		require.NotNil(t, env.Meta.NextCursor, "next_cursor must be set when has_more=true")
+		cursor = *env.Meta.NextCursor
+	}
+
+	require.Len(t, seen, total, "expected every created task to appear exactly once across pages")
+	for id := range created {
+		require.True(t, seen[id], "task %s missing from paged results", id)
+	}
+}
+
+// TestFullStack_TaskList_HasMoreAndNextCursorAccuracy is PRIM-001's
+// acceptance criterion: meta.has_more/next_cursor must accurately reflect
+// whether more rows exist, verified against a dataset large enough to need
+// a second page (total > limit).
+func TestFullStack_TaskList_HasMoreAndNextCursorAccuracy(t *testing.T) {
+	a := setupAdapter(t)
+
+	const total = 7
+	const pageSize = 5
+	for i := 0; i < total; i++ {
+		_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+			"title":       fmt.Sprintf("task %d", i),
+			"description": "x",
+		})
+		require.False(t, isErr)
+	}
+
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
+		"limit": fmt.Sprintf("%d", pageSize),
+	})
+	require.False(t, isErr, "list should not error: %s", text)
+	var page1 taskListCursorEnvelope
+	parseData(t, text, &page1)
+	require.Equal(t, pageSize, page1.Meta.Returned)
+	require.Equal(t, pageSize, page1.Meta.Limit)
+	require.True(t, page1.Meta.HasMore, "7 rows over a limit of 5 must report has_more=true")
+	require.NotNil(t, page1.Meta.NextCursor)
+	require.Len(t, page1.Items, pageSize)
+
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{
+		"limit":  fmt.Sprintf("%d", pageSize),
+		"cursor": *page1.Meta.NextCursor,
+	})
+	require.False(t, isErr, "list should not error: %s", text)
+	var page2 taskListCursorEnvelope
+	parseData(t, text, &page2)
+	require.Equal(t, total-pageSize, page2.Meta.Returned)
+	require.False(t, page2.Meta.HasMore, "remaining 2 rows exactly fill the last page")
+	require.Nil(t, page2.Meta.NextCursor, "next_cursor must be null once exhausted")
+	require.Len(t, page2.Items, total-pageSize)
+
+	seen := map[string]bool{}
+	for _, it := range page1.Items {
+		seen[it["id"].(string)] = true
+	}
+	for _, it := range page2.Items {
+		id := it["id"].(string)
+		require.False(t, seen[id], "task %s appeared on both pages", id)
+	}
+}
+
+// TestFullStack_TaskList_InvalidSortBy is PRIM-002's acceptance criterion:
+// an unrecognized sort_by must return a clean error.code=arg_invalid rather
+// than silently ignoring the value or erroring at the SQL layer.
+func TestFullStack_TaskList_InvalidSortBy(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
+		"sort_by": "not_a_real_field",
+	})
+	require.True(t, isErr, "list should error on invalid sort_by: %s", text)
+
+	code, _, field := parseError(t, text)
+	require.Equal(t, "arg_invalid", code)
+	require.Equal(t, "sort_by", field)
+}
+
+// TestFullStack_TaskList_InvalidSortDir mirrors
+// TestFullStack_TaskList_InvalidSortBy for sort_dir.
+func TestFullStack_TaskList_InvalidSortDir(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
+		"sort_dir": "sideways",
+	})
+	require.True(t, isErr, "list should error on invalid sort_dir: %s", text)
+
+	code, _, field := parseError(t, text)
+	require.Equal(t, "arg_invalid", code)
+	require.Equal(t, "sort_dir", field)
+}
+
+// TestFullStack_TaskList_CursorSortMismatchRejected verifies DEC-001's
+// cursor/sort binding: a cursor issued under one sort_by/sort_dir is
+// rejected with arg_invalid if replayed against a different sort_by or
+// sort_dir, since the WHERE-clause tuple comparison it encodes is only
+// meaningful for the exact order it was built against.
+func TestFullStack_TaskList_CursorSortMismatchRejected(t *testing.T) {
+	a := setupAdapter(t)
+
+	for i := 0; i < 2; i++ {
+		_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+			"title":       fmt.Sprintf("task %d", i),
+			"description": "x",
+		})
+		require.False(t, isErr)
+	}
+
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
+		"limit":    "1",
+		"sort_by":  "priority",
+		"sort_dir": "asc",
+	})
+	require.False(t, isErr, "list should not error: %s", text)
+	var env taskListCursorEnvelope
+	parseData(t, text, &env)
+	require.NotNil(t, env.Meta.NextCursor)
+
+	// Same cursor, different sort_dir — must be rejected.
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{
+		"limit":    "1",
+		"sort_by":  "priority",
+		"sort_dir": "desc",
+		"cursor":   *env.Meta.NextCursor,
+	})
+	require.True(t, isErr, "list should error on cursor/sort_dir mismatch: %s", text)
+	code, _, field := parseError(t, text)
+	require.Equal(t, "arg_invalid", code)
+	require.Equal(t, "cursor", field)
+
+	// Same cursor, different sort_by — must also be rejected.
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{
+		"limit":    "1",
+		"sort_by":  "status",
+		"sort_dir": "asc",
+		"cursor":   *env.Meta.NextCursor,
+	})
+	require.True(t, isErr, "list should error on cursor/sort_by mismatch: %s", text)
+	code, _, field = parseError(t, text)
+	require.Equal(t, "arg_invalid", code)
+	require.Equal(t, "cursor", field)
+}
+
+// TestFullStack_TaskList_SortByUpdatedAtDesc exercises a non-default sort
+// column (a timestamp) end to end, guarding against the
+// sqlstore.SQLiteDatetimeLayout encode/decode round-trip
+// (mcpadapter.taskSortValue <-> sqlstore.taskCursorArg) silently
+// mis-comparing against what's actually stored in the column.
+func TestFullStack_TaskList_SortByUpdatedAtDesc(t *testing.T) {
+	a := setupAdapter(t)
+
+	var ids []string
+	for i := 0; i < 5; i++ {
+		text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+			"title":       fmt.Sprintf("task %d", i),
+			"description": "x",
+		})
+		require.False(t, isErr)
+		var rec map[string]interface{}
+		parseData(t, text, &rec)
+		ids = append(ids, rec["ID"].(string))
+	}
+
+	// updated_at is whole-second precision (see sqlstore.updatedAtNow's doc
+	// comment) — sleep past a full second before the update so it lands in
+	// a strictly later second than the batch of creates above, rather than
+	// relying on the id tiebreak to (accidentally) produce the expected
+	// order.
+	time.Sleep(1100 * time.Millisecond)
+
+	// Touch the first-created task last so its updated_at becomes the
+	// newest — desc order should surface it first despite being created
+	// first.
+	_, isErr := callTool(t, a, "torque_task_update", map[string]interface{}{
+		"id":    ids[0],
+		"title": "touched",
+	})
+	require.False(t, isErr)
+
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
+		"sort_by":  "updated_at",
+		"sort_dir": "desc",
+		"limit":    "10",
+	})
+	require.False(t, isErr, "list should not error: %s", text)
+	var env taskListCursorEnvelope
+	parseData(t, text, &env)
+	require.Len(t, env.Items, 5)
+	require.Equal(t, ids[0], env.Items[0]["id"], "most recently updated task should sort first under updated_at desc")
+	require.False(t, env.Meta.HasMore)
+	require.Nil(t, env.Meta.NextCursor)
+}
+
+// TestFullStack_TaskList_FilterByStatuses verifies torque_task_list's
+// ENT-TASK statuses[] MCP wiring on top of the pre-existing store-layer OR
+// filter (TaskFilter.Statuses).
+func TestFullStack_TaskList_FilterByStatuses(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{"title": "s1", "description": "x"})
+	var t1 map[string]interface{}
+	parseData(t, text, &t1)
+	id1 := t1["ID"].(string)
+
+	text, _ = callTool(t, a, "torque_task_create", map[string]interface{}{"title": "s2", "description": "x"})
+	var t2 map[string]interface{}
+	parseData(t, text, &t2)
+	id2 := t2["ID"].(string)
+
+	text, _ = callTool(t, a, "torque_task_create", map[string]interface{}{"title": "s3", "description": "x"})
+	var t3 map[string]interface{}
+	parseData(t, text, &t3)
+	id3 := t3["ID"].(string)
+
+	_, isErr := callTool(t, a, "torque_task_transition", map[string]interface{}{"id": id1, "status": "doing"})
+	require.False(t, isErr)
+
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{
+		"statuses": `["doing","todo"]`,
+	})
+	require.False(t, isErr, "list should not error: %s", text)
+	var env taskListCursorEnvelope
+	parseData(t, text, &env)
+	var gotIDs []string
+	for _, item := range env.Items {
+		gotIDs = append(gotIDs, item["id"].(string))
+	}
+	require.ElementsMatch(t, []string{id1, id2, id3}, gotIDs)
+}
+
+// TestFullStack_TaskList_FilterByAgentAndLaunchProfile verifies the
+// ENT-TASK agent_profile/launch_profile MCP filters.
+func TestFullStack_TaskList_FilterByAgentAndLaunchProfile(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "profiled", "description": "x", "agent_profile": "reviewer", "launch_profile": "claude-code",
+	})
+	var created map[string]interface{}
+	parseData(t, text, &created)
+	id := created["ID"].(string)
+
+	_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "other-profile", "description": "x", "agent_profile": "builder",
+	})
+	require.False(t, isErr)
+
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{"agent_profile": "reviewer"})
+	require.False(t, isErr, "list should not error: %s", text)
+	var env taskListCursorEnvelope
+	parseData(t, text, &env)
+	require.Len(t, env.Items, 1)
+	require.Equal(t, id, env.Items[0]["id"])
+
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{"launch_profile": "claude-code"})
+	require.False(t, isErr, "list should not error: %s", text)
+	parseData(t, text, &env)
+	require.Len(t, env.Items, 1)
+	require.Equal(t, id, env.Items[0]["id"])
+}
+
+// TestFullStack_TaskList_FilterByBudgetRange verifies the ENT-TASK
+// cost_budget_gte/lte MCP filters — "show me over-budget tasks" style
+// queries. A task that never set cost_budget must never match either bound.
+func TestFullStack_TaskList_FilterByBudgetRange(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, _ := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "pricey", "description": "x", "cost_budget": "500",
+	})
+	var pricey map[string]interface{}
+	parseData(t, text, &pricey)
+	priceyID := pricey["ID"].(string)
+
+	_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "no-budget", "description": "x",
+	})
+	require.False(t, isErr)
+
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{"cost_budget_gte": "100"})
+	require.False(t, isErr, "list should not error: %s", text)
+	var env taskListCursorEnvelope
+	parseData(t, text, &env)
+	require.Len(t, env.Items, 1, "the never-budgeted task must not match a numeric bound")
+	require.Equal(t, priceyID, env.Items[0]["id"])
+}
+
+// TestFullStack_TaskCreate_FieldExpansion verifies the ENT-TASK create-field
+// expansion: fields TaskCreateInput already accepted at the service layer
+// but torque_task_create's MCP schema didn't expose.
+func TestFullStack_TaskCreate_FieldExpansion(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":            "expanded fields",
+		"tools":            `["bash","read"]`,
+		"on_review":        "auto-approve",
+		"files":            `["a.go","b.go"]`,
+		"cost_budget":      "42.5",
+		"max_retries":      "7",
+		"permissions":      `{"network":"deny"}`,
+		"environment":      `{"FOO":"bar"}`,
+		"max_duration_ms":  "60000",
+		"token_budget":     "100000",
+		"escalation_chain": `["lead","manager"]`,
+		"quality_gates":    `["lint","tests"]`,
+		"deliverables":     `[{"type":"diff","required":true}]`,
+		"blocked_reason":   "waiting on legal",
+	})
+	require.False(t, isErr, "create should not error: %s", text)
+
+	var rec map[string]interface{}
+	parseData(t, text, &rec)
+	require.Equal(t, "auto-approve", rec["OnReview"])
+	require.Equal(t, "waiting on legal", rec["BlockedReason"])
+	require.Equal(t, float64(7), rec["MaxRetries"])
+
+	id := rec["ID"].(string)
+	text, isErr = callTool(t, a, "torque_task_get", map[string]interface{}{"id": id})
+	require.False(t, isErr)
+	var got map[string]interface{}
+	parseData(t, text, &got)
+	require.Equal(t, `["bash","read"]`, got["Tools"].(map[string]interface{})["String"])
+	require.Equal(t, `["a.go","b.go"]`, got["Files"].(map[string]interface{})["String"])
+	require.Equal(t, 42.5, got["CostBudget"].(map[string]interface{})["Float64"])
+	require.Equal(t, float64(60000), got["MaxDurationMs"].(map[string]interface{})["Int64"])
+	require.Equal(t, float64(100000), got["TokenBudget"].(map[string]interface{})["Int64"])
+}
+
+// TestFullStack_TaskCreate_SubtodosSeed verifies torque_task_create's
+// subtodos[] seed list creates the task and its checklist atomically, with
+// missing ids auto-generated (same guarantee torque_task_subtodo_add gives
+// a single append).
+func TestFullStack_TaskCreate_SubtodosSeed(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":    "seeded",
+		"subtodos": `[{"id":"check-1","text":"write test","required":true},{"text":"no id item"}]`,
+	})
+	require.False(t, isErr, "create should not error: %s", text)
+	var rec map[string]interface{}
+	parseData(t, text, &rec)
+	id := rec["ID"].(string)
+
+	text, isErr = callTool(t, a, "torque_task_subtodo_list", map[string]interface{}{"task_id": id, "verbose": "true"})
+	require.False(t, isErr, "subtodo_list should not error: %s", text)
+	var env struct {
+		Items []map[string]interface{} `json:"items"`
+	}
+	parseData(t, text, &env)
+	items := env.Items
+	require.Len(t, items, 2)
+	require.Equal(t, "check-1", items[0]["id"])
+	require.Equal(t, "write test", items[0]["text"])
+	require.Equal(t, true, items[0]["required"])
+	require.NotEmpty(t, items[1]["id"])
+	require.NotEqual(t, "check-1", items[1]["id"])
+	require.Equal(t, "no id item", items[1]["text"])
+}
+
+// TestFullStack_TaskCreate_SubtodosSeedDuplicateID verifies a caller-
+// supplied duplicate id in the seed list is rejected as arg-invalid-shaped
+// domain validation, not silently accepted.
+func TestFullStack_TaskCreate_SubtodosSeedDuplicateID(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":    "dup seed",
+		"subtodos": `[{"id":"dup","text":"first"},{"id":"dup","text":"second"}]`,
+	})
+	require.True(t, isErr, "duplicate subtodo id should error: %s", text)
+}
+
+// TestFullStack_TaskTransition_WithComment verifies torque_task_transition's
+// ENT-TASK comment param posts atomically with the status change: the
+// status changes AND the comment appears on the task's thread from one call.
+func TestFullStack_TaskTransition_WithComment(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "transition with comment", "description": "x",
+	})
+	require.False(t, isErr)
+	var created map[string]interface{}
+	parseData(t, text, &created)
+	id := created["ID"].(string)
+
+	text, isErr = callTool(t, a, "torque_task_transition", map[string]interface{}{
+		"id":             id,
+		"status":         "doing",
+		"comment":        "kicking this off",
+		"comment_author": "alice",
+	})
+	require.False(t, isErr, "transition with comment should not error: %s", text)
+	var got map[string]interface{}
+	parseData(t, text, &got)
+	require.Equal(t, "doing", got["Status"])
+
+	text, isErr = callTool(t, a, "torque_comment_list", map[string]interface{}{
+		"entity_type": "task", "entity_id": id, "verbose": "true",
+	})
+	require.False(t, isErr, "comment_list should not error: %s", text)
+	var env struct {
+		Items []map[string]interface{} `json:"items"`
+	}
+	parseData(t, text, &env)
+	require.Len(t, env.Items, 1)
+	require.Equal(t, "kicking this off", env.Items[0]["content"])
+	require.Equal(t, "alice", env.Items[0]["author"])
+}
+
+// TestFullStack_TaskTransition_WithComment_InvalidTransitionPostsNoComment
+// mirrors the service-layer invariant: an FSM-invalid transition must not
+// leave the comment behind either.
+func TestFullStack_TaskTransition_WithComment_InvalidTransitionPostsNoComment(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "invalid transition with comment", "description": "x",
+	})
+	require.False(t, isErr)
+	var created map[string]interface{}
+	parseData(t, text, &created)
+	id := created["ID"].(string)
+
+	// todo -> done is FSM-invalid.
+	text, isErr = callTool(t, a, "torque_task_transition", map[string]interface{}{
+		"id":      id,
+		"status":  "done",
+		"comment": "should not stick",
+	})
+	require.True(t, isErr, "invalid transition should error: %s", text)
+
+	text, isErr = callTool(t, a, "torque_comment_list", map[string]interface{}{
+		"entity_type": "task", "entity_id": id,
+	})
+	require.False(t, isErr)
+	var env struct {
+		Items []map[string]interface{} `json:"items"`
+	}
+	parseData(t, text, &env)
+	require.Empty(t, env.Items)
 }

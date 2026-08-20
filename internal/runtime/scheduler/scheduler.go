@@ -1152,7 +1152,15 @@ func (s *Scheduler) buildJob(task sqlstore.TaskRecord, runID int64) *executor.Ex
 	if task.Deliverables.Valid && task.Deliverables.String != "" {
 		json.Unmarshal([]byte(task.Deliverables.String), &job.Deliverables)
 	}
-	job.DependsOn = decodeStringSlice(task.DependsOn)
+	// depends_on lives in the task_dependencies join table (migration 027 /
+	// FK-003), not a column on TaskRecord. This is informational context for
+	// the dispatched job (see task_context.go) — dependency GATING already
+	// happened in Picker.Pick before this task was selected for dispatch, so
+	// a lookup failure here is best-effort (leave job.DependsOn empty) rather
+	// than blocking dispatch.
+	if deps, err := s.store.ListTaskDependencyIDs(task.ID); err == nil {
+		job.DependsOn = deps
+	}
 	if task.Metadata.Valid && task.Metadata.String != "" {
 		var md map[string]any
 		if err := json.Unmarshal([]byte(task.Metadata.String), &md); err == nil {

@@ -126,8 +126,8 @@ func TestPickerDoesNotConsumeProjectSlotOnDepBlockedTask(t *testing.T) {
 		Priority: 1,
 		Executor: "cli", AgentProfile: "cli-profile",
 		ProjectID: sql.NullString{String: "PRJ-P", Valid: true},
-		DependsOn: sql.NullString{String: `["CW-DEP"]`, Valid: true},
 	}))
+	require.NoError(t, store.SetTaskDependencies("CW-P-BLOCKED", []string{"CW-DEP"}))
 	// Lower-priority task in the same project with NO deps — this must be
 	// picked once the dep-blocked task is skipped.
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{

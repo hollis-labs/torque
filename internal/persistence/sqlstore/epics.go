@@ -7,7 +7,9 @@ import (
 	"time"
 )
 
-// EpicRecord mirrors the epics table row.
+// EpicRecord mirrors the epics table row. ArchivedAt is NULL for active
+// epics; non-NULL means the epic is archived (kept for audit, hidden from
+// active filters). Archiving is independent of Status.
 type EpicRecord struct {
 	ID          string
 	Name        string
@@ -15,16 +17,40 @@ type EpicRecord struct {
 	Status      string
 	Priority    sql.NullInt64
 	ProjectID   sql.NullString
+	ArchivedAt  sql.NullTime
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
 
 // EpicFilter holds optional filter criteria for ListEpics.
+// IncludeArchived defaults to false: archived rows (archived_at IS NOT
+// NULL) are excluded unless the caller explicitly asks for them.
 type EpicFilter struct {
-	Status    string
-	ProjectID string
-	Limit     int
-	Offset    int
+	Status          string
+	ProjectID       string
+	Search          string // case-insensitive substring match on id, name, description
+	IncludeArchived bool
+	Limit           int
+	Offset          int
+
+	// Sort + cursor pagination (PRIM-002 / PRIM-001, DEC-001's binding
+	// spec), mirroring TaskFilter's SortBy/SortDir/AfterSortValue/AfterID
+	// (internal/persistence/sqlstore/tasks.go). SortBy/SortDir are expected
+	// to already be validated by the caller (mcpadapter validates against
+	// an explicit allow-list via internal/service/pagination.ValidateSortBy
+	// before this filter is built) — ListEpics does not itself reject an
+	// unrecognized SortBy, it just treats it the same as "" (see
+	// epicSortColumn). Leaving SortBy empty preserves the original
+	// hardcoded `updated_at DESC` order for callers that haven't adopted
+	// the primitive (HTTP /api/v1/epics).
+	//
+	// AfterSortValue/AfterID decode DEC-001's opaque cursor token: the
+	// string-encoded sort-column value and id of the last row the caller
+	// already saw. Both empty means "first page".
+	SortBy         string
+	SortDir        string
+	AfterSortValue string
+	AfterID        string
 }
 
 // EpicUpdate holds optional fields to update; nil pointer = no change.
@@ -51,8 +77,8 @@ func (s *Store) CreateEpic(e *EpicRecord) error {
 // GetEpic fetches a single epic by ID.
 func (s *Store) GetEpic(id string) (*EpicRecord, error) {
 	e := &EpicRecord{}
-	err := s.ReadDB().QueryRow(`SELECT id, name, description, status, priority, project_id, created_at, updated_at FROM epics WHERE id = ?`, id).Scan(
-		&e.ID, &e.Name, &e.Description, &e.Status, &e.Priority, &e.ProjectID, &e.CreatedAt, &e.UpdatedAt,
+	err := s.ReadDB().QueryRow(`SELECT id, name, description, status, priority, project_id, archived_at, created_at, updated_at FROM epics WHERE id = ?`, id).Scan(
+		&e.ID, &e.Name, &e.Description, &e.Status, &e.Priority, &e.ProjectID, &e.ArchivedAt, &e.CreatedAt, &e.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("epic %s not found", id)
@@ -60,9 +86,49 @@ func (s *Store) GetEpic(id string) (*EpicRecord, error) {
 	return e, err
 }
 
-// ListEpics returns epics matching the filter, ordered by created_at DESC.
+// epicSortColumn maps a validated sort_by value to its epics column name.
+// Returns "" for an empty or unrecognized sortBy — treated as "no sort_by
+// supplied", which preserves ListEpics' original hardcoded default order
+// (see the ORDER BY branch below). Allow-list matches PRIM-002's guidance
+// for Epic/Sprint/Project (name, status, updated_at, created_at) —
+// intentionally excludes priority, which is not on that documented list.
+func epicSortColumn(sortBy string) string {
+	switch sortBy {
+	case "name", "status", "updated_at", "created_at":
+		return sortBy
+	default:
+		return ""
+	}
+}
+
+// epicCursorArg converts a cursor's string-encoded sort value (DEC-001's
+// `sv` field) into the correctly-typed SQL bind argument for sortBy's
+// column. See taskCursorArg (tasks.go) for the full rationale on binding
+// updated_at/created_at as the original string rather than a re-derived
+// time.Time.
+func epicCursorArg(sortBy, sv string) (any, error) {
+	switch sortBy {
+	case "name", "status":
+		return sv, nil
+	case "updated_at", "created_at":
+		if _, err := time.Parse(SQLiteDatetimeLayout, sv); err != nil {
+			return nil, fmt.Errorf("%w: sort value for %s must match %q: %v", ErrInvalidCursor, sortBy, SQLiteDatetimeLayout, err)
+		}
+		return sv, nil
+	default:
+		return nil, fmt.Errorf("%w: unsupported sort_by %q", ErrInvalidCursor, sortBy)
+	}
+}
+
+// ListEpics returns epics matching the filter. Default order (f.SortBy ==
+// "") is updated_at DESC — the order torque_epic_list's docstring
+// describes. When f.SortBy is set (PRIM-002), order becomes `<sort column>
+// <SortDir>, id ASC` and, if f.AfterID is also set, results are
+// additionally filtered to rows after the cursor's (sort value, id)
+// position (PRIM-001/DEC-001 keyset pagination). Archived rows
+// (archived_at IS NOT NULL) are excluded unless f.IncludeArchived is true.
 func (s *Store) ListEpics(f EpicFilter) ([]EpicRecord, error) {
-	query := `SELECT id, name, description, status, priority, project_id, created_at, updated_at FROM epics`
+	query := `SELECT id, name, description, status, priority, project_id, archived_at, created_at, updated_at FROM epics`
 
 	var conditions []string
 	var args []interface{}
@@ -75,11 +141,48 @@ func (s *Store) ListEpics(f EpicFilter) ([]EpicRecord, error) {
 		conditions = append(conditions, "project_id = ?")
 		args = append(args, f.ProjectID)
 	}
+	if !f.IncludeArchived {
+		conditions = append(conditions, "archived_at IS NULL")
+	}
+	if f.Search != "" {
+		// SQLite's LIKE is case-insensitive for ASCII by default.
+		pattern := "%" + f.Search + "%"
+		conditions = append(conditions, "(id LIKE ? OR name LIKE ? OR description LIKE ?)")
+		args = append(args, pattern, pattern, pattern)
+	}
+
+	// PRIM-002 sort column + PRIM-001 cursor predicate.
+	sortCol := epicSortColumn(f.SortBy)
+	desc := strings.EqualFold(f.SortDir, "desc")
+	if sortCol != "" && f.AfterID != "" {
+		arg, err := epicCursorArg(f.SortBy, f.AfterSortValue)
+		if err != nil {
+			return nil, err
+		}
+		cmp := ">"
+		if desc {
+			cmp = "<"
+		}
+		// Tuple comparison (sortCol, id) > (arg, AfterID), or the two-clause
+		// equivalent below — tiebreak on id ascending regardless of
+		// SortDir, per DEC-001.
+		conditions = append(conditions, fmt.Sprintf("(%s %s ? OR (%s = ? AND id > ?))", sortCol, cmp, sortCol))
+		args = append(args, arg, arg, f.AfterID)
+	}
 
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
-	query += " ORDER BY created_at DESC"
+
+	if sortCol != "" {
+		dir := "ASC"
+		if desc {
+			dir = "DESC"
+		}
+		query += fmt.Sprintf(" ORDER BY %s %s, id ASC", sortCol, dir)
+	} else {
+		query += " ORDER BY updated_at DESC"
+	}
 
 	if f.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", f.Limit)
@@ -97,7 +200,7 @@ func (s *Store) ListEpics(f EpicFilter) ([]EpicRecord, error) {
 	var epics []EpicRecord
 	for rows.Next() {
 		var e EpicRecord
-		if err := rows.Scan(&e.ID, &e.Name, &e.Description, &e.Status, &e.Priority, &e.ProjectID, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.Name, &e.Description, &e.Status, &e.Priority, &e.ProjectID, &e.ArchivedAt, &e.CreatedAt, &e.UpdatedAt); err != nil {
 			return nil, err
 		}
 		epics = append(epics, e)
@@ -154,12 +257,59 @@ func (s *Store) UpdateEpic(id string, u EpicUpdate) error {
 	return nil
 }
 
-// DeleteEpic removes an epic and clears epic_id on associated tasks.
-func (s *Store) DeleteEpic(id string) error {
-	// Clear epic_id on any tasks referencing this epic
-	s.db.Exec("UPDATE tasks SET epic_id = NULL WHERE epic_id = ?", id)
+// ArchiveEpic sets archived_at = CURRENT_TIMESTAMP. Idempotent: calling
+// archive on an already-archived epic refreshes the timestamp. Does not
+// touch status — archiving is orthogonal to the epic's workflow state
+// (an archived epic isn't the same fact as the epic being "done").
+func (s *Store) ArchiveEpic(id string) error {
+	res, err := s.db.Exec(
+		`UPDATE epics SET archived_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("epic %s not found", id)
+	}
+	return nil
+}
 
-	result, err := s.db.Exec("DELETE FROM epics WHERE id = ?", id)
+// UnarchiveEpic clears archived_at, restoring the epic to active
+// (in the archive sense; status is untouched).
+func (s *Store) UnarchiveEpic(id string) error {
+	res, err := s.db.Exec(
+		`UPDATE epics SET archived_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("epic %s not found", id)
+	}
+	return nil
+}
+
+// DeleteEpic removes an epic and clears epic_id on associated tasks. The
+// reference-nulling UPDATE and the epic's own DELETE run inside a single
+// transaction so a failed UPDATE (lock contention, disk full, etc.) can
+// never leave the epic deleted while tasks still point at it.
+func (s *Store) DeleteEpic(id string) error {
+	tx, err := s.beginWriteTx()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Clear epic_id on any tasks referencing this epic
+	if _, err := tx.Exec("UPDATE tasks SET epic_id = NULL WHERE epic_id = ?", id); err != nil {
+		return err
+	}
+
+	result, err := tx.Exec("DELETE FROM epics WHERE id = ?", id)
 	if err != nil {
 		return err
 	}
@@ -167,7 +317,7 @@ func (s *Store) DeleteEpic(id string) error {
 	if n == 0 {
 		return fmt.Errorf("epic %s not found", id)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // NextEpicID generates the next sequential epic ID for today.

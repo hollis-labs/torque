@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -133,6 +134,118 @@ func TestTaskCreateValidation(t *testing.T) {
 	require.ErrorAs(t, err, &ve)
 }
 
+// TestTaskUpdateTitleCannotBeCleared covers FIX-001 item 3: title is the one
+// truly-required field, so Update must reject an explicit empty title with a
+// clean ValidationError (mirroring Create's check) rather than let it fall
+// through to a raw DB NOT NULL failure.
+func TestTaskUpdateTitleCannotBeCleared(t *testing.T) {
+	svc := setupService(t)
+
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "keep me"})
+	require.NoError(t, err)
+
+	empty := ""
+	err = svc.Task.Update(task.ID, service.TaskUpdateInput{
+		TaskUpdate: sqlstore.TaskUpdate{Title: &empty},
+	})
+	require.Error(t, err)
+
+	var ve *service.ValidationError
+	require.ErrorAs(t, err, &ve)
+	require.Equal(t, "title", ve.Field)
+
+	// Title must be unchanged.
+	unchanged, err := svc.Task.Get(task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "keep me", unchanged.Title)
+}
+
+// TestTaskCreateRollsBackOnDependencySetFailure covers FIX-007: Create's
+// CreateTask + SetTaskDependencies writes must commit together or not at
+// all. Forces the task_dependencies INSERT (the second write in the
+// sequence) to fail via a real SQLite trigger — not a mock — and verifies
+// the task row itself (the first write, already committed to the same
+// in-flight transaction before the trigger fires) was rolled back too, so
+// no orphaned task row is left behind with none of its intended dependency
+// edges.
+func TestTaskCreateRollsBackOnDependencySetFailure(t *testing.T) {
+	svc := setupService(t)
+
+	dep, err := svc.Task.Create(service.TaskCreateInput{Title: "Dependency target"})
+	require.NoError(t, err)
+
+	_, err = svc.Store().DB().Exec(`
+		CREATE TRIGGER fail_task_dependency_insert
+		BEFORE INSERT ON task_dependencies
+		BEGIN
+			SELECT RAISE(ABORT, 'forced failure for test');
+		END;
+	`)
+	require.NoError(t, err)
+
+	// Single-threaded test store: NextTaskID is a pure read with no writes
+	// racing it, so peeking it here returns the exact ID Create's own
+	// internal NextTaskID call will compute next (nothing writes to tasks
+	// in between).
+	predictedID, err := svc.Store().NextTaskID()
+	require.NoError(t, err)
+
+	_, err = svc.Task.Create(service.TaskCreateInput{
+		Title:     "Depends on target",
+		DependsOn: []string{dep.ID},
+	})
+	require.Error(t, err)
+
+	// The task row must not exist — CreateTask's INSERT must have been
+	// rolled back along with the failing SetTaskDependencies INSERT.
+	_, getErr := svc.Store().GetTask(predictedID)
+	require.Error(t, getErr)
+	require.True(t, errors.Is(getErr, sqlstore.ErrTaskNotFound))
+}
+
+// TestTaskUpdateRollsBackOnDependencySetFailure covers FIX-007: Update's
+// UpdateTask + SetTaskDependencies (and SetTaskTags, when present) writes
+// must commit together or not at all. Forces the task_dependencies INSERT
+// to fail via a real SQLite trigger and verifies the title change from the
+// same Update call — the first write in the sequence — was rolled back too,
+// so a partial-apply (title updated, dependency edges not) never happens.
+func TestTaskUpdateRollsBackOnDependencySetFailure(t *testing.T) {
+	svc := setupService(t)
+
+	dep, err := svc.Task.Create(service.TaskCreateInput{Title: "Dependency target"})
+	require.NoError(t, err)
+
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "original title"})
+	require.NoError(t, err)
+
+	_, err = svc.Store().DB().Exec(`
+		CREATE TRIGGER fail_task_dependency_insert
+		BEFORE INSERT ON task_dependencies
+		BEGIN
+			SELECT RAISE(ABORT, 'forced failure for test');
+		END;
+	`)
+	require.NoError(t, err)
+
+	newTitle := "updated title"
+	err = svc.Task.Update(task.ID, service.TaskUpdateInput{
+		TaskUpdate: sqlstore.TaskUpdate{Title: &newTitle},
+		DependsOn:  &[]string{dep.ID},
+	})
+	require.Error(t, err)
+
+	// Title must be unchanged — UpdateTask's write must have been rolled
+	// back along with the failing SetTaskDependencies INSERT.
+	unchanged, err := svc.Task.Get(task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "original title", unchanged.Title)
+
+	// No dependency edge should have been left behind either.
+	deps, err := svc.Task.ListDependencyIDs(task.ID)
+	require.NoError(t, err)
+	require.Empty(t, deps)
+}
+
 func TestTaskTransitionValid(t *testing.T) {
 	svc := setupService(t)
 
@@ -173,6 +286,125 @@ func TestTaskForceTransition(t *testing.T) {
 	updated, err := svc.Task.Get(task.ID)
 	require.NoError(t, err)
 	require.Equal(t, "done", updated.Status)
+}
+
+func TestTaskTransitionWithComment(t *testing.T) {
+	svc := setupService(t)
+
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "Transition with comment"})
+	require.NoError(t, err)
+
+	err = svc.Task.TransitionWithComment(context.Background(), task.ID, "doing", "kicking this off", "alice", false)
+	require.NoError(t, err)
+
+	updated, err := svc.Task.Get(task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "doing", updated.Status)
+
+	comments, err := svc.Comment.ListForTask(task.ID)
+	require.NoError(t, err)
+	require.Len(t, comments, 1)
+	require.Equal(t, "kicking this off", comments[0].Content)
+	require.Equal(t, "alice", comments[0].Author)
+}
+
+func TestTaskTransitionWithComment_InvalidTransitionPostsNoComment(t *testing.T) {
+	svc := setupService(t)
+
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "Invalid transition with comment"})
+	require.NoError(t, err)
+
+	// todo -> done is FSM-invalid; the comment must not be persisted either
+	// (FSM validation happens before the transaction that would write it).
+	err = svc.Task.TransitionWithComment(context.Background(), task.ID, "done", "should not stick", "", false)
+	require.Error(t, err)
+	var te *service.TransitionError
+	require.ErrorAs(t, err, &te)
+
+	updated, err := svc.Task.Get(task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "todo", updated.Status)
+
+	comments, err := svc.Comment.ListForTask(task.ID)
+	require.NoError(t, err)
+	require.Empty(t, comments)
+}
+
+func TestTaskTransitionWithComment_Force(t *testing.T) {
+	svc := setupService(t)
+
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "Forced transition with comment"})
+	require.NoError(t, err)
+
+	// todo -> done is FSM-invalid; force=true bypasses the FSM, mirroring
+	// ForceTransition's contract.
+	err = svc.Task.TransitionWithComment(context.Background(), task.ID, "done", "cleanup close", "", true)
+	require.NoError(t, err)
+
+	updated, err := svc.Task.Get(task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "done", updated.Status)
+
+	comments, err := svc.Comment.ListForTask(task.ID)
+	require.NoError(t, err)
+	require.Len(t, comments, 1)
+	require.Equal(t, "cleanup close", comments[0].Content)
+}
+
+func TestTaskCreate_SubtodosSeedAutoGeneratesMissingIDs(t *testing.T) {
+	svc := setupService(t)
+
+	task, err := svc.Task.Create(service.TaskCreateInput{
+		Title: "seeded checklist",
+		Subtodos: []sqlstore.Subtodo{
+			{ID: "explicit-id", Text: "first item", Required: true},
+			{Text: "second item (no id)"},
+		},
+	})
+	require.NoError(t, err)
+
+	items, err := svc.Task.ListSubtodos(task.ID)
+	require.NoError(t, err)
+	require.Len(t, items, 2)
+	require.Equal(t, "explicit-id", items[0].ID)
+	require.Equal(t, "first item", items[0].Text)
+	require.True(t, items[0].Required)
+	require.NotEmpty(t, items[1].ID)
+	require.NotEqual(t, "explicit-id", items[1].ID)
+	require.Equal(t, "second item (no id)", items[1].Text)
+}
+
+func TestTaskCreate_SubtodosSeedRejectsDuplicateIDs(t *testing.T) {
+	svc := setupService(t)
+
+	_, err := svc.Task.Create(service.TaskCreateInput{
+		Title: "dup checklist",
+		Subtodos: []sqlstore.Subtodo{
+			{ID: "dup", Text: "first"},
+			{ID: "dup", Text: "second"},
+		},
+	})
+	require.Error(t, err)
+	var ve *service.ValidationError
+	require.ErrorAs(t, err, &ve)
+	require.Equal(t, "subtodos", ve.Field)
+}
+
+func TestTaskCreate_EmptySubtodosSeedDisablesAutoExtract(t *testing.T) {
+	svc := setupService(t)
+
+	// Description has an auto-extractable checkbox, but an explicit empty
+	// Subtodos slice (non-nil) must win over auto-extraction.
+	task, err := svc.Task.Create(service.TaskCreateInput{
+		Title:       "explicit empty checklist",
+		Description: "- [ ] would normally auto-extract",
+		Subtodos:    []sqlstore.Subtodo{},
+	})
+	require.NoError(t, err)
+
+	items, err := svc.Task.ListSubtodos(task.ID)
+	require.NoError(t, err)
+	require.Empty(t, items)
 }
 
 func TestTaskSearch(t *testing.T) {
@@ -277,10 +509,14 @@ func TestCreateWithAllFieldsRoundTrip(t *testing.T) {
 	assert.Contains(t, got.QualityGates.String, "go test")
 	assert.True(t, got.Deliverables.Valid)
 	assert.Contains(t, got.Deliverables.String, "diff")
-	assert.True(t, got.DependsOn.Valid)
-	assert.Contains(t, got.DependsOn.String, dep.ID)
 	assert.True(t, got.Metadata.Valid)
 	assert.Contains(t, got.Metadata.String, "source")
+
+	// depends_on lives in the task_dependencies join table (migration 027 /
+	// FK-003), not a TaskRecord column — verify via ListDependencyIDs.
+	deps, err := svc.Task.ListDependencyIDs(created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{dep.ID}, deps)
 }
 
 func TestCreateWithSentinelValues(t *testing.T) {

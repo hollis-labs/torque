@@ -8,6 +8,7 @@ import (
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 )
 
 // maxMCPResponseBytes is the size guard for list/search responses. mark3labs
@@ -23,13 +24,13 @@ const maxMCPResponseBytes = 100 * 1024 // 100KB
 // scattered through per-tool handlers so the shape contract is discoverable
 // in one place.
 const (
-	defaultTaskSearchLimit   = 25
-	maxTaskSearchLimit       = 100
 	maxTaskListLimit         = 200
 	defaultGenericListLimit  = 100
 	maxGenericListLimit      = 500
 	defaultTemplateListLimit = 100
 	maxTemplateListLimit     = 500
+	defaultCommentListLimit  = 50
+	maxCommentListLimit      = 200
 )
 
 // listMeta is the companion to items[] in the list/search response envelope.
@@ -422,6 +423,148 @@ func cappedJSONResult(items []any, limit int) (*mcp.CallToolResult, error) {
 	}
 	payload = listEnvelope{Items: trimmed, Meta: meta}
 	b, err = marshalEnv(payload)
+	if err != nil {
+		return errResult(ErrCodeInternal, "response serialization failed", "")
+	}
+	return mcp.NewToolResultText(string(b)), nil
+}
+
+// ---- cursor-paginated envelope (PRIM-001 / PRIM-002) -----------------------
+
+// listMetaCursor is listMeta's cursor-pagination companion, used by list
+// tools that have adopted DEC-001's cursor pagination — Task's
+// torque_task_list is the PRIM-001/PRIM-002 reference implementation; Phase
+// 4 rolls this same shape out to the other 6 in-scope entities (Comment,
+// Project, Epic, Sprint, Issue, Plan). Matches ADR-0004 §3's envelope text
+// literally: `{items, meta: {returned, limit, total_count|has_more,
+// next_cursor, hint?}}`.
+//
+// HasMore (not TotalCount): DEC-001 left the has_more-vs-total_count choice
+// open and recommended has_more as the cheaper default (fetch limit+1, trim)
+// absent a concrete need for exact counts. No such need surfaced for Task,
+// so this reference implementation — and by extension every entity that
+// copies it in Phase 4 — uses has_more. A future entity that genuinely needs
+// an exact total_count can add that field to its own meta struct without
+// touching this one.
+//
+// Truncated is kept distinct from HasMore/NextCursor: Truncated flags the
+// orthogonal 100KB byte-size cap (cappedJSONResult's pre-existing behavior)
+// tripping and dropping rows below what the query actually returned;
+// HasMore/NextCursor flag whether the QUERY itself has more rows beyond this
+// page. The two can differ — see cappedCursorJSONResult's doc comment.
+type listMetaCursor struct {
+	Truncated  bool    `json:"truncated"`
+	Returned   int     `json:"returned"`
+	Limit      int     `json:"limit"`
+	HasMore    bool    `json:"has_more"`
+	NextCursor *string `json:"next_cursor"`
+	Hint       string  `json:"hint,omitempty"`
+}
+
+// listEnvelopeCursor is listEnvelope's cursor-pagination companion — see
+// listMetaCursor.
+type listEnvelopeCursor struct {
+	Items []any          `json:"items"`
+	Meta  listMetaCursor `json:"meta"`
+}
+
+// cappedCursorJSONResult is cappedJSONResult's cursor-aware sibling for list
+// tools that support DEC-001 cursor pagination (PRIM-001/PRIM-002). It is
+// intentionally a separate function rather than a change to
+// cappedJSONResult's signature: cappedJSONResult has 19 existing call sites
+// across every other entity's list/search tool, none of which have adopted
+// cursor pagination yet (that's each entity's own Phase 4 task per
+// PRIM-001's "Out of scope") — changing its signature would force an
+// unrelated, unwanted migration on all of them today.
+//
+// Parameters:
+//   - items: the already-verbose/brief-converted records for AT MOST the
+//     requested limit (callers that over-fetch limit+1 to detect has_more
+//     must trim the extra row off items before calling — see hasMoreFromQuery
+//     below for how that extra row's existence is still communicated).
+//   - limit: the applied limit (reported back in meta.limit).
+//   - sortBy, sortDir: the request's validated sort_by/sort_dir, stamped
+//     into next_cursor so a subsequent call can be validated against them
+//     (pagination.Cursor.Validate — DEC-001 cursors aren't portable across
+//     different sort orders).
+//   - hasMoreFromQuery: true when the store returned more rows than limit
+//     (i.e. the caller fetched limit+1, found len > limit, and trimmed the
+//     extra row before passing items here). This is ORTHOGONAL to the
+//     byte-size truncation below — a query can have more rows AND still fit
+//     under the byte cap, or have no more rows but still get byte-trimmed if
+//     the page itself is huge.
+//   - cursorAt: given the index of the LAST item actually included in the
+//     final (possibly byte-cap-trimmed) response, returns that row's
+//     string-encoded sort value and id so cappedCursorJSONResult can build
+//     next_cursor. This is called AFTER the byte-size trim below is
+//     resolved, never before — DEC-001 requires next_cursor to reflect what
+//     actually shipped, not what the store returned, so a byte-cap trim that
+//     drops rows below hasMoreFromQuery's original assumption still produces
+//     a correct, resumable cursor (and correctly flips has_more to true even
+//     if hasMoreFromQuery was false, since the byte cap itself created more
+//     unseen rows).
+func cappedCursorJSONResult(items []any, limit int, sortBy, sortDir string, hasMoreFromQuery bool, cursorAt func(lastIncludedIndex int) (sortValue, id string)) (*mcp.CallToolResult, error) {
+	build := func(n int) ([]byte, error) {
+		trimmed := items[:n]
+		hasMore := hasMoreFromQuery || n < len(items)
+		var nextCursor *string
+		if hasMore && n > 0 {
+			sv, id := cursorAt(n - 1)
+			s := pagination.Encode(sortBy, sortDir, sv, id)
+			nextCursor = &s
+		}
+		meta := listMetaCursor{
+			Truncated:  n < len(items),
+			Returned:   n,
+			Limit:      limit,
+			HasMore:    hasMore,
+			NextCursor: nextCursor,
+		}
+		if meta.Truncated {
+			meta.Hint = "response too large; add filters or lower limit"
+		}
+		return json.MarshalIndent(Response{OK: true, Data: listEnvelopeCursor{Items: trimmed, Meta: meta}}, "", "  ")
+	}
+
+	n := len(items)
+	b, err := build(n)
+	if err != nil {
+		return errResult(ErrCodeInternal, "response serialization failed", "")
+	}
+
+	// Fast path: fits in cap.
+	if len(b) <= maxMCPResponseBytes {
+		return mcp.NewToolResultText(string(b)), nil
+	}
+
+	// Slow path: same halve-then-grow shrink as cappedJSONResult.
+	trimN := n / 2
+	for trimN > 0 {
+		b, err = build(trimN)
+		if err != nil {
+			return errResult(ErrCodeInternal, "response serialization failed", "")
+		}
+		if len(b) <= maxMCPResponseBytes {
+			break
+		}
+		trimN /= 2
+	}
+
+	lo, hi := trimN, n
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		b2, err2 := build(mid)
+		if err2 != nil {
+			return errResult(ErrCodeInternal, "response serialization failed", "")
+		}
+		if len(b2) <= maxMCPResponseBytes {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+
+	b, err = build(lo)
 	if err != nil {
 		return errResult(ErrCodeInternal, "response serialization failed", "")
 	}

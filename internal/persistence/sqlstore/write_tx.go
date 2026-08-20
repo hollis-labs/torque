@@ -362,12 +362,12 @@ func (w *WriteTx) transitionTask(id, newStatus string, reason *string) (string, 
 	if reason != nil {
 		res, err = w.tx.Exec(
 			`UPDATE tasks SET status = ?, blocked_reason = ?, updated_at = ? WHERE id = ?`,
-			newStatus, *reason, time.Now().UTC(), id,
+			newStatus, *reason, updatedAtNow(), id,
 		)
 	} else {
 		res, err = w.tx.Exec(
 			`UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?`,
-			newStatus, time.Now().UTC(), id,
+			newStatus, updatedAtNow(), id,
 		)
 	}
 	if err != nil {
@@ -381,6 +381,20 @@ func (w *WriteTx) transitionTask(id, newStatus string, reason *string) (string, 
 		return "", fmt.Errorf("task %s not found", id)
 	}
 	return oldStatus, nil
+}
+
+// AddComment inserts a comment row inside the write transaction, populating
+// ID + CreatedAt from the DB. Mirrors Store.AddComment field-for-field; used
+// by TaskService.TransitionWithComment (ENT-TASK) so a transition's status
+// UPDATE and its accompanying comment INSERT commit atomically in one
+// transaction instead of two separate calls.
+func (w *WriteTx) AddComment(c *CommentRecord) error {
+	if c.EntityType == "" {
+		c.EntityType = EntityTypeTask
+	}
+	const q = `INSERT INTO comments (entity_type, entity_id, author, content) VALUES (?, ?, ?, ?)
+		RETURNING id, created_at`
+	return w.tx.QueryRow(q, c.EntityType, c.EntityID, c.Author, c.Content).Scan(&c.ID, &c.CreatedAt)
 }
 
 // GetTaskRetryCount reads retry_count under the write transaction.
@@ -397,7 +411,7 @@ func (w *WriteTx) GetTaskRetryCount(id string) (int, error) {
 
 // IncrementTaskRetryCount bumps retry_count by one.
 func (w *WriteTx) IncrementTaskRetryCount(id string) error {
-	res, err := w.tx.Exec(`UPDATE tasks SET retry_count = retry_count + 1, updated_at = ? WHERE id = ?`, time.Now().UTC(), id)
+	res, err := w.tx.Exec(`UPDATE tasks SET retry_count = retry_count + 1, updated_at = ? WHERE id = ?`, updatedAtNow(), id)
 	if err != nil {
 		return err
 	}
@@ -425,7 +439,7 @@ func (w *WriteTx) GetTaskEscalationStep(id string) (int, error) {
 
 // SetTaskEscalationStep updates escalation_step.
 func (w *WriteTx) SetTaskEscalationStep(id string, step int) error {
-	res, err := w.tx.Exec(`UPDATE tasks SET escalation_step = ?, updated_at = ? WHERE id = ?`, step, time.Now().UTC(), id)
+	res, err := w.tx.Exec(`UPDATE tasks SET escalation_step = ?, updated_at = ? WHERE id = ?`, step, updatedAtNow(), id)
 	if err != nil {
 		return err
 	}
@@ -441,7 +455,7 @@ func (w *WriteTx) SetTaskEscalationStep(id string, step int) error {
 
 // SetTaskAgentProfile updates agent_profile for the task.
 func (w *WriteTx) SetTaskAgentProfile(id, agentProfile string) error {
-	res, err := w.tx.Exec(`UPDATE tasks SET agent_profile = ?, updated_at = ? WHERE id = ?`, agentProfile, time.Now().UTC(), id)
+	res, err := w.tx.Exec(`UPDATE tasks SET agent_profile = ?, updated_at = ? WHERE id = ?`, agentProfile, updatedAtNow(), id)
 	if err != nil {
 		return err
 	}
@@ -533,18 +547,18 @@ func (w *WriteTx) CreateTask(t *TaskRecord) error {
 		executor, launch_profile, agent_profile, working_dir, tools, permissions, environment,
 		system_prompt, agent_file, files, cost_budget, max_retries, max_duration_ms, token_budget,
 		on_done, on_fail, on_review, escalation_chain, quality_gates, deliverables,
-		deliverable_preset, on_done_merge, depends_on, blocked_reason, metadata,
+		deliverable_preset, on_done_merge, blocked_reason, metadata,
 		sprint_id, project_id, epic_id,
 		kind, source_type, source_ref, trust, checkpoint_mode, on_checkpoint_response,
 		parent_id
-	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
 	_, err := w.tx.Exec(q,
 		t.ID, t.Title, t.Description, t.Status, t.Priority, manual,
 		t.Executor, t.LaunchProfile, t.AgentProfile, t.WorkingDir, t.Tools, t.Permissions, t.Environment,
 		t.SystemPrompt, t.AgentFile, t.Files, t.CostBudget, t.MaxRetries, t.MaxDurationMs, t.TokenBudget,
 		t.OnDone, t.OnFail, t.OnReview, t.EscalationChain, t.QualityGates, t.Deliverables,
-		t.DeliverablePreset, t.OnDoneMerge, t.DependsOn, t.BlockedReason, t.Metadata,
+		t.DeliverablePreset, t.OnDoneMerge, t.BlockedReason, t.Metadata,
 		t.SprintID, t.ProjectID, t.EpicID,
 		t.Kind, t.SourceType, t.SourceRef, t.Trust, t.CheckpointMode, t.OnCheckpointResponse,
 		t.ParentID,
@@ -552,12 +566,41 @@ func (w *WriteTx) CreateTask(t *TaskRecord) error {
 	return err
 }
 
+// UpdateTask applies non-nil pointer fields to the task row inside the write
+// transaction. Delegates to updateTaskExec (tasks.go) — the same
+// field-mapping logic Store.UpdateTask uses — so a multi-field update (e.g.
+// title + tags + depends_on) commits atomically with
+// SetTaskTags/SetTaskDependencies in the same WriteTx instead of as
+// independent calls (FIX-007).
+func (w *WriteTx) UpdateTask(id string, u TaskUpdate) error {
+	return updateTaskExec(w.tx, id, u)
+}
+
+// SetTaskTags replaces all tags linked to the given task inside the write
+// transaction. Delegates to setTaskTagsExec (tags.go) — the same
+// delete+reinsert logic Store.SetTaskTags uses — so it can be composed with
+// UpdateTask/CreateTask/SetTaskDependencies in one WriteTx (FIX-007) instead
+// of running (and committing) in its own separate transaction.
+func (w *WriteTx) SetTaskTags(taskID string, slugs []string) error {
+	return setTaskTagsExec(w.tx, taskID, slugs)
+}
+
+// SetTaskDependencies replaces all dependency edges for the given task
+// inside the write transaction. Delegates to setTaskDependenciesExec
+// (task_dependencies.go) — the same delete+reinsert logic
+// Store.SetTaskDependencies uses — so it can be composed with
+// CreateTask/UpdateTask/SetTaskTags in one WriteTx (FIX-007) instead of
+// running (and committing) in its own separate transaction.
+func (w *WriteTx) SetTaskDependencies(taskID string, depIDs []string) error {
+	return setTaskDependenciesExec(w.tx, taskID, depIDs)
+}
+
 // SetTaskMaxRetries overwrites max_retries inside the write transaction. It
 // is the pointer-to-zero counterpart to the MaxRetries==0→3 rewrite inside
 // applyDefaults: callers that genuinely want a zero-retry task call this
 // after CreateTask in the same transaction.
 func (w *WriteTx) SetTaskMaxRetries(id string, maxRetries int) error {
-	res, err := w.tx.Exec(`UPDATE tasks SET max_retries = ?, updated_at = ? WHERE id = ?`, maxRetries, time.Now().UTC(), id)
+	res, err := w.tx.Exec(`UPDATE tasks SET max_retries = ?, updated_at = ? WHERE id = ?`, maxRetries, updatedAtNow(), id)
 	if err != nil {
 		return err
 	}

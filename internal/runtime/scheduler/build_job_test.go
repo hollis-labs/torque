@@ -61,7 +61,6 @@ func TestBuildJob_PopulatesPlantedBootIdentityFields(t *testing.T) {
 		ParentID:    sql.NullString{String: "CW-PARENT", Valid: true},
 		SprintID:    sql.NullString{String: "SPR-1", Valid: true},
 		EpicID:      sql.NullString{String: "EPIC-1", Valid: true},
-		DependsOn:   sql.NullString{String: `["CW-DEP-1","CW-DEP-2"]`, Valid: true},
 	}
 	job := sched.buildJob(task, 42)
 	assert.Equal(t, "CW-T-BOOT", job.TaskID)
@@ -73,17 +72,35 @@ func TestBuildJob_PopulatesPlantedBootIdentityFields(t *testing.T) {
 	assert.Equal(t, "CW-PARENT", job.ParentID)
 	assert.Equal(t, "SPR-1", job.SprintID)
 	assert.Equal(t, "EPIC-1", job.EpicID)
+}
+
+// TestBuildJob_PopulatesDependsOnFromJoinTable covers depends_on since
+// migration 027 / FK-003: it now lives in the task_dependencies join table,
+// not a TaskRecord column, so buildJob queries the store by task.ID rather
+// than decoding a JSON string off the passed-in struct. Unlike the other
+// buildJob field tests, this one needs real rows persisted (including the
+// dependency targets, since depends_on_task_id is now a real FK).
+func TestBuildJob_PopulatesDependsOnFromJoinTable(t *testing.T) {
+	sched, store := setupBuildJobScheduler(t)
+
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: "CW-DEP-1", Title: "dep 1"}))
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: "CW-DEP-2", Title: "dep 2"}))
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: "CW-T-DEPS", Title: "depender"}))
+	require.NoError(t, store.SetTaskDependencies("CW-T-DEPS", []string{"CW-DEP-1", "CW-DEP-2"}))
+
+	task := sqlstore.TaskRecord{ID: "CW-T-DEPS", Title: "depender"}
+	job := sched.buildJob(task, 42)
 	assert.Equal(t, []string{"CW-DEP-1", "CW-DEP-2"}, job.DependsOn)
 }
 
-func TestBuildJob_InvalidDependsOnDoesNotPartiallyPopulate(t *testing.T) {
-	sched, _ := setupBuildJobScheduler(t)
-	task := sqlstore.TaskRecord{
-		ID:        "CW-T-BAD-DEPS",
-		Title:     "bad deps",
-		DependsOn: sql.NullString{String: `["CW-DEP-1",`, Valid: true},
-	}
+// TestBuildJob_EmptyDependsOnWhenNoneSet covers the no-dependencies case:
+// ListTaskDependencyIDs returns an empty result, and buildJob leaves
+// job.DependsOn nil (its zero value) rather than an empty non-nil slice.
+func TestBuildJob_EmptyDependsOnWhenNoneSet(t *testing.T) {
+	sched, store := setupBuildJobScheduler(t)
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: "CW-T-NODEPS", Title: "no deps"}))
 
+	task := sqlstore.TaskRecord{ID: "CW-T-NODEPS", Title: "no deps"}
 	job := sched.buildJob(task, 42)
 	assert.Nil(t, job.DependsOn)
 }

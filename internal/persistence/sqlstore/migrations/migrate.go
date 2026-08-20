@@ -82,18 +82,27 @@ func Run(db *sql.DB) error {
 			return fmt.Errorf("record migration %s: %w", f, err)
 		}
 
+		// Validate FK integrity against the migration's *uncommitted* result,
+		// inside the same transaction, before committing. PRAGMA
+		// foreign_key_check reports violations regardless of the foreign_keys
+		// pragma's on/off state, so this works even though foreign_keys is OFF
+		// for the duration of the migration above. Checking before commit (not
+		// after, as this used to) matters for a migration like a table rebuild
+		// that adds a new REFERENCES constraint over already-stale data: if the
+		// check fails we roll back instead of leaving the schema change (and
+		// schema_migrations row) committed with a violation already sitting in
+		// it.
+		if err := checkForeignKeys(ctx, tx, f); err != nil {
+			tx.Rollback()
+			_, _ = conn.ExecContext(ctx, restoreForeignKeys)
+			return err
+		}
+
 		if err := tx.Commit(); err != nil {
 			_, _ = conn.ExecContext(ctx, restoreForeignKeys)
 			return fmt.Errorf("commit migration %s: %w", f, err)
 		}
 
-		if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
-			return fmt.Errorf("enable foreign keys after %s: %w", f, err)
-		}
-		if err := checkForeignKeys(ctx, conn, f); err != nil {
-			_, _ = conn.ExecContext(ctx, restoreForeignKeys)
-			return err
-		}
 		if _, err := conn.ExecContext(ctx, restoreForeignKeys); err != nil {
 			return fmt.Errorf("restore foreign keys after %s: %w", f, err)
 		}
@@ -113,8 +122,8 @@ func foreignKeyRestoreStmt(ctx context.Context, conn *sql.Conn) (string, error) 
 	return "PRAGMA foreign_keys = ON", nil
 }
 
-func checkForeignKeys(ctx context.Context, conn *sql.Conn, migration string) error {
-	rows, err := conn.QueryContext(ctx, "PRAGMA foreign_key_check")
+func checkForeignKeys(ctx context.Context, tx *sql.Tx, migration string) error {
+	rows, err := tx.QueryContext(ctx, "PRAGMA foreign_key_check")
 	if err != nil {
 		return fmt.Errorf("foreign key check after %s: %w", migration, err)
 	}

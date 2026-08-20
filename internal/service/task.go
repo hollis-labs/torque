@@ -2,9 +2,13 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"log"
+	"time"
 
 	feotel "github.com/hollis-labs/go-otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -87,6 +91,7 @@ type TaskService struct {
 	feature            *FeatureService
 	tags               *TagService
 	transitionObserver TaskTransitionObserver // optional; nil disables the observer hook
+	commentObserver    CommentObserver        // optional; nil disables the observer hook
 }
 
 // SetTransitionObserver installs a TaskTransitionObserver that runs after
@@ -95,6 +100,19 @@ type TaskService struct {
 // bootstrap before serving traffic.
 func (s *TaskService) SetTransitionObserver(o TaskTransitionObserver) {
 	s.transitionObserver = o
+}
+
+// SetCommentObserver installs a CommentObserver that runs after every
+// successful TransitionWithComment. TransitionWithComment writes its
+// comment via the write transaction directly (not CommentService.Add) to
+// keep the status change and the comment atomic, which otherwise bypasses
+// CommentService's own observer hook — this lets bootstrap wire the same
+// CommentObserver (e.g. the session-lifecycle hook's session-complete
+// marker detection) onto this path too. nil clears the observer. Not
+// goroutine-safe with concurrent TransitionWithComment calls; install once
+// at bootstrap before serving traffic.
+func (s *TaskService) SetCommentObserver(o CommentObserver) {
+	s.commentObserver = o
 }
 
 // Create validates and creates a new task.
@@ -106,6 +124,31 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	priority := input.Priority
 	if priority == 0 {
 		priority = 2
+	}
+
+	// subtodos[] seed list (ENT-TASK, torque_task_create): a caller-provided
+	// (non-nil) Subtodos list bypasses ExtractSubtodosFromDescription below,
+	// but unlike that auto-extract path (which always fills ID via a
+	// sequential "item-N" scheme) a caller-supplied list may omit IDs or
+	// even collide on one. Normalize up front — before NextTaskID/CreateTask
+	// run — so a bad seed list fails cleanly with no half-created task row,
+	// and every stored subtodo has the same non-empty-unique-ID guarantee
+	// AddSubtodo already gives a single torque_task_subtodo_add call.
+	if input.Subtodos != nil {
+		seen := make(map[string]bool, len(input.Subtodos))
+		for i := range input.Subtodos {
+			id := input.Subtodos[i].ID
+			if id == "" {
+				id = newSubtodoID()
+				for seen[id] {
+					id = newSubtodoID()
+				}
+				input.Subtodos[i].ID = id
+			} else if seen[id] {
+				return nil, &ValidationError{Field: "subtodos", Message: "duplicate subtodo id: " + id}
+			}
+			seen[id] = true
+		}
 	}
 
 	// Validate write-time invariants (enums, numeric bounds, deliverables, depends_on).
@@ -300,9 +343,6 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	if len(input.Files) > 0 {
 		rec.Files = sql.NullString{String: marshalJSON(input.Files), Valid: true}
 	}
-	if len(input.DependsOn) > 0 {
-		rec.DependsOn = sql.NullString{String: marshalJSON(input.DependsOn), Valid: true}
-	}
 	if input.CostBudget != nil {
 		rec.CostBudget = sql.NullFloat64{Float64: *input.CostBudget, Valid: true}
 	}
@@ -343,8 +383,40 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		rec.ParentID = sql.NullString{String: input.ParentID, Valid: true}
 	}
 
-	if err := s.store.CreateTask(rec); err != nil {
-		return nil, err
+	// depends_on lives in the task_dependencies join table (migration 027 /
+	// FK-003), not a column on tasks. Existence was already checked above by
+	// validateTaskWrites; a cycle check is unnecessary here — a brand-new
+	// task has no ID until NextTaskID ran above, so nothing existing could
+	// already hold an edge pointing at it (same reasoning validateParentID
+	// uses to skip cycle checks on Create).
+	//
+	// FIX-007: when depends_on is set, CreateTask + SetTaskDependencies must
+	// commit together or not at all — otherwise a SetTaskDependencies
+	// failure (lock contention, or a dependency task deleted in the TOCTOU
+	// window after the existence check above trips the FK) leaves a real
+	// task row committed with none of its intended dependency edges, and
+	// the caller has no signal a task was actually created. The
+	// no-depends_on path is unchanged: a single CreateTask call, already
+	// atomic on its own.
+	if len(input.DependsOn) > 0 {
+		wtx, err := s.store.BeginWriteTx(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		defer wtx.Rollback()
+		if err := wtx.CreateTask(rec); err != nil {
+			return nil, err
+		}
+		if err := wtx.SetTaskDependencies(id, input.DependsOn); err != nil {
+			return nil, err
+		}
+		if err := wtx.Commit(); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := s.store.CreateTask(rec); err != nil {
+			return nil, err
+		}
 	}
 
 	// Subtodos: caller-provided list wins; otherwise auto-extract top-level
@@ -385,17 +457,26 @@ func (s *TaskService) List(filter sqlstore.TaskFilter) ([]sqlstore.TaskRecord, e
 	return s.store.ListTasks(filter)
 }
 
-// TaskUpdateInput wraps the store-level TaskUpdate and adds a tags field.
-// The store-level TaskUpdate no longer carries tags because they live in
-// the task_tags link table, not a column on tasks.
+// TaskUpdateInput wraps the store-level TaskUpdate and adds tags/depends_on
+// fields. The store-level TaskUpdate no longer carries these because they
+// live in link tables (task_tags, task_dependencies), not columns on tasks.
 type TaskUpdateInput struct {
 	sqlstore.TaskUpdate
-	Tags *[]string // nil = no change; non-nil = replace all linked tags
+	Tags      *[]string // nil = no change; non-nil = replace all linked tags
+	DependsOn *[]string // nil = no change; non-nil = replace all dependency edges
 }
 
 // Update applies a partial update to a task. If Tags is non-nil, linked
 // tags are resolved and replaced.
 func (s *TaskService) Update(id string, input TaskUpdateInput) error {
+	// title is the one truly-required field (mirrors Create's check). Now that
+	// the MCP layer detects title presence-based (FIX-001), an explicit
+	// "title": "" reaches here and must be rejected with a clean
+	// ValidationError rather than falling through to a raw DB NOT NULL error.
+	if input.Title != nil && *input.Title == "" {
+		return &ValidationError{Field: "title", Message: "title cannot be cleared to empty"}
+	}
+
 	fields, err := extractUpdateFields(input)
 	if err != nil {
 		return err
@@ -466,17 +547,62 @@ func (s *TaskService) Update(id string, input TaskUpdateInput) error {
 		}
 	}
 
-	if err := s.store.UpdateTask(id, input.TaskUpdate); err != nil {
-		return err
+	// depends_on cycle check (migration 027 / FK-003). Same rationale as
+	// validateParentID: runs before the store write so a cycle-producing
+	// update (e.g. A depends_on B, B depends_on A) is rejected with a
+	// ValidationError instead of committed. A mutual/circular dependency is
+	// a second, self-inflicted flavor of the scheduler deadlock this task
+	// exists to fix — ON DELETE CASCADE does nothing for it, since neither
+	// task is ever deleted. Only evaluated when the caller is touching
+	// depends_on; Create never needs this (see the comment there).
+	if input.DependsOn != nil {
+		if err := s.validateDependsOnCycle(id, *input.DependsOn); err != nil {
+			return err
+		}
 	}
+
+	// FIX-007: UpdateTask + SetTaskTags (when tags are changing) +
+	// SetTaskDependencies (when depends_on is changing) must commit together
+	// or not at all. Without this, a multi-field update (e.g. title +
+	// depends_on in the same call) can partially apply: UpdateTask commits
+	// the title change, then SetTaskDependencies fails — the title is now
+	// updated but the dependency edges aren't, and a blind retry re-applies
+	// the title update against already-changed data. When neither tags nor
+	// depends_on is being touched, UpdateTask alone is already atomic (one
+	// SQL statement), so that path is left as a standalone call.
+	if input.Tags == nil && input.DependsOn == nil {
+		return s.store.UpdateTask(id, input.TaskUpdate)
+	}
+
+	var slugs []string
 	if input.Tags != nil {
-		slugs, err := s.tags.ResolveNames(*input.Tags)
+		var err error
+		slugs, err = s.tags.ResolveNames(*input.Tags)
 		if err != nil {
 			return err
 		}
-		return s.store.SetTaskTags(id, slugs)
 	}
-	return nil
+
+	wtx, err := s.store.BeginWriteTx(context.Background())
+	if err != nil {
+		return err
+	}
+	defer wtx.Rollback()
+
+	if err := wtx.UpdateTask(id, input.TaskUpdate); err != nil {
+		return err
+	}
+	if input.Tags != nil {
+		if err := wtx.SetTaskTags(id, slugs); err != nil {
+			return err
+		}
+	}
+	if input.DependsOn != nil {
+		if err := wtx.SetTaskDependencies(id, *input.DependsOn); err != nil {
+			return err
+		}
+	}
+	return wtx.Commit()
 }
 
 // Delete removes a task by ID.
@@ -525,9 +651,68 @@ func (s *TaskService) validateParentID(taskID string, candidate sql.NullString) 
 	return &ValidationError{Field: "parent_id", Message: "parent_id ancestor chain exceeds 256 hops"}
 }
 
+// validateDependsOnCycle enforces that adding the given candidate depends_on
+// edges from taskID does not create a directed cycle in the depends_on
+// graph (migration 027 / FK-003). Unlike parent_id, depends_on is a
+// many-to-many DAG (a task can depend on several others, and several tasks
+// can share a dependency), not a tree, so this walks a DFS over each
+// candidate's own dependency edges — rather than a single-parent ancestor
+// chain — looking for a path back to taskID.
+//
+// A visited-set prevents revisiting shared nodes in diamond-shaped
+// dependency graphs (A depends on B and C, both depend on D) blowing up
+// into exponential re-walks; a 256-hop cap guards against pathological or
+// malformed graphs, mirroring validateParentID's guard.
+func (s *TaskService) validateDependsOnCycle(taskID string, candidates []string) error {
+	visited := map[string]bool{}
+	var walk func(id string, hops int) error
+	walk = func(id string, hops int) error {
+		if id == taskID {
+			if hops == 0 {
+				return &ValidationError{Field: "depends_on", Message: "depends_on cannot reference the task itself"}
+			}
+			return &ValidationError{Field: "depends_on", Message: "depends_on would create a cycle through task " + taskID}
+		}
+		if hops > 256 {
+			return &ValidationError{Field: "depends_on", Message: "depends_on chain exceeds 256 hops"}
+		}
+		if visited[id] {
+			return nil
+		}
+		visited[id] = true
+		deps, err := s.store.ListTaskDependencyIDs(id)
+		if err != nil {
+			// Broken/unreadable chain — treat as no cycle to avoid false
+			// positives, mirroring validateParentID's handling of a broken
+			// ancestor chain.
+			return nil
+		}
+		for _, d := range deps {
+			if err := walk(d, hops+1); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, depID := range candidates {
+		if err := walk(depID, 0); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ListTags returns the tags linked to a task.
 func (s *TaskService) ListTags(taskID string) ([]sqlstore.TagRecord, error) {
 	return s.store.ListTaskTags(taskID)
+}
+
+// ListDependencyIDs returns the depends_on task IDs linked to a task, in
+// the order they were set (task_dependencies.sort_order ASC). Every ID
+// returned still exists — ON DELETE CASCADE on depends_on_task_id prunes
+// the edge automatically when the dependency task is deleted (FK-003).
+func (s *TaskService) ListDependencyIDs(taskID string) ([]string, error) {
+	return s.store.ListTaskDependencyIDs(taskID)
 }
 
 // Transition moves a task to a new status if the FSM allows it.
@@ -613,6 +798,93 @@ func (s *TaskService) ForceTransition(ctx context.Context, id, newStatus string)
 	return nil
 }
 
+// TransitionWithComment moves a task to a new status and posts a comment in
+// the same SQL transaction (ENT-TASK / ADR-0004 §5) — the caller gets one
+// atomic operation instead of a transition call followed by a separate
+// torque_comment_add. force mirrors Transition/ForceTransition's contract:
+// false consults the FSM (validTransitions), true skips it. The FSM check
+// itself is read-then-validate against the same pre-transaction GetTask
+// Transition/ForceTransition already use — no additional race window is
+// introduced by adding the comment write.
+//
+// Only called when the caller actually supplied a comment; a plain
+// transition (no comment) keeps using Transition/ForceTransition unchanged
+// so the well-exercised no-comment path stays byte-for-byte as it was.
+func (s *TaskService) TransitionWithComment(ctx context.Context, id, newStatus, comment, author string, force bool) (err error) {
+	ctx, span := feotel.StartSpan(ctx, "torque.task.transition")
+	span.SetAttributes(
+		attribute.String("hollis.app", "torque"),
+		attribute.String("hollis.task.id", id),
+		attribute.String("torque.task.to_status", newStatus),
+		attribute.Bool("torque.task.forced", force),
+		attribute.Bool("torque.task.has_comment", true),
+	)
+	defer func() {
+		if err != nil {
+			var terr *TransitionError
+			if !errors.As(err, &terr) {
+				span.RecordError(err)
+			}
+		}
+		span.End()
+	}()
+
+	task, err := s.store.GetTask(id)
+	if err != nil {
+		return err
+	}
+	span.SetAttributes(attribute.String("torque.task.from_status", task.Status))
+
+	if !force {
+		allowed, ok := validTransitions[task.Status]
+		if !ok {
+			return &TransitionError{From: task.Status, To: newStatus, Message: "unknown source status"}
+		}
+		permitted := false
+		for _, a := range allowed {
+			if a == newStatus {
+				permitted = true
+				break
+			}
+		}
+		if !permitted {
+			return &TransitionError{From: task.Status, To: newStatus, Message: "transition not permitted"}
+		}
+	}
+
+	wtx, err := s.store.BeginWriteTx(ctx)
+	if err != nil {
+		return err
+	}
+	defer wtx.Rollback()
+
+	if err := wtx.TransitionTask(id, newStatus); err != nil {
+		return err
+	}
+	rec := &sqlstore.CommentRecord{
+		EntityType: sqlstore.EntityTypeTask,
+		EntityID:   id,
+		Author:     author,
+		Content:    comment,
+	}
+	if err := wtx.AddComment(rec); err != nil {
+		return err
+	}
+	if err := wtx.Commit(); err != nil {
+		return err
+	}
+	s.notifyTransition(ctx, id, task.Status, newStatus)
+	// wtx.AddComment bypasses CommentService.Add (see SetCommentObserver's
+	// doc comment for why), so the CommentObserver hook has to be invoked
+	// here explicitly or layer-2 session-complete marker detection
+	// silently never fires for transitions made with an accompanying
+	// comment.
+	if s.commentObserver != nil {
+		s.commentObserver.ObserveComment(ctx, rec)
+	}
+	return nil
+}
+
 func (s *TaskService) notifyTransition(ctx context.Context, id, from, to string) {
 	if s.transitionObserver == nil {
 		return
@@ -630,13 +902,12 @@ func (s *TaskService) ListSubtodos(taskID string) ([]sqlstore.Subtodo, error) {
 	return s.store.GetSubtodos(taskID)
 }
 
-// AddSubtodo appends a checklist item. Caller supplies the id to keep it
-// deterministic across repeated emits (e.g. "item-3"); duplicate ids are
-// rejected so downstream mark-done calls stay unambiguous.
+// AddSubtodo appends a checklist item. The caller may supply a meaningful
+// slug id (e.g. "check-auth-flow") to keep it deterministic across repeated
+// emits; when id is omitted, the server generates one (see newSubtodoID).
+// Duplicate ids — caller-supplied or generated — are rejected so downstream
+// mark-done calls stay unambiguous.
 func (s *TaskService) AddSubtodo(taskID string, item sqlstore.Subtodo) ([]sqlstore.Subtodo, error) {
-	if item.ID == "" {
-		return nil, &ValidationError{Field: "id", Message: "id is required"}
-	}
 	if item.Text == "" {
 		return nil, &ValidationError{Field: "text", Message: "text is required"}
 	}
@@ -644,16 +915,136 @@ func (s *TaskService) AddSubtodo(taskID string, item sqlstore.Subtodo) ([]sqlsto
 	if err != nil {
 		return nil, err
 	}
-	for _, e := range existing {
-		if e.ID == item.ID {
-			return nil, &ValidationError{Field: "id", Message: "duplicate subtodo id: " + item.ID}
+	if item.ID == "" {
+		item.ID = newSubtodoID()
+		// newSubtodoID is a 64-bit random value under a dedicated prefix, so
+		// a collision with an existing (generated or caller-supplied) id is
+		// vanishingly unlikely; regenerate defensively rather than fail.
+		for subtodoIDTaken(existing, item.ID) {
+			item.ID = newSubtodoID()
 		}
+	} else if subtodoIDTaken(existing, item.ID) {
+		return nil, &ValidationError{Field: "id", Message: "duplicate subtodo id: " + item.ID}
 	}
 	existing = append(existing, item)
 	if err := s.store.SetSubtodos(taskID, existing); err != nil {
 		return nil, err
 	}
 	return existing, nil
+}
+
+func subtodoIDTaken(items []sqlstore.Subtodo, id string) bool {
+	for _, e := range items {
+		if e.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// newSubtodoID returns a short random subtodo id under a dedicated "sub_"
+// prefix so generated ids can never collide with a caller-supplied
+// slug-style id (e.g. "check-auth-flow") — slugs are free to omit that
+// prefix entirely. Mirrors the crypto/rand + hex approach used by
+// internal/runtime/scheduler.newEventID: 8 random bytes (64 bits) is ample
+// for uniqueness within a single task's checklist (typically low tens of
+// items), and subtodos have no global/cross-task query surface that would
+// call for a date-bucketed sequential scheme like the other entity IDs.
+func newSubtodoID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// rand.Read never errors on a healthy OS RNG; fall back to a
+		// time-based id so the field is never empty.
+		return fmt.Sprintf("sub_%d", time.Now().UnixNano())
+	}
+	return "sub_" + hex.EncodeToString(b[:])
+}
+
+// BulkAddSubtodo seeds many checklist items onto one task in a single call
+// (ENT-SUBTODO). Per-item id resolution mirrors AddSubtodo exactly: a
+// caller-supplied id is validated for uniqueness (against both the task's
+// existing checklist and any earlier items in this same batch); an omitted
+// id is generated via newSubtodoID/subtodoIDTaken.
+//
+// Deviation from RunBulk (bulk.go)/PRIM-003: RunBulk's op closes over an id
+// the caller already has (bulk_update/bulk_delete/bulk_tag all operate on
+// an existing ids[]). bulk_add's items are new — most arrive with no id at
+// all — so there is no pre-existing id for RunBulk's op to key on. This
+// method loops directly over the item specs instead, and returns each
+// resolved id (caller-supplied or generated) as "succeeded", matching
+// RunBulk's/PRIM-003's shape at the response layer ({succeeded: [ids],
+// failed: [{id, error}]}) even though the id is being *assigned* here
+// rather than looked up. A failed item reports its caller-supplied id when
+// given, else a positional placeholder ("item[N]") since no id was ever
+// assigned to it.
+//
+// All items are validated against one fetched-and-held copy of the
+// checklist and persisted in a single SetSubtodos call — not one write per
+// item — so a batch never leaves a torn intermediate checklist: either
+// every accepted item lands in that one write, or (if the write itself
+// fails, e.g. task not found) none do and every provisionally-accepted item
+// reverts to failed.
+func (s *TaskService) BulkAddSubtodo(taskID string, items []sqlstore.Subtodo) ([]string, []BulkItemError) {
+	existing, err := s.store.GetSubtodos(taskID)
+	if err != nil {
+		failed := make([]BulkItemError, len(items))
+		for i, item := range items {
+			failed[i] = BulkItemError{ID: bulkAddSubtodoLabel(item, i), Err: err}
+		}
+		return nil, failed
+	}
+
+	succeeded := make([]string, 0, len(items))
+	var failed []BulkItemError
+	for i, item := range items {
+		if item.Text == "" {
+			failed = append(failed, BulkItemError{
+				ID:  bulkAddSubtodoLabel(item, i),
+				Err: &ValidationError{Field: "text", Message: "text is required"},
+			})
+			continue
+		}
+		if item.ID == "" {
+			item.ID = newSubtodoID()
+			for subtodoIDTaken(existing, item.ID) {
+				item.ID = newSubtodoID()
+			}
+		} else if subtodoIDTaken(existing, item.ID) {
+			failed = append(failed, BulkItemError{
+				ID:  item.ID,
+				Err: &ValidationError{Field: "id", Message: "duplicate subtodo id: " + item.ID},
+			})
+			continue
+		}
+		existing = append(existing, item)
+		succeeded = append(succeeded, item.ID)
+	}
+
+	if len(succeeded) == 0 {
+		return succeeded, failed
+	}
+	if err := s.store.SetSubtodos(taskID, existing); err != nil {
+		// The persist step failed after every accepted item passed in-memory
+		// validation; nothing was written, so none of them actually
+		// succeeded — move them all to failed rather than reporting ids
+		// that don't exist in the stored checklist.
+		for _, id := range succeeded {
+			failed = append(failed, BulkItemError{ID: id, Err: err})
+		}
+		return nil, failed
+	}
+	return succeeded, failed
+}
+
+// bulkAddSubtodoLabel picks the identifier to report for a bulk_add item
+// that failed before (or without) getting an id assigned: the
+// caller-supplied id when present, else a positional placeholder so the
+// failure is still traceable back to its slot in the request array.
+func bulkAddSubtodoLabel(item sqlstore.Subtodo, index int) string {
+	if item.ID != "" {
+		return item.ID
+	}
+	return fmt.Sprintf("item[%d]", index)
 }
 
 // MarkSubtodoDone ticks a single item and records its evidence.
@@ -690,7 +1081,13 @@ func (s *TaskService) UpdateSubtodo(taskID, itemID string, text *string, require
 		}
 		return items, nil
 	}
-	return nil, &ValidationError{Field: "id", Message: "subtodo not found: " + itemID}
+	// SWEEP-001: an unknown itemID is a not_found condition (the referenced
+	// subtodo doesn't exist), not a caller-input-shape problem — previously
+	// returned as *ValidationError, which mapServiceError maps to
+	// arg_invalid ahead of the string-match "not found" tier, so it never
+	// reached not_found regardless of message text. Matches the audit's
+	// Artifact finding of a not_found falling through to the wrong code.
+	return nil, &NotFoundError{Entity: "subtodo", ID: itemID}
 }
 
 // DeleteSubtodo removes a checklist item by id. Returns the full updated
@@ -709,19 +1106,28 @@ func (s *TaskService) DeleteSubtodo(taskID, itemID string) ([]sqlstore.Subtodo, 
 			return items, nil
 		}
 	}
-	return nil, &ValidationError{Field: "id", Message: "subtodo not found: " + itemID}
+	// SWEEP-001: same not_found fix as UpdateSubtodo above.
+	return nil, &NotFoundError{Entity: "subtodo", ID: itemID}
 }
 
 // BulkTransition applies the same status transition to multiple tasks. It
 // returns the slice of task IDs that successfully transitioned (in input
-// order, with failures dropped) plus a slice of errors for the failures. The
-// caller needs the actual successful IDs — not just a count — to broadcast
-// per-task SSE events or otherwise act per-item on the partial-success case.
-func (s *TaskService) BulkTransition(ctx context.Context, ids []string, newStatus string) ([]string, []error) {
+// order, with failures dropped) plus the per-item failures. The caller needs
+// the actual successful IDs — not just a count — to broadcast per-task SSE
+// events or otherwise act per-item on the partial-success case.
+//
+// PRIM-003 (ENT-TASK): this used to return a bare []error with no id
+// attached to each failure, which meant a caller couldn't tell which task a
+// given error belonged to, and the MCP handler hand-rolled a bespoke
+// {success, failed, errors} shape instead of the canonical bulk_* envelope
+// every other Task bulk verb (BulkUpdate/BulkDelete/BulkTag, task_bulk.go)
+// already uses. Routing through RunBulk fixes both: failures now carry
+// their id, and the response shape matches.
+func (s *TaskService) BulkTransition(ctx context.Context, ids []string, newStatus string) ([]string, []BulkItemError) {
 	// Wrapping span: per-item torque.task.transition spans nest under this so
 	// an operator sees "BulkTransition of N tasks" as one unit, with each task
 	// drilldown still available. Bulk operations don't expose a single err
-	// (callers see partial-success: succeeded IDs + []error), so the wrapper
+	// (callers see partial-success: succeeded IDs + failed[]), so the wrapper
 	// span doesn't RecordError; per-item spans capture individual faults.
 	ctx, span := feotel.StartSpan(ctx, "torque.task.transition.bulk")
 	span.SetAttributes(
@@ -731,18 +1137,12 @@ func (s *TaskService) BulkTransition(ctx context.Context, ids []string, newStatu
 	)
 	defer span.End()
 
-	var errs []error
-	succeeded := make([]string, 0, len(ids))
-	for _, id := range ids {
-		if err := s.Transition(ctx, id, newStatus); err != nil {
-			errs = append(errs, err)
-		} else {
-			succeeded = append(succeeded, id)
-		}
-	}
+	succeeded, failed := RunBulk(ids, func(id string) error {
+		return s.Transition(ctx, id, newStatus)
+	})
 	span.SetAttributes(
 		attribute.Int("torque.task.bulk_success", len(succeeded)),
-		attribute.Int("torque.task.bulk_failed", len(errs)),
+		attribute.Int("torque.task.bulk_failed", len(failed)),
 	)
-	return succeeded, errs
+	return succeeded, failed
 }

@@ -96,18 +96,32 @@ func (s *SprintService) Get(id string) (*sqlstore.SprintRecord, error) {
 	return s.store.GetSprint(id)
 }
 
-// List returns sprints optionally filtered by status and projectID.
-func (s *SprintService) List(status, projectID string) ([]sqlstore.SprintRecord, error) {
+// List returns sprints matching filter (status/project_id/archived-state
+// filters, PRIM-002 sort_by/sort_dir, PRIM-001 cursor pagination, and the
+// cost-budget-range/over-budget filter — ENT-SPRINT). Takes the full
+// sqlstore.SprintFilter directly, mirroring TaskService.List's pattern, so
+// callers (mcpadapter, HTTP) build the filter once instead of this method
+// growing a positional parameter per new filter dimension.
+func (s *SprintService) List(filter sqlstore.SprintFilter) ([]sqlstore.SprintRecord, error) {
 	if err := s.feature.Require("sprints"); err != nil {
 		return nil, err
 	}
-	return s.store.ListSprints(sqlstore.SprintFilter{Status: status, ProjectID: projectID})
+	return s.store.ListSprints(filter)
 }
 
 // Update applies a partial update to a sprint.
 func (s *SprintService) Update(id string, update sqlstore.SprintUpdate) error {
 	if err := s.feature.Require("sprints"); err != nil {
 		return err
+	}
+	// name is the one truly-required field (mirrors Create's implicit
+	// requirement — torque_sprint_create requires it). Now that the MCP
+	// layer detects name presence-based (SWEEP-001, mirroring FIX-001's fix
+	// for Task's title), an explicit "name": "" reaches here and must be
+	// rejected with a clean ValidationError rather than silently persisting
+	// an empty name.
+	if update.Name != nil && *update.Name == "" {
+		return &ValidationError{Field: "name", Message: "name cannot be cleared to empty"}
 	}
 	if update.ApprovalMode != nil && !validApprovalModes[*update.ApprovalMode] {
 		return &ValidationError{
@@ -118,12 +132,70 @@ func (s *SprintService) Update(id string, update sqlstore.SprintUpdate) error {
 	return s.store.UpdateSprint(id, update)
 }
 
+// BulkUpdate applies the same partial field update and/or status transition
+// to many sprints in one call (PRIM-003, mirroring TaskService.BulkUpdate's
+// shape in task_bulk.go). Per-item semantics match handleSprintUpdate's
+// combined tool: when status is non-empty, Transition runs first (through
+// each sprint's own current-status FSM, so two sprints in different states
+// can legitimately succeed or fail independently), then the field update
+// (if any field was set) is applied. A failure on one id — not found,
+// invalid transition, bad approval_mode, etc. — does not stop the rest.
+//
+// A single feature.Require check up front (rather than relying on the
+// per-call checks inside Transition/Update) means a disabled "sprints"
+// feature fails every id uniformly with the same FeatureDisabledError,
+// matching BulkTag's precedent in task_bulk.go for a shared precondition
+// that isn't really "per item."
+func (s *SprintService) BulkUpdate(ids []string, update sqlstore.SprintUpdate, status string) ([]string, []BulkItemError) {
+	if err := s.feature.Require("sprints"); err != nil {
+		failed := make([]BulkItemError, len(ids))
+		for i, id := range ids {
+			failed[i] = BulkItemError{ID: id, Err: err}
+		}
+		return nil, failed
+	}
+
+	hasUpdate := update.Name != nil || update.Goal != nil || update.ApprovalMode != nil ||
+		update.CostBudget != nil || update.ProjectID != nil
+
+	return RunBulk(ids, func(id string) error {
+		if status != "" {
+			if err := s.Transition(id, status); err != nil {
+				return err
+			}
+		}
+		if hasUpdate {
+			if err := s.Update(id, update); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // Delete removes a sprint by ID.
 func (s *SprintService) Delete(id string) error {
 	if err := s.feature.Require("sprints"); err != nil {
 		return err
 	}
 	return s.store.DeleteSprint(id)
+}
+
+// Archive soft-deletes a sprint by setting archived_at. Does not change
+// status — archiving is orthogonal to the sprint's workflow state.
+func (s *SprintService) Archive(id string) error {
+	if err := s.feature.Require("sprints"); err != nil {
+		return err
+	}
+	return s.store.ArchiveSprint(id)
+}
+
+// Unarchive restores a previously archived sprint.
+func (s *SprintService) Unarchive(id string) error {
+	if err := s.feature.Require("sprints"); err != nil {
+		return err
+	}
+	return s.store.UnarchiveSprint(id)
 }
 
 // Transition moves a sprint to a new status if the FSM allows it.

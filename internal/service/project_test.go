@@ -114,7 +114,7 @@ func TestProjectList(t *testing.T) {
 	svc.Project.Create(service.ProjectCreateInput{Name: "Project A", RepoPath: t.TempDir()})
 	svc.Project.Create(service.ProjectCreateInput{Name: "Project B", RepoPath: t.TempDir()})
 
-	projects, err := svc.Project.List("")
+	projects, err := svc.Project.List("", false)
 	require.NoError(t, err)
 	assert.Len(t, projects, 2)
 }
@@ -157,6 +157,51 @@ func TestProjectUpdateInvalidStatus(t *testing.T) {
 	err := svc.Project.Update(proj.ID, sqlstore.ProjectUpdate{Status: &bad})
 	assert.Error(t, err)
 	assert.IsType(t, &service.ValidationError{}, err)
+}
+
+// TestProjectArchiveDoesNotChangeStatus covers PRIM-004 AC: archiving is
+// independent of status.
+func TestProjectArchiveDoesNotChangeStatus(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("projects")
+
+	proj, err := svc.Project.Create(service.ProjectCreateInput{Name: "Project 1", RepoPath: t.TempDir()})
+	require.NoError(t, err)
+	require.Equal(t, "active", proj.Status)
+
+	require.NoError(t, svc.Project.Archive(proj.ID))
+
+	got, err := svc.Project.Get(proj.ID)
+	require.NoError(t, err)
+	assert.True(t, got.ArchivedAt.Valid)
+	assert.Equal(t, "active", got.Status)
+
+	require.NoError(t, svc.Project.Unarchive(proj.ID))
+
+	got, err = svc.Project.Get(proj.ID)
+	require.NoError(t, err)
+	assert.False(t, got.ArchivedAt.Valid)
+	assert.Equal(t, "active", got.Status)
+}
+
+// TestProjectListExcludesArchivedByDefault covers PRIM-004 AC: list filters
+// default to excluding archived rows unless include_archived is passed.
+func TestProjectListExcludesArchivedByDefault(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("projects")
+
+	p1, _ := svc.Project.Create(service.ProjectCreateInput{Name: "Project A", RepoPath: t.TempDir()})
+	p2, _ := svc.Project.Create(service.ProjectCreateInput{Name: "Project B", RepoPath: t.TempDir()})
+	require.NoError(t, svc.Project.Archive(p2.ID))
+
+	projects, err := svc.Project.List("", false)
+	require.NoError(t, err)
+	require.Len(t, projects, 1)
+	assert.Equal(t, p1.ID, projects[0].ID)
+
+	all, err := svc.Project.List("", true)
+	require.NoError(t, err)
+	assert.Len(t, all, 2)
 }
 
 func TestProjectDelete(t *testing.T) {

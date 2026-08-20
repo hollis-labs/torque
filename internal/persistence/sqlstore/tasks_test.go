@@ -483,6 +483,175 @@ func TestListTasks_FilterByKind(t *testing.T) {
 	assert.Equal(t, "CW-20260416-0010", waits[0].ID)
 }
 
+// TestListTasks_FilterByStatuses verifies the ENT-TASK Statuses OR-filter:
+// multiple statuses match any task in the set, and it takes precedence over
+// the single Status field when both are set.
+func TestListTasks_FilterByStatuses(t *testing.T) {
+	store := setupTestStore(t)
+
+	t1 := sampleTask("CW-20260601-0001")
+	t1.Status = "done"
+	t2 := sampleTask("CW-20260601-0002")
+	t2.Status = "doing"
+	t3 := sampleTask("CW-20260601-0003")
+	// t3.Status defaults to "todo"
+	require.NoError(t, store.CreateTask(t1))
+	require.NoError(t, store.CreateTask(t2))
+	require.NoError(t, store.CreateTask(t3))
+
+	got, err := store.ListTasks(sqlstore.TaskFilter{Statuses: []string{"done", "doing"}})
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	ids := []string{got[0].ID, got[1].ID}
+	assert.Contains(t, ids, "CW-20260601-0001")
+	assert.Contains(t, ids, "CW-20260601-0002")
+	assert.NotContains(t, ids, "CW-20260601-0003")
+
+	// Statuses takes precedence over Status when both are set.
+	got, err = store.ListTasks(sqlstore.TaskFilter{Status: "todo", Statuses: []string{"done"}})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "CW-20260601-0001", got[0].ID)
+}
+
+// TestListTasks_FilterByAgentAndLaunchProfile verifies the ENT-TASK
+// agent_profile/launch_profile exact-match filters.
+func TestListTasks_FilterByAgentAndLaunchProfile(t *testing.T) {
+	store := setupTestStore(t)
+
+	t1 := sampleTask("CW-20260601-0010")
+	t1.AgentProfile = "reviewer"
+	t1.LaunchProfile = "claude-code"
+	t2 := sampleTask("CW-20260601-0011")
+	t2.AgentProfile = "builder"
+	t2.LaunchProfile = "codex"
+	require.NoError(t, store.CreateTask(t1))
+	require.NoError(t, store.CreateTask(t2))
+
+	byAgent, err := store.ListTasks(sqlstore.TaskFilter{AgentProfile: "reviewer"})
+	require.NoError(t, err)
+	require.Len(t, byAgent, 1)
+	assert.Equal(t, "CW-20260601-0010", byAgent[0].ID)
+
+	byLaunch, err := store.ListTasks(sqlstore.TaskFilter{LaunchProfile: "codex"})
+	require.NoError(t, err)
+	require.Len(t, byLaunch, 1)
+	assert.Equal(t, "CW-20260601-0011", byLaunch[0].ID)
+}
+
+// TestListTasks_FilterByCreatedUpdatedRange verifies the ENT-TASK
+// created_at/updated_at range filters. Timestamps are whole-second
+// precision (see updatedAtNow's doc comment), so the test sleeps past a
+// full second between creates — same technique
+// TestListTasks_SortByUpdatedAtDesc_CursorRoundTrips uses — to get two
+// rows in distinct seconds without relying on sub-second precision.
+func TestListTasks_FilterByCreatedUpdatedRange(t *testing.T) {
+	store := setupTestStore(t)
+
+	t1 := sampleTask("CW-20260601-0020")
+	require.NoError(t, store.CreateTask(t1))
+	time.Sleep(1100 * time.Millisecond)
+	t2 := sampleTask("CW-20260601-0021")
+	require.NoError(t, store.CreateTask(t2))
+
+	got1, err := store.GetTask(t1.ID)
+	require.NoError(t, err)
+	got2, err := store.GetTask(t2.ID)
+	require.NoError(t, err)
+
+	// Bounds use each row's own stored (whole-second) timestamp directly,
+	// rather than an arbitrary sub-second offset: SQLiteDatetimeLayout has no
+	// fractional-second component, so Format() would silently collapse an
+	// offset smaller than 1s back onto the same whole-second string and
+	// defeat the boundary. The two rows are guaranteed >=1s apart by the
+	// sleep above, so >= t2's own timestamp excludes t1, and <= t1's own
+	// timestamp excludes t2.
+	createdAfter := got2.CreatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayout)
+	onlyLater, err := store.ListTasks(sqlstore.TaskFilter{CreatedAfter: createdAfter})
+	require.NoError(t, err)
+	require.Len(t, onlyLater, 1)
+	assert.Equal(t, t2.ID, onlyLater[0].ID)
+
+	createdBefore := got1.CreatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayout)
+	onlyEarlier, err := store.ListTasks(sqlstore.TaskFilter{CreatedBefore: createdBefore})
+	require.NoError(t, err)
+	require.Len(t, onlyEarlier, 1)
+	assert.Equal(t, t1.ID, onlyEarlier[0].ID)
+
+	// updated_at mirrors created_at for freshly-created, untouched rows.
+	updatedAfter := got2.UpdatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayout)
+	onlyLaterUpdated, err := store.ListTasks(sqlstore.TaskFilter{UpdatedAfter: updatedAfter})
+	require.NoError(t, err)
+	require.Len(t, onlyLaterUpdated, 1)
+	assert.Equal(t, t2.ID, onlyLaterUpdated[0].ID)
+
+	updatedBefore := got1.UpdatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayout)
+	onlyEarlierUpdated, err := store.ListTasks(sqlstore.TaskFilter{UpdatedBefore: updatedBefore})
+	require.NoError(t, err)
+	require.Len(t, onlyEarlierUpdated, 1)
+	assert.Equal(t, t1.ID, onlyEarlierUpdated[0].ID)
+}
+
+// TestListTasks_FilterByBudgetRange verifies the ENT-TASK budget/duration
+// Gte/Lte filters, including that a NULL column (budget never set) never
+// matches either bound.
+func TestListTasks_FilterByBudgetRange(t *testing.T) {
+	store := setupTestStore(t)
+
+	cheap := sampleTask("CW-20260601-0030")
+	cheap.CostBudget = sql.NullFloat64{Float64: 10, Valid: true}
+	cheap.TokenBudget = sql.NullInt64{Int64: 1000, Valid: true}
+	cheap.MaxDurationMs = sql.NullInt64{Int64: 60000, Valid: true}
+	cheap.MaxRetries = 1
+
+	pricey := sampleTask("CW-20260601-0031")
+	pricey.CostBudget = sql.NullFloat64{Float64: 500, Valid: true}
+	pricey.TokenBudget = sql.NullInt64{Int64: 500000, Valid: true}
+	pricey.MaxDurationMs = sql.NullInt64{Int64: 3600000, Valid: true}
+	pricey.MaxRetries = 5
+
+	unset := sampleTask("CW-20260601-0032")
+	// cheap/pricey's budget fields left at their zero value (Valid: false —
+	// NULL in the DB); MaxRetries left at 0, which applyDefaults rewrites to 3.
+
+	require.NoError(t, store.CreateTask(cheap))
+	require.NoError(t, store.CreateTask(pricey))
+	require.NoError(t, store.CreateTask(unset))
+
+	gte := 100.0
+	overBudget, err := store.ListTasks(sqlstore.TaskFilter{CostBudgetGte: &gte})
+	require.NoError(t, err)
+	require.Len(t, overBudget, 1)
+	assert.Equal(t, pricey.ID, overBudget[0].ID)
+
+	lte := 100.0
+	underBudget, err := store.ListTasks(sqlstore.TaskFilter{CostBudgetLte: &lte})
+	require.NoError(t, err)
+	require.Len(t, underBudget, 1)
+	assert.Equal(t, cheap.ID, underBudget[0].ID)
+
+	tokenGte := int64(10000)
+	highToken, err := store.ListTasks(sqlstore.TaskFilter{TokenBudgetGte: &tokenGte})
+	require.NoError(t, err)
+	require.Len(t, highToken, 1)
+	assert.Equal(t, pricey.ID, highToken[0].ID)
+
+	durLte := int64(120000)
+	shortDur, err := store.ListTasks(sqlstore.TaskFilter{MaxDurationMsLte: &durLte})
+	require.NoError(t, err)
+	require.Len(t, shortDur, 1)
+	assert.Equal(t, cheap.ID, shortDur[0].ID)
+
+	retriesGte := 3
+	highRetries, err := store.ListTasks(sqlstore.TaskFilter{MaxRetriesGte: &retriesGte})
+	require.NoError(t, err)
+	// pricey (5) and unset (defaulted to 3) both qualify.
+	require.Len(t, highRetries, 2)
+	gotIDs := []string{highRetries[0].ID, highRetries[1].ID}
+	assert.Contains(t, gotIDs, pricey.ID)
+	assert.Contains(t, gotIDs, unset.ID)
+}
+
 // ParkTaskOnCheckpoint is the conditional UPDATE behind
 // CheckpointService.Emit's park. It must only fire for tasks currently
 // in status=doing AND checkpoint_mode=blocking — protecting callers
@@ -617,6 +786,126 @@ func TestNextTaskID_AboveLexCeiling(t *testing.T) {
 	txID, err := tx.NextTaskID()
 	require.NoError(t, err)
 	assert.Equal(t, want, txID, "WriteTx.NextTaskID must use numeric MAX, not lex MAX")
+}
+
+// TestListTasks_DefaultOrderUnchangedWithoutSortBy pins down that leaving
+// SortBy empty (every caller that hasn't adopted PRIM-002 — HTTP
+// /api/v1/tasks, scheduler internals) preserves the exact original
+// `priority ASC, created_at ASC` order.
+func TestListTasks_DefaultOrderUnchangedWithoutSortBy(t *testing.T) {
+	store := setupTestStore(t)
+
+	t1 := sampleTask("CW-20260407-0001")
+	t1.Priority = 3
+	t2 := sampleTask("CW-20260407-0002")
+	t2.Priority = 1
+
+	require.NoError(t, store.CreateTask(t1))
+	require.NoError(t, store.CreateTask(t2))
+
+	tasks, err := store.ListTasks(sqlstore.TaskFilter{})
+	require.NoError(t, err)
+	require.Len(t, tasks, 2)
+	assert.Equal(t, "CW-20260407-0002", tasks[0].ID)
+	assert.Equal(t, "CW-20260407-0001", tasks[1].ID)
+}
+
+// TestListTasks_SortByPriority_CursorTiebreakOnID is PRIM-001/PRIM-002's
+// acceptance criterion at the store layer: with SortBy="priority" and many
+// rows sharing the same priority value, cursor pagination (AfterSortValue +
+// AfterID) must walk every row exactly once via the id tiebreak.
+func TestListTasks_SortByPriority_CursorTiebreakOnID(t *testing.T) {
+	store := setupTestStore(t)
+
+	const total = 7
+	var ids []string
+	for i := 0; i < total; i++ {
+		id := fmt.Sprintf("CW-20260407-%04d", i+1)
+		task := sampleTask(id)
+		task.Priority = 2 // identical for every row — forces the id tiebreak
+		require.NoError(t, store.CreateTask(task))
+		ids = append(ids, id)
+	}
+
+	var seen []string
+	filter := sqlstore.TaskFilter{SortBy: "priority", SortDir: "asc", Limit: 3}
+	for {
+		page, err := store.ListTasks(filter)
+		require.NoError(t, err)
+		if len(page) == 0 {
+			break
+		}
+		for _, t := range page {
+			seen = append(seen, t.ID)
+		}
+		last := page[len(page)-1]
+		filter.AfterSortValue = fmt.Sprintf("%d", last.Priority)
+		filter.AfterID = last.ID
+		if len(page) < filter.Limit {
+			break
+		}
+	}
+
+	assert.Equal(t, ids, seen, "cursor paging over duplicate priority values must visit every row exactly once, in id order")
+}
+
+// TestListTasks_SortByUpdatedAtDesc_CursorRoundTrips exercises a timestamp
+// sort column end to end at the store layer, guarding the string-argument
+// binding taskCursorArg relies on (binding a driver-reformatted time.Time
+// instead would compare against a differently formatted stored value —
+// see sqlstore.updatedAtNow's doc comment — and silently misorder).
+func TestListTasks_SortByUpdatedAtDesc_CursorRoundTrips(t *testing.T) {
+	store := setupTestStore(t)
+
+	t1 := sampleTask("CW-20260407-0001")
+	require.NoError(t, store.CreateTask(t1))
+	// created_at/updated_at are whole-second precision (see updatedAtNow's
+	// doc comment in tasks.go) — sleep past a full second so the two rows
+	// land in different seconds and this test isn't relying on the id
+	// tiebreak to (accidentally) produce the expected order.
+	time.Sleep(1100 * time.Millisecond)
+	t2 := sampleTask("CW-20260407-0002")
+	require.NoError(t, store.CreateTask(t2))
+
+	// First page: desc order should surface the more-recently-created (thus
+	// more-recently-updated) row first.
+	page1, err := store.ListTasks(sqlstore.TaskFilter{SortBy: "updated_at", SortDir: "desc", Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, page1, 1)
+	assert.Equal(t, "CW-20260407-0002", page1[0].ID)
+
+	// Cursor into the next page using the encoded sqlstore.SQLiteDatetimeLayout
+	// value a real caller (mcpadapter.taskSortValue) would produce.
+	after := page1[0]
+	page2, err := store.ListTasks(sqlstore.TaskFilter{
+		SortBy:         "updated_at",
+		SortDir:        "desc",
+		Limit:          1,
+		AfterSortValue: after.UpdatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayout),
+		AfterID:        after.ID,
+	})
+	require.NoError(t, err)
+	require.Len(t, page2, 1)
+	assert.Equal(t, "CW-20260407-0001", page2[0].ID)
+}
+
+// TestListTasks_InvalidCursorSortValue verifies a malformed cursor sort
+// value (non-numeric for the "priority" column) surfaces as
+// sqlstore.ErrInvalidCursor, which mcpadapter.mapServiceError maps to
+// arg_invalid rather than an internal error.
+func TestListTasks_InvalidCursorSortValue(t *testing.T) {
+	store := setupTestStore(t)
+
+	require.NoError(t, store.CreateTask(sampleTask("CW-20260407-0001")))
+
+	_, err := store.ListTasks(sqlstore.TaskFilter{
+		SortBy:         "priority",
+		SortDir:        "asc",
+		AfterSortValue: "not-a-number",
+		AfterID:        "CW-20260407-0001",
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, sqlstore.ErrInvalidCursor)
 }
 
 // timeUntilUTCMidnight returns the duration from now until the next UTC
