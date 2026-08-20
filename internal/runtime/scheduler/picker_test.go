@@ -20,6 +20,17 @@ func setupPickerStore(t *testing.T) *sqlstore.Store {
 	store, err := sqlstore.New(db, "sqlite")
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
+
+	// Picker tests use ad hoc project_id/sprint_id strings (e.g. "PRJ-A") as
+	// pure grouping/allowlist keys — the picker itself never joins against
+	// the projects/sprints tables (see picker.go), so these never need to
+	// correspond to real rows. tasks.project_id/sprint_id/epic_id carry real
+	// FKs since FK-002 (migration 028_task_fk_constraints.sql); disable
+	// enforcement here rather than seeding a real project/sprint per literal
+	// ID scattered across this package's tests.
+	_, err = store.DB().Exec("PRAGMA foreign_keys = OFF")
+	require.NoError(t, err)
+
 	return store
 }
 
