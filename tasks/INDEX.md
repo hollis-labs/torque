@@ -39,24 +39,24 @@ Status values: `todo` · `blocked` · `in-progress` · `done` · `skipped`
 | [FIX-002](phase-1-bugfixes/FIX-002-subtodo-id-autogen.md) | Auto-generate Subtodo IDs | done | — | ENT-SUBTODO, ENT-TASK |
 | [FIX-003](phase-1-bugfixes/FIX-003-epic-status-vocabulary-bug.md) | Fix Epic status vocabulary bug | done | — | ENT-EPIC |
 | [FIX-004](phase-1-bugfixes/FIX-004-docstring-order-mismatches.md) | Fix docstring/order mismatches (Task, Epic, Sprint, Project) | done | — | ENT-TASK, ENT-EPIC, ENT-SPRINT, ENT-PROJECT |
-| [FIX-005](phase-1-bugfixes/FIX-005-delete-cleanup-transaction-atomicity.md) | Wrap Sprint/Project/Epic delete-time task cleanup in a transaction | todo | — | — |
+| [FIX-005](phase-1-bugfixes/FIX-005-delete-cleanup-transaction-atomicity.md) | Wrap Sprint/Project/Epic delete-time task cleanup in a transaction | done | — | — |
 
 ## Phase 2 — Shared primitives
 
 | ID | Title | Status | Depends on | Blocks |
 |---|---|---|---|---|
-| [PRIM-001](phase-2-primitives/PRIM-001-pagination-envelope.md) | Pagination + response envelope primitive | todo | DEC-001 | ENT-TASK, ENT-COMMENT, ENT-PROJECT, ENT-EPIC, ENT-SPRINT, ENT-ISSUE, ENT-PLAN |
-| [PRIM-002](phase-2-primitives/PRIM-002-sort-primitive.md) | Sort primitive (`sort_by`/`sort_dir`) | todo | — | ENT-TASK, ENT-COMMENT, ENT-PROJECT, ENT-EPIC, ENT-SPRINT, ENT-ISSUE, ENT-PLAN |
-| [PRIM-003](phase-2-primitives/PRIM-003-bulk-operation-pattern.md) | Generalized bulk-operation pattern | todo | — | ENT-TASK, ENT-EPIC, ENT-SPRINT, ENT-ISSUE |
-| [PRIM-004](phase-2-primitives/PRIM-004-archive-primitive.md) | Archive primitive (`archived_at` + archive/unarchive) | todo | — | ENT-PROJECT, ENT-EPIC, ENT-SPRINT |
+| [PRIM-001](phase-2-primitives/PRIM-001-pagination-envelope.md) | Pagination + response envelope primitive | done (cursor/keyset, applied to Task) | DEC-001 | ENT-TASK, ENT-COMMENT, ENT-PROJECT, ENT-EPIC, ENT-SPRINT, ENT-ISSUE, ENT-PLAN |
+| [PRIM-002](phase-2-primitives/PRIM-002-sort-primitive.md) | Sort primitive (`sort_by`/`sort_dir`) | done (applied to Task, alongside PRIM-001) | — | ENT-TASK, ENT-COMMENT, ENT-PROJECT, ENT-EPIC, ENT-SPRINT, ENT-ISSUE, ENT-PLAN |
+| [PRIM-003](phase-2-primitives/PRIM-003-bulk-operation-pattern.md) | Generalized bulk-operation pattern | done (applied to Task) | — | ENT-TASK, ENT-EPIC, ENT-SPRINT, ENT-ISSUE |
+| [PRIM-004](phase-2-primitives/PRIM-004-archive-primitive.md) | Archive primitive (`archived_at` + archive/unarchive) | done (Project/Epic/Sprint; Issue/Plan scope deferred) | — | ENT-PROJECT, ENT-EPIC, ENT-SPRINT |
 
 ## Phase 3 — Real FK migration (independent track, parallel to Phase 2)
 
 | ID | Title | Status | Depends on | Blocks |
 |---|---|---|---|---|
 | [FK-001](phase-3-fk-migration/FK-001-orphan-backfill-cleanup.md) | Backfill/cleanup orphaned sprint_id/project_id/epic_id refs | done | — | FK-002 |
-| [FK-002](phase-3-fk-migration/FK-002-promote-real-foreign-keys.md) | Promote sprint_id/project_id/epic_id to real FKs | todo | FK-001 | — |
-| [FK-003](phase-3-fk-migration/FK-003-depends-on-join-table.md) | Normalize `depends_on` into a real join table (fixes scheduler deadlock bug) | todo | DEC-003 | — |
+| [FK-002](phase-3-fk-migration/FK-002-promote-real-foreign-keys.md) | Promote sprint_id/project_id/epic_id to real FKs | done (migration 028) | FK-001 | — |
+| [FK-003](phase-3-fk-migration/FK-003-depends-on-join-table.md) | Normalize `depends_on` into a real join table (fixes scheduler deadlock bug) | done (migration 029, must run after FK-002's 028) | DEC-003 | — |
 
 ## Phase 4 — Per-entity rollout
 
