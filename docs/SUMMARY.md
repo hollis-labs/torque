@@ -11,6 +11,7 @@ Use these first:
 - [architecture/sqlite-concurrency-pattern.md](architecture/sqlite-concurrency-pattern.md)
 - [hitl-workflows.md](hitl-workflows.md)
 - [agent-execution-environment.md](agent-execution-environment.md)
+- [task-tagging-conventions.md](task-tagging-conventions.md)
 - [architecture/sqlite-test-infra.md](architecture/sqlite-test-infra.md)
 
 Older material under `docs/architecture/` and `docs/superpowers/` is historical design work, not the canonical current-state documentation.
