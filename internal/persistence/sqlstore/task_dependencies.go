@@ -1,7 +1,5 @@
 package sqlstore
 
-import "time"
-
 // SetTaskDependencies replaces all dependency edges for the given task in a
 // single transaction. Preserves input order via explicit sort_order
 // (0-indexed), mirroring SetTaskTags. An empty depIDs slice clears all
@@ -22,7 +20,12 @@ func (s *Store) SetTaskDependencies(taskID string, depIDs []string) error {
 		return err
 	}
 
-	now := time.Now().UTC()
+	// Bind a pre-formatted SQLiteDatetimeLayout string (not a raw time.Time)
+	// so this column's created_at is byte-identical to every other
+	// table's, matching updatedAtNow's own rationale (tasks.go) — see its
+	// doc comment for why a raw time.Time bind here would silently break
+	// any future cursor pagination over task_dependencies.created_at.
+	now := updatedAtNow()
 	for i, depID := range depIDs {
 		_, err := tx.Exec(
 			`INSERT INTO task_dependencies (task_id, depends_on_task_id, sort_order, created_at)

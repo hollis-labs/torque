@@ -91,6 +91,7 @@ type TaskService struct {
 	feature            *FeatureService
 	tags               *TagService
 	transitionObserver TaskTransitionObserver // optional; nil disables the observer hook
+	commentObserver    CommentObserver        // optional; nil disables the observer hook
 }
 
 // SetTransitionObserver installs a TaskTransitionObserver that runs after
@@ -99,6 +100,19 @@ type TaskService struct {
 // bootstrap before serving traffic.
 func (s *TaskService) SetTransitionObserver(o TaskTransitionObserver) {
 	s.transitionObserver = o
+}
+
+// SetCommentObserver installs a CommentObserver that runs after every
+// successful TransitionWithComment. TransitionWithComment writes its
+// comment via the write transaction directly (not CommentService.Add) to
+// keep the status change and the comment atomic, which otherwise bypasses
+// CommentService's own observer hook — this lets bootstrap wire the same
+// CommentObserver (e.g. the session-lifecycle hook's session-complete
+// marker detection) onto this path too. nil clears the observer. Not
+// goroutine-safe with concurrent TransitionWithComment calls; install once
+// at bootstrap before serving traffic.
+func (s *TaskService) SetCommentObserver(o CommentObserver) {
+	s.commentObserver = o
 }
 
 // Create validates and creates a new task.
@@ -803,18 +817,27 @@ func (s *TaskService) TransitionWithComment(ctx context.Context, id, newStatus, 
 	if err := wtx.TransitionTask(id, newStatus); err != nil {
 		return err
 	}
-	if err := wtx.AddComment(&sqlstore.CommentRecord{
+	rec := &sqlstore.CommentRecord{
 		EntityType: sqlstore.EntityTypeTask,
 		EntityID:   id,
 		Author:     author,
 		Content:    comment,
-	}); err != nil {
+	}
+	if err := wtx.AddComment(rec); err != nil {
 		return err
 	}
 	if err := wtx.Commit(); err != nil {
 		return err
 	}
 	s.notifyTransition(ctx, id, task.Status, newStatus)
+	// wtx.AddComment bypasses CommentService.Add (see SetCommentObserver's
+	// doc comment for why), so the CommentObserver hook has to be invoked
+	// here explicitly or layer-2 session-complete marker detection
+	// silently never fires for transitions made with an accompanying
+	// comment.
+	if s.commentObserver != nil {
+		s.commentObserver.ObserveComment(ctx, rec)
+	}
 	return nil
 }
 

@@ -132,6 +132,7 @@ func AgentDeps(
 		if svc != nil {
 			if svc.Task != nil {
 				svc.Task.SetTransitionObserver(hook)
+				svc.Task.SetCommentObserver(hook)
 			}
 			if svc.Comment != nil {
 				svc.Comment.SetObserver(hook)

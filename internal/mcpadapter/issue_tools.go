@@ -2,7 +2,6 @@ package mcpadapter
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -283,10 +282,9 @@ func (a *Adapter) handleIssueBulkUpdate(ctx context.Context, req mcp.CallToolReq
 // bespoke {success, failed, errors} shape. TaskService.BulkTransition
 // itself is reused as-is, not reimplemented (out of scope per ENT-ISSUE).
 func (a *Adapter) handleIssueBulkTransition(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	raw := reqStr(req, "ids")
-	var ids []string
-	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
-		return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid ids JSON: %v", err), "ids")
+	ids, errRes := reqIDs(req)
+	if errRes != nil {
+		return errRes, nil
 	}
 	status := reqStr(req, "status")
 	succeeded, failed := a.svc.Task.BulkTransition(ctx, ids, status)

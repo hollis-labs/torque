@@ -761,9 +761,16 @@ func (a *Adapter) taskListCursorEnvelope(tasks []sqlstore.TaskRecord, limit int,
 			if tags == nil {
 				tags = []sqlstore.TagRecord{}
 			}
+			deps, err := a.svc.Task.ListDependencyIDs(t.ID)
+			if err != nil {
+				return errFromService(err)
+			}
+			if deps == nil {
+				deps = []string{}
+			}
 			// Copy struct to take address of a fresh local rather than loop var.
 			rec := t
-			items = append(items, taskWithTags{TaskRecord: &rec, Tags: tags})
+			items = append(items, taskWithTags{TaskRecord: &rec, Tags: tags, DependsOn: deps})
 		} else {
 			items = append(items, toBriefTask(t, briefTagSlugs(a.svc, t.ID)))
 		}
