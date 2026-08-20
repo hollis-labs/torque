@@ -159,6 +159,62 @@ func TestDeleteProjectClearsSprintAndEpicFK(t *testing.T) {
 	assert.False(t, epic.ProjectID.Valid)
 }
 
+// TestDeleteProjectRollsBackOnPartialCleanupFailure forces the sprints
+// reference-nulling UPDATE — which runs after the tasks UPDATE has already
+// succeeded inside the same transaction — to fail (via a trigger that
+// RAISE(ABORT)s on any UPDATE touching sprints.project_id). It verifies the
+// whole chain rolls back: the project row still exists, the earlier tasks
+// UPDATE is undone, and the sprint's project_id is untouched. This proves
+// atomicity across the full cleanup sequence, not just the first statement.
+func TestDeleteProjectRollsBackOnPartialCleanupFailure(t *testing.T) {
+	store := setupTestStore(t)
+
+	require.NoError(t, store.CreateProject(&sqlstore.ProjectRecord{ID: "PRJ-20260407-0001", Name: "Project"}))
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID:       "CW-20260407-0001",
+		Title:    "Task in project",
+		Executor: "cli",
+	}))
+	projRef := sql.NullString{String: "PRJ-20260407-0001", Valid: true}
+	require.NoError(t, store.UpdateTask("CW-20260407-0001", sqlstore.TaskUpdate{ProjectID: &projRef}))
+
+	require.NoError(t, store.CreateSprint(&sqlstore.SprintRecord{
+		ID:        "SP-20260407-0001",
+		Name:      "Sprint",
+		ProjectID: projRef,
+	}))
+
+	_, err := store.DB().Exec(`
+		CREATE TRIGGER fail_project_sprint_cleanup
+		BEFORE UPDATE OF project_id ON sprints
+		BEGIN
+			SELECT RAISE(ABORT, 'forced failure for test');
+		END;
+	`)
+	require.NoError(t, err)
+
+	err = store.DeleteProject("PRJ-20260407-0001")
+	require.Error(t, err)
+
+	// Project row must still exist — the DELETE must not have proceeded.
+	got, err := store.GetProject("PRJ-20260407-0001")
+	require.NoError(t, err)
+	assert.Equal(t, "PRJ-20260407-0001", got.ID)
+
+	// The tasks UPDATE that succeeded earlier in the same transaction must
+	// have been rolled back too — no partial state left behind.
+	task, err := store.GetTask("CW-20260407-0001")
+	require.NoError(t, err)
+	assert.True(t, task.ProjectID.Valid)
+	assert.Equal(t, "PRJ-20260407-0001", task.ProjectID.String)
+
+	// Sprint's project_id must remain untouched.
+	sprint, err := store.GetSprint("SP-20260407-0001")
+	require.NoError(t, err)
+	assert.True(t, sprint.ProjectID.Valid)
+	assert.Equal(t, "PRJ-20260407-0001", sprint.ProjectID.String)
+}
+
 func TestNextProjectID(t *testing.T) {
 	store := setupTestStore(t)
 

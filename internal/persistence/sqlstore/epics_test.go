@@ -180,6 +180,46 @@ func TestDeleteEpicClearsTaskFK(t *testing.T) {
 	assert.False(t, task.EpicID.Valid)
 }
 
+// TestDeleteEpicRollsBackOnTaskCleanupFailure forces the reference-nulling
+// UPDATE inside DeleteEpic to fail (via a trigger that RAISE(ABORT)s on any
+// UPDATE touching tasks.epic_id) and verifies the epic's own DELETE never
+// runs: the epic row still exists and the task's epic_id is untouched.
+func TestDeleteEpicRollsBackOnTaskCleanupFailure(t *testing.T) {
+	store := setupTestStore(t)
+
+	require.NoError(t, store.CreateEpic(&sqlstore.EpicRecord{ID: "EP-20260407-0001", Name: "Epic"}))
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID:       "CW-20260407-0001",
+		Title:    "Task in epic",
+		Executor: "cli",
+	}))
+	epicRef := sql.NullString{String: "EP-20260407-0001", Valid: true}
+	require.NoError(t, store.UpdateTask("CW-20260407-0001", sqlstore.TaskUpdate{EpicID: &epicRef}))
+
+	_, err := store.DB().Exec(`
+		CREATE TRIGGER fail_epic_cleanup
+		BEFORE UPDATE OF epic_id ON tasks
+		BEGIN
+			SELECT RAISE(ABORT, 'forced failure for test');
+		END;
+	`)
+	require.NoError(t, err)
+
+	err = store.DeleteEpic("EP-20260407-0001")
+	require.Error(t, err)
+
+	// Epic row must still exist — the DELETE must not have proceeded.
+	got, err := store.GetEpic("EP-20260407-0001")
+	require.NoError(t, err)
+	assert.Equal(t, "EP-20260407-0001", got.ID)
+
+	// Task's epic_id must remain untouched — no partial state.
+	task, err := store.GetTask("CW-20260407-0001")
+	require.NoError(t, err)
+	assert.True(t, task.EpicID.Valid)
+	assert.Equal(t, "EP-20260407-0001", task.EpicID.String)
+}
+
 func TestNextEpicID(t *testing.T) {
 	store := setupTestStore(t)
 

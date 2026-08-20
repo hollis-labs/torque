@@ -182,18 +182,37 @@ func (s *Store) UpdateProject(id string, u ProjectUpdate) error {
 	return nil
 }
 
-// DeleteProject removes a project and clears project_id on associated tasks, sprints, and epics.
+// DeleteProject removes a project and clears project_id on associated
+// tasks, sprints, and epics. The reference-nulling UPDATEs, the
+// project-artifact cleanup, and the project's own DELETE all run inside a
+// single transaction so a failure partway through (lock contention, disk
+// full, etc.) can never leave the project deleted while other rows still
+// point at it.
 func (s *Store) DeleteProject(id string) error {
-	// Clear project_id on any tasks referencing this project
-	s.db.Exec("UPDATE tasks SET project_id = NULL WHERE project_id = ?", id)
-	// Clear project_id on any sprints referencing this project
-	s.db.Exec("UPDATE sprints SET project_id = NULL WHERE project_id = ?", id)
-	// Clear project_id on any epics referencing this project
-	s.db.Exec("UPDATE epics SET project_id = NULL WHERE project_id = ?", id)
-	// Remove project-scoped context artifacts
-	s.db.Exec("DELETE FROM project_artifacts WHERE project_id = ?", id)
+	tx, err := s.beginWriteTx()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 
-	result, err := s.db.Exec("DELETE FROM projects WHERE id = ?", id)
+	// Clear project_id on any tasks referencing this project
+	if _, err := tx.Exec("UPDATE tasks SET project_id = NULL WHERE project_id = ?", id); err != nil {
+		return err
+	}
+	// Clear project_id on any sprints referencing this project
+	if _, err := tx.Exec("UPDATE sprints SET project_id = NULL WHERE project_id = ?", id); err != nil {
+		return err
+	}
+	// Clear project_id on any epics referencing this project
+	if _, err := tx.Exec("UPDATE epics SET project_id = NULL WHERE project_id = ?", id); err != nil {
+		return err
+	}
+	// Remove project-scoped context artifacts
+	if _, err := tx.Exec("DELETE FROM project_artifacts WHERE project_id = ?", id); err != nil {
+		return err
+	}
+
+	result, err := tx.Exec("DELETE FROM projects WHERE id = ?", id)
 	if err != nil {
 		return err
 	}
@@ -201,7 +220,7 @@ func (s *Store) DeleteProject(id string) error {
 	if n == 0 {
 		return fmt.Errorf("project %s not found", id)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // NextProjectID generates the next sequential project ID for today.
