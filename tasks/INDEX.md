@@ -27,18 +27,18 @@ Status values: `todo` · `blocked` · `in-progress` · `done` · `skipped`
 
 | ID | Title | Status | Depends on | Blocks |
 |---|---|---|---|---|
-| [DEC-001](phase-0-decisions/DEC-001-pagination-strategy.md) | Pagination strategy: cursor vs offset | todo | — | PRIM-001 |
-| [DEC-002](phase-0-decisions/DEC-002-feature-flag-gating.md) | Feature-flag gating vs always-on for Project/Epic/Sprint tools | todo | — | ENT-PROJECT, ENT-EPIC, ENT-SPRINT |
-| [DEC-003](phase-0-decisions/DEC-003-depends-on-normalization.md) | `depends_on` normalization: join table vs documented JSON blob | todo | — | ENT-TASK |
+| [DEC-001](phase-0-decisions/DEC-001-pagination-strategy.md) | Pagination strategy: cursor vs offset | in-progress (proposed: hybrid — offset+has_more now) | — | PRIM-001 |
+| [DEC-002](phase-0-decisions/DEC-002-feature-flag-gating.md) | Feature-flag gating vs always-on for Project/Epic/Sprint tools | in-progress (proposed: keep current gating) | — | ENT-PROJECT, ENT-EPIC, ENT-SPRINT |
+| [DEC-003](phase-0-decisions/DEC-003-depends-on-normalization.md) | `depends_on` normalization: join table vs documented JSON blob | in-progress (proposed: join table, split into new task) | — | ENT-TASK |
 
 ## Phase 1 — Locked bug fixes (independent, parallelizable, no Phase 0 dependency)
 
 | ID | Title | Status | Depends on | Blocks |
 |---|---|---|---|---|
-| [FIX-001](phase-1-bugfixes/FIX-001-task-create-update-field-detection.md) | Task create/update field-detection + required fixes | todo | — | ENT-TASK |
-| [FIX-002](phase-1-bugfixes/FIX-002-subtodo-id-autogen.md) | Auto-generate Subtodo IDs | todo | — | ENT-SUBTODO, ENT-TASK |
-| [FIX-003](phase-1-bugfixes/FIX-003-epic-status-vocabulary-bug.md) | Fix Epic status vocabulary bug | todo | — | ENT-EPIC |
-| [FIX-004](phase-1-bugfixes/FIX-004-docstring-order-mismatches.md) | Fix docstring/order mismatches (Task, Epic, Sprint, Project) | todo | — | ENT-TASK, ENT-EPIC, ENT-SPRINT, ENT-PROJECT |
+| [FIX-001](phase-1-bugfixes/FIX-001-task-create-update-field-detection.md) | Task create/update field-detection + required fixes | done | — | ENT-TASK |
+| [FIX-002](phase-1-bugfixes/FIX-002-subtodo-id-autogen.md) | Auto-generate Subtodo IDs | done | — | ENT-SUBTODO, ENT-TASK |
+| [FIX-003](phase-1-bugfixes/FIX-003-epic-status-vocabulary-bug.md) | Fix Epic status vocabulary bug | done | — | ENT-EPIC |
+| [FIX-004](phase-1-bugfixes/FIX-004-docstring-order-mismatches.md) | Fix docstring/order mismatches (Task, Epic, Sprint, Project) | done | — | ENT-TASK, ENT-EPIC, ENT-SPRINT, ENT-PROJECT |
 
 ## Phase 2 — Shared primitives
 
@@ -53,7 +53,7 @@ Status values: `todo` · `blocked` · `in-progress` · `done` · `skipped`
 
 | ID | Title | Status | Depends on | Blocks |
 |---|---|---|---|---|
-| [FK-001](phase-3-fk-migration/FK-001-orphan-backfill-cleanup.md) | Backfill/cleanup orphaned sprint_id/project_id/epic_id refs | todo | — | FK-002 |
+| [FK-001](phase-3-fk-migration/FK-001-orphan-backfill-cleanup.md) | Backfill/cleanup orphaned sprint_id/project_id/epic_id refs | done | — | FK-002 |
 | [FK-002](phase-3-fk-migration/FK-002-promote-real-foreign-keys.md) | Promote sprint_id/project_id/epic_id to real FKs | todo | FK-001 | — |
 
 ## Phase 4 — Per-entity rollout
