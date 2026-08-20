@@ -35,7 +35,7 @@ func sprintsJSON(sprints []sqlstore.SprintRecord) []map[string]interface{} {
 func (s *Server) listSprints(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	projectID := r.URL.Query().Get("project_id")
-	sprints, err := s.svc.Sprint.List(status, projectID, false)
+	sprints, err := s.svc.Sprint.List(sqlstore.SprintFilter{Status: status, ProjectID: projectID})
 	if err != nil {
 		if _, ok := err.(*service.FeatureDisabledError); ok {
 			writeError(w, http.StatusNotFound, err.Error())

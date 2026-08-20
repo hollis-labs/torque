@@ -32,8 +32,39 @@ type SprintFilter struct {
 	Status          string
 	ProjectID       string
 	IncludeArchived bool
-	Limit           int
-	Offset          int
+
+	// Budget-range filter (ENT-SPRINT). CostBudgetMin/Max compare against
+	// the sprints.cost_budget column directly; a nil bound is not applied.
+	// A NULL cost_budget row never matches either bound (SQL NULL
+	// comparison), which is the desired behavior — a sprint with no budget
+	// set shouldn't show up in a budget-range query.
+	CostBudgetMin *float64
+	CostBudgetMax *float64
+	// OverBudget, when true, restricts results to sprints with a cost_budget
+	// set whose total run cost (see SprintCostUsed) exceeds it — the "over
+	// budget" filter noted as missing in the audit (mcp-service-layer-audit
+	// §Sprint). A sprint with no budget can never be "over budget", so this
+	// implicitly excludes NULL-budget rows too.
+	OverBudget bool
+
+	Limit  int
+	Offset int
+
+	// Sort + cursor pagination (PRIM-002 / PRIM-001, DEC-001's binding
+	// spec) — mirrors TaskFilter's SortBy/SortDir/AfterSortValue/AfterID
+	// contract (see tasks.go for the full rationale). SortBy/SortDir are
+	// expected to already be validated by the caller (mcpadapter validates
+	// against an explicit allow-list via
+	// internal/service/pagination.ValidateSortBy/ValidateSortDir) before
+	// this filter is built; ListSprints does not itself reject an
+	// unrecognized SortBy, it just treats it the same as "" (see
+	// sprintSortColumn) and falls back to the original hardcoded
+	// `updated_at DESC` order — the order FIX-004 confirmed
+	// torque_sprint_list's docstring should describe.
+	SortBy         string
+	SortDir        string
+	AfterSortValue string
+	AfterID        string
 }
 
 // SprintUpdate holds optional fields to update; nil pointer = no change.
@@ -80,8 +111,54 @@ func (s *Store) GetSprint(id string) (*SprintRecord, error) {
 	return sp, err
 }
 
-// ListSprints returns sprints matching the filter, ordered by updated_at DESC.
-// Archived rows (archived_at IS NOT NULL) are excluded unless
+// sprintSortColumn maps a sort_by value to its backing SQL column for
+// ListSprints (PRIM-002). Mirrors taskSortColumn's contract: the MCP layer
+// validates sort_by against an explicit allow-list
+// (internal/service/pagination.ValidateSortBy) before ever reaching here, so
+// this is a closed, trusted set — but ListSprints stays defensive: an empty
+// or unrecognized sort_by both return "", which ListSprints treats
+// identically as "no sort_by supplied" and falls back to the original
+// hardcoded `updated_at DESC` order. That fallback is what keeps callers
+// that haven't adopted the sort/cursor primitive (HTTP /api/v1/sprints)
+// working unchanged.
+func sprintSortColumn(sortBy string) string {
+	switch sortBy {
+	case "name", "status", "updated_at", "created_at":
+		return sortBy
+	default:
+		return ""
+	}
+}
+
+// sprintCursorArg converts a cursor's string-encoded sort value (DEC-001's
+// `sv` field) into the correctly-typed SQL bind argument for sortBy's
+// column. name/status are plain strings; updated_at/created_at are
+// validated against SQLiteDatetimeLayout (mirroring taskCursorArg's
+// rationale in tasks.go — sprints.updated_at/created_at are always written
+// via SQL-side CURRENT_TIMESTAMP, so unlike tasks there's no Go-side
+// time.Time formatting mismatch to route around here; validating the shape
+// is still worthwhile to reject a malformed/tampered cursor token cleanly).
+func sprintCursorArg(sortBy, sv string) (any, error) {
+	switch sortBy {
+	case "name", "status":
+		return sv, nil
+	case "updated_at", "created_at":
+		if _, err := time.Parse(SQLiteDatetimeLayout, sv); err != nil {
+			return nil, fmt.Errorf("%w: sort value for %s must match %q: %v", ErrInvalidCursor, sortBy, SQLiteDatetimeLayout, err)
+		}
+		return sv, nil
+	default:
+		return nil, fmt.Errorf("%w: unsupported sort_by %q", ErrInvalidCursor, sortBy)
+	}
+}
+
+// ListSprints returns sprints matching the filter. Default order (f.SortBy
+// == "") is updated_at DESC — the order FIX-004 confirmed
+// torque_sprint_list's docstring should describe. When f.SortBy is set
+// (PRIM-002), order becomes `<sort column> <SortDir>, id ASC` and, if
+// f.AfterID is also set, results are additionally filtered to rows after
+// the cursor's (sort value, id) position (PRIM-001/DEC-001 keyset
+// pagination). Archived rows (archived_at IS NOT NULL) are excluded unless
 // f.IncludeArchived is true.
 func (s *Store) ListSprints(f SprintFilter) ([]SprintRecord, error) {
 	query := `SELECT id, name, goal, status, approval_mode, cost_budget, project_id,
@@ -101,11 +178,56 @@ func (s *Store) ListSprints(f SprintFilter) ([]SprintRecord, error) {
 	if !f.IncludeArchived {
 		conditions = append(conditions, "archived_at IS NULL")
 	}
+	if f.CostBudgetMin != nil {
+		conditions = append(conditions, "cost_budget >= ?")
+		args = append(args, *f.CostBudgetMin)
+	}
+	if f.CostBudgetMax != nil {
+		conditions = append(conditions, "cost_budget <= ?")
+		args = append(args, *f.CostBudgetMax)
+	}
+	if f.OverBudget {
+		conditions = append(conditions, `cost_budget IS NOT NULL AND cost_budget < (
+			SELECT COALESCE(SUM(r.cost), 0) FROM runs r
+			INNER JOIN tasks t ON r.task_id = t.id
+			WHERE t.sprint_id = sprints.id
+		)`)
+	}
+
+	// PRIM-002 sort column + PRIM-001 cursor predicate. sortCol == "" means
+	// "no sort_by supplied" (or an unrecognized one slipping past the MCP
+	// layer's validation, defensively treated the same) — preserves the
+	// original hardcoded default order below rather than the cursor path.
+	sortCol := sprintSortColumn(f.SortBy)
+	desc := strings.EqualFold(f.SortDir, "desc")
+	if sortCol != "" && f.AfterID != "" {
+		arg, err := sprintCursorArg(f.SortBy, f.AfterSortValue)
+		if err != nil {
+			return nil, err
+		}
+		cmp := ">"
+		if desc {
+			cmp = "<"
+		}
+		// Tuple comparison (sortCol, id) > (arg, AfterID), or the two-clause
+		// equivalent below — tiebreak on id ascending regardless of
+		// SortDir, per DEC-001.
+		conditions = append(conditions, fmt.Sprintf("(%s %s ? OR (%s = ? AND id > ?))", sortCol, cmp, sortCol))
+		args = append(args, arg, arg, f.AfterID)
+	}
 
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
-	query += " ORDER BY updated_at DESC"
+	if sortCol != "" {
+		dir := "ASC"
+		if desc {
+			dir = "DESC"
+		}
+		query += fmt.Sprintf(" ORDER BY %s %s, id ASC", sortCol, dir)
+	} else {
+		query += " ORDER BY updated_at DESC"
+	}
 
 	if f.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", f.Limit)
