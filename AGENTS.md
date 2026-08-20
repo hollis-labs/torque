@@ -29,6 +29,10 @@ project-management suite or generic workflow engine.
 - `docs/getting-started.md` — running the server and MCP locally.
 - `docs/runtime.md` — storage, scheduler, executors, feature flags.
 - `docs/surfaces.md` — the current HTTP and MCP surfaces.
+- `docs/mcp-tools-reference.md` — per-tool index for the Task/Subtodo/Comment/
+  Project/Epic/Sprint/Issue/Plan MCP tools: shared envelope/pagination/sort/
+  bulk conventions plus a table per entity. Points back into
+  `internal/mcpadapter/*.go` for exact schemas rather than duplicating them.
 - `cmd/torque/` — CLI + `serve` (HTTP API + scheduler + GUI) + `mcp` command host.
 - `cmd/torque-apikey-helper/` — OAuth/keychain API-key helper used by executors.
 - `internal/service/` — task CRUD, validation, lifecycle rules, tag management.
