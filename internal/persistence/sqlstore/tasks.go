@@ -62,7 +62,6 @@ type TaskRecord struct {
 	Deliverables      sql.NullString
 	DeliverablePreset string
 	OnDoneMerge       string
-	DependsOn         sql.NullString
 	BlockedReason     string
 	Metadata          sql.NullString
 	SprintID          sql.NullString
@@ -91,6 +90,11 @@ type TaskRecord struct {
 	CollectionID         sql.NullString
 	CollectionPosition   sql.NullInt64
 	AddedToCollectionsAt sql.NullTime
+
+	// depends_on (migration 027 / FK-003) lives in the task_dependencies
+	// join table, not a column here — same shape as tags (migration 005).
+	// See SetTaskDependencies / ListTaskDependencyIDs in
+	// task_dependencies.go.
 }
 
 // TaskFilter holds optional filter criteria for ListTasks.
@@ -163,7 +167,6 @@ type TaskUpdate struct {
 	Deliverables      *sql.NullString
 	DeliverablePreset *string
 	OnDoneMerge       *string
-	DependsOn         *sql.NullString
 	BlockedReason     *string
 	Metadata          *sql.NullString
 	SprintID          *sql.NullString
@@ -181,6 +184,10 @@ type TaskUpdate struct {
 	// Parent linkage (migration 013). Non-nil pointer writes the column;
 	// use a NullString with Valid=false to clear (set to NULL).
 	ParentID *sql.NullString
+
+	// depends_on (migration 027 / FK-003) is not a column here — it's
+	// managed via SetTaskDependencies (task_dependencies.go), same shape as
+	// Tags in service.TaskUpdateInput.
 }
 
 // applyDefaults fills zero-value fields with domain defaults.
@@ -220,12 +227,12 @@ func applyDefaults(t *TaskRecord) {
 	}
 }
 
-// The 45-column SELECT list used by GetTask, ListTasks, and SearchTasks.
+// The 44-column SELECT list used by GetTask, ListTasks, and SearchTasks.
 const taskSelectCols = `id, title, description, status, priority, manual,
 	executor, launch_profile, agent_profile, working_dir, tools, permissions, environment,
 	system_prompt, agent_file, files, cost_budget, max_retries, max_duration_ms, token_budget,
 	on_done, on_fail, on_review, escalation_chain, quality_gates, deliverables,
-	deliverable_preset, on_done_merge, depends_on, blocked_reason, metadata,
+	deliverable_preset, on_done_merge, blocked_reason, metadata,
 	sprint_id, project_id, epic_id, created_at, updated_at,
 	kind, source_type, source_ref, trust, checkpoint_mode, on_checkpoint_response,
 	parent_id,
@@ -242,7 +249,7 @@ func scanTask(row interface {
 		&t.Executor, &t.LaunchProfile, &t.AgentProfile, &t.WorkingDir, &t.Tools, &t.Permissions, &t.Environment,
 		&t.SystemPrompt, &t.AgentFile, &t.Files, &t.CostBudget, &t.MaxRetries, &t.MaxDurationMs, &t.TokenBudget,
 		&t.OnDone, &t.OnFail, &t.OnReview, &t.EscalationChain, &t.QualityGates, &t.Deliverables,
-		&t.DeliverablePreset, &t.OnDoneMerge, &t.DependsOn, &t.BlockedReason, &t.Metadata,
+		&t.DeliverablePreset, &t.OnDoneMerge, &t.BlockedReason, &t.Metadata,
 		&t.SprintID, &t.ProjectID, &t.EpicID, &t.CreatedAt, &t.UpdatedAt,
 		&t.Kind, &t.SourceType, &t.SourceRef, &t.Trust, &t.CheckpointMode, &t.OnCheckpointResponse,
 		&t.ParentID,
@@ -272,18 +279,18 @@ func (s *Store) CreateTask(t *TaskRecord) error {
 		executor, launch_profile, agent_profile, working_dir, tools, permissions, environment,
 		system_prompt, agent_file, files, cost_budget, max_retries, max_duration_ms, token_budget,
 		on_done, on_fail, on_review, escalation_chain, quality_gates, deliverables,
-		deliverable_preset, on_done_merge, depends_on, blocked_reason, metadata,
+		deliverable_preset, on_done_merge, blocked_reason, metadata,
 		sprint_id, project_id, epic_id,
 		kind, source_type, source_ref, trust, checkpoint_mode, on_checkpoint_response,
 		parent_id
-	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
 	_, err := s.db.Exec(q,
 		t.ID, t.Title, t.Description, t.Status, t.Priority, manual,
 		t.Executor, t.LaunchProfile, t.AgentProfile, t.WorkingDir, t.Tools, t.Permissions, t.Environment,
 		t.SystemPrompt, t.AgentFile, t.Files, t.CostBudget, t.MaxRetries, t.MaxDurationMs, t.TokenBudget,
 		t.OnDone, t.OnFail, t.OnReview, t.EscalationChain, t.QualityGates, t.Deliverables,
-		t.DeliverablePreset, t.OnDoneMerge, t.DependsOn, t.BlockedReason, t.Metadata,
+		t.DeliverablePreset, t.OnDoneMerge, t.BlockedReason, t.Metadata,
 		t.SprintID, t.ProjectID, t.EpicID,
 		t.Kind, t.SourceType, t.SourceRef, t.Trust, t.CheckpointMode, t.OnCheckpointResponse,
 		t.ParentID,
@@ -541,10 +548,6 @@ func (s *Store) UpdateTask(id string, u TaskUpdate) error {
 	if u.OnDoneMerge != nil {
 		setClauses = append(setClauses, "on_done_merge = ?")
 		args = append(args, *u.OnDoneMerge)
-	}
-	if u.DependsOn != nil {
-		setClauses = append(setClauses, "depends_on = ?")
-		args = append(args, *u.DependsOn)
 	}
 	if u.BlockedReason != nil {
 		setClauses = append(setClauses, "blocked_reason = ?")

@@ -282,4 +282,42 @@ func TestMigrationsApply(t *testing.T) {
 		_, err = db.Exec(`INSERT INTO sessions (id, state) VALUES (?, ?)`, "S23-"+st, st)
 		require.NoError(t, err, "sessions.state should accept %q", st)
 	}
+
+	// Verify 027 created task_dependencies with the expected columns
+	// (FK-003: depends_on promoted from a JSON column to a join table,
+	// mirroring 005's tags -> task_tags promotion).
+	_, err = db.Exec(`SELECT task_id, depends_on_task_id, sort_order, created_at FROM task_dependencies LIMIT 0`)
+	require.NoError(t, err, "task_dependencies columns should exist after migration 027")
+
+	// Verify 027 dropped the legacy tasks.depends_on column.
+	_, err = db.Exec(`SELECT depends_on FROM tasks LIMIT 0`)
+	require.Error(t, err, "tasks.depends_on column should have been dropped by migration 027")
+
+	// Verify the composite PK rejects a duplicate (task_id, depends_on_task_id)
+	// pair. Cascade-delete behavior is exercised indirectly via sqlstore tests
+	// where Store.New() enables foreign_keys; this test uses a raw sql.Open so
+	// PRAGMA foreign_keys is OFF by default (same caveat as the 008 comment
+	// above).
+	_, err = db.Exec(`INSERT INTO tasks (id, title, status) VALUES ('T27-A', 'a', 'todo')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO tasks (id, title, status) VALUES ('T27-B', 'b', 'todo')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO task_dependencies (task_id, depends_on_task_id, sort_order, created_at)
+		VALUES ('T27-B', 'T27-A', 0, CURRENT_TIMESTAMP)`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO task_dependencies (task_id, depends_on_task_id, sort_order, created_at)
+		VALUES ('T27-B', 'T27-A', 1, CURRENT_TIMESTAMP)`)
+	require.Error(t, err, "task_dependencies (task_id, depends_on_task_id) should be a UNIQUE composite PK")
+
+	// Verify the depends_on_task_id index exists (mirrors idx_task_tags_tag_slug).
+	depIdxRows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='task_dependencies'`)
+	require.NoError(t, err)
+	defer depIdxRows.Close()
+	depIdx := map[string]bool{}
+	for depIdxRows.Next() {
+		var n string
+		require.NoError(t, depIdxRows.Scan(&n))
+		depIdx[n] = true
+	}
+	require.True(t, depIdx["idx_task_dependencies_depends_on_task_id"], "idx_task_dependencies_depends_on_task_id should exist")
 }

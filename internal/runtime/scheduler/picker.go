@@ -1,8 +1,6 @@
 package scheduler
 
 import (
-	"encoding/json"
-
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
@@ -20,7 +18,12 @@ const (
 	SkipReasonProjectBusy       = "project_busy"
 	SkipReasonProjectContention = "project_contention"
 	SkipReasonDepUnmet          = "dep_unmet"
-	SkipReasonDepMalformed      = "dep_malformed"
+	// DEPRECATED (FK-003): depends_on moved from a JSON-string column to
+	// the task_dependencies join table (migration 027), so there is no
+	// longer any JSON to fail to parse — this reason is structurally
+	// unreachable now. Kept defined (never emitted) rather than deleted so
+	// historical log-grep queries against this key don't silently break.
+	SkipReasonDepMalformed = "dep_malformed"
 	// DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
 	// SkipReasonProjectScopeFilter is recorded when an operator-configured
 	// allowlist (TORQUE_PROJECT_ID / TORQUE_PROJECT_IDS) excludes
@@ -254,14 +257,21 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, PickDecisions, error) {
 			}
 		}
 
-		// Check dependencies
-		if task.DependsOn.Valid && task.DependsOn.String != "" {
-			var deps []string
-			if err := json.Unmarshal([]byte(task.DependsOn.String), &deps); err != nil {
-				record(task.ID, SkipReasonDepMalformed)
-				continue // skip tasks with malformed dependencies
-			}
-
+		// Check dependencies (FK-003 fix). task_dependencies rows are pruned
+		// automatically via ON DELETE CASCADE on depends_on_task_id when a
+		// dependency task is deleted — this is what fixes the scheduler
+		// deadlock: under the old depends_on JSON column, a deleted
+		// dependency's ID was never pruned from the array, so the per-dep
+		// GetTask lookup below failed forever and allMet never became true
+		// again. With the join table, a deleted dependency's edge is gone
+		// by the time this query runs, so it's simply absent from deps and
+		// no longer blocks the dependent task on the next tick.
+		deps, err := p.store.ListTaskDependencyIDs(task.ID)
+		if err != nil {
+			record(task.ID, SkipReasonDepUnmet)
+			continue
+		}
+		if len(deps) > 0 {
 			allMet := true
 			for _, depID := range deps {
 				depTask, err := p.store.GetTask(depID)

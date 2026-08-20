@@ -48,15 +48,15 @@ func TestPicker_ReturnsLowPriEligibleWhenHighPriDepsUnmet(t *testing.T) {
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-0152", Title: "depends on blocker", Status: "todo", Priority: 6,
 		Executor: "cli", AgentProfile: "cli-profile",
-		DependsOn: sql.NullString{String: `["CW-0151"]`, Valid: true},
 	}))
+	require.NoError(t, store.SetTaskDependencies("CW-0152", []string{"CW-0151"}))
 
 	// CW-0098: depends on both CW-0151 and CW-0152 (neither done).
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-0098", Title: "depends on two blockers", Status: "todo", Priority: 7,
 		Executor: "cli", AgentProfile: "cli-profile",
-		DependsOn: sql.NullString{String: `["CW-0151","CW-0152"]`, Valid: true},
 	}))
+	require.NoError(t, store.SetTaskDependencies("CW-0098", []string{"CW-0151", "CW-0152"}))
 
 	// CW-0079: eligible, sits in project "proj-A". This is the task that
 	// should surface when the higher-priority candidates are dep-blocked.
@@ -124,13 +124,13 @@ func TestPicker_AllCandidatesSkippedReturnsEmpty(t *testing.T) {
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-DEP-1", Title: "dep unmet 1", Status: "todo", Priority: 5,
 		Executor: "cli", AgentProfile: "cli-profile",
-		DependsOn: sql.NullString{String: `["CW-BLOCKER"]`, Valid: true},
 	}))
+	require.NoError(t, store.SetTaskDependencies("CW-DEP-1", []string{"CW-BLOCKER"}))
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-DEP-2", Title: "dep unmet 2", Status: "todo", Priority: 6,
 		Executor: "cli", AgentProfile: "cli-profile",
-		DependsOn: sql.NullString{String: `["CW-BLOCKER"]`, Valid: true},
 	}))
+	require.NoError(t, store.SetTaskDependencies("CW-DEP-2", []string{"CW-BLOCKER"}))
 
 	// Two project-contention candidates in the same project with a third
 	// eligible sibling that reserves the slot first. Then we add ONE more
@@ -194,8 +194,8 @@ func TestPicker_Limit1FirstSkippedReturnsNext(t *testing.T) {
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
 		ID: "CW-HEAD-DEP", Title: "dep unmet, scanned first", Status: "todo", Priority: 5,
 		Executor: "cli", AgentProfile: "cli-profile",
-		DependsOn: sql.NullString{String: `["CW-HEAD-BLOCKER"]`, Valid: true},
 	}))
+	require.NoError(t, store.SetTaskDependencies("CW-HEAD-DEP", []string{"CW-HEAD-BLOCKER"}))
 
 	// Priority 10 eligible candidate — scanned second.
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{

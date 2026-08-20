@@ -277,10 +277,14 @@ func TestCreateWithAllFieldsRoundTrip(t *testing.T) {
 	assert.Contains(t, got.QualityGates.String, "go test")
 	assert.True(t, got.Deliverables.Valid)
 	assert.Contains(t, got.Deliverables.String, "diff")
-	assert.True(t, got.DependsOn.Valid)
-	assert.Contains(t, got.DependsOn.String, dep.ID)
 	assert.True(t, got.Metadata.Valid)
 	assert.Contains(t, got.Metadata.String, "source")
+
+	// depends_on lives in the task_dependencies join table (migration 027 /
+	// FK-003), not a TaskRecord column — verify via ListDependencyIDs.
+	deps, err := svc.Task.ListDependencyIDs(created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{dep.ID}, deps)
 }
 
 func TestCreateWithSentinelValues(t *testing.T) {

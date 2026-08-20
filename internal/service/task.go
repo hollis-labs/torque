@@ -300,9 +300,6 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	if len(input.Files) > 0 {
 		rec.Files = sql.NullString{String: marshalJSON(input.Files), Valid: true}
 	}
-	if len(input.DependsOn) > 0 {
-		rec.DependsOn = sql.NullString{String: marshalJSON(input.DependsOn), Valid: true}
-	}
 	if input.CostBudget != nil {
 		rec.CostBudget = sql.NullFloat64{Float64: *input.CostBudget, Valid: true}
 	}
@@ -372,6 +369,18 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		}
 	}
 
+	// depends_on lives in the task_dependencies join table (migration 027 /
+	// FK-003), not a column on tasks. Existence was already checked above by
+	// validateTaskWrites; a cycle check is unnecessary here — a brand-new
+	// task has no ID until NextTaskID ran above, so nothing existing could
+	// already hold an edge pointing at it (same reasoning validateParentID
+	// uses to skip cycle checks on Create).
+	if len(input.DependsOn) > 0 {
+		if err := s.store.SetTaskDependencies(id, input.DependsOn); err != nil {
+			return nil, err
+		}
+	}
+
 	return s.store.GetTask(id)
 }
 
@@ -385,12 +394,13 @@ func (s *TaskService) List(filter sqlstore.TaskFilter) ([]sqlstore.TaskRecord, e
 	return s.store.ListTasks(filter)
 }
 
-// TaskUpdateInput wraps the store-level TaskUpdate and adds a tags field.
-// The store-level TaskUpdate no longer carries tags because they live in
-// the task_tags link table, not a column on tasks.
+// TaskUpdateInput wraps the store-level TaskUpdate and adds tags/depends_on
+// fields. The store-level TaskUpdate no longer carries these because they
+// live in link tables (task_tags, task_dependencies), not columns on tasks.
 type TaskUpdateInput struct {
 	sqlstore.TaskUpdate
-	Tags *[]string // nil = no change; non-nil = replace all linked tags
+	Tags      *[]string // nil = no change; non-nil = replace all linked tags
+	DependsOn *[]string // nil = no change; non-nil = replace all dependency edges
 }
 
 // Update applies a partial update to a task. If Tags is non-nil, linked
@@ -466,6 +476,20 @@ func (s *TaskService) Update(id string, input TaskUpdateInput) error {
 		}
 	}
 
+	// depends_on cycle check (migration 027 / FK-003). Same rationale as
+	// validateParentID: runs before the store write so a cycle-producing
+	// update (e.g. A depends_on B, B depends_on A) is rejected with a
+	// ValidationError instead of committed. A mutual/circular dependency is
+	// a second, self-inflicted flavor of the scheduler deadlock this task
+	// exists to fix — ON DELETE CASCADE does nothing for it, since neither
+	// task is ever deleted. Only evaluated when the caller is touching
+	// depends_on; Create never needs this (see the comment there).
+	if input.DependsOn != nil {
+		if err := s.validateDependsOnCycle(id, *input.DependsOn); err != nil {
+			return err
+		}
+	}
+
 	if err := s.store.UpdateTask(id, input.TaskUpdate); err != nil {
 		return err
 	}
@@ -474,7 +498,14 @@ func (s *TaskService) Update(id string, input TaskUpdateInput) error {
 		if err != nil {
 			return err
 		}
-		return s.store.SetTaskTags(id, slugs)
+		if err := s.store.SetTaskTags(id, slugs); err != nil {
+			return err
+		}
+	}
+	if input.DependsOn != nil {
+		if err := s.store.SetTaskDependencies(id, *input.DependsOn); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -525,9 +556,68 @@ func (s *TaskService) validateParentID(taskID string, candidate sql.NullString) 
 	return &ValidationError{Field: "parent_id", Message: "parent_id ancestor chain exceeds 256 hops"}
 }
 
+// validateDependsOnCycle enforces that adding the given candidate depends_on
+// edges from taskID does not create a directed cycle in the depends_on
+// graph (migration 027 / FK-003). Unlike parent_id, depends_on is a
+// many-to-many DAG (a task can depend on several others, and several tasks
+// can share a dependency), not a tree, so this walks a DFS over each
+// candidate's own dependency edges — rather than a single-parent ancestor
+// chain — looking for a path back to taskID.
+//
+// A visited-set prevents revisiting shared nodes in diamond-shaped
+// dependency graphs (A depends on B and C, both depend on D) blowing up
+// into exponential re-walks; a 256-hop cap guards against pathological or
+// malformed graphs, mirroring validateParentID's guard.
+func (s *TaskService) validateDependsOnCycle(taskID string, candidates []string) error {
+	visited := map[string]bool{}
+	var walk func(id string, hops int) error
+	walk = func(id string, hops int) error {
+		if id == taskID {
+			if hops == 0 {
+				return &ValidationError{Field: "depends_on", Message: "depends_on cannot reference the task itself"}
+			}
+			return &ValidationError{Field: "depends_on", Message: "depends_on would create a cycle through task " + taskID}
+		}
+		if hops > 256 {
+			return &ValidationError{Field: "depends_on", Message: "depends_on chain exceeds 256 hops"}
+		}
+		if visited[id] {
+			return nil
+		}
+		visited[id] = true
+		deps, err := s.store.ListTaskDependencyIDs(id)
+		if err != nil {
+			// Broken/unreadable chain — treat as no cycle to avoid false
+			// positives, mirroring validateParentID's handling of a broken
+			// ancestor chain.
+			return nil
+		}
+		for _, d := range deps {
+			if err := walk(d, hops+1); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, depID := range candidates {
+		if err := walk(depID, 0); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ListTags returns the tags linked to a task.
 func (s *TaskService) ListTags(taskID string) ([]sqlstore.TagRecord, error) {
 	return s.store.ListTaskTags(taskID)
+}
+
+// ListDependencyIDs returns the depends_on task IDs linked to a task, in
+// the order they were set (task_dependencies.sort_order ASC). Every ID
+// returned still exists — ON DELETE CASCADE on depends_on_task_id prunes
+// the edge automatically when the dependency task is deleted (FK-003).
+func (s *TaskService) ListDependencyIDs(taskID string) ([]string, error) {
+	return s.store.ListTaskDependencyIDs(taskID)
 }
 
 // Transition moves a task to a new status if the FSM allows it.
