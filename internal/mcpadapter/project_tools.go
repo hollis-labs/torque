@@ -21,7 +21,7 @@ Example: {"name":"Torque","repo_path":"/Users/me/Projects/torque"}`),
 	), a.handleProjectCreate)
 
 	a.addTool(mcp.NewTool("torque_project_list",
-		mcp.WithDescription(`List all projects; ordered updated_at DESC.
+		mcp.WithDescription(`List all projects; ordered name ASC.
 Use for project discovery; no dedicated project_get tool — torque_task_list with project_id filter exposes the project's task set. Default brief shape; pass verbose="true" for full records.
 Response shape: data = {items: [<briefProject or ProjectRecord>...], meta: {truncated, returned, limit, hint?}}.
 Example: {}`),

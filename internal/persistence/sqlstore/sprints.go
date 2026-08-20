@@ -74,7 +74,7 @@ func (s *Store) GetSprint(id string) (*SprintRecord, error) {
 	return sp, err
 }
 
-// ListSprints returns sprints matching the filter, ordered by created_at DESC.
+// ListSprints returns sprints matching the filter, ordered by updated_at DESC.
 func (s *Store) ListSprints(f SprintFilter) ([]SprintRecord, error) {
 	query := `SELECT id, name, goal, status, approval_mode, cost_budget, project_id,
 		started_at, ended_at, created_at, updated_at FROM sprints`
@@ -94,7 +94,7 @@ func (s *Store) ListSprints(f SprintFilter) ([]SprintRecord, error) {
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
-	query += " ORDER BY created_at DESC"
+	query += " ORDER BY updated_at DESC"
 
 	if f.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", f.Limit)
