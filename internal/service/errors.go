@@ -44,3 +44,15 @@ type ConflictError struct {
 }
 
 func (e *ConflictError) Error() string { return "conflict: " + e.Message }
+
+// PermissionError indicates the caller is not authorized to perform the
+// requested operation on an entity that DOES exist (contrast with
+// NotFoundError). Introduced by ENT-COMMENT for author-scoped
+// Comment.Update/Delete — mcpadapter.mapServiceError maps this to
+// error.code=permission (ErrCodePermission), previously reserved but
+// unmapped by any current error path.
+type PermissionError struct {
+	Message string
+}
+
+func (e *PermissionError) Error() string { return "permission denied: " + e.Message }

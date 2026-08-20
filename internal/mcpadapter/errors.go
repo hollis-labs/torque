@@ -36,9 +36,10 @@ const (
 	// field validation (e.g. feature not enabled, budget exhausted). Caller
 	// must change the surrounding environment, not just the args.
 	ErrCodeDomain ErrorCode = "domain"
-	// ErrCodePermission — reserved for future permission/auth paths. Phase C
-	// does not map any current errors onto this code; documented so the
-	// taxonomy is stable when auth lands.
+	// ErrCodePermission — the caller is not authorized to perform this
+	// operation on an entity that exists (contrast with ErrCodeNotFound).
+	// First mapped case: ENT-COMMENT's author-scoped
+	// torque_comment_update/torque_comment_delete (*service.PermissionError).
 	ErrCodePermission ErrorCode = "permission"
 	// ErrCodeInternal — uncategorized server-side failure (DB, marshal,
 	// unexpected state). Full context is logged server-side; caller sees
@@ -154,6 +155,7 @@ func errResult(code ErrorCode, message, field string) (*mcp.CallToolResult, erro
 //     via the string-match tier below since the sqlstore error isn't a typed
 //     sentinel that service-layer wraps)
 //   - *service.FeatureDisabledError → domain
+//   - *service.PermissionError → permission
 //   - Plain `fmt.Errorf("sprint %s not found", ...)` (sprint/project/epic
 //     stores return untyped messages) → string-match tier → not_found
 //   - sqlstore.ErrTemplateReferenced → conflict
@@ -214,6 +216,10 @@ func mapServiceError(err error) (ErrorCode, string, string) {
 	var fde *service.FeatureDisabledError
 	if errors.As(err, &fde) {
 		return ErrCodeDomain, err.Error(), ""
+	}
+	var pe *service.PermissionError
+	if errors.As(err, &pe) {
+		return ErrCodePermission, err.Error(), ""
 	}
 
 	// String-match tier for untyped "not found" errors from sprint/project/epic

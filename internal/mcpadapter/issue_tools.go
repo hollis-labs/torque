@@ -292,7 +292,7 @@ func (a *Adapter) handleIssueBulkTransition(ctx context.Context, req mcp.CallToo
 
 	var errMsgs []string
 	for _, e := range errs {
-		errMsgs = append(errMsgs, e.Error())
+		errMsgs = append(errMsgs, e.Err.Error())
 	}
 
 	result := map[string]interface{}{
