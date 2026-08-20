@@ -30,6 +30,7 @@ func main() {
 	root.AddCommand(serveCmd())
 	root.AddCommand(costBackfillCmd())
 	root.AddCommand(aarCmd())
+	root.AddCommand(fkOrphanCleanupCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
