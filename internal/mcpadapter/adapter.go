@@ -208,6 +208,7 @@ Response shape: data = {status, message, enabled_features[]}.
 Example: {}`),
 	), a.handleHealth)
 	a.registerTaskTools()
+	a.registerTaskBulkTools()
 	a.registerRunTools()
 	a.registerArtifactTools()
 	a.registerCommentTools()
