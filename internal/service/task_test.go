@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -157,6 +158,92 @@ func TestTaskUpdateTitleCannotBeCleared(t *testing.T) {
 	unchanged, err := svc.Task.Get(task.ID)
 	require.NoError(t, err)
 	require.Equal(t, "keep me", unchanged.Title)
+}
+
+// TestTaskCreateRollsBackOnDependencySetFailure covers FIX-007: Create's
+// CreateTask + SetTaskDependencies writes must commit together or not at
+// all. Forces the task_dependencies INSERT (the second write in the
+// sequence) to fail via a real SQLite trigger — not a mock — and verifies
+// the task row itself (the first write, already committed to the same
+// in-flight transaction before the trigger fires) was rolled back too, so
+// no orphaned task row is left behind with none of its intended dependency
+// edges.
+func TestTaskCreateRollsBackOnDependencySetFailure(t *testing.T) {
+	svc := setupService(t)
+
+	dep, err := svc.Task.Create(service.TaskCreateInput{Title: "Dependency target"})
+	require.NoError(t, err)
+
+	_, err = svc.Store().DB().Exec(`
+		CREATE TRIGGER fail_task_dependency_insert
+		BEFORE INSERT ON task_dependencies
+		BEGIN
+			SELECT RAISE(ABORT, 'forced failure for test');
+		END;
+	`)
+	require.NoError(t, err)
+
+	// Single-threaded test store: NextTaskID is a pure read with no writes
+	// racing it, so peeking it here returns the exact ID Create's own
+	// internal NextTaskID call will compute next (nothing writes to tasks
+	// in between).
+	predictedID, err := svc.Store().NextTaskID()
+	require.NoError(t, err)
+
+	_, err = svc.Task.Create(service.TaskCreateInput{
+		Title:     "Depends on target",
+		DependsOn: []string{dep.ID},
+	})
+	require.Error(t, err)
+
+	// The task row must not exist — CreateTask's INSERT must have been
+	// rolled back along with the failing SetTaskDependencies INSERT.
+	_, getErr := svc.Store().GetTask(predictedID)
+	require.Error(t, getErr)
+	require.True(t, errors.Is(getErr, sqlstore.ErrTaskNotFound))
+}
+
+// TestTaskUpdateRollsBackOnDependencySetFailure covers FIX-007: Update's
+// UpdateTask + SetTaskDependencies (and SetTaskTags, when present) writes
+// must commit together or not at all. Forces the task_dependencies INSERT
+// to fail via a real SQLite trigger and verifies the title change from the
+// same Update call — the first write in the sequence — was rolled back too,
+// so a partial-apply (title updated, dependency edges not) never happens.
+func TestTaskUpdateRollsBackOnDependencySetFailure(t *testing.T) {
+	svc := setupService(t)
+
+	dep, err := svc.Task.Create(service.TaskCreateInput{Title: "Dependency target"})
+	require.NoError(t, err)
+
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "original title"})
+	require.NoError(t, err)
+
+	_, err = svc.Store().DB().Exec(`
+		CREATE TRIGGER fail_task_dependency_insert
+		BEFORE INSERT ON task_dependencies
+		BEGIN
+			SELECT RAISE(ABORT, 'forced failure for test');
+		END;
+	`)
+	require.NoError(t, err)
+
+	newTitle := "updated title"
+	err = svc.Task.Update(task.ID, service.TaskUpdateInput{
+		TaskUpdate: sqlstore.TaskUpdate{Title: &newTitle},
+		DependsOn:  &[]string{dep.ID},
+	})
+	require.Error(t, err)
+
+	// Title must be unchanged — UpdateTask's write must have been rolled
+	// back along with the failing SetTaskDependencies INSERT.
+	unchanged, err := svc.Task.Get(task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "original title", unchanged.Title)
+
+	// No dependency edge should have been left behind either.
+	deps, err := svc.Task.ListDependencyIDs(task.ID)
+	require.NoError(t, err)
+	require.Empty(t, deps)
 }
 
 func TestTaskTransitionValid(t *testing.T) {

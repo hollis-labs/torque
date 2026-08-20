@@ -16,7 +16,20 @@ func (s *Store) SetTaskDependencies(taskID string, depIDs []string) error {
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(`DELETE FROM task_dependencies WHERE task_id = ?`, taskID); err != nil {
+	if err := setTaskDependenciesExec(tx, taskID, depIDs); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// setTaskDependenciesExec holds SetTaskDependencies' delete+reinsert logic,
+// parameterized over dbExecer so it can run inside SetTaskDependencies' own
+// single-purpose transaction (Store.SetTaskDependencies, above) or composed
+// into a caller-managed *sql.Tx (WriteTx.SetTaskDependencies, write_tx.go —
+// FIX-007) alongside other task writes that must commit together.
+func setTaskDependenciesExec(ex dbExecer, taskID string, depIDs []string) error {
+	if _, err := ex.Exec(`DELETE FROM task_dependencies WHERE task_id = ?`, taskID); err != nil {
 		return err
 	}
 
@@ -27,7 +40,7 @@ func (s *Store) SetTaskDependencies(taskID string, depIDs []string) error {
 	// any future cursor pagination over task_dependencies.created_at.
 	now := updatedAtNow()
 	for i, depID := range depIDs {
-		_, err := tx.Exec(
+		_, err := ex.Exec(
 			`INSERT INTO task_dependencies (task_id, depends_on_task_id, sort_order, created_at)
 			 VALUES (?, ?, ?, ?)`,
 			taskID, depID, i, now,
@@ -37,7 +50,7 @@ func (s *Store) SetTaskDependencies(taskID string, depIDs []string) error {
 		}
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 // ListTaskDependencyIDs returns the depends_on_task_id values linked to a

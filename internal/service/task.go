@@ -383,8 +383,40 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		rec.ParentID = sql.NullString{String: input.ParentID, Valid: true}
 	}
 
-	if err := s.store.CreateTask(rec); err != nil {
-		return nil, err
+	// depends_on lives in the task_dependencies join table (migration 027 /
+	// FK-003), not a column on tasks. Existence was already checked above by
+	// validateTaskWrites; a cycle check is unnecessary here — a brand-new
+	// task has no ID until NextTaskID ran above, so nothing existing could
+	// already hold an edge pointing at it (same reasoning validateParentID
+	// uses to skip cycle checks on Create).
+	//
+	// FIX-007: when depends_on is set, CreateTask + SetTaskDependencies must
+	// commit together or not at all — otherwise a SetTaskDependencies
+	// failure (lock contention, or a dependency task deleted in the TOCTOU
+	// window after the existence check above trips the FK) leaves a real
+	// task row committed with none of its intended dependency edges, and
+	// the caller has no signal a task was actually created. The
+	// no-depends_on path is unchanged: a single CreateTask call, already
+	// atomic on its own.
+	if len(input.DependsOn) > 0 {
+		wtx, err := s.store.BeginWriteTx(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		defer wtx.Rollback()
+		if err := wtx.CreateTask(rec); err != nil {
+			return nil, err
+		}
+		if err := wtx.SetTaskDependencies(id, input.DependsOn); err != nil {
+			return nil, err
+		}
+		if err := wtx.Commit(); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := s.store.CreateTask(rec); err != nil {
+			return nil, err
+		}
 	}
 
 	// Subtodos: caller-provided list wins; otherwise auto-extract top-level
@@ -408,18 +440,6 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 			return nil, err
 		}
 		if err := s.store.SetTaskTags(id, slugs); err != nil {
-			return nil, err
-		}
-	}
-
-	// depends_on lives in the task_dependencies join table (migration 027 /
-	// FK-003), not a column on tasks. Existence was already checked above by
-	// validateTaskWrites; a cycle check is unnecessary here — a brand-new
-	// task has no ID until NextTaskID ran above, so nothing existing could
-	// already hold an edge pointing at it (same reasoning validateParentID
-	// uses to skip cycle checks on Create).
-	if len(input.DependsOn) > 0 {
-		if err := s.store.SetTaskDependencies(id, input.DependsOn); err != nil {
 			return nil, err
 		}
 	}
@@ -541,24 +561,48 @@ func (s *TaskService) Update(id string, input TaskUpdateInput) error {
 		}
 	}
 
-	if err := s.store.UpdateTask(id, input.TaskUpdate); err != nil {
-		return err
+	// FIX-007: UpdateTask + SetTaskTags (when tags are changing) +
+	// SetTaskDependencies (when depends_on is changing) must commit together
+	// or not at all. Without this, a multi-field update (e.g. title +
+	// depends_on in the same call) can partially apply: UpdateTask commits
+	// the title change, then SetTaskDependencies fails — the title is now
+	// updated but the dependency edges aren't, and a blind retry re-applies
+	// the title update against already-changed data. When neither tags nor
+	// depends_on is being touched, UpdateTask alone is already atomic (one
+	// SQL statement), so that path is left as a standalone call.
+	if input.Tags == nil && input.DependsOn == nil {
+		return s.store.UpdateTask(id, input.TaskUpdate)
 	}
+
+	var slugs []string
 	if input.Tags != nil {
-		slugs, err := s.tags.ResolveNames(*input.Tags)
+		var err error
+		slugs, err = s.tags.ResolveNames(*input.Tags)
 		if err != nil {
 			return err
 		}
-		if err := s.store.SetTaskTags(id, slugs); err != nil {
+	}
+
+	wtx, err := s.store.BeginWriteTx(context.Background())
+	if err != nil {
+		return err
+	}
+	defer wtx.Rollback()
+
+	if err := wtx.UpdateTask(id, input.TaskUpdate); err != nil {
+		return err
+	}
+	if input.Tags != nil {
+		if err := wtx.SetTaskTags(id, slugs); err != nil {
 			return err
 		}
 	}
 	if input.DependsOn != nil {
-		if err := s.store.SetTaskDependencies(id, *input.DependsOn); err != nil {
+		if err := wtx.SetTaskDependencies(id, *input.DependsOn); err != nil {
 			return err
 		}
 	}
-	return nil
+	return wtx.Commit()
 }
 
 // Delete removes a task by ID.

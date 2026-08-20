@@ -182,13 +182,26 @@ func (s *Store) SetTaskTags(taskID string, slugs []string) error {
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(`DELETE FROM task_tags WHERE task_id = ?`, taskID); err != nil {
+	if err := setTaskTagsExec(tx, taskID, slugs); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// setTaskTagsExec holds SetTaskTags' delete+reinsert logic, parameterized
+// over dbExecer so it can run inside SetTaskTags' own single-purpose
+// transaction (Store.SetTaskTags, above) or composed into a caller-managed
+// *sql.Tx (WriteTx.SetTaskTags, write_tx.go — FIX-007) alongside other task
+// writes that must commit together.
+func setTaskTagsExec(ex dbExecer, taskID string, slugs []string) error {
+	if _, err := ex.Exec(`DELETE FROM task_tags WHERE task_id = ?`, taskID); err != nil {
 		return err
 	}
 
 	now := time.Now().UTC()
 	for i, slug := range slugs {
-		_, err := tx.Exec(
+		_, err := ex.Exec(
 			`INSERT INTO task_tags (task_id, tag_slug, sort_order, created_at)
 			 VALUES (?, ?, ?, ?)`,
 			taskID, slug, i, now,
@@ -198,7 +211,7 @@ func (s *Store) SetTaskTags(taskID string, slugs []string) error {
 		}
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 // ListTaskTags returns all tags linked to a task, ordered by the user's

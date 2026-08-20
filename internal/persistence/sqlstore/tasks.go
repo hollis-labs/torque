@@ -9,6 +9,15 @@ import (
 	"time"
 )
 
+// dbExecer is satisfied by both *sql.DB and *sql.Tx. Task-write helpers that
+// need to run either standalone (Store.*, on s.db) or composed inside a
+// caller-managed transaction (WriteTx.*, on w.tx — see write_tx.go / FIX-007)
+// are written once against this interface so the field-mapping logic can't
+// drift between the two call paths.
+type dbExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
 // taskIDRange returns the half-open range [lo, hi) covering all task IDs that
 // start with the given prefix. The prefix is expected to end in '-' (0x2D);
 // hi replaces that trailing '-' with '.' (0x2E) so the range upper bound
@@ -690,6 +699,15 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 
 // UpdateTask applies non-nil pointer fields to the task row.
 func (s *Store) UpdateTask(id string, u TaskUpdate) error {
+	return updateTaskExec(s.db, id, u)
+}
+
+// updateTaskExec holds UpdateTask's field-mapping logic, parameterized over
+// dbExecer so it can run against s.db (Store.UpdateTask, standalone) or a
+// caller-managed *sql.Tx (WriteTx.UpdateTask, write_tx.go — FIX-007). Both
+// callers stay behavior-identical automatically since there's only one copy
+// of the set-clause builder to maintain.
+func updateTaskExec(ex dbExecer, id string, u TaskUpdate) error {
 	var setClauses []string
 	var args []any
 
@@ -860,7 +878,7 @@ func (s *Store) UpdateTask(id string, u TaskUpdate) error {
 	args = append(args, id)
 
 	q := `UPDATE tasks SET ` + strings.Join(setClauses, ", ") + ` WHERE id = ?`
-	res, err := s.db.Exec(q, args...)
+	res, err := ex.Exec(q, args...)
 	if err != nil {
 		return err
 	}
