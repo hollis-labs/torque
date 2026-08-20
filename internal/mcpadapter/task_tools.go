@@ -131,7 +131,7 @@ Example: {"title":"Fix auth bug","description":"Login returns 500","priority":"2
 
 	a.addTool(mcp.NewTool("torque_task_get",
 		mcp.WithDescription(`Fetch the full TaskRecord for one task ID, including all facet/budget/hook columns and linked tags.
-Use when you already have the ID; prefer torque_task_list/search when filtering a cohort, and torque_task_subtodo_list for checklist-only views.
+Use when you already have the ID; prefer torque_task_list when filtering a cohort, and torque_task_subtodo_list for checklist-only views.
 Response shape: data = {<TaskRecord fields>, Tags[]} — singleton, PascalCase keys.
 Example: {"id":"T-123"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
@@ -139,7 +139,7 @@ Example: {"id":"T-123"}`),
 
 	a.addTool(mcp.NewTool("torque_task_list",
 		mcp.WithDescription(`List tasks with optional status/priority/facet filters; ordered priority ASC (tiebreak id ASC) by default. Pass sort_by (priority|status|updated_at|created_at) and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid.
-Use for browsing or filtered cohorts; prefer torque_task_search for free-text queries and torque_task_get when you already know the ID. Default returns ~150B briefTask records (lowercase JSON) so large fan-outs fit under the 100KB cap; pass verbose="true" for full TaskRecord columns.
+Use for browsing or filtered cohorts; pass search directly for free-text queries (no separate search tool — matches Issue's already-merged shape) and torque_task_get when you already know the ID. Default returns ~150B briefTask records (lowercase JSON) so large fan-outs fit under the 100KB cap; pass verbose="true" for full TaskRecord columns.
 Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under — pass a different sort_by/sort_dir without dropping cursor and you get error.code=arg_invalid.
 statuses[] OR-matches against status (takes precedence over status when both are set). created_after/created_before/updated_after/updated_before are RFC3339 timestamps, inclusive bounds. *_gte/*_lte budget/duration filters compare directly against the stored column — a task that never set that budget (NULL) never matches either bound, so unset-budget tasks are naturally excluded rather than needing a separate "has budget" filter.
 Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
@@ -252,23 +252,6 @@ Example with comment: {"id":"T-123","status":"blocked","comment":"waiting on ups
 		mcp.WithString("comment", mcp.Description("Optional comment body to post atomically with the status change (same transaction)")),
 		mcp.WithString("comment_author", mcp.Description("Author slug/id for the comment (optional; only used when comment is set)")),
 	), a.handleTaskTransition)
-
-	a.addTool(mcp.NewTool("torque_task_search",
-		mcp.WithDescription(`Full-text search across task title and description; ordered by priority ASC, created_at ASC.
-Use for free-text discovery; prefer torque_task_list when filtering by structured fields. Default returns ~150B briefTask records; pass verbose="true" for full TaskRecord. Limit defaults to 25, capped at 100.
-Filters (project_id, sprint_id, epic_id, tags, manual) combine with the query via AND — use them to narrow free-text results.
-Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, hint?}}.
-Example: {"query":"auth bug","limit":"10"}`),
-		mcp.WithString("query", mcp.Required(), mcp.Description("Free-text search query")),
-		mcp.WithString("project_id", mcp.Description("Filter by project ID (requires features.projects)")),
-		mcp.WithString("sprint_id", mcp.Description("Filter by sprint ID (requires features.sprints)")),
-		mcp.WithString("epic_id", mcp.Description("Filter by epic ID (requires features.epics)")),
-		mcp.WithString("tags", mcp.Description("JSON array of tag slugs — AND-match; task must have all listed tags")),
-		mcp.WithString("manual", mcp.Description("Filter by manual flag: 'manual'/'true'/'1' → manual only; 'auto'/'false'/'0' → scheduled only; 'both' or omit → no filter")),
-		mcp.WithString("include_internal", mcp.Description("Include kind=internal automation tasks. Default false: internal rows are suppressed. Accepts 'true'/'1'/'yes'.")),
-		mcp.WithString("limit", mcp.Description("Max results (integer, default 25, max 100)")),
-		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
-	), a.handleTaskSearch)
 
 	a.addTool(mcp.NewTool("torque_task_bulk_transition",
 		mcp.WithDescription(`Transition many tasks to the same status in one call; per-task validation errors are collected, not fatal.
@@ -1102,38 +1085,6 @@ func (a *Adapter) handleTaskTransition(ctx context.Context, req mcp.CallToolRequ
 		return errFromService(err)
 	}
 	return a.taskResult(task)
-}
-
-func (a *Adapter) handleTaskSearch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	query := reqStr(req, "query")
-	if query == "" {
-		return errResult(ErrCodeArgInvalid, "query is required", "query")
-	}
-	limit := clampLimit(reqInt(req, "limit"), defaultTaskSearchLimit, maxTaskSearchLimit)
-	verbose := reqStrBool(req, "verbose")
-
-	filter := sqlstore.TaskFilter{
-		Search:    query,
-		ProjectID: reqStr(req, "project_id"),
-		SprintID:  reqStr(req, "sprint_id"),
-		EpicID:    reqStr(req, "epic_id"),
-		Manual:    parseManualFilter(reqStr(req, "manual")),
-		Limit:     limit,
-		// kind=internal default-exclude (CW-20260503-0011); see
-		// handleTaskList for the rationale.
-		ExcludeInternal: !reqStrBool(req, "include_internal"),
-	}
-	if tags, err := reqStrSlice(req, "tags"); err != nil {
-		return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
-	} else if tags != nil {
-		filter.TagSlugs = tags
-	}
-
-	tasks, err := a.svc.Task.List(filter)
-	if err != nil {
-		return errFromService(err)
-	}
-	return a.tasksToEnvelope(tasks, limit, verbose)
 }
 
 // tasksToEnvelope converts a TaskRecord slice into the {items, meta} MCP

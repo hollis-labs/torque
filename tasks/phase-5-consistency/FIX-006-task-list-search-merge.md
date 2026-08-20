@@ -1,7 +1,7 @@
 # FIX-006 — Merge torque_task_search into torque_task_list (finish the ADR-0004 "one way to find things" merge for Task)
 
 **Phase:** 5 — Consistency sweep (spun out of SWEEP-001)
-**Status:** todo
+**Status:** done
 **Depends on:** none (ENT-TASK, ENT-ISSUE already landed; Issue's merge is the
 reference pattern to follow)
 **Blocks:** none
@@ -96,21 +96,21 @@ optional `search` param.
 
 ## Acceptance criteria
 
-- [ ] `torque_task_search` tool registration and handler removed;
+- [x] `torque_task_search` tool registration and handler removed;
       `torque_task_list`'s `search` param is the only way to free-text
       search tasks (matching Issue's already-merged shape).
-- [ ] A registration-check test (mirroring ENT-ISSUE's) confirms
+- [x] A registration-check test (mirroring ENT-ISSUE's) confirms
       `torque_task_search` is gone from the tool list.
-- [ ] Every existing behavior `torque_task_search`'s test suite verified
+- [x] Every existing behavior `torque_task_search`'s test suite verified
       that's still meaningful (byte-cap behavior, default-exclude of
       `kind=internal`, project/sprint/epic_id + tags + manual filter
       combination with free-text search) has an equivalent assertion against
       `torque_task_list` — no coverage silently dropped, but redundant
       tests (duplicating what `torque_task_list`'s own test suite already
       asserts) may be retired rather than ported 1:1.
-- [ ] `docs/task-tagging-conventions.md` no longer references
+- [x] `docs/task-tagging-conventions.md` no longer references
       `torque_task_search`.
-- [ ] `go build ./...` and `go test ./...` clean.
+- [x] `go build ./...` and `go test ./...` clean.
 
 ## Out of scope
 
@@ -123,3 +123,106 @@ optional `search` param.
 - Any other entity's list/search shape — Comment's `list`/`search` split is
   ADR-0004's one deliberate, permanent exception (different query shapes);
   every other entity was already confirmed merged during SWEEP-001.
+
+## Execution notes
+
+**Worktree was stale at start.** This worktree branched from `main` before
+SWEEP-001/ENT-COMMENT/ENT-EPIC/ENT-ISSUE (and `tasks/`, ADR-0004 itself) had
+landed — `git log` topped out at "Docs sync" with none of that history.
+Fast-forward merged local `main` (`d96d265`) into the branch first
+(`git merge --ff-only main`); no conflicts, no worktree-local commits existed
+yet.
+
+**Removal.** Deleted the `torque_task_search` tool registration block and
+`handleTaskSearch` (`internal/mcpadapter/task_tools.go`), plus the now-dead
+`defaultTaskSearchLimit`/`maxTaskSearchLimit` constants
+(`internal/mcpadapter/response.go`) — grep confirmed no other caller
+referenced them (`tasksToEnvelope`, reused by `handlePlanListChildren`, uses
+its own `defaultGenericListLimit`/`maxTaskListLimit`, not the search-specific
+pair). `torque_task_list`'s `search` param already covered every filter
+`torque_task_search` offered (project_id/sprint_id/epic_id/tags/manual/
+include_internal), so no new filter plumbing was needed on the list side —
+this was a pure subtraction, unlike ENT-ISSUE's merge which also had to
+consolidate two divergent service-layer methods. Left
+`internal/service/task.go`'s `Search`/`sqlstore.Store.SearchTasks` and
+`internal/httpserver/tasks.go`'s HTTP `/search` endpoint untouched — the
+task's Scope section only names the MCP tool layer, and unlike Issue's merge
+commit (304663a), FIX-006 never asked for an HTTP/service-layer
+consolidation.
+
+**Docstrings.** `torque_task_get` and `torque_task_list` no longer say
+"prefer torque_task_search" / "prefer torque_task_list/search" — replaced
+with guidance to pass `search` directly on `torque_task_list`. Also updated
+a stale comment in `internal/persistence/sqlstore/tasks.go` (TaskFilter's
+`ExcludeInternal` doc) that named `torque_task_search` as one of the
+default-exclude boundaries; not explicitly in scope but a one-line
+correction of a comment that would otherwise reference a now-nonexistent
+tool. Updated `docs/task-tagging-conventions.md:5` to drop the
+`torque_task_search` half of the `tags`-filter reference.
+
+**Registration-check test.** Added
+`TestFullStack_TaskSearchToolRemoved` (`internal/mcpadapter/task_tools_test.go`),
+mirroring ENT-ISSUE's `TestFullStack_IssueSearchToolRemoved` exactly: asserts
+`torque_task_search` is not registered and `torque_task_list` is, via the
+shared `toolIsRegistered` helper (`opt_in_tools_test.go`).
+
+**Per-test decisions** (the ~11 `torque_task_search` call sites named in
+Scope):
+
+- `TestTaskSearch_Default25Limit_FitsUnderCap`,
+  `TestTaskSearch_MaxLimitCapped` (`response_test.go`) — **ported**, not
+  retired. Renamed to `TestTaskList_Default50Limit_FitsUnderCap` /
+  `TestTaskList_MaxLimitCapped`, switched to `torque_task_list` +
+  `search` param, and re-asserted against list's own 50/200 defaults
+  (not search's old 25/100). Kept rather than treated as redundant with
+  `TestTaskList_500Tasks_FitsUnderCap` because that test only exercises an
+  *explicit* `limit=200`; nothing else in the suite exercised
+  `torque_task_list`'s implicit default-limit (omitted `limit` → 50) or its
+  clamp-down behavior on an over-max request — genuine, previously-search-only
+  coverage that would have silently disappeared.
+- `TestBeforeAfter_ByteCounts` (`response_test.go`) — **ported** verbatim as
+  described in Scope: both calls switched from `torque_task_search`
+  `query` to `torque_task_list` `search`; brief-vs-verbose byte-count
+  assertion (`briefBytes*5 < verboseBytes`) unchanged and still passes
+  (18033 vs 101863 bytes on the 80-task/6KB-description fixture).
+- `TestFullStack_SearchTasks`, `TestFullStack_TaskList_CombinedSearchAndProjectID`
+  (`task_tools_test.go`) — the former **ported** (renamed
+  `TestFullStack_TaskList_Search`, `query`→`search` on `torque_task_list`);
+  the latter needed **no change** (already `torque_task_list`-based, per
+  Scope's own note).
+- `TestFullStack_TaskSearch_WithSprintID` — **ported**, renamed
+  `TestFullStack_TaskList_SearchWithSprintID`, `torque_task_search`
+  `{query, sprint_id}` → `torque_task_list` `{search, sprint_id}`.
+- `TestFullStack_TaskSearch_EmptyQueryReturnsError` — **repurposed**, not
+  dropped. `torque_task_search` required a non-empty `query` and errored
+  otherwise; `torque_task_list`'s `search` has no such requirement (empty
+  search = no substring filter = correct list semantics, not an error).
+  Renamed `TestFullStack_TaskList_EmptySearchIsNoOpFilter`: seeds one task,
+  calls `torque_task_list` with `search=""`, asserts no error and the task
+  is still returned — confirms the new correct behavior instead of porting
+  an assertion that would now be wrong.
+- The `include_internal` default-exclude pair at (former)
+  `task_tools_test.go:304-311` inside
+  `TestFullStack_TaskList_DefaultExcludesInternal` — **ported** in place:
+  both `torque_task_search` calls (bare and with `include_internal=1`)
+  switched to `torque_task_list` with `search` in the same test function
+  (no rename needed; the test was already named for `torque_task_list`).
+
+No coverage gap: every filter combination `torque_task_search`'s test suite
+exercised (byte-cap at default/max limits, brief-vs-verbose byte delta,
+default-exclude of `kind=internal` with and without opt-in, `project_id`/
+`sprint_id` combined with free-text search) has an equivalent assertion
+against `torque_task_list` post-merge. (`epic_id`+search and `tags`/`manual`
+combined-with-search were never covered by `torque_task_search`'s own test
+suite either — confirmed via `git show 304663a^:.../task_tools_test.go`, the
+last commit before Issue's merge touched the same file — so there was no
+existing coverage to preserve there.)
+
+**Verification.** `go build ./...` and `go test ./...` both clean (full
+suite, all packages, no `-short`/`-run` filtering). `go vet` clean on the
+touched packages.
+
+**Files touched:** `internal/mcpadapter/task_tools.go`,
+`internal/mcpadapter/response.go`, `internal/mcpadapter/task_tools_test.go`,
+`internal/mcpadapter/response_test.go`, `internal/persistence/sqlstore/tasks.go`,
+`docs/task-tagging-conventions.md`.
