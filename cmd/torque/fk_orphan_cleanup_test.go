@@ -17,6 +17,22 @@ import (
 // (empty string = NULL) via a raw INSERT, bypassing TaskService/store
 // validation so a "dangling" id can be planted directly — exactly what an
 // orphaned reference from a bypassed/legacy write path looks like on disk.
+//
+// Since FK-002 (migration 028_task_fk_constraints.sql), tasks.sprint_id/
+// project_id/epic_id carry real REFERENCES ... ON DELETE SET NULL
+// constraints, and sqlstore.New enables PRAGMA foreign_keys=ON — so a
+// dangling reference can no longer be written through store.CreateTask at
+// all (the insert now fails with "FOREIGN KEY constraint failed"), and any
+// sprint/project/epic deleted through the DB is auto-nulled on referencing
+// tasks rather than left dangling. Orphans like these are now only
+// reachable from data written *before* migration 028 ran (which is exactly
+// what FK-001's cleanup targets — see FK-001's own execution notes on
+// DeleteSprint/DeleteProject/DeleteEpic's separate, non-transactional null
+// step as the one remaining real-world source). To keep exercising
+// findFKOrphans/nullifyFKOrphans against that legacy scenario, this helper
+// toggles foreign_keys off for the duration of the raw insert — sqlstore.New
+// pins SQLite to a single pooled connection (db.SetMaxOpenConns(1)), so the
+// toggle reliably applies to the connection CreateTask itself will use.
 func seedFKOrphanTask(t *testing.T, store *sqlstore.Store, id, sprintID, projectID, epicID string) {
 	t.Helper()
 	task := &sqlstore.TaskRecord{
@@ -34,6 +50,14 @@ func seedFKOrphanTask(t *testing.T, store *sqlstore.Store, id, sprintID, project
 	if epicID != "" {
 		task.EpicID = sql.NullString{String: epicID, Valid: true}
 	}
+
+	_, err := store.DB().Exec("PRAGMA foreign_keys = OFF")
+	require.NoError(t, err)
+	defer func() {
+		_, err := store.DB().Exec("PRAGMA foreign_keys = ON")
+		require.NoError(t, err)
+	}()
+
 	require.NoError(t, store.CreateTask(task))
 }
 

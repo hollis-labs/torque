@@ -28,6 +28,9 @@ import (
 // where they're already tested.
 func createPlanTask(t *testing.T, store *sqlstore.Store, id, workdir string) *sqlstore.TaskRecord {
 	t.Helper()
+	// tasks.project_id is a real FK (FK-002, migration 028) — PRJ-SMOKE must
+	// exist before a task can reference it.
+	require.NoError(t, store.CreateProject(&sqlstore.ProjectRecord{ID: "PRJ-SMOKE", Name: "Smoke Project"}))
 	plan := &sqlstore.TaskRecord{
 		ID:           id,
 		Title:        "Smoke plan: " + id,

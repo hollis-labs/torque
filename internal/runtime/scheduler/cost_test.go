@@ -21,6 +21,16 @@ func setupCostStore(t *testing.T) *sqlstore.Store {
 	store, err := sqlstore.New(db, "sqlite")
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
+
+	// TestCostTrackerSprintTotal uses an ad hoc sprint_id string as a pure
+	// grouping key (CostTracker.SprintTotal only filters cost_ledger rows by
+	// the string value, it never joins against sprints) — no need for a real
+	// sprints row. tasks.sprint_id carries a real FK since FK-002 (migration
+	// 028_task_fk_constraints.sql); disable enforcement here rather than
+	// seeding one.
+	_, err = store.DB().Exec("PRAGMA foreign_keys = OFF")
+	require.NoError(t, err)
+
 	return store
 }
 
