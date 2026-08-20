@@ -89,6 +89,87 @@ func TestTaskService_AddSubtodoExplicitIDStillWorks(t *testing.T) {
 	assert.Contains(t, err.Error(), "duplicate")
 }
 
+// TestTaskService_BulkAddSubtodo_MixedCallerAndOmittedIDs covers
+// ENT-SUBTODO's acceptance criterion: a single batch mixing caller-supplied
+// and omitted ids works, generated ids get the "sub_" prefix, and the
+// returned succeeded slice reports each item's resolved id in order.
+func TestTaskService_BulkAddSubtodo_MixedCallerAndOmittedIDs(t *testing.T) {
+	svc := setupService(t)
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "t1"})
+	require.NoError(t, err)
+
+	succeeded, failed := svc.Task.BulkAddSubtodo(task.ID, []sqlstore.Subtodo{
+		{ID: "check-auth-flow", Text: "explicit slug", Required: true},
+		{Text: "no id supplied"},
+		{ID: "check-docs", Text: "another explicit slug"},
+	})
+	require.Empty(t, failed)
+	require.Len(t, succeeded, 3)
+	assert.Equal(t, "check-auth-flow", succeeded[0])
+	assert.True(t, strings.HasPrefix(succeeded[1], "sub_"), "generated id %q should carry the sub_ prefix", succeeded[1])
+	assert.Equal(t, "check-docs", succeeded[2])
+
+	all, err := svc.Task.ListSubtodos(task.ID)
+	require.NoError(t, err)
+	require.Len(t, all, 3)
+	assert.Equal(t, []string{"check-auth-flow", succeeded[1], "check-docs"}, []string{all[0].ID, all[1].ID, all[2].ID})
+	assert.True(t, all[0].Required)
+	assert.False(t, all[1].Required)
+}
+
+// TestTaskService_BulkAddSubtodo_PartialFailureDoesNotAbortBatch covers
+// ENT-SUBTODO's other acceptance criterion: one duplicate id in the batch
+// fails only that item — the rest still land, and a pre-existing id on the
+// task (not just an intra-batch collision) is also caught.
+func TestTaskService_BulkAddSubtodo_PartialFailureDoesNotAbortBatch(t *testing.T) {
+	svc := setupService(t)
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "t1"})
+	require.NoError(t, err)
+
+	_, err = svc.Task.AddSubtodo(task.ID, sqlstore.Subtodo{ID: "pre-existing", Text: "seeded before the batch"})
+	require.NoError(t, err)
+
+	succeeded, failed := svc.Task.BulkAddSubtodo(task.ID, []sqlstore.Subtodo{
+		{ID: "item-a", Text: "first"},
+		{ID: "item-a", Text: "duplicate within the batch itself"},
+		{ID: "pre-existing", Text: "collides with a pre-existing id"},
+		{Text: ""}, // missing text
+		{ID: "item-b", Text: "last, should still succeed"},
+	})
+
+	require.Equal(t, []string{"item-a", "item-b"}, succeeded)
+	require.Len(t, failed, 3)
+	assert.Equal(t, "item-a", failed[0].ID)
+	assert.Contains(t, failed[0].Err.Error(), "duplicate")
+	assert.Equal(t, "pre-existing", failed[1].ID)
+	assert.Contains(t, failed[1].Err.Error(), "duplicate")
+	assert.Equal(t, "item[3]", failed[2].ID)
+	assert.Contains(t, failed[2].Err.Error(), "text is required")
+
+	all, err := svc.Task.ListSubtodos(task.ID)
+	require.NoError(t, err)
+	require.Len(t, all, 3, "pre-existing + the two batch items that actually succeeded")
+	ids := []string{all[0].ID, all[1].ID, all[2].ID}
+	assert.ElementsMatch(t, []string{"pre-existing", "item-a", "item-b"}, ids)
+}
+
+// TestTaskService_BulkAddSubtodo_UnknownTask covers the whole-batch failure
+// path: a task_id that doesn't exist fails every item (not a call-level
+// error), each labeled with its caller-supplied id or a positional
+// placeholder.
+func TestTaskService_BulkAddSubtodo_UnknownTask(t *testing.T) {
+	svc := setupService(t)
+
+	succeeded, failed := svc.Task.BulkAddSubtodo("does-not-exist", []sqlstore.Subtodo{
+		{ID: "a", Text: "one"},
+		{Text: "two"},
+	})
+	assert.Empty(t, succeeded)
+	require.Len(t, failed, 2)
+	assert.Equal(t, "a", failed[0].ID)
+	assert.Equal(t, "item[1]", failed[1].ID)
+}
+
 func TestTaskService_MarkSubtodoDone(t *testing.T) {
 	svc := setupService(t)
 	task, err := svc.Task.Create(service.TaskCreateInput{

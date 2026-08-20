@@ -790,6 +790,93 @@ func newSubtodoID() string {
 	return "sub_" + hex.EncodeToString(b[:])
 }
 
+// BulkAddSubtodo seeds many checklist items onto one task in a single call
+// (ENT-SUBTODO). Per-item id resolution mirrors AddSubtodo exactly: a
+// caller-supplied id is validated for uniqueness (against both the task's
+// existing checklist and any earlier items in this same batch); an omitted
+// id is generated via newSubtodoID/subtodoIDTaken.
+//
+// Deviation from RunBulk (bulk.go)/PRIM-003: RunBulk's op closes over an id
+// the caller already has (bulk_update/bulk_delete/bulk_tag all operate on
+// an existing ids[]). bulk_add's items are new — most arrive with no id at
+// all — so there is no pre-existing id for RunBulk's op to key on. This
+// method loops directly over the item specs instead, and returns each
+// resolved id (caller-supplied or generated) as "succeeded", matching
+// RunBulk's/PRIM-003's shape at the response layer ({succeeded: [ids],
+// failed: [{id, error}]}) even though the id is being *assigned* here
+// rather than looked up. A failed item reports its caller-supplied id when
+// given, else a positional placeholder ("item[N]") since no id was ever
+// assigned to it.
+//
+// All items are validated against one fetched-and-held copy of the
+// checklist and persisted in a single SetSubtodos call — not one write per
+// item — so a batch never leaves a torn intermediate checklist: either
+// every accepted item lands in that one write, or (if the write itself
+// fails, e.g. task not found) none do and every provisionally-accepted item
+// reverts to failed.
+func (s *TaskService) BulkAddSubtodo(taskID string, items []sqlstore.Subtodo) ([]string, []BulkItemError) {
+	existing, err := s.store.GetSubtodos(taskID)
+	if err != nil {
+		failed := make([]BulkItemError, len(items))
+		for i, item := range items {
+			failed[i] = BulkItemError{ID: bulkAddSubtodoLabel(item, i), Err: err}
+		}
+		return nil, failed
+	}
+
+	succeeded := make([]string, 0, len(items))
+	var failed []BulkItemError
+	for i, item := range items {
+		if item.Text == "" {
+			failed = append(failed, BulkItemError{
+				ID:  bulkAddSubtodoLabel(item, i),
+				Err: &ValidationError{Field: "text", Message: "text is required"},
+			})
+			continue
+		}
+		if item.ID == "" {
+			item.ID = newSubtodoID()
+			for subtodoIDTaken(existing, item.ID) {
+				item.ID = newSubtodoID()
+			}
+		} else if subtodoIDTaken(existing, item.ID) {
+			failed = append(failed, BulkItemError{
+				ID:  item.ID,
+				Err: &ValidationError{Field: "id", Message: "duplicate subtodo id: " + item.ID},
+			})
+			continue
+		}
+		existing = append(existing, item)
+		succeeded = append(succeeded, item.ID)
+	}
+
+	if len(succeeded) == 0 {
+		return succeeded, failed
+	}
+	if err := s.store.SetSubtodos(taskID, existing); err != nil {
+		// The persist step failed after every accepted item passed in-memory
+		// validation; nothing was written, so none of them actually
+		// succeeded — move them all to failed rather than reporting ids
+		// that don't exist in the stored checklist.
+		for _, id := range succeeded {
+			failed = append(failed, BulkItemError{ID: id, Err: err})
+		}
+		return nil, failed
+	}
+	return succeeded, failed
+}
+
+// bulkAddSubtodoLabel picks the identifier to report for a bulk_add item
+// that failed before (or without) getting an id assigned: the
+// caller-supplied id when present, else a positional placeholder so the
+// failure is still traceable back to its slot in the request array.
+func bulkAddSubtodoLabel(item sqlstore.Subtodo, index int) string {
+	if item.ID != "" {
+		return item.ID
+	}
+	return fmt.Sprintf("item[%d]", index)
+}
+
 // MarkSubtodoDone ticks a single item and records its evidence.
 func (s *TaskService) MarkSubtodoDone(taskID, itemID, evidence string) ([]sqlstore.Subtodo, error) {
 	if err := s.store.SetSubtodoDone(taskID, itemID, evidence); err != nil {
