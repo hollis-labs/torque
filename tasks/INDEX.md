@@ -64,7 +64,7 @@ Status values: `todo` · `blocked` · `in-progress` · `done` · `skipped`
 |---|---|---|---|---|
 | [ENT-TASK](phase-4-entities/ENT-TASK.md) | Task: filters, bulk ops, create-field expansion, transition comment | done | FIX-001, FIX-002, FIX-004, PRIM-001, PRIM-002, PRIM-003, DEC-003 | SWEEP-001 |
 | [ENT-SUBTODO](phase-4-entities/ENT-SUBTODO.md) | Subtodo: bulk_add | done | FIX-002 | SWEEP-001 |
-| [ENT-COMMENT](phase-4-entities/ENT-COMMENT.md) | Comment: update/delete, pagination/sort/filter, bulk_add | in-progress (corrective redo running) | PRIM-001, PRIM-002 | SWEEP-001 |
+| [ENT-COMMENT](phase-4-entities/ENT-COMMENT.md) | Comment: update/delete, pagination/sort/filter, bulk_add | done | PRIM-001, PRIM-002 | SWEEP-001 |
 | [ENT-PROJECT](phase-4-entities/ENT-PROJECT.md) | Project: get/update (new), create fields, list wiring, archive | done | FIX-004, PRIM-001, PRIM-002, PRIM-004, DEC-002 | SWEEP-001 |
 | [ENT-EPIC](phase-4-entities/ENT-EPIC.md) | Epic: merge list+search, settable priority, archive, bulk_update | done | FIX-003, FIX-004, PRIM-001, PRIM-002, PRIM-003, PRIM-004, DEC-002 | SWEEP-001 |
 | [ENT-SPRINT](phase-4-entities/ENT-SPRINT.md) | Sprint: list sort/cursor, archive, bulk_update, budget filter | done | FIX-004, PRIM-001, PRIM-002, PRIM-003, PRIM-004, DEC-002 | SWEEP-001 |
