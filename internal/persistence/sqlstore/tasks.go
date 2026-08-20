@@ -273,9 +273,9 @@ type TaskFilter struct {
 	// the result. Default zero-value (false) preserves prior behavior:
 	// no exclusion. Internal-call sites (picker, scheduler internals)
 	// leave it false so they continue to see all kinds; user-facing
-	// boundaries (HTTP /api/v1/tasks, MCP torque_task_list /
-	// torque_task_search) flip it to true unless the caller passes
-	// include_internal=true (CW-20260503-0011, S1.1). When the caller
+	// boundaries (HTTP /api/v1/tasks, MCP torque_task_list) flip it to
+	// true unless the caller passes include_internal=true
+	// (CW-20260503-0011, S1.1). When the caller
 	// supplies an explicit Kind filter, that exact-match takes precedence
 	// over the exclusion.
 	ExcludeInternal bool

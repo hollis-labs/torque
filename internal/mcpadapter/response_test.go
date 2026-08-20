@@ -111,9 +111,17 @@ func TestTaskList_500Tasks_FitsUnderCap(t *testing.T) {
 	assert.Equal(t, float64(200), env.Meta["returned"])
 }
 
-// ---- integration: task search ------------------------------------------------
+// ---- integration: task list search (merged from torque_task_search, FIX-006) -
 
-func TestTaskSearch_Default25Limit_FitsUnderCap(t *testing.T) {
+// TestTaskList_Default50Limit_FitsUnderCap is FIX-006's port of the former
+// torque_task_search's TestTaskSearch_Default25Limit_FitsUnderCap. That test
+// asserted search's own 25/max-100 defaults, which no longer exist post-merge
+// — torque_task_list's search param now carries this behavior under list's
+// 50/max-200 defaults instead. Kept (rather than retired as redundant with
+// TestTaskList_500Tasks_FitsUnderCap, which only exercises an explicit
+// limit=200) because no other test asserts torque_task_list's *default*
+// (omitted-limit) 50-row behavior.
+func TestTaskList_Default50Limit_FitsUnderCap(t *testing.T) {
 	a := setupAdapter(t)
 
 	bigDesc := strings.Repeat("x", 2000)
@@ -125,9 +133,9 @@ func TestTaskSearch_Default25Limit_FitsUnderCap(t *testing.T) {
 		require.False(t, isErr)
 	}
 
-	// Search with no explicit limit → default 25.
-	text, isErr := callTool(t, a, "torque_task_search", map[string]interface{}{
-		"query": "search-hit",
+	// List with search filter, no explicit limit → default 50.
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
+		"search": "search-hit",
 	})
 	require.False(t, isErr, text)
 
@@ -137,13 +145,18 @@ func TestTaskSearch_Default25Limit_FitsUnderCap(t *testing.T) {
 		Meta  map[string]interface{} `json:"meta"`
 	}
 	parseData(t, text, &env)
-	assert.Len(t, env.Items, 25, "search should default to 25 results")
-	assert.Equal(t, float64(25), env.Meta["limit"])
+	assert.Len(t, env.Items, 50, "list should default to 50 results")
+	assert.Equal(t, float64(50), env.Meta["limit"])
 }
 
-func TestTaskSearch_MaxLimitCapped(t *testing.T) {
+// TestTaskList_MaxLimitCapped is FIX-006's port of the former
+// torque_task_search's TestTaskSearch_MaxLimitCapped, asserting
+// torque_task_list's own 200 max (rather than search's former 100) — no
+// other test exercises the clamp-down behavior with an over-max requested
+// limit.
+func TestTaskList_MaxLimitCapped(t *testing.T) {
 	a := setupAdapter(t)
-	for i := 0; i < 150; i++ {
+	for i := 0; i < 250; i++ {
 		_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
 			"title":       fmt.Sprintf("clamp-me-%04d", i),
 			"description": "x",
@@ -151,10 +164,10 @@ func TestTaskSearch_MaxLimitCapped(t *testing.T) {
 		require.False(t, isErr)
 	}
 
-	// Request 500, should clamp to 100 (max).
-	text, isErr := callTool(t, a, "torque_task_search", map[string]interface{}{
-		"query": "clamp-me",
-		"limit": "500",
+	// Request 500, should clamp to 200 (max).
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
+		"search": "clamp-me",
+		"limit":  "500",
 	})
 	require.False(t, isErr, text)
 	var env struct {
@@ -162,8 +175,8 @@ func TestTaskSearch_MaxLimitCapped(t *testing.T) {
 		Meta  map[string]interface{} `json:"meta"`
 	}
 	parseData(t, text, &env)
-	assert.Equal(t, float64(100), env.Meta["limit"], "search limit must cap at 100")
-	assert.Len(t, env.Items, 100)
+	assert.Equal(t, float64(200), env.Meta["limit"], "list limit must cap at 200")
+	assert.Len(t, env.Items, 200)
 }
 
 // ---- truncation under pressure ----------------------------------------------
@@ -298,21 +311,21 @@ func TestBeforeAfter_ByteCounts(t *testing.T) {
 	}
 
 	// Verbose: what the old bare-array shape approximated.
-	text, _ := callTool(t, a, "torque_task_search", map[string]interface{}{
-		"query":   "repro",
+	text, _ := callTool(t, a, "torque_task_list", map[string]interface{}{
+		"search":  "repro",
 		"limit":   "100",
 		"verbose": "true",
 	})
 	verboseBytes := len(text)
 
 	// Brief: the new default.
-	text, _ = callTool(t, a, "torque_task_search", map[string]interface{}{
-		"query": "repro",
-		"limit": "100",
+	text, _ = callTool(t, a, "torque_task_list", map[string]interface{}{
+		"search": "repro",
+		"limit":  "100",
 	})
 	briefBytes := len(text)
 
-	t.Logf("BEFORE/AFTER byte counts — torque_task_search, 80 matching tasks:")
+	t.Logf("BEFORE/AFTER byte counts — torque_task_list (search param), 80 matching tasks:")
 	t.Logf("  verbose (full records): %d bytes", verboseBytes)
 	t.Logf("  brief (default):        %d bytes", briefBytes)
 

@@ -24,8 +24,6 @@ const maxMCPResponseBytes = 100 * 1024 // 100KB
 // scattered through per-tool handlers so the shape contract is discoverable
 // in one place.
 const (
-	defaultTaskSearchLimit   = 25
-	maxTaskSearchLimit       = 100
 	maxTaskListLimit         = 200
 	defaultGenericListLimit  = 100
 	maxGenericListLimit      = 500

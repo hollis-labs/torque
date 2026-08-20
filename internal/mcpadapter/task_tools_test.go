@@ -301,14 +301,15 @@ func TestFullStack_TaskList_DefaultExcludesInternal(t *testing.T) {
 	require.Len(t, internalOnly, 1)
 	require.Equal(t, "internal", internalOnly[0]["kind"])
 
-	// torque_task_search mirrors the same default-exclude.
-	text, _ = callTool(t, a, "torque_task_search", map[string]interface{}{
-		"query": "x",
+	// torque_task_list's search param mirrors the same default-exclude
+	// (FIX-006: formerly asserted via the now-removed torque_task_search).
+	text, _ = callTool(t, a, "torque_task_list", map[string]interface{}{
+		"search": "x",
 	})
 	require.Len(t, parseList(text), 1, "search default-excludes internal")
 
-	text, _ = callTool(t, a, "torque_task_search", map[string]interface{}{
-		"query":            "x",
+	text, _ = callTool(t, a, "torque_task_list", map[string]interface{}{
+		"search":           "x",
 		"include_internal": "1",
 	})
 	require.Len(t, parseList(text), 2, "search opt-in surfaces internal")
@@ -603,7 +604,10 @@ func TestFullStack_Health(t *testing.T) {
 	require.Contains(t, text, "running")
 }
 
-func TestFullStack_SearchTasks(t *testing.T) {
+// TestFullStack_TaskList_Search is FIX-006's port of the former
+// torque_task_search's TestFullStack_SearchTasks — torque_task_list's search
+// param is now the only way to free-text search tasks.
+func TestFullStack_TaskList_Search(t *testing.T) {
 	a := setupAdapter(t)
 
 	// Create two tasks.
@@ -620,8 +624,8 @@ func TestFullStack_SearchTasks(t *testing.T) {
 	require.False(t, isErr)
 
 	// Search for "login".
-	text, isErr := callTool(t, a, "torque_task_search", map[string]interface{}{
-		"query": "login",
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
+		"search": "login",
 	})
 	require.False(t, isErr, "search should not error: %s", text)
 
@@ -842,8 +846,10 @@ func TestFullStack_TaskList_CombinedSearchAndProjectID(t *testing.T) {
 	require.Equal(t, "Auth bug in Alpha", envelope.Items[0]["title"])
 }
 
-// TestFullStack_TaskSearch_WithSprintID verifies task_search with sprint_id filter.
-func TestFullStack_TaskSearch_WithSprintID(t *testing.T) {
+// TestFullStack_TaskList_SearchWithSprintID is FIX-006's port of the former
+// torque_task_search's TestFullStack_TaskSearch_WithSprintID, verifying
+// torque_task_list's search+sprint_id combination.
+func TestFullStack_TaskList_SearchWithSprintID(t *testing.T) {
 	a := setupAdapterWithFeatures(t)
 
 	// Create sprints.
@@ -873,11 +879,11 @@ func TestFullStack_TaskSearch_WithSprintID(t *testing.T) {
 	})
 	require.False(t, isErr)
 
-	text, isErr = callTool(t, a, "torque_task_search", map[string]interface{}{
-		"query":     "refactor",
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{
+		"search":    "refactor",
 		"sprint_id": sp01ID,
 	})
-	require.False(t, isErr, "task_search with sprint_id should not error: %s", text)
+	require.False(t, isErr, "task_list search+sprint_id should not error: %s", text)
 
 	var envelope struct {
 		Items []map[string]interface{} `json:"items"`
@@ -887,20 +893,43 @@ func TestFullStack_TaskSearch_WithSprintID(t *testing.T) {
 	require.Equal(t, "Sprint task refactor", envelope.Items[0]["title"])
 }
 
-// TestFullStack_TaskSearch_EmptyQueryReturnsError verifies that task_search
-// rejects an empty query with a structured error.
-func TestFullStack_TaskSearch_EmptyQueryReturnsError(t *testing.T) {
+// TestFullStack_TaskList_EmptySearchIsNoOpFilter is FIX-006's repurposing of
+// the former torque_task_search's TestFullStack_TaskSearch_EmptyQueryReturnsError.
+// torque_task_search required a non-empty query and errored otherwise;
+// torque_task_list's search param has no such requirement — an empty (or
+// omitted) search is correct list semantics ("no substring filter"), not an
+// error, so this confirms the new, correct no-op-filter behavior rather than
+// porting the old error assertion 1:1.
+func TestFullStack_TaskList_EmptySearchIsNoOpFilter(t *testing.T) {
 	a := setupAdapter(t)
 
-	// task_search declares query as Required() so the MCP framework may reject
-	// it before the handler runs. Passing an explicit empty string instead.
-	text, isErr := callTool(t, a, "torque_task_search", map[string]interface{}{
-		"query": "",
+	_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":       "Fix login bug",
+		"description": "Login is broken",
 	})
-	require.True(t, isErr, "empty query should return error; got: %s", text)
-	code, _, field := parseError(t, text)
-	require.Equal(t, "arg_invalid", code)
-	require.Equal(t, "query", field)
+	require.False(t, isErr)
+
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
+		"search": "",
+	})
+	require.False(t, isErr, "empty search should not error: %s", text)
+
+	var envelope struct {
+		Items []map[string]interface{} `json:"items"`
+	}
+	parseData(t, text, &envelope)
+	require.Len(t, envelope.Items, 1, "empty search is a no-op filter — all tasks returned")
+}
+
+// TestFullStack_TaskSearchToolRemoved confirms torque_task_search no longer
+// exists as a separate tool — the merge into torque_task_list (ADR-0004 §3)
+// removes the old dual-tool redundancy entirely rather than keeping a
+// deprecated alias, matching Issue's already-merged pattern
+// (TestFullStack_IssueSearchToolRemoved in issue_tools_test.go, ENT-ISSUE).
+func TestFullStack_TaskSearchToolRemoved(t *testing.T) {
+	a := setupAdapter(t)
+	require.False(t, toolIsRegistered(t, a, "torque_task_search"), "torque_task_search must be removed, merged into torque_task_list")
+	require.True(t, toolIsRegistered(t, a, "torque_task_list"))
 }
 
 // TestFullStack_CommentSearch covers 7 sub-tests for torque_comment_search.
