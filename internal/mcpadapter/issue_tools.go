@@ -66,7 +66,7 @@ Example: {"ids":"[\"CW-1\",\"CW-2\"]","project_id":"PRJ-..."}`),
 	a.addTool(mcp.NewTool("torque_issue_bulk_transition",
 		mcp.WithDescription(`Transition many issues to the same status in one call; per-issue validation errors are collected, not fatal. Issues share Task's lifecycle FSM (todo -> doing -> review -> done, or -> blocked/abandoned) via TaskService.BulkTransition — reused as-is, not reimplemented here.
 Use for batch issue status changes; torque_issue_update for field edits. Note: a freshly created issue starts at status=backlog, which is outside Task's FSM (no transitions are defined from it) — move it to todo first via torque_task_update or torque_task_transition with force=true before it can traverse the shared FSM.
-Response shape: data = {success: int, failed: int, errors?: "semicolon-joined messages"}.
+Response shape: data = {succeeded: [id...], failed: [{id, error: {code, message, field}}...]} — partial success is not an error; ok=true even when some ids fail.
 Example: {"ids":"[\"CW-1\",\"CW-2\"]","status":"done"}`),
 		mcp.WithString("ids", mcp.Required(), mcp.Description("JSON array of issue task IDs")),
 		mcp.WithString("status", mcp.Required(), mcp.Description("Target status applied to every id")),

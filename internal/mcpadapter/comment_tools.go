@@ -2,44 +2,118 @@ package mcpadapter
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"time"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 	"github.com/mark3labs/mcp-go/mcp"
+)
+
+// commentSortAllowList is torque_comment_list/torque_comment_search's
+// sort_by allow-list (PRIM-002). Comment has only one meaningful sortable
+// column today — no priority/status equivalent exists on a comment — so
+// this is a singleton list, unlike Task's four-column allow-list. Kept as
+// its own named list (rather than inlining "created_at" at each call site)
+// so a future second sortable column only needs to change here.
+var commentSortAllowList = []string{"created_at"}
+
+// torque_comment_list defaults to oldest-first (matches the pre-PRIM-001
+// per-entity thread order); torque_comment_search defaults to newest-first
+// (matches the pre-PRIM-001 cross-entity recency order) — see
+// commentSearchSortDefaultDir below. Both share the same sort column.
+const (
+	commentListSortDefaultBy    = "created_at"
+	commentListSortDefaultDir   = "asc"
+	commentSearchSortDefaultBy  = "created_at"
+	commentSearchSortDefaultDir = "desc"
+)
+
+const (
+	defaultCommentSearchLimit = 25
+	maxCommentSearchLimit     = 100
 )
 
 func (a *Adapter) registerCommentTools() {
 	a.addTool(mcp.NewTool("torque_comment_add",
 		mcp.WithDescription(`Append a comment (freeform prose) to an entity; returns the persisted CommentRecord with assigned ID.
-Comments are polymorphic — entity_type selects which kind of entity the comment is attached to. Currently supported: "task". Future: "collection", "epic", "sprint", "project". Use for agent-to-user channel, review notes, or blocked-reason explanation; structured audit trails should go in artifacts via torque_artifact_create. Comments never drive lifecycle.
+Comments are polymorphic — entity_type selects which kind of entity the comment is attached to. Supported: "task", "project", "epic", "sprint" (Issue/Plan already covered via entity_type="task" since they're Task rows). An unsupported entity_type returns error.code=arg_invalid. Use for agent-to-user channel, review notes, or blocked-reason explanation; structured audit trails should go in artifacts via torque_artifact_create. Comments never drive lifecycle.
 Response shape: data = {<CommentRecord fields>} — singleton.
 Example: {"entity_type":"task","entity_id":"T-123","author":"reviewer","content":"Please also cover the null-parent case."}`),
-		mcp.WithString("entity_type", mcp.Required(), mcp.Description(`Entity kind the comment is attached to. Valid: "task". Future: "collection", "epic", "sprint", "project".`)),
+		mcp.WithString("entity_type", mcp.Required(), mcp.Description(`Entity kind the comment is attached to. Valid: "task", "project", "epic", "sprint".`)),
 		mcp.WithString("entity_id", mcp.Required(), mcp.Description("ID of the entity (e.g. task ID for entity_type=task)")),
 		mcp.WithString("author", mcp.Description("Comment author slug/id")),
 		mcp.WithString("content", mcp.Required(), mcp.Description("Comment body (prose)")),
 	), a.handleCommentAdd)
 
 	a.addTool(mcp.NewTool("torque_comment_list",
-		mcp.WithDescription(`List all comments on an entity, oldest first (chronological order). Default brief shape includes a 100-char excerpt of the body; pass verbose="true" for full content.
-Use to review the discussion thread for a given entity; torque_comment_add to append. For newest-first cross-entity search use torque_comment_search. No comment_get/delete yet — brief ID + list is the read surface.
-Response shape: data = {items: [<briefComment or CommentRecord>...], meta: {truncated, returned, limit, hint?}}.
-Example: {"entity_type":"task","entity_id":"T-123"}`),
-		mcp.WithString("entity_type", mcp.Required(), mcp.Description(`Entity kind. Valid: "task". Future: "collection", "epic", "sprint", "project".`)),
-		mcp.WithString("entity_id", mcp.Required(), mcp.Description("ID of the entity")),
+		mcp.WithDescription(`List comments on one entity — or, via entity_ids, across a caller-resolved SET of entity refs of the same entity_type (e.g. every task in a sprint: first torque_task_list {"sprint_id":...} for the task ids, then pass those as entity_ids here) — ordered created_at ASC (oldest first, tiebreak id ASC) by default. Pass sort_by ("created_at") and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid. Default brief shape includes a 100-char excerpt of the body; pass verbose="true" for full content.
+Use to review the discussion thread for a given entity (or set of entities); torque_comment_add to append. For newest-first cross-entity content search use torque_comment_search.
+Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under.
+Response shape: data = {items: [<briefComment or CommentRecord>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
+Example: {"entity_type":"task","entity_id":"T-123","limit":"50"}`),
+		mcp.WithString("entity_type", mcp.Required(), mcp.Description(`Entity kind. Valid: "task", "project", "epic", "sprint".`)),
+		mcp.WithString("entity_id", mcp.Description("ID of the entity — required unless entity_ids is given instead")),
+		mcp.WithString("entity_ids", mcp.Description("JSON array of entity IDs (same entity_type) — OR-matched; alternative to entity_id for querying comments across a resolved set of refs at once")),
+		mcp.WithString("author", mcp.Description("Filter by exact author match (optional)")),
+		mcp.WithString("created_after", mcp.Description("Only comments created at/after this instant (RFC3339, e.g. 2026-01-02T15:04:05Z)")),
+		mcp.WithString("created_before", mcp.Description("Only comments created at/before this instant (RFC3339)")),
+		mcp.WithString("limit", mcp.Description("Max results (integer, default 50, max 200)")),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
+		mcp.WithString("sort_by", mcp.Description(`Sort field: "created_at" (default, only supported value)`)),
+		mcp.WithString("sort_dir", mcp.Description("Sort direction: asc|desc (default asc)")),
+		mcp.WithString("cursor", mcp.Description("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
 	), a.handleCommentList)
 
 	a.addTool(mcp.NewTool("torque_comment_search",
-		mcp.WithDescription(`Search comments by content across all entities, optionally scoped to one entity (entity_type + entity_id) or author. Returns newest first.
-Use to discover comments by content; torque_comment_list for per-entity ordered history. No comment_get/delete yet.
-Response shape: data = {items: [<CommentRecord>...], meta: {truncated, returned, limit, hint?}}.
+		mcp.WithDescription(`Search comments by content across all entities, optionally scoped to one entity (entity_type + entity_id), a set of entity refs (entity_type + entity_ids), an author, and/or a created_at range. Returns newest first (created_at DESC, tiebreak id ASC) by default; pass sort_by/sort_dir to change order.
+Use to discover comments by content; torque_comment_list for per-entity (or per-entity-set) chronological history.
+Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under.
+Response shape: data = {items: [<CommentRecord>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
 Example: {"query":"review notes","entity_type":"task","entity_id":"T-123"}`),
 		mcp.WithString("query", mcp.Required(), mcp.Description("Substring match on comment content")),
-		mcp.WithString("entity_type", mcp.Description(`Restrict to one entity kind (optional). Valid: "task" (more later).`)),
+		mcp.WithString("entity_type", mcp.Description(`Restrict to one entity kind (optional). Valid: "task", "project", "epic", "sprint".`)),
 		mcp.WithString("entity_id", mcp.Description("Restrict to one entity (optional; usually paired with entity_type)")),
+		mcp.WithString("entity_ids", mcp.Description("JSON array of entity IDs (same entity_type) — OR-matched; alternative to entity_id")),
 		mcp.WithString("author", mcp.Description("Exact author match (optional)")),
+		mcp.WithString("created_after", mcp.Description("Only comments created at/after this instant (RFC3339)")),
+		mcp.WithString("created_before", mcp.Description("Only comments created at/before this instant (RFC3339)")),
 		mcp.WithString("limit", mcp.Description("Max results (integer, default 25, max 100)")),
+		mcp.WithString("sort_by", mcp.Description(`Sort field: "created_at" (default, only supported value)`)),
+		mcp.WithString("sort_dir", mcp.Description("Sort direction: asc|desc (default desc)")),
+		mcp.WithString("cursor", mcp.Description("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
 	), a.handleCommentSearch)
+
+	a.addTool(mcp.NewTool("torque_comment_update",
+		mcp.WithDescription(`Edit an existing comment's content. Author-scoped: only the comment's original author may edit it — a mismatched author returns error.code=permission. Returns the updated CommentRecord.
+Use to correct/amend a comment you posted; torque_comment_delete to remove it entirely. Comments never drive lifecycle — editing content doesn't affect any entity state.
+Response shape: data = {<CommentRecord fields>} — singleton.
+Example: {"id":"42","author":"reviewer","content":"Updated: please also cover the null-parent case."}`),
+		mcp.WithString("id", mcp.Required(), mcp.Description("Comment ID (integer; pass as string)")),
+		mcp.WithString("author", mcp.Required(), mcp.Description("Caller's author slug/id — must exactly match the comment's original author")),
+		mcp.WithString("content", mcp.Required(), mcp.Description("New comment body (prose)")),
+	), a.handleCommentUpdate)
+
+	a.addTool(mcp.NewTool("torque_comment_delete",
+		mcp.WithDescription(`Hard-delete a comment. Author-scoped: only the comment's original author may delete it — a mismatched author returns error.code=permission. There is no undo.
+Use to remove a comment you posted in error.
+Response shape: data = {id, deleted: true}.
+Example: {"id":"42","author":"reviewer"}`),
+		mcp.WithString("id", mcp.Required(), mcp.Description("Comment ID (integer; pass as string)")),
+		mcp.WithString("author", mcp.Required(), mcp.Description("Caller's author slug/id — must exactly match the comment's original author")),
+	), a.handleCommentDelete)
+
+	a.addTool(mcp.NewTool("torque_comment_bulk_add",
+		mcp.WithDescription(`Post the same comment text to many entity refs in one call (e.g. broadcast a note to every task in a sprint); per-target failures are collected, not fatal. Unlike torque_task_bulk_update/delete/tag (which operate on an existing ids[]), this CREATES a new comment per target rather than modifying existing rows.
+Use for broadcast notes across a known set of entity refs; torque_comment_add for a single target.
+Response shape: data = {succeeded: [<CommentRecord fields>...], failed: [{target: {entity_type, entity_id}, error: {code, message, field}}...]} — partial success is not an error; ok=true even when some targets fail.
+Example: {"targets":"[{\"entity_type\":\"task\",\"entity_id\":\"T-1\"},{\"entity_type\":\"task\",\"entity_id\":\"T-2\"}]","author":"reviewer","content":"Sprint review starts in 1 hour."}`),
+		mcp.WithString("targets", mcp.Required(), mcp.Description(`JSON array of {"entity_type":...,"entity_id":...} objects naming every entity to comment on`)),
+		mcp.WithString("author", mcp.Description("Comment author slug/id")),
+		mcp.WithString("content", mcp.Required(), mcp.Description("Comment body (prose), posted identically to every target")),
+	), a.handleCommentBulkAdd)
 }
 
 func (a *Adapter) handleCommentAdd(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -65,21 +139,86 @@ func (a *Adapter) handleCommentAdd(ctx context.Context, req mcp.CallToolRequest)
 	return okResult(comment)
 }
 
-func (a *Adapter) handleCommentList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	entityType := reqStr(req, "entity_type")
-	entityID := reqStr(req, "entity_id")
-	if entityType == "" {
-		return errResult(ErrCodeArgInvalid, "entity_type is required", "entity_type")
+// commentSortValue formats a CommentRecord's sortBy column into the string
+// encoding PRIM-001's cursor uses for meta.next_cursor (DEC-001's `sv`
+// field). Mirrors taskSortValue's rationale: created_at uses
+// sqlstore.CommentDatetimeLayout — the exact text shape SQLite's own
+// CURRENT_TIMESTAMP writes and sqlstore.commentCursorArg parses/binds on
+// the decode side — NOT time.RFC3339Nano.
+func commentSortValue(c sqlstore.CommentRecord, sortBy string) string {
+	switch sortBy {
+	case "created_at":
+		return c.CreatedAt.UTC().Format(sqlstore.CommentDatetimeLayout)
+	default:
+		return ""
 	}
-	if entityID == "" {
-		return errResult(ErrCodeArgInvalid, "entity_id is required", "entity_id")
+}
+
+// commentCursorID formats a CommentRecord's integer id into the opaque
+// cursor's string id field.
+func commentCursorID(c sqlstore.CommentRecord) string {
+	return fmt.Sprintf("%d", c.ID)
+}
+
+// parseCommentDateArg parses a created_after/created_before value into
+// sqlstore.CommentDatetimeLayout text for CommentFilter. Accepts RFC3339
+// (the natural agent-facing format for a timestamp) and, defensively, the
+// raw SQLite storage layout itself. Empty input returns "" (no filter), not
+// an error.
+func parseCommentDateArg(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
 	}
-	verbose := reqStrBool(req, "verbose")
-	comments, err := a.svc.Comment.List(entityType, entityID)
-	if err != nil {
-		return errFromService(err)
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t.UTC().Format(sqlstore.CommentDatetimeLayout), nil
 	}
-	limit := defaultGenericListLimit
+	if t, err := time.Parse(sqlstore.CommentDatetimeLayout, raw); err == nil {
+		return t.UTC().Format(sqlstore.CommentDatetimeLayout), nil
+	}
+	return "", fmt.Errorf("must be RFC3339 (e.g. \"2026-01-02T15:04:05Z\"), got %q", raw)
+}
+
+// resolveCommentSort validates+resolves sort_by/sort_dir against defaults
+// and, if a cursor was supplied, decodes+validates it against the resolved
+// sort_by/sort_dir (PRIM-001/PRIM-002, mirroring handleTaskList's pattern).
+func resolveCommentSort(req mcp.CallToolRequest, defaultBy, defaultDir string) (sortBy, sortDir, afterSortValue, afterID string, errRes *mcp.CallToolResult) {
+	sortBy = defaultBy
+	if raw := reqStr(req, "sort_by"); raw != "" {
+		v, err := pagination.ValidateSortBy(raw, commentSortAllowList...)
+		if err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "sort_by")
+			return "", "", "", "", res
+		}
+		sortBy = v
+	}
+	sortDir = defaultDir
+	if raw := reqStr(req, "sort_dir"); raw != "" {
+		v, err := pagination.ValidateSortDir(raw)
+		if err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "sort_dir")
+			return "", "", "", "", res
+		}
+		sortDir = v
+	}
+	if raw := reqStr(req, "cursor"); raw != "" {
+		c, err := pagination.Decode(raw)
+		if err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid cursor: %v", err), "cursor")
+			return "", "", "", "", res
+		}
+		if err := c.Validate(sortBy, sortDir); err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "cursor")
+			return "", "", "", "", res
+		}
+		afterSortValue, afterID = c.SortValue, c.ID
+	}
+	return sortBy, sortDir, afterSortValue, afterID, nil
+}
+
+// commentListEnvelope builds the shared {items, meta} cursor-pagination
+// response for both torque_comment_list and torque_comment_search — see
+// taskListCursorEnvelope for the reference pattern this mirrors.
+func commentListEnvelope(comments []sqlstore.CommentRecord, limit int, verbose bool, sortBy, sortDir string, hasMoreFromQuery bool) (*mcp.CallToolResult, error) {
 	items := make([]any, 0, len(comments))
 	for _, c := range comments {
 		if verbose {
@@ -88,13 +227,71 @@ func (a *Adapter) handleCommentList(ctx context.Context, req mcp.CallToolRequest
 			items = append(items, toBriefComment(c))
 		}
 	}
-	return cappedJSONResult(items, limit)
+	cursorAt := func(i int) (sortValue, id string) {
+		return commentSortValue(comments[i], sortBy), commentCursorID(comments[i])
+	}
+	return cappedCursorJSONResult(items, limit, sortBy, sortDir, hasMoreFromQuery, cursorAt)
 }
 
-const (
-	defaultCommentSearchLimit = 25
-	maxCommentSearchLimit     = 100
-)
+func (a *Adapter) handleCommentList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	limit := clampLimit(reqInt(req, "limit"), defaultCommentListLimit, maxCommentListLimit)
+	verbose := reqStrBool(req, "verbose")
+
+	sortBy, sortDir, afterSortValue, afterID, errRes := resolveCommentSort(req, commentListSortDefaultBy, commentListSortDefaultDir)
+	if errRes != nil {
+		return errRes, nil
+	}
+
+	entityType := reqStr(req, "entity_type")
+	if entityType == "" {
+		return errResult(ErrCodeArgInvalid, "entity_type is required", "entity_type")
+	}
+	entityID := reqStr(req, "entity_id")
+	entityIDs, err := reqStrSlice(req, "entity_ids")
+	if err != nil {
+		return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid entity_ids JSON: %v", err), "entity_ids")
+	}
+	if entityID == "" && len(entityIDs) == 0 {
+		return errResult(ErrCodeArgInvalid, "entity_id or entity_ids is required", "entity_id")
+	}
+
+	createdAfter, err := parseCommentDateArg(reqStr(req, "created_after"))
+	if err != nil {
+		return errResult(ErrCodeArgInvalid, "created_after "+err.Error(), "created_after")
+	}
+	createdBefore, err := parseCommentDateArg(reqStr(req, "created_before"))
+	if err != nil {
+		return errResult(ErrCodeArgInvalid, "created_before "+err.Error(), "created_before")
+	}
+
+	filter := sqlstore.CommentFilter{
+		EntityType:    entityType,
+		EntityID:      entityID,
+		EntityIDs:     entityIDs,
+		Author:        reqStr(req, "author"),
+		CreatedAfter:  createdAfter,
+		CreatedBefore: createdBefore,
+		// Fetch one extra row beyond limit so has_more can be determined
+		// without a separate COUNT(*) query (DEC-001's cheaper-default
+		// choice) — see taskListCursorEnvelope's doc comment.
+		Limit:          limit + 1,
+		SortBy:         sortBy,
+		SortDir:        sortDir,
+		AfterSortValue: afterSortValue,
+		AfterID:        afterID,
+	}
+
+	comments, err := a.svc.Comment.ListFiltered(filter)
+	if err != nil {
+		return errFromService(err)
+	}
+
+	hasMoreFromQuery := len(comments) > limit
+	if hasMoreFromQuery {
+		comments = comments[:limit]
+	}
+	return commentListEnvelope(comments, limit, verbose, sortBy, sortDir, hasMoreFromQuery)
+}
 
 func (a *Adapter) handleCommentSearch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	query := reqStr(req, "query")
@@ -103,12 +300,38 @@ func (a *Adapter) handleCommentSearch(ctx context.Context, req mcp.CallToolReque
 	}
 	limit := clampLimit(reqInt(req, "limit"), defaultCommentSearchLimit, maxCommentSearchLimit)
 
+	sortBy, sortDir, afterSortValue, afterID, errRes := resolveCommentSort(req, commentSearchSortDefaultBy, commentSearchSortDefaultDir)
+	if errRes != nil {
+		return errRes, nil
+	}
+
+	entityIDs, err := reqStrSlice(req, "entity_ids")
+	if err != nil {
+		return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid entity_ids JSON: %v", err), "entity_ids")
+	}
+
+	createdAfter, err := parseCommentDateArg(reqStr(req, "created_after"))
+	if err != nil {
+		return errResult(ErrCodeArgInvalid, "created_after "+err.Error(), "created_after")
+	}
+	createdBefore, err := parseCommentDateArg(reqStr(req, "created_before"))
+	if err != nil {
+		return errResult(ErrCodeArgInvalid, "created_before "+err.Error(), "created_before")
+	}
+
 	filter := sqlstore.CommentFilter{
-		Search:     query,
-		EntityType: reqStr(req, "entity_type"),
-		EntityID:   reqStr(req, "entity_id"),
-		Author:     reqStr(req, "author"),
-		Limit:      limit,
+		Search:         query,
+		EntityType:     reqStr(req, "entity_type"),
+		EntityID:       reqStr(req, "entity_id"),
+		EntityIDs:      entityIDs,
+		Author:         reqStr(req, "author"),
+		CreatedAfter:   createdAfter,
+		CreatedBefore:  createdBefore,
+		Limit:          limit + 1,
+		SortBy:         sortBy,
+		SortDir:        sortDir,
+		AfterSortValue: afterSortValue,
+		AfterID:        afterID,
 	}
 
 	comments, err := a.svc.Comment.Search(filter)
@@ -116,9 +339,111 @@ func (a *Adapter) handleCommentSearch(ctx context.Context, req mcp.CallToolReque
 		return errFromService(err)
 	}
 
-	items := make([]any, 0, len(comments))
-	for _, c := range comments {
-		items = append(items, c)
+	hasMoreFromQuery := len(comments) > limit
+	if hasMoreFromQuery {
+		comments = comments[:limit]
 	}
-	return cappedJSONResult(items, limit)
+	// torque_comment_search has always returned full CommentRecord items
+	// (no brief/verbose toggle existed pre-ENT-COMMENT) — preserved as-is;
+	// only pagination/sort/filter changed here.
+	return commentListEnvelope(comments, limit, true, sortBy, sortDir, hasMoreFromQuery)
+}
+
+func (a *Adapter) handleCommentUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id := int64(reqInt(req, "id"))
+	if id <= 0 {
+		return errResult(ErrCodeArgInvalid, "id must be a positive integer", "id")
+	}
+	author := reqStr(req, "author")
+	if author == "" {
+		return errResult(ErrCodeArgInvalid, "author is required", "author")
+	}
+	content := reqStr(req, "content")
+	if content == "" {
+		return errResult(ErrCodeArgInvalid, "content is required", "content")
+	}
+	comment, err := a.svc.Comment.Update(id, author, content)
+	if err != nil {
+		return errFromService(err)
+	}
+	return okResult(comment)
+}
+
+func (a *Adapter) handleCommentDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id := int64(reqInt(req, "id"))
+	if id <= 0 {
+		return errResult(ErrCodeArgInvalid, "id must be a positive integer", "id")
+	}
+	author := reqStr(req, "author")
+	if author == "" {
+		return errResult(ErrCodeArgInvalid, "author is required", "author")
+	}
+	if err := a.svc.Comment.Delete(id, author); err != nil {
+		return errFromService(err)
+	}
+	return okResult(map[string]any{"id": id, "deleted": true})
+}
+
+// commentBulkTarget is one {entity_type, entity_id} element of
+// torque_comment_bulk_add's `targets` JSON array.
+type commentBulkTarget struct {
+	EntityType string `json:"entity_type"`
+	EntityID   string `json:"entity_id"`
+}
+
+// commentBulkAddFailure is torque_comment_bulk_add's per-target failure
+// shape — keyed by the target itself (entity_type + entity_id) rather than
+// a single "id" string, since BulkAdd creates new rows and has no
+// pre-existing id to key on (contrast with bulkFailure in
+// task_bulk_tools.go's PRIM-003 pattern, which bulk_update/delete/tag key
+// by an existing ids[] entry).
+type commentBulkAddFailure struct {
+	Target commentBulkTarget `json:"target"`
+	Error  *ErrorInfo        `json:"error"`
+}
+
+func (a *Adapter) handleCommentBulkAdd(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	raw := reqStr(req, "targets")
+	if raw == "" {
+		return errResult(ErrCodeArgInvalid, "targets is required", "targets")
+	}
+	var targets []commentBulkTarget
+	if err := json.Unmarshal([]byte(raw), &targets); err != nil {
+		return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid targets JSON: %v", err), "targets")
+	}
+	if len(targets) == 0 {
+		return errResult(ErrCodeArgInvalid, "targets must be a non-empty JSON array", "targets")
+	}
+	content := reqStr(req, "content")
+	if content == "" {
+		return errResult(ErrCodeArgInvalid, "content is required", "content")
+	}
+	author := reqStr(req, "author")
+
+	svcTargets := make([]service.CommentTarget, 0, len(targets))
+	byKey := make(map[string]commentBulkTarget, len(targets))
+	for i, t := range targets {
+		if t.EntityType == "" || t.EntityID == "" {
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("targets[%d] must have non-empty entity_type and entity_id", i), "targets")
+		}
+		svcTargets = append(svcTargets, service.CommentTarget{EntityType: t.EntityType, EntityID: t.EntityID})
+		byKey[fmt.Sprintf("%s:%s", t.EntityType, t.EntityID)] = t
+	}
+
+	created, _, failed := a.svc.Comment.BulkAdd(svcTargets, author, content)
+	if created == nil {
+		created = []*sqlstore.CommentRecord{}
+	}
+	out := make([]commentBulkAddFailure, 0, len(failed))
+	for _, f := range failed {
+		code, msg, field := mapServiceError(f.Err)
+		out = append(out, commentBulkAddFailure{
+			Target: byKey[f.ID],
+			Error:  &ErrorInfo{Code: code, Message: msg, Field: field},
+		})
+	}
+	return okResult(map[string]any{
+		"succeeded": created,
+		"failed":    out,
+	})
 }

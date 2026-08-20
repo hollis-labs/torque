@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -84,7 +85,29 @@ func (s *CommentService) SetObserver(o CommentObserver) {
 
 // Add inserts a new comment on an arbitrary entity and returns the persisted
 // record (including id and created_at populated by the DB).
+//
+// entityType is validated against sqlstore.ValidCommentEntityTypes
+// (ADR-0004 §5's Comment target inventory: task/project/epic/sprint) — an
+// empty value defaults to task first, same as the pre-existing store-layer
+// default in AddComment. This is the ENT-COMMENT fix for the "documented as
+// future, never shipped" entity_type gap: previously ANY string was
+// silently accepted (the comments table has no FK to validate against —
+// see migration 019's rationale), so "project"/"epic"/"sprint" already
+// round-tripped through the DB, but nothing ever confirmed a caller-supplied
+// value was one of the entity kinds Comment actually documents support for.
+// Callers that need to bypass this (e.g. the store-layer polymorphism test
+// exercising an arbitrary "collection" entity_type) call
+// sqlstore.Store.AddComment directly, below this validation.
 func (s *CommentService) Add(entityType, entityID, author, content string) (*sqlstore.CommentRecord, error) {
+	if entityType == "" {
+		entityType = sqlstore.EntityTypeTask
+	}
+	if !sqlstore.ValidCommentEntityTypes[entityType] {
+		return nil, &ValidationError{
+			Field:   "entity_type",
+			Message: fmt.Sprintf("must be one of: task, project, epic, sprint (got %q)", entityType),
+		}
+	}
 	rec := &sqlstore.CommentRecord{
 		EntityType: entityType,
 		EntityID:   entityID,
@@ -107,7 +130,47 @@ func (s *CommentService) AddForTask(taskID, author, content string) (*sqlstore.C
 	return s.Add(sqlstore.EntityTypeTask, taskID, author, content)
 }
 
-// List returns all comments for the given entity, oldest first.
+// CommentTarget names one (entity_type, entity_id) ref for BulkAdd.
+type CommentTarget struct {
+	EntityType string
+	EntityID   string
+}
+
+// BulkAdd posts the same comment text to many entity refs in one call (e.g.
+// broadcast a note to every task in a sprint). Unlike Task's BulkUpdate/
+// BulkDelete/BulkTag (bulk.go's RunBulk applied to an existing ids[]),
+// BulkAdd CREATES a new comment per target rather than operating on
+// existing rows — there is no pre-existing "id" to key partial-success
+// failures by, so each target's own (entity_type, entity_id) pair is used
+// as RunBulk's id string instead (formatted "entity_type:entity_id").
+// Successfully created records are returned alongside the RunBulk-shaped
+// (succeeded ids, failed) pair so callers get both the created records AND
+// the uniform bulk partial-success envelope.
+func (s *CommentService) BulkAdd(targets []CommentTarget, author, content string) (created []*sqlstore.CommentRecord, succeededKeys []string, failed []BulkItemError) {
+	byKey := make(map[string]CommentTarget, len(targets))
+	keys := make([]string, len(targets))
+	for i, t := range targets {
+		key := fmt.Sprintf("%s:%s", t.EntityType, t.EntityID)
+		keys[i] = key
+		byKey[key] = t
+	}
+
+	succeededKeys, failed = RunBulk(keys, func(key string) error {
+		t := byKey[key]
+		rec, err := s.Add(t.EntityType, t.EntityID, author, content)
+		if err != nil {
+			return err
+		}
+		created = append(created, rec)
+		return nil
+	})
+	return created, succeededKeys, failed
+}
+
+// List returns all comments for the given entity, oldest first. Unpaginated
+// — the simple/stable primitive the HTTP API and torque_comment_add's
+// "review the thread" doc text point to. torque_comment_list (MCP) uses
+// ListFiltered/Search's richer filter+sort+cursor path instead.
 func (s *CommentService) List(entityType, entityID string) ([]sqlstore.CommentRecord, error) {
 	return s.store.ListCommentsForEntity(entityType, entityID)
 }
@@ -120,6 +183,52 @@ func (s *CommentService) ListForTask(taskID string) ([]sqlstore.CommentRecord, e
 // Search returns comments matching the filter. The caller is responsible for
 // enforcing any required-field contract (e.g. non-empty Search) at the
 // MCP/HTTP layer — the store accepts an empty Search as "no content filter".
+// Also used by torque_comment_list (via ListFiltered) since list and search
+// share one underlying query shape at the store layer (ADR-0004 §3: they
+// stay distinct TOOLS with distinct defaults, not a distinct query builder).
 func (s *CommentService) Search(f sqlstore.CommentFilter) ([]sqlstore.CommentRecord, error) {
 	return s.store.SearchComments(f)
+}
+
+// ListFiltered is Search's alias for torque_comment_list's call site —
+// same underlying query, named separately so the MCP handler reads clearly
+// (list vs search) even though both funnel through one store method.
+func (s *CommentService) ListFiltered(f sqlstore.CommentFilter) ([]sqlstore.CommentRecord, error) {
+	return s.store.SearchComments(f)
+}
+
+// Update edits an existing comment's content. Author-scoped: only the
+// comment's original author may edit it — a mismatched author returns
+// *PermissionError (mapped to error.code=permission at the MCP layer), not
+// silently applied or a generic not_found. Returns the updated record.
+func (s *CommentService) Update(id int64, author, content string) (*sqlstore.CommentRecord, error) {
+	existing, err := s.store.GetComment(id)
+	if err != nil {
+		return nil, err
+	}
+	if existing.Author != author {
+		return nil, &PermissionError{
+			Message: fmt.Sprintf("comment %d is authored by %q, not %q", id, existing.Author, author),
+		}
+	}
+	if err := s.store.UpdateComment(id, content); err != nil {
+		return nil, err
+	}
+	return s.store.GetComment(id)
+}
+
+// Delete removes a comment. Author-scoped: only the comment's original
+// author may delete it — a mismatched author returns *PermissionError, not
+// silently applied.
+func (s *CommentService) Delete(id int64, author string) error {
+	existing, err := s.store.GetComment(id)
+	if err != nil {
+		return err
+	}
+	if existing.Author != author {
+		return &PermissionError{
+			Message: fmt.Sprintf("comment %d is authored by %q, not %q", id, existing.Author, author),
+		}
+	}
+	return s.store.DeleteComment(id)
 }

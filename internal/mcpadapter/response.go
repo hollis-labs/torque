@@ -31,6 +31,8 @@ const (
 	maxGenericListLimit      = 500
 	defaultTemplateListLimit = 100
 	maxTemplateListLimit     = 500
+	defaultCommentListLimit  = 50
+	maxCommentListLimit      = 200
 )
 
 // listMeta is the companion to items[] in the list/search response envelope.
