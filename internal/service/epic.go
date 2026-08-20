@@ -82,11 +82,54 @@ func (s *EpicService) Get(id string) (*sqlstore.EpicRecord, error) {
 // List returns epics optionally filtered by status and projectID.
 // includeArchived=false (the default) excludes archived rows; pass true to
 // surface them too.
+//
+// This is the pre-PRIM-001/002 signature, kept unchanged for its existing
+// callers (HTTP's listEpics). New callers that need free-text search,
+// sort, or cursor pagination should use ListPaginated instead.
 func (s *EpicService) List(status, projectID string, includeArchived bool) ([]sqlstore.EpicRecord, error) {
 	if err := s.feature.Require("epics"); err != nil {
 		return nil, err
 	}
 	return s.store.ListEpics(sqlstore.EpicFilter{Status: status, ProjectID: projectID, IncludeArchived: includeArchived})
+}
+
+// EpicListInput holds torque_epic_list's full filter/search/sort/cursor
+// surface (ADR-0004 §5: merged search, sort, cursor in one tool). SortBy/
+// SortDir/AfterSortValue/AfterID are expected to already be validated by
+// the caller (mcpadapter validates sort_by/sort_dir against an allow-list
+// via internal/service/pagination before building this input, mirroring
+// Task's handleTaskList).
+type EpicListInput struct {
+	Status          string
+	ProjectID       string
+	Search          string
+	IncludeArchived bool
+	SortBy          string
+	SortDir         string
+	AfterSortValue  string
+	AfterID         string
+	Limit           int
+}
+
+// ListPaginated returns epics matching input's filters, applying PRIM-001
+// cursor pagination and PRIM-002 sort on top of List's plain status/
+// projectID/includeArchived filtering. Reference: TaskService.List /
+// sqlstore.ListTasks (internal/mcpadapter/task_tools.go's handleTaskList).
+func (s *EpicService) ListPaginated(input EpicListInput) ([]sqlstore.EpicRecord, error) {
+	if err := s.feature.Require("epics"); err != nil {
+		return nil, err
+	}
+	return s.store.ListEpics(sqlstore.EpicFilter{
+		Status:          input.Status,
+		ProjectID:       input.ProjectID,
+		Search:          input.Search,
+		IncludeArchived: input.IncludeArchived,
+		Limit:           input.Limit,
+		SortBy:          input.SortBy,
+		SortDir:         input.SortDir,
+		AfterSortValue:  input.AfterSortValue,
+		AfterID:         input.AfterID,
+	})
 }
 
 // Update applies a partial update to an epic.
