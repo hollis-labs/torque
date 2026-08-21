@@ -80,3 +80,53 @@ func TestIssueListAndSearchAreKindScoped(t *testing.T) {
 	require.Len(t, found, 1)
 	require.Equal(t, issue.ID, found[0].ID)
 }
+
+func TestIssueDelete(t *testing.T) {
+	svc := setupService(t)
+	require.NoError(t, svc.Feature.Enable("projects"))
+	project, err := svc.Project.Create(service.ProjectCreateInput{Name: "Issues Project", RepoPath: t.TempDir()})
+	require.NoError(t, err)
+
+	issue, err := svc.Issue.Create(service.IssueCreateInput{
+		Title:     "Bug to delete",
+		Body:      "Gone soon.",
+		ProjectID: project.ID,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, svc.Issue.Delete(issue.ID))
+
+	_, err = svc.Issue.Get(issue.ID)
+	require.Error(t, err)
+}
+
+func TestIssueDelete_RejectsNonIssueTask(t *testing.T) {
+	svc := setupService(t)
+	require.NoError(t, svc.Feature.Enable("projects"))
+	project, err := svc.Project.Create(service.ProjectCreateInput{Name: "Issues Project", RepoPath: t.TempDir()})
+	require.NoError(t, err)
+
+	task, err := svc.Task.Create(service.TaskCreateInput{
+		Title:       "Plain task",
+		Description: "Not an issue.",
+		ProjectID:   project.ID,
+	})
+	require.NoError(t, err)
+
+	err = svc.Issue.Delete(task.ID)
+	require.Error(t, err)
+	var validation *service.ValidationError
+	require.ErrorAs(t, err, &validation)
+	require.Equal(t, "kind", validation.Field)
+
+	// The task itself must still exist — Delete must reject before it ever
+	// reaches TaskService.Delete.
+	_, err = svc.Task.Get(task.ID)
+	require.NoError(t, err)
+}
+
+func TestIssueDelete_NotFound(t *testing.T) {
+	svc := setupService(t)
+	err := svc.Issue.Delete("CW-nonexistent")
+	require.Error(t, err)
+}

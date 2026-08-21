@@ -2,6 +2,7 @@ package mcpadapter
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -569,6 +570,63 @@ func cappedCursorJSONResult(items []any, limit int, sortBy, sortDir string, hasM
 		return errResult(ErrCodeInternal, "response serialization failed", "")
 	}
 	return mcp.NewToolResultText(string(b)), nil
+}
+
+// ---- sort/cursor helper -----------------------------------------------------
+
+// resolveSortAndCursor resolves sort_by/sort_dir/cursor off an MCP request
+// against one entity's default order and sort-column allow-list (PRIM-001/
+// PRIM-002), returning values ready to drop straight into that entity's
+// TaskFilter/ProjectFilter/EpicFilter/SprintFilter (SortBy, SortDir,
+// AfterSortValue, AfterID). Shared by task_tools.go, project_tools.go,
+// sprint_tools.go, epic_tools.go, and issue_tools.go — each call site
+// previously hand-copied this same ~20-line block, differing only in which
+// per-entity default/allow-list constants it passed to
+// pagination.ValidateSortBy/ValidateSortDir.
+//
+// On any validation failure, errRes is non-nil and the caller must return it
+// immediately (matching buildTaskUpdateInput's errRes convention above):
+//
+//	sortBy, sortDir, afterSortValue, afterID, errRes := resolveSortAndCursor(req, xSortDefaultBy, xSortDefaultDir, xSortAllowList...)
+//	if errRes != nil {
+//		return errRes, nil
+//	}
+func resolveSortAndCursor(req mcp.CallToolRequest, defaultBy, defaultDir string, allowList ...string) (sortBy, sortDir, afterSortValue, afterID string, errRes *mcp.CallToolResult) {
+	sortBy = defaultBy
+	if raw := reqStr(req, "sort_by"); raw != "" {
+		v, err := pagination.ValidateSortBy(raw, allowList...)
+		if err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "sort_by")
+			return "", "", "", "", res
+		}
+		sortBy = v
+	}
+	sortDir = defaultDir
+	if raw := reqStr(req, "sort_dir"); raw != "" {
+		v, err := pagination.ValidateSortDir(raw)
+		if err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "sort_dir")
+			return "", "", "", "", res
+		}
+		sortDir = v
+	}
+
+	// DEC-001: cursors aren't portable across sort orders — validated against
+	// this request's (now-resolved) sort_by/sort_dir.
+	if raw := reqStr(req, "cursor"); raw != "" {
+		c, err := pagination.Decode(raw)
+		if err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid cursor: %v", err), "cursor")
+			return "", "", "", "", res
+		}
+		if err := c.Validate(sortBy, sortDir); err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "cursor")
+			return "", "", "", "", res
+		}
+		afterSortValue, afterID = c.SortValue, c.ID
+	}
+
+	return sortBy, sortDir, afterSortValue, afterID, nil
 }
 
 // ---- tag helper -------------------------------------------------------------

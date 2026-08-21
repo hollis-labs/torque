@@ -8,7 +8,6 @@ import (
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
-	"github.com/hollis-labs/torque/internal/service/pagination"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -178,43 +177,6 @@ func parseCommentDateArg(raw string) (string, error) {
 	return "", fmt.Errorf("must be RFC3339 (e.g. \"2026-01-02T15:04:05Z\"), got %q", raw)
 }
 
-// resolveCommentSort validates+resolves sort_by/sort_dir against defaults
-// and, if a cursor was supplied, decodes+validates it against the resolved
-// sort_by/sort_dir (PRIM-001/PRIM-002, mirroring handleTaskList's pattern).
-func resolveCommentSort(req mcp.CallToolRequest, defaultBy, defaultDir string) (sortBy, sortDir, afterSortValue, afterID string, errRes *mcp.CallToolResult) {
-	sortBy = defaultBy
-	if raw := reqStr(req, "sort_by"); raw != "" {
-		v, err := pagination.ValidateSortBy(raw, commentSortAllowList...)
-		if err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "sort_by")
-			return "", "", "", "", res
-		}
-		sortBy = v
-	}
-	sortDir = defaultDir
-	if raw := reqStr(req, "sort_dir"); raw != "" {
-		v, err := pagination.ValidateSortDir(raw)
-		if err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "sort_dir")
-			return "", "", "", "", res
-		}
-		sortDir = v
-	}
-	if raw := reqStr(req, "cursor"); raw != "" {
-		c, err := pagination.Decode(raw)
-		if err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid cursor: %v", err), "cursor")
-			return "", "", "", "", res
-		}
-		if err := c.Validate(sortBy, sortDir); err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "cursor")
-			return "", "", "", "", res
-		}
-		afterSortValue, afterID = c.SortValue, c.ID
-	}
-	return sortBy, sortDir, afterSortValue, afterID, nil
-}
-
 // commentListEnvelope builds the shared {items, meta} cursor-pagination
 // response for both torque_comment_list and torque_comment_search — see
 // taskListCursorEnvelope for the reference pattern this mirrors.
@@ -237,7 +199,7 @@ func (a *Adapter) handleCommentList(ctx context.Context, req mcp.CallToolRequest
 	limit := clampLimit(reqInt(req, "limit"), defaultCommentListLimit, maxCommentListLimit)
 	verbose := reqStrBool(req, "verbose")
 
-	sortBy, sortDir, afterSortValue, afterID, errRes := resolveCommentSort(req, commentListSortDefaultBy, commentListSortDefaultDir)
+	sortBy, sortDir, afterSortValue, afterID, errRes := resolveSortAndCursor(req, commentListSortDefaultBy, commentListSortDefaultDir, commentSortAllowList...)
 	if errRes != nil {
 		return errRes, nil
 	}
@@ -300,7 +262,7 @@ func (a *Adapter) handleCommentSearch(ctx context.Context, req mcp.CallToolReque
 	}
 	limit := clampLimit(reqInt(req, "limit"), defaultCommentSearchLimit, maxCommentSearchLimit)
 
-	sortBy, sortDir, afterSortValue, afterID, errRes := resolveCommentSort(req, commentSearchSortDefaultBy, commentSearchSortDefaultDir)
+	sortBy, sortDir, afterSortValue, afterID, errRes := resolveSortAndCursor(req, commentSearchSortDefaultBy, commentSearchSortDefaultDir, commentSortAllowList...)
 	if errRes != nil {
 		return errRes, nil
 	}

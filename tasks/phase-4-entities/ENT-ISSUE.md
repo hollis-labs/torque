@@ -47,6 +47,9 @@ tasks.
       work on the merged tool.
 - [x] `bulk_update` exists per PRIM-003.
 - [x] `bulk_transition` works for issues via the shared Task FSM path.
+- [x] `torque_issue_delete` exists, kind=issue scoped (rejects non-issue task
+      ids the same way `get`/`update` do) — added in a follow-up pass; see
+      Execution notes.
 
 ## Out of scope
 
@@ -121,3 +124,15 @@ exist. Updated `internal/service/issue_test.go` to call the merged
 
 **Verification:** `go build ./...`, `go vet ./...`, and `go test ./...`
 all pass (full suite, not just the touched packages).
+
+**Follow-up (post-merge correction):** `delete` was named in-scope in this
+task's own Summary line but never actually implemented — `IssueService` had
+no `Delete` method and no `torque_issue_delete` tool existed, an oversight
+caught in a self-review of the ADR-0004 work and not called out anywhere as
+an intentional cut. Added `IssueService.Delete` (kind=issue guard via `Get`,
+same pattern as `Update`) and `torque_issue_delete`
+(`internal/mcpadapter/issue_tools.go`), with coverage in
+`internal/service/issue_test.go` and
+`internal/mcpadapter/issue_tools_test.go`. This retires the
+`torque_task_delete {"id": "<issue id>"}` workaround documented in
+`docs/mcp-tools-reference.md`.

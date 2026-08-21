@@ -262,18 +262,9 @@ naturally, first non-empty one wins. Source:
 | `torque_issue_get` | Fetch by id; rejects a non-issue task id. |
 | `torque_issue_list` | Filter (`project_id`, `status`) + free-text `query` (over id/title/body), merged list+search in one tool, DB-level limit (no full-fetch-then-truncate). |
 | `torque_issue_update` | Partial patch; rejects non-issue ids. |
+| `torque_issue_delete` | Hard delete (runs/artifacts/comments cascade); rejects non-issue ids. Supersedes the old `torque_task_delete` workaround. |
 | `torque_issue_bulk_update` | Same field set as `torque_issue_update`, applied across `ids[]`. |
 | `torque_issue_bulk_transition` | Delegates straight to `TaskService.BulkTransition` — issues share Task's FSM. |
-
-**Known gap vs. the ADR-0004 target inventory:** there is no
-`torque_issue_delete`. `IssueService` has no `Delete` method at all — only
-`Create`/`Get`/`List`/`Update`/`BulkUpdate` exist
-(`internal/service/issue.go`). The ADR §5 target inventory and
-`tasks/phase-4-entities/ENT-ISSUE.md`'s own summary both name `delete` as
-in-scope, but it was never implemented and the task's acceptance criteria
-don't mention it either — this looks like an oversight, not a deliberate
-cut. **Workaround:** `torque_task_delete {"id": "<issue id>"}` works —
-`TaskService.Delete` has no `kind` guard, unlike `Get`/`Update`.
 
 **Known limitation (by design, not a bug):** a freshly created issue starts
 at `status=backlog`, which isn't a key in `TaskService`'s transition table —

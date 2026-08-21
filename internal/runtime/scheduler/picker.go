@@ -156,6 +156,35 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, PickDecisions, error) {
 	if err != nil {
 		return nil, decisions, err
 	}
+
+	// Batch-fetch dependency data for the whole candidate set up front so the
+	// eligibility loop below does zero-to-two queries total for dependency
+	// checking instead of one-per-candidate-plus-one-per-edge. This is a pure
+	// fast-path optimization: either bulk fetch failing just falls back to
+	// the original per-task/per-edge queries inside the loop (see the dep
+	// check below), so a transient error here never changes which tasks get
+	// skipped — it only costs the round trips this batching was meant to
+	// avoid, for this one tick.
+	candidateIDs := make([]string, len(candidates))
+	for i, t := range candidates {
+		candidateIDs[i] = t.ID
+	}
+	depsByTask, depsBulkErr := p.store.ListTaskDependencyIDsBulk(candidateIDs)
+	var depStatuses map[string]string
+	var statusBulkErr error
+	if depsBulkErr == nil {
+		depIDSet := make(map[string]struct{})
+		for _, deps := range depsByTask {
+			for _, id := range deps {
+				depIDSet[id] = struct{}{}
+			}
+		}
+		depIDs := make([]string, 0, len(depIDSet))
+		for id := range depIDSet {
+			depIDs = append(depIDs, id)
+		}
+		depStatuses, statusBulkErr = p.store.GetTaskStatuses(depIDs)
+	}
 	busyProjects := make(map[string]struct{}, len(busy))
 	for _, t := range busy {
 		if t.Kind == "internal" || t.Kind == "plan" || t.Kind == "parent" || t.Kind == "issue" {
@@ -266,20 +295,42 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, PickDecisions, error) {
 		// again. With the join table, a deleted dependency's edge is gone
 		// by the time this query runs, so it's simply absent from deps and
 		// no longer blocks the dependent task on the next tick.
-		deps, err := p.store.ListTaskDependencyIDs(task.ID)
-		if err != nil {
-			record(task.ID, SkipReasonDepUnmet)
-			continue
+		//
+		// Batched (see the bulk fetch above Pick's main loop): deps and dep
+		// statuses come from the pre-fetched maps in the common case, falling
+		// back to the original per-task/per-edge queries only when this
+		// tick's bulk fetch itself failed — same fail-closed-on-error
+		// behavior as before, just fewer round trips when nothing errors.
+		var deps []string
+		if depsBulkErr == nil {
+			deps = depsByTask[task.ID]
+		} else {
+			deps, err = p.store.ListTaskDependencyIDs(task.ID)
+			if err != nil {
+				record(task.ID, SkipReasonDepUnmet)
+				continue
+			}
 		}
 		if len(deps) > 0 {
 			allMet := true
 			for _, depID := range deps {
-				depTask, err := p.store.GetTask(depID)
-				if err != nil {
-					allMet = false
-					break
+				var status string
+				if depsBulkErr == nil && statusBulkErr == nil {
+					s, ok := depStatuses[depID]
+					if !ok {
+						allMet = false
+						break
+					}
+					status = s
+				} else {
+					depTask, err := p.store.GetTask(depID)
+					if err != nil {
+						allMet = false
+						break
+					}
+					status = depTask.Status
 				}
-				if depTask.Status != "done" {
+				if status != "done" {
 					allMet = false
 					break
 				}

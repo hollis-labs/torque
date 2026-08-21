@@ -483,6 +483,46 @@ func (s *Store) GetTask(id string) (*TaskRecord, error) {
 	return t, err
 }
 
+// GetTaskStatuses returns the status column for many tasks at once, keyed by
+// id — one query instead of one-per-id. The scheduler picker's per-tick
+// dependency check (picker.go) uses this to batch what used to be a
+// per-dependency GetTask round trip. An id that doesn't exist is simply
+// absent from the returned map (mirrors GetTask's not-found case, without
+// the error — callers that need "unmet" on a missing id get that for free
+// from a plain map lookup). Empty input short-circuits to an empty map with
+// no query.
+func (s *Store) GetTaskStatuses(ids []string) (map[string]string, error) {
+	result := make(map[string]string, len(ids))
+	if len(ids) == 0 {
+		return result, nil
+	}
+
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	rows, err := s.ReadDB().Query(
+		`SELECT id, status FROM tasks WHERE id IN (`+strings.Join(placeholders, ",")+`)`,
+		args...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id, status string
+		if err := rows.Scan(&id, &status); err != nil {
+			return nil, err
+		}
+		result[id] = status
+	}
+	return result, rows.Err()
+}
+
 // ListTasks returns tasks matching the filter. Default order (f.SortBy ==
 // "") is priority ASC, created_at ASC — the order FIX-004 confirmed
 // torque_task_list's docstring should describe. When f.SortBy is set

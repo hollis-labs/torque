@@ -6,7 +6,6 @@ import (
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
-	"github.com/hollis-labs/torque/internal/service/pagination"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -258,39 +257,12 @@ func (a *Adapter) handleEpicList(ctx context.Context, req mcp.CallToolRequest) (
 	limit := clampLimit(reqInt(req, "limit"), defaultGenericListLimit, maxGenericListLimit)
 	verbose := reqStrBool(req, "verbose")
 
-	// PRIM-002: sort_by/sort_dir, allow-list validated. Omitted values fall
-	// back to the tool's existing documented default order (updated_at
-	// DESC).
-	sortBy := epicSortDefaultBy
-	if raw := reqStr(req, "sort_by"); raw != "" {
-		v, err := pagination.ValidateSortBy(raw, epicSortAllowList...)
-		if err != nil {
-			return errResult(ErrCodeArgInvalid, err.Error(), "sort_by")
-		}
-		sortBy = v
-	}
-	sortDir := epicSortDefaultDir
-	if raw := reqStr(req, "sort_dir"); raw != "" {
-		v, err := pagination.ValidateSortDir(raw)
-		if err != nil {
-			return errResult(ErrCodeArgInvalid, err.Error(), "sort_dir")
-		}
-		sortDir = v
-	}
-
-	// PRIM-001: decode + validate the incoming cursor, if any, against this
-	// request's (now-resolved) sort_by/sort_dir. DEC-001: cursors aren't
-	// portable across sort orders.
-	var afterSortValue, afterID string
-	if raw := reqStr(req, "cursor"); raw != "" {
-		c, err := pagination.Decode(raw)
-		if err != nil {
-			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid cursor: %v", err), "cursor")
-		}
-		if err := c.Validate(sortBy, sortDir); err != nil {
-			return errResult(ErrCodeArgInvalid, err.Error(), "cursor")
-		}
-		afterSortValue, afterID = c.SortValue, c.ID
+	// PRIM-002/PRIM-001: sort_by/sort_dir/cursor, allow-list validated.
+	// Omitted sort values fall back to the tool's existing documented
+	// default order (updated_at DESC).
+	sortBy, sortDir, afterSortValue, afterID, errRes := resolveSortAndCursor(req, epicSortDefaultBy, epicSortDefaultDir, epicSortAllowList...)
+	if errRes != nil {
+		return errRes, nil
 	}
 
 	input := service.EpicListInput{

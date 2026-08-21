@@ -2,11 +2,9 @@ package mcpadapter
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
-	"github.com/hollis-labs/torque/internal/service/pagination"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -31,6 +29,14 @@ Use torque_task_get for generic task IDs that may not be issues.
 Example: {"id":"CW-20260514-0001"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Issue task ID")),
 	), a.handleIssueGet)
+
+	a.addTool(mcp.NewTool("torque_issue_delete",
+		mcp.WithDescription(`Hard-delete an issue row and its linkage (runs, artifacts, comments cascade). Rejects non-issue task IDs.
+Use sparingly — prefer torque_issue_update to close out via status where possible. Supersedes the torque_task_delete workaround previously needed here (that tool has no kind guard, so it worked but skipped the is-this-actually-an-issue check).
+Response shape: data = {id, deleted: true}.
+Example: {"id":"CW-20260514-0001"}`),
+		mcp.WithString("id", mcp.Required(), mcp.Description("Issue task ID")),
+	), a.handleIssueDelete)
 
 	a.addTool(mcp.NewTool("torque_issue_list",
 		mcp.WithDescription(`List issues (hard-scoped to kind=issue), optionally narrowed by project_id/status and a free-text query over ID/title/body. Ordered priority ASC (tiebreak id ASC) by default. Pass sort_by (priority|status|updated_at|created_at) and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid.
@@ -142,6 +148,14 @@ func (a *Adapter) handleIssueGet(ctx context.Context, req mcp.CallToolRequest) (
 	return a.issueResult(issue)
 }
 
+func (a *Adapter) handleIssueDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id := reqStr(req, "id")
+	if err := a.svc.Issue.Delete(id); err != nil {
+		return errFromService(err)
+	}
+	return okResult(map[string]any{"id": id, "deleted": true})
+}
+
 // handleIssueList is the merged list/search handler (ADR-0004 §3): the
 // former torque_issue_list and torque_issue_search collapsed into one tool.
 // It follows torque_task_list's PRIM-001/PRIM-002 reference pattern
@@ -153,33 +167,9 @@ func (a *Adapter) handleIssueList(ctx context.Context, req mcp.CallToolRequest) 
 	limit := clampLimit(reqInt(req, "limit"), 50, maxTaskListLimit)
 	verbose := reqStrBool(req, "verbose")
 
-	sortBy := taskSortDefaultBy
-	if raw := reqStr(req, "sort_by"); raw != "" {
-		v, err := pagination.ValidateSortBy(raw, taskSortAllowList...)
-		if err != nil {
-			return errResult(ErrCodeArgInvalid, err.Error(), "sort_by")
-		}
-		sortBy = v
-	}
-	sortDir := taskSortDefaultDir
-	if raw := reqStr(req, "sort_dir"); raw != "" {
-		v, err := pagination.ValidateSortDir(raw)
-		if err != nil {
-			return errResult(ErrCodeArgInvalid, err.Error(), "sort_dir")
-		}
-		sortDir = v
-	}
-
-	var afterSortValue, afterID string
-	if raw := reqStr(req, "cursor"); raw != "" {
-		c, err := pagination.Decode(raw)
-		if err != nil {
-			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid cursor: %v", err), "cursor")
-		}
-		if err := c.Validate(sortBy, sortDir); err != nil {
-			return errResult(ErrCodeArgInvalid, err.Error(), "cursor")
-		}
-		afterSortValue, afterID = c.SortValue, c.ID
+	sortBy, sortDir, afterSortValue, afterID, errRes := resolveSortAndCursor(req, taskSortDefaultBy, taskSortDefaultDir, taskSortAllowList...)
+	if errRes != nil {
+		return errRes, nil
 	}
 
 	issues, err := a.svc.Issue.List(service.IssueListInput{

@@ -65,6 +65,15 @@ func (s *IssueService) Get(id string) (*sqlstore.TaskRecord, error) {
 	return task, nil
 }
 
+// Delete removes an issue by task ID and rejects non-issue task rows, same
+// kind=issue scoping as Get/Update.
+func (s *IssueService) Delete(id string) error {
+	if _, err := s.Get(id); err != nil {
+		return err
+	}
+	return s.tasks.Delete(id)
+}
+
 // IssueListInput is the merged list/search filter for issues (ADR-0004 §3:
 // "Search folds into list where it's the same query" — Issue's `_search`
 // tool ran the identical query `_list`'s `search` param already ran, same

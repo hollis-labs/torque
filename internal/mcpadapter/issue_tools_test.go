@@ -292,4 +292,77 @@ func TestFullStack_IssueSearchToolRemoved(t *testing.T) {
 	require.True(t, toolIsRegistered(t, a, "torque_issue_list"))
 	require.True(t, toolIsRegistered(t, a, "torque_issue_bulk_update"))
 	require.True(t, toolIsRegistered(t, a, "torque_issue_bulk_transition"))
+	require.True(t, toolIsRegistered(t, a, "torque_issue_delete"))
+}
+
+// TestFullStack_IssueDelete covers the gap flagged against the ADR-0004
+// target inventory: IssueService had no Delete method at all, so
+// torque_issue_delete didn't exist. Deleting a real issue must remove it,
+// and deleting a non-issue task id through the issue-scoped tool must be
+// rejected (kind=issue scoping, same as get/update) rather than silently
+// falling through to a plain task delete.
+func TestFullStack_IssueDelete(t *testing.T) {
+	a := setupAdapterWithFeatures(t)
+	projText, isErr := callTool(t, a, "torque_project_create", map[string]interface{}{
+		"name": "Issue Project", "repo_path": t.TempDir(),
+	})
+	require.False(t, isErr)
+	var project map[string]interface{}
+	parseData(t, projText, &project)
+	projectID := project["ID"].(string)
+
+	issueText, isErr := callTool(t, a, "torque_issue_create", map[string]interface{}{
+		"title": "to be deleted", "details": "x", "project_id": projectID,
+	})
+	require.False(t, isErr)
+	var issue map[string]interface{}
+	parseData(t, issueText, &issue)
+	issueID := issue["ID"].(string)
+
+	delText, isErr := callTool(t, a, "torque_issue_delete", map[string]interface{}{"id": issueID})
+	require.False(t, isErr, "delete should not error: %s", delText)
+	var delResp struct {
+		ID      string `json:"id"`
+		Deleted bool   `json:"deleted"`
+	}
+	parseData(t, delText, &delResp)
+	require.Equal(t, issueID, delResp.ID)
+	require.True(t, delResp.Deleted)
+
+	_, isErr = callTool(t, a, "torque_issue_get", map[string]interface{}{"id": issueID})
+	require.True(t, isErr, "deleted issue must no longer be gettable")
+}
+
+func TestFullStack_IssueDelete_RejectsNonIssueTask(t *testing.T) {
+	a := setupAdapterWithFeatures(t)
+	projText, isErr := callTool(t, a, "torque_project_create", map[string]interface{}{
+		"name": "Issue Project", "repo_path": t.TempDir(),
+	})
+	require.False(t, isErr)
+	var project map[string]interface{}
+	parseData(t, projText, &project)
+	projectID := project["ID"].(string)
+
+	taskText, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "plain task", "description": "not an issue", "project_id": projectID,
+	})
+	require.False(t, isErr)
+	var task map[string]interface{}
+	parseData(t, taskText, &task)
+	taskID := task["ID"].(string)
+
+	delText, isErr := callTool(t, a, "torque_issue_delete", map[string]interface{}{"id": taskID})
+	require.True(t, isErr, "torque_issue_delete must reject a non-issue task id")
+	code, _, field := parseError(t, delText)
+	require.Equal(t, "arg_invalid", code)
+	require.Equal(t, "kind", field)
+
+	getText, isErr := callTool(t, a, "torque_task_get", map[string]interface{}{"id": taskID})
+	require.False(t, isErr, "the task must still exist: %s", getText)
+}
+
+func TestFullStack_IssueDelete_NotFound(t *testing.T) {
+	a := setupAdapterWithFeatures(t)
+	_, isErr := callTool(t, a, "torque_issue_delete", map[string]interface{}{"id": "CW-nonexistent"})
+	require.True(t, isErr)
 }
