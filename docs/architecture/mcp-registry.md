@@ -60,16 +60,18 @@ orchestration, run tracking, scheduling, and workspace management.
 
 ---
 
-### 3. Vanta Conduit
+### 3. Tesseract
 
 | Field | Value |
 |---|---|
-| Binary | `contextd mcp` |
+| Binary | `tesseract mcp` |
 | Transport | stdio |
 | Status | **Registered** |
 
-Context broker. Exposes tools for namespace management, context read/write,
-typed views, promotion workflows, and audit.
+Three-domain persistence service: memory (recall, activation, revision history),
+knowledge (semantic facets and pointer verification), and context (namespace
+management, read/write, typed views, promotion workflows, and audit). The same
+store is served through two doors — this MCP server and an HTTP `/v1/*` API.
 
 ---
 
@@ -97,8 +99,8 @@ services (health checks, logs, status).
 | MCP Server | **None** |
 
 Carrier is a content operations platform (ingest, generate, route). It has no
-MCP server implementation. Design documents exist for future Volon/Vanta Conduit MCP
-integration as an MCP *client* (calling into Volon and Vanta Conduit), but Carrier does
+MCP server implementation. Design documents exist for future Volon/Tesseract MCP
+integration as an MCP *client* (calling into Volon and Tesseract), but Carrier does
 not expose its own operations as MCP tools.
 
 **Recommendation:** An MCP server for Carrier could expose:
@@ -119,7 +121,7 @@ not expose its own operations as MCP tools.
 
 Nanite is a task/note management app with a desktop GUI (Wails), HTTP API, CLI,
 and Claude AI chat integration using Anthropic's native tool_use protocol. It
-does not implement MCP. It references Volon/Vanta Conduit/Hadron as external MCP
+does not implement MCP. It references Volon/Tesseract/Hadron as external MCP
 dependencies but does not expose itself as a server.
 
 **Recommendation:** An MCP server for Nanite could expose:
@@ -136,11 +138,11 @@ dependencies but does not expose itself as a server.
 |---|---|---|---|
 | Volon | Yes | Yes | 21 |
 | Hadron | Yes | Yes | 50+ |
-| Vanta Conduit | Yes | Yes | 15+ |
+| Tesseract | Yes | Yes | 15+ |
 | Cerberus | Yes | Yes | 6 |
 | Carrier | No | N/A | — |
 | Nanite | No | N/A | — |
 
-All four existing MCP servers (Volon, Hadron, Vanta Conduit, Cerberus) are registered
+All four existing MCP servers (Volon, Hadron, Tesseract, Cerberus) are registered
 in `~/.claude.json`. Carrier and Nanite do not have MCP servers and would need
 implementation before registration.
