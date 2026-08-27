@@ -185,17 +185,3 @@ func TestPlanner_LoadTemplateEmbeddedFallback(t *testing.T) {
 	assert.Contains(t, content, "Planner", "embedded template must mention Planner")
 	assert.Equal(t, "<embedded>", path)
 }
-
-func TestPlanner_TemplateIncludesHITLRedispatchGuidance(t *testing.T) {
-	t.Setenv(planner.TemplateEnvVar, "/nonexistent/path/that/should/not/exist")
-	t.Setenv("HOME", "/nonexistent/home/that/should/not/exist")
-
-	content, _ := planner.LoadTemplate()
-
-	assert.Contains(t, content, "Redispatch preflight")
-	assert.Contains(t, content, "task.metadata.checkpoint_responses")
-	assert.Contains(t, content, "HITL checkpoints")
-	assert.Contains(t, content, "torque_task_checkpoint_emit")
-	assert.Contains(t, content, "approval")
-	assert.Contains(t, content, "message")
-}

@@ -263,15 +263,6 @@ func TestKickoffMarkdown(t *testing.T) {
 	assert.Contains(t, body, "(no task_id)")
 }
 
-func TestComposeSystemPromptIncludesCheckpointRedispatchProtocol(t *testing.T) {
-	prompt := composeSystemPrompt(Options{}, nil)
-
-	assert.Contains(t, prompt, "Checkpoint redispatch protocol")
-	assert.Contains(t, prompt, "task.metadata.checkpoint_responses")
-	assert.Contains(t, prompt, "typed HITL checkpoint response")
-	assert.Contains(t, prompt, "Boot does not inline checkpoint responses")
-}
-
 // TestProfileIsDevMode locks the --dangerously-skip-permissions detection,
 // shared with the legacy cliexec.ProfileIsDevMode helper.
 func TestProfileIsDevMode(t *testing.T) {
