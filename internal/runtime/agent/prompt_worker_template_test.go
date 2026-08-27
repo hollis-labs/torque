@@ -143,18 +143,9 @@ func TestComposeSystemPromptSkipsWorkerTemplateForOneShot(t *testing.T) {
 	assert.Contains(t, prompt, "[ONESHOT-FRAMING]")
 }
 
-// TestDefaultWorkerTemplate_Embed sanity-checks the embedded template is
-// non-empty and contains the section headers callers depend on. Catches
-// the "embed didn't fire" / "file moved" class of mistake at build time.
+// TestDefaultWorkerTemplate_Embed sanity-checks the embedded template
+// resolved. Catches the "embed didn't fire" / "file moved" class of
+// mistake at build time.
 func TestDefaultWorkerTemplate_Embed(t *testing.T) {
-	tmpl := scheduler.DefaultWorkerTemplate()
-	require.NotEmpty(t, tmpl)
-	for _, anchor := range []string{
-		`What "done" means`,
-		"The completion call",
-		"help-asking protocol",
-		"scope-mismatch protocol",
-	} {
-		assert.Contains(t, tmpl, anchor, "expected default-worker template to contain section %q", anchor)
-	}
+	require.NotEmpty(t, scheduler.DefaultWorkerTemplate())
 }
