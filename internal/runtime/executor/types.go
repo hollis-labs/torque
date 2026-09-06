@@ -36,20 +36,20 @@ type ExecutionJob struct {
 	// resolves a per-run worktree it sets RepoRoot to the original repo root
 	// so the canonical checkout is not lost behind the worktree path. Empty
 	// when no worktree resolution happened (executors fall back to WorkingDir).
-	RepoRoot     string
-	ProjectID    string
-	ParentID     string
-	SprintID     string
-	EpicID       string
+	RepoRoot      string
+	ProjectID     string
+	ParentID      string
+	SprintID      string
+	EpicID        string
 	DependsOn     []string
 	LaunchProfile string
 	AgentProfile  string
 	Tools         []string
-	Permissions  map[string]string
-	Environment  map[string]string
-	Files        []string
-	Deliverables []Deliverable
-	Limits       ExecutionLimits
+	Permissions   map[string]string
+	Environment   map[string]string
+	Files         []string
+	Deliverables  []Deliverable
+	Limits        ExecutionLimits
 	// Metadata mirrors the task's freeform metadata JSON (map form). Keys
 	// that executors recognize include timeout_seconds_override (int seconds,
 	// valid range 60..7200). Nil when the task has no metadata set.

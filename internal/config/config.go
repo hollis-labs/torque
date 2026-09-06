@@ -228,7 +228,7 @@ func Load() (*Config, error) {
 		Stuck: StuckConfig{
 			// 90s = midpoint of the sprint-α α.5 60–120s range. Tuning
 			// notes on StuckConfig.WaitSeconds.
-			WaitSeconds:          envInt("TORQUE_STUCK_WAIT_SECONDS", 90),
+			WaitSeconds:              envInt("TORQUE_STUCK_WAIT_SECONDS", 90),
 			WatcherEnabled:           envBool("TORQUE_STUCK_WATCHER", true),
 			IdleThresholdSeconds:     envInt("TORQUE_STUCK_IDLE_SECONDS", 600),
 			ScanIntervalSeconds:      envInt("TORQUE_STUCK_SCAN_SECONDS", 60),

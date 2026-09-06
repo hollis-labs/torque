@@ -35,8 +35,8 @@ import (
 type ReminderRegistry struct {
 	now func() time.Time
 
-	mu     sync.Mutex
-	tasks  map[string]*taskReminderState // taskID -> per-task tracker
+	mu    sync.Mutex
+	tasks map[string]*taskReminderState // taskID -> per-task tracker
 }
 
 // taskReminderState holds the per-task reminder bookkeeping. injected

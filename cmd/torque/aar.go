@@ -49,12 +49,12 @@ func aarCmd() *cobra.Command {
 // default limit is 50; --all removes it.
 func aarListCmd() *cobra.Command {
 	var (
-		taskID    string
-		outcome   string
-		sinceStr  string
-		limit     int
-		showAll   bool
-		jsonOut   bool
+		taskID   string
+		outcome  string
+		sinceStr string
+		limit    int
+		showAll  bool
+		jsonOut  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -264,13 +264,13 @@ func listAARs(store *sqlstore.Store, f listFilter) ([]aarRow, error) {
 	var out []aarRow
 	for rows.Next() {
 		var (
-			id       int64
-			tid      string
-			runNI    sql.NullInt64
-			typ      string
-			content  string
-			metaNS   sql.NullString
-			created  time.Time
+			id      int64
+			tid     string
+			runNI   sql.NullInt64
+			typ     string
+			content string
+			metaNS  sql.NullString
+			created time.Time
 		)
 		if err := rows.Scan(&id, &tid, &runNI, &typ, &content, &metaNS, &created); err != nil {
 			return nil, err
@@ -356,8 +356,8 @@ func renderAARTable(w io.Writer, rows []aarRow) {
 // exportFilename returns the canonical on-disk name for an AAR export. Two
 // formats:
 //
-//   <task_id>-run-<run_id>.md   (when a run_id is attached — the common case)
-//   <task_id>-<artifact_id>.md  (fallback when no run_id — defensive)
+//	<task_id>-run-<run_id>.md   (when a run_id is attached — the common case)
+//	<task_id>-<artifact_id>.md  (fallback when no run_id — defensive)
 //
 // Task IDs already contain hyphens (e.g. CW-20260520-0007); we don't escape
 // them — Torque task IDs are filename-safe by convention.

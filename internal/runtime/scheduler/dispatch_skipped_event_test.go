@@ -120,4 +120,3 @@ func toInt(t *testing.T, v interface{}) int {
 		return 0
 	}
 }
-
