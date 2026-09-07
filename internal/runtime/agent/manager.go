@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"sync"
 	"syscall"
 	"time"
 
 	runtimeturn "github.com/hollis-labs/agentkit/agentruntime/turn"
 	"github.com/hollis-labs/agentkit/agentsessions"
+	"github.com/hollis-labs/go-agent-wrapper/wrapper"
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/oklog/ulid/v2"
@@ -49,8 +51,18 @@ type Manager struct {
 	stderrs        map[string]func()         // sessID → close() for the per-session stderr sidecar
 	streams        map[string]func()         // sessID → close() for the per-session stream sidecar (CW-20260509-0001)
 	bootDirs       map[string]string         // sessID → ephemeral boot dir; os.RemoveAll in Stop
-	pidPollers     map[string]func()         // sessID → close() for the per-session PID poller (CW-20260509-0008)
+	pidPollers     map[string]func()         // sessID → close() for the per-session PID poller (CW-20260509-0008) -- legacy (jsonrpc-stdio) sessions only; wrapper-routed sessions get PID/heartbeat from torqueRuntimeEventSink instead (CW-20260904-0098)
 	activityFrozen map[string]struct{}       // sessID → suppress heartbeat TouchSession after an error/auth frame; lifted by content-bearing stream events or teardown (CW-20260519-0130)
+
+	// wrapperSessions holds the go-agent-wrapper-routed sessions (CW-20260904-0098):
+	// claude/opencode's RuntimeKindStreamingStdio/Subprocess/ServeHTTP kinds boot
+	// through wrapper.Wrapper.Run instead of the legacy agentsessions.Manager (m.inner)
+	// path. Two kinds stay on the legacy path: JsonRpcStdio/codex (no
+	// Manager.JsonRpcCall equivalent exists on Wrapper; see
+	// go_agent_wrapper_gaps_2026_09_07) and PTY (go-agent-wrapper's adapters.Select
+	// has no PTY LaunchMode, and no shipped profile uses it). SendInput/Stop/Wait/
+	// LivePID dispatch on whichever map holds the sessID.
+	wrapperSessions map[string]*wrapperHandle
 
 	// codexTurns caches per-session Codex app-server thread state for the
 	// JsonRpcStdio runtime kind. Populated lazily by SendTurn after
@@ -79,6 +91,7 @@ func NewManager(deps *Dependencies) *Manager {
 		bootDirs:        make(map[string]string),
 		pidPollers:      make(map[string]func()),
 		activityFrozen:  make(map[string]struct{}),
+		wrapperSessions: make(map[string]*wrapperHandle),
 	}
 	emitter := NewSchedulerEmitter(deps.Bus)
 	stateSink := &storeStateSink{deps: deps}
@@ -211,6 +224,39 @@ func (m *Manager) registerPidPoller(sessID string, closer func()) {
 	m.pidPollers[sessID] = closer
 }
 
+// wrapperHandle is the go-agent-wrapper-routed counterpart to the legacy
+// path's implicit registration inside m.inner (agentsessions.Manager).
+// wrapper.Wrapper has no shared registry of its own -- each Run() owns a
+// throwaway agentsessions.Runtime internally -- so Manager holds the handle
+// directly, keyed by sessID in wrapperSessions.
+type wrapperHandle struct {
+	wr *wrapper.Wrapper
+
+	// runDone closes when wr.Run's driving goroutine returns; runErr is
+	// stable to read only after runDone closes (single-writer, closed-once).
+	runDone chan struct{}
+	runErr  error
+}
+
+// registerWrapperSession associates a wrapper.Wrapper handle with sessID so
+// SendInput/Stop/Wait/LivePID can dispatch to it instead of m.inner.
+func (m *Manager) registerWrapperSession(sessID string, h *wrapperHandle) {
+	if h == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.wrapperSessions[sessID] = h
+}
+
+// wrapperHandleFor returns the registered wrapperHandle for sessID, if any.
+func (m *Manager) wrapperHandleFor(sessID string) (*wrapperHandle, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	h, ok := m.wrapperSessions[sessID]
+	return h, ok
+}
+
 // teardownSession runs the per-session cleanups (PID poller shutdown, loopback
 // shutdown, stderr sidecar close, stream sidecar close, ephemeral boot dir
 // removal). Idempotent. Called from Stop and from the watch goroutine's
@@ -227,6 +273,7 @@ func (m *Manager) teardownSession(sessID string) {
 	delete(m.streams, sessID)
 	bootDir := m.bootDirs[sessID]
 	delete(m.bootDirs, sessID)
+	delete(m.wrapperSessions, sessID)
 	m.mu.Unlock()
 	// Stop the poller first so it doesn't race with the watch goroutine's
 	// terminal-state write (a final Touch landing after StateSink wrote done
@@ -306,6 +353,15 @@ func (m *Manager) SendInput(id string, data []byte) error {
 	if err := m.checkStopped(); err != nil {
 		return err
 	}
+	if h, ok := m.wrapperHandleFor(id); ok {
+		if err := h.wr.SendInput(context.Background(), data); err != nil {
+			return err
+		}
+		if m.deps.Store != nil {
+			_ = m.deps.TouchSession(context.Background(), id)
+		}
+		return nil
+	}
 	if err := m.inner.SendInput(id, data); err != nil {
 		if errors.Is(err, agentsessions.ErrSessionNotRunning) {
 			return ErrSessionNotRunning
@@ -318,10 +374,16 @@ func (m *Manager) SendInput(id string, data []byte) error {
 	return nil
 }
 
-// Resize forwards a (rows, cols) winsize update.
+// Resize forwards a (rows, cols) winsize update. Not supported for
+// wrapper-routed sessions -- wrapper.Wrapper exposes no Resize equivalent,
+// and no shipped profile defaults to RuntimeKindPTY (the only kind Resize
+// is meaningful for) today.
 func (m *Manager) Resize(id string, rows, cols uint16) error {
 	if err := m.checkStopped(); err != nil {
 		return err
+	}
+	if _, ok := m.wrapperHandleFor(id); ok {
+		return errors.New("agent: resize not supported for go-agent-wrapper-routed sessions")
 	}
 	if err := m.inner.Resize(id, rows, cols); err != nil {
 		if errors.Is(err, agentsessions.ErrSessionNotRunning) {
@@ -335,10 +397,15 @@ func (m *Manager) Resize(id string, rows, cols uint16) error {
 // Attach subscribes w to the session's live output stream. AttachEnabled
 // must have been set on the boot options for the inner manager to allocate
 // a broker; agent.Boot wires AttachEnabled=true uniformly so any session
-// can be attached after Boot returns.
+// can be attached after Boot returns. Not supported for wrapper-routed
+// sessions today (no production caller uses Attach; wrapper.Wrapper exposes
+// no equivalent broker).
 func (m *Manager) Attach(ctx context.Context, id string, w io.Writer) error {
 	if err := m.checkStopped(); err != nil {
 		return err
+	}
+	if _, ok := m.wrapperHandleFor(id); ok {
+		return errors.New("agent: attach not supported for go-agent-wrapper-routed sessions")
 	}
 	if err := m.inner.Attach(ctx, id, w); err != nil {
 		switch {
@@ -358,6 +425,12 @@ func (m *Manager) Attach(ctx context.Context, id string, w io.Writer) error {
 // without waiting for the watch goroutine.
 func (m *Manager) Stop(ctx context.Context, id string) error {
 	defer m.teardownSession(id)
+	if h, ok := m.wrapperHandleFor(id); ok {
+		if err := h.wr.Stop(ctx); err != nil {
+			return err
+		}
+		return nil
+	}
 	if err := m.inner.Stop(ctx, id); err != nil {
 		if errors.Is(err, agentsessions.ErrSessionNotRunning) {
 			// Live in DB but not in-memory (manager restarted). Mark failed
@@ -392,6 +465,31 @@ func (m *Manager) Stop(ctx context.Context, id string) error {
 // verbatim. The previous behavior of returning nil on all terminal states
 // hid termination causes from consumers; this is the correct shape.
 func (m *Manager) Wait(ctx context.Context, id string) (int, error) {
+	if h, ok := m.wrapperHandleFor(id); ok {
+		select {
+		case <-h.runDone:
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		}
+		if h.runErr == nil {
+			return 0, nil
+		}
+		if errors.Is(h.runErr, context.Canceled) || errors.Is(h.runErr, context.DeadlineExceeded) {
+			return 0, h.runErr
+		}
+		// wrapper.Wrapper.Run returns only an error (no exit code); recover
+		// the code from the underlying agentsessions/exec termination error
+		// it wraps, same as the legacy path's WaitSession result.
+		var exitErr *agentsessions.ExitError
+		if errors.As(h.runErr, &exitErr) {
+			return exitErr.Code, h.runErr
+		}
+		var eerr *exec.ExitError
+		if errors.As(h.runErr, &eerr) {
+			return eerr.ExitCode(), h.runErr
+		}
+		return 0, h.runErr
+	}
 	code, err := m.inner.WaitSession(ctx, id)
 	if err == nil {
 		return code, nil
@@ -515,7 +613,22 @@ func (m *Manager) checkStopped() error {
 // Reads the lib's live Health() — inner.Get's PID is the launch-time snapshot
 // and stays 0 for the entire lifetime of adapter-mode sessions
 // (CW-20260509-0008).
+//
+// For wrapper-routed sessions, wrapper.Wrapper exposes no Health()
+// equivalent; torqueRuntimeEventSink writes the live PID to the session row
+// on every runtimeevents.KindProcessStarted, so the stored row is the
+// freshest available source.
 func (m *Manager) LivePID(id string) int {
+	if _, ok := m.wrapperHandleFor(id); ok {
+		if m.deps == nil || m.deps.Store == nil {
+			return 0
+		}
+		rec, err := m.deps.Store.GetSession(id)
+		if err != nil {
+			return 0
+		}
+		return rec.PID
+	}
 	snap, ok := m.inner.Health(id)
 	if !ok {
 		return 0

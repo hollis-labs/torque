@@ -90,12 +90,15 @@ func (m *Manager) SendTurn(ctx context.Context, sess *Session, text string) (err
 		if err != nil {
 			return fmt.Errorf("encode streaming-stdio turn: %w", err)
 		}
-		return m.inner.SendInput(sess.ID, encoded)
+		// m.SendInput (not m.inner.SendInput directly) dual-dispatches
+		// between the legacy agentsessions path and go-agent-wrapper-routed
+		// sessions (CW-20260904-0098) -- streaming-stdio is wrapper-routed.
+		return m.SendInput(sess.ID, encoded)
 	default:
 		// subprocess / pty / empty share the raw-stdin path. PTY treats
 		// the bytes as if typed at the TUI; subprocess passes them as the
-		// turn prompt.
-		return m.inner.SendInput(sess.ID, []byte(text))
+		// turn prompt. Both are wrapper-routed; m.SendInput dual-dispatches.
+		return m.SendInput(sess.ID, []byte(text))
 	}
 }
 

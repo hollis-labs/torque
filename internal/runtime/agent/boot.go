@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +19,9 @@ import (
 	"github.com/hollis-labs/agentkit/agentruntime/sessionkit"
 	"github.com/hollis-labs/agentkit/agentruntime/turn"
 	"github.com/hollis-labs/agentkit/agentsessions"
+	"github.com/hollis-labs/go-agent-wrapper/activity"
+	"github.com/hollis-labs/go-agent-wrapper/adapters"
+	"github.com/hollis-labs/go-agent-wrapper/wrapper"
 	llmtypes "github.com/hollis-labs/go-llm-types"
 	feotel "github.com/hollis-labs/go-otel"
 	"github.com/hollis-labs/go-providers/provider"
@@ -357,6 +361,98 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	if hasBootDir {
 		capturedBootDir = prepared.PlantedBootDir
 	}
+
+	pb := &plantedBoot{
+		resolved:          resolved,
+		profile:           profile,
+		agentProfileName:  agentProfileName,
+		runtimeKind:       runtimeKind,
+		cliAdapter:        cliAdapter,
+		caps:              caps,
+		sessID:            sessID,
+		role:              role,
+		systemPrompt:      systemPrompt,
+		kickoffMD:         kickoffMD,
+		loopback:          loopback,
+		loopbackURL:       loopbackURL,
+		ws:                ws,
+		env:               env,
+		preparedExecution: preparedExecution,
+		capturedBootDir:   capturedBootDir,
+		sessionLaunch:     sessionLaunch,
+	}
+
+	// CW-20260904-0098: claude/opencode's runtime kinds (streaming-stdio,
+	// subprocess, serve-http) adopt go-agent-wrapper for spawn/lifecycle/
+	// events. Two kinds stay on Torque's existing agentsessions-direct
+	// pipeline:
+	//   - JsonRpcStdio (codex): wrapper.Wrapper exposes no equivalent to
+	//     agentsessions.Manager.JsonRpcCall, which codex's multi-turn
+	//     app-server protocol requires (Tesseract go_agent_wrapper_gaps_2026_09_07).
+	//   - PTY: go-agent-wrapper's adapters.Select has no PTY LaunchMode for
+	//     native (non-ACP) runtimes, and no shipped profile defaults to PTY
+	//     today (runtime_kind.go: "operator escape hatch", unproven for the
+	//     dogfooded providers) -- nothing exercises this path, so there is
+	//     no reason to force a mapping go-agent-wrapper doesn't model.
+	// deps.RuntimeFactory also forces the legacy path regardless of runtime
+	// kind: wrapper.Wrapper.Run() has no analogous override hook, so
+	// RuntimeFactory (Torque's existing fake-runtime test seam,
+	// internal/e2e/agent_boot) can only be honored there -- the natural
+	// generalization of "when a caller substitutes runtime construction,
+	// use the path where that substitution applies."
+	useWrapper := deps.RuntimeFactory == nil &&
+		runtimeKind != RuntimeKindJsonRpcStdio &&
+		runtimeKind != RuntimeKindPTY
+	if useWrapper {
+		return bootWrapper(ctx, deps, mgr, opts, pb)
+	}
+	return bootLegacy(ctx, deps, mgr, opts, pb)
+}
+
+// plantedBoot bundles everything Boot's shared prefix (profile resolution
+// through boot-dir planting) computes, so bootLegacy and bootWrapper can
+// consume it without re-deriving or re-planting.
+type plantedBoot struct {
+	resolved          launchprofile.CompiledLaunchProfile
+	profile           config.AgentProfile
+	agentProfileName  string
+	runtimeKind       RuntimeKind
+	cliAdapter        provider.CLIAdapter
+	caps              agentsessions.Capabilities
+	sessID            string
+	role              string
+	systemPrompt      string
+	kickoffMD         string
+	loopback          LoopbackHandle
+	loopbackURL       string
+	ws                *WorkspaceLayout
+	env               []string
+	preparedExecution *agentlaunch.PreparedExecution
+	capturedBootDir   string
+	sessionLaunch     sessionshim.SessionLaunch
+}
+
+// bootLegacy drives the pre-CW-20260904-0098 spawn/lifecycle path: direct
+// agentsessions.NewFromAdapter construction, mgr.inner.Start, and (for
+// JsonRpcStdio/codex) the SendTurn/JsonRpcCall turn-delivery machinery
+// go-agent-wrapper has no equivalent for. Used for codex's runtime kind
+// always, and for every runtime kind when deps.RuntimeFactory is set
+// (Torque's fake-runtime test seam, which only this path can honor).
+func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options, pb *plantedBoot) (sess *Session, err error) {
+	resolved := pb.resolved
+	profile := pb.profile
+	agentProfileName := pb.agentProfileName
+	runtimeKind := pb.runtimeKind
+	cliAdapter := pb.cliAdapter
+	caps := pb.caps
+	sessID := pb.sessID
+	systemPrompt := pb.systemPrompt
+	kickoffMD := pb.kickoffMD
+	loopback := pb.loopback
+	ws := pb.ws
+	env := pb.env
+	capturedBootDir := pb.capturedBootDir
+	sessionLaunch := pb.sessionLaunch
 
 	// Permission mode (CW-20260517-0038 Variation 3) is threaded into the
 	// claude-code adapter in adapterFor via ClaudeAdapter.PermissionMode,
@@ -1063,6 +1159,448 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	}
 
 	return sess, nil
+}
+
+// bootWrapper drives the CW-20260904-0098 go-agent-wrapper-routed spawn/
+// lifecycle path for claude/opencode's runtime kinds (streaming-stdio,
+// subprocess, serve-http). Planting already happened in Boot's shared prefix
+// (providerplant.PrepareExecution, CW-20260906-0111) -- wrapper.Config.
+// PreparedExecution carries that result directly, so wr.Run() never
+// re-plants (its internal runPlanter is skipped whenever
+// PreparedExecution.Materialization is already set).
+func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options, pb *plantedBoot) (sess *Session, err error) {
+	profile := pb.profile
+	agentProfileName := pb.agentProfileName
+	runtimeKind := pb.runtimeKind
+	cliAdapter := pb.cliAdapter
+	caps := pb.caps
+	sessID := pb.sessID
+	loopback := pb.loopback
+	ws := pb.ws
+	env := pb.env
+	preparedExecution := pb.preparedExecution
+	capturedBootDir := pb.capturedBootDir
+
+	if preparedExecution == nil {
+		// No BootDirSpec (gemini/copilot) -- unsupported in Torque today;
+		// adapterFor never resolves these providers, so this should be
+		// unreachable. Fail closed rather than risk a nil-deref below.
+		shutdownLoopbackHandle(loopback)
+		return nil, fmt.Errorf("%w: go-agent-wrapper path requires a planted boot dir", ErrBootFailed)
+	}
+
+	// Boot-dir leak guard, same contract as the legacy path (CW-20260515-0020
+	// follow-up): planting already happened before this function runs, so
+	// every error return before the wrapper session is admitted would
+	// otherwise leak the planted dir.
+	bootDirPlanted := capturedBootDir != ""
+	defer func() {
+		if bootDirPlanted {
+			_ = os.RemoveAll(capturedBootDir)
+		}
+	}()
+
+	// Neutralize the derived sandbox policy (go_agent_wrapper_gaps_2026_09_07
+	// Finding 3): providerplant's defaultAccessRequirements sets
+	// Mode: AccessRequired with the project root READ-ONLY (write is only
+	// granted on the state root) -- agentsessions derives a real go-sandbox
+	// ResolvedAccessPolicy from any AccessRequired PreparedExecution and
+	// enforces it at spawn. Torque runs with zero sandbox enforcement today
+	// (opts.SandboxProfile below is the only confinement mechanism); a
+	// session whose entire job is editing the project directly must not
+	// have that silently downgraded to read-only. AccessOptional
+	// short-circuits agentsessions' sandboxPolicyFromPrepared to a no-op
+	// while leaving the Argv/Env/CWD bindings -- the actual reason to feed
+	// PreparedExecution through -- untouched.
+	execution := *preparedExecution
+	execution.Access.Mode = agentlaunch.AccessOptional
+
+	// opencode serve-http hot-fix (factory.go's shouldDropBootDirExtraArgs,
+	// ported from the legacy path): `opencode serve` rejects `--dir <path>`
+	// (an `opencode run`-only flag); providerplant's OpencodeBootDirSpec
+	// emits it unconditionally. agentsessions.applyStartOptions derives
+	// StartOptions.ExtraArgs from Bindings.Argv[1:] unconditionally once
+	// PreparedExecution is set, so the trim has to happen on the bindings
+	// themselves rather than on a separate ExtraArgs override.
+	if shouldDropBootDirExtraArgs(profile.Provider, runtimeKind) && len(execution.Bindings.Argv) > 0 {
+		execution.Bindings.Argv = execution.Bindings.Argv[:1]
+	}
+
+	// Merge Torque's own composeEnv output (TORQUE_TASK_ID/RUN_ID, filtered
+	// OS env, agent-file env, opts.Env) into the bindings env --
+	// providerplant only resolved the provider-side amendments (CODEX_HOME /
+	// OPENCODE_CONFIG_DIR); agentsessions derives the FINAL spawn env
+	// entirely from Bindings.Env once PreparedExecution is set (same
+	// override behavior as ExtraArgs above), so Torque's base vars have to
+	// land there too. Provider-derived keys win on collision, matching the
+	// legacy path's mergePreparedEnv(env, sessionLaunch.Options.Env) precedence.
+	execution.Bindings.Env = mergeCallerEnvIntoPrepared(env, execution.Bindings.Env)
+
+	spawnWorkdir := opts.Workdir
+	if capturedBootDir != "" && execution.Bindings.CWD != "" {
+		spawnWorkdir = execution.Bindings.CWD
+	}
+
+	launchMode, err := adaptersLaunchModeFor(runtimeKind)
+	if err != nil {
+		shutdownLoopbackHandle(loopback)
+		return nil, fmt.Errorf("%w: %v", ErrBootFailed, err)
+	}
+	// adapters.Select wraps Torque's already-configured cliAdapter (bare-mode
+	// claude, dev-mode variants, permission mode, apiKeyHelper -- adapterFor
+	// is still authoritative for all of it) into the shape wrapper.Config.
+	// Adapter needs, without reimplementing per-provider adapter construction.
+	wrapperAdapter, err := adapters.Select(adapters.Selection{
+		Provider:   adaptersProviderFor(profile.Provider),
+		LaunchMode: launchMode,
+		CLIAdapter: cliAdapter,
+	})
+	if err != nil {
+		shutdownLoopbackHandle(loopback)
+		return nil, fmt.Errorf("%w: select wrapper adapter: %v", ErrBootFailed, err)
+	}
+
+	// Resume preset: same contract as the legacy path (boot.go's own
+	// ModeResume / ProviderSessionIDOverride handling).
+	var sessionIDPreset string
+	var resumeHint []byte
+	if opts.Mode == ModeResume {
+		cp, cpErr := findCheckpoint(deps.Store, opts.ResumeFromCheckpoint)
+		if cpErr != nil {
+			shutdownLoopbackHandle(loopback)
+			return nil, fmt.Errorf("%w: %v", ErrBootFailed, cpErr)
+		}
+		if len(cp.ResumeHint) > 0 {
+			sessionIDPreset = string(cp.ResumeHint)
+			resumeHint = cp.ResumeHint
+		}
+	}
+	if opts.ProviderSessionIDOverride != "" {
+		sessionIDPreset = opts.ProviderSessionIDOverride
+		resumeHint = []byte(opts.ProviderSessionIDOverride)
+	}
+
+	var onSessionID func(string)
+	if caps.ProviderSessionID && deps.Store != nil {
+		onSessionID = func(id string) {
+			_ = deps.UpdateSessionResumeHint(context.Background(), sessID, []byte(id))
+		}
+	}
+
+	persistedMeta := make(map[string]string, len(opts.SessionMeta)+3)
+	for k, v := range opts.SessionMeta {
+		persistedMeta[k] = v
+	}
+	persistedMeta[metaKeyMode] = opts.Mode.String()
+	persistedMeta[metaKeyWorkspaceDir] = ws.WorkspaceDir
+	if opts.ParentSessionID != "" {
+		persistedMeta[metaKeyParentSessionID] = opts.ParentSessionID
+	}
+	metaJSON, err := encodeMeta(persistedMeta)
+	if err != nil {
+		shutdownLoopbackHandle(loopback)
+		return nil, fmt.Errorf("%w: encode session meta: %v", ErrBootFailed, err)
+	}
+	rec := &sqlstore.SessionRecord{
+		ID:            sessID,
+		LaunchProfile: pb.resolved.Profile.ID,
+		AgentProfile:  agentProfileName,
+		Provider:      profile.Provider,
+		RuntimeID:     "torque-cli/" + cliAdapter.Name(),
+		RuntimeKind:   string(runtimeKind),
+		Workdir:       opts.Workdir,
+		ProjectID:     nullableString(opts.ProjectID),
+		TaskID:        nullableString(opts.TaskID),
+		State:         string(StatusLaunching),
+		ResumeHint:    resumeHint,
+		MetaJSON:      metaJSON,
+	}
+	if err := deps.CreateSession(context.Background(), rec); err != nil {
+		shutdownLoopbackHandle(loopback)
+		return nil, fmt.Errorf("%w: create session row: %v", ErrBootFailed, err)
+	}
+
+	sandboxProfile := sandbox.Profile{}
+	if opts.SandboxProfile != nil {
+		sandboxProfile = *opts.SandboxProfile
+		sandboxProfile.AllowLoopback = true
+	}
+
+	// AutoFireFirstTurn: same contract as the legacy path's non-JsonRpcStdio
+	// branch (this function never handles JsonRpcStdio -- codex stays on
+	// bootLegacy).
+	autoFire := opts.Mode == ModeLongLived || opts.Mode == ModeSubagent || opts.Mode == ModeBackground
+	var firstTurnPayload []byte
+	if autoFire {
+		firstTurnOpts := agentsessions.StartOptions{}
+		turnRuntime, mapErr := mapRuntimeKind(runtimeKind)
+		if mapErr != nil {
+			shutdownLoopbackHandle(loopback)
+			return nil, fmt.Errorf("%w: map first-turn runtime: %v", ErrBootFailed, mapErr)
+		}
+		if err := sessionkit.ApplyFirstTurnPolicy(&firstTurnOpts, sessionkit.FirstTurnPolicy{
+			Mode:   sessionkit.AutoFireFirstTurn,
+			Prompt: kickoffPayload(""),
+			Turn: turn.Options{
+				Provider: profile.Provider,
+				Runtime:  turnRuntime,
+			},
+		}); err != nil {
+			shutdownLoopbackHandle(loopback)
+			return nil, fmt.Errorf("%w: frame first turn: %v", ErrBootFailed, err)
+		}
+		firstTurnPayload = firstTurnOpts.FirstTurnPayload
+	}
+
+	stderrWriter, _, closeStderr := openStderrSidecar(opts.RunID, ws.LogPath)
+	sidecar := openStreamSidecar(ws.LogDir)
+
+	var oneshotDone chan struct{}
+	var oneshotOnDone func()
+	if opts.Mode == ModeOneShot {
+		oneshotDone = make(chan struct{})
+		var doneOnce sync.Once
+		oneshotOnDone = func() { doneOnce.Do(func() { close(oneshotDone) }) }
+	}
+
+	readyCh := make(chan struct{})
+	var readyOnce sync.Once
+	sink := &torqueRuntimeEventSink{
+		sessID:  sessID,
+		mgr:     mgr,
+		deps:    deps,
+		sidecar: sidecar,
+		fanout:  opts.eventFanout,
+		stderr:  stderrWriter,
+		onReady: func() { readyOnce.Do(func() { close(readyCh) }) },
+		onDone:  oneshotOnDone,
+	}
+
+	wr, err := wrapper.New(wrapper.Config{
+		App:               "torque",
+		Adapter:           wrapperAdapter,
+		Activity:          activity.NewBridge(sink),
+		Workdir:           spawnWorkdir,
+		SessionID:         sessID,
+		PreparedExecution: &execution,
+		SandboxProfile:    sandboxProfile,
+		WorkspaceDir:      ws.WorkspaceDir,
+		LogPath:           ws.LogPath,
+		SessionIDPreset:   sessionIDPreset,
+		OnSessionID:       onSessionID,
+		AutoFireFirstTurn: autoFire,
+		FirstTurnPayload:  string(firstTurnPayload),
+		HeartbeatInterval: mgr.pidPollInterval,
+	})
+	if err != nil {
+		closeStderr()
+		sidecar.Close()
+		shutdownLoopbackHandle(loopback)
+		bootDirPlanted = false
+		_ = os.RemoveAll(capturedBootDir)
+		return nil, fmt.Errorf("%w: construct wrapper: %v", ErrBootFailed, err)
+	}
+
+	// Context detachment for non-OneShot modes, matching the legacy path's
+	// rationale exactly (boot.go's startCtx comment): long-lived sessions
+	// must outlive the caller's request-scoped ctx.
+	runCtx := ctx
+	if opts.Mode != ModeOneShot {
+		runCtx = context.WithoutCancel(ctx)
+	}
+	runCtx, runCancel := context.WithCancel(runCtx)
+
+	h := &wrapperHandle{wr: wr, runDone: make(chan struct{})}
+	go func() {
+		defer close(h.runDone)
+		defer runCancel()
+		h.runErr = wr.Run(runCtx)
+		state := string(StatusDone)
+		if h.runErr != nil {
+			state = string(StatusFailed)
+		}
+		_ = deps.UpdateSessionState(context.Background(), sessID, state, 0, nil)
+	}()
+
+	// Block until KindSessionReady (SendInput/Stop become safe -- mirrors
+	// mgr.inner.Start() returning nil on the legacy path) or wr.Run exiting
+	// first (immediate spawn failure).
+	select {
+	case <-readyCh:
+		_ = deps.UpdateSessionState(context.Background(), sessID, string(StatusRunning), 0, nil)
+	case <-h.runDone:
+		runCancel()
+		closeStderr()
+		sidecar.Close()
+		shutdownLoopbackHandle(loopback)
+		bootDirPlanted = false
+		_ = os.RemoveAll(capturedBootDir)
+		failErr := h.runErr
+		if failErr == nil {
+			failErr = fmt.Errorf("wrapper.Run exited before session became ready")
+		}
+		_ = deps.UpdateSessionState(context.Background(), sessID, string(StatusFailed), 0, nil)
+		return nil, fmt.Errorf("%w: %v", ErrBootFailed, failErr)
+	case <-ctx.Done():
+		runCancel()
+		<-h.runDone
+		closeStderr()
+		sidecar.Close()
+		shutdownLoopbackHandle(loopback)
+		bootDirPlanted = false
+		_ = os.RemoveAll(capturedBootDir)
+		_ = deps.UpdateSessionState(context.Background(), sessID, string(StatusFailed), 0, nil)
+		return nil, fmt.Errorf("%w: %v", ErrBootFailed, ctx.Err())
+	}
+	bootDirPlanted = false
+
+	if capturedBootDir != "" {
+		persistedMeta[metaKeyBootDir] = capturedBootDir
+		if updatedMeta, encErr := encodeMeta(persistedMeta); encErr == nil {
+			if updErr := deps.UpdateSessionMeta(context.Background(), sessID, updatedMeta); updErr != nil {
+				log.Printf("agent.Boot: persist bootDir into session meta failed (sessID=%s bootDir=%s): %v", sessID, capturedBootDir, updErr)
+			}
+		}
+	}
+
+	mgr.registerWrapperSession(sessID, h)
+	if opts.Mode != ModeOneShot {
+		mgr.registerLoopback(sessID, loopback)
+		mgr.registerStderrCloser(sessID, closeStderr)
+		mgr.registerStreamCloser(sessID, sidecar.Close)
+		if capturedBootDir != "" {
+			mgr.registerBootDir(sessID, capturedBootDir)
+		}
+		// No registerPidPoller here: KindSessionHeartbeat/KindProcessStarted
+		// from the sink replace pid_poller.go's job for wrapper-routed
+		// sessions (see wrapper_sink.go's Write doc comments).
+	}
+
+	sess = &Session{
+		ID:              sessID,
+		Mode:            opts.Mode,
+		LaunchProfile:   pb.resolved.Profile.ID,
+		AgentProfile:    agentProfileName,
+		Provider:        profile.Provider,
+		RuntimeID:       "torque-cli/" + cliAdapter.Name(),
+		RuntimeKind:     string(runtimeKind),
+		Workdir:         opts.Workdir,
+		BootDir:         capturedBootDir,
+		WorkspaceDir:    ws.WorkspaceDir,
+		ProjectID:       opts.ProjectID,
+		TaskID:          opts.TaskID,
+		ParentSessionID: opts.ParentSessionID,
+		Status:          StatusRunning,
+		Meta:            opts.SessionMeta,
+		CreatedAt:       time.Now().UTC(),
+	}
+
+	if opts.Mode == ModeOneShot {
+		defer closeStderr()
+		defer sidecar.Close()
+		defer shutdownLoopbackHandle(loopback)
+		if capturedBootDir != "" {
+			defer func() { _ = os.RemoveAll(capturedBootDir) }()
+		}
+
+		prompt := composeUserPrompt(opts)
+		if prompt == "" {
+			prompt = kickoffPayload("")
+		}
+		// SendTurn (not raw SendInput) so streaming-stdio's turn.Frame NDJSON
+		// encoding is applied -- claude rejects unframed plaintext on stdin
+		// when running --input-format stream-json.
+		sendErr := mgr.SendTurn(ctx, sess, prompt)
+
+		var timedOut bool
+		if sendErr == nil && oneshotDone != nil {
+			select {
+			case <-oneshotDone:
+			case <-ctx.Done():
+				timedOut = true
+				log.Printf("agent.Boot: ModeOneShot session=%s timed out before turn_complete (ctx.Err=%v)", sessID, ctx.Err())
+			}
+		}
+
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = mgr.Stop(stopCtx, sessID)
+		stopCancel()
+
+		waitCtx, waitCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		exitCode, _ := mgr.Wait(waitCtx, sessID)
+		waitCancel()
+
+		sess.ExitCode = &exitCode
+		switch {
+		case sendErr != nil:
+			sess.Status = StatusFailed
+		case timedOut:
+			sess.Status = StatusFailed
+		case exitCode != 0:
+			sess.Status = StatusFailed
+		default:
+			sess.Status = StatusDone
+		}
+	}
+
+	return sess, nil
+}
+
+// mergeCallerEnvIntoPrepared merges Torque's caller-side "K=V" env slice
+// into a PreparedExecution's Bindings.Env map, preserving whatever
+// providerplant already resolved on collision -- matches the legacy path's
+// mergePreparedEnv(callerEnv, providerAmendments) precedence, where
+// provider-derived keys win.
+func mergeCallerEnvIntoPrepared(callerEnv []string, existing map[string]agentlaunch.EnvVar) map[string]agentlaunch.EnvVar {
+	out := make(map[string]agentlaunch.EnvVar, len(existing)+len(callerEnv))
+	for k, v := range existing {
+		out[k] = v
+	}
+	for _, kv := range callerEnv {
+		key, val, found := strings.Cut(kv, "=")
+		if !found || key == "" {
+			continue
+		}
+		if _, exists := out[key]; exists {
+			continue
+		}
+		out[key] = agentlaunch.EnvVar{Value: val, Source: "caller", Precedence: 10}
+	}
+	return out
+}
+
+// adaptersProviderFor maps Torque's config.AgentProfile.Provider string onto
+// go-agent-wrapper's adapters.Provider vocabulary. "claude-code" (Torque's
+// public profile provider name) maps to go-providers' ClaudeAdapter.Name()
+// == "claude", which is also adapters.ProviderClaude's wire value --
+// adapters.Select validates the two agree.
+func adaptersProviderFor(providerName string) adapters.Provider {
+	switch providerName {
+	case "claude-code":
+		return adapters.ProviderClaude
+	case "codex":
+		return adapters.ProviderCodex
+	case "opencode":
+		return adapters.ProviderOpenCode
+	default:
+		return adapters.Provider(providerName)
+	}
+}
+
+// adaptersLaunchModeFor maps a bootWrapper-reachable RuntimeKind onto
+// go-agent-wrapper's adapters.LaunchMode. JsonRpcStdio and PTY never reach
+// this function (Boot's dispatch routes them to bootLegacy).
+func adaptersLaunchModeFor(kind RuntimeKind) (adapters.LaunchMode, error) {
+	switch kind {
+	case RuntimeKindStreamingStdio:
+		return adapters.LaunchStreamingStdio, nil
+	case RuntimeKindSubprocess:
+		return adapters.LaunchSubprocessPerTurn, nil
+	case RuntimeKindServeHTTP:
+		return adapters.LaunchServeHTTP, nil
+	default:
+		return "", fmt.Errorf("no go-agent-wrapper launch mode for runtime kind %q", kind)
+	}
 }
 
 // findCheckpoint locates a checkpoint by ID via the store's direct lookup
