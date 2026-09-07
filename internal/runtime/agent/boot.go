@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hollis-labs/agentkit/agentlaunch"
 	"github.com/hollis-labs/agentkit/agentlaunch/launcher"
 	"github.com/hollis-labs/agentkit/agentlaunch/providerplant"
 	"github.com/hollis-labs/agentkit/agentlaunch/sessionshim"
@@ -319,12 +320,29 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	// (it returns plain claude). Planting against the same adapter
 	// instance Torque spawns keeps the planted files byte-identical to
 	// the pre-Stage-2 AutoPlantBootDir output.
+	// PrepareExecution (agentkit v0.6.1+, shared materialize.Engine
+	// underneath) replaces the legacy Plant() call: Plant() ran the same
+	// projection/materialization internally but copied only Argv/Env/
+	// Workdir back onto the legacy PreparedLaunch, silently discarding the
+	// computed Materialization handle, AccessRequirements, and
+	// CapabilityDiagnostics (CW-20260906-0111). We replicate Plant()'s
+	// copy-back manually (prepared.Argv/Env/Workdir) so the unchanged
+	// sessionshim.ToSessionLaunch(prepared) call below keeps working, and
+	// additionally surface the previously-discarded diagnostics. preparedExecution
+	// is kept alive past this call site for CW-20260904-0098's wrapper.Config
+	// to consume directly, avoiding a second plant.
 	bootDirProvider, hasBootDir := cliAdapter.(provider.BootDirProvider)
+	var preparedExecution *agentlaunch.PreparedExecution
 	if hasBootDir {
-		if err := providerplant.Plant(ctx, prepared, providerplant.WithAdapter(bootDirProvider)); err != nil {
+		preparedExecution, err = providerplant.PrepareExecution(ctx, prepared, providerplant.WithAdapter(bootDirProvider))
+		if err != nil {
 			shutdownLoopbackHandle(loopback)
 			return nil, fmt.Errorf("%w: plant boot dir: %v", ErrBootFailed, err)
 		}
+		prepared.Argv = append([]string(nil), preparedExecution.Bindings.Argv...)
+		prepared.Env = envVarValues(preparedExecution.Bindings.Env)
+		prepared.Workdir = preparedExecution.Bindings.CWD
+		logPlantResult(sessID, preparedExecution)
 	}
 	sessionLaunch, err := sessionshim.ToSessionLaunch(prepared)
 	if err != nil {
@@ -1160,6 +1178,35 @@ func resolveRepoRoot(opts Options) string {
 		return opts.RepoRoot
 	}
 	return opts.Workdir
+}
+
+// envVarValues flattens a PreparedExecution's map[string]agentlaunch.EnvVar
+// into the map[string]string shape PreparedLaunch.Env uses (mirrors
+// providerplant's private envVarMap, which Torque cannot import directly).
+func envVarValues(in map[string]agentlaunch.EnvVar) map[string]string {
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v.Value
+	}
+	return out
+}
+
+// logPlantResult surfaces the PreparedExecution fields the legacy Plant()
+// call silently discarded: the materialize.Engine's reconcile report and
+// any provider-capability diagnostics computed during planting. Previously
+// nothing observed conflicts or unsupported-capability warnings from this
+// step (CW-20260906-0111).
+func logPlantResult(sessID string, execution *agentlaunch.PreparedExecution) {
+	if execution == nil {
+		return
+	}
+	if execution.Materialization != nil {
+		report := execution.Materialization.Report
+		log.Printf("agent.Boot: plant materialize session=%s operation=%s complete=%t changes=%d", sessID, report.Operation, report.Complete, len(report.Changes))
+	}
+	for _, d := range execution.Diagnostics {
+		log.Printf("agent.Boot: plant diagnostic session=%s code=%s severity=%s outcome=%s feature=%s provider=%s: %s", sessID, d.Code, d.Severity, d.Outcome, d.Feature, d.Provider, d.Message)
+	}
 }
 
 // isApiKeyHelperExecutable mirrors bootstrap.isExecutableFile for the
