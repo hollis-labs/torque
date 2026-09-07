@@ -15,4 +15,12 @@ Start with:
 - [aar-system.md](aar-system.md) — After-Action Report schema, submission protocol, and `torque aar` query CLI
 - [architecture/sqlite-test-infra.md](architecture/sqlite-test-infra.md) — why shared SQLite fixtures default to pooled temp-file databases
 
+Directional and exploratory:
+
+- [work-coordination-direction.md](work-coordination-direction.md) — a 2026-08-22
+  target-direction draft on Torque's place in the portfolio. Draft status; not
+  a contract.
+- [vnext/](vnext/) — a 2026-09-07 vNext architecture sketch and the context that
+  produced it. Exploration; nothing in it is decided or scheduled.
+
 Older files under `docs/architecture/` and `docs/superpowers/` are historical design notes, working specs, or prior-art research. They are not the canonical source for current behavior unless a fresh doc links to them explicitly.
