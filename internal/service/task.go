@@ -792,8 +792,8 @@ func (s *TaskService) Transition(ctx context.Context, id, newStatus string) (err
 		attribute.Bool("torque.task.forced", false),
 	)
 	defer func() {
-		// TransitionError ("unknown source status" / "transition not permitted")
-		// is a POLICY reject the caller surfaces as 422 — not an infra fault.
+		// TransitionError (unrecognized status / terminal-status guard) is a
+		// POLICY reject the caller surfaces as 422 — not an infra fault.
 		// Skip RecordError for those; real store / GetTask errors still record.
 		if err != nil {
 			var terr *TransitionError
