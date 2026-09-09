@@ -1,0 +1,135 @@
+kind: cerberus-project/v1
+owner: torque
+namespace: local
+project:
+  id: torque
+  name: Torque
+resources:
+  - id: torque-api-service
+    name: Torque Service
+    type: process
+    project: torque
+    connector: local
+    config:
+      build_strategy:
+        kind: make_standard
+        rules:
+          target: build-prod
+      command:
+        - ./torque
+        - serve
+      dir: /Users/chrispian/dev/hollis-labs/apps/torque
+      env:
+        HOME: /Users/chrispian
+        PATH: /Users/chrispian/.local/bin:/Users/chrispian/.opencode/bin:/opt/homebrew/bin:/Users/chrispian/go/bin:/usr/bin:/bin:/usr/sbin:/sbin
+        CLAUDE_CODE_OAUTH_TOKEN: keychain://anthropic/claude-code-oauth
+        # TORQUE_DB_PATH intentionally unset (CW-20260517-0060): the DB
+        # path resolves via go-apppaths XDG defaults
+        # (~/.local/share/torque/workspaces/default/main.db).
+        # Per-run worktree isolation for controlled implementer test
+        # runs (TEST-RUN-HANDOFF Round 3): each run executes in an
+        # ephemeral git worktree branched from origin/main.
+        TORQUE_WORKTREE_PER_RUN: "true"
+        # Worktree precheck = warn (not block): a working_dir that is a
+        # git repo still gets an isolated worktree; a NON-repo working_dir
+        # (research / content tasks whose output is files, not a PR) falls
+        # back to running in place instead of being blocked at dispatch.
+        TORQUE_WORKTREE_PRECHECK: warn
+      mode: os_service
+      port: 8990
+      run_from: artifact
+      supervisor: launchd
+      url: http://127.0.0.1:8990
+    tags:
+      - torque
+      - service
+      - api
+      - gui
+      - scheduler
+      - go
+      - launchd
+      - v2
+      - uat
+  - id: torque-api-dev
+    name: Torque Dev (API + GUI)
+    type: process
+    project: torque
+    connector: local
+    config:
+      auto_restart: false
+      auto_start: false
+      command:
+        - go
+        - run
+        - ./cmd/torque
+        - serve
+        - --addr
+        - :8992
+      dir: /Users/chrispian/dev/hollis-labs/apps/torque
+      mode: dev_session
+      port: 8992
+      run_from: workspace
+      url: http://127.0.0.1:8992
+    tags:
+      - torque
+      - dev
+      - api
+      - gui
+      - scheduler
+      - go
+      - workspace
+      - v2
+  - id: torque-frontend-dev
+    name: Torque Frontend Dev (Vite HMR)
+    type: process
+    project: torque
+    connector: local
+    config:
+      command:
+        - npm
+        - run
+        - dev
+      dir: /Users/chrispian/dev/hollis-labs/apps/torque/apps/gui
+      env:
+        TORQUE_GUI_API_ORIGIN: http://localhost:8992
+      mode: dev_session
+      port: 5175
+      run_from: workspace
+      url: http://localhost:5175
+    tags:
+      - torque
+      - dev
+      - gui
+      - frontend
+      - vite
+      - hmr
+      - v2
+    depends_on:
+      - torque-api-dev
+  - id: torque-db-backup
+    name: Torque DB Backup
+    type: process
+    project: torque
+    connector: local
+    config:
+      command:
+        - ./hack/torque-db-backup.sh
+      dir: /Users/chrispian/dev/hollis-labs/apps/torque
+      env:
+        HOME: /Users/chrispian
+        PATH: /opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin
+        # TORQUE_DB_PATH intentionally unset (CW-20260517-0060): the
+        # backup script resolves the DB path from `torque path`
+        # (go-apppaths), so it follows the DB to its real home.
+        TORQUE_BACKUP_DIR: /Users/chrispian/dev/backups/torque
+        TORQUE_BACKUP_INTERVAL: "3600"
+      mode: os_service
+      run_from: workspace
+      supervisor: launchd
+    tags:
+      - torque
+      - backup
+      - infrastructure
+      - launchd
+      - v2
+registry_urn: msg://agent/agent-mux/prj_3muhwzq1hw
