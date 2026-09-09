@@ -260,18 +260,118 @@ func TestTaskTransitionValid(t *testing.T) {
 	require.Equal(t, "doing", updated.Status)
 }
 
-func TestTaskTransitionInvalid(t *testing.T) {
+// TestTaskTransitionPermissive pins the CW-20260909-0011 contract: any
+// canonical status reaches any other without walking a path. todo -> done in
+// one call is the case agents hit constantly — work that was finished before
+// anyone thought to mark it in progress.
+func TestTaskTransitionPermissive(t *testing.T) {
 	svc := setupService(t)
 
-	task, err := svc.Task.Create(service.TaskCreateInput{Title: "Invalid transition test"})
+	for _, target := range []string{"done", "review", "blocked", "abandoned", "archived", "backlog"} {
+		t.Run("todo to "+target, func(t *testing.T) {
+			task, err := svc.Task.Create(service.TaskCreateInput{Title: "permissive " + target})
+			require.NoError(t, err)
+
+			require.NoError(t, svc.Task.Transition(context.Background(), task.ID, target))
+
+			updated, err := svc.Task.Get(task.ID)
+			require.NoError(t, err)
+			require.Equal(t, target, updated.Status)
+		})
+	}
+}
+
+// TestTaskTransitionUnrecognizedStatus covers refusal (1) of two: a status
+// outside the vocabulary. The message must name the alternatives — a refusal
+// that does not is what made agents guess "in_progress" and conclude the FSM
+// was broken (CW-20260907-0059).
+func TestTaskTransitionUnrecognizedStatus(t *testing.T) {
+	svc := setupService(t)
+
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "Unrecognized status test"})
 	require.NoError(t, err)
 
-	// todo → done is not a valid transition
-	err = svc.Task.Transition(context.Background(), task.ID, "done")
+	err = svc.Task.Transition(context.Background(), task.ID, "in_progress")
 	require.Error(t, err)
 
 	var te *service.TransitionError
 	require.ErrorAs(t, err, &te)
+	require.Contains(t, err.Error(), "not a recognized status")
+	require.Contains(t, err.Error(), "doing", "the error must name the vocabulary so the caller can self-correct")
+
+	updated, err := svc.Task.Get(task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "todo", updated.Status)
+}
+
+// TestTaskTransitionTerminalGuard covers refusal (2) of two: leaving done or
+// archived needs force, so finished work is not reopened by a stray call.
+func TestTaskTransitionTerminalGuard(t *testing.T) {
+	svc := setupService(t)
+
+	for _, terminal := range []string{"done", "archived"} {
+		t.Run(terminal, func(t *testing.T) {
+			task, err := svc.Task.Create(service.TaskCreateInput{Title: "terminal " + terminal})
+			require.NoError(t, err)
+			require.NoError(t, svc.Task.Transition(context.Background(), task.ID, terminal))
+
+			err = svc.Task.Transition(context.Background(), task.ID, "doing")
+			require.Error(t, err)
+			var te *service.TransitionError
+			require.ErrorAs(t, err, &te)
+			require.Contains(t, err.Error(), "force=true", "the error must name the remedy")
+
+			// Re-asserting the same status is a no-op, not a reopening.
+			require.NoError(t, svc.Task.Transition(context.Background(), task.ID, terminal))
+
+			// force is the declared way through.
+			require.NoError(t, svc.Task.ForceTransition(context.Background(), task.ID, "doing"))
+			updated, err := svc.Task.Get(task.ID)
+			require.NoError(t, err)
+			require.Equal(t, "doing", updated.Status)
+		})
+	}
+}
+
+// TestTaskTransitionUnstucksNonFSMStatus is the regression guard for the 221
+// live rows the old validTransitions map had no key for: it answered "unknown
+// source status" for every one, so only force could move them. backlog is the
+// sharp case because IssueService.Create writes it.
+func TestTaskTransitionUnstucksNonFSMStatus(t *testing.T) {
+	svc := setupService(t)
+
+	for _, stuck := range []string{"backlog", "abandoned", "cancelled"} {
+		t.Run(stuck, func(t *testing.T) {
+			task, err := svc.Task.Create(service.TaskCreateInput{Title: "stuck in " + stuck})
+			require.NoError(t, err)
+			require.NoError(t, svc.Task.ForceTransition(context.Background(), task.ID, stuck))
+
+			// No force this time — the whole point.
+			require.NoError(t, svc.Task.Transition(context.Background(), task.ID, "todo"))
+			updated, err := svc.Task.Get(task.ID)
+			require.NoError(t, err)
+			require.Equal(t, "todo", updated.Status)
+		})
+	}
+}
+
+// TestForceTransitionRejectsUnrecognizedStatus pins the deliberate split in
+// ForceTransition: force bypasses the terminal guard, never the vocabulary.
+// A typo under force is how the store accumulated statuses nothing could move.
+func TestForceTransitionRejectsUnrecognizedStatus(t *testing.T) {
+	svc := setupService(t)
+
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "Force typo test"})
+	require.NoError(t, err)
+
+	err = svc.Task.ForceTransition(context.Background(), task.ID, "dnoe")
+	require.Error(t, err)
+	var te *service.TransitionError
+	require.ErrorAs(t, err, &te)
+
+	updated, err := svc.Task.Get(task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "todo", updated.Status)
 }
 
 func TestTaskForceTransition(t *testing.T) {
@@ -280,7 +380,8 @@ func TestTaskForceTransition(t *testing.T) {
 	task, err := svc.Task.Create(service.TaskCreateInput{Title: "Force transition test"})
 	require.NoError(t, err)
 
-	// todo → done is FSM-invalid; ForceTransition bypasses the rules.
+	// todo -> done needs no force since CW-20260909-0011; this pins that
+	// ForceTransition still performs an ordinary move unchanged.
 	require.NoError(t, svc.Task.ForceTransition(context.Background(), task.ID, "done"))
 
 	updated, err := svc.Task.Get(task.ID)
@@ -314,9 +415,10 @@ func TestTaskTransitionWithComment_InvalidTransitionPostsNoComment(t *testing.T)
 	task, err := svc.Task.Create(service.TaskCreateInput{Title: "Invalid transition with comment"})
 	require.NoError(t, err)
 
-	// todo -> done is FSM-invalid; the comment must not be persisted either
-	// (FSM validation happens before the transaction that would write it).
-	err = svc.Task.TransitionWithComment(context.Background(), task.ID, "done", "should not stick", "", false)
+	// An unrecognized status is refused, and the comment must not be
+	// persisted either — validation happens before the transaction that
+	// would write it.
+	err = svc.Task.TransitionWithComment(context.Background(), task.ID, "in_progress", "should not stick", "", false)
 	require.Error(t, err)
 	var te *service.TransitionError
 	require.ErrorAs(t, err, &te)
@@ -336,8 +438,8 @@ func TestTaskTransitionWithComment_Force(t *testing.T) {
 	task, err := svc.Task.Create(service.TaskCreateInput{Title: "Forced transition with comment"})
 	require.NoError(t, err)
 
-	// todo -> done is FSM-invalid; force=true bypasses the FSM, mirroring
-	// ForceTransition's contract.
+	// todo -> done needs no force since CW-20260909-0011; this pins that
+	// force=true still performs an ordinary move, mirroring ForceTransition.
 	err = svc.Task.TransitionWithComment(context.Background(), task.ID, "done", "cleanup close", "", true)
 	require.NoError(t, err)
 

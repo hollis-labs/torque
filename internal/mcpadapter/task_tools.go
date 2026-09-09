@@ -184,12 +184,13 @@ Example, over-budget cohort: {"cost_budget_gte":"50","updated_after":"2026-08-01
 
 	a.addTool(mcp.NewTool("torque_task_update",
 		mcp.WithDescription(`Partial update of a task's fields; only provided keys change (empty string clears most nullable scalars). Returns the updated TaskRecord.
-Use for field edits; prefer torque_task_transition for lifecycle moves and torque_task_bulk_transition for multi-id status changes. Numeric sentinel "-1" = unlimited for budget fields.
+Use for field edits. Passing status here works — it is routed through the same status change torque_task_transition performs, so hooks and the terminal guard still apply — but torque_task_transition is preferred for lifecycle moves because it can post an explanatory comment in the same transaction, and torque_task_bulk_transition for multi-id status changes. Numeric sentinel "-1" = unlimited for budget fields.
 Response shape: data = {<TaskRecord fields>, Tags[]} — singleton, PascalCase keys.
 Example: {"id":"T-123","priority":"1","tags":"[\"p0\",\"backend\"]"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
 		mcp.WithString("title", mcp.Description("New title")),
 		mcp.WithString("description", mcp.Description("New description")),
+		mcp.WithString("status", mcp.Description("New status: backlog|todo|queued|doing|review|done|blocked|paused|archived|abandoned|cancelled. Applied via the same path as torque_task_transition; reopening a done/archived task from here is refused — use torque_task_transition with force=true.")),
 		mcp.WithString("priority", mcp.Description("New priority (integer 1-5)")),
 		mcp.WithBoolean("manual", mcp.Description("Manual flag")),
 		mcp.WithString("executor", mcp.Description("Executor type")),
@@ -232,22 +233,27 @@ Example: {"id":"T-123","priority":"1","tags":"[\"p0\",\"backend\"]"}`),
 
 	a.addTool(mcp.NewTool("torque_task_delete",
 		mcp.WithDescription(`Hard-delete a task row and its linkage (runs, artifacts, comments cascade).
-Use sparingly — prefer torque_task_transition to "abandoned" for audit-preserving closure. For epics/sprints/projects use their respective *_delete tools.
+Use sparingly — prefer torque_task_transition to "abandoned" for audit-preserving closure (reachable from any status in one call). For epics/sprints/projects use their respective *_delete tools.
 Response shape: data = {id, deleted: true}.
 Example: {"id":"T-123"}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
 	), a.handleTaskDelete)
 
 	a.addTool(mcp.NewTool("torque_task_transition",
-		mcp.WithDescription(`Move a task through the lifecycle FSM (todo -> doing -> review -> done, or -> blocked/abandoned). Returns the updated TaskRecord.
-Use for single-task status changes; torque_task_bulk_transition for batches; torque_sprint_approve for sprint-scoped approvals. Invalid transitions return error.code=conflict — set force=true to bypass the FSM (user-initiated cleanup only; agents should respect the FSM).
+		mcp.WithDescription(`Set a task's status. Returns the updated TaskRecord.
+Transitions are PERMISSIVE: any status reaches any other, so you do not have to walk a path to record what already happened — a task sitting in todo whose work is finished goes straight to done in one call. The usual path is todo -> doing -> done; review is optional, for when the task or the user asks for it.
+The ONLY refusals are (1) a status outside the vocabulary below, and (2) leaving done or archived, which needs force=true so a finished task is not reopened by accident. Both come back as error.code=conflict with a message naming what would work.
+Status vocabulary: backlog, todo, queued, doing, review, done, blocked, paused, archived, abandoned, cancelled. Note "abandoned" (not "cancelled") is the conventional audit-preserving closure, and there is no "in_progress" — it is "doing".
 Pass comment to post a comment atomically with the status change (one transaction, not a transition call followed by a separate torque_comment_add) — e.g. explaining why a task moved to blocked. comment_author is optional (empty = unattributed, same as torque_comment_add).
+Use for single-task status changes; torque_task_bulk_transition for batches; torque_sprint_approve for sprint-scoped approvals.
 Response shape: data = {<TaskRecord fields>, Tags[]} — singleton.
 Example: {"id":"T-123","status":"doing"}
-Example with comment: {"id":"T-123","status":"blocked","comment":"waiting on upstream API key","comment_author":"reviewer"}`),
+Example, closing finished work straight from todo: {"id":"T-123","status":"done"}
+Example with comment: {"id":"T-123","status":"blocked","comment":"waiting on upstream API key","comment_author":"reviewer"}
+Example, reopening a closed task: {"id":"T-123","status":"doing","force":true}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
-		mcp.WithString("status", mcp.Required(), mcp.Description("Target status (todo|doing|review|done|blocked|abandoned)")),
-		mcp.WithBoolean("force", mcp.Description("Bypass FSM rules; for user-initiated dispositioning only (default false)")),
+		mcp.WithString("status", mcp.Required(), mcp.Description("Target status: backlog|todo|queued|doing|review|done|blocked|paused|archived|abandoned|cancelled. Any of these is reachable from any current status; only leaving done/archived needs force=true.")),
+		mcp.WithBoolean("force", mcp.Description("Reopen a task that is done or archived (default false). Not needed for any other move — transitions are otherwise permissive.")),
 		mcp.WithString("comment", mcp.Description("Optional comment body to post atomically with the status change (same transaction)")),
 		mcp.WithString("comment_author", mcp.Description("Author slug/id for the comment (optional; only used when comment is set)")),
 	), a.handleTaskTransition)
@@ -255,10 +261,11 @@ Example with comment: {"id":"T-123","status":"blocked","comment":"waiting on ups
 	a.addTool(mcp.NewTool("torque_task_bulk_transition",
 		mcp.WithDescription(`Transition many tasks to the same status in one call; per-task validation errors are collected, not fatal.
 Use for batch approvals or closures; prefer torque_sprint_approve for sprint-scoped approve-all. torque_task_transition for single-task moves.
+Status vocabulary: backlog, todo, queued, doing, review, done, blocked, paused, archived, abandoned, cancelled. Transitions are permissive (any status reaches any other), so the per-task failures you will see are tasks currently in done/archived — reopening those needs torque_task_transition with force=true.
 Response shape: data = {succeeded: [id...], failed: [{id, error: {code, message, field}}...]} — same PRIM-003 bulk envelope as torque_task_bulk_update/_delete/_tag; partial success is not an error, ok=true even when some ids fail.
 Example: {"ids":"[\"T-1\",\"T-2\",\"T-3\"]","status":"done"}`),
 		mcp.WithString("ids", mcp.Required(), mcp.Description("JSON array of task IDs")),
-		mcp.WithString("status", mcp.Required(), mcp.Description("Target status applied to every id")),
+		mcp.WithString("status", mcp.Required(), mcp.Description("Target status applied to every id: backlog|todo|queued|doing|review|done|blocked|paused|archived|abandoned|cancelled")),
 	), a.handleTaskBulkTransition)
 }
 
@@ -1021,6 +1028,20 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 	if err := a.svc.Task.Update(id, input); err != nil {
 		return errFromService(err)
 	}
+
+	// status is deliberately NOT part of buildTaskUpdateInput: routing it
+	// through TaskService.Update would write the column directly and skip
+	// the transition observers and the terminal guard. Before
+	// CW-20260909-0011 the arg was simply dropped and the call still
+	// answered ok:true — reporting a success that never happened, which the
+	// friction log flagged as the sharper defect. Now it performs the same
+	// status change torque_task_transition does, and refusals surface.
+	if status := reqStr(req, "status"); status != "" {
+		if err := a.svc.Task.Transition(ctx, id, status); err != nil {
+			return errFromService(err)
+		}
+	}
+
 	task, err := a.svc.Task.Get(id)
 	if err != nil {
 		return errFromService(err)

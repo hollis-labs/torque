@@ -11,7 +11,8 @@ ids and `clockwork` in older docs are historical.
 
 - `docs/README.md` indexes current docs. `docs/architecture/` and
   `docs/superpowers/` are historical notes, not the contract.
-- `internal/service/task.go` owns the status FSM (`validTransitions`).
+- `internal/service/task.go` owns the status vocabulary (`CanonicalStatuses`)
+  and the transition policy (`checkTransition`).
 - `internal/persistence/sqlstore/store.go` splits one handle into a serialized
   writer and a bounded reader; `migrations/` holds the numbered SQL.
 - `internal/runtime/scheduler/` dispatches from the queue;
@@ -39,9 +40,17 @@ Build and deploy authority is Cerberus, not git. Production is the
 `torque-api-service` resource — launchd, port 8990, run from a synced artifact,
 deployed with `cerberus_resource_deploy torque-api-service`.
 
-`TaskService.Transition` enforces the FSM. `ForceTransition` bypasses it for
-user-initiated dispositioning only, never to make an inconvenient transition
-legal.
+Task transitions are permissive (CW-20260909-0011): any status in
+`CanonicalStatuses` reaches any other in one call, so nothing has to walk a
+path to record what already happened. Exactly two things are refused, and each
+error names its own remedy — a status outside the vocabulary, and leaving the
+terminal statuses `done`/`archived`. `ForceTransition` clears the second only;
+it does NOT bypass the vocabulary, because a typo under force is how the store
+accumulated 221 rows the old FSM had no key for.
+
+Add a status to `CanonicalStatuses` and to the GUI's `TaskStatus` union
+together — they were allowed to drift apart once and produced three
+disagreeing vocabularies.
 
 SQLite write ownership is explicit and already solved: handles come from
 `appdb.Open`, and `sqlstore.New` re-opens them as a single-connection writer

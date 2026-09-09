@@ -227,7 +227,7 @@ func TestFullStack_IssueBulkUpdate_PartialSuccess(t *testing.T) {
 // TaskService.BulkTransition itself"): an issue force-moved to todo can
 // transition through the shared FSM, and a bogus id fails per-item without
 // aborting the batch.
-func TestFullStack_IssueBulkTransition_DelegatesToTaskFSM(t *testing.T) {
+func TestFullStack_IssueBulkTransition_DelegatesToTaskStatusPolicy(t *testing.T) {
 	a := setupAdapterWithFeatures(t)
 	projText, isErr := callTool(t, a, "torque_project_create", map[string]interface{}{
 		"name": "Issue Project", "repo_path": t.TempDir(),
@@ -245,24 +245,19 @@ func TestFullStack_IssueBulkTransition_DelegatesToTaskFSM(t *testing.T) {
 	parseData(t, text, &issue)
 	id := issue["ID"].(string)
 
-	// Fresh issues start at status=backlog, which is outside Task's FSM (no
-	// transitions defined from it) — bulk_transition must fail that item
-	// with a conflict, not silently succeed or panic.
+	// Fresh issues start at status=backlog. This used to be a trap: backlog
+	// was outside validTransitions, so Torque created rows its own FSM could
+	// not move and the caller needed force=true to escape. Since
+	// CW-20260909-0011 backlog is a canonical status like any other and
+	// backlog -> todo just works.
 	text, isErr = callTool(t, a, "torque_issue_bulk_transition", map[string]interface{}{
 		"ids": `["` + id + `"]`, "status": "todo",
 	})
 	require.False(t, isErr, "bulk_transition call itself must not be a call-level error: %s", text)
 	var fromBacklog bulkResponse
 	parseData(t, text, &fromBacklog)
-	require.Empty(t, fromBacklog.Succeeded)
-	require.Len(t, fromBacklog.Failed, 1)
-
-	// Force it to todo (bypassing the FSM, same escape hatch the docstring
-	// documents), then bulk_transition through the real FSM should succeed.
-	_, isErr = callTool(t, a, "torque_task_transition", map[string]interface{}{
-		"id": id, "status": "todo", "force": true,
-	})
-	require.False(t, isErr)
+	require.Equal(t, []string{id}, fromBacklog.Succeeded, "backlog must no longer be a dead end")
+	require.Empty(t, fromBacklog.Failed)
 
 	text, isErr = callTool(t, a, "torque_issue_bulk_transition", map[string]interface{}{
 		"ids": `["` + id + `","CW-does-not-exist"]`, "status": "doing",

@@ -283,13 +283,11 @@ func TestFullStack_TaskBulkTransition_PartialSuccess(t *testing.T) {
 	parseData(t, text, &t2)
 	id2 := t2["ID"].(string)
 
-	// todo -> done is FSM-invalid (must go through doing/review first), so
-	// id2 fails while id1... also fails the same way. Force id1 into
-	// "review" first so it succeeds and id2 (still "todo") fails, giving a
-	// genuine partial-success mix.
-	text, isErr := callTool(t, a, "torque_task_transition", map[string]interface{}{"id": id1, "status": "doing"})
-	require.False(t, isErr, "seed transition should succeed: %s", text)
-	text, isErr = callTool(t, a, "torque_task_transition", map[string]interface{}{"id": id1, "status": "review"})
+	// Since CW-20260909-0011 transitions are permissive, so the partial mix
+	// has to be built from the two refusals that remain. id1 stays in todo
+	// and will succeed; id2 is parked in "archived" so the terminal guard
+	// refuses it; the bogus id fails as not-found.
+	text, isErr := callTool(t, a, "torque_task_transition", map[string]interface{}{"id": id2, "status": "archived"})
 	require.False(t, isErr, "seed transition should succeed: %s", text)
 
 	text, isErr = callTool(t, a, "torque_task_bulk_transition", map[string]interface{}{

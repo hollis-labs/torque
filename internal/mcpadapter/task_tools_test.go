@@ -1734,13 +1734,15 @@ func TestFullStack_TaskTransition_WithComment_InvalidTransitionPostsNoComment(t 
 	parseData(t, text, &created)
 	id := created["ID"].(string)
 
-	// todo -> done is FSM-invalid.
+	// "in_progress" is not in the vocabulary — the exact name agents guessed
+	// before the tool description carried the real list (CW-20260907-0059).
 	text, isErr = callTool(t, a, "torque_task_transition", map[string]interface{}{
 		"id":      id,
-		"status":  "done",
+		"status":  "in_progress",
 		"comment": "should not stick",
 	})
-	require.True(t, isErr, "invalid transition should error: %s", text)
+	require.True(t, isErr, "unrecognized status should error: %s", text)
+	require.Contains(t, text, "doing", "the refusal must name the vocabulary so the caller can self-correct")
 
 	text, isErr = callTool(t, a, "torque_comment_list", map[string]interface{}{
 		"entity_type": "task", "entity_id": id,
@@ -1751,4 +1753,52 @@ func TestFullStack_TaskTransition_WithComment_InvalidTransitionPostsNoComment(t 
 	}
 	parseData(t, text, &env)
 	require.Empty(t, env.Items)
+}
+
+// TestFullStack_TaskUpdate_StatusApplies pins the CW-20260909-0011 fix for
+// the defect the friction log called the sharper of the pair: torque_task_update
+// had no status param, the adapter dropped the arg, and the call still
+// answered ok:true — reporting a status change that never happened. It must
+// now actually apply, and route through the transition path so the terminal
+// guard still holds.
+func TestFullStack_TaskUpdate_StatusApplies(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "update-status", "description": "x",
+	})
+	require.False(t, isErr)
+	var created map[string]interface{}
+	parseData(t, text, &created)
+	id := created["ID"].(string)
+
+	// The move that silently no-opped before.
+	text, isErr = callTool(t, a, "torque_task_update", map[string]interface{}{
+		"id": id, "status": "done",
+	})
+	require.False(t, isErr, "update with status should succeed: %s", text)
+	var updated map[string]interface{}
+	parseData(t, text, &updated)
+	require.Equal(t, "done", updated["Status"], "status must actually change, not report success and do nothing")
+
+	// It goes through the transition path, so the terminal guard applies
+	// rather than update being a back door around it.
+	text, isErr = callTool(t, a, "torque_task_update", map[string]interface{}{
+		"id": id, "status": "doing",
+	})
+	require.True(t, isErr, "leaving a terminal status via update must be refused: %s", text)
+	require.Contains(t, text, "force=true")
+
+	// A field edit alongside a status change still applies both.
+	_, isErr = callTool(t, a, "torque_task_transition", map[string]interface{}{
+		"id": id, "status": "todo", "force": true,
+	})
+	require.False(t, isErr)
+	text, isErr = callTool(t, a, "torque_task_update", map[string]interface{}{
+		"id": id, "status": "doing", "priority": "1",
+	})
+	require.False(t, isErr, "%s", text)
+	parseData(t, text, &updated)
+	require.Equal(t, "doing", updated["Status"])
+	require.Equal(t, float64(1), updated["Priority"])
 }

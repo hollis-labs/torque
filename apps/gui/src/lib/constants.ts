@@ -10,6 +10,8 @@ export const TASK_STATUSES: readonly TaskStatus[] = [
   'blocked',
   'paused',
   'archived',
+  'abandoned',
+  'cancelled',
 ] as const
 
 export const PRIORITIES = [
@@ -24,8 +26,12 @@ export const MODE_PRESETS = {
   reviewing: ['done', 'review'] as TaskStatus[],
 } as const
 
+// "Active" excludes every closed status, not just archived — otherwise
+// abandoned and cancelled tasks reappear in the default board view.
+const CLOSED_STATUSES: TaskStatus[] = ['archived', 'abandoned', 'cancelled']
+
 export const DEFAULT_ACTIVE_STATUSES: TaskStatus[] = TASK_STATUSES.filter(
-  (s) => s !== 'archived'
+  (s) => !CLOSED_STATUSES.includes(s)
 )
 
 /** Maps each TaskStatus to its CSS variable token name (legacy — kept for compat) */
@@ -39,6 +45,10 @@ export const STATUS_COLOR_VAR: Record<TaskStatus, string> = {
   blocked: 'var(--color-status-blocked)',
   paused: 'var(--color-status-paused)',
   archived: 'var(--color-status-archived)',
+  // No dedicated tokens for these two; they share archived's closed-state
+  // treatment rather than inventing colours that the theme does not define.
+  abandoned: 'var(--color-status-archived)',
+  cancelled: 'var(--color-status-archived)',
 }
 
 /** Maps each TaskStatus to a human-readable label */
@@ -52,6 +62,8 @@ export const STATUS_LABEL: Record<TaskStatus, string> = {
   blocked: 'Blocked',
   paused: 'Paused',
   archived: 'Archived',
+  abandoned: 'Abandoned',
+  cancelled: 'Cancelled',
 }
 
 /** Per-status Tailwind color classes (bg, text, border, dot) */

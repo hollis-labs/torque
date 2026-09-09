@@ -67,8 +67,10 @@ export function TaskActionsMenu({
   const showMoveToBacklog = !isTerminal && !isTodoManual
   const showPause = !isTerminal && task.status !== 'paused'
 
-  // Submenu lists every status except the current one. Force-bypass is wired
-  // up so users can disposition stuck tasks even when the FSM rejects.
+  // Submenu lists every status except the current one. Every one of them is
+  // reachable in a single call since CW-20260909-0011; the force-bypass
+  // prompt remains for the one case that still refuses — reopening a task
+  // that is done or archived.
   const transitionTargets = TASK_STATUSES.filter((s) => s !== task.status)
 
   async function runTransition(status: string, successMsg: string) {
@@ -270,7 +272,18 @@ export function TaskActionsMenu({
 // looksLikeFSMRejection inspects an error string for the conflict markers the
 // service.TransitionError produces. Conservative — only triggers the force
 // prompt for transition-rule errors, not network or unrelated 422s.
+//
+// Since CW-20260909-0011 transitions are permissive, so the only rejection
+// force can clear is the terminal guard ("done is terminal — pass force=true
+// to reopen this task"). The other rejection, an unrecognized status, is NOT
+// force-clearable and must fall through to a plain error toast. The two older
+// markers are kept so a UI running against an older daemon still offers the
+// bypass.
 function looksLikeFSMRejection(message: string): boolean {
   const m = message.toLowerCase()
-  return m.includes('transition not permitted') || m.includes('unknown source status')
+  return (
+    m.includes('is terminal') ||
+    m.includes('transition not permitted') ||
+    m.includes('unknown source status')
+  )
 }

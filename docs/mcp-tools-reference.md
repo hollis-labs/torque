@@ -127,9 +127,9 @@ Full field reference: ADR-0004 §4. Source: `internal/mcpadapter/task_tools.go`,
 | `torque_task_create` | Create a task. Safety override forces `manual=true` on every create (an agent must promote it via `torque_task_update {"manual":false}` before the scheduler dispatches it) — the response's `dispatch_notice` spells out the exact promotion call. Optional `subtodos[]` seeds an initial checklist atomically. |
 | `torque_task_get` | Fetch one task by id. |
 | `torque_task_list` | Filter + free-text `search` + sort + cursor-paginate, all in one tool (no separate search tool). Rich filter set: status/statuses[]/priority/kind/trust/checkpoint_mode/parent_id/project_id/sprint_id/epic_id/tags[]/manual/agent_profile/launch_profile, `created_*`/`updated_*` RFC3339 ranges, and `*_gte`/`*_lte` budget/duration range filters. `include_internal` (default false) hides `kind=internal` automation rows. |
-| `torque_task_update` | Partial patch. Numeric sentinel `-1` = unlimited on budget fields. |
-| `torque_task_delete` | Hard delete (runs/artifacts/comments cascade). Prefer `transition` to `abandoned` for an audit-preserving close. |
-| `torque_task_transition` | FSM move (`todo→doing→review→done`, or `→blocked`/`abandoned`). `force=true` bypasses the FSM. Optional `comment`/`comment_author` posts a comment atomically with the transition (one transaction). |
+| `torque_task_update` | Partial patch. Numeric sentinel `-1` = unlimited on budget fields. `status` is accepted and routed through the same path as `torque_task_transition` — before CW-20260909-0011 the arg was silently dropped and the call still answered `ok:true`. |
+| `torque_task_delete` | Hard delete (runs/artifacts/comments cascade). Prefer `transition` to `abandoned` for an audit-preserving close — reachable from any status in one call. |
+| `torque_task_transition` | Set a status. Permissive: any status reaches any other in one call (`todo→done` included). Vocabulary: `backlog`, `todo`, `queued`, `doing`, `review`, `done`, `blocked`, `paused`, `archived`, `abandoned`, `cancelled`. Only two refusals — a status outside that list, and leaving `done`/`archived`, which needs `force=true`. Optional `comment`/`comment_author` posts a comment atomically with the transition (one transaction). |
 | `torque_task_bulk_transition` | Same status applied to many ids; PRIM-003 `{succeeded, failed}` envelope. |
 | `torque_task_bulk_update` | Same field set/semantics as `torque_task_update`, applied across `ids[]`. |
 | `torque_task_bulk_delete` | Hard-delete many ids in one call. |
@@ -264,13 +264,13 @@ naturally, first non-empty one wins. Source:
 | `torque_issue_update` | Partial patch; rejects non-issue ids. |
 | `torque_issue_delete` | Hard delete (runs/artifacts/comments cascade); rejects non-issue ids. Supersedes the old `torque_task_delete` workaround. |
 | `torque_issue_bulk_update` | Same field set as `torque_issue_update`, applied across `ids[]`. |
-| `torque_issue_bulk_transition` | Delegates straight to `TaskService.BulkTransition` — issues share Task's FSM. |
+| `torque_issue_bulk_transition` | Delegates straight to `TaskService.BulkTransition` — issues share Task's status policy. |
 
-**Known limitation (by design, not a bug):** a freshly created issue starts
-at `status=backlog`, which isn't a key in `TaskService`'s transition table —
-neither `torque_task_transition` nor `torque_issue_bulk_transition` can move
-it out of `backlog` without `force=true` on a single-item
-`torque_task_transition` first.
+A freshly created issue starts at `status=backlog`. That used to be a dead end:
+`backlog` was not a key in `TaskService`'s transition table, so Torque created
+rows its own FSM could not move and callers needed `force=true` to escape.
+Since CW-20260909-0011 `backlog` is a canonical status like any other and moves
+out of it need no force.
 
 `torque_issue_list` sort: same allow-list/default as Task
 (`priority\|status\|updated_at\|created_at`, default `priority asc`) — issue
