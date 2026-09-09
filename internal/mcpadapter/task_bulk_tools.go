@@ -66,7 +66,7 @@ Example: {"ids":"[\"T-1\",\"T-2\"]","priority":"1","tags":"[\"p0\"]"}`),
 
 	a.addTool(mcp.NewTool("torque_task_bulk_delete",
 		mcp.WithDescription(`Hard-delete many tasks in one call (runs, artifacts, comments cascade per task); per-task failures are collected, not fatal.
-Use sparingly — prefer torque_task_bulk_transition to "abandoned" for audit-preserving batch closure. torque_task_delete for a single task.
+Use sparingly — prefer torque_task_bulk_transition to "abandoned" for audit-preserving batch closure (reachable from any status in one call). torque_task_delete for a single task.
 Response shape: data = {succeeded: [id...], failed: [{id, error: {code, message, field}}...]} — partial success is not an error; ok=true even when some ids fail. error.code uses the same taxonomy as single-item torque_task_delete.
 Example: {"ids":"[\"T-1\",\"T-2\"]"}`),
 		mcp.WithString("ids", mcp.Required(), mcp.Description("JSON array of task IDs")),

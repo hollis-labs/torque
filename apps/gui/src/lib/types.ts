@@ -1,3 +1,6 @@
+// Must stay in sync with service.CanonicalStatuses (internal/service/task.go).
+// abandoned and cancelled were absent here while 160 live rows already used
+// them, so the UI could neither render nor target them (CW-20260909-0011).
 export type TaskStatus =
   | 'backlog'
   | 'todo'
@@ -8,6 +11,8 @@ export type TaskStatus =
   | 'blocked'
   | 'paused'
   | 'archived'
+  | 'abandoned'
+  | 'cancelled'
 
 export type TagColor =
   | 'zinc' | 'red' | 'orange' | 'amber'

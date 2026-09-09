@@ -92,7 +92,7 @@ Example: {"plan_id":"T-999","title":"Auth refactor v2"}`),
 
 	a.addTool(mcp.NewTool("torque_plan_delete",
 		mcp.WithDescription(`Hard-delete a plan task row and its linkage (runs, artifacts, comments cascade). Rejects non-plan task ids with error.code=arg_invalid. Child tasks are NOT deleted — their parent_id is cleared (ON DELETE SET NULL).
-Use sparingly — prefer torque_task_transition to "abandoned" for audit-preserving closure. For non-plan tasks use torque_task_delete.
+Use sparingly — prefer torque_task_transition to "abandoned" for audit-preserving closure (reachable from any status in one call). For non-plan tasks use torque_task_delete.
 Response shape: data = {id, deleted: true}.
 Example: {"plan_id":"T-999"}`),
 		mcp.WithString("plan_id", mcp.Required(), mcp.Description("Plan task ID (kind=plan)")),

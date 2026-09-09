@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	feotel "github.com/hollis-labs/go-otel"
@@ -17,14 +18,74 @@ import (
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
-// validTransitions defines the allowed FSM transitions for task status.
-var validTransitions = map[string][]string{
-	"todo":    {"doing", "blocked", "paused", "archived"},
-	"doing":   {"review", "done", "blocked", "paused", "todo", "archived"},
-	"review":  {"done", "doing", "todo", "blocked", "paused", "archived"},
-	"blocked": {"todo", "archived"},
-	"paused":  {"todo", "archived"},
-	"done":    {"archived"},
+// CanonicalStatuses is the recognized task status vocabulary. It is the
+// union of the three vocabularies that disagreed before CW-20260909-0011:
+// the old validTransitions map (6), the GUI's TaskStatus union (9), and the
+// statuses actually present in the live store (9, including 221 rows in
+// abandoned/backlog/cancelled that the old map had no key for and could
+// therefore never move). Taking the union means no existing row is
+// unrepresentable and no data migration is needed.
+//
+// Torque writes backlog itself (IssueService.Create), so a status the FSM
+// refuses to recognize is not a hypothetical.
+var CanonicalStatuses = []string{
+	"backlog", "todo", "queued", "doing", "review",
+	"done", "blocked", "paused", "archived", "abandoned", "cancelled",
+}
+
+// canonicalStatusSet indexes CanonicalStatuses for membership tests.
+var canonicalStatusSet = func() map[string]bool {
+	m := make(map[string]bool, len(CanonicalStatuses))
+	for _, s := range CanonicalStatuses {
+		m[s] = true
+	}
+	return m
+}()
+
+// terminalStatuses are the statuses a task does not leave without force.
+// Everything else is freely reachable from everything else: the transition
+// policy is permissive by default (vNext ruling 2), so agents are not made
+// to walk a path to record what already happened. The guard exists only so
+// a finished task is not silently reopened by a stray call — reopening is a
+// deliberate act, and force=true is how a caller declares it.
+var terminalStatuses = map[string]bool{
+	"done":     true,
+	"archived": true,
+}
+
+// IsCanonicalStatus reports whether s is a recognized task status.
+func IsCanonicalStatus(s string) bool { return canonicalStatusSet[s] }
+
+// checkTransition applies the permissive transition policy and returns a
+// TransitionError whose message TELLS THE CALLER WHAT WOULD WORK. A refusal
+// that names no alternative is what made agents guess status names and
+// conclude the FSM was broken (CW-20260907-0059); every rejection here
+// carries the remedy.
+func checkTransition(from, to string) error {
+	if !canonicalStatusSet[to] {
+		return &TransitionError{
+			From: from,
+			To:   to,
+			Message: fmt.Sprintf(
+				"%q is not a recognized status — use one of: %s",
+				to, strings.Join(CanonicalStatuses, ", "),
+			),
+		}
+	}
+	// Re-asserting the current status is a no-op, not a reopening.
+	if from == to {
+		return nil
+	}
+	if terminalStatuses[from] {
+		return &TransitionError{
+			From: from,
+			To:   to,
+			Message: fmt.Sprintf(
+				"%s is terminal — pass force=true to reopen this task", from,
+			),
+		}
+	}
+	return nil
 }
 
 // TaskCreateInput holds user-facing fields for creating a task.
@@ -715,7 +776,9 @@ func (s *TaskService) ListDependencyIDs(taskID string) ([]string, error) {
 	return s.store.ListTaskDependencyIDs(taskID)
 }
 
-// Transition moves a task to a new status if the FSM allows it.
+// Transition moves a task to a new status under the permissive policy in
+// checkTransition: any canonical status reaches any other, except that
+// leaving a terminal status (done/archived) requires ForceTransition.
 //
 // ctx carries the inbound HTTP/MCP server span (when called from an
 // instrumented surface) so torque.task.transition nests under it; tests pass
@@ -747,30 +810,25 @@ func (s *TaskService) Transition(ctx context.Context, id, newStatus string) (err
 	}
 	span.SetAttributes(attribute.String("torque.task.from_status", task.Status))
 
-	allowed, ok := validTransitions[task.Status]
-	if !ok {
-		return &TransitionError{From: task.Status, To: newStatus, Message: "unknown source status"}
+	if err := checkTransition(task.Status, newStatus); err != nil {
+		return err
 	}
-	for _, a := range allowed {
-		if a == newStatus {
-			if err := s.store.TransitionTask(id, newStatus); err != nil {
-				return err
-			}
-			s.notifyTransition(ctx, id, task.Status, newStatus)
-			return nil
-		}
+	if err := s.store.TransitionTask(id, newStatus); err != nil {
+		return err
 	}
-	return &TransitionError{
-		From:    task.Status,
-		To:      newStatus,
-		Message: "transition not permitted",
-	}
+	s.notifyTransition(ctx, id, task.Status, newStatus)
+	return nil
 }
 
-// ForceTransition writes the new status without consulting the FSM. Use only
-// for explicit user-initiated cleanup (e.g., dispositioning a stuck task that
-// an agent left mid-flight); programmatic callers must use Transition. The
-// store still validates that the status string is a recognized value.
+// ForceTransition bypasses the terminal guard — it is how a caller reopens a
+// done/archived task, or dispositions one an agent left mid-flight. It does
+// NOT bypass the status vocabulary: the target must still be canonical.
+//
+// That split is deliberate. The store itself validates nothing (transitionTaskTx
+// is a plain UPDATE), so before CW-20260909-0011 a typo under force wrote a new
+// status value that nothing could then move — which is how the live store
+// accumulated 221 rows the old FSM had no key for. force answers "I mean to
+// reopen this", never "any string is a status".
 func (s *TaskService) ForceTransition(ctx context.Context, id, newStatus string) (err error) {
 	ctx, span := feotel.StartSpan(ctx, "torque.task.transition")
 	span.SetAttributes(
@@ -791,6 +849,16 @@ func (s *TaskService) ForceTransition(ctx context.Context, id, newStatus string)
 		return err
 	}
 	span.SetAttributes(attribute.String("torque.task.from_status", task.Status))
+	if !IsCanonicalStatus(newStatus) {
+		return &TransitionError{
+			From: task.Status,
+			To:   newStatus,
+			Message: fmt.Sprintf(
+				"%q is not a recognized status — use one of: %s",
+				newStatus, strings.Join(CanonicalStatuses, ", "),
+			),
+		}
+	}
 	if err := s.store.TransitionTask(id, newStatus); err != nil {
 		return err
 	}
@@ -835,21 +903,21 @@ func (s *TaskService) TransitionWithComment(ctx context.Context, id, newStatus, 
 	}
 	span.SetAttributes(attribute.String("torque.task.from_status", task.Status))
 
-	if !force {
-		allowed, ok := validTransitions[task.Status]
-		if !ok {
-			return &TransitionError{From: task.Status, To: newStatus, Message: "unknown source status"}
-		}
-		permitted := false
-		for _, a := range allowed {
-			if a == newStatus {
-				permitted = true
-				break
+	// force skips the terminal guard but not the vocabulary, matching
+	// ForceTransition — see its doc comment for why the split matters.
+	if force {
+		if !IsCanonicalStatus(newStatus) {
+			return &TransitionError{
+				From: task.Status,
+				To:   newStatus,
+				Message: fmt.Sprintf(
+					"%q is not a recognized status — use one of: %s",
+					newStatus, strings.Join(CanonicalStatuses, ", "),
+				),
 			}
 		}
-		if !permitted {
-			return &TransitionError{From: task.Status, To: newStatus, Message: "transition not permitted"}
-		}
+	} else if err := checkTransition(task.Status, newStatus); err != nil {
+		return err
 	}
 
 	wtx, err := s.store.BeginWriteTx(ctx)
