@@ -180,6 +180,16 @@ func (s *CommentService) ListForTask(taskID string) ([]sqlstore.CommentRecord, e
 	return s.List(sqlstore.EntityTypeTask, taskID)
 }
 
+// CountForEntity returns how many comments exist on an entity. Used by
+// torque_task_get to report thread totals alongside a tail window without
+// loading the thread (CW-20260910-0057).
+func (s *CommentService) CountForEntity(entityType, entityID string) (int, error) {
+	if entityType == "" {
+		entityType = sqlstore.EntityTypeTask
+	}
+	return s.store.CountCommentsForEntity(entityType, entityID)
+}
+
 // Search returns comments matching the filter. The caller is responsible for
 // enforcing any required-field contract (e.g. non-empty Search) at the
 // MCP/HTTP layer — the store accepts an empty Search as "no content filter".
