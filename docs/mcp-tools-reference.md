@@ -125,7 +125,7 @@ Full field reference: ADR-0004 §4. Source: `internal/mcpadapter/task_tools.go`,
 | Tool | Purpose |
 |---|---|
 | `torque_task_create` | Create a task. Safety override forces `manual=true` on every create (an agent must promote it via `torque_task_update {"manual":false}` before the scheduler dispatches it) — the response's `dispatch_notice` spells out the exact promotion call. Optional `subtodos[]` seeds an initial checklist atomically. |
-| `torque_task_get` | Fetch one task by id. |
+| `torque_task_get` | Fetch one task by id, **including its 10 most recent comments by default** (CW-20260910-0057). `comments="false"` opts out; `comments_limit` widens the window (max 100). |
 | `torque_task_list` | Filter + free-text `search` + sort + cursor-paginate, all in one tool (no separate search tool). Rich filter set: status/statuses[]/priority/kind/trust/checkpoint_mode/parent_id/project_id/sprint_id/epic_id/tags[]/manual/agent_profile/launch_profile, `created_*`/`updated_*` RFC3339 ranges, and `*_gte`/`*_lte` budget/duration range filters. `include_internal` (default false) hides `kind=internal` automation rows. |
 | `torque_task_update` | Partial patch. Numeric sentinel `-1` = unlimited on budget fields. `status` is accepted and routed through the same path as `torque_task_transition` — before CW-20260909-0011 the arg was silently dropped and the call still answered `ok:true`. |
 | `torque_task_delete` | Hard delete (runs/artifacts/comments cascade). Prefer `transition` to `abandoned` for an audit-preserving close — reachable from any status in one call. |
@@ -137,6 +137,83 @@ Full field reference: ADR-0004 §4. Source: `internal/mcpadapter/task_tools.go`,
 
 `torque_task_list` sort: `sort_by` ∈ `priority\|status\|updated_at\|created_at`,
 default `priority asc` (tiebreak `id asc`).
+
+### Unknown arguments are rejected, not dropped (CW-20260907-0060)
+
+Neither the MCP protocol layer nor mcp-go validates an incoming argument
+against the tool's schema, and every Torque handler reads its inputs
+presence-based. An argument no handler read was therefore simply not read: no
+rejection, and `ok: true` either way. A caller passing `body` where the schema
+says `content` was told the call succeeded while the value went nowhere.
+
+Every tool registered through `addTool` — the whole surface, loopback subset
+included — now rejects an argument its schema does not declare, with
+`error.code=arg_invalid` naming the offenders and enumerating the accepted set.
+`_`-prefixed transport arguments (`_traceparent`, `_tracestate`) are exempt.
+
+Scope evidence: an audit across the global, loopback and all-features adapters
+found zero handlers reading an argument their tool does not declare, so no
+legitimate call is newly rejected. The only field on `torque_task_create` and
+not on `torque_task_update` is `subtodos` (there is a dedicated
+`torque_task_subtodo_*` family) — every other create field is writable on
+update, so the reported per-field asymmetry was narrower than suspected.
+
+### `kind=decision` carries its own `checkpoint_mode` default (CW-20260907-0060)
+
+`checkpoint_mode`'s documented default is `none`, but `kind=decision` requires
+`blocking`. That combination made the documented default invalid for a
+documented kind, discoverable only by being rejected. The kind now carries the
+stricter default: `torque_task_create {"kind":"decision"}` and
+`torque_task_update {"kind":"decision"}` both apply `checkpoint_mode=blocking`
+when the caller supplies none, and both persist it.
+
+An **explicit** `checkpoint_mode=none|non_blocking` alongside `kind=decision`
+is still rejected — and since an omitted value is now defaulted, that rejection
+is reachable only from an explicit override, so the error says so rather than
+restating the requirement. Both fields' descriptions state the coupling.
+
+### `torque_task_get` comments (CW-20260910-0057)
+
+`torque_task_get` — the cross-task tool **and** the loopback's worker-pinned
+one — returns a tail window of the task's comments alongside the record.
+Corrections and scope changes posted after a task is written live in the
+thread; reading the description alone is how a session executes a framing that
+has since been superseded.
+
+| Arg | Default | Meaning |
+|---|---|---|
+| `comments` | `"true"` | include the comment tail |
+| `comments_limit` | `10` | window size, clamped to 100 |
+
+The window is the **newest** `comments_limit` comments, presented **oldest →
+newest** so successive corrections read forward — matching
+`torque_comment_list`'s per-entity `created_at ASC` default inside the window.
+
+`CommentsMeta` is **always present** when comments were requested, including
+when nothing was cut (`omitted: 0, truncated: false`). Inferring completeness
+from array length is the exact failure this fixes, so the response states it:
+
+```json
+"Comments": [ {"id": 4096, "author": "planner", "content": "...",
+               "created_at": "...", "updated_at": "..."} ],
+"CommentsMeta": {"returned": 10, "total": 34, "omitted": 24, "truncated": true,
+                 "hint": "24 older comments omitted — torque_comment_list ..."}
+```
+
+`total` comes from a `COUNT` query, not from loading the thread. With
+`comments="false"` both keys are absent entirely, not empty.
+
+This path also enforces `maxMCPResponseBytes` (100KB), which
+`torque_task_get` did not do at all before — the description column is
+unbounded. On overflow it drops the **oldest** comment in the window first,
+the opposite direction from `cappedJSONResult`'s tail-trim, because here the
+newest comments are the ones being kept. If the record alone exceeds the cap,
+every comment is dropped and `CommentsMeta` says so; the record is never
+silently trimmed.
+
+`comments` is a separate argument rather than a reuse of `task_list`'s
+`verbose`: on `task_list` `verbose` selects brief-vs-full *task* records, while
+here the axis is whether a *different entity* is included.
 
 ---
 
@@ -311,6 +388,35 @@ Not a tool-surface change, but relevant to any agent reading `sprint_id`/
 `task_dependencies` join table (not a JSON blob) — `torque_task_get`/`_list`
 (verbose)/`_create`/`_update` surface it as a plain `DependsOn: []string` of
 task ids either way, so no caller-visible shape changed.
+
+## Comment emptiness and unattributed rows (CW-20260903-0044)
+
+`torque_comment_add` declared `content` required and did not check it. A call
+that omitted it — or passed `body`, a plausible slip for a prose field — was
+accepted, answered `ok: true` with a real comment ID, and persisted a row
+storing nothing. `torque_comment_bulk_add` and `torque_comment_update` had
+always checked; the single-add path was the only gap.
+
+All three now route through one helper, so the error (`arg_invalid`,
+`"content is required"`, `field: content`) cannot drift between them.
+Whitespace-only content counts as empty. `CommentService.Add` carries the same
+check as a backstop for the HTTP route, and `torque_task_transition` treats a
+whitespace-only `comment` as no comment rather than writing a blank row.
+
+**Unattributed comments are now deletable.** `torque_comment_delete` is
+author-scoped by exact match, and it rejected `author=""` as missing — so no
+argument could ever match a row whose author is `""`. Since `author` is
+optional on `torque_comment_add` and an omitted one stores `""`, *every*
+unattributed comment was permanently unremovable, not only the ones the
+empty-content bug created. Passing `author=""` **explicitly** now matches an
+unattributed row; omitting the field entirely is still an error, so a caller
+who forgets it is not silently matched against unattributed rows.
+
+This does not change *who* may delete a comment. `author` is free text rather
+than a session identity, so declaring a comment unattributed grants no
+authority that was not already trivially available by claiming any other slug.
+Whether author-scoping is a meaningful check at all is a separate, open
+question.
 
 ## Related docs
 

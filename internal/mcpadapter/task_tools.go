@@ -104,11 +104,11 @@ Example: {"title":"Fix auth bug","description":"Login returns 500","priority":"2
 		mcp.WithString("sprint_id", mcp.Description("Sprint ID to associate this task with (requires features.sprints)")),
 		mcp.WithString("project_id", mcp.Description("Project ID to associate this task with (requires features.projects)")),
 		mcp.WithString("epic_id", mcp.Description("Epic ID to associate this task with (requires features.epics)")),
-		mcp.WithString("kind", mcp.Description("agent|external|wait|decision|parent|plan|internal|issue (default agent)")),
+		mcp.WithString("kind", mcp.Description("agent|external|wait|decision|parent|plan|internal|issue (default agent). kind=decision carries its own checkpoint_mode default of blocking — see checkpoint_mode.")),
 		mcp.WithString("source_type", mcp.Description("agent|user|api|system|webhook|import (default user)")),
 		mcp.WithString("source_ref", mcp.Description("Originating slug/id (free-form)")),
 		mcp.WithString("trust", mcp.Description("trusted|normal|untrusted (defaulted by source_type)")),
-		mcp.WithString("checkpoint_mode", mcp.Description("none|blocking|non_blocking (default none)")),
+		mcp.WithString("checkpoint_mode", mcp.Description("none|blocking|non_blocking (default none, EXCEPT kind=decision, which defaults to blocking and accepts nothing else). Omit it on a decision task and blocking is applied; passing none or non_blocking there is rejected.")),
 		mcp.WithString("on_checkpoint_response", mcp.Description("resume|review|custom (default resume)")),
 		mcp.WithString("metadata", mcp.Description("JSON object: freeform metadata, including metadata.wait for kind=wait")),
 		mcp.WithString("parent_id", mcp.Description("Optional parent task ID (migration 013). Empty = top of lineage.")),
@@ -129,11 +129,17 @@ Example: {"title":"Fix auth bug","description":"Login returns 500","priority":"2
 	), a.handleTaskCreate)
 
 	a.addTool(mcp.NewTool("torque_task_get",
-		mcp.WithDescription(`Fetch the full TaskRecord for one task ID, including all facet/budget/hook columns and linked tags.
+		mcp.WithDescription(fmt.Sprintf(`Fetch the full TaskRecord for one task ID, including all facet/budget/hook columns, linked tags, and BY DEFAULT the %d most recent comments.
+Comments are included because a task's real scope often lives in corrections posted after it was written — reading only the description is how a session executes a stale framing (CW-20260910-0057). Pass comments="false" to opt out, or comments_limit to widen the window (max %d).
+The window is the NEWEST comments_limit comments, presented oldest → newest so successive corrections read forward. CommentsMeta is ALWAYS present when comments were requested and states {returned, total, omitted, truncated} — including omitted=0 when nothing was cut, so completeness never has to be inferred from array length. Any omission names torque_comment_list in its hint.
 Use when you already have the ID; prefer torque_task_list when filtering a cohort, and torque_task_subtodo_list for checklist-only views.
-Response shape: data = {<TaskRecord fields>, Tags[]} — singleton, PascalCase keys.
-Example: {"id":"T-123"}`),
+Response shape: data = {<TaskRecord fields>, Tags[], DependsOn[], Comments[], CommentsMeta} — singleton, PascalCase keys (Comments[] entries are lowercase: id, author, content, created_at, updated_at). Comments and CommentsMeta are absent entirely when comments="false".
+Example: {"id":"T-123"}
+Example, record only: {"id":"T-123","comments":"false"}
+Example, longer thread: {"id":"T-123","comments_limit":"50"}`, defaultTaskGetCommentsLimit, maxTaskGetCommentsLimit)),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
+		mcp.WithString("comments", mcp.Description("Include the comment tail (string 'true'/'false', default 'true'). Set 'false' for the bare record — Comments and CommentsMeta are then omitted from the response entirely.")),
+		mcp.WithString("comments_limit", mcp.Description(fmt.Sprintf("How many of the newest comments to include (integer, default %d, max %d). Ignored when comments='false'.", defaultTaskGetCommentsLimit, maxTaskGetCommentsLimit))),
 	), a.handleTaskGet)
 
 	a.addTool(mcp.NewTool("torque_task_list",
@@ -222,11 +228,11 @@ Example: {"id":"T-123","priority":"1","tags":"[\"p0\",\"backend\"]"}`),
 		mcp.WithString("sprint_id", mcp.Description("Sprint ID (set empty string to unassign)")),
 		mcp.WithString("project_id", mcp.Description("Project ID (set empty string to unassign)")),
 		mcp.WithString("epic_id", mcp.Description("Epic ID (set empty string to unassign)")),
-		mcp.WithString("kind", mcp.Description("New kind (agent|external|wait|decision|parent|plan|internal|issue)")),
+		mcp.WithString("kind", mcp.Description("New kind (agent|external|wait|decision|parent|plan|internal|issue). Changing kind to decision also sets checkpoint_mode=blocking unless you pass one — see checkpoint_mode.")),
 		mcp.WithString("source_type", mcp.Description("New source_type")),
 		mcp.WithString("source_ref", mcp.Description("New source_ref (empty string clears)")),
 		mcp.WithString("trust", mcp.Description("New trust (trusted|normal|untrusted)")),
-		mcp.WithString("checkpoint_mode", mcp.Description("New checkpoint_mode (none|blocking|non_blocking)")),
+		mcp.WithString("checkpoint_mode", mcp.Description("New checkpoint_mode (none|blocking|non_blocking). kind=decision requires blocking: promoting a task to kind=decision without naming a checkpoint_mode sets it to blocking rather than rejecting the call; passing none or non_blocking alongside kind=decision is rejected.")),
 		mcp.WithString("on_checkpoint_response", mcp.Description("New on_checkpoint_response (resume|review|custom)")),
 		mcp.WithString("parent_id", mcp.Description("New parent_id (migration 013; empty string clears the parent)")),
 	), a.handleTaskUpdate)
@@ -288,24 +294,44 @@ type taskWithTags struct {
 	DependsOn []string             `json:"DependsOn"`
 }
 
-// taskResult loads the linked tags and dependency IDs for a task and
-// returns a combined MCP result.
-func (a *Adapter) taskResult(task *sqlstore.TaskRecord) (*mcp.CallToolResult, error) {
+// taskWithTagsFor loads the linked tags and dependency IDs for a task and
+// assembles the taskWithTags record. Split out of taskResult so
+// torque_task_get can build on the same record without going straight to
+// okResult (CW-20260910-0057 wraps it with a comment tail). The second
+// return is a non-nil error RESULT, already shaped for the caller to hand
+// back — matching the errFromService convention taskResult used inline.
+func (a *Adapter) taskWithTagsFor(task *sqlstore.TaskRecord) (*taskWithTags, *mcp.CallToolResult) {
 	tags, err := a.svc.Task.ListTags(task.ID)
 	if err != nil {
-		return errFromService(err)
+		res, _ := errFromService(err)
+		return nil, res
 	}
 	if tags == nil {
 		tags = []sqlstore.TagRecord{}
 	}
 	deps, err := a.svc.Task.ListDependencyIDs(task.ID)
 	if err != nil {
-		return errFromService(err)
+		res, _ := errFromService(err)
+		return nil, res
 	}
 	if deps == nil {
 		deps = []string{}
 	}
-	return okResult(taskWithTags{TaskRecord: task, Tags: tags, DependsOn: deps})
+	return &taskWithTags{TaskRecord: task, Tags: tags, DependsOn: deps}, nil
+}
+
+// taskResult loads the linked tags and dependency IDs for a task and
+// returns a combined MCP result.
+//
+// Shared by task_update, task_transition and task_create (via
+// createdTaskResult). It deliberately does NOT carry comments — see
+// taskGetResult, which is task_get's own builder.
+func (a *Adapter) taskResult(task *sqlstore.TaskRecord) (*mcp.CallToolResult, error) {
+	rec, errRes := a.taskWithTagsFor(task)
+	if errRes != nil {
+		return errRes, nil
+	}
+	return okResult(rec)
 }
 
 // createdTaskResult is the torque_task_create response shape. It is the
@@ -544,12 +570,25 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest)
 	return a.createdTaskResultFor(task)
 }
 
+// handleTaskGet returns one task's record plus, by default, a tail window of
+// its comments (CW-20260910-0057).
+//
+// `comments` is its own argument rather than a reuse of task_list's
+// `verbose`. On task_list, verbose selects brief-vs-full TASK records; here
+// the axis is whether a DIFFERENT ENTITY is included at all. Overloading one
+// argument across both meanings would make `verbose` ambiguous on exactly the
+// surface whose problem is that the real contract is not visible from the
+// schema.
 func (a *Adapter) handleTaskGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	task, err := a.svc.Task.Get(reqStr(req, "id"))
 	if err != nil {
 		return errFromService(err)
 	}
-	return a.taskResult(task)
+	return a.taskGetResult(
+		task,
+		reqStrBoolDefault(req, "comments", true),
+		clampLimit(reqInt(req, "comments_limit"), defaultTaskGetCommentsLimit, maxTaskGetCommentsLimit),
+	)
 }
 
 func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1067,7 +1106,12 @@ func (a *Adapter) handleTaskTransition(ctx context.Context, req mcp.CallToolRequ
 	// transition call followed by a separate torque_comment_add. The
 	// no-comment path is untouched: it keeps calling Transition/
 	// ForceTransition exactly as before.
-	if comment := reqStr(req, "comment"); comment != "" {
+	// TrimSpace, not != "": a whitespace-only comment is the same "nothing to
+	// say" as an omitted one, and taking this branch on it would persist a
+	// blank comment row — the data-integrity failure CW-20260903-0044 is
+	// about, reached through a second door. An optional field normalizing to
+	// its own semantic zero is not a dropped value.
+	if comment := strings.TrimSpace(reqStr(req, "comment")); comment != "" {
 		if err := a.svc.Task.TransitionWithComment(ctx, id, status, comment, reqStr(req, "comment_author"), force); err != nil {
 			return errFromService(err)
 		}

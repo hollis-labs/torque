@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/hollis-labs/torque/internal/hitl"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -128,7 +129,12 @@ var validOnCheckpointResponse = map[string]bool{
 //   - kind=external + executor!=""                     → 422
 //   - kind=external + auto_execute=true                → 422
 //   - kind=wait + no metadata.wait.predicate_type      → 422
-//   - kind=decision + checkpoint_mode!="blocking"      → 422
+//   - kind=decision                                    → checkpoint_mode
+//     defaults to "blocking" instead of the usual "none" (see
+//     task.go::defaultCheckpointModeFor, applied by both Create and Update
+//     before this runs). An EXPLICIT non-blocking value is still 422, and
+//     that is now the only way to reach the rejection — the error says so
+//     rather than restating the requirement (CW-20260907-0060).
 //   - kind=decision + auto_execute=true                → 422
 //   - kind=parent + missing metadata.children          → warning only (not
 //     surfaced through this function in MVP).
@@ -211,9 +217,16 @@ func validateTaskKind(
 		}
 	case "decision":
 		if checkpointMode != "blocking" {
+			// Reachable only when the caller passed checkpoint_mode
+			// explicitly: an omitted one is defaulted to "blocking" by
+			// defaultCheckpointModeFor before this runs. So the message can
+			// name the override rather than just restating the requirement.
 			return &ValidationError{
-				Field:   "checkpoint_mode",
-				Message: "decision tasks require checkpoint_mode=blocking",
+				Field: "checkpoint_mode",
+				Message: fmt.Sprintf(
+					"decision tasks require checkpoint_mode=blocking, but %q was passed explicitly; kind=decision overrides checkpoint_mode's own default of \"none\" — omit checkpoint_mode and blocking is applied for you",
+					checkpointMode,
+				),
 			}
 		}
 		if autoExecute {

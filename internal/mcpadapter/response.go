@@ -306,6 +306,19 @@ func reqStrBool(req mcp.CallToolRequest, key string) bool {
 	return false
 }
 
+// reqStrBoolDefault is reqStrBool for a flag whose default is true. An
+// absent argument yields def; a present one is parsed by the same rules as
+// reqStrBool, so any value other than the recognized truthy set is false.
+// reqStrBool cannot express this: it collapses "absent" and "false" into the
+// same answer, which is wrong for an opt-OUT flag like torque_task_get's
+// `comments` (CW-20260910-0057).
+func reqStrBoolDefault(req mcp.CallToolRequest, key string, def bool) bool {
+	if _, ok := req.GetArguments()[key]; !ok {
+		return def
+	}
+	return reqStrBool(req, key)
+}
+
 // clampLimit returns a sane limit for list/search tools. limit<=0 falls back
 // to def; anything above max is clamped down. The caller is responsible for
 // reading the raw int from the request.

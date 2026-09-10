@@ -147,11 +147,16 @@ Example: {"id":"check-1","evidence":"abc123 / PR #42"}`),
 	// for help short of going silent.
 
 	a.addTool(mcp.NewTool("torque_task_get",
-		mcp.WithDescription(`Fetch your own task record (the loopback's bound task), including metadata.checkpoint_responses. The id argument is accepted for symmetry with the cross-task tool but is validated against the loopback's bound task — passing a different id returns an error.
+		mcp.WithDescription(fmt.Sprintf(`Fetch your own task record (the loopback's bound task), including metadata.checkpoint_responses and BY DEFAULT the %d most recent comments on the task. The id argument is accepted for symmetry with the cross-task tool but is validated against the loopback's bound task — passing a different id returns an error.
 Use at the start of each turn to inspect any checkpoint responses that arrived since your last action; the substrate redispatches you when a response lands.
-Response shape: data = {<TaskRecord fields>, Tags[]} — singleton, PascalCase keys.
-Example: {} or {"id":"<your-own-task-id>"}`),
+READ THE COMMENTS. Your task's description is what someone wrote before the work started; corrections, scope changes and answers posted afterwards live in the comment thread, and acting on the description alone is how a worker executes a framing that has since been superseded (CW-20260910-0057). Pass comments="false" to opt out, or comments_limit to widen the window (max %d).
+The window is the NEWEST comments_limit comments, presented oldest → newest so successive corrections read forward. CommentsMeta is ALWAYS present when comments were requested and states {returned, total, omitted, truncated} — including omitted=0 when nothing was cut, so you never have to infer completeness from array length. If omitted > 0 the hint names the call that retrieves the rest.
+Response shape: data = {<TaskRecord fields>, Tags[], DependsOn[], Comments[], CommentsMeta} — singleton, PascalCase keys (Comments[] entries are lowercase: id, author, content, created_at, updated_at). Comments and CommentsMeta are absent entirely when comments="false".
+Example: {} or {"id":"<your-own-task-id>"}
+Example, record only: {"comments":"false"}`, defaultTaskGetCommentsLimit, maxTaskGetCommentsLimit)),
 		mcp.WithString("id", mcp.Description("Optional — must match the loopback's bound task when supplied")),
+		mcp.WithString("comments", mcp.Description("Include the comment tail (string 'true'/'false', default 'true'). Set 'false' for the bare record.")),
+		mcp.WithString("comments_limit", mcp.Description(fmt.Sprintf("How many of the newest comments to include (integer, default %d, max %d). Ignored when comments='false'.", defaultTaskGetCommentsLimit, maxTaskGetCommentsLimit))),
 	), a.handleLoopbackTaskGet)
 
 	a.addTool(mcp.NewTool("torque_task_checkpoint_emit",
@@ -328,7 +333,16 @@ func (a *Adapter) handleLoopbackTaskGet(ctx context.Context, req mcp.CallToolReq
 	if err != nil {
 		return errFromService(err)
 	}
-	return a.taskResult(task)
+	// Same comment tail as the cross-task tool (CW-20260910-0057). This path
+	// is the load-bearing one: the boot prompt already tells workers to read
+	// checkpoint responses through torque_task_get, so it is the call a
+	// dispatched worker actually makes, and the one where a stale
+	// description does the most damage.
+	return a.taskGetResult(
+		task,
+		reqStrBoolDefault(req, "comments", true),
+		clampLimit(reqInt(req, "comments_limit"), defaultTaskGetCommentsLimit, maxTaskGetCommentsLimit),
+	)
 }
 
 // handleLoopbackCheckpointEmit emits a typed HITL checkpoint on the worker's

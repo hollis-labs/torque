@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strconv"
+	"strings"
 
 	mcpsanitize "github.com/hollis-labs/go-mcp-sanitize"
 	feotel "github.com/hollis-labs/go-otel"
@@ -136,7 +138,10 @@ func (a *Adapter) WithLogger(l *slog.Logger) *Adapter {
 //     propagation.InjectMCP) so inbound calls continue the same trace, and
 //     opens a torque.mcp.call span for the handler's duration with
 //     hollis.tool.name attached. Outermost so the trace covers sanitize too.
-//  2. The go-mcp-sanitize middleware, which auto-cleans malformed agent
+//  2. The unknown-argument guard (CW-20260907-0060): an argument the tool's
+//     own schema does not declare is rejected rather than silently dropped.
+//     See unknownArgRejector for why a blanket guard is the right scope.
+//  3. The go-mcp-sanitize middleware, which auto-cleans malformed agent
 //     tool-call XML in free-text params before the handler runs. Clean calls
 //     are silent; cleaned calls emit one warn-level slog line (see
 //     github.com/hollis-labs/go-mcp-sanitize).
@@ -151,6 +156,7 @@ func (a *Adapter) addTool(t mcp.Tool, h server.ToolHandlerFunc) {
 	}
 	inner := mcpsanitize.Middleware(logger)(h)
 	toolName := t.Name
+	rejectUnknown := unknownArgRejector(t)
 	traced := func(ctx context.Context, req mcp.CallToolRequest) (result *mcp.CallToolResult, err error) {
 		// Extract MCP-encoded trace context (_traceparent / _tracestate) INTO
 		// the inbound ctx — do NOT use propagation.ExtractMCP here: that helper
@@ -195,9 +201,79 @@ func (a *Adapter) addTool(t mcp.Tool, h server.ToolHandlerFunc) {
 			}
 			span.End()
 		}()
+		if res := rejectUnknown(req); res != nil {
+			return res, nil
+		}
 		return inner(ctx, req)
 	}
 	a.server.AddTool(t, traced)
+}
+
+// argsMetaPrefix marks transport-level arguments that ride alongside a tool's
+// own inputs and are deliberately absent from its schema — currently the
+// _traceparent/_tracestate pair extracted above. They are exempt from the
+// unknown-argument check.
+const argsMetaPrefix = "_"
+
+// unknownArgRejector builds the per-tool guard against silently-dropped
+// arguments (CW-20260907-0060).
+//
+// Neither the MCP protocol layer nor mcp-go validates an incoming argument
+// against the tool's schema, and every Torque handler reads its inputs
+// presence-based (reqStr/reqInt and friends). An argument no handler reads is
+// therefore simply not read: no rejection, and `ok: true` either way. A caller
+// passing `body` where the schema says `content`, or `status` to a tool that
+// cannot write it, was told the call succeeded while the value went nowhere.
+// That is worse than a plain missing-validation bug, because the response is
+// confident and well-formed — the reporting session in CW-20260903-0044 lost
+// four records this way and reported them as landed.
+//
+// The set is captured once at registration, so the per-call cost is a map
+// lookup per supplied argument.
+//
+// Safety of a blanket guard: an audit across the global, loopback and
+// all-features adapters found ZERO handlers reading an argument their tool
+// does not declare, so no legitimate call is newly rejected. Tools registered
+// with a raw JSON schema expose no Properties map to check against and are
+// skipped rather than having every argument rejected.
+func unknownArgRejector(t mcp.Tool) func(mcp.CallToolRequest) *mcp.CallToolResult {
+	if len(t.RawInputSchema) > 0 {
+		return func(mcp.CallToolRequest) *mcp.CallToolResult { return nil }
+	}
+	declared := make(map[string]bool, len(t.InputSchema.Properties))
+	names := make([]string, 0, len(t.InputSchema.Properties))
+	for k := range t.InputSchema.Properties {
+		declared[k] = true
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	accepted := "this tool accepts no arguments"
+	if len(names) > 0 {
+		accepted = "accepted arguments: " + strings.Join(names, ", ")
+	}
+
+	return func(req mcp.CallToolRequest) *mcp.CallToolResult {
+		var unknown []string
+		for k := range req.GetArguments() {
+			if declared[k] || strings.HasPrefix(k, argsMetaPrefix) {
+				continue
+			}
+			unknown = append(unknown, k)
+		}
+		if len(unknown) == 0 {
+			return nil
+		}
+		sort.Strings(unknown)
+		field := ""
+		if len(unknown) == 1 {
+			field = unknown[0]
+		}
+		res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf(
+			"unknown argument(s) for %s: %s — the call was rejected rather than applied with those values dropped; %s",
+			t.Name, strings.Join(unknown, ", "), accepted,
+		), field)
+		return res
+	}
 }
 
 func (a *Adapter) registerCoreTools() {

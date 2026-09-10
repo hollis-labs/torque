@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -43,8 +44,8 @@ Response shape: data = {<CommentRecord fields>} — singleton.
 Example: {"entity_type":"task","entity_id":"T-123","author":"reviewer","content":"Please also cover the null-parent case."}`),
 		mcp.WithString("entity_type", mcp.Required(), mcp.Description(`Entity kind the comment is attached to. Valid: "task", "project", "epic", "sprint".`)),
 		mcp.WithString("entity_id", mcp.Required(), mcp.Description("ID of the entity (e.g. task ID for entity_type=task)")),
-		mcp.WithString("author", mcp.Description("Comment author slug/id")),
-		mcp.WithString("content", mcp.Required(), mcp.Description("Comment body (prose)")),
+		mcp.WithString("author", mcp.Description(`Comment author slug/id. Optional; omitted stores "" (unattributed), which torque_comment_delete matches by passing author="" explicitly.`)),
+		mcp.WithString("content", mcp.Required(), mcp.Description("Comment body (prose). Required for real — empty or whitespace-only content is rejected rather than stored.")),
 	), a.handleCommentAdd)
 
 	a.addTool(mcp.NewTool("torque_comment_list",
@@ -98,10 +99,12 @@ Example: {"id":"42","author":"reviewer","content":"Updated: please also cover th
 	a.addTool(mcp.NewTool("torque_comment_delete",
 		mcp.WithDescription(`Hard-delete a comment. Author-scoped: only the comment's original author may delete it — a mismatched author returns error.code=permission. There is no undo.
 Use to remove a comment you posted in error.
+Unattributed comments (author stored as "", which is what an omitted author on torque_comment_add produces) are deleted by passing author="" explicitly. Omitting author entirely is still an error — the empty string has to be deliberate.
 Response shape: data = {id, deleted: true}.
-Example: {"id":"42","author":"reviewer"}`),
+Example: {"id":"42","author":"reviewer"}
+Example, an unattributed comment: {"id":"42","author":""}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Comment ID (integer; pass as string)")),
-		mcp.WithString("author", mcp.Required(), mcp.Description("Caller's author slug/id — must exactly match the comment's original author")),
+		mcp.WithString("author", mcp.Required(), mcp.Description(`Caller's author slug/id — must exactly match the comment's original author. Pass "" to match an unattributed comment; the field itself must still be present.`)),
 	), a.handleCommentDelete)
 
 	a.addTool(mcp.NewTool("torque_comment_bulk_add",
@@ -115,6 +118,27 @@ Example: {"targets":"[{\"entity_type\":\"task\",\"entity_id\":\"T-1\"},{\"entity
 	), a.handleCommentBulkAdd)
 }
 
+// commentContentRequired is the one emptiness check every comment-writing
+// tool shares (CW-20260903-0044).
+//
+// torque_comment_add declared content as required and did not check it: a
+// call that omitted it — or passed `body`, a plausible slip for a prose
+// field — was accepted, returned ok:true with a real comment ID, and
+// persisted a row storing nothing. torque_comment_bulk_add and
+// torque_comment_update had always checked. Routing all three through one
+// helper is what stops them drifting apart again, and is why the error text
+// is defined here rather than repeated at three call sites.
+//
+// Whitespace-only content counts as empty. A comment of three spaces
+// destroys the audit trail exactly as thoroughly as one of none.
+func commentContentRequired(content string) *mcp.CallToolResult {
+	if strings.TrimSpace(content) != "" {
+		return nil
+	}
+	res, _ := errResult(ErrCodeArgInvalid, "content is required", "content")
+	return res
+}
+
 func (a *Adapter) handleCommentAdd(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	entityType := reqStr(req, "entity_type")
 	entityID := reqStr(req, "entity_id")
@@ -123,6 +147,9 @@ func (a *Adapter) handleCommentAdd(ctx context.Context, req mcp.CallToolRequest)
 	}
 	if entityID == "" {
 		return errResult(ErrCodeArgInvalid, "entity_id is required", "entity_id")
+	}
+	if res := commentContentRequired(reqStr(req, "content")); res != nil {
+		return res, nil
 	}
 	comment, err := a.svc.Comment.Add(
 		entityType,
@@ -321,8 +348,8 @@ func (a *Adapter) handleCommentUpdate(ctx context.Context, req mcp.CallToolReque
 		return errResult(ErrCodeArgInvalid, "author is required", "author")
 	}
 	content := reqStr(req, "content")
-	if content == "" {
-		return errResult(ErrCodeArgInvalid, "content is required", "content")
+	if res := commentContentRequired(content); res != nil {
+		return res, nil
 	}
 	comment, err := a.svc.Comment.Update(id, author, content)
 	if err != nil {
@@ -336,10 +363,32 @@ func (a *Adapter) handleCommentDelete(ctx context.Context, req mcp.CallToolReque
 	if id <= 0 {
 		return errResult(ErrCodeArgInvalid, "id must be a positive integer", "id")
 	}
-	author := reqStr(req, "author")
-	if author == "" {
+	// author is required, but an EXPLICIT empty string is a legitimate value:
+	// it names the unattributed author (CW-20260903-0044).
+	//
+	// author is optional on torque_comment_add and an omitted one stores "",
+	// which torque_task_transition's description already documents as
+	// "empty = unattributed". Delete is author-scoped by exact match, and
+	// this handler used to reject "" as missing — so no argument could ever
+	// match an unattributed row, and every unattributed comment in the store
+	// was permanently unremovable. That is a reachable state created by
+	// ordinary use of a documented feature, not only by the empty-content bug
+	// this task reported.
+	//
+	// Distinguishing absent from explicitly-empty is only reliable because
+	// presence is read off the argument map; a caller who forgets the field
+	// still gets "author is required".
+	//
+	// This does NOT change WHO may delete a comment. author is free text
+	// rather than a session identity — anyone can already claim to be
+	// "planner" — so declaring a comment unattributed grants no authority
+	// that was not already trivially available. Whether author-scoping is a
+	// meaningful check at all is a separate question this does not answer.
+	rawAuthor, supplied := req.GetArguments()["author"]
+	if !supplied {
 		return errResult(ErrCodeArgInvalid, "author is required", "author")
 	}
+	author, _ := rawAuthor.(string)
 	if err := a.svc.Comment.Delete(id, author); err != nil {
 		return errFromService(err)
 	}
@@ -377,8 +426,8 @@ func (a *Adapter) handleCommentBulkAdd(ctx context.Context, req mcp.CallToolRequ
 		return errResult(ErrCodeArgInvalid, "targets must be a non-empty JSON array", "targets")
 	}
 	content := reqStr(req, "content")
-	if content == "" {
-		return errResult(ErrCodeArgInvalid, "content is required", "content")
+	if res := commentContentRequired(content); res != nil {
+		return res, nil
 	}
 	author := reqStr(req, "author")
 

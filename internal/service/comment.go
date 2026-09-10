@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -102,6 +103,19 @@ func (s *CommentService) Add(entityType, entityID, author, content string) (*sql
 	if entityType == "" {
 		entityType = sqlstore.EntityTypeTask
 	}
+	// Emptiness backstop (CW-20260903-0044). The MCP tools check content
+	// before they get here so they can share one error text; this guard
+	// covers every OTHER caller of the service — the HTTP POST /comments
+	// route, and anything added later. A comment that stores nothing removes
+	// exactly the audit trail someone later relies on, so the fence belongs
+	// at the layer all writes pass through, not only at the one surface the
+	// defect was reported against.
+	if strings.TrimSpace(content) == "" {
+		return nil, &ValidationError{
+			Field:   "content",
+			Message: "content is required",
+		}
+	}
 	if !sqlstore.ValidCommentEntityTypes[entityType] {
 		return nil, &ValidationError{
 			Field:   "entity_type",
@@ -178,6 +192,16 @@ func (s *CommentService) List(entityType, entityID string) ([]sqlstore.CommentRe
 // ListForTask is sugar for List(EntityTypeTask, taskID).
 func (s *CommentService) ListForTask(taskID string) ([]sqlstore.CommentRecord, error) {
 	return s.List(sqlstore.EntityTypeTask, taskID)
+}
+
+// CountForEntity returns how many comments exist on an entity. Used by
+// torque_task_get to report thread totals alongside a tail window without
+// loading the thread (CW-20260910-0057).
+func (s *CommentService) CountForEntity(entityType, entityID string) (int, error) {
+	if entityType == "" {
+		entityType = sqlstore.EntityTypeTask
+	}
+	return s.store.CountCommentsForEntity(entityType, entityID)
 }
 
 // Search returns comments matching the filter. The caller is responsible for

@@ -243,6 +243,24 @@ func (s *Store) ListCommentsForEntity(entityType, entityID string) ([]CommentRec
 	return comments, rows.Err()
 }
 
+// CountCommentsForEntity returns the total number of comments on the given
+// (entity_type, entity_id). Read-only counterpart to ListCommentsForEntity,
+// added for CW-20260910-0057 so torque_task_get can report how many comments
+// exist without loading the thread to measure it — the point of the tail
+// window is to avoid paying for the whole thread, which a len() over a full
+// fetch would defeat.
+func (s *Store) CountCommentsForEntity(entityType, entityID string) (int, error) {
+	var n int
+	err := s.ReadDB().QueryRow(
+		`SELECT COUNT(*) FROM comments WHERE entity_type = ? AND entity_id = ?`,
+		entityType, entityID,
+	).Scan(&n)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // ListComments is a thin wrapper over ListCommentsForEntity for the common
 // task-comment case. Kept to avoid cluttering call sites that only ever
 // operate on task comments.
