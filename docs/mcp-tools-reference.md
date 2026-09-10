@@ -138,6 +138,26 @@ Full field reference: ADR-0004 §4. Source: `internal/mcpadapter/task_tools.go`,
 `torque_task_list` sort: `sort_by` ∈ `priority\|status\|updated_at\|created_at`,
 default `priority asc` (tiebreak `id asc`).
 
+### Unknown arguments are rejected, not dropped (CW-20260907-0060)
+
+Neither the MCP protocol layer nor mcp-go validates an incoming argument
+against the tool's schema, and every Torque handler reads its inputs
+presence-based. An argument no handler read was therefore simply not read: no
+rejection, and `ok: true` either way. A caller passing `body` where the schema
+says `content` was told the call succeeded while the value went nowhere.
+
+Every tool registered through `addTool` — the whole surface, loopback subset
+included — now rejects an argument its schema does not declare, with
+`error.code=arg_invalid` naming the offenders and enumerating the accepted set.
+`_`-prefixed transport arguments (`_traceparent`, `_tracestate`) are exempt.
+
+Scope evidence: an audit across the global, loopback and all-features adapters
+found zero handlers reading an argument their tool does not declare, so no
+legitimate call is newly rejected. The only field on `torque_task_create` and
+not on `torque_task_update` is `subtodos` (there is a dedicated
+`torque_task_subtodo_*` family) — every other create field is writable on
+update, so the reported per-field asymmetry was narrower than suspected.
+
 ### `kind=decision` carries its own `checkpoint_mode` default (CW-20260907-0060)
 
 `checkpoint_mode`'s documented default is `none`, but `kind=decision` requires
