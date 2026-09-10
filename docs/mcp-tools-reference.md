@@ -138,6 +138,20 @@ Full field reference: ADR-0004 §4. Source: `internal/mcpadapter/task_tools.go`,
 `torque_task_list` sort: `sort_by` ∈ `priority\|status\|updated_at\|created_at`,
 default `priority asc` (tiebreak `id asc`).
 
+### `kind=decision` carries its own `checkpoint_mode` default (CW-20260907-0060)
+
+`checkpoint_mode`'s documented default is `none`, but `kind=decision` requires
+`blocking`. That combination made the documented default invalid for a
+documented kind, discoverable only by being rejected. The kind now carries the
+stricter default: `torque_task_create {"kind":"decision"}` and
+`torque_task_update {"kind":"decision"}` both apply `checkpoint_mode=blocking`
+when the caller supplies none, and both persist it.
+
+An **explicit** `checkpoint_mode=none|non_blocking` alongside `kind=decision`
+is still rejected — and since an omitted value is now defaulted, that rejection
+is reachable only from an explicit override, so the error says so rather than
+restating the requirement. Both fields' descriptions state the coupling.
+
 ### `torque_task_get` comments (CW-20260910-0057)
 
 `torque_task_get` — the cross-task tool **and** the loopback's worker-pinned

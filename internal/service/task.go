@@ -274,7 +274,7 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		effectiveExecutor = "cli"
 	}
 	effectiveSourceType := orDefault(input.SourceType, "user")
-	effectiveCheckpointMode := orDefault(input.CheckpointMode, "none")
+	effectiveCheckpointMode := orDefault(input.CheckpointMode, defaultCheckpointModeFor(effectiveKind))
 	effectiveOnCheckpointResponse := orDefault(input.OnCheckpointResponse, "resume")
 	effectiveTrust := orDefault(input.Trust, ResolveTrust(effectiveSourceType, input.SourceRef))
 
@@ -527,6 +527,27 @@ type TaskUpdateInput struct {
 	DependsOn *[]string // nil = no change; non-nil = replace all dependency edges
 }
 
+// defaultCheckpointModeFor returns the checkpoint_mode a task of the given
+// kind receives when the caller supplies none.
+//
+// checkpoint_mode's documented default is "none", but validateTaskKind
+// requires "blocking" for kind=decision. Applying "none" and then rejecting
+// meant the documented default was invalid for a documented kind, the
+// coupling appeared in neither field's description, and a caller reading the
+// schema could not know before submitting — reproduced twice in one session
+// (CW-20260907-0060 defect 2). The kind carries the stricter default instead.
+//
+// A decision task that still reaches validateTaskKind with a non-blocking
+// mode therefore had one supplied EXPLICITLY, which is what lets that
+// rejection say it is overriding a stated default rather than merely naming
+// the required value.
+func defaultCheckpointModeFor(kind string) string {
+	if kind == "decision" {
+		return "blocking"
+	}
+	return "none"
+}
+
 // Update applies a partial update to a task. If Tags is non-nil, linked
 // tags are resolved and replaced.
 func (s *TaskService) Update(id string, input TaskUpdateInput) error {
@@ -556,6 +577,17 @@ func (s *TaskService) Update(id string, input TaskUpdateInput) error {
 	effectiveSourceType := ptrOrDefault(input.SourceType, existing.SourceType)
 	effectiveTrust := ptrOrDefault(input.Trust, existing.Trust)
 	effectiveCheckpointMode := ptrOrDefault(input.CheckpointMode, existing.CheckpointMode)
+	// Same kind-carries-the-default rule as Create (CW-20260907-0060 defect
+	// 2): promoting a task to kind=decision without naming a checkpoint_mode
+	// applies the one that kind requires rather than 422-ing on the value
+	// already stored. input is a value copy, so setting the pointer here both
+	// satisfies validateTaskKind below and reaches the store write — a mode
+	// that validated as "blocking" must not be persisted as anything else.
+	if input.CheckpointMode == nil && effectiveKind == "decision" && effectiveCheckpointMode != "blocking" {
+		promoted := defaultCheckpointModeFor(effectiveKind)
+		input.CheckpointMode = &promoted
+		effectiveCheckpointMode = promoted
+	}
 	effectiveOnCheckpointResponse := ptrOrDefault(input.OnCheckpointResponse, existing.OnCheckpointResponse)
 	effectiveManual := existing.Manual
 	if input.Manual != nil {
