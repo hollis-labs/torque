@@ -726,13 +726,21 @@ func (s *TaskService) validateParentID(taskID string, candidate sql.NullString) 
 	}
 	// Walk ancestors of the proposed parent; if we encounter taskID, a cycle
 	// would be created by this update.
+	//
+	// path accumulates the ancestor chain so the rejection can name the whole
+	// cycle rather than only the task being updated — which the caller
+	// already supplied and so learns nothing from (CW-20260910-0001). The
+	// chain is walked anyway at the point of rejection, so this threads
+	// information already in hand rather than recomputing anything.
+	path := []string{taskID, parentID}
 	cursor := parent
 	for hops := 0; hops < 256; hops++ {
 		if !cursor.ParentID.Valid || cursor.ParentID.String == "" {
 			return nil
 		}
+		path = append(path, cursor.ParentID.String)
 		if cursor.ParentID.String == taskID {
-			return &ValidationError{Field: "parent_id", Message: "parent_id would create a cycle through task " + taskID}
+			return &ValidationError{Field: "parent_id", Message: "parent_id would create a cycle: " + strings.Join(path, " -> ")}
 		}
 		next, err := s.store.GetTask(cursor.ParentID.String)
 		if err != nil {
@@ -758,17 +766,36 @@ func (s *TaskService) validateParentID(taskID string, candidate sql.NullString) 
 // malformed graphs, mirroring validateParentID's guard.
 func (s *TaskService) validateDependsOnCycle(taskID string, candidates []string) error {
 	visited := map[string]bool{}
-	var walk func(id string, hops int) error
-	walk = func(id string, hops int) error {
+	// path carries the edges walked so far so the rejection can name the
+	// actual cycle — "A -> B -> A" — instead of only the task being updated,
+	// which the caller already supplied. With several candidate ids in one
+	// call, naming just the updated task leaves the caller guessing which
+	// proposed edge was the offender; the reporter spent two extra
+	// torque_task_get calls on a wrong guess (CW-20260910-0001).
+	//
+	// Each frame copies rather than appending in place. With the exact-
+	// capacity slices this function happens to build, append would reallocate
+	// every time and behave identically — but that is an accident of
+	// capacity, not a property anyone should have to re-derive. An explicit
+	// copy makes sibling DFS branches independent by construction, so a
+	// rendered cycle can never name a task from a branch that was abandoned.
+	var walk func(id string, hops int, path []string) error
+	walk = func(id string, hops int, path []string) error {
+		here := make([]string, len(path)+1)
+		copy(here, path)
+		here[len(path)] = id
+
 		if id == taskID {
 			if hops == 0 {
 				return &ValidationError{Field: "depends_on", Message: "depends_on cannot reference the task itself"}
 			}
-			return &ValidationError{Field: "depends_on", Message: "depends_on would create a cycle through task " + taskID}
+			return &ValidationError{Field: "depends_on", Message: "depends_on would create a cycle: " + strings.Join(here, " -> ")}
 		}
 		if hops > 256 {
 			return &ValidationError{Field: "depends_on", Message: "depends_on chain exceeds 256 hops"}
 		}
+		// Skipping a visited node stays sound for this check: a node already
+		// explored without reaching taskID cannot reach it.
 		if visited[id] {
 			return nil
 		}
@@ -781,14 +808,17 @@ func (s *TaskService) validateDependsOnCycle(taskID string, candidates []string)
 			return nil
 		}
 		for _, d := range deps {
-			if err := walk(d, hops+1); err != nil {
+			if err := walk(d, hops+1, here); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
+	// The path starts at the task being updated, so the rendered cycle reads
+	// as a closed loop from it and back to it. Naming the first cycle found
+	// is sufficient — the caller can iterate.
 	for _, depID := range candidates {
-		if err := walk(depID, 0); err != nil {
+		if err := walk(depID, 0, []string{taskID}); err != nil {
 			return err
 		}
 	}
