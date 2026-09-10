@@ -389,6 +389,35 @@ Not a tool-surface change, but relevant to any agent reading `sprint_id`/
 (verbose)/`_create`/`_update` surface it as a plain `DependsOn: []string` of
 task ids either way, so no caller-visible shape changed.
 
+## Comment emptiness and unattributed rows (CW-20260903-0044)
+
+`torque_comment_add` declared `content` required and did not check it. A call
+that omitted it — or passed `body`, a plausible slip for a prose field — was
+accepted, answered `ok: true` with a real comment ID, and persisted a row
+storing nothing. `torque_comment_bulk_add` and `torque_comment_update` had
+always checked; the single-add path was the only gap.
+
+All three now route through one helper, so the error (`arg_invalid`,
+`"content is required"`, `field: content`) cannot drift between them.
+Whitespace-only content counts as empty. `CommentService.Add` carries the same
+check as a backstop for the HTTP route, and `torque_task_transition` treats a
+whitespace-only `comment` as no comment rather than writing a blank row.
+
+**Unattributed comments are now deletable.** `torque_comment_delete` is
+author-scoped by exact match, and it rejected `author=""` as missing — so no
+argument could ever match a row whose author is `""`. Since `author` is
+optional on `torque_comment_add` and an omitted one stores `""`, *every*
+unattributed comment was permanently unremovable, not only the ones the
+empty-content bug created. Passing `author=""` **explicitly** now matches an
+unattributed row; omitting the field entirely is still an error, so a caller
+who forgets it is not silently matched against unattributed rows.
+
+This does not change *who* may delete a comment. `author` is free text rather
+than a session identity, so declaring a comment unattributed grants no
+authority that was not already trivially available by claiming any other slug.
+Whether author-scoping is a meaningful check at all is a separate, open
+question.
+
 ## Related docs
 
 - `docs/adr/0004-mcp-data-entity-agent-ergonomics.md` — the target-shape

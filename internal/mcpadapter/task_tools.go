@@ -1106,7 +1106,12 @@ func (a *Adapter) handleTaskTransition(ctx context.Context, req mcp.CallToolRequ
 	// transition call followed by a separate torque_comment_add. The
 	// no-comment path is untouched: it keeps calling Transition/
 	// ForceTransition exactly as before.
-	if comment := reqStr(req, "comment"); comment != "" {
+	// TrimSpace, not != "": a whitespace-only comment is the same "nothing to
+	// say" as an omitted one, and taking this branch on it would persist a
+	// blank comment row — the data-integrity failure CW-20260903-0044 is
+	// about, reached through a second door. An optional field normalizing to
+	// its own semantic zero is not a dropped value.
+	if comment := strings.TrimSpace(reqStr(req, "comment")); comment != "" {
 		if err := a.svc.Task.TransitionWithComment(ctx, id, status, comment, reqStr(req, "comment_author"), force); err != nil {
 			return errFromService(err)
 		}

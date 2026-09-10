@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -101,6 +102,19 @@ func (s *CommentService) SetObserver(o CommentObserver) {
 func (s *CommentService) Add(entityType, entityID, author, content string) (*sqlstore.CommentRecord, error) {
 	if entityType == "" {
 		entityType = sqlstore.EntityTypeTask
+	}
+	// Emptiness backstop (CW-20260903-0044). The MCP tools check content
+	// before they get here so they can share one error text; this guard
+	// covers every OTHER caller of the service — the HTTP POST /comments
+	// route, and anything added later. A comment that stores nothing removes
+	// exactly the audit trail someone later relies on, so the fence belongs
+	// at the layer all writes pass through, not only at the one surface the
+	// defect was reported against.
+	if strings.TrimSpace(content) == "" {
+		return nil, &ValidationError{
+			Field:   "content",
+			Message: "content is required",
+		}
 	}
 	if !sqlstore.ValidCommentEntityTypes[entityType] {
 		return nil, &ValidationError{
