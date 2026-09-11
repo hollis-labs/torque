@@ -186,8 +186,8 @@ Torque passes the resolved permission mode to the Claude adapter, which plants
 `permissions.defaultMode` in `.claude/settings.json` alongside settings such as
 `apiKeyHelper`. Torque explicitly passes that file with `--settings` when
 launching Claude, so a fresh boot directory does not depend on an interactive
-trust grant to load its configuration. Both the wrapper and legacy launch paths
-carry the profile's model and extra arguments into the provider command.
+trust grant to load its configuration. Both the wrapper and legacy Claude launch
+paths carry the profile's model and extra arguments into the provider command.
 
 The legacy path is unchanged: a profile whose `args` carry
 `--dangerously-skip-permissions` boots in full bypass (the adapter already

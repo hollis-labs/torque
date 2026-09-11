@@ -1233,6 +1233,18 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 	if shouldDropBootDirExtraArgs(profile.Provider, runtimeKind) && len(execution.Bindings.Argv) > 0 {
 		execution.Bindings.Argv = execution.Bindings.Argv[:1]
 	}
+	// PreparedExecution is the wrapper's complete spawn command; it suppresses
+	// CLIAdapter.BuildArgs. Carry Claude's profile options on that command,
+	// rather than an adapter callback that the prepared path never invokes.
+	if profile.Provider == "claude-code" && len(execution.Bindings.Argv) > 0 {
+		argv := []string{execution.Bindings.Argv[0]}
+		argv = append(argv, profileArgsExcludingDevFlag(profile)...)
+		argv = append(argv, execution.Bindings.Argv[1:]...)
+		if profile.Model != "" {
+			argv = append(argv, "--model", profile.Model)
+		}
+		execution.Bindings.Argv = argv
+	}
 
 	// Merge Torque's own composeEnv output (TORQUE_TASK_ID/RUN_ID, filtered
 	// OS env, agent-file env, opts.Env) into the bindings env --
@@ -1261,7 +1273,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 	wrapperAdapter, err := adapters.Select(adapters.Selection{
 		Provider:   adaptersProviderFor(profile.Provider),
 		LaunchMode: launchMode,
-		CLIAdapter: &profileCLIAdapter{CLIAdapter: cliAdapter, profile: profile, systemPrompt: pb.systemPrompt},
+		CLIAdapter: cliAdapter,
 	})
 	if err != nil {
 		shutdownLoopbackHandle(loopback)
@@ -1695,26 +1707,6 @@ func composeBuildArgs(p buildArgsParams) []string {
 		args = append(filtered, args...)
 	}
 	return args
-}
-
-// The wrapper invokes CLIAdapter.BuildArgs directly, whereas the legacy
-// session path supplies composeBuildArgs as a callback. Keep the same profile
-// arguments and model selection on both paths.
-type profileCLIAdapter struct {
-	provider.CLIAdapter
-	profile      config.AgentProfile
-	systemPrompt string
-}
-
-func (a *profileCLIAdapter) BuildArgs(prompt, systemPrompt, sessionID string) []string {
-	if systemPrompt == "" {
-		systemPrompt = a.systemPrompt
-	}
-	return composeBuildArgs(buildArgsParams{
-		Adapter: a.CLIAdapter, Profile: a.profile, SystemPrompt: systemPrompt,
-		TurnPrompt: prompt, SessionID: sessionID,
-		SkipModelSuffix: skipModelSuffixForProvider(a.profile.Provider),
-	})
 }
 
 // skipModelSuffixForProvider reports whether the generic --model
