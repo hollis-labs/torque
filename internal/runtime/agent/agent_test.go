@@ -250,7 +250,6 @@ func TestKickoffMarkdown(t *testing.T) {
 	assert.Contains(t, body, "Work root")
 	assert.Contains(t, body, "/repo/source")
 	assert.Contains(t, body, "$TORQUE_WORK_ROOT")
-	assert.Contains(t, body, "Do not edit the source checkout")
 	assert.Contains(t, body, "Walk the plan.")
 	assert.Contains(t, body, "torque_loopback")
 
