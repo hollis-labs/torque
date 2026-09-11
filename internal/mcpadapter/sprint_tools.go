@@ -326,9 +326,9 @@ func sprintSortValue(sp sqlstore.SprintRecord, sortBy string) string {
 	case "status":
 		return sp.Status
 	case "updated_at":
-		return sp.UpdatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayout)
+		return sp.UpdatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayoutWithFractional)
 	case "created_at":
-		return sp.CreatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayout)
+		return sp.CreatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayoutWithFractional)
 	default:
 		return ""
 	}

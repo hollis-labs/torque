@@ -63,12 +63,11 @@ func parseManualFilter(v string) *bool {
 
 // parseTaskDateFilter parses an RFC3339 timestamp (torque_task_list's
 // created_after/created_before/updated_after/updated_before args) into the
-// SQLiteDatetimeLayout-formatted UTC text sqlstore.TaskFilter's range
-// filters compare against — the same shape every created_at/updated_at
-// write already uses (see sqlstore.updatedAtNow's doc comment) and the same
-// shape taskSortValue/taskCursorArg use for PRIM-001 cursors on these same
-// two columns. Empty input returns ("", nil), which the caller treats as
-// "no bound set".
+// SQLiteDatetimeLayoutWithFractional-formatted UTC text for range filter
+// comparison. Uses the fractional-preserving layout (CW-20260911-0080
+// revision) so inclusive bounds correctly exclude/include fractional instants
+// (e.g., an inclusive before=:49Z excludes :49.27701). Empty input returns
+// ("", nil), which the caller treats as "no bound set".
 func parseTaskDateFilter(raw string) (string, error) {
 	if raw == "" {
 		return "", nil
@@ -77,7 +76,7 @@ func parseTaskDateFilter(raw string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return t.UTC().Format(sqlstore.SQLiteDatetimeLayout), nil
+	return t.UTC().Format(sqlstore.SQLiteDatetimeLayoutWithFractional), nil
 }
 
 func (a *Adapter) registerTaskTools() {
@@ -739,15 +738,8 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 	return a.taskListCursorEnvelope(tasks, limit, verbose, sortBy, sortDir, hasMoreFromQuery)
 }
 
-// taskSortValue formats a TaskRecord's sortBy column into the string
-// encoding PRIM-001's cursor uses for meta.next_cursor (DEC-001's `sv`
-// field). updated_at/created_at use sqlstore.SQLiteDatetimeLayout — the
-// exact text shape SQLite's own CURRENT_TIMESTAMP writes and
-// sqlstore.taskCursorArg parses/binds on the decode side — NOT
-// time.RFC3339Nano; see sqlstore.updatedAtNow's doc comment for why the two
-// diverge (RFC3339 with a 'T'/'Z' vs the actual "YYYY-MM-DD HH:MM:SS" stored
-// shape) and why that mismatch would otherwise silently break the
-// WHERE-clause comparison.
+// taskSortValue preserves timestamp precision in the cursor. Whole-second
+// values retain the previous wire spelling.
 func taskSortValue(t sqlstore.TaskRecord, sortBy string) string {
 	switch sortBy {
 	case "priority":
@@ -755,9 +747,9 @@ func taskSortValue(t sqlstore.TaskRecord, sortBy string) string {
 	case "status":
 		return t.Status
 	case "updated_at":
-		return t.UpdatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayout)
+		return t.UpdatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayoutWithFractional)
 	case "created_at":
-		return t.CreatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayout)
+		return t.CreatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayoutWithFractional)
 	default:
 		return ""
 	}

@@ -101,11 +101,8 @@ func epicSortColumn(sortBy string) string {
 	}
 }
 
-// epicCursorArg converts a cursor's string-encoded sort value (DEC-001's
-// `sv` field) into the correctly-typed SQL bind argument for sortBy's
-// column. See taskCursorArg (tasks.go) for the full rationale on binding
-// updated_at/created_at as the original string rather than a re-derived
-// time.Time.
+// epicCursorArg validates the cursor value before the query builder binds it.
+// Timestamp values are normalized by timestampCursorArg for the active dialect.
 func epicCursorArg(sortBy, sv string) (any, error) {
 	switch sortBy {
 	case "name", "status":
@@ -153,9 +150,15 @@ func (s *Store) ListEpics(f EpicFilter) ([]EpicRecord, error) {
 
 	// PRIM-002 sort column + PRIM-001 cursor predicate.
 	sortCol := epicSortColumn(f.SortBy)
+	// Cursor predicates and ordering must compare the same precise key.
+	sortKey := s.timestampSortKey(sortCol)
 	desc := strings.EqualFold(f.SortDir, "desc")
 	if sortCol != "" && f.AfterID != "" {
 		arg, err := epicCursorArg(f.SortBy, f.AfterSortValue)
+		if err != nil {
+			return nil, err
+		}
+		arg, err = s.timestampCursorArg(sortCol, arg)
 		if err != nil {
 			return nil, err
 		}
@@ -163,10 +166,10 @@ func (s *Store) ListEpics(f EpicFilter) ([]EpicRecord, error) {
 		if desc {
 			cmp = "<"
 		}
-		// Tuple comparison (sortCol, id) > (arg, AfterID), or the two-clause
+		// Tuple comparison (sortKey, id) > (arg, AfterID), or the two-clause
 		// equivalent below — tiebreak on id ascending regardless of
 		// SortDir, per DEC-001.
-		conditions = append(conditions, fmt.Sprintf("(%s %s ? OR (%s = ? AND id > ?))", sortCol, cmp, sortCol))
+		conditions = append(conditions, fmt.Sprintf("(%s %s ? OR (%s = ? AND id > ?))", sortKey, cmp, sortKey))
 		args = append(args, arg, arg, f.AfterID)
 	}
 
@@ -179,7 +182,7 @@ func (s *Store) ListEpics(f EpicFilter) ([]EpicRecord, error) {
 		if desc {
 			dir = "DESC"
 		}
-		query += fmt.Sprintf(" ORDER BY %s %s, id ASC", sortCol, dir)
+		query += fmt.Sprintf(" ORDER BY %s %s, id ASC", sortKey, dir)
 	} else {
 		query += " ORDER BY updated_at DESC"
 	}

@@ -44,11 +44,16 @@ var ErrTaskNotFound = errors.New("task not found")
 // SQLiteDatetimeLayout is the Go time layout matching SQLite's own
 // CURRENT_TIMESTAMP output ("YYYY-MM-DD HH:MM:SS", space-separated, UTC, no
 // zone suffix, whole-second precision) — see updatedAtNow's doc comment for
-// why every tasks.updated_at write uses this exact layout. Exported so
-// mcpadapter's taskSortValue (the encode side of PRIM-001's cursor for the
-// updated_at/created_at sort columns) formats using the identical layout
-// taskCursorArg parses/binds on the decode side.
+// why every tasks.updated_at write uses this exact layout.
 const SQLiteDatetimeLayout = "2006-01-02 15:04:05"
+
+// SQLiteDatetimeLayoutWithFractional is the cursor encoding format for
+// timestamp sort columns (CW-20260911-0080). The .999999999 fractional part
+// auto-omits trailing zeros and the decimal point itself when zero, so
+// whole-second instants still encode as 19 characters (backward-compatible
+// with existing cursors) but fractional-second instants preserve their
+// precision. Used by mcpadapter's taskSortValue and sibling entity encoders.
+const SQLiteDatetimeLayoutWithFractional = "2006-01-02 15:04:05.999999999"
 
 // updatedAtNow returns the current UTC instant, whole-second precision,
 // pre-formatted as a plain string in SQLite's native CURRENT_TIMESTAMP
@@ -110,19 +115,8 @@ func taskSortColumn(sortBy string) string {
 	}
 }
 
-// taskCursorArg converts a cursor's string-encoded sort value (DEC-001's
-// `sv` field) into the correctly-typed SQL bind argument for sortBy's
-// column.
-//
-// updated_at/created_at are validated by parsing as SQLiteDatetimeLayout,
-// but the ORIGINAL STRING sv — not a re-derived time.Time — is what gets
-// bound. Binding a time.Time here would route through modernc.org/sqlite's
-// own time.Time formatting (conn.go's bindText/formatTime), which renders
-// as "YYYY-MM-DD HH:MM:SS.ffffff +0000 UTC" — NOT the "YYYY-MM-DD HH:MM:SS"
-// shape the column actually holds (see updatedAtNow's doc comment for the
-// full story). Binding sv as a plain string sidesteps that reformatting
-// entirely, so the WHERE-clause comparison is byte-for-byte TEXT vs TEXT
-// against what's actually stored.
+// taskCursorArg validates the cursor value before the query builder binds it.
+// Timestamp values are normalized by timestampCursorArg for the active dialect.
 func taskCursorArg(sortBy, sv string) (any, error) {
 	switch sortBy {
 	case "priority":
@@ -245,14 +239,9 @@ type TaskFilter struct {
 	// Manual-flag filter. Nil = no filter; otherwise matches manual=0/1.
 	Manual *bool
 
-	// created_at/updated_at range filters (ENT-TASK). Empty = no bound on
-	// that side. Values must already be formatted as SQLiteDatetimeLayout
-	// UTC text — the same shape updatedAtNow/every CreateTask/UpdateTask
-	// write actually stores in these columns (see updatedAtNow's doc
-	// comment) — so the WHERE-clause comparison stays a byte-for-byte TEXT
-	// compare, same reasoning as taskCursorArg's cursor-value binding.
-	// mcpadapter's handleTaskList is responsible for parsing caller-facing
-	// RFC3339 input into this layout before it reaches ListTasks.
+	// Inclusive UTC range bounds in SQLiteDatetimeLayout, with optional
+	// fractional seconds. Adapters normalize caller timezone offsets; the
+	// store normalizes SQL keys and bind values for its database dialect.
 	CreatedAfter  string
 	CreatedBefore string
 	UpdatedAfter  string
@@ -629,21 +618,41 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 		where = append(where, "launch_profile = ?")
 		args = append(args, f.LaunchProfile)
 	}
+	// Range bounds compare against the normalized timestamp key,
+	// not the raw column text — a legacy-shaped row ("... +0000 UTC") is
+	// lexically greater than the same instant's canonical text, so a raw
+	// `updated_at <= ?` bound silently dropped it. See timestampSortKey.
 	if f.CreatedAfter != "" {
-		where = append(where, "created_at >= ?")
-		args = append(args, f.CreatedAfter)
+		where = append(where, s.timestampSortKey("created_at")+" >= ?")
+		bound, err := s.timestampArg(f.CreatedAfter)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, bound)
 	}
 	if f.CreatedBefore != "" {
-		where = append(where, "created_at <= ?")
-		args = append(args, f.CreatedBefore)
+		where = append(where, s.timestampSortKey("created_at")+" <= ?")
+		bound, err := s.timestampArg(f.CreatedBefore)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, bound)
 	}
 	if f.UpdatedAfter != "" {
-		where = append(where, "updated_at >= ?")
-		args = append(args, f.UpdatedAfter)
+		where = append(where, s.timestampSortKey("updated_at")+" >= ?")
+		bound, err := s.timestampArg(f.UpdatedAfter)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, bound)
 	}
 	if f.UpdatedBefore != "" {
-		where = append(where, "updated_at <= ?")
-		args = append(args, f.UpdatedBefore)
+		where = append(where, s.timestampSortKey("updated_at")+" <= ?")
+		bound, err := s.timestampArg(f.UpdatedBefore)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, bound)
 	}
 	if f.CostBudgetGte != nil {
 		where = append(where, "cost_budget >= ?")
@@ -683,9 +692,15 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 	// layer's validation, defensively treated the same) — preserves the
 	// original hardcoded default order below rather than the cursor path.
 	sortCol := taskSortColumn(f.SortBy)
+	// Cursor predicates and ordering must compare the same precise key.
+	sortKey := s.timestampSortKey(sortCol)
 	desc := strings.EqualFold(f.SortDir, "desc")
 	if sortCol != "" && f.AfterID != "" {
 		arg, err := taskCursorArg(f.SortBy, f.AfterSortValue)
+		if err != nil {
+			return nil, err
+		}
+		arg, err = s.timestampCursorArg(sortCol, arg)
 		if err != nil {
 			return nil, err
 		}
@@ -693,10 +708,10 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 		if desc {
 			cmp = "<"
 		}
-		// Tuple comparison (sortCol, id) > (arg, AfterID), or the two-clause
+		// Tuple comparison (sortKey, id) > (arg, AfterID), or the two-clause
 		// equivalent below — tiebreak on id ascending regardless of
 		// SortDir, per DEC-001.
-		where = append(where, fmt.Sprintf("(%s %s ? OR (%s = ? AND id > ?))", sortCol, cmp, sortCol))
+		where = append(where, fmt.Sprintf("(%s %s ? OR (%s = ? AND id > ?))", sortKey, cmp, sortKey))
 		args = append(args, arg, arg, f.AfterID)
 	}
 
@@ -709,7 +724,7 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 		if desc {
 			dir = "DESC"
 		}
-		q += fmt.Sprintf(" ORDER BY %s %s, id ASC", sortCol, dir)
+		q += fmt.Sprintf(" ORDER BY %s %s, id ASC", sortKey, dir)
 	} else {
 		q += " ORDER BY priority ASC, created_at ASC"
 	}

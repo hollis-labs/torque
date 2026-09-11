@@ -165,16 +165,11 @@ func (a *Adapter) handleCommentAdd(ctx context.Context, req mcp.CallToolRequest)
 	return okResult(comment)
 }
 
-// commentSortValue formats a CommentRecord's sortBy column into the string
-// encoding PRIM-001's cursor uses for meta.next_cursor (DEC-001's `sv`
-// field). Mirrors taskSortValue's rationale: created_at uses
-// sqlstore.CommentDatetimeLayout — the exact text shape SQLite's own
-// CURRENT_TIMESTAMP writes and sqlstore.commentCursorArg parses/binds on
-// the decode side — NOT time.RFC3339Nano.
+// commentSortValue preserves timestamp precision in cursor values.
 func commentSortValue(c sqlstore.CommentRecord, sortBy string) string {
 	switch sortBy {
 	case "created_at":
-		return c.CreatedAt.UTC().Format(sqlstore.CommentDatetimeLayout)
+		return c.CreatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayoutWithFractional)
 	default:
 		return ""
 	}
@@ -187,7 +182,7 @@ func commentCursorID(c sqlstore.CommentRecord) string {
 }
 
 // parseCommentDateArg parses a created_after/created_before value into
-// sqlstore.CommentDatetimeLayout text for CommentFilter. Accepts RFC3339
+// UTC text with optional fractional seconds for CommentFilter. Accepts RFC3339
 // (the natural agent-facing format for a timestamp) and, defensively, the
 // raw SQLite storage layout itself. Empty input returns "" (no filter), not
 // an error.
@@ -196,10 +191,10 @@ func parseCommentDateArg(raw string) (string, error) {
 		return "", nil
 	}
 	if t, err := time.Parse(time.RFC3339, raw); err == nil {
-		return t.UTC().Format(sqlstore.CommentDatetimeLayout), nil
+		return t.UTC().Format(sqlstore.SQLiteDatetimeLayoutWithFractional), nil
 	}
 	if t, err := time.Parse(sqlstore.CommentDatetimeLayout, raw); err == nil {
-		return t.UTC().Format(sqlstore.CommentDatetimeLayout), nil
+		return t.UTC().Format(sqlstore.SQLiteDatetimeLayoutWithFractional), nil
 	}
 	return "", fmt.Errorf("must be RFC3339 (e.g. \"2026-01-02T15:04:05Z\"), got %q", raw)
 }

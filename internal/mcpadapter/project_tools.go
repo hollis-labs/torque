@@ -315,9 +315,9 @@ func projectSortValue(p sqlstore.ProjectRecord, sortBy string) string {
 	case "status":
 		return p.Status
 	case "updated_at":
-		return p.UpdatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayout)
+		return p.UpdatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayoutWithFractional)
 	case "created_at":
-		return p.CreatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayout)
+		return p.CreatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayoutWithFractional)
 	default:
 		return ""
 	}

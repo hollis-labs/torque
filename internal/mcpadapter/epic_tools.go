@@ -301,9 +301,9 @@ func epicSortValue(e sqlstore.EpicRecord, sortBy string) string {
 	case "status":
 		return e.Status
 	case "updated_at":
-		return e.UpdatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayout)
+		return e.UpdatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayoutWithFractional)
 	case "created_at":
-		return e.CreatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayout)
+		return e.CreatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayoutWithFractional)
 	default:
 		return ""
 	}
