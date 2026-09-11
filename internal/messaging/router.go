@@ -147,6 +147,11 @@ func (r *Router) Inbox(ctx context.Context, to messaging.Address, f messaging.Fi
 // Subscribe routes by the recipient authority. As with Inbox, this resolves
 // to the local Store in practice.
 func (r *Router) Subscribe(ctx context.Context, to messaging.Address, f messaging.Filter) (<-chan messaging.Envelope, error) {
+	// Internal system subscriptions observe local traffic only, including
+	// when federation requires explicit authorities for addressed calls.
+	if to == (messaging.Address{}) {
+		return r.local.Subscribe(ctx, to, f)
+	}
 	store, err := r.route(to.Authority)
 	if err != nil {
 		return nil, err
