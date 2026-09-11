@@ -189,6 +189,12 @@ launching Claude, so a fresh boot directory does not depend on an interactive
 trust grant to load its configuration. Both the wrapper and legacy Claude launch
 paths carry the profile's model and extra arguments into the provider command.
 
+Codex's JSON-RPC runtime owns the `app-server` subcommand. Torque removes
+that duplicate from the prepared argument tail, preserves the remaining
+options, and passes the profile model as a `-c model=...` override. The planted
+`CODEX_HOME` still supplies permissions and MCP configuration; `thread/start`
+binds execution to the task worktree.
+
 The legacy path is unchanged: a profile whose `args` carry
 `--dangerously-skip-permissions` boots in full bypass (the adapter already
 plants `bypassPermissions`), and the post-processing step does not downgrade

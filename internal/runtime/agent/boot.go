@@ -537,6 +537,20 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 	if shouldDropBootDirExtraArgs(profile.Provider, runtimeKind) {
 		bootDirExtraArgs = nil
 	}
+	if profile.Provider == "codex" && runtimeKind == RuntimeKindJsonRpcStdio {
+		// The JSON-RPC runtime already calls the adapter's BuildArgs, which
+		// emits app-server. PreparedExecution contains that same command;
+		// only its remaining options belong in the ExtraArgs splice.
+		if len(bootDirExtraArgs) > 0 && bootDirExtraArgs[0] == "app-server" {
+			bootDirExtraArgs = bootDirExtraArgs[1:]
+		}
+		// This runtime bypasses the per-turn buildArgs callback below.
+		// app-server accepts model configuration via -c, not --model.
+		bootDirExtraArgs = append(append([]string(nil), profile.Args...), bootDirExtraArgs...)
+		if profile.Model != "" {
+			bootDirExtraArgs = append(bootDirExtraArgs, "-c", fmt.Sprintf("model=%q", profile.Model))
+		}
+	}
 
 	// Merge the bootdir-derived env amendments (CODEX_HOME /
 	// OPENCODE_CONFIG_DIR) that providerplant.Plant resolved into
