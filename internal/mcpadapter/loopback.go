@@ -30,7 +30,7 @@ func timeParseRFC3339(s string) (time.Time, error) { return time.Parse(time.RFC3
 //   - torque_task_review(reason)             — flag review + comment
 //   - torque_task_get(id?)                   — read own task (CW-20260519-0095 Phase 2)
 //   - torque_artifact_create                 — task_id implicit
-//   - torque_comment_add                     — task_id + author implicit
+//   - torque_comment_add                     — task_id implicit; author optional
 //   - torque_task_subtodo_add                — task_id implicit
 //   - torque_task_subtodo_done               — task_id implicit
 //   - torque_task_checkpoint_emit            — ask-for-help (CW-20260519-0095 Phase 2)
@@ -114,10 +114,11 @@ Example: {"type":"file","file_path":"/tmp/report.md"}`),
 
 	a.addTool(mcp.NewTool("torque_comment_add",
 		mcp.WithDescription(`Append a comment (freeform prose) to the current task; returns the persisted CommentRecord.
-The current task is implicit (loopback context). Author defaults to "agent". Use for agent-to-user channel; for the canonical end-of-turn summary use torque_task_summary instead.
+The current task is implicit (loopback context). Optional author records caller attribution, matching the global comment tool; it defaults to "agent". Use for agent-to-user channel; for the canonical end-of-turn summary use torque_task_summary instead.
 Response shape: data = {<CommentRecord fields>} — singleton.
 Example: {"content":"Investigating the auth flow; see file X for context."}`),
 		mcp.WithString("content", mcp.Required(), mcp.Description("Comment body (prose)")),
+		mcp.WithString("author", mcp.Description("Caller attribution; defaults to agent")),
 	), a.handleLoopbackCommentAdd)
 
 	a.addTool(mcp.NewTool("torque_task_subtodo_add",
@@ -283,7 +284,11 @@ func (a *Adapter) handleLoopbackCommentAdd(ctx context.Context, req mcp.CallTool
 	if content == "" {
 		return errResult(ErrCodeArgInvalid, "content is required", "content")
 	}
-	comment, err := a.svc.Comment.AddForTask(a.loopbackTaskID, "agent", content)
+	author := reqStr(req, "author")
+	if author == "" {
+		author = "agent"
+	}
+	comment, err := a.svc.Comment.AddForTask(a.loopbackTaskID, author, content)
 	if err != nil {
 		return errFromService(err)
 	}
