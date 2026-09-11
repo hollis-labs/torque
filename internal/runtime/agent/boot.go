@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -342,6 +343,13 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		if err != nil {
 			shutdownLoopbackHandle(loopback)
 			return nil, fmt.Errorf("%w: plant boot dir: %v", ErrBootFailed, err)
+		}
+		// A newly planted directory has no interactive Claude trust grant.
+		// Load the operator-selected settings explicitly so headless launches
+		// honor the planted permission mode and auth helper from the outset.
+		if profile.Provider == "claude-code" {
+			preparedExecution.Bindings.Argv = append(preparedExecution.Bindings.Argv,
+				"--settings", filepath.Join(prepared.PlantedBootDir, ".claude", "settings.json"))
 		}
 		prepared.Argv = append([]string(nil), preparedExecution.Bindings.Argv...)
 		prepared.Env = envVarValues(preparedExecution.Bindings.Env)
@@ -1253,7 +1261,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 	wrapperAdapter, err := adapters.Select(adapters.Selection{
 		Provider:   adaptersProviderFor(profile.Provider),
 		LaunchMode: launchMode,
-		CLIAdapter: cliAdapter,
+		CLIAdapter: &profileCLIAdapter{CLIAdapter: cliAdapter, profile: profile, systemPrompt: pb.systemPrompt},
 	})
 	if err != nil {
 		shutdownLoopbackHandle(loopback)
@@ -1687,6 +1695,26 @@ func composeBuildArgs(p buildArgsParams) []string {
 		args = append(filtered, args...)
 	}
 	return args
+}
+
+// The wrapper invokes CLIAdapter.BuildArgs directly, whereas the legacy
+// session path supplies composeBuildArgs as a callback. Keep the same profile
+// arguments and model selection on both paths.
+type profileCLIAdapter struct {
+	provider.CLIAdapter
+	profile      config.AgentProfile
+	systemPrompt string
+}
+
+func (a *profileCLIAdapter) BuildArgs(prompt, systemPrompt, sessionID string) []string {
+	if systemPrompt == "" {
+		systemPrompt = a.systemPrompt
+	}
+	return composeBuildArgs(buildArgsParams{
+		Adapter: a.CLIAdapter, Profile: a.profile, SystemPrompt: systemPrompt,
+		TurnPrompt: prompt, SessionID: sessionID,
+		SkipModelSuffix: skipModelSuffixForProvider(a.profile.Provider),
+	})
 }
 
 // skipModelSuffixForProvider reports whether the generic --model

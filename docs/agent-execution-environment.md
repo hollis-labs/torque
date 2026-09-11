@@ -182,10 +182,12 @@ load-time error naming the valid set.
 
 ### How it is applied
 
-After go-agent-launch plants the boot dir, Torque post-processes the planted
-`.claude/settings.json` and merges in `permissions.defaultMode` from the
-profile's resolved `permission_mode` (other keys such as `apiKeyHelper` are
-preserved). This runs only for `claude-code` boots.
+Torque passes the resolved permission mode to the Claude adapter, which plants
+`permissions.defaultMode` in `.claude/settings.json` alongside settings such as
+`apiKeyHelper`. Torque explicitly passes that file with `--settings` when
+launching Claude, so a fresh boot directory does not depend on an interactive
+trust grant to load its configuration. Both the wrapper and legacy launch paths
+carry the profile's model and extra arguments into the provider command.
 
 The legacy path is unchanged: a profile whose `args` carry
 `--dangerously-skip-permissions` boots in full bypass (the adapter already
