@@ -162,7 +162,7 @@ Example, over-budget cohort: {"cost_budget_gte":"50","updated_after":"2026-08-01
 		mcp.WithString("project_id", mcp.Description("Filter by project ID (requires features.projects)")),
 		mcp.WithString("sprint_id", mcp.Description("Filter by sprint ID (requires features.sprints)")),
 		mcp.WithString("epic_id", mcp.Description("Filter by epic ID (requires features.epics)")),
-		mcp.WithString("tags", mcp.Description("JSON array of tag slugs — AND-match; task must have all listed tags")),
+		mcp.WithString("tags", mcp.Description("JSON array of case-sensitive tag slugs; task must have all distinct tags. Whitespace is trimmed; blank and duplicate slugs are ignored. An empty normalized list applies no tag filter.")),
 		mcp.WithString("manual", mcp.Description("Filter by manual flag: 'manual'/'true'/'1' → manual only; 'auto'/'false'/'0' → scheduled only; 'both' or omit → no filter")),
 		mcp.WithString("include_internal", mcp.Description("Include kind=internal automation tasks (Reviewer end-agents etc.). Default false: internal rows are suppressed unless kind='internal' is requested explicitly. Accepts 'true'/'1'/'yes'.")),
 		mcp.WithString("search", mcp.Description("Substring match on title + description (case-insensitive)")),

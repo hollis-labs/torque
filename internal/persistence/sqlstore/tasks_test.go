@@ -466,6 +466,61 @@ func TestListTasks_FilterByTagSlugs(t *testing.T) {
 	assert.Empty(t, got)
 }
 
+// TestListTasks_RepeatedTagPredicates verifies that duplicate tag slugs in
+// the filter are normalized (CW-20260911-0081). Repeated distinct requested
+// tags must produce the same results regardless of repetition.
+func TestListTasks_RepeatedTagPredicates(t *testing.T) {
+	store := setupTestStore(t)
+
+	require.NoError(t, store.CreateTag(&sqlstore.TagRecord{Slug: "torque", Name: "torque"}))
+	require.NoError(t, store.CreateTag(&sqlstore.TagRecord{Slug: "api", Name: "api"}))
+	require.NoError(t, store.CreateTag(&sqlstore.TagRecord{Slug: "mcp", Name: "mcp"}))
+
+	t1 := sampleTask("CW-REP-0001")
+	t2 := sampleTask("CW-REP-0002")
+	t3 := sampleTask("CW-REP-0003")
+	require.NoError(t, store.CreateTask(t1))
+	require.NoError(t, store.CreateTask(t2))
+	require.NoError(t, store.CreateTask(t3))
+
+	require.NoError(t, store.SetTaskTags(t1.ID, []string{"torque"}))
+	require.NoError(t, store.SetTaskTags(t2.ID, []string{"torque", "api"}))
+	require.NoError(t, store.SetTaskTags(t3.ID, []string{"mcp"}))
+
+	// Duplicate single tag: ["torque", "torque"] should match same as ["torque"]
+	got, err := store.ListTasks(sqlstore.TaskFilter{TagSlugs: []string{"torque", "torque"}})
+	require.NoError(t, err)
+	ids := []string{}
+	for _, r := range got {
+		ids = append(ids, r.ID)
+	}
+	assert.ElementsMatch(t, []string{t1.ID, t2.ID}, ids, "duplicate single tag should match same as single instance")
+
+	// Duplicate tags with genuinely distinct tags: ["torque", "api", "torque"] should match same as ["torque", "api"]
+	got, err = store.ListTasks(sqlstore.TaskFilter{TagSlugs: []string{"torque", "api", "torque"}})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, t2.ID, got[0].ID, "duplicate mixed with distinct tags should still apply AND-match correctly")
+
+	// Empty/whitespace-only tags mixed with valid tags: ["torque", "", "  ", "api"] should match same as ["torque", "api"]
+	got, err = store.ListTasks(sqlstore.TaskFilter{TagSlugs: []string{"torque", "", "  ", "api"}})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, t2.ID, got[0].ID, "empty/whitespace tags should be filtered out")
+
+	// Leading/trailing whitespace: [" torque ", "api"] should match same as ["torque", "api"]
+	got, err = store.ListTasks(sqlstore.TaskFilter{TagSlugs: []string{" torque ", "api"}})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, t2.ID, got[0].ID, "whitespace should be trimmed from slugs")
+
+	// All empty/whitespace tags: ["", "  "] should be normalized to empty filter
+	got, err = store.ListTasks(sqlstore.TaskFilter{TagSlugs: []string{"", "  "}})
+	require.NoError(t, err)
+	// Should return all tasks since the normalized filter is empty
+	assert.Len(t, got, 3, "all-empty tag filter should not restrict results")
+}
+
 // TestListTasks_FilterByKind verifies the Kind filter narrows results.
 func TestListTasks_FilterByKind(t *testing.T) {
 	store := setupTestStore(t)

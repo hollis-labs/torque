@@ -724,6 +724,158 @@ func TestFullStack_TaskList_FilterByTags(t *testing.T) {
 	require.Equal(t, "Backend task", envelope.Items[0]["title"])
 }
 
+// TestFullStack_TaskList_RepeatedTagPredicates verifies that duplicate tag
+// slugs in the MCP tags filter are normalized (CW-20260911-0081).
+func TestFullStack_TaskList_RepeatedTagPredicates(t *testing.T) {
+	a := setupAdapter(t)
+
+	_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":       "Torque task",
+		"description": "x",
+		"tags":        `["torque"]`,
+	})
+	require.False(t, isErr)
+
+	_, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":       "Torque + API task",
+		"description": "x",
+		"tags":        `["torque","api"]`,
+	})
+	require.False(t, isErr)
+
+	_, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":       "MCP task",
+		"description": "x",
+		"tags":        `["mcp"]`,
+	})
+	require.False(t, isErr)
+
+	// Duplicate single tag: ["torque", "torque"] should match same as ["torque"]
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
+		"tags": `["torque", "torque"]`,
+	})
+	require.False(t, isErr, "task_list with duplicate tag should not error: %s", text)
+
+	var envelope struct {
+		Items []map[string]interface{} `json:"items"`
+		Meta  map[string]interface{}   `json:"meta"`
+	}
+	parseData(t, text, &envelope)
+	require.Len(t, envelope.Items, 2, "duplicate single tag should match both tasks with 'torque' tag")
+
+	titles := []string{}
+	for _, item := range envelope.Items {
+		titles = append(titles, item["title"].(string))
+	}
+	assert.ElementsMatch(t, []string{"Torque task", "Torque + API task"}, titles)
+
+	// Duplicate with distinct tags: ["torque", "api", "torque"] should AND-match correctly
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{
+		"tags": `["torque", "api", "torque"]`,
+	})
+	require.False(t, isErr, "task_list with duplicate mixed tags should not error: %s", text)
+
+	parseData(t, text, &envelope)
+	require.Len(t, envelope.Items, 1, "duplicate with distinct tags should apply AND-match correctly")
+	require.Equal(t, "Torque + API task", envelope.Items[0]["title"])
+}
+
+// TestFullStack_TaskList_TagPredicates_BoundaryCases verifies edge cases for tag
+// filtering through the MCP adapter: mixed valid+missing tags, case-sensitive
+// mismatches, whitespace/empty handling (CW-20260911-0081).
+func TestFullStack_TaskList_TagPredicates_BoundaryCases(t *testing.T) {
+	a := setupAdapter(t)
+
+	_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":       "Torque task",
+		"description": "x",
+		"tags":        `["torque"]`,
+	})
+	require.False(t, isErr)
+
+	_, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":       "Torque+API task",
+		"description": "x",
+		"tags":        `["torque","api"]`,
+	})
+	require.False(t, isErr)
+
+	_, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":       "MCP task",
+		"description": "x",
+		"tags":        `["mcp"]`,
+	})
+	require.False(t, isErr)
+
+	var envelope struct {
+		Items []map[string]interface{} `json:"items"`
+		Meta  map[string]interface{}   `json:"meta"`
+	}
+
+	tests := []struct {
+		name     string
+		tags     string
+		expected []string
+	}{
+		{
+			name:     "valid tag + missing tag: AND-match requires both, so empty result",
+			tags:     `["torque","nonexistent"]`,
+			expected: []string{},
+		},
+		{
+			name:     "case-sensitive mismatch: 'Torque' != 'torque', no match",
+			tags:     `["Torque"]`,
+			expected: []string{},
+		},
+		{
+			name:     "case-sensitive mismatch with valid tag: ['Torque','api'] no match",
+			tags:     `["Torque","api"]`,
+			expected: []string{},
+		},
+		{
+			name:     "whitespace-only elements: normalized out",
+			tags:     `["   ","  ","    "]`,
+			expected: []string{"Torque task", "Torque+API task", "MCP task"},
+		},
+		{
+			name:     "duplicate + missing: ['torque','torque','missing'] returns empty",
+			tags:     `["torque","torque","missing"]`,
+			expected: []string{},
+		},
+		{
+			name:     "whitespace + duplicate + valid: [' torque ','torque','api']",
+			tags:     `[" torque ","torque","api"]`,
+			expected: []string{"Torque+API task"},
+		},
+		{
+			name:     "empty strings mixed: ['torque','','api']",
+			tags:     `["torque","","api"]`,
+			expected: []string{"Torque+API task"},
+		},
+		{
+			name:     "all empty strings: ['','','']",
+			tags:     `["","",""]`,
+			expected: []string{"Torque task", "Torque+API task", "MCP task"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
+				"tags": tc.tags,
+			})
+			require.False(t, isErr, "task_list should not error for %s: %s", tc.name, text)
+
+			parseData(t, text, &envelope)
+			titles := []string{}
+			for _, item := range envelope.Items {
+				titles = append(titles, item["title"].(string))
+			}
+			assert.ElementsMatch(t, tc.expected, titles, tc.name)
+		})
+	}
+}
+
 // TestFullStack_TaskList_FilterByManual verifies the manual filter vocabularies.
 func TestFullStack_TaskList_FilterByManual(t *testing.T) {
 	a := setupAdapter(t)

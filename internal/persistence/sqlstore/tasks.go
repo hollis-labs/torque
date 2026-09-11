@@ -211,7 +211,7 @@ type TaskFilter struct {
 	ProjectID string
 	EpicID    string
 	Executor  string
-	TagSlugs  []string // AND-match: task must have all listed tags
+	TagSlugs  []string // AND-match after trimming and removing blank/duplicate slugs; case-sensitive
 	Search    string   // case-insensitive substring match on id, title, or description
 	Limit     int
 
@@ -512,6 +512,24 @@ func (s *Store) GetTaskStatuses(ids []string) (map[string]string, error) {
 	return result, rows.Err()
 }
 
+// normalizeTagSlugs trims and deduplicates requested slugs without changing
+// case. Empty elements are ignored, matching the HTTP CSV query contract.
+func normalizeTagSlugs(slugs []string) []string {
+	if len(slugs) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(slugs))
+	out := make([]string, 0, len(slugs))
+	for _, slug := range slugs {
+		trimmed := strings.TrimSpace(slug)
+		if trimmed != "" && !seen[trimmed] {
+			seen[trimmed] = true
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
 // ListTasks returns tasks matching the filter. Default order (f.SortBy ==
 // "") is priority ASC, created_at ASC — the order FIX-004 confirmed
 // torque_task_list's docstring should describe. When f.SortBy is set
@@ -593,16 +611,20 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 		args = append(args, v)
 	}
 	if len(f.TagSlugs) > 0 {
-		placeholders := make([]string, len(f.TagSlugs))
-		for i, slug := range f.TagSlugs {
-			placeholders[i] = "?"
-			args = append(args, slug)
+		// COUNT(DISTINCT) must match the number of distinct requested slugs.
+		normalized := normalizeTagSlugs(f.TagSlugs)
+		if len(normalized) > 0 {
+			placeholders := make([]string, len(normalized))
+			for i, slug := range normalized {
+				placeholders[i] = "?"
+				args = append(args, slug)
+			}
+			args = append(args, len(normalized))
+			where = append(where, fmt.Sprintf(
+				"id IN (SELECT task_id FROM task_tags WHERE tag_slug IN (%s) GROUP BY task_id HAVING COUNT(DISTINCT tag_slug) = ?)",
+				strings.Join(placeholders, ","),
+			))
 		}
-		args = append(args, len(f.TagSlugs))
-		where = append(where, fmt.Sprintf(
-			"id IN (SELECT task_id FROM task_tags WHERE tag_slug IN (%s) GROUP BY task_id HAVING COUNT(DISTINCT tag_slug) = ?)",
-			strings.Join(placeholders, ","),
-		))
 	}
 	if f.Search != "" {
 		// SQLite's LIKE is case-insensitive for ASCII by default.
