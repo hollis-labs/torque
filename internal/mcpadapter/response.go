@@ -470,6 +470,7 @@ type listMetaCursor struct {
 	Truncated  bool    `json:"truncated"`
 	Returned   int     `json:"returned"`
 	Limit      int     `json:"limit"`
+	Total      *int    `json:"total,omitempty"`
 	HasMore    bool    `json:"has_more"`
 	NextCursor *string `json:"next_cursor"`
 	Hint       string  `json:"hint,omitempty"`
@@ -518,6 +519,10 @@ type listEnvelopeCursor struct {
 //     if hasMoreFromQuery was false, since the byte cap itself created more
 //     unseen rows).
 func cappedCursorJSONResult(items []any, limit int, sortBy, sortDir string, hasMoreFromQuery bool, cursorAt func(lastIncludedIndex int) (sortValue, id string)) (*mcp.CallToolResult, error) {
+	return cappedCursorJSONResultWithTotal(items, limit, nil, sortBy, sortDir, hasMoreFromQuery, cursorAt)
+}
+
+func cappedCursorJSONResultWithTotal(items []any, limit int, total *int, sortBy, sortDir string, hasMoreFromQuery bool, cursorAt func(lastIncludedIndex int) (sortValue, id string)) (*mcp.CallToolResult, error) {
 	build := func(n int) ([]byte, error) {
 		trimmed := items[:n]
 		hasMore := hasMoreFromQuery || n < len(items)
@@ -531,6 +536,7 @@ func cappedCursorJSONResult(items []any, limit int, sortBy, sortDir string, hasM
 			Truncated:  n < len(items),
 			Returned:   n,
 			Limit:      limit,
+			Total:      total,
 			HasMore:    hasMore,
 			NextCursor: nextCursor,
 		}

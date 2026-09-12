@@ -126,7 +126,7 @@ Full field reference: ADR-0004 §4. Source: `internal/mcpadapter/task_tools.go`,
 |---|---|
 | `torque_task_create` | Create a task. Safety override forces `manual=true` on every create (an agent must promote it via `torque_task_update {"manual":false}` before the scheduler dispatches it) — the response's `dispatch_notice` spells out the exact promotion call. Optional `subtodos[]` seeds an initial checklist atomically. |
 | `torque_task_get` | Fetch one task by id, **including its 10 most recent comments by default** (CW-20260910-0057). `comments="false"` opts out; `comments_limit` widens the window (max 100). |
-| `torque_task_list` | Filter + free-text `search` + sort + cursor-paginate, all in one tool (no separate search tool). Rich filter set: status/statuses[]/priority/kind/trust/checkpoint_mode/parent_id/project_id/sprint_id/epic_id/tags[]/manual/agent_profile/launch_profile, `created_*`/`updated_*` RFC3339 ranges, and `*_gte`/`*_lte` budget/duration range filters. `include_internal` (default false) hides `kind=internal` automation rows. |
+| `torque_task_list` | Filter + free-text `search` + sort + cursor-paginate, all in one tool (no separate search tool). Shares the public task-query contract with HTTP: status/statuses[]/priority/kind/trust/checkpoint_mode/parent_id/project_id/sprint_id/epic_id/tags[]/manual/agent_profile/launch_profile, `created_*`/`updated_*` RFC3339 ranges, and `*_gte`/`*_lte` budget/duration range filters. `include_internal` (default false) hides `kind=internal` automation rows unless `kind=internal` is requested explicitly. |
 | `torque_task_update` | Partial patch. Numeric sentinel `-1` = unlimited on budget fields. `status` is accepted and routed through the same path as `torque_task_transition` — before CW-20260909-0011 the arg was silently dropped and the call still answered `ok:true`. |
 | `torque_task_delete` | Hard delete (runs/artifacts/comments cascade). Prefer `transition` to `abandoned` for an audit-preserving close — reachable from any status in one call. |
 | `torque_task_transition` | Set a status. Permissive: any status reaches any other in one call (`todo→done` included). Vocabulary: `backlog`, `todo`, `queued`, `doing`, `review`, `done`, `blocked`, `paused`, `archived`, `abandoned`, `cancelled`. Only two refusals — a status outside that list, and leaving `done`/`archived`, which needs `force=true`. Optional `comment`/`comment_author` posts a comment atomically with the transition (one transaction). |
@@ -136,7 +136,9 @@ Full field reference: ADR-0004 §4. Source: `internal/mcpadapter/task_tools.go`,
 | `torque_task_bulk_tag` | Add/remove tag slugs across many ids — additive, unlike `update`'s `tags` (which replaces the full set). |
 
 `torque_task_list` sort: `sort_by` ∈ `priority\|status\|updated_at\|created_at`,
-default `priority asc` (tiebreak `id asc`).
+default `priority asc` (tiebreak `id asc`). HTTP `GET /api/v1/tasks` uses the
+same public default order; lower-level service/store list calls used by engine
+internals retain their legacy ordering.
 
 `torque_task_list` validates explicit query arguments instead of broadening
 bad filters into successful unfiltered lists. Malformed numbers, booleans,
@@ -144,7 +146,9 @@ RFC3339 dates, sort directions, cursors, malformed `tags` JSON, and wrong
 native types return `error.code=arg_invalid` with `error.field` when one input
 is at fault. Omitted values remain unfiltered/defaulted, `manual` keeps
 `manual`/`true`/`1`, `auto`/`false`/`0`, and `both`/empty sentinels, and
-`parent_id` keeps the empty/`null` root sentinel.
+`parent_id` keeps the empty/`null` root sentinel. Cursor tokens are opaque,
+sort-specific, and filter-specific by caller contract: when reusing
+`meta.next_cursor`, retain the same filters plus the same `sort_by`/`sort_dir`.
 
 Priority list filters are exact arbitrary integers, not a 1-5 vocabulary:
 `0`, negative values, and large int64 values are legal exact values. Use
@@ -152,11 +156,14 @@ Priority list filters are exact arbitrary integers, not a 1-5 vocabulary:
 OR-match; passing both is rejected as ambiguous, and `priorities=[]` is
 rejected rather than treated as omission.
 
-HTTP `GET /api/v1/tasks` has a smaller filter set today. It preserves the GUI
-compatibility alias `priority=1,2` as a comma-separated exact-integer OR-list,
-including `0`. Repeated HTTP query keys, malformed raw query strings,
-malformed/overflow/blank CSV members, unknown keys, and MCP-only filters that
-HTTP has not implemented yet return `400` with `error` and `field`.
+`include_total` is optional on MCP and defaults to false to preserve cheap
+legacy list calls. When `include_total=true`, `meta.total` is the full matching
+cohort count excluding cursor/offset/limit, and it is part of the normal
+100KB-capped response sizing. HTTP always includes `total` in its existing
+task-list envelope. HTTP keeps its GUI compatibility alias `priority=1,2` as a
+comma-separated exact-integer OR-list, including `0`; repeated HTTP query keys,
+malformed raw query strings, malformed/overflow/blank CSV members, unknown
+keys, and invalid shared-query fields return `400` with `error` and `field`.
 
 ### Unknown arguments are rejected, not dropped (CW-20260907-0060)
 

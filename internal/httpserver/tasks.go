@@ -3,6 +3,7 @@ package httpserver
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"net/url"
@@ -424,7 +425,7 @@ func nullJSONString(v any) *sql.NullString {
 }
 
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
-	filter := sqlstore.TaskFilter{}
+	query := service.TaskQuery{WithTotal: true}
 	q, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
 		writeFieldError(w, http.StatusBadRequest, "query", "invalid query string: "+err.Error())
@@ -437,9 +438,9 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	if v := q.Get("status"); v != "" {
 		parts := strings.Split(v, ",")
 		if len(parts) == 1 {
-			filter.Status = parts[0]
+			query.Status = parts[0]
 		} else {
-			filter.Statuses = parts
+			query.Statuses = parts
 		}
 	}
 	if _, ok := q["priority"]; ok {
@@ -448,61 +449,47 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 			writeFieldError(w, http.StatusBadRequest, "priority", err.Error())
 			return
 		}
-		filter.Priorities = priorities
+		query.Priorities = priorities
 	}
 	if v := q.Get("sprint_id"); v != "" {
-		filter.SprintID = v
+		query.SprintID = v
 	}
 	if v := q.Get("project_id"); v != "" {
-		filter.ProjectID = v
+		query.ProjectID = v
 	}
 	if v := q.Get("epic_id"); v != "" {
-		filter.EpicID = v
+		query.EpicID = v
 	}
 	if v := q.Get("executor"); v != "" {
-		filter.Executor = v
+		query.Executor = v
 	}
 	if v := q.Get("kind"); v != "" {
-		filter.Kind = v
+		query.Kind = v
 	}
-	includeInternal := false
 	if _, ok := q["include_internal"]; ok {
 		v, err := parseTaskListBool(q.Get("include_internal"), "include_internal")
 		if err != nil {
 			writeFieldError(w, http.StatusBadRequest, "include_internal", err.Error())
 			return
 		}
-		includeInternal = v
-	}
-	// kind=internal default-exclude (CW-20260503-0011): user-facing list
-	// queries hide internal automation tasks unless include_internal is
-	// truthy or an explicit kind=internal filter is supplied (the latter
-	// is short-circuited inside ListTasks).
-	if filter.Kind == "" {
-		if !includeInternal {
-			filter.ExcludeInternal = true
-		}
+		query.IncludeInternal = v
 	}
 	if v := q.Get("source_type"); v != "" {
-		filter.SourceType = v
+		query.SourceType = v
 	}
 	if v := q.Get("source_ref"); v != "" {
-		filter.SourceRef = v
+		query.SourceRef = v
 	}
 	if v := q.Get("trust"); v != "" {
-		filter.Trust = v
+		query.Trust = v
 	}
 	if v := q.Get("checkpoint_mode"); v != "" {
-		filter.CheckpointMode = v
+		query.CheckpointMode = v
 	}
 	// parent_id filter — special value "null" returns roots (parent IS NULL).
 	if _, ok := q["parent_id"]; ok {
-		v := q.Get("parent_id")
-		if v == "" || v == "null" {
-			filter.ParentIDNull = true
-		} else {
-			filter.ParentID = v
-		}
+		query.ParentIDSet = true
+		query.ParentID = q.Get("parent_id")
 	}
 	// manual filter — accepts canonical booleans plus UI aliases. "both" and
 	// empty mean no filter, preserving the documented sentinel.
@@ -512,7 +499,7 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 			writeFieldError(w, http.StatusBadRequest, "manual", err.Error())
 			return
 		}
-		filter.Manual = manual
+		query.Manual = manual
 	}
 	if v := q.Get("tags"); v != "" {
 		parts := strings.Split(v, ",")
@@ -522,22 +509,65 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 				out = append(out, s)
 			}
 		}
-		filter.TagSlugs = out
+		query.TagSlugs = out
 	} else if v := q.Get("tag"); v != "" {
-		filter.TagSlugs = []string{strings.TrimSpace(v)}
+		query.TagSlugs = []string{strings.TrimSpace(v)}
 	}
 	if v := q.Get("search"); v != "" {
-		filter.Search = v
+		query.Search = v
 	}
+	if v := q.Get("agent_profile"); v != "" {
+		query.AgentProfile = v
+	}
+	if v := q.Get("launch_profile"); v != "" {
+		query.LaunchProfile = v
+	}
+	query.CreatedAfter = q.Get("created_after")
+	query.CreatedBefore = q.Get("created_before")
+	query.UpdatedAfter = q.Get("updated_after")
+	query.UpdatedBefore = q.Get("updated_before")
+	if err := applyHTTPTaskQueryFloatBound(q, "cost_budget_gte", &query.CostBudgetGte); err != nil {
+		writeFieldError(w, http.StatusBadRequest, "cost_budget_gte", err.Error())
+		return
+	}
+	if err := applyHTTPTaskQueryFloatBound(q, "cost_budget_lte", &query.CostBudgetLte); err != nil {
+		writeFieldError(w, http.StatusBadRequest, "cost_budget_lte", err.Error())
+		return
+	}
+	if err := applyHTTPTaskQueryInt64Bound(q, "token_budget_gte", &query.TokenBudgetGte); err != nil {
+		writeFieldError(w, http.StatusBadRequest, "token_budget_gte", err.Error())
+		return
+	}
+	if err := applyHTTPTaskQueryInt64Bound(q, "token_budget_lte", &query.TokenBudgetLte); err != nil {
+		writeFieldError(w, http.StatusBadRequest, "token_budget_lte", err.Error())
+		return
+	}
+	if err := applyHTTPTaskQueryInt64Bound(q, "max_duration_ms_gte", &query.MaxDurationMsGte); err != nil {
+		writeFieldError(w, http.StatusBadRequest, "max_duration_ms_gte", err.Error())
+		return
+	}
+	if err := applyHTTPTaskQueryInt64Bound(q, "max_duration_ms_lte", &query.MaxDurationMsLte); err != nil {
+		writeFieldError(w, http.StatusBadRequest, "max_duration_ms_lte", err.Error())
+		return
+	}
+	if err := applyHTTPTaskQueryIntBound(q, "max_retries_gte", &query.MaxRetriesGte); err != nil {
+		writeFieldError(w, http.StatusBadRequest, "max_retries_gte", err.Error())
+		return
+	}
+	if err := applyHTTPTaskQueryIntBound(q, "max_retries_lte", &query.MaxRetriesLte); err != nil {
+		writeFieldError(w, http.StatusBadRequest, "max_retries_lte", err.Error())
+		return
+	}
+	query.SortBy = q.Get("sort_by")
+	query.SortDir = q.Get("sort_dir")
+	query.Cursor = q.Get("cursor")
 	if _, ok := q["limit"]; ok {
 		n, err := parseTaskListInt(q.Get("limit"), "limit")
 		if err != nil {
 			writeFieldError(w, http.StatusBadRequest, "limit", err.Error())
 			return
 		}
-		filter.Limit = boundedHTTPTaskListLimit(n)
-	} else {
-		filter.Limit = defaultHTTPTaskListLimit
+		query.Limit = n
 	}
 	if _, ok := q["offset"]; ok {
 		n, err := parseTaskListInt(q.Get("offset"), "offset")
@@ -545,15 +575,16 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 			writeFieldError(w, http.StatusBadRequest, "offset", err.Error())
 			return
 		}
-		if n < 0 {
-			writeFieldError(w, http.StatusBadRequest, "offset", "offset must be greater than or equal to 0")
-			return
-		}
-		filter.Offset = n
+		query.Offset = n
 	}
 
-	result, err := s.svc.Task.ListPage(filter)
+	result, err := s.svc.Task.Query(query)
 	if err != nil {
+		var verr *service.ValidationError
+		if errors.As(err, &verr) {
+			writeFieldError(w, http.StatusBadRequest, verr.Field, verr.Message)
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -566,18 +597,34 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	hasMore := filter.Offset+len(out) < result.Total
+	hasMore := result.HasMoreFromQuery
 	var nextOffset interface{}
 	var continuation interface{}
+	var nextCursor interface{}
 	if hasMore {
-		next := filter.Offset + len(out)
-		nextOffset = next
-		continuation = map[string]interface{}{
-			"limit":  filter.Limit,
-			"offset": next,
+		next := result.Offset + len(out)
+		if len(result.Tasks) > 0 {
+			cursor := service.TaskQueryCursor(result.Tasks[len(result.Tasks)-1], result.SortBy, result.SortDir)
+			nextCursor = cursor
+		}
+		if query.Cursor != "" {
+			nextOffset = nil
+			continuation = map[string]interface{}{
+				"limit":    result.Limit,
+				"sort_by":  result.SortBy,
+				"sort_dir": result.SortDir,
+				"cursor":   nextCursor,
+			}
+		} else {
+			nextOffset = next
+			continuation = map[string]interface{}{
+				"limit":  result.Limit,
+				"offset": next,
+			}
 		}
 	} else {
 		nextOffset = nil
+		nextCursor = nil
 		continuation = nil
 	}
 	// Offset pagination reports an exact count for the matching cohort, but
@@ -586,10 +633,13 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 		"tasks":        out,
 		"total":        result.Total,
 		"returned":     len(out),
-		"limit":        filter.Limit,
-		"offset":       filter.Offset,
+		"limit":        result.Limit,
+		"offset":       result.Offset,
 		"has_more":     hasMore,
 		"next_offset":  nextOffset,
+		"next_cursor":  nextCursor,
+		"sort_by":      result.SortBy,
+		"sort_dir":     result.SortDir,
 		"continuation": continuation,
 	})
 }
@@ -613,12 +663,19 @@ func validateTaskListQueryKeys(q url.Values) *taskListQueryError {
 		"executor": true, "kind": true, "include_internal": true, "source_type": true,
 		"source_ref": true, "trust": true, "checkpoint_mode": true, "parent_id": true,
 		"manual": true, "tags": true, "tag": true, "search": true, "limit": true, "offset": true,
+		"agent_profile": true, "launch_profile": true,
+		"created_after": true, "created_before": true, "updated_after": true, "updated_before": true,
+		"cost_budget_gte": true, "cost_budget_lte": true,
+		"token_budget_gte": true, "token_budget_lte": true,
+		"max_duration_ms_gte": true, "max_duration_ms_lte": true,
+		"max_retries_gte": true, "max_retries_lte": true,
+		"sort_by": true, "sort_dir": true, "cursor": true,
 	}
 	for key, values := range q {
 		if !supported[key] {
 			return &taskListQueryError{
 				field:   key,
-				message: "unsupported query parameter " + key + "; supported task-list parameters are status, priority, sprint_id, project_id, epic_id, executor, kind, include_internal, source_type, source_ref, trust, checkpoint_mode, parent_id, manual, tags, tag, search, limit, offset",
+				message: "unsupported query parameter " + key + "; supported task-list parameters are status, priority, sprint_id, project_id, epic_id, executor, kind, include_internal, source_type, source_ref, trust, checkpoint_mode, parent_id, manual, tags, tag, search, agent_profile, launch_profile, created_after, created_before, updated_after, updated_before, cost_budget_gte, cost_budget_lte, token_budget_gte, token_budget_lte, max_duration_ms_gte, max_duration_ms_lte, max_retries_gte, max_retries_lte, sort_by, sort_dir, cursor, limit, offset",
 			}
 		}
 		if len(values) > 1 {
@@ -657,7 +714,54 @@ func parseTaskListInt(raw, field string) (int, error) {
 	if err != nil {
 		return 0, taskListQueryError{field: field, message: field + " must be an integer"}
 	}
+	if int64(int(n)) != n {
+		return 0, taskListQueryError{field: field, message: field + " must fit in a Go int"}
+	}
 	return int(n), nil
+}
+
+func applyHTTPTaskQueryFloatBound(q url.Values, field string, target **float64) error {
+	if _, ok := q[field]; !ok {
+		return nil
+	}
+	v := strings.TrimSpace(q.Get(field))
+	if v == "" {
+		return taskListQueryError{field: field, message: field + " must be a finite number"}
+	}
+	n, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return taskListQueryError{field: field, message: field + " must be a finite number"}
+	}
+	*target = &n
+	return nil
+}
+
+func applyHTTPTaskQueryInt64Bound(q url.Values, field string, target **int64) error {
+	if _, ok := q[field]; !ok {
+		return nil
+	}
+	v := strings.TrimSpace(q.Get(field))
+	if v == "" {
+		return taskListQueryError{field: field, message: field + " must be an integer"}
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return taskListQueryError{field: field, message: field + " must be an integer"}
+	}
+	*target = &n
+	return nil
+}
+
+func applyHTTPTaskQueryIntBound(q url.Values, field string, target **int) error {
+	if _, ok := q[field]; !ok {
+		return nil
+	}
+	n, err := parseTaskListInt(q.Get(field), field)
+	if err != nil {
+		return err
+	}
+	*target = &n
+	return nil
 }
 
 func boundedHTTPTaskListLimit(n int) int {

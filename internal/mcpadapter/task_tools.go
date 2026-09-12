@@ -213,6 +213,54 @@ func taskListPriorityFilter(req mcp.CallToolRequest) ([]int, *mcp.CallToolResult
 	return out, nil
 }
 
+func reqTaskListStrictStringSlice(req mcp.CallToolRequest, key string) ([]string, error) {
+	args := req.GetArguments()
+	raw, ok := args[key]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	switch v := raw.(type) {
+	case []string:
+		out := make([]string, len(v))
+		copy(out, v)
+		return out, nil
+	case []any:
+		out := make([]string, 0, len(v))
+		for i, elem := range v {
+			s, ok := elem.(string)
+			if !ok {
+				return nil, fmt.Errorf("element %d is not a string (got %T)", i, elem)
+			}
+			out = append(out, s)
+		}
+		return out, nil
+	case string:
+		if v == "" {
+			return nil, nil
+		}
+		var elems []any
+		dec := json.NewDecoder(strings.NewReader(v))
+		if err := dec.Decode(&elems); err != nil {
+			return nil, err
+		}
+		var extra any
+		if err := dec.Decode(&extra); err != io.EOF {
+			return nil, fmt.Errorf("must contain a single JSON array and no trailing content")
+		}
+		out := make([]string, 0, len(elems))
+		for i, elem := range elems {
+			s, ok := elem.(string)
+			if !ok {
+				return nil, fmt.Errorf("element %d is not a string (got %T)", i, elem)
+			}
+			out = append(out, s)
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("unsupported type %T", raw)
+	}
+}
+
 func exactIntArray(raw any, field string) ([]int, error) {
 	var values []any
 	switch v := raw.(type) {
@@ -293,7 +341,7 @@ func rejectMalformedTaskListTags(req mcp.CallToolRequest) *mcp.CallToolResult {
 	if !reqHasArg(req, "tags") {
 		return nil
 	}
-	if _, err := reqStrSlice(req, "tags"); err != nil {
+	if _, err := reqTaskListStrictStringSlice(req, "tags"); err != nil {
 		res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
 		return res
 	}
@@ -422,6 +470,7 @@ Example, over-budget cohort: {"cost_budget_gte":"50","updated_after":"2026-08-01
 		mcp.WithString("max_retries_lte", mcp.Description("Filter: max_retries <= this value (integer)")),
 		mcp.WithString("limit", mcp.Description("Max results (integer, default 50, max 200)")),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
+		mcp.WithString("include_total", mcp.Description("When true, include meta.total for the full matching cohort, excluding cursor/offset/limit. Default false keeps list calls cheap.")),
 		mcp.WithString("sort_by", mcp.Description("Sort field: priority|status|updated_at|created_at (default priority)")),
 		mcp.WithString("sort_dir", mcp.Description("Sort direction: asc|desc (default asc)")),
 		mcp.WithString("cursor", mcp.Description("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
@@ -831,6 +880,9 @@ func (a *Adapter) handleTaskGet(ctx context.Context, req mcp.CallToolRequest) (*
 }
 
 func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if errRes := rejectMalformedTaskListTags(req); errRes != nil {
+		return errRes, nil
+	}
 	if errRes := validateTaskListStringArgs(req,
 		"status", "executor", "kind", "source_type", "source_ref", "trust", "checkpoint_mode",
 		"parent_id", "project_id", "sprint_id", "epic_id", "search", "agent_profile", "launch_profile",
@@ -843,7 +895,6 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 	if err != nil {
 		return errResult(ErrCodeArgInvalid, err.Error(), "limit")
 	}
-	limit := clampLimit(rawLimit, 50, maxTaskListLimit)
 	verbose, err := reqTaskListBool(req, "verbose")
 	if err != nil {
 		return errResult(ErrCodeArgInvalid, err.Error(), "verbose")
@@ -851,6 +902,10 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 	includeInternal, err := reqTaskListBool(req, "include_internal")
 	if err != nil {
 		return errResult(ErrCodeArgInvalid, err.Error(), "include_internal")
+	}
+	includeTotal, err := reqTaskListBool(req, "include_total")
+	if err != nil {
+		return errResult(ErrCodeArgInvalid, err.Error(), "include_total")
 	}
 	manual, err := parseManualFilter(req)
 	if err != nil {
@@ -862,15 +917,6 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 		return errRes, nil
 	}
 
-	// PRIM-002/PRIM-001: sort_by/sort_dir/cursor, allow-list validated.
-	// Omitted sort values fall back to FIX-004's locked default order (see
-	// taskSortDefaultBy/Dir's doc comment for why the tiebreak column
-	// differs from FIX-004's original wording without changing the
-	// observable order).
-	sortBy, sortDir, afterSortValue, afterID, errRes := resolveSortAndCursor(req, taskSortDefaultBy, taskSortDefaultDir, taskSortAllowList...)
-	if errRes != nil {
-		return errRes, nil
-	}
 	status, _ := reqTaskListString(req, "status")
 	executor, _ := reqTaskListString(req, "executor")
 	kind, _ := reqTaskListString(req, "kind")
@@ -884,92 +930,56 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 	search, _ := reqTaskListString(req, "search")
 	agentProfile, _ := reqTaskListString(req, "agent_profile")
 	launchProfile, _ := reqTaskListString(req, "launch_profile")
+	sortBy, _ := reqTaskListString(req, "sort_by")
+	sortDir, _ := reqTaskListString(req, "sort_dir")
+	cursor, _ := reqTaskListString(req, "cursor")
 
-	filter := sqlstore.TaskFilter{
-		Status:         status,
-		Priorities:     priorities,
-		Executor:       executor,
-		Kind:           kind,
-		SourceType:     sourceType,
-		SourceRef:      sourceRef,
-		Trust:          trust,
-		CheckpointMode: checkpointMode,
-		ProjectID:      projectID,
-		SprintID:       sprintID,
-		EpicID:         epicID,
-		Search:         search,
-		Manual:         manual,
-		AgentProfile:   agentProfile,
-		LaunchProfile:  launchProfile,
-		// Fetch one extra row beyond limit so has_more can be determined
-		// without a separate COUNT(*) query (DEC-001's cheaper-default
-		// choice). handleTaskList trims the extra row before building the
-		// response envelope.
-		Limit:          limit + 1,
-		SortBy:         sortBy,
-		SortDir:        sortDir,
-		AfterSortValue: afterSortValue,
-		AfterID:        afterID,
-		// kind=internal default-exclude (CW-20260503-0011): user-facing
-		// list calls hide internal automation tasks unless include_internal
-		// is truthy. An explicit kind filter takes precedence at the SQL
-		// layer, so this flip is safe to set unconditionally.
-		ExcludeInternal: !includeInternal,
+	query := service.TaskQuery{
+		Status:          status,
+		Priorities:      priorities,
+		Executor:        executor,
+		Kind:            kind,
+		SourceType:      sourceType,
+		SourceRef:       sourceRef,
+		Trust:           trust,
+		CheckpointMode:  checkpointMode,
+		ProjectID:       projectID,
+		SprintID:        sprintID,
+		EpicID:          epicID,
+		Search:          search,
+		Manual:          manual,
+		AgentProfile:    agentProfile,
+		LaunchProfile:   launchProfile,
+		Limit:           rawLimit,
+		SortBy:          sortBy,
+		SortDir:         sortDir,
+		Cursor:          cursor,
+		IncludeInternal: includeInternal,
+		WithTotal:       includeTotal,
 	}
 	if _, ok := req.GetArguments()["parent_id"]; ok {
 		v, _ := reqTaskListString(req, "parent_id")
-		if v == "" || v == "null" {
-			filter.ParentIDNull = true
-		} else {
-			filter.ParentID = v
-		}
+		query.ParentIDSet = true
+		query.ParentID = v
 	}
-	if tags, err := reqStrSlice(req, "tags"); err != nil {
+	if tags, err := reqTaskListStrictStringSlice(req, "tags"); err != nil {
 		return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
 	} else if tags != nil {
-		filter.TagSlugs = tags
+		query.TagSlugs = tags
 	}
 	// ENT-TASK: statuses[] OR-filter — already supported at the store layer
 	// (TaskFilter.Statuses, ListTasks) and on HTTP; this is the MCP wiring.
 	// ListTasks prefers Statuses over the single Status field when both are
 	// set, so no extra precedence handling is needed here.
-	if statuses, err := reqStrSlice(req, "statuses"); err != nil {
+	if statuses, err := reqTaskListStrictStringSlice(req, "statuses"); err != nil {
 		return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid statuses JSON: %v", err), "statuses")
 	} else if statuses != nil {
-		filter.Statuses = statuses
+		query.Statuses = statuses
 	}
-	// created_at/updated_at range filters (ENT-TASK). Caller-facing input is
-	// RFC3339 (matching every other timestamp param on this MCP surface,
-	// e.g. checkpoint_tools.go's timeout_at); parseTaskDateFilter reformats
-	// to the SQLiteDatetimeLayout text ListTasks compares against.
-	if raw, _ := reqTaskListString(req, "created_after"); raw != "" {
-		v, err := parseTaskDateFilter(raw)
-		if err != nil {
-			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid created_after: %v", err), "created_after")
-		}
-		filter.CreatedAfter = v
-	}
-	if raw, _ := reqTaskListString(req, "created_before"); raw != "" {
-		v, err := parseTaskDateFilter(raw)
-		if err != nil {
-			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid created_before: %v", err), "created_before")
-		}
-		filter.CreatedBefore = v
-	}
-	if raw, _ := reqTaskListString(req, "updated_after"); raw != "" {
-		v, err := parseTaskDateFilter(raw)
-		if err != nil {
-			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid updated_after: %v", err), "updated_after")
-		}
-		filter.UpdatedAfter = v
-	}
-	if raw, _ := reqTaskListString(req, "updated_before"); raw != "" {
-		v, err := parseTaskDateFilter(raw)
-		if err != nil {
-			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid updated_before: %v", err), "updated_before")
-		}
-		filter.UpdatedBefore = v
-	}
+	query.CreatedAfter, _ = reqTaskListString(req, "created_after")
+	query.CreatedBefore, _ = reqTaskListString(req, "created_before")
+	query.UpdatedAfter, _ = reqTaskListString(req, "updated_after")
+	query.UpdatedBefore, _ = reqTaskListString(req, "updated_before")
 	// Budget/duration range filters (ENT-TASK) — presence-gated (like
 	// buildTaskUpdateInput's numeric-nullable fields) so an omitted key
 	// leaves the bound unset rather than defaulting to 0, which would
@@ -980,84 +990,68 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 		if err != nil {
 			return errResult(ErrCodeArgInvalid, err.Error(), "cost_budget_gte")
 		}
-		filter.CostBudgetGte = &v
+		query.CostBudgetGte = &v
 	}
 	if _, ok := listArgs["cost_budget_lte"]; ok {
 		v, err := reqTaskListFloat(req, "cost_budget_lte")
 		if err != nil {
 			return errResult(ErrCodeArgInvalid, err.Error(), "cost_budget_lte")
 		}
-		filter.CostBudgetLte = &v
+		query.CostBudgetLte = &v
 	}
 	if _, ok := listArgs["token_budget_gte"]; ok {
 		v, err := reqTaskListInt64(req, "token_budget_gte")
 		if err != nil {
 			return errResult(ErrCodeArgInvalid, err.Error(), "token_budget_gte")
 		}
-		filter.TokenBudgetGte = &v
+		query.TokenBudgetGte = &v
 	}
 	if _, ok := listArgs["token_budget_lte"]; ok {
 		v, err := reqTaskListInt64(req, "token_budget_lte")
 		if err != nil {
 			return errResult(ErrCodeArgInvalid, err.Error(), "token_budget_lte")
 		}
-		filter.TokenBudgetLte = &v
+		query.TokenBudgetLte = &v
 	}
 	if _, ok := listArgs["max_duration_ms_gte"]; ok {
 		v, err := reqTaskListInt64(req, "max_duration_ms_gte")
 		if err != nil {
 			return errResult(ErrCodeArgInvalid, err.Error(), "max_duration_ms_gte")
 		}
-		filter.MaxDurationMsGte = &v
+		query.MaxDurationMsGte = &v
 	}
 	if _, ok := listArgs["max_duration_ms_lte"]; ok {
 		v, err := reqTaskListInt64(req, "max_duration_ms_lte")
 		if err != nil {
 			return errResult(ErrCodeArgInvalid, err.Error(), "max_duration_ms_lte")
 		}
-		filter.MaxDurationMsLte = &v
+		query.MaxDurationMsLte = &v
 	}
 	if _, ok := listArgs["max_retries_gte"]; ok {
 		v, _, err := reqTaskListInt(req, "max_retries_gte")
 		if err != nil {
 			return errResult(ErrCodeArgInvalid, err.Error(), "max_retries_gte")
 		}
-		filter.MaxRetriesGte = &v
+		query.MaxRetriesGte = &v
 	}
 	if _, ok := listArgs["max_retries_lte"]; ok {
 		v, _, err := reqTaskListInt(req, "max_retries_lte")
 		if err != nil {
 			return errResult(ErrCodeArgInvalid, err.Error(), "max_retries_lte")
 		}
-		filter.MaxRetriesLte = &v
+		query.MaxRetriesLte = &v
 	}
-	tasks, err := a.svc.Task.List(filter)
+	page, err := a.svc.Task.Query(query)
 	if err != nil {
 		return errFromService(err)
 	}
-
-	hasMoreFromQuery := len(tasks) > limit
-	if hasMoreFromQuery {
-		tasks = tasks[:limit]
-	}
-	return a.taskListCursorEnvelope(tasks, limit, verbose, sortBy, sortDir, hasMoreFromQuery)
+	return a.taskListCursorEnvelopeWithTotal(page.Tasks, page.Limit, verbose, page.SortBy, page.SortDir, page.HasMoreFromQuery, optionalTotal(page))
 }
 
 // taskSortValue preserves timestamp precision in the cursor. Whole-second
 // values retain the previous wire spelling.
 func taskSortValue(t sqlstore.TaskRecord, sortBy string) string {
-	switch sortBy {
-	case "priority":
-		return strconv.Itoa(t.Priority)
-	case "status":
-		return t.Status
-	case "updated_at":
-		return t.UpdatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayoutWithFractional)
-	case "created_at":
-		return t.CreatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayoutWithFractional)
-	default:
-		return ""
-	}
+	return service.TaskQuerySortValue(t, sortBy)
 }
 
 // taskListCursorEnvelope builds torque_task_list's {items, meta} cursor-
@@ -1067,6 +1061,10 @@ func taskSortValue(t sqlstore.TaskRecord, sortBy string) string {
 // before calling this, so cappedCursorJSONResult's byte-size trim (if it
 // triggers) is the only further truncation next_cursor needs to account for.
 func (a *Adapter) taskListCursorEnvelope(tasks []sqlstore.TaskRecord, limit int, verbose bool, sortBy, sortDir string, hasMoreFromQuery bool) (*mcp.CallToolResult, error) {
+	return a.taskListCursorEnvelopeWithTotal(tasks, limit, verbose, sortBy, sortDir, hasMoreFromQuery, nil)
+}
+
+func (a *Adapter) taskListCursorEnvelopeWithTotal(tasks []sqlstore.TaskRecord, limit int, verbose bool, sortBy, sortDir string, hasMoreFromQuery bool, total *int) (*mcp.CallToolResult, error) {
 	items := make([]any, 0, len(tasks))
 	for _, t := range tasks {
 		if verbose {
@@ -1095,7 +1093,15 @@ func (a *Adapter) taskListCursorEnvelope(tasks []sqlstore.TaskRecord, limit int,
 	cursorAt := func(i int) (sortValue, id string) {
 		return taskSortValue(tasks[i], sortBy), tasks[i].ID
 	}
-	return cappedCursorJSONResult(items, limit, sortBy, sortDir, hasMoreFromQuery, cursorAt)
+	return cappedCursorJSONResultWithTotal(items, limit, total, sortBy, sortDir, hasMoreFromQuery, cursorAt)
+}
+
+func optionalTotal(page service.TaskQueryResult) *int {
+	if !page.TotalValid {
+		return nil
+	}
+	total := page.Total
+	return &total
 }
 
 // buildTaskUpdateInput turns a torque_task_update-shaped request's

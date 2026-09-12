@@ -5,9 +5,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/torque/internal/httpserver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -46,6 +51,18 @@ func setupAdapterWithFeatures(t *testing.T) *mcpadapter.Adapter {
 	require.NoError(t, svc.Feature.Enable("sprints"))
 	require.NoError(t, svc.Feature.Enable("epics"))
 	return mcpadapter.New(svc, nil)
+}
+
+func setupTaskQueryParitySurfaces(t *testing.T) (*mcpadapter.Adapter, *httptest.Server, *sql.DB) {
+	t.Helper()
+	db, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	require.NoError(t, migrations.Run(db))
+	store, err := sqlstore.New(db, "sqlite")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	svc := service.New(store)
+	return mcpadapter.New(svc, nil), httptest.NewServer(httpserver.New(svc, nil)), db
 }
 
 // dataBytes extracts the marshaled `data` field from a Phase C
@@ -1545,9 +1562,302 @@ type taskListCursorEnvelope struct {
 		Truncated  bool    `json:"truncated"`
 		Returned   int     `json:"returned"`
 		Limit      int     `json:"limit"`
+		Total      *int    `json:"total"`
 		HasMore    bool    `json:"has_more"`
 		NextCursor *string `json:"next_cursor"`
 	} `json:"meta"`
+}
+
+func TestFullStack_TaskList_HTTPMCPParity_ComposedQuery(t *testing.T) {
+	a, ts, db := setupTaskQueryParitySurfaces(t)
+	defer ts.Close()
+
+	parentText, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{"title": "parent", "description": "x"})
+	require.False(t, isErr, "parent create: %s", parentText)
+	var parent map[string]interface{}
+	parseData(t, parentText, &parent)
+	parentID := parent["ID"].(string)
+
+	makeTask := func(title string, args map[string]interface{}) string {
+		t.Helper()
+		args["title"] = title
+		args["description"] = "query parity needle"
+		text, isErr := callTool(t, a, "torque_task_create", args)
+		require.False(t, isErr, "create %s: %s", title, text)
+		var rec map[string]interface{}
+		parseData(t, text, &rec)
+		return rec["ID"].(string)
+	}
+	matchA := makeTask("match-a", map[string]interface{}{
+		"priority": "0", "tags": `["alpha","beta"]`, "agent_profile": "codex", "launch_profile": "cli-fast",
+		"parent_id": parentID, "cost_budget": "75.5", "token_budget": "9000", "max_duration_ms": "60000", "max_retries": "2",
+	})
+	matchB := makeTask("match-b", map[string]interface{}{
+		"priority": "2", "tags": `["alpha","beta"]`, "agent_profile": "codex", "launch_profile": "cli-fast",
+		"parent_id": parentID, "cost_budget": "125", "token_budget": "12000", "max_duration_ms": "90000", "max_retries": "4",
+	})
+	wrongTag := makeTask("wrong-tag", map[string]interface{}{"priority": "0", "tags": `["alpha"]`, "agent_profile": "codex", "launch_profile": "cli-fast", "parent_id": parentID, "cost_budget": "90", "token_budget": "9000", "max_duration_ms": "60000", "max_retries": "2"})
+	wrongProfile := makeTask("wrong-profile", map[string]interface{}{"priority": "0", "tags": `["alpha","beta"]`, "agent_profile": "other", "launch_profile": "cli-fast", "parent_id": parentID, "cost_budget": "90", "token_budget": "9000", "max_duration_ms": "60000", "max_retries": "2"})
+	wrongCreated := makeTask("wrong-created", map[string]interface{}{"priority": "0", "tags": `["alpha","beta"]`, "agent_profile": "codex", "launch_profile": "cli-fast", "parent_id": parentID, "cost_budget": "90", "token_budget": "9000", "max_duration_ms": "60000", "max_retries": "2"})
+	wrongCost := makeTask("wrong-cost", map[string]interface{}{"priority": "0", "tags": `["alpha","beta"]`, "agent_profile": "codex", "launch_profile": "cli-fast", "parent_id": parentID, "cost_budget": "10", "token_budget": "9000", "max_duration_ms": "60000", "max_retries": "2"})
+	wrongToken := makeTask("wrong-token", map[string]interface{}{"priority": "0", "tags": `["alpha","beta"]`, "agent_profile": "codex", "launch_profile": "cli-fast", "parent_id": parentID, "cost_budget": "90", "token_budget": "100", "max_duration_ms": "60000", "max_retries": "2"})
+	wrongDuration := makeTask("wrong-duration", map[string]interface{}{"priority": "0", "tags": `["alpha","beta"]`, "agent_profile": "codex", "launch_profile": "cli-fast", "parent_id": parentID, "cost_budget": "90", "token_budget": "9000", "max_duration_ms": "1000", "max_retries": "2"})
+	wrongRetries := makeTask("wrong-retries", map[string]interface{}{"priority": "0", "tags": `["alpha","beta"]`, "agent_profile": "codex", "launch_profile": "cli-fast", "parent_id": parentID, "cost_budget": "90", "token_budget": "9000", "max_duration_ms": "60000", "max_retries": "9"})
+	internalID := makeTask("internal-match-hidden", map[string]interface{}{
+		"kind": "internal", "executor": "cli", "priority": "0", "tags": `["alpha","beta"]`, "agent_profile": "codex", "launch_profile": "cli-fast",
+		"parent_id": parentID, "cost_budget": "90", "token_budget": "9000", "max_duration_ms": "60000", "max_retries": "2",
+	})
+
+	for _, id := range []string{matchA, matchB, internalID, wrongTag, wrongProfile, wrongCreated, wrongCost, wrongToken, wrongDuration, wrongRetries} {
+		_, isErr = callTool(t, a, "torque_task_transition", map[string]interface{}{"id": id, "status": "doing"})
+		require.False(t, isErr)
+		_, isErr = callTool(t, a, "torque_task_update", map[string]interface{}{"id": id, "manual": false})
+		require.False(t, isErr)
+	}
+	for _, id := range []string{matchA, internalID, wrongTag, wrongProfile, wrongCreated, wrongCost, wrongToken, wrongDuration, wrongRetries} {
+		_, isErr = callTool(t, a, "torque_task_update", map[string]interface{}{"id": id, "priority": "0"})
+		require.False(t, isErr)
+	}
+	require.NoError(t, setTaskTimes(db, matchA, "2026-09-11 01:00:00.000000123", "2026-09-11 04:00:00.000000123"))
+	require.NoError(t, setTaskTimes(db, matchB, "2026-09-11 02:00:00.000000456", "2026-09-11 05:00:00.000000456"))
+	require.NoError(t, setTaskTimes(db, internalID, "2026-09-11 03:00:00.000000789", "2026-09-11 06:00:00.000000789"))
+	for _, id := range []string{wrongTag, wrongProfile, wrongCost, wrongToken, wrongDuration, wrongRetries} {
+		require.NoError(t, setTaskTimes(db, id, "2026-09-11 01:30:00.000000333", "2026-09-11 04:30:00.000000333"))
+	}
+	require.NoError(t, setTaskTimes(db, wrongCreated, "2026-09-11 03:30:00.000000333", "2026-09-11 04:30:00.000000333"))
+
+	httpIDs := httpTaskIDs(t, ts.URL+"/api/v1/tasks?"+url.Values{
+		"status":              {"doing"},
+		"priority":            {"0,2,0"},
+		"tags":                {"alpha,beta"},
+		"manual":              {"auto"},
+		"parent_id":           {parentID},
+		"agent_profile":       {"codex"},
+		"launch_profile":      {"cli-fast"},
+		"created_after":       {"2026-09-11T00:00:00Z"},
+		"created_before":      {"2026-09-11T03:00:00.000000500Z"},
+		"updated_after":       {"2026-09-11T03:00:00Z"},
+		"cost_budget_gte":     {"50"},
+		"cost_budget_lte":     {"150"},
+		"token_budget_gte":    {"8000"},
+		"token_budget_lte":    {"13000"},
+		"max_duration_ms_gte": {"50000"},
+		"max_duration_ms_lte": {"100000"},
+		"max_retries_gte":     {"1"},
+		"max_retries_lte":     {"4"},
+		"sort_by":             {"updated_at"},
+		"sort_dir":            {"desc"},
+	}.Encode())
+	mcpIDs := mcpTaskIDs(t, a, map[string]interface{}{
+		"status": "doing", "priorities": `[0,2,0]`, "tags": `["alpha","beta"]`, "manual": "auto", "parent_id": parentID,
+		"agent_profile": "codex", "launch_profile": "cli-fast", "created_after": "2026-09-11T00:00:00Z",
+		"created_before": "2026-09-11T03:00:00.000000500Z", "updated_after": "2026-09-11T03:00:00Z",
+		"cost_budget_gte": "50", "cost_budget_lte": "150", "token_budget_gte": "8000", "token_budget_lte": "13000",
+		"max_duration_ms_gte": "50000", "max_duration_ms_lte": "100000", "max_retries_gte": "1", "max_retries_lte": "4",
+		"sort_by": "updated_at", "sort_dir": "desc", "include_total": "true",
+	})
+	require.Equal(t, []string{matchB, matchA}, httpIDs)
+	require.Equal(t, httpIDs, mcpIDs)
+}
+
+func TestFullStack_TaskList_HTTPMCPParity_CursorTraversal(t *testing.T) {
+	a, ts, db := setupTaskQueryParitySurfaces(t)
+	defer ts.Close()
+
+	var seededIDs []string
+	for i := 0; i < 5; i++ {
+		text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{"title": fmt.Sprintf("page-%d", i), "description": "cursor parity"})
+		require.False(t, isErr, "create: %s", text)
+		var rec map[string]interface{}
+		parseData(t, text, &rec)
+		id := rec["ID"].(string)
+		seededIDs = append(seededIDs, id)
+		require.NoError(t, setTaskTimes(db, id, fmt.Sprintf("2026-09-11 00:00:00.%09d", i+1), fmt.Sprintf("2026-09-11 00:00:01.%09d", i+1)))
+	}
+
+	var httpIDs []string
+	var cursor string
+	for pages := 0; pages < 4; pages++ {
+		cursorMode := cursor != ""
+		q := url.Values{"limit": {"2"}, "sort_by": {"created_at"}, "sort_dir": {"asc"}}
+		if cursorMode {
+			q.Set("cursor", cursor)
+		}
+		page := httpTaskPage(t, ts.URL+"/api/v1/tasks?"+q.Encode())
+		require.Equal(t, 5, int(page["total"].(float64)))
+		for _, item := range page["tasks"].([]interface{}) {
+			httpIDs = append(httpIDs, item.(map[string]interface{})["id"].(string))
+		}
+		if !page["has_more"].(bool) {
+			require.Nil(t, page["next_cursor"])
+			require.Nil(t, page["next_offset"])
+			require.Equal(t, seededIDs, httpIDs)
+			descIDs := httpTaskIDs(t, ts.URL+"/api/v1/tasks?limit=5&sort_by=created_at&sort_dir=desc")
+			require.Equal(t, reverseStrings(seededIDs), descIDs)
+			mcpIDs := mcpTaskIDsAllPages(t, a, map[string]interface{}{"limit": "2", "sort_by": "created_at", "sort_dir": "asc", "include_total": "true"})
+			require.Equal(t, mcpIDs, httpIDs)
+			require.Len(t, httpIDs, 5)
+			return
+		}
+		next, ok := page["next_cursor"].(string)
+		require.True(t, ok)
+		continuation := page["continuation"].(map[string]interface{})
+		if cursorMode {
+			require.Equal(t, next, continuation["cursor"])
+			require.Nil(t, page["next_offset"])
+		} else {
+			require.NotContains(t, continuation, "cursor")
+			require.NotNil(t, page["next_offset"])
+		}
+		cursor = next
+	}
+	t.Fatal("cursor traversal did not terminate within expected page count")
+}
+
+func TestFullStack_TaskList_IncludeTotalAndVerboseByteCapTraversal(t *testing.T) {
+	a := setupAdapter(t)
+	for i := 0; i < 70; i++ {
+		text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+			"title":       fmt.Sprintf("fat-%02d", i),
+			"description": strings.Repeat(fmt.Sprintf("payload-%02d ", i), 200),
+			"metadata":    fmt.Sprintf(`{"blob":%q}`, strings.Repeat("x", 800)),
+		})
+		require.False(t, isErr, "create: %s", text)
+	}
+
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{"limit": "5"})
+	require.False(t, isErr, "task_list default total omitted: %s", text)
+	var first taskListCursorEnvelope
+	parseData(t, text, &first)
+	require.Nil(t, first.Meta.Total)
+
+	var seen []string
+	args := map[string]interface{}{"limit": "70", "verbose": "true", "include_total": "true"}
+	for pages := 0; pages < 80; pages++ {
+		text, isErr = callTool(t, a, "torque_task_list", args)
+		require.False(t, isErr, "verbose page should not error: %s", text)
+		require.Less(t, len(text), 100*1024)
+		var env taskListCursorEnvelope
+		parseData(t, text, &env)
+		require.NotNil(t, env.Meta.Total)
+		require.Equal(t, 70, *env.Meta.Total)
+		for _, item := range env.Items {
+			seen = append(seen, item["ID"].(string))
+		}
+		if !env.Meta.HasMore {
+			require.Nil(t, env.Meta.NextCursor)
+			require.Len(t, seen, 70)
+			require.Len(t, uniqueStrings(seen), 70)
+			return
+		}
+		require.NotNil(t, env.Meta.NextCursor)
+		args["cursor"] = *env.Meta.NextCursor
+	}
+	t.Fatal("verbose byte-cap traversal did not terminate")
+}
+
+func TestFullStack_TaskList_RejectsNullTagMemberBeforeSanitizeBroadens(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{"tags": `[null]`})
+	require.True(t, isErr, "task_list should reject null tag member: %s", text)
+	code, _, field := parseError(t, text)
+	require.Equal(t, "arg_invalid", code)
+	require.Equal(t, "tags", field)
+
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{"statuses": `["todo",null]`})
+	require.True(t, isErr, "task_list should reject null status member: %s", text)
+	code, _, field = parseError(t, text)
+	require.Equal(t, "arg_invalid", code)
+	require.Equal(t, "statuses", field)
+}
+
+func setTaskTimes(db *sql.DB, id, createdAt, updatedAt string) error {
+	_, err := db.Exec(`UPDATE tasks SET created_at = ?, updated_at = ? WHERE id = ?`, createdAt, updatedAt, id)
+	return err
+}
+
+func httpTaskPage(t *testing.T, rawURL string) map[string]interface{} {
+	t.Helper()
+	resp, err := http.Get(rawURL)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	defer resp.Body.Close()
+	var page map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&page))
+	return page
+}
+
+func httpTaskIDs(t *testing.T, rawURL string) []string {
+	t.Helper()
+	page := httpTaskPage(t, rawURL)
+	rawTasks := page["tasks"].([]interface{})
+	ids := make([]string, 0, len(rawTasks))
+	for _, raw := range rawTasks {
+		ids = append(ids, raw.(map[string]interface{})["id"].(string))
+	}
+	return ids
+}
+
+func mcpTaskIDs(t *testing.T, a *mcpadapter.Adapter, args map[string]interface{}) []string {
+	t.Helper()
+	text, isErr := callTool(t, a, "torque_task_list", args)
+	require.False(t, isErr, "task_list should not error: %s", text)
+	var env taskListCursorEnvelope
+	parseData(t, text, &env)
+	ids := make([]string, 0, len(env.Items))
+	for _, item := range env.Items {
+		ids = append(ids, item["id"].(string))
+	}
+	if _, ok := args["include_total"]; ok {
+		require.NotNil(t, env.Meta.Total)
+	}
+	return ids
+}
+
+func mcpTaskIDsAllPages(t *testing.T, a *mcpadapter.Adapter, args map[string]interface{}) []string {
+	t.Helper()
+	pageArgs := map[string]interface{}{}
+	for k, v := range args {
+		pageArgs[k] = v
+	}
+	var ids []string
+	for {
+		text, isErr := callTool(t, a, "torque_task_list", pageArgs)
+		require.False(t, isErr, "task_list should not error: %s", text)
+		var env taskListCursorEnvelope
+		parseData(t, text, &env)
+		if _, ok := pageArgs["include_total"]; ok {
+			require.NotNil(t, env.Meta.Total)
+			require.Equal(t, 5, *env.Meta.Total)
+		}
+		for _, item := range env.Items {
+			ids = append(ids, item["id"].(string))
+		}
+		if !env.Meta.HasMore {
+			require.Nil(t, env.Meta.NextCursor)
+			break
+		}
+		require.NotNil(t, env.Meta.NextCursor)
+		pageArgs["cursor"] = *env.Meta.NextCursor
+	}
+	return ids
+}
+
+func reverseStrings(in []string) []string {
+	out := make([]string, len(in))
+	for i := range in {
+		out[len(in)-1-i] = in[i]
+	}
+	return out
+}
+
+func uniqueStrings(in []string) map[string]bool {
+	out := make(map[string]bool, len(in))
+	for _, v := range in {
+		out[v] = true
+	}
+	return out
 }
 
 // TestFullStack_TaskList_CursorPagination_NoDuplicatesOrSkips is PRIM-001's

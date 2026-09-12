@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"testing"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
@@ -447,8 +449,8 @@ func TestHTTP_TaskList_StrictQueryValidation(t *testing.T) {
 		{query: "manual=sometimes", field: "manual"},
 		{query: "include_internal=maybe", field: "include_internal"},
 		{query: "kind=internal&include_internal=maybe", field: "include_internal"},
-		{query: "sort_by=updated_at", field: "sort_by"},
-		{query: "created_after=2026-09-11T00%3A00%3A00Z", field: "created_after"},
+		{query: "sort_by=+&limit=1", field: "sort_by"},
+		{query: "created_after=+", field: "created_after"},
 		{query: "unknown_filter=x", field: "unknown_filter"},
 		{query: "priority=1,garbage", field: "priority"},
 		{query: "priority=1,,2", field: "priority"},
@@ -464,6 +466,34 @@ func TestHTTP_TaskList_StrictQueryValidation(t *testing.T) {
 		assert.Equal(t, tc.field, errBody["field"], tc.query)
 		assert.NotEmpty(t, errBody["error"], tc.query)
 	}
+}
+
+func TestHTTP_TaskList_CursorAllowsZeroOffsetSpellings(t *testing.T) {
+	ts := setupTestServer(t)
+	httpCreateTask(t, ts.URL, "cursor zero a")
+	httpCreateTask(t, ts.URL, "cursor zero b")
+
+	first := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks?limit=1&sort_by=priority")
+	cursor, ok := first.nextCursor.(string)
+	require.True(t, ok)
+	for _, offset := range []string{"0", "00", "+0"} {
+		resp, err := http.Get(ts.URL + "/api/v1/tasks?limit=1&sort_by=priority&cursor=" + url.QueryEscape(cursor) + "&offset=" + url.QueryEscape(offset))
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode, offset)
+		resp.Body.Close()
+	}
+}
+
+func TestHTTP_TaskList_MalformedCursorSortValueReturnsFieldError(t *testing.T) {
+	ts := setupTestServer(t)
+	httpCreateTask(t, ts.URL, "bad cursor")
+	bad := pagination.Encode("priority", "asc", "not-an-int", "CW-20260911-0001")
+
+	resp, err := http.Get(ts.URL + "/api/v1/tasks?cursor=" + url.QueryEscape(bad))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	body := decodeHTTPError(t, resp)
+	require.Equal(t, "cursor", body["field"])
 }
 
 func TestHTTP_TaskList_ManualAliasesStillWork(t *testing.T) {
@@ -521,6 +551,7 @@ type decodedHTTPTaskList struct {
 	offset       int
 	hasMore      bool
 	nextOffset   interface{}
+	nextCursor   interface{}
 	continuation map[string]interface{}
 }
 
@@ -560,6 +591,7 @@ func decodeHTTPTaskList(t *testing.T, url string) decodedHTTPTaskList {
 		offset:       int(result["offset"].(float64)),
 		hasMore:      result["has_more"].(bool),
 		nextOffset:   nextOffset,
+		nextCursor:   result["next_cursor"],
 		continuation: continuation,
 	}
 }
