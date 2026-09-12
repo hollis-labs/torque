@@ -186,6 +186,7 @@ func (s *Server) routes() {
 		r.Post("/artifacts", s.createArtifact)
 		r.Get("/artifacts/{id}", s.getArtifact)
 		r.Delete("/artifacts/{id}", s.deleteArtifact)
+		r.Head("/artifacts/{id}/content", s.serveArtifactContent)
 		r.Get("/artifacts/{id}/content", s.serveArtifactContent)
 
 		// Comments

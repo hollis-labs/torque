@@ -245,6 +245,229 @@ func TestArtifactContent_OK_UnderTaskWorkingDir(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
+func TestArtifactContent_OK_RelativePathUsesTaskWorkingDirNotProcessCWD(t *testing.T) {
+	env := setupArtifactServer(t)
+
+	wd := t.TempDir()
+	daemonDir := t.TempDir()
+	t.Setenv("TORQUE_DATA_DIR", "")
+	require.NoError(t, env.svc.Task.Update(env.taskID, service.TaskUpdateInput{
+		TaskUpdate: sqlstore.TaskUpdate{WorkingDir: strPtr(wd)},
+	}))
+	t.Chdir(daemonDir)
+
+	relPath := filepath.Join("artifacts", "report.txt")
+	require.NoError(t, os.MkdirAll(filepath.Join(wd, "artifacts"), 0o700))
+	require.NoError(t, os.MkdirAll(filepath.Join(daemonDir, "artifacts"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(wd, relPath), []byte("task workdir bytes"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(daemonDir, relPath), []byte("daemon cwd bytes"), 0o600))
+
+	id := createArtifact(t, env.svc, env.taskID, relPath)
+
+	resp, err := http.Get(env.ts.URL + "/api/v1/artifacts/" + itoa(id) + "/content")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("task workdir bytes"), body)
+}
+
+func TestArtifactContent_HEAD_RelativePathMatchesGETHeaders(t *testing.T) {
+	env := setupArtifactServer(t)
+
+	wd := t.TempDir()
+	t.Setenv("TORQUE_DATA_DIR", "")
+	require.NoError(t, env.svc.Task.Update(env.taskID, service.TaskUpdateInput{
+		TaskUpdate: sqlstore.TaskUpdate{WorkingDir: strPtr(wd)},
+	}))
+	path := filepath.Join(wd, "notes.txt")
+	content := []byte("head body")
+	require.NoError(t, os.WriteFile(path, content, 0o600))
+
+	id := createArtifact(t, env.svc, env.taskID, "notes.txt")
+
+	getResp, err := http.Get(env.ts.URL + "/api/v1/artifacts/" + itoa(id) + "/content")
+	require.NoError(t, err)
+	defer getResp.Body.Close()
+	assert.Equal(t, http.StatusOK, getResp.StatusCode)
+
+	req, err := http.NewRequest(http.MethodHead, env.ts.URL+"/api/v1/artifacts/"+itoa(id)+"/content", nil)
+	require.NoError(t, err)
+	headResp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer headResp.Body.Close()
+	assert.Equal(t, http.StatusOK, headResp.StatusCode)
+	assert.Equal(t, getResp.Header.Get("Content-Type"), headResp.Header.Get("Content-Type"))
+	assert.Equal(t, getResp.Header.Get("Content-Length"), headResp.Header.Get("Content-Length"))
+	headBody, err := io.ReadAll(headResp.Body)
+	require.NoError(t, err)
+	assert.Empty(t, headBody)
+}
+
+func TestArtifactContent_RelativePathRequiresUsableTaskWorkingDir(t *testing.T) {
+	env := setupArtifactServer(t)
+
+	fileRoot := filepath.Join(t.TempDir(), "root-file")
+	require.NoError(t, os.WriteFile(fileRoot, []byte("not a dir"), 0o600))
+
+	tests := []struct {
+		name       string
+		workingDir string
+	}{
+		{name: "empty"},
+		{name: "relative", workingDir: "relative-root"},
+		{name: "missing", workingDir: filepath.Join(t.TempDir(), "missing")},
+		{name: "file", workingDir: fileRoot},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, env.svc.Task.Update(env.taskID, service.TaskUpdateInput{
+				TaskUpdate: sqlstore.TaskUpdate{WorkingDir: strPtr(tt.workingDir)},
+			}))
+
+			id := createArtifact(t, env.svc, env.taskID, filepath.Join("out", tt.name+".txt"))
+
+			resp, err := http.Get(env.ts.URL + "/api/v1/artifacts/" + itoa(id) + "/content")
+			require.NoError(t, err)
+			defer resp.Body.Close()
+			assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+		})
+	}
+}
+
+func TestArtifactContent_AbsolutePathIgnoresUnusableTaskWorkingDir(t *testing.T) {
+	env := setupArtifactServer(t)
+
+	require.NoError(t, env.svc.Task.Update(env.taskID, service.TaskUpdateInput{
+		TaskUpdate: sqlstore.TaskUpdate{WorkingDir: strPtr("relative-root")},
+	}))
+	path := filepath.Join(env.dataDir, "absolute.txt")
+	require.NoError(t, os.WriteFile(path, []byte("absolute body"), 0o600))
+
+	id := createArtifact(t, env.svc, env.taskID, path)
+
+	resp, err := http.Get(env.ts.URL + "/api/v1/artifacts/" + itoa(id) + "/content")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestArtifactContent_RelativePathMissingAndDirectory(t *testing.T) {
+	env := setupArtifactServer(t)
+
+	wd := t.TempDir()
+	t.Setenv("TORQUE_DATA_DIR", "")
+	require.NoError(t, env.svc.Task.Update(env.taskID, service.TaskUpdateInput{
+		TaskUpdate: sqlstore.TaskUpdate{WorkingDir: strPtr(wd)},
+	}))
+	require.NoError(t, os.Mkdir(filepath.Join(wd, "dir-artifact"), 0o700))
+
+	tests := []struct {
+		name       string
+		filePath   string
+		wantStatus int
+	}{
+		{name: "missing", filePath: "missing.txt", wantStatus: http.StatusNotFound},
+		{name: "directory", filePath: "dir-artifact", wantStatus: http.StatusForbidden},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			id := createArtifact(t, env.svc, env.taskID, tt.filePath)
+
+			resp, err := http.Get(env.ts.URL + "/api/v1/artifacts/" + itoa(id) + "/content")
+			require.NoError(t, err)
+			defer resp.Body.Close()
+			assert.Equal(t, tt.wantStatus, resp.StatusCode)
+		})
+	}
+}
+
+func TestArtifactContent_Forbidden_RelativeTraversalEscape(t *testing.T) {
+	env := setupArtifactServer(t)
+
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("traversal test relies on POSIX /etc/passwd")
+	}
+	wd := t.TempDir()
+	t.Setenv("TORQUE_DATA_DIR", "")
+	require.NoError(t, env.svc.Task.Update(env.taskID, service.TaskUpdateInput{
+		TaskUpdate: sqlstore.TaskUpdate{WorkingDir: strPtr(wd)},
+	}))
+
+	parts := make([]string, 0, 22)
+	for i := 0; i < 20; i++ {
+		parts = append(parts, "..")
+	}
+	parts = append(parts, "etc", "passwd")
+	id := createArtifact(t, env.svc, env.taskID, filepath.Join(parts...))
+
+	resp, err := http.Get(env.ts.URL + "/api/v1/artifacts/" + itoa(id) + "/content")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+}
+
+func TestArtifactContent_RelativeSymlinkPolicy(t *testing.T) {
+	env := setupArtifactServer(t)
+
+	wd := t.TempDir()
+	require.NoError(t, env.svc.Task.Update(env.taskID, service.TaskUpdateInput{
+		TaskUpdate: sqlstore.TaskUpdate{WorkingDir: strPtr(wd)},
+	}))
+
+	outsideDir := t.TempDir()
+	outsideTarget := filepath.Join(outsideDir, "secret.txt")
+	require.NoError(t, os.WriteFile(outsideTarget, []byte("secret"), 0o600))
+	require.NoError(t, os.Symlink(outsideTarget, filepath.Join(wd, "outside-link.txt")))
+
+	allowedTarget := filepath.Join(env.dataDir, "shared.txt")
+	require.NoError(t, os.WriteFile(allowedTarget, []byte("shared"), 0o600))
+	require.NoError(t, os.Symlink(allowedTarget, filepath.Join(wd, "allowed-link.txt")))
+
+	tests := []struct {
+		name       string
+		filePath   string
+		wantStatus int
+	}{
+		{name: "outside", filePath: "outside-link.txt", wantStatus: http.StatusForbidden},
+		{name: "allowed", filePath: "allowed-link.txt", wantStatus: http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			id := createArtifact(t, env.svc, env.taskID, tt.filePath)
+
+			resp, err := http.Get(env.ts.URL + "/api/v1/artifacts/" + itoa(id) + "/content")
+			require.NoError(t, err)
+			defer resp.Body.Close()
+			assert.Equal(t, tt.wantStatus, resp.StatusCode)
+		})
+	}
+}
+
+func TestArtifactContent_RelativePathUsesSymlinkedTaskWorkingDir(t *testing.T) {
+	env := setupArtifactServer(t)
+
+	realWD := t.TempDir()
+	linkWD := filepath.Join(t.TempDir(), "workdir-link")
+	t.Setenv("TORQUE_DATA_DIR", "")
+	require.NoError(t, os.Symlink(realWD, linkWD))
+	require.NoError(t, env.svc.Task.Update(env.taskID, service.TaskUpdateInput{
+		TaskUpdate: sqlstore.TaskUpdate{WorkingDir: strPtr(linkWD)},
+	}))
+	require.NoError(t, os.WriteFile(filepath.Join(realWD, "result.txt"), []byte("linked root"), 0o600))
+
+	id := createArtifact(t, env.svc, env.taskID, "result.txt")
+
+	resp, err := http.Get(env.ts.URL + "/api/v1/artifacts/" + itoa(id) + "/content")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
 func strPtr(s string) *string { return &s }
 
 // itoa is a tiny helper to avoid importing strconv just for test URL building.
