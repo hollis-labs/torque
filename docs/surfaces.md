@@ -202,6 +202,82 @@ dedupes/repoints task links, deletes the source, and stores no alias.
 
 For the eight data-management entities (Task, Subtodo, Comment, Project, Epic, Sprint, Issue, Plan), [mcp-tools-reference.md](mcp-tools-reference.md) is a per-tool index plus the shared conventions (response envelope, pagination, sort, bulk-op shape) — the "MCP discoverability/schema reference layer" [ADR-0004](adr/0004-mcp-data-entity-agent-ergonomics.md) scoped and deferred.
 
+## Consumer write contracts
+
+HTTP and MCP share the service operations below. These fields carry consumer
+data or execution settings; they do not introduce a prescribed naming vocabulary.
+
+- Task create accepts `deliverable_preset` on both surfaces. Omission or an
+  empty string leaves it unset; named presets round-trip through task get.
+  MCP create still forces `manual=true` until explicitly promoted.
+- Template create/update expose `cost_budget`, `max_retries`,
+  `max_duration_ms`, and `token_budget` on both surfaces, with the shared task
+  budget validation. Omitted retries default to 3 on create. Explicit
+  `max_retries=0` survives versioning and instantiation and means no retries;
+  omitting it on update preserves the stored value. Integer budgets require
+  exact integers, and cost values must be finite.
+- Project create accepts initial `status` on both surfaces. Omission defaults
+  to `active`; explicit values must be exactly `active` or `inactive`, as on
+  update. Empty, whitespace-only, and unknown values are rejected.
+
+### Artifacts
+
+`torque_artifact_create` and HTTP `POST /api/v1/artifacts` accept `run_id`
+and `metadata`. A linked run must exist and belong to the artifact's task.
+Metadata accepts a native JSON object or a string containing one JSON object.
+Use the JSON-string form for MCP metadata integers beyond native JSON's safe
+integer range; that form preserves number precision. Arrays, scalars, and
+malformed metadata are rejected.
+
+`torque_artifact_update` (`artifact_id`) and HTTP
+`PATCH /api/v1/artifacts/{id}` patch `type`, `content`, `url`, `file_path`,
+`run_id`, and `metadata`. Omitted fields stay unchanged. Empty strings clear
+`content`, `url`, and `file_path`; explicit JSON `null` clears `run_id` or
+`metadata`. Supplied metadata replaces the whole object. An empty object `{}`
+is stored as an object, not cleared.
+Supplied `type` must remain nonblank. Updates preserve the artifact ID, task
+ownership, and creation timestamp, and invalid patches leave the row unchanged.
+Changing or clearing a file pointer does not remove the file.
+
+HTTP create retains its `{id}` response; HTTP patch and MCP update return the
+artifact record. Use get for the stored record, including its creation time.
+
+`GET` and `HEAD /api/v1/artifacts/{id}/content` resolve relative `file_path`
+against the owning task's existing, absolute `working_dir`. An unusable task
+root returns `422`; the server's working directory is never a fallback.
+Absolute paths retain their existing behavior. The resolved file must still
+fall inside an allowed root after symlink resolution: the task's working
+directory, `TORQUE_DATA_DIR`, or `$HOME/Projects-apps`.
+
+### Session launch
+
+Both `torque_session_create` and its `torque_session_launch` alias accept
+`env` and `meta` as native objects with string values or JSON-object strings.
+HTTP `POST /api/v1/sessions/launch` retains its `env: ["KEY=value"]` shape;
+its `meta` accepts the same string-map representations. Both paths feed the
+same boot options. Supplied nulls, arrays, scalars, non-string members, and
+empty or malformed JSON strings are rejected for string-map inputs.
+
+`launch_profile` retains precedence over `agent_profile`, and launch remains
+long-lived. Caller metadata cannot replace the known Torque-owned keys
+`torque.mode`, `torque.boot_dir`, `torque.workspace_dir`,
+`torque.parent_session_id`, or `torque.run_id`; boot stamps the actual values
+when applicable. Other metadata keys are preserved.
+
+### Single-comment deletion
+
+`torque_comment_delete` and HTTP `DELETE /api/v1/comments/{id}` share the
+same operation. HTTP takes `author` and optional `force` as query parameters,
+for example `?author=reviewer&force=true`. The author must be supplied even
+with force; an explicitly empty author matches an unattributed comment.
+
+Omitted `force` or `false` keeps exact author matching. Explicit `true`
+bypasses only that match; invalid IDs and missing comments still fail. Author
+text is an accidental-deletion guard, not an authenticated identity. Deletion
+has no undo. MCP requires a native boolean for `force`; HTTP force values
+must be exactly `true` or `false`. Malformed, unknown, and repeated HTTP query
+parameters are rejected.
+
 ## GUI
 
 The frontend currently includes pages for:

@@ -11,7 +11,8 @@ section named as a deferred follow-up.
 **Out of scope for this doc:** Run, Session, Scheduler, Settings, Model,
 Broker, Collection, Artifact, Template, Checkpoint. Those tools exist and
 work, but weren't part of this ergonomics pass — see
-`docs/surfaces.md` for the full tool-area list and
+[`docs/surfaces.md`](surfaces.md#consumer-write-contracts) for their current
+consumer write contracts and the full tool-area list, and
 `docs/architecture/mcp-service-layer-audit.md` for their pre-existing shape.
 
 **Source of truth.** Every tool's exact parameter list and full description
@@ -89,12 +90,13 @@ id — see their entity sections.
 
 ### Parameter encoding
 
-- Numeric and boolean params are declared as MCP **strings** (e.g.
+- Many numeric and boolean params are declared as MCP **strings** (e.g.
   `"limit": "50"`, `"manual": "true"`) so LLM clients that emit
-  string-encoded values don't trip schema validation; the adapter coerces
-  string/number/bool interchangeably (`reqInt`/`reqFloat`/`reqBool` in
-  `internal/mcpadapter/adapter.go`). `-1` is the unlimited sentinel on budget
-  fields (`cost_budget`, `token_budget`, `max_duration_ms`).
+  string-encoded values don't trip schema validation. Older handlers use
+  coercing helpers; strict query and write fields validate exact values and
+  may advertise native/string unions. Check the tool's current schema and
+  description rather than relying on coercion. `-1` is the unlimited sentinel
+  on budget fields (`cost_budget`, `token_budget`, `max_duration_ms`).
 - List-of-string params (`tags`, `depends_on`, `ids`, `statuses`, etc.) are
   declared as a JSON-encoded string (e.g. `"tags":"[\"p0\",\"backend\"]"`)
   but the adapter also accepts a native JSON array where the transport
@@ -133,7 +135,7 @@ Full field reference: ADR-0004 §4. Source: `internal/mcpadapter/task_tools.go`,
 
 | Tool | Purpose |
 |---|---|
-| `torque_task_create` | Create a task. Safety override forces `manual=true` on every create (an agent must promote it via `torque_task_update {"manual":false}` before the scheduler dispatches it) — the response's `dispatch_notice` spells out the exact promotion call. Optional `subtodos[]` seeds an initial checklist atomically. |
+| `torque_task_create` | Create a task. Safety override forces `manual=true` on every create (an agent must promote it via `torque_task_update {"manual":false}` before the scheduler dispatches it) — the response's `dispatch_notice` spells out the exact promotion call. Optional `subtodos[]` seeds an initial checklist atomically. Optional `deliverable_preset` is preserved on create and get, matching HTTP. |
 | `torque_task_get` | Fetch one task by id, **including its 10 most recent comments by default** (CW-20260910-0057). `comments="false"` opts out; `comments_limit` widens the window (max 100). |
 | `torque_task_list` | Filter + free-text `search` + sort + cursor-paginate, all in one tool (no separate search tool). Shares the public task-query contract with HTTP: status/statuses[]/priority/kind/trust/checkpoint_mode/parent_id/project_id/sprint_id/epic_id/tags[]/manual/agent_profile/launch_profile, `created_*`/`updated_*` RFC3339 ranges, and `*_gte`/`*_lte` budget/duration range filters. `include_internal` (default false) hides `kind=internal` automation rows unless `kind=internal` is requested explicitly. |
 | `torque_task_facets` | Count distinct values for supported task dimensions over the same filtered cohort as `torque_task_list`, without fetching task records or counting a page. HTTP equivalent: `GET /api/v1/tasks/facets`. |
@@ -468,10 +470,14 @@ No `sort_by`/cursor — checklists are small and bounded by their parent task.
 
 Freeform prose attached to an entity — never drives lifecycle. Polymorphic
 across `entity_type` ∈ `task\|project\|epic\|sprint` (Issue/Plan are already
-covered via `entity_type="task"` since they're Task rows). Author-scoped
-edit/delete: only the original `author` string may update or delete a
-comment (mismatch → `error.code=permission`). Source:
+covered via `entity_type="task"` since they're Task rows). Edit and default
+delete require an exact match to the original `author` string (mismatch →
+`error.code=permission`). Delete accepts an explicit `force=true` override
+for that match only. Author is free text, not an authenticated principal. Source:
 `internal/mcpadapter/comment_tools.go`.
+
+Delete's `force` is a native boolean, unlike older string-encoded boolean
+parameters. Omitting it is equivalent to `false`.
 
 | Tool | Purpose |
 |---|---|
@@ -479,7 +485,7 @@ comment (mismatch → `error.code=permission`). Source:
 | `torque_comment_list` | Chronological thread for one `entity_id`, or for a caller-resolved set via `entity_ids[]` (same `entity_type`) — e.g. every task in a sprint. Default oldest-first. |
 | `torque_comment_search` | Free-text `query` over comment content, optionally scoped by entity/entity_ids/author/date range. Default newest-first. Always returns full records (no brief/verbose toggle). |
 | `torque_comment_update` | Author-scoped content edit. |
-| `torque_comment_delete` | Author-scoped hard delete, no undo. |
+| `torque_comment_delete` | Hard delete with an exact-author guard; optional `force=true` bypasses only that guard. Author must still be supplied; explicit `""` is allowed. No undo. HTTP equivalent: `DELETE /api/v1/comments/{id}?author=...&force=true`. |
 | `torque_comment_bulk_add` | Post the same `content` to many `{entity_type, entity_id}` targets (a broadcast, e.g. "sprint review in 1 hour" to every task in a sprint). Creates new rows, so `failed[]` is keyed by `target`, not an existing id. |
 
 `sort_by` is a singleton allow-list (`created_at` — the only sortable
@@ -495,7 +501,7 @@ Source: `internal/mcpadapter/project_tools.go`.
 
 | Tool | Purpose |
 |---|---|
-| `torque_project_create` | Create. `repo_path` must resolve to an existing directory (`~` expands) — a missing path is `error.code=arg_invalid, field=repo_path`. |
+| `torque_project_create` | Create. Optional `status` is exactly `active` or `inactive`; omission defaults to `active`. `repo_path` must resolve to an existing directory (`~` expands) — a missing path is `error.code=arg_invalid, field=repo_path`. |
 | `torque_project_get` | Fetch by id. |
 | `torque_project_update` | True partial patch — `repo_path` can be changed but never cleared to empty. |
 | `torque_project_list` | Filter by `status`; free-text search is **not** available on Project (no `search` param — this is the one in-scope entity without a merged search). |
@@ -642,8 +648,8 @@ who forgets it is not silently matched against unattributed rows.
 This does not change *who* may delete a comment. `author` is free text rather
 than a session identity, so declaring a comment unattributed grants no
 authority that was not already trivially available by claiming any other slug.
-Whether author-scoping is a meaningful check at all is a separate, open
-question.
+The match is retained as an accidental-deletion guard. `force=true` now
+provides a deliberate override without claiming an authorization model.
 
 ## Related docs
 
