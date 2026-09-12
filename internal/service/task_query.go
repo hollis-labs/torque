@@ -25,11 +25,23 @@ var TaskFacetDimensions = []string{
 	"status", "priority", "manual", "kind", "executor", "agent_profile", "launch_profile",
 	"project_id", "sprint_id", "epic_id", "parent_id", "tags",
 }
+var TaskPresenceFields = []string{
+	"project_id", "sprint_id", "epic_id", "parent_id", "source_ref", "collection_id",
+	"cost_budget", "token_budget", "max_duration_ms", "tags",
+}
 
 var taskFacetDimensionSet = func() map[string]bool {
 	m := make(map[string]bool, len(TaskFacetDimensions))
 	for _, d := range TaskFacetDimensions {
 		m[d] = true
+	}
+	return m
+}()
+
+var taskPresenceFieldSet = func() map[string]bool {
+	m := make(map[string]bool, len(TaskPresenceFields))
+	for _, f := range TaskPresenceFields {
+		m[f] = true
 	}
 	return m
 }()
@@ -42,6 +54,8 @@ type TaskQuery struct {
 	Status         string
 	Statuses       []string
 	Priorities     []int
+	PriorityGte    *int
+	PriorityLte    *int
 	SprintID       string
 	ProjectID      string
 	EpicID         string
@@ -55,6 +69,10 @@ type TaskQuery struct {
 	ParentIDSet    bool
 	Manual         *bool
 	TagSlugs       []string
+	TagSlugsAny    []string
+	TagSlugsNone   []string
+	MissingFields  []string
+	PresentFields  []string
 	Search         string
 	AgentProfile   string
 	LaunchProfile  string
@@ -284,6 +302,14 @@ func normalizeTaskQuery(q TaskQuery) (sqlstore.TaskFilter, int, string, string, 
 	if q.Priorities != nil && len(q.Priorities) == 0 {
 		return sqlstore.TaskFilter{}, 0, "", "", &ValidationError{Field: "priority", Message: "priority filter must contain at least one integer"}
 	}
+	missingFields, err := normalizeTaskPresenceFields("missing", q.MissingFields)
+	if err != nil {
+		return sqlstore.TaskFilter{}, 0, "", "", err
+	}
+	presentFields, err := normalizeTaskPresenceFields("present", q.PresentFields)
+	if err != nil {
+		return sqlstore.TaskFilter{}, 0, "", "", err
+	}
 	for field, value := range map[string]*float64{
 		"cost_budget_gte": q.CostBudgetGte,
 		"cost_budget_lte": q.CostBudgetLte,
@@ -333,6 +359,8 @@ func normalizeTaskQuery(q TaskQuery) (sqlstore.TaskFilter, int, string, string, 
 		Status:           q.Status,
 		Statuses:         q.Statuses,
 		Priorities:       normalizeIntSet(q.Priorities),
+		PriorityGte:      q.PriorityGte,
+		PriorityLte:      q.PriorityLte,
 		SprintID:         q.SprintID,
 		ProjectID:        q.ProjectID,
 		EpicID:           q.EpicID,
@@ -344,6 +372,10 @@ func normalizeTaskQuery(q TaskQuery) (sqlstore.TaskFilter, int, string, string, 
 		CheckpointMode:   q.CheckpointMode,
 		Manual:           q.Manual,
 		TagSlugs:         trimUniqueNonEmpty(q.TagSlugs),
+		TagSlugsAny:      trimUniqueNonEmpty(q.TagSlugsAny),
+		TagSlugsNone:     trimUniqueNonEmpty(q.TagSlugsNone),
+		MissingFields:    missingFields,
+		PresentFields:    presentFields,
 		Search:           q.Search,
 		AgentProfile:     q.AgentProfile,
 		LaunchProfile:    q.LaunchProfile,
@@ -369,7 +401,6 @@ func normalizeTaskQuery(q TaskQuery) (sqlstore.TaskFilter, int, string, string, 
 			filter.ParentID = q.ParentID
 		}
 	}
-	var err error
 	if filter.CreatedAfter, err = parseTaskQueryTime(q.CreatedAfter, "created_after"); err != nil {
 		return sqlstore.TaskFilter{}, 0, "", "", err
 	}
@@ -383,6 +414,28 @@ func normalizeTaskQuery(q TaskQuery) (sqlstore.TaskFilter, int, string, string, 
 		return sqlstore.TaskFilter{}, 0, "", "", err
 	}
 	return filter, limit, sortBy, sortDir, nil
+}
+
+func normalizeTaskPresenceFields(field string, values []string) ([]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	seen := make(map[string]bool, len(values))
+	out := make([]string, 0, len(values))
+	for _, raw := range values {
+		v := strings.TrimSpace(raw)
+		if v == "" {
+			return nil, &ValidationError{Field: field, Message: field + " fields cannot be blank"}
+		}
+		if !taskPresenceFieldSet[v] {
+			return nil, &ValidationError{Field: field, Message: fmt.Sprintf("unsupported task presence field %q; supported fields are %s", v, strings.Join(TaskPresenceFields, ", "))}
+		}
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	return out, nil
 }
 
 func parseTaskQueryTime(raw, field string) (string, error) {

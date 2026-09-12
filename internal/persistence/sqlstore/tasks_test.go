@@ -726,6 +726,65 @@ func TestListTasks_RepeatedTagPredicates(t *testing.T) {
 	assert.Len(t, got, 3, "all-empty tag filter should not restrict results")
 }
 
+func TestListTasks_QueryOperators(t *testing.T) {
+	store := setupTestStore(t)
+
+	for _, slug := range []string{"bug", "ui", "backend", "unused"} {
+		require.NoError(t, store.CreateTag(&sqlstore.TagRecord{Slug: slug, Name: slug}))
+	}
+	require.NoError(t, store.CreateProject(&sqlstore.ProjectRecord{ID: "PRJ-1", Name: "Project 1"}))
+
+	zero := sampleTask("CW-QOP-0001")
+	zero.Priority = 0
+	zero.ProjectID = sql.NullString{String: "PRJ-1", Valid: true}
+	zero.CostBudget = sql.NullFloat64{Float64: 0, Valid: true}
+	zero.SourceRef = sql.NullString{String: "", Valid: true}
+	two := sampleTask("CW-QOP-0002")
+	two.Priority = 2
+	two.TokenBudget = sql.NullInt64{Int64: 0, Valid: true}
+	two.MaxDurationMs = sql.NullInt64{Int64: 0, Valid: true}
+	five := sampleTask("CW-QOP-0003")
+	five.Priority = 5
+	seven := sampleTask("CW-QOP-0004")
+	seven.Priority = 7
+	large := sampleTask("CW-QOP-0005")
+	large.Priority = 9007199254740993
+	for _, rec := range []*sqlstore.TaskRecord{zero, two, five, seven} {
+		require.NoError(t, store.CreateTask(rec))
+	}
+	require.NoError(t, store.CreateTask(large))
+	require.NoError(t, store.SetTaskTags(zero.ID, []string{"bug", "ui"}))
+	require.NoError(t, store.SetTaskTags(two.ID, []string{"backend"}))
+	require.NoError(t, store.SetTaskTags(seven.ID, []string{"bug"}))
+
+	listIDs := func(f sqlstore.TaskFilter) []string {
+		t.Helper()
+		got, err := store.ListTasks(f)
+		require.NoError(t, err)
+		ids := make([]string, 0, len(got))
+		for _, rec := range got {
+			ids = append(ids, rec.ID)
+		}
+		return ids
+	}
+
+	assert.ElementsMatch(t, []string{zero.ID, seven.ID}, listIDs(sqlstore.TaskFilter{TagSlugsAny: []string{"bug", " ", "bug"}}))
+	assert.ElementsMatch(t, []string{two.ID, five.ID, large.ID}, listIDs(sqlstore.TaskFilter{TagSlugsNone: []string{"bug"}}))
+	assert.ElementsMatch(t, []string{five.ID, large.ID}, listIDs(sqlstore.TaskFilter{MissingFields: []string{"tags"}}))
+	assert.ElementsMatch(t, []string{zero.ID, two.ID, seven.ID}, listIDs(sqlstore.TaskFilter{PresentFields: []string{"tags"}}))
+	assert.Equal(t, []string{zero.ID}, listIDs(sqlstore.TaskFilter{PresentFields: []string{"project_id", "cost_budget"}}), "explicit zero cost_budget is present")
+	assert.Equal(t, []string{zero.ID}, listIDs(sqlstore.TaskFilter{PresentFields: []string{"source_ref"}}), "valid empty source_ref is present")
+	assert.Equal(t, []string{two.ID}, listIDs(sqlstore.TaskFilter{PresentFields: []string{"token_budget", "max_duration_ms"}}), "explicit zero int budgets are present")
+	assert.ElementsMatch(t, []string{two.ID, five.ID, seven.ID, large.ID}, listIDs(sqlstore.TaskFilter{MissingFields: []string{"project_id", "cost_budget"}}))
+	assert.Empty(t, listIDs(sqlstore.TaskFilter{MissingFields: []string{"source_ref"}, PresentFields: []string{"source_ref"}}))
+	assert.Equal(t, []string{two.ID}, listIDs(sqlstore.TaskFilter{Priorities: []int{0, 2, 7}, PriorityGte: intPtr(2), PriorityLte: intPtr(5)}))
+	assert.Empty(t, listIDs(sqlstore.TaskFilter{PriorityGte: intPtr(9), PriorityLte: intPtr(1)}))
+	assert.Equal(t, []string{large.ID}, listIDs(sqlstore.TaskFilter{PriorityGte: intPtr(9007199254740992), PriorityLte: intPtr(9007199254740993)}))
+	assert.Equal(t, []string{zero.ID}, listIDs(sqlstore.TaskFilter{TagSlugs: []string{"bug"}, TagSlugsAny: []string{"ui", "backend"}, TagSlugsNone: []string{"backend"}}))
+	assert.Empty(t, listIDs(sqlstore.TaskFilter{TagSlugsAny: []string{"bug"}, MissingFields: []string{"tags"}}))
+	assert.Empty(t, listIDs(sqlstore.TaskFilter{TagSlugsAny: []string{"unused"}}), "catalog-only unused tags do not match task links")
+}
+
 // TestListTasks_FilterByKind verifies the Kind filter narrows results.
 func TestListTasks_FilterByKind(t *testing.T) {
 	store := setupTestStore(t)

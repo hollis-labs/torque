@@ -204,6 +204,47 @@ comma-separated exact-integer OR-list, including `0`; repeated HTTP query keys,
 malformed raw query strings, malformed/overflow/blank CSV members, unknown
 keys, and invalid shared-query fields return `400` with `error` and `field`.
 
+### Task set, range, and presence filters (CW-20260911-0088)
+
+Task lists and facets share these operators through the same service/store
+predicate path; all active filter families combine by AND.
+
+| Operator | Meaning |
+|---|---|
+| `tags` | Has every selected tag (existing behavior). |
+| `tags_any` | Has at least one selected tag. |
+| `tags_none` | Has none of the selected tags. |
+| `priority_gte`, `priority_lte` | Inclusive exact integer bounds, intersected with any exact priority set. |
+| `missing`, `present` | Every named field is missing/present, respectively. |
+
+Tag values remain case-sensitive opaque slugs; lists trim whitespace and
+drop blank/duplicate slugs. Empty normalized tag lists add no filter.
+An unused catalog tag does not imply task membership. Reversed priority bounds,
+missing and present on the same field, or `missing=["tags"]` with a nonempty
+`tags_any` produce an empty cohort without hidden precedence.
+
+Presence fields are limited to `project_id`, `sprint_id`, `epic_id`,
+`parent_id`, `source_ref`, `collection_id`, `cost_budget`, `token_budget`,
+`max_duration_ms`, and `tags`. SQL NULL is missing; empty strings and zero
+are present. Tags are present when a task has at least one tag link.
+Duplicate field names are ignored; unknown/blank names reject. This does not
+query metadata paths or alter the legacy `parent_id=""`/`"null"` sentinel.
+
+MCP `tags_any`, `tags_none`, `missing`, and `present` accept native string
+arrays or JSON array strings. `[]` is an explicit no-op; null, empty strings,
+non-string/null members, and malformed/trailing JSON reject with
+`arg_invalid` on the parameter. HTTP uses CSV instead; exact empty CSV is
+an empty list, while whitespace-only presence fields and blank members reject.
+Bounds use the strict integer parser (including zero/negative values); use
+strings for exact values beyond native JSON safe-integer precision.
+
+Example MCP list:
+`{"tags_any":["api","ui"],"tags_none":["blocked"],"missing":["sprint_id"],"priority_lte":"2","include_total":"true"}`.
+The equivalent HTTP query is
+`/api/v1/tasks?tags_any=api,ui&tags_none=blocked&missing=sprint_id&priority_lte=2`.
+Use the same cohort filters with `torque_task_facets` or
+`/api/v1/tasks/facets` plus `dimensions` to get matching counts.
+
 ### Task facets and counts (CW-20260911-0086)
 
 `torque_task_facets` and `GET /api/v1/tasks/facets` share the task-list cohort

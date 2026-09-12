@@ -36,9 +36,9 @@ metadata; HTTP encodes multi-value filters as CSV query parameters where MCP
 uses JSON/native arrays.
 
 Supported HTTP filters are `status` (CSV OR-list), `priority` (CSV exact
-integer OR-list), `sprint_id`, `project_id`, `epic_id`, `executor`, `kind`,
+integer OR-list), `priority_gte`/`priority_lte`, `sprint_id`, `project_id`, `epic_id`, `executor`, `kind`,
 `include_internal`, `source_type`, `source_ref`, `trust`, `checkpoint_mode`,
-`parent_id`, `manual`, `tags`/`tag`, `search`, `agent_profile`,
+`parent_id`, `manual`, `tags`/`tag`, `tags_any`, `tags_none`, `missing`, `present`, `search`, `agent_profile`,
 `launch_profile`, RFC3339 `created_after`/`created_before` and
 `updated_after`/`updated_before`, and numeric range bounds
 `cost_budget_gte`/`cost_budget_lte`, `token_budget_gte`/`token_budget_lte`,
@@ -56,6 +56,25 @@ non-integer priority members, malformed `limit`/`offset`, invalid
 `manual`/`include_internal` aliases, unknown keys, invalid sort/date/cursor
 values, non-finite cost bounds, negative offsets, and positive
 `offset`+`cursor` combinations all return `400` rather than being ignored.
+
+The same operators apply to task lists and task facets. All filter families
+combine by AND: `tags` requires every selected tag, `tags_any` at least one,
+and `tags_none` excludes every selected tag. Tag lists trim whitespace and
+drop blank/duplicate slugs; empty lists add no restriction. Matching uses task
+links, so an unused catalog tag matches no tasks. Priority bounds are inclusive,
+exact integers and intersect with any exact priority set. Reversed bounds or
+contradictory filters produce an empty cohort.
+
+`missing` and `present` accept CSV field lists from this whitelist:
+`project_id`, `sprint_id`, `epic_id`, `parent_id`, `source_ref`,
+`collection_id`, `cost_budget`, `token_budget`, `max_duration_ms`, `tags`.
+SQL NULL is missing; an empty stored string or numeric zero is present.
+For `tags`, missing means no task-tag links and present means at least one.
+Duplicate fields are ignored; unknown/blank fields reject. Exact empty CSV
+(`missing=`) is an empty list; whitespace-only input is invalid.
+For example, `?tags_any=api,ui&tags_none=blocked&missing=sprint_id&priority_lte=2`
+selects unassigned tasks with either tag, without the excluded tag, inside the
+numeric bound. These names carry no scheduling meaning.
 
 Task lists keep the legacy HTTP envelope and always include `total`, where
 `total` is the full matching cohort under the supplied filters, excluding
@@ -123,6 +142,13 @@ array for OR-matching; passing both is rejected as ambiguous, and
 defaults to false so legacy lightweight calls avoid a full count. Cursor
 pagination still derives `meta.next_cursor` from the last row actually emitted
 after the 100KB response cap is applied.
+
+MCP task lists and facets expose the same `priority_gte`/`priority_lte`,
+`tags_any`, `tags_none`, `missing`, and `present` operators described above.
+The four new array parameters accept native arrays or JSON array strings;
+`[]` explicitly adds no filter. Whole null, empty strings, malformed arrays,
+and non-string/null members reject. Use string-form integer bounds when
+values exceed native JSON safe-integer precision.
 
 Tag catalog MCP tools are always registered: `torque_tag_list`,
 `torque_tag_get`, `torque_tag_create`, `torque_tag_update`,

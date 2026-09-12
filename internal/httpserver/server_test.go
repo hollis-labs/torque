@@ -455,8 +455,14 @@ func TestHTTP_TaskList_StrictQueryValidation(t *testing.T) {
 		{query: "priority=1,garbage", field: "priority"},
 		{query: "priority=1,,2", field: "priority"},
 		{query: "priority=", field: "priority"},
+		{query: "priority_gte=1.5", field: "priority_gte"},
+		{query: "priority_lte=9223372036854775808", field: "priority_lte"},
+		{query: "missing=%20", field: "missing"},
+		{query: "missing=project_id,,tags", field: "missing"},
+		{query: "present=metadata", field: "present"},
 		{query: "priority=9223372036854775808", field: "priority"},
 		{query: "priority=1&priority=garbage", field: "priority"},
+		{query: "tags_any=bug&tags_any=ui", field: "tags_any"},
 		{query: "%zz", field: "query"},
 	} {
 		resp, err := http.Get(ts.URL + "/api/v1/tasks?" + tc.query)
@@ -466,6 +472,90 @@ func TestHTTP_TaskList_StrictQueryValidation(t *testing.T) {
 		assert.Equal(t, tc.field, errBody["field"], tc.query)
 		assert.NotEmpty(t, errBody["error"], tc.query)
 	}
+}
+
+func TestHTTP_TaskList_QueryOperatorsAndFacets(t *testing.T) {
+	ts := setupTestServer(t)
+
+	create := func(title string, priority int, tags []string, body string) string {
+		rawTags, err := json.Marshal(tags)
+		require.NoError(t, err)
+		resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(
+			`{"title":"`+title+`","description":"x","tags":`+string(rawTags)+`}`))
+		require.NoError(t, err)
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+		var created map[string]interface{}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+		resp.Body.Close()
+		id := created["id"].(string)
+		if body == "" {
+			body = `{"priority":` + strconv.Itoa(priority) + `}`
+		}
+		req, err := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/tasks/"+id, bytes.NewBufferString(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err = http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		resp.Body.Close()
+		return id
+	}
+
+	zeroID := create("zero bug ui", 0, []string{"bug", "ui"}, `{"priority":0,"cost_budget":0}`)
+	twoID := create("two backend", 2, []string{"backend"}, "")
+	_ = create("five no tags", 5, nil, "")
+	sevenID := create("seven bug", 7, []string{"bug"}, "")
+	largeID := create("large precise", 2, nil, `{"priority":9007199254740993}`)
+
+	filter := "/api/v1/tasks?tags_any=bug,bug,%20&tags_none=backend&priority_gte=0&priority_lte=7&limit=1"
+	first := decodeHTTPTaskList(t, ts.URL+filter)
+	require.Len(t, first.tasks, 1)
+	assert.Equal(t, zeroID, first.tasks[0]["id"])
+	assert.Equal(t, 2, first.total)
+	assert.True(t, first.hasMore)
+	cursor, ok := first.nextCursor.(string)
+	require.True(t, ok)
+
+	second := decodeHTTPTaskList(t, ts.URL+filter+"&cursor="+url.QueryEscape(cursor))
+	require.Len(t, second.tasks, 1)
+	assert.Equal(t, sevenID, second.tasks[0]["id"])
+	assert.Equal(t, 2, second.total)
+	assert.False(t, second.hasMore)
+
+	assert.Equal(t, []string{zeroID}, httpTaskListIDs(t, ts.URL+"/api/v1/tasks?present=cost_budget&missing=project_id&tags_any=bug"))
+	assert.Equal(t, []string{twoID}, httpTaskListIDs(t, ts.URL+"/api/v1/tasks?priority=0,2,7&priority_gte=2&priority_lte=5"))
+	assert.Equal(t, []string{largeID}, httpTaskListIDs(t, ts.URL+"/api/v1/tasks?priority_gte=9007199254740992&priority_lte=9007199254740993"))
+	assert.Empty(t, httpTaskListIDs(t, ts.URL+"/api/v1/tasks?missing=tags&tags_any=bug"))
+
+	resp, err := http.Get(ts.URL + "/api/v1/tasks/facets?tags_any=bug&tags_none=backend&priority_gte=0&priority_lte=7&dimensions=tags,priority")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var facets struct {
+		MatchingCount int `json:"matching_count"`
+		Facets        []struct {
+			Dimension string `json:"dimension"`
+			Buckets   []struct {
+				Value interface{} `json:"value"`
+				Count int         `json:"count"`
+			} `json:"buckets"`
+		} `json:"facets"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&facets))
+	resp.Body.Close()
+	assert.Equal(t, 2, facets.MatchingCount)
+	require.Len(t, facets.Facets, 2)
+	assert.Equal(t, "tags", facets.Facets[0].Dimension)
+	assert.Equal(t, "priority", facets.Facets[1].Dimension)
+	tagBuckets := map[interface{}]int{}
+	for _, b := range facets.Facets[0].Buckets {
+		tagBuckets[b.Value] = b.Count
+	}
+	assert.Equal(t, map[interface{}]int{"bug": 2, "ui": 1}, tagBuckets)
+	priorityBuckets := map[interface{}]int{}
+	for _, b := range facets.Facets[1].Buckets {
+		priorityBuckets[b.Value] = b.Count
+	}
+	assert.Equal(t, map[interface{}]int{float64(0): 1, float64(7): 1}, priorityBuckets)
 }
 
 func TestHTTP_TaskList_CursorAllowsZeroOffsetSpellings(t *testing.T) {

@@ -38,6 +38,10 @@ func TestTaskQueryValidationBoundaries(t *testing.T) {
 		{name: "empty priorities", query: service.TaskQuery{Priorities: []int{}}, field: "priority"},
 		{name: "nan cost", query: service.TaskQuery{CostBudgetGte: &nan}, field: "cost_budget_gte"},
 		{name: "inf cost", query: service.TaskQuery{CostBudgetLte: &inf}, field: "cost_budget_lte"},
+		{name: "blank missing field", query: service.TaskQuery{MissingFields: []string{"project_id", " "}}, field: "missing"},
+		{name: "unknown missing field", query: service.TaskQuery{MissingFields: []string{"metadata.foo"}}, field: "missing"},
+		{name: "blank present field", query: service.TaskQuery{PresentFields: []string{""}}, field: "present"},
+		{name: "unknown present field", query: service.TaskQuery{PresentFields: []string{"budget"}}, field: "present"},
 		{name: "whitespace sort", query: service.TaskQuery{SortBy: " "}, field: "sort_by"},
 		{name: "whitespace date", query: service.TaskQuery{CreatedAfter: " "}, field: "created_after"},
 	} {

@@ -1050,6 +1050,10 @@ func TestFullStack_TaskList_StrictMalformedInputs(t *testing.T) {
 		{name: "wrong date type", args: map[string]interface{}{"created_after": 12}, field: "created_after"},
 		{name: "wrong cursor type", args: map[string]interface{}{"cursor": 12}, field: "cursor"},
 		{name: "wrong scalar filter type", args: map[string]interface{}{"status": []interface{}{"todo"}}, field: "status"},
+		{name: "bad priority gte", args: map[string]interface{}{"priority_gte": "1.2"}, field: "priority_gte"},
+		{name: "bad priority lte", args: map[string]interface{}{"priority_lte": "9223372036854775808"}, field: "priority_lte"},
+		{name: "blank missing field", args: map[string]interface{}{"missing": `[" "]`}, field: "missing"},
+		{name: "unknown present field", args: map[string]interface{}{"present": `["metadata"]`}, field: "present"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			text, isErr := callTool(t, a, "torque_task_list", tc.args)
@@ -1058,6 +1062,29 @@ func TestFullStack_TaskList_StrictMalformedInputs(t *testing.T) {
 			assert.Equal(t, "arg_invalid", code)
 			assert.Equal(t, tc.field, field)
 		})
+	}
+
+	for _, key := range []string{"tags_any", "tags_none", "missing", "present"} {
+		for _, raw := range []interface{}{
+			nil,
+			"",
+			" ",
+			[]interface{}{nil},
+			[]interface{}{"a", 1},
+			`[null]`,
+			`["a",1]`,
+			`null`,
+		} {
+			for _, tool := range []string{"torque_task_list", "torque_task_facets"} {
+				t.Run(fmt.Sprintf("%s bad %s %#v", tool, key, raw), func(t *testing.T) {
+					text, isErr := callTool(t, a, tool, map[string]interface{}{key: raw})
+					require.True(t, isErr, "%s should reject %s=%#v: %s", tool, key, raw, text)
+					code, _, field := parseError(t, text)
+					assert.Equal(t, "arg_invalid", code)
+					assert.Equal(t, key, field)
+				})
+			}
+		}
 	}
 
 	for _, args := range []map[string]interface{}{
@@ -1071,10 +1098,97 @@ func TestFullStack_TaskList_StrictMalformedInputs(t *testing.T) {
 		{"include_internal": "0"},
 		{"include_internal": "yes"},
 		{"verbose": "false"},
+		{"tags_any": `[]`},
+		{"tags_none": []interface{}{}},
+		{"missing": `[]`},
+		{"present": []interface{}{}},
 	} {
 		text, isErr := callTool(t, a, "torque_task_list", args)
 		require.False(t, isErr, "valid alias/sentinel should work for args=%v: %s", args, text)
 	}
+}
+
+func TestFullStack_TaskList_QueryOperatorsAndFacets(t *testing.T) {
+	a := setupAdapter(t)
+
+	zeroID := createTaskWithPriority(t, a, "zero bug ui", "0")
+	_, isErr := callTool(t, a, "torque_task_update", map[string]interface{}{"id": zeroID, "tags": `["bug","ui"]`, "cost_budget": "0"})
+	require.False(t, isErr)
+	twoID := createTaskWithPriority(t, a, "two backend", "2")
+	_, isErr = callTool(t, a, "torque_task_update", map[string]interface{}{"id": twoID, "tags": `["backend"]`})
+	require.False(t, isErr)
+	_ = createTaskWithPriority(t, a, "five no tags", "5")
+	sevenID := createTaskWithPriority(t, a, "seven bug", "7")
+	_, isErr = callTool(t, a, "torque_task_update", map[string]interface{}{"id": sevenID, "tags": `["bug"]`})
+	require.False(t, isErr)
+	largeID := createTaskWithPriority(t, a, "large precise", "9007199254740993")
+	_ = createTaskWithPriority(t, a, "adjacent large", "9007199254740992")
+
+	args := map[string]interface{}{
+		"tags_any":      []interface{}{"bug", "bug", " "},
+		"tags_none":     `["backend"]`,
+		"priority_gte":  "0",
+		"priority_lte":  "7",
+		"include_total": "true",
+	}
+	assert.ElementsMatch(t, []string{zeroID, sevenID}, taskListIDs(t, a, args))
+	assert.Equal(t, []string{zeroID}, taskListIDs(t, a, map[string]interface{}{"present": `["cost_budget"]`, "tags_any": `["bug"]`}))
+	assert.Equal(t, []string{twoID}, taskListIDs(t, a, map[string]interface{}{"priorities": `[0,2,7]`, "priority_gte": "2", "priority_lte": "5"}))
+	assert.Empty(t, taskListIDs(t, a, map[string]interface{}{"missing": `["tags"]`, "tags_any": `["bug"]`}))
+	assert.Equal(t, []string{largeID}, taskListIDs(t, a, map[string]interface{}{"priority_gte": "9007199254740993", "priority_lte": "9007199254740993"}))
+	assert.Equal(t, []string{zeroID}, taskListIDs(t, a, map[string]interface{}{"tags": `["bug"]`, "tags_any": `["ui","backend"]`, "tags_none": `["backend"]`}))
+
+	args["limit"] = "1"
+	text, isErr := callTool(t, a, "torque_task_list", args)
+	require.False(t, isErr, text)
+	var first taskListCursorEnvelope
+	parseData(t, text, &first)
+	require.Len(t, first.Items, 1)
+	assert.Equal(t, zeroID, first.Items[0]["id"])
+	require.True(t, first.Meta.HasMore)
+	require.NotNil(t, first.Meta.NextCursor)
+	args["cursor"] = *first.Meta.NextCursor
+	text, isErr = callTool(t, a, "torque_task_list", args)
+	require.False(t, isErr, text)
+	var second taskListCursorEnvelope
+	parseData(t, text, &second)
+	require.Len(t, second.Items, 1)
+	assert.Equal(t, sevenID, second.Items[0]["id"])
+	assert.False(t, second.Meta.HasMore)
+
+	text, isErr = callTool(t, a, "torque_task_facets", map[string]interface{}{
+		"tags_any":     `["bug"]`,
+		"tags_none":    `["backend"]`,
+		"priority_gte": "0",
+		"priority_lte": "7",
+		"dimensions":   `["tags","priority"]`,
+	})
+	require.False(t, isErr, text)
+	var facets struct {
+		MatchingCount int `json:"matching_count"`
+		Facets        []struct {
+			Dimension string `json:"dimension"`
+			Buckets   []struct {
+				Value interface{} `json:"value"`
+				Count int         `json:"count"`
+			} `json:"buckets"`
+		} `json:"facets"`
+	}
+	parseData(t, text, &facets)
+	assert.Equal(t, 2, facets.MatchingCount)
+	require.Len(t, facets.Facets, 2)
+	assert.Equal(t, "tags", facets.Facets[0].Dimension)
+	assert.Equal(t, "priority", facets.Facets[1].Dimension)
+	tagBuckets := map[interface{}]int{}
+	for _, b := range facets.Facets[0].Buckets {
+		tagBuckets[b.Value] = b.Count
+	}
+	assert.Equal(t, map[interface{}]int{"bug": 2, "ui": 1}, tagBuckets)
+	priorityBuckets := map[interface{}]int{}
+	for _, b := range facets.Facets[1].Buckets {
+		priorityBuckets[b.Value] = b.Count
+	}
+	assert.Equal(t, map[interface{}]int{float64(0): 1, float64(7): 1}, priorityBuckets)
 }
 
 func taskListIDs(t *testing.T, a *mcpadapter.Adapter, args map[string]interface{}) []string {

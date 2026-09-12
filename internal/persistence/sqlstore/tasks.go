@@ -204,17 +204,23 @@ type TaskRecord struct {
 
 // TaskFilter holds optional filter criteria for ListTasks.
 type TaskFilter struct {
-	Status     string   // single status (legacy)
-	Statuses   []string // multiple statuses (OR filter)
-	Priority   int      // legacy exact priority; zero means unset
-	Priorities []int    // presence-aware exact priority set; may include zero
-	SprintID   string
-	ProjectID  string
-	EpicID     string
-	Executor   string
-	TagSlugs   []string // AND-match after trimming and removing blank/duplicate slugs; case-sensitive
-	Search     string   // case-insensitive substring match on id, title, or description
-	Limit      int
+	Status        string   // single status (legacy)
+	Statuses      []string // multiple statuses (OR filter)
+	Priority      int      // legacy exact priority; zero means unset
+	Priorities    []int    // presence-aware exact priority set; may include zero
+	PriorityGte   *int
+	PriorityLte   *int
+	SprintID      string
+	ProjectID     string
+	EpicID        string
+	Executor      string
+	TagSlugs      []string // AND-match after trimming and removing blank/duplicate slugs; case-sensitive
+	TagSlugsAny   []string // OR-match: task must have at least one listed tag
+	TagSlugsNone  []string // exclusion: task must have none of the listed tags
+	MissingFields []string // supported nullable fields that must be SQL NULL; tags means no links
+	PresentFields []string // supported nullable fields that must be SQL NOT NULL; tags means at least one link
+	Search        string   // case-insensitive substring match on id, title, or description
+	Limit         int
 
 	// Offset is legacy offset-based pagination. Dead from the MCP surface's
 	// perspective as of PRIM-001 (torque_task_list now uses cursor
@@ -574,6 +580,17 @@ func normalizeInts(values []int) []int {
 	return out
 }
 
+func taskPresenceColumn(field string) (string, bool) {
+	switch field {
+	case "project_id", "sprint_id", "epic_id", "parent_id", "source_ref", "collection_id":
+		return field, true
+	case "cost_budget", "token_budget", "max_duration_ms":
+		return field, true
+	default:
+		return "", false
+	}
+}
+
 // ListTasks returns tasks matching the filter. Default order (f.SortBy ==
 // "") is priority ASC, created_at ASC — the order FIX-004 confirmed
 // torque_task_list's docstring should describe. When f.SortBy is set
@@ -816,6 +833,14 @@ func (s *Store) taskListPredicates(f TaskFilter) ([]string, []any, error) {
 		where = append(where, "priority = ?")
 		args = append(args, f.Priority)
 	}
+	if f.PriorityGte != nil {
+		where = append(where, "priority >= ?")
+		args = append(args, *f.PriorityGte)
+	}
+	if f.PriorityLte != nil {
+		where = append(where, "priority <= ?")
+		args = append(args, *f.PriorityLte)
+	}
 	if f.SprintID != "" {
 		where = append(where, "sprint_id = ?")
 		args = append(args, f.SprintID)
@@ -885,6 +910,50 @@ func (s *Store) taskListPredicates(f TaskFilter) ([]string, []any, error) {
 				strings.Join(placeholders, ","),
 			))
 		}
+	}
+	if normalized := normalizeTagSlugs(f.TagSlugsAny); len(normalized) > 0 {
+		placeholders := make([]string, len(normalized))
+		for i, slug := range normalized {
+			placeholders[i] = "?"
+			args = append(args, slug)
+		}
+		where = append(where, fmt.Sprintf(
+			"id IN (SELECT task_id FROM task_tags WHERE tag_slug IN (%s))",
+			strings.Join(placeholders, ","),
+		))
+	}
+	if normalized := normalizeTagSlugs(f.TagSlugsNone); len(normalized) > 0 {
+		placeholders := make([]string, len(normalized))
+		for i, slug := range normalized {
+			placeholders[i] = "?"
+			args = append(args, slug)
+		}
+		where = append(where, fmt.Sprintf(
+			"NOT EXISTS (SELECT 1 FROM task_tags task_tags_none WHERE task_tags_none.task_id = tasks.id AND task_tags_none.tag_slug IN (%s))",
+			strings.Join(placeholders, ","),
+		))
+	}
+	for _, field := range f.MissingFields {
+		if field == "tags" {
+			where = append(where, "NOT EXISTS (SELECT 1 FROM task_tags task_tags_missing WHERE task_tags_missing.task_id = tasks.id)")
+			continue
+		}
+		col, ok := taskPresenceColumn(field)
+		if !ok {
+			return nil, nil, fmt.Errorf("unsupported missing field %q", field)
+		}
+		where = append(where, col+" IS NULL")
+	}
+	for _, field := range f.PresentFields {
+		if field == "tags" {
+			where = append(where, "EXISTS (SELECT 1 FROM task_tags task_tags_present WHERE task_tags_present.task_id = tasks.id)")
+			continue
+		}
+		col, ok := taskPresenceColumn(field)
+		if !ok {
+			return nil, nil, fmt.Errorf("unsupported present field %q", field)
+		}
+		where = append(where, col+" IS NOT NULL")
 	}
 	if f.Search != "" {
 		// SQLite's LIKE is case-insensitive for ASCII by default.

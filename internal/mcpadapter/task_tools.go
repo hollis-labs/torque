@@ -261,6 +261,20 @@ func reqTaskListStrictStringSlice(req mcp.CallToolRequest, key string) ([]string
 	}
 }
 
+func reqTaskListOperatorStringSlice(req mcp.CallToolRequest, key string) ([]string, error) {
+	raw, ok := req.GetArguments()[key]
+	if !ok {
+		return nil, nil
+	}
+	if raw == nil {
+		return nil, fmt.Errorf("%s must be a JSON/native string array; null is not accepted", key)
+	}
+	if s, ok := raw.(string); ok && (strings.TrimSpace(s) == "null" || strings.TrimSpace(s) == "") {
+		return nil, fmt.Errorf("%s must be a JSON/native string array; use [] for no filter", key)
+	}
+	return reqTaskListStrictStringSlice(req, key)
+}
+
 func exactIntArray(raw any, field string) ([]int, error) {
 	var values []any
 	switch v := raw.(type) {
@@ -444,6 +458,8 @@ Example, over-budget cohort: {"cost_budget_gte":"50","updated_after":"2026-08-01
 		mcp.WithString("statuses", mcp.Description("JSON array of statuses — OR-match; takes precedence over status when both are set")),
 		mcp.WithString("priority", mcp.Description("Filter by one exact integer priority; may be 0")),
 		mcp.WithString("priorities", mcp.Description("JSON array of exact integer priorities; OR-matches values, rejects empty arrays; do not pass with priority")),
+		mcp.WithString("priority_gte", mcp.Description("Filter: priority >= this exact integer. Combines by AND with priority/priorities.")),
+		mcp.WithString("priority_lte", mcp.Description("Filter: priority <= this exact integer. Combines by AND with priority/priorities.")),
 		mcp.WithString("executor", mcp.Description("Filter by executor")),
 		mcp.WithString("kind", mcp.Description("Filter by kind (agent|external|wait|decision|parent|plan|internal|issue)")),
 		mcp.WithString("source_type", mcp.Description("Filter by source_type")),
@@ -455,6 +471,10 @@ Example, over-budget cohort: {"cost_budget_gte":"50","updated_after":"2026-08-01
 		mcp.WithString("sprint_id", mcp.Description("Filter by sprint ID (requires features.sprints)")),
 		mcp.WithString("epic_id", mcp.Description("Filter by epic ID (requires features.epics)")),
 		mcp.WithString("tags", mcp.Description("JSON array of case-sensitive tag slugs; task must have all distinct tags. Whitespace is trimmed; blank and duplicate slugs are ignored. An empty normalized list applies no tag filter.")),
+		mcp.WithString("tags_any", mcp.Description("JSON/native string array of case-sensitive tag slugs; task must have at least one. Blank/duplicate slugs are ignored; empty normalized list applies no filter.")),
+		mcp.WithString("tags_none", mcp.Description("JSON/native string array of case-sensitive tag slugs; task must have none. Blank/duplicate slugs are ignored; empty normalized list applies no filter.")),
+		mcp.WithString("missing", mcp.Description("JSON/native string array of missing fields. Supported: project_id, sprint_id, epic_id, parent_id, source_ref, collection_id, cost_budget, token_budget, max_duration_ms, tags. Empty list is no-op; blank/unknown fields reject.")),
+		mcp.WithString("present", mcp.Description("JSON/native string array of present fields. Same supported field set as missing. SQL NULL is missing; empty string and numeric 0 are present; tags means at least one task_tags link.")),
 		mcp.WithString("manual", mcp.Description("Filter by manual flag: 'manual'/'true'/'1' → manual only; 'auto'/'false'/'0' → scheduled only; 'both' or omit → no filter")),
 		mcp.WithString("include_internal", mcp.Description("Include kind=internal automation tasks (Reviewer end-agents etc.). Default false: internal rows are suppressed unless kind='internal' is requested explicitly. Accepts 'true'/'1'/'yes'.")),
 		mcp.WithString("search", mcp.Description("Substring match on title + description (case-insensitive)")),
@@ -493,6 +513,8 @@ Response shape: data = {matching_count, bucket_limit, dimensions, facets:[{dimen
 		mcp.WithString("statuses", mcp.Description("JSON array of statuses — OR-match; takes precedence over status when both are set")),
 		mcp.WithString("priority", mcp.Description("Filter by one exact integer priority; may be 0")),
 		mcp.WithString("priorities", mcp.Description("JSON array of exact integer priorities; OR-matches values, rejects empty arrays; do not pass with priority")),
+		mcp.WithString("priority_gte", mcp.Description("Filter: priority >= this exact integer. Combines by AND with priority/priorities.")),
+		mcp.WithString("priority_lte", mcp.Description("Filter: priority <= this exact integer. Combines by AND with priority/priorities.")),
 		mcp.WithString("executor", mcp.Description("Filter by executor")),
 		mcp.WithString("kind", mcp.Description("Filter by kind")),
 		mcp.WithString("source_type", mcp.Description("Filter by source_type")),
@@ -504,6 +526,10 @@ Response shape: data = {matching_count, bucket_limit, dimensions, facets:[{dimen
 		mcp.WithString("sprint_id", mcp.Description("Filter by sprint ID")),
 		mcp.WithString("epic_id", mcp.Description("Filter by epic ID")),
 		mcp.WithString("tags", mcp.Description("JSON array of case-sensitive tag slugs; task must have all distinct tags.")),
+		mcp.WithString("tags_any", mcp.Description("JSON/native string array of tag slugs; task must have at least one.")),
+		mcp.WithString("tags_none", mcp.Description("JSON/native string array of tag slugs; task must have none.")),
+		mcp.WithString("missing", mcp.Description("JSON/native string array of missing fields. Supported: "+strings.Join(service.TaskPresenceFields, ", ")+". SQL NULL is missing; tags means no task-tag links. [] is no-op; null/blank/unknown fields reject.")),
+		mcp.WithString("present", mcp.Description("JSON/native string array of present fields. Supported: "+strings.Join(service.TaskPresenceFields, ", ")+". Empty string and numeric 0 are present; tags means at least one link. [] is no-op; null/blank/unknown fields reject.")),
 		mcp.WithString("manual", mcp.Description("Filter by manual flag: 'manual'/'true'/'1', 'auto'/'false'/'0', or 'both'/omit")),
 		mcp.WithString("include_internal", mcp.Description("Include kind=internal automation tasks. Default false unless kind='internal' is requested.")),
 		mcp.WithString("search", mcp.Description("Substring match on title + description (case-insensitive)")),
@@ -964,6 +990,24 @@ func taskQueryFromMCP(req mcp.CallToolRequest) (service.TaskQuery, *mcp.CallTool
 	if errRes != nil {
 		return service.TaskQuery{}, errRes
 	}
+	var priorityGte *int
+	if reqHasArg(req, "priority_gte") {
+		v, _, err := reqTaskListInt(req, "priority_gte")
+		if err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "priority_gte")
+			return service.TaskQuery{}, res
+		}
+		priorityGte = &v
+	}
+	var priorityLte *int
+	if reqHasArg(req, "priority_lte") {
+		v, _, err := reqTaskListInt(req, "priority_lte")
+		if err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "priority_lte")
+			return service.TaskQuery{}, res
+		}
+		priorityLte = &v
+	}
 	status, _ := reqTaskListString(req, "status")
 	executor, _ := reqTaskListString(req, "executor")
 	kind, _ := reqTaskListString(req, "kind")
@@ -980,6 +1024,8 @@ func taskQueryFromMCP(req mcp.CallToolRequest) (service.TaskQuery, *mcp.CallTool
 	query := service.TaskQuery{
 		Status:          status,
 		Priorities:      priorities,
+		PriorityGte:     priorityGte,
+		PriorityLte:     priorityLte,
 		Executor:        executor,
 		Kind:            kind,
 		SourceType:      sourceType,
@@ -1006,6 +1052,30 @@ func taskQueryFromMCP(req mcp.CallToolRequest) (service.TaskQuery, *mcp.CallTool
 		return service.TaskQuery{}, res
 	} else if tags != nil {
 		query.TagSlugs = tags
+	}
+	if tags, err := reqTaskListOperatorStringSlice(req, "tags_any"); err != nil {
+		res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags_any JSON: %v", err), "tags_any")
+		return service.TaskQuery{}, res
+	} else if tags != nil {
+		query.TagSlugsAny = tags
+	}
+	if tags, err := reqTaskListOperatorStringSlice(req, "tags_none"); err != nil {
+		res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags_none JSON: %v", err), "tags_none")
+		return service.TaskQuery{}, res
+	} else if tags != nil {
+		query.TagSlugsNone = tags
+	}
+	if fields, err := reqTaskListOperatorStringSlice(req, "missing"); err != nil {
+		res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid missing JSON: %v", err), "missing")
+		return service.TaskQuery{}, res
+	} else if fields != nil {
+		query.MissingFields = fields
+	}
+	if fields, err := reqTaskListOperatorStringSlice(req, "present"); err != nil {
+		res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid present JSON: %v", err), "present")
+		return service.TaskQuery{}, res
+	} else if fields != nil {
+		query.PresentFields = fields
 	}
 	if statuses, err := reqTaskListStrictStringSlice(req, "statuses"); err != nil {
 		res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid statuses JSON: %v", err), "statuses")

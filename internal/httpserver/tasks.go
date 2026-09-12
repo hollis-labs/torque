@@ -565,6 +565,12 @@ func parseHTTPTaskQuery(q url.Values, facet bool) (service.TaskQuery, *taskListQ
 		}
 		query.Priorities = priorities
 	}
+	if err := applyHTTPTaskQueryIntBound(q, "priority_gte", &query.PriorityGte); err != nil {
+		return query, &taskListQueryError{field: "priority_gte", message: err.Error()}
+	}
+	if err := applyHTTPTaskQueryIntBound(q, "priority_lte", &query.PriorityLte); err != nil {
+		return query, &taskListQueryError{field: "priority_lte", message: err.Error()}
+	}
 	if v := q.Get("sprint_id"); v != "" {
 		query.SprintID = v
 	}
@@ -624,6 +630,18 @@ func parseHTTPTaskQuery(q url.Values, facet bool) (service.TaskQuery, *taskListQ
 		query.TagSlugs = out
 	} else if v := q.Get("tag"); v != "" {
 		query.TagSlugs = []string{strings.TrimSpace(v)}
+	}
+	query.TagSlugsAny = splitHTTPTagCSV(q.Get("tags_any"))
+	query.TagSlugsNone = splitHTTPTagCSV(q.Get("tags_none"))
+	if fields, err := splitHTTPPresenceFields(q, "missing"); err != nil {
+		return query, &taskListQueryError{field: "missing", message: err.Error()}
+	} else {
+		query.MissingFields = fields
+	}
+	if fields, err := splitHTTPPresenceFields(q, "present"); err != nil {
+		return query, &taskListQueryError{field: "present", message: err.Error()}
+	} else {
+		query.PresentFields = fields
 	}
 	if v := q.Get("search"); v != "" {
 		query.Search = v
@@ -697,10 +715,10 @@ func writeFieldError(w http.ResponseWriter, status int, field, msg string) {
 
 func validateTaskListQueryKeys(q url.Values, facet bool) *taskListQueryError {
 	supported := map[string]bool{
-		"status": true, "priority": true, "sprint_id": true, "project_id": true, "epic_id": true,
+		"status": true, "priority": true, "priority_gte": true, "priority_lte": true, "sprint_id": true, "project_id": true, "epic_id": true,
 		"executor": true, "kind": true, "include_internal": true, "source_type": true,
 		"source_ref": true, "trust": true, "checkpoint_mode": true, "parent_id": true,
-		"manual": true, "tags": true, "tag": true, "search": true, "limit": true, "offset": true,
+		"manual": true, "tags": true, "tag": true, "tags_any": true, "tags_none": true, "missing": true, "present": true, "search": true, "limit": true, "offset": true,
 		"agent_profile": true, "launch_profile": true,
 		"created_after": true, "created_before": true, "updated_after": true, "updated_before": true,
 		"cost_budget_gte": true, "cost_budget_lte": true,
@@ -717,7 +735,7 @@ func validateTaskListQueryKeys(q url.Values, facet bool) *taskListQueryError {
 		if !supported[key] {
 			return &taskListQueryError{
 				field:   key,
-				message: "unsupported query parameter " + key + "; supported task-list parameters are status, priority, sprint_id, project_id, epic_id, executor, kind, include_internal, source_type, source_ref, trust, checkpoint_mode, parent_id, manual, tags, tag, search, agent_profile, launch_profile, created_after, created_before, updated_after, updated_before, cost_budget_gte, cost_budget_lte, token_budget_gte, token_budget_lte, max_duration_ms_gte, max_duration_ms_lte, max_retries_gte, max_retries_lte, sort_by, sort_dir, cursor, limit, offset",
+				message: "unsupported query parameter " + key + "; supported task-list parameters are status, priority, priority_gte, priority_lte, sprint_id, project_id, epic_id, executor, kind, include_internal, source_type, source_ref, trust, checkpoint_mode, parent_id, manual, tags, tag, tags_any, tags_none, missing, present, search, agent_profile, launch_profile, created_after, created_before, updated_after, updated_before, cost_budget_gte, cost_budget_lte, token_budget_gte, token_budget_lte, max_duration_ms_gte, max_duration_ms_lte, max_retries_gte, max_retries_lte, sort_by, sort_dir, cursor, limit, offset",
 			}
 		}
 		if len(values) > 1 {
@@ -737,6 +755,43 @@ func splitHTTPFacetCSV(raw string) []string {
 		out = append(out, strings.TrimSpace(p))
 	}
 	return out
+}
+
+func splitHTTPTagCSV(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if s := strings.TrimSpace(p); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func splitHTTPPresenceFields(q url.Values, key string) ([]string, error) {
+	raw, ok := q[key]
+	if !ok {
+		return nil, nil
+	}
+	if len(raw) == 0 || raw[0] == "" {
+		return nil, nil
+	}
+	if strings.TrimSpace(raw[0]) == "" {
+		return nil, taskListQueryError{field: key, message: key + " fields cannot be blank"}
+	}
+	parts := strings.Split(raw[0], ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		field := strings.TrimSpace(p)
+		if field == "" {
+			return nil, taskListQueryError{field: key, message: key + " fields cannot be blank"}
+		}
+		out = append(out, field)
+	}
+	return out, nil
 }
 
 func parseHTTPPrioritySet(raw string) ([]int, error) {
