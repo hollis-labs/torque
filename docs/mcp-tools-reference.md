@@ -1,8 +1,9 @@
 # MCP Tools Reference — Data Entities
 
 Agent-facing reference for the `torque_*` MCP tools covering Torque's core
-data-management entities: **Task, Subtodo, Comment, Project, Epic, Sprint,
-Issue, Plan**. This is the scope ADR-0004 locked and Phase 0–5 of
+data-management entities: **Task, Tag, Subtodo, Comment, Project, Epic, Sprint,
+Issue, Plan**. Task/Subtodo/Comment/Project/Epic/Sprint/Issue/Plan are the
+scope ADR-0004 locked and Phase 0–5 of
 `tasks/INDEX.md` implemented (all phases `done` as of 2026-08-20) — the
 "MCP discoverability/schema reference layer" that ADR-0004's Consequences
 section named as a deferred follow-up.
@@ -135,6 +136,43 @@ Full field reference: ADR-0004 §4. Source: `internal/mcpadapter/task_tools.go`,
 | `torque_task_bulk_update` | Same field set/semantics as `torque_task_update`, applied across `ids[]`. |
 | `torque_task_bulk_delete` | Hard-delete many ids in one call. |
 | `torque_task_bulk_tag` | Add/remove tag slugs across many ids — additive, unlike `update`'s `tags` (which replaces the full set). |
+
+---
+
+## Tag
+
+Global tag catalog entity. Source: `internal/mcpadapter/tag_tools.go`.
+
+| Tool | Purpose |
+|---|---|
+| `torque_tag_list` | Discover the global catalog, including unused tags. Not a usage/count surface; use `torque_task_facets` for scoped tag counts. |
+| `torque_tag_get` | Fetch one tag by slug. Historical stored slugs are treated as opaque lookup values and are not revalidated on read. |
+| `torque_tag_create` | Create a tag through `TagService` validation/defaults. Slug derives from name only at create when omitted; duplicate slug returns `conflict`. |
+| `torque_tag_update` | Partial metadata update. Slug is identity and cannot be changed; omitted fields are untouched, explicit empty description clears, explicit empty color resets to `zinc`. |
+| `torque_tag_delete` | Destructive global delete: removes the catalog row and cascades all `task_tags` links. No undo. |
+| `torque_tag_merge` | Destructive merge: source and destination must be distinct existing slugs. Destination metadata is preserved, task links are rewritten/deduped to destination, source is deleted, and no alias is retained. |
+
+Tag records use HTTP-aligned snake_case fields:
+`slug`, `name`, `description`, `color`, `created_at`, `updated_at`. `slug`
+is lookup identity; `name` is mutable display text.
+
+`torque_tag_list` response shape:
+
+```json
+{
+  "items": [{"slug": "api", "name": "API", "description": "", "color": "zinc", "created_at": "...", "updated_at": "..."}],
+  "meta": {"truncated": false, "returned": 1, "limit": 50, "total": 1, "has_more": false, "next_cursor": null}
+}
+```
+
+Default limit is 50 and max is 200. Explicit `limit<=0`, fractional strings,
+and overflows return `arg_invalid`; native JSON numbers are accepted only when
+integral. Ordering is `name COLLATE NOCASE ASC, slug ASC`, matching HTTP
+`GET /api/v1/tags` default ordering and the cursor predicate. `query` is a
+literal substring over slug/name/description with `%`, `_`, and backslash
+escaped; `color` is exact equality. `meta.next_cursor` is derived from the last
+tag actually emitted after the MCP 100KB response cap, so byte-cap trimming
+does not skip catalog rows.
 
 `torque_task_list` sort: `sort_by` ∈ `priority\|status\|updated_at\|created_at`,
 default `priority asc` (tiebreak `id asc`). HTTP `GET /api/v1/tasks` uses the

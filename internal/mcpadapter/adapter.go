@@ -290,6 +290,7 @@ Example: {}`),
 	), a.handleHealth)
 	a.registerTaskTools()
 	a.registerTaskBulkTools()
+	a.registerTagTools()
 	a.registerRunTools()
 	a.registerArtifactTools()
 	a.registerCommentTools()

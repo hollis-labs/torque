@@ -2,7 +2,10 @@ package httpserver
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -10,16 +13,6 @@ import (
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
 )
-
-// isUniqueConstraintError heuristically detects a SQLite UNIQUE constraint
-// violation by substring-matching the driver's error message. Used to map
-// duplicate-slug errors from CreateTag to 409 Conflict.
-func isUniqueConstraintError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "UNIQUE constraint failed")
-}
 
 // tagJSON converts a TagRecord to a JSON-friendly map.
 func tagJSON(t *sqlstore.TagRecord) map[string]interface{} {
@@ -42,6 +35,10 @@ func tagsJSON(tags []sqlstore.TagRecord) []map[string]interface{} {
 }
 
 func (s *Server) listTags(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawQuery != "" {
+		s.listTagsPage(w, r)
+		return
+	}
 	tags, err := s.svc.Tag.List()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -51,6 +48,109 @@ func (s *Server) listTags(w http.ResponseWriter, r *http.Request) {
 		tags = []sqlstore.TagRecord{}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"tags": tagsJSON(tags)})
+}
+
+func (s *Server) listTagsPage(w http.ResponseWriter, r *http.Request) {
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		writeFieldError(w, http.StatusBadRequest, "query", "invalid query string: "+err.Error())
+		return
+	}
+	if qerr := validateTagListQueryKeys(q); qerr != nil {
+		writeFieldError(w, http.StatusBadRequest, qerr.field, qerr.Error())
+		return
+	}
+	limit := 0
+	if _, ok := q["limit"]; ok {
+		n, err := parseTagListInt(q.Get("limit"), "limit")
+		if err != nil {
+			writeFieldError(w, http.StatusBadRequest, "limit", err.Error())
+			return
+		}
+		limit = n
+	}
+	afterName, afterSlug, err := service.DecodeTagListCursor(q.Get("cursor"))
+	if err != nil {
+		var verr *service.ValidationError
+		if errors.As(err, &verr) {
+			writeFieldError(w, http.StatusBadRequest, verr.Field, verr.Message)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	result, err := s.svc.Tag.ListPage(service.TagListInput{
+		Query:     q.Get("query"),
+		Color:     q.Get("color"),
+		Limit:     limit,
+		AfterName: afterName,
+		AfterSlug: afterSlug,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	tags := result.Tags
+	if tags == nil {
+		tags = []sqlstore.TagRecord{}
+	}
+	var nextCursor interface{}
+	if result.HasMoreFromQuery && len(tags) > 0 {
+		nextCursor = service.TagListCursor(tags[len(tags)-1])
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"tags":        tagsJSON(tags),
+		"total":       result.Total,
+		"returned":    len(tags),
+		"limit":       result.Limit,
+		"has_more":    result.HasMoreFromQuery,
+		"next_cursor": nextCursor,
+		"sort_by":     service.TagListSortBy,
+		"sort_dir":    service.TagListSortDir,
+	})
+}
+
+type tagListQueryError struct {
+	field   string
+	message string
+}
+
+func (e tagListQueryError) Error() string { return e.message }
+
+func validateTagListQueryKeys(q url.Values) *tagListQueryError {
+	supported := map[string]bool{
+		"query": true, "color": true, "limit": true, "cursor": true,
+	}
+	for key, values := range q {
+		if !supported[key] {
+			return &tagListQueryError{
+				field:   key,
+				message: "unsupported query parameter " + key + "; supported tag-list parameters are query, color, limit, cursor",
+			}
+		}
+		if len(values) > 1 {
+			return &tagListQueryError{
+				field:   key,
+				message: "query parameter " + key + " may only be supplied once",
+			}
+		}
+	}
+	return nil
+}
+
+func parseTagListInt(raw, field string) (int, error) {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return 0, fmt.Errorf("%s must be an integer", field)
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an integer", field)
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("%s must be greater than 0", field)
+	}
+	return n, nil
 }
 
 func (s *Server) getTag(w http.ResponseWriter, r *http.Request) {
@@ -90,7 +190,7 @@ func (s *Server) createTag(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
-		if isUniqueConstraintError(err) {
+		if service.IsTagUniqueConstraintError(err) {
 			writeError(w, http.StatusConflict, "tag slug already exists")
 			return
 		}

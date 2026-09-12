@@ -71,12 +71,27 @@ Clients that need a complete refreshed task set, including the GUI shared API
 client, must follow `continuation` until `has_more=false`; clients that pass a
 positive `limit` should treat it as their own overall cap.
 
+Tag catalog contract (`GET /api/v1/tags`): with no query string, the endpoint
+keeps the legacy GUI-compatible shape `{tags:[...]}` and legacy ordering by
+`name COLLATE NOCASE ASC`. Supplying any query string opts into the bounded
+catalog query path; supported keys are exactly `query`, `color`, `limit`, and
+`cursor`, and unknown or repeated keys return `400` with `error` and `field`.
+`query` is a literal substring over slug/name/description; `%`, `_`, and
+backslash are escaped rather than treated as wildcards. `color` is exact
+equality, not trimmed. The opt-in response is `{tags,total,returned,limit,
+has_more,next_cursor,sort_by,sort_dir}` where `total` is the full filtered
+catalog count excluding cursor/limit. Ordering and cursor predicates both use
+`name COLLATE NOCASE ASC, slug ASC`, so duplicate/case-variant display names
+page stably. Default limit is 50, max is 200; explicit `limit<=0`, fractions,
+and overflows are rejected.
+
 ## MCP
 
 Core MCP areas exposed by the adapter:
 
 - Health
 - Tasks
+- Tags
 - Runs
 - Artifacts
 - Comments
@@ -108,6 +123,18 @@ array for OR-matching; passing both is rejected as ambiguous, and
 defaults to false so legacy lightweight calls avoid a full count. Cursor
 pagination still derives `meta.next_cursor` from the last row actually emitted
 after the 100KB response cap is applied.
+
+Tag catalog MCP tools are always registered: `torque_tag_list`,
+`torque_tag_get`, `torque_tag_create`, `torque_tag_update`,
+`torque_tag_delete`, and `torque_tag_merge`. Records use snake_case fields
+aligned with HTTP tags: `slug`, `name`, `description`, `color`, `created_at`,
+`updated_at`. `slug` is the immutable lookup identity; `name` is mutable
+display text. `torque_tag_list` is global catalog discovery, including unused
+tags, with the same query/color scope and `name COLLATE NOCASE ASC, slug ASC`
+ordering as HTTP. Its cursor comes from the last tag actually emitted after
+the MCP 100KB cap, so byte trimming does not skip values. Delete removes the
+global tag and cascades task-tag links; merge preserves destination metadata,
+dedupes/repoints task links, deletes the source, and stores no alias.
 
 For the eight data-management entities (Task, Subtodo, Comment, Project, Epic, Sprint, Issue, Plan), [mcp-tools-reference.md](mcp-tools-reference.md) is a per-tool index plus the shared conventions (response envelope, pagination, sort, bulk-op shape) — the "MCP discoverability/schema reference layer" [ADR-0004](adr/0004-mcp-data-entity-agent-ergonomics.md) scoped and deferred.
 
