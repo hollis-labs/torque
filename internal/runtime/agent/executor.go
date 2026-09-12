@@ -14,6 +14,8 @@ import (
 	"github.com/hollis-labs/torque/internal/toolbroker"
 )
 
+var errTaskMaxDurationExceeded = errors.New("task max_duration_ms deadline exceeded")
+
 // Executor adapts agent.Boot to the executor.Executor contract used by the
 // scheduler's worker pool. Registered as "cli" — the slot the legacy
 // cliexec.CLIExecutor occupied.
@@ -156,7 +158,14 @@ func (e *Executor) Run(ctx context.Context, job *executor.ExecutionJob, cb execu
 
 	switch mode {
 	case ModeLongLived:
-		return e.runLongLived(ctx, profile, opts, cb)
+		runCtx := ctx
+		var cancel context.CancelFunc
+		if deadline, ok := taskMaxDuration(opts); ok {
+			opts.RetainContextOnLongLivedStart = true
+			runCtx, cancel = context.WithTimeoutCause(ctx, deadline, errTaskMaxDurationExceeded)
+			defer cancel()
+		}
+		return e.runLongLived(runCtx, profile, opts, cb)
 	default:
 		return e.runOneShot(ctx, profile, opts, cb)
 	}
@@ -268,7 +277,7 @@ func modeForJob(job *executor.ExecutionJob) Mode {
 //   - SystemPrompt = job.SystemPrompt (agent_file persona stacks on top inside
 //     composeSystemPrompt at Boot time).
 //   - Description carries through as the user-prompt body for the OneShot turn.
-//   - Env / Metadata pass through.
+//   - Env / Metadata / Limits pass through.
 func optsFromJob(job *executor.ExecutionJob, resolvedWD string) Options {
 	return Options{
 		Mode:          ModeOneShot,
@@ -292,6 +301,7 @@ func optsFromJob(job *executor.ExecutionJob, resolvedWD string) Options {
 		Env:           job.Environment,
 		Description:   job.Description,
 		Metadata:      job.Metadata,
+		Limits:        job.Limits,
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	llmtypes "github.com/hollis-labs/go-llm-types"
 	"github.com/hollis-labs/go-providers/provider"
 	"github.com/hollis-labs/go-sandbox/sandbox"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
 )
 
 // Options describes a Boot request. Mode picks the lifecycle policy; the
@@ -148,6 +149,7 @@ type Options struct {
 	// path can reuse Options without a parallel struct. Most ModeLongLived
 	// callers leave them zero.
 	Metadata map[string]any
+	Limits   executor.ExecutionLimits
 
 	// TypedEventCallback, when non-nil, is forwarded to
 	// StartOptions.TypedEventCallback. PTY runtime fires per-line via the
@@ -169,6 +171,14 @@ type Options struct {
 	// StartOptions.ResourceLimits. Same PTY-vs-adapter forwarding contract
 	// as Supervisor.
 	ResourceLimits *agentsessions.ResourceLimits
+
+	// RetainContextOnLongLivedStart keeps the supplied ctx attached to
+	// long-lived Start/kickoff instead of detaching with context.WithoutCancel.
+	// Scheduler-dispatched workers set this when an explicit task deadline is
+	// present so max_duration_ms covers launch through teardown; HTTP/session
+	// boots leave it false so request cancellation does not kill standalone
+	// long-lived sessions.
+	RetainContextOnLongLivedStart bool
 
 	// IDFn lets tests pin session IDs. Production wires defaultSessionID().
 	IDFn func() string

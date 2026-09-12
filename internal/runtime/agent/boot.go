@@ -994,7 +994,7 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 	// in context.WithTimeout(ctx, profile.timeout) and needs the cancel to
 	// propagate for timeout enforcement.
 	startCtx := ctx
-	if opts.Mode != ModeOneShot {
+	if opts.Mode != ModeOneShot && !opts.RetainContextOnLongLivedStart {
 		startCtx = context.WithoutCancel(ctx)
 	}
 	if err := mgr.inner.Start(startCtx, startReq); err != nil {
@@ -1102,7 +1102,11 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 		if kickoff == "" {
 			kickoff = kickoffPayloadForBootDir(capturedBootDir)
 		}
-		if err := mgr.SendTurn(context.WithoutCancel(ctx), sess, kickoff); err != nil {
+		kickoffCtx := ctx
+		if !opts.RetainContextOnLongLivedStart {
+			kickoffCtx = context.WithoutCancel(ctx)
+		}
+		if err := mgr.SendTurn(kickoffCtx, sess, kickoff); err != nil {
 			log.Printf("agent.Boot: long-lived JsonRpcStdio kickoff failed (session=%s): %v", sessID, err)
 			stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			_ = mgr.inner.Stop(stopCtx, sessID)
@@ -1456,7 +1460,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 	// rationale exactly (boot.go's startCtx comment): long-lived sessions
 	// must outlive the caller's request-scoped ctx.
 	runCtx := ctx
-	if opts.Mode != ModeOneShot {
+	if opts.Mode != ModeOneShot && !opts.RetainContextOnLongLivedStart {
 		runCtx = context.WithoutCancel(ctx)
 	}
 	runCtx, runCancel := context.WithCancel(runCtx)

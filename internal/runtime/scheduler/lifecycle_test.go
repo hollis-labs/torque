@@ -130,6 +130,41 @@ func TestLifecycleFailedRetryExhausted(t *testing.T) {
 	assert.Equal(t, "blocked", task.Status, "should block when retries exhausted")
 }
 
+func TestLifecycleDeadlineFailureWithZeroRetriesBlocksWithoutRetry(t *testing.T) {
+	store := setupLifecycleStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	lm := scheduler.NewLifecycleManager(store, bus)
+
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-DEADLINE-0001", Title: "Task", Status: "doing", Executor: "cli",
+		OnFail: "retry", MaxRetries: 0,
+	}))
+	_, err := store.DB().Exec("UPDATE tasks SET max_retries = 0 WHERE id = ?", "CW-DEADLINE-0001")
+	require.NoError(t, err)
+	runID, err := store.CreateRun(&sqlstore.RunRecord{
+		ID:       1,
+		TaskID:   "CW-DEADLINE-0001",
+		Executor: "cli",
+		Status:   "running",
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), runID)
+
+	result := &executor.ExecutionResult{Status: "failed", Reason: "task deadline exceeded after 45s"}
+
+	err = lm.HandleResult("CW-DEADLINE-0001", 1, result)
+	require.NoError(t, err)
+
+	task, _ := store.GetTask("CW-DEADLINE-0001")
+	assert.Equal(t, "blocked", task.Status, "zero-retry deadline failure should park immediately")
+	assert.Contains(t, task.BlockedReason, "task deadline exceeded after 45s")
+
+	var retryCount int
+	require.NoError(t, store.DB().QueryRow("SELECT retry_count FROM tasks WHERE id = ?", "CW-DEADLINE-0001").Scan(&retryCount))
+	assert.Equal(t, 0, retryCount, "zero-retry deadline failure must not consume retry budget")
+}
+
 func TestLifecycleFailedWithBlock(t *testing.T) {
 	store := setupLifecycleStore(t)
 	bus := scheduler.NewEventBus()
