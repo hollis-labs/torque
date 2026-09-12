@@ -224,7 +224,7 @@ func (w *WriteTx) UpdateSessionState(id, state string, pid int, exit *int) error
 	now := time.Now().UTC()
 	var endedAt sql.NullTime
 	switch state {
-	case "done", "failed", "crashed":
+	case "done", "failed", "canceled", "crashed":
 		endedAt = sql.NullTime{Time: now, Valid: true}
 	}
 	var exitArg sql.NullInt64

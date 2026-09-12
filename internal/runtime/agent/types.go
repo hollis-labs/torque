@@ -103,8 +103,9 @@ func parseModeString(s string) Mode {
 }
 
 // Status is the public, user-facing session lifecycle state. Mirrors the
-// go-agent-sessions State strings plus `crashed` (set by the orphan sweep
-// when a daemon restart finds a session row whose process is gone).
+// go-agent-sessions State strings plus Torque-owned terminal states:
+// `canceled` for intentional operator/scheduler stops and `crashed` for
+// orphan-sweep transitions.
 type Status string
 
 const (
@@ -112,13 +113,14 @@ const (
 	StatusRunning   Status = "running"
 	StatusDone      Status = "done"
 	StatusFailed    Status = "failed"
+	StatusCanceled  Status = "canceled"
 	StatusCrashed   Status = "crashed"
 )
 
 // Terminal reports whether the status indicates the session has stopped.
 func (s Status) Terminal() bool {
 	switch s {
-	case StatusDone, StatusFailed, StatusCrashed:
+	case StatusDone, StatusFailed, StatusCanceled, StatusCrashed:
 		return true
 	}
 	return false

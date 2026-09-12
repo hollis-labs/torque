@@ -176,6 +176,13 @@ func TestLongLivedOutcome_ToExecutionResult(t *testing.T) {
 		assert.Contains(t, got.Reason, "canceled")
 	})
 
+	t.Run("operator pause → Status=canceled with explicit reason", func(t *testing.T) {
+		out := longLivedOutcome{Kind: outcomeTransition, TaskStatus: "paused"}
+		got := out.toExecutionResult(&executor.ExecutionResult{}, nil)
+		assert.Equal(t, "canceled", got.Status)
+		assert.Equal(t, operatorPauseReason, got.Reason)
+	})
+
 	t.Run("stream error is prepended to reason when present", func(t *testing.T) {
 		out := longLivedOutcome{Kind: outcomeIdle, IdleFor: 30 * time.Minute}
 		got := out.toExecutionResult(&executor.ExecutionResult{}, errors.New("rate_limit"))
@@ -184,10 +191,10 @@ func TestLongLivedOutcome_ToExecutionResult(t *testing.T) {
 	})
 
 	t.Run("transition to unexpected status surfaces it in reason", func(t *testing.T) {
-		out := longLivedOutcome{Kind: outcomeTransition, TaskStatus: "paused"}
+		out := longLivedOutcome{Kind: outcomeTransition, TaskStatus: "todo"}
 		got := out.toExecutionResult(&executor.ExecutionResult{}, nil)
 		assert.Equal(t, "failed", got.Status)
-		assert.Contains(t, got.Reason, "paused")
+		assert.Contains(t, got.Reason, "todo")
 	})
 }
 
@@ -588,6 +595,122 @@ func TestAwaitLongLivedCompletion_CtxCancelAfterSelfTransition(t *testing.T) {
 	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, nil, time.Hour, time.Hour, false)
 	assert.Equal(t, outcomeTransition, out.Kind)
 	assert.Equal(t, "review", out.TaskStatus)
+}
+
+func TestAwaitLongLivedCompletion_CtxCancelAfterOperatorPause(t *testing.T) {
+	store := newTestStoreForLongLived(t)
+
+	const taskID = "CW-TEST-LL-PAUSE-RACE"
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID:           taskID,
+		Title:        "ctx-cancel pause race test",
+		Status:       "doing",
+		Executor:     "cli",
+		Kind:         "agent",
+		AgentProfile: "test",
+	}))
+
+	deps := &Dependencies{Store: store}
+
+	prevInterval := statusPollInterval
+	statusPollInterval = time.Hour
+	t.Cleanup(func() { statusPollInterval = prevInterval })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		require.NoError(t, store.TransitionTask(taskID, "paused"))
+		cancel()
+	}()
+	activityCh := make(chan struct{}, 1)
+	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, nil, time.Hour, time.Hour, false)
+	assert.Equal(t, outcomeTransition, out.Kind)
+	assert.Equal(t, "paused", out.TaskStatus)
+
+	res := out.toExecutionResult(&executor.ExecutionResult{}, nil)
+	assert.Equal(t, "canceled", res.Status)
+	assert.Equal(t, operatorPauseReason, res.Reason)
+}
+
+func TestRunLongLived_OperatorPauseCancelsRunAndSession(t *testing.T) {
+	store := newTestStoreForLongLived(t)
+	const taskID = "CW-TEST-LL-PAUSE"
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID:           taskID,
+		Title:        "operator pause test",
+		Status:       "doing",
+		Executor:     "cli",
+		Kind:         "agent",
+		AgentProfile: "test",
+		OnFail:       "retry",
+		MaxRetries:   3,
+	}))
+	fr := &deadlineFakeRuntime{}
+	deps := &Dependencies{
+		Store:       store,
+		StateWriter: writeq.NewDirect(store),
+		Profiles: config.ProfileMap{
+			"test": {Executor: "cli", Provider: "claude-code", RuntimeKind: "streaming-stdio"},
+		},
+		RuntimeFactory: func(agentsessions.AdapterRuntimeConfig) (agentsessions.Runtime, error) {
+			return fr, nil
+		},
+		Reminder: steering.NewReminderRegistry(),
+	}
+	deps.Sessions = NewManager(deps).WithIDFunc(func() string { return "SES-PAUSE" })
+	agentExec := NewExecutor(deps)
+
+	prevInterval := statusPollInterval
+	statusPollInterval = 25 * time.Millisecond
+	t.Cleanup(func() { statusPollInterval = prevInterval })
+
+	resultCh := make(chan *executor.ExecutionResult, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		result, err := agentExec.Run(context.Background(), &executor.ExecutionJob{
+			TaskID:       taskID,
+			Kind:         "agent",
+			AgentProfile: "test",
+			WorkingDir:   t.TempDir(),
+			RunID:        1,
+		}, nil)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- result
+	}()
+
+	require.Eventually(t, func() bool {
+		rec, err := store.GetSession("SES-PAUSE")
+		return err == nil && rec.State == string(StatusRunning)
+	}, time.Second, 10*time.Millisecond)
+
+	require.NoError(t, store.TransitionTask(taskID, "paused"))
+
+	var result *executor.ExecutionResult
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case result = <-resultCh:
+	case <-time.After(3 * time.Second):
+		t.Fatal("long-lived executor did not return after operator pause")
+	}
+	require.NotNil(t, result)
+	assert.Equal(t, "canceled", result.Status)
+	assert.Equal(t, operatorPauseReason, result.Reason)
+	assert.Eventually(t, func() bool { return fr.stopCount.Load() == 1 }, time.Second, 10*time.Millisecond)
+
+	rec, err := store.GetSession("SES-PAUSE")
+	require.NoError(t, err)
+	assert.Equal(t, string(StatusCanceled), rec.State)
+	require.True(t, rec.ExitCode.Valid)
+	assert.Equal(t, int64(-1), rec.ExitCode.Int64)
+	assert.True(t, rec.EndedAt.Valid)
+	meta := decodeMeta(rec.MetaJSON)
+	assert.Equal(t, metaStopCauseOperator, meta[metaKeyStopCause])
+	assert.Equal(t, operatorPauseReason, meta[metaKeyStopReason])
+	assert.Equal(t, 0, deps.Sessions.LivePID("SES-PAUSE"), "pause cleanup must release the live manager slot")
 }
 
 // newTestStoreForLongLived opens a temp-file-backed sqlite store with all

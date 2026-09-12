@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -30,6 +31,11 @@ var statusPollInterval = 5 * time.Second
 // contention can stretch to seconds; we want to absorb that without
 // punishing every healthy run with a tighter bound.
 const workerVerifyTimeout = 30 * time.Second
+
+const (
+	operatorPauseReason   = "operator_pause: task transitioned to paused"
+	metaStopCauseOperator = "operator_pause"
+)
 
 // runLongLived dispatches a kind=agent worker as a long-lived agent.Boot
 // session, then drives the worker's completion via three signals: an
@@ -179,6 +185,11 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 	if outcome.Kind == outcomeHardCeiling && taskDeadlineCeiling {
 		outcome.TaskDeadline = true
 	}
+	if outcome.operatorPause() {
+		if err := e.deps.Sessions.markOperatorPaused(context.Background(), sess.ID, operatorPauseReason); err != nil {
+			log.Printf("agent: runLongLived mark operator-paused session %s failed: %v", sess.ID, err)
+		}
+	}
 	if outcome.Kind == outcomeTerminalFailure || (outcome.Kind == outcomeHardCeiling && outcome.TaskDeadline) {
 		if err := e.deps.Sessions.protectTerminalFailure(context.Background(), sess.ID); err != nil {
 			log.Printf("agent: runLongLived protect failed session %s failed: %v", sess.ID, err)
@@ -262,6 +273,33 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 	return res, nil
 }
 
+func (m *Manager) markOperatorPaused(ctx context.Context, id, reason string) error {
+	if m == nil || m.deps == nil || id == "" {
+		return nil
+	}
+	if err := m.protectTerminalCanceled(ctx, id); err != nil {
+		return err
+	}
+	if m.deps.Store == nil {
+		return nil
+	}
+	rec, err := m.deps.Store.GetSession(id)
+	if err != nil {
+		return err
+	}
+	meta := decodeMeta(rec.MetaJSON)
+	if meta == nil {
+		meta = map[string]string{}
+	}
+	meta[metaKeyStopCause] = metaStopCauseOperator
+	meta[metaKeyStopReason] = reason
+	b, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	return m.deps.UpdateSessionMeta(ctx, id, string(b))
+}
+
 // longLivedOutcome captures the wait-loop's verdict on why a long-lived
 // worker exited its "doing" phase. The four cases map 1:1 onto distinct
 // ExecutionResult shapes — see toExecutionResult.
@@ -301,6 +339,10 @@ type longLivedOutcome struct {
 	CauseErr error
 
 	TerminalFailure string
+}
+
+func (o longLivedOutcome) operatorPause() bool {
+	return o.Kind == outcomeTransition && o.TaskStatus == "paused"
 }
 
 type longLivedOutcomeKind int
@@ -457,6 +499,9 @@ func (o longLivedOutcome) toExecutionResult(result *executor.ExecutionResult, st
 			if result.Reason == "" {
 				result.Reason = "worker self-transitioned to blocked"
 			}
+		case "paused":
+			result.Status = "canceled"
+			result.Reason = operatorPauseReason
 		case "cancelled", "canceled":
 			result.Status = "canceled"
 			if o.BlockedReason != "" {

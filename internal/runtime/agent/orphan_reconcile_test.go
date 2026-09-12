@@ -168,6 +168,68 @@ func TestManagerTerminalFailureProtectionBlocksDelayedDoneOverwrite(t *testing.T
 	assert.Equal(t, -1, events[1]["exit_code"])
 }
 
+func TestManagerTerminalCanceledProtectionBlocksDelayedDoneOverwrite(t *testing.T) {
+	store := sqlitetest.OpenStore(t)
+	defer store.Close()
+	mgr := NewManager(&Dependencies{Store: store, StateWriter: writeq.NewDirect(store)})
+	seedSessionMeta(t, store, "SES-TERMINAL-CANCEL", "running", "CW-TERMINAL-CANCEL", `{}`)
+
+	sinkAtBoundary := make(chan struct{})
+	releaseSink := make(chan struct{})
+	var hookOnce sync.Once
+	mgr.terminalSinkBeforeWrite = func() {
+		hookOnce.Do(func() {
+			close(sinkAtBoundary)
+			<-releaseSink
+		})
+	}
+	doneWritten := make(chan error, 1)
+	go func() {
+		zero := 0
+		sink := &storeStateSink{deps: mgr.deps, manager: mgr}
+		doneWritten <- sink.UpdateSessionState("SES-TERMINAL-CANCEL", agentsessions.StateDone, 0, &zero)
+	}()
+	<-sinkAtBoundary
+
+	protected := make(chan error, 1)
+	go func() {
+		protected <- mgr.protectTerminalCanceled(context.Background(), "SES-TERMINAL-CANCEL")
+	}()
+
+	close(releaseSink)
+
+	require.NoError(t, <-protected)
+	require.NoError(t, <-doneWritten)
+
+	emitter := &recordingSessionEmitter{}
+	eventSink := &busEventSink{events: emitter, manager: mgr}
+	eventSink.Emit(context.Background(), agentsessions.LifecycleEvent{
+		SessionID: "SES-TERMINAL-CANCEL",
+		From:      agentsessions.StateLaunching,
+		To:        agentsessions.StateRunning,
+	})
+	zero := 0
+	eventSink.Emit(context.Background(), agentsessions.LifecycleEvent{
+		SessionID: "SES-TERMINAL-CANCEL",
+		From:      agentsessions.StateRunning,
+		To:        agentsessions.StateDone,
+		ExitCode:  &zero,
+	})
+
+	sess, err := store.GetSession("SES-TERMINAL-CANCEL")
+	require.NoError(t, err)
+	assert.Equal(t, "canceled", sess.State)
+	require.True(t, sess.ExitCode.Valid)
+	assert.EqualValues(t, -1, sess.ExitCode.Int64)
+	assert.True(t, sess.EndedAt.Valid)
+
+	events := emitter.snapshot()
+	require.Len(t, events, 2)
+	assert.Equal(t, "running", events[0]["to"])
+	assert.Equal(t, "canceled", events[1]["to"])
+	assert.Equal(t, -1, events[1]["exit_code"])
+}
+
 type recordingSessionEmitter struct {
 	mu     sync.Mutex
 	events []map[string]interface{}

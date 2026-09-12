@@ -219,6 +219,17 @@ retry hooks. A terminal failed Codex turn stops the long-lived invocation with
 a blocked result and a failed session, preserving the reason even if the
 app-server process exits cleanly afterward.
 
+For long-lived worker tasks, a positive `max_duration_ms` is an absolute
+dispatch deadline that includes boot. When it fires, Torque stops the live
+session and records the run as failed; the task result still flows through the
+task's normal failure policy (`on_fail`, retry budget, escalation, or block).
+
+An operator pause is different from worker failure. Moving an active long-lived
+task to `paused` stops the process, leaves the task `paused`, and records both
+the stopped run and stopped session as `canceled` with an `operator_pause`
+cause. The killed process is terminal evidence, not a resumable live session;
+Torque makes no resume promise for that stopped session.
+
 The legacy path is unchanged: a profile whose `args` carry
 `--dangerously-skip-permissions` boots in full bypass (the adapter already
 plants `bypassPermissions`), and the post-processing step does not downgrade

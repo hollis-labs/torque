@@ -23,7 +23,8 @@ or human operator owns the review/disposition from there.
 kinds (`parent`, `plan`, `internal`, `wait`, `decision`, `issue`, `external`)
 never enqueue internal reviewers, regardless of metadata.
 
-Task reads expose the resolved behavior as `effective_review`:
+HTTP task reads, and MCP task reads using `format=typed`, expose the resolved
+behavior as `effective_review`:
 
 ```json
 {
@@ -34,10 +35,11 @@ Task reads expose the resolved behavior as `effective_review`:
 }
 ```
 
-The HTTP and MCP task create/update paths validate the explicit metadata
-contract. Invalid values such as `{"review":{"mode":"claude"}}`, a non-object
-`review`, or a missing/non-string `review.mode` are rejected as
-`metadata.review` validation errors. If invalid metadata is somehow already
-stored and a task reaches `review`, Torque refuses to enqueue the default
-reviewer and records an observable `[system/end-agent] failed to enqueue`
-comment instead of silently falling back.
+The legacy MCP task-read shape is unchanged. The HTTP and MCP task
+create/update paths validate the explicit metadata contract. Invalid values
+such as `{"review":{"mode":"claude"}}`, a non-object `review`, or a
+missing/non-string `review.mode` are rejected as `metadata.review` validation
+errors. If invalid metadata is somehow already stored and a task reaches
+`review`, Torque refuses to enqueue the default reviewer and records an
+observable `[system/end-agent] failed to enqueue` comment instead of silently
+falling back.

@@ -128,7 +128,7 @@ func TestResolveRepoRoot(t *testing.T) {
 // Dashboards and the orphan sweep rely on Terminal() returning true for
 // any value that should stop appearing in "running" rollups.
 func TestStatus_Terminal(t *testing.T) {
-	for _, s := range []Status{StatusDone, StatusFailed, StatusCrashed} {
+	for _, s := range []Status{StatusDone, StatusFailed, StatusCanceled, StatusCrashed} {
 		assert.True(t, s.Terminal(), "%s should be terminal", s)
 	}
 	for _, s := range []Status{StatusLaunching, StatusRunning} {

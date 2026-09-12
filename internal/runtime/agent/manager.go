@@ -58,6 +58,7 @@ type Manager struct {
 
 	terminalMu              sync.Mutex
 	terminalFailed          map[string]struct{} // sessID → provider terminal failure already classified; state sink/event sink must not downgrade to done
+	terminalCanceled        map[string]struct{} // sessID → operator/scheduler cancellation already classified; state sink/event sink must not downgrade to done
 	terminalSinkBeforeWrite func()
 
 	// wrapperSessions holds the go-agent-wrapper-routed sessions (CW-20260904-0098):
@@ -87,18 +88,19 @@ func NewManager(deps *Dependencies) *Manager {
 		deps = &Dependencies{}
 	}
 	m := &Manager{
-		deps:            deps,
-		idFn:            defaultSessionID,
-		nowFn:           time.Now,
-		pidPollInterval: defaultPidPollInterval,
-		loopbacks:       make(map[string]LoopbackHandle),
-		stderrs:         make(map[string]func()),
-		streams:         make(map[string]func()),
-		bootDirs:        make(map[string]string),
-		pidPollers:      make(map[string]func()),
-		activityFrozen:  make(map[string]struct{}),
-		terminalFailed:  make(map[string]struct{}),
-		wrapperSessions: make(map[string]*wrapperHandle),
+		deps:             deps,
+		idFn:             defaultSessionID,
+		nowFn:            time.Now,
+		pidPollInterval:  defaultPidPollInterval,
+		loopbacks:        make(map[string]LoopbackHandle),
+		stderrs:          make(map[string]func()),
+		streams:          make(map[string]func()),
+		bootDirs:         make(map[string]string),
+		pidPollers:       make(map[string]func()),
+		activityFrozen:   make(map[string]struct{}),
+		terminalFailed:   make(map[string]struct{}),
+		terminalCanceled: make(map[string]struct{}),
+		wrapperSessions:  make(map[string]*wrapperHandle),
 	}
 	emitter := NewSchedulerEmitter(deps.Bus)
 	stateSink := &storeStateSink{deps: deps, manager: m}
@@ -161,9 +163,36 @@ func (m *Manager) terminalFailureProtected(id string) bool {
 	return ok
 }
 
+func (m *Manager) protectTerminalCanceled(ctx context.Context, id string) error {
+	if m == nil || m.deps == nil {
+		return nil
+	}
+	m.terminalMu.Lock()
+	defer m.terminalMu.Unlock()
+	if m.terminalCanceled == nil {
+		m.terminalCanceled = make(map[string]struct{})
+	}
+	m.terminalCanceled[id] = struct{}{}
+
+	exit := -1
+	return m.deps.UpdateSessionState(ctx, id, string(StatusCanceled), 0, &exit)
+}
+
+func (m *Manager) terminalCanceledProtected(id string) bool {
+	if m == nil {
+		return false
+	}
+	_, ok := m.terminalCanceled[id]
+	return ok
+}
+
 func (m *Manager) updateSessionStateFromSink(ctx context.Context, id string, state agentsessions.State, pid int, exit *int) error {
 	m.terminalMu.Lock()
 	defer m.terminalMu.Unlock()
+	if m.terminalCanceledProtected(id) {
+		forcedExit := -1
+		return m.deps.UpdateSessionState(ctx, id, string(StatusCanceled), 0, &forcedExit)
+	}
 	if m.terminalFailureProtected(id) {
 		forcedExit := -1
 		return m.deps.UpdateSessionState(ctx, id, string(StatusFailed), 0, &forcedExit)
@@ -185,6 +214,13 @@ func (m *Manager) normalizeTerminalEvent(ev agentsessions.LifecycleEvent) agents
 	}
 	m.terminalMu.Lock()
 	defer m.terminalMu.Unlock()
+	if m.terminalCanceledProtected(ev.SessionID) {
+		ev.To = agentsessions.State(StatusCanceled)
+		exit := -1
+		ev.ExitCode = &exit
+		delete(m.terminalCanceled, ev.SessionID)
+		return ev
+	}
 	if !m.terminalFailureProtected(ev.SessionID) {
 		return ev
 	}
@@ -1021,6 +1057,8 @@ const (
 	metaKeyWorkspaceDir    = "torque.workspace_dir"
 	metaKeyParentSessionID = "torque.parent_session_id"
 	metaKeyRunID           = "torque.run_id"
+	metaKeyStopCause       = "torque.stop_cause"
+	metaKeyStopReason      = "torque.stop_reason"
 )
 
 func callerSessionMeta(in map[string]string) map[string]string {
@@ -1033,6 +1071,8 @@ func callerSessionMeta(in map[string]string) map[string]string {
 	delete(out, metaKeyWorkspaceDir)
 	delete(out, metaKeyParentSessionID)
 	delete(out, metaKeyRunID)
+	delete(out, metaKeyStopCause)
+	delete(out, metaKeyStopReason)
 	return out
 }
 
