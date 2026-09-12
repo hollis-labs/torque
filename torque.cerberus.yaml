@@ -15,6 +15,7 @@ resources:
         kind: make_standard
         rules:
           target: build-prod
+          output: torque
       command:
         - ./torque
         - serve
