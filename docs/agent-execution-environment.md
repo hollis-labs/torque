@@ -195,6 +195,15 @@ options, and passes the profile model as a `-c model=...` override. The planted
 `CODEX_HOME` still supplies permissions and MCP configuration; `thread/start`
 binds execution to the task worktree.
 
+After materialization, Torque explicitly prepares Codex credentials from the
+launch environment's original `CODEX_HOME/auth.json`, or `HOME/.codex/auth.json`
+when `CODEX_HOME` is unset. It writes a private 0600 copy into the isolated boot
+directory before spawning. Credentials stay out of plans, artifacts and logs;
+normal session teardown removes the copy. A missing, empty or malformed cache
+fails boot with an actionable error. This path requires a file-backed login;
+it does not read OS keyrings or switch the account to API-key billing. Token
+refreshes in the isolated copy are not written back to the operator's cache.
+
 The legacy path is unchanged: a profile whose `args` carry
 `--dangerously-skip-permissions` boots in full bypass (the adapter already
 plants `bypassPermissions`), and the post-processing step does not downgrade

@@ -3,6 +3,7 @@ package agent_boot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,6 +21,7 @@ type codexProcessRecord struct {
 	Home      string   `json:"home"`
 	Methods   []string `json:"methods"`
 	ThreadCWD string   `json:"thread_cwd"`
+	AuthReady bool     `json:"auth_ready"`
 }
 
 // Run the real JSON-RPC runtime against a controlled subprocess. Replacing
@@ -52,6 +54,7 @@ func TestBootCodexProcessCommandAndKickoff(t *testing.T) {
 	require.Equal(t, workdir, rec.ThreadCWD)
 	require.NotEmpty(t, rec.Home)
 	require.NotEqual(t, workdir, rec.Home)
+	require.True(t, rec.AuthReady, "credentials must be available when the process starts")
 	settings, err := os.ReadFile(filepath.Join(rec.Home, "config.toml"))
 	require.NoError(t, err)
 	require.Contains(t, string(settings), `approval_policy = "never"`)
@@ -63,6 +66,11 @@ func TestCodexRPCProcessHelper(t *testing.T) {
 		return
 	}
 	rec := codexProcessRecord{Home: os.Getenv("CODEX_HOME")}
+	// Record only whether the synthetic fixture arrived, never its contents.
+	if auth, err := os.ReadFile(filepath.Join(rec.Home, "auth.json")); err == nil {
+		st, statErr := os.Stat(filepath.Join(rec.Home, "auth.json"))
+		rec.AuthReady = string(auth) == `{"OPENAI_API_KEY":"synthetic-test-credential"}` && statErr == nil && st.Mode().Perm() == 0600
+	}
 	for i, arg := range os.Args {
 		if arg == "--" {
 			rec.Args = os.Args[i+1:]
@@ -98,5 +106,20 @@ func TestCodexRPCProcessHelper(t *testing.T) {
 		if err := encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": result}); err != nil {
 			os.Exit(4)
 		}
+	}
+}
+
+func TestBootCodexMissingAuthFailsBeforeRuntimeAndCleansBootDir(t *testing.T) {
+	cd := composeDeps(t, fakeRuntimeConfig{RuntimeFactoryErr: errors.New("runtime must not be constructed")}, "codex")
+	require.NoError(t, os.Remove(filepath.Join(os.Getenv("CODEX_HOME"), "auth.json")))
+	bootRoot := agent.DefaultBuildDirRoot()
+	before := dirEntrySet(t, bootRoot)
+	sess, err := cd.Manager.Boot(context.Background(), agent.Options{TaskID: "CW-CODEX-NO-AUTH", AgentProfile: "torque-backend", Workdir: t.TempDir(), Mode: agent.ModeLongLived})
+	require.Nil(t, sess)
+	require.ErrorIs(t, err, agent.ErrBootFailed)
+	require.Contains(t, err.Error(), "read Codex login cache")
+	require.NotContains(t, err.Error(), "runtime must not be constructed")
+	for name := range dirEntrySet(t, bootRoot) {
+		require.True(t, before[name], "failed boot left directory %s", name)
 	}
 }

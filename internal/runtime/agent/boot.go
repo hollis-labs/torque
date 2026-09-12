@@ -344,6 +344,13 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 			shutdownLoopbackHandle(loopback)
 			return nil, fmt.Errorf("%w: plant boot dir: %v", ErrBootFailed, err)
 		}
+		if profile.Provider == "codex" {
+			if err := prepareCodexAuth(ctx, env, preparedExecution); err != nil {
+				shutdownLoopbackHandle(loopback)
+				_ = os.RemoveAll(prepared.PlantedBootDir)
+				return nil, fmt.Errorf("%w: prepare Codex authentication: %v", ErrBootFailed, err)
+			}
+		}
 		// A newly planted directory has no interactive Claude trust grant.
 		// Load the operator-selected settings explicitly so headless launches
 		// honor the planted permission mode and auth helper from the outset.
