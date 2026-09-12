@@ -204,6 +204,21 @@ fails boot with an actionable error. This path requires a file-backed login;
 it does not read OS keyrings or switch the account to API-key billing. Token
 refreshes in the isolated copy are not written back to the operator's cache.
 
+Scheduler launches persist `torque.run_id` in session metadata from the actual
+run ID; caller metadata cannot override that link. On daemon startup, recovery
+closes a running invocation as `killed` only when its explicitly linked session
+is crashed and no other live session owns that run. It blocks the task for
+inspection only if it is still automatic, `doing`, and has no newer run.
+Manual tasks and explicit task decisions are preserved. Recovery never replays
+interrupted work automatically. Legacy sessions without that link, and sessions
+whose process ownership is unknown (including PID 0), require separate evidence.
+
+Graceful shutdown drains worker results before stopping the state writer.
+Daemon interruption is distinct from a task transition and does not trigger
+retry hooks. A terminal failed Codex turn stops the long-lived invocation with
+a blocked result and a failed session, preserving the reason even if the
+app-server process exits cleanly afterward.
+
 The legacy path is unchanged: a profile whose `args` carry
 `--dangerously-skip-permissions` boots in full bypass (the adapter already
 plants `bypassPermissions`), and the post-processing step does not downgrade
