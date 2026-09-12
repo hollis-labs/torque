@@ -2571,6 +2571,40 @@ func TestFullStack_TaskList_FilterByBudgetRange(t *testing.T) {
 	require.Equal(t, priceyID, env.Items[0]["id"])
 }
 
+func TestFullStack_TaskReviewPolicyMetadata(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":    "parent review",
+		"metadata": `{"review":{"mode":"parent"}}`,
+	})
+	require.False(t, isErr, "create with parent review should succeed: %s", text)
+	var rec map[string]interface{}
+	parseData(t, text, &rec)
+	id := rec["ID"].(string)
+
+	text, isErr = callTool(t, a, "torque_task_get", map[string]interface{}{
+		"id":     id,
+		"format": "typed",
+	})
+	require.False(t, isErr, "typed get should succeed: %s", text)
+	var got map[string]interface{}
+	parseData(t, text, &got)
+	effective := got["effective_review"].(map[string]interface{})
+	require.Equal(t, "parent", effective["mode"])
+	require.Equal(t, false, effective["enqueue_internal_reviewer"])
+
+	text, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":    "bad review",
+		"metadata": `{"review":{"mode":"claude"}}`,
+	})
+	require.True(t, isErr, "invalid review mode should be rejected")
+	code, msg, field := parseError(t, text)
+	require.Equal(t, "arg_invalid", code)
+	require.Equal(t, "metadata.review", field)
+	require.Contains(t, msg, "invalid metadata.review.mode")
+}
+
 // TestFullStack_TaskCreate_FieldExpansion verifies the ENT-TASK create-field
 // expansion: fields TaskCreateInput already accepted at the service layer
 // but torque_task_create's MCP schema didn't expose.

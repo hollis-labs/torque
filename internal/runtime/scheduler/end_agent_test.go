@@ -112,6 +112,73 @@ func TestEndAgent_EnqueuesOnAgentReview(t *testing.T) {
 	assert.NotEmpty(t, ea["template"], "template path should be recorded")
 }
 
+func TestEndAgent_ParentReviewSkipsInternalReviewer(t *testing.T) {
+	store := setupEndAgentStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	lm := scheduler.NewLifecycleManager(store, bus)
+
+	target := &sqlstore.TaskRecord{
+		ID: "CW-TARGET-PARENT-001", Title: "executor task", Status: "doing",
+		Executor: "cli", AgentProfile: "torque-backend",
+		Kind: "agent", OnDone: "review",
+		Metadata: sql.NullString{String: `{"review":{"mode":"parent"}}`, Valid: true},
+	}
+	require.NoError(t, store.CreateTask(target))
+
+	require.NoError(t, lm.HandleResult(target.ID, 1, &executor.ExecutionResult{
+		Status: "done",
+	}))
+
+	post, err := store.GetTask(target.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "review", post.Status)
+
+	internals, err := store.ListTasks(sqlstore.TaskFilter{
+		Kind:     "internal",
+		ParentID: target.ID,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, internals, "parent-review leaves the task at review without enqueueing a reviewer")
+
+	comments, err := store.ListComments(target.ID)
+	require.NoError(t, err)
+	assert.Empty(t, comments, "parent-review is an explicit success path, not an enqueue failure")
+}
+
+func TestEndAgent_InvalidReviewPolicyDoesNotFallBackToReviewer(t *testing.T) {
+	store := setupEndAgentStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	lm := scheduler.NewLifecycleManager(store, bus)
+
+	target := &sqlstore.TaskRecord{
+		ID: "CW-TARGET-BAD-REVIEW-001", Title: "executor task", Status: "doing",
+		Executor: "cli", AgentProfile: "torque-backend",
+		Kind: "agent", OnDone: "review",
+		Metadata: sql.NullString{String: `{"review":{"mode":"surprise-me"}}`, Valid: true},
+	}
+	require.NoError(t, store.CreateTask(target))
+
+	require.NoError(t, lm.HandleResult(target.ID, 1, &executor.ExecutionResult{
+		Status: "done",
+	}))
+
+	internals, err := store.ListTasks(sqlstore.TaskFilter{
+		Kind:     "internal",
+		ParentID: target.ID,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, internals, "invalid explicit review policy must not silently fall back to the default reviewer")
+
+	comments, err := store.ListComments(target.ID)
+	require.NoError(t, err)
+	require.Len(t, comments, 1)
+	assert.Equal(t, scheduler.EndAgentAuthor, comments[0].Author)
+	assert.Contains(t, comments[0].Content, "invalid review policy")
+	assert.Contains(t, comments[0].Content, "surprise-me")
+}
+
 // kind=internal must NOT recurse into another end-agent — the hook is
 // gated to kind=agent only. Belt-and-suspenders against runaway loops.
 func TestEndAgent_DoesNotEnqueueForInternal(t *testing.T) {

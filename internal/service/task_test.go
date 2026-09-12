@@ -72,6 +72,47 @@ func TestTaskCreate_MaxRetriesDefaultAndExplicitZero(t *testing.T) {
 	assert.Equal(t, []string{dep.ID}, deps)
 }
 
+func TestTaskReviewPolicyMetadataValidation(t *testing.T) {
+	svc := setupService(t)
+
+	parent, err := svc.Task.Create(service.TaskCreateInput{
+		Title:    "parent review",
+		Metadata: map[string]any{"review": map[string]any{"mode": "parent"}},
+	})
+	require.NoError(t, err)
+	policy, err := service.EffectiveReviewPolicyFromJSON(parent.Metadata)
+	require.NoError(t, err)
+	assert.Equal(t, service.ReviewModeParent, policy.Mode)
+	assert.False(t, policy.EnqueueInternalReviewer)
+
+	defaulted, err := svc.Task.Create(service.TaskCreateInput{Title: "default review"})
+	require.NoError(t, err)
+	policy, err = service.EffectiveReviewPolicyFromJSON(defaulted.Metadata)
+	require.NoError(t, err)
+	assert.Equal(t, service.ReviewModeEndAgent, policy.Mode)
+	assert.True(t, policy.EnqueueInternalReviewer)
+
+	parentKind, err := svc.Task.Create(service.TaskCreateInput{
+		Title: "parent kind",
+		Kind:  "parent",
+	})
+	require.NoError(t, err)
+	policy, err = service.EffectiveReviewPolicyForKindFromJSON(parentKind.Kind, parentKind.Metadata)
+	require.NoError(t, err)
+	assert.Equal(t, service.ReviewModeEndAgent, policy.Mode)
+	assert.False(t, policy.EnqueueInternalReviewer, "non-agent kinds never enqueue internal reviewers")
+
+	_, err = svc.Task.Create(service.TaskCreateInput{
+		Title:    "bad review",
+		Metadata: map[string]any{"review": map[string]any{"mode": "claude"}},
+	})
+	require.Error(t, err)
+	var ve *service.ValidationError
+	require.ErrorAs(t, err, &ve)
+	assert.Equal(t, "metadata.review", ve.Field)
+	assert.Contains(t, ve.Message, "invalid metadata.review.mode")
+}
+
 func TestTaskCreate_FacetDefaults(t *testing.T) {
 	svc := setupService(t)
 

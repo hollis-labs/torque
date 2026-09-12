@@ -313,7 +313,12 @@ func (lm *LifecycleManager) transition(task *sqlstore.TaskRecord, runID int64, n
 	// fires AFTER the transition is committed so observers see the
 	// task's new state before any audit-driven side-effects show up.
 	if shouldEnqueueEndAgent(task, newStatus) {
-		lm.enqueueEndAgent(task)
+		policy, err := endAgentReviewPolicy(task)
+		if err != nil {
+			lm.failEndAgentEnqueue(task, "invalid review policy: "+err.Error())
+		} else if policy.EnqueueInternalReviewer {
+			lm.enqueueEndAgent(task)
+		}
 	}
 	if shouldCommentEndAgentFailure(task, newStatus) {
 		lm.commentEndAgentFailure(task, blockedReason)

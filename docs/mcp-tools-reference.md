@@ -147,6 +147,11 @@ Full field reference: ADR-0004 §4. Source: `internal/mcpadapter/task_tools.go`,
 | `torque_task_bulk_delete` | Hard-delete many ids in one call. |
 | `torque_task_bulk_tag` | Add/remove tag slugs across many ids — additive, unlike `update`'s `tags` (which replaces the full set). |
 
+Task metadata may include `{"review":{"mode":"parent"}}` to leave a
+`kind=agent` task in `review` without enqueueing `reviewer-end-agent`.
+Omission preserves the default internal reviewer. Task reads expose the
+resolved behavior as `effective_review`; see `docs/review-routing.md`.
+
 ---
 
 ## Tag

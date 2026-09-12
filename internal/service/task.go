@@ -306,6 +306,9 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	if err := validateRequiredWorkflowMetadata(input.Metadata); err != nil {
 		return nil, err
 	}
+	if err := validateReviewPolicyMetadata(input.Metadata); err != nil {
+		return nil, err
+	}
 
 	// Service-level safety enforcement for CW-20260417-0133. Promoted from
 	// audit-only to FORCE after Template.Instantiate was identified as a
@@ -634,6 +637,9 @@ func (s *TaskService) Update(id string, input TaskUpdateInput) error {
 		return err
 	}
 	if err := validateRequiredWorkflowMetadata(effectiveMetadata); err != nil {
+		return err
+	}
+	if err := validateReviewPolicyMetadata(effectiveMetadata); err != nil {
 		return err
 	}
 

@@ -392,6 +392,16 @@ func validateRequiredWorkflowMetadata(metadata map[string]any) error {
 	return nil
 }
 
+func validateReviewPolicyMetadata(metadata map[string]any) error {
+	if _, err := EffectiveReviewPolicy(metadata); err != nil {
+		return &ValidationError{
+			Field:   "metadata.review",
+			Message: err.Error(),
+		}
+	}
+	return nil
+}
+
 // validateLifecycleEnum validates a single nullable lifecycle enum field.
 // nil means "not set" (accepted; the record builder applies a default for
 // Create, or the column is untouched for Update). An explicit empty string

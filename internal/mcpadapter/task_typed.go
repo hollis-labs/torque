@@ -266,6 +266,7 @@ func typedTaskFull(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, deps []str
 		"depends_on":             deps,
 		"blocked_reason":         t.BlockedReason,
 		"metadata":               metadata,
+		"effective_review":       typedEffectiveReview(t.Kind, t.Metadata),
 		"sprint_id":              typedNullString(t.SprintID),
 		"project_id":             typedNullString(t.ProjectID),
 		"epic_id":                typedNullString(t.EpicID),
@@ -307,28 +308,44 @@ func typedTaskBrief(t sqlstore.TaskRecord, tagSlugs []string, deps []string) typ
 		deps = []string{}
 	}
 	return typedTaskRecord{
-		"id":              t.ID,
-		"title":           t.Title,
-		"status":          t.Status,
-		"priority":        t.Priority,
-		"manual":          t.Manual,
-		"executor":        t.Executor,
-		"launch_profile":  t.LaunchProfile,
-		"agent_profile":   t.AgentProfile,
-		"kind":            t.Kind,
-		"source_type":     t.SourceType,
-		"source_ref":      typedNullString(t.SourceRef),
-		"trust":           t.Trust,
-		"checkpoint_mode": t.CheckpointMode,
-		"parent_id":       typedNullString(t.ParentID),
-		"project_id":      typedNullString(t.ProjectID),
-		"sprint_id":       typedNullString(t.SprintID),
-		"epic_id":         typedNullString(t.EpicID),
-		"collection_id":   typedNullString(t.CollectionID),
-		"tags":            tagSlugs,
-		"depends_on":      deps,
-		"created_at":      t.CreatedAt,
-		"updated_at":      t.UpdatedAt,
+		"id":               t.ID,
+		"title":            t.Title,
+		"status":           t.Status,
+		"priority":         t.Priority,
+		"manual":           t.Manual,
+		"executor":         t.Executor,
+		"launch_profile":   t.LaunchProfile,
+		"agent_profile":    t.AgentProfile,
+		"kind":             t.Kind,
+		"source_type":      t.SourceType,
+		"source_ref":       typedNullString(t.SourceRef),
+		"trust":            t.Trust,
+		"checkpoint_mode":  t.CheckpointMode,
+		"parent_id":        typedNullString(t.ParentID),
+		"project_id":       typedNullString(t.ProjectID),
+		"sprint_id":        typedNullString(t.SprintID),
+		"epic_id":          typedNullString(t.EpicID),
+		"collection_id":    typedNullString(t.CollectionID),
+		"effective_review": typedEffectiveReview(t.Kind, t.Metadata),
+		"tags":             tagSlugs,
+		"depends_on":       deps,
+		"created_at":       t.CreatedAt,
+		"updated_at":       t.UpdatedAt,
+	}
+}
+
+func typedEffectiveReview(kind string, metadata sql.NullString) map[string]any {
+	policy, err := service.EffectiveReviewPolicyForKindFromJSON(kind, metadata)
+	if err != nil {
+		return map[string]any{
+			"mode":                      service.ReviewModeEndAgent,
+			"enqueue_internal_reviewer": false,
+			"error":                     err.Error(),
+		}
+	}
+	return map[string]any{
+		"mode":                      policy.Mode,
+		"enqueue_internal_reviewer": policy.EnqueueInternalReviewer,
 	}
 }
 

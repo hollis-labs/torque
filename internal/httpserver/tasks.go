@@ -88,6 +88,7 @@ func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, dependsOn []str
 		"depends_on":         dependsOn,
 		"blocked_reason":     t.BlockedReason,
 		"metadata":           parseFreeMap(t.Metadata),
+		"effective_review":   effectiveReviewJSON(t.Kind, t.Metadata),
 		"sprint_id":          nullStr(t.SprintID),
 		"project_id":         nullStr(t.ProjectID),
 		"epic_id":            nullStr(t.EpicID),
@@ -253,6 +254,21 @@ func nullTime(nt sql.NullTime) interface{} {
 		return nt.Time
 	}
 	return nil
+}
+
+func effectiveReviewJSON(kind string, metadata sql.NullString) map[string]any {
+	policy, err := service.EffectiveReviewPolicyForKindFromJSON(kind, metadata)
+	if err != nil {
+		return map[string]any{
+			"mode":                      service.ReviewModeEndAgent,
+			"enqueue_internal_reviewer": false,
+			"error":                     err.Error(),
+		}
+	}
+	return map[string]any{
+		"mode":                      policy.Mode,
+		"enqueue_internal_reviewer": policy.EnqueueInternalReviewer,
+	}
 }
 
 // TaskCreateRequest is the JSON request body for POST /api/v1/tasks.

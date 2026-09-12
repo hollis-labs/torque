@@ -1135,6 +1135,38 @@ func TestCreateTaskWithAllFields(t *testing.T) {
 	assert.Equal(t, true, d0["required"])
 }
 
+func TestHTTPTaskReviewPolicyMetadata(t *testing.T) {
+	ts := setupTestServer(t)
+
+	body := `{"title":"Parent review","metadata":{"review":{"mode":"parent"}}}`
+	resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var got map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	resp.Body.Close()
+	effective := got["effective_review"].(map[string]interface{})
+	assert.Equal(t, "parent", effective["mode"])
+	assert.Equal(t, false, effective["enqueue_internal_reviewer"])
+
+	body = `{"title":"Parent kind","kind":"parent"}`
+	resp, err = http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+	got = map[string]interface{}{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	resp.Body.Close()
+	effective = got["effective_review"].(map[string]interface{})
+	assert.Equal(t, "end_agent", effective["mode"])
+	assert.Equal(t, false, effective["enqueue_internal_reviewer"])
+
+	bad := `{"title":"Bad review","metadata":{"review":{"mode":"claude"}}}`
+	resp, err = http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(bad))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+}
+
 func TestUpdateTaskAllNewFields(t *testing.T) {
 	ts := setupTestServer(t)
 
