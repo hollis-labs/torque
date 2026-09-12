@@ -4,7 +4,7 @@ import { chromium } from 'playwright'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
-const BASE = process.env.BASE || 'http://localhost:5175'
+const BASE = process.env.BASE || 'http://localhost:5182'
 const API  = process.env.API  || 'http://localhost:8990'
 const OUT  = join(
   process.cwd(),

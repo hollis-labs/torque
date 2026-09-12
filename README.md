@@ -29,6 +29,12 @@ torque version
 
 `torque serve` starts the HTTP API, scheduler, and GUI on the configured HTTP port.
 
+The standalone Vite frontend (`cd apps/gui && npm run dev`, or the Cerberus
+resource `torque-frontend-dev`) uses port **5182** and refuses to silently move
+to another port if it is occupied. The Cerberus resource proxies API requests
+to the dev API on 8992; a direct Vite launch defaults to the API on 8990 unless
+`TORQUE_GUI_API_ORIGIN` is set.
+
 `torque mcp` starts the MCP server over stdio. In that mode there is no in-process scheduler instance, so scheduler MCP tools report that the scheduler is not running in that process.
 Opt-in MCP tool groups are registered when the MCP process starts, based on persisted `features.*` settings in the backing DB. If you enable a new feature such as `features.collections`, restart the MCP process so `tools/list` picks up the new `torque_collection_*` tools.
 
