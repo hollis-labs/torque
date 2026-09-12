@@ -324,6 +324,78 @@ func TestListTasks(t *testing.T) {
 	assert.Len(t, tasks, 2)
 }
 
+func TestHTTP_TaskList_PaginationMetadata(t *testing.T) {
+	ts := setupTestServer(t)
+
+	alphaID := httpCreateTask(t, ts.URL, "alpha page")
+	betaID := httpCreateTask(t, ts.URL, "beta page")
+	_ = httpCreateTask(t, ts.URL, "other page")
+	req, err := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/tasks/"+alphaID,
+		bytes.NewBufferString(`{"priority":0}`))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	resp.Body.Close()
+
+	first := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks?search=page&priority=0,2&limit=1")
+	require.Len(t, first.tasks, 1)
+	assert.Equal(t, alphaID, first.tasks[0]["id"])
+	assert.Equal(t, 3, first.total)
+	assert.Equal(t, 1, first.returned)
+	assert.Equal(t, 1, first.limit)
+	assert.Equal(t, 0, first.offset)
+	assert.True(t, first.hasMore)
+	assert.Equal(t, 1, first.nextOffset)
+	require.NotNil(t, first.continuation)
+	assert.Equal(t, 1, first.continuation["limit"])
+	assert.Equal(t, 1, first.continuation["offset"])
+
+	second := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks?search=page&priority=0,2&limit=1&offset=1")
+	require.Len(t, second.tasks, 1)
+	assert.Equal(t, betaID, second.tasks[0]["id"])
+	assert.Equal(t, 3, second.total)
+	assert.True(t, second.hasMore)
+	assert.Equal(t, 2, second.nextOffset)
+
+	boundary := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks?search=page&limit=3")
+	assert.Len(t, boundary.tasks, 3)
+	assert.Equal(t, 3, boundary.total)
+	assert.False(t, boundary.hasMore)
+	assert.Nil(t, boundary.nextOffset)
+	assert.Nil(t, boundary.continuation)
+
+	empty := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks?search=page&limit=2&offset=5")
+	assert.Empty(t, empty.tasks)
+	assert.Equal(t, 3, empty.total)
+	assert.Equal(t, 0, empty.returned)
+	assert.False(t, empty.hasMore)
+}
+
+func TestHTTP_TaskList_DefaultLimitAndCap(t *testing.T) {
+	ts := setupTestServer(t)
+
+	for i := 0; i < 205; i++ {
+		httpCreateTask(t, ts.URL, "default cap")
+	}
+
+	defaultPage := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks")
+	assert.Len(t, defaultPage.tasks, 50)
+	assert.Equal(t, 205, defaultPage.total)
+	assert.Equal(t, 50, defaultPage.returned)
+	assert.Equal(t, 50, defaultPage.limit)
+	assert.True(t, defaultPage.hasMore)
+	assert.Equal(t, 50, defaultPage.nextOffset)
+
+	capped := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks?limit=999")
+	assert.Len(t, capped.tasks, 200)
+	assert.Equal(t, 205, capped.total)
+	assert.Equal(t, 200, capped.limit)
+	assert.True(t, capped.hasMore)
+	assert.Equal(t, 200, capped.nextOffset)
+}
+
 func TestHTTP_TaskList_StrictPriorityQuery(t *testing.T) {
 	ts := setupTestServer(t)
 
@@ -371,6 +443,7 @@ func TestHTTP_TaskList_StrictQueryValidation(t *testing.T) {
 	}{
 		{query: "limit=abc", field: "limit"},
 		{query: "offset=1.2", field: "offset"},
+		{query: "offset=-1", field: "offset"},
 		{query: "manual=sometimes", field: "manual"},
 		{query: "include_internal=maybe", field: "include_internal"},
 		{query: "kind=internal&include_internal=maybe", field: "include_internal"},
@@ -438,6 +511,57 @@ func httpTaskListIDs(t *testing.T, url string) []string {
 		out = append(out, task.(map[string]interface{})["id"].(string))
 	}
 	return out
+}
+
+type decodedHTTPTaskList struct {
+	tasks        []map[string]interface{}
+	total        int
+	returned     int
+	limit        int
+	offset       int
+	hasMore      bool
+	nextOffset   interface{}
+	continuation map[string]interface{}
+}
+
+func decodeHTTPTaskList(t *testing.T, url string) decodedHTTPTaskList {
+	t.Helper()
+	resp, err := http.Get(url)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	rawTasks := result["tasks"].([]interface{})
+	tasks := make([]map[string]interface{}, 0, len(rawTasks))
+	for _, raw := range rawTasks {
+		tasks = append(tasks, raw.(map[string]interface{}))
+	}
+	var continuation map[string]interface{}
+	if raw, ok := result["continuation"].(map[string]interface{}); ok {
+		continuation = raw
+		if n, ok := continuation["limit"].(float64); ok {
+			continuation["limit"] = int(n)
+		}
+		if n, ok := continuation["offset"].(float64); ok {
+			continuation["offset"] = int(n)
+		}
+	}
+	nextOffset := result["next_offset"]
+	if n, ok := nextOffset.(float64); ok {
+		nextOffset = int(n)
+	}
+	return decodedHTTPTaskList{
+		tasks:        tasks,
+		total:        int(result["total"].(float64)),
+		returned:     int(result["returned"].(float64)),
+		limit:        int(result["limit"].(float64)),
+		offset:       int(result["offset"].(float64)),
+		hasMore:      result["has_more"].(bool),
+		nextOffset:   nextOffset,
+		continuation: continuation,
+	}
 }
 
 func decodeHTTPError(t *testing.T, resp *http.Response) map[string]string {

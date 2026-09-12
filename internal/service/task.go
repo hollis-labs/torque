@@ -518,6 +518,10 @@ func (s *TaskService) List(filter sqlstore.TaskFilter) ([]sqlstore.TaskRecord, e
 	return s.store.ListTasks(filter)
 }
 
+func (s *TaskService) ListPage(filter sqlstore.TaskFilter) (sqlstore.TaskListResult, error) {
+	return s.store.ListTasksPage(filter)
+}
+
 // TaskUpdateInput wraps the store-level TaskUpdate and adds tags/depends_on
 // fields. The store-level TaskUpdate no longer carries these because they
 // live in link tables (task_tags, task_dependencies), not columns on tasks.

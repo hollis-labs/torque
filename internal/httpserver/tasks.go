@@ -15,6 +15,11 @@ import (
 	"github.com/hollis-labs/torque/internal/service"
 )
 
+const (
+	defaultHTTPTaskListLimit = 50
+	maxHTTPTaskListLimit     = 200
+)
+
 // taskJSON converts a TaskRecord to a JSON-friendly map with snake_case keys
 // and proper null handling for sql.Null* types. Tags, the run aggregate,
 // subtodos, and collectionName are passed in so the caller can batch-load
@@ -530,7 +535,9 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 			writeFieldError(w, http.StatusBadRequest, "limit", err.Error())
 			return
 		}
-		filter.Limit = n
+		filter.Limit = boundedHTTPTaskListLimit(n)
+	} else {
+		filter.Limit = defaultHTTPTaskListLimit
 	}
 	if _, ok := q["offset"]; ok {
 		n, err := parseTaskListInt(q.Get("offset"), "offset")
@@ -538,14 +545,19 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 			writeFieldError(w, http.StatusBadRequest, "offset", err.Error())
 			return
 		}
+		if n < 0 {
+			writeFieldError(w, http.StatusBadRequest, "offset", "offset must be greater than or equal to 0")
+			return
+		}
 		filter.Offset = n
 	}
 
-	tasks, err := s.svc.Task.List(filter)
+	result, err := s.svc.Task.ListPage(filter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	tasks := result.Tasks
 	if tasks == nil {
 		tasks = []sqlstore.TaskRecord{}
 	}
@@ -554,13 +566,31 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// `total` matches the FE contract (api.ts's `listTasks` return type).
-	// While no pagination is applied from this handler, `len(out)` equals the
-	// full match count. If/when Limit/Offset get plumbed end-to-end, replace
-	// this with a separate COUNT query using the same filter.
+	hasMore := filter.Offset+len(out) < result.Total
+	var nextOffset interface{}
+	var continuation interface{}
+	if hasMore {
+		next := filter.Offset + len(out)
+		nextOffset = next
+		continuation = map[string]interface{}{
+			"limit":  filter.Limit,
+			"offset": next,
+		}
+	} else {
+		nextOffset = nil
+		continuation = nil
+	}
+	// Offset pagination reports an exact count for the matching cohort, but
+	// concurrent writes between requests can still shift later pages.
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"tasks": out,
-		"total": len(out),
+		"tasks":        out,
+		"total":        result.Total,
+		"returned":     len(out),
+		"limit":        filter.Limit,
+		"offset":       filter.Offset,
+		"has_more":     hasMore,
+		"next_offset":  nextOffset,
+		"continuation": continuation,
 	})
 }
 
@@ -628,6 +658,16 @@ func parseTaskListInt(raw, field string) (int, error) {
 		return 0, taskListQueryError{field: field, message: field + " must be an integer"}
 	}
 	return int(n), nil
+}
+
+func boundedHTTPTaskListLimit(n int) int {
+	if n <= 0 {
+		return defaultHTTPTaskListLimit
+	}
+	if n > maxHTTPTaskListLimit {
+		return maxHTTPTaskListLimit
+	}
+	return n
 }
 
 func parseTaskListBool(raw, field string) (bool, error) {

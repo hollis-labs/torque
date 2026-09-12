@@ -21,6 +21,7 @@ func setupTestStore(t *testing.T) *sqlstore.Store {
 
 func strPtr(s string) *string { return &s }
 func intPtr(i int) *int       { return &i }
+func boolPtr(b bool) *bool    { return &b }
 
 func sampleTask(id string) *sqlstore.TaskRecord {
 	return &sqlstore.TaskRecord{
@@ -74,6 +75,92 @@ func TestListTasks(t *testing.T) {
 	// lower priority value = higher priority, should come first
 	assert.Equal(t, "CW-20260407-0002", tasks[0].ID)
 	assert.Equal(t, "CW-20260407-0001", tasks[1].ID)
+}
+
+func TestListTasksPage_ReturnsExactFilteredTotal(t *testing.T) {
+	store := setupTestStore(t)
+	for _, slug := range []string{"torque", "api"} {
+		require.NoError(t, store.CreateTag(&sqlstore.TagRecord{Slug: slug, Name: slug, Color: "zinc"}))
+	}
+
+	create := func(id, title string, priority int, manual bool, kind string, tags ...string) {
+		t.Helper()
+		task := sampleTask(id)
+		task.Title = title
+		task.Priority = priority
+		task.Manual = manual
+		task.Kind = kind
+		require.NoError(t, store.CreateTask(task))
+		if len(tags) > 0 {
+			require.NoError(t, store.SetTaskTags(id, tags))
+		}
+	}
+
+	create("CW-20260911-1001", "alpha visible", 0, true, "agent", "torque", "api")
+	create("CW-20260911-1002", "beta visible", 1, true, "agent", "torque", "api")
+	create("CW-20260911-1003", "gamma visible", 1, true, "agent", "torque")
+	create("CW-20260911-1004", "delta auto", 1, false, "agent", "torque", "api")
+	create("CW-20260911-1005", "epsilon internal", 1, true, "internal", "torque", "api")
+
+	page, err := store.ListTasksPage(sqlstore.TaskFilter{
+		Priorities:      []int{0, 1, 1},
+		Manual:          boolPtr(true),
+		TagSlugs:        []string{" torque ", "api", "torque"},
+		ExcludeInternal: true,
+		Limit:           1,
+		Offset:          1,
+	})
+	require.NoError(t, err)
+	require.Len(t, page.Tasks, 1)
+	assert.Equal(t, 2, page.Total)
+	assert.Equal(t, "CW-20260911-1002", page.Tasks[0].ID)
+
+	boundary, err := store.ListTasksPage(sqlstore.TaskFilter{TagSlugs: []string{"torque", "api"}, ExcludeInternal: true, Limit: 2})
+	require.NoError(t, err)
+	assert.Len(t, boundary.Tasks, 2)
+	assert.Equal(t, 3, boundary.Total)
+
+	empty, err := store.ListTasksPage(sqlstore.TaskFilter{TagSlugs: []string{"torque", "api"}, ExcludeInternal: true, Limit: 2, Offset: 5})
+	require.NoError(t, err)
+	assert.Empty(t, empty.Tasks)
+	assert.Equal(t, 3, empty.Total)
+}
+
+func TestListTasksPage_CountIgnoresCursorPosition(t *testing.T) {
+	store := setupTestStore(t)
+
+	for _, id := range []string{"CW-20260911-2001", "CW-20260911-2002", "CW-20260911-2003"} {
+		task := sampleTask(id)
+		task.Priority = 1
+		require.NoError(t, store.CreateTask(task))
+	}
+
+	page, err := store.ListTasksPage(sqlstore.TaskFilter{
+		SortBy:         "priority",
+		SortDir:        "asc",
+		AfterSortValue: "1",
+		AfterID:        "CW-20260911-2001",
+		Limit:          1,
+	})
+	require.NoError(t, err)
+	require.Len(t, page.Tasks, 1)
+	assert.Equal(t, "CW-20260911-2002", page.Tasks[0].ID)
+	assert.Equal(t, 3, page.Total)
+}
+
+func TestListTasks_OffsetWithoutLimitWorksOnSQLite(t *testing.T) {
+	store := setupTestStore(t)
+
+	for _, id := range []string{"CW-20260911-3001", "CW-20260911-3002"} {
+		task := sampleTask(id)
+		task.Priority = 1
+		require.NoError(t, store.CreateTask(task))
+	}
+
+	tasks, err := store.ListTasks(sqlstore.TaskFilter{Offset: 1})
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	assert.Equal(t, "CW-20260911-3002", tasks[0].ID)
 }
 
 func TestListTasksPrioritySetDistinguishesOmittedAndZero(t *testing.T) {

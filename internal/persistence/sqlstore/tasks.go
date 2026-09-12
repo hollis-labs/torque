@@ -301,6 +301,11 @@ type TaskFilter struct {
 	AfterID        string
 }
 
+type TaskListResult struct {
+	Tasks []TaskRecord
+	Total int
+}
+
 // TaskUpdate holds optional fields to update; nil pointer = no change.
 type TaskUpdate struct {
 	Title             *string
@@ -554,6 +559,46 @@ func normalizeInts(values []int) []int {
 // the cursor's (sort value, id) position (PRIM-001/DEC-001 keyset
 // pagination).
 func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
+	where, args, err := s.taskListPredicates(f)
+	if err != nil {
+		return nil, err
+	}
+	return s.listTasksRows(f, where, args)
+}
+
+func (s *Store) ListTasksPage(f TaskFilter) (TaskListResult, error) {
+	countFilter := f
+	countFilter.Limit = 0
+	countFilter.Offset = 0
+	countFilter.AfterSortValue = ""
+	countFilter.AfterID = ""
+
+	where, args, err := s.taskListPredicates(countFilter)
+	if err != nil {
+		return TaskListResult{}, err
+	}
+
+	countQ := `SELECT COUNT(*) FROM tasks`
+	if len(where) > 0 {
+		countQ += " WHERE " + strings.Join(where, " AND ")
+	}
+	var total int
+	if err := s.ReadDB().QueryRow(countQ, args...).Scan(&total); err != nil {
+		return TaskListResult{}, err
+	}
+
+	where, args, err = s.taskListPredicates(f)
+	if err != nil {
+		return TaskListResult{}, err
+	}
+	tasks, err := s.listTasksRows(f, where, args)
+	if err != nil {
+		return TaskListResult{}, err
+	}
+	return TaskListResult{Tasks: tasks, Total: total}, nil
+}
+
+func (s *Store) taskListPredicates(f TaskFilter) ([]string, []any, error) {
 	var where []string
 	var args []any
 
@@ -672,7 +717,7 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 		where = append(where, s.timestampSortKey("created_at")+" >= ?")
 		bound, err := s.timestampArg(f.CreatedAfter)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		args = append(args, bound)
 	}
@@ -680,7 +725,7 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 		where = append(where, s.timestampSortKey("created_at")+" <= ?")
 		bound, err := s.timestampArg(f.CreatedBefore)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		args = append(args, bound)
 	}
@@ -688,7 +733,7 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 		where = append(where, s.timestampSortKey("updated_at")+" >= ?")
 		bound, err := s.timestampArg(f.UpdatedAfter)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		args = append(args, bound)
 	}
@@ -696,7 +741,7 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 		where = append(where, s.timestampSortKey("updated_at")+" <= ?")
 		bound, err := s.timestampArg(f.UpdatedBefore)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		args = append(args, bound)
 	}
@@ -744,11 +789,11 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 	if sortCol != "" && f.AfterID != "" {
 		arg, err := taskCursorArg(f.SortBy, f.AfterSortValue)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		arg, err = s.timestampCursorArg(sortCol, arg)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		cmp := ">"
 		if desc {
@@ -760,6 +805,13 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 		where = append(where, fmt.Sprintf("(%s %s ? OR (%s = ? AND id > ?))", sortKey, cmp, sortKey))
 		args = append(args, arg, arg, f.AfterID)
 	}
+	return where, args, nil
+}
+
+func (s *Store) listTasksRows(f TaskFilter, where []string, args []any) ([]TaskRecord, error) {
+	sortCol := taskSortColumn(f.SortBy)
+	sortKey := s.timestampSortKey(sortCol)
+	desc := strings.EqualFold(f.SortDir, "desc")
 
 	q := `SELECT ` + taskSelectCols + ` FROM tasks`
 	if len(where) > 0 {
@@ -772,10 +824,14 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 		}
 		q += fmt.Sprintf(" ORDER BY %s %s, id ASC", sortKey, dir)
 	} else {
-		q += " ORDER BY priority ASC, created_at ASC"
+		q += " ORDER BY priority ASC, created_at ASC, id ASC"
 	}
 	if f.Limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", f.Limit)
+	} else if f.Offset > 0 {
+		if _, sqlite := s.dialect.(sqliteDialect); sqlite {
+			q += " LIMIT -1"
+		}
 	}
 	if f.Offset > 0 {
 		q += fmt.Sprintf(" OFFSET %d", f.Offset)

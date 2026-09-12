@@ -36,6 +36,18 @@ priority value, not omission. Repeated query keys, malformed query strings,
 blank/overflow/non-integer priority members, malformed `limit`/`offset`,
 invalid `manual`/`include_internal` aliases, unknown keys, and MCP-only keys
 that HTTP does not implement yet all return `400` rather than being ignored.
+Task lists are offset-paginated with a bounded default page size of 50 and a
+maximum effective `limit` of 200; `limit<=0` uses the default, oversized limits
+are clamped, and negative offsets are rejected. The response keeps the legacy
+`tasks` array and `total` field, where `total` is the full matching cohort
+under the supplied filters, not the returned page length. Page-specific
+metadata is additive: `returned`, effective `limit`/`offset`, `has_more`,
+`next_offset`, and `continuation` describe the current page and the next
+request. Offset pagination is not a snapshot: concurrent writes between
+requests can move later pages.
+Clients that need a complete refreshed task set, including the GUI shared API
+client, must follow `continuation` until `has_more=false`; clients that pass a
+positive `limit` should treat it as their own overall cap.
 
 ## MCP
 
