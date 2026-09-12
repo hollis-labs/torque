@@ -630,8 +630,8 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	// rather than the tick ctx because the tick ctx goes away after Tick
 	// returns and we don't want its cancellation to kill running workers;
 	// scheduler Stop explicitly calls cancelAll to drain.
-	dispatchCtx, dispatchCancel := context.WithCancel(context.Background())
-	s.cancels.register(task.ID, dispatchCancel)
+	dispatchCtx, dispatchCancelCause := context.WithCancelCause(context.Background())
+	s.cancels.register(task.ID, dispatchCancelCause)
 
 	// Submit to worker pool
 	capturedRunID := runID
@@ -640,7 +640,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	capturedWorktree := wtPath
 	capturedRepoHint := task.WorkingDir
 	capturedDispatchCtx := dispatchCtx
-	capturedDispatchCancel := dispatchCancel
+	capturedDispatchCancel := dispatchCancelCause
 	s.pool.Submit(task.ID, runID, func(wctx context.Context) (*executor.ExecutionResult, error) {
 		// runCtx merges pool-shutdown cancellation (wctx) and per-task
 		// cancellation (capturedDispatchCtx). Either source cancelling
@@ -649,7 +649,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		runCtx, runCancel := mergeContexts(wctx, capturedDispatchCtx)
 		defer runCancel()
 		defer s.cancels.deregister(capturedTaskID)
-		defer capturedDispatchCancel() // release context.Background goroutine
+		defer capturedDispatchCancel(context.Canceled) // release context.Background goroutine
 		defer s.heartbeat.Deregister(capturedWorkerID)
 		defer s.progressHeartbeat.stop(capturedRunID)
 		defer s.progressThrottler.release(capturedRunID)
@@ -722,6 +722,58 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		}
 
 		result, err := exec.Run(runCtx, job, cb)
+
+		if capturedDispatchCtx.Err() != nil && isDaemonShutdownCancel(capturedDispatchCtx) && !definitiveCompletionResult(result) {
+			reason := "daemon shutdown interrupted active worker; partial work may exist; inspect run/session logs and resume or repair manually"
+			if err := s.stateWriter.Submit(context.Background(), "scheduler_run_interrupted", func(tx *sqlstore.WriteTx) error {
+				var taskStatus string
+				var manual int
+				if err := tx.QueryRow(`SELECT status, manual FROM tasks WHERE id = ?`, capturedTaskID).Scan(&taskStatus, &manual); err != nil {
+					return err
+				}
+				var newerRuns int
+				if err := tx.QueryRow(
+					`SELECT COUNT(*) FROM runs WHERE task_id = ? AND id > ?`,
+					capturedTaskID, capturedRunID,
+				).Scan(&newerRuns); err != nil {
+					return err
+				}
+				res, err := tx.Exec(
+					`UPDATE runs SET status = ?, ended_at = ?, error_message = ?
+					 WHERE id = ? AND status = ?`,
+					sqlstore.RunStatusKilled, time.Now().UTC(), reason, capturedRunID, sqlstore.RunStatusRunning,
+				)
+				if err != nil {
+					return err
+				}
+				n, err := res.RowsAffected()
+				if err != nil {
+					return err
+				}
+				if n == 0 {
+					return nil
+				}
+				_, err = tx.AppendRunEvent(&sqlstore.RunEventRecord{
+					RunID:   sql.NullInt64{Int64: capturedRunID, Valid: true},
+					TaskID:  capturedTaskID,
+					Type:    "run_interrupted",
+					Payload: fmt.Sprintf(`{"reason":%q}`, reason),
+				})
+				if err != nil {
+					return err
+				}
+				if taskStatus != "doing" || manual != 0 || newerRuns != 0 {
+					return nil
+				}
+				if err := tx.TransitionTaskWithReason(capturedTaskID, "blocked", reason); err != nil {
+					return err
+				}
+				return nil
+			}); err != nil {
+				log.Printf("[scheduler] run interruption write failed for %s (run %d): %v", capturedTaskID, capturedRunID, err)
+			}
+			return &executor.ExecutionResult{Status: "canceled", Reason: reason}, nil
+		}
 
 		// Cancellation branch. When the per-task dispatch context is
 		// cancelled (DB transition out of doing) or the pool is shutting
@@ -805,6 +857,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 				CompletionTokens: result.Tokens.CompletionTokens,
 				Cost:             result.Cost,
 				ExitCode:         result.ExitCode,
+				ErrorMessage:     result.Reason,
 			}); err != nil {
 				return err
 			}
@@ -1032,7 +1085,9 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			log.Println("[scheduler] stopping...")
-			return s.Stop(ctx)
+			stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			return s.Stop(stopCtx)
 		case <-ticker.C:
 			s.DrainResults()
 			if err := s.Tick(ctx); err != nil {
@@ -1055,6 +1110,7 @@ func (s *Scheduler) Stop(ctx context.Context) error {
 	if err := s.pool.Shutdown(ctx); err != nil {
 		return fmt.Errorf("scheduler: shutdown workers: %w", err)
 	}
+	s.DrainResults()
 	s.bus.Close()
 	return nil
 }
@@ -1372,6 +1428,18 @@ func runCompletedEventPayload(result *executor.ExecutionResult) string {
 		return fmt.Sprintf(`{"status":%q,"cost":%v}`, result.Status, result.Cost)
 	}
 	return string(b)
+}
+
+func definitiveCompletionResult(result *executor.ExecutionResult) bool {
+	if result == nil {
+		return false
+	}
+	switch result.Status {
+	case "done", "review", "blocked":
+		return true
+	default:
+		return false
+	}
 }
 
 // formatSkipCounts renders a PickDecisions.Counts map as a stable

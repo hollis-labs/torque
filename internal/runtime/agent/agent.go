@@ -179,12 +179,22 @@ type Options struct {
 	// than constructing it themselves; the wrapper allocates the chan,
 	// reads from it in a goroutine, and closes it after Boot returns.
 	eventFanout chan<- llmtypes.StreamEvent
+
+	// terminalFailure carries non-lossy turn-terminal failures, currently
+	// from Codex JSON-RPC turn/completed notifications, to long-lived
+	// scheduler workers. It is private for the same reason as eventFanout.
+	terminalFailure chan<- string
 }
 
 // withEventFanout sets the unexported eventFanout field. Used by the
 // Executor.Run wrapper to thread the OneShot token-usage chan into Boot.
 func (o Options) withEventFanout(c chan<- llmtypes.StreamEvent) Options {
 	o.eventFanout = c
+	return o
+}
+
+func (o Options) withTerminalFailure(c chan<- string) Options {
+	o.terminalFailure = c
 	return o
 }
 

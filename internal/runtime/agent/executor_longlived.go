@@ -83,6 +83,7 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 	// we only care about "did anything arrive since the last timer fire?",
 	// not the count.
 	activityCh := make(chan struct{}, 1)
+	terminalFailureCh := make(chan string, 1)
 
 	// turnDoneCh signals the reminder goroutine on every EventDone the
 	// drain observes — the turn-boundary signal for streaming-stdio
@@ -136,7 +137,7 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 		}
 	}()
 
-	opts = opts.withEventFanout(fanout)
+	opts = opts.withEventFanout(fanout).withTerminalFailure(terminalFailureCh)
 	sess, bootErr := Boot(ctx, e.deps, opts)
 	if bootErr != nil {
 		// Boot failed before Start succeeded — the lib's terminal-state
@@ -169,7 +170,12 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 	reminderWG.Add(1)
 	go runReminderPump(ctx, managerTurnSender{mgr: e.deps.Sessions}, e.deps.Reminder, opts.TaskID, sess, turnDoneCh, &reminderWG)
 
-	outcome := awaitLongLivedCompletion(ctx, e.deps, opts.TaskID, sess.ID, activityCh, inactivityThreshold, hardCeiling)
+	outcome := awaitLongLivedCompletion(ctx, e.deps, opts.TaskID, sess.ID, activityCh, terminalFailureCh, inactivityThreshold, hardCeiling)
+	if outcome.Kind == outcomeTerminalFailure {
+		if err := e.deps.Sessions.protectTerminalFailure(context.Background(), sess.ID); err != nil {
+			log.Printf("agent: runLongLived protect terminal-failed session %s failed: %v", sess.ID, err)
+		}
+	}
 
 	// Stop the live session. teardownSession (registered as the lib's
 	// terminal-state hook) closes the stream fanout, which drains any
@@ -184,6 +190,13 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 		log.Printf("agent: runLongLived stop session %s failed: %v", sess.ID, err)
 	}
 	cancel()
+	if outcome.Kind == outcomeTerminalFailure {
+		waitCtx, waitCancel := context.WithTimeout(context.Background(), stopGraceWindow)
+		if _, err := e.deps.Sessions.Wait(waitCtx, sess.ID); err != nil && !errors.Is(err, ErrSessionNotRunning) && !errors.Is(err, context.DeadlineExceeded) {
+			log.Printf("agent: runLongLived wait terminal-failed session %s failed: %v", sess.ID, err)
+		}
+		waitCancel()
+	}
 	close(fanout)
 	fanoutWG.Wait()
 
@@ -273,6 +286,8 @@ type longLivedOutcome struct {
 	// (toExecutionResult) just renders the Error() string and is
 	// agnostic to either source.
 	CauseErr error
+
+	TerminalFailure string
 }
 
 type longLivedOutcomeKind int
@@ -283,13 +298,14 @@ const (
 	outcomeIdle
 	outcomeHardCeiling
 	outcomeCtxCanceled
+	outcomeTerminalFailure
 )
 
 // awaitLongLivedCompletion polls the worker's task.Status and watches the
 // activity channel + hard ceiling + ctx. Returns when any of the four
 // completion signals fires. Polling cadence is statusPollInterval (5s by
 // default); the inactivity timer is in-memory and reset on every event.
-func awaitLongLivedCompletion(ctx context.Context, deps *Dependencies, taskID, sessID string, activityCh <-chan struct{}, inactivityThreshold, hardCeiling time.Duration) longLivedOutcome {
+func awaitLongLivedCompletion(ctx context.Context, deps *Dependencies, taskID, sessID string, activityCh <-chan struct{}, terminalFailureCh <-chan string, inactivityThreshold, hardCeiling time.Duration) longLivedOutcome {
 	statusTicker := time.NewTicker(statusPollInterval)
 	defer statusTicker.Stop()
 
@@ -335,6 +351,9 @@ func awaitLongLivedCompletion(ctx context.Context, deps *Dependencies, taskID, s
 				}
 			}
 			inactivityTimer.Reset(inactivityThreshold)
+
+		case msg := <-terminalFailureCh:
+			return longLivedOutcome{Kind: outcomeTerminalFailure, TerminalFailure: msg}
 
 		case <-inactivityTimer.C:
 			return longLivedOutcome{Kind: outcomeIdle, IdleFor: inactivityThreshold}
@@ -439,9 +458,18 @@ func (o longLivedOutcome) toExecutionResult(result *executor.ExecutionResult, st
 		} else {
 			result.Reason = "execution canceled"
 		}
+	case outcomeTerminalFailure:
+		result.Status = "blocked"
+		result.Reason = o.TerminalFailure
+		if result.Reason == "" {
+			result.Reason = "terminal provider turn failed"
+		}
 	default:
 		result.Status = "failed"
 		result.Reason = "unknown long-lived outcome"
+	}
+	if streamErr != nil && result.Reason == streamErr.Error() {
+		return result
 	}
 	if streamErr != nil && result.Reason != "" {
 		result.Reason = streamErr.Error() + " | " + result.Reason

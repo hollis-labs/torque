@@ -116,3 +116,71 @@ func TestQueue_SavepointIsolation(t *testing.T) {
 	require.EqualValues(t, 1, stats.Completed)
 	require.EqualValues(t, 1, stats.Failed)
 }
+
+func TestQueue_SubmitAfterRunExitFailsPromptly(t *testing.T) {
+	store := setupStore(t)
+	q := writeq.New(store, writeq.Options{QueueSize: 1})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_ = q.Run(ctx)
+		close(done)
+	}()
+	cancel()
+	<-done
+
+	submitDone := make(chan error, 1)
+	go func() {
+		submitDone <- q.Submit(context.Background(), "late", func(tx *sqlstore.WriteTx) error {
+			return nil
+		})
+	}()
+
+	select {
+	case err := <-submitDone:
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "state write queue stopped")
+	case <-time.After(time.Second):
+		t.Fatal("late Submit hung after queue Run exited")
+	}
+}
+
+func TestQueue_CommittedAckWinsShutdownRace(t *testing.T) {
+	store := setupStore(t)
+	seedTask(t, store, "CW-WQ-RACE")
+	q := writeq.New(store, writeq.Options{
+		QueueSize:   8,
+		MaxBatch:    1,
+		BatchWindow: time.Hour,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = q.Run(ctx) }()
+
+	errCh := make(chan error, 1)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	go func() {
+		errCh <- q.Submit(context.Background(), "commit_then_stop", func(tx *sqlstore.WriteTx) error {
+			close(started)
+			<-release
+			return tx.TransitionTask("CW-WQ-RACE", "doing")
+		})
+	}()
+	<-started
+	q.Stop()
+	close(release)
+
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("Submit with committed write did not receive ack")
+	}
+
+	task, err := store.GetTask("CW-WQ-RACE")
+	require.NoError(t, err)
+	require.Equal(t, "doing", task.Status)
+}

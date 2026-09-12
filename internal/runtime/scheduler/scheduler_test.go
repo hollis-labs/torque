@@ -6,6 +6,7 @@ import (
 	"log"
 	"path/filepath"
 	"regexp"
+	"sync"
 	"testing"
 	"time"
 
@@ -51,6 +52,197 @@ func setupScheduler(t *testing.T) (*scheduler.Scheduler, *sqlstore.Store, *execu
 	})
 
 	return sched, store, mock
+}
+
+type cancelResultExecutor struct {
+	mu       sync.Mutex
+	result   *executor.ExecutionResult
+	runCount int
+}
+
+func (e *cancelResultExecutor) Name() string { return "cause" }
+
+func (e *cancelResultExecutor) Run(ctx context.Context, _ *executor.ExecutionJob, _ executor.EventCallback) (*executor.ExecutionResult, error) {
+	e.mu.Lock()
+	e.runCount++
+	e.mu.Unlock()
+	<-ctx.Done()
+	if e.result == nil {
+		return nil, nil
+	}
+	cp := *e.result
+	return &cp, nil
+}
+
+func (e *cancelResultExecutor) Validate(*executor.ExecutionJob) error { return nil }
+
+func (e *cancelResultExecutor) Capabilities() executor.ExecutorCapabilities {
+	return executor.ExecutorCapabilities{SupportsStreaming: true}
+}
+
+func (e *cancelResultExecutor) RunCount() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.runCount
+}
+
+func setupShutdownCauseScheduler(t *testing.T, result *executor.ExecutionResult) (*scheduler.Scheduler, *sqlstore.Store, *cancelResultExecutor, func()) {
+	t.Helper()
+	store := sqlitetest.OpenStore(t)
+	dir := t.TempDir()
+	q, err := queue.Open(context.Background(), filepath.Join(dir, "queue.db"))
+	require.NoError(t, err)
+	exec := &cancelResultExecutor{result: result}
+	registry := executor.NewRegistry()
+	registry.Register(exec)
+	cfg := &config.SchedulerConfig{
+		Workers: 1, IntervalSeconds: 1, RetryBudget: 3,
+		Enabled: true, StaleSeconds: 300, HeartbeatProgressSeconds: 1,
+	}
+	sched := scheduler.New(store, q, registry, nil, cfg)
+	cleanup := func() {
+		_ = q.Close()
+		_ = store.Close()
+	}
+	return sched, store, exec, cleanup
+}
+
+func requireSingleRun(t *testing.T, store *sqlstore.Store, taskID string) sqlstore.RunRecord {
+	t.Helper()
+	runs, err := store.ListRuns(taskID)
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	return runs[0]
+}
+
+func retryCount(t *testing.T, store *sqlstore.Store, taskID string) int {
+	t.Helper()
+	var retryCount int
+	require.NoError(t, store.DB().QueryRow(
+		"SELECT retry_count FROM tasks WHERE id = ?", taskID,
+	).Scan(&retryCount))
+	return retryCount
+}
+
+func TestSchedulerStopDaemonInterruptionBlocksWithoutRetry(t *testing.T) {
+	sched, store, exec, cleanup := setupShutdownCauseScheduler(t, &executor.ExecutionResult{Status: "failed", Reason: "execution canceled: context canceled"})
+	defer cleanup()
+
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-SHUTDOWN-FAILED", Title: "interrupted", Status: "todo", Priority: 1,
+		Executor: "cause", AgentProfile: "mock", OnFail: "retry", MaxRetries: 3,
+	}))
+	require.NoError(t, sched.Tick(context.Background()))
+	require.Eventually(t, func() bool { return exec.RunCount() == 1 }, time.Second, 10*time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, sched.Stop(ctx))
+
+	run := requireSingleRun(t, store, "CW-SHUTDOWN-FAILED")
+	assert.Equal(t, sqlstore.RunStatusKilled, run.Status)
+	assert.Contains(t, run.ErrorMessage, "daemon shutdown interrupted")
+	task, err := store.GetTask("CW-SHUTDOWN-FAILED")
+	require.NoError(t, err)
+	assert.Equal(t, "blocked", task.Status)
+	assert.Contains(t, task.BlockedReason, "resume or repair manually")
+	assert.Equal(t, 0, retryCount(t, store, "CW-SHUTDOWN-FAILED"))
+}
+
+func TestSchedulerStopDaemonInterruptionNilResultBlocks(t *testing.T) {
+	sched, store, exec, cleanup := setupShutdownCauseScheduler(t, nil)
+	defer cleanup()
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-SHUTDOWN-NIL", Title: "interrupted nil", Status: "todo", Priority: 1,
+		Executor: "cause", AgentProfile: "mock", OnFail: "retry", MaxRetries: 3,
+	}))
+	require.NoError(t, sched.Tick(context.Background()))
+	require.Eventually(t, func() bool { return exec.RunCount() == 1 }, time.Second, 10*time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, sched.Stop(ctx))
+
+	run := requireSingleRun(t, store, "CW-SHUTDOWN-NIL")
+	assert.Equal(t, sqlstore.RunStatusKilled, run.Status)
+	task, err := store.GetTask("CW-SHUTDOWN-NIL")
+	require.NoError(t, err)
+	assert.Equal(t, "blocked", task.Status)
+	assert.Equal(t, 0, retryCount(t, store, "CW-SHUTDOWN-NIL"))
+}
+
+func TestSchedulerStopDaemonInterruptionPreservesManualDoingTask(t *testing.T) {
+	sched, store, exec, cleanup := setupShutdownCauseScheduler(t, nil)
+	defer cleanup()
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-SHUTDOWN-MANUAL", Title: "manual", Status: "todo", Priority: 1,
+		Executor: "cause", AgentProfile: "mock", OnFail: "retry", MaxRetries: 3,
+	}))
+	require.NoError(t, sched.Tick(context.Background()))
+	require.Eventually(t, func() bool { return exec.RunCount() == 1 }, time.Second, 10*time.Millisecond)
+	_, err := store.DB().Exec(`UPDATE tasks SET manual = 1 WHERE id = ?`, "CW-SHUTDOWN-MANUAL")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, sched.Stop(ctx))
+
+	run := requireSingleRun(t, store, "CW-SHUTDOWN-MANUAL")
+	assert.Equal(t, sqlstore.RunStatusKilled, run.Status)
+	task, err := store.GetTask("CW-SHUTDOWN-MANUAL")
+	require.NoError(t, err)
+	assert.Equal(t, "doing", task.Status)
+	assert.Equal(t, 0, retryCount(t, store, "CW-SHUTDOWN-MANUAL"))
+}
+
+func TestSchedulerStopDaemonInterruptionPreservesTaskWithNewerRun(t *testing.T) {
+	sched, store, exec, cleanup := setupShutdownCauseScheduler(t, nil)
+	defer cleanup()
+	const taskID = "CW-SHUTDOWN-NEWER"
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: taskID, Title: "newer", Status: "todo", Priority: 1,
+		Executor: "cause", AgentProfile: "mock", OnFail: "retry", MaxRetries: 3,
+	}))
+	require.NoError(t, sched.Tick(context.Background()))
+	require.Eventually(t, func() bool { return exec.RunCount() == 1 }, time.Second, 10*time.Millisecond)
+	_, err := store.CreateRun(&sqlstore.RunRecord{TaskID: taskID, Executor: "cause", Status: sqlstore.RunStatusDone})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, sched.Stop(ctx))
+
+	runs, err := store.ListRuns(taskID)
+	require.NoError(t, err)
+	require.Len(t, runs, 2)
+	assert.Equal(t, sqlstore.RunStatusKilled, runs[1].Status)
+	task, err := store.GetTask(taskID)
+	require.NoError(t, err)
+	assert.Equal(t, "doing", task.Status)
+	assert.Equal(t, 0, retryCount(t, store, taskID))
+}
+
+func TestSchedulerStopPreservesDefinitiveReviewResult(t *testing.T) {
+	sched, store, exec, cleanup := setupShutdownCauseScheduler(t, &executor.ExecutionResult{Status: "review", Reason: "worker requested review"})
+	defer cleanup()
+	const taskID = "CW-SHUTDOWN-REVIEW"
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: taskID, Title: "review race", Status: "todo", Priority: 1,
+		Executor: "cause", AgentProfile: "mock", OnDone: "review", OnFail: "retry", MaxRetries: 3,
+	}))
+	require.NoError(t, sched.Tick(context.Background()))
+	require.Eventually(t, func() bool { return exec.RunCount() == 1 }, time.Second, 10*time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, sched.Stop(ctx))
+
+	run := requireSingleRun(t, store, taskID)
+	assert.Equal(t, "review", run.Status)
+	assert.Equal(t, "worker requested review", run.ErrorMessage)
+	task, err := store.GetTask(taskID)
+	require.NoError(t, err)
+	assert.Equal(t, "review", task.Status)
 }
 
 func TestSchedulerPicksAndExecutesTasks(t *testing.T) {
@@ -122,6 +314,29 @@ func TestSchedulerHandlesFailure(t *testing.T) {
 
 	task, _ := store.GetTask("CW-0001")
 	assert.Equal(t, "todo", task.Status, "failed task with retry should go back to todo")
+}
+
+func TestSchedulerPersistsResultReasonOnCompletedRun(t *testing.T) {
+	sched, store, mock := setupScheduler(t)
+
+	store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-REASON-0001", Title: "reason", Status: "todo", Priority: 1,
+		Executor: "mock", AgentProfile: "mock", OnFail: "block", MaxRetries: 3,
+	})
+	mock.SetResult(&executor.ExecutionResult{
+		Status: "failed",
+		Reason: "provider terminal failure",
+	})
+
+	require.NoError(t, sched.Tick(context.Background()))
+	require.Eventually(t, func() bool {
+		runs, err := store.ListRuns("CW-REASON-0001")
+		return err == nil && len(runs) == 1 && runs[0].Status == "failed"
+	}, 2*time.Second, 25*time.Millisecond)
+	sched.DrainResults()
+
+	run := requireSingleRun(t, store, "CW-REASON-0001")
+	assert.Equal(t, "provider terminal failure", run.ErrorMessage)
 }
 
 func TestSchedulerStatus(t *testing.T) {

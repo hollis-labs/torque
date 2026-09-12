@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -673,12 +674,16 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 	// Start returns nil). Workdir on the row stays at opts.Workdir — the
 	// project root, which is the most useful forensic value; the planted
 	// bootDir lives in metaKeyBootDir and registerBootDir.
-	persistedMeta := make(map[string]string, len(opts.SessionMeta)+3)
+	persistedMeta := make(map[string]string, len(opts.SessionMeta)+4)
 	for k, v := range opts.SessionMeta {
 		persistedMeta[k] = v
 	}
+	delete(persistedMeta, metaKeyRunID)
 	persistedMeta[metaKeyMode] = opts.Mode.String()
 	persistedMeta[metaKeyWorkspaceDir] = ws.WorkspaceDir
+	if opts.RunID > 0 {
+		persistedMeta[metaKeyRunID] = strconv.FormatInt(opts.RunID, 10)
+	}
 	if opts.ParentSessionID != "" {
 		persistedMeta[metaKeyParentSessionID] = opts.ParentSessionID
 	}
@@ -885,6 +890,15 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 				// wire string. A mismatch never fires turn-complete, so
 				// ModeOneShot burns its full timeout budget then SIGTERMs a
 				// turn that already succeeded.
+				if msg, failed := codexTurnCompletedFailure(params); failed {
+					emit(llmtypes.StreamEvent{Type: llmtypes.EventError, Error: msg})
+					if opts.terminalFailure != nil {
+						select {
+						case opts.terminalFailure <- msg:
+						default:
+						}
+					}
+				}
 				if hookOnDone != nil {
 					hookOnDone()
 				}
@@ -1059,7 +1073,7 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 		TaskID:          opts.TaskID,
 		ParentSessionID: opts.ParentSessionID,
 		Status:          StatusLaunching, // updated on terminal observe
-		Meta:            opts.SessionMeta,
+		Meta:            persistedMeta,
 		CreatedAt:       time.Now().UTC(),
 	}
 
@@ -1328,12 +1342,16 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		}
 	}
 
-	persistedMeta := make(map[string]string, len(opts.SessionMeta)+3)
+	persistedMeta := make(map[string]string, len(opts.SessionMeta)+4)
 	for k, v := range opts.SessionMeta {
 		persistedMeta[k] = v
 	}
+	delete(persistedMeta, metaKeyRunID)
 	persistedMeta[metaKeyMode] = opts.Mode.String()
 	persistedMeta[metaKeyWorkspaceDir] = ws.WorkspaceDir
+	if opts.RunID > 0 {
+		persistedMeta[metaKeyRunID] = strconv.FormatInt(opts.RunID, 10)
+	}
 	if opts.ParentSessionID != "" {
 		persistedMeta[metaKeyParentSessionID] = opts.ParentSessionID
 	}
@@ -1532,7 +1550,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		TaskID:          opts.TaskID,
 		ParentSessionID: opts.ParentSessionID,
 		Status:          StatusRunning,
-		Meta:            opts.SessionMeta,
+		Meta:            persistedMeta,
 		CreatedAt:       time.Now().UTC(),
 	}
 

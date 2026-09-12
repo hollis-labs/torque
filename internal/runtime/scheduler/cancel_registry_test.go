@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -17,7 +18,7 @@ func TestCancelRegistry_RegisterDeregister(t *testing.T) {
 	r := newCancelRegistry()
 	require.Equal(t, 0, r.size())
 
-	_, cancel := context.WithCancel(context.Background())
+	_, cancel := context.WithCancelCause(context.Background())
 	r.register("CW-1", cancel)
 	require.Equal(t, 1, r.size())
 
@@ -32,7 +33,7 @@ func TestCancelRegistry_RegisterDeregister(t *testing.T) {
 // single call. The associated context must see its Done channel close.
 func TestCancelRegistry_Cancel(t *testing.T) {
 	r := newCancelRegistry()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancelCause(context.Background())
 	r.register("CW-1", cancel)
 
 	require.True(t, r.cancel("CW-1"))
@@ -44,6 +45,7 @@ func TestCancelRegistry_Cancel(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("context was not cancelled within 1s")
 	}
+	require.True(t, isTaskTransitionCancel(ctx))
 
 	// Second cancel is a no-op — the CancelFunc itself is idempotent
 	// (stdlib guarantees) and the registry has no entry to dispatch.
@@ -57,14 +59,14 @@ func TestCancelRegistry_DoubleRegister(t *testing.T) {
 	r := newCancelRegistry()
 
 	var firstFired int32
-	_, cancel1 := context.WithCancel(context.Background())
-	wrappedFirst := func() {
+	_, cancel1 := context.WithCancelCause(context.Background())
+	wrappedFirst := func(err error) {
 		atomic.StoreInt32(&firstFired, 1)
-		cancel1()
+		cancel1(err)
 	}
 	r.register("CW-1", wrappedFirst)
 
-	_, cancel2 := context.WithCancel(context.Background())
+	_, cancel2 := context.WithCancelCause(context.Background())
 	r.register("CW-1", cancel2)
 
 	require.Equal(t, int32(1), atomic.LoadInt32(&firstFired),
@@ -80,7 +82,7 @@ func TestCancelRegistry_CancelAll(t *testing.T) {
 
 	ctxs := make([]context.Context, 5)
 	for i := range ctxs {
-		c, cf := context.WithCancel(context.Background())
+		c, cf := context.WithCancelCause(context.Background())
 		ctxs[i] = c
 		r.register(idFor(i), cf)
 		wg.Add(1)
@@ -104,40 +106,46 @@ func TestCancelRegistry_CancelAll(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("not all contexts cancelled within 1s")
 	}
+	for _, ctx := range ctxs {
+		require.True(t, isDaemonShutdownCancel(ctx))
+	}
 }
 
 // TestMergeContexts_EitherParentCancels exercises both cancellation paths
 // of the mergeContexts helper.
 func TestMergeContexts_ParentACancels(t *testing.T) {
-	a, cancelA := context.WithCancel(context.Background())
+	cause := errors.New("parent a")
+	a, cancelA := context.WithCancelCause(context.Background())
 	b, cancelB := context.WithCancel(context.Background())
 	defer cancelB()
 
 	merged, cancelMerged := mergeContexts(a, b)
 	defer cancelMerged()
 
-	cancelA()
+	cancelA(cause)
 	select {
 	case <-merged.Done():
 	case <-time.After(time.Second):
 		t.Fatal("merged ctx did not cancel when a cancelled")
 	}
+	require.ErrorIs(t, context.Cause(merged), cause)
 }
 
 func TestMergeContexts_ParentBCancels(t *testing.T) {
 	a, cancelA := context.WithCancel(context.Background())
 	defer cancelA()
-	b, cancelB := context.WithCancel(context.Background())
+	b, cancelB := context.WithCancelCause(context.Background())
 
 	merged, cancelMerged := mergeContexts(a, b)
 	defer cancelMerged()
 
-	cancelB()
+	cancelB(errTaskTransitionCanceled)
 	select {
 	case <-merged.Done():
 	case <-time.After(time.Second):
 		t.Fatal("merged ctx did not cancel when b cancelled")
 	}
+	require.True(t, isTaskTransitionCancel(merged))
 }
 
 func idFor(i int) string {

@@ -2,7 +2,13 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"sync"
+)
+
+var (
+	errTaskTransitionCanceled = errors.New("task transition canceled worker")
+	errDaemonShutdownCanceled = errors.New("daemon shutdown canceled worker")
 )
 
 // cancelRegistry keeps the per-task CancelFunc for every in-flight worker.
@@ -18,11 +24,11 @@ import (
 //   - cancelAll is called from Scheduler.Stop so no workers leak at shutdown.
 type cancelRegistry struct {
 	mu      sync.Mutex
-	cancels map[string]context.CancelFunc
+	cancels map[string]context.CancelCauseFunc
 }
 
 func newCancelRegistry() *cancelRegistry {
-	return &cancelRegistry{cancels: make(map[string]context.CancelFunc)}
+	return &cancelRegistry{cancels: make(map[string]context.CancelCauseFunc)}
 }
 
 // register stores the cancel function for taskID. If a cancel for the same
@@ -30,11 +36,11 @@ func newCancelRegistry() *cancelRegistry {
 // the scheduler's own dispatch path is serialized per-task so in practice
 // this branch is unreachable, but it prevents an accidental leak if a
 // future caller double-registers).
-func (r *cancelRegistry) register(taskID string, cancel context.CancelFunc) {
+func (r *cancelRegistry) register(taskID string, cancel context.CancelCauseFunc) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if prev, ok := r.cancels[taskID]; ok {
-		prev()
+		prev(errTaskTransitionCanceled)
 	}
 	r.cancels[taskID] = cancel
 }
@@ -56,6 +62,10 @@ func (r *cancelRegistry) deregister(taskID string) bool {
 // entry. Returns true if a cancel was invoked. Idempotent: calling twice
 // for the same taskID returns false on the second call.
 func (r *cancelRegistry) cancel(taskID string) bool {
+	return r.cancelWithCause(taskID, errTaskTransitionCanceled)
+}
+
+func (r *cancelRegistry) cancelWithCause(taskID string, cause error) bool {
 	r.mu.Lock()
 	fn, ok := r.cancels[taskID]
 	if ok {
@@ -63,7 +73,7 @@ func (r *cancelRegistry) cancel(taskID string) bool {
 	}
 	r.mu.Unlock()
 	if ok {
-		fn()
+		fn(cause)
 	}
 	return ok
 }
@@ -73,14 +83,14 @@ func (r *cancelRegistry) cancel(taskID string) bool {
 // an already-empty registry.
 func (r *cancelRegistry) cancelAll() {
 	r.mu.Lock()
-	fns := make([]context.CancelFunc, 0, len(r.cancels))
+	fns := make([]context.CancelCauseFunc, 0, len(r.cancels))
 	for _, fn := range r.cancels {
 		fns = append(fns, fn)
 	}
-	r.cancels = make(map[string]context.CancelFunc)
+	r.cancels = make(map[string]context.CancelCauseFunc)
 	r.mu.Unlock()
 	for _, fn := range fns {
-		fn()
+		fn(errDaemonShutdownCanceled)
 	}
 }
 
@@ -100,15 +110,23 @@ func (r *cancelRegistry) size() int {
 // per-task dispatch cancellation, so exec.Run receives a single ctx that
 // correctly reflects both sources of cancellation.
 func mergeContexts(a, b context.Context) (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithCancel(a)
+	ctx, cancel := context.WithCancelCause(a)
 	go func() {
 		select {
 		case <-b.Done():
-			cancel()
+			cancel(context.Cause(b))
 		case <-ctx.Done():
 			// a was cancelled (or cancel was called directly); nothing
 			// more to do — watcher exits so no goroutine leaks.
 		}
 	}()
-	return ctx, cancel
+	return ctx, func() { cancel(context.Canceled) }
+}
+
+func isDaemonShutdownCancel(ctx context.Context) bool {
+	return errors.Is(context.Cause(ctx), errDaemonShutdownCanceled)
+}
+
+func isTaskTransitionCancel(ctx context.Context) bool {
+	return errors.Is(context.Cause(ctx), errTaskTransitionCanceled)
 }

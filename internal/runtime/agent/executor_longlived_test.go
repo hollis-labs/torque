@@ -204,7 +204,7 @@ func TestAwaitLongLivedCompletion_SelfTransitionToReview(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	activityCh := make(chan struct{}, 1)
-	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, time.Hour, time.Hour)
+	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, nil, time.Hour, time.Hour)
 	assert.Equal(t, outcomeTransition, out.Kind)
 	assert.Equal(t, "review", out.TaskStatus)
 }
@@ -234,7 +234,7 @@ func TestAwaitLongLivedCompletion_IdleReap(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	activityCh := make(chan struct{}, 1)
-	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, 200*time.Millisecond, time.Hour)
+	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, nil, 200*time.Millisecond, time.Hour)
 	assert.Equal(t, outcomeIdle, out.Kind)
 	assert.Equal(t, 200*time.Millisecond, out.IdleFor)
 }
@@ -285,7 +285,7 @@ func TestAwaitLongLivedCompletion_HardCeiling(t *testing.T) {
 	}()
 	defer close(stop)
 
-	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, time.Hour, 250*time.Millisecond)
+	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, nil, time.Hour, 250*time.Millisecond)
 	assert.Equal(t, outcomeHardCeiling, out.Kind)
 	assert.Equal(t, 250*time.Millisecond, out.CeilingAt)
 }
@@ -321,7 +321,7 @@ func TestAwaitLongLivedCompletion_CtxCancelWhileDoing(t *testing.T) {
 		cancel()
 	}()
 	activityCh := make(chan struct{}, 1)
-	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, time.Hour, time.Hour)
+	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, nil, time.Hour, time.Hour)
 	assert.Equal(t, outcomeCtxCanceled, out.Kind)
 	assert.Error(t, out.CauseErr)
 }
@@ -361,7 +361,7 @@ func TestAwaitLongLivedCompletion_CtxCancelAfterSelfTransition(t *testing.T) {
 		cancel()
 	}()
 	activityCh := make(chan struct{}, 1)
-	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, time.Hour, time.Hour)
+	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, nil, time.Hour, time.Hour)
 	assert.Equal(t, outcomeTransition, out.Kind)
 	assert.Equal(t, "review", out.TaskStatus)
 }
@@ -568,4 +568,24 @@ func TestRunReminderPump_SendFailureLeavesEnvelopeUnreminded(t *testing.T) {
 	snap := reg.Snapshot(taskID)
 	require.Len(t, snap, 1)
 	assert.False(t, snap[0].Reminded, "send failure must leave the envelope unreminded so the next turn retries")
+}
+
+func TestAwaitLongLivedCompletion_TerminalFailureBlocks(t *testing.T) {
+	store := sqlitetest.OpenStore(t)
+	defer store.Close()
+
+	const taskID = "CW-LL-TERMINAL-FAIL"
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: taskID, Title: "terminal provider failure", Status: "doing",
+		Executor: "cli", AgentProfile: "codex",
+	}))
+	deps := &Dependencies{Store: store}
+	terminalFailureCh := make(chan string, 1)
+	terminalFailureCh <- "codex terminal turn failed: unexpected status 401"
+
+	out := awaitLongLivedCompletion(context.Background(), deps, taskID, "SES-TEST", nil, terminalFailureCh, time.Hour, time.Hour)
+	require.Equal(t, outcomeTerminalFailure, out.Kind)
+	res := out.toExecutionResult(&executor.ExecutionResult{}, nil)
+	assert.Equal(t, "blocked", res.Status)
+	assert.Contains(t, res.Reason, "unexpected status 401")
 }

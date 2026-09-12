@@ -6,6 +6,7 @@ import (
 
 	llmtypes "github.com/hollis-labs/go-llm-types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCodexItemCompletedEvent_CommandExecution(t *testing.T) {
@@ -50,6 +51,25 @@ func TestCodexItemCompletedEvent_IgnoredTypes(t *testing.T) {
 		`not json`,
 	} {
 		_, ok := codexItemCompletedEvent(json.RawMessage(raw))
+		assert.False(t, ok, "raw=%s", raw)
+	}
+}
+
+func TestCodexTurnCompletedFailure_NestedFailedPayload(t *testing.T) {
+	params := json.RawMessage(`{"threadId":"thread-1","turn":{"id":"turn-1","items":[],"status":"failed","error":{"message":"unexpected status 401: missing auth","codexErrorInfo":"other","additionalDetails":null},"startedAt":"2026-09-12T00:03:00Z","completedAt":"2026-09-12T00:03:34Z"}}`)
+	msg, ok := codexTurnCompletedFailure(params)
+	require.True(t, ok)
+	assert.Equal(t, "codex terminal turn failed: unexpected status 401: missing auth", msg)
+	assert.NotContains(t, msg, "codexErrorInfo")
+}
+
+func TestCodexTurnCompletedFailure_IgnoresSuccessfulOrMalformedPayloads(t *testing.T) {
+	for _, raw := range []string{
+		`{"turn":{"status":"completed"}}`,
+		`{"status":"failed","errorMessage":"top-level legacy shape"}`,
+		`not-json`,
+	} {
+		_, ok := codexTurnCompletedFailure(json.RawMessage(raw))
 		assert.False(t, ok, "raw=%s", raw)
 	}
 }
