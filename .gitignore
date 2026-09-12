@@ -22,6 +22,7 @@ queue.db
 
 # Build
 dist/
+.cerberus-build.lock
 
 # Worktrees
 .worktrees/
