@@ -5,7 +5,7 @@
 // the row body deterministically navigates to /tasks/:id while the inner
 // controls do not.
 //
-// Run with: BASE=http://localhost:5175 node scripts/verify-CW-0009.mjs
+// Run with: BASE=http://localhost:5182 node scripts/verify-CW-0009.mjs
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
@@ -13,7 +13,7 @@ import { createRequire } from 'node:module'
 const req = createRequire(import.meta.url)
 const { chromium } = req('playwright')
 
-const BASE = process.env.BASE || 'http://localhost:5175'
+const BASE = process.env.BASE || 'http://localhost:5182'
 const OUT = join(process.cwd(), 'artifacts/CW-20260418-0009')
 
 async function shoot(page, name) {

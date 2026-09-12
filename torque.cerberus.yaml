@@ -94,9 +94,9 @@ resources:
       env:
         TORQUE_GUI_API_ORIGIN: http://localhost:8992
       mode: dev_session
-      port: 5175
+      port: 5182
       run_from: workspace
-      url: http://localhost:5175
+      url: http://localhost:5182
     tags:
       - torque
       - dev
