@@ -242,6 +242,36 @@ silently trimmed.
 `verbose`: on `task_list` `verbose` selects brief-vs-full *task* records, while
 here the axis is whether a *different entity* is included.
 
+### Task typed read format (CW-20260911-0085)
+
+`torque_task_get` and `torque_task_list` accept an additive
+`format="typed"` response option. Omit it, or pass `format="legacy"`, to keep
+the existing MCP defaults: `torque_task_get` and verbose list return the
+PascalCase `TaskRecord` shape with `sql.Null*` wrappers, and default list keeps
+the compact lowercase `briefTask`.
+
+Typed format is read-only and never changes the query cohort, ordering,
+pagination, cursor, comment-tail, or byte-cap rules. In typed mode task records
+use snake_case keys and native JSON values: nullable scalar columns become JSON
+`null`, explicit zero numeric values remain numbers, tags/dependencies are JSON
+arrays, and stored JSON blob columns decode to arrays/objects rather than
+JSON-encoded strings. `torque_task_get format="typed"` keeps the existing
+comment-tail behavior but spells the added keys `comments` and
+`comments_meta`; `comments="false"` still omits both. `torque_task_list
+format="typed"` without `verbose` returns a richer brief projection with
+nullable scope references (`parent_id`, `project_id`, `sprint_id`, `epic_id`,
+collection refs) plus tag slugs and dependency ids. `verbose="true"` returns
+full typed task records.
+
+For compatibility with HTTP, valid stored empty or `null` JSON blob values read
+as the same empty fallback HTTP exposes today (`[]` for array-like fields, `{}`
+for object-like fields). Typed MCP additionally reports malformed or
+wrong-shaped stored blobs in `decode_errors` so consumers can distinguish
+legacy/corrupt storage from an intentional empty value. Intentional differences
+from HTTP default task responses are limited to the opt-in `decode_errors`
+field, the lowercase MCP comment-tail keys, and JSON-number precision
+preservation inside decoded blob fields.
+
 ---
 
 ## Subtodo

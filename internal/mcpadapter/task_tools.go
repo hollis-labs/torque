@@ -419,22 +419,26 @@ Example: {"title":"Fix auth bug","description":"Login returns 500","priority":"2
 Comments are included because a task's real scope often lives in corrections posted after it was written — reading only the description is how a session executes a stale framing (CW-20260910-0057). Pass comments="false" to opt out, or comments_limit to widen the window (max %d).
 The window is the NEWEST comments_limit comments, presented oldest → newest so successive corrections read forward. CommentsMeta is ALWAYS present when comments were requested and states {returned, total, omitted, truncated} — including omitted=0 when nothing was cut, so completeness never has to be inferred from array length. Any omission names torque_comment_list in its hint.
 Use when you already have the ID; prefer torque_task_list when filtering a cohort, and torque_task_subtodo_list for checklist-only views.
-Response shape: data = {<TaskRecord fields>, Tags[], DependsOn[], Comments[], CommentsMeta} — singleton, PascalCase keys (Comments[] entries are lowercase: id, author, content, created_at, updated_at). Comments and CommentsMeta are absent entirely when comments="false".
+Pass format="typed" for the additive snake_case/native JSON read representation. Omitted or format="legacy" preserves the PascalCase TaskRecord/sql.Null wrapper shape.
+Response shape: legacy data = {<TaskRecord fields>, Tags[], DependsOn[], Comments[], CommentsMeta} — singleton, PascalCase keys (Comments[] entries are lowercase: id, author, content, created_at, updated_at). Typed data = {snake_case task fields, tags[], depends_on[], comments[], comments_meta, decode_errors?}. Comments and comments_meta/CommentsMeta are absent entirely when comments="false".
 Example: {"id":"T-123"}
 Example, record only: {"id":"T-123","comments":"false"}
+Example, typed: {"id":"T-123","format":"typed"}
 Example, longer thread: {"id":"T-123","comments_limit":"50"}`, defaultTaskGetCommentsLimit, maxTaskGetCommentsLimit)),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
+		mcp.WithString("format", mcp.Description("Response format: legacy (default) or typed. typed returns snake_case/native JSON values without sql.Null wrappers or JSON-encoded blob strings.")),
 		mcp.WithString("comments", mcp.Description("Include the comment tail (string 'true'/'false', default 'true'). Set 'false' for the bare record — Comments and CommentsMeta are then omitted from the response entirely.")),
 		mcp.WithString("comments_limit", mcp.Description(fmt.Sprintf("How many of the newest comments to include (integer, default %d, max %d). Ignored when comments='false'.", defaultTaskGetCommentsLimit, maxTaskGetCommentsLimit))),
 	), a.handleTaskGet)
 
 	a.addTool(mcp.NewTool("torque_task_list",
 		mcp.WithDescription(`List tasks with optional status/priority/facet filters; ordered priority ASC (tiebreak id ASC) by default. Pass sort_by (priority|status|updated_at|created_at) and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid.
-Use for browsing or filtered cohorts; pass search directly for free-text queries (no separate search tool — matches Issue's already-merged shape) and torque_task_get when you already know the ID. Default returns ~150B briefTask records (lowercase JSON) so large fan-outs fit under the 100KB cap; pass verbose="true" for full TaskRecord columns.
+Use for browsing or filtered cohorts; pass search directly for free-text queries (no separate search tool — matches Issue's already-merged shape) and torque_task_get when you already know the ID. Default returns ~150B briefTask records (lowercase JSON) so large fan-outs fit under the 100KB cap; pass verbose="true" for full TaskRecord columns. Pass format="typed" for the additive snake_case/native JSON projection; typed+verbose returns full typed records, typed without verbose returns a richer brief record with nullable scope refs.
 Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under — pass a different sort_by/sort_dir without dropping cursor and you get error.code=arg_invalid.
 statuses[] OR-matches against status (takes precedence over status when both are set). created_after/created_before/updated_after/updated_before are RFC3339 timestamps, inclusive bounds. *_gte/*_lte budget/duration filters compare directly against the stored column — a task that never set that budget (NULL) never matches either bound, so unset-budget tasks are naturally excluded rather than needing a separate "has budget" filter.
-Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
+Response shape: data = {items: [<briefTask or TaskRecord or typed task>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
 Example: {"status":"doing","limit":"50","sort_by":"updated_at","sort_dir":"desc"}
+Example, typed projection: {"format":"typed","status":"doing","limit":"50"}
 Example, over-budget cohort: {"cost_budget_gte":"50","updated_after":"2026-08-01T00:00:00Z"}`),
 		mcp.WithString("status", mcp.Description("Filter by status")),
 		mcp.WithString("statuses", mcp.Description("JSON array of statuses — OR-match; takes precedence over status when both are set")),
@@ -470,6 +474,7 @@ Example, over-budget cohort: {"cost_budget_gte":"50","updated_after":"2026-08-01
 		mcp.WithString("max_retries_lte", mcp.Description("Filter: max_retries <= this value (integer)")),
 		mcp.WithString("limit", mcp.Description("Max results (integer, default 50, max 200)")),
 		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
+		mcp.WithString("format", mcp.Description("Response format: legacy (default) or typed. typed returns snake_case/native JSON values; with verbose=true it returns full typed records.")),
 		mcp.WithString("include_total", mcp.Description("When true, include meta.total for the full matching cohort, excluding cursor/offset/limit. Default false keeps list calls cheap.")),
 		mcp.WithString("sort_by", mcp.Description("Sort field: priority|status|updated_at|created_at (default priority)")),
 		mcp.WithString("sort_dir", mcp.Description("Sort direction: asc|desc (default asc)")),
@@ -868,9 +873,20 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest)
 // surface whose problem is that the real contract is not visible from the
 // schema.
 func (a *Adapter) handleTaskGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	format, err := reqTaskFormat(req)
+	if err != nil {
+		return errResult(ErrCodeArgInvalid, err.Error(), "format")
+	}
 	task, err := a.svc.Task.Get(reqStr(req, "id"))
 	if err != nil {
 		return errFromService(err)
+	}
+	if isTypedFormat(format) {
+		return a.typedTaskGetResult(
+			task,
+			reqStrBoolDefault(req, "comments", true),
+			clampLimit(reqInt(req, "comments_limit"), defaultTaskGetCommentsLimit, maxTaskGetCommentsLimit),
+		)
 	}
 	return a.taskGetResult(
 		task,
@@ -887,9 +903,13 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 		"status", "executor", "kind", "source_type", "source_ref", "trust", "checkpoint_mode",
 		"parent_id", "project_id", "sprint_id", "epic_id", "search", "agent_profile", "launch_profile",
 		"created_after", "created_before", "updated_after", "updated_before",
-		"sort_by", "sort_dir", "cursor",
+		"sort_by", "sort_dir", "cursor", "format",
 	); errRes != nil {
 		return errRes, nil
+	}
+	format, formatErr := reqTaskFormat(req)
+	if formatErr != nil {
+		return errResult(ErrCodeArgInvalid, formatErr.Error(), "format")
 	}
 	rawLimit, _, err := reqTaskListInt(req, "limit")
 	if err != nil {
@@ -1045,7 +1065,7 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 	if err != nil {
 		return errFromService(err)
 	}
-	return a.taskListCursorEnvelopeWithTotal(page.Tasks, page.Limit, verbose, page.SortBy, page.SortDir, page.HasMoreFromQuery, optionalTotal(page))
+	return a.taskListCursorEnvelopeWithTotal(page.Tasks, page.Limit, verbose, isTypedFormat(format), page.SortBy, page.SortDir, page.HasMoreFromQuery, optionalTotal(page))
 }
 
 // taskSortValue preserves timestamp precision in the cursor. Whole-second
@@ -1061,13 +1081,19 @@ func taskSortValue(t sqlstore.TaskRecord, sortBy string) string {
 // before calling this, so cappedCursorJSONResult's byte-size trim (if it
 // triggers) is the only further truncation next_cursor needs to account for.
 func (a *Adapter) taskListCursorEnvelope(tasks []sqlstore.TaskRecord, limit int, verbose bool, sortBy, sortDir string, hasMoreFromQuery bool) (*mcp.CallToolResult, error) {
-	return a.taskListCursorEnvelopeWithTotal(tasks, limit, verbose, sortBy, sortDir, hasMoreFromQuery, nil)
+	return a.taskListCursorEnvelopeWithTotal(tasks, limit, verbose, false, sortBy, sortDir, hasMoreFromQuery, nil)
 }
 
-func (a *Adapter) taskListCursorEnvelopeWithTotal(tasks []sqlstore.TaskRecord, limit int, verbose bool, sortBy, sortDir string, hasMoreFromQuery bool, total *int) (*mcp.CallToolResult, error) {
+func (a *Adapter) taskListCursorEnvelopeWithTotal(tasks []sqlstore.TaskRecord, limit int, verbose bool, typed bool, sortBy, sortDir string, hasMoreFromQuery bool, total *int) (*mcp.CallToolResult, error) {
 	items := make([]any, 0, len(tasks))
 	for _, t := range tasks {
-		if verbose {
+		if typed {
+			item, errRes := a.typedTaskListItem(t, verbose)
+			if errRes != nil {
+				return errRes, nil
+			}
+			items = append(items, item)
+		} else if verbose {
 			tags, err := a.svc.Task.ListTags(t.ID)
 			if err != nil {
 				return errFromService(err)

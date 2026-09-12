@@ -152,6 +152,21 @@ func (a *Adapter) taskGetResult(task *sqlstore.TaskRecord, includeComments bool,
 	return cappedTaskGetResult(task.ID, base, comments, total)
 }
 
+func (a *Adapter) typedTaskGetResult(task *sqlstore.TaskRecord, includeComments bool, commentsLimit int) (*mcp.CallToolResult, error) {
+	base, errRes := a.typedTaskFullResult(task)
+	if errRes != nil {
+		return errRes, nil
+	}
+	if !includeComments {
+		return okResult(base)
+	}
+	comments, total, err := a.commentTail(task.ID, commentsLimit)
+	if err != nil {
+		return errFromService(err)
+	}
+	return cappedTypedTaskGetResult(task.ID, base, comments, total)
+}
+
 // cappedTaskGetResult enforces maxMCPResponseBytes on the comments-bearing
 // task_get payload, dropping the OLDEST comment in the window first.
 //
@@ -210,6 +225,51 @@ func cappedTaskGetResult(taskID string, base *taskWithTags, comments []taskComme
 			return okResult(build(nil, true))
 		}
 		// Drop the oldest comment still in the window and retry.
+		window = window[1:]
+	}
+}
+
+func cappedTypedTaskGetResult(taskID string, base typedTaskRecord, comments []taskComment, total int) (*mcp.CallToolResult, error) {
+	if comments == nil {
+		comments = []taskComment{}
+	}
+	build := func(window []taskComment, recordOversized bool) typedTaskRecord {
+		if window == nil {
+			window = []taskComment{}
+		}
+		omitted := total - len(window)
+		if omitted < 0 {
+			omitted = 0
+		}
+		out := make(typedTaskRecord, len(base)+2)
+		for k, v := range base {
+			out[k] = v
+		}
+		out["comments"] = window
+		out["comments_meta"] = commentsMeta{
+			Returned:  len(window),
+			Total:     total,
+			Omitted:   omitted,
+			Truncated: omitted > 0,
+			Hint:      commentTailHint(taskID, omitted, recordOversized),
+		}
+		return out
+	}
+
+	window := comments
+	for {
+		payload := build(window, false)
+		b, err := json.MarshalIndent(Response{OK: true, Data: payload}, "", "  ")
+		if err != nil {
+			log.Printf("mcpadapter: typed task_get marshal failed: %v", err)
+			return errResult(ErrCodeInternal, "response serialization failed", "")
+		}
+		if len(b) <= maxMCPResponseBytes {
+			return mcp.NewToolResultText(string(b)), nil
+		}
+		if len(window) == 0 {
+			return okResult(build(nil, true))
+		}
 		window = window[1:]
 	}
 }
