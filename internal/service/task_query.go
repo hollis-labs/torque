@@ -16,9 +16,23 @@ const (
 	MaxTaskQueryLimit     = 200
 	TaskQueryDefaultSort  = "priority"
 	TaskQueryDefaultDir   = "asc"
+	DefaultTaskFacetLimit = 50
+	MaxTaskFacetLimit     = 200
 )
 
 var TaskQuerySortFields = []string{"priority", "status", "updated_at", "created_at"}
+var TaskFacetDimensions = []string{
+	"status", "priority", "manual", "kind", "executor", "agent_profile", "launch_profile",
+	"project_id", "sprint_id", "epic_id", "parent_id", "tags",
+}
+
+var taskFacetDimensionSet = func() map[string]bool {
+	m := make(map[string]bool, len(TaskFacetDimensions))
+	for _, d := range TaskFacetDimensions {
+		m[d] = true
+	}
+	return m
+}()
 
 // TaskQuery is the public task-list contract shared by HTTP and MCP.
 // Transports may decode arrays differently, but validation/defaulting,
@@ -79,6 +93,37 @@ type TaskQueryResult struct {
 	HasMoreFromQuery bool
 }
 
+type TaskFacetQuery struct {
+	TaskQuery
+	Dimensions  []string
+	BucketLimit int
+}
+
+type TaskFacetValue struct {
+	Value  any
+	IsNull bool
+}
+
+type TaskFacetBucket struct {
+	Value any `json:"value"`
+	Count int `json:"count"`
+}
+
+type TaskFacet struct {
+	Dimension     string            `json:"dimension"`
+	Buckets       []TaskFacetBucket `json:"buckets"`
+	TotalDistinct int               `json:"total_distinct"`
+	Returned      int               `json:"returned"`
+	Truncated     bool              `json:"truncated"`
+}
+
+type TaskFacetQueryResult struct {
+	MatchingCount int         `json:"matching_count"`
+	BucketLimit   int         `json:"bucket_limit"`
+	Dimensions    []string    `json:"dimensions"`
+	Facets        []TaskFacet `json:"facets"`
+}
+
 func (s *TaskService) Query(q TaskQuery) (TaskQueryResult, error) {
 	filter, limit, sortBy, sortDir, err := normalizeTaskQuery(q)
 	if err != nil {
@@ -121,6 +166,112 @@ func (s *TaskService) Query(q TaskQuery) (TaskQueryResult, error) {
 		SortDir:          sortDir,
 		HasMoreFromQuery: hasMore,
 	}, nil
+}
+
+func (s *TaskService) Facets(q TaskFacetQuery) (TaskFacetQueryResult, error) {
+	dims, err := normalizeTaskFacetDimensions(q.Dimensions)
+	if err != nil {
+		return TaskFacetQueryResult{}, err
+	}
+	limit, err := normalizeTaskFacetLimit(q.BucketLimit)
+	if err != nil {
+		return TaskFacetQueryResult{}, err
+	}
+	if q.Limit != 0 {
+		return TaskFacetQueryResult{}, &ValidationError{Field: "limit", Message: "limit is not supported by task facets; use bucket_limit for facet bucket bounds"}
+	}
+	if q.Offset != 0 {
+		return TaskFacetQueryResult{}, &ValidationError{Field: "offset", Message: "offset is not supported by task facets; facets always count the whole matching cohort"}
+	}
+	if q.Cursor != "" {
+		return TaskFacetQueryResult{}, &ValidationError{Field: "cursor", Message: "cursor is not supported by task facets; facets always count the whole matching cohort"}
+	}
+	if q.SortBy != "" {
+		return TaskFacetQueryResult{}, &ValidationError{Field: "sort_by", Message: "sort_by is not supported by task facets; buckets sort by count desc then value asc"}
+	}
+	if q.SortDir != "" {
+		return TaskFacetQueryResult{}, &ValidationError{Field: "sort_dir", Message: "sort_dir is not supported by task facets; buckets sort by count desc then value asc"}
+	}
+	filter, _, _, _, err := normalizeTaskQuery(q.TaskQuery)
+	if err != nil {
+		return TaskFacetQueryResult{}, err
+	}
+	filter.Limit = 0
+	filter.Offset = 0
+	filter.AfterSortValue = ""
+	filter.AfterID = ""
+	storeFacets, matching, err := s.store.TaskFacets(sqlstore.TaskFacetRequest{
+		Filter:     filter,
+		Dimensions: dims,
+		Limit:      limit,
+	})
+	if err != nil {
+		if errors.Is(err, sqlstore.ErrInvalidCursor) {
+			return TaskFacetQueryResult{}, &ValidationError{Field: "cursor", Message: err.Error()}
+		}
+		return TaskFacetQueryResult{}, err
+	}
+	facets := make([]TaskFacet, 0, len(storeFacets))
+	for _, sf := range storeFacets {
+		buckets := make([]TaskFacetBucket, 0, len(sf.Buckets))
+		for _, b := range sf.Buckets {
+			buckets = append(buckets, TaskFacetBucket{
+				Value: b.Value.Value,
+				Count: b.Count,
+			})
+		}
+		facets = append(facets, TaskFacet{
+			Dimension:     sf.Dimension,
+			Buckets:       buckets,
+			TotalDistinct: sf.TotalDistinct,
+			Returned:      len(buckets),
+			Truncated:     sf.Truncated,
+		})
+	}
+	return TaskFacetQueryResult{
+		MatchingCount: matching,
+		BucketLimit:   limit,
+		Dimensions:    dims,
+		Facets:        facets,
+	}, nil
+}
+
+func normalizeTaskFacetDimensions(values []string) ([]string, error) {
+	if values == nil {
+		return append([]string{}, TaskFacetDimensions...), nil
+	}
+	seen := make(map[string]bool, len(values))
+	out := make([]string, 0, len(values))
+	for _, raw := range values {
+		d := strings.TrimSpace(raw)
+		if d == "" {
+			continue
+		}
+		if !taskFacetDimensionSet[d] {
+			return nil, &ValidationError{Field: "dimensions", Message: fmt.Sprintf("unsupported task facet dimension %q; supported dimensions are %s", d, strings.Join(TaskFacetDimensions, ", "))}
+		}
+		if !seen[d] {
+			seen[d] = true
+			out = append(out, d)
+		}
+	}
+	if len(out) == 0 {
+		return nil, &ValidationError{Field: "dimensions", Message: "dimensions must include at least one supported dimension"}
+	}
+	return out, nil
+}
+
+func normalizeTaskFacetLimit(n int) (int, error) {
+	if n < 0 {
+		return 0, &ValidationError{Field: "bucket_limit", Message: "bucket_limit must be greater than or equal to 0"}
+	}
+	if n == 0 {
+		return DefaultTaskFacetLimit, nil
+	}
+	if n > MaxTaskFacetLimit {
+		return MaxTaskFacetLimit, nil
+	}
+	return n, nil
 }
 
 func normalizeTaskQuery(q TaskQuery) (sqlstore.TaskFilter, int, string, string, error) {

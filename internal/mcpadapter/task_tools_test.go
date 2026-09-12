@@ -1,6 +1,7 @@
 package mcpadapter_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -1658,6 +1659,220 @@ func TestFullStack_TaskList_HTTPMCPParity_ComposedQuery(t *testing.T) {
 	})
 	require.Equal(t, []string{matchB, matchA}, httpIDs)
 	require.Equal(t, httpIDs, mcpIDs)
+}
+
+type decodedTaskFacets struct {
+	MatchingCount int      `json:"matching_count"`
+	BucketLimit   int      `json:"bucket_limit"`
+	Dimensions    []string `json:"dimensions"`
+	Facets        []struct {
+		Dimension     string `json:"dimension"`
+		TotalDistinct int    `json:"total_distinct"`
+		Returned      int    `json:"returned"`
+		Truncated     bool   `json:"truncated"`
+		Buckets       []struct {
+			Value any `json:"value"`
+			Count int `json:"count"`
+		} `json:"buckets"`
+	} `json:"facets"`
+}
+
+func decodeHTTPTaskFacets(t *testing.T, rawURL string) decodedTaskFacets {
+	t.Helper()
+	resp, err := http.Get(rawURL)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	defer resp.Body.Close()
+	var out decodedTaskFacets
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
+	return out
+}
+
+func taskFacetByDimension(t *testing.T, got decodedTaskFacets, dim string) []struct {
+	Value any `json:"value"`
+	Count int `json:"count"`
+} {
+	t.Helper()
+	for _, f := range got.Facets {
+		if f.Dimension == dim {
+			return f.Buckets
+		}
+	}
+	t.Fatalf("missing facet dimension %s in %+v", dim, got.Dimensions)
+	return nil
+}
+
+func TestFullStack_TaskFacets_HTTPMCPParityAndValidation(t *testing.T) {
+	a, ts, _ := setupTaskQueryParitySurfaces(t)
+	defer ts.Close()
+	create := func(title string, args map[string]any) string {
+		t.Helper()
+		body := map[string]any{"title": title, "description": "facet parity"}
+		for k, v := range args {
+			body[k] = v
+		}
+		raw, err := json.Marshal(body)
+		require.NoError(t, err)
+		resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewReader(raw))
+		require.NoError(t, err)
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+		defer resp.Body.Close()
+		var created map[string]any
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+		return created["id"].(string)
+	}
+	update := func(id string, patch map[string]any) {
+		t.Helper()
+		raw, err := json.Marshal(patch)
+		require.NoError(t, err)
+		req, err := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/tasks/"+id, bytes.NewReader(raw))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		resp.Body.Close()
+	}
+	id1 := create("facet parity a", map[string]any{"tags": []string{"api", "torque"}, "agent_profile": "codex"})
+	id2 := create("facet parity b", map[string]any{"tags": []string{"api"}, "agent_profile": "codex"})
+	_ = create("facet parity c", map[string]any{"agent_profile": "other"})
+	update(id1, map[string]any{"priority": 0, "manual": false})
+	update(id2, map[string]any{"priority": 0, "manual": false})
+
+	httpFacets := decodeHTTPTaskFacets(t, ts.URL+"/api/v1/tasks/facets?search=facet+parity&priority=0,1&dimensions=priority,manual,tags,tags&bucket_limit=10")
+	require.Equal(t, 2, httpFacets.MatchingCount)
+	assert.Equal(t, []string{"priority", "manual", "tags"}, httpFacets.Dimensions)
+	assert.Equal(t, float64(0), taskFacetByDimension(t, httpFacets, "priority")[0].Value)
+	assert.Equal(t, 2, taskFacetByDimension(t, httpFacets, "priority")[0].Count)
+	assert.Equal(t, false, taskFacetByDimension(t, httpFacets, "manual")[0].Value)
+	assert.Equal(t, 2, taskFacetByDimension(t, httpFacets, "manual")[0].Count)
+	assert.Equal(t, "api", taskFacetByDimension(t, httpFacets, "tags")[0].Value)
+	assert.Equal(t, 2, taskFacetByDimension(t, httpFacets, "tags")[0].Count)
+
+	defaultHTTP := decodeHTTPTaskFacets(t, ts.URL+"/api/v1/tasks/facets?search=facet+parity")
+	assert.Equal(t, 3, defaultHTTP.MatchingCount)
+	assert.Equal(t, 50, defaultHTTP.BucketLimit)
+	assert.Len(t, defaultHTTP.Dimensions, 12)
+	projectBuckets := taskFacetByDimension(t, defaultHTTP, "project_id")
+	require.Len(t, projectBuckets, 1)
+	assert.Nil(t, projectBuckets[0].Value)
+	assert.Equal(t, 3, projectBuckets[0].Count)
+
+	noMatch := decodeHTTPTaskFacets(t, ts.URL+"/api/v1/tasks/facets?search=definitely-no-match")
+	assert.Equal(t, 0, noMatch.MatchingCount)
+	assert.Equal(t, 50, noMatch.BucketLimit)
+	assert.Len(t, noMatch.Dimensions, 12)
+	for _, f := range noMatch.Facets {
+		assert.Empty(t, f.Buckets)
+		assert.Equal(t, 0, f.TotalDistinct)
+		assert.Equal(t, 0, f.Returned)
+		assert.False(t, f.Truncated)
+	}
+
+	text, isErr := callTool(t, a, "torque_task_facets", map[string]interface{}{
+		"search":       "facet parity",
+		"priorities":   []interface{}{0, 1, 0},
+		"dimensions":   []interface{}{"priority", "manual", "tags", "tags"},
+		"bucket_limit": "10",
+	})
+	require.False(t, isErr, "mcp facets should not error: %s", text)
+	var mcpFacets decodedTaskFacets
+	parseData(t, text, &mcpFacets)
+	assert.Equal(t, httpFacets.MatchingCount, mcpFacets.MatchingCount)
+	assert.Equal(t, httpFacets.Dimensions, mcpFacets.Dimensions)
+	assert.Equal(t, taskFacetByDimension(t, httpFacets, "tags"), taskFacetByDimension(t, mcpFacets, "tags"))
+
+	for _, rawQuery := range []string{
+		"dimensions=", "limit=0", "offset=0", "cursor=", "sort_by=",
+		"dimensions=missing", "bucket_limit=-1", "bucket_limit=9223372036854775808",
+		"dimensions=status&dimensions=manual",
+	} {
+		resp, err := http.Get(ts.URL + "/api/v1/tasks/facets?" + rawQuery)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode, rawQuery)
+		resp.Body.Close()
+	}
+	for _, args := range []map[string]interface{}{
+		{"dimensions": "[]"},
+		{"dimensions": ""},
+		{"limit": "0"},
+		{"offset": "0"},
+		{"cursor": ""},
+		{"sort_by": ""},
+		{"dimensions": `[null]`},
+		{"tags": `[null]`},
+		{"tags": `[1]`},
+		{"dimensions": `["missing"]`},
+		{"bucket_limit": "-1"},
+		{"bucket_limit": "9223372036854775808"},
+	} {
+		text, isErr := callTool(t, a, "torque_task_facets", args)
+		require.True(t, isErr, "expected facet arg rejection for %#v: %s", args, text)
+		code, _, field := parseError(t, text)
+		assert.Equal(t, "arg_invalid", code)
+		assert.NotEmpty(t, field)
+	}
+}
+
+func TestFullStack_TaskFacets_MCPByteCapTrimsBucketsOnly(t *testing.T) {
+	a, ts, db := setupTaskQueryParitySurfaces(t)
+	defer ts.Close()
+	long := strings.Repeat("x", 900)
+	for i := 0; i < 220; i++ {
+		id := fmt.Sprintf("CW-20260911-7%03d", i)
+		launch := fmt.Sprintf("launch-%03d-%s", i, long)
+		_, err := db.Exec(`INSERT INTO tasks (id, title, description, status, priority, manual, kind, launch_profile) VALUES (?, ?, 'cap fixture', 'todo', 2, 0, 'agent', ?)`, id, "facet cap", launch)
+		require.NoError(t, err)
+	}
+	httpFacets := decodeHTTPTaskFacets(t, ts.URL+"/api/v1/tasks/facets?search=facet+cap&dimensions=launch_profile&bucket_limit=200")
+	require.Equal(t, 220, httpFacets.MatchingCount)
+	require.Len(t, httpFacets.Facets, 1)
+	assert.Equal(t, 220, httpFacets.Facets[0].TotalDistinct)
+	assert.Equal(t, 200, httpFacets.Facets[0].Returned)
+	assert.Len(t, httpFacets.Facets[0].Buckets, httpFacets.Facets[0].Returned)
+	assert.True(t, httpFacets.Facets[0].Truncated)
+	assert.Contains(t, httpFacets.Facets[0].Buckets[0].Value.(string), "launch-000-")
+	assert.Contains(t, httpFacets.Facets[0].Buckets[199].Value.(string), "launch-199-")
+	assert.Equal(t, 1, httpFacets.Facets[0].Buckets[0].Count)
+
+	text, isErr := callTool(t, a, "torque_task_facets", map[string]interface{}{
+		"search":       "facet cap",
+		"dimensions":   []interface{}{"launch_profile"},
+		"bucket_limit": "200",
+	})
+	require.False(t, isErr, "mcp facets should trim, not fail: %s", text)
+	require.LessOrEqual(t, len([]byte(text)), 100*1024)
+	var got decodedTaskFacets
+	parseData(t, text, &got)
+	require.Equal(t, 220, got.MatchingCount)
+	require.Len(t, got.Facets, 1)
+	assert.Equal(t, 220, got.Facets[0].TotalDistinct)
+	assert.True(t, got.Facets[0].Truncated)
+	assert.Len(t, got.Facets[0].Buckets, got.Facets[0].Returned)
+	assert.Less(t, got.Facets[0].Returned, 200)
+	for _, b := range got.Facets[0].Buckets {
+		require.IsType(t, "", b.Value)
+		assert.Contains(t, b.Value.(string), long)
+	}
+
+	giant := strings.Repeat("y", 110*1024)
+	_, err := db.Exec(`INSERT INTO tasks (id, title, description, status, priority, manual, kind, launch_profile) VALUES ('CW-20260911-7999', 'facet giant', 'giant fixture', 'todo', 2, 0, 'agent', ?)`, giant)
+	require.NoError(t, err)
+	text, isErr = callTool(t, a, "torque_task_facets", map[string]interface{}{
+		"search":       "facet giant",
+		"dimensions":   []interface{}{"launch_profile"},
+		"bucket_limit": "1",
+	})
+	require.False(t, isErr, "oversized single bucket should be omitted, not fail: %s", text)
+	require.LessOrEqual(t, len([]byte(text)), 100*1024)
+	var giantGot decodedTaskFacets
+	parseData(t, text, &giantGot)
+	require.Equal(t, 1, giantGot.MatchingCount)
+	require.Len(t, giantGot.Facets, 1)
+	assert.Equal(t, 1, giantGot.Facets[0].TotalDistinct)
+	assert.Equal(t, 0, giantGot.Facets[0].Returned)
+	assert.Empty(t, giantGot.Facets[0].Buckets)
+	assert.True(t, giantGot.Facets[0].Truncated)
 }
 
 func TestFullStack_TaskList_HTTPMCPParity_CursorTraversal(t *testing.T) {

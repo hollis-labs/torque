@@ -127,6 +127,7 @@ Full field reference: ADR-0004 §4. Source: `internal/mcpadapter/task_tools.go`,
 | `torque_task_create` | Create a task. Safety override forces `manual=true` on every create (an agent must promote it via `torque_task_update {"manual":false}` before the scheduler dispatches it) — the response's `dispatch_notice` spells out the exact promotion call. Optional `subtodos[]` seeds an initial checklist atomically. |
 | `torque_task_get` | Fetch one task by id, **including its 10 most recent comments by default** (CW-20260910-0057). `comments="false"` opts out; `comments_limit` widens the window (max 100). |
 | `torque_task_list` | Filter + free-text `search` + sort + cursor-paginate, all in one tool (no separate search tool). Shares the public task-query contract with HTTP: status/statuses[]/priority/kind/trust/checkpoint_mode/parent_id/project_id/sprint_id/epic_id/tags[]/manual/agent_profile/launch_profile, `created_*`/`updated_*` RFC3339 ranges, and `*_gte`/`*_lte` budget/duration range filters. `include_internal` (default false) hides `kind=internal` automation rows unless `kind=internal` is requested explicitly. |
+| `torque_task_facets` | Count distinct values for supported task dimensions over the same filtered cohort as `torque_task_list`, without fetching task records or counting a page. HTTP equivalent: `GET /api/v1/tasks/facets`. |
 | `torque_task_update` | Partial patch. Numeric sentinel `-1` = unlimited on budget fields. `status` is accepted and routed through the same path as `torque_task_transition` — before CW-20260909-0011 the arg was silently dropped and the call still answered `ok:true`. |
 | `torque_task_delete` | Hard delete (runs/artifacts/comments cascade). Prefer `transition` to `abandoned` for an audit-preserving close — reachable from any status in one call. |
 | `torque_task_transition` | Set a status. Permissive: any status reaches any other in one call (`todo→done` included). Vocabulary: `backlog`, `todo`, `queued`, `doing`, `review`, `done`, `blocked`, `paused`, `archived`, `abandoned`, `cancelled`. Only two refusals — a status outside that list, and leaving `done`/`archived`, which needs `force=true`. Optional `comment`/`comment_author` posts a comment atomically with the transition (one transaction). |
@@ -164,6 +165,67 @@ task-list envelope. HTTP keeps its GUI compatibility alias `priority=1,2` as a
 comma-separated exact-integer OR-list, including `0`; repeated HTTP query keys,
 malformed raw query strings, malformed/overflow/blank CSV members, unknown
 keys, and invalid shared-query fields return `400` with `error` and `field`.
+
+### Task facets and counts (CW-20260911-0086)
+
+`torque_task_facets` and `GET /api/v1/tasks/facets` share the task-list cohort
+contract. Every active filter applies to every requested facet, including a
+filter on the same dimension; facets answer "what values exist inside this
+exact cohort," not "what filters could I add if this one were removed."
+
+Supported dimensions are `status`, `priority`, `manual`, `kind`, `executor`,
+`agent_profile`, `launch_profile`, `project_id`, `sprint_id`, `epic_id`,
+`parent_id`, and `tags`. Omitted `dimensions` returns all of them. HTTP encodes
+dimensions as comma-separated CSV (`dimensions=status,priority,tags`); MCP
+accepts a native string array or JSON array string. Explicit empty/blank
+dimensions are invalid. Duplicates are removed deterministically.
+
+`bucket_limit` defaults to 50 and caps at 200. Task-list row controls
+(`limit`, `offset`, `cursor`, `sort_by`, `sort_dir`) are rejected on the
+dedicated facet endpoint/tool by presence, including zero or empty-string
+spellings, because facet counts are always whole-cohort SQL aggregates.
+
+Response shape:
+
+```json
+{
+  "matching_count": 42,
+  "bucket_limit": 50,
+  "dimensions": ["status"],
+  "facets": [
+    {
+      "dimension": "status",
+      "total_distinct": 2,
+      "returned": 2,
+      "truncated": false,
+      "buckets": [{"value": "doing", "count": 31}, {"value": "review", "count": 11}]
+    }
+  ]
+}
+```
+
+Bucket values are native JSON scalars or `null`; JSON `null` is the null/missing
+bucket and is distinct from the literal strings `""` and `"null"`. `manual`
+values are booleans and `priority` values are numbers. `total_distinct`
+includes the null bucket when present. Buckets sort by `count DESC`, then among
+equal counts non-null values before null, then typed value ascending.
+
+Tags are multi-valued: a matching task contributes once to each distinct linked
+tag bucket. Untagged matching tasks contribute once to the `null` bucket.
+
+Examples:
+
+```json
+{"project_id":"PRJ-1","sprint_id":"SP-1","manual":"auto","dimensions":["status","priority","tags"]}
+{"status":"doing","include_internal":"true","agent_profile":"codex-implementer","dimensions":["executor","launch_profile","tags"]}
+```
+
+HTTP returns the normal JSON body without the MCP tool-response byte cap. MCP
+facet responses enforce the same 100KB tool cap as list responses by omitting
+whole buckets only; values are never truncated into different opaque values.
+`matching_count` and `total_distinct` remain whole-cohort counts; `returned`
+and `truncated` describe the buckets actually emitted after any MCP byte-cap
+trim.
 
 ### Unknown arguments are rejected, not dropped (CW-20260907-0060)
 

@@ -425,158 +425,17 @@ func nullJSONString(v any) *sql.NullString {
 }
 
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
-	query := service.TaskQuery{WithTotal: true}
 	q, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
 		writeFieldError(w, http.StatusBadRequest, "query", "invalid query string: "+err.Error())
 		return
 	}
-	if err := validateTaskListQueryKeys(q); err != nil {
-		writeFieldError(w, http.StatusBadRequest, err.field, err.Error())
+	query, qerr := parseHTTPTaskQuery(q, false)
+	if qerr != nil {
+		writeFieldError(w, http.StatusBadRequest, qerr.field, qerr.Error())
 		return
 	}
-	if v := q.Get("status"); v != "" {
-		parts := strings.Split(v, ",")
-		if len(parts) == 1 {
-			query.Status = parts[0]
-		} else {
-			query.Statuses = parts
-		}
-	}
-	if _, ok := q["priority"]; ok {
-		priorities, err := parseHTTPPrioritySet(q.Get("priority"))
-		if err != nil {
-			writeFieldError(w, http.StatusBadRequest, "priority", err.Error())
-			return
-		}
-		query.Priorities = priorities
-	}
-	if v := q.Get("sprint_id"); v != "" {
-		query.SprintID = v
-	}
-	if v := q.Get("project_id"); v != "" {
-		query.ProjectID = v
-	}
-	if v := q.Get("epic_id"); v != "" {
-		query.EpicID = v
-	}
-	if v := q.Get("executor"); v != "" {
-		query.Executor = v
-	}
-	if v := q.Get("kind"); v != "" {
-		query.Kind = v
-	}
-	if _, ok := q["include_internal"]; ok {
-		v, err := parseTaskListBool(q.Get("include_internal"), "include_internal")
-		if err != nil {
-			writeFieldError(w, http.StatusBadRequest, "include_internal", err.Error())
-			return
-		}
-		query.IncludeInternal = v
-	}
-	if v := q.Get("source_type"); v != "" {
-		query.SourceType = v
-	}
-	if v := q.Get("source_ref"); v != "" {
-		query.SourceRef = v
-	}
-	if v := q.Get("trust"); v != "" {
-		query.Trust = v
-	}
-	if v := q.Get("checkpoint_mode"); v != "" {
-		query.CheckpointMode = v
-	}
-	// parent_id filter — special value "null" returns roots (parent IS NULL).
-	if _, ok := q["parent_id"]; ok {
-		query.ParentIDSet = true
-		query.ParentID = q.Get("parent_id")
-	}
-	// manual filter — accepts canonical booleans plus UI aliases. "both" and
-	// empty mean no filter, preserving the documented sentinel.
-	if _, ok := q["manual"]; ok {
-		manual, err := parseTaskListManual(q.Get("manual"))
-		if err != nil {
-			writeFieldError(w, http.StatusBadRequest, "manual", err.Error())
-			return
-		}
-		query.Manual = manual
-	}
-	if v := q.Get("tags"); v != "" {
-		parts := strings.Split(v, ",")
-		out := make([]string, 0, len(parts))
-		for _, p := range parts {
-			if s := strings.TrimSpace(p); s != "" {
-				out = append(out, s)
-			}
-		}
-		query.TagSlugs = out
-	} else if v := q.Get("tag"); v != "" {
-		query.TagSlugs = []string{strings.TrimSpace(v)}
-	}
-	if v := q.Get("search"); v != "" {
-		query.Search = v
-	}
-	if v := q.Get("agent_profile"); v != "" {
-		query.AgentProfile = v
-	}
-	if v := q.Get("launch_profile"); v != "" {
-		query.LaunchProfile = v
-	}
-	query.CreatedAfter = q.Get("created_after")
-	query.CreatedBefore = q.Get("created_before")
-	query.UpdatedAfter = q.Get("updated_after")
-	query.UpdatedBefore = q.Get("updated_before")
-	if err := applyHTTPTaskQueryFloatBound(q, "cost_budget_gte", &query.CostBudgetGte); err != nil {
-		writeFieldError(w, http.StatusBadRequest, "cost_budget_gte", err.Error())
-		return
-	}
-	if err := applyHTTPTaskQueryFloatBound(q, "cost_budget_lte", &query.CostBudgetLte); err != nil {
-		writeFieldError(w, http.StatusBadRequest, "cost_budget_lte", err.Error())
-		return
-	}
-	if err := applyHTTPTaskQueryInt64Bound(q, "token_budget_gte", &query.TokenBudgetGte); err != nil {
-		writeFieldError(w, http.StatusBadRequest, "token_budget_gte", err.Error())
-		return
-	}
-	if err := applyHTTPTaskQueryInt64Bound(q, "token_budget_lte", &query.TokenBudgetLte); err != nil {
-		writeFieldError(w, http.StatusBadRequest, "token_budget_lte", err.Error())
-		return
-	}
-	if err := applyHTTPTaskQueryInt64Bound(q, "max_duration_ms_gte", &query.MaxDurationMsGte); err != nil {
-		writeFieldError(w, http.StatusBadRequest, "max_duration_ms_gte", err.Error())
-		return
-	}
-	if err := applyHTTPTaskQueryInt64Bound(q, "max_duration_ms_lte", &query.MaxDurationMsLte); err != nil {
-		writeFieldError(w, http.StatusBadRequest, "max_duration_ms_lte", err.Error())
-		return
-	}
-	if err := applyHTTPTaskQueryIntBound(q, "max_retries_gte", &query.MaxRetriesGte); err != nil {
-		writeFieldError(w, http.StatusBadRequest, "max_retries_gte", err.Error())
-		return
-	}
-	if err := applyHTTPTaskQueryIntBound(q, "max_retries_lte", &query.MaxRetriesLte); err != nil {
-		writeFieldError(w, http.StatusBadRequest, "max_retries_lte", err.Error())
-		return
-	}
-	query.SortBy = q.Get("sort_by")
-	query.SortDir = q.Get("sort_dir")
-	query.Cursor = q.Get("cursor")
-	if _, ok := q["limit"]; ok {
-		n, err := parseTaskListInt(q.Get("limit"), "limit")
-		if err != nil {
-			writeFieldError(w, http.StatusBadRequest, "limit", err.Error())
-			return
-		}
-		query.Limit = n
-	}
-	if _, ok := q["offset"]; ok {
-		n, err := parseTaskListInt(q.Get("offset"), "offset")
-		if err != nil {
-			writeFieldError(w, http.StatusBadRequest, "offset", err.Error())
-			return
-		}
-		query.Offset = n
-	}
+	query.WithTotal = true
 
 	result, err := s.svc.Task.Query(query)
 	if err != nil {
@@ -644,6 +503,185 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) taskFacets(w http.ResponseWriter, r *http.Request) {
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		writeFieldError(w, http.StatusBadRequest, "query", "invalid query string: "+err.Error())
+		return
+	}
+	for _, key := range []string{"limit", "offset", "cursor", "sort_by", "sort_dir"} {
+		if _, ok := q[key]; ok {
+			writeFieldError(w, http.StatusBadRequest, key, key+" is not supported by task facets; facets always count the whole matching cohort")
+			return
+		}
+	}
+	query, qerr := parseHTTPTaskQuery(q, true)
+	if qerr != nil {
+		writeFieldError(w, http.StatusBadRequest, qerr.field, qerr.Error())
+		return
+	}
+	fq := service.TaskFacetQuery{TaskQuery: query}
+	if _, ok := q["dimensions"]; ok {
+		fq.Dimensions = splitHTTPFacetCSV(q.Get("dimensions"))
+	}
+	if _, ok := q["bucket_limit"]; ok {
+		n, err := parseTaskListInt(q.Get("bucket_limit"), "bucket_limit")
+		if err != nil {
+			writeFieldError(w, http.StatusBadRequest, "bucket_limit", err.Error())
+			return
+		}
+		fq.BucketLimit = n
+	}
+	result, err := s.svc.Task.Facets(fq)
+	if err != nil {
+		var verr *service.ValidationError
+		if errors.As(err, &verr) {
+			writeFieldError(w, http.StatusBadRequest, verr.Field, verr.Message)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func parseHTTPTaskQuery(q url.Values, facet bool) (service.TaskQuery, *taskListQueryError) {
+	query := service.TaskQuery{}
+	if err := validateTaskListQueryKeys(q, facet); err != nil {
+		return query, err
+	}
+	if v := q.Get("status"); v != "" {
+		parts := strings.Split(v, ",")
+		if len(parts) == 1 {
+			query.Status = parts[0]
+		} else {
+			query.Statuses = parts
+		}
+	}
+	if _, ok := q["priority"]; ok {
+		priorities, err := parseHTTPPrioritySet(q.Get("priority"))
+		if err != nil {
+			return query, &taskListQueryError{field: "priority", message: err.Error()}
+		}
+		query.Priorities = priorities
+	}
+	if v := q.Get("sprint_id"); v != "" {
+		query.SprintID = v
+	}
+	if v := q.Get("project_id"); v != "" {
+		query.ProjectID = v
+	}
+	if v := q.Get("epic_id"); v != "" {
+		query.EpicID = v
+	}
+	if v := q.Get("executor"); v != "" {
+		query.Executor = v
+	}
+	if v := q.Get("kind"); v != "" {
+		query.Kind = v
+	}
+	if _, ok := q["include_internal"]; ok {
+		v, err := parseTaskListBool(q.Get("include_internal"), "include_internal")
+		if err != nil {
+			return query, &taskListQueryError{field: "include_internal", message: err.Error()}
+		}
+		query.IncludeInternal = v
+	}
+	if v := q.Get("source_type"); v != "" {
+		query.SourceType = v
+	}
+	if v := q.Get("source_ref"); v != "" {
+		query.SourceRef = v
+	}
+	if v := q.Get("trust"); v != "" {
+		query.Trust = v
+	}
+	if v := q.Get("checkpoint_mode"); v != "" {
+		query.CheckpointMode = v
+	}
+	// parent_id filter — special value "null" returns roots (parent IS NULL).
+	if _, ok := q["parent_id"]; ok {
+		query.ParentIDSet = true
+		query.ParentID = q.Get("parent_id")
+	}
+	// manual filter — accepts canonical booleans plus UI aliases. "both" and
+	// empty mean no filter, preserving the documented sentinel.
+	if _, ok := q["manual"]; ok {
+		manual, err := parseTaskListManual(q.Get("manual"))
+		if err != nil {
+			return query, &taskListQueryError{field: "manual", message: err.Error()}
+		}
+		query.Manual = manual
+	}
+	if v := q.Get("tags"); v != "" {
+		parts := strings.Split(v, ",")
+		out := make([]string, 0, len(parts))
+		for _, p := range parts {
+			if s := strings.TrimSpace(p); s != "" {
+				out = append(out, s)
+			}
+		}
+		query.TagSlugs = out
+	} else if v := q.Get("tag"); v != "" {
+		query.TagSlugs = []string{strings.TrimSpace(v)}
+	}
+	if v := q.Get("search"); v != "" {
+		query.Search = v
+	}
+	if v := q.Get("agent_profile"); v != "" {
+		query.AgentProfile = v
+	}
+	if v := q.Get("launch_profile"); v != "" {
+		query.LaunchProfile = v
+	}
+	query.CreatedAfter = q.Get("created_after")
+	query.CreatedBefore = q.Get("created_before")
+	query.UpdatedAfter = q.Get("updated_after")
+	query.UpdatedBefore = q.Get("updated_before")
+	if err := applyHTTPTaskQueryFloatBound(q, "cost_budget_gte", &query.CostBudgetGte); err != nil {
+		return query, &taskListQueryError{field: "cost_budget_gte", message: err.Error()}
+	}
+	if err := applyHTTPTaskQueryFloatBound(q, "cost_budget_lte", &query.CostBudgetLte); err != nil {
+		return query, &taskListQueryError{field: "cost_budget_lte", message: err.Error()}
+	}
+	if err := applyHTTPTaskQueryInt64Bound(q, "token_budget_gte", &query.TokenBudgetGte); err != nil {
+		return query, &taskListQueryError{field: "token_budget_gte", message: err.Error()}
+	}
+	if err := applyHTTPTaskQueryInt64Bound(q, "token_budget_lte", &query.TokenBudgetLte); err != nil {
+		return query, &taskListQueryError{field: "token_budget_lte", message: err.Error()}
+	}
+	if err := applyHTTPTaskQueryInt64Bound(q, "max_duration_ms_gte", &query.MaxDurationMsGte); err != nil {
+		return query, &taskListQueryError{field: "max_duration_ms_gte", message: err.Error()}
+	}
+	if err := applyHTTPTaskQueryInt64Bound(q, "max_duration_ms_lte", &query.MaxDurationMsLte); err != nil {
+		return query, &taskListQueryError{field: "max_duration_ms_lte", message: err.Error()}
+	}
+	if err := applyHTTPTaskQueryIntBound(q, "max_retries_gte", &query.MaxRetriesGte); err != nil {
+		return query, &taskListQueryError{field: "max_retries_gte", message: err.Error()}
+	}
+	if err := applyHTTPTaskQueryIntBound(q, "max_retries_lte", &query.MaxRetriesLte); err != nil {
+		return query, &taskListQueryError{field: "max_retries_lte", message: err.Error()}
+	}
+	query.SortBy = q.Get("sort_by")
+	query.SortDir = q.Get("sort_dir")
+	query.Cursor = q.Get("cursor")
+	if _, ok := q["limit"]; ok {
+		n, err := parseTaskListInt(q.Get("limit"), "limit")
+		if err != nil {
+			return query, &taskListQueryError{field: "limit", message: err.Error()}
+		}
+		query.Limit = n
+	}
+	if _, ok := q["offset"]; ok {
+		n, err := parseTaskListInt(q.Get("offset"), "offset")
+		if err != nil {
+			return query, &taskListQueryError{field: "offset", message: err.Error()}
+		}
+		query.Offset = n
+	}
+	return query, nil
+}
+
 type taskListQueryError struct {
 	field   string
 	message string
@@ -657,7 +695,7 @@ func writeFieldError(w http.ResponseWriter, status int, field, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg, "field": field})
 }
 
-func validateTaskListQueryKeys(q url.Values) *taskListQueryError {
+func validateTaskListQueryKeys(q url.Values, facet bool) *taskListQueryError {
 	supported := map[string]bool{
 		"status": true, "priority": true, "sprint_id": true, "project_id": true, "epic_id": true,
 		"executor": true, "kind": true, "include_internal": true, "source_type": true,
@@ -670,6 +708,10 @@ func validateTaskListQueryKeys(q url.Values) *taskListQueryError {
 		"max_duration_ms_gte": true, "max_duration_ms_lte": true,
 		"max_retries_gte": true, "max_retries_lte": true,
 		"sort_by": true, "sort_dir": true, "cursor": true,
+	}
+	if facet {
+		supported["dimensions"] = true
+		supported["bucket_limit"] = true
 	}
 	for key, values := range q {
 		if !supported[key] {
@@ -686,6 +728,15 @@ func validateTaskListQueryKeys(q url.Values) *taskListQueryError {
 		}
 	}
 	return nil
+}
+
+func splitHTTPFacetCSV(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		out = append(out, strings.TrimSpace(p))
+	}
+	return out
 }
 
 func parseHTTPPrioritySet(raw string) ([]int, error) {

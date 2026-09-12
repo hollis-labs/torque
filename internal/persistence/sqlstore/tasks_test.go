@@ -148,6 +148,90 @@ func TestListTasksPage_CountIgnoresCursorPosition(t *testing.T) {
 	assert.Equal(t, 3, page.Total)
 }
 
+func TestTaskFacets_CountsWholeFilteredCohortAndTypedBuckets(t *testing.T) {
+	store := setupTestStore(t)
+	for _, slug := range []string{"api", "torque", "zzz"} {
+		require.NoError(t, store.CreateTag(&sqlstore.TagRecord{Slug: slug, Name: slug, Color: "zinc"}))
+	}
+	for _, id := range []string{"PRJ", "", "null", "BULK"} {
+		require.NoError(t, store.CreateProject(&sqlstore.ProjectRecord{ID: id, Name: "project " + id}))
+	}
+
+	create := func(id string, priority int, manual bool, status string, project sql.NullString, tags ...string) {
+		t.Helper()
+		task := sampleTask(id)
+		task.Title = "facet cohort"
+		task.Priority = priority
+		task.Manual = manual
+		task.Status = status
+		task.ProjectID = project
+		require.NoError(t, store.CreateTask(task))
+		if len(tags) > 0 {
+			require.NoError(t, store.SetTaskTags(id, tags))
+		}
+	}
+	create("CW-20260911-4100", 0, false, "todo", sql.NullString{String: "PRJ", Valid: true}, "api", "torque")
+	create("CW-20260911-4101", 0, false, "todo", sql.NullString{String: "PRJ", Valid: true}, "api")
+	create("CW-20260911-4102", 1, true, "doing", sql.NullString{String: "PRJ", Valid: true})
+	create("CW-20260911-4103", 1, true, "doing", sql.NullString{String: "", Valid: true}, "zzz")
+	create("CW-20260911-4104", 1, true, "doing", sql.NullString{String: "null", Valid: true}, "zzz")
+	create("CW-20260911-4105", 1, true, "doing", sql.NullString{})
+	for i := 0; i < 205; i++ {
+		create(fmt.Sprintf("CW-20260911-5%03d", i), 2, false, "todo", sql.NullString{String: "BULK", Valid: true})
+	}
+
+	facets, matching, err := store.TaskFacets(sqlstore.TaskFacetRequest{
+		Filter:     sqlstore.TaskFilter{Search: "facet cohort", Priorities: []int{0, 1}, ExcludeInternal: true},
+		Dimensions: []string{"priority", "manual", "status", "project_id", "tags"},
+		Limit:      2,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 6, matching)
+
+	byDim := map[string]sqlstore.TaskFacetResult{}
+	for _, f := range facets {
+		byDim[f.Dimension] = f
+	}
+	assert.Equal(t, []sqlstore.TaskFacetBucket{
+		{Value: sqlstore.TaskFacetValue{Value: 1}, Count: 4},
+		{Value: sqlstore.TaskFacetValue{Value: 0}, Count: 2},
+	}, byDim["priority"].Buckets)
+	assert.Equal(t, []sqlstore.TaskFacetBucket{
+		{Value: sqlstore.TaskFacetValue{Value: true}, Count: 4},
+		{Value: sqlstore.TaskFacetValue{Value: false}, Count: 2},
+	}, byDim["manual"].Buckets)
+	assert.Equal(t, 4, byDim["project_id"].TotalDistinct)
+	assert.True(t, byDim["project_id"].Truncated)
+	assert.Equal(t, any("PRJ"), byDim["project_id"].Buckets[0].Value.Value)
+	assert.Equal(t, 3, byDim["project_id"].Buckets[0].Count)
+	assert.Equal(t, 4, byDim["tags"].TotalDistinct)
+
+	tags, _, err := store.TaskFacets(sqlstore.TaskFacetRequest{
+		Filter:     sqlstore.TaskFilter{Search: "facet cohort", Priorities: []int{0, 1}},
+		Dimensions: []string{"tags"},
+		Limit:      50,
+	})
+	require.NoError(t, err)
+	require.Len(t, tags, 1)
+	assert.Equal(t, []sqlstore.TaskFacetBucket{
+		{Value: sqlstore.TaskFacetValue{Value: "api"}, Count: 2},
+		{Value: sqlstore.TaskFacetValue{Value: "zzz"}, Count: 2},
+		{Value: sqlstore.TaskFacetValue{IsNull: true}, Count: 2},
+		{Value: sqlstore.TaskFacetValue{Value: "torque"}, Count: 1},
+	}, tags[0].Buckets)
+	assert.Equal(t, 4, tags[0].TotalDistinct, "api, torque, zzz, and the no-tags null bucket")
+
+	filtered, matching, err := store.TaskFacets(sqlstore.TaskFacetRequest{
+		Filter:     sqlstore.TaskFilter{Search: "facet cohort", Priorities: []int{0}},
+		Dimensions: []string{"priority", "tags"},
+		Limit:      50,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, matching)
+	assert.Equal(t, 1, filtered[0].TotalDistinct, "active priority filter applies to its own facet")
+	assert.Equal(t, 2, filtered[0].Buckets[0].Count)
+}
+
 func TestListTasks_OffsetWithoutLimitWorksOnSQLite(t *testing.T) {
 	store := setupTestStore(t)
 

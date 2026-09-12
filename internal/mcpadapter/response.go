@@ -483,6 +483,62 @@ type listEnvelopeCursor struct {
 	Meta  listMetaCursor `json:"meta"`
 }
 
+func cappedTaskFacetResult(result service.TaskFacetQueryResult) (*mcp.CallToolResult, error) {
+	build := func(r service.TaskFacetQueryResult, truncated bool) ([]byte, error) {
+		if truncated {
+			for i := range r.Facets {
+				if r.Facets[i].Returned < r.Facets[i].TotalDistinct {
+					r.Facets[i].Truncated = true
+				}
+			}
+		}
+		return json.MarshalIndent(Response{OK: true, Data: r}, "", "  ")
+	}
+	b, err := build(result, false)
+	if err != nil {
+		return errResult(ErrCodeInternal, "response serialization failed", "")
+	}
+	if len(b) <= maxMCPResponseBytes {
+		return mcp.NewToolResultText(string(b)), nil
+	}
+
+	trimmed := result
+	trimmed.Facets = append([]service.TaskFacet{}, result.Facets...)
+	for i := range trimmed.Facets {
+		trimmed.Facets[i].Buckets = append([]service.TaskFacetBucket{}, result.Facets[i].Buckets...)
+	}
+	for {
+		longest := -1
+		for i := range trimmed.Facets {
+			if len(trimmed.Facets[i].Buckets) > 0 && (longest == -1 || len(trimmed.Facets[i].Buckets) > len(trimmed.Facets[longest].Buckets)) {
+				longest = i
+			}
+		}
+		if longest == -1 {
+			break
+		}
+		trimmed.Facets[longest].Buckets = trimmed.Facets[longest].Buckets[:len(trimmed.Facets[longest].Buckets)-1]
+		trimmed.Facets[longest].Returned = len(trimmed.Facets[longest].Buckets)
+		trimmed.Facets[longest].Truncated = true
+		b, err = build(trimmed, true)
+		if err != nil {
+			return errResult(ErrCodeInternal, "response serialization failed", "")
+		}
+		if len(b) <= maxMCPResponseBytes {
+			return mcp.NewToolResultText(string(b)), nil
+		}
+	}
+
+	b, err = build(trimmed, true)
+	if err != nil {
+		return errResult(ErrCodeInternal, "response serialization failed", "")
+	}
+	if len(b) <= maxMCPResponseBytes {
+		return mcp.NewToolResultText(string(b)), nil
+	}
+	return errResult(ErrCodeInternal, "task facet response metadata exceeds MCP response cap; narrow dimensions or filters", "")
+}
+
 // cappedCursorJSONResult is cappedJSONResult's cursor-aware sibling for list
 // tools that support DEC-001 cursor pagination (PRIM-001/PRIM-002). It is
 // intentionally a separate function rather than a change to

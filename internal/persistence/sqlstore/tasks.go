@@ -306,6 +306,29 @@ type TaskListResult struct {
 	Total int
 }
 
+type TaskFacetValue struct {
+	Value  any
+	IsNull bool
+}
+
+type TaskFacetBucket struct {
+	Value TaskFacetValue
+	Count int
+}
+
+type TaskFacetResult struct {
+	Dimension     string
+	Buckets       []TaskFacetBucket
+	TotalDistinct int
+	Truncated     bool
+}
+
+type TaskFacetRequest struct {
+	Filter     TaskFilter
+	Dimensions []string
+	Limit      int
+}
+
 // TaskUpdate holds optional fields to update; nil pointer = no change.
 type TaskUpdate struct {
 	Title             *string
@@ -596,6 +619,174 @@ func (s *Store) ListTasksPage(f TaskFilter) (TaskListResult, error) {
 		return TaskListResult{}, err
 	}
 	return TaskListResult{Tasks: tasks, Total: total}, nil
+}
+
+func (s *Store) TaskFacets(req TaskFacetRequest) ([]TaskFacetResult, int, error) {
+	filter := req.Filter
+	filter.Limit = 0
+	filter.Offset = 0
+	filter.AfterSortValue = ""
+	filter.AfterID = ""
+	where, args, err := s.taskListPredicates(filter)
+	if err != nil {
+		return nil, 0, err
+	}
+	countQ := `SELECT COUNT(*) FROM tasks`
+	if len(where) > 0 {
+		countQ += " WHERE " + strings.Join(where, " AND ")
+	}
+	var matching int
+	if err := s.ReadDB().QueryRow(countQ, args...).Scan(&matching); err != nil {
+		return nil, 0, err
+	}
+	results := make([]TaskFacetResult, 0, len(req.Dimensions))
+	for _, dim := range req.Dimensions {
+		var r TaskFacetResult
+		var err error
+		if dim == "tags" {
+			r, err = s.taskTagFacet(where, args, req.Limit)
+		} else {
+			r, err = s.taskColumnFacet(dim, where, args, req.Limit)
+		}
+		if err != nil {
+			return nil, 0, err
+		}
+		results = append(results, r)
+	}
+	return results, matching, nil
+}
+
+func (s *Store) taskColumnFacet(dim string, where []string, args []any, limit int) (TaskFacetResult, error) {
+	col, ok := taskFacetColumn(dim)
+	if !ok {
+		return TaskFacetResult{}, fmt.Errorf("unsupported task facet dimension %q", dim)
+	}
+	from := " FROM tasks"
+	if len(where) > 0 {
+		from += " WHERE " + strings.Join(where, " AND ")
+	}
+	totalQ := "SELECT COUNT(*) FROM (SELECT " + col + from + " GROUP BY " + col + ") task_facet_values"
+	var total int
+	if err := s.ReadDB().QueryRow(totalQ, args...).Scan(&total); err != nil {
+		return TaskFacetResult{}, err
+	}
+	q := "SELECT " + col + ", COUNT(*) AS c" + from + " GROUP BY " + col +
+		" ORDER BY c DESC, CASE WHEN " + col + " IS NULL THEN 1 ELSE 0 END ASC, " + col + " ASC"
+	if limit > 0 {
+		q += fmt.Sprintf(" LIMIT %d", limit+1)
+	}
+	rows, err := s.ReadDB().Query(q, args...)
+	if err != nil {
+		return TaskFacetResult{}, err
+	}
+	defer rows.Close()
+	buckets := []TaskFacetBucket{}
+	for rows.Next() {
+		b, err := scanTaskFacetBucket(rows, dim)
+		if err != nil {
+			return TaskFacetResult{}, err
+		}
+		buckets = append(buckets, b)
+	}
+	if err := rows.Err(); err != nil {
+		return TaskFacetResult{}, err
+	}
+	truncated := limit > 0 && len(buckets) > limit
+	if truncated {
+		buckets = buckets[:limit]
+	}
+	return TaskFacetResult{Dimension: dim, Buckets: buckets, TotalDistinct: total, Truncated: truncated}, nil
+}
+
+func (s *Store) taskTagFacet(where []string, args []any, limit int) (TaskFacetResult, error) {
+	base := "SELECT id FROM tasks"
+	if len(where) > 0 {
+		base += " WHERE " + strings.Join(where, " AND ")
+	}
+	totalQ := "SELECT COUNT(*) FROM (" +
+		"SELECT tt.tag_slug FROM task_tags tt JOIN (" + base + ") cohort ON cohort.id = tt.task_id GROUP BY tt.tag_slug " +
+		"UNION ALL SELECT NULL WHERE EXISTS (SELECT 1 FROM (" + base + ") cohort_missing WHERE NOT EXISTS (SELECT 1 FROM task_tags tx WHERE tx.task_id = cohort_missing.id))" +
+		") task_tag_values"
+	totalArgs := append([]any{}, args...)
+	totalArgs = append(totalArgs, args...)
+	var total int
+	if err := s.ReadDB().QueryRow(totalQ, totalArgs...).Scan(&total); err != nil {
+		return TaskFacetResult{}, err
+	}
+	q := "SELECT value, c FROM (" +
+		"SELECT tt.tag_slug AS value, COUNT(DISTINCT tt.task_id) AS c, 0 AS is_null FROM task_tags tt JOIN (" + base + ") cohort ON cohort.id = tt.task_id GROUP BY tt.tag_slug " +
+		"UNION ALL SELECT NULL AS value, COUNT(*) AS c, 1 AS is_null FROM (" + base + ") cohort_missing WHERE NOT EXISTS (SELECT 1 FROM task_tags tx WHERE tx.task_id = cohort_missing.id)" +
+		") task_tag_counts WHERE c > 0 ORDER BY c DESC, is_null ASC, value ASC"
+	queryArgs := append([]any{}, args...)
+	queryArgs = append(queryArgs, args...)
+	if limit > 0 {
+		q += fmt.Sprintf(" LIMIT %d", limit+1)
+	}
+	rows, err := s.ReadDB().Query(q, queryArgs...)
+	if err != nil {
+		return TaskFacetResult{}, err
+	}
+	defer rows.Close()
+	buckets := []TaskFacetBucket{}
+	for rows.Next() {
+		b, err := scanTaskFacetBucket(rows, "tags")
+		if err != nil {
+			return TaskFacetResult{}, err
+		}
+		buckets = append(buckets, b)
+	}
+	if err := rows.Err(); err != nil {
+		return TaskFacetResult{}, err
+	}
+	truncated := limit > 0 && len(buckets) > limit
+	if truncated {
+		buckets = buckets[:limit]
+	}
+	return TaskFacetResult{Dimension: "tags", Buckets: buckets, TotalDistinct: total, Truncated: truncated}, nil
+}
+
+func taskFacetColumn(dim string) (string, bool) {
+	switch dim {
+	case "status", "executor", "agent_profile", "launch_profile", "kind", "project_id", "sprint_id", "epic_id", "parent_id":
+		return dim, true
+	case "priority", "manual":
+		return dim, true
+	default:
+		return "", false
+	}
+}
+
+func scanTaskFacetBucket(rows *sql.Rows, dim string) (TaskFacetBucket, error) {
+	var count int
+	switch dim {
+	case "priority":
+		var v sql.NullInt64
+		if err := rows.Scan(&v, &count); err != nil {
+			return TaskFacetBucket{}, err
+		}
+		if !v.Valid {
+			return TaskFacetBucket{Value: TaskFacetValue{IsNull: true}, Count: count}, nil
+		}
+		return TaskFacetBucket{Value: TaskFacetValue{Value: int(v.Int64)}, Count: count}, nil
+	case "manual":
+		var v sql.NullInt64
+		if err := rows.Scan(&v, &count); err != nil {
+			return TaskFacetBucket{}, err
+		}
+		if !v.Valid {
+			return TaskFacetBucket{Value: TaskFacetValue{IsNull: true}, Count: count}, nil
+		}
+		return TaskFacetBucket{Value: TaskFacetValue{Value: v.Int64 != 0}, Count: count}, nil
+	default:
+		var v sql.NullString
+		if err := rows.Scan(&v, &count); err != nil {
+			return TaskFacetBucket{}, err
+		}
+		if !v.Valid {
+			return TaskFacetBucket{Value: TaskFacetValue{IsNull: true}, Count: count}, nil
+		}
+		return TaskFacetBucket{Value: TaskFacetValue{Value: v.String}, Count: count}, nil
+	}
 }
 
 func (s *Store) taskListPredicates(f TaskFilter) ([]string, []any, error) {

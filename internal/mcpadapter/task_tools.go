@@ -481,6 +481,53 @@ Example, over-budget cohort: {"cost_budget_gte":"50","updated_after":"2026-08-01
 		mcp.WithString("cursor", mcp.Description("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
 	), a.handleTaskList)
 
+	a.addTool(mcp.NewTool("torque_task_facets",
+		mcp.WithDescription(`Return bounded value/count buckets for supported task dimensions over the same filtered cohort as torque_task_list, without fetching task records or counting a returned page.
+Example: {"project_id":"PRJ-1","sprint_id":"SP-1","manual":"auto","dimensions":["status","priority","tags"]}. Monitor example: {"status":"doing","include_internal":"true","agent_profile":"codex-implementer","dimensions":["executor","launch_profile","tags"]}.
+dimensions may be a native string array or JSON array string. Omit it for all supported dimensions: status, priority, manual, kind, executor, agent_profile, launch_profile, project_id, sprint_id, epic_id, parent_id, tags. Duplicate dimensions/tags are normalized deterministically and do not inflate counts.
+All active filters apply to every requested facet, including the facet's own dimension. Tags count each matching task once per distinct tag; untagged matching tasks appear as a null bucket. Null buckets are value:null and are distinct from "" and "null". Buckets are ordered count desc, then among tied counts non-null values before null, then typed value asc. bucket_limit defaults to 50 and caps at 200. Row paging/sort inputs (limit, offset, cursor, sort_by, sort_dir) are rejected because facets always count the whole matching cohort.
+Response shape: data = {matching_count, bucket_limit, dimensions, facets:[{dimension,total_distinct,returned,truncated,buckets:[{value,count}]}]}.`),
+		mcp.WithString("dimensions", mcp.Description("JSON array or native array of dimensions. Omit for all supported dimensions.")),
+		mcp.WithString("bucket_limit", mcp.Description("Max buckets per dimension (integer, default 50, max 200).")),
+		mcp.WithString("status", mcp.Description("Filter by status")),
+		mcp.WithString("statuses", mcp.Description("JSON array of statuses — OR-match; takes precedence over status when both are set")),
+		mcp.WithString("priority", mcp.Description("Filter by one exact integer priority; may be 0")),
+		mcp.WithString("priorities", mcp.Description("JSON array of exact integer priorities; OR-matches values, rejects empty arrays; do not pass with priority")),
+		mcp.WithString("executor", mcp.Description("Filter by executor")),
+		mcp.WithString("kind", mcp.Description("Filter by kind")),
+		mcp.WithString("source_type", mcp.Description("Filter by source_type")),
+		mcp.WithString("source_ref", mcp.Description("Filter by source_ref")),
+		mcp.WithString("trust", mcp.Description("Filter by trust")),
+		mcp.WithString("checkpoint_mode", mcp.Description("Filter by checkpoint_mode")),
+		mcp.WithString("parent_id", mcp.Description("Filter by parent_id; pass 'null' to return root tasks")),
+		mcp.WithString("project_id", mcp.Description("Filter by project ID")),
+		mcp.WithString("sprint_id", mcp.Description("Filter by sprint ID")),
+		mcp.WithString("epic_id", mcp.Description("Filter by epic ID")),
+		mcp.WithString("tags", mcp.Description("JSON array of case-sensitive tag slugs; task must have all distinct tags.")),
+		mcp.WithString("manual", mcp.Description("Filter by manual flag: 'manual'/'true'/'1', 'auto'/'false'/'0', or 'both'/omit")),
+		mcp.WithString("include_internal", mcp.Description("Include kind=internal automation tasks. Default false unless kind='internal' is requested.")),
+		mcp.WithString("search", mcp.Description("Substring match on title + description (case-insensitive)")),
+		mcp.WithString("agent_profile", mcp.Description("Filter by agent_profile")),
+		mcp.WithString("launch_profile", mcp.Description("Filter by launch_profile")),
+		mcp.WithString("created_after", mcp.Description("Filter: created_at >= this RFC3339 timestamp")),
+		mcp.WithString("created_before", mcp.Description("Filter: created_at <= this RFC3339 timestamp")),
+		mcp.WithString("updated_after", mcp.Description("Filter: updated_at >= this RFC3339 timestamp")),
+		mcp.WithString("updated_before", mcp.Description("Filter: updated_at <= this RFC3339 timestamp")),
+		mcp.WithString("cost_budget_gte", mcp.Description("Filter: cost_budget >= this value")),
+		mcp.WithString("cost_budget_lte", mcp.Description("Filter: cost_budget <= this value")),
+		mcp.WithString("token_budget_gte", mcp.Description("Filter: token_budget >= this integer")),
+		mcp.WithString("token_budget_lte", mcp.Description("Filter: token_budget <= this integer")),
+		mcp.WithString("max_duration_ms_gte", mcp.Description("Filter: max_duration_ms >= this integer")),
+		mcp.WithString("max_duration_ms_lte", mcp.Description("Filter: max_duration_ms <= this integer")),
+		mcp.WithString("max_retries_gte", mcp.Description("Filter: max_retries >= this integer")),
+		mcp.WithString("max_retries_lte", mcp.Description("Filter: max_retries <= this integer")),
+		mcp.WithString("limit", mcp.Description("Rejected on facets; use bucket_limit instead.")),
+		mcp.WithString("offset", mcp.Description("Rejected on facets; facets count the whole cohort.")),
+		mcp.WithString("sort_by", mcp.Description("Rejected on facets; buckets use fixed ordering.")),
+		mcp.WithString("sort_dir", mcp.Description("Rejected on facets; buckets use fixed ordering.")),
+		mcp.WithString("cursor", mcp.Description("Rejected on facets; facets count the whole cohort.")),
+	), a.handleTaskFacets)
+
 	a.addTool(mcp.NewTool("torque_task_update",
 		mcp.WithDescription(`Partial update of a task's fields; only provided keys change (empty string clears most nullable scalars). Returns the updated TaskRecord.
 Use for field edits. Passing status here works — it is routed through the same status change torque_task_transition performs, so hooks and the terminal guard still apply — but torque_task_transition is preferred for lifecycle moves because it can post an explanatory comment in the same transaction, and torque_task_bulk_transition for multi-id status changes. Numeric sentinel "-1" = unlimited for budget fields.
@@ -895,6 +942,148 @@ func (a *Adapter) handleTaskGet(ctx context.Context, req mcp.CallToolRequest) (*
 	)
 }
 
+func taskQueryFromMCP(req mcp.CallToolRequest) (service.TaskQuery, *mcp.CallToolResult) {
+	if errRes := validateTaskListStringArgs(req,
+		"status", "executor", "kind", "source_type", "source_ref", "trust", "checkpoint_mode",
+		"parent_id", "project_id", "sprint_id", "epic_id", "search", "agent_profile", "launch_profile",
+		"created_after", "created_before", "updated_after", "updated_before",
+	); errRes != nil {
+		return service.TaskQuery{}, errRes
+	}
+	includeInternal, err := reqTaskListBool(req, "include_internal")
+	if err != nil {
+		res, _ := errResult(ErrCodeArgInvalid, err.Error(), "include_internal")
+		return service.TaskQuery{}, res
+	}
+	manual, err := parseManualFilter(req)
+	if err != nil {
+		res, _ := errResult(ErrCodeArgInvalid, err.Error(), "manual")
+		return service.TaskQuery{}, res
+	}
+	priorities, errRes := taskListPriorityFilter(req)
+	if errRes != nil {
+		return service.TaskQuery{}, errRes
+	}
+	status, _ := reqTaskListString(req, "status")
+	executor, _ := reqTaskListString(req, "executor")
+	kind, _ := reqTaskListString(req, "kind")
+	sourceType, _ := reqTaskListString(req, "source_type")
+	sourceRef, _ := reqTaskListString(req, "source_ref")
+	trust, _ := reqTaskListString(req, "trust")
+	checkpointMode, _ := reqTaskListString(req, "checkpoint_mode")
+	projectID, _ := reqTaskListString(req, "project_id")
+	sprintID, _ := reqTaskListString(req, "sprint_id")
+	epicID, _ := reqTaskListString(req, "epic_id")
+	search, _ := reqTaskListString(req, "search")
+	agentProfile, _ := reqTaskListString(req, "agent_profile")
+	launchProfile, _ := reqTaskListString(req, "launch_profile")
+	query := service.TaskQuery{
+		Status:          status,
+		Priorities:      priorities,
+		Executor:        executor,
+		Kind:            kind,
+		SourceType:      sourceType,
+		SourceRef:       sourceRef,
+		Trust:           trust,
+		CheckpointMode:  checkpointMode,
+		ProjectID:       projectID,
+		SprintID:        sprintID,
+		EpicID:          epicID,
+		Search:          search,
+		Manual:          manual,
+		AgentProfile:    agentProfile,
+		LaunchProfile:   launchProfile,
+		IncludeInternal: includeInternal,
+	}
+	args := req.GetArguments()
+	if _, ok := args["parent_id"]; ok {
+		v, _ := reqTaskListString(req, "parent_id")
+		query.ParentIDSet = true
+		query.ParentID = v
+	}
+	if tags, err := reqTaskListStrictStringSlice(req, "tags"); err != nil {
+		res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
+		return service.TaskQuery{}, res
+	} else if tags != nil {
+		query.TagSlugs = tags
+	}
+	if statuses, err := reqTaskListStrictStringSlice(req, "statuses"); err != nil {
+		res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid statuses JSON: %v", err), "statuses")
+		return service.TaskQuery{}, res
+	} else if statuses != nil {
+		query.Statuses = statuses
+	}
+	query.CreatedAfter, _ = reqTaskListString(req, "created_after")
+	query.CreatedBefore, _ = reqTaskListString(req, "created_before")
+	query.UpdatedAfter, _ = reqTaskListString(req, "updated_after")
+	query.UpdatedBefore, _ = reqTaskListString(req, "updated_before")
+	if _, ok := args["cost_budget_gte"]; ok {
+		v, err := reqTaskListFloat(req, "cost_budget_gte")
+		if err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "cost_budget_gte")
+			return service.TaskQuery{}, res
+		}
+		query.CostBudgetGte = &v
+	}
+	if _, ok := args["cost_budget_lte"]; ok {
+		v, err := reqTaskListFloat(req, "cost_budget_lte")
+		if err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "cost_budget_lte")
+			return service.TaskQuery{}, res
+		}
+		query.CostBudgetLte = &v
+	}
+	if _, ok := args["token_budget_gte"]; ok {
+		v, err := reqTaskListInt64(req, "token_budget_gte")
+		if err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "token_budget_gte")
+			return service.TaskQuery{}, res
+		}
+		query.TokenBudgetGte = &v
+	}
+	if _, ok := args["token_budget_lte"]; ok {
+		v, err := reqTaskListInt64(req, "token_budget_lte")
+		if err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "token_budget_lte")
+			return service.TaskQuery{}, res
+		}
+		query.TokenBudgetLte = &v
+	}
+	if _, ok := args["max_duration_ms_gte"]; ok {
+		v, err := reqTaskListInt64(req, "max_duration_ms_gte")
+		if err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "max_duration_ms_gte")
+			return service.TaskQuery{}, res
+		}
+		query.MaxDurationMsGte = &v
+	}
+	if _, ok := args["max_duration_ms_lte"]; ok {
+		v, err := reqTaskListInt64(req, "max_duration_ms_lte")
+		if err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "max_duration_ms_lte")
+			return service.TaskQuery{}, res
+		}
+		query.MaxDurationMsLte = &v
+	}
+	if _, ok := args["max_retries_gte"]; ok {
+		v, _, err := reqTaskListInt(req, "max_retries_gte")
+		if err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "max_retries_gte")
+			return service.TaskQuery{}, res
+		}
+		query.MaxRetriesGte = &v
+	}
+	if _, ok := args["max_retries_lte"]; ok {
+		v, _, err := reqTaskListInt(req, "max_retries_lte")
+		if err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "max_retries_lte")
+			return service.TaskQuery{}, res
+		}
+		query.MaxRetriesLte = &v
+	}
+	return query, nil
+}
+
 func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if errRes := rejectMalformedTaskListTags(req); errRes != nil {
 		return errRes, nil
@@ -927,145 +1116,85 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 	if err != nil {
 		return errResult(ErrCodeArgInvalid, err.Error(), "include_total")
 	}
-	manual, err := parseManualFilter(req)
-	if err != nil {
-		return errResult(ErrCodeArgInvalid, err.Error(), "manual")
-	}
-
-	priorities, errRes := taskListPriorityFilter(req)
+	query, errRes := taskQueryFromMCP(req)
 	if errRes != nil {
 		return errRes, nil
 	}
-
-	status, _ := reqTaskListString(req, "status")
-	executor, _ := reqTaskListString(req, "executor")
-	kind, _ := reqTaskListString(req, "kind")
-	sourceType, _ := reqTaskListString(req, "source_type")
-	sourceRef, _ := reqTaskListString(req, "source_ref")
-	trust, _ := reqTaskListString(req, "trust")
-	checkpointMode, _ := reqTaskListString(req, "checkpoint_mode")
-	projectID, _ := reqTaskListString(req, "project_id")
-	sprintID, _ := reqTaskListString(req, "sprint_id")
-	epicID, _ := reqTaskListString(req, "epic_id")
-	search, _ := reqTaskListString(req, "search")
-	agentProfile, _ := reqTaskListString(req, "agent_profile")
-	launchProfile, _ := reqTaskListString(req, "launch_profile")
 	sortBy, _ := reqTaskListString(req, "sort_by")
 	sortDir, _ := reqTaskListString(req, "sort_dir")
 	cursor, _ := reqTaskListString(req, "cursor")
-
-	query := service.TaskQuery{
-		Status:          status,
-		Priorities:      priorities,
-		Executor:        executor,
-		Kind:            kind,
-		SourceType:      sourceType,
-		SourceRef:       sourceRef,
-		Trust:           trust,
-		CheckpointMode:  checkpointMode,
-		ProjectID:       projectID,
-		SprintID:        sprintID,
-		EpicID:          epicID,
-		Search:          search,
-		Manual:          manual,
-		AgentProfile:    agentProfile,
-		LaunchProfile:   launchProfile,
-		Limit:           rawLimit,
-		SortBy:          sortBy,
-		SortDir:         sortDir,
-		Cursor:          cursor,
-		IncludeInternal: includeInternal,
-		WithTotal:       includeTotal,
-	}
-	if _, ok := req.GetArguments()["parent_id"]; ok {
-		v, _ := reqTaskListString(req, "parent_id")
-		query.ParentIDSet = true
-		query.ParentID = v
-	}
-	if tags, err := reqTaskListStrictStringSlice(req, "tags"); err != nil {
-		return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
-	} else if tags != nil {
-		query.TagSlugs = tags
-	}
-	// ENT-TASK: statuses[] OR-filter — already supported at the store layer
-	// (TaskFilter.Statuses, ListTasks) and on HTTP; this is the MCP wiring.
-	// ListTasks prefers Statuses over the single Status field when both are
-	// set, so no extra precedence handling is needed here.
-	if statuses, err := reqTaskListStrictStringSlice(req, "statuses"); err != nil {
-		return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid statuses JSON: %v", err), "statuses")
-	} else if statuses != nil {
-		query.Statuses = statuses
-	}
-	query.CreatedAfter, _ = reqTaskListString(req, "created_after")
-	query.CreatedBefore, _ = reqTaskListString(req, "created_before")
-	query.UpdatedAfter, _ = reqTaskListString(req, "updated_after")
-	query.UpdatedBefore, _ = reqTaskListString(req, "updated_before")
-	// Budget/duration range filters (ENT-TASK) — presence-gated (like
-	// buildTaskUpdateInput's numeric-nullable fields) so an omitted key
-	// leaves the bound unset rather than defaulting to 0, which would
-	// wrongly exclude every task whose budget is above/below zero.
-	listArgs := req.GetArguments()
-	if _, ok := listArgs["cost_budget_gte"]; ok {
-		v, err := reqTaskListFloat(req, "cost_budget_gte")
-		if err != nil {
-			return errResult(ErrCodeArgInvalid, err.Error(), "cost_budget_gte")
-		}
-		query.CostBudgetGte = &v
-	}
-	if _, ok := listArgs["cost_budget_lte"]; ok {
-		v, err := reqTaskListFloat(req, "cost_budget_lte")
-		if err != nil {
-			return errResult(ErrCodeArgInvalid, err.Error(), "cost_budget_lte")
-		}
-		query.CostBudgetLte = &v
-	}
-	if _, ok := listArgs["token_budget_gte"]; ok {
-		v, err := reqTaskListInt64(req, "token_budget_gte")
-		if err != nil {
-			return errResult(ErrCodeArgInvalid, err.Error(), "token_budget_gte")
-		}
-		query.TokenBudgetGte = &v
-	}
-	if _, ok := listArgs["token_budget_lte"]; ok {
-		v, err := reqTaskListInt64(req, "token_budget_lte")
-		if err != nil {
-			return errResult(ErrCodeArgInvalid, err.Error(), "token_budget_lte")
-		}
-		query.TokenBudgetLte = &v
-	}
-	if _, ok := listArgs["max_duration_ms_gte"]; ok {
-		v, err := reqTaskListInt64(req, "max_duration_ms_gte")
-		if err != nil {
-			return errResult(ErrCodeArgInvalid, err.Error(), "max_duration_ms_gte")
-		}
-		query.MaxDurationMsGte = &v
-	}
-	if _, ok := listArgs["max_duration_ms_lte"]; ok {
-		v, err := reqTaskListInt64(req, "max_duration_ms_lte")
-		if err != nil {
-			return errResult(ErrCodeArgInvalid, err.Error(), "max_duration_ms_lte")
-		}
-		query.MaxDurationMsLte = &v
-	}
-	if _, ok := listArgs["max_retries_gte"]; ok {
-		v, _, err := reqTaskListInt(req, "max_retries_gte")
-		if err != nil {
-			return errResult(ErrCodeArgInvalid, err.Error(), "max_retries_gte")
-		}
-		query.MaxRetriesGte = &v
-	}
-	if _, ok := listArgs["max_retries_lte"]; ok {
-		v, _, err := reqTaskListInt(req, "max_retries_lte")
-		if err != nil {
-			return errResult(ErrCodeArgInvalid, err.Error(), "max_retries_lte")
-		}
-		query.MaxRetriesLte = &v
-	}
+	query.Limit = rawLimit
+	query.SortBy = sortBy
+	query.SortDir = sortDir
+	query.Cursor = cursor
+	query.IncludeInternal = includeInternal
+	query.WithTotal = includeTotal
 	page, err := a.svc.Task.Query(query)
 	if err != nil {
 		return errFromService(err)
 	}
 	return a.taskListCursorEnvelopeWithTotal(page.Tasks, page.Limit, verbose, isTypedFormat(format), page.SortBy, page.SortDir, page.HasMoreFromQuery, optionalTotal(page))
+}
+
+func (a *Adapter) handleTaskFacets(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if errRes := rejectMalformedTaskListTags(req); errRes != nil {
+		return errRes, nil
+	}
+	args := req.GetArguments()
+	for _, key := range []string{"limit", "offset", "cursor", "sort_by", "sort_dir"} {
+		if _, ok := args[key]; ok {
+			return errResult(ErrCodeArgInvalid, key+" is not supported by task facets; facets always count the whole matching cohort", key)
+		}
+	}
+	if errRes := validateTaskListStringArgs(req,
+		"status", "executor", "kind", "source_type", "source_ref", "trust", "checkpoint_mode",
+		"parent_id", "project_id", "sprint_id", "epic_id", "search", "agent_profile", "launch_profile",
+		"created_after", "created_before", "updated_after", "updated_before",
+	); errRes != nil {
+		return errRes, nil
+	}
+	query, errRes := taskQueryFromMCP(req)
+	if errRes != nil {
+		return errRes, nil
+	}
+	fq := service.TaskFacetQuery{TaskQuery: query}
+	if _, ok := args["dimensions"]; ok {
+		dims, err := reqTaskFacetDimensions(req)
+		if err != nil {
+			return errResult(ErrCodeArgInvalid, err.Error(), "dimensions")
+		}
+		fq.Dimensions = dims
+	}
+	if _, ok := args["bucket_limit"]; ok {
+		n, _, err := reqTaskListInt(req, "bucket_limit")
+		if err != nil {
+			return errResult(ErrCodeArgInvalid, err.Error(), "bucket_limit")
+		}
+		fq.BucketLimit = n
+	}
+	result, err := a.svc.Task.Facets(fq)
+	if err != nil {
+		return errFromService(err)
+	}
+	return cappedTaskFacetResult(result)
+}
+
+func reqTaskFacetDimensions(req mcp.CallToolRequest) ([]string, error) {
+	raw, ok := req.GetArguments()["dimensions"]
+	if !ok {
+		return nil, nil
+	}
+	if s, ok := raw.(string); ok && strings.TrimSpace(s) == "" {
+		return []string{}, nil
+	}
+	dims, err := reqTaskListStrictStringSlice(req, "dimensions")
+	if err != nil {
+		return nil, fmt.Errorf("invalid dimensions JSON: %v", err)
+	}
+	if dims == nil {
+		return []string{}, nil
+	}
+	return dims, nil
 }
 
 // taskSortValue preserves timestamp precision in the cursor. Whole-second
