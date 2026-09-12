@@ -1023,6 +1023,19 @@ const (
 	metaKeyRunID           = "torque.run_id"
 )
 
+func callerSessionMeta(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in)+4)
+	for k, v := range in {
+		out[k] = v
+	}
+	delete(out, metaKeyMode)
+	delete(out, metaKeyBootDir)
+	delete(out, metaKeyWorkspaceDir)
+	delete(out, metaKeyParentSessionID)
+	delete(out, metaKeyRunID)
+	return out
+}
+
 // sessionFromRecord projects a sqlstore row onto the public Session shape.
 // Decodes the substrate-stamped MetaJSON keys (torque.mode, .boot_dir,
 // .workspace_dir, .parent_session_id) so Get/List return the same fields

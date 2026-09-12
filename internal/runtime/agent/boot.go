@@ -674,11 +674,7 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 	// Start returns nil). Workdir on the row stays at opts.Workdir — the
 	// project root, which is the most useful forensic value; the planted
 	// bootDir lives in metaKeyBootDir and registerBootDir.
-	persistedMeta := make(map[string]string, len(opts.SessionMeta)+4)
-	for k, v := range opts.SessionMeta {
-		persistedMeta[k] = v
-	}
-	delete(persistedMeta, metaKeyRunID)
+	persistedMeta := callerSessionMeta(opts.SessionMeta)
 	persistedMeta[metaKeyMode] = opts.Mode.String()
 	persistedMeta[metaKeyWorkspaceDir] = ws.WorkspaceDir
 	if opts.RunID > 0 {
@@ -1342,11 +1338,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		}
 	}
 
-	persistedMeta := make(map[string]string, len(opts.SessionMeta)+4)
-	for k, v := range opts.SessionMeta {
-		persistedMeta[k] = v
-	}
-	delete(persistedMeta, metaKeyRunID)
+	persistedMeta := callerSessionMeta(opts.SessionMeta)
 	persistedMeta[metaKeyMode] = opts.Mode.String()
 	persistedMeta[metaKeyWorkspaceDir] = ws.WorkspaceDir
 	if opts.RunID > 0 {

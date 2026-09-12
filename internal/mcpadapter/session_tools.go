@@ -6,6 +6,7 @@ import (
 
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
+	"github.com/hollis-labs/torque/internal/sessioninput"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -26,6 +27,8 @@ Example: {"agent_profile":"default","workdir":"/tmp/sess","task_id":"T-123"}`),
 		mcp.WithString("project_id", mcp.Description("Optional project soft-FK")),
 		mcp.WithString("task_id", mcp.Description("Optional task soft-FK")),
 		mcp.WithString("system_prompt", mcp.Description("Boot/system prompt for the agent")),
+		sessionStringMapParam("env", "Environment additions as a native object with string values or a JSON-object string. MCP object form maps to agent.Options.Env; HTTP legacy /sessions/launch maps env [\"K=V\"] to the same Options.Env shape. Null, arrays, scalars, and non-string values are rejected."),
+		sessionStringMapParam("meta", "Session metadata as a native object with string values or a JSON-object string. Maps to HTTP /sessions/launch meta and agent.Options.SessionMeta. Null, arrays, scalars, and non-string values are rejected; Torque-owned torque.* session keys are protected by Boot."),
 	), a.handleSessionCreate)
 
 	// _launch is an alias for _create — the ticket lists both. Kept as
@@ -42,6 +45,8 @@ Example: {"agent_profile":"default","workdir":"/tmp/sess"}`),
 		mcp.WithString("project_id"),
 		mcp.WithString("task_id"),
 		mcp.WithString("system_prompt"),
+		sessionStringMapParam("env", "Environment additions as a native object with string values or a JSON-object string. MCP object form maps to agent.Options.Env; HTTP legacy /sessions/launch maps env [\"K=V\"] to the same Options.Env shape. Null, arrays, scalars, and non-string values are rejected."),
+		sessionStringMapParam("meta", "Session metadata as a native object with string values or a JSON-object string. Maps to HTTP /sessions/launch meta and agent.Options.SessionMeta. Null, arrays, scalars, and non-string values are rejected; Torque-owned torque.* session keys are protected by Boot."),
 	), a.handleSessionCreate)
 
 	a.addTool(mcp.NewTool("torque_session_get",
@@ -116,6 +121,21 @@ func (a *Adapter) requireSessionMgr() (*agent.Manager, error) {
 	return a.sessions, nil
 }
 
+func sessionStringMapParam(name, description string) mcp.ToolOption {
+	return func(t *mcp.Tool) {
+		t.InputSchema.Properties[name] = map[string]any{
+			"anyOf": []any{
+				map[string]any{
+					"type":                 "object",
+					"additionalProperties": map[string]any{"type": "string"},
+				},
+				map[string]any{"type": "string"},
+			},
+			"description": description,
+		}
+	}
+}
+
 func (a *Adapter) handleSessionCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	mgr, err := a.requireSessionMgr()
 	if err != nil {
@@ -141,6 +161,14 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req mcp.CallToolReque
 			return errResult(ErrCodeArgInvalid, err.Error(), "agent_profile")
 		}
 	}
+	env, res := reqStringMap(req, "env")
+	if res != nil {
+		return res, nil
+	}
+	meta, res := reqStringMap(req, "meta")
+	if res != nil {
+		return res, nil
+	}
 	sess, err := mgr.Boot(ctx, agent.Options{
 		Mode:          agent.ModeLongLived,
 		LaunchProfile: launchProfile,
@@ -149,11 +177,26 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req mcp.CallToolReque
 		ProjectID:     reqStr(req, "project_id"),
 		TaskID:        reqStr(req, "task_id"),
 		SystemPrompt:  reqStr(req, "system_prompt"),
+		Env:           env,
+		SessionMeta:   meta,
 	})
 	if err != nil {
 		return errResult(ErrCodeDomain, err.Error(), "")
 	}
 	return okResult(sess)
+}
+
+func reqStringMap(req mcp.CallToolRequest, key string) (map[string]string, *mcp.CallToolResult) {
+	raw, ok := req.GetArguments()[key]
+	if !ok {
+		return nil, nil
+	}
+	out, err := sessioninput.DecodeStringMapValue(raw, key)
+	if err != nil {
+		res, _ := errResult(ErrCodeArgInvalid, err.Error(), key)
+		return nil, res
+	}
+	return out, nil
 }
 
 func (a *Adapter) handleSessionGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

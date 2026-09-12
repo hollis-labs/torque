@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"github.com/hollis-labs/agentkit/agentsessions"
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
+	"github.com/hollis-labs/torque/internal/sessioninput"
 )
 
 // requireSessions writes a 503 envelope when the session manager is not
@@ -51,6 +53,26 @@ type launchSessionBody struct {
 	SystemPrompt  string            `json:"system_prompt,omitempty"`
 	Env           []string          `json:"env,omitempty"`
 	Meta          map[string]string `json:"meta,omitempty"`
+}
+
+func (b *launchSessionBody) UnmarshalJSON(data []byte) error {
+	type wire launchSessionBody
+	var raw struct {
+		wire
+		Meta json.RawMessage `json:"meta,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*b = launchSessionBody(raw.wire)
+	if len(raw.Meta) != 0 {
+		meta, err := sessioninput.DecodeStringMapJSON(raw.Meta, "meta")
+		if err != nil {
+			return err
+		}
+		b.Meta = meta
+	}
+	return nil
 }
 
 func (s *Server) launchSession(w http.ResponseWriter, r *http.Request) {
