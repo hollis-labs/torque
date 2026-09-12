@@ -465,44 +465,58 @@ func TestCommentDelete_RejectsImpreciseIDAndAuthorTypesWithoutDeleting(t *testin
 	id := added["id"].(float64)
 
 	cases := []struct {
-		name string
-		args map[string]interface{}
+		name  string
+		args  map[string]interface{}
+		field string
 	}{
 		{
-			name: "fractional id",
-			args: map[string]interface{}{"id": id + 0.5, "author": "alice", "force": true},
+			name:  "fractional id without force",
+			args:  map[string]interface{}{"id": id + 0.5, "author": "alice"},
+			field: "id",
 		},
 		{
-			name: "numeric author",
-			args: map[string]interface{}{"id": id, "author": 7, "force": true},
+			name:  "fractional id with force",
+			args:  map[string]interface{}{"id": id + 0.5, "author": "alice", "force": true},
+			field: "id",
 		},
 		{
-			name: "null author",
-			args: map[string]interface{}{"id": id, "author": nil, "force": true},
+			name:  "numeric author",
+			args:  map[string]interface{}{"id": id, "author": 7, "force": true},
+			field: "author",
 		},
 		{
-			name: "missing author under force",
-			args: map[string]interface{}{"id": id, "force": true},
+			name:  "null author",
+			args:  map[string]interface{}{"id": id, "author": nil, "force": true},
+			field: "author",
 		},
 		{
-			name: "null force",
-			args: map[string]interface{}{"id": id, "author": "bob", "force": nil},
+			name:  "missing author under force",
+			args:  map[string]interface{}{"id": id, "force": true},
+			field: "author",
 		},
 		{
-			name: "number force",
-			args: map[string]interface{}{"id": id, "author": "bob", "force": 1},
+			name:  "null force",
+			args:  map[string]interface{}{"id": id, "author": "bob", "force": nil},
+			field: "force",
 		},
 		{
-			name: "string force rejected by boolean schema contract",
-			args: map[string]interface{}{"id": id, "author": "bob", "force": "true"},
+			name:  "number force",
+			args:  map[string]interface{}{"id": id, "author": "bob", "force": 1},
+			field: "force",
+		},
+		{
+			name:  "string force rejected by boolean schema contract",
+			args:  map[string]interface{}{"id": id, "author": "bob", "force": "true"},
+			field: "force",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			text, isErr := callTool(t, a, "torque_comment_delete", tc.args)
 			require.True(t, isErr, "expected parser rejection: %s", text)
-			code, _, _ := parseError(t, text)
+			code, _, field := parseError(t, text)
 			assert.Equal(t, "arg_invalid", code)
+			assert.Equal(t, tc.field, field)
 
 			listText, listErr := callTool(t, a, "torque_comment_list", map[string]interface{}{
 				"entity_type": "task", "entity_id": taskID, "verbose": "true",
