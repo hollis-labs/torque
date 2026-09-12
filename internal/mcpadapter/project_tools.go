@@ -23,6 +23,7 @@ Example: {"name":"Torque","repo_path":"/Users/me/Projects/torque"}`),
 		mcp.WithString("repo_path", mcp.Description("Repository path — absolute or ~-prefixed; must point at an existing directory")),
 		mcp.WithString("agent_path", mcp.Description("Path to an agent spec file for this project, relative to repo_path or absolute")),
 		mcp.WithString("icon", mcp.Description("Icon identifier/name for UI display")),
+		mcp.WithString("status", mcp.Description("Initial status: active|inactive (default active when omitted)")),
 		mcp.WithString("read_paths", mcp.Description("JSON array of paths this project's agents may read")),
 		mcp.WithString("write_paths", mcp.Description("JSON array of paths this project's agents may write")),
 		mcp.WithString("context_paths", mcp.Description("JSON array of paths providing background context")),
@@ -136,6 +137,10 @@ func (a *Adapter) handleProjectCreate(ctx context.Context, req mcp.CallToolReque
 		RepoPath:    reqStr(req, "repo_path"),
 		AgentPath:   reqStr(req, "agent_path"),
 		Icon:        reqStr(req, "icon"),
+	}
+	if reqHasArg(req, "status") {
+		status := reqStr(req, "status")
+		input.Status = &status
 	}
 
 	for _, f := range []struct {

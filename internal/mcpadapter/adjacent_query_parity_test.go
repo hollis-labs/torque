@@ -1,6 +1,7 @@
 package mcpadapter_test
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -133,6 +134,118 @@ func collectHTTPAdjacentIDs(t *testing.T, base string, params url.Values) []stri
 	}
 	t.Fatalf("HTTP pagination did not terminate for %s", base)
 	return nil
+}
+
+func postHTTPProject(t *testing.T, baseURL string, body map[string]any) (map[string]any, int) {
+	t.Helper()
+	raw, err := json.Marshal(body)
+	require.NoError(t, err)
+	resp, err := http.Post(baseURL+"/api/v1/projects", "application/json", bytes.NewReader(raw))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	var project map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&project))
+	return project, resp.StatusCode
+}
+
+func getHTTPProject(t *testing.T, baseURL, id string) map[string]any {
+	t.Helper()
+	resp, err := http.Get(baseURL + "/api/v1/projects/" + id)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var project map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&project))
+	return project
+}
+
+func projectStatusesByID(items []map[string]any) map[string]string {
+	out := map[string]string{}
+	for _, item := range items {
+		id, _ := item["id"].(string)
+		if id == "" {
+			id, _ = item["ID"].(string)
+		}
+		status, _ := item["status"].(string)
+		if status == "" {
+			status, _ = item["Status"].(string)
+		}
+		out[id] = status
+	}
+	return out
+}
+
+func TestFullStack_ProjectCreateInitialStatusHTTPMCPParity(t *testing.T) {
+	a, ts, svc := setupAdjacentQueryParitySurfaces(t)
+	repoPath := t.TempDir()
+
+	text, isErr := callTool(t, a, "torque_project_create", map[string]any{"name": "MCP Omitted", "repo_path": repoPath})
+	require.False(t, isErr, "mcp omitted create: %s", text)
+	var mcpOmitted map[string]any
+	parseData(t, text, &mcpOmitted)
+
+	text, isErr = callTool(t, a, "torque_project_create", map[string]any{"name": "MCP Inactive", "repo_path": repoPath, "status": "inactive"})
+	require.False(t, isErr, "mcp inactive create: %s", text)
+	var mcpInactive map[string]any
+	parseData(t, text, &mcpInactive)
+
+	text, isErr = callTool(t, a, "torque_project_create", map[string]any{"name": "MCP Active", "repo_path": repoPath, "status": "active"})
+	require.False(t, isErr, "mcp active create: %s", text)
+	var mcpActive map[string]any
+	parseData(t, text, &mcpActive)
+
+	httpOmitted, status := postHTTPProject(t, ts.URL, map[string]any{"name": "HTTP Omitted", "repo_path": repoPath})
+	require.Equal(t, http.StatusCreated, status)
+	httpInactive, status := postHTTPProject(t, ts.URL, map[string]any{"name": "HTTP Inactive", "repo_path": repoPath, "status": "inactive"})
+	require.Equal(t, http.StatusCreated, status)
+	httpActive, status := postHTTPProject(t, ts.URL, map[string]any{"name": "HTTP Active", "repo_path": repoPath, "status": "active"})
+	require.Equal(t, http.StatusCreated, status)
+
+	expected := map[string]string{
+		mcpOmitted["ID"].(string):   "active",
+		mcpInactive["ID"].(string):  "inactive",
+		mcpActive["ID"].(string):    "active",
+		httpOmitted["id"].(string):  "active",
+		httpInactive["id"].(string): "inactive",
+		httpActive["id"].(string):   "active",
+	}
+	for id, want := range expected {
+		got, err := svc.Project.Get(id)
+		require.NoError(t, err)
+		require.Equal(t, want, got.Status)
+	}
+
+	text, isErr = callTool(t, a, "torque_project_get", map[string]any{"id": mcpInactive["ID"].(string)})
+	require.False(t, isErr)
+	var gotMCPInactive map[string]any
+	parseData(t, text, &gotMCPInactive)
+	require.Equal(t, "inactive", gotMCPInactive["Status"])
+	require.Equal(t, "inactive", getHTTPProject(t, ts.URL, httpInactive["id"].(string))["status"])
+
+	mcpInactiveList := mcpAdjacentPage(t, a, "torque_project_list", map[string]any{"status": "inactive", "sort_by": "name"})
+	httpInactiveList := decodeHTTPAdjacentEnvelope(t, ts.URL+"/api/v1/projects?"+url.Values{"status": {"inactive"}, "limit": {"100"}, "sort_by": {"name"}}.Encode())
+	require.Equal(t, projectStatusesByID(mcpInactiveList.Items), projectStatusesByID(httpInactiveList.Items))
+	require.Equal(t, "inactive", projectStatusesByID(httpInactiveList.Items)[mcpInactive["ID"].(string)])
+	require.Equal(t, "inactive", projectStatusesByID(httpInactiveList.Items)[httpInactive["id"].(string)])
+
+	mcpActiveList := mcpAdjacentPage(t, a, "torque_project_list", map[string]any{"status": "active", "sort_by": "name"})
+	httpActiveList := decodeHTTPAdjacentEnvelope(t, ts.URL+"/api/v1/projects?"+url.Values{"status": {"active"}, "limit": {"100"}, "sort_by": {"name"}}.Encode())
+	require.Equal(t, projectStatusesByID(mcpActiveList.Items), projectStatusesByID(httpActiveList.Items))
+	require.Equal(t, "active", projectStatusesByID(httpActiveList.Items)[mcpOmitted["ID"].(string)])
+	require.Equal(t, "active", projectStatusesByID(httpActiveList.Items)[mcpActive["ID"].(string)])
+	require.Equal(t, "active", projectStatusesByID(httpActiveList.Items)[httpOmitted["id"].(string)])
+	require.Equal(t, "active", projectStatusesByID(httpActiveList.Items)[httpActive["id"].(string)])
+
+	for _, bad := range []string{"", " inactive", "Inactive", "deleted"} {
+		text, isErr = callTool(t, a, "torque_project_create", map[string]any{"name": "MCP Bad", "repo_path": repoPath, "status": bad})
+		require.True(t, isErr, "mcp create should reject status %q", bad)
+		code, _, field := parseError(t, text)
+		require.Equal(t, "arg_invalid", code)
+		require.Equal(t, "status", field)
+
+		_, status = postHTTPProject(t, ts.URL, map[string]any{"name": "HTTP Bad", "repo_path": repoPath, "status": bad})
+		require.Equal(t, http.StatusBadRequest, status)
+	}
 }
 
 func TestFullStack_AdjacentHTTPMCPParity_ComposedQueriesAndCursors(t *testing.T) {

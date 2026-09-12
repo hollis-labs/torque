@@ -24,6 +24,7 @@ type ProjectCreateInput struct {
 	Permissions  map[string]string
 	Rules        []string
 	Icon         string
+	Status       *string
 }
 
 type ProjectArtifactCreateInput struct {
@@ -55,6 +56,13 @@ func (s *ProjectService) Create(input ProjectCreateInput) (*sqlstore.ProjectReco
 	if err := validateRepoPath(input.RepoPath); err != nil {
 		return nil, err
 	}
+	status := "active"
+	if input.Status != nil {
+		if err := validateProjectStatus(*input.Status); err != nil {
+			return nil, err
+		}
+		status = *input.Status
+	}
 
 	id, err := s.store.NextProjectID()
 	if err != nil {
@@ -68,7 +76,7 @@ func (s *ProjectService) Create(input ProjectCreateInput) (*sqlstore.ProjectReco
 		RepoPath:    input.RepoPath,
 		AgentPath:   input.AgentPath,
 		Icon:        input.Icon,
-		Status:      "active",
+		Status:      status,
 	}
 	if len(input.ReadPaths) > 0 {
 		record.ReadPaths = sql.NullString{String: marshalJSON(input.ReadPaths), Valid: true}
@@ -130,11 +138,8 @@ func (s *ProjectService) Update(id string, update sqlstore.ProjectUpdate) error 
 		return err
 	}
 	if update.Status != nil {
-		if *update.Status != "active" && *update.Status != "inactive" {
-			return &ValidationError{
-				Field:   "status",
-				Message: "must be one of: active, inactive",
-			}
+		if err := validateProjectStatus(*update.Status); err != nil {
+			return err
 		}
 	}
 	if update.RepoPath != nil {
@@ -150,6 +155,16 @@ func (s *ProjectService) Update(id string, update sqlstore.ProjectUpdate) error 
 		}
 	}
 	return s.store.UpdateProject(id, update)
+}
+
+func validateProjectStatus(status string) error {
+	if status != "active" && status != "inactive" {
+		return &ValidationError{
+			Field:   "status",
+			Message: "must be one of: active, inactive",
+		}
+	}
+	return nil
 }
 
 // Delete removes a project by ID.

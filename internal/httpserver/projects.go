@@ -152,6 +152,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		Permissions  map[string]string `json:"permissions"`
 		Rules        []string          `json:"rules"`
 		Icon         string            `json:"icon"`
+		Status       *string           `json:"status,omitempty"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -169,6 +170,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		Permissions:  req.Permissions,
 		Rules:        req.Rules,
 		Icon:         req.Icon,
+		Status:       req.Status,
 	})
 	if err != nil {
 		if _, ok := err.(*service.ValidationError); ok {
