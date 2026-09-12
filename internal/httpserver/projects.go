@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 )
 
 func projectJSON(p *sqlstore.ProjectRecord) map[string]interface{} {
@@ -63,20 +64,66 @@ func projectsJSON(projects []sqlstore.ProjectRecord) []map[string]interface{} {
 }
 
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
-	status := r.URL.Query().Get("status")
-	projects, err := s.svc.Project.List(status, false)
-	if err != nil {
-		if _, ok := err.(*service.FeatureDisabledError); ok {
-			writeError(w, http.StatusNotFound, err.Error())
+	allowed := map[string]bool{"status": true, "include_archived": true, "limit": true, "cursor": true, "sort_by": true, "sort_dir": true}
+	q, qerr := parseStrictQuery(r, allowed)
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
+		return
+	}
+	status := queryString(q, "status")
+	includeArchived, qerr := queryBool(q, "include_archived")
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
+		return
+	}
+	if !hasAnyQueryKey(q, "limit", "cursor", "sort_by", "sort_dir") {
+		projects, err := s.svc.Project.List(status, includeArchived)
+		if err != nil {
+			if _, ok := err.(*service.FeatureDisabledError); ok {
+				writeError(w, http.StatusNotFound, err.Error())
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		writeError(w, http.StatusInternalServerError, err.Error())
+		if projects == nil {
+			projects = []sqlstore.ProjectRecord{}
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"projects": projectsJSON(projects)})
 		return
+	}
+	cursor, qerr := queryCursor(q)
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
+		return
+	}
+	filter, normalized, err := service.NormalizeProjectQuery(service.ProjectQuery{
+		Status:          status,
+		IncludeArchived: includeArchived,
+		CursorQuery:     cursor,
+	})
+	if err != nil {
+		writeAdjacentServiceError(w, err)
+		return
+	}
+	projects, err := s.svc.Project.ListPage(filter)
+	if err != nil {
+		writeAdjacentServiceError(w, err)
+		return
+	}
+	hasMore := len(projects) > normalized.Limit
+	if hasMore {
+		projects = projects[:normalized.Limit]
 	}
 	if projects == nil {
 		projects = []sqlstore.ProjectRecord{}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"projects": projectsJSON(projects)})
+	nextCursor := ""
+	if hasMore && len(projects) > 0 {
+		last := projects[len(projects)-1]
+		nextCursor = pagination.Encode(normalized.SortBy, normalized.SortDir, service.ProjectQuerySortValue(last, normalized.SortBy), last.ID)
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": projectsJSON(projects), "meta": advancedMeta(normalized.Limit, normalized.SortBy, normalized.SortDir, hasMore, nextCursor, len(projects))})
 }
 
 func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {

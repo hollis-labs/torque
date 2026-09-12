@@ -104,6 +104,44 @@ catalog count excluding cursor/limit. Ordering and cursor predicates both use
 page stably. Default limit is 50, max is 200; explicit `limit<=0`, fractions,
 and overflows are rejected.
 
+Adjacent entity HTTP lists (`/projects`, `/sprints`, `/epics`, `/issues`, and
+`/comments`) preserve their legacy fetch-all response shapes for existing
+simple calls, and opt into bounded cursor mode only when an advanced key is
+present. Before that mode choice, handlers reject malformed raw query strings,
+unknown keys, and repeated scalar keys with `400` plus `field`; an
+unknown-only request never falls through to a successful unfiltered legacy
+list. Explicit blank, malformed, fractional, overflow, unsafe, or negative
+`limit` values are rejected. Cursor tokens are opaque and tied to the
+`sort_by`/`sort_dir` that issued them.
+
+Advanced adjacent responses use `{items:[...], meta:{returned, limit,
+has_more, next_cursor, sort_by, sort_dir}}`. They deliberately make no
+whole-cohort `total` claim unless a count is actually computed. Legacy
+`GET /api/v1/issues/search?q=...` keeps its old `total=len(page)` value; that
+is page length compatibility, not a cohort count.
+
+| Route | Legacy keys and shape | Advanced opt-in keys | Default/max/order |
+|---|---|---|---|
+| `GET /projects` | `status`, `include_archived`; `{projects:[...]}` fetch-all | `limit`, `cursor`, `sort_by`, `sort_dir` | 100/500, `name asc`; sort fields `name,status,updated_at,created_at` |
+| `GET /sprints` | `status`, `project_id`; `{sprints:[...]}` fetch-all | `include_archived`, `over_budget`, `cost_budget_min`, `cost_budget_max`, `limit`, `cursor`, `sort_by`, `sort_dir` | 100/500, `updated_at desc`; sort fields `name,status,updated_at,created_at` |
+| `GET /epics` | `status`, `project_id`; `{epics:[...]}` fetch-all | `include_archived`, `search`, `limit`, `cursor`, `sort_by`, `sort_dir` | 100/500, `updated_at desc`; sort fields `name,status,updated_at,created_at` |
+| `GET /issues` | `project_id`; `{issues:[...], total}` fetch-all | `status`, `query`, `limit`, `cursor`, `sort_by`, `sort_dir` | 50/200, `priority asc`; sort fields `priority,status,updated_at,created_at` |
+| `GET /issues/search` | `q`, optional `project_id`, `limit`; `{issues:[...], total=len(page)}` | `status`, `query`, `cursor`, `sort_by`, `sort_dir`; `limit` is shared | 50/200, `priority asc`; `q` and `query` together are rejected as ambiguous |
+| `GET /comments` | `entity_type`, `entity_id`; raw `[...]` fetch-all | `author`, `created_after`, `created_before`, `entity_ids`, `limit`, `cursor`, `sort_by`, `sort_dir` | 50/200, `created_at asc`; only sort field `created_at` |
+| `GET /comments/search` | none | `query`, optional `entity_type`, `entity_id`, `entity_ids`, `author`, `created_after`, `created_before`, `limit`, `cursor`, `sort_by`, `sort_dir` | 25/100, `created_at desc`; only sort field `created_at` |
+
+HTTP `entity_ids` is a JSON-string query value such as
+`entity_ids=["T-1","T-2"]`; URL-encode it in real requests. Whole `null`,
+`[null]`, non-string members, and malformed JSON are invalid. An empty
+`entity_ids=[]` is invalid as the only scope for `GET /comments`, but remains
+valid with `entity_id` present or for unscoped `GET /comments/search`. When
+both `entity_id` and `entity_ids` are supplied on flat comment routes,
+`entity_id` takes precedence in the store predicate. Nested
+`/tasks/{id}/comments` remains fixed to that task: `entity_type` must be
+`task` if supplied, `entity_id` must match the path id if supplied, and
+`entity_ids` is rejected rather than widening scope. Comment date filters use
+RFC3339 timestamps.
+
 ## MCP
 
 Core MCP areas exposed by the adapter:

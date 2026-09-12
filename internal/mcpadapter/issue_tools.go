@@ -42,6 +42,7 @@ Example: {"id":"CW-20260514-0001"}`),
 		mcp.WithDescription(`List issues (hard-scoped to kind=issue), optionally narrowed by project_id/status and a free-text query over ID/title/body. Ordered priority ASC (tiebreak id ASC) by default. Pass sort_by (priority|status|updated_at|created_at) and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid.
 Merges the former torque_issue_search into this one tool (ADR-0004 §3) — pass "query" for the old search behavior; omit it for a pure filtered list. Limit is now always pushed to the DB layer (no more full-fetch-then-truncate).
 Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under — pass a different sort_by/sort_dir without dropping cursor and you get error.code=arg_invalid.
+Explicit malformed, blank, fractional, overflow, unsafe native-float, or negative limit values reject with error.code=arg_invalid, field=limit; omitted limit defaults to 50 and oversized limits clamp to 200.
 Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
 Example: {"project_id":"PRJ-...","status":"backlog","query":"login","limit":"50","sort_by":"updated_at","sort_dir":"desc"}`),
 		mcp.WithString("project_id", mcp.Description("Optional project ID filter")),
@@ -164,35 +165,46 @@ func (a *Adapter) handleIssueDelete(ctx context.Context, req mcp.CallToolRequest
 // taskSortAllowList/taskSortDefaultBy/taskSortDefaultDir/taskSortValue
 // directly rather than duplicating them.
 func (a *Adapter) handleIssueList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	limit := clampLimit(reqInt(req, "limit"), 50, maxTaskListLimit)
-	verbose := reqStrBool(req, "verbose")
-
-	sortBy, sortDir, afterSortValue, afterID, errRes := resolveSortAndCursor(req, taskSortDefaultBy, taskSortDefaultDir, taskSortAllowList...)
+	verbose, errRes := reqQueryBool(req, "verbose")
+	if errRes != nil {
+		return errRes, nil
+	}
+	projectID, errRes := reqQueryString(req, "project_id")
+	if errRes != nil {
+		return errRes, nil
+	}
+	status, errRes := reqQueryString(req, "status")
+	if errRes != nil {
+		return errRes, nil
+	}
+	query, errRes := reqQueryString(req, "query")
+	if errRes != nil {
+		return errRes, nil
+	}
+	cursor, errRes := reqQueryCursor(req)
 	if errRes != nil {
 		return errRes, nil
 	}
 
-	issues, err := a.svc.Issue.List(service.IssueListInput{
-		ProjectID: reqStr(req, "project_id"),
-		Status:    reqStr(req, "status"),
-		Query:     reqStr(req, "query"),
-		// Fetch one extra row beyond limit so has_more can be determined
-		// without a separate COUNT(*) query, matching handleTaskList.
-		Limit:          limit + 1,
-		SortBy:         sortBy,
-		SortDir:        sortDir,
-		AfterSortValue: afterSortValue,
-		AfterID:        afterID,
+	input, normalized, err := service.NormalizeIssueQuery(service.IssueQuery{
+		ProjectID:   projectID,
+		Status:      status,
+		Query:       query,
+		CursorQuery: cursor,
 	})
 	if err != nil {
 		return errFromService(err)
 	}
-
-	hasMoreFromQuery := len(issues) > limit
-	if hasMoreFromQuery {
-		issues = issues[:limit]
+	issues, err := a.svc.Issue.List(input)
+	if err != nil {
+		return errFromService(err)
 	}
-	return a.issueListCursorEnvelope(issues, limit, verbose, sortBy, sortDir, hasMoreFromQuery)
+
+	hasMoreFromQuery := len(issues) > normalized.Limit
+	if hasMoreFromQuery {
+		issues = issues[:normalized.Limit]
+	}
+	return a.issueListCursorEnvelope(issues, normalized.Limit, verbose, normalized.SortBy, normalized.SortDir, hasMoreFromQuery)
 }
 
 // issueListCursorEnvelope is torque_issue_list's {items, meta} cursor-

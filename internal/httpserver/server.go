@@ -189,6 +189,7 @@ func (s *Server) routes() {
 		r.Get("/artifacts/{id}/content", s.serveArtifactContent)
 
 		// Comments
+		r.Get("/comments/search", s.searchComments)
 		r.Get("/comments", s.listComments)
 		r.Post("/comments", s.addComment)
 

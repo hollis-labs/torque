@@ -3,12 +3,16 @@ package httpserver
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 )
 
 // defaultCommentAuthor is used when a POST has no explicit author and no
@@ -41,25 +45,178 @@ func commentEntityFromRequest(r *http.Request) (entityType, entityID string) {
 const legacyTaskIDError = "task_id is no longer accepted on /comments; use entity_type=task&entity_id=<id> (or POST {\"entity_type\":\"task\",\"entity_id\":\"<id>\"})"
 
 func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
+	allowed := map[string]bool{"entity_type": true, "entity_id": true, "task_id": true, "entity_ids": true, "author": true, "created_after": true, "created_before": true, "limit": true, "cursor": true, "sort_by": true, "sort_dir": true}
+	q, qerr := parseStrictQuery(r, allowed)
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
+		return
+	}
 	// Nested route resolves via URL param; flat route never accepts task_id.
-	if chi.URLParam(r, "id") == "" && r.URL.Query().Get("task_id") != "" {
+	if chi.URLParam(r, "id") == "" && queryString(q, "task_id") != "" {
 		writeError(w, http.StatusBadRequest, legacyTaskIDError)
 		return
 	}
-	entityType, entityID := commentEntityFromRequest(r)
-	if entityID == "" {
-		writeError(w, http.StatusBadRequest, "entity_id is required")
+	isNested := chi.URLParam(r, "id") != ""
+	if isNested {
+		if et := queryString(q, "entity_type"); et != "" && et != sqlstore.EntityTypeTask {
+			writeFieldError(w, http.StatusBadRequest, "entity_type", "nested task comments require entity_type=task")
+			return
+		}
+		if eid := queryString(q, "entity_id"); eid != "" && eid != chi.URLParam(r, "id") {
+			writeFieldError(w, http.StatusBadRequest, "entity_id", "nested task comments cannot switch entity_id")
+			return
+		}
+		if _, ok := q["entity_ids"]; ok {
+			writeFieldError(w, http.StatusBadRequest, "entity_ids", "nested task comments cannot use entity_ids")
+			return
+		}
+	}
+	entityType, entityID := sqlstore.EntityTypeTask, chi.URLParam(r, "id")
+	var entityIDs []string
+	if !isNested {
+		entityType = queryString(q, "entity_type")
+		entityID = queryString(q, "entity_id")
+		if entityType == "" {
+			entityType = sqlstore.EntityTypeTask
+		}
+		var arrErr *httpQueryError
+		entityIDs, arrErr = queryStringArray(q, "entity_ids")
+		if arrErr != nil {
+			writeHTTPQueryError(w, arrErr)
+			return
+		}
+	}
+	if entityID == "" && len(entityIDs) == 0 {
+		writeFieldError(w, http.StatusBadRequest, "entity_id", "entity_id or entity_ids is required")
 		return
 	}
-	comments, err := s.svc.Comment.List(entityType, entityID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	if !hasAnyQueryKey(q, "entity_ids", "author", "created_after", "created_before", "limit", "cursor", "sort_by", "sort_dir") {
+		comments, err := s.svc.Comment.List(entityType, entityID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if comments == nil {
+			comments = []sqlstore.CommentRecord{}
+		}
+		writeJSON(w, http.StatusOK, comments)
 		return
+	}
+	cursor, qerr := queryCursor(q)
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
+		return
+	}
+	filter, normalized, err := service.NormalizeCommentListQuery(service.CommentQuery{
+		EntityType:    entityType,
+		EntityID:      entityID,
+		EntityIDs:     entityIDs,
+		Author:        queryString(q, "author"),
+		CreatedAfter:  queryString(q, "created_after"),
+		CreatedBefore: queryString(q, "created_before"),
+		CursorQuery:   cursor,
+	})
+	if err != nil {
+		writeAdjacentServiceError(w, err)
+		return
+	}
+	comments, err := s.svc.Comment.ListFiltered(filter)
+	if err != nil {
+		writeAdjacentServiceError(w, err)
+		return
+	}
+	hasMore := len(comments) > normalized.Limit
+	if hasMore {
+		comments = comments[:normalized.Limit]
 	}
 	if comments == nil {
 		comments = []sqlstore.CommentRecord{}
 	}
-	writeJSON(w, http.StatusOK, comments)
+	nextCursor := ""
+	if hasMore && len(comments) > 0 {
+		last := comments[len(comments)-1]
+		nextCursor = pagination.Encode(normalized.SortBy, normalized.SortDir, service.CommentQuerySortValue(last, normalized.SortBy), service.CommentQueryCursorID(last))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": comments, "meta": advancedMeta(normalized.Limit, normalized.SortBy, normalized.SortDir, hasMore, nextCursor, len(comments))})
+}
+
+func (s *Server) searchComments(w http.ResponseWriter, r *http.Request) {
+	allowed := map[string]bool{"query": true, "entity_type": true, "entity_id": true, "entity_ids": true, "author": true, "created_after": true, "created_before": true, "limit": true, "cursor": true, "sort_by": true, "sort_dir": true}
+	q, qerr := parseStrictQuery(r, allowed)
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
+		return
+	}
+	if queryString(q, "query") == "" {
+		writeFieldError(w, http.StatusBadRequest, "query", "query is required")
+		return
+	}
+	cursor, qerr := queryCursor(q)
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
+		return
+	}
+	entityIDs, qerr := queryStringArray(q, "entity_ids")
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
+		return
+	}
+	filter, normalized, err := service.NormalizeCommentSearchQuery(service.CommentQuery{
+		Search:        queryString(q, "query"),
+		EntityType:    queryString(q, "entity_type"),
+		EntityID:      queryString(q, "entity_id"),
+		EntityIDs:     entityIDs,
+		Author:        queryString(q, "author"),
+		CreatedAfter:  queryString(q, "created_after"),
+		CreatedBefore: queryString(q, "created_before"),
+		CursorQuery:   cursor,
+	})
+	if err != nil {
+		writeAdjacentServiceError(w, err)
+		return
+	}
+	comments, err := s.svc.Comment.Search(filter)
+	if err != nil {
+		writeAdjacentServiceError(w, err)
+		return
+	}
+	hasMore := len(comments) > normalized.Limit
+	if hasMore {
+		comments = comments[:normalized.Limit]
+	}
+	if comments == nil {
+		comments = []sqlstore.CommentRecord{}
+	}
+	nextCursor := ""
+	if hasMore && len(comments) > 0 {
+		last := comments[len(comments)-1]
+		nextCursor = pagination.Encode(normalized.SortBy, normalized.SortDir, service.CommentQuerySortValue(last, normalized.SortBy), service.CommentQueryCursorID(last))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": comments, "meta": advancedMeta(normalized.Limit, normalized.SortBy, normalized.SortDir, hasMore, nextCursor, len(comments))})
+}
+
+func queryStringArray(q url.Values, key string) ([]string, *httpQueryError) {
+	if _, ok := q[key]; !ok {
+		return nil, nil
+	}
+	raw := queryString(q, key)
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || trimmed == "null" {
+		return nil, &httpQueryError{field: key, message: key + " must be a JSON array of strings"}
+	}
+	var elems []any
+	if err := json.Unmarshal([]byte(raw), &elems); err != nil {
+		return nil, &httpQueryError{field: key, message: "invalid " + key + " JSON: " + err.Error()}
+	}
+	out := make([]string, 0, len(elems))
+	for i, elem := range elems {
+		s, ok := elem.(string)
+		if !ok {
+			return nil, &httpQueryError{field: key, message: fmt.Sprintf("%s[%d] must be a string", key, i)}
+		}
+		out = append(out, s)
+	}
+	return out, nil
 }
 
 func (s *Server) addComment(w http.ResponseWriter, r *http.Request) {

@@ -99,6 +99,14 @@ id — see their entity sections.
   declared as a JSON-encoded string (e.g. `"tags":"[\"p0\",\"backend\"]"`)
   but the adapter also accepts a native JSON array where the transport
   allows it.
+- Adjacent list/search tools use strict query decoding. Explicit malformed,
+  blank, fractional, overflow, unsafe native-float, negative `limit`, nonfinite
+  numeric bounds, invalid booleans, invalid dates, invalid sorts, and
+  sort-mismatched cursors return `arg_invalid` with `field`. Omitted values
+  remain defaulted/unfiltered. `entity_ids` on comment list/search accepts a
+  JSON array string or native string array; whole null, `[null]`, non-string
+  members, and malformed JSON reject; an empty list is rejected only when it is
+  the sole scope for `torque_comment_list`.
 - **Update tools are true partial patches.** Presence in the payload is the
   only "change this" signal — an omitted key leaves the field untouched; an
   explicit empty string clears most nullable scalars. This is uniform across
@@ -244,6 +252,27 @@ The equivalent HTTP query is
 `/api/v1/tasks?tags_any=api,ui&tags_none=blocked&missing=sprint_id&priority_lte=2`.
 Use the same cohort filters with `torque_task_facets` or
 `/api/v1/tasks/facets` plus `dimensions` to get matching counts.
+
+### Adjacent entity query defaults
+
+Project, Epic, Sprint, Issue, and Comment list/search tools share cursor
+validation with their HTTP advanced-query counterparts. They always return
+`data={items,meta}` and do not include a whole-cohort `total` unless the tool
+explicitly says it computed one.
+
+| Tool | Filters/search | Default/max/order |
+|---|---|---|
+| `torque_project_list` | `status`, `include_archived`; no free-text search | 100/500, `name asc`; sort fields `name,status,updated_at,created_at` |
+| `torque_sprint_list` | `status`, `project_id`, `include_archived`, `over_budget`, `cost_budget_min`, `cost_budget_max`; no free-text search | 100/500, `updated_at desc`; sort fields `name,status,updated_at,created_at` |
+| `torque_epic_list` | `status`, `project_id`, `include_archived`, `search` over id/name/description | 100/500, `updated_at desc`; sort fields `name,status,updated_at,created_at` |
+| `torque_issue_list` | `project_id`, `status`, `query` over id/title/body | 50/200, `priority asc`; sort fields `priority,status,updated_at,created_at` |
+| `torque_comment_list` | Required `entity_type` plus `entity_id` or non-empty `entity_ids`; optional `author`, `created_after`, `created_before` | 50/200, `created_at asc`; only sort field `created_at` |
+| `torque_comment_search` | Required `query`; optional `entity_type`, `entity_id`, `entity_ids`, `author`, `created_after`, `created_before` | 25/100, `created_at desc`; only sort field `created_at` |
+
+When both `entity_id` and `entity_ids` are supplied to comment tools,
+`entity_id` takes precedence in the store predicate. Use RFC3339 for
+`created_after`/`created_before`; cursors preserve subsecond timestamp
+precision and must be passed back unchanged.
 
 ### Task facets and counts (CW-20260911-0086)
 

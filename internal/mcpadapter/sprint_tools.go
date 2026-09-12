@@ -9,20 +9,6 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// sprintSortAllowList is torque_sprint_list's sort_by allow-list (PRIM-002),
-// per pagination.ValidateSortBy's doc comment ("Epic/Sprint/Project: name,
-// status, updated_at, created_at").
-var sprintSortAllowList = []string{"name", "status", "updated_at", "created_at"}
-
-// sprintSortDefaultBy/sprintSortDefaultDir are torque_sprint_list's default
-// sort_by/sort_dir when the caller omits both — chosen to preserve the
-// pre-existing `updated_at DESC` order (FIX-004's confirmed docstring/order
-// match) as closely as the cursor mechanism allows.
-const (
-	sprintSortDefaultBy  = "updated_at"
-	sprintSortDefaultDir = "desc"
-)
-
 func (a *Adapter) registerSprintTools() {
 	a.addTool(mcp.NewTool("torque_sprint_create",
 		mcp.WithDescription(`Create a sprint (feature-flagged: requires features.sprints). Returns the SprintRecord.
@@ -100,6 +86,7 @@ Example: {"id":"SP-17"}`),
 		mcp.WithDescription(`List sprints with optional status/project/budget filters; ordered updated_at DESC (tiebreak id ASC, per DEC-001) by default. Pass sort_by (name|status|updated_at|created_at) and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid.
 Use for browsing; torque_sprint_get when you know the ID. Default brief shape drops goal body for size; pass verbose="true" for full records. Archived sprints are excluded unless include_archived="true".
 Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under — pass a different sort_by/sort_dir without dropping cursor and you get error.code=arg_invalid.
+Explicit malformed, blank, fractional, overflow, unsafe native-float, or negative limit values reject with error.code=arg_invalid, field=limit; omitted limit defaults to 100 and oversized limits clamp to 500. Cost budget bounds must be finite numbers when present.
 Response shape: data = {items: [<briefSprint or SprintRecord>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
 Example: {"status":"active","cost_budget_min":"10","sort_by":"updated_at","sort_dir":"desc"}`),
 		mcp.WithString("status", mcp.Description("Filter: active|inactive|completed")),
@@ -269,39 +256,55 @@ func (a *Adapter) handleSprintDelete(ctx context.Context, req mcp.CallToolReques
 }
 
 func (a *Adapter) handleSprintList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	limit := clampLimit(reqInt(req, "limit"), defaultGenericListLimit, maxGenericListLimit)
-	verbose := reqStrBool(req, "verbose")
-
-	// PRIM-002/PRIM-001: sort_by/sort_dir/cursor, allow-list validated.
-	// Omitted sort values fall back to the pre-existing `updated_at DESC`
-	// default order (FIX-004's confirmed docstring/order match) — see
-	// sprintSortDefaultBy/Dir.
-	sortBy, sortDir, afterSortValue, afterID, errRes := resolveSortAndCursor(req, sprintSortDefaultBy, sprintSortDefaultDir, sprintSortAllowList...)
+	verbose, errRes := reqQueryBool(req, "verbose")
+	if errRes != nil {
+		return errRes, nil
+	}
+	status, errRes := reqQueryString(req, "status")
+	if errRes != nil {
+		return errRes, nil
+	}
+	projectID, errRes := reqQueryString(req, "project_id")
+	if errRes != nil {
+		return errRes, nil
+	}
+	includeArchived, errRes := reqQueryBool(req, "include_archived")
+	if errRes != nil {
+		return errRes, nil
+	}
+	overBudget, errRes := reqQueryBool(req, "over_budget")
+	if errRes != nil {
+		return errRes, nil
+	}
+	cursor, errRes := reqQueryCursor(req)
 	if errRes != nil {
 		return errRes, nil
 	}
 
-	filter := sqlstore.SprintFilter{
-		Status:          reqStr(req, "status"),
-		ProjectID:       reqStr(req, "project_id"),
-		IncludeArchived: reqStrBool(req, "include_archived"),
-		OverBudget:      reqStrBool(req, "over_budget"),
-		// Fetch one extra row beyond limit so has_more can be determined
-		// without a separate COUNT(*) query (DEC-001's cheaper-default
-		// choice). Trimmed back to limit below before building the envelope.
-		Limit:          limit + 1,
-		SortBy:         sortBy,
-		SortDir:        sortDir,
-		AfterSortValue: afterSortValue,
-		AfterID:        afterID,
+	query := service.SprintQuery{
+		Status:          status,
+		ProjectID:       projectID,
+		IncludeArchived: includeArchived,
+		OverBudget:      overBudget,
+		CursorQuery:     cursor,
 	}
 	if reqHasArg(req, "cost_budget_min") {
-		v := reqFloat(req, "cost_budget_min")
-		filter.CostBudgetMin = &v
+		v, errRes := reqQueryFloat(req, "cost_budget_min")
+		if errRes != nil {
+			return errRes, nil
+		}
+		query.CostBudgetMin = v
 	}
 	if reqHasArg(req, "cost_budget_max") {
-		v := reqFloat(req, "cost_budget_max")
-		filter.CostBudgetMax = &v
+		v, errRes := reqQueryFloat(req, "cost_budget_max")
+		if errRes != nil {
+			return errRes, nil
+		}
+		query.CostBudgetMax = v
+	}
+	filter, normalized, err := service.NormalizeSprintQuery(query)
+	if err != nil {
+		return errFromService(err)
 	}
 
 	sprints, err := a.svc.Sprint.List(filter)
@@ -309,29 +312,11 @@ func (a *Adapter) handleSprintList(ctx context.Context, req mcp.CallToolRequest)
 		return errFromService(err)
 	}
 
-	hasMoreFromQuery := len(sprints) > limit
+	hasMoreFromQuery := len(sprints) > normalized.Limit
 	if hasMoreFromQuery {
-		sprints = sprints[:limit]
+		sprints = sprints[:normalized.Limit]
 	}
-	return a.sprintListCursorEnvelope(sprints, limit, verbose, sortBy, sortDir, hasMoreFromQuery)
-}
-
-// sprintSortValue formats a SprintRecord's sortBy column into the string
-// encoding PRIM-001's cursor uses for meta.next_cursor (DEC-001's `sv`
-// field). Mirrors taskSortValue's contract in task_tools.go.
-func sprintSortValue(sp sqlstore.SprintRecord, sortBy string) string {
-	switch sortBy {
-	case "name":
-		return sp.Name
-	case "status":
-		return sp.Status
-	case "updated_at":
-		return sp.UpdatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayoutWithFractional)
-	case "created_at":
-		return sp.CreatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayoutWithFractional)
-	default:
-		return ""
-	}
+	return a.sprintListCursorEnvelope(sprints, normalized.Limit, verbose, normalized.SortBy, normalized.SortDir, hasMoreFromQuery)
 }
 
 // sprintListCursorEnvelope builds torque_sprint_list's {items, meta} cursor-
@@ -348,7 +333,7 @@ func (a *Adapter) sprintListCursorEnvelope(sprints []sqlstore.SprintRecord, limi
 	}
 
 	cursorAt := func(i int) (sortValue, id string) {
-		return sprintSortValue(sprints[i], sortBy), sprints[i].ID
+		return service.SprintQuerySortValue(sprints[i], sortBy), sprints[i].ID
 	}
 	return cappedCursorJSONResult(items, limit, sortBy, sortDir, hasMoreFromQuery, cursorAt)
 }

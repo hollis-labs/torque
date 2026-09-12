@@ -6,6 +6,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 )
 
 func epicJSON(e *sqlstore.EpicRecord) map[string]interface{} {
@@ -34,21 +35,69 @@ func epicsJSON(epics []sqlstore.EpicRecord) []map[string]interface{} {
 }
 
 func (s *Server) listEpics(w http.ResponseWriter, r *http.Request) {
-	status := r.URL.Query().Get("status")
-	projectID := r.URL.Query().Get("project_id")
-	epics, err := s.svc.Epic.List(status, projectID, false)
-	if err != nil {
-		if _, ok := err.(*service.FeatureDisabledError); ok {
-			writeError(w, http.StatusNotFound, err.Error())
+	allowed := map[string]bool{"status": true, "project_id": true, "include_archived": true, "search": true, "limit": true, "cursor": true, "sort_by": true, "sort_dir": true}
+	q, qerr := parseStrictQuery(r, allowed)
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
+		return
+	}
+	status := queryString(q, "status")
+	projectID := queryString(q, "project_id")
+	if !hasAnyQueryKey(q, "include_archived", "search", "limit", "cursor", "sort_by", "sort_dir") {
+		epics, err := s.svc.Epic.List(status, projectID, false)
+		if err != nil {
+			if _, ok := err.(*service.FeatureDisabledError); ok {
+				writeError(w, http.StatusNotFound, err.Error())
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		writeError(w, http.StatusInternalServerError, err.Error())
+		if epics == nil {
+			epics = []sqlstore.EpicRecord{}
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"epics": epicsJSON(epics)})
 		return
+	}
+	includeArchived, qerr := queryBool(q, "include_archived")
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
+		return
+	}
+	cursor, qerr := queryCursor(q)
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
+		return
+	}
+	input, normalized, err := service.NormalizeEpicQuery(service.EpicQuery{
+		Status:          status,
+		ProjectID:       projectID,
+		Search:          queryString(q, "search"),
+		IncludeArchived: includeArchived,
+		CursorQuery:     cursor,
+	})
+	if err != nil {
+		writeAdjacentServiceError(w, err)
+		return
+	}
+	epics, err := s.svc.Epic.ListPaginated(input)
+	if err != nil {
+		writeAdjacentServiceError(w, err)
+		return
+	}
+	hasMore := len(epics) > normalized.Limit
+	if hasMore {
+		epics = epics[:normalized.Limit]
 	}
 	if epics == nil {
 		epics = []sqlstore.EpicRecord{}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"epics": epicsJSON(epics)})
+	nextCursor := ""
+	if hasMore && len(epics) > 0 {
+		last := epics[len(epics)-1]
+		nextCursor = pagination.Encode(normalized.SortBy, normalized.SortDir, service.EpicQuerySortValue(last, normalized.SortBy), last.ID)
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": epicsJSON(epics), "meta": advancedMeta(normalized.Limit, normalized.SortBy, normalized.SortDir, hasMore, nextCursor, len(epics))})
 }
 
 func (s *Server) getEpic(w http.ResponseWriter, r *http.Request) {
