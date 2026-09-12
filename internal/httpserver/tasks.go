@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -419,7 +420,16 @@ func nullJSONString(v any) *sql.NullString {
 
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	filter := sqlstore.TaskFilter{}
-	if v := r.URL.Query().Get("status"); v != "" {
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		writeFieldError(w, http.StatusBadRequest, "query", "invalid query string: "+err.Error())
+		return
+	}
+	if err := validateTaskListQueryKeys(q); err != nil {
+		writeFieldError(w, http.StatusBadRequest, err.field, err.Error())
+		return
+	}
+	if v := q.Get("status"); v != "" {
 		parts := strings.Split(v, ",")
 		if len(parts) == 1 {
 			filter.Status = parts[0]
@@ -427,74 +437,79 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 			filter.Statuses = parts
 		}
 	}
-	if v := r.URL.Query().Get("priority"); v != "" {
-		if p, err := strconv.Atoi(v); err == nil {
-			filter.Priority = p
+	if _, ok := q["priority"]; ok {
+		priorities, err := parseHTTPPrioritySet(q.Get("priority"))
+		if err != nil {
+			writeFieldError(w, http.StatusBadRequest, "priority", err.Error())
+			return
 		}
+		filter.Priorities = priorities
 	}
-	if v := r.URL.Query().Get("sprint_id"); v != "" {
+	if v := q.Get("sprint_id"); v != "" {
 		filter.SprintID = v
 	}
-	if v := r.URL.Query().Get("project_id"); v != "" {
+	if v := q.Get("project_id"); v != "" {
 		filter.ProjectID = v
 	}
-	if v := r.URL.Query().Get("epic_id"); v != "" {
+	if v := q.Get("epic_id"); v != "" {
 		filter.EpicID = v
 	}
-	if v := r.URL.Query().Get("executor"); v != "" {
+	if v := q.Get("executor"); v != "" {
 		filter.Executor = v
 	}
-	if v := r.URL.Query().Get("kind"); v != "" {
+	if v := q.Get("kind"); v != "" {
 		filter.Kind = v
+	}
+	includeInternal := false
+	if _, ok := q["include_internal"]; ok {
+		v, err := parseTaskListBool(q.Get("include_internal"), "include_internal")
+		if err != nil {
+			writeFieldError(w, http.StatusBadRequest, "include_internal", err.Error())
+			return
+		}
+		includeInternal = v
 	}
 	// kind=internal default-exclude (CW-20260503-0011): user-facing list
 	// queries hide internal automation tasks unless include_internal is
 	// truthy or an explicit kind=internal filter is supplied (the latter
-	// is short-circuited inside ListTasks). Accepted truthy values mirror
-	// the manual filter: "1", "true", "yes".
+	// is short-circuited inside ListTasks).
 	if filter.Kind == "" {
-		switch strings.ToLower(r.URL.Query().Get("include_internal")) {
-		case "1", "true", "yes":
-			// keep ExcludeInternal=false
-		default:
+		if !includeInternal {
 			filter.ExcludeInternal = true
 		}
 	}
-	if v := r.URL.Query().Get("source_type"); v != "" {
+	if v := q.Get("source_type"); v != "" {
 		filter.SourceType = v
 	}
-	if v := r.URL.Query().Get("source_ref"); v != "" {
+	if v := q.Get("source_ref"); v != "" {
 		filter.SourceRef = v
 	}
-	if v := r.URL.Query().Get("trust"); v != "" {
+	if v := q.Get("trust"); v != "" {
 		filter.Trust = v
 	}
-	if v := r.URL.Query().Get("checkpoint_mode"); v != "" {
+	if v := q.Get("checkpoint_mode"); v != "" {
 		filter.CheckpointMode = v
 	}
 	// parent_id filter — special value "null" returns roots (parent IS NULL).
-	if _, ok := r.URL.Query()["parent_id"]; ok {
-		v := r.URL.Query().Get("parent_id")
+	if _, ok := q["parent_id"]; ok {
+		v := q.Get("parent_id")
 		if v == "" || v == "null" {
 			filter.ParentIDNull = true
 		} else {
 			filter.ParentID = v
 		}
 	}
-	// manual filter — accepts the canonical `true`/`false` plus the UI-layer
-	// `manual`/`auto` aliases. Unrecognized values are silently ignored so the
-	// caller can omit the param to mean "no filter".
-	if v := r.URL.Query().Get("manual"); v != "" {
-		switch strings.ToLower(v) {
-		case "true", "1", "manual":
-			t := true
-			filter.Manual = &t
-		case "false", "0", "auto":
-			f := false
-			filter.Manual = &f
+	// manual filter — accepts canonical booleans plus UI aliases. "both" and
+	// empty mean no filter, preserving the documented sentinel.
+	if _, ok := q["manual"]; ok {
+		manual, err := parseTaskListManual(q.Get("manual"))
+		if err != nil {
+			writeFieldError(w, http.StatusBadRequest, "manual", err.Error())
+			return
 		}
+		filter.Manual = manual
 	}
-	if v := r.URL.Query().Get("tags"); v != "" {
+	if v := q.Get("tags"); v != "" {
 		parts := strings.Split(v, ",")
 		out := make([]string, 0, len(parts))
 		for _, p := range parts {
@@ -503,21 +518,27 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		filter.TagSlugs = out
-	} else if v := r.URL.Query().Get("tag"); v != "" {
+	} else if v := q.Get("tag"); v != "" {
 		filter.TagSlugs = []string{strings.TrimSpace(v)}
 	}
-	if v := r.URL.Query().Get("search"); v != "" {
+	if v := q.Get("search"); v != "" {
 		filter.Search = v
 	}
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			filter.Limit = n
+	if _, ok := q["limit"]; ok {
+		n, err := parseTaskListInt(q.Get("limit"), "limit")
+		if err != nil {
+			writeFieldError(w, http.StatusBadRequest, "limit", err.Error())
+			return
 		}
+		filter.Limit = n
 	}
-	if v := r.URL.Query().Get("offset"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			filter.Offset = n
+	if _, ok := q["offset"]; ok {
+		n, err := parseTaskListInt(q.Get("offset"), "offset")
+		if err != nil {
+			writeFieldError(w, http.StatusBadRequest, "offset", err.Error())
+			return
 		}
+		filter.Offset = n
 	}
 
 	tasks, err := s.svc.Task.List(filter)
@@ -541,6 +562,98 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 		"tasks": out,
 		"total": len(out),
 	})
+}
+
+type taskListQueryError struct {
+	field   string
+	message string
+}
+
+func (e taskListQueryError) Error() string {
+	return e.message
+}
+
+func writeFieldError(w http.ResponseWriter, status int, field, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg, "field": field})
+}
+
+func validateTaskListQueryKeys(q url.Values) *taskListQueryError {
+	supported := map[string]bool{
+		"status": true, "priority": true, "sprint_id": true, "project_id": true, "epic_id": true,
+		"executor": true, "kind": true, "include_internal": true, "source_type": true,
+		"source_ref": true, "trust": true, "checkpoint_mode": true, "parent_id": true,
+		"manual": true, "tags": true, "tag": true, "search": true, "limit": true, "offset": true,
+	}
+	for key, values := range q {
+		if !supported[key] {
+			return &taskListQueryError{
+				field:   key,
+				message: "unsupported query parameter " + key + "; supported task-list parameters are status, priority, sprint_id, project_id, epic_id, executor, kind, include_internal, source_type, source_ref, trust, checkpoint_mode, parent_id, manual, tags, tag, search, limit, offset",
+			}
+		}
+		if len(values) > 1 {
+			return &taskListQueryError{
+				field:   key,
+				message: "query parameter " + key + " may only be supplied once; use comma-separated values where supported",
+			}
+		}
+	}
+	return nil
+}
+
+func parseHTTPPrioritySet(raw string) ([]int, error) {
+	parts := strings.Split(raw, ",")
+	out := make([]int, 0, len(parts))
+	seen := make(map[int]bool, len(parts))
+	for _, part := range parts {
+		n, err := parseTaskListInt(part, "priority")
+		if err != nil {
+			return nil, err
+		}
+		if !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out, nil
+}
+
+func parseTaskListInt(raw, field string) (int, error) {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return 0, taskListQueryError{field: field, message: field + " must be an integer"}
+	}
+	n, err := strconv.ParseInt(v, 10, 0)
+	if err != nil {
+		return 0, taskListQueryError{field: field, message: field + " must be an integer"}
+	}
+	return int(n), nil
+}
+
+func parseTaskListBool(raw, field string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "true", "1", "yes":
+		return true, nil
+	case "false", "0", "no":
+		return false, nil
+	default:
+		return false, taskListQueryError{field: field, message: field + " must be true/false, 1/0, or yes/no"}
+	}
+}
+
+func parseTaskListManual(raw string) (*bool, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "both":
+		return nil, nil
+	case "manual", "true", "1":
+		v := true
+		return &v, nil
+	case "auto", "false", "0":
+		v := false
+		return &v, nil
+	default:
+		return nil, taskListQueryError{field: "manual", message: "manual must be manual/auto/both, true/false, or 1/0"}
+	}
 }
 
 func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {

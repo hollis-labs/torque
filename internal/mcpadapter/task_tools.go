@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -37,7 +39,7 @@ const (
 	taskSortDefaultDir = "asc"
 )
 
-// parseManualFilter translates the `manual` MCP string param to a *bool for
+// parseManualFilter translates the `manual` MCP param to a *bool for
 // TaskFilter.Manual. Input is lowercased before matching so callers sending
 // "Manual", "TRUE", etc. behave identically to their lowercase equivalents.
 // Accepted vocabularies:
@@ -46,19 +48,256 @@ const (
 //   - UI:   "auto"               → false
 //   - HTTP: "true" / "1"         → true
 //   - HTTP: "false" / "0"        → false
-//
-// Unknown values return nil (no filter), matching HTTP handler behavior.
-func parseManualFilter(v string) *bool {
+func parseManualFilter(req mcp.CallToolRequest) (*bool, error) {
+	raw, ok := req.GetArguments()["manual"]
+	if !ok || raw == nil {
+		return nil, nil
+	}
 	t := true
 	f := false
-	switch strings.ToLower(v) {
-	case "manual", "true", "1":
-		return &t
-	case "auto", "false", "0":
-		return &f
-	default:
-		return nil // "both", "", or unknown → no filter
+	switch v := raw.(type) {
+	case bool:
+		if v {
+			return &t, nil
+		}
+		return &f, nil
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "manual", "true", "1":
+			return &t, nil
+		case "auto", "false", "0":
+			return &f, nil
+		case "both", "":
+			return nil, nil
+		}
 	}
+	return nil, fmt.Errorf("manual must be manual/auto/both, true/false, or 1/0")
+}
+
+func reqTaskListBool(req mcp.CallToolRequest, key string) (bool, error) {
+	raw, ok := req.GetArguments()[key]
+	if !ok {
+		return false, nil
+	}
+	switch v := raw.(type) {
+	case bool:
+		return v, nil
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true", "1", "yes":
+			return true, nil
+		case "false", "0", "no":
+			return false, nil
+		}
+	}
+	return false, fmt.Errorf("%s must be true/false, 1/0, or yes/no", key)
+}
+
+func reqTaskListString(req mcp.CallToolRequest, key string) (string, error) {
+	raw, ok := req.GetArguments()[key]
+	if !ok || raw == nil {
+		return "", nil
+	}
+	v, ok := raw.(string)
+	if !ok {
+		return "", fmt.Errorf("%s must be a string", key)
+	}
+	return v, nil
+}
+
+func validateTaskListStringArgs(req mcp.CallToolRequest, keys ...string) *mcp.CallToolResult {
+	for _, key := range keys {
+		if _, err := reqTaskListString(req, key); err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), key)
+			return res
+		}
+	}
+	return nil
+}
+
+func reqTaskListInt(req mcp.CallToolRequest, key string) (int, bool, error) {
+	raw, ok := req.GetArguments()[key]
+	if !ok {
+		return 0, false, nil
+	}
+	n, err := exactInt64(raw, key)
+	if err != nil {
+		return 0, true, err
+	}
+	if int64(int(n)) != n {
+		return 0, true, fmt.Errorf("%s must fit in a Go int", key)
+	}
+	return int(n), true, nil
+}
+
+func reqTaskListInt64(req mcp.CallToolRequest, key string) (int64, error) {
+	raw, ok := req.GetArguments()[key]
+	if !ok {
+		return 0, nil
+	}
+	return exactInt64(raw, key)
+}
+
+func reqTaskListFloat(req mcp.CallToolRequest, key string) (float64, error) {
+	raw, ok := req.GetArguments()[key]
+	if !ok {
+		return 0, nil
+	}
+	switch v := raw.(type) {
+	case float64:
+		if !isFinite(v) {
+			return 0, fmt.Errorf("%s must be a finite number", key)
+		}
+		return v, nil
+	case int:
+		return float64(v), nil
+	case int64:
+		return float64(v), nil
+	case json.Number:
+		f, err := strconv.ParseFloat(v.String(), 64)
+		if err != nil || !isFinite(f) {
+			return 0, fmt.Errorf("%s must be a finite number", key)
+		}
+		return f, nil
+	case string:
+		s := strings.TrimSpace(v)
+		if s == "" {
+			return 0, fmt.Errorf("%s must be a finite number", key)
+		}
+		f, err := strconv.ParseFloat(s, 64)
+		if err != nil || !isFinite(f) {
+			return 0, fmt.Errorf("%s must be a finite number", key)
+		}
+		return f, nil
+	default:
+		return 0, fmt.Errorf("%s must be a finite number", key)
+	}
+}
+
+func taskListPriorityFilter(req mcp.CallToolRequest) ([]int, *mcp.CallToolResult) {
+	args := req.GetArguments()
+	_, hasPriority := args["priority"]
+	_, hasPriorities := args["priorities"]
+	if hasPriority && hasPriorities {
+		res, _ := errResult(ErrCodeArgInvalid, "priority and priorities cannot both be supplied; choose one exact priority filter shape", "priority")
+		return nil, res
+	}
+	if hasPriority {
+		n, _, err := reqTaskListInt(req, "priority")
+		if err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "priority")
+			return nil, res
+		}
+		return []int{n}, nil
+	}
+	if !hasPriorities {
+		return nil, nil
+	}
+	priorities, err := exactIntArray(args["priorities"], "priorities")
+	if err != nil {
+		res, _ := errResult(ErrCodeArgInvalid, err.Error(), "priorities")
+		return nil, res
+	}
+	if len(priorities) == 0 {
+		res, _ := errResult(ErrCodeArgInvalid, "priorities must contain at least one integer", "priorities")
+		return nil, res
+	}
+	seen := make(map[int]bool, len(priorities))
+	out := make([]int, 0, len(priorities))
+	for _, p := range priorities {
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+func exactIntArray(raw any, field string) ([]int, error) {
+	var values []any
+	switch v := raw.(type) {
+	case []any:
+		values = v
+	case []int:
+		out := make([]int, len(v))
+		copy(out, v)
+		return out, nil
+	case string:
+		dec := json.NewDecoder(strings.NewReader(v))
+		dec.UseNumber()
+		if err := dec.Decode(&values); err != nil {
+			return nil, fmt.Errorf("%s must be a JSON array of integers: %v", field, err)
+		}
+		var extra any
+		if err := dec.Decode(&extra); err != io.EOF {
+			return nil, fmt.Errorf("%s must contain a single JSON array and no trailing content", field)
+		}
+	default:
+		return nil, fmt.Errorf("%s must be a JSON array of integers", field)
+	}
+	out := make([]int, 0, len(values))
+	for i, v := range values {
+		n, err := exactInt64(v, fmt.Sprintf("%s[%d]", field, i))
+		if err != nil {
+			return nil, err
+		}
+		if int64(int(n)) != n {
+			return nil, fmt.Errorf("%s[%d] must fit in a Go int", field, i)
+		}
+		out = append(out, int(n))
+	}
+	return out, nil
+}
+
+func exactInt64(raw any, field string) (int64, error) {
+	switch v := raw.(type) {
+	case int:
+		return int64(v), nil
+	case int64:
+		return v, nil
+	case float64:
+		if !isFinite(v) || math.Trunc(v) != v {
+			return 0, fmt.Errorf("%s must be an integer", field)
+		}
+		const maxExactFloatInt = 1<<53 - 1
+		if v < -maxExactFloatInt || v > maxExactFloatInt {
+			return 0, fmt.Errorf("%s must be passed as a string for exact integer values outside +/-2^53", field)
+		}
+		return int64(v), nil
+	case json.Number:
+		n, err := strconv.ParseInt(v.String(), 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("%s must be an integer", field)
+		}
+		return n, nil
+	case string:
+		s := strings.TrimSpace(v)
+		if s == "" {
+			return 0, fmt.Errorf("%s must be an integer", field)
+		}
+		n, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("%s must be an integer", field)
+		}
+		return n, nil
+	default:
+		return 0, fmt.Errorf("%s must be an integer", field)
+	}
+}
+
+func isFinite(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0)
+}
+
+func rejectMalformedTaskListTags(req mcp.CallToolRequest) *mcp.CallToolResult {
+	if !reqHasArg(req, "tags") {
+		return nil
+	}
+	if _, err := reqStrSlice(req, "tags"); err != nil {
+		res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
+		return res
+	}
+	return nil
 }
 
 // parseTaskDateFilter parses an RFC3339 timestamp (torque_task_list's
@@ -151,7 +390,8 @@ Example: {"status":"doing","limit":"50","sort_by":"updated_at","sort_dir":"desc"
 Example, over-budget cohort: {"cost_budget_gte":"50","updated_after":"2026-08-01T00:00:00Z"}`),
 		mcp.WithString("status", mcp.Description("Filter by status")),
 		mcp.WithString("statuses", mcp.Description("JSON array of statuses — OR-match; takes precedence over status when both are set")),
-		mcp.WithString("priority", mcp.Description("Filter by priority (integer 1-5)")),
+		mcp.WithString("priority", mcp.Description("Filter by one exact integer priority; may be 0")),
+		mcp.WithString("priorities", mcp.Description("JSON array of exact integer priorities; OR-matches values, rejects empty arrays; do not pass with priority")),
 		mcp.WithString("executor", mcp.Description("Filter by executor")),
 		mcp.WithString("kind", mcp.Description("Filter by kind (agent|external|wait|decision|parent|plan|internal|issue)")),
 		mcp.WithString("source_type", mcp.Description("Filter by source_type")),
@@ -591,8 +831,36 @@ func (a *Adapter) handleTaskGet(ctx context.Context, req mcp.CallToolRequest) (*
 }
 
 func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	limit := clampLimit(reqInt(req, "limit"), 50, maxTaskListLimit)
-	verbose := reqStrBool(req, "verbose")
+	if errRes := validateTaskListStringArgs(req,
+		"status", "executor", "kind", "source_type", "source_ref", "trust", "checkpoint_mode",
+		"parent_id", "project_id", "sprint_id", "epic_id", "search", "agent_profile", "launch_profile",
+		"created_after", "created_before", "updated_after", "updated_before",
+		"sort_by", "sort_dir", "cursor",
+	); errRes != nil {
+		return errRes, nil
+	}
+	rawLimit, _, err := reqTaskListInt(req, "limit")
+	if err != nil {
+		return errResult(ErrCodeArgInvalid, err.Error(), "limit")
+	}
+	limit := clampLimit(rawLimit, 50, maxTaskListLimit)
+	verbose, err := reqTaskListBool(req, "verbose")
+	if err != nil {
+		return errResult(ErrCodeArgInvalid, err.Error(), "verbose")
+	}
+	includeInternal, err := reqTaskListBool(req, "include_internal")
+	if err != nil {
+		return errResult(ErrCodeArgInvalid, err.Error(), "include_internal")
+	}
+	manual, err := parseManualFilter(req)
+	if err != nil {
+		return errResult(ErrCodeArgInvalid, err.Error(), "manual")
+	}
+
+	priorities, errRes := taskListPriorityFilter(req)
+	if errRes != nil {
+		return errRes, nil
+	}
 
 	// PRIM-002/PRIM-001: sort_by/sort_dir/cursor, allow-list validated.
 	// Omitted sort values fall back to FIX-004's locked default order (see
@@ -603,23 +871,36 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 	if errRes != nil {
 		return errRes, nil
 	}
+	status, _ := reqTaskListString(req, "status")
+	executor, _ := reqTaskListString(req, "executor")
+	kind, _ := reqTaskListString(req, "kind")
+	sourceType, _ := reqTaskListString(req, "source_type")
+	sourceRef, _ := reqTaskListString(req, "source_ref")
+	trust, _ := reqTaskListString(req, "trust")
+	checkpointMode, _ := reqTaskListString(req, "checkpoint_mode")
+	projectID, _ := reqTaskListString(req, "project_id")
+	sprintID, _ := reqTaskListString(req, "sprint_id")
+	epicID, _ := reqTaskListString(req, "epic_id")
+	search, _ := reqTaskListString(req, "search")
+	agentProfile, _ := reqTaskListString(req, "agent_profile")
+	launchProfile, _ := reqTaskListString(req, "launch_profile")
 
 	filter := sqlstore.TaskFilter{
-		Status:         reqStr(req, "status"),
-		Priority:       reqInt(req, "priority"),
-		Executor:       reqStr(req, "executor"),
-		Kind:           reqStr(req, "kind"),
-		SourceType:     reqStr(req, "source_type"),
-		SourceRef:      reqStr(req, "source_ref"),
-		Trust:          reqStr(req, "trust"),
-		CheckpointMode: reqStr(req, "checkpoint_mode"),
-		ProjectID:      reqStr(req, "project_id"),
-		SprintID:       reqStr(req, "sprint_id"),
-		EpicID:         reqStr(req, "epic_id"),
-		Search:         reqStr(req, "search"),
-		Manual:         parseManualFilter(reqStr(req, "manual")),
-		AgentProfile:   reqStr(req, "agent_profile"),
-		LaunchProfile:  reqStr(req, "launch_profile"),
+		Status:         status,
+		Priorities:     priorities,
+		Executor:       executor,
+		Kind:           kind,
+		SourceType:     sourceType,
+		SourceRef:      sourceRef,
+		Trust:          trust,
+		CheckpointMode: checkpointMode,
+		ProjectID:      projectID,
+		SprintID:       sprintID,
+		EpicID:         epicID,
+		Search:         search,
+		Manual:         manual,
+		AgentProfile:   agentProfile,
+		LaunchProfile:  launchProfile,
 		// Fetch one extra row beyond limit so has_more can be determined
 		// without a separate COUNT(*) query (DEC-001's cheaper-default
 		// choice). handleTaskList trims the extra row before building the
@@ -633,10 +914,10 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 		// list calls hide internal automation tasks unless include_internal
 		// is truthy. An explicit kind filter takes precedence at the SQL
 		// layer, so this flip is safe to set unconditionally.
-		ExcludeInternal: !reqStrBool(req, "include_internal"),
+		ExcludeInternal: !includeInternal,
 	}
 	if _, ok := req.GetArguments()["parent_id"]; ok {
-		v := reqStr(req, "parent_id")
+		v, _ := reqTaskListString(req, "parent_id")
 		if v == "" || v == "null" {
 			filter.ParentIDNull = true
 		} else {
@@ -661,28 +942,28 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 	// RFC3339 (matching every other timestamp param on this MCP surface,
 	// e.g. checkpoint_tools.go's timeout_at); parseTaskDateFilter reformats
 	// to the SQLiteDatetimeLayout text ListTasks compares against.
-	if raw := reqStr(req, "created_after"); raw != "" {
+	if raw, _ := reqTaskListString(req, "created_after"); raw != "" {
 		v, err := parseTaskDateFilter(raw)
 		if err != nil {
 			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid created_after: %v", err), "created_after")
 		}
 		filter.CreatedAfter = v
 	}
-	if raw := reqStr(req, "created_before"); raw != "" {
+	if raw, _ := reqTaskListString(req, "created_before"); raw != "" {
 		v, err := parseTaskDateFilter(raw)
 		if err != nil {
 			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid created_before: %v", err), "created_before")
 		}
 		filter.CreatedBefore = v
 	}
-	if raw := reqStr(req, "updated_after"); raw != "" {
+	if raw, _ := reqTaskListString(req, "updated_after"); raw != "" {
 		v, err := parseTaskDateFilter(raw)
 		if err != nil {
 			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid updated_after: %v", err), "updated_after")
 		}
 		filter.UpdatedAfter = v
 	}
-	if raw := reqStr(req, "updated_before"); raw != "" {
+	if raw, _ := reqTaskListString(req, "updated_before"); raw != "" {
 		v, err := parseTaskDateFilter(raw)
 		if err != nil {
 			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid updated_before: %v", err), "updated_before")
@@ -695,35 +976,59 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 	// wrongly exclude every task whose budget is above/below zero.
 	listArgs := req.GetArguments()
 	if _, ok := listArgs["cost_budget_gte"]; ok {
-		v := reqFloat(req, "cost_budget_gte")
+		v, err := reqTaskListFloat(req, "cost_budget_gte")
+		if err != nil {
+			return errResult(ErrCodeArgInvalid, err.Error(), "cost_budget_gte")
+		}
 		filter.CostBudgetGte = &v
 	}
 	if _, ok := listArgs["cost_budget_lte"]; ok {
-		v := reqFloat(req, "cost_budget_lte")
+		v, err := reqTaskListFloat(req, "cost_budget_lte")
+		if err != nil {
+			return errResult(ErrCodeArgInvalid, err.Error(), "cost_budget_lte")
+		}
 		filter.CostBudgetLte = &v
 	}
 	if _, ok := listArgs["token_budget_gte"]; ok {
-		v := int64(reqFloat(req, "token_budget_gte"))
+		v, err := reqTaskListInt64(req, "token_budget_gte")
+		if err != nil {
+			return errResult(ErrCodeArgInvalid, err.Error(), "token_budget_gte")
+		}
 		filter.TokenBudgetGte = &v
 	}
 	if _, ok := listArgs["token_budget_lte"]; ok {
-		v := int64(reqFloat(req, "token_budget_lte"))
+		v, err := reqTaskListInt64(req, "token_budget_lte")
+		if err != nil {
+			return errResult(ErrCodeArgInvalid, err.Error(), "token_budget_lte")
+		}
 		filter.TokenBudgetLte = &v
 	}
 	if _, ok := listArgs["max_duration_ms_gte"]; ok {
-		v := int64(reqFloat(req, "max_duration_ms_gte"))
+		v, err := reqTaskListInt64(req, "max_duration_ms_gte")
+		if err != nil {
+			return errResult(ErrCodeArgInvalid, err.Error(), "max_duration_ms_gte")
+		}
 		filter.MaxDurationMsGte = &v
 	}
 	if _, ok := listArgs["max_duration_ms_lte"]; ok {
-		v := int64(reqFloat(req, "max_duration_ms_lte"))
+		v, err := reqTaskListInt64(req, "max_duration_ms_lte")
+		if err != nil {
+			return errResult(ErrCodeArgInvalid, err.Error(), "max_duration_ms_lte")
+		}
 		filter.MaxDurationMsLte = &v
 	}
 	if _, ok := listArgs["max_retries_gte"]; ok {
-		v := reqInt(req, "max_retries_gte")
+		v, _, err := reqTaskListInt(req, "max_retries_gte")
+		if err != nil {
+			return errResult(ErrCodeArgInvalid, err.Error(), "max_retries_gte")
+		}
 		filter.MaxRetriesGte = &v
 	}
 	if _, ok := listArgs["max_retries_lte"]; ok {
-		v := reqInt(req, "max_retries_lte")
+		v, _, err := reqTaskListInt(req, "max_retries_lte")
+		if err != nil {
+			return errResult(ErrCodeArgInvalid, err.Error(), "max_retries_lte")
+		}
 		filter.MaxRetriesLte = &v
 	}
 	tasks, err := a.svc.Task.List(filter)

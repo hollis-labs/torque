@@ -76,6 +76,40 @@ func TestListTasks(t *testing.T) {
 	assert.Equal(t, "CW-20260407-0001", tasks[1].ID)
 }
 
+func TestListTasksPrioritySetDistinguishesOmittedAndZero(t *testing.T) {
+	store := setupTestStore(t)
+
+	zero := sampleTask("CW-20260911-0000")
+	zero.Priority = 0
+	one := sampleTask("CW-20260911-0001")
+	one.Priority = 1
+	two := sampleTask("CW-20260911-0002")
+	two.Priority = 2
+
+	require.NoError(t, store.CreateTask(zero))
+	require.NoError(t, store.CreateTask(one))
+	require.NoError(t, store.CreateTask(two))
+
+	all, err := store.ListTasks(sqlstore.TaskFilter{})
+	require.NoError(t, err)
+	require.Len(t, all, 3, "omitted priority remains unfiltered")
+
+	legacy, err := store.ListTasks(sqlstore.TaskFilter{Priority: 1})
+	require.NoError(t, err)
+	require.Len(t, legacy, 1, "legacy scalar Priority callers keep working")
+	assert.Equal(t, one.ID, legacy[0].ID)
+
+	explicitZero, err := store.ListTasks(sqlstore.TaskFilter{Priorities: []int{0}})
+	require.NoError(t, err)
+	require.Len(t, explicitZero, 1, "explicit zero in the exact set is a real filter")
+	assert.Equal(t, zero.ID, explicitZero[0].ID)
+
+	set, err := store.ListTasks(sqlstore.TaskFilter{Priorities: []int{2, 0, 2}})
+	require.NoError(t, err)
+	require.Len(t, set, 2, "duplicates are deduped and values OR-match")
+	assert.Equal(t, []string{zero.ID, two.ID}, []string{set[0].ID, set[1].ID})
+}
+
 // TestListTasksFilterByStatus verifies status filtering works.
 func TestListTasksFilterByStatus(t *testing.T) {
 	store := setupTestStore(t)

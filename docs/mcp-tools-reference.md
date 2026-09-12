@@ -138,6 +138,26 @@ Full field reference: ADR-0004 §4. Source: `internal/mcpadapter/task_tools.go`,
 `torque_task_list` sort: `sort_by` ∈ `priority\|status\|updated_at\|created_at`,
 default `priority asc` (tiebreak `id asc`).
 
+`torque_task_list` validates explicit query arguments instead of broadening
+bad filters into successful unfiltered lists. Malformed numbers, booleans,
+RFC3339 dates, sort directions, cursors, malformed `tags` JSON, and wrong
+native types return `error.code=arg_invalid` with `error.field` when one input
+is at fault. Omitted values remain unfiltered/defaulted, `manual` keeps
+`manual`/`true`/`1`, `auto`/`false`/`0`, and `both`/empty sentinels, and
+`parent_id` keeps the empty/`null` root sentinel.
+
+Priority list filters are exact arbitrary integers, not a 1-5 vocabulary:
+`0`, negative values, and large int64 values are legal exact values. Use
+`priority` for one value or `priorities` as a non-empty JSON array for an
+OR-match; passing both is rejected as ambiguous, and `priorities=[]` is
+rejected rather than treated as omission.
+
+HTTP `GET /api/v1/tasks` has a smaller filter set today. It preserves the GUI
+compatibility alias `priority=1,2` as a comma-separated exact-integer OR-list,
+including `0`. Repeated HTTP query keys, malformed raw query strings,
+malformed/overflow/blank CSV members, unknown keys, and MCP-only filters that
+HTTP has not implemented yet return `400` with `error` and `field`.
+
 ### Unknown arguments are rejected, not dropped (CW-20260907-0060)
 
 Neither the MCP protocol layer nor mcp-go validates an incoming argument

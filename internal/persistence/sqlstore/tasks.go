@@ -204,16 +204,17 @@ type TaskRecord struct {
 
 // TaskFilter holds optional filter criteria for ListTasks.
 type TaskFilter struct {
-	Status    string   // single status (legacy)
-	Statuses  []string // multiple statuses (OR filter)
-	Priority  int
-	SprintID  string
-	ProjectID string
-	EpicID    string
-	Executor  string
-	TagSlugs  []string // AND-match after trimming and removing blank/duplicate slugs; case-sensitive
-	Search    string   // case-insensitive substring match on id, title, or description
-	Limit     int
+	Status     string   // single status (legacy)
+	Statuses   []string // multiple statuses (OR filter)
+	Priority   int      // legacy exact priority; zero means unset
+	Priorities []int    // presence-aware exact priority set; may include zero
+	SprintID   string
+	ProjectID  string
+	EpicID     string
+	Executor   string
+	TagSlugs   []string // AND-match after trimming and removing blank/duplicate slugs; case-sensitive
+	Search     string   // case-insensitive substring match on id, title, or description
+	Limit      int
 
 	// Offset is legacy offset-based pagination. Dead from the MCP surface's
 	// perspective as of PRIM-001 (torque_task_list now uses cursor
@@ -530,6 +531,21 @@ func normalizeTagSlugs(slugs []string) []string {
 	return out
 }
 
+func normalizeInts(values []int) []int {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[int]bool, len(values))
+	out := make([]int, 0, len(values))
+	for _, v := range values {
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 // ListTasks returns tasks matching the filter. Default order (f.SortBy ==
 // "") is priority ASC, created_at ASC — the order FIX-004 confirmed
 // torque_task_list's docstring should describe. When f.SortBy is set
@@ -552,7 +568,15 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 		where = append(where, "status = ?")
 		args = append(args, f.Status)
 	}
-	if f.Priority != 0 {
+	if len(f.Priorities) > 0 {
+		normalized := normalizeInts(f.Priorities)
+		placeholders := make([]string, len(normalized))
+		for i, p := range normalized {
+			placeholders[i] = "?"
+			args = append(args, p)
+		}
+		where = append(where, "priority IN ("+strings.Join(placeholders, ",")+")")
+	} else if f.Priority != 0 {
 		where = append(where, "priority = ?")
 		args = append(args, f.Priority)
 	}

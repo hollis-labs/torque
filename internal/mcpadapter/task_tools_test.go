@@ -946,6 +946,146 @@ func TestFullStack_TaskList_FilterByManual(t *testing.T) {
 	})
 }
 
+func TestFullStack_TaskList_StrictPriorityQueries(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "zero", "description": "x", "priority": "1",
+	})
+	require.False(t, isErr, text)
+	var zero map[string]interface{}
+	parseData(t, text, &zero)
+	zeroID := zero["ID"].(string)
+	text, isErr = callTool(t, a, "torque_task_update", map[string]interface{}{"id": zeroID, "priority": 0})
+	require.False(t, isErr, text)
+
+	text, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "one", "description": "x", "priority": "1",
+	})
+	require.False(t, isErr, text)
+	var one map[string]interface{}
+	parseData(t, text, &one)
+	oneID := one["ID"].(string)
+
+	text, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "two", "description": "x", "priority": "2",
+	})
+	require.False(t, isErr, text)
+	var two map[string]interface{}
+	parseData(t, text, &two)
+	twoID := two["ID"].(string)
+	largeAID := createTaskWithPriority(t, a, "large-a", "9007199254740992")
+	largeBID := createTaskWithPriority(t, a, "large-b", "9007199254740993")
+	minID := createTaskWithPriority(t, a, "min-int64", "-9223372036854775808")
+	maxID := createTaskWithPriority(t, a, "max-int64", "9223372036854775807")
+
+	assert.ElementsMatch(t, []string{zeroID, oneID, twoID, largeAID, largeBID, minID, maxID}, taskListIDs(t, a, map[string]interface{}{}))
+	assert.Equal(t, []string{zeroID}, taskListIDs(t, a, map[string]interface{}{"priority": "0"}))
+	assert.ElementsMatch(t, []string{zeroID, twoID}, taskListIDs(t, a, map[string]interface{}{"priorities": `[2,0,2]`}))
+	assert.Equal(t, []string{largeBID}, taskListIDs(t, a, map[string]interface{}{"priorities": `[9007199254740993]`}),
+		"JSON-number array parsing must not round >2^53 to the adjacent priority")
+	assert.Equal(t, []string{minID}, taskListIDs(t, a, map[string]interface{}{"priorities": `[-9223372036854775808]`}))
+	assert.Equal(t, []string{maxID}, taskListIDs(t, a, map[string]interface{}{"priorities": `[9223372036854775807]`}))
+
+	for _, tc := range []struct {
+		name  string
+		args  map[string]interface{}
+		field string
+	}{
+		{name: "bad scalar", args: map[string]interface{}{"priority": "not_an_integer"}, field: "priority"},
+		{name: "fraction scalar", args: map[string]interface{}{"priority": "1.2"}, field: "priority"},
+		{name: "empty priorities", args: map[string]interface{}{"priorities": `[]`}, field: "priorities"},
+		{name: "fraction member", args: map[string]interface{}{"priorities": `[1.5]`}, field: "priorities"},
+		{name: "overflow member", args: map[string]interface{}{"priorities": `["9223372036854775808"]`}, field: "priorities"},
+		{name: "trailing garbage", args: map[string]interface{}{"priorities": `[1] garbage`}, field: "priorities"},
+		{name: "two arrays", args: map[string]interface{}{"priorities": `[1] [2]`}, field: "priorities"},
+		{name: "scalar conflict", args: map[string]interface{}{"priority": "1", "priorities": `[2]`}, field: "priority"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			text, isErr := callTool(t, a, "torque_task_list", tc.args)
+			require.True(t, isErr, "task_list should reject %s: %s", tc.name, text)
+			code, _, field := parseError(t, text)
+			assert.Equal(t, "arg_invalid", code)
+			assert.Equal(t, tc.field, field)
+		})
+	}
+}
+
+func TestFullStack_TaskList_StrictMalformedInputs(t *testing.T) {
+	a := setupAdapter(t)
+
+	for _, tc := range []struct {
+		name  string
+		args  map[string]interface{}
+		field string
+	}{
+		{name: "malformed tags json", args: map[string]interface{}{"tags": "not-json"}, field: "tags"},
+		{name: "non-string tag member", args: map[string]interface{}{"tags": "[1]"}, field: "tags"},
+		{name: "bad manual", args: map[string]interface{}{"manual": "sometimes"}, field: "manual"},
+		{name: "bad include internal", args: map[string]interface{}{"include_internal": "maybe"}, field: "include_internal"},
+		{name: "bad verbose", args: map[string]interface{}{"verbose": "maybe"}, field: "verbose"},
+		{name: "bad limit", args: map[string]interface{}{"limit": "not_an_integer"}, field: "limit"},
+		{name: "unsafe native float limit", args: map[string]interface{}{"limit": float64(9007199254740993)}, field: "limit"},
+		{name: "bad token bound", args: map[string]interface{}{"token_budget_gte": "1.2"}, field: "token_budget_gte"},
+		{name: "non-finite float string", args: map[string]interface{}{"cost_budget_gte": "NaN"}, field: "cost_budget_gte"},
+		{name: "wrong sort type", args: map[string]interface{}{"sort_dir": true}, field: "sort_dir"},
+		{name: "wrong date type", args: map[string]interface{}{"created_after": 12}, field: "created_after"},
+		{name: "wrong cursor type", args: map[string]interface{}{"cursor": 12}, field: "cursor"},
+		{name: "wrong scalar filter type", args: map[string]interface{}{"status": []interface{}{"todo"}}, field: "status"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			text, isErr := callTool(t, a, "torque_task_list", tc.args)
+			require.True(t, isErr, "task_list should reject %s: %s", tc.name, text)
+			code, _, field := parseError(t, text)
+			assert.Equal(t, "arg_invalid", code)
+			assert.Equal(t, tc.field, field)
+		})
+	}
+
+	for _, args := range []map[string]interface{}{
+		{"manual": "both"},
+		{"manual": ""},
+		{"parent_id": ""},
+		{"parent_id": "null"},
+		{"created_after": ""},
+		{"updated_before": ""},
+		{"include_internal": "false"},
+		{"include_internal": "0"},
+		{"include_internal": "yes"},
+		{"verbose": "false"},
+	} {
+		text, isErr := callTool(t, a, "torque_task_list", args)
+		require.False(t, isErr, "valid alias/sentinel should work for args=%v: %s", args, text)
+	}
+}
+
+func taskListIDs(t *testing.T, a *mcpadapter.Adapter, args map[string]interface{}) []string {
+	t.Helper()
+	text, isErr := callTool(t, a, "torque_task_list", args)
+	require.False(t, isErr, "task_list should not error: %s", text)
+	var env taskListCursorEnvelope
+	parseData(t, text, &env)
+	out := make([]string, 0, len(env.Items))
+	for _, item := range env.Items {
+		out = append(out, item["id"].(string))
+	}
+	return out
+}
+
+func createTaskWithPriority(t *testing.T, a *mcpadapter.Adapter, title, priority string) string {
+	t.Helper()
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": title, "description": "x", "priority": "1",
+	})
+	require.False(t, isErr, text)
+	var created map[string]interface{}
+	parseData(t, text, &created)
+	id := created["ID"].(string)
+	text, isErr = callTool(t, a, "torque_task_update", map[string]interface{}{"id": id, "priority": priority})
+	require.False(t, isErr, "priority update should accept %s: %s", priority, text)
+	return id
+}
+
 // TestFullStack_TaskList_CombinedSearchAndProjectID verifies query+project_id AND combination.
 func TestFullStack_TaskList_CombinedSearchAndProjectID(t *testing.T) {
 	a := setupAdapterWithFeatures(t)

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/hollis-labs/torque/internal/httpserver"
@@ -321,6 +322,130 @@ func TestListTasks(t *testing.T) {
 	resp.Body.Close()
 	tasks := result["tasks"].([]interface{})
 	assert.Len(t, tasks, 2)
+}
+
+func TestHTTP_TaskList_StrictPriorityQuery(t *testing.T) {
+	ts := setupTestServer(t)
+
+	create := func(title string, priority int) string {
+		resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(
+			`{"title":"`+title+`","description":"x","priority":1}`))
+		require.NoError(t, err)
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+		var created map[string]interface{}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+		resp.Body.Close()
+		id := created["id"].(string)
+		req, err := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/tasks/"+id,
+			bytes.NewBufferString(`{"priority":`+strconv.Itoa(priority)+`}`))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err = http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		resp.Body.Close()
+		return id
+	}
+	zeroID := create("zero", 0)
+	oneID := create("one", 1)
+	twoID := create("two", 2)
+
+	assert.ElementsMatch(t, []string{zeroID, oneID, twoID}, httpTaskListIDs(t, ts.URL+"/api/v1/tasks"))
+	assert.Equal(t, []string{zeroID}, httpTaskListIDs(t, ts.URL+"/api/v1/tasks?priority=0"))
+	assert.ElementsMatch(t, []string{zeroID, oneID}, httpTaskListIDs(t, ts.URL+"/api/v1/tasks?priority=1,0,1"))
+
+	resp, err := http.Get(ts.URL + "/api/v1/tasks?priority=not_an_integer")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	errBody := decodeHTTPError(t, resp)
+	assert.Equal(t, "priority", errBody["field"])
+	assert.Contains(t, errBody["error"], "integer")
+}
+
+func TestHTTP_TaskList_StrictQueryValidation(t *testing.T) {
+	ts := setupTestServer(t)
+
+	for _, tc := range []struct {
+		query string
+		field string
+	}{
+		{query: "limit=abc", field: "limit"},
+		{query: "offset=1.2", field: "offset"},
+		{query: "manual=sometimes", field: "manual"},
+		{query: "include_internal=maybe", field: "include_internal"},
+		{query: "kind=internal&include_internal=maybe", field: "include_internal"},
+		{query: "sort_by=updated_at", field: "sort_by"},
+		{query: "created_after=2026-09-11T00%3A00%3A00Z", field: "created_after"},
+		{query: "unknown_filter=x", field: "unknown_filter"},
+		{query: "priority=1,garbage", field: "priority"},
+		{query: "priority=1,,2", field: "priority"},
+		{query: "priority=", field: "priority"},
+		{query: "priority=9223372036854775808", field: "priority"},
+		{query: "priority=1&priority=garbage", field: "priority"},
+		{query: "%zz", field: "query"},
+	} {
+		resp, err := http.Get(ts.URL + "/api/v1/tasks?" + tc.query)
+		require.NoError(t, err, tc.query)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode, tc.query)
+		errBody := decodeHTTPError(t, resp)
+		assert.Equal(t, tc.field, errBody["field"], tc.query)
+		assert.NotEmpty(t, errBody["error"], tc.query)
+	}
+}
+
+func TestHTTP_TaskList_ManualAliasesStillWork(t *testing.T) {
+	ts := setupTestServer(t)
+
+	autoID := httpCreateTask(t, ts.URL, "auto-eligible")
+	manualID := httpCreateTask(t, ts.URL, "manual-hold")
+	req, err := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/tasks/"+autoID,
+		bytes.NewBufferString(`{"manual":false}`))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	resp.Body.Close()
+
+	assert.Equal(t, []string{manualID}, httpTaskListIDs(t, ts.URL+"/api/v1/tasks?manual=manual"))
+	assert.Equal(t, []string{autoID}, httpTaskListIDs(t, ts.URL+"/api/v1/tasks?manual=auto"))
+	assert.ElementsMatch(t, []string{autoID, manualID}, httpTaskListIDs(t, ts.URL+"/api/v1/tasks?manual=both"))
+}
+
+func httpCreateTask(t *testing.T, baseURL, title string) string {
+	t.Helper()
+	resp, err := http.Post(baseURL+"/api/v1/tasks", "application/json", bytes.NewBufferString(
+		`{"title":"`+title+`","description":"x"}`))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	var created map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+	resp.Body.Close()
+	return created["id"].(string)
+}
+
+func httpTaskListIDs(t *testing.T, url string) []string {
+	t.Helper()
+	resp, err := http.Get(url)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	resp.Body.Close()
+	raw := result["tasks"].([]interface{})
+	out := make([]string, 0, len(raw))
+	for _, task := range raw {
+		out = append(out, task.(map[string]interface{})["id"].(string))
+	}
+	return out
+}
+
+func decodeHTTPError(t *testing.T, resp *http.Response) map[string]string {
+	t.Helper()
+	defer resp.Body.Close()
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	return body
 }
 
 func TestTransitionTask(t *testing.T) {
