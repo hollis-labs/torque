@@ -42,6 +42,36 @@ func TestTaskCreate(t *testing.T) {
 	require.Equal(t, 1, task.Priority)
 }
 
+func TestTaskCreate_MaxRetriesDefaultAndExplicitZero(t *testing.T) {
+	svc := setupService(t)
+
+	omitted, err := svc.Task.Create(service.TaskCreateInput{Title: "omitted retries"})
+	require.NoError(t, err)
+	assert.Equal(t, 3, omitted.MaxRetries)
+
+	zero := 0
+	explicit, err := svc.Task.Create(service.TaskCreateInput{
+		Title:      "zero retries",
+		MaxRetries: &zero,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, explicit.MaxRetries)
+
+	dep, err := svc.Task.Create(service.TaskCreateInput{Title: "retry dependency"})
+	require.NoError(t, err)
+	withDep, err := svc.Task.Create(service.TaskCreateInput{
+		Title:      "zero retries with dependency",
+		MaxRetries: &zero,
+		DependsOn:  []string{dep.ID},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, withDep.MaxRetries)
+
+	deps, err := svc.Task.ListDependencyIDs(withDep.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{dep.ID}, deps)
+}
+
 func TestTaskCreate_FacetDefaults(t *testing.T) {
 	svc := setupService(t)
 

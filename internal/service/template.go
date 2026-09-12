@@ -121,6 +121,9 @@ func (s *TemplateService) Create(in TemplateCreateInput) (*sqlstore.TemplateReco
 	if in.Kind != "" && !validKinds[in.Kind] {
 		return nil, &ValidationError{Field: "kind", Message: "invalid template kind"}
 	}
+	if err := s.validateTemplateBudgets(in.CostBudget, in.MaxRetries, in.MaxDurationMs, in.TokenBudget); err != nil {
+		return nil, err
+	}
 	next, err := s.store.NextTemplateVersion(in.ID)
 	if err != nil {
 		return nil, err
@@ -141,6 +144,9 @@ func (s *TemplateService) Update(id string, in TemplateUpdateInput) (*sqlstore.T
 		if errors.Is(err, sqlstore.ErrTemplateNotFound) {
 			return nil, &ValidationError{Field: "id", Message: "template not found: " + id}
 		}
+		return nil, err
+	}
+	if err := s.validateTemplateBudgets(in.CostBudget, in.MaxRetries, in.MaxDurationMs, in.TokenBudget); err != nil {
 		return nil, err
 	}
 	merged := mergeTemplateUpdate(prev, in)
@@ -188,6 +194,18 @@ func (s *TemplateService) Delete(id string) error {
 // List returns matching templates.
 func (s *TemplateService) List(opts TemplateListOpts) ([]sqlstore.TemplateRecord, error) {
 	return s.store.ListTemplates(opts.IncludeArchived, opts.Kind)
+}
+
+func (s *TemplateService) validateTemplateBudgets(cost *float64, retries *int, duration *int64, tokens *int64) error {
+	if s.tasks == nil {
+		return nil
+	}
+	return s.tasks.validateTaskWrites(taskWriteFields{
+		CostBudget:    cost,
+		MaxRetries:    retries,
+		MaxDurationMs: duration,
+		TokenBudget:   tokens,
+	})
 }
 
 // Instantiate builds a TaskCreateInput from a template + caller vars and
@@ -392,10 +410,8 @@ func (s *TemplateService) applyTemplateToInput(tpl *sqlstore.TemplateRecord, in 
 		v := tpl.TokenBudget.Int64
 		input.TokenBudget = &v
 	}
-	if tpl.MaxRetries > 0 {
-		v := tpl.MaxRetries
-		input.MaxRetries = &v
-	}
+	v := tpl.MaxRetries
+	input.MaxRetries = &v
 
 	// metadata_template — deep-resolve string leaves into Metadata.
 	if tpl.MetadataTemplate.Valid && tpl.MetadataTemplate.String != "" {
@@ -496,6 +512,8 @@ func buildTemplateRecord(in TemplateCreateInput, id string, version int) *sqlsto
 	}
 	if in.MaxRetries != nil {
 		rec.MaxRetries = *in.MaxRetries
+	} else {
+		rec.MaxRetries = 3
 	}
 	if in.MaxDurationMs != nil {
 		rec.MaxDurationMs = sql.NullInt64{Int64: *in.MaxDurationMs, Valid: true}

@@ -29,6 +29,10 @@ Example: {"id":"backend-fix","name":"Backend Fix","description":"Fix {{issue}}",
 		mcp.WithString("tools", mcp.Description("JSON array of tool names")),
 		mcp.WithString("permissions", mcp.Description("JSON object of permissions")),
 		mcp.WithString("environment", mcp.Description("JSON object of env vars (values support {{var}})")),
+		mcp.WithString("cost_budget", mcp.Description("Cost budget (numeric; -1 unlimited, 0 none, or positive)")),
+		mcp.WithString("max_retries", mcp.Description("Max retries (non-negative integer, default 3)")),
+		mcp.WithString("max_duration_ms", mcp.Description("Max duration in ms (integer; -1 unlimited or positive)")),
+		mcp.WithString("token_budget", mcp.Description("Token budget (integer; -1 unlimited or positive)")),
 		mcp.WithString("on_done", mcp.Description("close|review|notify (default review)")),
 		mcp.WithString("on_fail", mcp.Description("retry|block|escalate|notify (default retry)")),
 		mcp.WithString("on_review", mcp.Description("pause|notify|auto-approve (default pause)")),
@@ -70,6 +74,10 @@ Example: {"id":"backend-fix","description":"Fix {{issue}} in {{component}}"}`),
 		mcp.WithString("tools"),
 		mcp.WithString("permissions"),
 		mcp.WithString("environment"),
+		mcp.WithString("cost_budget", mcp.Description("Cost budget (numeric; -1 unlimited, 0 none, or positive)")),
+		mcp.WithString("max_retries", mcp.Description("Max retries (non-negative integer)")),
+		mcp.WithString("max_duration_ms", mcp.Description("Max duration in ms (integer; -1 unlimited or positive)")),
+		mcp.WithString("token_budget", mcp.Description("Token budget (integer; -1 unlimited or positive)")),
 		mcp.WithString("on_done"),
 		mcp.WithString("on_fail"),
 		mcp.WithString("on_review"),
@@ -168,6 +176,9 @@ func (a *Adapter) handleTemplateCreate(ctx context.Context, req mcp.CallToolRequ
 		if err := json.Unmarshal([]byte(raw), &in.Environment); err != nil {
 			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid environment JSON: %v", err), "environment")
 		}
+	}
+	if res := applyTemplateBudgetArgs(req, &in.CostBudget, &in.MaxRetries, &in.MaxDurationMs, &in.TokenBudget); res != nil {
+		return res, nil
 	}
 	if raw := reqStr(req, "escalation_chain"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.EscalationChain); err != nil {
@@ -269,6 +280,9 @@ func (a *Adapter) handleTemplateUpdate(ctx context.Context, req mcp.CallToolRequ
 		if err := json.Unmarshal([]byte(raw), &in.Environment); err != nil {
 			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid environment JSON: %v", err), "environment")
 		}
+	}
+	if res := applyTemplateBudgetArgs(req, &in.CostBudget, &in.MaxRetries, &in.MaxDurationMs, &in.TokenBudget); res != nil {
+		return res, nil
 	}
 	if raw := reqStr(req, "escalation_chain"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.EscalationChain); err != nil {
@@ -387,4 +401,41 @@ func (a *Adapter) handleTaskCreateFromTemplate(ctx context.Context, req mcp.Call
 		return errFromService(err)
 	}
 	return a.taskResult(task)
+}
+
+func applyTemplateBudgetArgs(req mcp.CallToolRequest, cost **float64, retries **int, duration **int64, tokens **int64) *mcp.CallToolResult {
+	args := req.GetArguments()
+	if _, ok := args["cost_budget"]; ok {
+		v, err := reqTaskListFloat(req, "cost_budget")
+		if err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "cost_budget")
+			return res
+		}
+		*cost = &v
+	}
+	if _, ok := args["max_retries"]; ok {
+		v, _, err := reqTaskListInt(req, "max_retries")
+		if err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "max_retries")
+			return res
+		}
+		*retries = &v
+	}
+	if _, ok := args["max_duration_ms"]; ok {
+		v, err := reqTaskListInt64(req, "max_duration_ms")
+		if err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "max_duration_ms")
+			return res
+		}
+		*duration = &v
+	}
+	if _, ok := args["token_budget"]; ok {
+		v, err := reqTaskListInt64(req, "token_budget")
+		if err != nil {
+			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "token_budget")
+			return res
+		}
+		*tokens = &v
+	}
+	return nil
 }
