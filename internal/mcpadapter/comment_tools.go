@@ -74,14 +74,16 @@ Example: {"id":"42","author":"reviewer","content":"Updated: please also cover th
 	), a.handleCommentUpdate)
 
 	a.addTool(mcp.NewTool("torque_comment_delete",
-		mcp.WithDescription(`Hard-delete a comment. Author-scoped: only the comment's original author may delete it — a mismatched author returns error.code=permission. There is no undo.
-Use to remove a comment you posted in error.
+		mcp.WithDescription(`Hard-delete a comment. By default this uses exact author matching as an accidental-deletion guard: a mismatched author returns error.code=permission. author is caller-supplied text, not an authenticated principal. There is no undo.
+Use to remove a comment you posted in error. Pass force=true only when you deliberately want to bypass the author-match guard; force does not bypass invalid IDs or missing-comment errors.
 Unattributed comments (author stored as "", which is what an omitted author on torque_comment_add produces) are deleted by passing author="" explicitly. Omitting author entirely is still an error — the empty string has to be deliberate.
 Response shape: data = {id, deleted: true}.
 Example: {"id":"42","author":"reviewer"}
-Example, an unattributed comment: {"id":"42","author":""}`),
+Example, an unattributed comment: {"id":"42","author":""}
+Example, deliberate override: {"id":"42","author":"reviewer","force":true}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Comment ID (integer; pass as string)")),
-		mcp.WithString("author", mcp.Required(), mcp.Description(`Caller's author slug/id — must exactly match the comment's original author. Pass "" to match an unattributed comment; the field itself must still be present.`)),
+		mcp.WithString("author", mcp.Required(), mcp.Description(`Caller's author slug/id — must exactly match the comment's original author unless force=true. Pass "" to match an unattributed comment; the field itself must still be present.`)),
+		mcp.WithBoolean("force", mcp.Description(`Optional. true deliberately bypasses only the author-match guard; omitted/false preserves exact-author behavior.`)),
 	), a.handleCommentDelete)
 
 	a.addTool(mcp.NewTool("torque_comment_bulk_add",
@@ -323,8 +325,8 @@ func (a *Adapter) handleCommentUpdate(ctx context.Context, req mcp.CallToolReque
 }
 
 func (a *Adapter) handleCommentDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	id := int64(reqInt(req, "id"))
-	if id <= 0 {
+	id, err := exactInt64(req.GetArguments()["id"], "id")
+	if err != nil || id <= 0 {
 		return errResult(ErrCodeArgInvalid, "id must be a positive integer", "id")
 	}
 	// author is required, but an EXPLICIT empty string is a legitimate value:
@@ -343,17 +345,19 @@ func (a *Adapter) handleCommentDelete(ctx context.Context, req mcp.CallToolReque
 	// presence is read off the argument map; a caller who forgets the field
 	// still gets "author is required".
 	//
-	// This does NOT change WHO may delete a comment. author is free text
-	// rather than a session identity — anyone can already claim to be
-	// "planner" — so declaring a comment unattributed grants no authority
-	// that was not already trivially available. Whether author-scoping is a
-	// meaningful check at all is a separate question this does not answer.
 	rawAuthor, supplied := req.GetArguments()["author"]
 	if !supplied {
 		return errResult(ErrCodeArgInvalid, "author is required", "author")
 	}
-	author, _ := rawAuthor.(string)
-	if err := a.svc.Comment.Delete(id, author); err != nil {
+	author, ok := rawAuthor.(string)
+	if !ok {
+		return errResult(ErrCodeArgInvalid, "author must be a string", "author")
+	}
+	force, errRes := reqExactBool(req, "force")
+	if errRes != nil {
+		return errRes, nil
+	}
+	if err := a.svc.Comment.Delete(id, author, force); err != nil {
 		return errFromService(err)
 	}
 	return okResult(map[string]any{"id": id, "deleted": true})

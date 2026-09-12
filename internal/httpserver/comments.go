@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -193,6 +194,55 @@ func (s *Server) searchComments(w http.ResponseWriter, r *http.Request) {
 		nextCursor = pagination.Encode(normalized.SortBy, normalized.SortDir, service.CommentQuerySortValue(last, normalized.SortBy), service.CommentQueryCursorID(last))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": comments, "meta": advancedMeta(normalized.Limit, normalized.SortBy, normalized.SortDir, hasMore, nextCursor, len(comments))})
+}
+
+func queryExactBool(q url.Values, key string) (bool, *httpQueryError) {
+	if _, ok := q[key]; !ok {
+		return false, nil
+	}
+	switch queryString(q, key) {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, &httpQueryError{field: key, message: key + " must be exactly true or false"}
+	}
+}
+
+func (s *Server) deleteComment(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeFieldError(w, http.StatusBadRequest, "id", "id must be a positive integer")
+		return
+	}
+	q, qerr := parseStrictQuery(r, map[string]bool{"author": true, "force": true})
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
+		return
+	}
+	if _, ok := q["author"]; !ok {
+		writeFieldError(w, http.StatusBadRequest, "author", "author is required")
+		return
+	}
+	force, qerr := queryExactBool(q, "force")
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
+		return
+	}
+	if err := s.svc.Comment.Delete(id, queryString(q, "author"), force); err != nil {
+		var permission *service.PermissionError
+		switch {
+		case errors.Is(err, sqlstore.ErrCommentNotFound):
+			writeError(w, http.StatusNotFound, err.Error())
+		case errors.As(err, &permission):
+			writeError(w, http.StatusForbidden, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "deleted": true})
 }
 
 func queryStringArray(q url.Values, key string) ([]string, *httpQueryError) {

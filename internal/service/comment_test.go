@@ -72,23 +72,46 @@ func TestCommentDelete_AuthorScoped(t *testing.T) {
 	svc := setupService(t)
 	task, err := svc.Task.Create(service.TaskCreateInput{Title: "T1"})
 	require.NoError(t, err)
+	exists := func(id int64) bool {
+		t.Helper()
+		comments, err := svc.Comment.ListForTask(task.ID)
+		require.NoError(t, err)
+		for _, c := range comments {
+			if c.ID == id {
+				return true
+			}
+		}
+		return false
+	}
 
-	c, err := svc.Comment.Add("task", task.ID, "alice", "content")
-	require.NoError(t, err)
-
-	t.Run("different author cannot delete", func(t *testing.T) {
-		err := svc.Comment.Delete(c.ID, "bob")
+	t.Run("different author cannot delete without force", func(t *testing.T) {
+		c, err := svc.Comment.Add("task", task.ID, "alice", "content")
+		require.NoError(t, err)
+		err = svc.Comment.Delete(c.ID, "bob", false)
 		require.Error(t, err)
 		assert.IsType(t, &service.PermissionError{}, err)
+		assert.True(t, exists(c.ID))
 	})
 
 	t.Run("original author can delete", func(t *testing.T) {
-		err := svc.Comment.Delete(c.ID, "alice")
+		c, err := svc.Comment.Add("task", task.ID, "alice", "content")
 		require.NoError(t, err)
+		err = svc.Comment.Delete(c.ID, "alice", false)
+		require.NoError(t, err)
+		assert.False(t, exists(c.ID))
+	})
 
-		comments, err := svc.Comment.ListForTask(task.ID)
+	t.Run("force bypasses only author match", func(t *testing.T) {
+		c, err := svc.Comment.Add("task", task.ID, "alice", "content")
 		require.NoError(t, err)
-		assert.Empty(t, comments)
+		err = svc.Comment.Delete(c.ID, "bob", true)
+		require.NoError(t, err)
+		assert.False(t, exists(c.ID))
+	})
+
+	t.Run("force still returns missing comment errors", func(t *testing.T) {
+		err := svc.Comment.Delete(999999, "bob", true)
+		require.Error(t, err)
 	})
 }
 

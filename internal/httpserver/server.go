@@ -194,6 +194,7 @@ func (s *Server) routes() {
 		r.Get("/comments/search", s.searchComments)
 		r.Get("/comments", s.listComments)
 		r.Post("/comments", s.addComment)
+		r.Delete("/comments/{id}", s.deleteComment)
 
 		// Settings
 		r.Get("/settings", s.getAllSettings)

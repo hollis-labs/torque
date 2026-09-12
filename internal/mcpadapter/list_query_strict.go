@@ -79,6 +79,19 @@ func reqQueryBool(req mcp.CallToolRequest, key string) (bool, *mcp.CallToolResul
 	}
 }
 
+func reqExactBool(req mcp.CallToolRequest, key string) (bool, *mcp.CallToolResult) {
+	v, ok := req.GetArguments()[key]
+	if !ok {
+		return false, nil
+	}
+	b, ok := v.(bool)
+	if !ok {
+		res, _ := errResult(ErrCodeArgInvalid, key+" must be a boolean", key)
+		return false, res
+	}
+	return b, nil
+}
+
 func reqQueryCursor(req mcp.CallToolRequest) (service.CursorQuery, *mcp.CallToolResult) {
 	limit, errRes := reqQueryInt(req, "limit")
 	if errRes != nil {
