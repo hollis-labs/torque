@@ -425,6 +425,7 @@ Example: {"title":"Fix auth bug","description":"Login returns 500","priority":"2
 		mcp.WithString("escalation_chain", mcp.Description("JSON array of escalation-target names")),
 		mcp.WithString("quality_gates", mcp.Description("JSON array of gate names")),
 		mcp.WithString("deliverables", mcp.Description("JSON array of Deliverable objects: {type, required, description?}")),
+		mcp.WithString("deliverable_preset", mcp.Description("Deliverable preset name")),
 		mcp.WithString("subtodos", mcp.Description(`JSON array of initial checklist items to seed atomically with the create — {id?, text, required?} per item; id auto-generates when omitted (same as torque_task_subtodo_add). Providing this (including "[]") disables description auto-extraction.`)),
 	), a.handleTaskCreate)
 
@@ -806,8 +807,9 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest)
 		// exposed. OnReview mirrors OnDone/OnFail above; BlockedReason is
 		// useful as pure tracking metadata even outside the blocked-status
 		// flow (ADR-0004 §4).
-		OnReview:      reqStr(req, "on_review"),
-		BlockedReason: reqStr(req, "blocked_reason"),
+		OnReview:          reqStr(req, "on_review"),
+		DeliverablePreset: reqStr(req, "deliverable_preset"),
+		BlockedReason:     reqStr(req, "blocked_reason"),
 
 		ParentID: reqStr(req, "parent_id"),
 	}

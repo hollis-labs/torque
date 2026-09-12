@@ -161,6 +161,51 @@ func callTool(t *testing.T, a *mcpadapter.Adapter, name string, args map[string]
 	return text, isError
 }
 
+func listToolSchemaProperties(t *testing.T, a *mcpadapter.Adapter, name string) map[string]interface{} {
+	t.Helper()
+
+	initMsg, err := json.Marshal(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      0,
+		"method":  "initialize",
+		"params": map[string]interface{}{
+			"protocolVersion": "2024-11-05",
+			"capabilities":    map[string]interface{}{},
+			"clientInfo":      map[string]interface{}{"name": "test", "version": "0.1.0"},
+		},
+	})
+	require.NoError(t, err)
+	a.Server().HandleMessage(context.Background(), initMsg)
+
+	msg, err := json.Marshal(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/list",
+	})
+	require.NoError(t, err)
+
+	resp := a.Server().HandleMessage(context.Background(), msg)
+	respBytes, err := json.Marshal(resp)
+	require.NoError(t, err)
+	var parsed map[string]interface{}
+	require.NoError(t, json.Unmarshal(respBytes, &parsed), "tools/list response: %s", string(respBytes))
+	if errObj, ok := parsed["error"]; ok {
+		t.Fatalf("tools/list returned error: %v", errObj)
+	}
+	result := parsed["result"].(map[string]interface{})
+	tools := result["tools"].([]interface{})
+	for _, raw := range tools {
+		tool := raw.(map[string]interface{})
+		if tool["name"] != name {
+			continue
+		}
+		inputSchema := tool["inputSchema"].(map[string]interface{})
+		return inputSchema["properties"].(map[string]interface{})
+	}
+	t.Fatalf("tool %s not found in tools/list response", name)
+	return nil
+}
+
 func TestFullStack_CreateAndGetTask(t *testing.T) {
 	a := setupAdapter(t)
 
@@ -2566,6 +2611,83 @@ func TestFullStack_TaskCreate_FieldExpansion(t *testing.T) {
 	require.Equal(t, 42.5, got["CostBudget"].(map[string]interface{})["Float64"])
 	require.Equal(t, float64(60000), got["MaxDurationMs"].(map[string]interface{})["Int64"])
 	require.Equal(t, float64(100000), got["TokenBudget"].(map[string]interface{})["Int64"])
+}
+
+func TestFullStack_TaskCreate_DeliverablePresetHTTPMCPParity(t *testing.T) {
+	a, ts, _ := setupTaskQueryParitySurfaces(t)
+	defer ts.Close()
+
+	props := listToolSchemaProperties(t, a, "torque_task_create")
+	require.Contains(t, props, "deliverable_preset")
+
+	type createCase struct {
+		name  string
+		value *string
+		want  string
+	}
+	empty := ""
+	arbitrary := "arbitrary-review-pack"
+	cases := []createCase{
+		{name: "omitted", want: ""},
+		{name: "empty", value: &empty, want: ""},
+		{name: "explicit", value: &arbitrary, want: arbitrary},
+	}
+
+	for _, tc := range cases {
+		t.Run("mcp_"+tc.name, func(t *testing.T) {
+			args := map[string]interface{}{
+				"title":       "mcp preset " + tc.name,
+				"description": "preset parity",
+				"manual":      false,
+			}
+			if tc.value != nil {
+				args["deliverable_preset"] = *tc.value
+			}
+			text, isErr := callTool(t, a, "torque_task_create", args)
+			require.False(t, isErr, "create should not error: %s", text)
+			var created map[string]interface{}
+			parseData(t, text, &created)
+			require.Equal(t, tc.want, created["DeliverablePreset"])
+			require.Equal(t, true, created["Manual"])
+
+			text, isErr = callTool(t, a, "torque_task_get", map[string]interface{}{"id": created["ID"].(string)})
+			require.False(t, isErr, "get should not error: %s", text)
+			var got map[string]interface{}
+			parseData(t, text, &got)
+			require.Equal(t, tc.want, got["DeliverablePreset"])
+			require.Equal(t, true, got["Manual"])
+		})
+
+		t.Run("http_"+tc.name, func(t *testing.T) {
+			body := map[string]interface{}{
+				"title":       "http preset " + tc.name,
+				"description": "preset parity",
+				"manual":      false,
+			}
+			if tc.value != nil {
+				body["deliverable_preset"] = *tc.value
+			}
+			raw, err := json.Marshal(body)
+			require.NoError(t, err)
+			resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewReader(raw))
+			require.NoError(t, err)
+			require.Equal(t, http.StatusCreated, resp.StatusCode)
+			var created map[string]interface{}
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+			require.NoError(t, resp.Body.Close())
+			require.Equal(t, tc.want, created["deliverable_preset"])
+			require.Equal(t, true, created["manual"])
+
+			resp, err = http.Get(ts.URL + "/api/v1/tasks/" + created["id"].(string))
+			require.NoError(t, err)
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			var got map[string]interface{}
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+			require.NoError(t, resp.Body.Close())
+			require.Equal(t, tc.want, got["deliverable_preset"])
+			require.Equal(t, true, got["manual"])
+		})
+	}
 }
 
 // TestFullStack_TaskCreate_SubtodosSeed verifies torque_task_create's
