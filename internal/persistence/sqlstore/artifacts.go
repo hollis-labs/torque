@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -22,6 +23,18 @@ type ArtifactRecord struct {
 	FilePath  string
 	Metadata  sql.NullString
 	CreatedAt time.Time
+}
+
+// ArtifactPatch is a presence-aware update for mutable artifact columns. Nil
+// fields are omitted from the SQL UPDATE; non-nil nullable fields can carry
+// Valid=false to clear the column.
+type ArtifactPatch struct {
+	RunID    *sql.NullInt64
+	Type     *string
+	Content  *string
+	URL      *string
+	FilePath *string
+	Metadata *sql.NullString
 }
 
 const artifactSelectCols = `id, task_id, run_id, type, content, url, file_path, metadata, created_at`
@@ -84,6 +97,53 @@ func (s *Store) ListArtifacts(taskID string) ([]ArtifactRecord, error) {
 		artifacts = append(artifacts, a)
 	}
 	return artifacts, rows.Err()
+}
+
+// UpdateArtifact patches mutable artifact columns by ID and returns the fresh
+// row. ID, owning task and creation timestamp are immutable.
+func (s *Store) UpdateArtifact(id int64, patch ArtifactPatch) (*ArtifactRecord, error) {
+	sets := make([]string, 0, 6)
+	args := make([]any, 0, 7)
+	if patch.RunID != nil {
+		sets = append(sets, "run_id = ?")
+		args = append(args, *patch.RunID)
+	}
+	if patch.Type != nil {
+		sets = append(sets, "type = ?")
+		args = append(args, *patch.Type)
+	}
+	if patch.Content != nil {
+		sets = append(sets, "content = ?")
+		args = append(args, *patch.Content)
+	}
+	if patch.URL != nil {
+		sets = append(sets, "url = ?")
+		args = append(args, *patch.URL)
+	}
+	if patch.FilePath != nil {
+		sets = append(sets, "file_path = ?")
+		args = append(args, *patch.FilePath)
+	}
+	if patch.Metadata != nil {
+		sets = append(sets, "metadata = ?")
+		args = append(args, *patch.Metadata)
+	}
+	if len(sets) == 0 {
+		return s.GetArtifact(id)
+	}
+	args = append(args, id)
+	res, err := s.db.Exec(`UPDATE artifacts SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		return nil, fmt.Errorf("artifact %d: %w", id, ErrArtifactNotFound)
+	}
+	return s.GetArtifact(id)
 }
 
 // DeleteArtifact removes the artifact row by ID. Returns ErrArtifactNotFound
