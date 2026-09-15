@@ -1,8 +1,9 @@
 # MCP Tools Reference — Data Entities
 
 Agent-facing reference for the `torque_*` MCP tools covering Torque's core
-data-management entities: **Task, Subtodo, Comment, Project, Epic, Sprint,
-Issue, Plan**. This is the scope ADR-0004 locked and Phase 0–5 of
+data-management entities: **Task, Tag, Subtodo, Comment, Project, Epic, Sprint,
+Issue, Plan**. Task/Subtodo/Comment/Project/Epic/Sprint/Issue/Plan are the
+scope ADR-0004 locked and Phase 0–5 of
 `tasks/INDEX.md` implemented (all phases `done` as of 2026-08-20) — the
 "MCP discoverability/schema reference layer" that ADR-0004's Consequences
 section named as a deferred follow-up.
@@ -10,7 +11,8 @@ section named as a deferred follow-up.
 **Out of scope for this doc:** Run, Session, Scheduler, Settings, Model,
 Broker, Collection, Artifact, Template, Checkpoint. Those tools exist and
 work, but weren't part of this ergonomics pass — see
-`docs/surfaces.md` for the full tool-area list and
+[`docs/surfaces.md`](surfaces.md#consumer-write-contracts) for their current
+consumer write contracts and the full tool-area list, and
 `docs/architecture/mcp-service-layer-audit.md` for their pre-existing shape.
 
 **Source of truth.** Every tool's exact parameter list and full description
@@ -88,16 +90,25 @@ id — see their entity sections.
 
 ### Parameter encoding
 
-- Numeric and boolean params are declared as MCP **strings** (e.g.
+- Many numeric and boolean params are declared as MCP **strings** (e.g.
   `"limit": "50"`, `"manual": "true"`) so LLM clients that emit
-  string-encoded values don't trip schema validation; the adapter coerces
-  string/number/bool interchangeably (`reqInt`/`reqFloat`/`reqBool` in
-  `internal/mcpadapter/adapter.go`). `-1` is the unlimited sentinel on budget
-  fields (`cost_budget`, `token_budget`, `max_duration_ms`).
+  string-encoded values don't trip schema validation. Older handlers use
+  coercing helpers; strict query and write fields validate exact values and
+  may advertise native/string unions. Check the tool's current schema and
+  description rather than relying on coercion. `-1` is the unlimited sentinel
+  on budget fields (`cost_budget`, `token_budget`, `max_duration_ms`).
 - List-of-string params (`tags`, `depends_on`, `ids`, `statuses`, etc.) are
   declared as a JSON-encoded string (e.g. `"tags":"[\"p0\",\"backend\"]"`)
   but the adapter also accepts a native JSON array where the transport
   allows it.
+- Adjacent list/search tools use strict query decoding. Explicit malformed,
+  blank, fractional, overflow, unsafe native-float, negative `limit`, nonfinite
+  numeric bounds, invalid booleans, invalid dates, invalid sorts, and
+  sort-mismatched cursors return `arg_invalid` with `field`. Omitted values
+  remain defaulted/unfiltered. `entity_ids` on comment list/search accepts a
+  JSON array string or native string array; whole null, `[null]`, non-string
+  members, and malformed JSON reject; an empty list is rejected only when it is
+  the sole scope for `torque_comment_list`.
 - **Update tools are true partial patches.** Presence in the payload is the
   only "change this" signal — an omitted key leaves the field untouched; an
   explicit empty string clears most nullable scalars. This is uniform across
@@ -124,9 +135,10 @@ Full field reference: ADR-0004 §4. Source: `internal/mcpadapter/task_tools.go`,
 
 | Tool | Purpose |
 |---|---|
-| `torque_task_create` | Create a task. Safety override forces `manual=true` on every create (an agent must promote it via `torque_task_update {"manual":false}` before the scheduler dispatches it) — the response's `dispatch_notice` spells out the exact promotion call. Optional `subtodos[]` seeds an initial checklist atomically. |
+| `torque_task_create` | Create a task. Safety override forces `manual=true` on every create (an agent must promote it via `torque_task_update {"manual":false}` before the scheduler dispatches it) — the response's `dispatch_notice` spells out the exact promotion call. Optional `subtodos[]` seeds an initial checklist atomically. Optional `deliverable_preset` is preserved on create and get, matching HTTP. |
 | `torque_task_get` | Fetch one task by id, **including its 10 most recent comments by default** (CW-20260910-0057). `comments="false"` opts out; `comments_limit` widens the window (max 100). |
-| `torque_task_list` | Filter + free-text `search` + sort + cursor-paginate, all in one tool (no separate search tool). Rich filter set: status/statuses[]/priority/kind/trust/checkpoint_mode/parent_id/project_id/sprint_id/epic_id/tags[]/manual/agent_profile/launch_profile, `created_*`/`updated_*` RFC3339 ranges, and `*_gte`/`*_lte` budget/duration range filters. `include_internal` (default false) hides `kind=internal` automation rows. |
+| `torque_task_list` | Filter + free-text `search` + sort + cursor-paginate, all in one tool (no separate search tool). Shares the public task-query contract with HTTP: status/statuses[]/priority/kind/trust/checkpoint_mode/parent_id/project_id/sprint_id/epic_id/tags[]/manual/agent_profile/launch_profile, `created_*`/`updated_*` RFC3339 ranges, and `*_gte`/`*_lte` budget/duration range filters. `include_internal` (default false) hides `kind=internal` automation rows unless `kind=internal` is requested explicitly. |
+| `torque_task_facets` | Count distinct values for supported task dimensions over the same filtered cohort as `torque_task_list`, without fetching task records or counting a page. HTTP equivalent: `GET /api/v1/tasks/facets`. |
 | `torque_task_update` | Partial patch. Numeric sentinel `-1` = unlimited on budget fields. `status` is accepted and routed through the same path as `torque_task_transition` — before CW-20260909-0011 the arg was silently dropped and the call still answered `ok:true`. |
 | `torque_task_delete` | Hard delete (runs/artifacts/comments cascade). Prefer `transition` to `abandoned` for an audit-preserving close — reachable from any status in one call. |
 | `torque_task_transition` | Set a status. Permissive: any status reaches any other in one call (`todo→done` included). Vocabulary: `backlog`, `todo`, `queued`, `doing`, `review`, `done`, `blocked`, `paused`, `archived`, `abandoned`, `cancelled`. Only two refusals — a status outside that list, and leaving `done`/`archived`, which needs `force=true`. Optional `comment`/`comment_author` posts a comment atomically with the transition (one transaction). |
@@ -135,8 +147,200 @@ Full field reference: ADR-0004 §4. Source: `internal/mcpadapter/task_tools.go`,
 | `torque_task_bulk_delete` | Hard-delete many ids in one call. |
 | `torque_task_bulk_tag` | Add/remove tag slugs across many ids — additive, unlike `update`'s `tags` (which replaces the full set). |
 
+Task metadata may include `{"review":{"mode":"parent"}}` to leave a
+`kind=agent` task in `review` without enqueueing `reviewer-end-agent`.
+Omission preserves the default internal reviewer. Task reads expose the
+resolved behavior as `effective_review`; see `docs/review-routing.md`.
+
+---
+
+## Tag
+
+Global tag catalog entity. Source: `internal/mcpadapter/tag_tools.go`.
+
+| Tool | Purpose |
+|---|---|
+| `torque_tag_list` | Discover the global catalog, including unused tags. Not a usage/count surface; use `torque_task_facets` for scoped tag counts. |
+| `torque_tag_get` | Fetch one tag by slug. Historical stored slugs are treated as opaque lookup values and are not revalidated on read. |
+| `torque_tag_create` | Create a tag through `TagService` validation/defaults. Slug derives from name only at create when omitted; duplicate slug returns `conflict`. |
+| `torque_tag_update` | Partial metadata update. Slug is identity and cannot be changed; omitted fields are untouched, explicit empty description clears, explicit empty color resets to `zinc`. |
+| `torque_tag_delete` | Destructive global delete: removes the catalog row and cascades all `task_tags` links. No undo. |
+| `torque_tag_merge` | Destructive merge: source and destination must be distinct existing slugs. Destination metadata is preserved, task links are rewritten/deduped to destination, source is deleted, and no alias is retained. |
+
+Tag records use HTTP-aligned snake_case fields:
+`slug`, `name`, `description`, `color`, `created_at`, `updated_at`. `slug`
+is lookup identity; `name` is mutable display text.
+
+`torque_tag_list` response shape:
+
+```json
+{
+  "items": [{"slug": "api", "name": "API", "description": "", "color": "zinc", "created_at": "...", "updated_at": "..."}],
+  "meta": {"truncated": false, "returned": 1, "limit": 50, "total": 1, "has_more": false, "next_cursor": null}
+}
+```
+
+Default limit is 50 and max is 200. Explicit `limit<=0`, fractional strings,
+and overflows return `arg_invalid`; native JSON numbers are accepted only when
+integral. Ordering is `name COLLATE NOCASE ASC, slug ASC`, matching HTTP
+`GET /api/v1/tags` default ordering and the cursor predicate. `query` is a
+literal substring over slug/name/description with `%`, `_`, and backslash
+escaped; `color` is exact equality. `meta.next_cursor` is derived from the last
+tag actually emitted after the MCP 100KB response cap, so byte-cap trimming
+does not skip catalog rows.
+
 `torque_task_list` sort: `sort_by` ∈ `priority\|status\|updated_at\|created_at`,
-default `priority asc` (tiebreak `id asc`).
+default `priority asc` (tiebreak `id asc`). HTTP `GET /api/v1/tasks` uses the
+same public default order; lower-level service/store list calls used by engine
+internals retain their legacy ordering.
+
+`torque_task_list` validates explicit query arguments instead of broadening
+bad filters into successful unfiltered lists. Malformed numbers, booleans,
+RFC3339 dates, sort directions, cursors, malformed `tags` JSON, and wrong
+native types return `error.code=arg_invalid` with `error.field` when one input
+is at fault. Omitted values remain unfiltered/defaulted, `manual` keeps
+`manual`/`true`/`1`, `auto`/`false`/`0`, and `both`/empty sentinels, and
+`parent_id` keeps the empty/`null` root sentinel. Cursor tokens are opaque,
+sort-specific, and filter-specific by caller contract: when reusing
+`meta.next_cursor`, retain the same filters plus the same `sort_by`/`sort_dir`.
+
+Priority list filters are exact arbitrary integers, not a 1-5 vocabulary:
+`0`, negative values, and large int64 values are legal exact values. Use
+`priority` for one value or `priorities` as a non-empty JSON array for an
+OR-match; passing both is rejected as ambiguous, and `priorities=[]` is
+rejected rather than treated as omission.
+
+`include_total` is optional on MCP and defaults to false to preserve cheap
+legacy list calls. When `include_total=true`, `meta.total` is the full matching
+cohort count excluding cursor/offset/limit, and it is part of the normal
+100KB-capped response sizing. HTTP always includes `total` in its existing
+task-list envelope. HTTP keeps its GUI compatibility alias `priority=1,2` as a
+comma-separated exact-integer OR-list, including `0`; repeated HTTP query keys,
+malformed raw query strings, malformed/overflow/blank CSV members, unknown
+keys, and invalid shared-query fields return `400` with `error` and `field`.
+
+### Task set, range, and presence filters (CW-20260911-0088)
+
+Task lists and facets share these operators through the same service/store
+predicate path; all active filter families combine by AND.
+
+| Operator | Meaning |
+|---|---|
+| `tags` | Has every selected tag (existing behavior). |
+| `tags_any` | Has at least one selected tag. |
+| `tags_none` | Has none of the selected tags. |
+| `priority_gte`, `priority_lte` | Inclusive exact integer bounds, intersected with any exact priority set. |
+| `missing`, `present` | Every named field is missing/present, respectively. |
+
+Tag values remain case-sensitive opaque slugs; lists trim whitespace and
+drop blank/duplicate slugs. Empty normalized tag lists add no filter.
+An unused catalog tag does not imply task membership. Reversed priority bounds,
+missing and present on the same field, or `missing=["tags"]` with a nonempty
+`tags_any` produce an empty cohort without hidden precedence.
+
+Presence fields are limited to `project_id`, `sprint_id`, `epic_id`,
+`parent_id`, `source_ref`, `collection_id`, `cost_budget`, `token_budget`,
+`max_duration_ms`, and `tags`. SQL NULL is missing; empty strings and zero
+are present. Tags are present when a task has at least one tag link.
+Duplicate field names are ignored; unknown/blank names reject. This does not
+query metadata paths or alter the legacy `parent_id=""`/`"null"` sentinel.
+
+MCP `tags_any`, `tags_none`, `missing`, and `present` accept native string
+arrays or JSON array strings. `[]` is an explicit no-op; null, empty strings,
+non-string/null members, and malformed/trailing JSON reject with
+`arg_invalid` on the parameter. HTTP uses CSV instead; exact empty CSV is
+an empty list, while whitespace-only presence fields and blank members reject.
+Bounds use the strict integer parser (including zero/negative values); use
+strings for exact values beyond native JSON safe-integer precision.
+
+Example MCP list:
+`{"tags_any":["api","ui"],"tags_none":["blocked"],"missing":["sprint_id"],"priority_lte":"2","include_total":"true"}`.
+The equivalent HTTP query is
+`/api/v1/tasks?tags_any=api,ui&tags_none=blocked&missing=sprint_id&priority_lte=2`.
+Use the same cohort filters with `torque_task_facets` or
+`/api/v1/tasks/facets` plus `dimensions` to get matching counts.
+
+### Adjacent entity query defaults
+
+Project, Epic, Sprint, Issue, and Comment list/search tools share cursor
+validation with their HTTP advanced-query counterparts. They always return
+`data={items,meta}` and do not include a whole-cohort `total` unless the tool
+explicitly says it computed one.
+
+| Tool | Filters/search | Default/max/order |
+|---|---|---|
+| `torque_project_list` | `status`, `include_archived`; no free-text search | 100/500, `name asc`; sort fields `name,status,updated_at,created_at` |
+| `torque_sprint_list` | `status`, `project_id`, `include_archived`, `over_budget`, `cost_budget_min`, `cost_budget_max`; no free-text search | 100/500, `updated_at desc`; sort fields `name,status,updated_at,created_at` |
+| `torque_epic_list` | `status`, `project_id`, `include_archived`, `search` over id/name/description | 100/500, `updated_at desc`; sort fields `name,status,updated_at,created_at` |
+| `torque_issue_list` | `project_id`, `status`, `query` over id/title/body | 50/200, `priority asc`; sort fields `priority,status,updated_at,created_at` |
+| `torque_comment_list` | Required `entity_type` plus `entity_id` or non-empty `entity_ids`; optional `author`, `created_after`, `created_before` | 50/200, `created_at asc`; only sort field `created_at` |
+| `torque_comment_search` | Required `query`; optional `entity_type`, `entity_id`, `entity_ids`, `author`, `created_after`, `created_before` | 25/100, `created_at desc`; only sort field `created_at` |
+
+When both `entity_id` and `entity_ids` are supplied to comment tools,
+`entity_id` takes precedence in the store predicate. Use RFC3339 for
+`created_after`/`created_before`; cursors preserve subsecond timestamp
+precision and must be passed back unchanged.
+
+### Task facets and counts (CW-20260911-0086)
+
+`torque_task_facets` and `GET /api/v1/tasks/facets` share the task-list cohort
+contract. Every active filter applies to every requested facet, including a
+filter on the same dimension; facets answer "what values exist inside this
+exact cohort," not "what filters could I add if this one were removed."
+
+Supported dimensions are `status`, `priority`, `manual`, `kind`, `executor`,
+`agent_profile`, `launch_profile`, `project_id`, `sprint_id`, `epic_id`,
+`parent_id`, and `tags`. Omitted `dimensions` returns all of them. HTTP encodes
+dimensions as comma-separated CSV (`dimensions=status,priority,tags`); MCP
+accepts a native string array or JSON array string. Explicit empty/blank
+dimensions are invalid. Duplicates are removed deterministically.
+
+`bucket_limit` defaults to 50 and caps at 200. Task-list row controls
+(`limit`, `offset`, `cursor`, `sort_by`, `sort_dir`) are rejected on the
+dedicated facet endpoint/tool by presence, including zero or empty-string
+spellings, because facet counts are always whole-cohort SQL aggregates.
+
+Response shape:
+
+```json
+{
+  "matching_count": 42,
+  "bucket_limit": 50,
+  "dimensions": ["status"],
+  "facets": [
+    {
+      "dimension": "status",
+      "total_distinct": 2,
+      "returned": 2,
+      "truncated": false,
+      "buckets": [{"value": "doing", "count": 31}, {"value": "review", "count": 11}]
+    }
+  ]
+}
+```
+
+Bucket values are native JSON scalars or `null`; JSON `null` is the null/missing
+bucket and is distinct from the literal strings `""` and `"null"`. `manual`
+values are booleans and `priority` values are numbers. `total_distinct`
+includes the null bucket when present. Buckets sort by `count DESC`, then among
+equal counts non-null values before null, then typed value ascending.
+
+Tags are multi-valued: a matching task contributes once to each distinct linked
+tag bucket. Untagged matching tasks contribute once to the `null` bucket.
+
+Examples:
+
+```json
+{"project_id":"PRJ-1","sprint_id":"SP-1","manual":"auto","dimensions":["status","priority","tags"]}
+{"status":"doing","include_internal":"true","agent_profile":"codex-implementer","dimensions":["executor","launch_profile","tags"]}
+```
+
+HTTP returns the normal JSON body without the MCP tool-response byte cap. MCP
+facet responses enforce the same 100KB tool cap as list responses by omitting
+whole buckets only; values are never truncated into different opaque values.
+`matching_count` and `total_distinct` remain whole-cohort counts; `returned`
+and `truncated` describe the buckets actually emitted after any MCP byte-cap
+trim.
 
 ### Unknown arguments are rejected, not dropped (CW-20260907-0060)
 
@@ -215,6 +419,36 @@ silently trimmed.
 `verbose`: on `task_list` `verbose` selects brief-vs-full *task* records, while
 here the axis is whether a *different entity* is included.
 
+### Task typed read format (CW-20260911-0085)
+
+`torque_task_get` and `torque_task_list` accept an additive
+`format="typed"` response option. Omit it, or pass `format="legacy"`, to keep
+the existing MCP defaults: `torque_task_get` and verbose list return the
+PascalCase `TaskRecord` shape with `sql.Null*` wrappers, and default list keeps
+the compact lowercase `briefTask`.
+
+Typed format is read-only and never changes the query cohort, ordering,
+pagination, cursor, comment-tail, or byte-cap rules. In typed mode task records
+use snake_case keys and native JSON values: nullable scalar columns become JSON
+`null`, explicit zero numeric values remain numbers, tags/dependencies are JSON
+arrays, and stored JSON blob columns decode to arrays/objects rather than
+JSON-encoded strings. `torque_task_get format="typed"` keeps the existing
+comment-tail behavior but spells the added keys `comments` and
+`comments_meta`; `comments="false"` still omits both. `torque_task_list
+format="typed"` without `verbose` returns a richer brief projection with
+nullable scope references (`parent_id`, `project_id`, `sprint_id`, `epic_id`,
+collection refs) plus tag slugs and dependency ids. `verbose="true"` returns
+full typed task records.
+
+For compatibility with HTTP, valid stored empty or `null` JSON blob values read
+as the same empty fallback HTTP exposes today (`[]` for array-like fields, `{}`
+for object-like fields). Typed MCP additionally reports malformed or
+wrong-shaped stored blobs in `decode_errors` so consumers can distinguish
+legacy/corrupt storage from an intentional empty value. Intentional differences
+from HTTP default task responses are limited to the opt-in `decode_errors`
+field, the lowercase MCP comment-tail keys, and JSON-number precision
+preservation inside decoded blob fields.
+
 ---
 
 ## Subtodo
@@ -241,10 +475,14 @@ No `sort_by`/cursor — checklists are small and bounded by their parent task.
 
 Freeform prose attached to an entity — never drives lifecycle. Polymorphic
 across `entity_type` ∈ `task\|project\|epic\|sprint` (Issue/Plan are already
-covered via `entity_type="task"` since they're Task rows). Author-scoped
-edit/delete: only the original `author` string may update or delete a
-comment (mismatch → `error.code=permission`). Source:
+covered via `entity_type="task"` since they're Task rows). Edit and default
+delete require an exact match to the original `author` string (mismatch →
+`error.code=permission`). Delete accepts an explicit `force=true` override
+for that match only. Author is free text, not an authenticated principal. Source:
 `internal/mcpadapter/comment_tools.go`.
+
+Delete's `force` is a native boolean, unlike older string-encoded boolean
+parameters. Omitting it is equivalent to `false`.
 
 | Tool | Purpose |
 |---|---|
@@ -252,7 +490,7 @@ comment (mismatch → `error.code=permission`). Source:
 | `torque_comment_list` | Chronological thread for one `entity_id`, or for a caller-resolved set via `entity_ids[]` (same `entity_type`) — e.g. every task in a sprint. Default oldest-first. |
 | `torque_comment_search` | Free-text `query` over comment content, optionally scoped by entity/entity_ids/author/date range. Default newest-first. Always returns full records (no brief/verbose toggle). |
 | `torque_comment_update` | Author-scoped content edit. |
-| `torque_comment_delete` | Author-scoped hard delete, no undo. |
+| `torque_comment_delete` | Hard delete with an exact-author guard; optional `force=true` bypasses only that guard. Author must still be supplied; explicit `""` is allowed. No undo. HTTP equivalent: `DELETE /api/v1/comments/{id}?author=...&force=true`. |
 | `torque_comment_bulk_add` | Post the same `content` to many `{entity_type, entity_id}` targets (a broadcast, e.g. "sprint review in 1 hour" to every task in a sprint). Creates new rows, so `failed[]` is keyed by `target`, not an existing id. |
 
 `sort_by` is a singleton allow-list (`created_at` — the only sortable
@@ -268,7 +506,7 @@ Source: `internal/mcpadapter/project_tools.go`.
 
 | Tool | Purpose |
 |---|---|
-| `torque_project_create` | Create. `repo_path` must resolve to an existing directory (`~` expands) — a missing path is `error.code=arg_invalid, field=repo_path`. |
+| `torque_project_create` | Create. Optional `status` is exactly `active` or `inactive`; omission defaults to `active`. `repo_path` must resolve to an existing directory (`~` expands) — a missing path is `error.code=arg_invalid, field=repo_path`. |
 | `torque_project_get` | Fetch by id. |
 | `torque_project_update` | True partial patch — `repo_path` can be changed but never cleared to empty. |
 | `torque_project_list` | Filter by `status`; free-text search is **not** available on Project (no `search` param — this is the one in-scope entity without a merged search). |
@@ -415,8 +653,8 @@ who forgets it is not silently matched against unattributed rows.
 This does not change *who* may delete a comment. `author` is free text rather
 than a session identity, so declaring a comment unattributed grants no
 authority that was not already trivially available by claiming any other slug.
-Whether author-scoping is a meaningful check at all is a separate, open
-question.
+The match is retained as an accidental-deletion guard. `force=true` now
+provides a deliberate override without claiming an authorization model.
 
 ## Related docs
 

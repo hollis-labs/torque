@@ -175,7 +175,8 @@ func mapServiceError(err error) (ErrorCode, string, string) {
 		errors.Is(err, sqlstore.ErrTemplateNotFound) ||
 		errors.Is(err, sqlstore.ErrCheckpointNotFound) ||
 		errors.Is(err, sqlstore.ErrArtifactNotFound) ||
-		errors.Is(err, sqlstore.ErrTagNotFound) {
+		errors.Is(err, sqlstore.ErrTagNotFound) ||
+		errors.Is(err, sqlstore.ErrCommentNotFound) {
 		return ErrCodeNotFound, err.Error(), ""
 	}
 	if errors.Is(err, sqlstore.ErrTemplateReferenced) {

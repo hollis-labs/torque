@@ -2,6 +2,8 @@ package service_test
 
 import (
 	"database/sql"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -11,6 +13,14 @@ import (
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 )
+
+type fakeSQLError struct {
+	state string
+	msg   string
+}
+
+func (e fakeSQLError) Error() string    { return e.msg }
+func (e fakeSQLError) SQLState() string { return e.state }
 
 func setupTagServiceTest(t *testing.T) (*service.Service, *sqlstore.Store) {
 	t.Helper()
@@ -45,6 +55,14 @@ func TestTagServiceCreateWithName(t *testing.T) {
 	assert.Equal(t, "frontend-bug", tag.Slug)
 	assert.Equal(t, "Frontend Bug", tag.Name)
 	assert.Equal(t, "zinc", tag.Color)
+}
+
+func TestIsTagUniqueConstraintError(t *testing.T) {
+	assert.True(t, service.IsTagUniqueConstraintError(fmt.Errorf("wrapped: %w", fakeSQLError{state: "23505", msg: "duplicate key"})))
+	assert.True(t, service.IsTagUniqueConstraintError(errors.New("UNIQUE constraint failed: tags.slug")))
+	assert.True(t, service.IsTagUniqueConstraintError(errors.New("pq: duplicate key value violates unique constraint (SQLSTATE 23505)")))
+	assert.False(t, service.IsTagUniqueConstraintError(fakeSQLError{state: "23503", msg: "foreign key"}))
+	assert.False(t, service.IsTagUniqueConstraintError(errors.New("ordinary error mentions row 23505 but is not a SQLSTATE")))
 }
 
 func TestTagServiceCreateWithExplicitSlug(t *testing.T) {

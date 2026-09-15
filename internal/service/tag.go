@@ -1,10 +1,13 @@
 package service
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/hollis-labs/go-strutil"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 )
 
 // TagService provides business logic for tags.
@@ -22,6 +25,28 @@ type TagCreateInput struct {
 
 // TagUpdateInput is a re-export of the store-layer update type.
 type TagUpdateInput = sqlstore.TagUpdate
+
+type TagListInput struct {
+	Query     string
+	Color     string
+	Limit     int
+	AfterName string
+	AfterSlug string
+}
+
+type TagListResult struct {
+	Tags             []sqlstore.TagRecord
+	Limit            int
+	Total            int
+	HasMoreFromQuery bool
+}
+
+const (
+	DefaultTagListLimit = 50
+	MaxTagListLimit     = 200
+	TagListSortBy       = "name"
+	TagListSortDir      = "asc"
+)
 
 var validTagColors = map[string]bool{
 	"zinc": true, "red": true, "orange": true, "amber": true,
@@ -52,6 +77,24 @@ func validateColor(c string) (string, error) {
 		}
 	}
 	return c, nil
+}
+
+type sqlStateError interface {
+	SQLState() string
+}
+
+func IsTagUniqueConstraintError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var sqlState sqlStateError
+	if errors.As(err, &sqlState) && sqlState.SQLState() == "23505" {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "UNIQUE constraint failed") ||
+		strings.Contains(msg, "SQLSTATE 23505") ||
+		strings.Contains(msg, "SQLSTATE=23505")
 }
 
 // Create creates a new tag, deriving the slug from the name if not provided.
@@ -102,6 +145,50 @@ func (s *TagService) Get(slug string) (*sqlstore.TagRecord, error) {
 // List returns all tags.
 func (s *TagService) List() ([]sqlstore.TagRecord, error) {
 	return s.store.ListTags()
+}
+
+func (s *TagService) ListPage(input TagListInput) (TagListResult, error) {
+	limit := input.Limit
+	if limit <= 0 {
+		limit = DefaultTagListLimit
+	}
+	if limit > MaxTagListLimit {
+		limit = MaxTagListLimit
+	}
+
+	tags, err := s.store.ListTagsPage(sqlstore.TagFilter{
+		Query:     input.Query,
+		Color:     input.Color,
+		Limit:     limit + 1,
+		AfterName: input.AfterName,
+		AfterSlug: input.AfterSlug,
+	})
+	if err != nil {
+		return TagListResult{}, err
+	}
+	hasMore := len(tags.Tags) > limit
+	if hasMore {
+		tags.Tags = tags.Tags[:limit]
+	}
+	return TagListResult{Tags: tags.Tags, Limit: limit, Total: tags.Total, HasMoreFromQuery: hasMore}, nil
+}
+
+func DecodeTagListCursor(raw string) (afterName, afterSlug string, err error) {
+	if raw == "" {
+		return "", "", nil
+	}
+	c, err := pagination.Decode(raw)
+	if err != nil {
+		return "", "", &ValidationError{Field: "cursor", Message: fmt.Sprintf("invalid cursor: %v", err)}
+	}
+	if err := c.Validate(TagListSortBy, TagListSortDir); err != nil {
+		return "", "", &ValidationError{Field: "cursor", Message: err.Error()}
+	}
+	return c.SortValue, c.ID, nil
+}
+
+func TagListCursor(t sqlstore.TagRecord) string {
+	return pagination.Encode(TagListSortBy, TagListSortDir, t.Name, t.Slug)
 }
 
 // Update applies a partial update to a tag. Does not allow changing the slug.

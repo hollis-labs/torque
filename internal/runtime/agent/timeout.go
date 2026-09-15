@@ -103,13 +103,29 @@ func resolveInactivityThreshold(opts Options) time.Duration {
 // ModeLongLived worker. Hard ceiling fires regardless of activity — it is
 // the "forgotten worker" safety net, not a budget. Priority:
 //
-//  1. opts.Metadata["hard_ceiling_seconds"] when within range
-//  2. defaultHardCeiling
+//  1. opts.Limits.MaxDuration (task max_duration_ms) when positive
+//  2. opts.Metadata["hard_ceiling_seconds"] when within range
+//  3. defaultHardCeiling
 func resolveHardCeiling(opts Options) time.Duration {
+	if d, ok := taskMaxDuration(opts); ok {
+		return d
+	}
 	if secs, ok := clampedSecondsFromMetadata(opts.Metadata, "hard_ceiling_seconds", hardCeilingMinSeconds, hardCeilingMaxSeconds); ok {
 		return time.Duration(secs) * time.Second
 	}
 	return defaultHardCeiling
+}
+
+func taskMaxDuration(opts Options) (time.Duration, bool) {
+	if opts.Limits.MaxDuration != nil && *opts.Limits.MaxDuration > 0 {
+		return *opts.Limits.MaxDuration, true
+	}
+	return 0, false
+}
+
+func hardCeilingIsTaskDeadline(opts Options, ceiling time.Duration) bool {
+	d, ok := taskMaxDuration(opts)
+	return ok && d == ceiling
 }
 
 // clampedSecondsFromMetadata reads an integer-seconds value from a task

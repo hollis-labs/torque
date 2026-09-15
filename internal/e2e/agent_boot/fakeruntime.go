@@ -50,6 +50,11 @@ type fakeRuntimeConfig struct {
 	// doesn't inspect the result body of).
 	JsonRpcResponses map[string]json.RawMessage
 
+	// TurnCompletedNotification, when non-empty, is emitted as the
+	// turn/completed notification payload after turn/start. Empty preserves
+	// the successful `{}` default used by existing handshake tests.
+	TurnCompletedNotification json.RawMessage
+
 	// RuntimeFactoryErr, when non-nil, makes Dependencies.RuntimeFactory
 	// return it instead of a fakeRuntime. agent.Boot invokes the factory
 	// AFTER providerplant.Plant materializes the boot dir, so this drives
@@ -75,6 +80,7 @@ func newFakeRuntime(cfg fakeRuntimeConfig) *fakeRuntime {
 		waitExitErr:                 cfg.WaitExitErr,
 		suppressTurnDoneOnSendInput: cfg.SuppressTurnDoneOnSendInput,
 		jsonRpcResponses:            cfg.JsonRpcResponses,
+		turnCompletedNotification:   cfg.TurnCompletedNotification,
 	}
 	rt.pidNext.Store(3000)
 	return rt
@@ -117,6 +123,8 @@ type fakeRuntime struct {
 	// to every fakeSession this runtime spawns. Used by JsonRpcStdio
 	// tests to script thread/start's {thread:{id}} envelope.
 	jsonRpcResponses map[string]json.RawMessage
+
+	turnCompletedNotification json.RawMessage
 
 	// Captured StartOptions snapshot — populated on every Start() call.
 	// Tests read after Boot returns; access is guarded by atomic.Pointer
@@ -257,6 +265,7 @@ func (r *fakeRuntime) Start(_ context.Context, opts agentsessions.StartOptions) 
 	sess.bootDir = plantedBootDir
 	sess.notificationHook = opts.JsonRpcNotificationHook
 	sess.jsonRpcResponses = r.jsonRpcResponses
+	sess.turnCompletedNotification = r.turnCompletedNotification
 	if !r.suppressTurnDoneOnSendInput {
 		sess.eventFanout = opts.EventFanout
 	}
@@ -354,6 +363,8 @@ type fakeSession struct {
 	// JSON-RPC method. Used by tests to drive thread/start's response
 	// shape (the {thread: {id}} envelope torque's SendTurn decodes).
 	jsonRpcResponses map[string]json.RawMessage
+
+	turnCompletedNotification json.RawMessage
 
 	done     chan struct{}
 	doneOnce sync.Once
@@ -462,7 +473,11 @@ func (s *fakeSession) Call(_ context.Context, method string, params any) (json.R
 	// turn/completed notification both arrive after the turn finishes,
 	// but the notification is what signals turn-complete to consumers).
 	if method == "turn/start" && s.notificationHook != nil {
-		s.notificationHook("turn/completed", json.RawMessage(`{}`))
+		payload := s.turnCompletedNotification
+		if len(payload) == 0 {
+			payload = json.RawMessage(`{}`)
+		}
+		s.notificationHook("turn/completed", payload)
 	}
 	return resp, nil
 }

@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"testing"
 
 	"github.com/hollis-labs/torque/internal/httpserver"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
@@ -323,6 +326,407 @@ func TestListTasks(t *testing.T) {
 	assert.Len(t, tasks, 2)
 }
 
+func TestHTTP_TaskList_PaginationMetadata(t *testing.T) {
+	ts := setupTestServer(t)
+
+	alphaID := httpCreateTask(t, ts.URL, "alpha page")
+	betaID := httpCreateTask(t, ts.URL, "beta page")
+	_ = httpCreateTask(t, ts.URL, "other page")
+	req, err := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/tasks/"+alphaID,
+		bytes.NewBufferString(`{"priority":0}`))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	resp.Body.Close()
+
+	first := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks?search=page&priority=0,2&limit=1")
+	require.Len(t, first.tasks, 1)
+	assert.Equal(t, alphaID, first.tasks[0]["id"])
+	assert.Equal(t, 3, first.total)
+	assert.Equal(t, 1, first.returned)
+	assert.Equal(t, 1, first.limit)
+	assert.Equal(t, 0, first.offset)
+	assert.True(t, first.hasMore)
+	assert.Equal(t, 1, first.nextOffset)
+	require.NotNil(t, first.continuation)
+	assert.Equal(t, 1, first.continuation["limit"])
+	assert.Equal(t, 1, first.continuation["offset"])
+
+	second := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks?search=page&priority=0,2&limit=1&offset=1")
+	require.Len(t, second.tasks, 1)
+	assert.Equal(t, betaID, second.tasks[0]["id"])
+	assert.Equal(t, 3, second.total)
+	assert.True(t, second.hasMore)
+	assert.Equal(t, 2, second.nextOffset)
+
+	boundary := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks?search=page&limit=3")
+	assert.Len(t, boundary.tasks, 3)
+	assert.Equal(t, 3, boundary.total)
+	assert.False(t, boundary.hasMore)
+	assert.Nil(t, boundary.nextOffset)
+	assert.Nil(t, boundary.continuation)
+
+	empty := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks?search=page&limit=2&offset=5")
+	assert.Empty(t, empty.tasks)
+	assert.Equal(t, 3, empty.total)
+	assert.Equal(t, 0, empty.returned)
+	assert.False(t, empty.hasMore)
+}
+
+func TestHTTP_TaskList_DefaultLimitAndCap(t *testing.T) {
+	ts := setupTestServer(t)
+
+	for i := 0; i < 205; i++ {
+		httpCreateTask(t, ts.URL, "default cap")
+	}
+
+	defaultPage := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks")
+	assert.Len(t, defaultPage.tasks, 50)
+	assert.Equal(t, 205, defaultPage.total)
+	assert.Equal(t, 50, defaultPage.returned)
+	assert.Equal(t, 50, defaultPage.limit)
+	assert.True(t, defaultPage.hasMore)
+	assert.Equal(t, 50, defaultPage.nextOffset)
+
+	capped := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks?limit=999")
+	assert.Len(t, capped.tasks, 200)
+	assert.Equal(t, 205, capped.total)
+	assert.Equal(t, 200, capped.limit)
+	assert.True(t, capped.hasMore)
+	assert.Equal(t, 200, capped.nextOffset)
+}
+
+func TestHTTP_TaskList_StrictPriorityQuery(t *testing.T) {
+	ts := setupTestServer(t)
+
+	create := func(title string, priority int) string {
+		resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(
+			`{"title":"`+title+`","description":"x","priority":1}`))
+		require.NoError(t, err)
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+		var created map[string]interface{}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+		resp.Body.Close()
+		id := created["id"].(string)
+		req, err := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/tasks/"+id,
+			bytes.NewBufferString(`{"priority":`+strconv.Itoa(priority)+`}`))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err = http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		resp.Body.Close()
+		return id
+	}
+	zeroID := create("zero", 0)
+	oneID := create("one", 1)
+	twoID := create("two", 2)
+
+	assert.ElementsMatch(t, []string{zeroID, oneID, twoID}, httpTaskListIDs(t, ts.URL+"/api/v1/tasks"))
+	assert.Equal(t, []string{zeroID}, httpTaskListIDs(t, ts.URL+"/api/v1/tasks?priority=0"))
+	assert.ElementsMatch(t, []string{zeroID, oneID}, httpTaskListIDs(t, ts.URL+"/api/v1/tasks?priority=1,0,1"))
+
+	resp, err := http.Get(ts.URL + "/api/v1/tasks?priority=not_an_integer")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	errBody := decodeHTTPError(t, resp)
+	assert.Equal(t, "priority", errBody["field"])
+	assert.Contains(t, errBody["error"], "integer")
+}
+
+func TestHTTP_TaskList_StrictQueryValidation(t *testing.T) {
+	ts := setupTestServer(t)
+
+	for _, tc := range []struct {
+		query string
+		field string
+	}{
+		{query: "limit=abc", field: "limit"},
+		{query: "offset=1.2", field: "offset"},
+		{query: "offset=-1", field: "offset"},
+		{query: "manual=sometimes", field: "manual"},
+		{query: "include_internal=maybe", field: "include_internal"},
+		{query: "kind=internal&include_internal=maybe", field: "include_internal"},
+		{query: "sort_by=+&limit=1", field: "sort_by"},
+		{query: "created_after=+", field: "created_after"},
+		{query: "unknown_filter=x", field: "unknown_filter"},
+		{query: "priority=1,garbage", field: "priority"},
+		{query: "priority=1,,2", field: "priority"},
+		{query: "priority=", field: "priority"},
+		{query: "priority_gte=1.5", field: "priority_gte"},
+		{query: "priority_lte=9223372036854775808", field: "priority_lte"},
+		{query: "missing=%20", field: "missing"},
+		{query: "missing=project_id,,tags", field: "missing"},
+		{query: "present=metadata", field: "present"},
+		{query: "priority=9223372036854775808", field: "priority"},
+		{query: "priority=1&priority=garbage", field: "priority"},
+		{query: "tags_any=bug&tags_any=ui", field: "tags_any"},
+		{query: "%zz", field: "query"},
+	} {
+		resp, err := http.Get(ts.URL + "/api/v1/tasks?" + tc.query)
+		require.NoError(t, err, tc.query)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode, tc.query)
+		errBody := decodeHTTPError(t, resp)
+		assert.Equal(t, tc.field, errBody["field"], tc.query)
+		assert.NotEmpty(t, errBody["error"], tc.query)
+	}
+}
+
+func TestHTTP_TaskList_QueryOperatorsAndFacets(t *testing.T) {
+	ts := setupTestServer(t)
+
+	create := func(title string, priority int, tags []string, body string) string {
+		rawTags, err := json.Marshal(tags)
+		require.NoError(t, err)
+		resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(
+			`{"title":"`+title+`","description":"x","tags":`+string(rawTags)+`}`))
+		require.NoError(t, err)
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+		var created map[string]interface{}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+		resp.Body.Close()
+		id := created["id"].(string)
+		if body == "" {
+			body = `{"priority":` + strconv.Itoa(priority) + `}`
+		}
+		req, err := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/tasks/"+id, bytes.NewBufferString(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err = http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		resp.Body.Close()
+		return id
+	}
+
+	zeroID := create("zero bug ui", 0, []string{"bug", "ui"}, `{"priority":0,"cost_budget":0}`)
+	twoID := create("two backend", 2, []string{"backend"}, "")
+	_ = create("five no tags", 5, nil, "")
+	sevenID := create("seven bug", 7, []string{"bug"}, "")
+	largeID := create("large precise", 2, nil, `{"priority":9007199254740993}`)
+
+	filter := "/api/v1/tasks?tags_any=bug,bug,%20&tags_none=backend&priority_gte=0&priority_lte=7&limit=1"
+	first := decodeHTTPTaskList(t, ts.URL+filter)
+	require.Len(t, first.tasks, 1)
+	assert.Equal(t, zeroID, first.tasks[0]["id"])
+	assert.Equal(t, 2, first.total)
+	assert.True(t, first.hasMore)
+	cursor, ok := first.nextCursor.(string)
+	require.True(t, ok)
+
+	second := decodeHTTPTaskList(t, ts.URL+filter+"&cursor="+url.QueryEscape(cursor))
+	require.Len(t, second.tasks, 1)
+	assert.Equal(t, sevenID, second.tasks[0]["id"])
+	assert.Equal(t, 2, second.total)
+	assert.False(t, second.hasMore)
+
+	assert.Equal(t, []string{zeroID}, httpTaskListIDs(t, ts.URL+"/api/v1/tasks?present=cost_budget&missing=project_id&tags_any=bug"))
+	assert.Equal(t, []string{twoID}, httpTaskListIDs(t, ts.URL+"/api/v1/tasks?priority=0,2,7&priority_gte=2&priority_lte=5"))
+	assert.Equal(t, []string{largeID}, httpTaskListIDs(t, ts.URL+"/api/v1/tasks?priority_gte=9007199254740992&priority_lte=9007199254740993"))
+	assert.Empty(t, httpTaskListIDs(t, ts.URL+"/api/v1/tasks?missing=tags&tags_any=bug"))
+
+	resp, err := http.Get(ts.URL + "/api/v1/tasks/facets?tags_any=bug&tags_none=backend&priority_gte=0&priority_lte=7&dimensions=tags,priority")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var facets struct {
+		MatchingCount int `json:"matching_count"`
+		Facets        []struct {
+			Dimension string `json:"dimension"`
+			Buckets   []struct {
+				Value interface{} `json:"value"`
+				Count int         `json:"count"`
+			} `json:"buckets"`
+		} `json:"facets"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&facets))
+	resp.Body.Close()
+	assert.Equal(t, 2, facets.MatchingCount)
+	require.Len(t, facets.Facets, 2)
+	assert.Equal(t, "tags", facets.Facets[0].Dimension)
+	assert.Equal(t, "priority", facets.Facets[1].Dimension)
+	tagBuckets := map[interface{}]int{}
+	for _, b := range facets.Facets[0].Buckets {
+		tagBuckets[b.Value] = b.Count
+	}
+	assert.Equal(t, map[interface{}]int{"bug": 2, "ui": 1}, tagBuckets)
+	priorityBuckets := map[interface{}]int{}
+	for _, b := range facets.Facets[1].Buckets {
+		priorityBuckets[b.Value] = b.Count
+	}
+	assert.Equal(t, map[interface{}]int{float64(0): 1, float64(7): 1}, priorityBuckets)
+}
+
+func TestHTTP_TaskList_CursorAllowsZeroOffsetSpellings(t *testing.T) {
+	ts := setupTestServer(t)
+	httpCreateTask(t, ts.URL, "cursor zero a")
+	httpCreateTask(t, ts.URL, "cursor zero b")
+
+	first := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks?limit=1&sort_by=priority")
+	cursor, ok := first.nextCursor.(string)
+	require.True(t, ok)
+	for _, offset := range []string{"0", "00", "+0"} {
+		resp, err := http.Get(ts.URL + "/api/v1/tasks?limit=1&sort_by=priority&cursor=" + url.QueryEscape(cursor) + "&offset=" + url.QueryEscape(offset))
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode, offset)
+		resp.Body.Close()
+	}
+}
+
+func TestHTTP_TaskList_MalformedCursorSortValueReturnsFieldError(t *testing.T) {
+	ts := setupTestServer(t)
+	httpCreateTask(t, ts.URL, "bad cursor")
+	bad := pagination.Encode("priority", "asc", "not-an-int", "CW-20260911-0001")
+
+	resp, err := http.Get(ts.URL + "/api/v1/tasks?cursor=" + url.QueryEscape(bad))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	body := decodeHTTPError(t, resp)
+	require.Equal(t, "cursor", body["field"])
+}
+
+func TestHTTP_TaskList_ManualAliasesStillWork(t *testing.T) {
+	ts := setupTestServer(t)
+
+	autoID := httpCreateTask(t, ts.URL, "auto-eligible")
+	manualID := httpCreateTask(t, ts.URL, "manual-hold")
+	req, err := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/tasks/"+autoID,
+		bytes.NewBufferString(`{"manual":false}`))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	resp.Body.Close()
+
+	assert.Equal(t, []string{manualID}, httpTaskListIDs(t, ts.URL+"/api/v1/tasks?manual=manual"))
+	assert.Equal(t, []string{autoID}, httpTaskListIDs(t, ts.URL+"/api/v1/tasks?manual=auto"))
+	assert.ElementsMatch(t, []string{autoID, manualID}, httpTaskListIDs(t, ts.URL+"/api/v1/tasks?manual=both"))
+}
+
+func httpCreateTask(t *testing.T, baseURL, title string) string {
+	t.Helper()
+	resp, err := http.Post(baseURL+"/api/v1/tasks", "application/json", bytes.NewBufferString(
+		`{"title":"`+title+`","description":"x"}`))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	var created map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+	resp.Body.Close()
+	return created["id"].(string)
+}
+
+func httpTaskListIDs(t *testing.T, url string) []string {
+	t.Helper()
+	resp, err := http.Get(url)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	resp.Body.Close()
+	raw := result["tasks"].([]interface{})
+	out := make([]string, 0, len(raw))
+	for _, task := range raw {
+		out = append(out, task.(map[string]interface{})["id"].(string))
+	}
+	return out
+}
+
+type decodedHTTPTaskList struct {
+	tasks        []map[string]interface{}
+	total        int
+	returned     int
+	limit        int
+	offset       int
+	hasMore      bool
+	nextOffset   interface{}
+	nextCursor   interface{}
+	continuation map[string]interface{}
+}
+
+func decodeHTTPTaskList(t *testing.T, url string) decodedHTTPTaskList {
+	t.Helper()
+	resp, err := http.Get(url)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	rawTasks := result["tasks"].([]interface{})
+	tasks := make([]map[string]interface{}, 0, len(rawTasks))
+	for _, raw := range rawTasks {
+		tasks = append(tasks, raw.(map[string]interface{}))
+	}
+	var continuation map[string]interface{}
+	if raw, ok := result["continuation"].(map[string]interface{}); ok {
+		continuation = raw
+		if n, ok := continuation["limit"].(float64); ok {
+			continuation["limit"] = int(n)
+		}
+		if n, ok := continuation["offset"].(float64); ok {
+			continuation["offset"] = int(n)
+		}
+	}
+	nextOffset := result["next_offset"]
+	if n, ok := nextOffset.(float64); ok {
+		nextOffset = int(n)
+	}
+	return decodedHTTPTaskList{
+		tasks:        tasks,
+		total:        int(result["total"].(float64)),
+		returned:     int(result["returned"].(float64)),
+		limit:        int(result["limit"].(float64)),
+		offset:       int(result["offset"].(float64)),
+		hasMore:      result["has_more"].(bool),
+		nextOffset:   nextOffset,
+		nextCursor:   result["next_cursor"],
+		continuation: continuation,
+	}
+}
+
+type decodedHTTPTagPage struct {
+	tags       []map[string]interface{}
+	total      int
+	returned   int
+	limit      int
+	hasMore    bool
+	nextCursor interface{}
+}
+
+func decodeHTTPTagPage(t *testing.T, url string) decodedHTTPTagPage {
+	t.Helper()
+	resp, err := http.Get(url)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	rawTags := result["tags"].([]interface{})
+	tags := make([]map[string]interface{}, 0, len(rawTags))
+	for _, raw := range rawTags {
+		tags = append(tags, raw.(map[string]interface{}))
+	}
+	return decodedHTTPTagPage{
+		tags:       tags,
+		total:      int(result["total"].(float64)),
+		returned:   int(result["returned"].(float64)),
+		limit:      int(result["limit"].(float64)),
+		hasMore:    result["has_more"].(bool),
+		nextCursor: result["next_cursor"],
+	}
+}
+
+func decodeHTTPError(t *testing.T, resp *http.Response) map[string]string {
+	t.Helper()
+	defer resp.Body.Close()
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	return body
+}
+
 func TestTransitionTask(t *testing.T) {
 	ts := setupTestServer(t)
 
@@ -447,6 +851,61 @@ func TestListTags(t *testing.T) {
 	tags, ok := out["tags"].([]interface{})
 	require.True(t, ok)
 	assert.Len(t, tags, 2)
+}
+
+func TestListTagsPagedOptInQueryAndCursor(t *testing.T) {
+	ts := setupTestServer(t)
+	for _, body := range []string{
+		`{"slug":"alpha-1","name":"Alpha","color":"red","description":"has space"}`,
+		`{"slug":"alpha-2","name":"alpha","color":"blue","description":"100%literal"}`,
+		`{"slug":"alpha-0","name":"ALPHA","color":"blue","description":"under_score"}`,
+		`{"slug":"unicode","name":"Café","color":"green","description":"same-case-unicode"}`,
+	} {
+		resp, err := http.Post(ts.URL+"/api/v1/tags", "application/json", bytes.NewBufferString(body))
+		require.NoError(t, err)
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+		resp.Body.Close()
+	}
+
+	first := decodeHTTPTagPage(t, ts.URL+"/api/v1/tags?limit=2")
+	require.Equal(t, 4, first.total)
+	require.Equal(t, 2, first.returned)
+	require.True(t, first.hasMore)
+	assert.Equal(t, []string{"alpha-0", "alpha-1"}, []string{first.tags[0]["slug"].(string), first.tags[1]["slug"].(string)})
+	cursor, ok := first.nextCursor.(string)
+	require.True(t, ok)
+
+	second := decodeHTTPTagPage(t, ts.URL+"/api/v1/tags?limit=2&cursor="+url.QueryEscape(cursor))
+	require.False(t, second.hasMore)
+	assert.Equal(t, []string{"alpha-2", "unicode"}, []string{second.tags[0]["slug"].(string), second.tags[1]["slug"].(string)})
+
+	for _, tc := range []struct {
+		query string
+		want  string
+	}{
+		{query: " ", want: "alpha-1"},
+		{query: "%", want: "alpha-2"},
+		{query: "_", want: "alpha-0"},
+		{query: "Café", want: "unicode"},
+	} {
+		got := decodeHTTPTagPage(t, ts.URL+"/api/v1/tags?query="+url.QueryEscape(tc.query))
+		require.Equal(t, 1, got.total, tc.query)
+		assert.Equal(t, tc.want, got.tags[0]["slug"], tc.query)
+	}
+
+	blue := decodeHTTPTagPage(t, ts.URL+"/api/v1/tags?color=blue")
+	require.Equal(t, 2, blue.total)
+	exact := decodeHTTPTagPage(t, ts.URL+"/api/v1/tags?color="+url.QueryEscape(" blue "))
+	assert.Equal(t, 0, exact.total)
+	spaceLimit := decodeHTTPTagPage(t, ts.URL+"/api/v1/tags?limit="+url.QueryEscape(" 2 "))
+	assert.Equal(t, 2, spaceLimit.limit)
+
+	for _, raw := range []string{"limit=0", "limit=-1", "limit=1.9", "limit=9223372036854775808", "unknown=x", "query=a&query=b", "%zz"} {
+		resp, err := http.Get(ts.URL + "/api/v1/tags?" + raw)
+		require.NoError(t, err, raw)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode, raw)
+		resp.Body.Close()
+	}
 }
 
 func TestPatchTag(t *testing.T) {
@@ -674,6 +1133,38 @@ func TestCreateTaskWithAllFields(t *testing.T) {
 	d0 := delivs[0].(map[string]interface{})
 	assert.Equal(t, "diff", d0["type"])
 	assert.Equal(t, true, d0["required"])
+}
+
+func TestHTTPTaskReviewPolicyMetadata(t *testing.T) {
+	ts := setupTestServer(t)
+
+	body := `{"title":"Parent review","metadata":{"review":{"mode":"parent"}}}`
+	resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var got map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	resp.Body.Close()
+	effective := got["effective_review"].(map[string]interface{})
+	assert.Equal(t, "parent", effective["mode"])
+	assert.Equal(t, false, effective["enqueue_internal_reviewer"])
+
+	body = `{"title":"Parent kind","kind":"parent"}`
+	resp, err = http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+	got = map[string]interface{}{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	resp.Body.Close()
+	effective = got["effective_review"].(map[string]interface{})
+	assert.Equal(t, "end_agent", effective["mode"])
+	assert.Equal(t, false, effective["enqueue_internal_reviewer"])
+
+	bad := `{"title":"Bad review","metadata":{"review":{"mode":"claude"}}}`
+	resp, err = http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(bad))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 }
 
 func TestUpdateTaskAllNewFields(t *testing.T) {

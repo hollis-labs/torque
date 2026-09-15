@@ -133,6 +133,61 @@ func TestProjectCreateWithIcon(t *testing.T) {
 	assert.Equal(t, "active", proj.Status)
 }
 
+func TestProjectCreateInitialStatus(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("projects")
+
+	active := "active"
+	inactive := "inactive"
+	cases := []struct {
+		name       string
+		status     *string
+		wantStatus string
+	}{
+		{name: "omitted", wantStatus: "active"},
+		{name: "active", status: &active, wantStatus: "active"},
+		{name: "inactive", status: &inactive, wantStatus: "inactive"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			proj, err := svc.Project.Create(service.ProjectCreateInput{
+				Name:     "Project " + tc.name,
+				RepoPath: t.TempDir(),
+				Status:   tc.status,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantStatus, proj.Status)
+
+			got, err := svc.Project.Get(proj.ID)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantStatus, got.Status)
+		})
+	}
+
+	inactiveProjects, err := svc.Project.List("inactive", false)
+	require.NoError(t, err)
+	require.Equal(t, []string{"inactive"}, []string{inactiveProjects[0].Status})
+}
+
+func TestProjectCreateInvalidInitialStatus(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("projects")
+
+	for _, status := range []string{"", " inactive", "Inactive", "deleted"} {
+		t.Run(status, func(t *testing.T) {
+			_, err := svc.Project.Create(service.ProjectCreateInput{
+				Name:     "Project",
+				RepoPath: t.TempDir(),
+				Status:   &status,
+			})
+			require.Error(t, err)
+			var ve *service.ValidationError
+			require.ErrorAs(t, err, &ve)
+			assert.Equal(t, "status", ve.Field)
+		})
+	}
+}
+
 func TestProjectUpdate(t *testing.T) {
 	svc := setupService(t)
 	svc.Feature.Enable("projects")

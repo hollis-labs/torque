@@ -1,13 +1,19 @@
 package mcpadapter_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/torque/internal/httpserver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -46,6 +52,18 @@ func setupAdapterWithFeatures(t *testing.T) *mcpadapter.Adapter {
 	require.NoError(t, svc.Feature.Enable("sprints"))
 	require.NoError(t, svc.Feature.Enable("epics"))
 	return mcpadapter.New(svc, nil)
+}
+
+func setupTaskQueryParitySurfaces(t *testing.T) (*mcpadapter.Adapter, *httptest.Server, *sql.DB) {
+	t.Helper()
+	db, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	require.NoError(t, migrations.Run(db))
+	store, err := sqlstore.New(db, "sqlite")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	svc := service.New(store)
+	return mcpadapter.New(svc, nil), httptest.NewServer(httpserver.New(svc, nil)), db
 }
 
 // dataBytes extracts the marshaled `data` field from a Phase C
@@ -141,6 +159,51 @@ func callTool(t *testing.T, a *mcpadapter.Adapter, name string, args map[string]
 	text, _ := first["text"].(string)
 	isError, _ := result["isError"].(bool)
 	return text, isError
+}
+
+func listToolSchemaProperties(t *testing.T, a *mcpadapter.Adapter, name string) map[string]interface{} {
+	t.Helper()
+
+	initMsg, err := json.Marshal(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      0,
+		"method":  "initialize",
+		"params": map[string]interface{}{
+			"protocolVersion": "2024-11-05",
+			"capabilities":    map[string]interface{}{},
+			"clientInfo":      map[string]interface{}{"name": "test", "version": "0.1.0"},
+		},
+	})
+	require.NoError(t, err)
+	a.Server().HandleMessage(context.Background(), initMsg)
+
+	msg, err := json.Marshal(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/list",
+	})
+	require.NoError(t, err)
+
+	resp := a.Server().HandleMessage(context.Background(), msg)
+	respBytes, err := json.Marshal(resp)
+	require.NoError(t, err)
+	var parsed map[string]interface{}
+	require.NoError(t, json.Unmarshal(respBytes, &parsed), "tools/list response: %s", string(respBytes))
+	if errObj, ok := parsed["error"]; ok {
+		t.Fatalf("tools/list returned error: %v", errObj)
+	}
+	result := parsed["result"].(map[string]interface{})
+	tools := result["tools"].([]interface{})
+	for _, raw := range tools {
+		tool := raw.(map[string]interface{})
+		if tool["name"] != name {
+			continue
+		}
+		inputSchema := tool["inputSchema"].(map[string]interface{})
+		return inputSchema["properties"].(map[string]interface{})
+	}
+	t.Fatalf("tool %s not found in tools/list response", name)
+	return nil
 }
 
 func TestFullStack_CreateAndGetTask(t *testing.T) {
@@ -724,6 +787,158 @@ func TestFullStack_TaskList_FilterByTags(t *testing.T) {
 	require.Equal(t, "Backend task", envelope.Items[0]["title"])
 }
 
+// TestFullStack_TaskList_RepeatedTagPredicates verifies that duplicate tag
+// slugs in the MCP tags filter are normalized (CW-20260911-0081).
+func TestFullStack_TaskList_RepeatedTagPredicates(t *testing.T) {
+	a := setupAdapter(t)
+
+	_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":       "Torque task",
+		"description": "x",
+		"tags":        `["torque"]`,
+	})
+	require.False(t, isErr)
+
+	_, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":       "Torque + API task",
+		"description": "x",
+		"tags":        `["torque","api"]`,
+	})
+	require.False(t, isErr)
+
+	_, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":       "MCP task",
+		"description": "x",
+		"tags":        `["mcp"]`,
+	})
+	require.False(t, isErr)
+
+	// Duplicate single tag: ["torque", "torque"] should match same as ["torque"]
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
+		"tags": `["torque", "torque"]`,
+	})
+	require.False(t, isErr, "task_list with duplicate tag should not error: %s", text)
+
+	var envelope struct {
+		Items []map[string]interface{} `json:"items"`
+		Meta  map[string]interface{}   `json:"meta"`
+	}
+	parseData(t, text, &envelope)
+	require.Len(t, envelope.Items, 2, "duplicate single tag should match both tasks with 'torque' tag")
+
+	titles := []string{}
+	for _, item := range envelope.Items {
+		titles = append(titles, item["title"].(string))
+	}
+	assert.ElementsMatch(t, []string{"Torque task", "Torque + API task"}, titles)
+
+	// Duplicate with distinct tags: ["torque", "api", "torque"] should AND-match correctly
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{
+		"tags": `["torque", "api", "torque"]`,
+	})
+	require.False(t, isErr, "task_list with duplicate mixed tags should not error: %s", text)
+
+	parseData(t, text, &envelope)
+	require.Len(t, envelope.Items, 1, "duplicate with distinct tags should apply AND-match correctly")
+	require.Equal(t, "Torque + API task", envelope.Items[0]["title"])
+}
+
+// TestFullStack_TaskList_TagPredicates_BoundaryCases verifies edge cases for tag
+// filtering through the MCP adapter: mixed valid+missing tags, case-sensitive
+// mismatches, whitespace/empty handling (CW-20260911-0081).
+func TestFullStack_TaskList_TagPredicates_BoundaryCases(t *testing.T) {
+	a := setupAdapter(t)
+
+	_, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":       "Torque task",
+		"description": "x",
+		"tags":        `["torque"]`,
+	})
+	require.False(t, isErr)
+
+	_, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":       "Torque+API task",
+		"description": "x",
+		"tags":        `["torque","api"]`,
+	})
+	require.False(t, isErr)
+
+	_, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":       "MCP task",
+		"description": "x",
+		"tags":        `["mcp"]`,
+	})
+	require.False(t, isErr)
+
+	var envelope struct {
+		Items []map[string]interface{} `json:"items"`
+		Meta  map[string]interface{}   `json:"meta"`
+	}
+
+	tests := []struct {
+		name     string
+		tags     string
+		expected []string
+	}{
+		{
+			name:     "valid tag + missing tag: AND-match requires both, so empty result",
+			tags:     `["torque","nonexistent"]`,
+			expected: []string{},
+		},
+		{
+			name:     "case-sensitive mismatch: 'Torque' != 'torque', no match",
+			tags:     `["Torque"]`,
+			expected: []string{},
+		},
+		{
+			name:     "case-sensitive mismatch with valid tag: ['Torque','api'] no match",
+			tags:     `["Torque","api"]`,
+			expected: []string{},
+		},
+		{
+			name:     "whitespace-only elements: normalized out",
+			tags:     `["   ","  ","    "]`,
+			expected: []string{"Torque task", "Torque+API task", "MCP task"},
+		},
+		{
+			name:     "duplicate + missing: ['torque','torque','missing'] returns empty",
+			tags:     `["torque","torque","missing"]`,
+			expected: []string{},
+		},
+		{
+			name:     "whitespace + duplicate + valid: [' torque ','torque','api']",
+			tags:     `[" torque ","torque","api"]`,
+			expected: []string{"Torque+API task"},
+		},
+		{
+			name:     "empty strings mixed: ['torque','','api']",
+			tags:     `["torque","","api"]`,
+			expected: []string{"Torque+API task"},
+		},
+		{
+			name:     "all empty strings: ['','','']",
+			tags:     `["","",""]`,
+			expected: []string{"Torque task", "Torque+API task", "MCP task"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{
+				"tags": tc.tags,
+			})
+			require.False(t, isErr, "task_list should not error for %s: %s", tc.name, text)
+
+			parseData(t, text, &envelope)
+			titles := []string{}
+			for _, item := range envelope.Items {
+				titles = append(titles, item["title"].(string))
+			}
+			assert.ElementsMatch(t, tc.expected, titles, tc.name)
+		})
+	}
+}
+
 // TestFullStack_TaskList_FilterByManual verifies the manual filter vocabularies.
 func TestFullStack_TaskList_FilterByManual(t *testing.T) {
 	a := setupAdapter(t)
@@ -792,6 +1007,260 @@ func TestFullStack_TaskList_FilterByManual(t *testing.T) {
 		parseData(t, text, &env)
 		require.Len(t, env.Items, 2)
 	})
+}
+
+func TestFullStack_TaskList_StrictPriorityQueries(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "zero", "description": "x", "priority": "1",
+	})
+	require.False(t, isErr, text)
+	var zero map[string]interface{}
+	parseData(t, text, &zero)
+	zeroID := zero["ID"].(string)
+	text, isErr = callTool(t, a, "torque_task_update", map[string]interface{}{"id": zeroID, "priority": 0})
+	require.False(t, isErr, text)
+
+	text, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "one", "description": "x", "priority": "1",
+	})
+	require.False(t, isErr, text)
+	var one map[string]interface{}
+	parseData(t, text, &one)
+	oneID := one["ID"].(string)
+
+	text, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": "two", "description": "x", "priority": "2",
+	})
+	require.False(t, isErr, text)
+	var two map[string]interface{}
+	parseData(t, text, &two)
+	twoID := two["ID"].(string)
+	largeAID := createTaskWithPriority(t, a, "large-a", "9007199254740992")
+	largeBID := createTaskWithPriority(t, a, "large-b", "9007199254740993")
+	minID := createTaskWithPriority(t, a, "min-int64", "-9223372036854775808")
+	maxID := createTaskWithPriority(t, a, "max-int64", "9223372036854775807")
+
+	assert.ElementsMatch(t, []string{zeroID, oneID, twoID, largeAID, largeBID, minID, maxID}, taskListIDs(t, a, map[string]interface{}{}))
+	assert.Equal(t, []string{zeroID}, taskListIDs(t, a, map[string]interface{}{"priority": "0"}))
+	assert.ElementsMatch(t, []string{zeroID, twoID}, taskListIDs(t, a, map[string]interface{}{"priorities": `[2,0,2]`}))
+	assert.Equal(t, []string{largeBID}, taskListIDs(t, a, map[string]interface{}{"priorities": `[9007199254740993]`}),
+		"JSON-number array parsing must not round >2^53 to the adjacent priority")
+	assert.Equal(t, []string{minID}, taskListIDs(t, a, map[string]interface{}{"priorities": `[-9223372036854775808]`}))
+	assert.Equal(t, []string{maxID}, taskListIDs(t, a, map[string]interface{}{"priorities": `[9223372036854775807]`}))
+
+	for _, tc := range []struct {
+		name  string
+		args  map[string]interface{}
+		field string
+	}{
+		{name: "bad scalar", args: map[string]interface{}{"priority": "not_an_integer"}, field: "priority"},
+		{name: "fraction scalar", args: map[string]interface{}{"priority": "1.2"}, field: "priority"},
+		{name: "empty priorities", args: map[string]interface{}{"priorities": `[]`}, field: "priorities"},
+		{name: "fraction member", args: map[string]interface{}{"priorities": `[1.5]`}, field: "priorities"},
+		{name: "overflow member", args: map[string]interface{}{"priorities": `["9223372036854775808"]`}, field: "priorities"},
+		{name: "trailing garbage", args: map[string]interface{}{"priorities": `[1] garbage`}, field: "priorities"},
+		{name: "two arrays", args: map[string]interface{}{"priorities": `[1] [2]`}, field: "priorities"},
+		{name: "scalar conflict", args: map[string]interface{}{"priority": "1", "priorities": `[2]`}, field: "priority"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			text, isErr := callTool(t, a, "torque_task_list", tc.args)
+			require.True(t, isErr, "task_list should reject %s: %s", tc.name, text)
+			code, _, field := parseError(t, text)
+			assert.Equal(t, "arg_invalid", code)
+			assert.Equal(t, tc.field, field)
+		})
+	}
+}
+
+func TestFullStack_TaskList_StrictMalformedInputs(t *testing.T) {
+	a := setupAdapter(t)
+
+	for _, tc := range []struct {
+		name  string
+		args  map[string]interface{}
+		field string
+	}{
+		{name: "malformed tags json", args: map[string]interface{}{"tags": "not-json"}, field: "tags"},
+		{name: "non-string tag member", args: map[string]interface{}{"tags": "[1]"}, field: "tags"},
+		{name: "bad manual", args: map[string]interface{}{"manual": "sometimes"}, field: "manual"},
+		{name: "bad include internal", args: map[string]interface{}{"include_internal": "maybe"}, field: "include_internal"},
+		{name: "bad verbose", args: map[string]interface{}{"verbose": "maybe"}, field: "verbose"},
+		{name: "bad limit", args: map[string]interface{}{"limit": "not_an_integer"}, field: "limit"},
+		{name: "unsafe native float limit", args: map[string]interface{}{"limit": float64(9007199254740993)}, field: "limit"},
+		{name: "bad token bound", args: map[string]interface{}{"token_budget_gte": "1.2"}, field: "token_budget_gte"},
+		{name: "non-finite float string", args: map[string]interface{}{"cost_budget_gte": "NaN"}, field: "cost_budget_gte"},
+		{name: "wrong sort type", args: map[string]interface{}{"sort_dir": true}, field: "sort_dir"},
+		{name: "wrong date type", args: map[string]interface{}{"created_after": 12}, field: "created_after"},
+		{name: "wrong cursor type", args: map[string]interface{}{"cursor": 12}, field: "cursor"},
+		{name: "wrong scalar filter type", args: map[string]interface{}{"status": []interface{}{"todo"}}, field: "status"},
+		{name: "bad priority gte", args: map[string]interface{}{"priority_gte": "1.2"}, field: "priority_gte"},
+		{name: "bad priority lte", args: map[string]interface{}{"priority_lte": "9223372036854775808"}, field: "priority_lte"},
+		{name: "blank missing field", args: map[string]interface{}{"missing": `[" "]`}, field: "missing"},
+		{name: "unknown present field", args: map[string]interface{}{"present": `["metadata"]`}, field: "present"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			text, isErr := callTool(t, a, "torque_task_list", tc.args)
+			require.True(t, isErr, "task_list should reject %s: %s", tc.name, text)
+			code, _, field := parseError(t, text)
+			assert.Equal(t, "arg_invalid", code)
+			assert.Equal(t, tc.field, field)
+		})
+	}
+
+	for _, key := range []string{"tags_any", "tags_none", "missing", "present"} {
+		for _, raw := range []interface{}{
+			nil,
+			"",
+			" ",
+			[]interface{}{nil},
+			[]interface{}{"a", 1},
+			`[null]`,
+			`["a",1]`,
+			`null`,
+		} {
+			for _, tool := range []string{"torque_task_list", "torque_task_facets"} {
+				t.Run(fmt.Sprintf("%s bad %s %#v", tool, key, raw), func(t *testing.T) {
+					text, isErr := callTool(t, a, tool, map[string]interface{}{key: raw})
+					require.True(t, isErr, "%s should reject %s=%#v: %s", tool, key, raw, text)
+					code, _, field := parseError(t, text)
+					assert.Equal(t, "arg_invalid", code)
+					assert.Equal(t, key, field)
+				})
+			}
+		}
+	}
+
+	for _, args := range []map[string]interface{}{
+		{"manual": "both"},
+		{"manual": ""},
+		{"parent_id": ""},
+		{"parent_id": "null"},
+		{"created_after": ""},
+		{"updated_before": ""},
+		{"include_internal": "false"},
+		{"include_internal": "0"},
+		{"include_internal": "yes"},
+		{"verbose": "false"},
+		{"tags_any": `[]`},
+		{"tags_none": []interface{}{}},
+		{"missing": `[]`},
+		{"present": []interface{}{}},
+	} {
+		text, isErr := callTool(t, a, "torque_task_list", args)
+		require.False(t, isErr, "valid alias/sentinel should work for args=%v: %s", args, text)
+	}
+}
+
+func TestFullStack_TaskList_QueryOperatorsAndFacets(t *testing.T) {
+	a := setupAdapter(t)
+
+	zeroID := createTaskWithPriority(t, a, "zero bug ui", "0")
+	_, isErr := callTool(t, a, "torque_task_update", map[string]interface{}{"id": zeroID, "tags": `["bug","ui"]`, "cost_budget": "0"})
+	require.False(t, isErr)
+	twoID := createTaskWithPriority(t, a, "two backend", "2")
+	_, isErr = callTool(t, a, "torque_task_update", map[string]interface{}{"id": twoID, "tags": `["backend"]`})
+	require.False(t, isErr)
+	_ = createTaskWithPriority(t, a, "five no tags", "5")
+	sevenID := createTaskWithPriority(t, a, "seven bug", "7")
+	_, isErr = callTool(t, a, "torque_task_update", map[string]interface{}{"id": sevenID, "tags": `["bug"]`})
+	require.False(t, isErr)
+	largeID := createTaskWithPriority(t, a, "large precise", "9007199254740993")
+	_ = createTaskWithPriority(t, a, "adjacent large", "9007199254740992")
+
+	args := map[string]interface{}{
+		"tags_any":      []interface{}{"bug", "bug", " "},
+		"tags_none":     `["backend"]`,
+		"priority_gte":  "0",
+		"priority_lte":  "7",
+		"include_total": "true",
+	}
+	assert.ElementsMatch(t, []string{zeroID, sevenID}, taskListIDs(t, a, args))
+	assert.Equal(t, []string{zeroID}, taskListIDs(t, a, map[string]interface{}{"present": `["cost_budget"]`, "tags_any": `["bug"]`}))
+	assert.Equal(t, []string{twoID}, taskListIDs(t, a, map[string]interface{}{"priorities": `[0,2,7]`, "priority_gte": "2", "priority_lte": "5"}))
+	assert.Empty(t, taskListIDs(t, a, map[string]interface{}{"missing": `["tags"]`, "tags_any": `["bug"]`}))
+	assert.Equal(t, []string{largeID}, taskListIDs(t, a, map[string]interface{}{"priority_gte": "9007199254740993", "priority_lte": "9007199254740993"}))
+	assert.Equal(t, []string{zeroID}, taskListIDs(t, a, map[string]interface{}{"tags": `["bug"]`, "tags_any": `["ui","backend"]`, "tags_none": `["backend"]`}))
+
+	args["limit"] = "1"
+	text, isErr := callTool(t, a, "torque_task_list", args)
+	require.False(t, isErr, text)
+	var first taskListCursorEnvelope
+	parseData(t, text, &first)
+	require.Len(t, first.Items, 1)
+	assert.Equal(t, zeroID, first.Items[0]["id"])
+	require.True(t, first.Meta.HasMore)
+	require.NotNil(t, first.Meta.NextCursor)
+	args["cursor"] = *first.Meta.NextCursor
+	text, isErr = callTool(t, a, "torque_task_list", args)
+	require.False(t, isErr, text)
+	var second taskListCursorEnvelope
+	parseData(t, text, &second)
+	require.Len(t, second.Items, 1)
+	assert.Equal(t, sevenID, second.Items[0]["id"])
+	assert.False(t, second.Meta.HasMore)
+
+	text, isErr = callTool(t, a, "torque_task_facets", map[string]interface{}{
+		"tags_any":     `["bug"]`,
+		"tags_none":    `["backend"]`,
+		"priority_gte": "0",
+		"priority_lte": "7",
+		"dimensions":   `["tags","priority"]`,
+	})
+	require.False(t, isErr, text)
+	var facets struct {
+		MatchingCount int `json:"matching_count"`
+		Facets        []struct {
+			Dimension string `json:"dimension"`
+			Buckets   []struct {
+				Value interface{} `json:"value"`
+				Count int         `json:"count"`
+			} `json:"buckets"`
+		} `json:"facets"`
+	}
+	parseData(t, text, &facets)
+	assert.Equal(t, 2, facets.MatchingCount)
+	require.Len(t, facets.Facets, 2)
+	assert.Equal(t, "tags", facets.Facets[0].Dimension)
+	assert.Equal(t, "priority", facets.Facets[1].Dimension)
+	tagBuckets := map[interface{}]int{}
+	for _, b := range facets.Facets[0].Buckets {
+		tagBuckets[b.Value] = b.Count
+	}
+	assert.Equal(t, map[interface{}]int{"bug": 2, "ui": 1}, tagBuckets)
+	priorityBuckets := map[interface{}]int{}
+	for _, b := range facets.Facets[1].Buckets {
+		priorityBuckets[b.Value] = b.Count
+	}
+	assert.Equal(t, map[interface{}]int{float64(0): 1, float64(7): 1}, priorityBuckets)
+}
+
+func taskListIDs(t *testing.T, a *mcpadapter.Adapter, args map[string]interface{}) []string {
+	t.Helper()
+	text, isErr := callTool(t, a, "torque_task_list", args)
+	require.False(t, isErr, "task_list should not error: %s", text)
+	var env taskListCursorEnvelope
+	parseData(t, text, &env)
+	out := make([]string, 0, len(env.Items))
+	for _, item := range env.Items {
+		out = append(out, item["id"].(string))
+	}
+	return out
+}
+
+func createTaskWithPriority(t *testing.T, a *mcpadapter.Adapter, title, priority string) string {
+	t.Helper()
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title": title, "description": "x", "priority": "1",
+	})
+	require.False(t, isErr, text)
+	var created map[string]interface{}
+	parseData(t, text, &created)
+	id := created["ID"].(string)
+	text, isErr = callTool(t, a, "torque_task_update", map[string]interface{}{"id": id, "priority": priority})
+	require.False(t, isErr, "priority update should accept %s: %s", priority, text)
+	return id
 }
 
 // TestFullStack_TaskList_CombinedSearchAndProjectID verifies query+project_id AND combination.
@@ -1253,9 +1722,516 @@ type taskListCursorEnvelope struct {
 		Truncated  bool    `json:"truncated"`
 		Returned   int     `json:"returned"`
 		Limit      int     `json:"limit"`
+		Total      *int    `json:"total"`
 		HasMore    bool    `json:"has_more"`
 		NextCursor *string `json:"next_cursor"`
 	} `json:"meta"`
+}
+
+func TestFullStack_TaskList_HTTPMCPParity_ComposedQuery(t *testing.T) {
+	a, ts, db := setupTaskQueryParitySurfaces(t)
+	defer ts.Close()
+
+	parentText, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{"title": "parent", "description": "x"})
+	require.False(t, isErr, "parent create: %s", parentText)
+	var parent map[string]interface{}
+	parseData(t, parentText, &parent)
+	parentID := parent["ID"].(string)
+
+	makeTask := func(title string, args map[string]interface{}) string {
+		t.Helper()
+		args["title"] = title
+		args["description"] = "query parity needle"
+		text, isErr := callTool(t, a, "torque_task_create", args)
+		require.False(t, isErr, "create %s: %s", title, text)
+		var rec map[string]interface{}
+		parseData(t, text, &rec)
+		return rec["ID"].(string)
+	}
+	matchA := makeTask("match-a", map[string]interface{}{
+		"priority": "0", "tags": `["alpha","beta"]`, "agent_profile": "codex", "launch_profile": "cli-fast",
+		"parent_id": parentID, "cost_budget": "75.5", "token_budget": "9000", "max_duration_ms": "60000", "max_retries": "2",
+	})
+	matchB := makeTask("match-b", map[string]interface{}{
+		"priority": "2", "tags": `["alpha","beta"]`, "agent_profile": "codex", "launch_profile": "cli-fast",
+		"parent_id": parentID, "cost_budget": "125", "token_budget": "12000", "max_duration_ms": "90000", "max_retries": "4",
+	})
+	wrongTag := makeTask("wrong-tag", map[string]interface{}{"priority": "0", "tags": `["alpha"]`, "agent_profile": "codex", "launch_profile": "cli-fast", "parent_id": parentID, "cost_budget": "90", "token_budget": "9000", "max_duration_ms": "60000", "max_retries": "2"})
+	wrongProfile := makeTask("wrong-profile", map[string]interface{}{"priority": "0", "tags": `["alpha","beta"]`, "agent_profile": "other", "launch_profile": "cli-fast", "parent_id": parentID, "cost_budget": "90", "token_budget": "9000", "max_duration_ms": "60000", "max_retries": "2"})
+	wrongCreated := makeTask("wrong-created", map[string]interface{}{"priority": "0", "tags": `["alpha","beta"]`, "agent_profile": "codex", "launch_profile": "cli-fast", "parent_id": parentID, "cost_budget": "90", "token_budget": "9000", "max_duration_ms": "60000", "max_retries": "2"})
+	wrongCost := makeTask("wrong-cost", map[string]interface{}{"priority": "0", "tags": `["alpha","beta"]`, "agent_profile": "codex", "launch_profile": "cli-fast", "parent_id": parentID, "cost_budget": "10", "token_budget": "9000", "max_duration_ms": "60000", "max_retries": "2"})
+	wrongToken := makeTask("wrong-token", map[string]interface{}{"priority": "0", "tags": `["alpha","beta"]`, "agent_profile": "codex", "launch_profile": "cli-fast", "parent_id": parentID, "cost_budget": "90", "token_budget": "100", "max_duration_ms": "60000", "max_retries": "2"})
+	wrongDuration := makeTask("wrong-duration", map[string]interface{}{"priority": "0", "tags": `["alpha","beta"]`, "agent_profile": "codex", "launch_profile": "cli-fast", "parent_id": parentID, "cost_budget": "90", "token_budget": "9000", "max_duration_ms": "1000", "max_retries": "2"})
+	wrongRetries := makeTask("wrong-retries", map[string]interface{}{"priority": "0", "tags": `["alpha","beta"]`, "agent_profile": "codex", "launch_profile": "cli-fast", "parent_id": parentID, "cost_budget": "90", "token_budget": "9000", "max_duration_ms": "60000", "max_retries": "9"})
+	internalID := makeTask("internal-match-hidden", map[string]interface{}{
+		"kind": "internal", "executor": "cli", "priority": "0", "tags": `["alpha","beta"]`, "agent_profile": "codex", "launch_profile": "cli-fast",
+		"parent_id": parentID, "cost_budget": "90", "token_budget": "9000", "max_duration_ms": "60000", "max_retries": "2",
+	})
+
+	for _, id := range []string{matchA, matchB, internalID, wrongTag, wrongProfile, wrongCreated, wrongCost, wrongToken, wrongDuration, wrongRetries} {
+		_, isErr = callTool(t, a, "torque_task_transition", map[string]interface{}{"id": id, "status": "doing"})
+		require.False(t, isErr)
+		_, isErr = callTool(t, a, "torque_task_update", map[string]interface{}{"id": id, "manual": false})
+		require.False(t, isErr)
+	}
+	for _, id := range []string{matchA, internalID, wrongTag, wrongProfile, wrongCreated, wrongCost, wrongToken, wrongDuration, wrongRetries} {
+		_, isErr = callTool(t, a, "torque_task_update", map[string]interface{}{"id": id, "priority": "0"})
+		require.False(t, isErr)
+	}
+	require.NoError(t, setTaskTimes(db, matchA, "2026-09-11 01:00:00.000000123", "2026-09-11 04:00:00.000000123"))
+	require.NoError(t, setTaskTimes(db, matchB, "2026-09-11 02:00:00.000000456", "2026-09-11 05:00:00.000000456"))
+	require.NoError(t, setTaskTimes(db, internalID, "2026-09-11 03:00:00.000000789", "2026-09-11 06:00:00.000000789"))
+	for _, id := range []string{wrongTag, wrongProfile, wrongCost, wrongToken, wrongDuration, wrongRetries} {
+		require.NoError(t, setTaskTimes(db, id, "2026-09-11 01:30:00.000000333", "2026-09-11 04:30:00.000000333"))
+	}
+	require.NoError(t, setTaskTimes(db, wrongCreated, "2026-09-11 03:30:00.000000333", "2026-09-11 04:30:00.000000333"))
+
+	httpIDs := httpTaskIDs(t, ts.URL+"/api/v1/tasks?"+url.Values{
+		"status":              {"doing"},
+		"priority":            {"0,2,0"},
+		"tags":                {"alpha,beta"},
+		"manual":              {"auto"},
+		"parent_id":           {parentID},
+		"agent_profile":       {"codex"},
+		"launch_profile":      {"cli-fast"},
+		"created_after":       {"2026-09-11T00:00:00Z"},
+		"created_before":      {"2026-09-11T03:00:00.000000500Z"},
+		"updated_after":       {"2026-09-11T03:00:00Z"},
+		"cost_budget_gte":     {"50"},
+		"cost_budget_lte":     {"150"},
+		"token_budget_gte":    {"8000"},
+		"token_budget_lte":    {"13000"},
+		"max_duration_ms_gte": {"50000"},
+		"max_duration_ms_lte": {"100000"},
+		"max_retries_gte":     {"1"},
+		"max_retries_lte":     {"4"},
+		"sort_by":             {"updated_at"},
+		"sort_dir":            {"desc"},
+	}.Encode())
+	mcpIDs := mcpTaskIDs(t, a, map[string]interface{}{
+		"status": "doing", "priorities": `[0,2,0]`, "tags": `["alpha","beta"]`, "manual": "auto", "parent_id": parentID,
+		"agent_profile": "codex", "launch_profile": "cli-fast", "created_after": "2026-09-11T00:00:00Z",
+		"created_before": "2026-09-11T03:00:00.000000500Z", "updated_after": "2026-09-11T03:00:00Z",
+		"cost_budget_gte": "50", "cost_budget_lte": "150", "token_budget_gte": "8000", "token_budget_lte": "13000",
+		"max_duration_ms_gte": "50000", "max_duration_ms_lte": "100000", "max_retries_gte": "1", "max_retries_lte": "4",
+		"sort_by": "updated_at", "sort_dir": "desc", "include_total": "true",
+	})
+	require.Equal(t, []string{matchB, matchA}, httpIDs)
+	require.Equal(t, httpIDs, mcpIDs)
+}
+
+type decodedTaskFacets struct {
+	MatchingCount int      `json:"matching_count"`
+	BucketLimit   int      `json:"bucket_limit"`
+	Dimensions    []string `json:"dimensions"`
+	Facets        []struct {
+		Dimension     string `json:"dimension"`
+		TotalDistinct int    `json:"total_distinct"`
+		Returned      int    `json:"returned"`
+		Truncated     bool   `json:"truncated"`
+		Buckets       []struct {
+			Value any `json:"value"`
+			Count int `json:"count"`
+		} `json:"buckets"`
+	} `json:"facets"`
+}
+
+func decodeHTTPTaskFacets(t *testing.T, rawURL string) decodedTaskFacets {
+	t.Helper()
+	resp, err := http.Get(rawURL)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	defer resp.Body.Close()
+	var out decodedTaskFacets
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
+	return out
+}
+
+func taskFacetByDimension(t *testing.T, got decodedTaskFacets, dim string) []struct {
+	Value any `json:"value"`
+	Count int `json:"count"`
+} {
+	t.Helper()
+	for _, f := range got.Facets {
+		if f.Dimension == dim {
+			return f.Buckets
+		}
+	}
+	t.Fatalf("missing facet dimension %s in %+v", dim, got.Dimensions)
+	return nil
+}
+
+func TestFullStack_TaskFacets_HTTPMCPParityAndValidation(t *testing.T) {
+	a, ts, _ := setupTaskQueryParitySurfaces(t)
+	defer ts.Close()
+	create := func(title string, args map[string]any) string {
+		t.Helper()
+		body := map[string]any{"title": title, "description": "facet parity"}
+		for k, v := range args {
+			body[k] = v
+		}
+		raw, err := json.Marshal(body)
+		require.NoError(t, err)
+		resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewReader(raw))
+		require.NoError(t, err)
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+		defer resp.Body.Close()
+		var created map[string]any
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+		return created["id"].(string)
+	}
+	update := func(id string, patch map[string]any) {
+		t.Helper()
+		raw, err := json.Marshal(patch)
+		require.NoError(t, err)
+		req, err := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/tasks/"+id, bytes.NewReader(raw))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		resp.Body.Close()
+	}
+	id1 := create("facet parity a", map[string]any{"tags": []string{"api", "torque"}, "agent_profile": "codex"})
+	id2 := create("facet parity b", map[string]any{"tags": []string{"api"}, "agent_profile": "codex"})
+	_ = create("facet parity c", map[string]any{"agent_profile": "other"})
+	update(id1, map[string]any{"priority": 0, "manual": false})
+	update(id2, map[string]any{"priority": 0, "manual": false})
+
+	httpFacets := decodeHTTPTaskFacets(t, ts.URL+"/api/v1/tasks/facets?search=facet+parity&priority=0,1&dimensions=priority,manual,tags,tags&bucket_limit=10")
+	require.Equal(t, 2, httpFacets.MatchingCount)
+	assert.Equal(t, []string{"priority", "manual", "tags"}, httpFacets.Dimensions)
+	assert.Equal(t, float64(0), taskFacetByDimension(t, httpFacets, "priority")[0].Value)
+	assert.Equal(t, 2, taskFacetByDimension(t, httpFacets, "priority")[0].Count)
+	assert.Equal(t, false, taskFacetByDimension(t, httpFacets, "manual")[0].Value)
+	assert.Equal(t, 2, taskFacetByDimension(t, httpFacets, "manual")[0].Count)
+	assert.Equal(t, "api", taskFacetByDimension(t, httpFacets, "tags")[0].Value)
+	assert.Equal(t, 2, taskFacetByDimension(t, httpFacets, "tags")[0].Count)
+
+	defaultHTTP := decodeHTTPTaskFacets(t, ts.URL+"/api/v1/tasks/facets?search=facet+parity")
+	assert.Equal(t, 3, defaultHTTP.MatchingCount)
+	assert.Equal(t, 50, defaultHTTP.BucketLimit)
+	assert.Len(t, defaultHTTP.Dimensions, 12)
+	projectBuckets := taskFacetByDimension(t, defaultHTTP, "project_id")
+	require.Len(t, projectBuckets, 1)
+	assert.Nil(t, projectBuckets[0].Value)
+	assert.Equal(t, 3, projectBuckets[0].Count)
+
+	noMatch := decodeHTTPTaskFacets(t, ts.URL+"/api/v1/tasks/facets?search=definitely-no-match")
+	assert.Equal(t, 0, noMatch.MatchingCount)
+	assert.Equal(t, 50, noMatch.BucketLimit)
+	assert.Len(t, noMatch.Dimensions, 12)
+	for _, f := range noMatch.Facets {
+		assert.Empty(t, f.Buckets)
+		assert.Equal(t, 0, f.TotalDistinct)
+		assert.Equal(t, 0, f.Returned)
+		assert.False(t, f.Truncated)
+	}
+
+	text, isErr := callTool(t, a, "torque_task_facets", map[string]interface{}{
+		"search":       "facet parity",
+		"priorities":   []interface{}{0, 1, 0},
+		"dimensions":   []interface{}{"priority", "manual", "tags", "tags"},
+		"bucket_limit": "10",
+	})
+	require.False(t, isErr, "mcp facets should not error: %s", text)
+	var mcpFacets decodedTaskFacets
+	parseData(t, text, &mcpFacets)
+	assert.Equal(t, httpFacets.MatchingCount, mcpFacets.MatchingCount)
+	assert.Equal(t, httpFacets.Dimensions, mcpFacets.Dimensions)
+	assert.Equal(t, taskFacetByDimension(t, httpFacets, "tags"), taskFacetByDimension(t, mcpFacets, "tags"))
+
+	for _, rawQuery := range []string{
+		"dimensions=", "limit=0", "offset=0", "cursor=", "sort_by=",
+		"dimensions=missing", "bucket_limit=-1", "bucket_limit=9223372036854775808",
+		"dimensions=status&dimensions=manual",
+	} {
+		resp, err := http.Get(ts.URL + "/api/v1/tasks/facets?" + rawQuery)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode, rawQuery)
+		resp.Body.Close()
+	}
+	for _, args := range []map[string]interface{}{
+		{"dimensions": "[]"},
+		{"dimensions": ""},
+		{"limit": "0"},
+		{"offset": "0"},
+		{"cursor": ""},
+		{"sort_by": ""},
+		{"dimensions": `[null]`},
+		{"tags": `[null]`},
+		{"tags": `[1]`},
+		{"dimensions": `["missing"]`},
+		{"bucket_limit": "-1"},
+		{"bucket_limit": "9223372036854775808"},
+	} {
+		text, isErr := callTool(t, a, "torque_task_facets", args)
+		require.True(t, isErr, "expected facet arg rejection for %#v: %s", args, text)
+		code, _, field := parseError(t, text)
+		assert.Equal(t, "arg_invalid", code)
+		assert.NotEmpty(t, field)
+	}
+}
+
+func TestFullStack_TaskFacets_MCPByteCapTrimsBucketsOnly(t *testing.T) {
+	a, ts, db := setupTaskQueryParitySurfaces(t)
+	defer ts.Close()
+	long := strings.Repeat("x", 900)
+	for i := 0; i < 220; i++ {
+		id := fmt.Sprintf("CW-20260911-7%03d", i)
+		launch := fmt.Sprintf("launch-%03d-%s", i, long)
+		_, err := db.Exec(`INSERT INTO tasks (id, title, description, status, priority, manual, kind, launch_profile) VALUES (?, ?, 'cap fixture', 'todo', 2, 0, 'agent', ?)`, id, "facet cap", launch)
+		require.NoError(t, err)
+	}
+	httpFacets := decodeHTTPTaskFacets(t, ts.URL+"/api/v1/tasks/facets?search=facet+cap&dimensions=launch_profile&bucket_limit=200")
+	require.Equal(t, 220, httpFacets.MatchingCount)
+	require.Len(t, httpFacets.Facets, 1)
+	assert.Equal(t, 220, httpFacets.Facets[0].TotalDistinct)
+	assert.Equal(t, 200, httpFacets.Facets[0].Returned)
+	assert.Len(t, httpFacets.Facets[0].Buckets, httpFacets.Facets[0].Returned)
+	assert.True(t, httpFacets.Facets[0].Truncated)
+	assert.Contains(t, httpFacets.Facets[0].Buckets[0].Value.(string), "launch-000-")
+	assert.Contains(t, httpFacets.Facets[0].Buckets[199].Value.(string), "launch-199-")
+	assert.Equal(t, 1, httpFacets.Facets[0].Buckets[0].Count)
+
+	text, isErr := callTool(t, a, "torque_task_facets", map[string]interface{}{
+		"search":       "facet cap",
+		"dimensions":   []interface{}{"launch_profile"},
+		"bucket_limit": "200",
+	})
+	require.False(t, isErr, "mcp facets should trim, not fail: %s", text)
+	require.LessOrEqual(t, len([]byte(text)), 100*1024)
+	var got decodedTaskFacets
+	parseData(t, text, &got)
+	require.Equal(t, 220, got.MatchingCount)
+	require.Len(t, got.Facets, 1)
+	assert.Equal(t, 220, got.Facets[0].TotalDistinct)
+	assert.True(t, got.Facets[0].Truncated)
+	assert.Len(t, got.Facets[0].Buckets, got.Facets[0].Returned)
+	assert.Less(t, got.Facets[0].Returned, 200)
+	for _, b := range got.Facets[0].Buckets {
+		require.IsType(t, "", b.Value)
+		assert.Contains(t, b.Value.(string), long)
+	}
+
+	giant := strings.Repeat("y", 110*1024)
+	_, err := db.Exec(`INSERT INTO tasks (id, title, description, status, priority, manual, kind, launch_profile) VALUES ('CW-20260911-7999', 'facet giant', 'giant fixture', 'todo', 2, 0, 'agent', ?)`, giant)
+	require.NoError(t, err)
+	text, isErr = callTool(t, a, "torque_task_facets", map[string]interface{}{
+		"search":       "facet giant",
+		"dimensions":   []interface{}{"launch_profile"},
+		"bucket_limit": "1",
+	})
+	require.False(t, isErr, "oversized single bucket should be omitted, not fail: %s", text)
+	require.LessOrEqual(t, len([]byte(text)), 100*1024)
+	var giantGot decodedTaskFacets
+	parseData(t, text, &giantGot)
+	require.Equal(t, 1, giantGot.MatchingCount)
+	require.Len(t, giantGot.Facets, 1)
+	assert.Equal(t, 1, giantGot.Facets[0].TotalDistinct)
+	assert.Equal(t, 0, giantGot.Facets[0].Returned)
+	assert.Empty(t, giantGot.Facets[0].Buckets)
+	assert.True(t, giantGot.Facets[0].Truncated)
+}
+
+func TestFullStack_TaskList_HTTPMCPParity_CursorTraversal(t *testing.T) {
+	a, ts, db := setupTaskQueryParitySurfaces(t)
+	defer ts.Close()
+
+	var seededIDs []string
+	for i := 0; i < 5; i++ {
+		text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{"title": fmt.Sprintf("page-%d", i), "description": "cursor parity"})
+		require.False(t, isErr, "create: %s", text)
+		var rec map[string]interface{}
+		parseData(t, text, &rec)
+		id := rec["ID"].(string)
+		seededIDs = append(seededIDs, id)
+		require.NoError(t, setTaskTimes(db, id, fmt.Sprintf("2026-09-11 00:00:00.%09d", i+1), fmt.Sprintf("2026-09-11 00:00:01.%09d", i+1)))
+	}
+
+	var httpIDs []string
+	var cursor string
+	for pages := 0; pages < 4; pages++ {
+		cursorMode := cursor != ""
+		q := url.Values{"limit": {"2"}, "sort_by": {"created_at"}, "sort_dir": {"asc"}}
+		if cursorMode {
+			q.Set("cursor", cursor)
+		}
+		page := httpTaskPage(t, ts.URL+"/api/v1/tasks?"+q.Encode())
+		require.Equal(t, 5, int(page["total"].(float64)))
+		for _, item := range page["tasks"].([]interface{}) {
+			httpIDs = append(httpIDs, item.(map[string]interface{})["id"].(string))
+		}
+		if !page["has_more"].(bool) {
+			require.Nil(t, page["next_cursor"])
+			require.Nil(t, page["next_offset"])
+			require.Equal(t, seededIDs, httpIDs)
+			descIDs := httpTaskIDs(t, ts.URL+"/api/v1/tasks?limit=5&sort_by=created_at&sort_dir=desc")
+			require.Equal(t, reverseStrings(seededIDs), descIDs)
+			mcpIDs := mcpTaskIDsAllPages(t, a, map[string]interface{}{"limit": "2", "sort_by": "created_at", "sort_dir": "asc", "include_total": "true"})
+			require.Equal(t, mcpIDs, httpIDs)
+			require.Len(t, httpIDs, 5)
+			return
+		}
+		next, ok := page["next_cursor"].(string)
+		require.True(t, ok)
+		continuation := page["continuation"].(map[string]interface{})
+		if cursorMode {
+			require.Equal(t, next, continuation["cursor"])
+			require.Nil(t, page["next_offset"])
+		} else {
+			require.NotContains(t, continuation, "cursor")
+			require.NotNil(t, page["next_offset"])
+		}
+		cursor = next
+	}
+	t.Fatal("cursor traversal did not terminate within expected page count")
+}
+
+func TestFullStack_TaskList_IncludeTotalAndVerboseByteCapTraversal(t *testing.T) {
+	a := setupAdapter(t)
+	for i := 0; i < 70; i++ {
+		text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+			"title":       fmt.Sprintf("fat-%02d", i),
+			"description": strings.Repeat(fmt.Sprintf("payload-%02d ", i), 200),
+			"metadata":    fmt.Sprintf(`{"blob":%q}`, strings.Repeat("x", 800)),
+		})
+		require.False(t, isErr, "create: %s", text)
+	}
+
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{"limit": "5"})
+	require.False(t, isErr, "task_list default total omitted: %s", text)
+	var first taskListCursorEnvelope
+	parseData(t, text, &first)
+	require.Nil(t, first.Meta.Total)
+
+	var seen []string
+	args := map[string]interface{}{"limit": "70", "verbose": "true", "include_total": "true"}
+	for pages := 0; pages < 80; pages++ {
+		text, isErr = callTool(t, a, "torque_task_list", args)
+		require.False(t, isErr, "verbose page should not error: %s", text)
+		require.Less(t, len(text), 100*1024)
+		var env taskListCursorEnvelope
+		parseData(t, text, &env)
+		require.NotNil(t, env.Meta.Total)
+		require.Equal(t, 70, *env.Meta.Total)
+		for _, item := range env.Items {
+			seen = append(seen, item["ID"].(string))
+		}
+		if !env.Meta.HasMore {
+			require.Nil(t, env.Meta.NextCursor)
+			require.Len(t, seen, 70)
+			require.Len(t, uniqueStrings(seen), 70)
+			return
+		}
+		require.NotNil(t, env.Meta.NextCursor)
+		args["cursor"] = *env.Meta.NextCursor
+	}
+	t.Fatal("verbose byte-cap traversal did not terminate")
+}
+
+func TestFullStack_TaskList_RejectsNullTagMemberBeforeSanitizeBroadens(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "torque_task_list", map[string]interface{}{"tags": `[null]`})
+	require.True(t, isErr, "task_list should reject null tag member: %s", text)
+	code, _, field := parseError(t, text)
+	require.Equal(t, "arg_invalid", code)
+	require.Equal(t, "tags", field)
+
+	text, isErr = callTool(t, a, "torque_task_list", map[string]interface{}{"statuses": `["todo",null]`})
+	require.True(t, isErr, "task_list should reject null status member: %s", text)
+	code, _, field = parseError(t, text)
+	require.Equal(t, "arg_invalid", code)
+	require.Equal(t, "statuses", field)
+}
+
+func setTaskTimes(db *sql.DB, id, createdAt, updatedAt string) error {
+	_, err := db.Exec(`UPDATE tasks SET created_at = ?, updated_at = ? WHERE id = ?`, createdAt, updatedAt, id)
+	return err
+}
+
+func httpTaskPage(t *testing.T, rawURL string) map[string]interface{} {
+	t.Helper()
+	resp, err := http.Get(rawURL)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	defer resp.Body.Close()
+	var page map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&page))
+	return page
+}
+
+func httpTaskIDs(t *testing.T, rawURL string) []string {
+	t.Helper()
+	page := httpTaskPage(t, rawURL)
+	rawTasks := page["tasks"].([]interface{})
+	ids := make([]string, 0, len(rawTasks))
+	for _, raw := range rawTasks {
+		ids = append(ids, raw.(map[string]interface{})["id"].(string))
+	}
+	return ids
+}
+
+func mcpTaskIDs(t *testing.T, a *mcpadapter.Adapter, args map[string]interface{}) []string {
+	t.Helper()
+	text, isErr := callTool(t, a, "torque_task_list", args)
+	require.False(t, isErr, "task_list should not error: %s", text)
+	var env taskListCursorEnvelope
+	parseData(t, text, &env)
+	ids := make([]string, 0, len(env.Items))
+	for _, item := range env.Items {
+		ids = append(ids, item["id"].(string))
+	}
+	if _, ok := args["include_total"]; ok {
+		require.NotNil(t, env.Meta.Total)
+	}
+	return ids
+}
+
+func mcpTaskIDsAllPages(t *testing.T, a *mcpadapter.Adapter, args map[string]interface{}) []string {
+	t.Helper()
+	pageArgs := map[string]interface{}{}
+	for k, v := range args {
+		pageArgs[k] = v
+	}
+	var ids []string
+	for {
+		text, isErr := callTool(t, a, "torque_task_list", pageArgs)
+		require.False(t, isErr, "task_list should not error: %s", text)
+		var env taskListCursorEnvelope
+		parseData(t, text, &env)
+		if _, ok := pageArgs["include_total"]; ok {
+			require.NotNil(t, env.Meta.Total)
+			require.Equal(t, 5, *env.Meta.Total)
+		}
+		for _, item := range env.Items {
+			ids = append(ids, item["id"].(string))
+		}
+		if !env.Meta.HasMore {
+			require.Nil(t, env.Meta.NextCursor)
+			break
+		}
+		require.NotNil(t, env.Meta.NextCursor)
+		pageArgs["cursor"] = *env.Meta.NextCursor
+	}
+	return ids
+}
+
+func reverseStrings(in []string) []string {
+	out := make([]string, len(in))
+	for i := range in {
+		out[len(in)-1-i] = in[i]
+	}
+	return out
+}
+
+func uniqueStrings(in []string) map[string]bool {
+	out := make(map[string]bool, len(in))
+	for _, v := range in {
+		out[v] = true
+	}
+	return out
 }
 
 // TestFullStack_TaskList_CursorPagination_NoDuplicatesOrSkips is PRIM-001's
@@ -1595,6 +2571,40 @@ func TestFullStack_TaskList_FilterByBudgetRange(t *testing.T) {
 	require.Equal(t, priceyID, env.Items[0]["id"])
 }
 
+func TestFullStack_TaskReviewPolicyMetadata(t *testing.T) {
+	a := setupAdapter(t)
+
+	text, isErr := callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":    "parent review",
+		"metadata": `{"review":{"mode":"parent"}}`,
+	})
+	require.False(t, isErr, "create with parent review should succeed: %s", text)
+	var rec map[string]interface{}
+	parseData(t, text, &rec)
+	id := rec["ID"].(string)
+
+	text, isErr = callTool(t, a, "torque_task_get", map[string]interface{}{
+		"id":     id,
+		"format": "typed",
+	})
+	require.False(t, isErr, "typed get should succeed: %s", text)
+	var got map[string]interface{}
+	parseData(t, text, &got)
+	effective := got["effective_review"].(map[string]interface{})
+	require.Equal(t, "parent", effective["mode"])
+	require.Equal(t, false, effective["enqueue_internal_reviewer"])
+
+	text, isErr = callTool(t, a, "torque_task_create", map[string]interface{}{
+		"title":    "bad review",
+		"metadata": `{"review":{"mode":"claude"}}`,
+	})
+	require.True(t, isErr, "invalid review mode should be rejected")
+	code, msg, field := parseError(t, text)
+	require.Equal(t, "arg_invalid", code)
+	require.Equal(t, "metadata.review", field)
+	require.Contains(t, msg, "invalid metadata.review.mode")
+}
+
 // TestFullStack_TaskCreate_FieldExpansion verifies the ENT-TASK create-field
 // expansion: fields TaskCreateInput already accepted at the service layer
 // but torque_task_create's MCP schema didn't expose.
@@ -1635,6 +2645,83 @@ func TestFullStack_TaskCreate_FieldExpansion(t *testing.T) {
 	require.Equal(t, 42.5, got["CostBudget"].(map[string]interface{})["Float64"])
 	require.Equal(t, float64(60000), got["MaxDurationMs"].(map[string]interface{})["Int64"])
 	require.Equal(t, float64(100000), got["TokenBudget"].(map[string]interface{})["Int64"])
+}
+
+func TestFullStack_TaskCreate_DeliverablePresetHTTPMCPParity(t *testing.T) {
+	a, ts, _ := setupTaskQueryParitySurfaces(t)
+	defer ts.Close()
+
+	props := listToolSchemaProperties(t, a, "torque_task_create")
+	require.Contains(t, props, "deliverable_preset")
+
+	type createCase struct {
+		name  string
+		value *string
+		want  string
+	}
+	empty := ""
+	arbitrary := "arbitrary-review-pack"
+	cases := []createCase{
+		{name: "omitted", want: ""},
+		{name: "empty", value: &empty, want: ""},
+		{name: "explicit", value: &arbitrary, want: arbitrary},
+	}
+
+	for _, tc := range cases {
+		t.Run("mcp_"+tc.name, func(t *testing.T) {
+			args := map[string]interface{}{
+				"title":       "mcp preset " + tc.name,
+				"description": "preset parity",
+				"manual":      false,
+			}
+			if tc.value != nil {
+				args["deliverable_preset"] = *tc.value
+			}
+			text, isErr := callTool(t, a, "torque_task_create", args)
+			require.False(t, isErr, "create should not error: %s", text)
+			var created map[string]interface{}
+			parseData(t, text, &created)
+			require.Equal(t, tc.want, created["DeliverablePreset"])
+			require.Equal(t, true, created["Manual"])
+
+			text, isErr = callTool(t, a, "torque_task_get", map[string]interface{}{"id": created["ID"].(string)})
+			require.False(t, isErr, "get should not error: %s", text)
+			var got map[string]interface{}
+			parseData(t, text, &got)
+			require.Equal(t, tc.want, got["DeliverablePreset"])
+			require.Equal(t, true, got["Manual"])
+		})
+
+		t.Run("http_"+tc.name, func(t *testing.T) {
+			body := map[string]interface{}{
+				"title":       "http preset " + tc.name,
+				"description": "preset parity",
+				"manual":      false,
+			}
+			if tc.value != nil {
+				body["deliverable_preset"] = *tc.value
+			}
+			raw, err := json.Marshal(body)
+			require.NoError(t, err)
+			resp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewReader(raw))
+			require.NoError(t, err)
+			require.Equal(t, http.StatusCreated, resp.StatusCode)
+			var created map[string]interface{}
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+			require.NoError(t, resp.Body.Close())
+			require.Equal(t, tc.want, created["deliverable_preset"])
+			require.Equal(t, true, created["manual"])
+
+			resp, err = http.Get(ts.URL + "/api/v1/tasks/" + created["id"].(string))
+			require.NoError(t, err)
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			var got map[string]interface{}
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+			require.NoError(t, resp.Body.Close())
+			require.Equal(t, tc.want, got["deliverable_preset"])
+			require.Equal(t, true, got["manual"])
+		})
+	}
 }
 
 // TestFullStack_TaskCreate_SubtodosSeed verifies torque_task_create's

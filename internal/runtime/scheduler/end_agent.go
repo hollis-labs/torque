@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/service"
 )
 
 // CW-20260503-0019 (S2.3) — Reviewer end-agent V1.
@@ -99,6 +100,10 @@ func shouldEnqueueEndAgent(task *sqlstore.TaskRecord, newStatus string) bool {
 		return false
 	}
 	return task.Kind == "agent"
+}
+
+func endAgentReviewPolicy(task *sqlstore.TaskRecord) (service.ReviewPolicy, error) {
+	return service.EffectiveReviewPolicyFromJSON(task.Metadata)
 }
 
 // enqueueEndAgent creates and inserts a kind=internal end-agent task

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -260,6 +261,69 @@ func TestSQLStore_ContextCancelClosesSubscribe(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("subscription channel did not close within 1s")
+	}
+}
+
+func TestSystemSubscriptionPreservesRecipientAndKindFilters(t *testing.T) {
+	for _, federated := range []bool{false, true} {
+		t.Run(fmt.Sprint(federated), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			cfg := messaging.RouterConfig{Local: messaging.NewStore(newDB(t))}
+			if federated {
+				cfg.LocalAuthorities = []string{"local"}
+			}
+			router, err := messaging.NewRouter(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			all, err := router.Subscribe(ctx, gomsg.Address{}, gomsg.Filter{Kind: []gomsg.Kind{gomsg.MsgKindNotice}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			alice := gomsg.Address{Kind: gomsg.KindAgent, Authority: "local", ID: "alice"}
+			bob := gomsg.Address{Kind: gomsg.KindAgent, Authority: "local", ID: "bob"}
+			forBob, err := router.Subscribe(ctx, bob, gomsg.Filter{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			send := func(to gomsg.Address, kind gomsg.Kind) gomsg.Envelope {
+				env, err := router.Send(ctx, gomsg.Envelope{Kind: kind, From: alice, To: to})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return env
+			}
+			aliceNotice := send(alice, gomsg.MsgKindNotice)
+			bobStatus := send(bob, gomsg.MsgKindStatusUpdate)
+			bobNotice := send(bob, gomsg.MsgKindNotice)
+			wantNext := func(ch <-chan gomsg.Envelope, want gomsg.Envelope) {
+				t.Helper()
+				select {
+				case got := <-ch:
+					if got.ID != want.ID {
+						t.Fatalf("got envelope %s, want %s", got.ID, want.ID)
+					}
+				case <-time.After(time.Second):
+					t.Fatalf("envelope %s was persisted but not delivered", want.ID)
+				}
+			}
+			wantNext(all, aliceNotice)
+			wantNext(all, bobNotice)
+			wantNext(forBob, bobStatus)
+			wantNext(forBob, bobNotice)
+			cancel()
+			for _, ch := range []<-chan gomsg.Envelope{all, forBob} {
+				select {
+				case _, ok := <-ch:
+					if ok {
+						t.Fatal("unexpected extra envelope")
+					}
+				case <-time.After(time.Second):
+					t.Fatal("subscription did not close")
+				}
+			}
+		})
 	}
 }
 

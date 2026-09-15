@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -44,10 +45,21 @@ func (s *Server) serveArtifactContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var taskWorkingDir string
+	if task, err := s.svc.Task.Get(art.TaskID); err == nil {
+		taskWorkingDir = task.WorkingDir
+	}
+
+	candidate, err := artifactCandidatePath(art.FilePath, taskWorkingDir)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+
 	// Resolve the candidate to an absolute, symlink-free path. EvalSymlinks
 	// also returns an error if any component does not exist, which we map to
 	// 404 so callers cannot distinguish "missing" from "outside allowlist".
-	resolved, err := resolvePath(art.FilePath)
+	resolved, err := resolvePath(candidate)
 	if err != nil {
 		if os.IsNotExist(err) {
 			writeError(w, http.StatusNotFound, "artifact file not found on disk")
@@ -59,10 +71,6 @@ func (s *Server) serveArtifactContent(w http.ResponseWriter, r *http.Request) {
 
 	// Collect the allowed roots. A root is skipped if it is empty or the
 	// symlink-resolve fails — never let a bad root upgrade to "allow all".
-	var taskWorkingDir string
-	if task, err := s.svc.Task.Get(art.TaskID); err == nil {
-		taskWorkingDir = task.WorkingDir
-	}
 	roots := collectAllowedRoots(taskWorkingDir)
 
 	if !anyRootContains(roots, resolved) {
@@ -104,6 +112,33 @@ func (s *Server) serveArtifactContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	io.Copy(w, f) //nolint:errcheck
+}
+
+// artifactCandidatePath returns the path that should be resolved and checked.
+// Absolute artifact rows keep their existing semantics. Relative artifact rows
+// are rooted in the owning task's existing absolute working directory.
+func artifactCandidatePath(filePath, taskWorkingDir string) (string, error) {
+	if filepath.IsAbs(filePath) {
+		return filePath, nil
+	}
+	if taskWorkingDir == "" {
+		return "", errors.New("relative artifact file_path requires task working_dir")
+	}
+	if !filepath.IsAbs(taskWorkingDir) {
+		return "", fmt.Errorf("relative artifact file_path requires absolute task working_dir: %q", taskWorkingDir)
+	}
+	root, err := resolvePath(taskWorkingDir)
+	if err != nil {
+		return "", fmt.Errorf("relative artifact file_path requires usable task working_dir: %w", err)
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		return "", fmt.Errorf("relative artifact file_path requires usable task working_dir: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("relative artifact file_path requires directory task working_dir: %q", taskWorkingDir)
+	}
+	return filepath.Join(root, filePath), nil
 }
 
 // resolvePath returns the absolute, symlink-resolved form of p.

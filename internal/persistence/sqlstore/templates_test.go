@@ -39,7 +39,19 @@ func TestTemplate_CreateAndGet(t *testing.T) {
 	// Defaults applied by store.
 	assert.Equal(t, "review", got.OnDone)
 	assert.Equal(t, "retry", got.OnFail)
-	assert.Equal(t, 3, got.MaxRetries)
+	assert.Equal(t, 0, got.MaxRetries)
+}
+
+func TestTemplate_CreateAndGet_PreservesExplicitZeroRetries(t *testing.T) {
+	store := setupTestStore(t)
+
+	tpl := sampleTemplate("zero-retries", 1)
+	tpl.MaxRetries = 0
+	require.NoError(t, store.CreateTemplate(tpl))
+
+	got, err := store.GetTemplate("zero-retries", 1)
+	require.NoError(t, err)
+	assert.Equal(t, 0, got.MaxRetries)
 }
 
 func TestTemplate_GetNotFound(t *testing.T) {

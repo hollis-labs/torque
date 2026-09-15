@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -31,6 +32,11 @@ var statusPollInterval = 5 * time.Second
 // punishing every healthy run with a tighter bound.
 const workerVerifyTimeout = 30 * time.Second
 
+const (
+	operatorPauseReason   = "operator_pause: task transitioned to paused"
+	metaStopCauseOperator = "operator_pause"
+)
+
 // runLongLived dispatches a kind=agent worker as a long-lived agent.Boot
 // session, then drives the worker's completion via three signals: an
 // explicit self-transition out of "doing", an in-memory inactivity timer
@@ -54,8 +60,9 @@ const workerVerifyTimeout = 30 * time.Second
 //     than discarding the work.
 //
 //  3. Wall-clock hard ceiling elapses (default 12h, override hard_ceiling_
-//     seconds). The run completes as failed; this is the "forgotten worker"
-//     safety net, not a budget.
+//     seconds, with task max_duration_ms taking precedence as the dispatch
+//     deadline). The run completes as failed; this is the absolute wall-clock
+//     guard, not an inactivity budget.
 //
 //  4. Caller ctx cancellation (scheduler shutdown / external transition):
 //     the run completes as failed with reason="execution canceled".
@@ -83,6 +90,7 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 	// we only care about "did anything arrive since the last timer fire?",
 	// not the count.
 	activityCh := make(chan struct{}, 1)
+	terminalFailureCh := make(chan string, 1)
 
 	// turnDoneCh signals the reminder goroutine on every EventDone the
 	// drain observes — the turn-boundary signal for streaming-stdio
@@ -136,7 +144,11 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 		}
 	}()
 
-	opts = opts.withEventFanout(fanout)
+	inactivityThreshold := resolveInactivityThreshold(opts)
+	hardCeiling := resolveHardCeiling(opts)
+	taskDeadlineCeiling := hardCeilingIsTaskDeadline(opts, hardCeiling)
+
+	opts = opts.withEventFanout(fanout).withTerminalFailure(terminalFailureCh)
 	sess, bootErr := Boot(ctx, e.deps, opts)
 	if bootErr != nil {
 		// Boot failed before Start succeeded — the lib's terminal-state
@@ -148,6 +160,9 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 		if streamErr != nil {
 			reason = streamErr.Error() + " | " + reason
 		}
+		if taskDeadlineExpired(ctx) && taskDeadlineCeiling {
+			return longLivedOutcome{Kind: outcomeHardCeiling, CeilingAt: hardCeiling, TaskDeadline: true}.toExecutionResult(result, streamErr), nil
+		}
 		return &executor.ExecutionResult{Status: "failed", Reason: reason}, nil
 	}
 	if sess == nil {
@@ -155,9 +170,6 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 		fanoutWG.Wait()
 		return &executor.ExecutionResult{Status: "failed", Reason: "agent.Boot returned nil session without error"}, nil
 	}
-
-	inactivityThreshold := resolveInactivityThreshold(opts)
-	hardCeiling := resolveHardCeiling(opts)
 
 	// Turn-boundary reminder pump (CW-20260519-0065). Starts here so
 	// sess.ID and opts.TaskID are bound; the drain goroutine has been
@@ -169,7 +181,20 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 	reminderWG.Add(1)
 	go runReminderPump(ctx, managerTurnSender{mgr: e.deps.Sessions}, e.deps.Reminder, opts.TaskID, sess, turnDoneCh, &reminderWG)
 
-	outcome := awaitLongLivedCompletion(ctx, e.deps, opts.TaskID, sess.ID, activityCh, inactivityThreshold, hardCeiling)
+	outcome := awaitLongLivedCompletion(ctx, e.deps, opts.TaskID, sess.ID, activityCh, terminalFailureCh, inactivityThreshold, hardCeiling, taskDeadlineCeiling)
+	if outcome.Kind == outcomeHardCeiling && taskDeadlineCeiling {
+		outcome.TaskDeadline = true
+	}
+	if outcome.operatorPause() {
+		if err := e.deps.Sessions.markOperatorPaused(context.Background(), sess.ID, operatorPauseReason); err != nil {
+			log.Printf("agent: runLongLived mark operator-paused session %s failed: %v", sess.ID, err)
+		}
+	}
+	if outcome.Kind == outcomeTerminalFailure || (outcome.Kind == outcomeHardCeiling && outcome.TaskDeadline) {
+		if err := e.deps.Sessions.protectTerminalFailure(context.Background(), sess.ID); err != nil {
+			log.Printf("agent: runLongLived protect failed session %s failed: %v", sess.ID, err)
+		}
+	}
 
 	// Stop the live session. teardownSession (registered as the lib's
 	// terminal-state hook) closes the stream fanout, which drains any
@@ -184,6 +209,13 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 		log.Printf("agent: runLongLived stop session %s failed: %v", sess.ID, err)
 	}
 	cancel()
+	if outcome.Kind == outcomeTerminalFailure || (outcome.Kind == outcomeHardCeiling && outcome.TaskDeadline) {
+		waitCtx, waitCancel := context.WithTimeout(context.Background(), stopGraceWindow)
+		if _, err := e.deps.Sessions.Wait(waitCtx, sess.ID); err != nil && !errors.Is(err, ErrSessionNotRunning) && !errors.Is(err, context.DeadlineExceeded) {
+			log.Printf("agent: runLongLived wait failed session %s failed: %v", sess.ID, err)
+		}
+		waitCancel()
+	}
 	close(fanout)
 	fanoutWG.Wait()
 
@@ -241,6 +273,33 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 	return res, nil
 }
 
+func (m *Manager) markOperatorPaused(ctx context.Context, id, reason string) error {
+	if m == nil || m.deps == nil || id == "" {
+		return nil
+	}
+	if err := m.protectTerminalCanceled(ctx, id); err != nil {
+		return err
+	}
+	if m.deps.Store == nil {
+		return nil
+	}
+	rec, err := m.deps.Store.GetSession(id)
+	if err != nil {
+		return err
+	}
+	meta := decodeMeta(rec.MetaJSON)
+	if meta == nil {
+		meta = map[string]string{}
+	}
+	meta[metaKeyStopCause] = metaStopCauseOperator
+	meta[metaKeyStopReason] = reason
+	b, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	return m.deps.UpdateSessionMeta(ctx, id, string(b))
+}
+
 // longLivedOutcome captures the wait-loop's verdict on why a long-lived
 // worker exited its "doing" phase. The four cases map 1:1 onto distinct
 // ExecutionResult shapes — see toExecutionResult.
@@ -264,6 +323,11 @@ type longLivedOutcome struct {
 	// CeilingAt is the threshold that fired for Kind=hardCeiling.
 	CeilingAt time.Duration
 
+	// TaskDeadline marks outcomeHardCeiling values that came from the
+	// task's max_duration_ms dispatch deadline rather than the metadata /
+	// default forgotten-worker ceiling.
+	TaskDeadline bool
+
 	// CauseErr captures the ctx error for Kind=ctxCanceled. Populated
 	// from ctx.Err() (not context.Cause(ctx)) because the callers that
 	// cancel us today — pool shutdown, scheduler stop, dispatchCtx
@@ -273,6 +337,12 @@ type longLivedOutcome struct {
 	// (toExecutionResult) just renders the Error() string and is
 	// agnostic to either source.
 	CauseErr error
+
+	TerminalFailure string
+}
+
+func (o longLivedOutcome) operatorPause() bool {
+	return o.Kind == outcomeTransition && o.TaskStatus == "paused"
 }
 
 type longLivedOutcomeKind int
@@ -283,13 +353,14 @@ const (
 	outcomeIdle
 	outcomeHardCeiling
 	outcomeCtxCanceled
+	outcomeTerminalFailure
 )
 
 // awaitLongLivedCompletion polls the worker's task.Status and watches the
 // activity channel + hard ceiling + ctx. Returns when any of the four
 // completion signals fires. Polling cadence is statusPollInterval (5s by
 // default); the inactivity timer is in-memory and reset on every event.
-func awaitLongLivedCompletion(ctx context.Context, deps *Dependencies, taskID, sessID string, activityCh <-chan struct{}, inactivityThreshold, hardCeiling time.Duration) longLivedOutcome {
+func awaitLongLivedCompletion(ctx context.Context, deps *Dependencies, taskID, sessID string, activityCh <-chan struct{}, terminalFailureCh <-chan string, inactivityThreshold, hardCeiling time.Duration, taskDeadlineCeiling bool) longLivedOutcome {
 	statusTicker := time.NewTicker(statusPollInterval)
 	defer statusTicker.Stop()
 
@@ -322,6 +393,9 @@ func awaitLongLivedCompletion(ctx context.Context, deps *Dependencies, taskID, s
 					BlockedReason: rec.BlockedReason,
 				}
 			}
+			if taskDeadlineExpired(ctx) && taskDeadlineCeiling {
+				return longLivedOutcome{Kind: outcomeHardCeiling, CeilingAt: hardCeiling, TaskDeadline: true}
+			}
 			return longLivedOutcome{Kind: outcomeCtxCanceled, CauseErr: ctx.Err()}
 
 		case <-activityCh:
@@ -336,10 +410,22 @@ func awaitLongLivedCompletion(ctx context.Context, deps *Dependencies, taskID, s
 			}
 			inactivityTimer.Reset(inactivityThreshold)
 
+		case msg := <-terminalFailureCh:
+			return longLivedOutcome{Kind: outcomeTerminalFailure, TerminalFailure: msg}
+
 		case <-inactivityTimer.C:
 			return longLivedOutcome{Kind: outcomeIdle, IdleFor: inactivityThreshold}
 
 		case <-hardTimer.C:
+			if taskDeadlineCeiling {
+				if rec, err := deps.Store.GetTask(taskID); err == nil && rec != nil && rec.Status != "doing" {
+					return longLivedOutcome{
+						Kind:          outcomeTransition,
+						TaskStatus:    rec.Status,
+						BlockedReason: rec.BlockedReason,
+					}
+				}
+			}
 			return longLivedOutcome{Kind: outcomeHardCeiling, CeilingAt: hardCeiling}
 
 		case <-statusTicker.C:
@@ -362,6 +448,10 @@ func awaitLongLivedCompletion(ctx context.Context, deps *Dependencies, taskID, s
 			}
 		}
 	}
+}
+
+func taskDeadlineExpired(ctx context.Context) bool {
+	return errors.Is(context.Cause(ctx), errTaskMaxDurationExceeded)
 }
 
 // toExecutionResult maps a longLivedOutcome onto the ExecutionResult shape
@@ -409,6 +499,9 @@ func (o longLivedOutcome) toExecutionResult(result *executor.ExecutionResult, st
 			if result.Reason == "" {
 				result.Reason = "worker self-transitioned to blocked"
 			}
+		case "paused":
+			result.Status = "canceled"
+			result.Reason = operatorPauseReason
 		case "cancelled", "canceled":
 			result.Status = "canceled"
 			if o.BlockedReason != "" {
@@ -431,7 +524,11 @@ func (o longLivedOutcome) toExecutionResult(result *executor.ExecutionResult, st
 		result.Reason = fmt.Sprintf("worker idle past %s — no executor events received within the inactivity threshold", o.IdleFor)
 	case outcomeHardCeiling:
 		result.Status = "failed"
-		result.Reason = fmt.Sprintf("worker exceeded hard ceiling of %s", o.CeilingAt)
+		if o.TaskDeadline {
+			result.Reason = fmt.Sprintf("task deadline exceeded after %s", o.CeilingAt)
+		} else {
+			result.Reason = fmt.Sprintf("worker exceeded hard ceiling of %s", o.CeilingAt)
+		}
 	case outcomeCtxCanceled:
 		result.Status = "failed"
 		if o.CauseErr != nil {
@@ -439,9 +536,18 @@ func (o longLivedOutcome) toExecutionResult(result *executor.ExecutionResult, st
 		} else {
 			result.Reason = "execution canceled"
 		}
+	case outcomeTerminalFailure:
+		result.Status = "blocked"
+		result.Reason = o.TerminalFailure
+		if result.Reason == "" {
+			result.Reason = "terminal provider turn failed"
+		}
 	default:
 		result.Status = "failed"
 		result.Reason = "unknown long-lived outcome"
+	}
+	if streamErr != nil && result.Reason == streamErr.Error() {
+		return result
 	}
 	if streamErr != nil && result.Reason != "" {
 		result.Reason = streamErr.Error() + " | " + result.Reason

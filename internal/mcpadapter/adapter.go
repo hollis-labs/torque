@@ -204,6 +204,11 @@ func (a *Adapter) addTool(t mcp.Tool, h server.ToolHandlerFunc) {
 		if res := rejectUnknown(req); res != nil {
 			return res, nil
 		}
+		if toolName == "torque_task_list" || toolName == "torque_task_facets" {
+			if res := rejectMalformedTaskListTags(req); res != nil {
+				return res, nil
+			}
+		}
 		return inner(ctx, req)
 	}
 	a.server.AddTool(t, traced)
@@ -285,6 +290,7 @@ Example: {}`),
 	), a.handleHealth)
 	a.registerTaskTools()
 	a.registerTaskBulkTools()
+	a.registerTagTools()
 	a.registerRunTools()
 	a.registerArtifactTools()
 	a.registerCommentTools()

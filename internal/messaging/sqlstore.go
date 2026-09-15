@@ -253,9 +253,16 @@ func (s *Store) Cancel(ctx context.Context, id string) error {
 // Returns a channel that closes when ctx is canceled. Live-only; no
 // historical replay (callers use Inbox/Thread for that).
 func (s *Store) Subscribe(ctx context.Context, to messaging.Address, f messaging.Filter) (<-chan messaging.Envelope, error) {
+	// Torque's internal reactor and steering loops use the zero address to
+	// observe all local recipients. Address.URN renders even zero as msg:///,
+	// which must not become an exact-recipient filter.
+	toURN := ""
+	if to != (messaging.Address{}) {
+		toURN = to.URN()
+	}
 	sub := &subscription{
 		to:     to,
-		toURN:  to.URN(),
+		toURN:  toURN,
 		ch:     make(chan messaging.Envelope, 16),
 		filter: f,
 		ctx:    ctx,
@@ -282,12 +289,12 @@ func (s *Store) Subscribe(ctx context.Context, to messaging.Address, f messaging
 
 func (s *Store) fanOut(env messaging.Envelope) {
 	s.mu.Lock()
-	subs := make([]*subscription, len(s.subscribers))
-	copy(subs, s.subscribers)
-	s.mu.Unlock()
+	defer s.mu.Unlock()
 
 	envURN := env.To.URN()
-	for _, sub := range subs {
+	// Sends are nonblocking. Hold the registry lock until they finish so a
+	// canceled subscriber cannot be removed and closed under a stale copy.
+	for _, sub := range s.subscribers {
 		if sub.toURN != "" && sub.toURN != envURN {
 			continue
 		}

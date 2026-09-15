@@ -3,6 +3,7 @@ package agent_boot
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -47,6 +48,12 @@ type composedDeps struct {
 func composeDeps(t *testing.T, cfg fakeRuntimeConfig, profileProvider string) *composedDeps {
 	t.Helper()
 	dir := t.TempDir()
+	if profileProvider == "codex" {
+		// Never import the developer's real credentials into test boot dirs.
+		authHome := t.TempDir()
+		t.Setenv("CODEX_HOME", authHome)
+		require.NoError(t, os.WriteFile(filepath.Join(authHome, "auth.json"), []byte(`{"OPENAI_API_KEY":"synthetic-test-credential"}`), 0600))
+	}
 	db, err := sqlitekit.OpenWriter(context.Background(), filepath.Join(dir, "agent_boot.db"), sqlitekit.OpenOptions{Options: sqlitekit.WriterOptions()})
 	require.NoError(t, err)
 	require.NoError(t, migrations.Run(db))

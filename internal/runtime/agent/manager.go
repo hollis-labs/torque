@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/hollis-labs/go-agent-wrapper/wrapper"
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/runtime/writeq"
 	"github.com/oklog/ulid/v2"
 )
 
@@ -54,6 +56,11 @@ type Manager struct {
 	pidPollers     map[string]func()         // sessID → close() for the per-session PID poller (CW-20260509-0008) -- legacy (jsonrpc-stdio) sessions only; wrapper-routed sessions get PID/heartbeat from torqueRuntimeEventSink instead (CW-20260904-0098)
 	activityFrozen map[string]struct{}       // sessID → suppress heartbeat TouchSession after an error/auth frame; lifted by content-bearing stream events or teardown (CW-20260519-0130)
 
+	terminalMu              sync.Mutex
+	terminalFailed          map[string]struct{} // sessID → provider terminal failure already classified; state sink/event sink must not downgrade to done
+	terminalCanceled        map[string]struct{} // sessID → operator/scheduler cancellation already classified; state sink/event sink must not downgrade to done
+	terminalSinkBeforeWrite func()
+
 	// wrapperSessions holds the go-agent-wrapper-routed sessions (CW-20260904-0098):
 	// claude/opencode's RuntimeKindStreamingStdio/Subprocess/ServeHTTP kinds boot
 	// through wrapper.Wrapper.Run instead of the legacy agentsessions.Manager (m.inner)
@@ -81,23 +88,26 @@ func NewManager(deps *Dependencies) *Manager {
 		deps = &Dependencies{}
 	}
 	m := &Manager{
-		deps:            deps,
-		idFn:            defaultSessionID,
-		nowFn:           time.Now,
-		pidPollInterval: defaultPidPollInterval,
-		loopbacks:       make(map[string]LoopbackHandle),
-		stderrs:         make(map[string]func()),
-		streams:         make(map[string]func()),
-		bootDirs:        make(map[string]string),
-		pidPollers:      make(map[string]func()),
-		activityFrozen:  make(map[string]struct{}),
-		wrapperSessions: make(map[string]*wrapperHandle),
+		deps:             deps,
+		idFn:             defaultSessionID,
+		nowFn:            time.Now,
+		pidPollInterval:  defaultPidPollInterval,
+		loopbacks:        make(map[string]LoopbackHandle),
+		stderrs:          make(map[string]func()),
+		streams:          make(map[string]func()),
+		bootDirs:         make(map[string]string),
+		pidPollers:       make(map[string]func()),
+		activityFrozen:   make(map[string]struct{}),
+		terminalFailed:   make(map[string]struct{}),
+		terminalCanceled: make(map[string]struct{}),
+		wrapperSessions:  make(map[string]*wrapperHandle),
 	}
 	emitter := NewSchedulerEmitter(deps.Bus)
-	stateSink := &storeStateSink{deps: deps}
+	stateSink := &storeStateSink{deps: deps, manager: m}
 	eventSink := &busEventSink{
 		events:     emitter,
 		onTerminal: m.teardownSession,
+		manager:    m,
 	}
 	m.inner = agentsessions.NewManager(stateSink).WithEventSink(eventSink)
 	return m
@@ -128,6 +138,97 @@ func (m *Manager) WithPidPollInterval(d time.Duration) *Manager {
 		m.pidPollInterval = d
 	}
 	return m
+}
+
+func (m *Manager) protectTerminalFailure(ctx context.Context, id string) error {
+	if m == nil || m.deps == nil {
+		return nil
+	}
+	m.terminalMu.Lock()
+	defer m.terminalMu.Unlock()
+	if m.terminalFailed == nil {
+		m.terminalFailed = make(map[string]struct{})
+	}
+	m.terminalFailed[id] = struct{}{}
+
+	exit := -1
+	return m.deps.UpdateSessionState(ctx, id, string(StatusFailed), 0, &exit)
+}
+
+func (m *Manager) terminalFailureProtected(id string) bool {
+	if m == nil {
+		return false
+	}
+	_, ok := m.terminalFailed[id]
+	return ok
+}
+
+func (m *Manager) protectTerminalCanceled(ctx context.Context, id string) error {
+	if m == nil || m.deps == nil {
+		return nil
+	}
+	m.terminalMu.Lock()
+	defer m.terminalMu.Unlock()
+	if m.terminalCanceled == nil {
+		m.terminalCanceled = make(map[string]struct{})
+	}
+	m.terminalCanceled[id] = struct{}{}
+
+	exit := -1
+	return m.deps.UpdateSessionState(ctx, id, string(StatusCanceled), 0, &exit)
+}
+
+func (m *Manager) terminalCanceledProtected(id string) bool {
+	if m == nil {
+		return false
+	}
+	_, ok := m.terminalCanceled[id]
+	return ok
+}
+
+func (m *Manager) updateSessionStateFromSink(ctx context.Context, id string, state agentsessions.State, pid int, exit *int) error {
+	m.terminalMu.Lock()
+	defer m.terminalMu.Unlock()
+	if m.terminalCanceledProtected(id) {
+		forcedExit := -1
+		return m.deps.UpdateSessionState(ctx, id, string(StatusCanceled), 0, &forcedExit)
+	}
+	if m.terminalFailureProtected(id) {
+		forcedExit := -1
+		return m.deps.UpdateSessionState(ctx, id, string(StatusFailed), 0, &forcedExit)
+	}
+	if m.terminalSinkBeforeWrite != nil {
+		m.terminalSinkBeforeWrite()
+	}
+	return m.deps.UpdateSessionState(ctx, id, string(state), pid, exit)
+}
+
+func (m *Manager) normalizeTerminalEvent(ev agentsessions.LifecycleEvent) agentsessions.LifecycleEvent {
+	if m == nil {
+		return ev
+	}
+	switch agentsessions.State(ev.To) {
+	case agentsessions.StateDone, agentsessions.StateFailed:
+	default:
+		return ev
+	}
+	m.terminalMu.Lock()
+	defer m.terminalMu.Unlock()
+	if m.terminalCanceledProtected(ev.SessionID) {
+		ev.To = agentsessions.State(StatusCanceled)
+		exit := -1
+		ev.ExitCode = &exit
+		delete(m.terminalCanceled, ev.SessionID)
+		return ev
+	}
+	if !m.terminalFailureProtected(ev.SessionID) {
+		return ev
+	}
+	ev.To = agentsessions.StateFailed
+	exit := -1
+	ev.ExitCode = &exit
+	delete(m.terminalFailed, ev.SessionID)
+	return ev
 }
 
 // inner returns the wrapped agentsessions.Manager so package-internal Boot
@@ -572,7 +673,7 @@ func (m *Manager) Sweep() (int, error) {
 	}
 	return m.deps.Store.SweepStaleSessions(func(rec *sqlstore.SessionRecord) bool {
 		if rec.PID <= 0 {
-			return false
+			return true
 		}
 		err := syscall.Kill(rec.PID, syscall.Signal(0))
 		switch {
@@ -584,6 +685,184 @@ func (m *Manager) Sweep() (int, error) {
 			return false // ESRCH or other — treat as dead
 		}
 	})
+}
+
+// ReconcileInterruptedRuns repairs scheduler-dispatched runs whose explicitly
+// linked agent session was proven dead by the startup sweep. This is daemon
+// owner work: stdio MCP processes may construct AgentDeps for session tools,
+// but they do not own the scheduler and must not mutate run/task state.
+func (m *Manager) ReconcileInterruptedRuns(ctx context.Context) (int, error) {
+	if m.deps == nil || m.deps.Store == nil {
+		return 0, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	sessions, err := m.deps.Store.ListSessions(sqlstore.SessionFilter{State: string(StatusCrashed)})
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, sess := range sessions {
+		runID, ok := linkedRunID(sess)
+		if !ok {
+			continue
+		}
+		reconciled, err := m.reconcileInterruptedRun(ctx, sess, runID)
+		if err != nil {
+			return count, err
+		}
+		if reconciled {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (m *Manager) reconcileInterruptedRun(ctx context.Context, sess *sqlstore.SessionRecord, runID int64) (bool, error) {
+	reason := "worker session crashed during daemon restart; partial work may exist; inspect run/session logs and resume or repair manually"
+	if sess == nil || sess.ID == "" {
+		return false, nil
+	}
+	writer := m.deps.StateWriter
+	if writer == nil {
+		writer = writeq.NewDirect(m.deps.Store)
+	}
+	changed := false
+	err := writer.Submit(ctx, "agent_reconcile_interrupted_run", func(tx *sqlstore.WriteTx) error {
+		var sessionState string
+		var taskID sql.NullString
+		var metaJSON string
+		if err := tx.QueryRow(`SELECT state, task_id, meta FROM sessions WHERE id = ?`, sess.ID).Scan(&sessionState, &taskID, &metaJSON); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return err
+		}
+		if sessionState != string(StatusCrashed) || !taskID.Valid || taskID.String == "" {
+			return nil
+		}
+		linked, ok := linkedRunIDFromMeta(metaJSON)
+		if !ok || linked != runID {
+			return nil
+		}
+		var runTaskID, runStatus string
+		if err := tx.QueryRow(`SELECT task_id, status FROM runs WHERE id = ?`, runID).Scan(&runTaskID, &runStatus); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return err
+		}
+		if runTaskID != taskID.String || runStatus != sqlstore.RunStatusRunning {
+			return nil
+		}
+		liveLinked, err := hasLiveSessionLinkedToRun(tx, taskID.String, sess.ID, runID)
+		if err != nil {
+			return err
+		}
+		if liveLinked {
+			return nil
+		}
+		res, err := tx.Exec(
+			`UPDATE runs SET status = ?, ended_at = ?, error_message = ?
+			 WHERE id = ? AND status = ?`,
+			sqlstore.RunStatusKilled, time.Now().UTC(), reason, runID, sqlstore.RunStatusRunning,
+		)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return nil
+		}
+		changed = true
+		_, err = tx.AppendRunEvent(&sqlstore.RunEventRecord{
+			RunID:   sql.NullInt64{Int64: runID, Valid: true},
+			TaskID:  taskID.String,
+			Type:    "run_interrupted",
+			Payload: fmt.Sprintf(`{"session_id":%q,"reason":%q}`, sess.ID, reason),
+		})
+		if err != nil {
+			return err
+		}
+		var taskStatus string
+		var manual int
+		if err := tx.QueryRow(`SELECT status, manual FROM tasks WHERE id = ?`, taskID.String).Scan(&taskStatus, &manual); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return err
+		}
+		var newerRuns int
+		if err := tx.QueryRow(
+			`SELECT COUNT(*) FROM runs WHERE task_id = ? AND id > ?`,
+			taskID.String, runID,
+		).Scan(&newerRuns); err != nil {
+			return err
+		}
+		if taskStatus != "doing" || manual != 0 || newerRuns != 0 {
+			return nil
+		}
+		if err := tx.TransitionTaskWithReason(taskID.String, "blocked", reason); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return changed, nil
+}
+
+func linkedRunID(sess *sqlstore.SessionRecord) (int64, bool) {
+	if sess == nil {
+		return 0, false
+	}
+	return linkedRunIDFromMeta(sess.MetaJSON)
+}
+
+func linkedRunIDFromMeta(metaJSON string) (int64, bool) {
+	meta := decodeMeta(metaJSON)
+	if meta == nil {
+		return 0, false
+	}
+	raw := meta[metaKeyRunID]
+	if raw == "" {
+		return 0, false
+	}
+	runID, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || runID <= 0 {
+		return 0, false
+	}
+	return runID, true
+}
+
+func hasLiveSessionLinkedToRun(tx *sqlstore.WriteTx, taskID, excludeSessionID string, runID int64) (bool, error) {
+	rows, err := tx.Query(
+		`SELECT id, meta FROM sessions WHERE task_id = ? AND state IN ('launching','running')`,
+		taskID,
+	)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, metaJSON string
+		if err := rows.Scan(&id, &metaJSON); err != nil {
+			return false, err
+		}
+		if id == excludeSessionID {
+			continue
+		}
+		linked, ok := linkedRunIDFromMeta(metaJSON)
+		if ok && linked == runID {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // Shutdown stops accepting new boots and waits for in-flight watch
@@ -777,7 +1056,25 @@ const (
 	metaKeyBootDir         = "torque.boot_dir"
 	metaKeyWorkspaceDir    = "torque.workspace_dir"
 	metaKeyParentSessionID = "torque.parent_session_id"
+	metaKeyRunID           = "torque.run_id"
+	metaKeyStopCause       = "torque.stop_cause"
+	metaKeyStopReason      = "torque.stop_reason"
 )
+
+func callerSessionMeta(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in)+4)
+	for k, v := range in {
+		out[k] = v
+	}
+	delete(out, metaKeyMode)
+	delete(out, metaKeyBootDir)
+	delete(out, metaKeyWorkspaceDir)
+	delete(out, metaKeyParentSessionID)
+	delete(out, metaKeyRunID)
+	delete(out, metaKeyStopCause)
+	delete(out, metaKeyStopReason)
+	return out
+}
 
 // sessionFromRecord projects a sqlstore row onto the public Session shape.
 // Decodes the substrate-stamped MetaJSON keys (torque.mode, .boot_dir,

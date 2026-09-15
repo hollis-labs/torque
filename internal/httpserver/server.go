@@ -75,6 +75,7 @@ func (s *Server) routes() {
 		r.Get("/tasks", s.listTasks)
 		r.Post("/tasks", s.createTask)
 		r.Get("/tasks/search", s.searchTasks)
+		r.Get("/tasks/facets", s.taskFacets)
 		r.Post("/tasks/bulk-transition", s.bulkTransitionTasks)
 		r.Get("/tasks/{id}", s.getTask)
 		r.Put("/tasks/{id}", s.updateTask)
@@ -184,12 +185,16 @@ func (s *Server) routes() {
 		r.Get("/artifacts", s.listArtifacts)
 		r.Post("/artifacts", s.createArtifact)
 		r.Get("/artifacts/{id}", s.getArtifact)
+		r.Patch("/artifacts/{id}", s.updateArtifact)
 		r.Delete("/artifacts/{id}", s.deleteArtifact)
+		r.Head("/artifacts/{id}/content", s.serveArtifactContent)
 		r.Get("/artifacts/{id}/content", s.serveArtifactContent)
 
 		// Comments
+		r.Get("/comments/search", s.searchComments)
 		r.Get("/comments", s.listComments)
 		r.Post("/comments", s.addComment)
+		r.Delete("/comments/{id}", s.deleteComment)
 
 		// Settings
 		r.Get("/settings", s.getAllSettings)

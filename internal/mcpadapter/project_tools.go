@@ -11,21 +11,6 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// projectSortAllowList is torque_project_list's sort_by allow-list
-// (PRIM-002), per pagination.ValidateSortBy's doc comment ("Epic/Sprint/
-// Project: name, status, updated_at, created_at").
-var projectSortAllowList = []string{"name", "status", "updated_at", "created_at"}
-
-// projectSortDefaultBy/projectSortDefaultDir are torque_project_list's
-// default sort_by/sort_dir when the caller omits both — "name ASC" matches
-// the tool's own historical/documented default order (FIX-004), so a
-// caller that never touches sort_by/sort_dir sees the same order as
-// before cursor pagination landed.
-const (
-	projectSortDefaultBy  = "name"
-	projectSortDefaultDir = "asc"
-)
-
 func (a *Adapter) registerProjectTools() {
 	a.addTool(mcp.NewTool("torque_project_create",
 		mcp.WithDescription(`Create a project (feature-flagged: requires features.projects). Returns the ProjectRecord.
@@ -38,6 +23,7 @@ Example: {"name":"Torque","repo_path":"/Users/me/Projects/torque"}`),
 		mcp.WithString("repo_path", mcp.Description("Repository path — absolute or ~-prefixed; must point at an existing directory")),
 		mcp.WithString("agent_path", mcp.Description("Path to an agent spec file for this project, relative to repo_path or absolute")),
 		mcp.WithString("icon", mcp.Description("Icon identifier/name for UI display")),
+		mcp.WithString("status", mcp.Description("Initial status: active|inactive (default active when omitted)")),
 		mcp.WithString("read_paths", mcp.Description("JSON array of paths this project's agents may read")),
 		mcp.WithString("write_paths", mcp.Description("JSON array of paths this project's agents may write")),
 		mcp.WithString("context_paths", mcp.Description("JSON array of paths providing background context")),
@@ -76,6 +62,7 @@ Example: {"id":"PRJ-20260820-0001","status":"inactive"}`),
 		mcp.WithDescription(`List projects with optional status filter; ordered name ASC (tiebreak id ASC) by default. Pass sort_by (name|status|updated_at|created_at) and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid.
 Use for project discovery; torque_project_get when you know the ID, torque_task_list with project_id filter for the project's task set. Default brief shape; pass verbose="true" for full records.
 Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under.
+Explicit malformed, blank, fractional, overflow, unsafe native-float, or negative limit values reject with error.code=arg_invalid, field=limit; omitted limit defaults to 100 and oversized limits clamp to 500.
 Response shape: data = {items: [<briefProject or ProjectRecord>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
 Example: {"status":"active","limit":"50"}`),
 		mcp.WithString("status", mcp.Description("Filter: active|inactive")),
@@ -150,6 +137,10 @@ func (a *Adapter) handleProjectCreate(ctx context.Context, req mcp.CallToolReque
 		RepoPath:    reqStr(req, "repo_path"),
 		AgentPath:   reqStr(req, "agent_path"),
 		Icon:        reqStr(req, "icon"),
+	}
+	if reqHasArg(req, "status") {
+		status := reqStr(req, "status")
+		input.Status = &status
 	}
 
 	for _, f := range []struct {
@@ -304,58 +295,39 @@ func (a *Adapter) handleProjectUpdate(ctx context.Context, req mcp.CallToolReque
 	})
 }
 
-// projectSortValue formats a ProjectRecord's sortBy column into the string
-// encoding PRIM-001's cursor uses for meta.next_cursor. Mirrors
-// taskSortValue; every Project sort column is string-typed so there's no
-// integer-formatting case to handle.
-func projectSortValue(p sqlstore.ProjectRecord, sortBy string) string {
-	switch sortBy {
-	case "name":
-		return p.Name
-	case "status":
-		return p.Status
-	case "updated_at":
-		return p.UpdatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayout)
-	case "created_at":
-		return p.CreatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayout)
-	default:
-		return ""
-	}
-}
-
 func (a *Adapter) handleProjectList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	limit := clampLimit(reqInt(req, "limit"), defaultGenericListLimit, maxGenericListLimit)
-	verbose := reqStrBool(req, "verbose")
-	includeArchived := reqStrBool(req, "include_archived")
-
-	// PRIM-002/PRIM-001: sort_by/sort_dir/cursor, allow-list validated.
-	// Omitted sort values fall back to name/asc (this tool's historical
-	// default order).
-	sortBy, sortDir, afterSortValue, afterID, errRes := resolveSortAndCursor(req, projectSortDefaultBy, projectSortDefaultDir, projectSortAllowList...)
+	verbose, errRes := reqQueryBool(req, "verbose")
 	if errRes != nil {
 		return errRes, nil
 	}
-
-	filter := sqlstore.ProjectFilter{
-		Status:          reqStr(req, "status"),
+	status, errRes := reqQueryString(req, "status")
+	if errRes != nil {
+		return errRes, nil
+	}
+	includeArchived, errRes := reqQueryBool(req, "include_archived")
+	if errRes != nil {
+		return errRes, nil
+	}
+	cursor, errRes := reqQueryCursor(req)
+	if errRes != nil {
+		return errRes, nil
+	}
+	filter, normalized, err := service.NormalizeProjectQuery(service.ProjectQuery{
+		Status:          status,
 		IncludeArchived: includeArchived,
-		// Fetch one extra row beyond limit so has_more can be determined
-		// without a separate COUNT(*) query (DEC-001's cheaper-default
-		// choice); trimmed below before building the response envelope.
-		Limit:          limit + 1,
-		SortBy:         sortBy,
-		SortDir:        sortDir,
-		AfterSortValue: afterSortValue,
-		AfterID:        afterID,
+		CursorQuery:     cursor,
+	})
+	if err != nil {
+		return errFromService(err)
 	}
 	projects, err := a.svc.Project.ListPage(filter)
 	if err != nil {
 		return errFromService(err)
 	}
 
-	hasMoreFromQuery := len(projects) > limit
+	hasMoreFromQuery := len(projects) > normalized.Limit
 	if hasMoreFromQuery {
-		projects = projects[:limit]
+		projects = projects[:normalized.Limit]
 	}
 
 	items := make([]any, 0, len(projects))
@@ -368,9 +340,9 @@ func (a *Adapter) handleProjectList(ctx context.Context, req mcp.CallToolRequest
 	}
 
 	cursorAt := func(i int) (sortValue, id string) {
-		return projectSortValue(projects[i], sortBy), projects[i].ID
+		return service.ProjectQuerySortValue(projects[i], normalized.SortBy), projects[i].ID
 	}
-	return cappedCursorJSONResult(items, limit, sortBy, sortDir, hasMoreFromQuery, cursorAt)
+	return cappedCursorJSONResult(items, normalized.Limit, normalized.SortBy, normalized.SortDir, hasMoreFromQuery, cursorAt)
 }
 
 func (a *Adapter) handleProjectDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

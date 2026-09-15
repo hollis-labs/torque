@@ -44,11 +44,16 @@ var ErrTaskNotFound = errors.New("task not found")
 // SQLiteDatetimeLayout is the Go time layout matching SQLite's own
 // CURRENT_TIMESTAMP output ("YYYY-MM-DD HH:MM:SS", space-separated, UTC, no
 // zone suffix, whole-second precision) — see updatedAtNow's doc comment for
-// why every tasks.updated_at write uses this exact layout. Exported so
-// mcpadapter's taskSortValue (the encode side of PRIM-001's cursor for the
-// updated_at/created_at sort columns) formats using the identical layout
-// taskCursorArg parses/binds on the decode side.
+// why every tasks.updated_at write uses this exact layout.
 const SQLiteDatetimeLayout = "2006-01-02 15:04:05"
+
+// SQLiteDatetimeLayoutWithFractional is the cursor encoding format for
+// timestamp sort columns (CW-20260911-0080). The .999999999 fractional part
+// auto-omits trailing zeros and the decimal point itself when zero, so
+// whole-second instants still encode as 19 characters (backward-compatible
+// with existing cursors) but fractional-second instants preserve their
+// precision. Used by mcpadapter's taskSortValue and sibling entity encoders.
+const SQLiteDatetimeLayoutWithFractional = "2006-01-02 15:04:05.999999999"
 
 // updatedAtNow returns the current UTC instant, whole-second precision,
 // pre-formatted as a plain string in SQLite's native CURRENT_TIMESTAMP
@@ -110,19 +115,8 @@ func taskSortColumn(sortBy string) string {
 	}
 }
 
-// taskCursorArg converts a cursor's string-encoded sort value (DEC-001's
-// `sv` field) into the correctly-typed SQL bind argument for sortBy's
-// column.
-//
-// updated_at/created_at are validated by parsing as SQLiteDatetimeLayout,
-// but the ORIGINAL STRING sv — not a re-derived time.Time — is what gets
-// bound. Binding a time.Time here would route through modernc.org/sqlite's
-// own time.Time formatting (conn.go's bindText/formatTime), which renders
-// as "YYYY-MM-DD HH:MM:SS.ffffff +0000 UTC" — NOT the "YYYY-MM-DD HH:MM:SS"
-// shape the column actually holds (see updatedAtNow's doc comment for the
-// full story). Binding sv as a plain string sidesteps that reformatting
-// entirely, so the WHERE-clause comparison is byte-for-byte TEXT vs TEXT
-// against what's actually stored.
+// taskCursorArg validates the cursor value before the query builder binds it.
+// Timestamp values are normalized by timestampCursorArg for the active dialect.
 func taskCursorArg(sortBy, sv string) (any, error) {
 	switch sortBy {
 	case "priority":
@@ -210,16 +204,23 @@ type TaskRecord struct {
 
 // TaskFilter holds optional filter criteria for ListTasks.
 type TaskFilter struct {
-	Status    string   // single status (legacy)
-	Statuses  []string // multiple statuses (OR filter)
-	Priority  int
-	SprintID  string
-	ProjectID string
-	EpicID    string
-	Executor  string
-	TagSlugs  []string // AND-match: task must have all listed tags
-	Search    string   // case-insensitive substring match on id, title, or description
-	Limit     int
+	Status        string   // single status (legacy)
+	Statuses      []string // multiple statuses (OR filter)
+	Priority      int      // legacy exact priority; zero means unset
+	Priorities    []int    // presence-aware exact priority set; may include zero
+	PriorityGte   *int
+	PriorityLte   *int
+	SprintID      string
+	ProjectID     string
+	EpicID        string
+	Executor      string
+	TagSlugs      []string // AND-match after trimming and removing blank/duplicate slugs; case-sensitive
+	TagSlugsAny   []string // OR-match: task must have at least one listed tag
+	TagSlugsNone  []string // exclusion: task must have none of the listed tags
+	MissingFields []string // supported nullable fields that must be SQL NULL; tags means no links
+	PresentFields []string // supported nullable fields that must be SQL NOT NULL; tags means at least one link
+	Search        string   // case-insensitive substring match on id, title, or description
+	Limit         int
 
 	// Offset is legacy offset-based pagination. Dead from the MCP surface's
 	// perspective as of PRIM-001 (torque_task_list now uses cursor
@@ -245,14 +246,9 @@ type TaskFilter struct {
 	// Manual-flag filter. Nil = no filter; otherwise matches manual=0/1.
 	Manual *bool
 
-	// created_at/updated_at range filters (ENT-TASK). Empty = no bound on
-	// that side. Values must already be formatted as SQLiteDatetimeLayout
-	// UTC text — the same shape updatedAtNow/every CreateTask/UpdateTask
-	// write actually stores in these columns (see updatedAtNow's doc
-	// comment) — so the WHERE-clause comparison stays a byte-for-byte TEXT
-	// compare, same reasoning as taskCursorArg's cursor-value binding.
-	// mcpadapter's handleTaskList is responsible for parsing caller-facing
-	// RFC3339 input into this layout before it reaches ListTasks.
+	// Inclusive UTC range bounds in SQLiteDatetimeLayout, with optional
+	// fractional seconds. Adapters normalize caller timezone offsets; the
+	// store normalizes SQL keys and bind values for its database dialect.
 	CreatedAfter  string
 	CreatedBefore string
 	UpdatedAfter  string
@@ -309,6 +305,34 @@ type TaskFilter struct {
 	SortDir        string
 	AfterSortValue string
 	AfterID        string
+}
+
+type TaskListResult struct {
+	Tasks []TaskRecord
+	Total int
+}
+
+type TaskFacetValue struct {
+	Value  any
+	IsNull bool
+}
+
+type TaskFacetBucket struct {
+	Value TaskFacetValue
+	Count int
+}
+
+type TaskFacetResult struct {
+	Dimension     string
+	Buckets       []TaskFacetBucket
+	TotalDistinct int
+	Truncated     bool
+}
+
+type TaskFacetRequest struct {
+	Filter     TaskFilter
+	Dimensions []string
+	Limit      int
 }
 
 // TaskUpdate holds optional fields to update; nil pointer = no change.
@@ -523,6 +547,50 @@ func (s *Store) GetTaskStatuses(ids []string) (map[string]string, error) {
 	return result, rows.Err()
 }
 
+// normalizeTagSlugs trims and deduplicates requested slugs without changing
+// case. Empty elements are ignored, matching the HTTP CSV query contract.
+func normalizeTagSlugs(slugs []string) []string {
+	if len(slugs) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(slugs))
+	out := make([]string, 0, len(slugs))
+	for _, slug := range slugs {
+		trimmed := strings.TrimSpace(slug)
+		if trimmed != "" && !seen[trimmed] {
+			seen[trimmed] = true
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+func normalizeInts(values []int) []int {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[int]bool, len(values))
+	out := make([]int, 0, len(values))
+	for _, v := range values {
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func taskPresenceColumn(field string) (string, bool) {
+	switch field {
+	case "project_id", "sprint_id", "epic_id", "parent_id", "source_ref", "collection_id":
+		return field, true
+	case "cost_budget", "token_budget", "max_duration_ms":
+		return field, true
+	default:
+		return "", false
+	}
+}
+
 // ListTasks returns tasks matching the filter. Default order (f.SortBy ==
 // "") is priority ASC, created_at ASC — the order FIX-004 confirmed
 // torque_task_list's docstring should describe. When f.SortBy is set
@@ -531,6 +599,214 @@ func (s *Store) GetTaskStatuses(ids []string) (map[string]string, error) {
 // the cursor's (sort value, id) position (PRIM-001/DEC-001 keyset
 // pagination).
 func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
+	where, args, err := s.taskListPredicates(f)
+	if err != nil {
+		return nil, err
+	}
+	return s.listTasksRows(f, where, args)
+}
+
+func (s *Store) ListTasksPage(f TaskFilter) (TaskListResult, error) {
+	countFilter := f
+	countFilter.Limit = 0
+	countFilter.Offset = 0
+	countFilter.AfterSortValue = ""
+	countFilter.AfterID = ""
+
+	where, args, err := s.taskListPredicates(countFilter)
+	if err != nil {
+		return TaskListResult{}, err
+	}
+
+	countQ := `SELECT COUNT(*) FROM tasks`
+	if len(where) > 0 {
+		countQ += " WHERE " + strings.Join(where, " AND ")
+	}
+	var total int
+	if err := s.ReadDB().QueryRow(countQ, args...).Scan(&total); err != nil {
+		return TaskListResult{}, err
+	}
+
+	where, args, err = s.taskListPredicates(f)
+	if err != nil {
+		return TaskListResult{}, err
+	}
+	tasks, err := s.listTasksRows(f, where, args)
+	if err != nil {
+		return TaskListResult{}, err
+	}
+	return TaskListResult{Tasks: tasks, Total: total}, nil
+}
+
+func (s *Store) TaskFacets(req TaskFacetRequest) ([]TaskFacetResult, int, error) {
+	filter := req.Filter
+	filter.Limit = 0
+	filter.Offset = 0
+	filter.AfterSortValue = ""
+	filter.AfterID = ""
+	where, args, err := s.taskListPredicates(filter)
+	if err != nil {
+		return nil, 0, err
+	}
+	countQ := `SELECT COUNT(*) FROM tasks`
+	if len(where) > 0 {
+		countQ += " WHERE " + strings.Join(where, " AND ")
+	}
+	var matching int
+	if err := s.ReadDB().QueryRow(countQ, args...).Scan(&matching); err != nil {
+		return nil, 0, err
+	}
+	results := make([]TaskFacetResult, 0, len(req.Dimensions))
+	for _, dim := range req.Dimensions {
+		var r TaskFacetResult
+		var err error
+		if dim == "tags" {
+			r, err = s.taskTagFacet(where, args, req.Limit)
+		} else {
+			r, err = s.taskColumnFacet(dim, where, args, req.Limit)
+		}
+		if err != nil {
+			return nil, 0, err
+		}
+		results = append(results, r)
+	}
+	return results, matching, nil
+}
+
+func (s *Store) taskColumnFacet(dim string, where []string, args []any, limit int) (TaskFacetResult, error) {
+	col, ok := taskFacetColumn(dim)
+	if !ok {
+		return TaskFacetResult{}, fmt.Errorf("unsupported task facet dimension %q", dim)
+	}
+	from := " FROM tasks"
+	if len(where) > 0 {
+		from += " WHERE " + strings.Join(where, " AND ")
+	}
+	totalQ := "SELECT COUNT(*) FROM (SELECT " + col + from + " GROUP BY " + col + ") task_facet_values"
+	var total int
+	if err := s.ReadDB().QueryRow(totalQ, args...).Scan(&total); err != nil {
+		return TaskFacetResult{}, err
+	}
+	q := "SELECT " + col + ", COUNT(*) AS c" + from + " GROUP BY " + col +
+		" ORDER BY c DESC, CASE WHEN " + col + " IS NULL THEN 1 ELSE 0 END ASC, " + col + " ASC"
+	if limit > 0 {
+		q += fmt.Sprintf(" LIMIT %d", limit+1)
+	}
+	rows, err := s.ReadDB().Query(q, args...)
+	if err != nil {
+		return TaskFacetResult{}, err
+	}
+	defer rows.Close()
+	buckets := []TaskFacetBucket{}
+	for rows.Next() {
+		b, err := scanTaskFacetBucket(rows, dim)
+		if err != nil {
+			return TaskFacetResult{}, err
+		}
+		buckets = append(buckets, b)
+	}
+	if err := rows.Err(); err != nil {
+		return TaskFacetResult{}, err
+	}
+	truncated := limit > 0 && len(buckets) > limit
+	if truncated {
+		buckets = buckets[:limit]
+	}
+	return TaskFacetResult{Dimension: dim, Buckets: buckets, TotalDistinct: total, Truncated: truncated}, nil
+}
+
+func (s *Store) taskTagFacet(where []string, args []any, limit int) (TaskFacetResult, error) {
+	base := "SELECT id FROM tasks"
+	if len(where) > 0 {
+		base += " WHERE " + strings.Join(where, " AND ")
+	}
+	totalQ := "SELECT COUNT(*) FROM (" +
+		"SELECT tt.tag_slug FROM task_tags tt JOIN (" + base + ") cohort ON cohort.id = tt.task_id GROUP BY tt.tag_slug " +
+		"UNION ALL SELECT NULL WHERE EXISTS (SELECT 1 FROM (" + base + ") cohort_missing WHERE NOT EXISTS (SELECT 1 FROM task_tags tx WHERE tx.task_id = cohort_missing.id))" +
+		") task_tag_values"
+	totalArgs := append([]any{}, args...)
+	totalArgs = append(totalArgs, args...)
+	var total int
+	if err := s.ReadDB().QueryRow(totalQ, totalArgs...).Scan(&total); err != nil {
+		return TaskFacetResult{}, err
+	}
+	q := "SELECT value, c FROM (" +
+		"SELECT tt.tag_slug AS value, COUNT(DISTINCT tt.task_id) AS c, 0 AS is_null FROM task_tags tt JOIN (" + base + ") cohort ON cohort.id = tt.task_id GROUP BY tt.tag_slug " +
+		"UNION ALL SELECT NULL AS value, COUNT(*) AS c, 1 AS is_null FROM (" + base + ") cohort_missing WHERE NOT EXISTS (SELECT 1 FROM task_tags tx WHERE tx.task_id = cohort_missing.id)" +
+		") task_tag_counts WHERE c > 0 ORDER BY c DESC, is_null ASC, value ASC"
+	queryArgs := append([]any{}, args...)
+	queryArgs = append(queryArgs, args...)
+	if limit > 0 {
+		q += fmt.Sprintf(" LIMIT %d", limit+1)
+	}
+	rows, err := s.ReadDB().Query(q, queryArgs...)
+	if err != nil {
+		return TaskFacetResult{}, err
+	}
+	defer rows.Close()
+	buckets := []TaskFacetBucket{}
+	for rows.Next() {
+		b, err := scanTaskFacetBucket(rows, "tags")
+		if err != nil {
+			return TaskFacetResult{}, err
+		}
+		buckets = append(buckets, b)
+	}
+	if err := rows.Err(); err != nil {
+		return TaskFacetResult{}, err
+	}
+	truncated := limit > 0 && len(buckets) > limit
+	if truncated {
+		buckets = buckets[:limit]
+	}
+	return TaskFacetResult{Dimension: "tags", Buckets: buckets, TotalDistinct: total, Truncated: truncated}, nil
+}
+
+func taskFacetColumn(dim string) (string, bool) {
+	switch dim {
+	case "status", "executor", "agent_profile", "launch_profile", "kind", "project_id", "sprint_id", "epic_id", "parent_id":
+		return dim, true
+	case "priority", "manual":
+		return dim, true
+	default:
+		return "", false
+	}
+}
+
+func scanTaskFacetBucket(rows *sql.Rows, dim string) (TaskFacetBucket, error) {
+	var count int
+	switch dim {
+	case "priority":
+		var v sql.NullInt64
+		if err := rows.Scan(&v, &count); err != nil {
+			return TaskFacetBucket{}, err
+		}
+		if !v.Valid {
+			return TaskFacetBucket{Value: TaskFacetValue{IsNull: true}, Count: count}, nil
+		}
+		return TaskFacetBucket{Value: TaskFacetValue{Value: int(v.Int64)}, Count: count}, nil
+	case "manual":
+		var v sql.NullInt64
+		if err := rows.Scan(&v, &count); err != nil {
+			return TaskFacetBucket{}, err
+		}
+		if !v.Valid {
+			return TaskFacetBucket{Value: TaskFacetValue{IsNull: true}, Count: count}, nil
+		}
+		return TaskFacetBucket{Value: TaskFacetValue{Value: v.Int64 != 0}, Count: count}, nil
+	default:
+		var v sql.NullString
+		if err := rows.Scan(&v, &count); err != nil {
+			return TaskFacetBucket{}, err
+		}
+		if !v.Valid {
+			return TaskFacetBucket{Value: TaskFacetValue{IsNull: true}, Count: count}, nil
+		}
+		return TaskFacetBucket{Value: TaskFacetValue{Value: v.String}, Count: count}, nil
+	}
+}
+
+func (s *Store) taskListPredicates(f TaskFilter) ([]string, []any, error) {
 	var where []string
 	var args []any
 
@@ -545,9 +821,25 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 		where = append(where, "status = ?")
 		args = append(args, f.Status)
 	}
-	if f.Priority != 0 {
+	if len(f.Priorities) > 0 {
+		normalized := normalizeInts(f.Priorities)
+		placeholders := make([]string, len(normalized))
+		for i, p := range normalized {
+			placeholders[i] = "?"
+			args = append(args, p)
+		}
+		where = append(where, "priority IN ("+strings.Join(placeholders, ",")+")")
+	} else if f.Priority != 0 {
 		where = append(where, "priority = ?")
 		args = append(args, f.Priority)
+	}
+	if f.PriorityGte != nil {
+		where = append(where, "priority >= ?")
+		args = append(args, *f.PriorityGte)
+	}
+	if f.PriorityLte != nil {
+		where = append(where, "priority <= ?")
+		args = append(args, *f.PriorityLte)
 	}
 	if f.SprintID != "" {
 		where = append(where, "sprint_id = ?")
@@ -604,16 +896,64 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 		args = append(args, v)
 	}
 	if len(f.TagSlugs) > 0 {
-		placeholders := make([]string, len(f.TagSlugs))
-		for i, slug := range f.TagSlugs {
+		// COUNT(DISTINCT) must match the number of distinct requested slugs.
+		normalized := normalizeTagSlugs(f.TagSlugs)
+		if len(normalized) > 0 {
+			placeholders := make([]string, len(normalized))
+			for i, slug := range normalized {
+				placeholders[i] = "?"
+				args = append(args, slug)
+			}
+			args = append(args, len(normalized))
+			where = append(where, fmt.Sprintf(
+				"id IN (SELECT task_id FROM task_tags WHERE tag_slug IN (%s) GROUP BY task_id HAVING COUNT(DISTINCT tag_slug) = ?)",
+				strings.Join(placeholders, ","),
+			))
+		}
+	}
+	if normalized := normalizeTagSlugs(f.TagSlugsAny); len(normalized) > 0 {
+		placeholders := make([]string, len(normalized))
+		for i, slug := range normalized {
 			placeholders[i] = "?"
 			args = append(args, slug)
 		}
-		args = append(args, len(f.TagSlugs))
 		where = append(where, fmt.Sprintf(
-			"id IN (SELECT task_id FROM task_tags WHERE tag_slug IN (%s) GROUP BY task_id HAVING COUNT(DISTINCT tag_slug) = ?)",
+			"id IN (SELECT task_id FROM task_tags WHERE tag_slug IN (%s))",
 			strings.Join(placeholders, ","),
 		))
+	}
+	if normalized := normalizeTagSlugs(f.TagSlugsNone); len(normalized) > 0 {
+		placeholders := make([]string, len(normalized))
+		for i, slug := range normalized {
+			placeholders[i] = "?"
+			args = append(args, slug)
+		}
+		where = append(where, fmt.Sprintf(
+			"NOT EXISTS (SELECT 1 FROM task_tags task_tags_none WHERE task_tags_none.task_id = tasks.id AND task_tags_none.tag_slug IN (%s))",
+			strings.Join(placeholders, ","),
+		))
+	}
+	for _, field := range f.MissingFields {
+		if field == "tags" {
+			where = append(where, "NOT EXISTS (SELECT 1 FROM task_tags task_tags_missing WHERE task_tags_missing.task_id = tasks.id)")
+			continue
+		}
+		col, ok := taskPresenceColumn(field)
+		if !ok {
+			return nil, nil, fmt.Errorf("unsupported missing field %q", field)
+		}
+		where = append(where, col+" IS NULL")
+	}
+	for _, field := range f.PresentFields {
+		if field == "tags" {
+			where = append(where, "EXISTS (SELECT 1 FROM task_tags task_tags_present WHERE task_tags_present.task_id = tasks.id)")
+			continue
+		}
+		col, ok := taskPresenceColumn(field)
+		if !ok {
+			return nil, nil, fmt.Errorf("unsupported present field %q", field)
+		}
+		where = append(where, col+" IS NOT NULL")
 	}
 	if f.Search != "" {
 		// SQLite's LIKE is case-insensitive for ASCII by default.
@@ -629,21 +969,41 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 		where = append(where, "launch_profile = ?")
 		args = append(args, f.LaunchProfile)
 	}
+	// Range bounds compare against the normalized timestamp key,
+	// not the raw column text — a legacy-shaped row ("... +0000 UTC") is
+	// lexically greater than the same instant's canonical text, so a raw
+	// `updated_at <= ?` bound silently dropped it. See timestampSortKey.
 	if f.CreatedAfter != "" {
-		where = append(where, "created_at >= ?")
-		args = append(args, f.CreatedAfter)
+		where = append(where, s.timestampSortKey("created_at")+" >= ?")
+		bound, err := s.timestampArg(f.CreatedAfter)
+		if err != nil {
+			return nil, nil, err
+		}
+		args = append(args, bound)
 	}
 	if f.CreatedBefore != "" {
-		where = append(where, "created_at <= ?")
-		args = append(args, f.CreatedBefore)
+		where = append(where, s.timestampSortKey("created_at")+" <= ?")
+		bound, err := s.timestampArg(f.CreatedBefore)
+		if err != nil {
+			return nil, nil, err
+		}
+		args = append(args, bound)
 	}
 	if f.UpdatedAfter != "" {
-		where = append(where, "updated_at >= ?")
-		args = append(args, f.UpdatedAfter)
+		where = append(where, s.timestampSortKey("updated_at")+" >= ?")
+		bound, err := s.timestampArg(f.UpdatedAfter)
+		if err != nil {
+			return nil, nil, err
+		}
+		args = append(args, bound)
 	}
 	if f.UpdatedBefore != "" {
-		where = append(where, "updated_at <= ?")
-		args = append(args, f.UpdatedBefore)
+		where = append(where, s.timestampSortKey("updated_at")+" <= ?")
+		bound, err := s.timestampArg(f.UpdatedBefore)
+		if err != nil {
+			return nil, nil, err
+		}
+		args = append(args, bound)
 	}
 	if f.CostBudgetGte != nil {
 		where = append(where, "cost_budget >= ?")
@@ -683,22 +1043,35 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 	// layer's validation, defensively treated the same) — preserves the
 	// original hardcoded default order below rather than the cursor path.
 	sortCol := taskSortColumn(f.SortBy)
+	// Cursor predicates and ordering must compare the same precise key.
+	sortKey := s.timestampSortKey(sortCol)
 	desc := strings.EqualFold(f.SortDir, "desc")
 	if sortCol != "" && f.AfterID != "" {
 		arg, err := taskCursorArg(f.SortBy, f.AfterSortValue)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
+		}
+		arg, err = s.timestampCursorArg(sortCol, arg)
+		if err != nil {
+			return nil, nil, err
 		}
 		cmp := ">"
 		if desc {
 			cmp = "<"
 		}
-		// Tuple comparison (sortCol, id) > (arg, AfterID), or the two-clause
+		// Tuple comparison (sortKey, id) > (arg, AfterID), or the two-clause
 		// equivalent below — tiebreak on id ascending regardless of
 		// SortDir, per DEC-001.
-		where = append(where, fmt.Sprintf("(%s %s ? OR (%s = ? AND id > ?))", sortCol, cmp, sortCol))
+		where = append(where, fmt.Sprintf("(%s %s ? OR (%s = ? AND id > ?))", sortKey, cmp, sortKey))
 		args = append(args, arg, arg, f.AfterID)
 	}
+	return where, args, nil
+}
+
+func (s *Store) listTasksRows(f TaskFilter, where []string, args []any) ([]TaskRecord, error) {
+	sortCol := taskSortColumn(f.SortBy)
+	sortKey := s.timestampSortKey(sortCol)
+	desc := strings.EqualFold(f.SortDir, "desc")
 
 	q := `SELECT ` + taskSelectCols + ` FROM tasks`
 	if len(where) > 0 {
@@ -709,12 +1082,16 @@ func (s *Store) ListTasks(f TaskFilter) ([]TaskRecord, error) {
 		if desc {
 			dir = "DESC"
 		}
-		q += fmt.Sprintf(" ORDER BY %s %s, id ASC", sortCol, dir)
+		q += fmt.Sprintf(" ORDER BY %s %s, id ASC", sortKey, dir)
 	} else {
-		q += " ORDER BY priority ASC, created_at ASC"
+		q += " ORDER BY priority ASC, created_at ASC, id ASC"
 	}
 	if f.Limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", f.Limit)
+	} else if f.Offset > 0 {
+		if _, sqlite := s.dialect.(sqliteDialect); sqlite {
+			q += " LIMIT -1"
+		}
 	}
 	if f.Offset > 0 {
 		q += fmt.Sprintf(" OFFSET %d", f.Offset)

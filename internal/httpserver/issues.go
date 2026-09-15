@@ -3,11 +3,11 @@ package httpserver
 import (
 	"errors"
 	"net/http"
-	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 )
 
 type IssueCreateRequest struct {
@@ -89,10 +89,53 @@ func (s *Server) issuesJSON(tasks []sqlstore.TaskRecord) ([]map[string]interface
 }
 
 func (s *Server) listIssues(w http.ResponseWriter, r *http.Request) {
-	issues, err := s.svc.Issue.List(service.IssueListInput{ProjectID: r.URL.Query().Get("project_id")})
-	if err != nil {
-		writeIssueError(w, err)
+	allowed := map[string]bool{"project_id": true, "status": true, "query": true, "limit": true, "cursor": true, "sort_by": true, "sort_dir": true}
+	q, qerr := parseStrictQuery(r, allowed)
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
 		return
+	}
+	projectID := queryString(q, "project_id")
+	if !hasAnyQueryKey(q, "status", "query", "limit", "cursor", "sort_by", "sort_dir") {
+		issues, err := s.svc.Issue.List(service.IssueListInput{ProjectID: projectID})
+		if err != nil {
+			writeIssueError(w, err)
+			return
+		}
+		if issues == nil {
+			issues = []sqlstore.TaskRecord{}
+		}
+		out, err := s.issuesJSON(issues)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"issues": out, "total": len(out)})
+		return
+	}
+	cursor, qerr := queryCursor(q)
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
+		return
+	}
+	input, normalized, err := service.NormalizeIssueQuery(service.IssueQuery{
+		ProjectID:   projectID,
+		Status:      queryString(q, "status"),
+		Query:       queryString(q, "query"),
+		CursorQuery: cursor,
+	})
+	if err != nil {
+		writeAdjacentServiceError(w, err)
+		return
+	}
+	issues, err := s.svc.Issue.List(input)
+	if err != nil {
+		writeAdjacentServiceError(w, err)
+		return
+	}
+	hasMore := len(issues) > normalized.Limit
+	if hasMore {
+		issues = issues[:normalized.Limit]
 	}
 	if issues == nil {
 		issues = []sqlstore.TaskRecord{}
@@ -102,12 +145,27 @@ func (s *Server) listIssues(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"issues": out, "total": len(out)})
+	nextCursor := ""
+	if hasMore && len(issues) > 0 {
+		last := issues[len(issues)-1]
+		nextCursor = pagination.Encode(normalized.SortBy, normalized.SortDir, service.TaskQuerySortValue(last, normalized.SortBy), last.ID)
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": out, "meta": advancedMeta(normalized.Limit, normalized.SortBy, normalized.SortDir, hasMore, nextCursor, len(issues))})
 }
 
 func (s *Server) searchIssues(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query().Get("q")
-	if q == "" {
+	allowed := map[string]bool{"q": true, "project_id": true, "limit": true, "status": true, "query": true, "cursor": true, "sort_by": true, "sort_dir": true}
+	values, qerr := parseStrictQuery(r, allowed)
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
+		return
+	}
+	q := queryString(values, "q")
+	if q != "" && queryString(values, "query") != "" {
+		writeFieldError(w, http.StatusBadRequest, "query", "q and query cannot both be supplied")
+		return
+	}
+	if q == "" && queryString(values, "query") == "" {
 		// Preserve pre-merge behavior: IssueService.Search used to reject an
 		// empty query outright. The service-layer List/Search merge
 		// (ADR-0004 §3) makes Query optional for the MCP list surface, but
@@ -116,20 +174,60 @@ func (s *Server) searchIssues(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "query is required")
 		return
 	}
-	limit := 0
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			limit = n
-		}
+	limit, qerr := queryInt(values, "limit")
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
+		return
 	}
-	issues, err := s.svc.Issue.List(service.IssueListInput{
-		Query:     q,
-		ProjectID: r.URL.Query().Get("project_id"),
-		Limit:     limit,
+	search := q
+	if search == "" {
+		search = queryString(values, "query")
+	}
+	if !hasAnyQueryKey(values, "status", "query", "cursor", "sort_by", "sort_dir") {
+		issues, err := s.svc.Issue.List(service.IssueListInput{
+			Query:     search,
+			ProjectID: queryString(values, "project_id"),
+			Limit:     limit,
+		})
+		if err != nil {
+			writeIssueError(w, err)
+			return
+		}
+		if issues == nil {
+			issues = []sqlstore.TaskRecord{}
+		}
+		out, err := s.issuesJSON(issues)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"issues": out, "total": len(out)})
+		return
+	}
+	cursor, qerr := queryCursor(values)
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
+		return
+	}
+	cursor.Limit = limit
+	input, normalized, err := service.NormalizeIssueQuery(service.IssueQuery{
+		ProjectID:   queryString(values, "project_id"),
+		Status:      queryString(values, "status"),
+		Query:       search,
+		CursorQuery: cursor,
 	})
 	if err != nil {
-		writeIssueError(w, err)
+		writeAdjacentServiceError(w, err)
 		return
+	}
+	issues, err := s.svc.Issue.List(input)
+	if err != nil {
+		writeAdjacentServiceError(w, err)
+		return
+	}
+	hasMore := len(issues) > normalized.Limit
+	if hasMore {
+		issues = issues[:normalized.Limit]
 	}
 	if issues == nil {
 		issues = []sqlstore.TaskRecord{}
@@ -139,13 +237,18 @@ func (s *Server) searchIssues(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"issues": out, "total": len(out)})
+	nextCursor := ""
+	if hasMore && len(issues) > 0 {
+		last := issues[len(issues)-1]
+		nextCursor = pagination.Encode(normalized.SortBy, normalized.SortDir, service.TaskQuerySortValue(last, normalized.SortBy), last.ID)
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": out, "meta": advancedMeta(normalized.Limit, normalized.SortBy, normalized.SortDir, hasMore, nextCursor, len(issues))})
 }
 
 func (s *Server) getIssue(w http.ResponseWriter, r *http.Request) {
 	issue, err := s.svc.Issue.Get(chi.URLParam(r, "id"))
 	if err != nil {
-		writeIssueError(w, err)
+		writeAdjacentServiceError(w, err)
 		return
 	}
 	out, err := s.issueJSON(issue)

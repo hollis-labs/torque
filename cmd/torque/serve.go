@@ -187,6 +187,28 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	sched.SetTelemetryWriter(telemetryWriter)
 	stateWriter := writeq.New(store, writeq.Options{})
 	sched.SetStateWriter(stateWriter)
+	writerCtx, writerCancel := context.WithCancel(context.Background())
+	writerDone := make(chan struct{})
+	var stopStateWriterOnce sync.Once
+	stopStateWriter := func() {
+		stopStateWriterOnce.Do(func() {
+			stateWriter.Stop()
+			select {
+			case <-writerDone:
+			case <-time.After(5 * time.Second):
+				writerCancel()
+				<-writerDone
+			}
+			writerCancel()
+		})
+	}
+	go func() {
+		defer close(writerDone)
+		if err := stateWriter.Run(writerCtx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Printf("[serve] state write queue stopped: %v", err)
+		}
+	}()
+	defer stopStateWriter()
 
 	// DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
 	if len(cfg.Scheduler.ProjectAllowlist) > 0 {
@@ -219,6 +241,11 @@ func runServe(ctx context.Context, ln net.Listener) error {
 		return fmt.Errorf("bootstrap agent deps: %w", err)
 	}
 	defer agentDepsClose()
+	if reconciled, err := agentDeps.Sessions.ReconcileInterruptedRuns(context.Background()); err != nil {
+		return fmt.Errorf("reconcile interrupted runs: %w", err)
+	} else if reconciled > 0 {
+		log.Printf("[serve] reconciled %d interrupted scheduler run(s)", reconciled)
+	}
 
 	// Register executors against the unified deps. agent.NewExecutor occupies
 	// the "cli" slot the legacy cliexec.CLIExecutor previously held; the
@@ -390,16 +417,10 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	bridge := httpserver.NewSchedulerBridge(handler.SSEHub(), sched.EventBus())
 
 	var wg sync.WaitGroup
-	wg.Add(5)
+	wg.Add(4)
 	go func() {
 		defer wg.Done()
 		bridge.Run(runCtx)
-	}()
-	go func() {
-		defer wg.Done()
-		if err := stateWriter.Run(runCtx); err != nil && !errors.Is(err, context.Canceled) {
-			log.Printf("[serve] state write queue stopped: %v", err)
-		}
 	}()
 	go func() {
 		defer wg.Done()
@@ -478,6 +499,7 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// server has fully quiesced.
 	<-shutdownDone
 	wg.Wait()
+	stopStateWriter()
 
 	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 		return serveErr

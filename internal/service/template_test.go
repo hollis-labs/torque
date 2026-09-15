@@ -28,6 +28,84 @@ func TestTemplateService_Create_BasicRoundTrip(t *testing.T) {
 	assert.Equal(t, "agent", tpl.Kind)
 }
 
+func TestTemplateService_Create_BudgetDefaultsAndExplicitValues(t *testing.T) {
+	svc := setupService(t)
+
+	omitted, err := svc.Template.Create(service.TemplateCreateInput{
+		ID: "omitted", Name: "omitted", Description: "x",
+		Kind: "agent", Executor: "cli", AutoExecute: true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 3, omitted.MaxRetries)
+	assert.False(t, omitted.CostBudget.Valid)
+	assert.False(t, omitted.MaxDurationMs.Valid)
+	assert.False(t, omitted.TokenBudget.Valid)
+
+	cost := 0.0
+	retries := 0
+	duration := int64(service.Unlimited)
+	tokens := int64(service.Unlimited)
+	explicit, err := svc.Template.Create(service.TemplateCreateInput{
+		ID: "explicit", Name: "explicit", Description: "x",
+		Kind: "agent", Executor: "cli", AutoExecute: true,
+		CostBudget: &cost, MaxRetries: &retries, MaxDurationMs: &duration, TokenBudget: &tokens,
+	})
+	require.NoError(t, err)
+	assert.True(t, explicit.CostBudget.Valid)
+	assert.Equal(t, 0.0, explicit.CostBudget.Float64)
+	assert.Equal(t, 0, explicit.MaxRetries)
+	assert.True(t, explicit.MaxDurationMs.Valid)
+	assert.Equal(t, int64(service.Unlimited), explicit.MaxDurationMs.Int64)
+	assert.True(t, explicit.TokenBudget.Valid)
+	assert.Equal(t, int64(service.Unlimited), explicit.TokenBudget.Int64)
+}
+
+func TestTemplateService_Create_RejectsInvalidBudgets(t *testing.T) {
+	svc := setupService(t)
+	cost := -2.0
+	retries := -1
+	duration := int64(0)
+	tokens := int64(0)
+
+	for _, tc := range []struct {
+		name  string
+		field string
+		input service.TemplateCreateInput
+	}{
+		{
+			name: "cost", field: "cost_budget",
+			input: service.TemplateCreateInput{CostBudget: &cost},
+		},
+		{
+			name: "retries", field: "max_retries",
+			input: service.TemplateCreateInput{MaxRetries: &retries},
+		},
+		{
+			name: "duration", field: "max_duration_ms",
+			input: service.TemplateCreateInput{MaxDurationMs: &duration},
+		},
+		{
+			name: "tokens", field: "token_budget",
+			input: service.TemplateCreateInput{TokenBudget: &tokens},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.input.ID = "bad-" + tc.name
+			tc.input.Name = "bad"
+			tc.input.Description = "x"
+			tc.input.Kind = "agent"
+			tc.input.Executor = "cli"
+			tc.input.AutoExecute = true
+
+			_, err := svc.Template.Create(tc.input)
+			require.Error(t, err)
+			var verr *service.ValidationError
+			require.ErrorAs(t, err, &verr)
+			assert.Equal(t, tc.field, verr.Field)
+		})
+	}
+}
+
 func TestTemplateService_Create_InvalidKind_422(t *testing.T) {
 	svc := setupService(t)
 	_, err := svc.Template.Create(service.TemplateCreateInput{
@@ -62,6 +140,32 @@ func TestTemplateService_Update_AppendsNewVersion(t *testing.T) {
 	// Inherited.
 	assert.Equal(t, "agent", tpl.Kind)
 	assert.Equal(t, "cli", tpl.Executor.String)
+}
+
+func TestTemplateService_Update_BudgetsAndRetries(t *testing.T) {
+	svc := setupService(t)
+	_, err := svc.Template.Create(service.TemplateCreateInput{
+		ID: "budgeted", Name: "v1", Description: "x",
+		Kind: "agent", Executor: "cli", AutoExecute: true,
+	})
+	require.NoError(t, err)
+
+	cost := -1.0
+	retries := 0
+	duration := int64(service.Unlimited)
+	tokens := int64(service.Unlimited)
+	tpl, err := svc.Template.Update("budgeted", service.TemplateUpdateInput{
+		CostBudget: &cost, MaxRetries: &retries, MaxDurationMs: &duration, TokenBudget: &tokens,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, tpl.Version)
+	assert.True(t, tpl.CostBudget.Valid)
+	assert.Equal(t, -1.0, tpl.CostBudget.Float64)
+	assert.Equal(t, 0, tpl.MaxRetries)
+	assert.True(t, tpl.MaxDurationMs.Valid)
+	assert.Equal(t, int64(service.Unlimited), tpl.MaxDurationMs.Int64)
+	assert.True(t, tpl.TokenBudget.Valid)
+	assert.Equal(t, int64(service.Unlimited), tpl.TokenBudget.Int64)
 }
 
 func TestTemplateService_Update_UnknownTemplate_422(t *testing.T) {
@@ -247,6 +351,32 @@ func TestTemplateService_Instantiate_ResolvesVarsAndStampsTemplateRef(t *testing
 	assert.Equal(t, "/tmp/repo", md["working_dir_template"])
 	nested := md["nested"].(map[string]any)
 	assert.Equal(t, "auth-42", nested["issue"])
+}
+
+func TestTemplateService_Instantiate_PropagatesBudgetsAndZeroRetries(t *testing.T) {
+	svc := setupService(t)
+	cost := 4.5
+	retries := 0
+	duration := int64(service.Unlimited)
+	tokens := int64(1200)
+	_, err := svc.Template.Create(service.TemplateCreateInput{
+		ID: "budgeted", Name: "budgeted", Description: "x",
+		Kind: "agent", Executor: "cli", AutoExecute: true,
+		CostBudget: &cost, MaxRetries: &retries, MaxDurationMs: &duration, TokenBudget: &tokens,
+	})
+	require.NoError(t, err)
+
+	task, err := svc.Template.Instantiate(service.TemplateInstantiateInput{
+		TemplateID: "budgeted", Title: "from template",
+	})
+	require.NoError(t, err)
+	assert.True(t, task.CostBudget.Valid)
+	assert.Equal(t, 4.5, task.CostBudget.Float64)
+	assert.Equal(t, 0, task.MaxRetries)
+	assert.True(t, task.MaxDurationMs.Valid)
+	assert.Equal(t, int64(service.Unlimited), task.MaxDurationMs.Int64)
+	assert.True(t, task.TokenBudget.Valid)
+	assert.Equal(t, int64(1200), task.TokenBudget.Int64)
 }
 
 func TestTemplateService_Instantiate_MissingVar_422(t *testing.T) {

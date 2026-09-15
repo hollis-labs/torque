@@ -2,6 +2,10 @@ package migrations_test
 
 import (
 	"database/sql"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
@@ -278,10 +282,49 @@ func TestMigrationsApply(t *testing.T) {
 	_, err = db.Exec(`INSERT INTO sessions (id, state) VALUES ('S23-bad', 'nonsense')`)
 	require.Error(t, err, "sessions.state CHECK should reject unknown values")
 
-	for _, st := range []string{"launching", "running", "done", "failed", "crashed"} {
+	for _, st := range []string{"launching", "running", "done", "failed", "canceled", "crashed"} {
 		_, err = db.Exec(`INSERT INTO sessions (id, state) VALUES (?, ?)`, "S23-"+st, st)
 		require.NoError(t, err, "sessions.state should accept %q", st)
 	}
+
+	// Verify 032 widened sessions.state without losing rows, checkpoint FKs,
+	// or the indexes recreated after the table swap.
+	_, err = db.Exec(`INSERT INTO sessions (
+		id, launch_profile, agent_profile, provider, runtime_id, runtime_kind,
+		workdir, project_id, task_id, state, pid, exit_code, resume_hint, meta
+	) VALUES (
+		'S32-canceled', 'codex', 'codex-implementer', 'codex', 'rt-1', 'streaming-stdio',
+		'/tmp/work', NULL, 'T15-ok', 'canceled', 42, -1, X'0102', '{"k":"v"}'
+	)`)
+	require.NoError(t, err, "032 sessions.state should accept canceled with existing columns intact")
+	_, err = db.Exec(`INSERT INTO session_checkpoints (id, session_id, payload, note)
+		VALUES ('SCP32-1', 'S32-canceled', '{"ok":true}', 'kept')`)
+	require.NoError(t, err, "session_checkpoints FK should still point at rebuilt sessions")
+	var sessionState, launchProfile, checkpointNote string
+	var sessionPID, exitCode int
+	err = db.QueryRow(`SELECT state, launch_profile, pid, exit_code FROM sessions WHERE id = 'S32-canceled'`).
+		Scan(&sessionState, &launchProfile, &sessionPID, &exitCode)
+	require.NoError(t, err)
+	require.Equal(t, "canceled", sessionState)
+	require.Equal(t, "codex", launchProfile)
+	require.Equal(t, 42, sessionPID)
+	require.Equal(t, -1, exitCode)
+	err = db.QueryRow(`SELECT note FROM session_checkpoints WHERE id = 'SCP32-1'`).Scan(&checkpointNote)
+	require.NoError(t, err)
+	require.Equal(t, "kept", checkpointNote)
+	sessIdxRows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='sessions'`)
+	require.NoError(t, err)
+	defer sessIdxRows.Close()
+	sessIdx := map[string]bool{}
+	for sessIdxRows.Next() {
+		var n string
+		require.NoError(t, sessIdxRows.Scan(&n))
+		sessIdx[n] = true
+	}
+	require.True(t, sessIdx["idx_sessions_state"], "idx_sessions_state should survive 032 rebuild")
+	require.True(t, sessIdx["idx_sessions_task_id"], "idx_sessions_task_id should survive 032 rebuild")
+	require.True(t, sessIdx["idx_sessions_project_id"], "idx_sessions_project_id should survive 032 rebuild")
+	require.True(t, sessIdx["idx_sessions_last_activity"], "idx_sessions_last_activity should survive 032 rebuild")
 
 	// Verify 027 flipped epics.status DEFAULT from 'open' to 'active' (FIX-003).
 	_, err = db.Exec(`INSERT INTO epics (id, name) VALUES ('EP27-1', 'Default status epic')`)
@@ -368,4 +411,121 @@ func TestMigrationsApply(t *testing.T) {
 		depIdx[n] = true
 	}
 	require.True(t, depIdx["idx_task_dependencies_depends_on_task_id"], "idx_task_dependencies_depends_on_task_id should exist")
+}
+
+func TestMigration032SessionCanceledStateRebuildPreservesRows(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	applyMigrationFilesThroughAndMarkApplied(t, db, "031_comment_updated_at.sql")
+
+	_, err = db.Exec(`INSERT INTO sessions (
+		id, launch_profile, agent_profile, provider, runtime_id, runtime_kind,
+		workdir, state, pid, exit_code, resume_hint, meta,
+		created_at, updated_at, last_activity, ended_at
+	) VALUES (
+		'S32-preexisting', 'codex', 'codex-implementer', 'codex', 'rt-pre', 'streaming-stdio',
+		'/tmp/pre', 'running', 77, NULL, X'CAFE', '{"before":"032"}',
+		'2026-09-12 01:02:03', '2026-09-12 01:02:04', '2026-09-12 01:02:05', NULL
+	)`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO session_checkpoints (id, session_id, payload, resume_hint, note)
+		VALUES ('SCP32-pre', 'S32-preexisting', '{"checkpoint":true}', X'BEEF', 'before rebuild')`)
+	require.NoError(t, err)
+
+	_, err = db.Exec(`INSERT INTO sessions (id, state) VALUES ('S32-before-bad', 'canceled')`)
+	require.Error(t, err, "pre-032 sessions.state CHECK should still reject canceled")
+
+	_, err = db.Exec(`PRAGMA foreign_keys = ON`)
+	require.NoError(t, err)
+	require.NoError(t, migrations.Run(db), "production migration runner should apply 032")
+
+	var fkEnabled int
+	require.NoError(t, db.QueryRow(`PRAGMA foreign_keys`).Scan(&fkEnabled))
+	require.Equal(t, 1, fkEnabled, "migrations.Run should restore FK enforcement")
+	assertNoForeignKeyViolations(t, db)
+
+	var state, launchProfile, metaJSON, createdAt, updatedAt, lastActivity, checkpointPayload, checkpointNote string
+	var pid int
+	var sessionResumeHint, checkpointResumeHint []byte
+	err = db.QueryRow(`SELECT state, launch_profile, pid, resume_hint, meta, created_at, updated_at, last_activity
+		FROM sessions WHERE id = 'S32-preexisting'`).
+		Scan(&state, &launchProfile, &pid, &sessionResumeHint, &metaJSON, &createdAt, &updatedAt, &lastActivity)
+	require.NoError(t, err)
+	require.Equal(t, "running", state)
+	require.Equal(t, "codex", launchProfile)
+	require.Equal(t, 77, pid)
+	require.Equal(t, []byte{0xca, 0xfe}, sessionResumeHint)
+	require.Equal(t, `{"before":"032"}`, metaJSON)
+	require.Equal(t, "2026-09-12T01:02:03Z", createdAt)
+	require.Equal(t, "2026-09-12T01:02:04Z", updatedAt)
+	require.Equal(t, "2026-09-12T01:02:05Z", lastActivity)
+	err = db.QueryRow(`SELECT payload, resume_hint, note FROM session_checkpoints WHERE id = 'SCP32-pre'`).
+		Scan(&checkpointPayload, &checkpointResumeHint, &checkpointNote)
+	require.NoError(t, err)
+	require.Equal(t, `{"checkpoint":true}`, checkpointPayload)
+	require.Equal(t, []byte{0xbe, 0xef}, checkpointResumeHint)
+	require.Equal(t, "before rebuild", checkpointNote)
+
+	_, err = db.Exec(`UPDATE sessions SET state = 'canceled' WHERE id = 'S32-preexisting'`)
+	require.NoError(t, err, "032 should allow existing sessions to become canceled")
+	_, err = db.Exec(`INSERT INTO session_checkpoints (id, session_id, payload)
+		VALUES ('SCP32-post', 'S32-preexisting', '{"after":true}')`)
+	require.NoError(t, err, "session_checkpoints FK should survive sessions rebuild")
+
+	sessIdxRows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='sessions'`)
+	require.NoError(t, err)
+	defer sessIdxRows.Close()
+	sessIdx := map[string]bool{}
+	for sessIdxRows.Next() {
+		var n string
+		require.NoError(t, sessIdxRows.Scan(&n))
+		sessIdx[n] = true
+	}
+	require.True(t, sessIdx["idx_sessions_state"])
+	require.True(t, sessIdx["idx_sessions_task_id"])
+	require.True(t, sessIdx["idx_sessions_project_id"])
+	require.True(t, sessIdx["idx_sessions_last_activity"])
+}
+
+func applyMigrationFilesThroughAndMarkApplied(t *testing.T, db *sql.DB, through string) {
+	t.Helper()
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+		version TEXT PRIMARY KEY,
+		applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`)
+	require.NoError(t, err)
+	files, err := filepath.Glob("*.sql")
+	require.NoError(t, err)
+	sort.Strings(files)
+	for _, f := range files {
+		if !strings.HasSuffix(f, ".sql") {
+			continue
+		}
+		applyMigrationFile(t, db, f)
+		_, err = db.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, filepath.Base(f))
+		require.NoError(t, err)
+		if filepath.Base(f) == through {
+			return
+		}
+	}
+	t.Fatalf("migration %s not found", through)
+}
+
+func applyMigrationFile(t *testing.T, db *sql.DB, file string) {
+	t.Helper()
+	content, err := os.ReadFile(file)
+	require.NoError(t, err)
+	_, err = db.Exec(string(content))
+	require.NoError(t, err, "apply %s", file)
+}
+
+func assertNoForeignKeyViolations(t *testing.T, db *sql.DB) {
+	t.Helper()
+	rows, err := db.Query(`PRAGMA foreign_key_check`)
+	require.NoError(t, err)
+	defer rows.Close()
+	require.False(t, rows.Next(), "foreign_key_check should be empty")
+	require.NoError(t, rows.Err())
 }

@@ -379,6 +379,157 @@ func TestCommentDelete_AuthorScoped(t *testing.T) {
 	})
 }
 
+func TestCommentDelete_ForceGuardMatrix(t *testing.T) {
+	a := setupAdapter(t)
+	taskID := createTaskForComments(t, a, "force delete")
+
+	add := func(author string, includeAuthor bool) float64 {
+		t.Helper()
+		args := map[string]interface{}{
+			"entity_type": "task",
+			"entity_id":   taskID,
+			"content":     "content",
+		}
+		if includeAuthor {
+			args["author"] = author
+		}
+		text, isErr := callTool(t, a, "torque_comment_add", args)
+		require.False(t, isErr, "add should not error: %s", text)
+		var added map[string]interface{}
+		parseData(t, text, &added)
+		return added["id"].(float64)
+	}
+	exists := func(id float64) bool {
+		t.Helper()
+		listText, isErr := callTool(t, a, "torque_comment_list", map[string]interface{}{
+			"entity_type": "task", "entity_id": taskID, "verbose": "true",
+		})
+		require.False(t, isErr, "list should not error: %s", listText)
+		var env commentListCursorEnvelope
+		parseData(t, listText, &env)
+		for _, item := range env.Items {
+			if item["id"] == id {
+				return true
+			}
+		}
+		return false
+	}
+
+	assertDelete := func(name string, id float64, author any, force any, wantErr bool, wantCode string) {
+		t.Helper()
+		t.Run(name, func(t *testing.T) {
+			args := map[string]interface{}{"id": id, "author": author}
+			if force != nil {
+				args["force"] = force
+			}
+			text, isErr := callTool(t, a, "torque_comment_delete", args)
+			if wantErr {
+				require.True(t, isErr, "expected error: %s", text)
+				code, _, _ := parseError(t, text)
+				assert.Equal(t, wantCode, code)
+				assert.True(t, exists(id))
+				return
+			}
+			require.False(t, isErr, "delete should not error: %s", text)
+			assert.False(t, exists(id))
+		})
+	}
+
+	assertDelete("matching author omitted force succeeds", add("alice", true), "alice", nil, false, "")
+	assertDelete("mismatching author omitted force rejects", add("alice", true), "bob", nil, true, "permission")
+	assertDelete("mismatching author force false rejects", add("alice", true), "bob", false, true, "permission")
+	assertDelete("mismatching author force true succeeds", add("alice", true), "bob", true, false, "")
+	assertDelete("explicit empty author omitted force succeeds", add("", false), "", nil, false, "")
+	assertDelete("empty author force false succeeds", add("", false), "", false, false, "")
+	assertDelete("empty author mismatched force true succeeds", add("", false), "bob", true, false, "")
+
+	t.Run("force true preserves missing-comment error", func(t *testing.T) {
+		text, isErr := callTool(t, a, "torque_comment_delete", map[string]interface{}{
+			"id": "999999", "author": "bob", "force": true,
+		})
+		require.True(t, isErr, "expected not_found: %s", text)
+		code, _, _ := parseError(t, text)
+		assert.Equal(t, "not_found", code)
+	})
+}
+
+func TestCommentDelete_RejectsImpreciseIDAndAuthorTypesWithoutDeleting(t *testing.T) {
+	a := setupAdapter(t)
+	taskID := createTaskForComments(t, a, "parser guard")
+	addText, isErr := callTool(t, a, "torque_comment_add", map[string]interface{}{
+		"entity_type": "task", "entity_id": taskID, "author": "alice", "content": "content",
+	})
+	require.False(t, isErr, "add should not error: %s", addText)
+	var added map[string]interface{}
+	parseData(t, addText, &added)
+	id := added["id"].(float64)
+
+	cases := []struct {
+		name  string
+		args  map[string]interface{}
+		field string
+	}{
+		{
+			name:  "fractional id without force",
+			args:  map[string]interface{}{"id": id + 0.5, "author": "alice"},
+			field: "id",
+		},
+		{
+			name:  "fractional id with force",
+			args:  map[string]interface{}{"id": id + 0.5, "author": "alice", "force": true},
+			field: "id",
+		},
+		{
+			name:  "numeric author",
+			args:  map[string]interface{}{"id": id, "author": 7, "force": true},
+			field: "author",
+		},
+		{
+			name:  "null author",
+			args:  map[string]interface{}{"id": id, "author": nil, "force": true},
+			field: "author",
+		},
+		{
+			name:  "missing author under force",
+			args:  map[string]interface{}{"id": id, "force": true},
+			field: "author",
+		},
+		{
+			name:  "null force",
+			args:  map[string]interface{}{"id": id, "author": "bob", "force": nil},
+			field: "force",
+		},
+		{
+			name:  "number force",
+			args:  map[string]interface{}{"id": id, "author": "bob", "force": 1},
+			field: "force",
+		},
+		{
+			name:  "string force rejected by boolean schema contract",
+			args:  map[string]interface{}{"id": id, "author": "bob", "force": "true"},
+			field: "force",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			text, isErr := callTool(t, a, "torque_comment_delete", tc.args)
+			require.True(t, isErr, "expected parser rejection: %s", text)
+			code, _, field := parseError(t, text)
+			assert.Equal(t, "arg_invalid", code)
+			assert.Equal(t, tc.field, field)
+
+			listText, listErr := callTool(t, a, "torque_comment_list", map[string]interface{}{
+				"entity_type": "task", "entity_id": taskID, "verbose": "true",
+			})
+			require.False(t, listErr, "list should not error: %s", listText)
+			var env commentListCursorEnvelope
+			parseData(t, listText, &env)
+			require.Len(t, env.Items, 1)
+			assert.Equal(t, "content", env.Items[0]["content"])
+		})
+	}
+}
+
 func TestCommentBulkAdd(t *testing.T) {
 	a := setupAdapter(t)
 	taskA := createTaskForComments(t, a, "A")

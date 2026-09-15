@@ -99,6 +99,22 @@ interface ApiArtifactRecord {
   CreatedAt: string
 }
 
+interface TaskListResponse {
+  tasks: Task[]
+  total: number
+  returned?: number
+  limit?: number
+  offset?: number
+  has_more?: boolean
+  next_offset?: number | null
+  continuation?: {
+    limit?: number
+    offset?: number
+  } | null
+}
+
+const TASK_LIST_PAGE_SIZE = 200
+
 /**
  * Coerce any of the shapes the artifact list endpoints have historically
  * returned into a real `Artifact[]`. The frontend shipped against two
@@ -261,6 +277,55 @@ export class TorqueApiClient {
   // -------------------------
 
   async listTasks(filter?: TaskFilter): Promise<{ tasks: Task[]; total: number }> {
+    const explicitLimit = filter?.limit
+    const startOffset = filter?.offset ?? 0
+    if (explicitLimit !== undefined && (!Number.isSafeInteger(explicitLimit) || !Number.isFinite(explicitLimit))) {
+      throw new ApiError(0, 'Task list limit must be a finite safe integer.')
+    }
+    if (!Number.isSafeInteger(startOffset) || !Number.isFinite(startOffset) || startOffset < 0) {
+      throw new ApiError(0, 'Task list offset must be a non-negative safe integer.')
+    }
+    const target = explicitLimit !== undefined && explicitLimit > 0 ? explicitLimit : undefined
+    const tasks: Task[] = []
+    let total = 0
+    let offset = startOffset
+    let nextLimit = target === undefined ? undefined : Math.min(target, TASK_LIST_PAGE_SIZE)
+
+    for (;;) {
+      if (target !== undefined && target - tasks.length <= 0) {
+        return { tasks, total }
+      }
+      const page = await this.fetchTaskPage({ ...filter, limit: nextLimit, offset })
+      total = page.total
+      tasks.push(...page.tasks)
+
+      if (target !== undefined && tasks.length >= target) {
+        return { tasks, total }
+      }
+      if (!page.has_more) {
+        return { tasks, total }
+      }
+      const nextOffset = page.next_offset ?? page.continuation?.offset
+      if (typeof nextOffset !== 'number' || !Number.isSafeInteger(nextOffset) || nextOffset <= offset) {
+        throw new ApiError(200, 'Task list response did not provide a usable forward continuation.')
+      }
+      if (page.tasks.length === 0) {
+        throw new ApiError(200, 'Task list response reported more pages without returning progress.')
+      }
+      offset = nextOffset
+      const continuationLimit = page.continuation?.limit
+      const remaining = target === undefined ? TASK_LIST_PAGE_SIZE : target - tasks.length
+      if (typeof continuationLimit === 'number' && Number.isSafeInteger(continuationLimit) && continuationLimit > 0) {
+        nextLimit = Math.min(continuationLimit, TASK_LIST_PAGE_SIZE, remaining)
+      } else if (target === undefined) {
+        nextLimit = TASK_LIST_PAGE_SIZE
+      } else {
+        nextLimit = Math.min(remaining, TASK_LIST_PAGE_SIZE)
+      }
+    }
+  }
+
+  private async fetchTaskPage(filter?: TaskFilter): Promise<TaskListResponse> {
     const params: Record<string, string | number | boolean | undefined> = {}
     if (filter?.status?.length) params['status'] = filter.status.join(',')
     if (filter?.priority?.length) params['priority'] = filter.priority.join(',')
@@ -275,7 +340,7 @@ export class TorqueApiClient {
     if (filter?.parent_id !== undefined) params['parent_id'] = filter.parent_id
     if (filter?.manual !== undefined) params['manual'] = filter.manual ? 'true' : 'false'
     if (filter?.include_internal) params['include_internal'] = 'true'
-    return this.get<{ tasks: Task[]; total: number }>('/tasks', params)
+    return this.get<TaskListResponse>('/tasks', params)
   }
 
   async getTask(id: string): Promise<Task> {

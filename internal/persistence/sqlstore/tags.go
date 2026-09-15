@@ -30,6 +30,19 @@ type TagUpdate struct {
 	Color       *string
 }
 
+type TagFilter struct {
+	Query     string
+	Color     string
+	Limit     int
+	AfterName string
+	AfterSlug string
+}
+
+type TagListResult struct {
+	Tags  []TagRecord
+	Total int
+}
+
 const tagSelectCols = `slug, name, description, color, created_at, updated_at`
 
 // scanTag scans a single row into a TagRecord.
@@ -111,6 +124,75 @@ func (s *Store) ListTags() ([]TagRecord, error) {
 		tags = append(tags, *t)
 	}
 	return tags, rows.Err()
+}
+
+func (s *Store) ListTagsPage(f TagFilter) (TagListResult, error) {
+	where, args := tagListPredicates(f, false)
+
+	countQ := `SELECT COUNT(*) FROM tags`
+	if len(where) > 0 {
+		countQ += " WHERE " + strings.Join(where, " AND ")
+	}
+	var total int
+	if err := s.ReadDB().QueryRow(countQ, args...).Scan(&total); err != nil {
+		return TagListResult{}, err
+	}
+
+	where, args = tagListPredicates(f, true)
+	query := `SELECT ` + tagSelectCols + ` FROM tags`
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += " ORDER BY name COLLATE NOCASE ASC, slug ASC"
+	if f.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", f.Limit)
+	}
+
+	rows, err := s.ReadDB().Query(query, args...)
+	if err != nil {
+		return TagListResult{}, err
+	}
+	defer rows.Close()
+
+	var tags []TagRecord
+	for rows.Next() {
+		t, err := scanTag(rows)
+		if err != nil {
+			return TagListResult{}, err
+		}
+		tags = append(tags, *t)
+	}
+	if err := rows.Err(); err != nil {
+		return TagListResult{}, err
+	}
+	return TagListResult{Tags: tags, Total: total}, nil
+}
+
+func tagListPredicates(f TagFilter, includeCursor bool) ([]string, []any) {
+	var conditions []string
+	var args []any
+
+	if f.Query != "" {
+		pat := "%" + escapeSQLLike(f.Query) + "%"
+		conditions = append(conditions, `(LOWER(slug) LIKE LOWER(?) ESCAPE '\' OR LOWER(name) LIKE LOWER(?) ESCAPE '\' OR LOWER(description) LIKE LOWER(?) ESCAPE '\')`)
+		args = append(args, pat, pat, pat)
+	}
+	if f.Color != "" {
+		conditions = append(conditions, "color = ?")
+		args = append(args, f.Color)
+	}
+	if includeCursor && f.AfterSlug != "" {
+		conditions = append(conditions, `(name COLLATE NOCASE > ? COLLATE NOCASE OR (name COLLATE NOCASE = ? COLLATE NOCASE AND slug > ?))`)
+		args = append(args, f.AfterName, f.AfterName, f.AfterSlug)
+	}
+	return conditions, args
+}
+
+func escapeSQLLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
 }
 
 // UpdateTag applies a partial update. Returns an error wrapping

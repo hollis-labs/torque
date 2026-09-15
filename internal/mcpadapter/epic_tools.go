@@ -9,20 +9,6 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// epicSortAllowList is torque_epic_list's sort_by allow-list (PRIM-002),
-// per the audit's documented guidance for Epic/Sprint/Project (name,
-// status, updated_at, created_at) — deliberately excludes priority, which
-// is not on that list.
-var epicSortAllowList = []string{"name", "status", "updated_at", "created_at"}
-
-// epicSortDefaultBy/epicSortDefaultDir are torque_epic_list's default
-// sort_by/sort_dir when the caller omits both — preserves the tool's
-// existing documented order ("ordered updated_at DESC").
-const (
-	epicSortDefaultBy  = "updated_at"
-	epicSortDefaultDir = "desc"
-)
-
 func (a *Adapter) registerEpicTools() {
 	a.addTool(mcp.NewTool("torque_epic_create",
 		mcp.WithDescription(`Create an epic (feature-flagged: requires features.epics). Returns the EpicRecord.
@@ -84,6 +70,7 @@ Example: {"id":"EP-4"}`),
 		mcp.WithDescription(`List epics with optional status/project filters and free-text search, ordered updated_at DESC by default. Pass sort_by (name|status|updated_at|created_at) and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid.
 Use for browsing, filtered cohorts, or free-text discovery in one call (no separate _search tool); torque_epic_get when you know the ID. Default brief shape; pass verbose="true" for full records.
 Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under — pass a different sort_by/sort_dir without dropping cursor and you get error.code=arg_invalid.
+Explicit malformed, blank, fractional, overflow, unsafe native-float, or negative limit values reject with error.code=arg_invalid, field=limit; omitted limit defaults to 100 and oversized limits clamp to 500.
 Response shape: data = {items: [<briefEpic or EpicRecord>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
 Example: {"status":"active","search":"auth","limit":"50","sort_by":"updated_at","sort_dir":"desc"}`),
 		mcp.WithString("status", mcp.Description("Filter: active|inactive")),
@@ -254,59 +241,51 @@ func (a *Adapter) handleEpicUnarchive(ctx context.Context, req mcp.CallToolReque
 }
 
 func (a *Adapter) handleEpicList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	limit := clampLimit(reqInt(req, "limit"), defaultGenericListLimit, maxGenericListLimit)
-	verbose := reqStrBool(req, "verbose")
-
-	// PRIM-002/PRIM-001: sort_by/sort_dir/cursor, allow-list validated.
-	// Omitted sort values fall back to the tool's existing documented
-	// default order (updated_at DESC).
-	sortBy, sortDir, afterSortValue, afterID, errRes := resolveSortAndCursor(req, epicSortDefaultBy, epicSortDefaultDir, epicSortAllowList...)
+	verbose, errRes := reqQueryBool(req, "verbose")
+	if errRes != nil {
+		return errRes, nil
+	}
+	status, errRes := reqQueryString(req, "status")
+	if errRes != nil {
+		return errRes, nil
+	}
+	projectID, errRes := reqQueryString(req, "project_id")
+	if errRes != nil {
+		return errRes, nil
+	}
+	search, errRes := reqQueryString(req, "search")
+	if errRes != nil {
+		return errRes, nil
+	}
+	includeArchived, errRes := reqQueryBool(req, "include_archived")
+	if errRes != nil {
+		return errRes, nil
+	}
+	cursor, errRes := reqQueryCursor(req)
 	if errRes != nil {
 		return errRes, nil
 	}
 
-	input := service.EpicListInput{
-		Status:          reqStr(req, "status"),
-		ProjectID:       reqStr(req, "project_id"),
-		Search:          reqStr(req, "search"),
-		IncludeArchived: reqStrBool(req, "include_archived"),
-		SortBy:          sortBy,
-		SortDir:         sortDir,
-		AfterSortValue:  afterSortValue,
-		AfterID:         afterID,
-		// Fetch one extra row beyond limit so has_more can be determined
-		// without a separate COUNT(*) query (DEC-001's cheaper-default
-		// choice), mirroring handleTaskList.
-		Limit: limit + 1,
+	input, normalized, err := service.NormalizeEpicQuery(service.EpicQuery{
+		Status:          status,
+		ProjectID:       projectID,
+		Search:          search,
+		IncludeArchived: includeArchived,
+		CursorQuery:     cursor,
+	})
+	if err != nil {
+		return errFromService(err)
 	}
 	epics, err := a.svc.Epic.ListPaginated(input)
 	if err != nil {
 		return errFromService(err)
 	}
 
-	hasMoreFromQuery := len(epics) > limit
+	hasMoreFromQuery := len(epics) > normalized.Limit
 	if hasMoreFromQuery {
-		epics = epics[:limit]
+		epics = epics[:normalized.Limit]
 	}
-	return epicListCursorEnvelope(epics, limit, verbose, sortBy, sortDir, hasMoreFromQuery)
-}
-
-// epicSortValue formats an EpicRecord's sortBy column into the string
-// encoding PRIM-001's cursor uses for meta.next_cursor (DEC-001's `sv`
-// field) — Epic's analog to taskSortValue (task_tools.go).
-func epicSortValue(e sqlstore.EpicRecord, sortBy string) string {
-	switch sortBy {
-	case "name":
-		return e.Name
-	case "status":
-		return e.Status
-	case "updated_at":
-		return e.UpdatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayout)
-	case "created_at":
-		return e.CreatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayout)
-	default:
-		return ""
-	}
+	return epicListCursorEnvelope(epics, normalized.Limit, verbose, normalized.SortBy, normalized.SortDir, hasMoreFromQuery)
 }
 
 // epicListCursorEnvelope builds torque_epic_list's {items, meta} cursor-
@@ -325,7 +304,7 @@ func epicListCursorEnvelope(epics []sqlstore.EpicRecord, limit int, verbose bool
 	}
 
 	cursorAt := func(i int) (sortValue, id string) {
-		return epicSortValue(epics[i], sortBy), epics[i].ID
+		return service.EpicQuerySortValue(epics[i], sortBy), epics[i].ID
 	}
 	return cappedCursorJSONResult(items, limit, sortBy, sortDir, hasMoreFromQuery, cursorAt)
 }

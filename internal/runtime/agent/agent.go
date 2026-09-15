@@ -5,6 +5,7 @@ import (
 	llmtypes "github.com/hollis-labs/go-llm-types"
 	"github.com/hollis-labs/go-providers/provider"
 	"github.com/hollis-labs/go-sandbox/sandbox"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
 )
 
 // Options describes a Boot request. Mode picks the lifecycle policy; the
@@ -148,6 +149,7 @@ type Options struct {
 	// path can reuse Options without a parallel struct. Most ModeLongLived
 	// callers leave them zero.
 	Metadata map[string]any
+	Limits   executor.ExecutionLimits
 
 	// TypedEventCallback, when non-nil, is forwarded to
 	// StartOptions.TypedEventCallback. PTY runtime fires per-line via the
@@ -170,6 +172,14 @@ type Options struct {
 	// as Supervisor.
 	ResourceLimits *agentsessions.ResourceLimits
 
+	// RetainContextOnLongLivedStart keeps the supplied ctx attached to
+	// long-lived Start/kickoff instead of detaching with context.WithoutCancel.
+	// Scheduler-dispatched workers set this when an explicit task deadline is
+	// present so max_duration_ms covers launch through teardown; HTTP/session
+	// boots leave it false so request cancellation does not kill standalone
+	// long-lived sessions.
+	RetainContextOnLongLivedStart bool
+
 	// IDFn lets tests pin session IDs. Production wires defaultSessionID().
 	IDFn func() string
 
@@ -179,12 +189,22 @@ type Options struct {
 	// than constructing it themselves; the wrapper allocates the chan,
 	// reads from it in a goroutine, and closes it after Boot returns.
 	eventFanout chan<- llmtypes.StreamEvent
+
+	// terminalFailure carries non-lossy turn-terminal failures, currently
+	// from Codex JSON-RPC turn/completed notifications, to long-lived
+	// scheduler workers. It is private for the same reason as eventFanout.
+	terminalFailure chan<- string
 }
 
 // withEventFanout sets the unexported eventFanout field. Used by the
 // Executor.Run wrapper to thread the OneShot token-usage chan into Boot.
 func (o Options) withEventFanout(c chan<- llmtypes.StreamEvent) Options {
 	o.eventFanout = c
+	return o
+}
+
+func (o Options) withTerminalFailure(c chan<- string) Options {
+	o.terminalFailure = c
 	return o
 }
 

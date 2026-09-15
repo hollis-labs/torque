@@ -75,6 +75,12 @@ func (w *WriteTx) QueryRow(query string, args ...any) *sql.Row {
 	return w.tx.QueryRow(query, args...)
 }
 
+// Query exposes tx.Query for transaction-scoped reconciliation paths that need
+// to scan a bounded candidate set before deciding whether to write.
+func (w *WriteTx) Query(query string, args ...any) (*sql.Rows, error) {
+	return w.tx.Query(query, args...)
+}
+
 // MarkAfterCommit snapshots the deferred-hook stack depth.
 func (w *WriteTx) MarkAfterCommit() int {
 	return len(w.afterCommit)
@@ -218,7 +224,7 @@ func (w *WriteTx) UpdateSessionState(id, state string, pid int, exit *int) error
 	now := time.Now().UTC()
 	var endedAt sql.NullTime
 	switch state {
-	case "done", "failed", "crashed":
+	case "done", "failed", "canceled", "crashed":
 		endedAt = sql.NullTime{Time: now, Valid: true}
 	}
 	var exitArg sql.NullInt64

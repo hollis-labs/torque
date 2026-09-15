@@ -63,6 +63,127 @@ func TestHTTP_Template_Update_AppendsVersion(t *testing.T) {
 	assert.Equal(t, "v2", got["name"])
 }
 
+func TestHTTP_Template_BudgetRoundTripAndInstantiate(t *testing.T) {
+	ts := setupTestServer(t)
+	tpl := httpCreateTemplate(t, ts.URL, `{
+		"id":"budgeted",
+		"name":"budgeted",
+		"description":"x",
+		"kind":"agent",
+		"executor":"cli",
+		"cost_budget":0,
+		"max_retries":0,
+		"max_duration_ms":-1,
+		"token_budget":1200
+	}`)
+	assert.Equal(t, float64(0), tpl["cost_budget"])
+	assert.Equal(t, float64(0), tpl["max_retries"])
+	assert.Equal(t, float64(-1), tpl["max_duration_ms"])
+	assert.Equal(t, float64(1200), tpl["token_budget"])
+
+	resp, err := http.Post(ts.URL+"/api/v1/templates/budgeted/instantiate", "application/json",
+		bytes.NewBufferString(`{"template_version":1,"title":"from budgeted v1"}`))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	var task map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&task))
+	resp.Body.Close()
+	assert.Equal(t, float64(0), task["cost_budget"])
+	assert.Equal(t, float64(0), task["max_retries"])
+	assert.Equal(t, float64(-1), task["max_duration_ms"])
+	assert.Equal(t, float64(1200), task["token_budget"])
+
+	req, err := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/templates/budgeted",
+		bytes.NewBufferString(`{"name":"budgeted v2"}`))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var inherited map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&inherited))
+	resp.Body.Close()
+	assert.Equal(t, float64(2), inherited["version"])
+	assert.Equal(t, float64(0), inherited["cost_budget"])
+	assert.Equal(t, float64(0), inherited["max_retries"])
+	assert.Equal(t, float64(-1), inherited["max_duration_ms"])
+	assert.Equal(t, float64(1200), inherited["token_budget"])
+
+	req, err = http.NewRequest(http.MethodPut, ts.URL+"/api/v1/templates/budgeted",
+		bytes.NewBufferString(`{"cost_budget":-1,"max_retries":2,"max_duration_ms":5000,"token_budget":-1}`))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var updated map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&updated))
+	resp.Body.Close()
+	assert.Equal(t, float64(3), updated["version"])
+	assert.Equal(t, float64(-1), updated["cost_budget"])
+	assert.Equal(t, float64(2), updated["max_retries"])
+	assert.Equal(t, float64(5000), updated["max_duration_ms"])
+	assert.Equal(t, float64(-1), updated["token_budget"])
+
+	resp, err = http.Post(ts.URL+"/api/v1/templates/budgeted/instantiate", "application/json",
+		bytes.NewBufferString(`{"title":"from budgeted"}`))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	task = map[string]interface{}{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&task))
+	resp.Body.Close()
+	assert.Equal(t, float64(-1), task["cost_budget"])
+	assert.Equal(t, float64(2), task["max_retries"])
+	assert.Equal(t, float64(5000), task["max_duration_ms"])
+	assert.Equal(t, float64(-1), task["token_budget"])
+
+	req, err = http.NewRequest(http.MethodPut, ts.URL+"/api/v1/templates/budgeted",
+		bytes.NewBufferString(`{"max_retries":-1}`))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+	resp.Body.Close()
+
+	req, err = http.NewRequest(http.MethodPut, ts.URL+"/api/v1/templates/budgeted",
+		bytes.NewBufferString(`{"token_budget":1.5}`))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	resp.Body.Close()
+
+	resp, err = http.Get(ts.URL + "/api/v1/templates/budgeted")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var latest map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&latest))
+	resp.Body.Close()
+	assert.Equal(t, float64(3), latest["version"])
+	assert.Equal(t, float64(-1), latest["cost_budget"])
+	assert.Equal(t, float64(2), latest["max_retries"])
+	assert.Equal(t, float64(5000), latest["max_duration_ms"])
+	assert.Equal(t, float64(-1), latest["token_budget"])
+}
+
+func TestHTTP_Template_InvalidBudgetInputs(t *testing.T) {
+	ts := setupTestServer(t)
+
+	resp, err := http.Post(ts.URL+"/api/v1/templates", "application/json",
+		bytes.NewBufferString(`{"id":"bad","name":"bad","description":"x","kind":"agent","executor":"cli","max_duration_ms":1.5}`))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	resp.Body.Close()
+
+	resp, err = http.Post(ts.URL+"/api/v1/templates", "application/json",
+		bytes.NewBufferString(`{"id":"bad","name":"bad","description":"x","kind":"agent","executor":"cli","max_retries":-1}`))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+	resp.Body.Close()
+}
+
 func TestHTTP_Template_Delete_Conflict(t *testing.T) {
 	ts := setupTestServer(t)
 	httpCreateTemplate(t, ts.URL, `{"id":"t","name":"t","description":"x","kind":"agent","executor":"cli"}`)

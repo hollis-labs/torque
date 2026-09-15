@@ -9,7 +9,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
 )
 
 // TestBoot_ModeOneShot_CodexJsonRpcStdio_Handshake exercises the full
@@ -122,6 +124,48 @@ func TestBoot_ModeOneShot_CodexJsonRpcStdio_Handshake(t *testing.T) {
 	//   5. exitCode=0 → Status=Done
 	assert.Equal(t, agent.StatusDone, sess.Status,
 		"successful JsonRpcStdio kickoff must surface Status=Done")
+}
+
+func TestExecutor_LongLivedCodexTerminalFailedTurnBlocksAndMarksSessionFailed(t *testing.T) {
+	const cannedThreadID = "thread-codex-failed-001"
+	cd := composeDeps(t, fakeRuntimeConfig{
+		PTY: false,
+		JsonRpcResponses: map[string]json.RawMessage{
+			"thread/start": json.RawMessage(
+				`{"thread": {"id": "` + cannedThreadID + `"}}`),
+		},
+		TurnCompletedNotification: json.RawMessage(`{"threadId":"thread-codex-failed-001","turn":{"id":"turn-1","items":[],"status":"failed","error":{"message":"unexpected status 401: missing auth","codexErrorInfo":"other","additionalDetails":null},"startedAt":"2026-09-12T00:03:00Z","completedAt":"2026-09-12T00:03:34Z"}}`),
+	}, "codex")
+
+	const taskID = "CW-TEST-CODEX-FAILED"
+	require.NoError(t, cd.Store.CreateTask(&sqlstore.TaskRecord{
+		ID: taskID, Title: "codex failed", Status: "doing",
+		Executor: "cli", AgentProfile: "torque-backend", OnFail: "retry", MaxRetries: 3,
+	}))
+	runID, err := cd.Store.CreateRun(&sqlstore.RunRecord{TaskID: taskID, Executor: "cli", Status: sqlstore.RunStatusRunning})
+	require.NoError(t, err)
+
+	exec := agent.NewExecutor(cd.Deps)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := exec.Run(ctx, &executor.ExecutionJob{
+		TaskID: taskID, TaskTitle: "codex failed",
+		Kind: "agent", TaskStatus: "doing", AgentProfile: "torque-backend",
+		WorkingDir: t.TempDir(), RunID: runID, Description: "trigger a failed codex turn",
+	}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "blocked", result.Status)
+	assert.Contains(t, result.Reason, "unexpected status 401: missing auth")
+	assert.NotContains(t, result.Reason, "codexErrorInfo")
+
+	sessions, err := cd.Store.ListSessions(sqlstore.SessionFilter{TaskID: taskID})
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, "failed", sessions[0].State)
+	require.True(t, sessions[0].ExitCode.Valid)
+	assert.EqualValues(t, -1, sessions[0].ExitCode.Int64)
+	assert.Contains(t, sessions[0].MetaJSON, `"torque.run_id"`)
 }
 
 // TestBoot_ModeLongLived_CodexJsonRpcStdio_PostStartKickoff covers the

@@ -106,13 +106,8 @@ func projectSortColumn(sortBy string) string {
 	}
 }
 
-// projectCursorArg converts a cursor's string-encoded sort value (DEC-001's
-// `sv` field) into the SQL bind argument for sortBy's column. Unlike
-// taskCursorArg, every Project sort column is TEXT-typed (name/status are
-// plain strings; updated_at/created_at are validated against
-// SQLiteDatetimeLayout but bound as the original string — see
-// taskCursorArg's doc comment for why binding the raw string instead of a
-// re-parsed time.Time matters), so there's no numeric-column case to handle.
+// projectCursorArg validates the cursor value before the query builder binds it.
+// Timestamp values are normalized by timestampCursorArg for the active dialect.
 func projectCursorArg(sortBy, sv string) (any, error) {
 	switch sortBy {
 	case "name", "status":
@@ -149,9 +144,15 @@ func (s *Store) ListProjects(f ProjectFilter) ([]ProjectRecord, error) {
 	}
 
 	sortCol := projectSortColumn(f.SortBy)
+	// Cursor predicates and ordering must compare the same precise key.
+	sortKey := s.timestampSortKey(sortCol)
 	desc := strings.EqualFold(f.SortDir, "desc")
 	if sortCol != "" && f.AfterID != "" {
 		arg, err := projectCursorArg(f.SortBy, f.AfterSortValue)
+		if err != nil {
+			return nil, err
+		}
+		arg, err = s.timestampCursorArg(sortCol, arg)
 		if err != nil {
 			return nil, err
 		}
@@ -159,10 +160,10 @@ func (s *Store) ListProjects(f ProjectFilter) ([]ProjectRecord, error) {
 		if desc {
 			cmp = "<"
 		}
-		// Tuple comparison (sortCol, id) > (arg, AfterID), or the two-clause
+		// Tuple comparison (sortKey, id) > (arg, AfterID), or the two-clause
 		// equivalent below — tiebreak on id ascending regardless of
 		// SortDir, per DEC-001.
-		conditions = append(conditions, fmt.Sprintf("(%s %s ? OR (%s = ? AND id > ?))", sortCol, cmp, sortCol))
+		conditions = append(conditions, fmt.Sprintf("(%s %s ? OR (%s = ? AND id > ?))", sortKey, cmp, sortKey))
 		args = append(args, arg, arg, f.AfterID)
 	}
 
@@ -174,7 +175,7 @@ func (s *Store) ListProjects(f ProjectFilter) ([]ProjectRecord, error) {
 		if desc {
 			dir = "DESC"
 		}
-		query += fmt.Sprintf(" ORDER BY %s %s, id ASC", sortCol, dir)
+		query += fmt.Sprintf(" ORDER BY %s %s, id ASC", sortKey, dir)
 	} else {
 		query += " ORDER BY name ASC"
 	}

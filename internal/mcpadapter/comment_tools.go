@@ -5,35 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
 	"github.com/mark3labs/mcp-go/mcp"
-)
-
-// commentSortAllowList is torque_comment_list/torque_comment_search's
-// sort_by allow-list (PRIM-002). Comment has only one meaningful sortable
-// column today — no priority/status equivalent exists on a comment — so
-// this is a singleton list, unlike Task's four-column allow-list. Kept as
-// its own named list (rather than inlining "created_at" at each call site)
-// so a future second sortable column only needs to change here.
-var commentSortAllowList = []string{"created_at"}
-
-// torque_comment_list defaults to oldest-first (matches the pre-PRIM-001
-// per-entity thread order); torque_comment_search defaults to newest-first
-// (matches the pre-PRIM-001 cross-entity recency order) — see
-// commentSearchSortDefaultDir below. Both share the same sort column.
-const (
-	commentListSortDefaultBy    = "created_at"
-	commentListSortDefaultDir   = "asc"
-	commentSearchSortDefaultBy  = "created_at"
-	commentSearchSortDefaultDir = "desc"
-)
-
-const (
-	defaultCommentSearchLimit = 25
-	maxCommentSearchLimit     = 100
 )
 
 func (a *Adapter) registerCommentTools() {
@@ -52,6 +27,7 @@ Example: {"entity_type":"task","entity_id":"T-123","author":"reviewer","content"
 		mcp.WithDescription(`List comments on one entity — or, via entity_ids, across a caller-resolved SET of entity refs of the same entity_type (e.g. every task in a sprint: first torque_task_list {"sprint_id":...} for the task ids, then pass those as entity_ids here) — ordered created_at ASC (oldest first, tiebreak id ASC) by default. Pass sort_by ("created_at") and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid. Default brief shape includes a 100-char excerpt of the body; pass verbose="true" for full content.
 Use to review the discussion thread for a given entity (or set of entities); torque_comment_add to append. For newest-first cross-entity content search use torque_comment_search.
 Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under.
+entity_ids accepts a JSON array string or native string array; whole null, [null], non-string members, malformed JSON, and an empty list as the only scope reject. If both entity_id and entity_ids are supplied, entity_id takes precedence. Explicit malformed or negative limit values reject; default/max are 50/200.
 Response shape: data = {items: [<briefComment or CommentRecord>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
 Example: {"entity_type":"task","entity_id":"T-123","limit":"50"}`),
 		mcp.WithString("entity_type", mcp.Required(), mcp.Description(`Entity kind. Valid: "task", "project", "epic", "sprint".`)),
@@ -71,6 +47,7 @@ Example: {"entity_type":"task","entity_id":"T-123","limit":"50"}`),
 		mcp.WithDescription(`Search comments by content across all entities, optionally scoped to one entity (entity_type + entity_id), a set of entity refs (entity_type + entity_ids), an author, and/or a created_at range. Returns newest first (created_at DESC, tiebreak id ASC) by default; pass sort_by/sort_dir to change order.
 Use to discover comments by content; torque_comment_list for per-entity (or per-entity-set) chronological history.
 Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under.
+entity_ids accepts a JSON array string or native string array; whole null, [null], non-string members, and malformed JSON reject. If both entity_id and entity_ids are supplied, entity_id takes precedence. Explicit malformed or negative limit values reject; default/max are 25/100.
 Response shape: data = {items: [<CommentRecord>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
 Example: {"query":"review notes","entity_type":"task","entity_id":"T-123"}`),
 		mcp.WithString("query", mcp.Required(), mcp.Description("Substring match on comment content")),
@@ -97,14 +74,16 @@ Example: {"id":"42","author":"reviewer","content":"Updated: please also cover th
 	), a.handleCommentUpdate)
 
 	a.addTool(mcp.NewTool("torque_comment_delete",
-		mcp.WithDescription(`Hard-delete a comment. Author-scoped: only the comment's original author may delete it — a mismatched author returns error.code=permission. There is no undo.
-Use to remove a comment you posted in error.
+		mcp.WithDescription(`Hard-delete a comment. By default this uses exact author matching as an accidental-deletion guard: a mismatched author returns error.code=permission. author is caller-supplied text, not an authenticated principal. There is no undo.
+Use to remove a comment you posted in error. Pass force=true only when you deliberately want to bypass the author-match guard; force does not bypass invalid IDs or missing-comment errors.
 Unattributed comments (author stored as "", which is what an omitted author on torque_comment_add produces) are deleted by passing author="" explicitly. Omitting author entirely is still an error — the empty string has to be deliberate.
 Response shape: data = {id, deleted: true}.
 Example: {"id":"42","author":"reviewer"}
-Example, an unattributed comment: {"id":"42","author":""}`),
+Example, an unattributed comment: {"id":"42","author":""}
+Example, deliberate override: {"id":"42","author":"reviewer","force":true}`),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Comment ID (integer; pass as string)")),
-		mcp.WithString("author", mcp.Required(), mcp.Description(`Caller's author slug/id — must exactly match the comment's original author. Pass "" to match an unattributed comment; the field itself must still be present.`)),
+		mcp.WithString("author", mcp.Required(), mcp.Description(`Caller's author slug/id — must exactly match the comment's original author unless force=true. Pass "" to match an unattributed comment; the field itself must still be present.`)),
+		mcp.WithBoolean("force", mcp.Description(`Optional. true deliberately bypasses only the author-match guard; omitted/false preserves exact-author behavior.`)),
 	), a.handleCommentDelete)
 
 	a.addTool(mcp.NewTool("torque_comment_bulk_add",
@@ -165,43 +144,15 @@ func (a *Adapter) handleCommentAdd(ctx context.Context, req mcp.CallToolRequest)
 	return okResult(comment)
 }
 
-// commentSortValue formats a CommentRecord's sortBy column into the string
-// encoding PRIM-001's cursor uses for meta.next_cursor (DEC-001's `sv`
-// field). Mirrors taskSortValue's rationale: created_at uses
-// sqlstore.CommentDatetimeLayout — the exact text shape SQLite's own
-// CURRENT_TIMESTAMP writes and sqlstore.commentCursorArg parses/binds on
-// the decode side — NOT time.RFC3339Nano.
+// commentSortValue preserves timestamp precision in cursor values.
 func commentSortValue(c sqlstore.CommentRecord, sortBy string) string {
-	switch sortBy {
-	case "created_at":
-		return c.CreatedAt.UTC().Format(sqlstore.CommentDatetimeLayout)
-	default:
-		return ""
-	}
+	return service.CommentQuerySortValue(c, sortBy)
 }
 
 // commentCursorID formats a CommentRecord's integer id into the opaque
 // cursor's string id field.
 func commentCursorID(c sqlstore.CommentRecord) string {
-	return fmt.Sprintf("%d", c.ID)
-}
-
-// parseCommentDateArg parses a created_after/created_before value into
-// sqlstore.CommentDatetimeLayout text for CommentFilter. Accepts RFC3339
-// (the natural agent-facing format for a timestamp) and, defensively, the
-// raw SQLite storage layout itself. Empty input returns "" (no filter), not
-// an error.
-func parseCommentDateArg(raw string) (string, error) {
-	if raw == "" {
-		return "", nil
-	}
-	if t, err := time.Parse(time.RFC3339, raw); err == nil {
-		return t.UTC().Format(sqlstore.CommentDatetimeLayout), nil
-	}
-	if t, err := time.Parse(sqlstore.CommentDatetimeLayout, raw); err == nil {
-		return t.UTC().Format(sqlstore.CommentDatetimeLayout), nil
-	}
-	return "", fmt.Errorf("must be RFC3339 (e.g. \"2026-01-02T15:04:05Z\"), got %q", raw)
+	return service.CommentQueryCursorID(c)
 }
 
 // commentListEnvelope builds the shared {items, meta} cursor-pagination
@@ -223,51 +174,56 @@ func commentListEnvelope(comments []sqlstore.CommentRecord, limit int, verbose b
 }
 
 func (a *Adapter) handleCommentList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	limit := clampLimit(reqInt(req, "limit"), defaultCommentListLimit, maxCommentListLimit)
-	verbose := reqStrBool(req, "verbose")
-
-	sortBy, sortDir, afterSortValue, afterID, errRes := resolveSortAndCursor(req, commentListSortDefaultBy, commentListSortDefaultDir, commentSortAllowList...)
+	verbose, errRes := reqQueryBool(req, "verbose")
 	if errRes != nil {
 		return errRes, nil
 	}
-
-	entityType := reqStr(req, "entity_type")
+	entityType, errRes := reqQueryString(req, "entity_type")
+	if errRes != nil {
+		return errRes, nil
+	}
 	if entityType == "" {
 		return errResult(ErrCodeArgInvalid, "entity_type is required", "entity_type")
 	}
-	entityID := reqStr(req, "entity_id")
-	entityIDs, err := reqStrSlice(req, "entity_ids")
+	entityID, errRes := reqQueryString(req, "entity_id")
+	if errRes != nil {
+		return errRes, nil
+	}
+	entityIDs, err := reqTaskListOperatorStringSlice(req, "entity_ids")
 	if err != nil {
 		return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid entity_ids JSON: %v", err), "entity_ids")
 	}
 	if entityID == "" && len(entityIDs) == 0 {
 		return errResult(ErrCodeArgInvalid, "entity_id or entity_ids is required", "entity_id")
 	}
-
-	createdAfter, err := parseCommentDateArg(reqStr(req, "created_after"))
-	if err != nil {
-		return errResult(ErrCodeArgInvalid, "created_after "+err.Error(), "created_after")
+	author, errRes := reqQueryString(req, "author")
+	if errRes != nil {
+		return errRes, nil
 	}
-	createdBefore, err := parseCommentDateArg(reqStr(req, "created_before"))
-	if err != nil {
-		return errResult(ErrCodeArgInvalid, "created_before "+err.Error(), "created_before")
+	createdAfter, errRes := reqQueryString(req, "created_after")
+	if errRes != nil {
+		return errRes, nil
+	}
+	createdBefore, errRes := reqQueryString(req, "created_before")
+	if errRes != nil {
+		return errRes, nil
+	}
+	cursor, errRes := reqQueryCursor(req)
+	if errRes != nil {
+		return errRes, nil
 	}
 
-	filter := sqlstore.CommentFilter{
+	filter, normalized, err := service.NormalizeCommentListQuery(service.CommentQuery{
 		EntityType:    entityType,
 		EntityID:      entityID,
 		EntityIDs:     entityIDs,
-		Author:        reqStr(req, "author"),
+		Author:        author,
 		CreatedAfter:  createdAfter,
 		CreatedBefore: createdBefore,
-		// Fetch one extra row beyond limit so has_more can be determined
-		// without a separate COUNT(*) query (DEC-001's cheaper-default
-		// choice) — see taskListCursorEnvelope's doc comment.
-		Limit:          limit + 1,
-		SortBy:         sortBy,
-		SortDir:        sortDir,
-		AfterSortValue: afterSortValue,
-		AfterID:        afterID,
+		CursorQuery:   cursor,
+	})
+	if err != nil {
+		return errFromService(err)
 	}
 
 	comments, err := a.svc.Comment.ListFiltered(filter)
@@ -275,52 +231,62 @@ func (a *Adapter) handleCommentList(ctx context.Context, req mcp.CallToolRequest
 		return errFromService(err)
 	}
 
-	hasMoreFromQuery := len(comments) > limit
+	hasMoreFromQuery := len(comments) > normalized.Limit
 	if hasMoreFromQuery {
-		comments = comments[:limit]
+		comments = comments[:normalized.Limit]
 	}
-	return commentListEnvelope(comments, limit, verbose, sortBy, sortDir, hasMoreFromQuery)
+	return commentListEnvelope(comments, normalized.Limit, verbose, normalized.SortBy, normalized.SortDir, hasMoreFromQuery)
 }
 
 func (a *Adapter) handleCommentSearch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	query := reqStr(req, "query")
+	query, errRes := reqQueryString(req, "query")
+	if errRes != nil {
+		return errRes, nil
+	}
 	if query == "" {
 		return errResult(ErrCodeArgInvalid, "query is required", "query")
 	}
-	limit := clampLimit(reqInt(req, "limit"), defaultCommentSearchLimit, maxCommentSearchLimit)
-
-	sortBy, sortDir, afterSortValue, afterID, errRes := resolveSortAndCursor(req, commentSearchSortDefaultBy, commentSearchSortDefaultDir, commentSortAllowList...)
+	entityType, errRes := reqQueryString(req, "entity_type")
+	if errRes != nil {
+		return errRes, nil
+	}
+	entityID, errRes := reqQueryString(req, "entity_id")
+	if errRes != nil {
+		return errRes, nil
+	}
+	entityIDs, err := reqTaskListOperatorStringSlice(req, "entity_ids")
+	if err != nil {
+		return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid entity_ids JSON: %v", err), "entity_ids")
+	}
+	author, errRes := reqQueryString(req, "author")
+	if errRes != nil {
+		return errRes, nil
+	}
+	createdAfter, errRes := reqQueryString(req, "created_after")
+	if errRes != nil {
+		return errRes, nil
+	}
+	createdBefore, errRes := reqQueryString(req, "created_before")
+	if errRes != nil {
+		return errRes, nil
+	}
+	cursor, errRes := reqQueryCursor(req)
 	if errRes != nil {
 		return errRes, nil
 	}
 
-	entityIDs, err := reqStrSlice(req, "entity_ids")
+	filter, normalized, err := service.NormalizeCommentSearchQuery(service.CommentQuery{
+		Search:        query,
+		EntityType:    entityType,
+		EntityID:      entityID,
+		EntityIDs:     entityIDs,
+		Author:        author,
+		CreatedAfter:  createdAfter,
+		CreatedBefore: createdBefore,
+		CursorQuery:   cursor,
+	})
 	if err != nil {
-		return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid entity_ids JSON: %v", err), "entity_ids")
-	}
-
-	createdAfter, err := parseCommentDateArg(reqStr(req, "created_after"))
-	if err != nil {
-		return errResult(ErrCodeArgInvalid, "created_after "+err.Error(), "created_after")
-	}
-	createdBefore, err := parseCommentDateArg(reqStr(req, "created_before"))
-	if err != nil {
-		return errResult(ErrCodeArgInvalid, "created_before "+err.Error(), "created_before")
-	}
-
-	filter := sqlstore.CommentFilter{
-		Search:         query,
-		EntityType:     reqStr(req, "entity_type"),
-		EntityID:       reqStr(req, "entity_id"),
-		EntityIDs:      entityIDs,
-		Author:         reqStr(req, "author"),
-		CreatedAfter:   createdAfter,
-		CreatedBefore:  createdBefore,
-		Limit:          limit + 1,
-		SortBy:         sortBy,
-		SortDir:        sortDir,
-		AfterSortValue: afterSortValue,
-		AfterID:        afterID,
+		return errFromService(err)
 	}
 
 	comments, err := a.svc.Comment.Search(filter)
@@ -328,14 +294,14 @@ func (a *Adapter) handleCommentSearch(ctx context.Context, req mcp.CallToolReque
 		return errFromService(err)
 	}
 
-	hasMoreFromQuery := len(comments) > limit
+	hasMoreFromQuery := len(comments) > normalized.Limit
 	if hasMoreFromQuery {
-		comments = comments[:limit]
+		comments = comments[:normalized.Limit]
 	}
 	// torque_comment_search has always returned full CommentRecord items
 	// (no brief/verbose toggle existed pre-ENT-COMMENT) — preserved as-is;
 	// only pagination/sort/filter changed here.
-	return commentListEnvelope(comments, limit, true, sortBy, sortDir, hasMoreFromQuery)
+	return commentListEnvelope(comments, normalized.Limit, true, normalized.SortBy, normalized.SortDir, hasMoreFromQuery)
 }
 
 func (a *Adapter) handleCommentUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -359,8 +325,8 @@ func (a *Adapter) handleCommentUpdate(ctx context.Context, req mcp.CallToolReque
 }
 
 func (a *Adapter) handleCommentDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	id := int64(reqInt(req, "id"))
-	if id <= 0 {
+	id, err := exactInt64(req.GetArguments()["id"], "id")
+	if err != nil || id <= 0 {
 		return errResult(ErrCodeArgInvalid, "id must be a positive integer", "id")
 	}
 	// author is required, but an EXPLICIT empty string is a legitimate value:
@@ -379,17 +345,19 @@ func (a *Adapter) handleCommentDelete(ctx context.Context, req mcp.CallToolReque
 	// presence is read off the argument map; a caller who forgets the field
 	// still gets "author is required".
 	//
-	// This does NOT change WHO may delete a comment. author is free text
-	// rather than a session identity — anyone can already claim to be
-	// "planner" — so declaring a comment unattributed grants no authority
-	// that was not already trivially available. Whether author-scoping is a
-	// meaningful check at all is a separate question this does not answer.
 	rawAuthor, supplied := req.GetArguments()["author"]
 	if !supplied {
 		return errResult(ErrCodeArgInvalid, "author is required", "author")
 	}
-	author, _ := rawAuthor.(string)
-	if err := a.svc.Comment.Delete(id, author); err != nil {
+	author, ok := rawAuthor.(string)
+	if !ok {
+		return errResult(ErrCodeArgInvalid, "author must be a string", "author")
+	}
+	force, errRes := reqExactBool(req, "force")
+	if errRes != nil {
+		return errRes, nil
+	}
+	if err := a.svc.Comment.Delete(id, author, force); err != nil {
 		return errFromService(err)
 	}
 	return okResult(map[string]any{"id": id, "deleted": true})

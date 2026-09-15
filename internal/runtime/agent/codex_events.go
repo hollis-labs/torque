@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/hollis-labs/agentkit/agentruntime/turn"
 	llmtypes "github.com/hollis-labs/go-llm-types"
@@ -27,6 +28,8 @@ import (
 // turn.Codex* method-name constants. Torque keeps only the app-specific
 // *projection* of the parsed item onto llmtypes.StreamEvent (the tool-name
 // mapping below) — which the upstream README explicitly leaves to apps.
+
+const codexTerminalFailurePrefix = "codex terminal turn failed"
 
 // codexItemCompletedEvent projects a parsed codex `item/completed`
 // notification (via turn.ParseCodexItemCompleted) onto a StreamEvent.
@@ -74,4 +77,30 @@ func codexItemCompletedEvent(params json.RawMessage) (llmtypes.StreamEvent, bool
 	default:
 		return llmtypes.StreamEvent{}, false
 	}
+}
+
+func codexTurnCompletedFailure(params json.RawMessage) (string, bool) {
+	var payload struct {
+		Turn struct {
+			Status string `json:"status"`
+			Error  struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		} `json:"turn"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return "", false
+	}
+	if !strings.EqualFold(payload.Turn.Status, "failed") {
+		return "", false
+	}
+	reason := strings.TrimSpace(payload.Turn.Error.Message)
+	if reason == "" {
+		reason = "status=failed"
+	}
+	const maxReason = 240
+	if len(reason) > maxReason {
+		reason = reason[:maxReason] + "..."
+	}
+	return codexTerminalFailurePrefix + ": " + reason, true
 }

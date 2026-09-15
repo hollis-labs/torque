@@ -7,6 +7,8 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -343,6 +345,20 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 			shutdownLoopbackHandle(loopback)
 			return nil, fmt.Errorf("%w: plant boot dir: %v", ErrBootFailed, err)
 		}
+		if profile.Provider == "codex" {
+			if err := prepareCodexAuth(ctx, env, preparedExecution); err != nil {
+				shutdownLoopbackHandle(loopback)
+				_ = os.RemoveAll(prepared.PlantedBootDir)
+				return nil, fmt.Errorf("%w: prepare Codex authentication: %v", ErrBootFailed, err)
+			}
+		}
+		// A newly planted directory has no interactive Claude trust grant.
+		// Load the operator-selected settings explicitly so headless launches
+		// honor the planted permission mode and auth helper from the outset.
+		if profile.Provider == "claude-code" {
+			preparedExecution.Bindings.Argv = append(preparedExecution.Bindings.Argv,
+				"--settings", filepath.Join(prepared.PlantedBootDir, ".claude", "settings.json"))
+		}
 		prepared.Argv = append([]string(nil), preparedExecution.Bindings.Argv...)
 		prepared.Env = envVarValues(preparedExecution.Bindings.Env)
 		prepared.Workdir = preparedExecution.Bindings.CWD
@@ -529,6 +545,20 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 	if shouldDropBootDirExtraArgs(profile.Provider, runtimeKind) {
 		bootDirExtraArgs = nil
 	}
+	if profile.Provider == "codex" && runtimeKind == RuntimeKindJsonRpcStdio {
+		// The JSON-RPC runtime already calls the adapter's BuildArgs, which
+		// emits app-server. PreparedExecution contains that same command;
+		// only its remaining options belong in the ExtraArgs splice.
+		if len(bootDirExtraArgs) > 0 && bootDirExtraArgs[0] == "app-server" {
+			bootDirExtraArgs = bootDirExtraArgs[1:]
+		}
+		// This runtime bypasses the per-turn buildArgs callback below.
+		// app-server accepts model configuration via -c, not --model.
+		bootDirExtraArgs = append(append([]string(nil), profile.Args...), bootDirExtraArgs...)
+		if profile.Model != "" {
+			bootDirExtraArgs = append(bootDirExtraArgs, "-c", fmt.Sprintf("model=%q", profile.Model))
+		}
+	}
 
 	// Merge the bootdir-derived env amendments (CODEX_HOME /
 	// OPENCODE_CONFIG_DIR) that providerplant.Plant resolved into
@@ -644,12 +674,12 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 	// Start returns nil). Workdir on the row stays at opts.Workdir — the
 	// project root, which is the most useful forensic value; the planted
 	// bootDir lives in metaKeyBootDir and registerBootDir.
-	persistedMeta := make(map[string]string, len(opts.SessionMeta)+3)
-	for k, v := range opts.SessionMeta {
-		persistedMeta[k] = v
-	}
+	persistedMeta := callerSessionMeta(opts.SessionMeta)
 	persistedMeta[metaKeyMode] = opts.Mode.String()
 	persistedMeta[metaKeyWorkspaceDir] = ws.WorkspaceDir
+	if opts.RunID > 0 {
+		persistedMeta[metaKeyRunID] = strconv.FormatInt(opts.RunID, 10)
+	}
 	if opts.ParentSessionID != "" {
 		persistedMeta[metaKeyParentSessionID] = opts.ParentSessionID
 	}
@@ -856,6 +886,15 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 				// wire string. A mismatch never fires turn-complete, so
 				// ModeOneShot burns its full timeout budget then SIGTERMs a
 				// turn that already succeeded.
+				if msg, failed := codexTurnCompletedFailure(params); failed {
+					emit(llmtypes.StreamEvent{Type: llmtypes.EventError, Error: msg})
+					if opts.terminalFailure != nil {
+						select {
+						case opts.terminalFailure <- msg:
+						default:
+						}
+					}
+				}
 				if hookOnDone != nil {
 					hookOnDone()
 				}
@@ -955,7 +994,7 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 	// in context.WithTimeout(ctx, profile.timeout) and needs the cancel to
 	// propagate for timeout enforcement.
 	startCtx := ctx
-	if opts.Mode != ModeOneShot {
+	if opts.Mode != ModeOneShot && !opts.RetainContextOnLongLivedStart {
 		startCtx = context.WithoutCancel(ctx)
 	}
 	if err := mgr.inner.Start(startCtx, startReq); err != nil {
@@ -1030,7 +1069,7 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 		TaskID:          opts.TaskID,
 		ParentSessionID: opts.ParentSessionID,
 		Status:          StatusLaunching, // updated on terminal observe
-		Meta:            opts.SessionMeta,
+		Meta:            persistedMeta,
 		CreatedAt:       time.Now().UTC(),
 	}
 
@@ -1063,7 +1102,11 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 		if kickoff == "" {
 			kickoff = kickoffPayloadForBootDir(capturedBootDir)
 		}
-		if err := mgr.SendTurn(context.WithoutCancel(ctx), sess, kickoff); err != nil {
+		kickoffCtx := ctx
+		if !opts.RetainContextOnLongLivedStart {
+			kickoffCtx = context.WithoutCancel(ctx)
+		}
+		if err := mgr.SendTurn(kickoffCtx, sess, kickoff); err != nil {
 			log.Printf("agent.Boot: long-lived JsonRpcStdio kickoff failed (session=%s): %v", sessID, err)
 			stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			_ = mgr.inner.Stop(stopCtx, sessID)
@@ -1225,6 +1268,18 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 	if shouldDropBootDirExtraArgs(profile.Provider, runtimeKind) && len(execution.Bindings.Argv) > 0 {
 		execution.Bindings.Argv = execution.Bindings.Argv[:1]
 	}
+	// PreparedExecution is the wrapper's complete spawn command; it suppresses
+	// CLIAdapter.BuildArgs. Carry Claude's profile options on that command,
+	// rather than an adapter callback that the prepared path never invokes.
+	if profile.Provider == "claude-code" && len(execution.Bindings.Argv) > 0 {
+		argv := []string{execution.Bindings.Argv[0]}
+		argv = append(argv, profileArgsExcludingDevFlag(profile)...)
+		argv = append(argv, execution.Bindings.Argv[1:]...)
+		if profile.Model != "" {
+			argv = append(argv, "--model", profile.Model)
+		}
+		execution.Bindings.Argv = argv
+	}
 
 	// Merge Torque's own composeEnv output (TORQUE_TASK_ID/RUN_ID, filtered
 	// OS env, agent-file env, opts.Env) into the bindings env --
@@ -1287,12 +1342,12 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		}
 	}
 
-	persistedMeta := make(map[string]string, len(opts.SessionMeta)+3)
-	for k, v := range opts.SessionMeta {
-		persistedMeta[k] = v
-	}
+	persistedMeta := callerSessionMeta(opts.SessionMeta)
 	persistedMeta[metaKeyMode] = opts.Mode.String()
 	persistedMeta[metaKeyWorkspaceDir] = ws.WorkspaceDir
+	if opts.RunID > 0 {
+		persistedMeta[metaKeyRunID] = strconv.FormatInt(opts.RunID, 10)
+	}
 	if opts.ParentSessionID != "" {
 		persistedMeta[metaKeyParentSessionID] = opts.ParentSessionID
 	}
@@ -1405,7 +1460,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 	// rationale exactly (boot.go's startCtx comment): long-lived sessions
 	// must outlive the caller's request-scoped ctx.
 	runCtx := ctx
-	if opts.Mode != ModeOneShot {
+	if opts.Mode != ModeOneShot && !opts.RetainContextOnLongLivedStart {
 		runCtx = context.WithoutCancel(ctx)
 	}
 	runCtx, runCancel := context.WithCancel(runCtx)
@@ -1491,7 +1546,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		TaskID:          opts.TaskID,
 		ParentSessionID: opts.ParentSessionID,
 		Status:          StatusRunning,
-		Meta:            opts.SessionMeta,
+		Meta:            persistedMeta,
 		CreatedAt:       time.Now().UTC(),
 	}
 

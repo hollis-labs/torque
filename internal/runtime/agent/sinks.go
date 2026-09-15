@@ -22,10 +22,14 @@ type EventEmitter interface {
 //
 // Forked from internal/runtime/sessionmgr/sinks.go without semantic change.
 type storeStateSink struct {
-	deps *Dependencies
+	deps    *Dependencies
+	manager *Manager
 }
 
 func (s *storeStateSink) UpdateSessionState(id string, state agentsessions.State, pid int, exit *int) error {
+	if s.manager != nil {
+		return s.manager.updateSessionStateFromSink(context.Background(), id, state, pid, exit)
+	}
 	return s.deps.UpdateSessionState(context.Background(), id, string(state), pid, exit)
 }
 
@@ -41,9 +45,13 @@ func (s *storeStateSink) UpdateSessionState(id string, state agentsessions.State
 type busEventSink struct {
 	events     EventEmitter
 	onTerminal func(sessID string)
+	manager    *Manager
 }
 
 func (s *busEventSink) Emit(_ context.Context, ev agentsessions.LifecycleEvent) {
+	if s.manager != nil {
+		ev = s.manager.normalizeTerminalEvent(ev)
+	}
 	if s.events != nil {
 		data := map[string]interface{}{
 			"session_id": ev.SessionID,

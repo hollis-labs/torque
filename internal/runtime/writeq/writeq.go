@@ -133,6 +133,7 @@ func New(store *sqlstore.Store, opts Options) *Queue {
 // Run drains queued write ops until ctx is cancelled or Stop is called.
 func (q *Queue) Run(ctx context.Context) error {
 	defer close(q.doneCh)
+	defer q.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -186,6 +187,19 @@ func (q *Queue) Submit(ctx context.Context, name string, fn func(*sqlstore.Write
 			q.stats.completed.Add(1)
 		}
 		return err
+	case <-q.doneCh:
+		select {
+		case err := <-item.res:
+			if err != nil {
+				q.stats.failed.Add(1)
+			} else {
+				q.stats.completed.Add(1)
+			}
+			return err
+		default:
+		}
+		q.stats.failed.Add(1)
+		return fmt.Errorf("state write queue stopped")
 	case <-ctx.Done():
 		q.stats.failed.Add(1)
 		return ctx.Err()

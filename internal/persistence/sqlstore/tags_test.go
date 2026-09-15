@@ -72,6 +72,76 @@ func TestListTagsSortedByName(t *testing.T) {
 	assert.WithinDuration(t, time.Now(), tags[0].CreatedAt, 5*time.Second)
 }
 
+func TestListTagsPageStableNameCollationAndCursor(t *testing.T) {
+	store := setupTestStore(t)
+	fixtures := []sqlstore.TagRecord{
+		{Slug: "alpha-1", Name: "Alpha", Color: "red"},
+		{Slug: "alpha-2", Name: "alpha", Color: "blue"},
+		{Slug: "alpha-0", Name: "ALPHA", Color: "green"},
+		{Slug: "beta", Name: "Beta", Color: "zinc"},
+	}
+	for i := range fixtures {
+		require.NoError(t, store.CreateTag(&fixtures[i]))
+	}
+
+	filter := sqlstore.TagFilter{Limit: 2}
+	page1, err := store.ListTagsPage(filter)
+	require.NoError(t, err)
+	require.Equal(t, 4, page1.Total)
+	require.Len(t, page1.Tags, 2)
+	assert.Equal(t, []string{"alpha-0", "alpha-1"}, []string{page1.Tags[0].Slug, page1.Tags[1].Slug})
+
+	last := page1.Tags[len(page1.Tags)-1]
+	filter.AfterName = last.Name
+	filter.AfterSlug = last.Slug
+	page2, err := store.ListTagsPage(filter)
+	require.NoError(t, err)
+	require.Equal(t, 4, page2.Total)
+	require.Len(t, page2.Tags, 2)
+	assert.Equal(t, []string{"alpha-2", "beta"}, []string{page2.Tags[0].Slug, page2.Tags[1].Slug})
+}
+
+func TestListTagsPageLiteralSearchAndExactColor(t *testing.T) {
+	store := setupTestStore(t)
+	fixtures := []sqlstore.TagRecord{
+		{Slug: "space", Name: "two words", Description: "has space", Color: "red"},
+		{Slug: "percent", Name: "100%literal", Description: "plain", Color: "blue"},
+		{Slug: "underscore", Name: "under_score", Description: "plain", Color: "blue"},
+		{Slug: "slash", Name: `back\slash`, Description: "plain", Color: "green"},
+		{Slug: "unicode", Name: "Café", Description: "same-case-unicode", Color: "red"},
+	}
+	for i := range fixtures {
+		require.NoError(t, store.CreateTag(&fixtures[i]))
+	}
+
+	for _, tc := range []struct {
+		query string
+		want  string
+	}{
+		{query: " ", want: "space"},
+		{query: "%", want: "percent"},
+		{query: "_", want: "underscore"},
+		{query: `\`, want: "slash"},
+		{query: "Café", want: "unicode"},
+	} {
+		got, err := store.ListTagsPage(sqlstore.TagFilter{Query: tc.query})
+		require.NoError(t, err, tc.query)
+		require.Len(t, got.Tags, 1, tc.query)
+		assert.Equal(t, tc.want, got.Tags[0].Slug, tc.query)
+		assert.Equal(t, 1, got.Total, tc.query)
+	}
+
+	got, err := store.ListTagsPage(sqlstore.TagFilter{Query: "plain", Color: "blue"})
+	require.NoError(t, err)
+	require.Len(t, got.Tags, 2)
+	assert.Equal(t, 2, got.Total)
+
+	got, err = store.ListTagsPage(sqlstore.TagFilter{Color: " blue "})
+	require.NoError(t, err)
+	assert.Empty(t, got.Tags, "color filter is exact equality, not trimmed")
+	assert.Equal(t, 0, got.Total)
+}
+
 func TestUpdateTag(t *testing.T) {
 	store := setupTestStore(t)
 

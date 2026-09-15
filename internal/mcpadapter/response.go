@@ -470,6 +470,7 @@ type listMetaCursor struct {
 	Truncated  bool    `json:"truncated"`
 	Returned   int     `json:"returned"`
 	Limit      int     `json:"limit"`
+	Total      *int    `json:"total,omitempty"`
 	HasMore    bool    `json:"has_more"`
 	NextCursor *string `json:"next_cursor"`
 	Hint       string  `json:"hint,omitempty"`
@@ -480,6 +481,62 @@ type listMetaCursor struct {
 type listEnvelopeCursor struct {
 	Items []any          `json:"items"`
 	Meta  listMetaCursor `json:"meta"`
+}
+
+func cappedTaskFacetResult(result service.TaskFacetQueryResult) (*mcp.CallToolResult, error) {
+	build := func(r service.TaskFacetQueryResult, truncated bool) ([]byte, error) {
+		if truncated {
+			for i := range r.Facets {
+				if r.Facets[i].Returned < r.Facets[i].TotalDistinct {
+					r.Facets[i].Truncated = true
+				}
+			}
+		}
+		return json.MarshalIndent(Response{OK: true, Data: r}, "", "  ")
+	}
+	b, err := build(result, false)
+	if err != nil {
+		return errResult(ErrCodeInternal, "response serialization failed", "")
+	}
+	if len(b) <= maxMCPResponseBytes {
+		return mcp.NewToolResultText(string(b)), nil
+	}
+
+	trimmed := result
+	trimmed.Facets = append([]service.TaskFacet{}, result.Facets...)
+	for i := range trimmed.Facets {
+		trimmed.Facets[i].Buckets = append([]service.TaskFacetBucket{}, result.Facets[i].Buckets...)
+	}
+	for {
+		longest := -1
+		for i := range trimmed.Facets {
+			if len(trimmed.Facets[i].Buckets) > 0 && (longest == -1 || len(trimmed.Facets[i].Buckets) > len(trimmed.Facets[longest].Buckets)) {
+				longest = i
+			}
+		}
+		if longest == -1 {
+			break
+		}
+		trimmed.Facets[longest].Buckets = trimmed.Facets[longest].Buckets[:len(trimmed.Facets[longest].Buckets)-1]
+		trimmed.Facets[longest].Returned = len(trimmed.Facets[longest].Buckets)
+		trimmed.Facets[longest].Truncated = true
+		b, err = build(trimmed, true)
+		if err != nil {
+			return errResult(ErrCodeInternal, "response serialization failed", "")
+		}
+		if len(b) <= maxMCPResponseBytes {
+			return mcp.NewToolResultText(string(b)), nil
+		}
+	}
+
+	b, err = build(trimmed, true)
+	if err != nil {
+		return errResult(ErrCodeInternal, "response serialization failed", "")
+	}
+	if len(b) <= maxMCPResponseBytes {
+		return mcp.NewToolResultText(string(b)), nil
+	}
+	return errResult(ErrCodeInternal, "task facet response metadata exceeds MCP response cap; narrow dimensions or filters", "")
 }
 
 // cappedCursorJSONResult is cappedJSONResult's cursor-aware sibling for list
@@ -518,6 +575,10 @@ type listEnvelopeCursor struct {
 //     if hasMoreFromQuery was false, since the byte cap itself created more
 //     unseen rows).
 func cappedCursorJSONResult(items []any, limit int, sortBy, sortDir string, hasMoreFromQuery bool, cursorAt func(lastIncludedIndex int) (sortValue, id string)) (*mcp.CallToolResult, error) {
+	return cappedCursorJSONResultWithTotal(items, limit, nil, sortBy, sortDir, hasMoreFromQuery, cursorAt)
+}
+
+func cappedCursorJSONResultWithTotal(items []any, limit int, total *int, sortBy, sortDir string, hasMoreFromQuery bool, cursorAt func(lastIncludedIndex int) (sortValue, id string)) (*mcp.CallToolResult, error) {
 	build := func(n int) ([]byte, error) {
 		trimmed := items[:n]
 		hasMore := hasMoreFromQuery || n < len(items)
@@ -531,6 +592,7 @@ func cappedCursorJSONResult(items []any, limit int, sortBy, sortDir string, hasM
 			Truncated:  n < len(items),
 			Returned:   n,
 			Limit:      limit,
+			Total:      total,
 			HasMore:    hasMore,
 			NextCursor: nextCursor,
 		}

@@ -6,6 +6,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 )
 
 func sprintJSON(sp *sqlstore.SprintRecord) map[string]interface{} {
@@ -33,21 +34,90 @@ func sprintsJSON(sprints []sqlstore.SprintRecord) []map[string]interface{} {
 }
 
 func (s *Server) listSprints(w http.ResponseWriter, r *http.Request) {
-	status := r.URL.Query().Get("status")
-	projectID := r.URL.Query().Get("project_id")
-	sprints, err := s.svc.Sprint.List(sqlstore.SprintFilter{Status: status, ProjectID: projectID})
+	allowed := map[string]bool{"status": true, "project_id": true, "include_archived": true, "over_budget": true, "cost_budget_min": true, "cost_budget_max": true, "limit": true, "cursor": true, "sort_by": true, "sort_dir": true}
+	q, qerr := parseStrictQuery(r, allowed)
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
+		return
+	}
+	status := queryString(q, "status")
+	projectID := queryString(q, "project_id")
+	if !hasAnyQueryKey(q, "include_archived", "over_budget", "cost_budget_min", "cost_budget_max", "limit", "cursor", "sort_by", "sort_dir") {
+		sprints, err := s.svc.Sprint.List(sqlstore.SprintFilter{Status: status, ProjectID: projectID})
+		if err != nil {
+			if _, ok := err.(*service.FeatureDisabledError); ok {
+				writeError(w, http.StatusNotFound, err.Error())
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if sprints == nil {
+			sprints = []sqlstore.SprintRecord{}
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"sprints": sprintsJSON(sprints)})
+		return
+	}
+	includeArchived, qerr := queryBool(q, "include_archived")
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
+		return
+	}
+	overBudget, qerr := queryBool(q, "over_budget")
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
+		return
+	}
+	min, qerr := queryFloatPtr(q, "cost_budget_min")
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
+		return
+	}
+	max, qerr := queryFloatPtr(q, "cost_budget_max")
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
+		return
+	}
+	cursor, qerr := queryCursor(q)
+	if qerr != nil {
+		writeHTTPQueryError(w, qerr)
+		return
+	}
+	filter, normalized, err := service.NormalizeSprintQuery(service.SprintQuery{
+		Status:          status,
+		ProjectID:       projectID,
+		IncludeArchived: includeArchived,
+		OverBudget:      overBudget,
+		CostBudgetMin:   min,
+		CostBudgetMax:   max,
+		CursorQuery:     cursor,
+	})
+	if err != nil {
+		writeAdjacentServiceError(w, err)
+		return
+	}
+	sprints, err := s.svc.Sprint.List(filter)
 	if err != nil {
 		if _, ok := err.(*service.FeatureDisabledError); ok {
 			writeError(w, http.StatusNotFound, err.Error())
 			return
 		}
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeAdjacentServiceError(w, err)
 		return
+	}
+	hasMore := len(sprints) > normalized.Limit
+	if hasMore {
+		sprints = sprints[:normalized.Limit]
 	}
 	if sprints == nil {
 		sprints = []sqlstore.SprintRecord{}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"sprints": sprintsJSON(sprints)})
+	nextCursor := ""
+	if hasMore && len(sprints) > 0 {
+		last := sprints[len(sprints)-1]
+		nextCursor = pagination.Encode(normalized.SortBy, normalized.SortDir, service.SprintQuerySortValue(last, normalized.SortBy), last.ID)
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": sprintsJSON(sprints), "meta": advancedMeta(normalized.Limit, normalized.SortBy, normalized.SortDir, hasMore, nextCursor, len(sprints))})
 }
 
 func (s *Server) getSprint(w http.ResponseWriter, r *http.Request) {

@@ -306,6 +306,9 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	if err := validateRequiredWorkflowMetadata(input.Metadata); err != nil {
 		return nil, err
 	}
+	if err := validateReviewPolicyMetadata(input.Metadata); err != nil {
+		return nil, err
+	}
 
 	// Service-level safety enforcement for CW-20260417-0133. Promoted from
 	// audit-only to FORCE after Template.Instantiate was identified as a
@@ -456,10 +459,15 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	// failure (lock contention, or a dependency task deleted in the TOCTOU
 	// window after the existence check above trips the FK) leaves a real
 	// task row committed with none of its intended dependency edges, and
-	// the caller has no signal a task was actually created. The
-	// no-depends_on path is unchanged: a single CreateTask call, already
-	// atomic on its own.
-	if len(input.DependsOn) > 0 {
+	// the caller has no signal a task was actually created.
+	//
+	// Explicit MaxRetries=0 also uses the transaction path because
+	// Store.CreateTask still applies the historical zero-value default of 3.
+	// WriteTx.SetTaskMaxRetries is the existing pointer-to-zero remedy; doing
+	// it before commit preserves explicit zero while omitted retries keep the
+	// documented default.
+	explicitZeroRetries := input.MaxRetries != nil && *input.MaxRetries == 0
+	if len(input.DependsOn) > 0 || explicitZeroRetries {
 		wtx, err := s.store.BeginWriteTx(context.Background())
 		if err != nil {
 			return nil, err
@@ -468,8 +476,15 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		if err := wtx.CreateTask(rec); err != nil {
 			return nil, err
 		}
-		if err := wtx.SetTaskDependencies(id, input.DependsOn); err != nil {
-			return nil, err
+		if explicitZeroRetries {
+			if err := wtx.SetTaskMaxRetries(id, 0); err != nil {
+				return nil, err
+			}
+		}
+		if len(input.DependsOn) > 0 {
+			if err := wtx.SetTaskDependencies(id, input.DependsOn); err != nil {
+				return nil, err
+			}
 		}
 		if err := wtx.Commit(); err != nil {
 			return nil, err
@@ -516,6 +531,10 @@ func (s *TaskService) Get(id string) (*sqlstore.TaskRecord, error) {
 // List returns tasks matching the filter.
 func (s *TaskService) List(filter sqlstore.TaskFilter) ([]sqlstore.TaskRecord, error) {
 	return s.store.ListTasks(filter)
+}
+
+func (s *TaskService) ListPage(filter sqlstore.TaskFilter) (sqlstore.TaskListResult, error) {
+	return s.store.ListTasksPage(filter)
 }
 
 // TaskUpdateInput wraps the store-level TaskUpdate and adds tags/depends_on
@@ -618,6 +637,9 @@ func (s *TaskService) Update(id string, input TaskUpdateInput) error {
 		return err
 	}
 	if err := validateRequiredWorkflowMetadata(effectiveMetadata); err != nil {
+		return err
+	}
+	if err := validateReviewPolicyMetadata(effectiveMetadata); err != nil {
 		return err
 	}
 

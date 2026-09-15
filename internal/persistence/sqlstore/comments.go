@@ -285,12 +285,8 @@ func commentSortColumn(sortBy string) string {
 	return ""
 }
 
-// commentCursorArg converts a cursor's string-encoded sort value (DEC-001's
-// `sv` field) into the correctly-typed SQL bind argument for sortBy's
-// column. Mirrors tasks.go's taskCursorArg: the original string sv (not a
-// re-derived time.Time) is bound as-is so the WHERE-clause comparison is
-// byte-for-byte TEXT vs TEXT against what SQLite's own CURRENT_TIMESTAMP
-// wrote — see CommentDatetimeLayout's doc comment above for the full story.
+// commentCursorArg validates the cursor value before the query builder binds it.
+// Timestamp values are normalized by timestampCursorArg for the active dialect.
 func commentCursorArg(sortBy, sv string) (any, error) {
 	switch sortBy {
 	case "created_at":
@@ -346,21 +342,39 @@ func (s *Store) SearchComments(f CommentFilter) ([]CommentRecord, error) {
 		where = append(where, "author = ?")
 		args = append(args, f.Author)
 	}
+	// Range bounds compare against the normalized timestamp key,
+	// not the raw column text — a legacy-shaped row (" +0000 UTC") is
+	// lexically greater than the same instant's canonical text, so a raw
+	// `created_at <= ?` bound silently dropped it. See timestampSortKey.
 	if f.CreatedAfter != "" {
-		where = append(where, "created_at >= ?")
-		args = append(args, f.CreatedAfter)
+		where = append(where, s.timestampSortKey("created_at")+" >= ?")
+		bound, err := s.timestampArg(f.CreatedAfter)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, bound)
 	}
 	if f.CreatedBefore != "" {
-		where = append(where, "created_at <= ?")
-		args = append(args, f.CreatedBefore)
+		where = append(where, s.timestampSortKey("created_at")+" <= ?")
+		bound, err := s.timestampArg(f.CreatedBefore)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, bound)
 	}
 
 	// PRIM-002 sort column + PRIM-001 cursor predicate — see commentSortColumn's
 	// doc comment for why sortCol == "" preserves the original hardcoded order.
 	sortCol := commentSortColumn(f.SortBy)
+	// Cursor predicates and ordering must compare the same precise key.
+	sortKey := s.timestampSortKey(sortCol)
 	desc := strings.EqualFold(f.SortDir, "desc")
 	if sortCol != "" && f.AfterID != "" {
 		arg, err := commentCursorArg(f.SortBy, f.AfterSortValue)
+		if err != nil {
+			return nil, err
+		}
+		arg, err = s.timestampCursorArg(sortCol, arg)
 		if err != nil {
 			return nil, err
 		}
@@ -372,10 +386,10 @@ func (s *Store) SearchComments(f CommentFilter) ([]CommentRecord, error) {
 		if desc {
 			cmp = "<"
 		}
-		// Tuple comparison (sortCol, id) > (arg, AfterID), or the two-clause
+		// Tuple comparison (sortKey, id) > (arg, AfterID), or the two-clause
 		// equivalent below — tiebreak on id ascending regardless of
 		// SortDir, per DEC-001.
-		where = append(where, fmt.Sprintf("(%s %s ? OR (%s = ? AND id > ?))", sortCol, cmp, sortCol))
+		where = append(where, fmt.Sprintf("(%s %s ? OR (%s = ? AND id > ?))", sortKey, cmp, sortKey))
 		args = append(args, arg, arg, afterID)
 	}
 
@@ -388,7 +402,7 @@ func (s *Store) SearchComments(f CommentFilter) ([]CommentRecord, error) {
 		if desc {
 			dir = "DESC"
 		}
-		q += fmt.Sprintf(" ORDER BY %s %s, id ASC", sortCol, dir)
+		q += fmt.Sprintf(" ORDER BY %s %s, id ASC", sortKey, dir)
 	} else {
 		// id is auto-increment and monotonically increasing within a second,
 		// so it provides a stable tie-breaker when multiple rows share the

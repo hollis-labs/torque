@@ -2,11 +2,15 @@ package httpserver_test
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -128,4 +132,148 @@ func TestHTTP_DeleteArtifact_NotFound(t *testing.T) {
 	require.NoError(t, err)
 	resp.Body.Close()
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+func TestHTTP_ArtifactCreateAndPatchRoundTrip(t *testing.T) {
+	ts := setupTestServer(t)
+	taskID := createTestTask(t, ts.URL)
+	tmpFile := filepath.Join(t.TempDir(), "artifact.txt")
+	require.NoError(t, os.WriteFile(tmpFile, []byte("still here"), 0o600))
+
+	createBody := `{"task_id":` + strconv.Quote(taskID) + `,"type":"inline","content":"old","file_path":` + strconv.Quote(tmpFile) + `,"metadata":{"nested":{"big":9007199254740993123}}}`
+	resp, err := http.Post(ts.URL+"/api/v1/artifacts", "application/json", bytes.NewBufferString(createBody))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	var created map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+	id := int64(created["id"].(float64))
+	resp, err = http.Get(ts.URL + "/api/v1/artifacts/" + strconv.FormatInt(id, 10))
+	require.NoError(t, err)
+	var before map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&before))
+	resp.Body.Close()
+
+	req, err := http.NewRequest(http.MethodPatch, ts.URL+"/api/v1/artifacts/"+strconv.FormatInt(id, 10), bytes.NewBufferString(`{"content":"new","url":"https://example.test/a","file_path":""}`))
+	require.NoError(t, err)
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var patched map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&patched))
+	assert.Equal(t, float64(id), patched["ID"])
+	assert.Equal(t, taskID, patched["TaskID"])
+	assert.Equal(t, before["CreatedAt"], patched["CreatedAt"])
+	assert.Equal(t, "inline", patched["Type"])
+	assert.Equal(t, "new", patched["Content"])
+	assert.Equal(t, "https://example.test/a", patched["URL"])
+	assert.Equal(t, "", patched["FilePath"])
+	assert.Contains(t, patched["Metadata"].(map[string]interface{})["String"], `9007199254740993123`)
+	_, statErr := os.Stat(tmpFile)
+	require.NoError(t, statErr, "updating/clearing file_path must not delete referenced files")
+
+	req, err = http.NewRequest(http.MethodPatch, ts.URL+"/api/v1/artifacts/"+strconv.FormatInt(id, 10), bytes.NewBufferString(`{"metadata":{},"content":""}`))
+	require.NoError(t, err)
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var emptyMeta map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&emptyMeta))
+	assert.Equal(t, true, emptyMeta["Metadata"].(map[string]interface{})["Valid"])
+	assert.Equal(t, "{}", emptyMeta["Metadata"].(map[string]interface{})["String"])
+
+	req, err = http.NewRequest(http.MethodPatch, ts.URL+"/api/v1/artifacts/"+strconv.FormatInt(id, 10), bytes.NewBufferString(`{"metadata":null,"run_id":null}`))
+	require.NoError(t, err)
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var cleared map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&cleared))
+	assert.Equal(t, false, cleared["Metadata"].(map[string]interface{})["Valid"])
+	assert.Equal(t, false, cleared["RunID"].(map[string]interface{})["Valid"])
+}
+
+func TestHTTP_ArtifactPatchRejectsInvalidWithoutMutation(t *testing.T) {
+	ts := setupTestServer(t)
+	taskID := createTestTask(t, ts.URL)
+	resp, err := http.Post(ts.URL+"/api/v1/artifacts", "application/json", bytes.NewBufferString(`{"task_id":`+strconv.Quote(taskID)+`,"type":"inline","content":{"wrong":true}}`))
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	id := postArtifact(t, ts.URL, taskID, "/tmp/original.log")
+
+	req, err := http.NewRequest(http.MethodPatch, ts.URL+"/api/v1/artifacts/"+strconv.FormatInt(id, 10), bytes.NewBufferString(`{"file_path":null,"content":"mutated"}`))
+	require.NoError(t, err)
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	resp, err = http.Get(ts.URL + "/api/v1/artifacts/" + strconv.FormatInt(id, 10))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	var got map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	assert.Equal(t, "/tmp/original.log", got["FilePath"])
+	assert.Equal(t, "", got["Content"])
+
+	req, err = http.NewRequest(http.MethodPatch, ts.URL+"/api/v1/artifacts/"+strconv.FormatInt(id, 10), bytes.NewBufferString(`{"metadata":"{} {}","content":"mutated"}`))
+	require.NoError(t, err)
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	resp, err = http.Get(ts.URL + "/api/v1/artifacts/" + strconv.FormatInt(id, 10))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	assert.Equal(t, "", got["Content"])
+}
+
+func TestHTTP_ArtifactRunLinkValidation(t *testing.T) {
+	ts, store := setupRunsTestServer(t)
+	taskA := createTestTask(t, ts.URL)
+	taskB := createTestTask(t, ts.URL)
+	runA, err := store.CreateRun(&sqlstore.RunRecord{TaskID: taskA, Executor: "cli"})
+	require.NoError(t, err)
+	runB, err := store.CreateRun(&sqlstore.RunRecord{TaskID: taskB, Executor: "cli"})
+	require.NoError(t, err)
+
+	resp, err := http.Post(ts.URL+"/api/v1/artifacts", "application/json", bytes.NewBufferString(`{"task_id":`+strconv.Quote(taskA)+`,"type":"inline","run_id":999999}`))
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	body := `{"task_id":` + strconv.Quote(taskA) + `,"type":"inline","run_id":` + strconv.FormatInt(runA, 10) + `}`
+	resp, err = http.Post(ts.URL+"/api/v1/artifacts", "application/json", bytes.NewBufferString(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	var created map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+	id := int64(created["id"].(float64))
+
+	req, err := http.NewRequest(http.MethodPatch, ts.URL+"/api/v1/artifacts/"+strconv.FormatInt(id, 10), bytes.NewBufferString(`{"run_id":`+strconv.FormatInt(runB, 10)+`,"url":"https://bad.example"}`))
+	require.NoError(t, err)
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	got, err := store.GetArtifact(id)
+	require.NoError(t, err)
+	assert.Equal(t, sql.NullInt64{Int64: runA, Valid: true}, got.RunID)
+	assert.Equal(t, "", got.URL)
+
+	req, err = http.NewRequest(http.MethodPatch, ts.URL+"/api/v1/artifacts/999999", bytes.NewBufferString(`{"url":"https://missing.example"}`))
+	require.NoError(t, err)
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 }

@@ -130,14 +130,8 @@ func sprintSortColumn(sortBy string) string {
 	}
 }
 
-// sprintCursorArg converts a cursor's string-encoded sort value (DEC-001's
-// `sv` field) into the correctly-typed SQL bind argument for sortBy's
-// column. name/status are plain strings; updated_at/created_at are
-// validated against SQLiteDatetimeLayout (mirroring taskCursorArg's
-// rationale in tasks.go — sprints.updated_at/created_at are always written
-// via SQL-side CURRENT_TIMESTAMP, so unlike tasks there's no Go-side
-// time.Time formatting mismatch to route around here; validating the shape
-// is still worthwhile to reject a malformed/tampered cursor token cleanly).
+// sprintCursorArg validates the cursor value before the query builder binds it.
+// Timestamp values are normalized by timestampCursorArg for the active dialect.
 func sprintCursorArg(sortBy, sv string) (any, error) {
 	switch sortBy {
 	case "name", "status":
@@ -199,9 +193,15 @@ func (s *Store) ListSprints(f SprintFilter) ([]SprintRecord, error) {
 	// layer's validation, defensively treated the same) — preserves the
 	// original hardcoded default order below rather than the cursor path.
 	sortCol := sprintSortColumn(f.SortBy)
+	// Cursor predicates and ordering must compare the same precise key.
+	sortKey := s.timestampSortKey(sortCol)
 	desc := strings.EqualFold(f.SortDir, "desc")
 	if sortCol != "" && f.AfterID != "" {
 		arg, err := sprintCursorArg(f.SortBy, f.AfterSortValue)
+		if err != nil {
+			return nil, err
+		}
+		arg, err = s.timestampCursorArg(sortCol, arg)
 		if err != nil {
 			return nil, err
 		}
@@ -209,10 +209,10 @@ func (s *Store) ListSprints(f SprintFilter) ([]SprintRecord, error) {
 		if desc {
 			cmp = "<"
 		}
-		// Tuple comparison (sortCol, id) > (arg, AfterID), or the two-clause
+		// Tuple comparison (sortKey, id) > (arg, AfterID), or the two-clause
 		// equivalent below — tiebreak on id ascending regardless of
 		// SortDir, per DEC-001.
-		conditions = append(conditions, fmt.Sprintf("(%s %s ? OR (%s = ? AND id > ?))", sortCol, cmp, sortCol))
+		conditions = append(conditions, fmt.Sprintf("(%s %s ? OR (%s = ? AND id > ?))", sortKey, cmp, sortKey))
 		args = append(args, arg, arg, f.AfterID)
 	}
 
@@ -224,7 +224,7 @@ func (s *Store) ListSprints(f SprintFilter) ([]SprintRecord, error) {
 		if desc {
 			dir = "DESC"
 		}
-		query += fmt.Sprintf(" ORDER BY %s %s, id ASC", sortCol, dir)
+		query += fmt.Sprintf(" ORDER BY %s %s, id ASC", sortKey, dir)
 	} else {
 		query += " ORDER BY updated_at DESC"
 	}

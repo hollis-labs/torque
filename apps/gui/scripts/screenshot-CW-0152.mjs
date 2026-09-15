@@ -19,7 +19,7 @@ try {
   chromium = req(pwPath).chromium
 }
 
-const BASE = process.env.BASE || 'http://localhost:5175'
+const BASE = process.env.BASE || 'http://localhost:5182'
 const OUT = join(process.cwd(), 'artifacts/CW-20260417-0152')
 
 async function shoot(page, name) {

@@ -128,10 +128,6 @@ func (s *Store) CreateTemplate(t *TemplateRecord) error {
 	if t.OnCheckpointResponse == "" {
 		t.OnCheckpointResponse = "resume"
 	}
-	if t.MaxRetries == 0 {
-		t.MaxRetries = 3
-	}
-
 	autoExecute := 0
 	if t.AutoExecute {
 		autoExecute = 1

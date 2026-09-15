@@ -321,6 +321,25 @@ func TestLoopback_CommentAddRequiresContent(t *testing.T) {
 	assert.Equal(t, "content", field)
 }
 
+func TestLoopback_CommentAddAcceptsAttributionButKeepsTaskScope(t *testing.T) {
+	fix := setupLoopback(t)
+	text, isErr := callTool(t, fix.loopback, "torque_comment_add", map[string]interface{}{
+		"content": "Worker progress", "author": "worker-profile",
+	})
+	require.False(t, isErr, "%s", text)
+	var rec map[string]interface{}
+	parseData(t, text, &rec)
+	assert.Equal(t, "worker-profile", rec["author"])
+	assert.Equal(t, fix.taskID, rec["entity_id"])
+	text, isErr = callTool(t, fix.loopback, "torque_comment_add", map[string]interface{}{
+		"content": "Wrong target", "author": "worker-profile", "entity_id": "another-task",
+	})
+	require.True(t, isErr, "%s", text)
+	code, _, field := parseError(t, text)
+	assert.Equal(t, string(mcpadapter.ErrCodeArgInvalid), code)
+	assert.Equal(t, "entity_id", field)
+}
+
 func TestLoopback_SubtodoAddBindsTaskID(t *testing.T) {
 	fix := setupLoopback(t)
 

@@ -182,10 +182,53 @@ load-time error naming the valid set.
 
 ### How it is applied
 
-After go-agent-launch plants the boot dir, Torque post-processes the planted
-`.claude/settings.json` and merges in `permissions.defaultMode` from the
-profile's resolved `permission_mode` (other keys such as `apiKeyHelper` are
-preserved). This runs only for `claude-code` boots.
+Torque passes the resolved permission mode to the Claude adapter, which plants
+`permissions.defaultMode` in `.claude/settings.json` alongside settings such as
+`apiKeyHelper`. Torque explicitly passes that file with `--settings` when
+launching Claude, so a fresh boot directory does not depend on an interactive
+trust grant to load its configuration. Both the wrapper and legacy Claude launch
+paths carry the profile's model and extra arguments into the provider command.
+
+Codex's JSON-RPC runtime owns the `app-server` subcommand. Torque removes
+that duplicate from the prepared argument tail, preserves the remaining
+options, and passes the profile model as a `-c model=...` override. The planted
+`CODEX_HOME` still supplies permissions and MCP configuration; `thread/start`
+binds execution to the task worktree.
+
+After materialization, Torque explicitly prepares Codex credentials from the
+launch environment's original `CODEX_HOME/auth.json`, or `HOME/.codex/auth.json`
+when `CODEX_HOME` is unset. It writes a private 0600 copy into the isolated boot
+directory before spawning. Credentials stay out of plans, artifacts and logs;
+normal session teardown removes the copy. A missing, empty or malformed cache
+fails boot with an actionable error. This path requires a file-backed login;
+it does not read OS keyrings or switch the account to API-key billing. Token
+refreshes in the isolated copy are not written back to the operator's cache.
+
+Scheduler launches persist `torque.run_id` in session metadata from the actual
+run ID; caller metadata cannot override that link. On daemon startup, recovery
+closes a running invocation as `killed` only when its explicitly linked session
+is crashed and no other live session owns that run. It blocks the task for
+inspection only if it is still automatic, `doing`, and has no newer run.
+Manual tasks and explicit task decisions are preserved. Recovery never replays
+interrupted work automatically. Legacy sessions without that link, and sessions
+whose process ownership is unknown (including PID 0), require separate evidence.
+
+Graceful shutdown drains worker results before stopping the state writer.
+Daemon interruption is distinct from a task transition and does not trigger
+retry hooks. A terminal failed Codex turn stops the long-lived invocation with
+a blocked result and a failed session, preserving the reason even if the
+app-server process exits cleanly afterward.
+
+For long-lived worker tasks, a positive `max_duration_ms` is an absolute
+dispatch deadline that includes boot. When it fires, Torque stops the live
+session and records the run as failed; the task result still flows through the
+task's normal failure policy (`on_fail`, retry budget, escalation, or block).
+
+An operator pause is different from worker failure. Moving an active long-lived
+task to `paused` stops the process, leaves the task `paused`, and records both
+the stopped run and stopped session as `canceled` with an `operator_pause`
+cause. The killed process is terminal evidence, not a resumable live session;
+Torque makes no resume promise for that stopped session.
 
 The legacy path is unchanged: a profile whose `args` carry
 `--dangerously-skip-permissions` boots in full bypass (the adapter already

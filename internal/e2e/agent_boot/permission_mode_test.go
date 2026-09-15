@@ -33,6 +33,16 @@ func plantedPermissionMode(t *testing.T, cd *composedDeps, profileName string) s
 	require.NoError(t, err)
 	require.NotNil(t, sess)
 	require.NotEmpty(t, sess.BootDir)
+	start := cd.Runtime.lastStartOpts.Load()
+	require.NotNil(t, start)
+	settingsPath := filepath.Join(sess.BootDir, ".claude", "settings.json")
+	var explicitSettings string
+	for i, arg := range start.ExtraArgs {
+		if arg == "--settings" && i+1 < len(start.ExtraArgs) {
+			explicitSettings = start.ExtraArgs[i+1]
+		}
+	}
+	assert.Equal(t, settingsPath, explicitSettings, "headless Claude must explicitly load its configured permissions")
 
 	raw, err := os.ReadFile(filepath.Join(sess.BootDir, ".claude", "settings.json"))
 	require.NoError(t, err, "planted settings.json must exist")

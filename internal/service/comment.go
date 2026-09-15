@@ -241,15 +241,16 @@ func (s *CommentService) Update(id int64, author, content string) (*sqlstore.Com
 	return s.store.GetComment(id)
 }
 
-// Delete removes a comment. Author-scoped: only the comment's original
-// author may delete it — a mismatched author returns *PermissionError, not
-// silently applied.
-func (s *CommentService) Delete(id int64, author string) error {
+// Delete removes a comment. Author-scoped by default: only the comment's
+// original author may delete it. Force deliberately bypasses only that
+// author-match guard; it is not an authorization model, since author is caller
+// supplied text rather than an authenticated principal.
+func (s *CommentService) Delete(id int64, author string, force bool) error {
 	existing, err := s.store.GetComment(id)
 	if err != nil {
 		return err
 	}
-	if existing.Author != author {
+	if !force && existing.Author != author {
 		return &PermissionError{
 			Message: fmt.Sprintf("comment %d is authored by %q, not %q", id, existing.Author, author),
 		}
