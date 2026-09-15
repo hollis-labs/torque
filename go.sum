@@ -65,8 +65,8 @@ github.com/hollis-labs/go-otel v0.6.1 h1:bPqO0xFkTNIrcgW7J4YM/yt3yn1/2Hy9dKxX6/E
 github.com/hollis-labs/go-otel v0.6.1/go.mod h1:aju/sgq+E9fdnsxzvCMdcOxcFOryEPHEFHxQEEhRbjU=
 github.com/hollis-labs/go-providers v0.26.0 h1:zXCu8CBkzjcVjlsucD3lEYWqyl7DCtx+XW2uBNnhUe4=
 github.com/hollis-labs/go-providers v0.26.0/go.mod h1:Y0WQHyW7gIj0ooxyvq2uDqnEHAyOOqVhB2miNiajZ2Q=
-github.com/hollis-labs/go-queue v0.1.1 h1:dJ8i4XB0DtUznzI4Kh6RkUBzHYOV4VCa4SYNfZq/+d8=
-github.com/hollis-labs/go-queue v0.1.1/go.mod h1:wAP95gDz9kxAhcCWaR4e07Jz54OvFpiNEq+5ERgt2/E=
+github.com/hollis-labs/go-queue v0.2.0 h1:hQ6dKEJVdHrH+j/cqLr+ywu0eD/SD7Hspnn5sUV+JsE=
+github.com/hollis-labs/go-queue v0.2.0/go.mod h1:wAP95gDz9kxAhcCWaR4e07Jz54OvFpiNEq+5ERgt2/E=
 github.com/hollis-labs/go-runner v0.7.0 h1:nJIDnZHBVn1Ii8hITTxLsGMVaEI9AWipar85qo8QkY8=
 github.com/hollis-labs/go-runner v0.7.0/go.mod h1:+PgCa0CxAImd63sZgLb8Zw0uasyDWyHRdcE2sH8Zc7Q=
 github.com/hollis-labs/go-runtime-events v0.1.2 h1:ChyjCVidjeAVf+dUJjiJTdX/LYujkJILKuLi+cTDNJM=

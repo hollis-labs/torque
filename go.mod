@@ -15,7 +15,7 @@ require (
 	github.com/hollis-labs/go-modelsdev v0.2.0
 	github.com/hollis-labs/go-otel v0.6.1
 	github.com/hollis-labs/go-providers v0.26.0
-	github.com/hollis-labs/go-queue v0.1.1
+	github.com/hollis-labs/go-queue v0.2.0
 	github.com/hollis-labs/go-runner v0.7.0
 	github.com/hollis-labs/go-runtime-events v0.1.2
 	github.com/hollis-labs/go-sandbox v0.3.0
