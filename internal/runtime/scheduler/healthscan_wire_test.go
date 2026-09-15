@@ -88,8 +88,8 @@ func TestHealthScanBoot_LeavesLiveTaskAlone(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	_, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
+	_, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(nil) })
 	sched.cancels.register("CW-BOOT-LIVE", cancel)
 
 	sched.runHealthScan(context.Background(), healthscan.ModeBoot)

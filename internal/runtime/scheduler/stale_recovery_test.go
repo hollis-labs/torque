@@ -74,8 +74,8 @@ func TestStaleHeartbeat_LiveWorker_RefreshedNotRecovered(t *testing.T) {
 
 	// Inject a cancel into the registry so the worker LOOKS alive to the
 	// stale sweep. Use a no-op cancel — the test never triggers it.
-	_, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
+	_, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(nil) })
 	sched.cancels.register("CW-LIVE", cancel)
 
 	require.NoError(t, sched.Tick(context.Background()))
@@ -220,8 +220,8 @@ func TestStaleHeartbeat_LiveWorker_LogsFalsePositiveClassifier(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	_, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
+	_, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(nil) })
 	sched.cancels.register("CW-LIVE-LOG", cancel)
 
 	var buf bytes.Buffer
