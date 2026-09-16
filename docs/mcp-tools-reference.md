@@ -210,6 +210,18 @@ Priority list filters are exact arbitrary integers, not a 1-5 vocabulary:
 OR-match; passing both is rejected as ambiguous, and `priorities=[]` is
 rejected rather than treated as omission.
 
+Priority is validated identically on the **write** paths. `torque_task_create`,
+`torque_task_update`, `torque_task_bulk_update`, `torque_plan_create`,
+`torque_plan_update`, `torque_epic_create`, `torque_epic_update` and
+`torque_epic_bulk_update` reject a non-integer `priority` with
+`error.code=arg_invalid, field=priority` rather than coercing it. Before this,
+writes ran the argument through a lenient parser that yielded `0` for anything
+unparseable, so `{"priority":"high"}` on create silently stored the default `2`
+and `{"priority":"banana"}` on update silently overwrote a real priority with
+`0` while still answering `ok=true`. String-encoded integers (`"3"`) remain
+accepted everywhere, and `priority=0` on create remains the "unset" sentinel
+that defaults to `2`. A rejected write modifies nothing.
+
 `include_total` is optional on MCP and defaults to false to preserve cheap
 legacy list calls. When `include_total=true`, `meta.total` is the full matching
 cohort count excluding cursor/offset/limit, and it is part of the normal

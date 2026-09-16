@@ -40,7 +40,7 @@ Response shape: data = {<PlanDetail>: task fields + decoded phases[] + child rol
 Example: {"title":"Auth refactor","phases":"[{\"name\":\"extract\",\"acceptance\":\"green tests\"},{\"name\":\"migrate\"}]"}`),
 		mcp.WithString("title", mcp.Required(), mcp.Description("Plan title")),
 		mcp.WithString("description", mcp.Description("Plan description (free-form)")),
-		mcp.WithString("priority", mcp.Description("Priority 1-5 (integer, default 2)")),
+		mcp.WithString("priority", mcp.Description("Priority 1-5 (integer, default 2). A non-integer value returns error.code=arg_invalid; it is not coerced to the default.")),
 		mcp.WithString("project_id", mcp.Description("Project ID (requires features.projects)")),
 		mcp.WithString("sprint_id", mcp.Description("Sprint ID (requires features.sprints)")),
 		mcp.WithString("epic_id", mcp.Description("Epic ID (requires features.epics)")),
@@ -83,7 +83,7 @@ Example: {"plan_id":"T-999","title":"Auth refactor v2"}`),
 		mcp.WithString("plan_id", mcp.Required(), mcp.Description("Plan task ID (kind=plan)")),
 		mcp.WithString("title", mcp.Description("New plan title (cannot be cleared to empty)")),
 		mcp.WithString("description", mcp.Description("New plan description")),
-		mcp.WithString("priority", mcp.Description("New priority (integer 1-5)")),
+		mcp.WithString("priority", mcp.Description("New priority (integer 1-5). A non-integer value returns error.code=arg_invalid and leaves the stored priority unchanged.")),
 		mcp.WithString("project_id", mcp.Description("Project ID (requires features.projects); empty string unassigns")),
 		mcp.WithString("sprint_id", mcp.Description("Sprint ID (requires features.sprints); empty string unassigns")),
 		mcp.WithString("epic_id", mcp.Description("Epic ID (requires features.epics); empty string unassigns")),
@@ -140,10 +140,15 @@ Example: {"plan_id":"T-PLAN-1","workdir":"/tmp/plan"}`),
 }
 
 func (a *Adapter) handlePlanCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	priority, _, errRes := reqPriorityArg(req)
+	if errRes != nil {
+		return errRes, nil
+	}
+
 	input := service.PlanCreateInput{
 		Title:       reqStr(req, "title"),
 		Description: reqStr(req, "description"),
-		Priority:    reqInt(req, "priority"),
+		Priority:    priority,
 		ProjectID:   reqStr(req, "project_id"),
 		SprintID:    reqStr(req, "sprint_id"),
 		EpicID:      reqStr(req, "epic_id"),
@@ -217,9 +222,14 @@ func (a *Adapter) handlePlanList(ctx context.Context, req mcp.CallToolRequest) (
 		afterSortValue, afterID = c.SortValue, c.ID
 	}
 
+	priorityFilter, _, errRes := reqPriorityArg(req)
+	if errRes != nil {
+		return errRes, nil
+	}
+
 	filter := sqlstore.TaskFilter{
 		Status:    reqStr(req, "status"),
-		Priority:  reqInt(req, "priority"),
+		Priority:  priorityFilter,
 		ProjectID: reqStr(req, "project_id"),
 		SprintID:  reqStr(req, "sprint_id"),
 		EpicID:    reqStr(req, "epic_id"),
@@ -268,9 +278,11 @@ func (a *Adapter) handlePlanUpdate(ctx context.Context, req mcp.CallToolRequest)
 		v := reqStr(req, "description")
 		input.Description = &v
 	}
-	if reqHasArg(req, "priority") {
-		v := reqInt(req, "priority")
-		input.Priority = &v
+	if priority, present, errRes := reqPriorityArg(req); present {
+		if errRes != nil {
+			return errRes, nil
+		}
+		input.Priority = &priority
 	}
 	if reqHasArg(req, "project_id") {
 		v := reqStr(req, "project_id")
