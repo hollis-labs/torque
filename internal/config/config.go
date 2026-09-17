@@ -142,11 +142,11 @@ type SchedulerConfig struct {
 	// HeartbeatMonitor.Register doesn't trigger spurious recovery. Default
 	// 60s (Nanite's pid-zero-grace floor). Set TORQUE_SCHED_STUCK_GRACE to
 	// override.
-	StuckGraceSeconds        int
-	Enabled                  bool
-	MaxPerProject            int
-	DefaultMerge             string
-	WorktreeCleanup          string
+	StuckGraceSeconds int
+	Enabled           bool
+	MaxPerProject     int
+	DefaultMerge      string
+	WorktreeCleanup   string
 
 	// Per-run worktree dispatch — opt-in. When enabled, each run gets its
 	// own ephemeral git worktree branched from origin/main so concurrent
@@ -217,7 +217,7 @@ func Load() (*Config, error) {
 			// threshold just controls how quickly a truly dead worker
 			// gets reclaimed. Tune down for faster feedback in dev/test,
 			// not recommended below ~60s in production.
-			StaleSeconds:     envInt("TORQUE_SCHED_STALE", 900),
+			StaleSeconds: envInt("TORQUE_SCHED_STALE", 900),
 			// 60s grace before auto-reclaiming a stuck `doing` task or a
 			// `running` run with no heartbeat — matches Nanite's
 			// pid-zero-grace floor (internal/runtime/agent/orphan_sweep.go).
@@ -226,14 +226,14 @@ func Load() (*Config, error) {
 			// older is genuinely zombied. Tune down in tests; production
 			// safe range is roughly [60, 300].
 			StuckGraceSeconds: envInt("TORQUE_SCHED_STUCK_GRACE", 60),
-			Enabled:          envBool("TORQUE_SCHED_ENABLED", true),
-			MaxPerProject:    envInt("TORQUE_SCHED_MAX_PER_PROJECT", 2),
-			DefaultMerge:     envOr("TORQUE_SCHED_DEFAULT_MERGE", "none"),
-			WorktreeCleanup:  envOr("TORQUE_SCHED_WORKTREE_CLEANUP", "on_merge"),
-			WorktreePerRun:   envBool("TORQUE_WORKTREE_PER_RUN", false),
-			WorktreeRoot:     os.Getenv("TORQUE_WORKTREE_ROOT"),
-			WorktreeKeepDays: envInt("TORQUE_WORKTREE_KEEP_DAYS", 7),
-			WorktreePrecheck: os.Getenv("TORQUE_WORKTREE_PRECHECK"),
+			Enabled:           envBool("TORQUE_SCHED_ENABLED", true),
+			MaxPerProject:     envInt("TORQUE_SCHED_MAX_PER_PROJECT", 2),
+			DefaultMerge:      envOr("TORQUE_SCHED_DEFAULT_MERGE", "none"),
+			WorktreeCleanup:   envOr("TORQUE_SCHED_WORKTREE_CLEANUP", "on_merge"),
+			WorktreePerRun:    envBool("TORQUE_WORKTREE_PER_RUN", false),
+			WorktreeRoot:      os.Getenv("TORQUE_WORKTREE_ROOT"),
+			WorktreeKeepDays:  envInt("TORQUE_WORKTREE_KEEP_DAYS", 7),
+			WorktreePrecheck:  os.Getenv("TORQUE_WORKTREE_PRECHECK"),
 			// DEPRECATED: remove when CW-20260417-0129 (workspace support) ships.
 			ProjectAllowlist: envProjectAllowlist(),
 		},
