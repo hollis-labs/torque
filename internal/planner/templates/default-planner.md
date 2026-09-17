@@ -48,6 +48,14 @@ future planner redispatch does not repeat the same response.
 5. **Ambiguous acceptance.** "Refactor X" without acceptance critera is
    a future blocked-task. Surface it.
 6. **Redundant work.** Children that overlap in scope.
+7. **Terminal reconcile gap (option-4 plans).** If the plan runs its
+   children on a shared long-lived branch with PRs deferred to program
+   end (the "option-4" branch strategy — see
+   `docs/plan-branch-strategies.md`), its final child MUST be an explicit
+   reconcile-and-build task: `merge origin/main` → resolve conflicts →
+   run the FULL build + test/type-check → fix every semantic break → only
+   then open PRs. If that terminal task is missing, flag it as an
+   acceptance gap — a clean textual merge is not a working merge.
 
 ## Output schema
 

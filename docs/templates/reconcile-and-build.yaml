@@ -1,0 +1,49 @@
+# Reference template — commit to DB via torque_template_create.
+# Source of truth is the DB row; this file documents the shape for humans.
+#
+# The MANDATORY final task of any option-4 plan (shared long-lived branch,
+# PRs opened at program end). See ../plan-branch-strategies.md. Instantiate it
+# as the LAST child of the plan — after every feature task, before any PR is
+# opened. Do not fold it into another task.
+id: reconcile-and-build
+name: Reconcile and Build
+description: >-
+  Terminal reconcile for the shared option-4 branch in {{repo_path}}, in order:
+  (1) `git fetch origin`;
+  (2) `git merge origin/main` into the shared branch;
+  (3) resolve every textual conflict git reports;
+  (4) run the FULL build + full test/type-check suite for the WHOLE tree — not
+  incremental, not only the packages this program touched;
+  (5) fix every semantic break the build surfaces — renamed symbols, changed
+  signatures, moved files, narrowed types — none of which a 3-way merge can
+  see;
+  (6) only once the full build is green, open the program's PR(s).
+  A clean textual merge is NOT a working merge: the build, not git, is the
+  authority on whether the merge worked. Acceptance is the green build output,
+  not "the merge completed".
+kind: agent
+auto_execute: true
+executor: cli
+on_done: review
+on_fail: retry
+on_done_merge: none
+max_retries: 1
+quality_gates:
+  # Replace with this repo's FULL build + full test/type-check — whole tree,
+  # not incremental, not only the packages the program touched. Examples:
+  #   Go:         "go build ./..."        /  "go test ./..."
+  #   TypeScript: "npm run build"         /  "npx tsc --noEmit"
+  - "<full build — whole tree>"
+  - "<full test + type-check — whole tree>"
+deliverables:
+  - { type: diff,         required: true,  description: "Merge + semantic-fix commits on the shared branch" }
+  - { type: test-results, required: true,  description: "Full-tree build + type-check output, green" }
+  - { type: pr-link,      required: false, description: "Program PR(s) — opened only after the build is green" }
+required_vars:
+  - repo_path
+# Migration 010 added a typed working_dir column; set it directly here.
+working_dir: "{{repo_path}}"
+tags:
+  - reconcile
+  - build
+  - option-4
