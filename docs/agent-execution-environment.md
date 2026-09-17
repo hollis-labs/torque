@@ -157,10 +157,12 @@ abandons worktree isolation. Branching from local `HEAD` is the fallback, not
 a silent degradation to shared mode. (A missing `origin/main` previously made
 `SetupPerRun` fail outright and the run silently fell back to shared mode.)
 
-This base-ref order is also why an **option-4 plan** (a shared long-lived
-branch, PRs deferred to program end) freezes its children against a stale
-`main`: each child detaches off the shared branch tip (local `HEAD`), so no
-child ever observes `main` move. See
+This base-ref order does **not** protect an **option-4 plan** (a shared
+long-lived branch, PRs deferred to program end) from drift: it governs where a
+newly created worktree detaches from, not which branch a plan's children keep
+committing to afterward. Option-4 children continue the same shared branch for
+the life of the program by convention, so a freshly-fetched `origin/main` at
+worktree creation never re-syncs it. See
 [plan-branch-strategies.md](plan-branch-strategies.md) for the resulting drift
 and the mandatory terminal reconcile-and-build step.
 

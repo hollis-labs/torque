@@ -31,12 +31,16 @@ orchestrator walk, a single review at program end instead of one per task. The
 cost is structural. The shared branch is cut **once**, off `main`, at program
 start, and nothing pulls `main` back in until the program ends.
 
-Torque's per-run worktrees do not soften this — they sharpen it. A per-run
-worktree detaches at the first ref that resolves: `origin/main` → `origin/HEAD`
-→ local `HEAD` (see [agent-execution-environment.md](agent-execution-environment.md)
-§"Base-ref selection"). On an option-4 plan the children run off the shared
-branch tip — local `HEAD` — so **no child ever sees `main` move** either. The
-whole program executes against a frozen snapshot of `main`.
+Torque's per-run worktrees do not fix this either. `SetupPerRun`'s base-ref
+selection (`origin/main` → `origin/HEAD` → local `HEAD`; see
+[agent-execution-environment.md](agent-execution-environment.md)
+§"Base-ref selection") governs where a *newly created* worktree detaches from
+— normally a freshly-fetched `origin/main`. It has no say in which branch a
+plan's children keep committing to afterward. An option-4 plan's children are,
+by definition, continuing the same shared branch for the life of the program;
+nothing in the per-run worktree contract re-syncs that branch against `main`
+mid-flight. The whole program executes against a frozen snapshot of `main`
+regardless of how fresh any individual worktree's starting point was.
 
 Meanwhile `main` keeps moving: other programs land their PRs. By program end
 the shared branch and `main` have diverged by the full duration of the
@@ -122,8 +126,8 @@ terminal:
 ## See also
 
 - [agent-execution-environment.md](agent-execution-environment.md) — per-run
-  worktree base-ref selection (why option-4 children branch off the shared
-  tip, not `origin/main`).
+  worktree base-ref selection, and why it doesn't re-sync an option-4 plan's
+  shared branch against `main`.
 - [plans-v1.md](plans-v1.md) — the `kind=plan` model the terminal reconcile
   task plugs into as a final child.
 - [templates/reconcile-and-build.yaml](templates/reconcile-and-build.yaml) —
