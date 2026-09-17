@@ -84,6 +84,15 @@ func TestShouldApplyWorkerTemplate(t *testing.T) {
 // editorial tweaks to the template don't break this test — the contract
 // is "the substrate's default-worker contract is present and applied
 // BEFORE per-task framing", not "matches an exact byte sequence".
+//
+// Every string below is an ANCHOR or a TOOL NAME, never a prose claim. The
+// anchors carry the ordering assertions at the bottom; the tool names are
+// identifiers this package owns, so a rename should fail here. A `What "done"
+// means` section-heading assertion was removed 2026-09-11: it was a
+// hand-typed word list that would have gone red on a legitimate rewording,
+// and it proved nothing the ordering block does not. Keep it that way — if a
+// claim about the template's WORDING seems worth asserting, the wording is
+// not the thing under test.
 func TestComposeSystemPromptPrependsDefaultWorkerTemplate(t *testing.T) {
 	const taskFraming = "[TASK-FRAMING] do the thing"
 	prompt := composeSystemPrompt(Options{
@@ -94,7 +103,6 @@ func TestComposeSystemPromptPrependsDefaultWorkerTemplate(t *testing.T) {
 
 	require.NotEmpty(t, prompt)
 	assert.Contains(t, prompt, "Worker — long-lived dispatch contract", "default-worker template anchor must appear")
-	assert.Contains(t, prompt, `What "done" means`, "completion contract section must appear")
 	assert.Contains(t, prompt, "torque_task_checkpoint_emit", "help-asking primitive must be documented")
 	assert.Contains(t, prompt, "torque_task_review", "completion call must be documented")
 

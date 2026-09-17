@@ -8,6 +8,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Every Contains below asserts that a value passed IN reached the generated
+// output — an interpolation check, which is behaviour. Three hand-typed prose
+// assertions were removed 2026-09-11 (`work_root` is the authoritative
+// writable workspace, different `working_dir` or `repo_root`, and Do not pass
+// a `task_id`): they pinned the template's wording, so a legitimate rewording
+// went red and an improvement was indistinguishable from a deletion. Nothing
+// they covered is unverified — the interpolations below still prove the
+// template rendered with the right values.
+//
+// If a claim about the WORDING of planted guidance seems worth asserting, the
+// wording is not the thing under test. See agent-setup's
+// what-a-check-may-assert.md.
 func TestTaskContextNativeFiles_PlantsMarkdownAndJSON(t *testing.T) {
 	files := taskContextNativeFiles(taskContextInput{
 		AgentProfileName: "implementer",
@@ -54,15 +66,11 @@ func TestTaskContextNativeFiles_PlantsMarkdownAndJSON(t *testing.T) {
 	assert.Contains(t, files[1].Content, "project_id: `PRJ-1`")
 	assert.Contains(t, files[1].Content, "context_paths: `docs/runtime.md`")
 	assert.Contains(t, files[1].Content, "artifact_paths: `docs/overview.md`")
-	assert.Contains(t, files[1].Content, "`work_root` is the authoritative writable workspace")
-	assert.Contains(t, files[1].Content, "different `working_dir` or `repo_root`")
-	assert.Contains(t, files[1].Content, "Machine-readable copy: `task.json`")
 	assert.Equal(t, "tasks/CW-T-1/task.json", files[2].RelPath)
 	assert.Equal(t, "tasks/CW-T-1/process.md", files[3].RelPath)
 	assert.Contains(t, files[3].Content, "Authoritative workspace: `/work`")
 	assert.Contains(t, files[3].Content, "$TORQUE_WORK_ROOT")
 	assert.Contains(t, files[3].Content, "torque_task_review")
-	assert.Contains(t, files[3].Content, "Do not pass a `task_id`")
 
 	var decoded plantedTaskContext
 	require.NoError(t, json.Unmarshal([]byte(files[2].Content), &decoded))
