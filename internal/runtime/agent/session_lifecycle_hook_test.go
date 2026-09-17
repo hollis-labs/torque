@@ -470,7 +470,8 @@ func TestSessionLifecycleHook_ObserveComment_SuppressedWhenChildStillDoing(t *te
 // the CW-20260519-0132 narrowing of the CW-20260510-0064 guard. Children
 // in `review` are being audited by the reviewer end-agent on a SEPARATE
 // session; the orchestrator standing down at that point is the canonical
-// happy path (dispatch work complete, async review will close them).
+// happy path (dispatch work complete, async review will close them) —
+// parked on a HITL checkpoint or not, `review` never arms the guard.
 // Suppressing here previously trapped sessions in Status=running,
 // Terminal=false until an operator manually POSTed /stop.
 func TestSessionLifecycleHook_ObserveComment_AllowedWhenChildAtReview(t *testing.T) {
@@ -495,6 +496,38 @@ func TestSessionLifecycleHook_ObserveComment_AllowedWhenChildAtReview(t *testing
 	}, time.Second, 10*time.Millisecond,
 		"layer-2 stop must fire when only review children remain (reviewer end-agent runs in its own session)")
 	assert.Equal(t, []string{"SES-CW0132-1"}, stopper.StopCalled())
+}
+
+// TestSessionLifecycleHook_HasInProgressChild_MixedChildren pins the
+// per-child semantics of the CW-20260519-0132 guard: `review` never arms
+// it (parked on a HITL checkpoint or not — the reviewer end-agent, or the
+// operator response, drives those forward on a separate session), and a
+// `doing` sibling arms it regardless of any other children's status.
+func TestSessionLifecycleHook_HasInProgressChild_MixedChildren(t *testing.T) {
+	store := newHookTestStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	stopper := &stubStopper{getStatus: StatusRunning}
+	hook := NewSessionLifecycleHook(bus, store, stopper)
+
+	writePlanWithSession(t, store, "CW-PLAN-MIX", "doing", "SES-MIX")
+
+	// A review child alone → false, whether or not it's parked on a HITL
+	// checkpoint (blocked_reason is irrelevant to the guard now).
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-CHILD-MIX-PARKED", Title: "parked", Kind: "agent",
+		Status:        "review",
+		ParentID:      sql.NullString{Valid: true, String: "CW-PLAN-MIX"},
+		BlockedReason: "awaiting checkpoint 01HK_MIX",
+	}))
+	assert.False(t, hook.hasInProgressChild("CW-PLAN-MIX"),
+		"a review child never arms the guard, parked on checkpoint or not")
+
+	// Add a doing sibling → true (doing dominates regardless of review
+	// siblings).
+	writeChildTask(t, store, "CW-CHILD-MIX-DOING", "CW-PLAN-MIX", "doing")
+	assert.True(t, hook.hasInProgressChild("CW-PLAN-MIX"),
+		"doing children are never excluded, regardless of any other siblings")
 }
 
 // TestSessionLifecycleHook_ObserveComment_AllowedWhenChildrenTerminal

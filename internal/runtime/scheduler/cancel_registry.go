@@ -78,6 +78,29 @@ func (r *cancelRegistry) cancelWithCause(taskID string, cause error) bool {
 	return ok
 }
 
+// has reports whether a cancel function is currently registered for taskID.
+// Used by the stale-heartbeat sweep as a liveness check: a heartbeat row
+// whose task is still in the registry means the worker is alive in this
+// scheduler process, just not producing executor events fast enough to
+// keep its DB heartbeat fresh (CW-20260519-0079 false-positive #2:
+// run 904 mid-`go test`).
+func (r *cancelRegistry) has(taskID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.cancels[taskID]
+	return ok
+}
+
+// Has is the exported alias the healthscan package consumes via its
+// Liveness interface. Lower-case has() remains the in-package
+// convention; the exported wrapper keeps the cross-package contract
+// honest without forcing the rest of the scheduler to switch to the
+// capitalized name. Single source of truth: Has just dispatches to
+// has().
+func (r *cancelRegistry) Has(taskID string) bool {
+	return r.has(taskID)
+}
+
 // cancelAll invokes every registered cancel and clears the map. Called by
 // Scheduler.Stop so no worker leaks through a shutdown. Safe to call on
 // an already-empty registry.

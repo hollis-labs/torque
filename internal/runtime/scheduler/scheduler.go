@@ -20,6 +20,7 @@ import (
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/persistence/writequeue"
 	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/healthscan"
 	"github.com/hollis-labs/torque/internal/runtime/queue"
 	"github.com/hollis-labs/torque/internal/runtime/waitpoll"
 	"github.com/hollis-labs/torque/internal/runtime/writeq"
@@ -63,6 +64,7 @@ type Scheduler struct {
 	lifecycle         *LifecycleManager
 	cost              *CostTracker
 	heartbeat         *HeartbeatMonitor
+	healthscanner     *healthscan.Scanner
 	bus               *EventBus
 	progressThrottler *progressThrottler
 	progressHeartbeat *progressHeartbeat
@@ -174,6 +176,18 @@ func New(
 	s.lifecycle.SetTelemetryWriter(s.telemetryWriter)
 	s.cost.SetTelemetryWriter(s.telemetryWriter)
 	s.lifecycle.SetStateWriter(s.stateWriter)
+
+	// System-health scanner (CW-20260519-0083). DETECT half of the
+	// orphan / stuck-task remediation pair. The scanner uses the
+	// cancelRegistry as its Liveness signal so a heartbeat row whose
+	// worker is still active in THIS process is correctly classified
+	// as live; the existing FindStale path uses the same source-of-
+	// truth. The boot sweep below routes any pre-existing heartbeat
+	// row (i.e. from a previous serve that didn't deregister) through
+	// recoverOrphanedWorker without waiting for the staleness timer.
+	s.healthscanner = healthscan.New(store, s.cancels, healthscan.Config{
+		StaleHeartbeat: time.Duration(cfg.StaleSeconds) * time.Second,
+	})
 
 	// Subscribe to DB-driven task transitions so that a manual / external
 	// task_transition out of "doing" cancels the in-flight worker's
@@ -393,32 +407,64 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 		}
 	}
 
-	// Check for stale workers. Zombie heartbeat rows (from a crashed or
-	// force-killed serve where Deregister never ran) are logged, published on
-	// the bus, and then deleted in the same pass. Without the delete, each
-	// tick re-logs the same zombies indefinitely, and across sessions the
-	// table accumulates noise that obscures real staleness signals
-	// (CW-20260418-0003 secondary fix).
+	// Check for stale workers. Each row is classified by a real liveness
+	// check against the in-process cancelRegistry before any recovery
+	// action (CW-20260519-0079). The old "log + bulk DeleteStale" pass
+	// conflated two distinct cases:
+	//
+	//   1. live-but-slow worker (no recent executor events for >threshold
+	//      seconds, e.g. mid-`go test`). Deleting the row dropped a healthy
+	//      worker from the gauge AND its task never auto-re-queued — the
+	//      worker eventually finished fine but observability lied
+	//      mid-flight. Recovery here just refreshes the heartbeat in place.
+	//
+	//   2. genuine orphan (the previous serve crashed; the worker process
+	//      is gone). Deleting the row left the task pinned at `doing`
+	//      forever — manual recovery only (the run 864 / CW-20260515-0133
+	//      incident, ~1h47m zombie). Recovery here forces task `doing →
+	//      todo`, fails the run row, and best-effort cleans the per-run
+	//      worktree so the picker re-dispatches without an operator nudge.
+	//
+	// The split key is cancelRegistry.has(taskID): the registry is the
+	// authoritative set of workers actually running in THIS scheduler
+	// process. A stale heartbeat with no cancelRegistry entry can ONLY be
+	// an orphan, because the worker closure's defer chain removes the
+	// heartbeat row BEFORE removing the cancelRegistry entry (so there is
+	// no race where a completing worker briefly looks orphaned).
 	staleThreshold := time.Duration(s.cfg.StaleSeconds) * time.Second
 	stale, err := s.heartbeat.FindStale(staleThreshold)
 	if err != nil {
 		log.Printf("[scheduler] stale check error: %v", err)
 	}
 	for _, w := range stale {
-		log.Printf("[scheduler] stale worker detected: %s (task %s)", w.WorkerID, w.TaskID)
+		if s.cancels.has(w.TaskID) {
+			// False-positive class: the worker is alive in this process,
+			// just not producing executor events fast enough to keep its
+			// DB heartbeat fresh. Refresh in place so the gauge stays
+			// honest and the row isn't reconsidered every tick. NEVER
+			// re-queue a live worker.
+			log.Printf("[scheduler] stale heartbeat for live worker %s (task %s) — refreshing (executor quiet, run still active)", w.WorkerID, w.TaskID)
+			if berr := s.heartbeat.Beat(w.WorkerID); berr != nil {
+				log.Printf("[scheduler] live-worker heartbeat refresh failed for %s: %v", w.WorkerID, berr)
+			}
+			s.bus.Publish(SchedulerEvent{
+				Type:   "worker.stale.live",
+				TaskID: w.TaskID,
+				Data:   map[string]interface{}{"worker_id": w.WorkerID, "run_id": w.RunID, "reason": "live_worker_refreshed"},
+			})
+			continue
+		}
+
+		// Confirmed-dead orphan: stale heartbeat AND no in-process worker
+		// holds the task. Either the previous serve crashed or the worker
+		// died without going through Deregister. Auto-recover.
+		log.Printf("[scheduler] orphaned worker detected: %s (task %s run %d) — auto-recovering", w.WorkerID, w.TaskID, w.RunID)
 		s.bus.Publish(SchedulerEvent{
 			Type:   "worker.stale",
 			TaskID: w.TaskID,
-			Data:   map[string]interface{}{"worker_id": w.WorkerID},
+			Data:   map[string]interface{}{"worker_id": w.WorkerID, "run_id": w.RunID},
 		})
-	}
-	if len(stale) > 0 {
-		deleted, derr := s.heartbeat.DeleteStale(staleThreshold)
-		if derr != nil {
-			log.Printf("[scheduler] stale cleanup error: %v", derr)
-		} else if deleted > 0 {
-			log.Printf("[scheduler] cleaned up %d stale heartbeat row(s)", deleted)
-		}
+		s.recoverOrphanedWorker(ctx, w)
 	}
 
 	// Per-tick heartbeat gauge (CW-20260418-0018). One info-level line per
@@ -435,8 +481,452 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 			counts.Live, counts.Stale, s.cfg.StaleSeconds)
 	}
 
+	// System-health periodic sweep (CW-20260519-0083). Surfaces gaps
+	// the staleness-keyed FindStale path above cannot see — chiefly
+	// tasks pinned at `doing` with no worker_heartbeats row at all,
+	// and runs at `running` with the same blind-spot. Detect-only at
+	// the tick: the FindStale + recoverOrphanedWorker pair above
+	// already handles the stale-heartbeat-with-no-cancel class, so
+	// runHealthScan emits its own AnomalyOrphanWorker entries
+	// alongside but does NOT double-recover (idempotent: the
+	// heartbeat row was already deleted by recoverOrphanedWorker).
+	s.runHealthScan(ctx, healthscan.ModeTick)
+
 	s.bus.Publish(SchedulerEvent{Type: "scheduler.tick"})
 	return nil
+}
+
+// runHealthScan executes one DETECT pass over canonical state and
+// publishes the result. In ModeBoot, AnomalyOrphanWorker entries are
+// routed through recoverOrphanedWorker so a daemon restart reclaims
+// stranded heartbeat rows immediately (CW-20260519-0083 boot sweep,
+// addressing the run 864 / CW-20260515-0133 ~1h47m zombie). In
+// ModeTick the same kind is logged + published but NOT auto-recovered
+// — the FindStale + recoverOrphanedWorker call earlier in Tick is the
+// canonical recovery path for that class, and a second pass would
+// either be idempotent (heartbeat row already gone) or wrongly second-
+// guess the threshold guard. The other two anomaly kinds
+// (task_doing_no_worker, run_running_no_worker) are detect-only in
+// both modes; RECOVER for those classes pairs with the session-
+// recovery work.
+func (s *Scheduler) runHealthScan(ctx context.Context, mode healthscan.Mode) {
+	if s.healthscanner == nil {
+		return
+	}
+	res, err := s.healthscanner.Scan(ctx, mode)
+	if err != nil {
+		log.Printf("[healthscan] %s scan error: %v", mode, err)
+		return
+	}
+	if len(res.Anomalies) == 0 {
+		if mode == healthscan.ModeBoot {
+			log.Printf("[healthscan] boot scan clean")
+		}
+		return
+	}
+	log.Printf("[healthscan] %s scan found %d anomaly(ies)", mode, len(res.Anomalies))
+	for _, a := range res.Anomalies {
+		log.Printf("[healthscan] %s kind=%s task=%s run=%d worker=%s — %s",
+			mode, a.Kind, a.TaskID, a.RunID, a.WorkerID, a.Detail)
+		s.bus.Publish(SchedulerEvent{
+			Type:   "health.anomaly",
+			TaskID: a.TaskID,
+			RunID:  a.RunID,
+			Data: map[string]interface{}{
+				"mode":           string(mode),
+				"kind":           string(a.Kind),
+				"worker_id":      a.WorkerID,
+				"executor":       a.Executor,
+				"last_heartbeat": a.LastHeartbeat,
+				"detail":         a.Detail,
+			},
+		})
+
+		switch {
+		case mode == healthscan.ModeBoot && a.Kind == healthscan.AnomalyOrphanWorker:
+			// Boot-time recovery uses the same primitive the tick-time
+			// stale sweep uses, just on a wider input set (every
+			// surviving heartbeat row, not just stale ones).
+			s.recoverOrphanedWorker(ctx, StaleWorker{
+				WorkerID:      a.WorkerID,
+				TaskID:        a.TaskID,
+				RunID:         a.RunID,
+				Executor:      a.Executor,
+				LastHeartbeat: a.LastHeartbeat,
+			})
+		case a.Kind == healthscan.AnomalyTaskDoingNoWorker:
+			s.recoverStuckTask(ctx, mode, a)
+		case a.Kind == healthscan.AnomalyRunRunningNoWorker:
+			s.recoverOrphanRun(ctx, mode, a)
+		}
+	}
+}
+
+// stuckGrace is the wall-clock floor an Anomaly's ObservedAt must clear
+// before the session-recovery RECOVER primitive will reclaim the
+// underlying row. Sourced from SchedulerConfig.StuckGraceSeconds; an
+// unset/zero value falls back to 60s (Nanite's pid-zero-grace floor —
+// see internal/runtime/agent/orphan_sweep.go in the Nanite repo for the
+// originating pattern). The grace window covers the legitimate races
+// (dispatch-vs-register, mid-completion-vs-deregister); anything older
+// is genuinely zombied. Boot scans apply the same grace — at boot a
+// fresh task's updated_at is fresh by construction, so the grace
+// suppresses any false-positive from a task that the previous serve
+// transitioned to `doing` immediately before crashing without
+// registering a heartbeat. The trade-off is the run 864 / CW-20260515-0133
+// recovery for that narrow pre-dispatch class waits the grace window;
+// the orphan-worker recovery (the dominant restart-zombie shape) is
+// unaffected because it has its own primitive that fires immediately on
+// the existing heartbeat row.
+func (s *Scheduler) stuckGrace() time.Duration {
+	secs := s.cfg.StuckGraceSeconds
+	if secs <= 0 {
+		secs = 60
+	}
+	return time.Duration(secs) * time.Second
+}
+
+// recoverStuckTask reclaims a task pinned at `doing` with no
+// worker_heartbeats row at all (healthscan.AnomalyTaskDoingNoWorker).
+// The heartbeat lifecycle deregistered (or never registered) but the
+// task transition out of `doing` was lost — usually a crash mid-
+// completion or a partial txn. Without recovery the task zombies
+// indefinitely; the staleness sweep cannot see it (no row to find
+// stale). Pairs with the system health agent's DETECT half
+// (CW-20260519-0083) — this is the RECOVER half (CW-20260519-0084,
+// ported from Nanite's orphan_sweep pattern).
+//
+// Grace window: tasks.updated_at younger than s.stuckGrace() is left
+// alone so a mid-dispatch race between TransitionTask(doing) and
+// HeartbeatMonitor.Register cannot trigger spurious recovery. The
+// scanner reports tasks.updated_at via Anomaly.ObservedAt.
+//
+// Recovery steps (each best-effort; partial recovery beats none):
+//  1. Re-read the task and verify it's still `doing` (idempotent
+//     against a concurrent operator transition).
+//  2. Fail any running run row for the task with a structured
+//     "orphaned: no worker heartbeat" message so log search can group
+//     the recovery.
+//  3. Transition task `doing → todo` so the next picker tick
+//     re-dispatches it. No retry-count bump (Nanite-style: runtime
+//     accidents don't burn retry budget).
+//  4. Best-effort per-run worktree cleanup if dispatch had reached the
+//     worktree-allocation step.
+func (s *Scheduler) recoverStuckTask(ctx context.Context, mode healthscan.Mode, a healthscan.Anomaly) {
+	now := time.Now().UTC()
+	age := now.Sub(a.ObservedAt)
+	if age < s.stuckGrace() {
+		log.Printf("[healthscan] %s recovery deferred for stuck task %s — age %s under grace %s",
+			mode, a.TaskID, age.Round(time.Second), s.stuckGrace())
+		return
+	}
+	task, terr := s.store.GetTask(a.TaskID)
+	if terr != nil {
+		log.Printf("[healthscan] %s recovery: get task %s: %v", mode, a.TaskID, terr)
+		return
+	}
+	if task.Status != "doing" {
+		log.Printf("[healthscan] %s recovery: %s already in status %s, skipping",
+			mode, a.TaskID, task.Status)
+		return
+	}
+
+	// Fail any still-running run rows for this task. There should be at
+	// most one in steady state, but list-and-iterate guards against a
+	// pathological history of abandoned runs (the runs scan would also
+	// surface those, but co-locating the reclaim here keeps the recovery
+	// path single-pass and resilient to scan-ordering).
+	runs, rerr := s.store.ListRunsFiltered(sqlstore.RunFilter{
+		TaskID:   a.TaskID,
+		Statuses: []string{"running"},
+	})
+	if rerr != nil {
+		log.Printf("[healthscan] %s recovery: list running runs for %s: %v",
+			mode, a.TaskID, rerr)
+	}
+	for _, r := range runs {
+		if werr := s.stateWriter.Submit(ctx, "scheduler_stuck_task_recovery", func(tx *sqlstore.WriteTx) error {
+			if err := tx.CompleteRun(r.ID, sqlstore.RunCompletion{
+				Status:       "failed",
+				ErrorMessage: "orphaned: no worker heartbeat, auto-recovered by session-recovery sweep",
+			}); err != nil {
+				return err
+			}
+			_, err := tx.AppendRunEvent(&sqlstore.RunEventRecord{
+				RunID:   sql.NullInt64{Int64: r.ID, Valid: true},
+				TaskID:  a.TaskID,
+				Type:    "run_orphan_recovered",
+				Payload: `{"reason":"no_worker_heartbeat","source":"session_recovery"}`,
+			})
+			return err
+		}); werr != nil {
+			log.Printf("[healthscan] %s recovery: fail run %d for %s: %v",
+				mode, r.ID, a.TaskID, werr)
+		}
+	}
+
+	// Re-queue the task. The status guard above means we know the task
+	// is still in `doing`; the TransitionTask path enforces the
+	// state-machine invariant a second time on its own.
+	if err := s.stateWriter.Submit(ctx, "scheduler_stuck_task_requeue", func(tx *sqlstore.WriteTx) error {
+		return tx.TransitionTask(a.TaskID, "todo")
+	}); err != nil {
+		log.Printf("[healthscan] %s recovery: transition %s doing→todo: %v",
+			mode, a.TaskID, err)
+		return
+	}
+	log.Printf("[healthscan] %s recovery: stuck task %s re-queued (age %s)",
+		mode, a.TaskID, age.Round(time.Second))
+	s.bus.Publish(SchedulerEvent{
+		Type:   "task.transitioned",
+		TaskID: a.TaskID,
+		Data: map[string]interface{}{
+			"from":   "doing",
+			"to":     "todo",
+			"reason": "stuck_task_recovery",
+			"source": string(mode),
+		},
+	})
+
+	// Best-effort worktree cleanup. We don't have a runID handed in by
+	// the anomaly (the heartbeat row is gone), so we walk the failed
+	// runs we just reclaimed and try each one's deterministic per-run
+	// path. CleanupPerRun is idempotent and safe when the path doesn't
+	// exist, so we don't have to know which run actually got a worktree.
+	if spec := s.worktreeSpec(); spec.WorktreeEnabled() && task.WorkingDir != "" {
+		for _, r := range runs {
+			wtPath := worktree.PerRunPath(task.WorkingDir, spec.Root, r.ID)
+			removed, werr := worktree.CleanupPerRun(task.WorkingDir, wtPath)
+			switch {
+			case werr != nil:
+				log.Printf("[healthscan] %s recovery: worktree cleanup failed for %s run %d at %s: %v",
+					mode, a.TaskID, r.ID, wtPath, werr)
+			case removed:
+				log.Printf("[healthscan] %s recovery: worktree removed for %s run %d at %s",
+					mode, a.TaskID, r.ID, wtPath)
+			}
+		}
+	}
+}
+
+// recoverOrphanRun reclaims a run pinned at `running` with no
+// worker_heartbeats row keyed by run_id
+// (healthscan.AnomalyRunRunningNoWorker). The run never reached
+// CompleteRun and the heartbeat was either never registered or already
+// deleted; a fresh tick will keep observing the same anomaly until the
+// run is marked terminal.
+//
+// Grace window: runs.started_at younger than s.stuckGrace() is left
+// alone (same dispatch-vs-register race as recoverStuckTask). The
+// scanner reports runs.started_at via Anomaly.ObservedAt.
+//
+// Recovery steps:
+//  1. Re-read the run and verify it's still `running` (idempotent
+//     against the recoverStuckTask path having already failed it as
+//     part of a task-level reclaim, and against concurrent operator
+//     transitions).
+//  2. Mark the run failed with the same structured "orphaned" message
+//     as recoverStuckTask so log search groups consistently.
+//  3. If the parent task is still `doing`, re-queue it. A run can be
+//     abandoned while the task has moved on (e.g. operator transition
+//     cleared the task but never failed the run); in that case we
+//     leave the task alone.
+//  4. Best-effort per-run worktree cleanup.
+func (s *Scheduler) recoverOrphanRun(ctx context.Context, mode healthscan.Mode, a healthscan.Anomaly) {
+	now := time.Now().UTC()
+	age := now.Sub(a.ObservedAt)
+	if age < s.stuckGrace() {
+		log.Printf("[healthscan] %s recovery deferred for orphan run %d — age %s under grace %s",
+			mode, a.RunID, age.Round(time.Second), s.stuckGrace())
+		return
+	}
+	if a.RunID <= 0 {
+		log.Printf("[healthscan] %s recovery: orphan run anomaly with no run_id — skipping",
+			mode)
+		return
+	}
+	run, rerr := s.store.GetRun(a.RunID)
+	if rerr != nil {
+		log.Printf("[healthscan] %s recovery: get run %d: %v", mode, a.RunID, rerr)
+		return
+	}
+	if run.Status != "running" {
+		log.Printf("[healthscan] %s recovery: run %d already in status %s, skipping",
+			mode, a.RunID, run.Status)
+		return
+	}
+
+	if werr := s.stateWriter.Submit(ctx, "scheduler_orphan_run_recovery", func(tx *sqlstore.WriteTx) error {
+		if err := tx.CompleteRun(a.RunID, sqlstore.RunCompletion{
+			Status:       "failed",
+			ErrorMessage: "orphaned: no worker heartbeat keyed by run_id, auto-recovered by session-recovery sweep",
+		}); err != nil {
+			return err
+		}
+		_, err := tx.AppendRunEvent(&sqlstore.RunEventRecord{
+			RunID:   sql.NullInt64{Int64: a.RunID, Valid: true},
+			TaskID:  a.TaskID,
+			Type:    "run_orphan_recovered",
+			Payload: `{"reason":"no_worker_heartbeat","source":"session_recovery"}`,
+		})
+		return err
+	}); werr != nil {
+		log.Printf("[healthscan] %s recovery: fail run %d: %v", mode, a.RunID, werr)
+		return
+	}
+	log.Printf("[healthscan] %s recovery: orphan run %d (task %s) failed (age %s)",
+		mode, a.RunID, a.TaskID, age.Round(time.Second))
+
+	// Re-queue the parent task if it's still pinned at `doing`. A run
+	// can be abandoned while the task has moved on (manual transition
+	// cleared the task but never failed the run); in that case leave
+	// the task alone.
+	if a.TaskID != "" {
+		task, terr := s.store.GetTask(a.TaskID)
+		if terr != nil {
+			log.Printf("[healthscan] %s recovery: get task %s for orphan run %d: %v",
+				mode, a.TaskID, a.RunID, terr)
+		} else if task.Status == "doing" {
+			if err := s.stateWriter.Submit(ctx, "scheduler_orphan_run_requeue", func(tx *sqlstore.WriteTx) error {
+				return tx.TransitionTask(a.TaskID, "todo")
+			}); err != nil {
+				log.Printf("[healthscan] %s recovery: transition %s doing→todo (orphan run %d): %v",
+					mode, a.TaskID, a.RunID, err)
+			} else {
+				log.Printf("[healthscan] %s recovery: %s re-queued via orphan run %d",
+					mode, a.TaskID, a.RunID)
+				s.bus.Publish(SchedulerEvent{
+					Type:   "task.transitioned",
+					TaskID: a.TaskID,
+					RunID:  a.RunID,
+					Data: map[string]interface{}{
+						"from":   "doing",
+						"to":     "todo",
+						"reason": "orphan_run_recovery",
+						"source": string(mode),
+					},
+				})
+			}
+
+			// Worktree cleanup uses the task's working_dir as the
+			// repo root, mirroring recoverOrphanedWorker.
+			if spec := s.worktreeSpec(); spec.WorktreeEnabled() && task.WorkingDir != "" {
+				wtPath := worktree.PerRunPath(task.WorkingDir, spec.Root, a.RunID)
+				removed, werr := worktree.CleanupPerRun(task.WorkingDir, wtPath)
+				switch {
+				case werr != nil:
+					log.Printf("[healthscan] %s recovery: worktree cleanup failed for %s run %d at %s: %v",
+						mode, a.TaskID, a.RunID, wtPath, werr)
+				case removed:
+					log.Printf("[healthscan] %s recovery: worktree removed for %s run %d at %s",
+						mode, a.TaskID, a.RunID, wtPath)
+				}
+			}
+		}
+	}
+}
+
+// recoverOrphanedWorker reclaims a worker whose heartbeat is stale AND
+// which is not present in the scheduler's cancel registry — i.e. the
+// worker process is gone (a previous serve crashed; a worker died
+// without Deregister). Without recovery the task pins at `doing`
+// indefinitely (the run 864 / CW-20260515-0133 zombie). Steps:
+//
+//  1. Fail the run row (status=failed, error_message structured for
+//     log search) if it is still in a non-terminal state.
+//  2. Force task `doing → todo` so the next picker tick re-dispatches
+//     it. No retry-count bump — this wasn't a real failure, it was a
+//     runtime accident, and counting it against the retry budget would
+//     unfairly burn the task's remaining attempts.
+//  3. Best-effort cleanup of the per-run worktree (deterministic
+//     path via worktree.PerRunPath), so the next dispatch isn't blocked
+//     by a stale worktree on the next free runID.
+//  4. Delete the heartbeat row so it stops re-firing every tick.
+//
+// Each phase is best-effort: an error in one phase logs but doesn't
+// block the others. Partial recovery (e.g. task re-queued but stale row
+// undeletable) is strictly better than no recovery.
+func (s *Scheduler) recoverOrphanedWorker(ctx context.Context, w StaleWorker) {
+	task, terr := s.store.GetTask(w.TaskID)
+	if terr != nil {
+		log.Printf("[scheduler] orphan recovery: get task %s: %v (deleting heartbeat row only)", w.TaskID, terr)
+		if derr := s.heartbeat.Deregister(w.WorkerID); derr != nil {
+			log.Printf("[scheduler] orphan recovery: delete heartbeat row %s: %v", w.WorkerID, derr)
+		}
+		return
+	}
+
+	// 1. Fail the run row if it's still marked running. We deliberately
+	//    skip non-running rows (a manual transition may have already
+	//    stamped canceled/superseded/killed; respect that — see
+	//    sqlstore.IsOperatorTerminalRunStatus).
+	if w.RunID > 0 {
+		if run, rerr := s.store.GetRun(w.RunID); rerr != nil {
+			log.Printf("[scheduler] orphan recovery: get run %d: %v", w.RunID, rerr)
+		} else if run.Status == "running" {
+			if werr := s.stateWriter.Submit(ctx, "scheduler_orphan_recovery", func(tx *sqlstore.WriteTx) error {
+				if err := tx.CompleteRun(w.RunID, sqlstore.RunCompletion{
+					Status:       "failed",
+					ErrorMessage: "orphaned: worker process gone, auto-recovered by scheduler",
+				}); err != nil {
+					return err
+				}
+				_, err := tx.AppendRunEvent(&sqlstore.RunEventRecord{
+					RunID:   sql.NullInt64{Int64: w.RunID, Valid: true},
+					TaskID:  w.TaskID,
+					Type:    "run_orphan_recovered",
+					Payload: `{"reason":"worker_process_gone"}`,
+				})
+				return err
+			}); werr != nil {
+				log.Printf("[scheduler] orphan recovery: fail run %d: %v", w.RunID, werr)
+			}
+		}
+	}
+
+	// 2. Re-queue the task only if it's still in `doing`. Any other
+	//    status means an operator (or another path) has already moved
+	//    it; touching it would clobber that intent — same guard the
+	//    lifecycle manager applies for late-arriving results.
+	if task.Status == "doing" {
+		if err := s.stateWriter.Submit(ctx, "scheduler_orphan_requeue", func(tx *sqlstore.WriteTx) error {
+			return tx.TransitionTask(w.TaskID, "todo")
+		}); err != nil {
+			log.Printf("[scheduler] orphan recovery: transition %s doing→todo: %v", w.TaskID, err)
+		} else {
+			log.Printf("[scheduler] orphan recovery: %s re-queued (run %d)", w.TaskID, w.RunID)
+			s.bus.Publish(SchedulerEvent{
+				Type:   "task.transitioned",
+				TaskID: w.TaskID,
+				Data:   map[string]interface{}{"from": "doing", "to": "todo", "reason": "orphan_recovery"},
+			})
+		}
+	} else {
+		log.Printf("[scheduler] orphan recovery: %s in status %s, skipping re-queue", w.TaskID, task.Status)
+	}
+
+	// 3. Worktree cleanup. PerRunPath is deterministic from
+	//    (repo_root, root, runID), so we can derive the path without
+	//    persisting it; CleanupPerRun is idempotent and safe when the
+	//    path doesn't exist. Only attempted when per-run worktree
+	//    dispatch is on AND the task carried a working_dir.
+	if spec := s.worktreeSpec(); spec.WorktreeEnabled() && task.WorkingDir != "" && w.RunID > 0 {
+		wtPath := worktree.PerRunPath(task.WorkingDir, spec.Root, w.RunID)
+		removed, werr := worktree.CleanupPerRun(task.WorkingDir, wtPath)
+		switch {
+		case werr != nil:
+			log.Printf("[scheduler] orphan recovery: worktree cleanup failed for %s run %d at %s: %v", w.TaskID, w.RunID, wtPath, werr)
+		case removed:
+			log.Printf("[scheduler] orphan recovery: worktree removed for %s run %d at %s", w.TaskID, w.RunID, wtPath)
+		default:
+			log.Printf("[scheduler] orphan recovery: worktree preserved for %s run %d at %s (commits or uncommitted work present)", w.TaskID, w.RunID, wtPath)
+		}
+	}
+
+	// 4. Delete the heartbeat row.
+	if derr := s.heartbeat.Deregister(w.WorkerID); derr != nil {
+		log.Printf("[scheduler] orphan recovery: delete heartbeat row %s: %v", w.WorkerID, derr)
+	}
 }
 
 // worktreeSpec projects the scheduler's worktree-related config onto a
@@ -1080,6 +1570,19 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			}
 		}
 	}
+
+	// System-health boot sweep (CW-20260519-0083). cancelRegistry is
+	// empty by construction in a fresh process, so any worker_heartbeats
+	// row that survived the previous serve is an orphan-by-definition;
+	// the sweep routes each one through recoverOrphanedWorker without
+	// waiting for last_heartbeat to age past the staleness threshold.
+	// This closes the run 864 / CW-20260515-0133 gap (a zombie run sat
+	// dead for ~1h47m because the new serve waited a full StaleSeconds
+	// before reclaiming it). Tasks-in-doing-with-no-heartbeat and
+	// runs-in-running-with-no-heartbeat are logged + published but
+	// detect-only — RECOVER for those classes pairs with the session-
+	// recovery work.
+	s.runHealthScan(ctx, healthscan.ModeBoot)
 
 	for {
 		select {
