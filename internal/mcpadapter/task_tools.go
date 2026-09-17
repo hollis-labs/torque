@@ -115,6 +115,31 @@ func validateTaskListStringArgs(req mcp.CallToolRequest, keys ...string) *mcp.Ca
 	return nil
 }
 
+// reqPriorityArg parses a WRITE path's "priority" param with the same
+// strictness the read paths already apply through reqTaskListInt, and returns
+// an arg_invalid result rather than a value the caller never asked for.
+//
+// It exists because plain reqInt returns 0 for anything it cannot parse. That
+// silent zero is harmless for a filter (the read paths reject it first) but it
+// is data loss on a write: torque_task_create {"priority":"high"} used to land
+// as the default 2, and torque_task_update {"priority":"banana"} used to
+// OVERWRITE a valid priority with 0 and still answer ok=true. torque_task_list
+// rejected the same value with arg_invalid, so the two halves of the API
+// disagreed about what a priority is.
+//
+// Returns (value, present, nil) when the key is absent or parses cleanly, so
+// callers keep their existing presence-gated update semantics — including an
+// explicit priority=0, which stays a real value here and is only turned into
+// the default by service.CreateTask.
+func reqPriorityArg(req mcp.CallToolRequest) (int, bool, *mcp.CallToolResult) {
+	n, present, err := reqTaskListInt(req, "priority")
+	if err != nil {
+		res, _ := errResult(ErrCodeArgInvalid, err.Error(), "priority")
+		return 0, present, res
+	}
+	return n, present, nil
+}
+
 func reqTaskListInt(req mcp.CallToolRequest, key string) (int, bool, error) {
 	raw, ok := req.GetArguments()[key]
 	if !ok {
@@ -388,7 +413,7 @@ Response shape: data = {<TaskRecord fields>, Tags[], dispatch_notice} — single
 Example: {"title":"Fix auth bug","description":"Login returns 500","priority":"2","tags":"[\"backend\"]"}`),
 		mcp.WithString("title", mcp.Required(), mcp.Description("Task title")),
 		mcp.WithString("description", mcp.Description("Task description")),
-		mcp.WithString("priority", mcp.Description("Priority 1-5 (integer, default 2)")),
+		mcp.WithString("priority", mcp.Description("Priority 1-5 (integer, default 2). A non-integer value returns error.code=arg_invalid; it is not coerced to the default.")),
 		mcp.WithString("tags", mcp.Description("JSON array of tag strings")),
 		mcp.WithString("executor", mcp.Description("Executor type (default cli)")),
 		mcp.WithString("launch_profile", mcp.Description("Torque launch_profile id (preferred). Drives the stable launch family at dispatch.")),
@@ -778,10 +803,15 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest)
 		manual = true
 	}
 
+	priority, _, errRes := reqPriorityArg(req)
+	if errRes != nil {
+		return errRes, nil
+	}
+
 	input := service.TaskCreateInput{
 		Title:                title,
 		Description:          reqStr(req, "description"),
-		Priority:             reqInt(req, "priority"),
+		Priority:             priority,
 		Executor:             reqStr(req, "executor"),
 		LaunchProfile:        reqStr(req, "launch_profile"),
 		AgentProfile:         reqStr(req, "agent_profile"),
@@ -1362,9 +1392,11 @@ func buildTaskUpdateInput(req mcp.CallToolRequest) (service.TaskUpdateInput, *mc
 		v := reqStr(req, "description")
 		update.Description = &v
 	}
-	if _, ok := args["priority"]; ok {
-		v := reqInt(req, "priority")
-		update.Priority = &v
+	if priority, present, errRes := reqPriorityArg(req); present {
+		if errRes != nil {
+			return service.TaskUpdateInput{}, errRes
+		}
+		update.Priority = &priority
 	}
 
 	// Scalar pass-through fields: presence in args is the trigger so callers

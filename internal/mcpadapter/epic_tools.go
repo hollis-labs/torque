@@ -17,7 +17,7 @@ Response shape: data = {<EpicRecord fields>} — singleton.
 Example: {"name":"Auth Overhaul","description":"Replace entire auth stack","priority":"1"}`),
 		mcp.WithString("name", mcp.Required(), mcp.Description("Epic name")),
 		mcp.WithString("description", mcp.Description("Epic description")),
-		mcp.WithString("priority", mcp.Description("Priority (integer; lower typically means higher priority, no enforced range)")),
+		mcp.WithString("priority", mcp.Description("Priority (integer; lower typically means higher priority, no enforced range). A non-integer value returns error.code=arg_invalid.")),
 		mcp.WithString("project_id", mcp.Description("Project ID to associate this epic with (requires features.projects)")),
 	), a.handleEpicCreate)
 
@@ -38,7 +38,7 @@ Example: {"id":"EP-4","status":"inactive"}`),
 		mcp.WithString("name", mcp.Description("New name")),
 		mcp.WithString("description", mcp.Description("New description")),
 		mcp.WithString("status", mcp.Description("New status: active|inactive")),
-		mcp.WithString("priority", mcp.Description("New priority (integer; lower typically means higher priority, no enforced range)")),
+		mcp.WithString("priority", mcp.Description("New priority (integer; lower typically means higher priority, no enforced range). A non-integer value returns error.code=arg_invalid and leaves the stored priority unchanged.")),
 		mcp.WithString("project_id", mcp.Description("Project ID to associate this epic with (requires features.projects); pass empty string to clear")),
 	), a.handleEpicUpdate)
 
@@ -93,16 +93,21 @@ Example: {"ids":"[\"EP-1\",\"EP-2\"]","status":"inactive"}`),
 		mcp.WithString("name", mcp.Description("New name")),
 		mcp.WithString("description", mcp.Description("New description")),
 		mcp.WithString("status", mcp.Description("New status: active|inactive")),
-		mcp.WithString("priority", mcp.Description("New priority (integer; lower typically means higher priority, no enforced range)")),
+		mcp.WithString("priority", mcp.Description("New priority (integer; lower typically means higher priority, no enforced range). A non-integer value returns error.code=arg_invalid and leaves the stored priority unchanged.")),
 		mcp.WithString("project_id", mcp.Description("Project ID to associate every epic with (requires features.projects); pass empty string to clear")),
 	), a.handleEpicBulkUpdate)
 }
 
 func (a *Adapter) handleEpicCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	priority, errRes := reqEpicPriorityPtr(req)
+	if errRes != nil {
+		return errRes, nil
+	}
+
 	input := service.EpicCreateInput{
 		Name:        reqStr(req, "name"),
 		Description: reqStr(req, "description"),
-		Priority:    reqEpicPriorityPtr(req),
+		Priority:    priority,
 		ProjectID:   reqStr(req, "project_id"),
 	}
 
@@ -127,12 +132,16 @@ func (a *Adapter) handleEpicGet(ctx context.Context, req mcp.CallToolRequest) (*
 // explicit priority="0" is distinguishable from the param being omitted
 // entirely — a value-based `if v != 0` check would silently drop a
 // caller's intentional priority=0.
-func reqEpicPriorityPtr(req mcp.CallToolRequest) *int64 {
-	if !reqHasArg(req, "priority") {
-		return nil
+func reqEpicPriorityPtr(req mcp.CallToolRequest) (*int64, *mcp.CallToolResult) {
+	n, present, errRes := reqPriorityArg(req)
+	if !present {
+		return nil, nil
 	}
-	v := int64(reqInt(req, "priority"))
-	return &v
+	if errRes != nil {
+		return nil, errRes
+	}
+	v := int64(n)
+	return &v, nil
 }
 
 // buildEpicUpdateInput turns a torque_epic_update-shaped request's
@@ -144,8 +153,10 @@ func reqEpicPriorityPtr(req mcp.CallToolRequest) *int64 {
 // by EpicService.Update's validation instead of being silently ignored).
 // Shared by handleEpicUpdate (single-id) and handleEpicBulkUpdate (PRIM-003)
 // so single- and bulk-update can never drift apart on semantics — mirrors
-// Task's buildTaskUpdateInput.
-func buildEpicUpdateInput(req mcp.CallToolRequest) (service.EpicUpdateInput, bool) {
+// Task's buildTaskUpdateInput, including its third return: a non-nil result
+// is a validation failure the caller must return as-is without inspecting
+// the (zero-value) EpicUpdateInput.
+func buildEpicUpdateInput(req mcp.CallToolRequest) (service.EpicUpdateInput, bool, *mcp.CallToolResult) {
 	input := service.EpicUpdateInput{}
 	hasUpdate := false
 
@@ -164,7 +175,11 @@ func buildEpicUpdateInput(req mcp.CallToolRequest) (service.EpicUpdateInput, boo
 		input.Status = &v
 		hasUpdate = true
 	}
-	if p := reqEpicPriorityPtr(req); p != nil {
+	p, errRes := reqEpicPriorityPtr(req)
+	if errRes != nil {
+		return service.EpicUpdateInput{}, false, errRes
+	}
+	if p != nil {
 		input.Priority = p
 		hasUpdate = true
 	}
@@ -174,12 +189,15 @@ func buildEpicUpdateInput(req mcp.CallToolRequest) (service.EpicUpdateInput, boo
 		hasUpdate = true
 	}
 
-	return input, hasUpdate
+	return input, hasUpdate, nil
 }
 
 func (a *Adapter) handleEpicUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	id := reqStr(req, "id")
-	input, hasUpdate := buildEpicUpdateInput(req)
+	input, hasUpdate, errRes := buildEpicUpdateInput(req)
+	if errRes != nil {
+		return errRes, nil
+	}
 
 	if !hasUpdate {
 		return okResult(map[string]any{
@@ -314,7 +332,10 @@ func (a *Adapter) handleEpicBulkUpdate(ctx context.Context, req mcp.CallToolRequ
 	if errRes != nil {
 		return errRes, nil
 	}
-	input, hasUpdate := buildEpicUpdateInput(req)
+	input, hasUpdate, errRes := buildEpicUpdateInput(req)
+	if errRes != nil {
+		return errRes, nil
+	}
 	if !hasUpdate {
 		return errResult(ErrCodeArgInvalid, "at least one updatable field must be provided", "")
 	}
