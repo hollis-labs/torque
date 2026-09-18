@@ -9,8 +9,14 @@ ids and `clockwork` in older docs are historical.
 
 ## Start Here
 
-- `docs/README.md` indexes current docs. `docs/architecture/` and
-  `docs/superpowers/` are historical notes, not the contract.
+- `docs/README.md` indexes current docs. `docs/architecture/` is current
+  reference; it is not the contract.
+- `tasks/`, `TEST-RUN-HANDOFF.md`, `docs/adr/`, `docs/superpowers/`,
+  `docs/reviews/`, and `docs/architecture/mcp-service-layer-audit.md` were
+  archived out of this repo to `~/dev/agent-os/archive/torque/` in a docs
+  cleanup pass — completed task tracking and design history, not current
+  contract. Code comments and older docs still cite those paths; the paths do
+  not resolve and are not coming back.
 - `internal/service/task.go` owns the status vocabulary (`CanonicalStatuses`)
   and the transition policy (`checkTransition`).
 - `internal/persistence/sqlstore/store.go` splits one handle into a serialized

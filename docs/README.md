@@ -17,4 +17,9 @@ Start with:
 - [plan-branch-strategies.md](plan-branch-strategies.md) — branch/PR strategies for `kind=plan` programs, and the mandatory terminal reconcile-and-build step for option-4 (shared-branch) plans
 - [architecture/sqlite-test-infra.md](architecture/sqlite-test-infra.md) — why shared SQLite fixtures default to pooled temp-file databases
 
-Older files under `docs/architecture/` and `docs/superpowers/` are historical design notes, working specs, or prior-art research. They are not the canonical source for current behavior unless a fresh doc links to them explicitly.
+`docs/superpowers/`, `docs/adr/`, `docs/reviews/`, and the older task-tracking
+under `tasks/` and `TEST-RUN-HANDOFF.md` were historical design notes, working
+specs, decision records, and prior-art research — archived to
+`~/dev/agent-os/archive/torque/` in a docs cleanup pass. They were never the
+canonical source for current behavior; a fresh doc links to their content
+explicitly where it still matters.
