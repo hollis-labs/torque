@@ -11,7 +11,6 @@ import (
 
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/runtime/scheduler"
-	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // Session-scoped toggle — the enabled flag lives on the scheduler instance and
@@ -30,17 +29,17 @@ Response shape: data = {enabled, max_workers, active_workers, queue_depth, total
 Example: {"enabled":"false"}`
 
 func (a *Adapter) registerSchedulerTools() {
-	a.addTool(mcp.NewTool("torque_scheduler_status",
-		mcp.WithDescription(schedulerStatusDescription),
+	a.addTool(newTool("torque_scheduler_status",
+		withDescription(schedulerStatusDescription),
 	), a.handleSchedulerStatus)
 
-	a.addTool(mcp.NewTool("torque_scheduler_toggle",
-		mcp.WithDescription(schedulerToggleDescription),
-		mcp.WithString("enabled", mcp.Required(), mcp.Description("true to enable dispatch, false to pause. Session-scoped — no effect on config. (boolean, accepts \"true\"/\"false\" strings).")),
+	a.addTool(newTool("torque_scheduler_toggle",
+		withDescription(schedulerToggleDescription),
+		withString("enabled", required(), desc("true to enable dispatch, false to pause. Session-scoped — no effect on config. (boolean, accepts \"true\"/\"false\" strings).")),
 	), a.handleSchedulerToggle)
 }
 
-func (a *Adapter) handleSchedulerStatus(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleSchedulerStatus(ctx context.Context, req map[string]any) (any, error) {
 	if a.sched == nil {
 		status, err := proxySchedulerStatus(ctx)
 		if err != nil {
@@ -58,7 +57,7 @@ func (a *Adapter) handleSchedulerStatus(ctx context.Context, req mcp.CallToolReq
 // returns a consistent status snapshot. Unlike the HTTP toggle (which always
 // flips), the MCP toggle takes an explicit enabled arg so agent callers don't
 // have to read-modify-write across two tool calls.
-func (a *Adapter) handleSchedulerToggle(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleSchedulerToggle(ctx context.Context, req map[string]any) (any, error) {
 	if a.sched == nil {
 		return errResult(ErrCodeDomain, "scheduler toggle requires the serve process scheduler; stdio mcp is read-only here, use torque_scheduler_status to inspect state", "")
 	}

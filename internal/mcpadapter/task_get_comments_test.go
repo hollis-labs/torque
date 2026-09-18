@@ -135,7 +135,7 @@ func TestTaskGet_CommentsMetaOnEmptyThread(t *testing.T) {
 	assert.Equal(t, 0, got.CommentsMeta.Total)
 	assert.False(t, got.CommentsMeta.Truncated)
 	// An empty thread must serialize as [] rather than null.
-	assert.Contains(t, text, `"Comments": []`)
+	assert.Contains(t, text, `"Comments":[]`)
 }
 
 func TestTaskGet_CommentsOptOut(t *testing.T) {

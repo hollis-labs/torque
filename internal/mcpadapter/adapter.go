@@ -8,8 +8,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
-	mcpsanitize "github.com/hollis-labs/go-mcp-sanitize"
+	"github.com/hollis-labs/go-mcp/sanitize"
+	gomcp "github.com/hollis-labs/go-mcp/server"
 	feotel "github.com/hollis-labs/go-otel"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -20,8 +22,6 @@ import (
 	"github.com/hollis-labs/torque/internal/runtime/scheduler"
 	"github.com/hollis-labs/torque/internal/runtime/steering"
 	"github.com/hollis-labs/torque/internal/service"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 )
 
 // Adapter wires the service layer to an MCP server.
@@ -34,7 +34,7 @@ import (
 type Adapter struct {
 	svc            *service.Service
 	sched          *scheduler.Scheduler
-	server         *server.MCPServer
+	server         *gomcp.Server
 	loopbackTaskID string
 	// sessions wires the long-lived agent session manager (CW-20260503-0014).
 	// Nil disables torque_session_* tools — they reply with a domain error
@@ -62,6 +62,9 @@ type Adapter struct {
 	// in cmd/torque/mcp.go because stdio MCP reserves stdout for the
 	// JSON-RPC protocol stream.
 	Logger *slog.Logger
+	// sanitizeOnce guards the one-time install of go-mcp's sanitize
+	// middleware on first Server() call. See Server()'s doc comment.
+	sanitizeOnce sync.Once
 }
 
 // New creates an Adapter, registers all tools, and returns it. sched may be
@@ -70,19 +73,34 @@ type Adapter struct {
 // subcommand runs in a separate process from serve and passes nil; tests and
 // any future in-process wiring can pass a live *scheduler.Scheduler.
 func New(svc *service.Service, sched *scheduler.Scheduler) *Adapter {
-	s := server.NewMCPServer(
-		"Torque",
-		"0.1.0",
-		server.WithToolCapabilities(true),
-	)
+	s := gomcp.NewServer("Torque", "0.1.0")
 	a := &Adapter{svc: svc, sched: sched, server: s}
 	a.registerCoreTools()
 	a.registerOptInTools()
 	return a
 }
 
-// Server returns the underlying MCPServer.
-func (a *Adapter) Server() *server.MCPServer { return a.server }
+// Server returns the underlying go-mcp Server. Installs go-mcp's sanitize
+// middleware (the former go-mcp-sanitize module, folded into go-mcp) at the
+// protocol level on first call, replacing the old per-tool
+// mcpsanitize.Middleware(logger)(h) wrap that addTool used to apply
+// individually. Deferred to first Server() call (rather than New()) so a
+// WithLogger call made after New() — the documented contract, e.g.
+// cmd/torque/mcp.go's mcpadapter.New(...).WithSessions(...).WithLogger(...)
+// chain — is honored: stdio MCP reserves stdout for the JSON-RPC stream, so
+// routing sanitize's warn telemetry to the wrong logger (slog.Default(),
+// typically stdout) instead of the caller's stderr logger would corrupt the
+// protocol stream, not just misroute a log line.
+func (a *Adapter) Server() *gomcp.Server {
+	a.sanitizeOnce.Do(func() {
+		logger := a.Logger
+		if logger == nil {
+			logger = slog.Default()
+		}
+		a.server.SDKServer().AddReceivingMiddleware(sanitize.Middleware(logger))
+	})
+	return a.server
+}
 
 // WithSessions attaches the unified agent session manager so the
 // torque_session_* tools surface real data. Must be called before any
@@ -131,52 +149,50 @@ func (a *Adapter) WithLogger(l *slog.Logger) *Adapter {
 	return a
 }
 
-// addTool wraps every MCP tool handler with two pieces of middleware:
+// addTool wraps every MCP tool handler with middleware and registers it
+// against the underlying go-mcp server:
 //
 //  1. The OTel tracing wrapper: extracts MCP-encoded trace context from the
 //     call args (_traceparent / _tracestate set by Hollis-app callers via
 //     propagation.InjectMCP) so inbound calls continue the same trace, and
 //     opens a torque.mcp.call span for the handler's duration with
-//     hollis.tool.name attached. Outermost so the trace covers sanitize too.
+//     hollis.tool.name attached.
 //  2. The unknown-argument guard (CW-20260907-0060): an argument the tool's
 //     own schema does not declare is rejected rather than silently dropped.
 //     See unknownArgRejector for why a blanket guard is the right scope.
-//  3. The go-mcp-sanitize middleware, which auto-cleans malformed agent
-//     tool-call XML in free-text params before the handler runs. Clean calls
-//     are silent; cleaned calls emit one warn-level slog line (see
-//     github.com/hollis-labs/go-mcp-sanitize).
+//
+// go-mcp's own sanitize middleware (the former go-mcp-sanitize module) is
+// installed once, at the protocol level, on first Server() call — see
+// Server()'s doc comment — rather than wrapped per tool here.
 //
 // All registerXxx helpers (and NewLoopback's registerLoopbackTools) must call
-// a.addTool(...) instead of a.server.AddTool(...) directly so both the trace
-// and the sanitize protection stay uniform across the 100+ tool surface.
-func (a *Adapter) addTool(t mcp.Tool, h server.ToolHandlerFunc) {
-	logger := a.Logger
-	if logger == nil {
-		logger = slog.Default()
+// a.addTool(...) instead of a.server.RegisterTool(...) directly so the trace
+// and unknown-arg protection stay uniform across the 100+ tool surface, and
+// so every tool gets its annotation hints from toolAnnotations (see
+// tool_annotations.go) rather than a hand-copied literal per call site.
+func (a *Adapter) addTool(spec toolSpec, h gomcp.ToolHandler) {
+	toolName := spec.Name
+	hints, ok := toolAnnotations[toolName]
+	if !ok {
+		panic("mcpadapter: no annotation hints for tool " + toolName + " — add an entry to toolAnnotations in tool_annotations.go")
 	}
-	inner := mcpsanitize.Middleware(logger)(h)
-	toolName := t.Name
-	rejectUnknown := unknownArgRejector(t)
-	traced := func(ctx context.Context, req mcp.CallToolRequest) (result *mcp.CallToolResult, err error) {
+	rejectUnknown := unknownArgRejector(spec)
+	traced := func(ctx context.Context, req map[string]any) (result any, err error) {
 		// Extract MCP-encoded trace context (_traceparent / _tracestate) INTO
 		// the inbound ctx — do NOT use propagation.ExtractMCP here: that helper
 		// starts from context.Background() and discards the MCP-server-provided
 		// ctx (cancellation, deadlines, transport-scoped values). Using
 		// otel.GetTextMapPropagator().Extract(ctx, ...) attaches the remote
 		// span context onto the existing ctx, preserving everything else.
-		// Arguments is typed `any` here (mcp-go's transport-level shape); a
-		// non-map payload can't carry trace headers, so we skip safely.
-		if args, ok := req.Params.Arguments.(map[string]any); ok {
-			if _, hasTP := args["_traceparent"]; hasTP {
-				carrier := otelprop.MapCarrier{}
-				if tp, ok := args["_traceparent"].(string); ok {
-					carrier.Set("traceparent", tp)
-				}
-				if ts, ok := args["_tracestate"].(string); ok {
-					carrier.Set("tracestate", ts)
-				}
-				ctx = otel.GetTextMapPropagator().Extract(ctx, carrier)
+		if _, hasTP := req["_traceparent"]; hasTP {
+			carrier := otelprop.MapCarrier{}
+			if tp, ok := req["_traceparent"].(string); ok {
+				carrier.Set("traceparent", tp)
 			}
+			if ts, ok := req["_tracestate"].(string); ok {
+				carrier.Set("tracestate", ts)
+			}
+			ctx = otel.GetTextMapPropagator().Extract(ctx, carrier)
 		}
 		ctx, span := feotel.StartSpan(ctx, "torque.mcp.call")
 		span.SetAttributes(
@@ -184,34 +200,41 @@ func (a *Adapter) addTool(t mcp.Tool, h server.ToolHandlerFunc) {
 			attribute.String("hollis.tool.name", toolName),
 		)
 		// Named returns + defer keep span lifecycle panic-safe: if the
-		// inner handler (or sanitize middleware) panics, the deferred End
-		// still fires, so spans never leak. The result/err inspection runs
-		// against the actual return values (or zero values on panic).
+		// inner handler panics, the deferred End still fires, so spans
+		// never leak. The result/err inspection runs against the actual
+		// return values (or zero values on panic).
 		defer func() {
 			if err != nil {
-				span.RecordError(err)
-			} else if result != nil && result.IsError {
 				// CallToolResult.IsError conflates validation rejects and
 				// infra faults at the mcpadapter layer (errResult/toolError
-				// both set it). Per the OTel guide's policy-not-infra
-				// guidance, surface as an attribute rather than span.Error
-				// so an operator can grep failed tool calls without those
-				// drowning out real faults.
+				// both produce a non-nil err here). Per the OTel guide's
+				// policy-not-infra guidance, surface as an attribute rather
+				// than span.RecordError so an operator can grep failed tool
+				// calls without those drowning out real faults.
 				span.SetAttributes(attribute.Bool("torque.mcp.result_error", true))
 			}
 			span.End()
 		}()
-		if res := rejectUnknown(req); res != nil {
-			return res, nil
+		if rejectErr := rejectUnknown(req); rejectErr != nil {
+			return nil, rejectErr
 		}
 		if toolName == "torque_task_list" || toolName == "torque_task_facets" {
-			if res := rejectMalformedTaskListTags(req); res != nil {
-				return res, nil
+			if rejectErr := rejectMalformedTaskListTags(req); rejectErr != nil {
+				return nil, rejectErr
 			}
 		}
-		return inner(ctx, req)
+		return h(ctx, req)
 	}
-	a.server.AddTool(t, traced)
+	a.server.RegisterTool(gomcp.Tool{
+		Name:            toolName,
+		Description:     spec.Description,
+		InputSchema:     gomcp.ObjectSchema(spec.Properties, spec.Required...),
+		Handler:         traced,
+		ReadOnlyHint:    hints.ReadOnly,
+		DestructiveHint: hints.Destructive,
+		IdempotentHint:  hints.Idempotent,
+		OpenWorldHint:   false,
+	})
 }
 
 // argsMetaPrefix marks transport-level arguments that ride alongside a tool's
@@ -223,7 +246,7 @@ const argsMetaPrefix = "_"
 // unknownArgRejector builds the per-tool guard against silently-dropped
 // arguments (CW-20260907-0060).
 //
-// Neither the MCP protocol layer nor mcp-go validates an incoming argument
+// Neither the MCP protocol layer nor go-mcp validates an incoming argument
 // against the tool's schema, and every Torque handler reads its inputs
 // presence-based (reqStr/reqInt and friends). An argument no handler reads is
 // therefore simply not read: no rejection, and `ok: true` either way. A caller
@@ -238,16 +261,11 @@ const argsMetaPrefix = "_"
 //
 // Safety of a blanket guard: an audit across the global, loopback and
 // all-features adapters found ZERO handlers reading an argument their tool
-// does not declare, so no legitimate call is newly rejected. Tools registered
-// with a raw JSON schema expose no Properties map to check against and are
-// skipped rather than having every argument rejected.
-func unknownArgRejector(t mcp.Tool) func(mcp.CallToolRequest) *mcp.CallToolResult {
-	if len(t.RawInputSchema) > 0 {
-		return func(mcp.CallToolRequest) *mcp.CallToolResult { return nil }
-	}
-	declared := make(map[string]bool, len(t.InputSchema.Properties))
-	names := make([]string, 0, len(t.InputSchema.Properties))
-	for k := range t.InputSchema.Properties {
+// does not declare, so no legitimate call is newly rejected.
+func unknownArgRejector(spec toolSpec) func(map[string]any) error {
+	declared := make(map[string]bool, len(spec.Properties))
+	names := make([]string, 0, len(spec.Properties))
+	for k := range spec.Properties {
 		declared[k] = true
 		names = append(names, k)
 	}
@@ -257,9 +275,9 @@ func unknownArgRejector(t mcp.Tool) func(mcp.CallToolRequest) *mcp.CallToolResul
 		accepted = "accepted arguments: " + strings.Join(names, ", ")
 	}
 
-	return func(req mcp.CallToolRequest) *mcp.CallToolResult {
+	return func(req map[string]any) error {
 		var unknown []string
-		for k := range req.GetArguments() {
+		for k := range req {
 			if declared[k] || strings.HasPrefix(k, argsMetaPrefix) {
 				continue
 			}
@@ -273,17 +291,16 @@ func unknownArgRejector(t mcp.Tool) func(mcp.CallToolRequest) *mcp.CallToolResul
 		if len(unknown) == 1 {
 			field = unknown[0]
 		}
-		res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf(
+		return argError(ErrCodeArgInvalid, fmt.Sprintf(
 			"unknown argument(s) for %s: %s — the call was rejected rather than applied with those values dropped; %s",
-			t.Name, strings.Join(unknown, ", "), accepted,
+			spec.Name, strings.Join(unknown, ", "), accepted,
 		), field)
-		return res
 	}
 }
 
 func (a *Adapter) registerCoreTools() {
-	a.addTool(mcp.NewTool("torque_health",
-		mcp.WithDescription(`Liveness probe for the Torque MCP server.
+	a.addTool(newTool("torque_health",
+		withDescription(`Liveness probe for the Torque MCP server.
 Use before any other tool when you need to confirm the service is reachable and discover which opt-in feature flags (sprints, projects, epics, collections) are enabled.
 Response shape: data = {status, message, enabled_features[]}.
 Example: {}`),
@@ -323,7 +340,7 @@ func (a *Adapter) registerOptInTools() {
 	}
 }
 
-func (a *Adapter) handleHealth(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleHealth(ctx context.Context, req map[string]any) (any, error) {
 	features := a.svc.Feature.ListEnabled()
 	return okResult(map[string]interface{}{
 		"status":           "running",
@@ -337,16 +354,16 @@ func (a *Adapter) handleHealth(ctx context.Context, req mcp.CallToolRequest) (*m
 // reqHasArg reports whether the caller supplied the named argument. Use to
 // distinguish "omitted" from "explicit zero / empty string / false" when a
 // handler treats the two cases differently (e.g. partial-update PATCH calls).
-func reqHasArg(req mcp.CallToolRequest, key string) bool {
-	_, ok := req.GetArguments()[key]
+func reqHasArg(req map[string]any, key string) bool {
+	_, ok := req[key]
 	return ok
 }
 
 // reqStr extracts a string argument. Non-string values return "" to match
 // mcp-go's CallToolRequest.GetString behavior — callers that need
 // presence-detection should use reqHasArg.
-func reqStr(req mcp.CallToolRequest, key string) string {
-	args := req.GetArguments()
+func reqStr(req map[string]any, key string) string {
+	args := req
 	if v, ok := args[key]; ok {
 		if s, ok := v.(string); ok {
 			return s
@@ -376,8 +393,8 @@ func reqStr(req mcp.CallToolRequest, key string) string {
 //
 // Use in place of `if raw := reqStr(req, "tags"); raw != "" { json.Unmarshal... }`
 // at every list-of-strings argument site.
-func reqStrSlice(req mcp.CallToolRequest, key string) ([]string, error) {
-	args := req.GetArguments()
+func reqStrSlice(req map[string]any, key string) ([]string, error) {
+	args := req
 	v, ok := args[key]
 	if !ok {
 		return nil, nil
@@ -436,8 +453,8 @@ func reqStrSlice(req mcp.CallToolRequest, key string) ([]string, error) {
 //
 // Sentinel values "-1" (unlimited) and "0" (explicit zero) must round-trip
 // exactly — see adapter_test.go for the matrix.
-func reqInt(req mcp.CallToolRequest, key string) int {
-	args := req.GetArguments()
+func reqInt(req map[string]any, key string) int {
+	args := req
 	if v, ok := args[key]; ok {
 		switch n := v.(type) {
 		case float64:
@@ -467,8 +484,8 @@ func reqInt(req mcp.CallToolRequest, key string) int {
 // reqFloat extracts a float64 parameter from an MCP request. Mirrors reqInt:
 // accepts float64, int, int64, and string inputs; returns 0 on missing key or
 // unparseable string. See reqInt for the silent-zero rationale.
-func reqFloat(req mcp.CallToolRequest, key string) float64 {
-	args := req.GetArguments()
+func reqFloat(req map[string]any, key string) float64 {
+	args := req
 	if v, ok := args[key]; ok {
 		switch n := v.(type) {
 		case float64:
@@ -495,8 +512,8 @@ func reqFloat(req mcp.CallToolRequest, key string) float64 {
 // Without this coercion, a caller passing "manual": "true" (string) silently
 // drops to false even though the MCP server-side tool declares a Boolean
 // field — task_update silent-drop regression tracked in CW-20260418-0019.
-func reqBool(req mcp.CallToolRequest, key string) bool {
-	args := req.GetArguments()
+func reqBool(req map[string]any, key string) bool {
+	args := req
 	if v, ok := args[key]; ok {
 		switch b := v.(type) {
 		case bool:

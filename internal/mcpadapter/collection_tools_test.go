@@ -1,7 +1,6 @@
 package mcpadapter_test
 
 import (
-	"sort"
 	"testing"
 
 	"github.com/hollis-labs/torque/internal/mcpadapter"
@@ -43,16 +42,16 @@ func TestCollectionToolsRegisteredWhenEnabled(t *testing.T) {
 func TestCollectionToolsSurfacedInListToolsWhenEnabled(t *testing.T) {
 	a := setupCollectionsAdapter(t)
 
-	tools := a.Server().ListTools()
-	require.NotEmpty(t, tools)
+	defs := a.Server().ToolDefinitions()
+	require.NotEmpty(t, defs)
 
 	var names []string
-	for name := range tools {
-		if len(name) >= len("torque_collection_") && name[:len("torque_collection_")] == "torque_collection_" {
-			names = append(names, name)
+	for _, def := range defs {
+		if len(def.Name) >= len("torque_collection_") && def.Name[:len("torque_collection_")] == "torque_collection_" {
+			names = append(names, def.Name)
 		}
 	}
-	sort.Strings(names)
+	// ToolDefinitions() is already sorted by name.
 
 	assert.Equal(t, []string{
 		"torque_collection_archive",

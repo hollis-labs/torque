@@ -1,12 +1,20 @@
 package mcpadapter
 
-// Integration test for the go-mcp-sanitize middleware install
-// (CW-20260509-0033, mirrors vanta-conduit v0.6.1 Pattern A).
+// Integration test for go-mcp's sanitize middleware install
+// (CW-20260509-0033, mirrors vanta-conduit v0.6.1 Pattern A; ported onto
+// go-mcp's sanitize package for CW-20260917-0014).
 //
-// Lives in `package mcpadapter` (not `_test`) so it can call the unexported
-// handleTaskCreate handler through the same middleware chain Adapter.addTool
-// installs at registration. End-to-end coverage via HandleMessage lives in
-// task_tools_test.go; this file specifically locks the integration shape.
+// Lives in `package mcpadapter` (not `_test`) so it can reach a.Server() and
+// a.svc directly. Unlike the pre-migration version, sanitize is now
+// installed once at the protocol level (Server()'s
+// AddReceivingMiddleware(sanitize.Middleware(...)) call, not wrapped around
+// each handler individually), so exercising it requires a real protocol
+// round-trip rather than calling the handler function directly -- an
+// in-memory client/server transport pair drives that without a real
+// process boundary. End-to-end business-logic coverage lives in
+// task_tools_test.go via callTool (Server.CallTool, which bypasses this
+// middleware layer on purpose — see its doc comment); this file specifically
+// locks the sanitize-middleware wiring shape.
 
 import (
 	"context"
@@ -16,8 +24,7 @@ import (
 	"strings"
 	"testing"
 
-	mcpsanitize "github.com/hollis-labs/go-mcp-sanitize"
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -55,14 +62,32 @@ func (w testLogWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// parseSanitizeResult extracts the {ok, data, error} envelope from a tool
-// result and returns the unmarshaled data map. Fails the test on non-text
-// content or non-ok=true responses.
-func parseSanitizeResult(t *testing.T, res *mcp.CallToolResult) map[string]any {
+// callToolOverProtocol drives a real MCP protocol round-trip against a, over
+// an in-memory transport pair, so protocol-level middleware (sanitize)
+// actually runs — unlike Server.CallTool's direct in-process path. Returns
+// the unmarshaled `data` field of the {ok, data, error} envelope; fails the
+// test on non-text content or ok=false.
+func callToolOverProtocol(t *testing.T, a *Adapter, name string, args map[string]any) map[string]any {
 	t.Helper()
+	ctx := context.Background()
+
+	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "sanitize-test-client", Version: "0.0.0"}, nil)
+	t1, t2 := mcpsdk.NewInMemoryTransports()
+
+	serverSession, err := a.Server().SDKServer().Connect(ctx, t1, nil)
+	require.NoError(t, err, "server connect")
+	t.Cleanup(func() { _ = serverSession.Wait() })
+
+	clientSession, err := client.Connect(ctx, t2, nil)
+	require.NoError(t, err, "client connect")
+	defer clientSession.Close()
+
+	res, err := clientSession.CallTool(ctx, &mcpsdk.CallToolParams{Name: name, Arguments: args})
+	require.NoError(t, err, "CallTool transport error")
 	require.NotNil(t, res, "tool result must not be nil")
+	require.False(t, res.IsError, "tool result reported IsError")
 	require.NotEmpty(t, res.Content, "tool result must have content")
-	textContent, ok := res.Content[0].(mcp.TextContent)
+	textContent, ok := res.Content[0].(*mcpsdk.TextContent)
 	require.True(t, ok, "expected TextContent, got %T", res.Content[0])
 
 	var env struct {
@@ -78,7 +103,7 @@ func parseSanitizeResult(t *testing.T, res *mcp.CallToolResult) map[string]any {
 	return data
 }
 
-// TestSanitizeMiddleware_PollutedTaskCreate exercises the go-mcp-sanitize
+// TestSanitizeMiddleware_PollutedTaskCreate exercises go-mcp's sanitize
 // middleware against the smoking-gun shape: a torque_task_create call
 // where description ends with leaked agent-XML markup
 // (`</description>\n<parameter name="title">REAL_TITLE</parameter>...`),
@@ -89,8 +114,9 @@ func parseSanitizeResult(t *testing.T, res *mcp.CallToolResult) map[string]any {
 //   - title preserved as the agent's clean copy (NOT overwritten by the
 //     leaked fragment)
 //
-// This locks in the integration as wired by Adapter.addTool — same Pattern A
-// proven in vanta-conduit v0.6.1.
+// This locks in the integration as wired by Adapter.Server()'s
+// AddReceivingMiddleware install — same Pattern A proven in vanta-conduit
+// v0.6.1, now ported onto go-mcp's sanitize package.
 func TestSanitizeMiddleware_PollutedTaskCreate(t *testing.T) {
 	a := newSanitizeTestAdapter(t)
 
@@ -104,24 +130,11 @@ func TestSanitizeMiddleware_PollutedTaskCreate(t *testing.T) {
 		"</description>\n" +
 		"<parameter name=\"title\">REAL_TITLE_LEAKED</parameter>"
 
-	args := map[string]any{
+	data := callToolOverProtocol(t, a, "torque_task_create", map[string]any{
 		"title":       cleanTitle,
 		"description": pollutedDescription,
 		"priority":    "1",
-	}
-
-	// Wrap the handler with the same middleware Adapter.addTool installs.
-	// This mirrors the production wiring exactly.
-	wrapped := mcpsanitize.Middleware(a.Logger)(a.handleTaskCreate)
-
-	req := mcp.CallToolRequest{}
-	req.Params.Name = "torque_task_create"
-	req.Params.Arguments = args
-
-	res, err := wrapped(context.Background(), req)
-	require.NoError(t, err, "wrapped handler error")
-
-	data := parseSanitizeResult(t, res)
+	})
 	id, ok := data["ID"].(string)
 	require.True(t, ok, "response should contain string ID; got %v", data)
 	require.NotEmpty(t, id)
@@ -153,22 +166,11 @@ func TestSanitizeMiddleware_PollutedTaskCreate(t *testing.T) {
 func TestSanitizeMiddleware_CleanTaskCreatePassesThrough(t *testing.T) {
 	a := newSanitizeTestAdapter(t)
 
-	args := map[string]any{
+	data := callToolOverProtocol(t, a, "torque_task_create", map[string]any{
 		"title":       "Clean title, no markup",
 		"description": "Clean description, no markup at all.",
 		"priority":    "2",
-	}
-
-	wrapped := mcpsanitize.Middleware(a.Logger)(a.handleTaskCreate)
-
-	req := mcp.CallToolRequest{}
-	req.Params.Name = "torque_task_create"
-	req.Params.Arguments = args
-
-	res, err := wrapped(context.Background(), req)
-	require.NoError(t, err, "wrapped handler error")
-
-	data := parseSanitizeResult(t, res)
+	})
 	id, ok := data["ID"].(string)
 	require.True(t, ok, "response should contain string ID; got %v", data)
 

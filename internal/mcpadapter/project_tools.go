@@ -8,96 +8,95 @@ import (
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
-	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func (a *Adapter) registerProjectTools() {
-	a.addTool(mcp.NewTool("torque_project_create",
-		mcp.WithDescription(`Create a project (feature-flagged: requires features.projects). Returns the ProjectRecord.
+	a.addTool(newTool("torque_project_create",
+		withDescription(`Create a project (feature-flagged: requires features.projects). Returns the ProjectRecord.
 Use to group long-lived work by repo/app; sprints scope short-cycle execution, epics scope multi-sprint initiatives.
 repo_path must resolve to an existing directory (~ is expanded) — a missing path returns error.code=arg_invalid, field=repo_path, so stale metadata can never be created.
 Response shape: data = {<ProjectRecord fields>} — singleton.
 Example: {"name":"Torque","repo_path":"/Users/me/Projects/torque"}`),
-		mcp.WithString("name", mcp.Required(), mcp.Description("Project name")),
-		mcp.WithString("description", mcp.Description("Project description")),
-		mcp.WithString("repo_path", mcp.Description("Repository path — absolute or ~-prefixed; must point at an existing directory")),
-		mcp.WithString("agent_path", mcp.Description("Path to an agent spec file for this project, relative to repo_path or absolute")),
-		mcp.WithString("icon", mcp.Description("Icon identifier/name for UI display")),
-		mcp.WithString("status", mcp.Description("Initial status: active|inactive (default active when omitted)")),
-		mcp.WithString("read_paths", mcp.Description("JSON array of paths this project's agents may read")),
-		mcp.WithString("write_paths", mcp.Description("JSON array of paths this project's agents may write")),
-		mcp.WithString("context_paths", mcp.Description("JSON array of paths providing background context")),
-		mcp.WithString("permissions", mcp.Description("JSON object of permission key/value pairs")),
-		mcp.WithString("rules", mcp.Description("JSON array of rule strings agents must follow in this project")),
+		withString("name", required(), desc("Project name")),
+		withString("description", desc("Project description")),
+		withString("repo_path", desc("Repository path — absolute or ~-prefixed; must point at an existing directory")),
+		withString("agent_path", desc("Path to an agent spec file for this project, relative to repo_path or absolute")),
+		withString("icon", desc("Icon identifier/name for UI display")),
+		withString("status", desc("Initial status: active|inactive (default active when omitted)")),
+		withString("read_paths", desc("JSON array of paths this project's agents may read")),
+		withString("write_paths", desc("JSON array of paths this project's agents may write")),
+		withString("context_paths", desc("JSON array of paths providing background context")),
+		withString("permissions", desc("JSON object of permission key/value pairs")),
+		withString("rules", desc("JSON array of rule strings agents must follow in this project")),
 	), a.handleProjectCreate)
 
-	a.addTool(mcp.NewTool("torque_project_get",
-		mcp.WithDescription(`Fetch a project's full record by ID.
+	a.addTool(newTool("torque_project_get",
+		withDescription(`Fetch a project's full record by ID.
 Use when you know the ID; torque_project_list for browsing, torque_task_list with project_id filter for the project's task set.
 Response shape: data = {<ProjectRecord fields>} — singleton.
 Example: {"id":"PRJ-20260820-0001"}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Project ID")),
+		withString("id", required(), desc("Project ID")),
 	), a.handleProjectGet)
 
-	a.addTool(mcp.NewTool("torque_project_update",
-		mcp.WithDescription(`True partial patch of a project's fields; only keys present in the payload change (presence-in-payload, not value-based — an explicit empty string clears a scalar; an explicit empty array/object clears a JSON column). Omitted keys are left untouched.
+	a.addTool(newTool("torque_project_update",
+		withDescription(`True partial patch of a project's fields; only keys present in the payload change (presence-in-payload, not value-based — an explicit empty string clears a scalar; an explicit empty array/object clears a JSON column). Omitted keys are left untouched.
 Use for edits, active<->inactive transitions, or attaching an agent spec/paths/permissions. Use torque_project_archive/unarchive for soft-delete, which is orthogonal to status.
 Response shape: data = {id, updated: bool, message}.
 Example: {"id":"PRJ-20260820-0001","status":"inactive"}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Project ID")),
-		mcp.WithString("name", mcp.Description("New name")),
-		mcp.WithString("description", mcp.Description("New description")),
-		mcp.WithString("repo_path", mcp.Description("New repo_path — must point at an existing directory; cannot be cleared to empty")),
-		mcp.WithString("agent_path", mcp.Description("New agent_path; empty string clears")),
-		mcp.WithString("icon", mcp.Description("New icon; empty string clears")),
-		mcp.WithString("status", mcp.Description("New status: active|inactive")),
-		mcp.WithString("read_paths", mcp.Description("JSON array replacing the read_paths set; empty array/string clears")),
-		mcp.WithString("write_paths", mcp.Description("JSON array replacing the write_paths set; empty array/string clears")),
-		mcp.WithString("context_paths", mcp.Description("JSON array replacing the context_paths set; empty array/string clears")),
-		mcp.WithString("permissions", mcp.Description("JSON object replacing the permissions map; empty string clears")),
-		mcp.WithString("rules", mcp.Description("JSON array replacing the rules set; empty array/string clears")),
+		withString("id", required(), desc("Project ID")),
+		withString("name", desc("New name")),
+		withString("description", desc("New description")),
+		withString("repo_path", desc("New repo_path — must point at an existing directory; cannot be cleared to empty")),
+		withString("agent_path", desc("New agent_path; empty string clears")),
+		withString("icon", desc("New icon; empty string clears")),
+		withString("status", desc("New status: active|inactive")),
+		withString("read_paths", desc("JSON array replacing the read_paths set; empty array/string clears")),
+		withString("write_paths", desc("JSON array replacing the write_paths set; empty array/string clears")),
+		withString("context_paths", desc("JSON array replacing the context_paths set; empty array/string clears")),
+		withString("permissions", desc("JSON object replacing the permissions map; empty string clears")),
+		withString("rules", desc("JSON array replacing the rules set; empty array/string clears")),
 	), a.handleProjectUpdate)
 
-	a.addTool(mcp.NewTool("torque_project_list",
-		mcp.WithDescription(`List projects with optional status filter; ordered name ASC (tiebreak id ASC) by default. Pass sort_by (name|status|updated_at|created_at) and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid.
+	a.addTool(newTool("torque_project_list",
+		withDescription(`List projects with optional status filter; ordered name ASC (tiebreak id ASC) by default. Pass sort_by (name|status|updated_at|created_at) and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid.
 Use for project discovery; torque_project_get when you know the ID, torque_task_list with project_id filter for the project's task set. Default brief shape; pass verbose="true" for full records.
 Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under.
 Explicit malformed, blank, fractional, overflow, unsafe native-float, or negative limit values reject with error.code=arg_invalid, field=limit; omitted limit defaults to 100 and oversized limits clamp to 500.
 Response shape: data = {items: [<briefProject or ProjectRecord>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
 Example: {"status":"active","limit":"50"}`),
-		mcp.WithString("status", mcp.Description("Filter: active|inactive")),
-		mcp.WithString("include_archived", mcp.Description("Include archived projects (default false, string 'true'/'false')")),
-		mcp.WithString("limit", mcp.Description("Max results (integer, default 100, max 500)")),
-		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
-		mcp.WithString("sort_by", mcp.Description("Sort field: name|status|updated_at|created_at (default name)")),
-		mcp.WithString("sort_dir", mcp.Description("Sort direction: asc|desc (default asc)")),
-		mcp.WithString("cursor", mcp.Description("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
+		withString("status", desc("Filter: active|inactive")),
+		withString("include_archived", desc("Include archived projects (default false, string 'true'/'false')")),
+		withString("limit", desc("Max results (integer, default 100, max 500)")),
+		withString("verbose", desc("Return full records instead of brief (string 'true'/'false', default false)")),
+		withString("sort_by", desc("Sort field: name|status|updated_at|created_at (default name)")),
+		withString("sort_dir", desc("Sort direction: asc|desc (default asc)")),
+		withString("cursor", desc("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
 	), a.handleProjectList)
 
-	a.addTool(mcp.NewTool("torque_project_delete",
-		mcp.WithDescription(`Hard-delete a project; linked tasks have project_id cleared but remain.
+	a.addTool(newTool("torque_project_delete",
+		withDescription(`Hard-delete a project; linked tasks have project_id cleared but remain.
 Use sparingly — prefer torque_project_archive for audit-preserving removal. Similar surfaces: torque_sprint_delete, torque_epic_delete.
 Response shape: data = {id, deleted: true, message}.
 Example: {"id":"PRJ-4"}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Project ID")),
+		withString("id", required(), desc("Project ID")),
 	), a.handleProjectDelete)
 
-	a.addTool(mcp.NewTool("torque_project_archive",
-		mcp.WithDescription(`Archive a project (soft-delete; preserves audit trail — the row and its history stay intact, just hidden from default list results).
+	a.addTool(newTool("torque_project_archive",
+		withDescription(`Archive a project (soft-delete; preserves audit trail — the row and its history stay intact, just hidden from default list results).
 Orthogonal to status — archiving a project is a separate fact from it being active/inactive; use torque_project_update status=inactive for the workflow-state change instead. Idempotent: archiving an already-archived project just refreshes the timestamp.
 Use torque_project_unarchive to restore. Similar surfaces: torque_collection_archive, torque_template_archive.
 Response shape: data = {id, archived: true, message}.
 Example: {"id":"PRJ-20260820-0001"}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Project ID")),
+		withString("id", required(), desc("Project ID")),
 	), a.handleProjectArchive)
 
-	a.addTool(mcp.NewTool("torque_project_unarchive",
-		mcp.WithDescription(`Restore an archived project back to active (in the archive sense only — status is untouched, so an unarchived project keeps whatever active/inactive value it had before archiving).
+	a.addTool(newTool("torque_project_unarchive",
+		withDescription(`Restore an archived project back to active (in the archive sense only — status is untouched, so an unarchived project keeps whatever active/inactive value it had before archiving).
 Use after torque_project_archive to reverse an accidental or premature archive; the project reappears in torque_project_list's default (include_archived=false) results.
 Similar surfaces: torque_collection_unarchive.
 Response shape: data = {id, unarchived: true, message}.
 Example: {"id":"PRJ-20260820-0001"}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Project ID")),
+		withString("id", required(), desc("Project ID")),
 	), a.handleProjectUnarchive)
 }
 
@@ -106,31 +105,29 @@ Example: {"id":"PRJ-20260820-0001"}`),
 // forms via reqStrSlice, matching the tags/depends_on convention) and
 // returns (nil result, nil error) when absent/empty so callers can `if v
 // != nil { input.Field = v }` without a separate presence check.
-func projectStrSliceArg(req mcp.CallToolRequest, key string) ([]string, *mcp.CallToolResult) {
+func projectStrSliceArg(req map[string]any, key string) ([]string, error) {
 	vals, err := reqStrSlice(req, key)
 	if err != nil {
-		res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid %s JSON: %v", key, err), key)
-		return nil, res
+		return nil, argError(ErrCodeArgInvalid, fmt.Sprintf("invalid %s JSON: %v", key, err), key)
 	}
 	return vals, nil
 }
 
 // projectPermissionsMapArg parses a JSON-object-of-strings argument for
 // torque_project_create's permissions field into a map[string]string.
-func projectPermissionsMapArg(req mcp.CallToolRequest, key string) (map[string]string, *mcp.CallToolResult) {
+func projectPermissionsMapArg(req map[string]any, key string) (map[string]string, error) {
 	raw := reqStr(req, key)
 	if raw == "" {
 		return nil, nil
 	}
 	var m map[string]string
 	if err := json.Unmarshal([]byte(raw), &m); err != nil {
-		res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid %s JSON: %v", key, err), key)
-		return nil, res
+		return nil, argError(ErrCodeArgInvalid, fmt.Sprintf("invalid %s JSON: %v", key, err), key)
 	}
 	return m, nil
 }
 
-func (a *Adapter) handleProjectCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleProjectCreate(ctx context.Context, req map[string]any) (any, error) {
 	input := service.ProjectCreateInput{
 		Name:        reqStr(req, "name"),
 		Description: reqStr(req, "description"),
@@ -154,7 +151,7 @@ func (a *Adapter) handleProjectCreate(ctx context.Context, req mcp.CallToolReque
 	} {
 		v, errRes := projectStrSliceArg(req, f.key)
 		if errRes != nil {
-			return errRes, nil
+			return nil, errRes
 		}
 		if v != nil {
 			f.set(v)
@@ -163,7 +160,7 @@ func (a *Adapter) handleProjectCreate(ctx context.Context, req mcp.CallToolReque
 
 	perms, errRes := projectPermissionsMapArg(req, "permissions")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	if perms != nil {
 		input.Permissions = perms
@@ -176,7 +173,7 @@ func (a *Adapter) handleProjectCreate(ctx context.Context, req mcp.CallToolReque
 	return okResult(project)
 }
 
-func (a *Adapter) handleProjectGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleProjectGet(ctx context.Context, req map[string]any) (any, error) {
 	project, err := a.svc.Project.Get(reqStr(req, "id"))
 	if err != nil {
 		return errFromService(err)
@@ -190,11 +187,10 @@ func (a *Adapter) handleProjectGet(ctx context.Context, req mcp.CallToolRequest)
 // present in the payload — presence is the "change this" signal (true
 // partial-patch semantics); an empty array/string clears the column
 // (Valid:false), a non-empty array re-marshals to canonical JSON.
-func projectPathsUpdateArg(req mcp.CallToolRequest, key string) (sql.NullString, *mcp.CallToolResult) {
+func projectPathsUpdateArg(req map[string]any, key string) (sql.NullString, error) {
 	vals, err := reqStrSlice(req, key)
 	if err != nil {
-		res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid %s JSON: %v", key, err), key)
-		return sql.NullString{}, res
+		return sql.NullString{}, argError(ErrCodeArgInvalid, fmt.Sprintf("invalid %s JSON: %v", key, err), key)
 	}
 	if len(vals) == 0 {
 		return sql.NullString{Valid: false}, nil
@@ -207,22 +203,21 @@ func projectPathsUpdateArg(req mcp.CallToolRequest, key string) (sql.NullString,
 // torque_project_update's permissions field. Matches Task's metadata/
 // environment/permissions convention (buildTaskUpdateInput): a JSON-encoded
 // object string, stored as-is once validated; empty string clears.
-func projectPermissionsUpdateArg(req mcp.CallToolRequest) (sql.NullString, *mcp.CallToolResult) {
+func projectPermissionsUpdateArg(req map[string]any) (sql.NullString, error) {
 	raw := reqStr(req, "permissions")
 	if raw == "" {
 		return sql.NullString{Valid: false}, nil
 	}
 	var m map[string]string
 	if err := json.Unmarshal([]byte(raw), &m); err != nil {
-		res, _ := errResult(ErrCodeArgInvalid, "invalid permissions JSON: "+err.Error(), "permissions")
-		return sql.NullString{}, res
+		return sql.NullString{}, argError(ErrCodeArgInvalid, "invalid permissions JSON: "+err.Error(), "permissions")
 	}
 	return sql.NullString{String: raw, Valid: true}, nil
 }
 
-func (a *Adapter) handleProjectUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleProjectUpdate(ctx context.Context, req map[string]any) (any, error) {
 	id := reqStr(req, "id")
-	args := req.GetArguments()
+	args := req
 	update := sqlstore.ProjectUpdate{}
 	hasUpdate := false
 
@@ -261,7 +256,7 @@ func (a *Adapter) handleProjectUpdate(ctx context.Context, req mcp.CallToolReque
 		if _, ok := args[f.key]; ok {
 			ns, errRes := projectPathsUpdateArg(req, f.key)
 			if errRes != nil {
-				return errRes, nil
+				return nil, errRes
 			}
 			f.set(&ns)
 			hasUpdate = true
@@ -271,7 +266,7 @@ func (a *Adapter) handleProjectUpdate(ctx context.Context, req mcp.CallToolReque
 	if _, ok := args["permissions"]; ok {
 		ns, errRes := projectPermissionsUpdateArg(req)
 		if errRes != nil {
-			return errRes, nil
+			return nil, errRes
 		}
 		update.Permissions = &ns
 		hasUpdate = true
@@ -295,22 +290,22 @@ func (a *Adapter) handleProjectUpdate(ctx context.Context, req mcp.CallToolReque
 	})
 }
 
-func (a *Adapter) handleProjectList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleProjectList(ctx context.Context, req map[string]any) (any, error) {
 	verbose, errRes := reqQueryBool(req, "verbose")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	status, errRes := reqQueryString(req, "status")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	includeArchived, errRes := reqQueryBool(req, "include_archived")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	cursor, errRes := reqQueryCursor(req)
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	filter, normalized, err := service.NormalizeProjectQuery(service.ProjectQuery{
 		Status:          status,
@@ -345,7 +340,7 @@ func (a *Adapter) handleProjectList(ctx context.Context, req mcp.CallToolRequest
 	return cappedCursorJSONResult(items, normalized.Limit, normalized.SortBy, normalized.SortDir, hasMoreFromQuery, cursorAt)
 }
 
-func (a *Adapter) handleProjectDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleProjectDelete(ctx context.Context, req map[string]any) (any, error) {
 	id := reqStr(req, "id")
 	if err := a.svc.Project.Delete(id); err != nil {
 		return errFromService(err)
@@ -357,7 +352,7 @@ func (a *Adapter) handleProjectDelete(ctx context.Context, req mcp.CallToolReque
 	})
 }
 
-func (a *Adapter) handleProjectArchive(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleProjectArchive(ctx context.Context, req map[string]any) (any, error) {
 	id := reqStr(req, "id")
 	if err := a.svc.Project.Archive(id); err != nil {
 		return errFromService(err)
@@ -369,7 +364,7 @@ func (a *Adapter) handleProjectArchive(ctx context.Context, req mcp.CallToolRequ
 	})
 }
 
-func (a *Adapter) handleProjectUnarchive(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleProjectUnarchive(ctx context.Context, req map[string]any) (any, error) {
 	id := reqStr(req, "id")
 	if err := a.svc.Project.Unarchive(id); err != nil {
 		return errFromService(err)

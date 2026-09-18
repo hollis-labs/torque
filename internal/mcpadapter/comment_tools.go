@@ -8,92 +8,91 @@ import (
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
-	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func (a *Adapter) registerCommentTools() {
-	a.addTool(mcp.NewTool("torque_comment_add",
-		mcp.WithDescription(`Append a comment (freeform prose) to an entity; returns the persisted CommentRecord with assigned ID.
+	a.addTool(newTool("torque_comment_add",
+		withDescription(`Append a comment (freeform prose) to an entity; returns the persisted CommentRecord with assigned ID.
 Comments are polymorphic — entity_type selects which kind of entity the comment is attached to. Supported: "task", "project", "epic", "sprint" (Issue/Plan already covered via entity_type="task" since they're Task rows). An unsupported entity_type returns error.code=arg_invalid. Use for agent-to-user channel, review notes, or blocked-reason explanation; structured audit trails should go in artifacts via torque_artifact_create. Comments never drive lifecycle.
 Response shape: data = {<CommentRecord fields>} — singleton.
 Example: {"entity_type":"task","entity_id":"T-123","author":"reviewer","content":"Please also cover the null-parent case."}`),
-		mcp.WithString("entity_type", mcp.Required(), mcp.Description(`Entity kind the comment is attached to. Valid: "task", "project", "epic", "sprint".`)),
-		mcp.WithString("entity_id", mcp.Required(), mcp.Description("ID of the entity (e.g. task ID for entity_type=task)")),
-		mcp.WithString("author", mcp.Description(`Comment author slug/id. Optional; omitted stores "" (unattributed), which torque_comment_delete matches by passing author="" explicitly.`)),
-		mcp.WithString("content", mcp.Required(), mcp.Description("Comment body (prose). Required for real — empty or whitespace-only content is rejected rather than stored.")),
+		withString("entity_type", required(), desc(`Entity kind the comment is attached to. Valid: "task", "project", "epic", "sprint".`)),
+		withString("entity_id", required(), desc("ID of the entity (e.g. task ID for entity_type=task)")),
+		withString("author", desc(`Comment author slug/id. Optional; omitted stores "" (unattributed), which torque_comment_delete matches by passing author="" explicitly.`)),
+		withString("content", required(), desc("Comment body (prose). Required for real — empty or whitespace-only content is rejected rather than stored.")),
 	), a.handleCommentAdd)
 
-	a.addTool(mcp.NewTool("torque_comment_list",
-		mcp.WithDescription(`List comments on one entity — or, via entity_ids, across a caller-resolved SET of entity refs of the same entity_type (e.g. every task in a sprint: first torque_task_list {"sprint_id":...} for the task ids, then pass those as entity_ids here) — ordered created_at ASC (oldest first, tiebreak id ASC) by default. Pass sort_by ("created_at") and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid. Default brief shape includes a 100-char excerpt of the body; pass verbose="true" for full content.
+	a.addTool(newTool("torque_comment_list",
+		withDescription(`List comments on one entity — or, via entity_ids, across a caller-resolved SET of entity refs of the same entity_type (e.g. every task in a sprint: first torque_task_list {"sprint_id":...} for the task ids, then pass those as entity_ids here) — ordered created_at ASC (oldest first, tiebreak id ASC) by default. Pass sort_by ("created_at") and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid. Default brief shape includes a 100-char excerpt of the body; pass verbose="true" for full content.
 Use to review the discussion thread for a given entity (or set of entities); torque_comment_add to append. For newest-first cross-entity content search use torque_comment_search.
 Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under.
 entity_ids accepts a JSON array string or native string array; whole null, [null], non-string members, malformed JSON, and an empty list as the only scope reject. If both entity_id and entity_ids are supplied, entity_id takes precedence. Explicit malformed or negative limit values reject; default/max are 50/200.
 Response shape: data = {items: [<briefComment or CommentRecord>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
 Example: {"entity_type":"task","entity_id":"T-123","limit":"50"}`),
-		mcp.WithString("entity_type", mcp.Required(), mcp.Description(`Entity kind. Valid: "task", "project", "epic", "sprint".`)),
-		mcp.WithString("entity_id", mcp.Description("ID of the entity — required unless entity_ids is given instead")),
-		mcp.WithString("entity_ids", mcp.Description("JSON array of entity IDs (same entity_type) — OR-matched; alternative to entity_id for querying comments across a resolved set of refs at once")),
-		mcp.WithString("author", mcp.Description("Filter by exact author match (optional)")),
-		mcp.WithString("created_after", mcp.Description("Only comments created at/after this instant (RFC3339, e.g. 2026-01-02T15:04:05Z)")),
-		mcp.WithString("created_before", mcp.Description("Only comments created at/before this instant (RFC3339)")),
-		mcp.WithString("limit", mcp.Description("Max results (integer, default 50, max 200)")),
-		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
-		mcp.WithString("sort_by", mcp.Description(`Sort field: "created_at" (default, only supported value)`)),
-		mcp.WithString("sort_dir", mcp.Description("Sort direction: asc|desc (default asc)")),
-		mcp.WithString("cursor", mcp.Description("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
+		withString("entity_type", required(), desc(`Entity kind. Valid: "task", "project", "epic", "sprint".`)),
+		withString("entity_id", desc("ID of the entity — required unless entity_ids is given instead")),
+		withString("entity_ids", desc("JSON array of entity IDs (same entity_type) — OR-matched; alternative to entity_id for querying comments across a resolved set of refs at once")),
+		withString("author", desc("Filter by exact author match (optional)")),
+		withString("created_after", desc("Only comments created at/after this instant (RFC3339, e.g. 2026-01-02T15:04:05Z)")),
+		withString("created_before", desc("Only comments created at/before this instant (RFC3339)")),
+		withString("limit", desc("Max results (integer, default 50, max 200)")),
+		withString("verbose", desc("Return full records instead of brief (string 'true'/'false', default false)")),
+		withString("sort_by", desc(`Sort field: "created_at" (default, only supported value)`)),
+		withString("sort_dir", desc("Sort direction: asc|desc (default asc)")),
+		withString("cursor", desc("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
 	), a.handleCommentList)
 
-	a.addTool(mcp.NewTool("torque_comment_search",
-		mcp.WithDescription(`Search comments by content across all entities, optionally scoped to one entity (entity_type + entity_id), a set of entity refs (entity_type + entity_ids), an author, and/or a created_at range. Returns newest first (created_at DESC, tiebreak id ASC) by default; pass sort_by/sort_dir to change order.
+	a.addTool(newTool("torque_comment_search",
+		withDescription(`Search comments by content across all entities, optionally scoped to one entity (entity_type + entity_id), a set of entity refs (entity_type + entity_ids), an author, and/or a created_at range. Returns newest first (created_at DESC, tiebreak id ASC) by default; pass sort_by/sort_dir to change order.
 Use to discover comments by content; torque_comment_list for per-entity (or per-entity-set) chronological history.
 Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under.
 entity_ids accepts a JSON array string or native string array; whole null, [null], non-string members, and malformed JSON reject. If both entity_id and entity_ids are supplied, entity_id takes precedence. Explicit malformed or negative limit values reject; default/max are 25/100.
 Response shape: data = {items: [<CommentRecord>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
 Example: {"query":"review notes","entity_type":"task","entity_id":"T-123"}`),
-		mcp.WithString("query", mcp.Required(), mcp.Description("Substring match on comment content")),
-		mcp.WithString("entity_type", mcp.Description(`Restrict to one entity kind (optional). Valid: "task", "project", "epic", "sprint".`)),
-		mcp.WithString("entity_id", mcp.Description("Restrict to one entity (optional; usually paired with entity_type)")),
-		mcp.WithString("entity_ids", mcp.Description("JSON array of entity IDs (same entity_type) — OR-matched; alternative to entity_id")),
-		mcp.WithString("author", mcp.Description("Exact author match (optional)")),
-		mcp.WithString("created_after", mcp.Description("Only comments created at/after this instant (RFC3339)")),
-		mcp.WithString("created_before", mcp.Description("Only comments created at/before this instant (RFC3339)")),
-		mcp.WithString("limit", mcp.Description("Max results (integer, default 25, max 100)")),
-		mcp.WithString("sort_by", mcp.Description(`Sort field: "created_at" (default, only supported value)`)),
-		mcp.WithString("sort_dir", mcp.Description("Sort direction: asc|desc (default desc)")),
-		mcp.WithString("cursor", mcp.Description("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
+		withString("query", required(), desc("Substring match on comment content")),
+		withString("entity_type", desc(`Restrict to one entity kind (optional). Valid: "task", "project", "epic", "sprint".`)),
+		withString("entity_id", desc("Restrict to one entity (optional; usually paired with entity_type)")),
+		withString("entity_ids", desc("JSON array of entity IDs (same entity_type) — OR-matched; alternative to entity_id")),
+		withString("author", desc("Exact author match (optional)")),
+		withString("created_after", desc("Only comments created at/after this instant (RFC3339)")),
+		withString("created_before", desc("Only comments created at/before this instant (RFC3339)")),
+		withString("limit", desc("Max results (integer, default 25, max 100)")),
+		withString("sort_by", desc(`Sort field: "created_at" (default, only supported value)`)),
+		withString("sort_dir", desc("Sort direction: asc|desc (default desc)")),
+		withString("cursor", desc("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
 	), a.handleCommentSearch)
 
-	a.addTool(mcp.NewTool("torque_comment_update",
-		mcp.WithDescription(`Edit an existing comment's content. Author-scoped: only the comment's original author may edit it — a mismatched author returns error.code=permission. Returns the updated CommentRecord.
+	a.addTool(newTool("torque_comment_update",
+		withDescription(`Edit an existing comment's content. Author-scoped: only the comment's original author may edit it — a mismatched author returns error.code=permission. Returns the updated CommentRecord.
 Use to correct/amend a comment you posted; torque_comment_delete to remove it entirely. Comments never drive lifecycle — editing content doesn't affect any entity state.
 Response shape: data = {<CommentRecord fields>} — singleton.
 Example: {"id":"42","author":"reviewer","content":"Updated: please also cover the null-parent case."}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Comment ID (integer; pass as string)")),
-		mcp.WithString("author", mcp.Required(), mcp.Description("Caller's author slug/id — must exactly match the comment's original author")),
-		mcp.WithString("content", mcp.Required(), mcp.Description("New comment body (prose)")),
+		withString("id", required(), desc("Comment ID (integer; pass as string)")),
+		withString("author", required(), desc("Caller's author slug/id — must exactly match the comment's original author")),
+		withString("content", required(), desc("New comment body (prose)")),
 	), a.handleCommentUpdate)
 
-	a.addTool(mcp.NewTool("torque_comment_delete",
-		mcp.WithDescription(`Hard-delete a comment. By default this uses exact author matching as an accidental-deletion guard: a mismatched author returns error.code=permission. author is caller-supplied text, not an authenticated principal. There is no undo.
+	a.addTool(newTool("torque_comment_delete",
+		withDescription(`Hard-delete a comment. By default this uses exact author matching as an accidental-deletion guard: a mismatched author returns error.code=permission. author is caller-supplied text, not an authenticated principal. There is no undo.
 Use to remove a comment you posted in error. Pass force=true only when you deliberately want to bypass the author-match guard; force does not bypass invalid IDs or missing-comment errors.
 Unattributed comments (author stored as "", which is what an omitted author on torque_comment_add produces) are deleted by passing author="" explicitly. Omitting author entirely is still an error — the empty string has to be deliberate.
 Response shape: data = {id, deleted: true}.
 Example: {"id":"42","author":"reviewer"}
 Example, an unattributed comment: {"id":"42","author":""}
 Example, deliberate override: {"id":"42","author":"reviewer","force":true}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Comment ID (integer; pass as string)")),
-		mcp.WithString("author", mcp.Required(), mcp.Description(`Caller's author slug/id — must exactly match the comment's original author unless force=true. Pass "" to match an unattributed comment; the field itself must still be present.`)),
-		mcp.WithBoolean("force", mcp.Description(`Optional. true deliberately bypasses only the author-match guard; omitted/false preserves exact-author behavior.`)),
+		withString("id", required(), desc("Comment ID (integer; pass as string)")),
+		withString("author", required(), desc(`Caller's author slug/id — must exactly match the comment's original author unless force=true. Pass "" to match an unattributed comment; the field itself must still be present.`)),
+		withBoolean("force", desc(`Optional. true deliberately bypasses only the author-match guard; omitted/false preserves exact-author behavior.`)),
 	), a.handleCommentDelete)
 
-	a.addTool(mcp.NewTool("torque_comment_bulk_add",
-		mcp.WithDescription(`Post the same comment text to many entity refs in one call (e.g. broadcast a note to every task in a sprint); per-target failures are collected, not fatal. Unlike torque_task_bulk_update/delete/tag (which operate on an existing ids[]), this CREATES a new comment per target rather than modifying existing rows.
+	a.addTool(newTool("torque_comment_bulk_add",
+		withDescription(`Post the same comment text to many entity refs in one call (e.g. broadcast a note to every task in a sprint); per-target failures are collected, not fatal. Unlike torque_task_bulk_update/delete/tag (which operate on an existing ids[]), this CREATES a new comment per target rather than modifying existing rows.
 Use for broadcast notes across a known set of entity refs; torque_comment_add for a single target.
 Response shape: data = {succeeded: [<CommentRecord fields>...], failed: [{target: {entity_type, entity_id}, error: {code, message, field}}...]} — partial success is not an error; ok=true even when some targets fail.
 Example: {"targets":"[{\"entity_type\":\"task\",\"entity_id\":\"T-1\"},{\"entity_type\":\"task\",\"entity_id\":\"T-2\"}]","author":"reviewer","content":"Sprint review starts in 1 hour."}`),
-		mcp.WithString("targets", mcp.Required(), mcp.Description(`JSON array of {"entity_type":...,"entity_id":...} objects naming every entity to comment on`)),
-		mcp.WithString("author", mcp.Description("Comment author slug/id")),
-		mcp.WithString("content", mcp.Required(), mcp.Description("Comment body (prose), posted identically to every target")),
+		withString("targets", required(), desc(`JSON array of {"entity_type":...,"entity_id":...} objects naming every entity to comment on`)),
+		withString("author", desc("Comment author slug/id")),
+		withString("content", required(), desc("Comment body (prose), posted identically to every target")),
 	), a.handleCommentBulkAdd)
 }
 
@@ -110,15 +109,14 @@ Example: {"targets":"[{\"entity_type\":\"task\",\"entity_id\":\"T-1\"},{\"entity
 //
 // Whitespace-only content counts as empty. A comment of three spaces
 // destroys the audit trail exactly as thoroughly as one of none.
-func commentContentRequired(content string) *mcp.CallToolResult {
+func commentContentRequired(content string) error {
 	if strings.TrimSpace(content) != "" {
 		return nil
 	}
-	res, _ := errResult(ErrCodeArgInvalid, "content is required", "content")
-	return res
+	return argError(ErrCodeArgInvalid, "content is required", "content")
 }
 
-func (a *Adapter) handleCommentAdd(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleCommentAdd(ctx context.Context, req map[string]any) (any, error) {
 	entityType := reqStr(req, "entity_type")
 	entityID := reqStr(req, "entity_id")
 	if entityType == "" {
@@ -128,7 +126,7 @@ func (a *Adapter) handleCommentAdd(ctx context.Context, req mcp.CallToolRequest)
 		return errResult(ErrCodeArgInvalid, "entity_id is required", "entity_id")
 	}
 	if res := commentContentRequired(reqStr(req, "content")); res != nil {
-		return res, nil
+		return nil, res
 	}
 	comment, err := a.svc.Comment.Add(
 		entityType,
@@ -158,7 +156,7 @@ func commentCursorID(c sqlstore.CommentRecord) string {
 // commentListEnvelope builds the shared {items, meta} cursor-pagination
 // response for both torque_comment_list and torque_comment_search — see
 // taskListCursorEnvelope for the reference pattern this mirrors.
-func commentListEnvelope(comments []sqlstore.CommentRecord, limit int, verbose bool, sortBy, sortDir string, hasMoreFromQuery bool) (*mcp.CallToolResult, error) {
+func commentListEnvelope(comments []sqlstore.CommentRecord, limit int, verbose bool, sortBy, sortDir string, hasMoreFromQuery bool) (any, error) {
 	items := make([]any, 0, len(comments))
 	for _, c := range comments {
 		if verbose {
@@ -173,21 +171,21 @@ func commentListEnvelope(comments []sqlstore.CommentRecord, limit int, verbose b
 	return cappedCursorJSONResult(items, limit, sortBy, sortDir, hasMoreFromQuery, cursorAt)
 }
 
-func (a *Adapter) handleCommentList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleCommentList(ctx context.Context, req map[string]any) (any, error) {
 	verbose, errRes := reqQueryBool(req, "verbose")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	entityType, errRes := reqQueryString(req, "entity_type")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	if entityType == "" {
 		return errResult(ErrCodeArgInvalid, "entity_type is required", "entity_type")
 	}
 	entityID, errRes := reqQueryString(req, "entity_id")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	entityIDs, err := reqTaskListOperatorStringSlice(req, "entity_ids")
 	if err != nil {
@@ -198,19 +196,19 @@ func (a *Adapter) handleCommentList(ctx context.Context, req mcp.CallToolRequest
 	}
 	author, errRes := reqQueryString(req, "author")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	createdAfter, errRes := reqQueryString(req, "created_after")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	createdBefore, errRes := reqQueryString(req, "created_before")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	cursor, errRes := reqQueryCursor(req)
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 
 	filter, normalized, err := service.NormalizeCommentListQuery(service.CommentQuery{
@@ -238,21 +236,21 @@ func (a *Adapter) handleCommentList(ctx context.Context, req mcp.CallToolRequest
 	return commentListEnvelope(comments, normalized.Limit, verbose, normalized.SortBy, normalized.SortDir, hasMoreFromQuery)
 }
 
-func (a *Adapter) handleCommentSearch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleCommentSearch(ctx context.Context, req map[string]any) (any, error) {
 	query, errRes := reqQueryString(req, "query")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	if query == "" {
 		return errResult(ErrCodeArgInvalid, "query is required", "query")
 	}
 	entityType, errRes := reqQueryString(req, "entity_type")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	entityID, errRes := reqQueryString(req, "entity_id")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	entityIDs, err := reqTaskListOperatorStringSlice(req, "entity_ids")
 	if err != nil {
@@ -260,19 +258,19 @@ func (a *Adapter) handleCommentSearch(ctx context.Context, req mcp.CallToolReque
 	}
 	author, errRes := reqQueryString(req, "author")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	createdAfter, errRes := reqQueryString(req, "created_after")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	createdBefore, errRes := reqQueryString(req, "created_before")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	cursor, errRes := reqQueryCursor(req)
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 
 	filter, normalized, err := service.NormalizeCommentSearchQuery(service.CommentQuery{
@@ -304,7 +302,7 @@ func (a *Adapter) handleCommentSearch(ctx context.Context, req mcp.CallToolReque
 	return commentListEnvelope(comments, normalized.Limit, true, normalized.SortBy, normalized.SortDir, hasMoreFromQuery)
 }
 
-func (a *Adapter) handleCommentUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleCommentUpdate(ctx context.Context, req map[string]any) (any, error) {
 	id := int64(reqInt(req, "id"))
 	if id <= 0 {
 		return errResult(ErrCodeArgInvalid, "id must be a positive integer", "id")
@@ -315,7 +313,7 @@ func (a *Adapter) handleCommentUpdate(ctx context.Context, req mcp.CallToolReque
 	}
 	content := reqStr(req, "content")
 	if res := commentContentRequired(content); res != nil {
-		return res, nil
+		return nil, res
 	}
 	comment, err := a.svc.Comment.Update(id, author, content)
 	if err != nil {
@@ -324,8 +322,8 @@ func (a *Adapter) handleCommentUpdate(ctx context.Context, req mcp.CallToolReque
 	return okResult(comment)
 }
 
-func (a *Adapter) handleCommentDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	id, err := exactInt64(req.GetArguments()["id"], "id")
+func (a *Adapter) handleCommentDelete(ctx context.Context, req map[string]any) (any, error) {
+	id, err := exactInt64(req["id"], "id")
 	if err != nil || id <= 0 {
 		return errResult(ErrCodeArgInvalid, "id must be a positive integer", "id")
 	}
@@ -345,7 +343,7 @@ func (a *Adapter) handleCommentDelete(ctx context.Context, req mcp.CallToolReque
 	// presence is read off the argument map; a caller who forgets the field
 	// still gets "author is required".
 	//
-	rawAuthor, supplied := req.GetArguments()["author"]
+	rawAuthor, supplied := req["author"]
 	if !supplied {
 		return errResult(ErrCodeArgInvalid, "author is required", "author")
 	}
@@ -355,7 +353,7 @@ func (a *Adapter) handleCommentDelete(ctx context.Context, req mcp.CallToolReque
 	}
 	force, errRes := reqExactBool(req, "force")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	if err := a.svc.Comment.Delete(id, author, force); err != nil {
 		return errFromService(err)
@@ -381,7 +379,7 @@ type commentBulkAddFailure struct {
 	Error  *ErrorInfo        `json:"error"`
 }
 
-func (a *Adapter) handleCommentBulkAdd(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleCommentBulkAdd(ctx context.Context, req map[string]any) (any, error) {
 	raw := reqStr(req, "targets")
 	if raw == "" {
 		return errResult(ErrCodeArgInvalid, "targets is required", "targets")
@@ -395,7 +393,7 @@ func (a *Adapter) handleCommentBulkAdd(ctx context.Context, req mcp.CallToolRequ
 	}
 	content := reqStr(req, "content")
 	if res := commentContentRequired(content); res != nil {
-		return res, nil
+		return nil, res
 	}
 	author := reqStr(req, "author")
 

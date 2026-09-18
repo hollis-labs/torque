@@ -6,8 +6,6 @@ import (
 	"log"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
-
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
@@ -136,10 +134,10 @@ func (a *Adapter) commentTail(taskID string, limit int) ([]taskComment, int, err
 // task_transition and task_create; adding comments there would bolt a
 // comment thread onto every task WRITE response, which nobody asked for and
 // which would multiply the payload of routine status changes.
-func (a *Adapter) taskGetResult(task *sqlstore.TaskRecord, includeComments bool, commentsLimit int) (*mcp.CallToolResult, error) {
+func (a *Adapter) taskGetResult(task *sqlstore.TaskRecord, includeComments bool, commentsLimit int) (any, error) {
 	base, errRes := a.taskWithTagsFor(task)
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	if !includeComments {
 		return okResult(base)
@@ -152,10 +150,10 @@ func (a *Adapter) taskGetResult(task *sqlstore.TaskRecord, includeComments bool,
 	return cappedTaskGetResult(task.ID, base, comments, total)
 }
 
-func (a *Adapter) typedTaskGetResult(task *sqlstore.TaskRecord, includeComments bool, commentsLimit int) (*mcp.CallToolResult, error) {
+func (a *Adapter) typedTaskGetResult(task *sqlstore.TaskRecord, includeComments bool, commentsLimit int) (any, error) {
 	base, errRes := a.typedTaskFullResult(task)
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	if !includeComments {
 		return okResult(base)
@@ -180,7 +178,7 @@ func (a *Adapter) typedTaskGetResult(task *sqlstore.TaskRecord, includeComments 
 // torque_task_get enforced no byte limit at all before this (taskResult went
 // straight to okResult with an unbounded description column), so this adds
 // the guard rather than reusing one.
-func cappedTaskGetResult(taskID string, base *taskWithTags, comments []taskComment, total int) (*mcp.CallToolResult, error) {
+func cappedTaskGetResult(taskID string, base *taskWithTags, comments []taskComment, total int) (any, error) {
 	if comments == nil {
 		comments = []taskComment{}
 	}
@@ -208,13 +206,13 @@ func cappedTaskGetResult(taskID string, base *taskWithTags, comments []taskComme
 	window := comments
 	for {
 		payload := build(window, false)
-		b, err := json.MarshalIndent(Response{OK: true, Data: payload}, "", "  ")
+		b, err := json.Marshal(Response{OK: true, Data: payload})
 		if err != nil {
 			log.Printf("mcpadapter: task_get marshal failed: %v", err)
 			return errResult(ErrCodeInternal, "response serialization failed", "")
 		}
 		if len(b) <= maxMCPResponseBytes {
-			return mcp.NewToolResultText(string(b)), nil
+			return Response{OK: true, Data: payload}, nil
 		}
 		if len(window) == 0 {
 			// The record alone does not fit. Return it anyway, with every
@@ -229,7 +227,7 @@ func cappedTaskGetResult(taskID string, base *taskWithTags, comments []taskComme
 	}
 }
 
-func cappedTypedTaskGetResult(taskID string, base typedTaskRecord, comments []taskComment, total int) (*mcp.CallToolResult, error) {
+func cappedTypedTaskGetResult(taskID string, base typedTaskRecord, comments []taskComment, total int) (any, error) {
 	if comments == nil {
 		comments = []taskComment{}
 	}
@@ -259,13 +257,13 @@ func cappedTypedTaskGetResult(taskID string, base typedTaskRecord, comments []ta
 	window := comments
 	for {
 		payload := build(window, false)
-		b, err := json.MarshalIndent(Response{OK: true, Data: payload}, "", "  ")
+		b, err := json.Marshal(Response{OK: true, Data: payload})
 		if err != nil {
 			log.Printf("mcpadapter: typed task_get marshal failed: %v", err)
 			return errResult(ErrCodeInternal, "response serialization failed", "")
 		}
 		if len(b) <= maxMCPResponseBytes {
-			return mcp.NewToolResultText(string(b)), nil
+			return Response{OK: true, Data: payload}, nil
 		}
 		if len(window) == 0 {
 			return okResult(build(nil, true))

@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -105,104 +106,46 @@ func parseError(t *testing.T, text string) (code, message, field string) {
 	return env.Error.Code, env.Error.Message, env.Error.Field
 }
 
+// callTool drives a.Server().CallTool directly — the in-process path go-mcp
+// documents for tests, bypassing the protocol/transport layer. errResult and
+// its callers report failure via a real Go error implementing
+// budget.StructuredError (see mcpadapter's mcpToolError) rather than a
+// value, so both branches are handled here: an error unwraps its structured
+// content into the same {ok,data,error} JSON text a protocol client would
+// have received; a success marshals the returned value the same way go-mcp's
+// own adaptHandler would for a real RPC caller.
 func callTool(t *testing.T, a *mcpadapter.Adapter, name string, args map[string]interface{}) (string, bool) {
 	t.Helper()
 
-	// Send initialize first to ensure the server is ready.
-	initMsg, err := json.Marshal(map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      0,
-		"method":  "initialize",
-		"params": map[string]interface{}{
-			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]interface{}{},
-			"clientInfo":      map[string]interface{}{"name": "test", "version": "0.1.0"},
-		},
-	})
-	require.NoError(t, err)
-	a.Server().HandleMessage(context.Background(), initMsg)
-
-	msg, err := json.Marshal(map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "tools/call",
-		"params": map[string]interface{}{
-			"name":      name,
-			"arguments": args,
-		},
-	})
-	require.NoError(t, err)
-
-	resp := a.Server().HandleMessage(context.Background(), msg)
-
-	respBytes, err := json.Marshal(resp)
-	require.NoError(t, err)
-
-	var parsed map[string]interface{}
-	require.NoError(t, json.Unmarshal(respBytes, &parsed))
-
-	result, ok := parsed["result"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("no result in response: %s", string(respBytes))
+	result, err := a.Server().CallTool(context.Background(), name, args)
+	if err != nil {
+		var se interface{ ToolErrorContent() any }
+		if !errors.As(err, &se) {
+			t.Fatalf("callTool(%s): unexpected non-structured error: %v", name, err)
+		}
+		b, marshalErr := json.Marshal(se.ToolErrorContent())
+		require.NoError(t, marshalErr)
+		return string(b), true
 	}
-
-	content, ok := result["content"].([]interface{})
-	if !ok || len(content) == 0 {
-		return "", false
-	}
-
-	first, ok := content[0].(map[string]interface{})
-	if !ok {
-		return "", false
-	}
-
-	text, _ := first["text"].(string)
-	isError, _ := result["isError"].(bool)
-	return text, isError
+	b, err := json.Marshal(result)
+	require.NoError(t, err)
+	return string(b), false
 }
 
 func listToolSchemaProperties(t *testing.T, a *mcpadapter.Adapter, name string) map[string]interface{} {
 	t.Helper()
 
-	initMsg, err := json.Marshal(map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      0,
-		"method":  "initialize",
-		"params": map[string]interface{}{
-			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]interface{}{},
-			"clientInfo":      map[string]interface{}{"name": "test", "version": "0.1.0"},
-		},
-	})
-	require.NoError(t, err)
-	a.Server().HandleMessage(context.Background(), initMsg)
-
-	msg, err := json.Marshal(map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "tools/list",
-	})
-	require.NoError(t, err)
-
-	resp := a.Server().HandleMessage(context.Background(), msg)
-	respBytes, err := json.Marshal(resp)
-	require.NoError(t, err)
-	var parsed map[string]interface{}
-	require.NoError(t, json.Unmarshal(respBytes, &parsed), "tools/list response: %s", string(respBytes))
-	if errObj, ok := parsed["error"]; ok {
-		t.Fatalf("tools/list returned error: %v", errObj)
-	}
-	result := parsed["result"].(map[string]interface{})
-	tools := result["tools"].([]interface{})
-	for _, raw := range tools {
-		tool := raw.(map[string]interface{})
-		if tool["name"] != name {
+	for _, def := range a.Server().ToolDefinitions() {
+		if def.Name != name {
 			continue
 		}
-		inputSchema := tool["inputSchema"].(map[string]interface{})
-		return inputSchema["properties"].(map[string]interface{})
+		schema, ok := def.InputSchema.(map[string]interface{})
+		require.True(t, ok, "tool %s InputSchema must be map[string]interface{}, got %T", name, def.InputSchema)
+		props, ok := schema["properties"].(map[string]interface{})
+		require.True(t, ok, "tool %s schema missing properties", name)
+		return props
 	}
-	t.Fatalf("tool %s not found in tools/list response", name)
+	t.Fatalf("tool %s not found in ToolDefinitions", name)
 	return nil
 }
 

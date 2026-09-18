@@ -8,8 +8,6 @@ import (
 	"io"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
-
 	"github.com/hollis-labs/torque/internal/hitl"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
@@ -349,54 +347,48 @@ func typedEffectiveReview(kind string, metadata sql.NullString) map[string]any {
 	}
 }
 
-func (a *Adapter) typedTaskFullResult(task *sqlstore.TaskRecord) (typedTaskRecord, *mcp.CallToolResult) {
+func (a *Adapter) typedTaskFullResult(task *sqlstore.TaskRecord) (typedTaskRecord, error) {
 	tags, err := a.svc.Task.ListTags(task.ID)
 	if err != nil {
-		res, _ := errFromService(err)
-		return nil, res
+		return nil, argErrorFromService(err)
 	}
 	deps, err := a.svc.Task.ListDependencyIDs(task.ID)
 	if err != nil {
-		res, _ := errFromService(err)
-		return nil, res
+		return nil, argErrorFromService(err)
 	}
 	agg, err := a.svc.Run.Aggregate(task.ID)
 	if err != nil {
-		res, _ := errFromService(err)
-		return nil, res
+		return nil, argErrorFromService(err)
 	}
 	subs, err := a.svc.Task.ListSubtodos(task.ID)
 	if err != nil {
-		res, _ := errFromService(err)
-		return nil, res
+		return nil, argErrorFromService(err)
 	}
 	collectionName := ""
 	if task.CollectionID.Valid && task.CollectionID.String != "" {
 		names, err := a.svc.Collection.LookupNames([]string{task.CollectionID.String})
 		if err != nil {
-			res, _ := errFromService(err)
-			return nil, res
+			return nil, argErrorFromService(err)
 		}
 		collectionName = names[task.CollectionID.String]
 	}
 	return typedTaskFull(task, tags, deps, agg, subs, collectionName), nil
 }
 
-func (a *Adapter) typedTaskListItem(t sqlstore.TaskRecord, full bool) (any, *mcp.CallToolResult) {
+func (a *Adapter) typedTaskListItem(t sqlstore.TaskRecord, full bool) (any, error) {
 	if full {
 		rec := t
 		return a.typedTaskFullResult(&rec)
 	}
 	deps, err := a.svc.Task.ListDependencyIDs(t.ID)
 	if err != nil {
-		res, _ := errFromService(err)
-		return nil, res
+		return nil, argErrorFromService(err)
 	}
 	return typedTaskBrief(t, briefTagSlugs(a.svc, t.ID), deps), nil
 }
 
-func reqTaskFormat(req mcp.CallToolRequest) (string, error) {
-	raw, ok := req.GetArguments()["format"]
+func reqTaskFormat(req map[string]any) (string, error) {
+	raw, ok := req["format"]
 	if !ok || raw == nil {
 		return "legacy", nil
 	}

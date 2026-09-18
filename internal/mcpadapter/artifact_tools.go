@@ -11,85 +11,84 @@ import (
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
-	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func (a *Adapter) registerArtifactTools() {
-	a.addTool(mcp.NewTool("torque_artifact_create",
-		mcp.WithDescription(`Create an artifact (file pointer, URL, or inline content) attached to a task; returns the persisted ArtifactRecord with assigned numeric ID.
+	a.addTool(newTool("torque_artifact_create",
+		withDescription(`Create an artifact (file pointer, URL, or inline content) attached to a task; returns the persisted ArtifactRecord with assigned numeric ID.
 Use for deliverables and evidence; prefer torque_comment_add for discussion prose. Subtodo evidence strings go through torque_task_subtodo_done.
 Response shape: data = {<ArtifactRecord fields>} — singleton.
 Example: {"task_id":"T-123","type":"file","file_path":"/tmp/report.md"}`),
-		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),
-		mcp.WithString("type", mcp.Required(), mcp.Description("Artifact type (file|url|inline|diff|...)")),
-		mcp.WithString("content", mcp.Description("Inline content (for type=inline)")),
-		mcp.WithString("url", mcp.Description("URL (for type=url)")),
-		mcp.WithString("file_path", mcp.Description("Filesystem path (for type=file)")),
-		mcp.WithString("run_id", artifactNullableInt64Schema(), mcp.Description("Optional run ID linked to this artifact. Must exist and belong to task_id. Omit or null for no link.")),
-		mcp.WithObject("metadata", artifactMetadataSchema(), mcp.Description("Optional JSON object metadata. Omit unchanged/not set; null clears on update. Legacy JSON-string object is accepted.")),
+		withString("task_id", required(), desc("Task ID")),
+		withString("type", required(), desc("Artifact type (file|url|inline|diff|...)")),
+		withString("content", desc("Inline content (for type=inline)")),
+		withString("url", desc("URL (for type=url)")),
+		withString("file_path", desc("Filesystem path (for type=file)")),
+		withString("run_id", artifactNullableInt64Schema(), desc("Optional run ID linked to this artifact. Must exist and belong to task_id. Omit or null for no link.")),
+		withObject("metadata", artifactMetadataSchema(), desc("Optional JSON object metadata. Omit unchanged/not set; null clears on update. Legacy JSON-string object is accepted.")),
 	), a.handleArtifactCreate)
 
-	a.addTool(mcp.NewTool("torque_artifact_list",
-		mcp.WithDescription(`List all artifacts for a task, newest first. Default brief shape drops inline content body for size; pass verbose="true" for full records.
+	a.addTool(newTool("torque_artifact_list",
+		withDescription(`List all artifacts for a task, newest first. Default brief shape drops inline content body for size; pass verbose="true" for full records.
 Use to discover outputs; torque_artifact_get when you have the numeric ID. torque_comment_list is the prose/discussion analog.
 Response shape: data = {items: [<briefArtifact or ArtifactRecord>...], meta: {truncated, returned, limit, hint?}}.
 Example: {"task_id":"T-123"}`),
-		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),
-		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
+		withString("task_id", required(), desc("Task ID")),
+		withString("verbose", desc("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleArtifactList)
 
-	a.addTool(mcp.NewTool("torque_artifact_get",
-		mcp.WithDescription(`Fetch one artifact's full record by numeric ID (pass as string per numeric-as-string convention).
+	a.addTool(newTool("torque_artifact_get",
+		withDescription(`Fetch one artifact's full record by numeric ID (pass as string per numeric-as-string convention).
 Use when you have the ID; torque_artifact_list for discovery.
 Response shape: data = {<ArtifactRecord fields>} — singleton.
 Example: {"artifact_id":"42"}`),
-		mcp.WithString("artifact_id", mcp.Required(), mcp.Description("Artifact ID (integer; pass as string)")),
+		withString("artifact_id", required(), desc("Artifact ID (integer; pass as string)")),
 	), a.handleArtifactGet)
 
-	a.addTool(mcp.NewTool("torque_artifact_update",
-		mcp.WithDescription(`Patch mutable artifact fields while preserving ID, task_id and created_at.
+	a.addTool(newTool("torque_artifact_update",
+		withDescription(`Patch mutable artifact fields while preserving ID, task_id and created_at.
 Omitted fields stay unchanged. Empty content/url/file_path explicitly clears that field. type is still required to be nonblank if supplied.
 run_id accepts an exact integer or null to clear. metadata accepts a JSON object or null to clear; legacy JSON-string objects are accepted and decoded with number precision preserved.
 Response shape: data = {<ArtifactRecord fields>} — singleton.
 Example: {"artifact_id":"42","content":"","metadata":{"status":"corrected"}}`),
-		mcp.WithString("artifact_id", mcp.Required(), mcp.Description("Artifact ID (integer; pass as string)")),
-		mcp.WithString("type", mcp.Description("New artifact type; must be nonblank when supplied")),
-		mcp.WithString("content", mcp.Description("New inline content; pass empty string to clear")),
-		mcp.WithString("url", mcp.Description("New URL; pass empty string to clear")),
-		mcp.WithString("file_path", mcp.Description("New filesystem path; pass empty string to clear")),
-		mcp.WithString("run_id", artifactNullableInt64Schema(), mcp.Description("Exact run ID to link, or null to clear. Linked run must belong to the artifact task.")),
-		mcp.WithObject("metadata", artifactMetadataSchema(), mcp.Description("JSON object metadata, JSON-string object, or null to clear")),
+		withString("artifact_id", required(), desc("Artifact ID (integer; pass as string)")),
+		withString("type", desc("New artifact type; must be nonblank when supplied")),
+		withString("content", desc("New inline content; pass empty string to clear")),
+		withString("url", desc("New URL; pass empty string to clear")),
+		withString("file_path", desc("New filesystem path; pass empty string to clear")),
+		withString("run_id", artifactNullableInt64Schema(), desc("Exact run ID to link, or null to clear. Linked run must belong to the artifact task.")),
+		withObject("metadata", artifactMetadataSchema(), desc("JSON object metadata, JSON-string object, or null to clear")),
 	), a.handleArtifactUpdate)
 
-	a.addTool(mcp.NewTool("torque_artifact_delete",
-		mcp.WithDescription(`Delete an artifact row by numeric ID. Does NOT remove the referenced file on disk — caller owns filesystem cleanup.
+	a.addTool(newTool("torque_artifact_delete",
+		withDescription(`Delete an artifact row by numeric ID. Does NOT remove the referenced file on disk — caller owns filesystem cleanup.
 Use for artifact-row cleanup; for deleting an entire task + its artifacts, use torque_task_delete (cascade).
 Response shape: data = {id, deleted: true}.
 Example: {"artifact_id":"42"}`),
-		mcp.WithString("artifact_id", mcp.Required(), mcp.Description("Artifact ID (integer; pass as string)")),
+		withString("artifact_id", required(), desc("Artifact ID (integer; pass as string)")),
 	), a.handleArtifactDelete)
 }
 
-func (a *Adapter) handleArtifactCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleArtifactCreate(ctx context.Context, req map[string]any) (any, error) {
 	taskID, errRes := reqRequiredString(req, "task_id")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	typ, errRes := reqRequiredString(req, "type")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	content, errRes := reqCreateOptionalString(req, "content")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	url, errRes := reqCreateOptionalString(req, "url")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	filePath, errRes := reqCreateOptionalString(req, "file_path")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	rec := &sqlstore.ArtifactRecord{
 		TaskID:   taskID,
@@ -99,12 +98,12 @@ func (a *Adapter) handleArtifactCreate(ctx context.Context, req mcp.CallToolRequ
 		FilePath: filePath,
 	}
 	if runID, present, errRes := reqNullableInt64(req, "run_id"); errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	} else if present && runID != nil {
 		rec.RunID = sql.NullInt64{Int64: *runID, Valid: true}
 	}
 	if metadata, present, errRes := reqNullableMetadata(req, "metadata"); errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	} else if present && metadata != nil {
 		rec.Metadata = sql.NullString{String: string(metadata), Valid: true}
 	}
@@ -114,7 +113,7 @@ func (a *Adapter) handleArtifactCreate(ctx context.Context, req mcp.CallToolRequ
 	return okResult(rec)
 }
 
-func (a *Adapter) handleArtifactList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleArtifactList(ctx context.Context, req map[string]any) (any, error) {
 	verbose := reqStrBool(req, "verbose")
 	artifacts, err := a.svc.Artifact.List(reqStr(req, "task_id"))
 	if err != nil {
@@ -132,10 +131,10 @@ func (a *Adapter) handleArtifactList(ctx context.Context, req mcp.CallToolReques
 	return cappedJSONResult(items, limit)
 }
 
-func (a *Adapter) handleArtifactGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleArtifactGet(ctx context.Context, req map[string]any) (any, error) {
 	id, errRes := reqStrictInt64(req, "artifact_id")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	art, err := a.svc.Artifact.Get(id)
 	if err != nil {
@@ -144,43 +143,43 @@ func (a *Adapter) handleArtifactGet(ctx context.Context, req mcp.CallToolRequest
 	return okResult(art)
 }
 
-func (a *Adapter) handleArtifactUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleArtifactUpdate(ctx context.Context, req map[string]any) (any, error) {
 	id, errRes := reqStrictInt64(req, "artifact_id")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
-	args := req.GetArguments()
+	args := req
 	var in service.ArtifactUpdateInput
 	if _, ok := args["type"]; ok {
 		v, errRes := reqStrictString(req, "type")
 		if errRes != nil {
-			return errRes, nil
+			return nil, errRes
 		}
 		in.Type = &v
 	}
 	if _, ok := args["content"]; ok {
 		v, errRes := reqStrictString(req, "content")
 		if errRes != nil {
-			return errRes, nil
+			return nil, errRes
 		}
 		in.Content = &v
 	}
 	if _, ok := args["url"]; ok {
 		v, errRes := reqStrictString(req, "url")
 		if errRes != nil {
-			return errRes, nil
+			return nil, errRes
 		}
 		in.URL = &v
 	}
 	if _, ok := args["file_path"]; ok {
 		v, errRes := reqStrictString(req, "file_path")
 		if errRes != nil {
-			return errRes, nil
+			return nil, errRes
 		}
 		in.FilePath = &v
 	}
 	if runID, present, errRes := reqNullableInt64(req, "run_id"); errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	} else if present {
 		if runID == nil {
 			in.RunID = &sql.NullInt64{}
@@ -189,7 +188,7 @@ func (a *Adapter) handleArtifactUpdate(ctx context.Context, req mcp.CallToolRequ
 		}
 	}
 	if metadata, present, errRes := reqNullableMetadata(req, "metadata"); errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	} else if present {
 		if metadata == nil {
 			in.Metadata = &sql.NullString{}
@@ -204,10 +203,10 @@ func (a *Adapter) handleArtifactUpdate(ctx context.Context, req mcp.CallToolRequ
 	return okResult(art)
 }
 
-func (a *Adapter) handleArtifactDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleArtifactDelete(ctx context.Context, req map[string]any) (any, error) {
 	id, errRes := reqStrictInt64(req, "artifact_id")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	if err := a.svc.Artifact.Delete(id); err != nil {
 		return errFromService(err)
@@ -215,7 +214,7 @@ func (a *Adapter) handleArtifactDelete(ctx context.Context, req mcp.CallToolRequ
 	return okResult(map[string]interface{}{"id": id, "deleted": true})
 }
 
-func artifactNullableInt64Schema() mcp.PropertyOption {
+func artifactNullableInt64Schema() propOpt {
 	return func(schema map[string]any) {
 		delete(schema, "type")
 		schema["anyOf"] = []map[string]any{
@@ -226,7 +225,7 @@ func artifactNullableInt64Schema() mcp.PropertyOption {
 	}
 }
 
-func artifactMetadataSchema() mcp.PropertyOption {
+func artifactMetadataSchema() propOpt {
 	return func(schema map[string]any) {
 		delete(schema, "type")
 		delete(schema, "properties")
@@ -238,8 +237,8 @@ func artifactMetadataSchema() mcp.PropertyOption {
 	}
 }
 
-func reqStrictInt64(req mcp.CallToolRequest, field string) (int64, *mcp.CallToolResult) {
-	raw, ok := req.GetArguments()[field]
+func reqStrictInt64(req map[string]any, field string) (int64, error) {
+	raw, ok := req[field]
 	if !ok {
 		return 0, mustErrResult(ErrCodeArgInvalid, field+" is required", field)
 	}
@@ -250,8 +249,8 @@ func reqStrictInt64(req mcp.CallToolRequest, field string) (int64, *mcp.CallTool
 	return id, nil
 }
 
-func reqStrictString(req mcp.CallToolRequest, field string) (string, *mcp.CallToolResult) {
-	raw, ok := req.GetArguments()[field]
+func reqStrictString(req map[string]any, field string) (string, error) {
+	raw, ok := req[field]
 	if !ok {
 		return "", nil
 	}
@@ -262,8 +261,8 @@ func reqStrictString(req mcp.CallToolRequest, field string) (string, *mcp.CallTo
 	return s, nil
 }
 
-func reqRequiredString(req mcp.CallToolRequest, field string) (string, *mcp.CallToolResult) {
-	raw, ok := req.GetArguments()[field]
+func reqRequiredString(req map[string]any, field string) (string, error) {
+	raw, ok := req[field]
 	if !ok {
 		return "", mustErrResult(ErrCodeArgInvalid, field+" is required", field)
 	}
@@ -277,8 +276,8 @@ func reqRequiredString(req mcp.CallToolRequest, field string) (string, *mcp.Call
 	return s, nil
 }
 
-func reqCreateOptionalString(req mcp.CallToolRequest, field string) (string, *mcp.CallToolResult) {
-	raw, ok := req.GetArguments()[field]
+func reqCreateOptionalString(req map[string]any, field string) (string, error) {
+	raw, ok := req[field]
 	if !ok || raw == nil {
 		return "", nil
 	}
@@ -289,8 +288,8 @@ func reqCreateOptionalString(req mcp.CallToolRequest, field string) (string, *mc
 	return s, nil
 }
 
-func reqNullableInt64(req mcp.CallToolRequest, field string) (*int64, bool, *mcp.CallToolResult) {
-	raw, ok := req.GetArguments()[field]
+func reqNullableInt64(req map[string]any, field string) (*int64, bool, error) {
+	raw, ok := req[field]
 	if !ok {
 		return nil, false, nil
 	}
@@ -304,8 +303,8 @@ func reqNullableInt64(req mcp.CallToolRequest, field string) (*int64, bool, *mcp
 	return &id, true, nil
 }
 
-func reqNullableMetadata(req mcp.CallToolRequest, field string) (json.RawMessage, bool, *mcp.CallToolResult) {
-	raw, ok := req.GetArguments()[field]
+func reqNullableMetadata(req map[string]any, field string) (json.RawMessage, bool, error) {
+	raw, ok := req[field]
 	if !ok {
 		return nil, false, nil
 	}
@@ -372,7 +371,6 @@ func isSafeIntegerFloat(v float64) bool {
 	return !math.IsNaN(v) && !math.IsInf(v, 0) && math.Trunc(v) == v && math.Abs(v) <= 9007199254740991
 }
 
-func mustErrResult(code ErrorCode, message, field string) *mcp.CallToolResult {
-	res, _ := errResult(code, message, field)
-	return res
+func mustErrResult(code ErrorCode, message, field string) error {
+	return argError(code, message, field)
 }

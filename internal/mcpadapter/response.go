@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
-
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
 	"github.com/hollis-labs/torque/internal/service/pagination"
@@ -287,9 +285,8 @@ func toBriefCheckpoint(c sqlstore.CheckpointRecord) briefCheckpoint {
 // bool. Matches the Phase A convention of declaring numeric/bool-like params
 // as strings so LLM clients that emit "verbose": "false" don't trip schema
 // validation. Missing or unparseable values return false.
-func reqStrBool(req mcp.CallToolRequest, key string) bool {
-	args := req.GetArguments()
-	v, ok := args[key]
+func reqStrBool(req map[string]any, key string) bool {
+	v, ok := req[key]
 	if !ok {
 		return false
 	}
@@ -312,8 +309,8 @@ func reqStrBool(req mcp.CallToolRequest, key string) bool {
 // reqStrBool cannot express this: it collapses "absent" and "false" into the
 // same answer, which is wrong for an opt-OUT flag like torque_task_get's
 // `comments` (CW-20260910-0057).
-func reqStrBoolDefault(req mcp.CallToolRequest, key string, def bool) bool {
-	if _, ok := req.GetArguments()[key]; !ok {
+func reqStrBoolDefault(req map[string]any, key string, def bool) bool {
+	if _, ok := req[key]; !ok {
 		return def
 	}
 	return reqStrBool(req, key)
@@ -355,11 +352,13 @@ type listEnvelope struct {
 // the `{items, meta}` literal — no further nesting. The size budget accounts
 // for the JSON overhead of the outer envelope so a list that nominally fits
 // under the cap doesn't blow it once wrapped.
-func cappedJSONResult(items []any, limit int) (*mcp.CallToolResult, error) {
+func cappedJSONResult(items []any, limit int) (any, error) {
 	// Marshal via the envelope helper so the size we're budgeting against is
-	// the actual wire payload the caller will see.
+	// the actual wire payload the caller will see. Compact (not indented)
+	// to match the marshal go-mcp's own adaptHandler performs on the value
+	// this function returns.
 	marshalEnv := func(payload listEnvelope) ([]byte, error) {
-		return json.MarshalIndent(Response{OK: true, Data: payload}, "", "  ")
+		return json.Marshal(Response{OK: true, Data: payload})
 	}
 
 	meta := listMeta{
@@ -376,7 +375,7 @@ func cappedJSONResult(items []any, limit int) (*mcp.CallToolResult, error) {
 
 	// Fast path: fits in cap.
 	if len(b) <= maxMCPResponseBytes {
-		return mcp.NewToolResultText(string(b)), nil
+		return Response{OK: true, Data: payload}, nil
 	}
 
 	// Slow path: shrink until it fits. We drop from the tail; callers pass
@@ -436,11 +435,10 @@ func cappedJSONResult(items []any, limit int) (*mcp.CallToolResult, error) {
 		meta.Hint = "response too large; add filters or lower limit"
 	}
 	payload = listEnvelope{Items: trimmed, Meta: meta}
-	b, err = marshalEnv(payload)
-	if err != nil {
+	if _, err = marshalEnv(payload); err != nil {
 		return errResult(ErrCodeInternal, "response serialization failed", "")
 	}
-	return mcp.NewToolResultText(string(b)), nil
+	return Response{OK: true, Data: payload}, nil
 }
 
 // ---- cursor-paginated envelope (PRIM-001 / PRIM-002) -----------------------
@@ -483,7 +481,7 @@ type listEnvelopeCursor struct {
 	Meta  listMetaCursor `json:"meta"`
 }
 
-func cappedTaskFacetResult(result service.TaskFacetQueryResult) (*mcp.CallToolResult, error) {
+func cappedTaskFacetResult(result service.TaskFacetQueryResult) (any, error) {
 	build := func(r service.TaskFacetQueryResult, truncated bool) ([]byte, error) {
 		if truncated {
 			for i := range r.Facets {
@@ -492,14 +490,14 @@ func cappedTaskFacetResult(result service.TaskFacetQueryResult) (*mcp.CallToolRe
 				}
 			}
 		}
-		return json.MarshalIndent(Response{OK: true, Data: r}, "", "  ")
+		return json.Marshal(Response{OK: true, Data: r})
 	}
 	b, err := build(result, false)
 	if err != nil {
 		return errResult(ErrCodeInternal, "response serialization failed", "")
 	}
 	if len(b) <= maxMCPResponseBytes {
-		return mcp.NewToolResultText(string(b)), nil
+		return Response{OK: true, Data: result}, nil
 	}
 
 	trimmed := result
@@ -525,7 +523,7 @@ func cappedTaskFacetResult(result service.TaskFacetQueryResult) (*mcp.CallToolRe
 			return errResult(ErrCodeInternal, "response serialization failed", "")
 		}
 		if len(b) <= maxMCPResponseBytes {
-			return mcp.NewToolResultText(string(b)), nil
+			return Response{OK: true, Data: trimmed}, nil
 		}
 	}
 
@@ -534,7 +532,7 @@ func cappedTaskFacetResult(result service.TaskFacetQueryResult) (*mcp.CallToolRe
 		return errResult(ErrCodeInternal, "response serialization failed", "")
 	}
 	if len(b) <= maxMCPResponseBytes {
-		return mcp.NewToolResultText(string(b)), nil
+		return Response{OK: true, Data: trimmed}, nil
 	}
 	return errResult(ErrCodeInternal, "task facet response metadata exceeds MCP response cap; narrow dimensions or filters", "")
 }
@@ -574,12 +572,12 @@ func cappedTaskFacetResult(result service.TaskFacetQueryResult) (*mcp.CallToolRe
 //     a correct, resumable cursor (and correctly flips has_more to true even
 //     if hasMoreFromQuery was false, since the byte cap itself created more
 //     unseen rows).
-func cappedCursorJSONResult(items []any, limit int, sortBy, sortDir string, hasMoreFromQuery bool, cursorAt func(lastIncludedIndex int) (sortValue, id string)) (*mcp.CallToolResult, error) {
+func cappedCursorJSONResult(items []any, limit int, sortBy, sortDir string, hasMoreFromQuery bool, cursorAt func(lastIncludedIndex int) (sortValue, id string)) (any, error) {
 	return cappedCursorJSONResultWithTotal(items, limit, nil, sortBy, sortDir, hasMoreFromQuery, cursorAt)
 }
 
-func cappedCursorJSONResultWithTotal(items []any, limit int, total *int, sortBy, sortDir string, hasMoreFromQuery bool, cursorAt func(lastIncludedIndex int) (sortValue, id string)) (*mcp.CallToolResult, error) {
-	build := func(n int) ([]byte, error) {
+func cappedCursorJSONResultWithTotal(items []any, limit int, total *int, sortBy, sortDir string, hasMoreFromQuery bool, cursorAt func(lastIncludedIndex int) (sortValue, id string)) (any, error) {
+	envelopeFor := func(n int) listEnvelopeCursor {
 		trimmed := items[:n]
 		hasMore := hasMoreFromQuery || n < len(items)
 		var nextCursor *string
@@ -599,7 +597,10 @@ func cappedCursorJSONResultWithTotal(items []any, limit int, total *int, sortBy,
 		if meta.Truncated {
 			meta.Hint = "response too large; add filters or lower limit"
 		}
-		return json.MarshalIndent(Response{OK: true, Data: listEnvelopeCursor{Items: trimmed, Meta: meta}}, "", "  ")
+		return listEnvelopeCursor{Items: trimmed, Meta: meta}
+	}
+	build := func(n int) ([]byte, error) {
+		return json.Marshal(Response{OK: true, Data: envelopeFor(n)})
 	}
 
 	n := len(items)
@@ -610,7 +611,7 @@ func cappedCursorJSONResultWithTotal(items []any, limit int, total *int, sortBy,
 
 	// Fast path: fits in cap.
 	if len(b) <= maxMCPResponseBytes {
-		return mcp.NewToolResultText(string(b)), nil
+		return Response{OK: true, Data: envelopeFor(n)}, nil
 	}
 
 	// Slow path: same halve-then-grow shrink as cappedJSONResult.
@@ -640,11 +641,10 @@ func cappedCursorJSONResultWithTotal(items []any, limit int, total *int, sortBy,
 		}
 	}
 
-	b, err = build(lo)
-	if err != nil {
+	if _, err = build(lo); err != nil {
 		return errResult(ErrCodeInternal, "response serialization failed", "")
 	}
-	return mcp.NewToolResultText(string(b)), nil
+	return Response{OK: true, Data: envelopeFor(lo)}, nil
 }
 
 // ---- sort/cursor helper -----------------------------------------------------
@@ -664,15 +664,14 @@ func cappedCursorJSONResultWithTotal(items []any, limit int, total *int, sortBy,
 //
 //	sortBy, sortDir, afterSortValue, afterID, errRes := resolveSortAndCursor(req, xSortDefaultBy, xSortDefaultDir, xSortAllowList...)
 //	if errRes != nil {
-//		return errRes, nil
+//		return nil, errRes
 //	}
-func resolveSortAndCursor(req mcp.CallToolRequest, defaultBy, defaultDir string, allowList ...string) (sortBy, sortDir, afterSortValue, afterID string, errRes *mcp.CallToolResult) {
+func resolveSortAndCursor(req map[string]any, defaultBy, defaultDir string, allowList ...string) (sortBy, sortDir, afterSortValue, afterID string, errRes error) {
 	sortBy = defaultBy
 	if raw := reqStr(req, "sort_by"); raw != "" {
 		v, err := pagination.ValidateSortBy(raw, allowList...)
 		if err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "sort_by")
-			return "", "", "", "", res
+			return "", "", "", "", argError(ErrCodeArgInvalid, err.Error(), "sort_by")
 		}
 		sortBy = v
 	}
@@ -680,8 +679,7 @@ func resolveSortAndCursor(req mcp.CallToolRequest, defaultBy, defaultDir string,
 	if raw := reqStr(req, "sort_dir"); raw != "" {
 		v, err := pagination.ValidateSortDir(raw)
 		if err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "sort_dir")
-			return "", "", "", "", res
+			return "", "", "", "", argError(ErrCodeArgInvalid, err.Error(), "sort_dir")
 		}
 		sortDir = v
 	}
@@ -691,12 +689,10 @@ func resolveSortAndCursor(req mcp.CallToolRequest, defaultBy, defaultDir string,
 	if raw := reqStr(req, "cursor"); raw != "" {
 		c, err := pagination.Decode(raw)
 		if err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid cursor: %v", err), "cursor")
-			return "", "", "", "", res
+			return "", "", "", "", argError(ErrCodeArgInvalid, fmt.Sprintf("invalid cursor: %v", err), "cursor")
 		}
 		if err := c.Validate(sortBy, sortDir); err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "cursor")
-			return "", "", "", "", res
+			return "", "", "", "", argError(ErrCodeArgInvalid, err.Error(), "cursor")
 		}
 		afterSortValue, afterID = c.SortValue, c.ID
 	}

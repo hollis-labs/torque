@@ -3,13 +3,14 @@ package mcpadapter_test
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	gomcp "github.com/hollis-labs/go-mcp/server"
 	"github.com/hollis-labs/torque/internal/mcpadapter"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
@@ -76,45 +77,18 @@ func (fix *loopbackFixture) promote(t *testing.T, status string) {
 }
 
 // rawJSONRPCError calls a tool by name on the given adapter and returns the
-// JSON-RPC error envelope, if any. Used to verify "tool not found" responses
-// without going through callTool's "result must exist" assertion.
+// "unknown tool" error message, if any. Used to verify "tool not found"
+// responses without going through callTool's "result must exist" assertion.
+// A registered tool's own domain-error result (errResult/argError) is not
+// what this checks — that arrives via a *different* error shape
+// (budget.StructuredError) — only go-mcp's ErrUnknownTool counts as "not
+// found" here, matching this helper's original JSON-RPC-error-envelope
+// semantics (which never fired for an in-band tool-level error either).
 func rawJSONRPCError(t *testing.T, a *mcpadapter.Adapter, name string, args map[string]interface{}) string {
 	t.Helper()
-
-	initMsg, err := json.Marshal(map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      0,
-		"method":  "initialize",
-		"params": map[string]interface{}{
-			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]interface{}{},
-			"clientInfo":      map[string]interface{}{"name": "test", "version": "0.1.0"},
-		},
-	})
-	require.NoError(t, err)
-	a.Server().HandleMessage(context.Background(), initMsg)
-
-	msg, err := json.Marshal(map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "tools/call",
-		"params": map[string]interface{}{
-			"name":      name,
-			"arguments": args,
-		},
-	})
-	require.NoError(t, err)
-
-	resp := a.Server().HandleMessage(context.Background(), msg)
-	respBytes, err := json.Marshal(resp)
-	require.NoError(t, err)
-	var parsed map[string]interface{}
-	require.NoError(t, json.Unmarshal(respBytes, &parsed))
-
-	if errObj, ok := parsed["error"].(map[string]interface{}); ok {
-		if msg, ok := errObj["message"].(string); ok {
-			return msg
-		}
+	_, err := a.Server().CallTool(context.Background(), name, args)
+	if errors.Is(err, gomcp.ErrUnknownTool) {
+		return err.Error()
 	}
 	return ""
 }
@@ -144,7 +118,7 @@ func TestLoopback_ExcludedToolsReturnNotFound(t *testing.T) {
 		"id":     fix.taskID,
 		"status": "doing",
 	})
-	assert.Contains(t, errMsg, "not found", "transition must not be exposed; got: %q", errMsg)
+	assert.Contains(t, errMsg, "unknown tool", "transition must not be exposed; got: %q", errMsg)
 
 	// Sanity: the same call WORKS on the global adapter.
 	errMsg = rawJSONRPCError(t, fix.global, "torque_task_transition", map[string]interface{}{

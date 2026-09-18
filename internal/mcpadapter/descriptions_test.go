@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 
@@ -42,15 +41,16 @@ func TestDescriptionInventory_AssertsMinimumsAndEmitsArtifact(t *testing.T) {
 	require.NoError(t, svc.Feature.Enable("epics"))
 	a := mcpadapter.New(svc, nil)
 
-	tools := a.Server().ListTools()
-	require.NotEmpty(t, tools, "expected registered tools")
+	defs := a.Server().ToolDefinitions()
+	require.NotEmpty(t, defs, "expected registered tools")
 
-	// Gather sorted names so the inventory output is stable across runs.
-	names := make([]string, 0, len(tools))
-	for name := range tools {
-		names = append(names, name)
+	// ToolDefinitions() is already sorted by name.
+	names := make([]string, 0, len(defs))
+	byName := make(map[string]string, len(defs))
+	for _, d := range defs {
+		names = append(names, d.Name)
+		byName[d.Name] = d.Description
 	}
-	sort.Strings(names)
 
 	// Build the markdown artifact as we walk. Assert per tool.
 	var md strings.Builder
@@ -60,8 +60,7 @@ func TestDescriptionInventory_AssertsMinimumsAndEmitsArtifact(t *testing.T) {
 
 	totalLines := 0
 	for _, name := range names {
-		tool := tools[name]
-		desc := tool.Tool.Description
+		desc := byName[name]
 		lines := strings.Split(strings.TrimRight(desc, "\n"), "\n")
 
 		assert.GreaterOrEqual(t, len(lines), 4,

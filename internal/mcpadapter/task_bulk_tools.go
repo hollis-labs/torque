@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/hollis-labs/torque/internal/service"
-	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // PRIM-003: generalized bulk-operation pattern, applied to Task as the
@@ -16,70 +15,70 @@ import (
 // stays out of scope per ADR-0004 §3 / PRIM-003.
 
 func (a *Adapter) registerTaskBulkTools() {
-	a.addTool(mcp.NewTool("torque_task_bulk_update",
-		mcp.WithDescription(`Apply the same partial update to many tasks in one call; per-task failures are collected, not fatal. Same field set and presence-in-payload semantics as torque_task_update — only keys you actually pass change; omit a key to leave that field untouched on every task.
+	a.addTool(newTool("torque_task_bulk_update",
+		withDescription(`Apply the same partial update to many tasks in one call; per-task failures are collected, not fatal. Same field set and presence-in-payload semantics as torque_task_update — only keys you actually pass change; omit a key to leave that field untouched on every task.
 Use for batch field edits (e.g. re-priority or re-home a cohort); prefer torque_task_update for a single task and torque_task_bulk_transition for status-only batch moves.
 Response shape: data = {succeeded: [id...], failed: [{id, error: {code, message, field}}...]} — partial success is not an error; ok=true even when some ids fail. error.code uses the same taxonomy (arg_invalid/not_found/conflict/domain/permission/internal) as single-item torque_task_update.
 Example: {"ids":"[\"T-1\",\"T-2\"]","priority":"1","tags":"[\"p0\"]"}`),
-		mcp.WithString("ids", mcp.Required(), mcp.Description("JSON array of task IDs")),
-		mcp.WithString("title", mcp.Description("New title")),
-		mcp.WithString("description", mcp.Description("New description")),
-		mcp.WithString("priority", mcp.Description("New priority (integer 1-5). A non-integer value returns error.code=arg_invalid and leaves every stored priority unchanged.")),
-		mcp.WithBoolean("manual", mcp.Description("Manual flag")),
-		mcp.WithString("executor", mcp.Description("Executor type")),
-		mcp.WithString("launch_profile", mcp.Description("Torque launch_profile id (preferred). Empty string clears.")),
-		mcp.WithString("agent_profile", mcp.Description("Legacy agent_profile name.")),
-		mcp.WithString("working_dir", mcp.Description("Working directory")),
-		mcp.WithString("system_prompt", mcp.Description("System prompt override")),
-		mcp.WithString("agent_file", mcp.Description("Absolute or working_dir-relative path to a YAML agent spec; pass empty string to clear")),
-		mcp.WithString("on_done", mcp.Description("Hook on done (close|review|notify)")),
-		mcp.WithString("on_fail", mcp.Description("Hook on fail (retry|block|escalate|notify)")),
-		mcp.WithString("on_review", mcp.Description("Hook on review (pause|notify|auto-approve)")),
-		mcp.WithString("on_done_merge", mcp.Description("Merge hook on done (none|auto|pr|auto-resolve)")),
-		mcp.WithString("deliverable_preset", mcp.Description("Deliverable preset name")),
-		mcp.WithString("blocked_reason", mcp.Description("Blocked reason")),
-		mcp.WithString("cost_budget", mcp.Description("Cost budget (numeric; -1 unlimited, 0 none, or positive)")),
-		mcp.WithString("max_retries", mcp.Description("Max retries (non-negative integer)")),
-		mcp.WithString("max_duration_ms", mcp.Description("Max duration in ms (integer; -1 unlimited or positive)")),
-		mcp.WithString("token_budget", mcp.Description("Token budget (integer; -1 unlimited or positive)")),
-		mcp.WithString("tools", mcp.Description("JSON array of tool names")),
-		mcp.WithString("files", mcp.Description("JSON array of file paths")),
-		mcp.WithString("permissions", mcp.Description("JSON object of permissions")),
-		mcp.WithString("environment", mcp.Description("JSON object of env vars")),
-		mcp.WithString("escalation_chain", mcp.Description("JSON array of escalation-target names")),
-		mcp.WithString("quality_gates", mcp.Description("JSON array of gate names")),
-		mcp.WithString("deliverables", mcp.Description("JSON array of Deliverable objects")),
-		mcp.WithString("depends_on", mcp.Description("JSON array of dependency task IDs")),
-		mcp.WithString("metadata", mcp.Description("JSON object: freeform metadata")),
-		mcp.WithString("tags", mcp.Description("JSON array of tag names/slugs — replaces the full linked tag set on every task")),
-		mcp.WithString("sprint_id", mcp.Description("Sprint ID (set empty string to unassign)")),
-		mcp.WithString("project_id", mcp.Description("Project ID (set empty string to unassign)")),
-		mcp.WithString("epic_id", mcp.Description("Epic ID (set empty string to unassign)")),
-		mcp.WithString("kind", mcp.Description("New kind (agent|external|wait|decision|parent|plan|internal|issue)")),
-		mcp.WithString("source_type", mcp.Description("New source_type")),
-		mcp.WithString("source_ref", mcp.Description("New source_ref (empty string clears)")),
-		mcp.WithString("trust", mcp.Description("New trust (trusted|normal|untrusted)")),
-		mcp.WithString("checkpoint_mode", mcp.Description("New checkpoint_mode (none|blocking|non_blocking)")),
-		mcp.WithString("on_checkpoint_response", mcp.Description("New on_checkpoint_response (resume|review|custom)")),
-		mcp.WithString("parent_id", mcp.Description("New parent_id (migration 013; empty string clears the parent)")),
+		withString("ids", required(), desc("JSON array of task IDs")),
+		withString("title", desc("New title")),
+		withString("description", desc("New description")),
+		withString("priority", desc("New priority (integer 1-5). A non-integer value returns error.code=arg_invalid and leaves every stored priority unchanged.")),
+		withBoolean("manual", desc("Manual flag")),
+		withString("executor", desc("Executor type")),
+		withString("launch_profile", desc("Torque launch_profile id (preferred). Empty string clears.")),
+		withString("agent_profile", desc("Legacy agent_profile name.")),
+		withString("working_dir", desc("Working directory")),
+		withString("system_prompt", desc("System prompt override")),
+		withString("agent_file", desc("Absolute or working_dir-relative path to a YAML agent spec; pass empty string to clear")),
+		withString("on_done", desc("Hook on done (close|review|notify)")),
+		withString("on_fail", desc("Hook on fail (retry|block|escalate|notify)")),
+		withString("on_review", desc("Hook on review (pause|notify|auto-approve)")),
+		withString("on_done_merge", desc("Merge hook on done (none|auto|pr|auto-resolve)")),
+		withString("deliverable_preset", desc("Deliverable preset name")),
+		withString("blocked_reason", desc("Blocked reason")),
+		withString("cost_budget", desc("Cost budget (numeric; -1 unlimited, 0 none, or positive)")),
+		withString("max_retries", desc("Max retries (non-negative integer)")),
+		withString("max_duration_ms", desc("Max duration in ms (integer; -1 unlimited or positive)")),
+		withString("token_budget", desc("Token budget (integer; -1 unlimited or positive)")),
+		withString("tools", desc("JSON array of tool names")),
+		withString("files", desc("JSON array of file paths")),
+		withString("permissions", desc("JSON object of permissions")),
+		withString("environment", desc("JSON object of env vars")),
+		withString("escalation_chain", desc("JSON array of escalation-target names")),
+		withString("quality_gates", desc("JSON array of gate names")),
+		withString("deliverables", desc("JSON array of Deliverable objects")),
+		withString("depends_on", desc("JSON array of dependency task IDs")),
+		withString("metadata", desc("JSON object: freeform metadata")),
+		withString("tags", desc("JSON array of tag names/slugs — replaces the full linked tag set on every task")),
+		withString("sprint_id", desc("Sprint ID (set empty string to unassign)")),
+		withString("project_id", desc("Project ID (set empty string to unassign)")),
+		withString("epic_id", desc("Epic ID (set empty string to unassign)")),
+		withString("kind", desc("New kind (agent|external|wait|decision|parent|plan|internal|issue)")),
+		withString("source_type", desc("New source_type")),
+		withString("source_ref", desc("New source_ref (empty string clears)")),
+		withString("trust", desc("New trust (trusted|normal|untrusted)")),
+		withString("checkpoint_mode", desc("New checkpoint_mode (none|blocking|non_blocking)")),
+		withString("on_checkpoint_response", desc("New on_checkpoint_response (resume|review|custom)")),
+		withString("parent_id", desc("New parent_id (migration 013; empty string clears the parent)")),
 	), a.handleTaskBulkUpdate)
 
-	a.addTool(mcp.NewTool("torque_task_bulk_delete",
-		mcp.WithDescription(`Hard-delete many tasks in one call (runs, artifacts, comments cascade per task); per-task failures are collected, not fatal.
+	a.addTool(newTool("torque_task_bulk_delete",
+		withDescription(`Hard-delete many tasks in one call (runs, artifacts, comments cascade per task); per-task failures are collected, not fatal.
 Use sparingly — prefer torque_task_bulk_transition to "abandoned" for audit-preserving batch closure (reachable from any status in one call). torque_task_delete for a single task.
 Response shape: data = {succeeded: [id...], failed: [{id, error: {code, message, field}}...]} — partial success is not an error; ok=true even when some ids fail. error.code uses the same taxonomy as single-item torque_task_delete.
 Example: {"ids":"[\"T-1\",\"T-2\"]"}`),
-		mcp.WithString("ids", mcp.Required(), mcp.Description("JSON array of task IDs")),
+		withString("ids", required(), desc("JSON array of task IDs")),
 	), a.handleTaskBulkDelete)
 
-	a.addTool(mcp.NewTool("torque_task_bulk_tag",
-		mcp.WithDescription(`Add and/or remove tag slugs across many tasks in one call; per-task failures are collected, not fatal. Unlike torque_task_update's tags field (which replaces the full set), this adds/removes only the slugs you name — every other tag on each task is left alone.
+	a.addTool(newTool("torque_task_bulk_tag",
+		withDescription(`Add and/or remove tag slugs across many tasks in one call; per-task failures are collected, not fatal. Unlike torque_task_update's tags field (which replaces the full set), this adds/removes only the slugs you name — every other tag on each task is left alone.
 Use for cohort-wide tag maintenance (e.g. tag a sprint's tasks "p0", or strip "wip" once review starts); prefer torque_task_update tags for replacing one task's full tag set.
 Response shape: data = {succeeded: [id...], failed: [{id, error: {code, message, field}}...]} — partial success is not an error; ok=true even when some ids fail.
 Example: {"ids":"[\"T-1\",\"T-2\"]","add":"[\"p0\"]","remove":"[\"wip\"]"}`),
-		mcp.WithString("ids", mcp.Required(), mcp.Description("JSON array of task IDs")),
-		mcp.WithString("add", mcp.Description("JSON array of tag names/slugs to add (auto-creates unknown tags, same as torque_task_update)")),
-		mcp.WithString("remove", mcp.Description("JSON array of tag slugs to remove (unknown/unlinked slugs are a no-op)")),
+		withString("ids", required(), desc("JSON array of task IDs")),
+		withString("add", desc("JSON array of tag names/slugs to add (auto-creates unknown tags, same as torque_task_update)")),
+		withString("remove", desc("JSON array of tag slugs to remove (unknown/unlinked slugs are a no-op)")),
 	), a.handleTaskBulkTag)
 }
 
@@ -112,7 +111,7 @@ type bulkFailure struct {
 // failed[] themselves. Only malformed call-level args (bad ids JSON, empty
 // ids, etc.) are call-level errors and are returned via errResult before
 // bulkResult is ever reached.
-func bulkResult(succeeded []string, failed []service.BulkItemError) (*mcp.CallToolResult, error) {
+func bulkResult(succeeded []string, failed []service.BulkItemError) (any, error) {
 	if succeeded == nil {
 		succeeded = []string{}
 	}
@@ -135,47 +134,45 @@ func bulkResult(succeeded []string, failed []service.BulkItemError) (*mcp.CallTo
 // per-item failure) when ids is missing, malformed, or empty — an empty
 // ids[] means there is nothing to do, which is a caller mistake, not a
 // partial-success case.
-func reqIDs(req mcp.CallToolRequest) ([]string, *mcp.CallToolResult) {
+func reqIDs(req map[string]any) ([]string, error) {
 	ids, err := reqStrSlice(req, "ids")
 	if err != nil {
-		res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid ids JSON: %v", err), "ids")
-		return nil, res
+		return nil, argError(ErrCodeArgInvalid, fmt.Sprintf("invalid ids JSON: %v", err), "ids")
 	}
 	if len(ids) == 0 {
-		res, _ := errResult(ErrCodeArgInvalid, "ids must be a non-empty JSON array", "ids")
-		return nil, res
+		return nil, argError(ErrCodeArgInvalid, "ids must be a non-empty JSON array", "ids")
 	}
 	return ids, nil
 }
 
-func (a *Adapter) handleTaskBulkUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleTaskBulkUpdate(ctx context.Context, req map[string]any) (any, error) {
 	ids, errRes := reqIDs(req)
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	input, errRes := buildTaskUpdateInput(req)
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 
 	succeeded, failed := a.svc.Task.BulkUpdate(ids, input)
 	return bulkResult(succeeded, failed)
 }
 
-func (a *Adapter) handleTaskBulkDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleTaskBulkDelete(ctx context.Context, req map[string]any) (any, error) {
 	ids, errRes := reqIDs(req)
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 
 	succeeded, failed := a.svc.Task.BulkDelete(ids)
 	return bulkResult(succeeded, failed)
 }
 
-func (a *Adapter) handleTaskBulkTag(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleTaskBulkTag(ctx context.Context, req map[string]any) (any, error) {
 	ids, errRes := reqIDs(req)
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 
 	add, err := reqStrSlice(req, "add")

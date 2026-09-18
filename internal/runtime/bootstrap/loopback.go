@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	httptransport "github.com/hollis-labs/go-mcp/transport/http"
 	"github.com/hollis-labs/torque/internal/mcpadapter"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
 	"github.com/hollis-labs/torque/internal/runtime/steering"
 	"github.com/hollis-labs/torque/internal/service"
-	"github.com/mark3labs/mcp-go/server"
 )
 
 // loopbackHandle owns the per-task MCP loopback HTTP listener and its
@@ -155,7 +155,11 @@ func loopbackBuilder(svc *service.Service, sessionsRef func() *agent.Manager, po
 			return nil, fmt.Errorf("loopback listener returned non-TCP addr: %T", ln.Addr())
 		}
 
-		streamableHandler := server.NewStreamableHTTPServer(loopback.Server())
+		// AllowedOrigins empty = allow all: this listener is bound to
+		// 127.0.0.1 with an OS-assigned ephemeral port, reachable only by
+		// the subprocess it was created for, not by an arbitrary browser
+		// origin the way a shared/public MCP HTTP endpoint would be.
+		streamableHandler := httptransport.NewHandler(loopback.Server(), httptransport.HandlerOptions{})
 
 		httpSrv := &http.Server{
 			Handler:           streamableHandler,

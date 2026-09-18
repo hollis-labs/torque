@@ -9,17 +9,15 @@ package mcpadapter
 import (
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/require"
 )
 
-// buildRequest constructs a minimal CallToolRequest carrying the supplied
-// arguments map. The helpers only read req.GetArguments(), so the tool
-// name / meta are irrelevant.
-func buildRequest(args map[string]interface{}) mcp.CallToolRequest {
-	req := mcp.CallToolRequest{}
-	req.Params.Arguments = args
-	return req
+// buildRequest returns the supplied arguments map as-is. Handler helpers now
+// take the args map directly rather than a mark3labs CallToolRequest
+// wrapper; kept as a named helper so call sites below read the same as
+// before.
+func buildRequest(args map[string]interface{}) map[string]interface{} {
+	return args
 }
 
 func TestReqInt(t *testing.T) {
