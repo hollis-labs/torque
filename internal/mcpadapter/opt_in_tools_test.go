@@ -1,9 +1,7 @@
 package mcpadapter_test
 
 import (
-	"context"
 	"database/sql"
-	"encoding/json"
 	"testing"
 
 	"github.com/hollis-labs/torque/internal/mcpadapter"
@@ -33,44 +31,15 @@ func adapterFromService(svc *service.Service) *mcpadapter.Adapter {
 	return mcpadapter.New(svc, nil)
 }
 
-// toolIsRegistered returns true if the tool exists (no JSON-RPC error in response).
+// toolIsRegistered returns true if the tool is registered on a's server.
 func toolIsRegistered(t *testing.T, a *mcpadapter.Adapter, toolName string) bool {
 	t.Helper()
-
-	initMsg, err := json.Marshal(map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      0,
-		"method":  "initialize",
-		"params": map[string]interface{}{
-			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]interface{}{},
-			"clientInfo":      map[string]interface{}{"name": "test", "version": "0.1.0"},
-		},
-	})
-	require.NoError(t, err)
-	a.Server().HandleMessage(context.Background(), initMsg)
-
-	msg, err := json.Marshal(map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "tools/call",
-		"params": map[string]interface{}{
-			"name":      toolName,
-			"arguments": map[string]interface{}{"name": "test"},
-		},
-	})
-	require.NoError(t, err)
-
-	resp := a.Server().HandleMessage(context.Background(), msg)
-	respBytes, err := json.Marshal(resp)
-	require.NoError(t, err)
-
-	var parsed map[string]interface{}
-	require.NoError(t, json.Unmarshal(respBytes, &parsed))
-
-	// If there's a top-level "error" key, the tool was not found
-	_, hasError := parsed["error"]
-	return !hasError
+	for _, def := range a.Server().ToolDefinitions() {
+		if def.Name == toolName {
+			return true
+		}
+	}
+	return false
 }
 
 func TestSprintToolsNotRegisteredWhenDisabled(t *testing.T) {

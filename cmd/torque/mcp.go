@@ -13,7 +13,6 @@ import (
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/torque/internal/runtime/bootstrap"
 	"github.com/hollis-labs/torque/internal/service"
-	"github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"
 )
 
@@ -116,8 +115,7 @@ func mcpCmd() *cobra.Command {
 				WithSessions(agentDeps.Sessions).
 				WithLogger(sanitizeLogger)
 
-			stdio := server.NewStdioServer(adapter.Server())
-			return stdio.Listen(cmd.Context(), os.Stdin, os.Stdout)
+			return adapter.Server().Run(cmd.Context())
 		},
 	}
 }

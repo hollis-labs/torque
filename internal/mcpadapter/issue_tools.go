@@ -5,91 +5,90 @@ import (
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
-	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func (a *Adapter) registerIssueTools() {
-	a.addTool(mcp.NewTool("torque_issue_create",
-		mcp.WithDescription(`Create a project-scoped issue as a kind=issue backlog task. Requires title, body/context/issue/details, and project_id.
+	a.addTool(newTool("torque_issue_create",
+		withDescription(`Create a project-scoped issue as a kind=issue backlog task. Requires title, body/context/issue/details, and project_id.
 Use for low-friction issue capture that should appear in task views but never auto-dispatch. Response shape: data = {<TaskRecord fields>, Body, Tags[]}.
 Validation: project_id is required and must reference an enabled project.
 Example: {"title":"Login error","body":"Users see 500 on callback","project_id":"PRJ-..."}`),
-		mcp.WithString("title", mcp.Required(), mcp.Description("Issue title")),
-		mcp.WithString("body", mcp.Description("Issue body/details/context")),
-		mcp.WithString("context", mcp.Description("Alias for body")),
-		mcp.WithString("issue", mcp.Description("Alias for body")),
-		mcp.WithString("details", mcp.Description("Alias for body")),
-		mcp.WithString("project_id", mcp.Required(), mcp.Description("Project ID (requires features.projects)")),
+		withString("title", required(), desc("Issue title")),
+		withString("body", desc("Issue body/details/context")),
+		withString("context", desc("Alias for body")),
+		withString("issue", desc("Alias for body")),
+		withString("details", desc("Alias for body")),
+		withString("project_id", required(), desc("Project ID (requires features.projects)")),
 	), a.handleIssueCreate)
 
-	a.addTool(mcp.NewTool("torque_issue_get",
-		mcp.WithDescription(`Fetch one issue by ID. Rejects non-issue task IDs.
+	a.addTool(newTool("torque_issue_get",
+		withDescription(`Fetch one issue by ID. Rejects non-issue task IDs.
 Response shape: data = {<TaskRecord fields>, Body, Tags[]}.
 Use torque_task_get for generic task IDs that may not be issues.
 Example: {"id":"CW-20260514-0001"}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Issue task ID")),
+		withString("id", required(), desc("Issue task ID")),
 	), a.handleIssueGet)
 
-	a.addTool(mcp.NewTool("torque_issue_delete",
-		mcp.WithDescription(`Hard-delete an issue row and its linkage (runs, artifacts, comments cascade). Rejects non-issue task IDs.
+	a.addTool(newTool("torque_issue_delete",
+		withDescription(`Hard-delete an issue row and its linkage (runs, artifacts, comments cascade). Rejects non-issue task IDs.
 Use sparingly — prefer torque_issue_update to close out via status where possible. Supersedes the torque_task_delete workaround previously needed here (that tool has no kind guard, so it worked but skipped the is-this-actually-an-issue check).
 Response shape: data = {id, deleted: true}.
 Example: {"id":"CW-20260514-0001"}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Issue task ID")),
+		withString("id", required(), desc("Issue task ID")),
 	), a.handleIssueDelete)
 
-	a.addTool(mcp.NewTool("torque_issue_list",
-		mcp.WithDescription(`List issues (hard-scoped to kind=issue), optionally narrowed by project_id/status and a free-text query over ID/title/body. Ordered priority ASC (tiebreak id ASC) by default. Pass sort_by (priority|status|updated_at|created_at) and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid.
+	a.addTool(newTool("torque_issue_list",
+		withDescription(`List issues (hard-scoped to kind=issue), optionally narrowed by project_id/status and a free-text query over ID/title/body. Ordered priority ASC (tiebreak id ASC) by default. Pass sort_by (priority|status|updated_at|created_at) and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid.
 Merges the former torque_issue_search into this one tool (ADR-0004 §3) — pass "query" for the old search behavior; omit it for a pure filtered list. Limit is now always pushed to the DB layer (no more full-fetch-then-truncate).
 Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under — pass a different sort_by/sort_dir without dropping cursor and you get error.code=arg_invalid.
 Explicit malformed, blank, fractional, overflow, unsafe native-float, or negative limit values reject with error.code=arg_invalid, field=limit; omitted limit defaults to 50 and oversized limits clamp to 200.
 Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
 Example: {"project_id":"PRJ-...","status":"backlog","query":"login","limit":"50","sort_by":"updated_at","sort_dir":"desc"}`),
-		mcp.WithString("project_id", mcp.Description("Optional project ID filter")),
-		mcp.WithString("status", mcp.Description("Optional status filter (e.g. backlog, todo, doing, done)")),
-		mcp.WithString("query", mcp.Description("Optional free-text search over ID, title, and body/description")),
-		mcp.WithString("limit", mcp.Description("Max results (integer, default 50, max 200)")),
-		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
-		mcp.WithString("sort_by", mcp.Description("Sort field: priority|status|updated_at|created_at (default priority)")),
-		mcp.WithString("sort_dir", mcp.Description("Sort direction: asc|desc (default asc)")),
-		mcp.WithString("cursor", mcp.Description("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
+		withString("project_id", desc("Optional project ID filter")),
+		withString("status", desc("Optional status filter (e.g. backlog, todo, doing, done)")),
+		withString("query", desc("Optional free-text search over ID, title, and body/description")),
+		withString("limit", desc("Max results (integer, default 50, max 200)")),
+		withString("verbose", desc("Return full records instead of brief (string 'true'/'false', default false)")),
+		withString("sort_by", desc("Sort field: priority|status|updated_at|created_at (default priority)")),
+		withString("sort_dir", desc("Sort direction: asc|desc (default asc)")),
+		withString("cursor", desc("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
 	), a.handleIssueList)
 
-	a.addTool(mcp.NewTool("torque_issue_bulk_update",
-		mcp.WithDescription(`Apply the same partial update to many issues in one call; per-issue failures are collected, not fatal. Same field set and presence-in-payload semantics as torque_issue_update — only keys you actually pass change; omit a key to leave that field untouched on every issue. Each id must already be a kind=issue task row; a non-issue id fails that item with error.code=arg_invalid, field=kind.
+	a.addTool(newTool("torque_issue_bulk_update",
+		withDescription(`Apply the same partial update to many issues in one call; per-issue failures are collected, not fatal. Same field set and presence-in-payload semantics as torque_issue_update — only keys you actually pass change; omit a key to leave that field untouched on every issue. Each id must already be a kind=issue task row; a non-issue id fails that item with error.code=arg_invalid, field=kind.
 Use for batch issue edits (e.g. re-home a cohort to a new project); prefer torque_issue_update for a single issue and torque_issue_bulk_transition for status-only batch moves.
 Response shape: data = {succeeded: [id...], failed: [{id, error: {code, message, field}}...]} — partial success is not an error; ok=true even when some ids fail.
 Example: {"ids":"[\"CW-1\",\"CW-2\"]","project_id":"PRJ-..."}`),
-		mcp.WithString("ids", mcp.Required(), mcp.Description("JSON array of issue task IDs")),
-		mcp.WithString("title", mcp.Description("New issue title")),
-		mcp.WithString("body", mcp.Description("New issue body")),
-		mcp.WithString("context", mcp.Description("Alias for body")),
-		mcp.WithString("issue", mcp.Description("Alias for body")),
-		mcp.WithString("details", mcp.Description("Alias for body")),
-		mcp.WithString("project_id", mcp.Description("New project ID (requires features.projects)")),
+		withString("ids", required(), desc("JSON array of issue task IDs")),
+		withString("title", desc("New issue title")),
+		withString("body", desc("New issue body")),
+		withString("context", desc("Alias for body")),
+		withString("issue", desc("Alias for body")),
+		withString("details", desc("Alias for body")),
+		withString("project_id", desc("New project ID (requires features.projects)")),
 	), a.handleIssueBulkUpdate)
 
-	a.addTool(mcp.NewTool("torque_issue_bulk_transition",
-		mcp.WithDescription(`Transition many issues to the same status in one call; per-issue validation errors are collected, not fatal. Issues share Task's lifecycle FSM (todo -> doing -> review -> done, or -> blocked/abandoned) via TaskService.BulkTransition — reused as-is, not reimplemented here.
+	a.addTool(newTool("torque_issue_bulk_transition",
+		withDescription(`Transition many issues to the same status in one call; per-issue validation errors are collected, not fatal. Issues share Task's lifecycle FSM (todo -> doing -> review -> done, or -> blocked/abandoned) via TaskService.BulkTransition — reused as-is, not reimplemented here.
 Use for batch issue status changes; torque_issue_update for field edits. A freshly created issue starts at status=backlog, which is a canonical status like any other — it moves straight to todo, doing or done without force (CW-20260909-0011 made transitions permissive; the old force=true workaround is no longer needed).
 Response shape: data = {succeeded: [id...], failed: [{id, error: {code, message, field}}...]} — partial success is not an error; ok=true even when some ids fail.
 Example: {"ids":"[\"CW-1\",\"CW-2\"]","status":"done"}`),
-		mcp.WithString("ids", mcp.Required(), mcp.Description("JSON array of issue task IDs")),
-		mcp.WithString("status", mcp.Required(), mcp.Description("Target status applied to every id")),
+		withString("ids", required(), desc("JSON array of issue task IDs")),
+		withString("status", required(), desc("Target status applied to every id")),
 	), a.handleIssueBulkTransition)
 
-	a.addTool(mcp.NewTool("torque_issue_update",
-		mcp.WithDescription(`Update the minimal issue fields. Only supplied keys change; body/context/issue/details are aliases.
+	a.addTool(newTool("torque_issue_update",
+		withDescription(`Update the minimal issue fields. Only supplied keys change; body/context/issue/details are aliases.
 Response shape: data = {<TaskRecord fields>, Body, Tags[]}.
 This refuses non-issue IDs so generic task rows cannot be edited through the issue surface.
 Example: {"id":"CW-...","details":"New reproduction steps"}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Issue task ID")),
-		mcp.WithString("title", mcp.Description("New issue title")),
-		mcp.WithString("body", mcp.Description("New issue body")),
-		mcp.WithString("context", mcp.Description("Alias for body")),
-		mcp.WithString("issue", mcp.Description("Alias for body")),
-		mcp.WithString("details", mcp.Description("Alias for body")),
-		mcp.WithString("project_id", mcp.Description("New project ID (requires features.projects)")),
+		withString("id", required(), desc("Issue task ID")),
+		withString("title", desc("New issue title")),
+		withString("body", desc("New issue body")),
+		withString("context", desc("Alias for body")),
+		withString("issue", desc("Alias for body")),
+		withString("details", desc("Alias for body")),
+		withString("project_id", desc("New project ID (requires features.projects)")),
 	), a.handleIssueUpdate)
 }
 
@@ -99,7 +98,7 @@ type issueWithTags struct {
 	Tags []sqlstore.TagRecord `json:"Tags"`
 }
 
-func (a *Adapter) issueResult(task *sqlstore.TaskRecord) (*mcp.CallToolResult, error) {
+func (a *Adapter) issueResult(task *sqlstore.TaskRecord) (any, error) {
 	tags, err := a.svc.Task.ListTags(task.ID)
 	if err != nil {
 		return errFromService(err)
@@ -110,7 +109,7 @@ func (a *Adapter) issueResult(task *sqlstore.TaskRecord) (*mcp.CallToolResult, e
 	return okResult(issueWithTags{TaskRecord: task, Body: task.Description, Tags: tags})
 }
 
-func reqIssueBody(req mcp.CallToolRequest) string {
+func reqIssueBody(req map[string]any) string {
 	for _, key := range []string{"body", "context", "issue", "details"} {
 		if v := reqStr(req, key); v != "" {
 			return v
@@ -119,7 +118,7 @@ func reqIssueBody(req mcp.CallToolRequest) string {
 	return ""
 }
 
-func reqIssueBodyUpdate(req mcp.CallToolRequest) *string {
+func reqIssueBodyUpdate(req map[string]any) *string {
 	for _, key := range []string{"body", "context", "issue", "details"} {
 		if reqHasArg(req, key) {
 			v := reqStr(req, key)
@@ -129,7 +128,7 @@ func reqIssueBodyUpdate(req mcp.CallToolRequest) *string {
 	return nil
 }
 
-func (a *Adapter) handleIssueCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleIssueCreate(ctx context.Context, req map[string]any) (any, error) {
 	issue, err := a.svc.Issue.Create(service.IssueCreateInput{
 		Title:     reqStr(req, "title"),
 		Body:      reqIssueBody(req),
@@ -141,7 +140,7 @@ func (a *Adapter) handleIssueCreate(ctx context.Context, req mcp.CallToolRequest
 	return a.issueResult(issue)
 }
 
-func (a *Adapter) handleIssueGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleIssueGet(ctx context.Context, req map[string]any) (any, error) {
 	issue, err := a.svc.Issue.Get(reqStr(req, "id"))
 	if err != nil {
 		return errFromService(err)
@@ -149,7 +148,7 @@ func (a *Adapter) handleIssueGet(ctx context.Context, req mcp.CallToolRequest) (
 	return a.issueResult(issue)
 }
 
-func (a *Adapter) handleIssueDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleIssueDelete(ctx context.Context, req map[string]any) (any, error) {
 	id := reqStr(req, "id")
 	if err := a.svc.Issue.Delete(id); err != nil {
 		return errFromService(err)
@@ -164,26 +163,26 @@ func (a *Adapter) handleIssueDelete(ctx context.Context, req mcp.CallToolRequest
 // rows sharing the same sort columns/allow-list, so this reuses
 // taskSortAllowList/taskSortDefaultBy/taskSortDefaultDir/taskSortValue
 // directly rather than duplicating them.
-func (a *Adapter) handleIssueList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleIssueList(ctx context.Context, req map[string]any) (any, error) {
 	verbose, errRes := reqQueryBool(req, "verbose")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	projectID, errRes := reqQueryString(req, "project_id")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	status, errRes := reqQueryString(req, "status")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	query, errRes := reqQueryString(req, "query")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	cursor, errRes := reqQueryCursor(req)
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 
 	input, normalized, err := service.NormalizeIssueQuery(service.IssueQuery{
@@ -212,7 +211,7 @@ func (a *Adapter) handleIssueList(ctx context.Context, req mcp.CallToolRequest) 
 // already be trimmed to at most `limit` records. Verbose items use
 // issueWithTags (Body+Tags, no DependsOn — matching issueResult's singleton
 // shape); brief items reuse toBriefTask since issue rows are TaskRecord.
-func (a *Adapter) issueListCursorEnvelope(issues []sqlstore.TaskRecord, limit int, verbose bool, sortBy, sortDir string, hasMoreFromQuery bool) (*mcp.CallToolResult, error) {
+func (a *Adapter) issueListCursorEnvelope(issues []sqlstore.TaskRecord, limit int, verbose bool, sortBy, sortDir string, hasMoreFromQuery bool) (any, error) {
 	items := make([]any, 0, len(issues))
 	for _, t := range issues {
 		if verbose {
@@ -241,7 +240,7 @@ func (a *Adapter) issueListCursorEnvelope(issues []sqlstore.TaskRecord, limit in
 // presence-in-payload semantics as buildTaskUpdateInput: a key only changes
 // its field when the caller actually sent it. Shared by both handlers so
 // single- and bulk-update can never drift apart on semantics (PRIM-003).
-func buildIssueUpdateInput(req mcp.CallToolRequest) service.IssueUpdateInput {
+func buildIssueUpdateInput(req map[string]any) service.IssueUpdateInput {
 	input := service.IssueUpdateInput{Body: reqIssueBodyUpdate(req)}
 	if reqHasArg(req, "title") {
 		v := reqStr(req, "title")
@@ -254,7 +253,7 @@ func buildIssueUpdateInput(req mcp.CallToolRequest) service.IssueUpdateInput {
 	return input
 }
 
-func (a *Adapter) handleIssueUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleIssueUpdate(ctx context.Context, req map[string]any) (any, error) {
 	id := reqStr(req, "id")
 	if err := a.svc.Issue.Update(id, buildIssueUpdateInput(req)); err != nil {
 		return errFromService(err)
@@ -266,10 +265,10 @@ func (a *Adapter) handleIssueUpdate(ctx context.Context, req mcp.CallToolRequest
 	return a.issueResult(issue)
 }
 
-func (a *Adapter) handleIssueBulkUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleIssueBulkUpdate(ctx context.Context, req map[string]any) (any, error) {
 	ids, errRes := reqIDs(req)
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	succeeded, failed := a.svc.Issue.BulkUpdate(ids, buildIssueUpdateInput(req))
 	return bulkResult(succeeded, failed)
@@ -283,10 +282,10 @@ func (a *Adapter) handleIssueBulkUpdate(ctx context.Context, req mcp.CallToolReq
 // the shared bulkResult envelope (see task_tools.go) instead of the old
 // bespoke {success, failed, errors} shape. TaskService.BulkTransition
 // itself is reused as-is, not reimplemented (out of scope per ENT-ISSUE).
-func (a *Adapter) handleIssueBulkTransition(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleIssueBulkTransition(ctx context.Context, req map[string]any) (any, error) {
 	ids, errRes := reqIDs(req)
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	status := reqStr(req, "status")
 	succeeded, failed := a.svc.Task.BulkTransition(ctx, ids, status)

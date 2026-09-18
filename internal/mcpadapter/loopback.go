@@ -5,11 +5,10 @@ import (
 	"fmt"
 	"time"
 
+	gomcp "github.com/hollis-labs/go-mcp/server"
 	"github.com/hollis-labs/torque/internal/hitl"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 )
 
 // timeParseRFC3339 is a thin wrapper around time.Parse so the loopback
@@ -62,11 +61,7 @@ func NewLoopback(svc *service.Service, taskID string) *Adapter {
 	if taskID == "" {
 		panic("mcpadapter: NewLoopback requires non-empty taskID")
 	}
-	s := server.NewMCPServer(
-		"Torque Loopback",
-		"0.1.0",
-		server.WithToolCapabilities(true),
-	)
+	s := gomcp.NewServer("Torque Loopback", "0.1.0")
 	a := &Adapter{
 		svc:            svc,
 		sched:          nil,
@@ -78,66 +73,66 @@ func NewLoopback(svc *service.Service, taskID string) *Adapter {
 }
 
 func (a *Adapter) registerLoopbackTools() {
-	a.addTool(mcp.NewTool("torque_task_summary",
-		mcp.WithDescription(`Capture an agent-written summary of what was accomplished this turn. Persisted as a comment with author="agent" so the audit trail stays queryable via torque_comment_search.
+	a.addTool(newTool("torque_task_summary",
+		withDescription(`Capture an agent-written summary of what was accomplished this turn. Persisted as a comment with author="agent" so the audit trail stays queryable via torque_comment_search.
 Use exactly once per turn, near the end, before the wrapper signals done. The wrapper drives the FSM transition; this is interpretive signal only.
 Response shape: data = {<CommentRecord fields>} — singleton.
 Example: {"text":"Refactored streamparser per CW-..., added 3 tests, all green."}`),
-		mcp.WithString("text", mcp.Required(), mcp.Description("Prose summary of work accomplished")),
+		withString("text", required(), desc("Prose summary of work accomplished")),
 	), a.handleLoopbackSummary)
 
-	a.addTool(mcp.NewTool("torque_task_blocked",
-		mcp.WithDescription(`Flag the current task as blocked with an explanation. Sets blocked_reason and transitions the task to blocked. Use only when the agent has determined the task cannot proceed without external action; lifecycle (started, exited, timeout) is wrapper-driven and should not be signaled here.
+	a.addTool(newTool("torque_task_blocked",
+		withDescription(`Flag the current task as blocked with an explanation. Sets blocked_reason and transitions the task to blocked. Use only when the agent has determined the task cannot proceed without external action; lifecycle (started, exited, timeout) is wrapper-driven and should not be signaled here.
 Response shape: data = {task_id, status:"blocked", blocked_reason}.
 Example: {"reason":"Need credentials for the staging API; ENV var not set."}`),
-		mcp.WithString("reason", mcp.Required(), mcp.Description("Why the task is blocked (persisted as blocked_reason)")),
+		withString("reason", required(), desc("Why the task is blocked (persisted as blocked_reason)")),
 	), a.handleLoopbackBlocked)
 
-	a.addTool(mcp.NewTool("torque_task_review",
-		mcp.WithDescription(`Flag the current task as needing review. The reason is posted as a comment with author="agent" for the reviewer. Transitions the task to review.
+	a.addTool(newTool("torque_task_review",
+		withDescription(`Flag the current task as needing review. The reason is posted as a comment with author="agent" for the reviewer. Transitions the task to review.
 Use when the agent has completed enough to warrant review but cannot self-determine done.
 Response shape: data = {task_id, status:"review"}.
 Example: {"reason":"Implementation done but the test for edge case X is not feasible without prod data."}`),
-		mcp.WithString("reason", mcp.Description("Optional context for the reviewer (persisted as a comment)")),
+		withString("reason", desc("Optional context for the reviewer (persisted as a comment)")),
 	), a.handleLoopbackReview)
 
-	a.addTool(mcp.NewTool("torque_artifact_create",
-		mcp.WithDescription(`Create an artifact (file pointer, URL, or inline content) attached to the current task; returns the persisted ArtifactRecord.
+	a.addTool(newTool("torque_artifact_create",
+		withDescription(`Create an artifact (file pointer, URL, or inline content) attached to the current task; returns the persisted ArtifactRecord.
 The current task is implicit (loopback context) — agents cannot create artifacts for other tasks via this server.
 Response shape: data = {<ArtifactRecord fields>} — singleton.
 Example: {"type":"file","file_path":"/tmp/report.md"}`),
-		mcp.WithString("type", mcp.Required(), mcp.Description("Artifact type (file|url|inline|diff|...)")),
-		mcp.WithString("content", mcp.Description("Inline content (for type=inline)")),
-		mcp.WithString("url", mcp.Description("URL (for type=url)")),
-		mcp.WithString("file_path", mcp.Description("Filesystem path (for type=file)")),
+		withString("type", required(), desc("Artifact type (file|url|inline|diff|...)")),
+		withString("content", desc("Inline content (for type=inline)")),
+		withString("url", desc("URL (for type=url)")),
+		withString("file_path", desc("Filesystem path (for type=file)")),
 	), a.handleLoopbackArtifactCreate)
 
-	a.addTool(mcp.NewTool("torque_comment_add",
-		mcp.WithDescription(`Append a comment (freeform prose) to the current task; returns the persisted CommentRecord.
+	a.addTool(newTool("torque_comment_add",
+		withDescription(`Append a comment (freeform prose) to the current task; returns the persisted CommentRecord.
 The current task is implicit (loopback context). Optional author records caller attribution, matching the global comment tool; it defaults to "agent". Use for agent-to-user channel; for the canonical end-of-turn summary use torque_task_summary instead.
 Response shape: data = {<CommentRecord fields>} — singleton.
 Example: {"content":"Investigating the auth flow; see file X for context."}`),
-		mcp.WithString("content", mcp.Required(), mcp.Description("Comment body (prose)")),
-		mcp.WithString("author", mcp.Description("Caller attribution; defaults to agent")),
+		withString("content", required(), desc("Comment body (prose)")),
+		withString("author", desc("Caller attribution; defaults to agent")),
 	), a.handleLoopbackCommentAdd)
 
-	a.addTool(mcp.NewTool("torque_task_subtodo_add",
-		mcp.WithDescription(`Append a subtodo item to the current task's checklist. required=true means the task cannot transition past review until the item is ticked off.
+	a.addTool(newTool("torque_task_subtodo_add",
+		withDescription(`Append a subtodo item to the current task's checklist. required=true means the task cannot transition past review until the item is ticked off.
 The current task is implicit (loopback context).
 Response shape: data = [<Subtodo>...] — returns the updated full checklist.
 Example: {"id":"check-1","text":"write regression test","required":true}
 Example, id omitted (server generates one): {"text":"write regression test","required":true}`),
-		mcp.WithString("id", mcp.Description("Item id (unique per task). Omit to auto-generate a server-assigned id; supply a meaningful slug (e.g. \"check-auth-flow\") to keep it deterministic across repeated emits")),
-		mcp.WithString("text", mcp.Required(), mcp.Description("Human-readable description")),
-		mcp.WithBoolean("required", mcp.Description("If true, blocks done until ticked off (default false)")),
+		withString("id", desc("Item id (unique per task). Omit to auto-generate a server-assigned id; supply a meaningful slug (e.g. \"check-auth-flow\") to keep it deterministic across repeated emits")),
+		withString("text", required(), desc("Human-readable description")),
+		withBoolean("required", desc("If true, blocks done until ticked off (default false)")),
 	), a.handleLoopbackSubtodoAdd)
 
-	a.addTool(mcp.NewTool("torque_task_subtodo_done",
-		mcp.WithDescription(`Mark a subtodo done with an evidence string (artifact id, commit SHA, URL, or note). Operates on the current task's checklist.
+	a.addTool(newTool("torque_task_subtodo_done",
+		withDescription(`Mark a subtodo done with an evidence string (artifact id, commit SHA, URL, or note). Operates on the current task's checklist.
 Response shape: data = [<Subtodo>...] — returns the updated full checklist.
 Example: {"id":"check-1","evidence":"abc123 / PR #42"}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Item id to mark done")),
-		mcp.WithString("evidence", mcp.Description("Optional evidence pointer (artifact id, commit, URL, or note)")),
+		withString("id", required(), desc("Item id to mark done")),
+		withString("evidence", desc("Optional evidence pointer (artifact id, commit, URL, or note)")),
 	), a.handleLoopbackSubtodoDone)
 
 	// Phase 2 of the worker-substrate rebuild (CW-20260519-0095): read +
@@ -147,30 +142,30 @@ Example: {"id":"check-1","evidence":"abc123 / PR #42"}`),
 	// followed by workers, and there was no way for a stuck worker to ask
 	// for help short of going silent.
 
-	a.addTool(mcp.NewTool("torque_task_get",
-		mcp.WithDescription(fmt.Sprintf(`Fetch your own task record (the loopback's bound task), including metadata.checkpoint_responses and BY DEFAULT the %d most recent comments on the task. The id argument is accepted for symmetry with the cross-task tool but is validated against the loopback's bound task — passing a different id returns an error.
+	a.addTool(newTool("torque_task_get",
+		withDescription(fmt.Sprintf(`Fetch your own task record (the loopback's bound task), including metadata.checkpoint_responses and BY DEFAULT the %d most recent comments on the task. The id argument is accepted for symmetry with the cross-task tool but is validated against the loopback's bound task — passing a different id returns an error.
 Use at the start of each turn to inspect any checkpoint responses that arrived since your last action; the substrate redispatches you when a response lands.
 READ THE COMMENTS. Your task's description is what someone wrote before the work started; corrections, scope changes and answers posted afterwards live in the comment thread, and acting on the description alone is how a worker executes a framing that has since been superseded (CW-20260910-0057). Pass comments="false" to opt out, or comments_limit to widen the window (max %d).
 The window is the NEWEST comments_limit comments, presented oldest → newest so successive corrections read forward. CommentsMeta is ALWAYS present when comments were requested and states {returned, total, omitted, truncated} — including omitted=0 when nothing was cut, so you never have to infer completeness from array length. If omitted > 0 the hint names the call that retrieves the rest.
 Response shape: data = {<TaskRecord fields>, Tags[], DependsOn[], Comments[], CommentsMeta} — singleton, PascalCase keys (Comments[] entries are lowercase: id, author, content, created_at, updated_at). Comments and CommentsMeta are absent entirely when comments="false".
 Example: {} or {"id":"<your-own-task-id>"}
 Example, record only: {"comments":"false"}`, defaultTaskGetCommentsLimit, maxTaskGetCommentsLimit)),
-		mcp.WithString("id", mcp.Description("Optional — must match the loopback's bound task when supplied")),
-		mcp.WithString("comments", mcp.Description("Include the comment tail (string 'true'/'false', default 'true'). Set 'false' for the bare record.")),
-		mcp.WithString("comments_limit", mcp.Description(fmt.Sprintf("How many of the newest comments to include (integer, default %d, max %d). Ignored when comments='false'.", defaultTaskGetCommentsLimit, maxTaskGetCommentsLimit))),
+		withString("id", desc("Optional — must match the loopback's bound task when supplied")),
+		withString("comments", desc("Include the comment tail (string 'true'/'false', default 'true'). Set 'false' for the bare record.")),
+		withString("comments_limit", desc(fmt.Sprintf("How many of the newest comments to include (integer, default %d, max %d). Ignored when comments='false'.", defaultTaskGetCommentsLimit, maxTaskGetCommentsLimit))),
 	), a.handleLoopbackTaskGet)
 
-	a.addTool(mcp.NewTool("torque_task_checkpoint_emit",
-		mcp.WithDescription(fmt.Sprintf(`Emit a typed HITL checkpoint on your own task — the help-asking primitive. The task_id is implicit (loopback context).
+	a.addTool(newTool("torque_task_checkpoint_emit",
+		withDescription(fmt.Sprintf(`Emit a typed HITL checkpoint on your own task — the help-asking primitive. The task_id is implicit (loopback context).
 Use when blocked, when scope is unclear, or when a decision needs a human. Workers MUST NOT exit silently — emit a checkpoint and wait for the operator to respond (or cancel) from a dashboard. The substrate then redispatches you with the response in task.metadata.checkpoint_responses[correlation_id]; read it on your next turn with torque_task_get and incorporate it into your next action.
 Lifecycle: emit (status=pending) → operator responds via the cross-task tool (status=responded) OR operator cancels (status=canceled) → substrate redispatches you with the response (if any) parked on your task metadata. The worker does NOT call torque_task_checkpoint_respond to acknowledge or close — that tool CREATES the response on a still-pending checkpoint and is intended for the dashboard / operator side.
 Canonical HITL types: %s, %s, %s. Payload contracts: pr_review={pr_url,title?,summary?,branch?,checklist?}; approval={title,prompt,context?,options?}; message={subject?,message,severity?,context?}.
 Response shape: data = {<CheckpointRecord fields>} — singleton with correlation_id, status="pending".
 Example: {"type":"%s","payload_json":"{\"title\":\"Need DB creds\",\"prompt\":\"Should I block until provided or skip the migration step?\"}"}`,
 			hitl.TypePRReview, hitl.TypeApproval, hitl.TypeMessage, hitl.TypeApproval)),
-		mcp.WithString("type", mcp.Required(), mcp.Description("Workflow type. Canonical: pr_review|approval|message")),
-		mcp.WithString("payload_json", mcp.Required(), mcp.Description("JSON payload matching the type's HITL workflow schema")),
-		mcp.WithString("timeout_at", mcp.Description("Optional RFC3339 timestamp for the timeout sweeper")),
+		withString("type", required(), desc("Workflow type. Canonical: pr_review|approval|message")),
+		withString("payload_json", required(), desc("JSON payload matching the type's HITL workflow schema")),
+		withString("timeout_at", desc("Optional RFC3339 timestamp for the timeout sweeper")),
 	), a.handleLoopbackCheckpointEmit)
 
 	// torque_steering_dismiss (CW-20260519-0065): the agent's "ack, I saw
@@ -184,34 +179,34 @@ Example: {"type":"%s","payload_json":"{\"title\":\"Need DB creds\",\"prompt\":\"
 	// dropped (e.g. a stale id from a prior process). Always registered
 	// in the loopback subset; when no registry is wired (test paths) the
 	// tool returns a "feature disabled" error rather than panicking.
-	a.addTool(mcp.NewTool("torque_steering_dismiss",
-		mcp.WithDescription(`Acknowledge ("dismiss") one or more injected steering envelopes so the substrate stops re-surfacing them at turn boundaries (CW-20260519-0065). Pass the envelope IDs the substrate listed in its "[steering reminder · N unaddressed messages]" turn — those IDs appear as "envelope=ENV-XXX" in the reminder body.
+	a.addTool(newTool("torque_steering_dismiss",
+		withDescription(`Acknowledge ("dismiss") one or more injected steering envelopes so the substrate stops re-surfacing them at turn boundaries (CW-20260519-0065). Pass the envelope IDs the substrate listed in its "[steering reminder · N unaddressed messages]" turn — those IDs appear as "envelope=ENV-XXX" in the reminder body.
 Dismissal is per-envelope and permanent for this task: a dismissed envelope is never re-surfaced even if the operator sends new steering messages. Dismissing is the agent's "I saw this and chose not to act" signal; an envelope you've already replied to or otherwise handled should also be dismissed to keep the registry clean.
 Response shape: data = {dismissed: [<envelope-id>...], unknown: [<envelope-id>...]} — dismissed lists IDs that were actually present in the registry; unknown lists IDs that were absent (stale, already dismissed, or never injected).
 Example: {"envelope_ids":["01HK...","01HJ..."]}`),
-		mcp.WithArray("envelope_ids",
-			mcp.Required(),
-			mcp.Description("Envelope IDs to dismiss (as listed in the reminder body)"),
-			mcp.Items(map[string]any{"type": "string"}),
+		withArray("envelope_ids",
+			required(),
+			desc("Envelope IDs to dismiss (as listed in the reminder body)"),
+			items(map[string]any{"type": "string"}),
 		),
 	), a.handleLoopbackSteeringDismiss)
 
 	a.registerLoopbackAARTool()
 
-	a.addTool(mcp.NewTool("torque_task_checkpoint_respond",
-		mcp.WithDescription(`CREATE a response on a still-pending checkpoint that lives on your own task. Transitions the checkpoint from status=pending → status=responded. Only checkpoints whose task_id matches the loopback's bound task are accepted — passing a correlation_id for another task's checkpoint returns an error. Responding to a non-pending checkpoint (already responded, canceled, or timed out) returns a conflict error.
+	a.addTool(newTool("torque_task_checkpoint_respond",
+		withDescription(`CREATE a response on a still-pending checkpoint that lives on your own task. Transitions the checkpoint from status=pending → status=responded. Only checkpoints whose task_id matches the loopback's bound task are accepted — passing a correlation_id for another task's checkpoint returns an error. Responding to a non-pending checkpoint (already responded, canceled, or timed out) returns a conflict error.
 This tool exists for narrow self-service cases where a worker decides on its own behalf — e.g. an automated approval flow where the worker handles both sides of the loop. The typical worker DOES NOT call this: when a human operator responds to your help-asking checkpoint from a dashboard, the substrate parks the response in task.metadata.checkpoint_responses[correlation_id] and redispatches you automatically. Read it from torque_task_get and act on it; do NOT call respond to "consume" or "acknowledge" — there is no acknowledge primitive, and calling respond on a checkpoint someone else already responded to will fail with conflict.
 Typed response contracts: pr_review={decision:"approve|request_changes|comment",summary?,comments?,required_changes?}; approval={decision:"approved|rejected|needs_info",comment?}; message={acknowledged:boolean,reply?}.
 Response shape: data = {<CheckpointRecord fields>} — singleton, status="responded".
 Example: {"correlation_id":"01HK...","response_json":"{\"decision\":\"approved\",\"comment\":\"Proceeding.\"}"}`),
-		mcp.WithString("correlation_id", mcp.Required(), mcp.Description("Checkpoint correlation_id (ULID); must point at a still-pending checkpoint on the loopback's bound task")),
-		mcp.WithString("response_json", mcp.Required(), mcp.Description("JSON response matching the checkpoint type's HITL response schema")),
+		withString("correlation_id", required(), desc("Checkpoint correlation_id (ULID); must point at a still-pending checkpoint on the loopback's bound task")),
+		withString("response_json", required(), desc("JSON response matching the checkpoint type's HITL response schema")),
 	), a.handleLoopbackCheckpointRespond)
 }
 
 // ---- handlers --------------------------------------------------------------
 
-func (a *Adapter) handleLoopbackSummary(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleLoopbackSummary(ctx context.Context, req map[string]any) (any, error) {
 	text := reqStr(req, "text")
 	if text == "" {
 		return errResult(ErrCodeArgInvalid, "text is required", "text")
@@ -223,7 +218,7 @@ func (a *Adapter) handleLoopbackSummary(ctx context.Context, req mcp.CallToolReq
 	return okResult(comment)
 }
 
-func (a *Adapter) handleLoopbackBlocked(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleLoopbackBlocked(ctx context.Context, req map[string]any) (any, error) {
 	reason := reqStr(req, "reason")
 	if reason == "" {
 		return errResult(ErrCodeArgInvalid, "reason is required", "reason")
@@ -246,7 +241,7 @@ func (a *Adapter) handleLoopbackBlocked(ctx context.Context, req mcp.CallToolReq
 	})
 }
 
-func (a *Adapter) handleLoopbackReview(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleLoopbackReview(ctx context.Context, req map[string]any) (any, error) {
 	reason := reqStr(req, "reason")
 	if reason != "" {
 		if _, err := a.svc.Comment.AddForTask(a.loopbackTaskID, "agent", "Review note: "+reason); err != nil {
@@ -262,7 +257,7 @@ func (a *Adapter) handleLoopbackReview(ctx context.Context, req mcp.CallToolRequ
 	})
 }
 
-func (a *Adapter) handleLoopbackArtifactCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleLoopbackArtifactCreate(ctx context.Context, req map[string]any) (any, error) {
 	rec := &sqlstore.ArtifactRecord{
 		TaskID:   a.loopbackTaskID,
 		Type:     reqStr(req, "type"),
@@ -279,7 +274,7 @@ func (a *Adapter) handleLoopbackArtifactCreate(ctx context.Context, req mcp.Call
 	return okResult(rec)
 }
 
-func (a *Adapter) handleLoopbackCommentAdd(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleLoopbackCommentAdd(ctx context.Context, req map[string]any) (any, error) {
 	content := reqStr(req, "content")
 	if content == "" {
 		return errResult(ErrCodeArgInvalid, "content is required", "content")
@@ -295,7 +290,7 @@ func (a *Adapter) handleLoopbackCommentAdd(ctx context.Context, req mcp.CallTool
 	return okResult(comment)
 }
 
-func (a *Adapter) handleLoopbackSubtodoAdd(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleLoopbackSubtodoAdd(ctx context.Context, req map[string]any) (any, error) {
 	id := reqStr(req, "id")
 	text := reqStr(req, "text")
 	if text == "" {
@@ -312,7 +307,7 @@ func (a *Adapter) handleLoopbackSubtodoAdd(ctx context.Context, req mcp.CallTool
 	return okResult(items)
 }
 
-func (a *Adapter) handleLoopbackSubtodoDone(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleLoopbackSubtodoDone(ctx context.Context, req map[string]any) (any, error) {
 	id := reqStr(req, "id")
 	if id == "" {
 		return errResult(ErrCodeArgInvalid, "id is required", "id")
@@ -330,7 +325,7 @@ func (a *Adapter) handleLoopbackSubtodoDone(ctx context.Context, req mcp.CallToo
 // silently widen the worker's read surface beyond the self-task subset
 // the loopback's contract promises. Passing no id (`{}`) is the canonical
 // shape; the worker's id is implicit.
-func (a *Adapter) handleLoopbackTaskGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleLoopbackTaskGet(ctx context.Context, req map[string]any) (any, error) {
 	if requested := reqStr(req, "id"); requested != "" && requested != a.loopbackTaskID {
 		return errResult(ErrCodeArgInvalid, fmt.Sprintf("loopback task_get is pinned to %s; cannot read task %s", a.loopbackTaskID, requested), "id")
 	}
@@ -356,7 +351,7 @@ func (a *Adapter) handleLoopbackTaskGet(ctx context.Context, req mcp.CallToolReq
 // "agent" so dashboards see the right provenance without the worker having
 // to set it correctly (the cross-task tool defaulted to "system" when
 // omitted, which would mislabel worker-emitted checkpoints).
-func (a *Adapter) handleLoopbackCheckpointEmit(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleLoopbackCheckpointEmit(ctx context.Context, req map[string]any) (any, error) {
 	in := service.CheckpointEmitInput{
 		TaskID:            a.loopbackTaskID,
 		Type:              reqStr(req, "type"),
@@ -388,7 +383,7 @@ func (a *Adapter) handleLoopbackCheckpointEmit(ctx context.Context, req mcp.Call
 // would let a worker accidentally close another worker's pending question
 // to the user. ResponderSourceType is forced to "agent" (same rationale as
 // emit's EmitterSourceType — workers always speak as agent).
-func (a *Adapter) handleLoopbackCheckpointRespond(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleLoopbackCheckpointRespond(ctx context.Context, req map[string]any) (any, error) {
 	corr := reqStr(req, "correlation_id")
 	if corr == "" {
 		return errResult(ErrCodeArgInvalid, "correlation_id is required", "correlation_id")
@@ -419,7 +414,7 @@ func (a *Adapter) handleLoopbackCheckpointRespond(ctx context.Context, req mcp.C
 // Returns a "feature disabled" error when no ReminderRegistry was
 // attached to this adapter — the dismiss only makes sense paired with a
 // runtime that tracks injections. Mirrors the nil-broker contract.
-func (a *Adapter) handleLoopbackSteeringDismiss(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleLoopbackSteeringDismiss(ctx context.Context, req map[string]any) (any, error) {
 	if a.reminderRegistry == nil {
 		return errResult(ErrCodeDomain, "steering reminder registry not configured on this MCP host", "")
 	}

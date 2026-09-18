@@ -1,12 +1,9 @@
 package mcpadapter
 
 import (
-	"encoding/json"
 	"errors"
 	"log"
 	"strings"
-
-	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
@@ -72,69 +69,64 @@ type ErrorInfo struct {
 	Details any       `json:"details,omitempty"`
 }
 
-// okResult wraps a handler's payload in `{ok: true, data: <payload>, error: nil}`
-// and emits the JSON as a mcp TextContent. All successful handler paths MUST
-// go through this helper so the envelope shape is consistent.
+// mcpToolError adapts Torque's {ok,data,error} envelope to go-mcp's
+// budget.StructuredError contract (github.com/hollis-labs/go-mcp/budget,
+// added in v0.4.2 for exactly this shape of caller) so a failed call still
+// trips CallToolResult.IsError at the protocol framing level while keeping
+// the full {ok,data,error} envelope -- Torque's own domain-error meaning,
+// which stays app-owned per the go-mcp ADR's scope fence -- as the
+// structured content, instead of adopting go-mcp's own ToolError shape.
+type mcpToolError struct{ resp Response }
+
+// Error implements the error interface.
+func (e mcpToolError) Error() string {
+	if e.resp.Error == nil {
+		return "unknown error"
+	}
+	return e.resp.Error.Message
+}
+
+// ToolErrorContent implements budget.StructuredError.
+func (e mcpToolError) ToolErrorContent() any { return e.resp }
+
+// argError builds the error value a validation/parsing helper returns as its
+// early-return-on-error sentinel, in place of the old *mcp.CallToolResult
+// value. errResult wraps this for the common "return errResult(...)"
+// passthrough shape.
+func argError(code ErrorCode, message, field string) error {
+	return mcpToolError{Response{OK: false, Error: &ErrorInfo{Code: code, Message: message, Field: field}}}
+}
+
+// okResult wraps a handler's payload in `{ok: true, data: <payload>, error: nil}`.
+// All successful handler paths MUST go through this helper so the envelope
+// shape is consistent. go-mcp JSON-marshals the returned value into both
+// CallToolResult.StructuredContent and a mirrored text block itself; this
+// helper does not marshal.
 //
 // Pass `data` as whatever the handler wants as the top-level content of `data`:
 //   - list handler: the full `{items, meta}` literal (a struct or a map).
 //   - singleton get: the record directly.
 //   - scalar op: a minimal map like {"deleted": true, "id": "T-1"}.
-//
-// Marshaling is indented so the wire output is human-readable — matches the
-// pre-Phase-C jsonResult behavior so callers diffing raw JSON don't re-format.
-func okResult(data any) (*mcp.CallToolResult, error) {
-	b, err := json.MarshalIndent(Response{OK: true, Data: data}, "", "  ")
-	if err != nil {
-		// Serialization of a successful response failed — degrade to an
-		// internal error envelope. This path should be unreachable for any
-		// data we actually pass, but we log and return a safe shape rather
-		// than crash the handler chain.
-		log.Printf("mcpadapter: okResult marshal failed: %v", err)
-		return errResult(ErrCodeInternal, "response serialization failed", "")
-	}
-	return mcp.NewToolResultText(string(b)), nil
+func okResult(data any) (any, error) {
+	return Response{OK: true, Data: data}, nil
 }
 
 // errResult emits the dual-surface error result the ticket's sharp-edge
 // section mandates:
 //
-//  1. At the MCP framing level: IsError=true so mcp-go clients that surface
-//     only the `isError` flag / the `NewToolResultError`-shaped content still
-//     see the failure.
-//  2. At the payload level: the content text is the full
-//     {ok:false, data:null, error:{...}} envelope so clients that parse the
-//     text can read the structured taxonomy (code, field, message).
-//
-// We build the CallToolResult manually instead of chaining NewToolResultError
-// + a separate TextContent because mcp-go only supports one surface per
-// convenience helper. One CallToolResult with IsError=true and a JSON text
-// body satisfies both consumers from a single response.
+//  1. At the MCP framing level: IsError=true, via returning a value that
+//     satisfies go-mcp's budget.StructuredError -- go-mcp's adaptHandler
+//     recognizes it and sets CallToolResult.IsError=true.
+//  2. At the payload level: StructuredContent (and its mirrored text) is the
+//     full {ok:false, data:null, error:{...}} envelope so clients that parse
+//     the body can read the structured taxonomy (code, field, message).
 //
 // Internal-error sanitization: callers pass the already-sanitized message.
 // mapServiceError strips any stack-traceable context from `internal` mappings
 // before this function sees it. The full diagnostic context is logged there,
 // not here.
-func errResult(code ErrorCode, message, field string) (*mcp.CallToolResult, error) {
-	env := Response{
-		OK:    false,
-		Error: &ErrorInfo{Code: code, Message: message, Field: field},
-	}
-	b, err := json.MarshalIndent(env, "", "  ")
-	if err != nil {
-		// Fall back to a bare NewToolResultError so we at least surface the
-		// problem at the framing level. This branch is effectively unreachable
-		// (ErrorInfo has no non-marshalable fields) but covers future schema
-		// drift.
-		log.Printf("mcpadapter: errResult marshal failed: %v", err)
-		return mcp.NewToolResultError(message), nil
-	}
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			mcp.TextContent{Type: "text", Text: string(b)},
-		},
-		IsError: true,
-	}, nil
+func errResult(code ErrorCode, message, field string) (any, error) {
+	return nil, argError(code, message, field)
 }
 
 // mapServiceError maps a service/sqlstore error into the (ErrorCode, user-safe
@@ -243,7 +235,15 @@ func mapServiceError(err error) (ErrorCode, string, string) {
 
 // errFromService is a convenience wrapper for handlers that want the common
 // "service call failed, map and surface" pattern in one line.
-func errFromService(err error) (*mcp.CallToolResult, error) {
+// argErrorFromService is errFromService's error-only form, for Shape-B
+// helpers that return (T, error) rather than a handler's (any, error) and
+// need just the error side to propagate.
+func argErrorFromService(err error) error {
+	code, msg, field := mapServiceError(err)
+	return argError(code, msg, field)
+}
+
+func errFromService(err error) (any, error) {
 	code, msg, field := mapServiceError(err)
 	return errResult(code, msg, field)
 }

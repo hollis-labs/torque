@@ -14,7 +14,6 @@ import (
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
-	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // taskSortAllowList is torque_task_list's sort_by allow-list (PRIM-002).
@@ -48,8 +47,8 @@ const (
 //   - UI:   "auto"               → false
 //   - HTTP: "true" / "1"         → true
 //   - HTTP: "false" / "0"        → false
-func parseManualFilter(req mcp.CallToolRequest) (*bool, error) {
-	raw, ok := req.GetArguments()["manual"]
+func parseManualFilter(req map[string]any) (*bool, error) {
+	raw, ok := req["manual"]
 	if !ok || raw == nil {
 		return nil, nil
 	}
@@ -74,8 +73,8 @@ func parseManualFilter(req mcp.CallToolRequest) (*bool, error) {
 	return nil, fmt.Errorf("manual must be manual/auto/both, true/false, or 1/0")
 }
 
-func reqTaskListBool(req mcp.CallToolRequest, key string) (bool, error) {
-	raw, ok := req.GetArguments()[key]
+func reqTaskListBool(req map[string]any, key string) (bool, error) {
+	raw, ok := req[key]
 	if !ok {
 		return false, nil
 	}
@@ -93,8 +92,8 @@ func reqTaskListBool(req mcp.CallToolRequest, key string) (bool, error) {
 	return false, fmt.Errorf("%s must be true/false, 1/0, or yes/no", key)
 }
 
-func reqTaskListString(req mcp.CallToolRequest, key string) (string, error) {
-	raw, ok := req.GetArguments()[key]
+func reqTaskListString(req map[string]any, key string) (string, error) {
+	raw, ok := req[key]
 	if !ok || raw == nil {
 		return "", nil
 	}
@@ -105,11 +104,10 @@ func reqTaskListString(req mcp.CallToolRequest, key string) (string, error) {
 	return v, nil
 }
 
-func validateTaskListStringArgs(req mcp.CallToolRequest, keys ...string) *mcp.CallToolResult {
+func validateTaskListStringArgs(req map[string]any, keys ...string) error {
 	for _, key := range keys {
 		if _, err := reqTaskListString(req, key); err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), key)
-			return res
+			return argError(ErrCodeArgInvalid, err.Error(), key)
 		}
 	}
 	return nil
@@ -131,17 +129,16 @@ func validateTaskListStringArgs(req mcp.CallToolRequest, keys ...string) *mcp.Ca
 // callers keep their existing presence-gated update semantics — including an
 // explicit priority=0, which stays a real value here and is only turned into
 // the default by service.CreateTask.
-func reqPriorityArg(req mcp.CallToolRequest) (int, bool, *mcp.CallToolResult) {
+func reqPriorityArg(req map[string]any) (int, bool, error) {
 	n, present, err := reqTaskListInt(req, "priority")
 	if err != nil {
-		res, _ := errResult(ErrCodeArgInvalid, err.Error(), "priority")
-		return 0, present, res
+		return 0, present, argError(ErrCodeArgInvalid, err.Error(), "priority")
 	}
 	return n, present, nil
 }
 
-func reqTaskListInt(req mcp.CallToolRequest, key string) (int, bool, error) {
-	raw, ok := req.GetArguments()[key]
+func reqTaskListInt(req map[string]any, key string) (int, bool, error) {
+	raw, ok := req[key]
 	if !ok {
 		return 0, false, nil
 	}
@@ -155,16 +152,16 @@ func reqTaskListInt(req mcp.CallToolRequest, key string) (int, bool, error) {
 	return int(n), true, nil
 }
 
-func reqTaskListInt64(req mcp.CallToolRequest, key string) (int64, error) {
-	raw, ok := req.GetArguments()[key]
+func reqTaskListInt64(req map[string]any, key string) (int64, error) {
+	raw, ok := req[key]
 	if !ok {
 		return 0, nil
 	}
 	return exactInt64(raw, key)
 }
 
-func reqTaskListFloat(req mcp.CallToolRequest, key string) (float64, error) {
-	raw, ok := req.GetArguments()[key]
+func reqTaskListFloat(req map[string]any, key string) (float64, error) {
+	raw, ok := req[key]
 	if !ok {
 		return 0, nil
 	}
@@ -199,19 +196,17 @@ func reqTaskListFloat(req mcp.CallToolRequest, key string) (float64, error) {
 	}
 }
 
-func taskListPriorityFilter(req mcp.CallToolRequest) ([]int, *mcp.CallToolResult) {
-	args := req.GetArguments()
+func taskListPriorityFilter(req map[string]any) ([]int, error) {
+	args := req
 	_, hasPriority := args["priority"]
 	_, hasPriorities := args["priorities"]
 	if hasPriority && hasPriorities {
-		res, _ := errResult(ErrCodeArgInvalid, "priority and priorities cannot both be supplied; choose one exact priority filter shape", "priority")
-		return nil, res
+		return nil, argError(ErrCodeArgInvalid, "priority and priorities cannot both be supplied; choose one exact priority filter shape", "priority")
 	}
 	if hasPriority {
 		n, _, err := reqTaskListInt(req, "priority")
 		if err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "priority")
-			return nil, res
+			return nil, argError(ErrCodeArgInvalid, err.Error(), "priority")
 		}
 		return []int{n}, nil
 	}
@@ -220,12 +215,10 @@ func taskListPriorityFilter(req mcp.CallToolRequest) ([]int, *mcp.CallToolResult
 	}
 	priorities, err := exactIntArray(args["priorities"], "priorities")
 	if err != nil {
-		res, _ := errResult(ErrCodeArgInvalid, err.Error(), "priorities")
-		return nil, res
+		return nil, argError(ErrCodeArgInvalid, err.Error(), "priorities")
 	}
 	if len(priorities) == 0 {
-		res, _ := errResult(ErrCodeArgInvalid, "priorities must contain at least one integer", "priorities")
-		return nil, res
+		return nil, argError(ErrCodeArgInvalid, "priorities must contain at least one integer", "priorities")
 	}
 	seen := make(map[int]bool, len(priorities))
 	out := make([]int, 0, len(priorities))
@@ -238,8 +231,8 @@ func taskListPriorityFilter(req mcp.CallToolRequest) ([]int, *mcp.CallToolResult
 	return out, nil
 }
 
-func reqTaskListStrictStringSlice(req mcp.CallToolRequest, key string) ([]string, error) {
-	args := req.GetArguments()
+func reqTaskListStrictStringSlice(req map[string]any, key string) ([]string, error) {
+	args := req
 	raw, ok := args[key]
 	if !ok || raw == nil {
 		return nil, nil
@@ -286,8 +279,8 @@ func reqTaskListStrictStringSlice(req mcp.CallToolRequest, key string) ([]string
 	}
 }
 
-func reqTaskListOperatorStringSlice(req mcp.CallToolRequest, key string) ([]string, error) {
-	raw, ok := req.GetArguments()[key]
+func reqTaskListOperatorStringSlice(req map[string]any, key string) ([]string, error) {
+	raw, ok := req[key]
 	if !ok {
 		return nil, nil
 	}
@@ -376,13 +369,12 @@ func isFinite(v float64) bool {
 	return !math.IsNaN(v) && !math.IsInf(v, 0)
 }
 
-func rejectMalformedTaskListTags(req mcp.CallToolRequest) *mcp.CallToolResult {
+func rejectMalformedTaskListTags(req map[string]any) error {
 	if !reqHasArg(req, "tags") {
 		return nil
 	}
 	if _, err := reqTaskListStrictStringSlice(req, "tags"); err != nil {
-		res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
-		return res
+		return argError(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
 	}
 	return nil
 }
@@ -406,56 +398,56 @@ func parseTaskDateFilter(raw string) (string, error) {
 }
 
 func (a *Adapter) registerTaskTools() {
-	a.addTool(mcp.NewTool("torque_task_create",
-		mcp.WithDescription(`Create a new task in Torque; returns the full TaskRecord with its assigned ID.
+	a.addTool(newTool("torque_task_create",
+		withDescription(`Create a new task in Torque; returns the full TaskRecord with its assigned ID.
 Use for ad-hoc work items — prefer torque_task_create_from_template when a matching template exists, and torque_plan_create for multi-phase work. Safety override forces manual=true on every create (CW-20260417-0133), even when callers pass manual=false or omit the field: the task will NOT dispatch until you promote it with torque_task_update {"id":...,"manual":false}.
 Response shape: data = {<TaskRecord fields>, Tags[], dispatch_notice} — singleton, PascalCase keys. dispatch_notice spells out the manual state and the exact promotion call.
 Example: {"title":"Fix auth bug","description":"Login returns 500","priority":"2","tags":"[\"backend\"]"}`),
-		mcp.WithString("title", mcp.Required(), mcp.Description("Task title")),
-		mcp.WithString("description", mcp.Description("Task description")),
-		mcp.WithString("priority", mcp.Description("Priority 1-5 (integer, default 2). A non-integer value returns error.code=arg_invalid; it is not coerced to the default.")),
-		mcp.WithString("tags", mcp.Description("JSON array of tag strings")),
-		mcp.WithString("executor", mcp.Description("Executor type (default cli)")),
-		mcp.WithString("launch_profile", mcp.Description("Torque launch_profile id (preferred). Drives the stable launch family at dispatch.")),
-		mcp.WithString("agent_profile", mcp.Description("Legacy agent_profile name. Honored when launch_profile is empty.")),
-		mcp.WithString("working_dir", mcp.Description("Working directory. Auto-inherits from parent_id when omitted (CW-20260508-0004); pass explicitly only to override the parent's value.")),
-		mcp.WithString("system_prompt", mcp.Description("System prompt override")),
-		mcp.WithString("agent_file", mcp.Description("Absolute or working_dir-relative path to a YAML agent spec; loaded at dispatch")),
-		mcp.WithString("on_done", mcp.Description("Hook on done")),
-		mcp.WithString("on_fail", mcp.Description("Hook on fail")),
-		mcp.WithString("on_done_merge", mcp.Description("Merge hook on done")),
-		mcp.WithString("depends_on", mcp.Description("JSON array of dependency task IDs")),
-		mcp.WithBoolean("manual", mcp.Description("Requested manual flag on create. Tool-surface safety override currently coerces every create to manual=true (CW-20260417-0133); use torque_task_update manual=false later to queue reviewed work.")),
-		mcp.WithString("sprint_id", mcp.Description("Sprint ID to associate this task with (requires features.sprints)")),
-		mcp.WithString("project_id", mcp.Description("Project ID to associate this task with (requires features.projects)")),
-		mcp.WithString("epic_id", mcp.Description("Epic ID to associate this task with (requires features.epics)")),
-		mcp.WithString("kind", mcp.Description("agent|external|wait|decision|parent|plan|internal|issue (default agent). kind=decision carries its own checkpoint_mode default of blocking — see checkpoint_mode.")),
-		mcp.WithString("source_type", mcp.Description("agent|user|api|system|webhook|import (default user)")),
-		mcp.WithString("source_ref", mcp.Description("Originating slug/id (free-form)")),
-		mcp.WithString("trust", mcp.Description("trusted|normal|untrusted (defaulted by source_type)")),
-		mcp.WithString("checkpoint_mode", mcp.Description("none|blocking|non_blocking (default none, EXCEPT kind=decision, which defaults to blocking and accepts nothing else). Omit it on a decision task and blocking is applied; passing none or non_blocking there is rejected.")),
-		mcp.WithString("on_checkpoint_response", mcp.Description("resume|review|custom (default resume)")),
-		mcp.WithString("metadata", mcp.Description("JSON object: freeform metadata, including metadata.wait for kind=wait")),
-		mcp.WithString("parent_id", mcp.Description("Optional parent task ID (migration 013). Empty = top of lineage.")),
-		mcp.WithString("on_review", mcp.Description("Hook on review (pause|notify|auto-approve; default pause)")),
-		mcp.WithString("blocked_reason", mcp.Description("Blocked reason (also useful as pure tracking metadata, e.g. \"waiting on legal\")")),
-		mcp.WithString("tools", mcp.Description("JSON array of tool names")),
-		mcp.WithString("files", mcp.Description("JSON array of file paths")),
-		mcp.WithString("permissions", mcp.Description("JSON object of permissions")),
-		mcp.WithString("environment", mcp.Description("JSON object of env vars")),
-		mcp.WithString("cost_budget", mcp.Description("Cost budget (numeric; -1 unlimited, 0 none, or positive)")),
-		mcp.WithString("max_retries", mcp.Description("Max retries (non-negative integer, default 3)")),
-		mcp.WithString("max_duration_ms", mcp.Description("Max duration in ms (integer; -1 unlimited or positive)")),
-		mcp.WithString("token_budget", mcp.Description("Token budget (integer; -1 unlimited or positive)")),
-		mcp.WithString("escalation_chain", mcp.Description("JSON array of escalation-target names")),
-		mcp.WithString("quality_gates", mcp.Description("JSON array of gate names")),
-		mcp.WithString("deliverables", mcp.Description("JSON array of Deliverable objects: {type, required, description?}")),
-		mcp.WithString("deliverable_preset", mcp.Description("Deliverable preset name")),
-		mcp.WithString("subtodos", mcp.Description(`JSON array of initial checklist items to seed atomically with the create — {id?, text, required?} per item; id auto-generates when omitted (same as torque_task_subtodo_add). Providing this (including "[]") disables description auto-extraction.`)),
+		withString("title", required(), desc("Task title")),
+		withString("description", desc("Task description")),
+		withString("priority", desc("Priority 1-5 (integer, default 2). A non-integer value returns error.code=arg_invalid; it is not coerced to the default.")),
+		withString("tags", desc("JSON array of tag strings")),
+		withString("executor", desc("Executor type (default cli)")),
+		withString("launch_profile", desc("Torque launch_profile id (preferred). Drives the stable launch family at dispatch.")),
+		withString("agent_profile", desc("Legacy agent_profile name. Honored when launch_profile is empty.")),
+		withString("working_dir", desc("Working directory. Auto-inherits from parent_id when omitted (CW-20260508-0004); pass explicitly only to override the parent's value.")),
+		withString("system_prompt", desc("System prompt override")),
+		withString("agent_file", desc("Absolute or working_dir-relative path to a YAML agent spec; loaded at dispatch")),
+		withString("on_done", desc("Hook on done")),
+		withString("on_fail", desc("Hook on fail")),
+		withString("on_done_merge", desc("Merge hook on done")),
+		withString("depends_on", desc("JSON array of dependency task IDs")),
+		withBoolean("manual", desc("Requested manual flag on create. Tool-surface safety override currently coerces every create to manual=true (CW-20260417-0133); use torque_task_update manual=false later to queue reviewed work.")),
+		withString("sprint_id", desc("Sprint ID to associate this task with (requires features.sprints)")),
+		withString("project_id", desc("Project ID to associate this task with (requires features.projects)")),
+		withString("epic_id", desc("Epic ID to associate this task with (requires features.epics)")),
+		withString("kind", desc("agent|external|wait|decision|parent|plan|internal|issue (default agent). kind=decision carries its own checkpoint_mode default of blocking — see checkpoint_mode.")),
+		withString("source_type", desc("agent|user|api|system|webhook|import (default user)")),
+		withString("source_ref", desc("Originating slug/id (free-form)")),
+		withString("trust", desc("trusted|normal|untrusted (defaulted by source_type)")),
+		withString("checkpoint_mode", desc("none|blocking|non_blocking (default none, EXCEPT kind=decision, which defaults to blocking and accepts nothing else). Omit it on a decision task and blocking is applied; passing none or non_blocking there is rejected.")),
+		withString("on_checkpoint_response", desc("resume|review|custom (default resume)")),
+		withString("metadata", desc("JSON object: freeform metadata, including metadata.wait for kind=wait")),
+		withString("parent_id", desc("Optional parent task ID (migration 013). Empty = top of lineage.")),
+		withString("on_review", desc("Hook on review (pause|notify|auto-approve; default pause)")),
+		withString("blocked_reason", desc("Blocked reason (also useful as pure tracking metadata, e.g. \"waiting on legal\")")),
+		withString("tools", desc("JSON array of tool names")),
+		withString("files", desc("JSON array of file paths")),
+		withString("permissions", desc("JSON object of permissions")),
+		withString("environment", desc("JSON object of env vars")),
+		withString("cost_budget", desc("Cost budget (numeric; -1 unlimited, 0 none, or positive)")),
+		withString("max_retries", desc("Max retries (non-negative integer, default 3)")),
+		withString("max_duration_ms", desc("Max duration in ms (integer; -1 unlimited or positive)")),
+		withString("token_budget", desc("Token budget (integer; -1 unlimited or positive)")),
+		withString("escalation_chain", desc("JSON array of escalation-target names")),
+		withString("quality_gates", desc("JSON array of gate names")),
+		withString("deliverables", desc("JSON array of Deliverable objects: {type, required, description?}")),
+		withString("deliverable_preset", desc("Deliverable preset name")),
+		withString("subtodos", desc(`JSON array of initial checklist items to seed atomically with the create — {id?, text, required?} per item; id auto-generates when omitted (same as torque_task_subtodo_add). Providing this (including "[]") disables description auto-extraction.`)),
 	), a.handleTaskCreate)
 
-	a.addTool(mcp.NewTool("torque_task_get",
-		mcp.WithDescription(fmt.Sprintf(`Fetch the full TaskRecord for one task ID, including all facet/budget/hook columns, linked tags, and BY DEFAULT the %d most recent comments.
+	a.addTool(newTool("torque_task_get",
+		withDescription(fmt.Sprintf(`Fetch the full TaskRecord for one task ID, including all facet/budget/hook columns, linked tags, and BY DEFAULT the %d most recent comments.
 Comments are included because a task's real scope often lives in corrections posted after it was written — reading only the description is how a session executes a stale framing (CW-20260910-0057). Pass comments="false" to opt out, or comments_limit to widen the window (max %d).
 The window is the NEWEST comments_limit comments, presented oldest → newest so successive corrections read forward. CommentsMeta is ALWAYS present when comments were requested and states {returned, total, omitted, truncated} — including omitted=0 when nothing was cut, so completeness never has to be inferred from array length. Any omission names torque_comment_list in its hint.
 Use when you already have the ID; prefer torque_task_list when filtering a cohort, and torque_task_subtodo_list for checklist-only views.
@@ -465,14 +457,14 @@ Example: {"id":"T-123"}
 Example, record only: {"id":"T-123","comments":"false"}
 Example, typed: {"id":"T-123","format":"typed"}
 Example, longer thread: {"id":"T-123","comments_limit":"50"}`, defaultTaskGetCommentsLimit, maxTaskGetCommentsLimit)),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
-		mcp.WithString("format", mcp.Description("Response format: legacy (default) or typed. typed returns snake_case/native JSON values without sql.Null wrappers or JSON-encoded blob strings.")),
-		mcp.WithString("comments", mcp.Description("Include the comment tail (string 'true'/'false', default 'true'). Set 'false' for the bare record — Comments and CommentsMeta are then omitted from the response entirely.")),
-		mcp.WithString("comments_limit", mcp.Description(fmt.Sprintf("How many of the newest comments to include (integer, default %d, max %d). Ignored when comments='false'.", defaultTaskGetCommentsLimit, maxTaskGetCommentsLimit))),
+		withString("id", required(), desc("Task ID")),
+		withString("format", desc("Response format: legacy (default) or typed. typed returns snake_case/native JSON values without sql.Null wrappers or JSON-encoded blob strings.")),
+		withString("comments", desc("Include the comment tail (string 'true'/'false', default 'true'). Set 'false' for the bare record — Comments and CommentsMeta are then omitted from the response entirely.")),
+		withString("comments_limit", desc(fmt.Sprintf("How many of the newest comments to include (integer, default %d, max %d). Ignored when comments='false'.", defaultTaskGetCommentsLimit, maxTaskGetCommentsLimit))),
 	), a.handleTaskGet)
 
-	a.addTool(mcp.NewTool("torque_task_list",
-		mcp.WithDescription(`List tasks with optional status/priority/facet filters; ordered priority ASC (tiebreak id ASC) by default. Pass sort_by (priority|status|updated_at|created_at) and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid.
+	a.addTool(newTool("torque_task_list",
+		withDescription(`List tasks with optional status/priority/facet filters; ordered priority ASC (tiebreak id ASC) by default. Pass sort_by (priority|status|updated_at|created_at) and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid.
 Use for browsing or filtered cohorts; pass search directly for free-text queries (no separate search tool — matches Issue's already-merged shape) and torque_task_get when you already know the ID. Default returns ~150B briefTask records (lowercase JSON) so large fan-outs fit under the 100KB cap; pass verbose="true" for full TaskRecord columns. Pass format="typed" for the additive snake_case/native JSON projection; typed+verbose returns full typed records, typed without verbose returns a richer brief record with nullable scope refs.
 Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under — pass a different sort_by/sort_dir without dropping cursor and you get error.code=arg_invalid.
 statuses[] OR-matches against status (takes precedence over status when both are set). created_after/created_before/updated_after/updated_before are RFC3339 timestamps, inclusive bounds. *_gte/*_lte budget/duration filters compare directly against the stored column — a task that never set that budget (NULL) never matches either bound, so unset-budget tasks are naturally excluded rather than needing a separate "has budget" filter.
@@ -480,165 +472,165 @@ Response shape: data = {items: [<briefTask or TaskRecord or typed task>...], met
 Example: {"status":"doing","limit":"50","sort_by":"updated_at","sort_dir":"desc"}
 Example, typed projection: {"format":"typed","status":"doing","limit":"50"}
 Example, over-budget cohort: {"cost_budget_gte":"50","updated_after":"2026-08-01T00:00:00Z"}`),
-		mcp.WithString("status", mcp.Description("Filter by status")),
-		mcp.WithString("statuses", mcp.Description("JSON array of statuses — OR-match; takes precedence over status when both are set")),
-		mcp.WithString("priority", mcp.Description("Filter by one exact integer priority; may be 0")),
-		mcp.WithString("priorities", mcp.Description("JSON array of exact integer priorities; OR-matches values, rejects empty arrays; do not pass with priority")),
-		mcp.WithString("priority_gte", mcp.Description("Filter: priority >= this exact integer. Combines by AND with priority/priorities.")),
-		mcp.WithString("priority_lte", mcp.Description("Filter: priority <= this exact integer. Combines by AND with priority/priorities.")),
-		mcp.WithString("executor", mcp.Description("Filter by executor")),
-		mcp.WithString("kind", mcp.Description("Filter by kind (agent|external|wait|decision|parent|plan|internal|issue)")),
-		mcp.WithString("source_type", mcp.Description("Filter by source_type")),
-		mcp.WithString("source_ref", mcp.Description("Filter by source_ref")),
-		mcp.WithString("trust", mcp.Description("Filter by trust (trusted|normal|untrusted)")),
-		mcp.WithString("checkpoint_mode", mcp.Description("Filter by checkpoint_mode")),
-		mcp.WithString("parent_id", mcp.Description("Filter by parent_id; pass 'null' to return root tasks")),
-		mcp.WithString("project_id", mcp.Description("Filter by project ID (requires features.projects)")),
-		mcp.WithString("sprint_id", mcp.Description("Filter by sprint ID (requires features.sprints)")),
-		mcp.WithString("epic_id", mcp.Description("Filter by epic ID (requires features.epics)")),
-		mcp.WithString("tags", mcp.Description("JSON array of case-sensitive tag slugs; task must have all distinct tags. Whitespace is trimmed; blank and duplicate slugs are ignored. An empty normalized list applies no tag filter.")),
-		mcp.WithString("tags_any", mcp.Description("JSON/native string array of case-sensitive tag slugs; task must have at least one. Blank/duplicate slugs are ignored; empty normalized list applies no filter.")),
-		mcp.WithString("tags_none", mcp.Description("JSON/native string array of case-sensitive tag slugs; task must have none. Blank/duplicate slugs are ignored; empty normalized list applies no filter.")),
-		mcp.WithString("missing", mcp.Description("JSON/native string array of missing fields. Supported: project_id, sprint_id, epic_id, parent_id, source_ref, collection_id, cost_budget, token_budget, max_duration_ms, tags. Empty list is no-op; blank/unknown fields reject.")),
-		mcp.WithString("present", mcp.Description("JSON/native string array of present fields. Same supported field set as missing. SQL NULL is missing; empty string and numeric 0 are present; tags means at least one task_tags link.")),
-		mcp.WithString("manual", mcp.Description("Filter by manual flag: 'manual'/'true'/'1' → manual only; 'auto'/'false'/'0' → scheduled only; 'both' or omit → no filter")),
-		mcp.WithString("include_internal", mcp.Description("Include kind=internal automation tasks (Reviewer end-agents etc.). Default false: internal rows are suppressed unless kind='internal' is requested explicitly. Accepts 'true'/'1'/'yes'.")),
-		mcp.WithString("search", mcp.Description("Substring match on title + description (case-insensitive)")),
-		mcp.WithString("agent_profile", mcp.Description("Filter by agent_profile (exact match)")),
-		mcp.WithString("launch_profile", mcp.Description("Filter by launch_profile (exact match)")),
-		mcp.WithString("created_after", mcp.Description("Filter: created_at >= this RFC3339 timestamp")),
-		mcp.WithString("created_before", mcp.Description("Filter: created_at <= this RFC3339 timestamp")),
-		mcp.WithString("updated_after", mcp.Description("Filter: updated_at >= this RFC3339 timestamp")),
-		mcp.WithString("updated_before", mcp.Description("Filter: updated_at <= this RFC3339 timestamp")),
-		mcp.WithString("cost_budget_gte", mcp.Description("Filter: cost_budget >= this value (numeric; NULL cost_budget never matches)")),
-		mcp.WithString("cost_budget_lte", mcp.Description("Filter: cost_budget <= this value (numeric; NULL cost_budget never matches)")),
-		mcp.WithString("token_budget_gte", mcp.Description("Filter: token_budget >= this value (integer; NULL token_budget never matches)")),
-		mcp.WithString("token_budget_lte", mcp.Description("Filter: token_budget <= this value (integer; NULL token_budget never matches)")),
-		mcp.WithString("max_duration_ms_gte", mcp.Description("Filter: max_duration_ms >= this value (integer; NULL max_duration_ms never matches)")),
-		mcp.WithString("max_duration_ms_lte", mcp.Description("Filter: max_duration_ms <= this value (integer; NULL max_duration_ms never matches)")),
-		mcp.WithString("max_retries_gte", mcp.Description("Filter: max_retries >= this value (integer)")),
-		mcp.WithString("max_retries_lte", mcp.Description("Filter: max_retries <= this value (integer)")),
-		mcp.WithString("limit", mcp.Description("Max results (integer, default 50, max 200)")),
-		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
-		mcp.WithString("format", mcp.Description("Response format: legacy (default) or typed. typed returns snake_case/native JSON values; with verbose=true it returns full typed records.")),
-		mcp.WithString("include_total", mcp.Description("When true, include meta.total for the full matching cohort, excluding cursor/offset/limit. Default false keeps list calls cheap.")),
-		mcp.WithString("sort_by", mcp.Description("Sort field: priority|status|updated_at|created_at (default priority)")),
-		mcp.WithString("sort_dir", mcp.Description("Sort direction: asc|desc (default asc)")),
-		mcp.WithString("cursor", mcp.Description("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
+		withString("status", desc("Filter by status")),
+		withString("statuses", desc("JSON array of statuses — OR-match; takes precedence over status when both are set")),
+		withString("priority", desc("Filter by one exact integer priority; may be 0")),
+		withString("priorities", desc("JSON array of exact integer priorities; OR-matches values, rejects empty arrays; do not pass with priority")),
+		withString("priority_gte", desc("Filter: priority >= this exact integer. Combines by AND with priority/priorities.")),
+		withString("priority_lte", desc("Filter: priority <= this exact integer. Combines by AND with priority/priorities.")),
+		withString("executor", desc("Filter by executor")),
+		withString("kind", desc("Filter by kind (agent|external|wait|decision|parent|plan|internal|issue)")),
+		withString("source_type", desc("Filter by source_type")),
+		withString("source_ref", desc("Filter by source_ref")),
+		withString("trust", desc("Filter by trust (trusted|normal|untrusted)")),
+		withString("checkpoint_mode", desc("Filter by checkpoint_mode")),
+		withString("parent_id", desc("Filter by parent_id; pass 'null' to return root tasks")),
+		withString("project_id", desc("Filter by project ID (requires features.projects)")),
+		withString("sprint_id", desc("Filter by sprint ID (requires features.sprints)")),
+		withString("epic_id", desc("Filter by epic ID (requires features.epics)")),
+		withString("tags", desc("JSON array of case-sensitive tag slugs; task must have all distinct tags. Whitespace is trimmed; blank and duplicate slugs are ignored. An empty normalized list applies no tag filter.")),
+		withString("tags_any", desc("JSON/native string array of case-sensitive tag slugs; task must have at least one. Blank/duplicate slugs are ignored; empty normalized list applies no filter.")),
+		withString("tags_none", desc("JSON/native string array of case-sensitive tag slugs; task must have none. Blank/duplicate slugs are ignored; empty normalized list applies no filter.")),
+		withString("missing", desc("JSON/native string array of missing fields. Supported: project_id, sprint_id, epic_id, parent_id, source_ref, collection_id, cost_budget, token_budget, max_duration_ms, tags. Empty list is no-op; blank/unknown fields reject.")),
+		withString("present", desc("JSON/native string array of present fields. Same supported field set as missing. SQL NULL is missing; empty string and numeric 0 are present; tags means at least one task_tags link.")),
+		withString("manual", desc("Filter by manual flag: 'manual'/'true'/'1' → manual only; 'auto'/'false'/'0' → scheduled only; 'both' or omit → no filter")),
+		withString("include_internal", desc("Include kind=internal automation tasks (Reviewer end-agents etc.). Default false: internal rows are suppressed unless kind='internal' is requested explicitly. Accepts 'true'/'1'/'yes'.")),
+		withString("search", desc("Substring match on title + description (case-insensitive)")),
+		withString("agent_profile", desc("Filter by agent_profile (exact match)")),
+		withString("launch_profile", desc("Filter by launch_profile (exact match)")),
+		withString("created_after", desc("Filter: created_at >= this RFC3339 timestamp")),
+		withString("created_before", desc("Filter: created_at <= this RFC3339 timestamp")),
+		withString("updated_after", desc("Filter: updated_at >= this RFC3339 timestamp")),
+		withString("updated_before", desc("Filter: updated_at <= this RFC3339 timestamp")),
+		withString("cost_budget_gte", desc("Filter: cost_budget >= this value (numeric; NULL cost_budget never matches)")),
+		withString("cost_budget_lte", desc("Filter: cost_budget <= this value (numeric; NULL cost_budget never matches)")),
+		withString("token_budget_gte", desc("Filter: token_budget >= this value (integer; NULL token_budget never matches)")),
+		withString("token_budget_lte", desc("Filter: token_budget <= this value (integer; NULL token_budget never matches)")),
+		withString("max_duration_ms_gte", desc("Filter: max_duration_ms >= this value (integer; NULL max_duration_ms never matches)")),
+		withString("max_duration_ms_lte", desc("Filter: max_duration_ms <= this value (integer; NULL max_duration_ms never matches)")),
+		withString("max_retries_gte", desc("Filter: max_retries >= this value (integer)")),
+		withString("max_retries_lte", desc("Filter: max_retries <= this value (integer)")),
+		withString("limit", desc("Max results (integer, default 50, max 200)")),
+		withString("verbose", desc("Return full records instead of brief (string 'true'/'false', default false)")),
+		withString("format", desc("Response format: legacy (default) or typed. typed returns snake_case/native JSON values; with verbose=true it returns full typed records.")),
+		withString("include_total", desc("When true, include meta.total for the full matching cohort, excluding cursor/offset/limit. Default false keeps list calls cheap.")),
+		withString("sort_by", desc("Sort field: priority|status|updated_at|created_at (default priority)")),
+		withString("sort_dir", desc("Sort direction: asc|desc (default asc)")),
+		withString("cursor", desc("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
 	), a.handleTaskList)
 
-	a.addTool(mcp.NewTool("torque_task_facets",
-		mcp.WithDescription(`Return bounded value/count buckets for supported task dimensions over the same filtered cohort as torque_task_list, without fetching task records or counting a returned page.
+	a.addTool(newTool("torque_task_facets",
+		withDescription(`Return bounded value/count buckets for supported task dimensions over the same filtered cohort as torque_task_list, without fetching task records or counting a returned page.
 Example: {"project_id":"PRJ-1","sprint_id":"SP-1","manual":"auto","dimensions":["status","priority","tags"]}. Monitor example: {"status":"doing","include_internal":"true","agent_profile":"codex-implementer","dimensions":["executor","launch_profile","tags"]}.
 dimensions may be a native string array or JSON array string. Omit it for all supported dimensions: status, priority, manual, kind, executor, agent_profile, launch_profile, project_id, sprint_id, epic_id, parent_id, tags. Duplicate dimensions/tags are normalized deterministically and do not inflate counts.
 All active filters apply to every requested facet, including the facet's own dimension. Tags count each matching task once per distinct tag; untagged matching tasks appear as a null bucket. Null buckets are value:null and are distinct from "" and "null". Buckets are ordered count desc, then among tied counts non-null values before null, then typed value asc. bucket_limit defaults to 50 and caps at 200. Row paging/sort inputs (limit, offset, cursor, sort_by, sort_dir) are rejected because facets always count the whole matching cohort.
 Response shape: data = {matching_count, bucket_limit, dimensions, facets:[{dimension,total_distinct,returned,truncated,buckets:[{value,count}]}]}.`),
-		mcp.WithString("dimensions", mcp.Description("JSON array or native array of dimensions. Omit for all supported dimensions.")),
-		mcp.WithString("bucket_limit", mcp.Description("Max buckets per dimension (integer, default 50, max 200).")),
-		mcp.WithString("status", mcp.Description("Filter by status")),
-		mcp.WithString("statuses", mcp.Description("JSON array of statuses — OR-match; takes precedence over status when both are set")),
-		mcp.WithString("priority", mcp.Description("Filter by one exact integer priority; may be 0")),
-		mcp.WithString("priorities", mcp.Description("JSON array of exact integer priorities; OR-matches values, rejects empty arrays; do not pass with priority")),
-		mcp.WithString("priority_gte", mcp.Description("Filter: priority >= this exact integer. Combines by AND with priority/priorities.")),
-		mcp.WithString("priority_lte", mcp.Description("Filter: priority <= this exact integer. Combines by AND with priority/priorities.")),
-		mcp.WithString("executor", mcp.Description("Filter by executor")),
-		mcp.WithString("kind", mcp.Description("Filter by kind")),
-		mcp.WithString("source_type", mcp.Description("Filter by source_type")),
-		mcp.WithString("source_ref", mcp.Description("Filter by source_ref")),
-		mcp.WithString("trust", mcp.Description("Filter by trust")),
-		mcp.WithString("checkpoint_mode", mcp.Description("Filter by checkpoint_mode")),
-		mcp.WithString("parent_id", mcp.Description("Filter by parent_id; pass 'null' to return root tasks")),
-		mcp.WithString("project_id", mcp.Description("Filter by project ID")),
-		mcp.WithString("sprint_id", mcp.Description("Filter by sprint ID")),
-		mcp.WithString("epic_id", mcp.Description("Filter by epic ID")),
-		mcp.WithString("tags", mcp.Description("JSON array of case-sensitive tag slugs; task must have all distinct tags.")),
-		mcp.WithString("tags_any", mcp.Description("JSON/native string array of tag slugs; task must have at least one.")),
-		mcp.WithString("tags_none", mcp.Description("JSON/native string array of tag slugs; task must have none.")),
-		mcp.WithString("missing", mcp.Description("JSON/native string array of missing fields. Supported: "+strings.Join(service.TaskPresenceFields, ", ")+". SQL NULL is missing; tags means no task-tag links. [] is no-op; null/blank/unknown fields reject.")),
-		mcp.WithString("present", mcp.Description("JSON/native string array of present fields. Supported: "+strings.Join(service.TaskPresenceFields, ", ")+". Empty string and numeric 0 are present; tags means at least one link. [] is no-op; null/blank/unknown fields reject.")),
-		mcp.WithString("manual", mcp.Description("Filter by manual flag: 'manual'/'true'/'1', 'auto'/'false'/'0', or 'both'/omit")),
-		mcp.WithString("include_internal", mcp.Description("Include kind=internal automation tasks. Default false unless kind='internal' is requested.")),
-		mcp.WithString("search", mcp.Description("Substring match on title + description (case-insensitive)")),
-		mcp.WithString("agent_profile", mcp.Description("Filter by agent_profile")),
-		mcp.WithString("launch_profile", mcp.Description("Filter by launch_profile")),
-		mcp.WithString("created_after", mcp.Description("Filter: created_at >= this RFC3339 timestamp")),
-		mcp.WithString("created_before", mcp.Description("Filter: created_at <= this RFC3339 timestamp")),
-		mcp.WithString("updated_after", mcp.Description("Filter: updated_at >= this RFC3339 timestamp")),
-		mcp.WithString("updated_before", mcp.Description("Filter: updated_at <= this RFC3339 timestamp")),
-		mcp.WithString("cost_budget_gte", mcp.Description("Filter: cost_budget >= this value")),
-		mcp.WithString("cost_budget_lte", mcp.Description("Filter: cost_budget <= this value")),
-		mcp.WithString("token_budget_gte", mcp.Description("Filter: token_budget >= this integer")),
-		mcp.WithString("token_budget_lte", mcp.Description("Filter: token_budget <= this integer")),
-		mcp.WithString("max_duration_ms_gte", mcp.Description("Filter: max_duration_ms >= this integer")),
-		mcp.WithString("max_duration_ms_lte", mcp.Description("Filter: max_duration_ms <= this integer")),
-		mcp.WithString("max_retries_gte", mcp.Description("Filter: max_retries >= this integer")),
-		mcp.WithString("max_retries_lte", mcp.Description("Filter: max_retries <= this integer")),
-		mcp.WithString("limit", mcp.Description("Rejected on facets; use bucket_limit instead.")),
-		mcp.WithString("offset", mcp.Description("Rejected on facets; facets count the whole cohort.")),
-		mcp.WithString("sort_by", mcp.Description("Rejected on facets; buckets use fixed ordering.")),
-		mcp.WithString("sort_dir", mcp.Description("Rejected on facets; buckets use fixed ordering.")),
-		mcp.WithString("cursor", mcp.Description("Rejected on facets; facets count the whole cohort.")),
+		withString("dimensions", desc("JSON array or native array of dimensions. Omit for all supported dimensions.")),
+		withString("bucket_limit", desc("Max buckets per dimension (integer, default 50, max 200).")),
+		withString("status", desc("Filter by status")),
+		withString("statuses", desc("JSON array of statuses — OR-match; takes precedence over status when both are set")),
+		withString("priority", desc("Filter by one exact integer priority; may be 0")),
+		withString("priorities", desc("JSON array of exact integer priorities; OR-matches values, rejects empty arrays; do not pass with priority")),
+		withString("priority_gte", desc("Filter: priority >= this exact integer. Combines by AND with priority/priorities.")),
+		withString("priority_lte", desc("Filter: priority <= this exact integer. Combines by AND with priority/priorities.")),
+		withString("executor", desc("Filter by executor")),
+		withString("kind", desc("Filter by kind")),
+		withString("source_type", desc("Filter by source_type")),
+		withString("source_ref", desc("Filter by source_ref")),
+		withString("trust", desc("Filter by trust")),
+		withString("checkpoint_mode", desc("Filter by checkpoint_mode")),
+		withString("parent_id", desc("Filter by parent_id; pass 'null' to return root tasks")),
+		withString("project_id", desc("Filter by project ID")),
+		withString("sprint_id", desc("Filter by sprint ID")),
+		withString("epic_id", desc("Filter by epic ID")),
+		withString("tags", desc("JSON array of case-sensitive tag slugs; task must have all distinct tags.")),
+		withString("tags_any", desc("JSON/native string array of tag slugs; task must have at least one.")),
+		withString("tags_none", desc("JSON/native string array of tag slugs; task must have none.")),
+		withString("missing", desc("JSON/native string array of missing fields. Supported: "+strings.Join(service.TaskPresenceFields, ", ")+". SQL NULL is missing; tags means no task-tag links. [] is no-op; null/blank/unknown fields reject.")),
+		withString("present", desc("JSON/native string array of present fields. Supported: "+strings.Join(service.TaskPresenceFields, ", ")+". Empty string and numeric 0 are present; tags means at least one link. [] is no-op; null/blank/unknown fields reject.")),
+		withString("manual", desc("Filter by manual flag: 'manual'/'true'/'1', 'auto'/'false'/'0', or 'both'/omit")),
+		withString("include_internal", desc("Include kind=internal automation tasks. Default false unless kind='internal' is requested.")),
+		withString("search", desc("Substring match on title + description (case-insensitive)")),
+		withString("agent_profile", desc("Filter by agent_profile")),
+		withString("launch_profile", desc("Filter by launch_profile")),
+		withString("created_after", desc("Filter: created_at >= this RFC3339 timestamp")),
+		withString("created_before", desc("Filter: created_at <= this RFC3339 timestamp")),
+		withString("updated_after", desc("Filter: updated_at >= this RFC3339 timestamp")),
+		withString("updated_before", desc("Filter: updated_at <= this RFC3339 timestamp")),
+		withString("cost_budget_gte", desc("Filter: cost_budget >= this value")),
+		withString("cost_budget_lte", desc("Filter: cost_budget <= this value")),
+		withString("token_budget_gte", desc("Filter: token_budget >= this integer")),
+		withString("token_budget_lte", desc("Filter: token_budget <= this integer")),
+		withString("max_duration_ms_gte", desc("Filter: max_duration_ms >= this integer")),
+		withString("max_duration_ms_lte", desc("Filter: max_duration_ms <= this integer")),
+		withString("max_retries_gte", desc("Filter: max_retries >= this integer")),
+		withString("max_retries_lte", desc("Filter: max_retries <= this integer")),
+		withString("limit", desc("Rejected on facets; use bucket_limit instead.")),
+		withString("offset", desc("Rejected on facets; facets count the whole cohort.")),
+		withString("sort_by", desc("Rejected on facets; buckets use fixed ordering.")),
+		withString("sort_dir", desc("Rejected on facets; buckets use fixed ordering.")),
+		withString("cursor", desc("Rejected on facets; facets count the whole cohort.")),
 	), a.handleTaskFacets)
 
-	a.addTool(mcp.NewTool("torque_task_update",
-		mcp.WithDescription(`Partial update of a task's fields; only provided keys change (empty string clears most nullable scalars). Returns the updated TaskRecord.
+	a.addTool(newTool("torque_task_update",
+		withDescription(`Partial update of a task's fields; only provided keys change (empty string clears most nullable scalars). Returns the updated TaskRecord.
 Use for field edits. Passing status here works — it is routed through the same status change torque_task_transition performs, so hooks and the terminal guard still apply — but torque_task_transition is preferred for lifecycle moves because it can post an explanatory comment in the same transaction, and torque_task_bulk_transition for multi-id status changes. Numeric sentinel "-1" = unlimited for budget fields.
 Response shape: data = {<TaskRecord fields>, Tags[]} — singleton, PascalCase keys.
 Example: {"id":"T-123","priority":"1","tags":"[\"p0\",\"backend\"]"}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
-		mcp.WithString("title", mcp.Description("New title")),
-		mcp.WithString("description", mcp.Description("New description")),
-		mcp.WithString("status", mcp.Description("New status: backlog|todo|queued|doing|review|done|blocked|paused|archived|abandoned|cancelled. Applied via the same path as torque_task_transition; reopening a done/archived task from here is refused — use torque_task_transition with force=true.")),
-		mcp.WithString("priority", mcp.Description("New priority (integer 1-5)")),
-		mcp.WithBoolean("manual", mcp.Description("Manual flag")),
-		mcp.WithString("executor", mcp.Description("Executor type")),
-		mcp.WithString("launch_profile", mcp.Description("Torque launch_profile id (preferred). Empty string clears.")),
-		mcp.WithString("agent_profile", mcp.Description("Legacy agent_profile name.")),
-		mcp.WithString("working_dir", mcp.Description("Working directory")),
-		mcp.WithString("system_prompt", mcp.Description("System prompt override")),
-		mcp.WithString("agent_file", mcp.Description("Absolute or working_dir-relative path to a YAML agent spec; pass empty string to clear")),
-		mcp.WithString("on_done", mcp.Description("Hook on done (close|review|notify)")),
-		mcp.WithString("on_fail", mcp.Description("Hook on fail (retry|block|escalate|notify)")),
-		mcp.WithString("on_review", mcp.Description("Hook on review (pause|notify|auto-approve)")),
-		mcp.WithString("on_done_merge", mcp.Description("Merge hook on done (none|auto|pr|auto-resolve)")),
-		mcp.WithString("deliverable_preset", mcp.Description("Deliverable preset name")),
-		mcp.WithString("blocked_reason", mcp.Description("Blocked reason")),
-		mcp.WithString("cost_budget", mcp.Description("Cost budget (numeric; -1 unlimited, 0 none, or positive)")),
-		mcp.WithString("max_retries", mcp.Description("Max retries (non-negative integer)")),
-		mcp.WithString("max_duration_ms", mcp.Description("Max duration in ms (integer; -1 unlimited or positive)")),
-		mcp.WithString("token_budget", mcp.Description("Token budget (integer; -1 unlimited or positive)")),
-		mcp.WithString("tools", mcp.Description("JSON array of tool names")),
-		mcp.WithString("files", mcp.Description("JSON array of file paths")),
-		mcp.WithString("permissions", mcp.Description("JSON object of permissions")),
-		mcp.WithString("environment", mcp.Description("JSON object of env vars")),
-		mcp.WithString("escalation_chain", mcp.Description("JSON array of escalation-target names")),
-		mcp.WithString("quality_gates", mcp.Description("JSON array of gate names")),
-		mcp.WithString("deliverables", mcp.Description("JSON array of Deliverable objects")),
-		mcp.WithString("depends_on", mcp.Description("JSON array of dependency task IDs")),
-		mcp.WithString("metadata", mcp.Description("JSON object: freeform metadata")),
-		mcp.WithString("tags", mcp.Description("JSON array of tag names/slugs — replaces the full linked tag set")),
-		mcp.WithString("sprint_id", mcp.Description("Sprint ID (set empty string to unassign)")),
-		mcp.WithString("project_id", mcp.Description("Project ID (set empty string to unassign)")),
-		mcp.WithString("epic_id", mcp.Description("Epic ID (set empty string to unassign)")),
-		mcp.WithString("kind", mcp.Description("New kind (agent|external|wait|decision|parent|plan|internal|issue). Changing kind to decision also sets checkpoint_mode=blocking unless you pass one — see checkpoint_mode.")),
-		mcp.WithString("source_type", mcp.Description("New source_type")),
-		mcp.WithString("source_ref", mcp.Description("New source_ref (empty string clears)")),
-		mcp.WithString("trust", mcp.Description("New trust (trusted|normal|untrusted)")),
-		mcp.WithString("checkpoint_mode", mcp.Description("New checkpoint_mode (none|blocking|non_blocking). kind=decision requires blocking: promoting a task to kind=decision without naming a checkpoint_mode sets it to blocking rather than rejecting the call; passing none or non_blocking alongside kind=decision is rejected.")),
-		mcp.WithString("on_checkpoint_response", mcp.Description("New on_checkpoint_response (resume|review|custom)")),
-		mcp.WithString("parent_id", mcp.Description("New parent_id (migration 013; empty string clears the parent)")),
+		withString("id", required(), desc("Task ID")),
+		withString("title", desc("New title")),
+		withString("description", desc("New description")),
+		withString("status", desc("New status: backlog|todo|queued|doing|review|done|blocked|paused|archived|abandoned|cancelled. Applied via the same path as torque_task_transition; reopening a done/archived task from here is refused — use torque_task_transition with force=true.")),
+		withString("priority", desc("New priority (integer 1-5)")),
+		withBoolean("manual", desc("Manual flag")),
+		withString("executor", desc("Executor type")),
+		withString("launch_profile", desc("Torque launch_profile id (preferred). Empty string clears.")),
+		withString("agent_profile", desc("Legacy agent_profile name.")),
+		withString("working_dir", desc("Working directory")),
+		withString("system_prompt", desc("System prompt override")),
+		withString("agent_file", desc("Absolute or working_dir-relative path to a YAML agent spec; pass empty string to clear")),
+		withString("on_done", desc("Hook on done (close|review|notify)")),
+		withString("on_fail", desc("Hook on fail (retry|block|escalate|notify)")),
+		withString("on_review", desc("Hook on review (pause|notify|auto-approve)")),
+		withString("on_done_merge", desc("Merge hook on done (none|auto|pr|auto-resolve)")),
+		withString("deliverable_preset", desc("Deliverable preset name")),
+		withString("blocked_reason", desc("Blocked reason")),
+		withString("cost_budget", desc("Cost budget (numeric; -1 unlimited, 0 none, or positive)")),
+		withString("max_retries", desc("Max retries (non-negative integer)")),
+		withString("max_duration_ms", desc("Max duration in ms (integer; -1 unlimited or positive)")),
+		withString("token_budget", desc("Token budget (integer; -1 unlimited or positive)")),
+		withString("tools", desc("JSON array of tool names")),
+		withString("files", desc("JSON array of file paths")),
+		withString("permissions", desc("JSON object of permissions")),
+		withString("environment", desc("JSON object of env vars")),
+		withString("escalation_chain", desc("JSON array of escalation-target names")),
+		withString("quality_gates", desc("JSON array of gate names")),
+		withString("deliverables", desc("JSON array of Deliverable objects")),
+		withString("depends_on", desc("JSON array of dependency task IDs")),
+		withString("metadata", desc("JSON object: freeform metadata")),
+		withString("tags", desc("JSON array of tag names/slugs — replaces the full linked tag set")),
+		withString("sprint_id", desc("Sprint ID (set empty string to unassign)")),
+		withString("project_id", desc("Project ID (set empty string to unassign)")),
+		withString("epic_id", desc("Epic ID (set empty string to unassign)")),
+		withString("kind", desc("New kind (agent|external|wait|decision|parent|plan|internal|issue). Changing kind to decision also sets checkpoint_mode=blocking unless you pass one — see checkpoint_mode.")),
+		withString("source_type", desc("New source_type")),
+		withString("source_ref", desc("New source_ref (empty string clears)")),
+		withString("trust", desc("New trust (trusted|normal|untrusted)")),
+		withString("checkpoint_mode", desc("New checkpoint_mode (none|blocking|non_blocking). kind=decision requires blocking: promoting a task to kind=decision without naming a checkpoint_mode sets it to blocking rather than rejecting the call; passing none or non_blocking alongside kind=decision is rejected.")),
+		withString("on_checkpoint_response", desc("New on_checkpoint_response (resume|review|custom)")),
+		withString("parent_id", desc("New parent_id (migration 013; empty string clears the parent)")),
 	), a.handleTaskUpdate)
 
-	a.addTool(mcp.NewTool("torque_task_delete",
-		mcp.WithDescription(`Hard-delete a task row and its linkage (runs, artifacts, comments cascade).
+	a.addTool(newTool("torque_task_delete",
+		withDescription(`Hard-delete a task row and its linkage (runs, artifacts, comments cascade).
 Use sparingly — prefer torque_task_transition to "abandoned" for audit-preserving closure (reachable from any status in one call). For epics/sprints/projects use their respective *_delete tools.
 Response shape: data = {id, deleted: true}.
 Example: {"id":"T-123"}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
+		withString("id", required(), desc("Task ID")),
 	), a.handleTaskDelete)
 
-	a.addTool(mcp.NewTool("torque_task_transition",
-		mcp.WithDescription(`Set a task's status. Returns the updated TaskRecord.
+	a.addTool(newTool("torque_task_transition",
+		withDescription(`Set a task's status. Returns the updated TaskRecord.
 Transitions are PERMISSIVE: any status reaches any other, so you do not have to walk a path to record what already happened — a task sitting in todo whose work is finished goes straight to done in one call. The usual path is todo -> doing -> done; review is optional, for when the task or the user asks for it.
 The ONLY refusals are (1) a status outside the vocabulary below, and (2) leaving done or archived, which needs force=true so a finished task is not reopened by accident. Both come back as error.code=conflict with a message naming what would work.
 Status vocabulary: backlog, todo, queued, doing, review, done, blocked, paused, archived, abandoned, cancelled. Note "abandoned" (not "cancelled") is the conventional audit-preserving closure, and there is no "in_progress" — it is "doing".
@@ -649,21 +641,21 @@ Example: {"id":"T-123","status":"doing"}
 Example, closing finished work straight from todo: {"id":"T-123","status":"done"}
 Example with comment: {"id":"T-123","status":"blocked","comment":"waiting on upstream API key","comment_author":"reviewer"}
 Example, reopening a closed task: {"id":"T-123","status":"doing","force":true}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Task ID")),
-		mcp.WithString("status", mcp.Required(), mcp.Description("Target status: backlog|todo|queued|doing|review|done|blocked|paused|archived|abandoned|cancelled. Any of these is reachable from any current status; only leaving done/archived needs force=true.")),
-		mcp.WithBoolean("force", mcp.Description("Reopen a task that is done or archived (default false). Not needed for any other move — transitions are otherwise permissive.")),
-		mcp.WithString("comment", mcp.Description("Optional comment body to post atomically with the status change (same transaction)")),
-		mcp.WithString("comment_author", mcp.Description("Author slug/id for the comment (optional; only used when comment is set)")),
+		withString("id", required(), desc("Task ID")),
+		withString("status", required(), desc("Target status: backlog|todo|queued|doing|review|done|blocked|paused|archived|abandoned|cancelled. Any of these is reachable from any current status; only leaving done/archived needs force=true.")),
+		withBoolean("force", desc("Reopen a task that is done or archived (default false). Not needed for any other move — transitions are otherwise permissive.")),
+		withString("comment", desc("Optional comment body to post atomically with the status change (same transaction)")),
+		withString("comment_author", desc("Author slug/id for the comment (optional; only used when comment is set)")),
 	), a.handleTaskTransition)
 
-	a.addTool(mcp.NewTool("torque_task_bulk_transition",
-		mcp.WithDescription(`Transition many tasks to the same status in one call; per-task validation errors are collected, not fatal.
+	a.addTool(newTool("torque_task_bulk_transition",
+		withDescription(`Transition many tasks to the same status in one call; per-task validation errors are collected, not fatal.
 Use for batch approvals or closures; prefer torque_sprint_approve for sprint-scoped approve-all. torque_task_transition for single-task moves.
 Status vocabulary: backlog, todo, queued, doing, review, done, blocked, paused, archived, abandoned, cancelled. Transitions are permissive (any status reaches any other), so the per-task failures you will see are tasks currently in done/archived — reopening those needs torque_task_transition with force=true.
 Response shape: data = {succeeded: [id...], failed: [{id, error: {code, message, field}}...]} — same PRIM-003 bulk envelope as torque_task_bulk_update/_delete/_tag; partial success is not an error, ok=true even when some ids fail.
 Example: {"ids":"[\"T-1\",\"T-2\",\"T-3\"]","status":"done"}`),
-		mcp.WithString("ids", mcp.Required(), mcp.Description("JSON array of task IDs")),
-		mcp.WithString("status", mcp.Required(), mcp.Description("Target status applied to every id: backlog|todo|queued|doing|review|done|blocked|paused|archived|abandoned|cancelled")),
+		withString("ids", required(), desc("JSON array of task IDs")),
+		withString("status", required(), desc("Target status applied to every id: backlog|todo|queued|doing|review|done|blocked|paused|archived|abandoned|cancelled")),
 	), a.handleTaskBulkTransition)
 }
 
@@ -692,19 +684,17 @@ type taskWithTags struct {
 // okResult (CW-20260910-0057 wraps it with a comment tail). The second
 // return is a non-nil error RESULT, already shaped for the caller to hand
 // back — matching the errFromService convention taskResult used inline.
-func (a *Adapter) taskWithTagsFor(task *sqlstore.TaskRecord) (*taskWithTags, *mcp.CallToolResult) {
+func (a *Adapter) taskWithTagsFor(task *sqlstore.TaskRecord) (*taskWithTags, error) {
 	tags, err := a.svc.Task.ListTags(task.ID)
 	if err != nil {
-		res, _ := errFromService(err)
-		return nil, res
+		return nil, argErrorFromService(err)
 	}
 	if tags == nil {
 		tags = []sqlstore.TagRecord{}
 	}
 	deps, err := a.svc.Task.ListDependencyIDs(task.ID)
 	if err != nil {
-		res, _ := errFromService(err)
-		return nil, res
+		return nil, argErrorFromService(err)
 	}
 	if deps == nil {
 		deps = []string{}
@@ -718,10 +708,10 @@ func (a *Adapter) taskWithTagsFor(task *sqlstore.TaskRecord) (*taskWithTags, *mc
 // Shared by task_update, task_transition and task_create (via
 // createdTaskResult). It deliberately does NOT carry comments — see
 // taskGetResult, which is task_get's own builder.
-func (a *Adapter) taskResult(task *sqlstore.TaskRecord) (*mcp.CallToolResult, error) {
+func (a *Adapter) taskResult(task *sqlstore.TaskRecord) (any, error) {
 	rec, errRes := a.taskWithTagsFor(task)
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	return okResult(rec)
 }
@@ -759,7 +749,7 @@ type dispatchNotice struct {
 // createdTaskResultFor builds the createdTaskResult envelope for a freshly
 // created task, loading its tags and dependency IDs the same way taskResult
 // does.
-func (a *Adapter) createdTaskResultFor(task *sqlstore.TaskRecord) (*mcp.CallToolResult, error) {
+func (a *Adapter) createdTaskResultFor(task *sqlstore.TaskRecord) (any, error) {
 	tags, err := a.svc.Task.ListTags(task.ID)
 	if err != nil {
 		return errFromService(err)
@@ -789,7 +779,7 @@ func (a *Adapter) createdTaskResultFor(task *sqlstore.TaskRecord) (*mcp.CallTool
 	})
 }
 
-func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleTaskCreate(ctx context.Context, req map[string]any) (any, error) {
 	// Safety override per CW-20260417-0133: force manual=true on every task
 	// create until portfolio callers stop shipping manual=false (explicitly or
 	// by default). See createTask in internal/httpserver/tasks.go for the
@@ -805,7 +795,7 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest)
 
 	priority, _, errRes := reqPriorityArg(req)
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 
 	input := service.TaskCreateInput{
@@ -914,7 +904,7 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest)
 	// cost_budget/max_retries/max_duration_ms/token_budget handling, so an
 	// omitted key leaves the service-layer default (nil pointer) rather than
 	// forcing an explicit 0.
-	createArgs := req.GetArguments()
+	createArgs := req
 	if _, ok := createArgs["cost_budget"]; ok {
 		v := reqFloat(req, "cost_budget")
 		input.CostBudget = &v
@@ -977,7 +967,7 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req mcp.CallToolRequest)
 // argument across both meanings would make `verbose` ambiguous on exactly the
 // surface whose problem is that the real contract is not visible from the
 // schema.
-func (a *Adapter) handleTaskGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleTaskGet(ctx context.Context, req map[string]any) (any, error) {
 	format, err := reqTaskFormat(req)
 	if err != nil {
 		return errResult(ErrCodeArgInvalid, err.Error(), "format")
@@ -1000,7 +990,7 @@ func (a *Adapter) handleTaskGet(ctx context.Context, req mcp.CallToolRequest) (*
 	)
 }
 
-func taskQueryFromMCP(req mcp.CallToolRequest) (service.TaskQuery, *mcp.CallToolResult) {
+func taskQueryFromMCP(req map[string]any) (service.TaskQuery, error) {
 	if errRes := validateTaskListStringArgs(req,
 		"status", "executor", "kind", "source_type", "source_ref", "trust", "checkpoint_mode",
 		"parent_id", "project_id", "sprint_id", "epic_id", "search", "agent_profile", "launch_profile",
@@ -1010,13 +1000,11 @@ func taskQueryFromMCP(req mcp.CallToolRequest) (service.TaskQuery, *mcp.CallTool
 	}
 	includeInternal, err := reqTaskListBool(req, "include_internal")
 	if err != nil {
-		res, _ := errResult(ErrCodeArgInvalid, err.Error(), "include_internal")
-		return service.TaskQuery{}, res
+		return service.TaskQuery{}, argError(ErrCodeArgInvalid, err.Error(), "include_internal")
 	}
 	manual, err := parseManualFilter(req)
 	if err != nil {
-		res, _ := errResult(ErrCodeArgInvalid, err.Error(), "manual")
-		return service.TaskQuery{}, res
+		return service.TaskQuery{}, argError(ErrCodeArgInvalid, err.Error(), "manual")
 	}
 	priorities, errRes := taskListPriorityFilter(req)
 	if errRes != nil {
@@ -1026,8 +1014,7 @@ func taskQueryFromMCP(req mcp.CallToolRequest) (service.TaskQuery, *mcp.CallTool
 	if reqHasArg(req, "priority_gte") {
 		v, _, err := reqTaskListInt(req, "priority_gte")
 		if err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "priority_gte")
-			return service.TaskQuery{}, res
+			return service.TaskQuery{}, argError(ErrCodeArgInvalid, err.Error(), "priority_gte")
 		}
 		priorityGte = &v
 	}
@@ -1035,8 +1022,7 @@ func taskQueryFromMCP(req mcp.CallToolRequest) (service.TaskQuery, *mcp.CallTool
 	if reqHasArg(req, "priority_lte") {
 		v, _, err := reqTaskListInt(req, "priority_lte")
 		if err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "priority_lte")
-			return service.TaskQuery{}, res
+			return service.TaskQuery{}, argError(ErrCodeArgInvalid, err.Error(), "priority_lte")
 		}
 		priorityLte = &v
 	}
@@ -1073,45 +1059,39 @@ func taskQueryFromMCP(req mcp.CallToolRequest) (service.TaskQuery, *mcp.CallTool
 		LaunchProfile:   launchProfile,
 		IncludeInternal: includeInternal,
 	}
-	args := req.GetArguments()
+	args := req
 	if _, ok := args["parent_id"]; ok {
 		v, _ := reqTaskListString(req, "parent_id")
 		query.ParentIDSet = true
 		query.ParentID = v
 	}
 	if tags, err := reqTaskListStrictStringSlice(req, "tags"); err != nil {
-		res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
-		return service.TaskQuery{}, res
+		return service.TaskQuery{}, argError(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
 	} else if tags != nil {
 		query.TagSlugs = tags
 	}
 	if tags, err := reqTaskListOperatorStringSlice(req, "tags_any"); err != nil {
-		res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags_any JSON: %v", err), "tags_any")
-		return service.TaskQuery{}, res
+		return service.TaskQuery{}, argError(ErrCodeArgInvalid, fmt.Sprintf("invalid tags_any JSON: %v", err), "tags_any")
 	} else if tags != nil {
 		query.TagSlugsAny = tags
 	}
 	if tags, err := reqTaskListOperatorStringSlice(req, "tags_none"); err != nil {
-		res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags_none JSON: %v", err), "tags_none")
-		return service.TaskQuery{}, res
+		return service.TaskQuery{}, argError(ErrCodeArgInvalid, fmt.Sprintf("invalid tags_none JSON: %v", err), "tags_none")
 	} else if tags != nil {
 		query.TagSlugsNone = tags
 	}
 	if fields, err := reqTaskListOperatorStringSlice(req, "missing"); err != nil {
-		res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid missing JSON: %v", err), "missing")
-		return service.TaskQuery{}, res
+		return service.TaskQuery{}, argError(ErrCodeArgInvalid, fmt.Sprintf("invalid missing JSON: %v", err), "missing")
 	} else if fields != nil {
 		query.MissingFields = fields
 	}
 	if fields, err := reqTaskListOperatorStringSlice(req, "present"); err != nil {
-		res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid present JSON: %v", err), "present")
-		return service.TaskQuery{}, res
+		return service.TaskQuery{}, argError(ErrCodeArgInvalid, fmt.Sprintf("invalid present JSON: %v", err), "present")
 	} else if fields != nil {
 		query.PresentFields = fields
 	}
 	if statuses, err := reqTaskListStrictStringSlice(req, "statuses"); err != nil {
-		res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid statuses JSON: %v", err), "statuses")
-		return service.TaskQuery{}, res
+		return service.TaskQuery{}, argError(ErrCodeArgInvalid, fmt.Sprintf("invalid statuses JSON: %v", err), "statuses")
 	} else if statuses != nil {
 		query.Statuses = statuses
 	}
@@ -1122,73 +1102,65 @@ func taskQueryFromMCP(req mcp.CallToolRequest) (service.TaskQuery, *mcp.CallTool
 	if _, ok := args["cost_budget_gte"]; ok {
 		v, err := reqTaskListFloat(req, "cost_budget_gte")
 		if err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "cost_budget_gte")
-			return service.TaskQuery{}, res
+			return service.TaskQuery{}, argError(ErrCodeArgInvalid, err.Error(), "cost_budget_gte")
 		}
 		query.CostBudgetGte = &v
 	}
 	if _, ok := args["cost_budget_lte"]; ok {
 		v, err := reqTaskListFloat(req, "cost_budget_lte")
 		if err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "cost_budget_lte")
-			return service.TaskQuery{}, res
+			return service.TaskQuery{}, argError(ErrCodeArgInvalid, err.Error(), "cost_budget_lte")
 		}
 		query.CostBudgetLte = &v
 	}
 	if _, ok := args["token_budget_gte"]; ok {
 		v, err := reqTaskListInt64(req, "token_budget_gte")
 		if err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "token_budget_gte")
-			return service.TaskQuery{}, res
+			return service.TaskQuery{}, argError(ErrCodeArgInvalid, err.Error(), "token_budget_gte")
 		}
 		query.TokenBudgetGte = &v
 	}
 	if _, ok := args["token_budget_lte"]; ok {
 		v, err := reqTaskListInt64(req, "token_budget_lte")
 		if err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "token_budget_lte")
-			return service.TaskQuery{}, res
+			return service.TaskQuery{}, argError(ErrCodeArgInvalid, err.Error(), "token_budget_lte")
 		}
 		query.TokenBudgetLte = &v
 	}
 	if _, ok := args["max_duration_ms_gte"]; ok {
 		v, err := reqTaskListInt64(req, "max_duration_ms_gte")
 		if err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "max_duration_ms_gte")
-			return service.TaskQuery{}, res
+			return service.TaskQuery{}, argError(ErrCodeArgInvalid, err.Error(), "max_duration_ms_gte")
 		}
 		query.MaxDurationMsGte = &v
 	}
 	if _, ok := args["max_duration_ms_lte"]; ok {
 		v, err := reqTaskListInt64(req, "max_duration_ms_lte")
 		if err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "max_duration_ms_lte")
-			return service.TaskQuery{}, res
+			return service.TaskQuery{}, argError(ErrCodeArgInvalid, err.Error(), "max_duration_ms_lte")
 		}
 		query.MaxDurationMsLte = &v
 	}
 	if _, ok := args["max_retries_gte"]; ok {
 		v, _, err := reqTaskListInt(req, "max_retries_gte")
 		if err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "max_retries_gte")
-			return service.TaskQuery{}, res
+			return service.TaskQuery{}, argError(ErrCodeArgInvalid, err.Error(), "max_retries_gte")
 		}
 		query.MaxRetriesGte = &v
 	}
 	if _, ok := args["max_retries_lte"]; ok {
 		v, _, err := reqTaskListInt(req, "max_retries_lte")
 		if err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "max_retries_lte")
-			return service.TaskQuery{}, res
+			return service.TaskQuery{}, argError(ErrCodeArgInvalid, err.Error(), "max_retries_lte")
 		}
 		query.MaxRetriesLte = &v
 	}
 	return query, nil
 }
 
-func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleTaskList(ctx context.Context, req map[string]any) (any, error) {
 	if errRes := rejectMalformedTaskListTags(req); errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	if errRes := validateTaskListStringArgs(req,
 		"status", "executor", "kind", "source_type", "source_ref", "trust", "checkpoint_mode",
@@ -1196,7 +1168,7 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 		"created_after", "created_before", "updated_after", "updated_before",
 		"sort_by", "sort_dir", "cursor", "format",
 	); errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	format, formatErr := reqTaskFormat(req)
 	if formatErr != nil {
@@ -1220,7 +1192,7 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 	}
 	query, errRes := taskQueryFromMCP(req)
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	sortBy, _ := reqTaskListString(req, "sort_by")
 	sortDir, _ := reqTaskListString(req, "sort_dir")
@@ -1238,11 +1210,11 @@ func (a *Adapter) handleTaskList(ctx context.Context, req mcp.CallToolRequest) (
 	return a.taskListCursorEnvelopeWithTotal(page.Tasks, page.Limit, verbose, isTypedFormat(format), page.SortBy, page.SortDir, page.HasMoreFromQuery, optionalTotal(page))
 }
 
-func (a *Adapter) handleTaskFacets(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleTaskFacets(ctx context.Context, req map[string]any) (any, error) {
 	if errRes := rejectMalformedTaskListTags(req); errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
-	args := req.GetArguments()
+	args := req
 	for _, key := range []string{"limit", "offset", "cursor", "sort_by", "sort_dir"} {
 		if _, ok := args[key]; ok {
 			return errResult(ErrCodeArgInvalid, key+" is not supported by task facets; facets always count the whole matching cohort", key)
@@ -1253,11 +1225,11 @@ func (a *Adapter) handleTaskFacets(ctx context.Context, req mcp.CallToolRequest)
 		"parent_id", "project_id", "sprint_id", "epic_id", "search", "agent_profile", "launch_profile",
 		"created_after", "created_before", "updated_after", "updated_before",
 	); errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	query, errRes := taskQueryFromMCP(req)
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	fq := service.TaskFacetQuery{TaskQuery: query}
 	if _, ok := args["dimensions"]; ok {
@@ -1281,8 +1253,8 @@ func (a *Adapter) handleTaskFacets(ctx context.Context, req mcp.CallToolRequest)
 	return cappedTaskFacetResult(result)
 }
 
-func reqTaskFacetDimensions(req mcp.CallToolRequest) ([]string, error) {
-	raw, ok := req.GetArguments()["dimensions"]
+func reqTaskFacetDimensions(req map[string]any) ([]string, error) {
+	raw, ok := req["dimensions"]
 	if !ok {
 		return nil, nil
 	}
@@ -1311,17 +1283,17 @@ func taskSortValue(t sqlstore.TaskRecord, sortBy string) string {
 // over-fetches limit+1 to compute hasMoreFromQuery, then drops the extra row
 // before calling this, so cappedCursorJSONResult's byte-size trim (if it
 // triggers) is the only further truncation next_cursor needs to account for.
-func (a *Adapter) taskListCursorEnvelope(tasks []sqlstore.TaskRecord, limit int, verbose bool, sortBy, sortDir string, hasMoreFromQuery bool) (*mcp.CallToolResult, error) {
+func (a *Adapter) taskListCursorEnvelope(tasks []sqlstore.TaskRecord, limit int, verbose bool, sortBy, sortDir string, hasMoreFromQuery bool) (any, error) {
 	return a.taskListCursorEnvelopeWithTotal(tasks, limit, verbose, false, sortBy, sortDir, hasMoreFromQuery, nil)
 }
 
-func (a *Adapter) taskListCursorEnvelopeWithTotal(tasks []sqlstore.TaskRecord, limit int, verbose bool, typed bool, sortBy, sortDir string, hasMoreFromQuery bool, total *int) (*mcp.CallToolResult, error) {
+func (a *Adapter) taskListCursorEnvelopeWithTotal(tasks []sqlstore.TaskRecord, limit int, verbose bool, typed bool, sortBy, sortDir string, hasMoreFromQuery bool, total *int) (any, error) {
 	items := make([]any, 0, len(tasks))
 	for _, t := range tasks {
 		if typed {
 			item, errRes := a.typedTaskListItem(t, verbose)
 			if errRes != nil {
-				return errRes, nil
+				return nil, errRes
 			}
 			items = append(items, item)
 		} else if verbose {
@@ -1375,9 +1347,9 @@ func optionalTotal(page service.TaskQueryResult) *int {
 // On a validation failure (malformed JSON in one of the blob fields), the
 // second return value is non-nil and the caller must return it as-is
 // without inspecting the (zero-value) TaskUpdateInput.
-func buildTaskUpdateInput(req mcp.CallToolRequest) (service.TaskUpdateInput, *mcp.CallToolResult) {
+func buildTaskUpdateInput(req map[string]any) (service.TaskUpdateInput, error) {
 	update := sqlstore.TaskUpdate{}
-	args := req.GetArguments()
+	args := req
 
 	// title/description/priority: presence-based detection, matching every
 	// other field on this tool (see args["..."] pattern below). Value-based
@@ -1503,14 +1475,12 @@ func buildTaskUpdateInput(req mcp.CallToolRequest) (service.TaskUpdateInput, *mc
 	var scratchObj map[string]any
 	for _, k := range []string{"tools", "files", "escalation_chain", "quality_gates", "deliverables"} {
 		if err := unmarshalBlob(k, &scratchArr); err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), k)
-			return service.TaskUpdateInput{}, res
+			return service.TaskUpdateInput{}, argError(ErrCodeArgInvalid, err.Error(), k)
 		}
 	}
 	for _, k := range []string{"permissions", "environment", "metadata"} {
 		if err := unmarshalBlob(k, &scratchObj); err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), k)
-			return service.TaskUpdateInput{}, res
+			return service.TaskUpdateInput{}, argError(ErrCodeArgInvalid, err.Error(), k)
 		}
 	}
 	if ns := nullFromRaw("tools"); ns != nil {
@@ -1595,8 +1565,7 @@ func buildTaskUpdateInput(req mcp.CallToolRequest) (service.TaskUpdateInput, *mc
 	if reqHasArg(req, "tags") {
 		slugs, err := reqStrSlice(req, "tags")
 		if err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
-			return service.TaskUpdateInput{}, res
+			return service.TaskUpdateInput{}, argError(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
 		}
 		if slugs != nil {
 			input.Tags = &slugs
@@ -1608,8 +1577,7 @@ func buildTaskUpdateInput(req mcp.CallToolRequest) (service.TaskUpdateInput, *mc
 	if reqHasArg(req, "depends_on") {
 		deps, err := reqStrSlice(req, "depends_on")
 		if err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid depends_on JSON: %v", err), "depends_on")
-			return service.TaskUpdateInput{}, res
+			return service.TaskUpdateInput{}, argError(ErrCodeArgInvalid, fmt.Sprintf("invalid depends_on JSON: %v", err), "depends_on")
 		}
 		if deps != nil {
 			input.DependsOn = &deps
@@ -1619,11 +1587,11 @@ func buildTaskUpdateInput(req mcp.CallToolRequest) (service.TaskUpdateInput, *mc
 	return input, nil
 }
 
-func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleTaskUpdate(ctx context.Context, req map[string]any) (any, error) {
 	id := reqStr(req, "id")
 	input, errRes := buildTaskUpdateInput(req)
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 
 	if err := a.svc.Task.Update(id, input); err != nil {
@@ -1650,7 +1618,7 @@ func (a *Adapter) handleTaskUpdate(ctx context.Context, req mcp.CallToolRequest)
 	return a.taskResult(task)
 }
 
-func (a *Adapter) handleTaskDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleTaskDelete(ctx context.Context, req map[string]any) (any, error) {
 	id := reqStr(req, "id")
 	if err := a.svc.Task.Delete(id); err != nil {
 		return errFromService(err)
@@ -1658,7 +1626,7 @@ func (a *Adapter) handleTaskDelete(ctx context.Context, req mcp.CallToolRequest)
 	return okResult(map[string]any{"id": id, "deleted": true})
 }
 
-func (a *Adapter) handleTaskTransition(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleTaskTransition(ctx context.Context, req map[string]any) (any, error) {
 	id := reqStr(req, "id")
 	status := reqStr(req, "status")
 	force := reqBool(req, "force")
@@ -1698,7 +1666,7 @@ func (a *Adapter) handleTaskTransition(ctx context.Context, req mcp.CallToolRequ
 // response envelope. When verbose is false, each record is the ~150-byte
 // briefTask shape with tag slugs only; when true, each record is the full
 // taskWithTags structure (matching the taskResult() singleton-get shape).
-func (a *Adapter) tasksToEnvelope(tasks []sqlstore.TaskRecord, limit int, verbose bool) (*mcp.CallToolResult, error) {
+func (a *Adapter) tasksToEnvelope(tasks []sqlstore.TaskRecord, limit int, verbose bool) (any, error) {
 	items := make([]any, 0, len(tasks))
 	for _, t := range tasks {
 		if verbose {
@@ -1726,7 +1694,7 @@ func (a *Adapter) tasksToEnvelope(tasks []sqlstore.TaskRecord, limit int, verbos
 	return cappedJSONResult(items, limit)
 }
 
-func (a *Adapter) handleTaskBulkTransition(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleTaskBulkTransition(ctx context.Context, req map[string]any) (any, error) {
 	raw := reqStr(req, "ids")
 	var ids []string
 	if err := json.Unmarshal([]byte(raw), &ids); err != nil {

@@ -5,139 +5,137 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/mark3labs/mcp-go/mcp"
-
 	"github.com/hollis-labs/torque/internal/service"
 )
 
 func (a *Adapter) registerTemplateTools() {
-	a.addTool(mcp.NewTool("torque_template_create",
-		mcp.WithDescription(`Create a task template at version=1; subsequent torque_template_update calls append new versions.
+	a.addTool(newTool("torque_template_create",
+		withDescription(`Create a task template at version=1; subsequent torque_template_update calls append new versions.
 Use to encode repeated task shapes with {{var}} placeholders and required_vars; torque_task_create_from_template instantiates. torque_task_create is the ad-hoc alternative.
 Response shape: data = {<TemplateRecord fields>} — singleton.
 Example: {"id":"backend-fix","name":"Backend Fix","description":"Fix {{issue}}","kind":"agent","executor":"cli","required_vars":"[\"issue\"]"}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Template id (stable across versions)")),
-		mcp.WithString("name", mcp.Required(), mcp.Description("Human-readable name")),
-		mcp.WithString("description", mcp.Required(), mcp.Description("Template description (supports {{var}})")),
-		mcp.WithString("kind", mcp.Required(), mcp.Description("agent|external|wait|decision|parent")),
-		mcp.WithBoolean("auto_execute", mcp.Description("Default true — whether the scheduler picks up instantiated tasks")),
-		mcp.WithString("executor", mcp.Description("Executor name for agent-kind tasks")),
-		mcp.WithString("launch_profile", mcp.Description("Torque launch_profile id default — preferred over agent_profile.")),
-		mcp.WithString("agent_profile", mcp.Description("Legacy agent_profile override. Honored when launch_profile is empty.")),
-		mcp.WithString("system_prompt", mcp.Description("System prompt (supports {{var}})")),
-		mcp.WithString("working_dir", mcp.Description("Task working directory (supports {{var}})")),
-		mcp.WithString("tools", mcp.Description("JSON array of tool names")),
-		mcp.WithString("permissions", mcp.Description("JSON object of permissions")),
-		mcp.WithString("environment", mcp.Description("JSON object of env vars (values support {{var}})")),
-		mcp.WithString("cost_budget", mcp.Description("Cost budget (numeric; -1 unlimited, 0 none, or positive)")),
-		mcp.WithString("max_retries", mcp.Description("Max retries (non-negative integer, default 3)")),
-		mcp.WithString("max_duration_ms", mcp.Description("Max duration in ms (integer; -1 unlimited or positive)")),
-		mcp.WithString("token_budget", mcp.Description("Token budget (integer; -1 unlimited or positive)")),
-		mcp.WithString("on_done", mcp.Description("close|review|notify (default review)")),
-		mcp.WithString("on_fail", mcp.Description("retry|block|escalate|notify (default retry)")),
-		mcp.WithString("on_review", mcp.Description("pause|notify|auto-approve (default pause)")),
-		mcp.WithString("on_done_merge", mcp.Description("none|auto|pr|auto-resolve (default none)")),
-		mcp.WithString("escalation_chain", mcp.Description("JSON array of escalation-target names")),
-		mcp.WithString("quality_gates", mcp.Description("JSON array of gate names")),
-		mcp.WithString("deliverables", mcp.Description("JSON array of Deliverable objects")),
-		mcp.WithString("checkpoint_mode", mcp.Description("none|blocking|non_blocking (default none)")),
-		mcp.WithString("on_checkpoint_response", mcp.Description("resume|review|custom (default resume)")),
-		mcp.WithString("metadata_template", mcp.Description("JSON object; string leaves support {{var}}")),
-		mcp.WithString("required_vars", mcp.Description("JSON array of variable names enforced at instantiate")),
-		mcp.WithString("tags", mcp.Description("JSON array of tag names")),
+		withString("id", required(), desc("Template id (stable across versions)")),
+		withString("name", required(), desc("Human-readable name")),
+		withString("description", required(), desc("Template description (supports {{var}})")),
+		withString("kind", required(), desc("agent|external|wait|decision|parent")),
+		withBoolean("auto_execute", desc("Default true — whether the scheduler picks up instantiated tasks")),
+		withString("executor", desc("Executor name for agent-kind tasks")),
+		withString("launch_profile", desc("Torque launch_profile id default — preferred over agent_profile.")),
+		withString("agent_profile", desc("Legacy agent_profile override. Honored when launch_profile is empty.")),
+		withString("system_prompt", desc("System prompt (supports {{var}})")),
+		withString("working_dir", desc("Task working directory (supports {{var}})")),
+		withString("tools", desc("JSON array of tool names")),
+		withString("permissions", desc("JSON object of permissions")),
+		withString("environment", desc("JSON object of env vars (values support {{var}})")),
+		withString("cost_budget", desc("Cost budget (numeric; -1 unlimited, 0 none, or positive)")),
+		withString("max_retries", desc("Max retries (non-negative integer, default 3)")),
+		withString("max_duration_ms", desc("Max duration in ms (integer; -1 unlimited or positive)")),
+		withString("token_budget", desc("Token budget (integer; -1 unlimited or positive)")),
+		withString("on_done", desc("close|review|notify (default review)")),
+		withString("on_fail", desc("retry|block|escalate|notify (default retry)")),
+		withString("on_review", desc("pause|notify|auto-approve (default pause)")),
+		withString("on_done_merge", desc("none|auto|pr|auto-resolve (default none)")),
+		withString("escalation_chain", desc("JSON array of escalation-target names")),
+		withString("quality_gates", desc("JSON array of gate names")),
+		withString("deliverables", desc("JSON array of Deliverable objects")),
+		withString("checkpoint_mode", desc("none|blocking|non_blocking (default none)")),
+		withString("on_checkpoint_response", desc("resume|review|custom (default resume)")),
+		withString("metadata_template", desc("JSON object; string leaves support {{var}}")),
+		withString("required_vars", desc("JSON array of variable names enforced at instantiate")),
+		withString("tags", desc("JSON array of tag names")),
 	), a.handleTemplateCreate)
 
-	a.addTool(mcp.NewTool("torque_template_get",
-		mcp.WithDescription(`Fetch a template by id (and optional version). When version is omitted, returns the latest non-archived version.
+	a.addTool(newTool("torque_template_get",
+		withDescription(`Fetch a template by id (and optional version). When version is omitted, returns the latest non-archived version.
 Use when you have the id; torque_template_list for browsing, torque_task_create_from_template when you want to instantiate not inspect.
 Response shape: data = {<TemplateRecord fields>} — singleton.
 Example: {"id":"backend-fix"}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Template id (stable across versions)")),
-		mcp.WithString("version", mcp.Description("Optional integer; omit for latest non-archived")),
+		withString("id", required(), desc("Template id (stable across versions)")),
+		withString("version", desc("Optional integer; omit for latest non-archived")),
 	), a.handleTemplateGet)
 
-	a.addTool(mcp.NewTool("torque_template_update",
-		mcp.WithDescription(`Append a new version with merged changes; prior versions remain queryable.
+	a.addTool(newTool("torque_template_update",
+		withDescription(`Append a new version with merged changes; prior versions remain queryable.
 Use for forward-only template evolution; torque_template_archive retires a version, torque_template_delete wipes all versions (rejected if referenced).
 Response shape: data = {<TemplateRecord fields>} — singleton, the new version.
 Example: {"id":"backend-fix","description":"Fix {{issue}} in {{component}}"}`),
-		mcp.WithString("id", mcp.Required()),
-		mcp.WithString("name", mcp.Description("New name")),
-		mcp.WithString("description", mcp.Description("New description")),
-		mcp.WithString("kind", mcp.Description("New kind")),
-		mcp.WithBoolean("auto_execute"),
-		mcp.WithString("executor"),
-		mcp.WithString("launch_profile"),
-		mcp.WithString("agent_profile"),
-		mcp.WithString("system_prompt"),
-		mcp.WithString("working_dir"),
-		mcp.WithString("tools"),
-		mcp.WithString("permissions"),
-		mcp.WithString("environment"),
-		mcp.WithString("cost_budget", mcp.Description("Cost budget (numeric; -1 unlimited, 0 none, or positive)")),
-		mcp.WithString("max_retries", mcp.Description("Max retries (non-negative integer)")),
-		mcp.WithString("max_duration_ms", mcp.Description("Max duration in ms (integer; -1 unlimited or positive)")),
-		mcp.WithString("token_budget", mcp.Description("Token budget (integer; -1 unlimited or positive)")),
-		mcp.WithString("on_done"),
-		mcp.WithString("on_fail"),
-		mcp.WithString("on_review"),
-		mcp.WithString("on_done_merge"),
-		mcp.WithString("escalation_chain"),
-		mcp.WithString("quality_gates"),
-		mcp.WithString("deliverables"),
-		mcp.WithString("checkpoint_mode"),
-		mcp.WithString("on_checkpoint_response"),
-		mcp.WithString("metadata_template"),
-		mcp.WithString("required_vars"),
-		mcp.WithString("tags"),
+		withString("id", required()),
+		withString("name", desc("New name")),
+		withString("description", desc("New description")),
+		withString("kind", desc("New kind")),
+		withBoolean("auto_execute"),
+		withString("executor"),
+		withString("launch_profile"),
+		withString("agent_profile"),
+		withString("system_prompt"),
+		withString("working_dir"),
+		withString("tools"),
+		withString("permissions"),
+		withString("environment"),
+		withString("cost_budget", desc("Cost budget (numeric; -1 unlimited, 0 none, or positive)")),
+		withString("max_retries", desc("Max retries (non-negative integer)")),
+		withString("max_duration_ms", desc("Max duration in ms (integer; -1 unlimited or positive)")),
+		withString("token_budget", desc("Token budget (integer; -1 unlimited or positive)")),
+		withString("on_done"),
+		withString("on_fail"),
+		withString("on_review"),
+		withString("on_done_merge"),
+		withString("escalation_chain"),
+		withString("quality_gates"),
+		withString("deliverables"),
+		withString("checkpoint_mode"),
+		withString("on_checkpoint_response"),
+		withString("metadata_template"),
+		withString("required_vars"),
+		withString("tags"),
 	), a.handleTemplateUpdate)
 
-	a.addTool(mcp.NewTool("torque_template_archive",
-		mcp.WithDescription(`Soft-remove one (id, version) from the live catalog; the row stays queryable with include_archived=true.
+	a.addTool(newTool("torque_template_archive",
+		withDescription(`Soft-remove one (id, version) from the live catalog; the row stays queryable with include_archived=true.
 Use to retire an old template version while keeping audit; torque_template_delete when you want to hard-wipe all versions.
 Response shape: data = {id, version, archived: true}.
 Example: {"id":"backend-fix","version":"1"}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Template id")),
-		mcp.WithString("version", mcp.Required(), mcp.Description("Template version (integer; pass as string)")),
+		withString("id", required(), desc("Template id")),
+		withString("version", required(), desc("Template version (integer; pass as string)")),
 	), a.handleTemplateArchive)
 
-	a.addTool(mcp.NewTool("torque_template_delete",
-		mcp.WithDescription(`Hard-delete every version of a template. Rejected with error.code=conflict if any task still references it.
+	a.addTool(newTool("torque_template_delete",
+		withDescription(`Hard-delete every version of a template. Rejected with error.code=conflict if any task still references it.
 Use sparingly — prefer torque_template_archive to retire. Has no version arg because it wipes all versions.
 Response shape: data = {id, deleted: true}.
 Example: {"id":"backend-fix"}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Template id")),
+		withString("id", required(), desc("Template id")),
 	), a.handleTemplateDelete)
 
-	a.addTool(mcp.NewTool("torque_template_list",
-		mcp.WithDescription(`List templates, optionally filtered by kind; include_archived=true surfaces retired rows.
+	a.addTool(newTool("torque_template_list",
+		withDescription(`List templates, optionally filtered by kind; include_archived=true surfaces retired rows.
 Use for template discovery; torque_template_get when you know the id. Default brief shape excludes the description body; pass verbose="true" for full records (description MAY include {{var}} placeholders).
 Response shape: data = {items: [<briefTemplate or TemplateRecord>...], meta: {truncated, returned, limit, hint?}}.
 Example: {"kind":"agent"}`),
-		mcp.WithBoolean("include_archived", mcp.Description("Surface retired rows (default false)")),
-		mcp.WithString("kind", mcp.Description("Filter: agent|external|wait|decision|parent")),
-		mcp.WithString("verbose", mcp.Description("Return full records (incl. description body) instead of brief (string 'true'/'false', default false)")),
+		withBoolean("include_archived", desc("Surface retired rows (default false)")),
+		withString("kind", desc("Filter: agent|external|wait|decision|parent")),
+		withString("verbose", desc("Return full records (incl. description body) instead of brief (string 'true'/'false', default false)")),
 	), a.handleTemplateList)
 
-	a.addTool(mcp.NewTool("torque_task_create_from_template",
-		mcp.WithDescription(`Instantiate a template into a new task; validates required_vars and resolves {{var}} placeholders in description/prompts/metadata.
+	a.addTool(newTool("torque_task_create_from_template",
+		withDescription(`Instantiate a template into a new task; validates required_vars and resolves {{var}} placeholders in description/prompts/metadata.
 Use when a matching template exists; torque_task_create for ad-hoc tasks, torque_plan_create for multi-phase plans. Missing required_vars return error.code=arg_invalid.
 Response shape: data = {<TaskRecord fields>, Tags[]} — singleton, the new task.
 Example: {"template_id":"backend-fix","title":"Fix auth","vars":"{\"issue\":\"auth-42\"}"}`),
-		mcp.WithString("template_id", mcp.Required(), mcp.Description("Template id to instantiate")),
-		mcp.WithString("template_version", mcp.Description("Optional integer; omit for latest non-archived")),
-		mcp.WithString("title", mcp.Required(), mcp.Description("Title for the new task")),
-		mcp.WithString("description", mcp.Description("Optional description override")),
-		mcp.WithString("vars", mcp.Description("JSON object of variable values")),
-		mcp.WithString("overrides", mcp.Description("JSON object of task-field overrides (last-wins)")),
-		mcp.WithString("sprint_id", mcp.Description("Optional sprint assignment")),
-		mcp.WithString("project_id", mcp.Description("Optional project assignment")),
-		mcp.WithString("epic_id", mcp.Description("Optional epic assignment")),
-		mcp.WithString("tags", mcp.Description("JSON array of extra tag names")),
+		withString("template_id", required(), desc("Template id to instantiate")),
+		withString("template_version", desc("Optional integer; omit for latest non-archived")),
+		withString("title", required(), desc("Title for the new task")),
+		withString("description", desc("Optional description override")),
+		withString("vars", desc("JSON object of variable values")),
+		withString("overrides", desc("JSON object of task-field overrides (last-wins)")),
+		withString("sprint_id", desc("Optional sprint assignment")),
+		withString("project_id", desc("Optional project assignment")),
+		withString("epic_id", desc("Optional epic assignment")),
+		withString("tags", desc("JSON array of extra tag names")),
 	), a.handleTaskCreateFromTemplate)
 }
 
-func (a *Adapter) handleTemplateCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleTemplateCreate(ctx context.Context, req map[string]any) (any, error) {
 	in := service.TemplateCreateInput{
 		ID:                   reqStr(req, "id"),
 		Name:                 reqStr(req, "name"),
@@ -156,7 +154,7 @@ func (a *Adapter) handleTemplateCreate(ctx context.Context, req mcp.CallToolRequ
 		OnCheckpointResponse: reqStr(req, "on_checkpoint_response"),
 	}
 	// auto_execute defaults true when omitted, matching spec §3.2 for agent kind.
-	if _, ok := req.GetArguments()["auto_execute"]; ok {
+	if _, ok := req["auto_execute"]; ok {
 		in.AutoExecute = reqBool(req, "auto_execute")
 	} else {
 		in.AutoExecute = true
@@ -178,7 +176,7 @@ func (a *Adapter) handleTemplateCreate(ctx context.Context, req mcp.CallToolRequ
 		}
 	}
 	if res := applyTemplateBudgetArgs(req, &in.CostBudget, &in.MaxRetries, &in.MaxDurationMs, &in.TokenBudget); res != nil {
-		return res, nil
+		return nil, res
 	}
 	if raw := reqStr(req, "escalation_chain"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.EscalationChain); err != nil {
@@ -218,7 +216,7 @@ func (a *Adapter) handleTemplateCreate(ctx context.Context, req mcp.CallToolRequ
 	return okResult(tpl)
 }
 
-func (a *Adapter) handleTemplateGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleTemplateGet(ctx context.Context, req map[string]any) (any, error) {
 	id := reqStr(req, "id")
 	version := reqInt(req, "version")
 	tpl, err := a.svc.Template.Get(id, version)
@@ -228,7 +226,7 @@ func (a *Adapter) handleTemplateGet(ctx context.Context, req mcp.CallToolRequest
 	return okResult(tpl)
 }
 
-func (a *Adapter) handleTemplateUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleTemplateUpdate(ctx context.Context, req map[string]any) (any, error) {
 	id := reqStr(req, "id")
 	in := service.TemplateUpdateInput{
 		Name:                 reqStr(req, "name"),
@@ -241,7 +239,7 @@ func (a *Adapter) handleTemplateUpdate(ctx context.Context, req mcp.CallToolRequ
 		CheckpointMode:       reqStr(req, "checkpoint_mode"),
 		OnCheckpointResponse: reqStr(req, "on_checkpoint_response"),
 	}
-	args := req.GetArguments()
+	args := req
 	if _, ok := args["auto_execute"]; ok {
 		v := reqBool(req, "auto_execute")
 		in.AutoExecute = &v
@@ -282,7 +280,7 @@ func (a *Adapter) handleTemplateUpdate(ctx context.Context, req mcp.CallToolRequ
 		}
 	}
 	if res := applyTemplateBudgetArgs(req, &in.CostBudget, &in.MaxRetries, &in.MaxDurationMs, &in.TokenBudget); res != nil {
-		return res, nil
+		return nil, res
 	}
 	if raw := reqStr(req, "escalation_chain"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.EscalationChain); err != nil {
@@ -322,7 +320,7 @@ func (a *Adapter) handleTemplateUpdate(ctx context.Context, req mcp.CallToolRequ
 	return okResult(tpl)
 }
 
-func (a *Adapter) handleTemplateArchive(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleTemplateArchive(ctx context.Context, req map[string]any) (any, error) {
 	id := reqStr(req, "id")
 	version := reqInt(req, "version")
 	if err := a.svc.Template.Archive(id, version); err != nil {
@@ -335,7 +333,7 @@ func (a *Adapter) handleTemplateArchive(ctx context.Context, req mcp.CallToolReq
 	})
 }
 
-func (a *Adapter) handleTemplateDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleTemplateDelete(ctx context.Context, req map[string]any) (any, error) {
 	id := reqStr(req, "id")
 	if err := a.svc.Template.Delete(id); err != nil {
 		return errFromService(err)
@@ -346,7 +344,7 @@ func (a *Adapter) handleTemplateDelete(ctx context.Context, req mcp.CallToolRequ
 	})
 }
 
-func (a *Adapter) handleTemplateList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleTemplateList(ctx context.Context, req map[string]any) (any, error) {
 	verbose := reqStrBool(req, "verbose")
 	list, err := a.svc.Template.List(service.TemplateListOpts{
 		IncludeArchived: reqBool(req, "include_archived"),
@@ -370,7 +368,7 @@ func (a *Adapter) handleTemplateList(ctx context.Context, req mcp.CallToolReques
 	return cappedJSONResult(items, limit)
 }
 
-func (a *Adapter) handleTaskCreateFromTemplate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleTaskCreateFromTemplate(ctx context.Context, req map[string]any) (any, error) {
 	in := service.TemplateInstantiateInput{
 		TemplateID:      reqStr(req, "template_id"),
 		TemplateVersion: reqInt(req, "template_version"),
@@ -403,37 +401,33 @@ func (a *Adapter) handleTaskCreateFromTemplate(ctx context.Context, req mcp.Call
 	return a.taskResult(task)
 }
 
-func applyTemplateBudgetArgs(req mcp.CallToolRequest, cost **float64, retries **int, duration **int64, tokens **int64) *mcp.CallToolResult {
-	args := req.GetArguments()
+func applyTemplateBudgetArgs(req map[string]any, cost **float64, retries **int, duration **int64, tokens **int64) error {
+	args := req
 	if _, ok := args["cost_budget"]; ok {
 		v, err := reqTaskListFloat(req, "cost_budget")
 		if err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "cost_budget")
-			return res
+			return argError(ErrCodeArgInvalid, err.Error(), "cost_budget")
 		}
 		*cost = &v
 	}
 	if _, ok := args["max_retries"]; ok {
 		v, _, err := reqTaskListInt(req, "max_retries")
 		if err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "max_retries")
-			return res
+			return argError(ErrCodeArgInvalid, err.Error(), "max_retries")
 		}
 		*retries = &v
 	}
 	if _, ok := args["max_duration_ms"]; ok {
 		v, err := reqTaskListInt64(req, "max_duration_ms")
 		if err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "max_duration_ms")
-			return res
+			return argError(ErrCodeArgInvalid, err.Error(), "max_duration_ms")
 		}
 		*duration = &v
 	}
 	if _, ok := args["token_budget"]; ok {
 		v, err := reqTaskListInt64(req, "token_budget")
 		if err != nil {
-			res, _ := errResult(ErrCodeArgInvalid, err.Error(), "token_budget")
-			return res
+			return argError(ErrCodeArgInvalid, err.Error(), "token_budget")
 		}
 		*tokens = &v
 	}

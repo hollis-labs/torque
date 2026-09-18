@@ -6,121 +6,120 @@ import (
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
-	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func (a *Adapter) registerSprintTools() {
-	a.addTool(mcp.NewTool("torque_sprint_create",
-		mcp.WithDescription(`Create a sprint (feature-flagged: requires features.sprints). Returns the SprintRecord.
+	a.addTool(newTool("torque_sprint_create",
+		withDescription(`Create a sprint (feature-flagged: requires features.sprints). Returns the SprintRecord.
 Use to scope a cohort of tasks under a common approval_mode + cost budget; prefer torque_epic_create for long-running multi-sprint initiatives, torque_project_create for infrastructure grouping. approval_mode=approve_sprint is a completion gate, not a kickoff action: start work by promoting the first sprint tasks to manual=false via torque_task_update, then let the scheduler dispatch them.
 Response shape: data = {<SprintRecord fields>} — singleton.
 Example: {"name":"Sprint 17","goal":"Land Phase C","approval_mode":"approve_each","cost_budget":"50"}`),
-		mcp.WithString("name", mcp.Required(), mcp.Description("Sprint name")),
-		mcp.WithString("goal", mcp.Description("Sprint goal")),
-		mcp.WithString("approval_mode", mcp.Description("auto|approve_sprint|approve_each (default approve_each)")),
-		mcp.WithString("cost_budget", mcp.Description("Maximum cost budget (numeric)")),
-		mcp.WithString("project_id", mcp.Description("Project ID to associate this sprint with (requires features.projects)")),
+		withString("name", required(), desc("Sprint name")),
+		withString("goal", desc("Sprint goal")),
+		withString("approval_mode", desc("auto|approve_sprint|approve_each (default approve_each)")),
+		withString("cost_budget", desc("Maximum cost budget (numeric)")),
+		withString("project_id", desc("Project ID to associate this sprint with (requires features.projects)")),
 	), a.handleSprintCreate)
 
-	a.addTool(mcp.NewTool("torque_sprint_get",
-		mcp.WithDescription(`Fetch a sprint by ID plus derived budget headroom (within_budget, cost_remaining).
+	a.addTool(newTool("torque_sprint_get",
+		withDescription(`Fetch a sprint by ID plus derived budget headroom (within_budget, cost_remaining).
 Use when you need the definition + live budget check; torque_sprint_list for browsing, torque_task_list with sprint_id filter for the sprint's tasks.
 Response shape: data = {sprint: <SprintRecord>, within_budget: bool, cost_remaining: float}.
 Example: {"id":"SP-17"}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Sprint ID")),
+		withString("id", required(), desc("Sprint ID")),
 	), a.handleSprintGet)
 
-	a.addTool(mcp.NewTool("torque_sprint_update",
-		mcp.WithDescription(`Partial update of sprint fields; pass status to transition (active<->inactive, either to completed terminal).
+	a.addTool(newTool("torque_sprint_update",
+		withDescription(`Partial update of sprint fields; pass status to transition (active<->inactive, either to completed terminal).
 Use for field edits or lifecycle moves; sibling torque_sprint_approve handles task approvals, torque_sprint_archive/_unarchive for soft-delete (orthogonal to status), torque_sprint_bulk_update for the same edit across many sprints at once.
 Response shape: data = {id, updated: bool, message}.
 Example: {"id":"SP-17","status":"completed"}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Sprint ID")),
-		mcp.WithString("name", mcp.Description("New name")),
-		mcp.WithString("goal", mcp.Description("New goal")),
-		mcp.WithString("approval_mode", mcp.Description("New approval mode")),
-		mcp.WithString("cost_budget", mcp.Description("New cost budget (numeric)")),
-		mcp.WithString("project_id", mcp.Description("Project ID to associate this sprint with (requires features.projects); pass empty string to clear")),
-		mcp.WithString("status", mcp.Description("Transition target: active|inactive|completed")),
+		withString("id", required(), desc("Sprint ID")),
+		withString("name", desc("New name")),
+		withString("goal", desc("New goal")),
+		withString("approval_mode", desc("New approval mode")),
+		withString("cost_budget", desc("New cost budget (numeric)")),
+		withString("project_id", desc("Project ID to associate this sprint with (requires features.projects); pass empty string to clear")),
+		withString("status", desc("Transition target: active|inactive|completed")),
 	), a.handleSprintUpdate)
 
-	a.addTool(mcp.NewTool("torque_sprint_bulk_update",
-		mcp.WithDescription(`Apply the same partial field update and/or status transition to many sprints in one call; per-sprint failures are collected, not fatal. Same field set and semantics as torque_sprint_update — only keys you actually pass change; status (if any) transitions each sprint through its own current-status FSM before the field update applies.
+	a.addTool(newTool("torque_sprint_bulk_update",
+		withDescription(`Apply the same partial field update and/or status transition to many sprints in one call; per-sprint failures are collected, not fatal. Same field set and semantics as torque_sprint_update — only keys you actually pass change; status (if any) transitions each sprint through its own current-status FSM before the field update applies.
 Use for batch field edits or lifecycle moves across a cohort of sprints (e.g. re-home several sprints to a project, or close out a batch); prefer torque_sprint_update for a single sprint.
 Response shape: data = {succeeded: [id...], failed: [{id, error: {code, message, field}}...]} — partial success is not an error; ok=true even when some ids fail. error.code uses the same taxonomy (arg_invalid/not_found/conflict/domain/permission/internal) as single-item torque_sprint_update.
 Example: {"ids":"[\"SP-17\",\"SP-18\"]","project_id":"PRJ-1"}`),
-		mcp.WithString("ids", mcp.Required(), mcp.Description("JSON array of sprint IDs")),
-		mcp.WithString("name", mcp.Description("New name")),
-		mcp.WithString("goal", mcp.Description("New goal")),
-		mcp.WithString("approval_mode", mcp.Description("New approval mode")),
-		mcp.WithString("cost_budget", mcp.Description("New cost budget (numeric)")),
-		mcp.WithString("project_id", mcp.Description("Project ID to associate these sprints with (requires features.projects); pass empty string to clear")),
-		mcp.WithString("status", mcp.Description("Transition target applied to every id: active|inactive|completed")),
+		withString("ids", required(), desc("JSON array of sprint IDs")),
+		withString("name", desc("New name")),
+		withString("goal", desc("New goal")),
+		withString("approval_mode", desc("New approval mode")),
+		withString("cost_budget", desc("New cost budget (numeric)")),
+		withString("project_id", desc("Project ID to associate these sprints with (requires features.projects); pass empty string to clear")),
+		withString("status", desc("Transition target applied to every id: active|inactive|completed")),
 	), a.handleSprintBulkUpdate)
 
-	a.addTool(mcp.NewTool("torque_sprint_delete",
-		mcp.WithDescription(`Hard-delete a sprint; tasks previously assigned have sprint_id cleared but are kept.
+	a.addTool(newTool("torque_sprint_delete",
+		withDescription(`Hard-delete a sprint; tasks previously assigned have sprint_id cleared but are kept.
 Use sparingly — prefer torque_sprint_update status=completed for audit, or torque_sprint_archive to soft-delete while keeping the row (and its tasks' sprint_id links) intact. Similar surfaces: torque_project_delete, torque_epic_delete.
 Response shape: data = {id, deleted: true, message}.
 Example: {"id":"SP-17"}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Sprint ID")),
+		withString("id", required(), desc("Sprint ID")),
 	), a.handleSprintDelete)
 
-	a.addTool(mcp.NewTool("torque_sprint_archive",
-		mcp.WithDescription(`Archive a sprint (soft-delete; preserves audit trail and every task's sprint_id link). Independent of status — an archived sprint keeps whatever status it had.
+	a.addTool(newTool("torque_sprint_archive",
+		withDescription(`Archive a sprint (soft-delete; preserves audit trail and every task's sprint_id link). Independent of status — an archived sprint keeps whatever status it had.
 Use instead of torque_sprint_delete when you want the row to stay around, just hidden from default torque_sprint_list results; torque_sprint_unarchive reverses it.
 Response shape: data = {id, archived: true, message}.
 Example: {"id":"SP-17"}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Sprint ID")),
+		withString("id", required(), desc("Sprint ID")),
 	), a.handleSprintArchive)
 
-	a.addTool(mcp.NewTool("torque_sprint_unarchive",
-		mcp.WithDescription(`Restore an archived sprint back to visible in default torque_sprint_list results. Status is untouched throughout — unarchiving never changes active/inactive/completed.
+	a.addTool(newTool("torque_sprint_unarchive",
+		withDescription(`Restore an archived sprint back to visible in default torque_sprint_list results. Status is untouched throughout — unarchiving never changes active/inactive/completed.
 Use to reverse a torque_sprint_archive call; sibling torque_sprint_update handles ordinary field edits and lifecycle status moves.
 Response shape: data = {id, unarchived: true, message}.
 Example: {"id":"SP-17"}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Sprint ID")),
+		withString("id", required(), desc("Sprint ID")),
 	), a.handleSprintUnarchive)
 
-	a.addTool(mcp.NewTool("torque_sprint_list",
-		mcp.WithDescription(`List sprints with optional status/project/budget filters; ordered updated_at DESC (tiebreak id ASC, per DEC-001) by default. Pass sort_by (name|status|updated_at|created_at) and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid.
+	a.addTool(newTool("torque_sprint_list",
+		withDescription(`List sprints with optional status/project/budget filters; ordered updated_at DESC (tiebreak id ASC, per DEC-001) by default. Pass sort_by (name|status|updated_at|created_at) and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid.
 Use for browsing; torque_sprint_get when you know the ID. Default brief shape drops goal body for size; pass verbose="true" for full records. Archived sprints are excluded unless include_archived="true".
 Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under — pass a different sort_by/sort_dir without dropping cursor and you get error.code=arg_invalid.
 Explicit malformed, blank, fractional, overflow, unsafe native-float, or negative limit values reject with error.code=arg_invalid, field=limit; omitted limit defaults to 100 and oversized limits clamp to 500. Cost budget bounds must be finite numbers when present.
 Response shape: data = {items: [<briefSprint or SprintRecord>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
 Example: {"status":"active","cost_budget_min":"10","sort_by":"updated_at","sort_dir":"desc"}`),
-		mcp.WithString("status", mcp.Description("Filter: active|inactive|completed")),
-		mcp.WithString("project_id", mcp.Description("Filter by project ID (requires features.projects)")),
-		mcp.WithString("include_archived", mcp.Description("Include archived sprints (string 'true'/'false', default false)")),
-		mcp.WithString("cost_budget_min", mcp.Description("Only sprints with cost_budget >= this value (numeric; sprints with no budget set never match)")),
-		mcp.WithString("cost_budget_max", mcp.Description("Only sprints with cost_budget <= this value (numeric; sprints with no budget set never match)")),
-		mcp.WithString("over_budget", mcp.Description("Only sprints whose total run cost exceeds their cost_budget (string 'true'/'false', default false)")),
-		mcp.WithString("verbose", mcp.Description("Return full records instead of brief (string 'true'/'false', default false)")),
-		mcp.WithString("limit", mcp.Description("Max results (integer, default 100, max 500)")),
-		mcp.WithString("sort_by", mcp.Description("Sort field: name|status|updated_at|created_at (default updated_at)")),
-		mcp.WithString("sort_dir", mcp.Description("Sort direction: asc|desc (default desc)")),
-		mcp.WithString("cursor", mcp.Description("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
+		withString("status", desc("Filter: active|inactive|completed")),
+		withString("project_id", desc("Filter by project ID (requires features.projects)")),
+		withString("include_archived", desc("Include archived sprints (string 'true'/'false', default false)")),
+		withString("cost_budget_min", desc("Only sprints with cost_budget >= this value (numeric; sprints with no budget set never match)")),
+		withString("cost_budget_max", desc("Only sprints with cost_budget <= this value (numeric; sprints with no budget set never match)")),
+		withString("over_budget", desc("Only sprints whose total run cost exceeds their cost_budget (string 'true'/'false', default false)")),
+		withString("verbose", desc("Return full records instead of brief (string 'true'/'false', default false)")),
+		withString("limit", desc("Max results (integer, default 100, max 500)")),
+		withString("sort_by", desc("Sort field: name|status|updated_at|created_at (default updated_at)")),
+		withString("sort_dir", desc("Sort direction: asc|desc (default desc)")),
+		withString("cursor", desc("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
 	), a.handleSprintList)
 
-	a.addTool(mcp.NewTool("torque_sprint_approve",
-		mcp.WithDescription(`Approve tasks in a sprint. With task_id, approves one task; without, approves every task currently in review.
+	a.addTool(newTool("torque_sprint_approve",
+		withDescription(`Approve tasks in a sprint. With task_id, approves one task; without, approves every task currently in review.
 Use for sprint-level review-gate closures (CLOSING the cohort) after tasks have already run and reached review; this does NOT start dispatch. torque_sprint_start OPENS the dispatch gate. Confirm scheduler state with torque_scheduler_status. Use torque_task_transition for single-task control and torque_task_bulk_transition when approving outside a sprint.
 Response shape: data = {sprint_id, task_id?, approved: count, message}.
 Example: {"id":"SP-17"}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Sprint ID")),
-		mcp.WithString("task_id", mcp.Description("Specific task ID (omit for approve-all-in-review)")),
+		withString("id", required(), desc("Sprint ID")),
+		withString("task_id", desc("Specific task ID (omit for approve-all-in-review)")),
 	), a.handleSprintApprove)
 
-	a.addTool(mcp.NewTool("torque_sprint_start",
-		mcp.WithDescription(`Open the dispatch gate for a sprint: promote every parked (manual=true) task in it to manual=false so the scheduler can begin dispatching them.
+	a.addTool(newTool("torque_sprint_start",
+		withDescription(`Open the dispatch gate for a sprint: promote every parked (manual=true) task in it to manual=false so the scheduler can begin dispatching them.
 Use this to "start" a sprint under approval_mode=approve_sprint — torque_sprint_approve only CLOSES the review gate (review->done) and reports "0 tasks approved" on a fresh sprint. Mental model: Torque has ONE dispatch gate, the per-task manual flag; approval_mode is workflow metadata, not a scheduler gate. Starting a sprint = bulk-promoting its tasks. Idempotent: already-eligible tasks are left alone.
 Response shape: data = {sprint_id, promoted: count, promoted_ids[], already_eligible: count, skipped[]?, message}.
 Example: {"id":"SP-17"}`),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Sprint ID")),
+		withString("id", required(), desc("Sprint ID")),
 	), a.handleSprintStart)
 }
 
-func (a *Adapter) handleSprintCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleSprintCreate(ctx context.Context, req map[string]any) (any, error) {
 	input := service.SprintCreateInput{
 		Name:         reqStr(req, "name"),
 		Goal:         reqStr(req, "goal"),
@@ -139,7 +138,7 @@ func (a *Adapter) handleSprintCreate(ctx context.Context, req mcp.CallToolReques
 	return okResult(sprint)
 }
 
-func (a *Adapter) handleSprintGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleSprintGet(ctx context.Context, req map[string]any) (any, error) {
 	sprint, err := a.svc.Sprint.Get(reqStr(req, "id"))
 	if err != nil {
 		return errFromService(err)
@@ -169,7 +168,7 @@ func (a *Adapter) handleSprintGet(ctx context.Context, req mcp.CallToolRequest) 
 // approval_mode/cost_budget accept an explicit empty/zero value like their
 // Task counterparts (approval_mode="" is rejected downstream by the existing
 // validApprovalModes check).
-func buildSprintUpdate(req mcp.CallToolRequest) (sqlstore.SprintUpdate, bool) {
+func buildSprintUpdate(req map[string]any) (sqlstore.SprintUpdate, bool) {
 	update := sqlstore.SprintUpdate{}
 	hasUpdate := false
 
@@ -201,7 +200,7 @@ func buildSprintUpdate(req mcp.CallToolRequest) (sqlstore.SprintUpdate, bool) {
 	return update, hasUpdate
 }
 
-func (a *Adapter) handleSprintUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleSprintUpdate(ctx context.Context, req map[string]any) (any, error) {
 	id := reqStr(req, "id")
 
 	// Handle status transition separately
@@ -230,10 +229,10 @@ func (a *Adapter) handleSprintUpdate(ctx context.Context, req mcp.CallToolReques
 // (plus an optional status transition) to every id through
 // SprintService.BulkUpdate, then shapes the result through bulkResult — the
 // same {succeeded, failed} envelope every bulk_* verb uses.
-func (a *Adapter) handleSprintBulkUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleSprintBulkUpdate(ctx context.Context, req map[string]any) (any, error) {
 	ids, errRes := reqIDs(req)
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 
 	update, _ := buildSprintUpdate(req)
@@ -243,7 +242,7 @@ func (a *Adapter) handleSprintBulkUpdate(ctx context.Context, req mcp.CallToolRe
 	return bulkResult(succeeded, failed)
 }
 
-func (a *Adapter) handleSprintDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleSprintDelete(ctx context.Context, req map[string]any) (any, error) {
 	id := reqStr(req, "id")
 	if err := a.svc.Sprint.Delete(id); err != nil {
 		return errFromService(err)
@@ -255,30 +254,30 @@ func (a *Adapter) handleSprintDelete(ctx context.Context, req mcp.CallToolReques
 	})
 }
 
-func (a *Adapter) handleSprintList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleSprintList(ctx context.Context, req map[string]any) (any, error) {
 	verbose, errRes := reqQueryBool(req, "verbose")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	status, errRes := reqQueryString(req, "status")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	projectID, errRes := reqQueryString(req, "project_id")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	includeArchived, errRes := reqQueryBool(req, "include_archived")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	overBudget, errRes := reqQueryBool(req, "over_budget")
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 	cursor, errRes := reqQueryCursor(req)
 	if errRes != nil {
-		return errRes, nil
+		return nil, errRes
 	}
 
 	query := service.SprintQuery{
@@ -291,14 +290,14 @@ func (a *Adapter) handleSprintList(ctx context.Context, req mcp.CallToolRequest)
 	if reqHasArg(req, "cost_budget_min") {
 		v, errRes := reqQueryFloat(req, "cost_budget_min")
 		if errRes != nil {
-			return errRes, nil
+			return nil, errRes
 		}
 		query.CostBudgetMin = v
 	}
 	if reqHasArg(req, "cost_budget_max") {
 		v, errRes := reqQueryFloat(req, "cost_budget_max")
 		if errRes != nil {
-			return errRes, nil
+			return nil, errRes
 		}
 		query.CostBudgetMax = v
 	}
@@ -322,7 +321,7 @@ func (a *Adapter) handleSprintList(ctx context.Context, req mcp.CallToolRequest)
 // sprintListCursorEnvelope builds torque_sprint_list's {items, meta} cursor-
 // pagination response, mirroring taskListCursorEnvelope's contract. sprints
 // must already be trimmed to at most `limit` records.
-func (a *Adapter) sprintListCursorEnvelope(sprints []sqlstore.SprintRecord, limit int, verbose bool, sortBy, sortDir string, hasMoreFromQuery bool) (*mcp.CallToolResult, error) {
+func (a *Adapter) sprintListCursorEnvelope(sprints []sqlstore.SprintRecord, limit int, verbose bool, sortBy, sortDir string, hasMoreFromQuery bool) (any, error) {
 	items := make([]any, 0, len(sprints))
 	for _, sp := range sprints {
 		if verbose {
@@ -342,7 +341,7 @@ func (a *Adapter) sprintListCursorEnvelope(sprints []sqlstore.SprintRecord, limi
 // primitive (SprintService.Archive/Unarchive, already built) onto the MCP
 // surface, following torque_collection_archive/_unarchive's reference
 // response shape (collection_tools.go).
-func (a *Adapter) handleSprintArchive(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleSprintArchive(ctx context.Context, req map[string]any) (any, error) {
 	id := reqStr(req, "id")
 	if err := a.svc.Sprint.Archive(id); err != nil {
 		return errFromService(err)
@@ -354,7 +353,7 @@ func (a *Adapter) handleSprintArchive(ctx context.Context, req mcp.CallToolReque
 	})
 }
 
-func (a *Adapter) handleSprintUnarchive(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleSprintUnarchive(ctx context.Context, req map[string]any) (any, error) {
 	id := reqStr(req, "id")
 	if err := a.svc.Sprint.Unarchive(id); err != nil {
 		return errFromService(err)
@@ -366,7 +365,7 @@ func (a *Adapter) handleSprintUnarchive(ctx context.Context, req mcp.CallToolReq
 	})
 }
 
-func (a *Adapter) handleSprintApprove(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleSprintApprove(ctx context.Context, req map[string]any) (any, error) {
 	sprintID := reqStr(req, "id")
 	taskID := reqStr(req, "task_id")
 
@@ -397,7 +396,7 @@ func (a *Adapter) handleSprintApprove(ctx context.Context, req mcp.CallToolReque
 // and the torque_sprint_start description for the mental model: this is the
 // missing "begin the sprint" action for approval_mode=approve_sprint
 // (CW-20260517-0011 edge 5).
-func (a *Adapter) handleSprintStart(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleSprintStart(ctx context.Context, req map[string]any) (any, error) {
 	sprintID := reqStr(req, "id")
 
 	res, err := a.svc.Sprint.Start(sprintID)

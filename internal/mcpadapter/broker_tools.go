@@ -7,7 +7,6 @@ import (
 	"time"
 
 	gomsg "github.com/hollis-labs/go-messaging"
-	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/hollis-labs/torque/internal/broker"
 	"github.com/hollis-labs/torque/internal/runtime/steering"
@@ -17,64 +16,64 @@ import (
 // over MCP. Tools reply with a domain error when the adapter has no broker
 // wired (mcp-only stdio path), mirroring the sessionmgr contract.
 func (a *Adapter) registerBrokerTools() {
-	a.addTool(mcp.NewTool("torque_broker_send",
-		mcp.WithDescription(`Send a typed envelope through the Torque broker (notice|status_update|handoff|escalation|response).
+	a.addTool(newTool("torque_broker_send",
+		withDescription(`Send a typed envelope through the Torque broker (notice|status_update|handoff|escalation|response).
 Use for fire-and-forget envelopes (notice, status_update, handoff) and one-shot escalations. For request/reply with a blocking wait, use torque_broker_request.
 Validation: kind must be a known envelope type; from/to must be canonical msg:// URNs; payload size capped per MaxPayloadBytes; escalation requires severity in {info,warn,error,critical} and a non-empty reason.
 Response shape: data = <Envelope> singleton — id, kind, from, to, thread_id, in_reply_to, created_at, payload, etc.
 Example: {"kind":"notice","from":"msg://agent/test/alice","to":"msg://agent/test/bob","payload":"{\"hello\":\"world\"}"}`),
-		mcp.WithString("kind", mcp.Required(), mcp.Description("Envelope kind: notice|status_update|handoff|escalation|response")),
-		mcp.WithString("from", mcp.Required(), mcp.Description("Sender URN (msg://kind/authority/id[/subid])")),
-		mcp.WithString("to", mcp.Required(), mcp.Description("Recipient URN")),
-		mcp.WithString("payload", mcp.Description("JSON-encoded payload (string)")),
-		mcp.WithString("content_type", mcp.Description("Override default application/json")),
-		mcp.WithString("thread_id", mcp.Description("Conversation thread ID")),
-		mcp.WithString("in_reply_to", mcp.Description("Correlation ID — for response envelopes")),
-		mcp.WithString("channel", mcp.Description("Opaque UX-layer channel tag")),
-		mcp.WithString("metadata", mcp.Description("JSON object of string→string metadata")),
+		withString("kind", required(), desc("Envelope kind: notice|status_update|handoff|escalation|response")),
+		withString("from", required(), desc("Sender URN (msg://kind/authority/id[/subid])")),
+		withString("to", required(), desc("Recipient URN")),
+		withString("payload", desc("JSON-encoded payload (string)")),
+		withString("content_type", desc("Override default application/json")),
+		withString("thread_id", desc("Conversation thread ID")),
+		withString("in_reply_to", desc("Correlation ID — for response envelopes")),
+		withString("channel", desc("Opaque UX-layer channel tag")),
+		withString("metadata", desc("JSON object of string→string metadata")),
 	), a.handleBrokerSend)
 
-	a.addTool(mcp.NewTool("torque_broker_request",
-		mcp.WithDescription(`Send a kind=request envelope and BLOCK until a correlated response arrives or the timeout expires.
+	a.addTool(newTool("torque_broker_request",
+		withDescription(`Send a kind=request envelope and BLOCK until a correlated response arrives or the timeout expires.
 Use for synchronous agent-to-agent calls (orchestrator asks reviewer for disposition; planner asks orchestrator for context). Pair with torque_broker_send (kind=response) on the responder side, or use the dispatcher's Reply helper.
 timeout_seconds clamps to [1, 600]; defaults to 30. On timeout the call returns a domain error and the request envelope persists — issue torque_broker_send for a follow-up Cancel-equivalent if the request is no longer meaningful.
 Response shape: data = <Envelope> for the response (kind=response, in_reply_to=<request id>).
 Example: {"from":"msg://agent/test/alice","to":"msg://agent/test/bob","payload":"{\"q\":\"ping\"}","timeout_seconds":"15"}`),
-		mcp.WithString("from", mcp.Required(), mcp.Description("Requester URN")),
-		mcp.WithString("to", mcp.Required(), mcp.Description("Responder URN")),
-		mcp.WithString("payload", mcp.Description("JSON-encoded request body")),
-		mcp.WithString("content_type"),
-		mcp.WithString("thread_id"),
-		mcp.WithString("channel"),
-		mcp.WithString("metadata"),
-		mcp.WithString("timeout_seconds", mcp.Description("Block timeout in seconds; default 30, range [1,600]")),
+		withString("from", required(), desc("Requester URN")),
+		withString("to", required(), desc("Responder URN")),
+		withString("payload", desc("JSON-encoded request body")),
+		withString("content_type"),
+		withString("thread_id"),
+		withString("channel"),
+		withString("metadata"),
+		withString("timeout_seconds", desc("Block timeout in seconds; default 30, range [1,600]")),
 	), a.handleBrokerRequest)
 
-	a.addTool(mcp.NewTool("torque_broker_inbox",
-		mcp.WithDescription(`Drain undelivered envelopes addressed to a recipient URN. Atomically marks returned rows DeliveredAt=now and emits envelope.delivered SSE events.
+	a.addTool(newTool("torque_broker_inbox",
+		withDescription(`Drain undelivered envelopes addressed to a recipient URN. Atomically marks returned rows DeliveredAt=now and emits envelope.delivered SSE events.
 Use to poll for incoming envelopes when not running a Subscribe stream (HTTP /api/v1/messages/subscribe is the SSE alternative).
 kind / channel / thread_id filter values combine via AND; within a slice values OR. Limit caps the page (0 = unlimited).
 Response shape: data = {envelopes: [<Envelope>...]}.
 Example: {"to":"msg://agent/test/alice","limit":"20"}`),
-		mcp.WithString("to", mcp.Required(), mcp.Description("Recipient URN")),
-		mcp.WithString("kind", mcp.Description("Filter by envelope kind (comma-separated for multi)")),
-		mcp.WithString("channel", mcp.Description("Filter by channel (comma-separated for multi)")),
-		mcp.WithString("thread_id", mcp.Description("Filter by thread")),
-		mcp.WithString("limit", mcp.Description("Max envelopes (integer; 0 = unlimited)")),
+		withString("to", required(), desc("Recipient URN")),
+		withString("kind", desc("Filter by envelope kind (comma-separated for multi)")),
+		withString("channel", desc("Filter by channel (comma-separated for multi)")),
+		withString("thread_id", desc("Filter by thread")),
+		withString("limit", desc("Max envelopes (integer; 0 = unlimited)")),
 	), a.handleBrokerInbox)
 
-	a.addTool(mcp.NewTool("torque_inbox_poll",
-		mcp.WithDescription(`Opt into mid-session inbox polling AND drain your inbox in one call (CW-20260518-0042).
+	a.addTool(newTool("torque_inbox_poll",
+		withDescription(`Opt into mid-session inbox polling AND drain your inbox in one call (CW-20260518-0042).
 By default Torque delivers envelopes addressed to a live agent by injecting them as the agent's next turn (inject-at-turn-boundary). An agent that is actively communicating can instead PULL its own inbox between tool calls: each torque_inbox_poll call records a polling opt-in for the 'to' URN, and while that opt-in is fresh the steering bridge stops injecting turns for that recipient — so a steering message is handled exactly once, by your poll.
 The opt-in is time-bounded: it lapses after poll_ttl_seconds (returned in the response) unless you poll again. Keep polling on a cadence shorter than the TTL to stay opted in; stop polling (or pass release=true) to revert to inject-at-turn. 'to' MUST be your own address and match how senders address you (e.g. msg://agent/<authority>/<your-task-id>).
 Response shape: data = {to, polling, poll_ttl_seconds, count, envelopes:[<Envelope>...], drain_hint?}.
 Example: {"to":"msg://agent/local/CW-20260518-0042","limit":"20"}`),
-		mcp.WithString("to", mcp.Required(), mcp.Description("Your own recipient URN (msg://kind/authority/id[/subid])")),
-		mcp.WithString("kind", mcp.Description("Filter drained envelopes by kind (comma-separated for multi)")),
-		mcp.WithString("channel", mcp.Description("Filter drained envelopes by channel (comma-separated for multi)")),
-		mcp.WithString("thread_id", mcp.Description("Filter drained envelopes by thread")),
-		mcp.WithString("limit", mcp.Description("Max envelopes to drain (integer; 0 = unlimited)")),
-		mcp.WithBoolean("release", mcp.Description("If true, drop the polling opt-in (revert to inject-at-turn) instead of refreshing it; a final drain is still returned")),
+		withString("to", required(), desc("Your own recipient URN (msg://kind/authority/id[/subid])")),
+		withString("kind", desc("Filter drained envelopes by kind (comma-separated for multi)")),
+		withString("channel", desc("Filter drained envelopes by channel (comma-separated for multi)")),
+		withString("thread_id", desc("Filter drained envelopes by thread")),
+		withString("limit", desc("Max envelopes to drain (integer; 0 = unlimited)")),
+		withBoolean("release", desc("If true, drop the polling opt-in (revert to inject-at-turn) instead of refreshing it; a final drain is still returned")),
 	), a.handleInboxPoll)
 }
 
@@ -95,7 +94,7 @@ func (a *Adapter) requireBroker() (*broker.Broker, error) {
 	return a.broker, nil
 }
 
-func (a *Adapter) handleBrokerSend(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleBrokerSend(ctx context.Context, req map[string]any) (any, error) {
 	b, err := a.requireBroker()
 	if err != nil {
 		return errResult(ErrCodeDomain, err.Error(), "")
@@ -135,7 +134,7 @@ func (a *Adapter) handleBrokerSend(ctx context.Context, req mcp.CallToolRequest)
 	return okResult(out)
 }
 
-func (a *Adapter) handleBrokerRequest(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleBrokerRequest(ctx context.Context, req map[string]any) (any, error) {
 	b, err := a.requireBroker()
 	if err != nil {
 		return errResult(ErrCodeDomain, err.Error(), "")
@@ -182,7 +181,7 @@ func (a *Adapter) handleBrokerRequest(ctx context.Context, req mcp.CallToolReque
 	return okResult(resp)
 }
 
-func (a *Adapter) handleBrokerInbox(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleBrokerInbox(ctx context.Context, req map[string]any) (any, error) {
 	b, err := a.requireBroker()
 	if err != nil {
 		return errResult(ErrCodeDomain, err.Error(), "")
@@ -217,7 +216,7 @@ func (a *Adapter) handleBrokerInbox(ctx context.Context, req mcp.CallToolRequest
 // is what makes mid-session polling exclusive with the steering bridge's
 // inject-at-turn default: while the opt-in is fresh, the bridge skips
 // turn injection for this recipient (see internal/runtime/steering).
-func (a *Adapter) handleInboxPoll(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleInboxPoll(ctx context.Context, req map[string]any) (any, error) {
 	reg, err := a.requirePollRegistry()
 	if err != nil {
 		return errResult(ErrCodeDomain, err.Error(), "")
@@ -278,7 +277,7 @@ func (a *Adapter) handleInboxPoll(ctx context.Context, req mcp.CallToolRequest) 
 
 // brokerErrResult maps broker / gomsg error sentinels to dual-surface MCP
 // error results so callers see the right code (arg_invalid vs domain).
-func brokerErrResult(err error) (*mcp.CallToolResult, error) {
+func brokerErrResult(err error) (any, error) {
 	switch {
 	case errors.Is(err, broker.ErrValidation):
 		return errResult(ErrCodeArgInvalid, err.Error(), "")

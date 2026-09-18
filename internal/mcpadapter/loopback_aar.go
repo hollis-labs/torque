@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
-
 	"github.com/hollis-labs/torque/internal/aar"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
@@ -47,8 +45,8 @@ type aarSubmitInput struct {
 // outcome so CLI aggregation tools can filter / group without re-parsing
 // the markdown body.
 func (a *Adapter) registerLoopbackAARTool() {
-	a.addTool(mcp.NewTool("torque_aar_submit",
-		mcp.WithDescription(`Submit the run's After-Action Report — the structured reflection log every Torque agent run is expected to file before signaling completion (CW-20260519-0088).
+	a.addTool(newTool("torque_aar_submit",
+		withDescription(`Submit the run's After-Action Report — the structured reflection log every Torque agent run is expected to file before signaling completion (CW-20260519-0088).
 
 The AAR captures process / DX feedback the operator cannot infer from commits or error logs. Run-identity fields (task_id, run_id, agent_profile, started_at, ended_at, project_id, sprint_id, title) are auto-populated from the task and the active run; you only fill in the reflection sections.
 
@@ -66,7 +64,7 @@ reflection_json fields (all string unless noted):
 
 Response shape: data = {<ArtifactRecord fields>} — the created AAR artifact (Type="aar").
 Example: {"reflection_json":"{\"summary\":\"Built X.\",\"outcome\":\"success\",\"clunky\":\"...\",\"automatable\":\"\",\"manual_should_be_auto\":\"\",\"sharp_edges\":\"\",\"suggestions\":\"\"}"}`),
-		mcp.WithString("reflection_json", mcp.Required(), mcp.Description("JSON object of reflection fields (see description for the canonical keys)")),
+		withString("reflection_json", required(), desc("JSON object of reflection fields (see description for the canonical keys)")),
 	), a.handleLoopbackAARSubmit)
 }
 
@@ -82,7 +80,7 @@ Example: {"reflection_json":"{\"summary\":\"Built X.\",\"outcome\":\"success\",\
 // When no run exists (e.g. tests using NewLoopback without scheduler), the
 // artifact is still written with RunID unset so the AAR remains a record
 // of the agent's reflection.
-func (a *Adapter) handleLoopbackAARSubmit(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleLoopbackAARSubmit(ctx context.Context, req map[string]any) (any, error) {
 	raw := reqStr(req, "reflection_json")
 	if raw == "" {
 		return errResult(ErrCodeArgInvalid, "reflection_json is required", "reflection_json")

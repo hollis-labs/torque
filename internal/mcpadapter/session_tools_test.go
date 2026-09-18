@@ -4,20 +4,33 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
+	gomcp "github.com/hollis-labs/go-mcp/server"
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
-	"github.com/mark3labs/mcp-go/mcp"
-	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 )
+
+// mcpErrorJSON extracts the JSON-marshaled {ok,data,error} envelope from a
+// handler error produced by errResult/argError (a budget.StructuredError),
+// for tests that need to inspect the structured error content the way an
+// MCP client reading CallToolResult text would see it.
+func mcpErrorJSON(t *testing.T, err error) string {
+	t.Helper()
+	var se interface{ ToolErrorContent() any }
+	require.True(t, errors.As(err, &se), "expected a structured tool error, got: %v", err)
+	b, marshalErr := json.Marshal(se.ToolErrorContent())
+	require.NoError(t, marshalErr)
+	return string(b)
+}
 
 func TestHandleSessionCreate_UnknownAgentProfile(t *testing.T) {
 	a := &Adapter{
@@ -29,22 +42,17 @@ func TestHandleSessionCreate_UnknownAgentProfile(t *testing.T) {
 		}),
 	}
 
-	req := mcp.CallToolRequest{}
-	req.Params.Arguments = map[string]any{
+	req := map[string]any{
 		"agent_profile": "typo",
 		"workdir":       t.TempDir(),
 	}
 
 	res, err := a.handleSessionCreate(context.Background(), req)
-	require.NoError(t, err)
-	require.NotNil(t, res)
-	assert.True(t, res.IsError)
-	require.Len(t, res.Content, 1)
-
-	text, ok := res.Content[0].(mcp.TextContent)
-	require.True(t, ok)
-	assert.Contains(t, text.Text, `"code": "arg_invalid"`)
-	assert.Contains(t, text.Text, "unknown agent_profile 'typo' in profiles.yaml agent_profiles registry — known: [default fast]")
+	require.Nil(t, res)
+	require.Error(t, err)
+	text := mcpErrorJSON(t, err)
+	assert.Contains(t, text, `"code":"arg_invalid"`)
+	assert.Contains(t, text, "unknown agent_profile 'typo' in profiles.yaml agent_profiles registry — known: [default fast]")
 }
 
 // TestHandleSessionCreate_NoSelectorSurfacesArgInvalid pins the MCP
@@ -60,30 +68,24 @@ func TestHandleSessionCreate_NoSelectorSurfacesArgInvalid(t *testing.T) {
 		}),
 	}
 
-	req := mcp.CallToolRequest{}
-	req.Params.Arguments = map[string]any{
+	req := map[string]any{
 		"workdir": t.TempDir(),
 	}
 
 	res, err := a.handleSessionCreate(context.Background(), req)
-	require.NoError(t, err)
-	require.NotNil(t, res)
-	assert.True(t, res.IsError, "missing selector must surface as IsError")
-	require.Len(t, res.Content, 1)
-
-	text, ok := res.Content[0].(mcp.TextContent)
-	require.True(t, ok)
-	assert.Contains(t, text.Text, `"code": "arg_invalid"`)
-	assert.Contains(t, text.Text, "launch_profile")
-	assert.Contains(t, text.Text, "at least one of launch_profile or agent_profile is required")
+	require.Nil(t, res)
+	require.Error(t, err)
+	text := mcpErrorJSON(t, err)
+	assert.Contains(t, text, `"code":"arg_invalid"`)
+	assert.Contains(t, text, "launch_profile")
+	assert.Contains(t, text, "at least one of launch_profile or agent_profile is required")
 }
 
 func TestHandleSessionCreate_ForwardsEnvMetaThroughBoot(t *testing.T) {
 	a, store, rt := sessionCreateFixture(t)
 	workdir := t.TempDir()
 
-	req := mcp.CallToolRequest{}
-	req.Params.Arguments = map[string]any{
+	req := map[string]any{
 		"launch_profile": "worker.implementer",
 		"agent_profile":  "typo-ignored-when-launch-profile-present",
 		"workdir":        workdir,
@@ -98,7 +100,7 @@ func TestHandleSessionCreate_ForwardsEnvMetaThroughBoot(t *testing.T) {
 
 	res, err := a.handleSessionCreate(context.Background(), req)
 	require.NoError(t, err)
-	require.False(t, res.IsError, "response: %#v", res.Content)
+	require.NotNil(t, res, "response must carry the created session on success")
 	require.NotNil(t, rt.lastStart, "Boot must reach the fake runtime")
 
 	env := envMap(rt.lastStart.Env)
@@ -134,12 +136,20 @@ func TestHandleSessionCreate_ForwardsEnvMetaThroughBoot(t *testing.T) {
 
 func TestSessionCreateRegisteredToolSchemaAndNativeMapCall(t *testing.T) {
 	a, store, rt := sessionCreateFixture(t)
-	tools := a.server.ListTools()
+	defs := a.server.ToolDefinitions()
+	byName := make(map[string]gomcp.ToolDefinition, len(defs))
+	for _, d := range defs {
+		byName[d.Name] = d
+	}
 	for _, name := range []string{"torque_session_create", "torque_session_launch"} {
-		tool := tools[name]
-		require.NotNil(t, tool, "%s must be registered", name)
+		tool, ok := byName[name]
+		require.True(t, ok, "%s must be registered", name)
+		schema, ok := tool.InputSchema.(map[string]any)
+		require.True(t, ok, "%s schema must be a map[string]any", name)
+		props, ok := schema["properties"].(map[string]any)
+		require.True(t, ok, "%s schema missing properties", name)
 		for _, field := range []string{"env", "meta"} {
-			prop, ok := tool.Tool.InputSchema.Properties[field].(map[string]any)
+			prop, ok := props[field].(map[string]any)
 			require.True(t, ok, "%s.%s schema missing", name, field)
 			require.Contains(t, prop["description"], "native object")
 			anyOf, ok := prop["anyOf"].([]any)
@@ -152,16 +162,15 @@ func TestSessionCreateRegisteredToolSchemaAndNativeMapCall(t *testing.T) {
 		}
 	}
 
-	req := mcp.CallToolRequest{}
-	req.Params.Arguments = map[string]any{
+	req := map[string]any{
 		"agent_profile": "default",
 		"workdir":       t.TempDir(),
 		"env":           map[string]any{"NATIVE_ENV": "ok"},
 		"meta":          map[string]any{"native_meta": "ok"},
 	}
-	res, err := tools["torque_session_launch"].Handler(context.Background(), req)
+	res, err := a.server.CallTool(context.Background(), "torque_session_launch", req)
 	require.NoError(t, err)
-	require.False(t, res.IsError, "response: %#v", res.Content)
+	require.NotNil(t, res)
 	require.NotNil(t, rt.lastStart)
 	assert.Equal(t, "ok", envMap(rt.lastStart.Env)["NATIVE_ENV"])
 
@@ -187,18 +196,17 @@ func TestHandleSessionCreate_RejectsInvalidEnvMeta(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a, _, _ := sessionCreateFixture(t)
-			req := mcp.CallToolRequest{}
-			req.Params.Arguments = map[string]any{
+			req := map[string]any{
 				"agent_profile": "default",
 				"workdir":       t.TempDir(),
 				tc.field:        tc.value,
 			}
 
 			res, err := a.handleSessionCreate(context.Background(), req)
-			require.NoError(t, err)
-			require.True(t, res.IsError)
-			text := res.Content[0].(mcp.TextContent).Text
-			assert.Contains(t, text, `"code": "arg_invalid"`)
+			require.Nil(t, res)
+			require.Error(t, err)
+			text := mcpErrorJSON(t, err)
+			assert.Contains(t, text, `"code":"arg_invalid"`)
 			assert.Contains(t, text, tc.field)
 		})
 	}
@@ -227,7 +235,7 @@ func sessionCreateFixture(t *testing.T) (*Adapter, *sqlstore.Store, *recordingRu
 	deps.Sessions = agent.NewManager(deps).WithIDFunc(func() string { return "SES-MCP-1" })
 	a := &Adapter{
 		sessions: deps.Sessions,
-		server:   mcpserver.NewMCPServer("Torque Test", "0.0.0"),
+		server:   gomcp.NewServer("Torque Test", "0.0.0"),
 	}
 	a.registerSessionTools()
 	t.Cleanup(func() {

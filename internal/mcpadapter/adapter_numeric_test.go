@@ -8,10 +8,10 @@ package mcpadapter_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"testing"
 
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,51 +57,37 @@ func TestFullStack_TaskList_NumericStringLimit(t *testing.T) {
 }
 
 // TestFullStack_TaskList_StringLimit_NoArgValidationFailed is the minimal
-// regression probe: dispatch the raw JSON-RPC message exactly as an
-// LLM-backed MCP client would serialize it, and assert the response is NOT
-// an ARG_VALIDATION_FAILED error envelope.
+// regression probe: dispatch a real MCP protocol tools/call (over an
+// in-memory transport, so the official SDK's own JSON-schema argument
+// validator runs — Server.CallTool's direct in-process path, which the
+// shared callTool test helper uses, bypasses that validator entirely) with
+// limit as a string, exactly as an LLM-backed MCP client would serialize it,
+// and assert the call is not rejected at the schema boundary.
 func TestFullStack_TaskList_StringLimit_NoArgValidationFailed(t *testing.T) {
 	a := setupAdapter(t)
+	ctx := context.Background()
 
-	// initialize
-	initMsg, err := json.Marshal(map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      0,
-		"method":  "initialize",
-		"params": map[string]interface{}{
-			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]interface{}{},
-			"clientInfo":      map[string]interface{}{"name": "test", "version": "0.1.0"},
-		},
-	})
-	require.NoError(t, err)
-	a.Server().HandleMessage(context.Background(), initMsg)
+	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "numeric-test-client", Version: "0.0.0"}, nil)
+	t1, t2 := mcpsdk.NewInMemoryTransports()
 
-	msg, err := json.Marshal(map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "tools/call",
-		"params": map[string]interface{}{
-			"name": "torque_task_list",
-			"arguments": map[string]interface{}{
-				"limit": "10",
-			},
-		},
-	})
-	require.NoError(t, err)
+	serverSession, err := a.Server().SDKServer().Connect(ctx, t1, nil)
+	require.NoError(t, err, "server connect")
+	t.Cleanup(func() { _ = serverSession.Wait() })
 
-	resp := a.Server().HandleMessage(context.Background(), msg)
-	respBytes, err := json.Marshal(resp)
-	require.NoError(t, err)
+	clientSession, err := client.Connect(ctx, t2, nil)
+	require.NoError(t, err, "client connect")
+	defer clientSession.Close()
 
 	// The pre-fix failure was a JSON-RPC error with message text containing
-	// "got string, want number". Assert no such error envelope is returned.
-	var parsed map[string]interface{}
-	require.NoError(t, json.Unmarshal(respBytes, &parsed))
-	if errObj, ok := parsed["error"].(map[string]interface{}); ok {
-		t.Fatalf("schema-boundary error leaked: %v", errObj)
-	}
-	require.Contains(t, parsed, "result", "expected a result envelope, got: %s", string(respBytes))
+	// "got string, want number" — a transport-level error, which surfaces
+	// here as a non-nil err (not a tool-level IsError result).
+	res, err := clientSession.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name:      "torque_task_list",
+		Arguments: map[string]interface{}{"limit": "10"},
+	})
+	require.NoError(t, err, "schema-boundary error leaked")
+	require.NotNil(t, res)
+	require.False(t, res.IsError, "expected a successful result, got IsError=true: %+v", res.Content)
 }
 
 // TestFullStack_TaskCreate_PriorityAcceptsString verifies the priority

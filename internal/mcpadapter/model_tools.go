@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/hollis-labs/go-modelsdev/modelsdev"
-	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // briefModel drops the noisier fields (full modality + every cost variant) to
@@ -38,27 +37,27 @@ func toBriefModel(m modelsdev.ModelRef) briefModel {
 }
 
 func (a *Adapter) registerModelTools() {
-	a.addTool(mcp.NewTool("torque_models_list",
-		mcp.WithDescription(`List every (provider, model) pair in the models.dev catalog with pricing, context-window, and capability data.
+	a.addTool(newTool("torque_models_list",
+		withDescription(`List every (provider, model) pair in the models.dev catalog with pricing, context-window, and capability data.
 Use to discover what's available before configuring a profile or estimating cost. Filter with provider="anthropic" to narrow. Cold cache returns an empty list — retry rather than treat absence as fatal. Brief shape drops cache pricing + modality; pass verbose="true" for the full record.
 Response shape: data = {items: [<briefModel or ModelRef>...], meta: {truncated, returned, limit, hint?}}.
 Example: {"provider":"anthropic","limit":"50"}`),
-		mcp.WithString("provider", mcp.Description("Filter to a single provider id (e.g. 'anthropic', 'openai')")),
-		mcp.WithString("verbose", mcp.Description("Return full ModelRef records instead of brief (string 'true'/'false', default false)")),
-		mcp.WithString("limit", mcp.Description("Max records to return (default 100, capped at 500)")),
+		withString("provider", desc("Filter to a single provider id (e.g. 'anthropic', 'openai')")),
+		withString("verbose", desc("Return full ModelRef records instead of brief (string 'true'/'false', default false)")),
+		withString("limit", desc("Max records to return (default 100, capped at 500)")),
 	), a.handleModelsList)
 
-	a.addTool(mcp.NewTool("torque_models_get",
-		mcp.WithDescription(`Look up a single (provider, model) pair. Returns the full Model record.
+	a.addTool(newTool("torque_models_get",
+		withDescription(`Look up a single (provider, model) pair. Returns the full Model record.
 Use when you need exact pricing or capability flags for a known model. Returns error.code=not_found on cold cache or unknown id.
 Response shape: data = <Model> — singleton.
 Example: {"provider":"anthropic","model":"claude-sonnet-4-6"}`),
-		mcp.WithString("provider", mcp.Required(), mcp.Description("Provider id")),
-		mcp.WithString("model", mcp.Required(), mcp.Description("Model id within the provider")),
+		withString("provider", required(), desc("Provider id")),
+		withString("model", required(), desc("Model id within the provider")),
 	), a.handleModelsGet)
 }
 
-func (a *Adapter) handleModelsList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleModelsList(ctx context.Context, req map[string]any) (any, error) {
 	if a.svc.Models == nil {
 		return cappedJSONResult(nil, defaultGenericListLimit)
 	}
@@ -81,7 +80,7 @@ func (a *Adapter) handleModelsList(ctx context.Context, req mcp.CallToolRequest)
 	return cappedJSONResult(out, limit)
 }
 
-func (a *Adapter) handleModelsGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleModelsGet(ctx context.Context, req map[string]any) (any, error) {
 	if a.svc.Models == nil {
 		return errResult(ErrCodeNotFound, "model catalog not initialized", "")
 	}
