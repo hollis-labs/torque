@@ -9,6 +9,7 @@ import { useApi } from './use-api'
 import {
   ActiveRunsContext,
   FEED_LIMIT,
+  accumulateTokenTotals,
   type ActiveRun,
   type ActiveRunsContextValue,
   type ActivityItem,
@@ -118,14 +119,20 @@ export function ActiveRunsProvider({ children }: ActiveRunsProviderProps) {
               item.artifact = artifact
               updated.lastArtifact = artifact
             } else if (kind === 'tokens') {
-              const tokens = {
+              item.kind = 'tokens'
+              item.tokens = {
                 prompt: Number(payload.prompt ?? 0),
                 completion: Number(payload.completion ?? 0),
                 cost: Number(payload.cost ?? 0),
+                cache_read: Number(payload.cache_read ?? 0),
+                cache_write: Number(payload.cache_write ?? 0),
               }
-              item.kind = 'tokens'
-              item.tokens = tokens
-              updated.lastTokens = tokens
+              // Totals never carry across runs (a missed run.finished
+              // would otherwise fold the last run into this one).
+              updated.tokenTotals = accumulateTokenTotals(
+                existing.runId === runId ? existing.tokenTotals : undefined,
+                payload,
+              )
             } else if (kind === 'tool_use') {
               const toolUse = {
                 tool_name:

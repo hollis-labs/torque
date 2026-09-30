@@ -118,6 +118,10 @@ type Artifact struct {
 type TokenUsage struct {
 	PromptTokens     int
 	CompletionTokens int
+	// CacheReadTokens / CacheWriteTokens are prompt-cache reads and writes,
+	// when the runtime reports them. Zero when it does not.
+	CacheReadTokens  int
+	CacheWriteTokens int
 	Cost             float64
 }
 

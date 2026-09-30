@@ -88,9 +88,11 @@ func runEventPayload(event executor.ExecutionEvent) interface{} {
 			return nil
 		}
 		return map[string]interface{}{
-			"prompt":     event.Tokens.PromptTokens,
-			"completion": event.Tokens.CompletionTokens,
-			"cost":       event.Tokens.Cost,
+			"prompt":      event.Tokens.PromptTokens,
+			"completion":  event.Tokens.CompletionTokens,
+			"cache_read":  event.Tokens.CacheReadTokens,
+			"cache_write": event.Tokens.CacheWriteTokens,
+			"cost":        event.Tokens.Cost,
 		}
 	case executor.EventProgress:
 		if event.Progress == nil {
