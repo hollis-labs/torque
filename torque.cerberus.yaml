@@ -65,7 +65,7 @@ resources:
         - ./cmd/torque
         - serve
         - --addr
-        - :8992
+        - 127.0.0.1:8992
       dir: /Users/chrispian/dev/hollis-labs/apps/torque
       mode: dev_session
       port: 8992
