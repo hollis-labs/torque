@@ -4,19 +4,16 @@ Torque is a local-first task orchestration engine: a task FSM, a persistent
 queue and scheduler, pluggable executors, and HTTP + MCP surfaces over one
 SQLite or Postgres store. It dispatches work and records what happened. It is
 not a project-management suite, a workflow engine, or an agent runtime — it does
-not host the agent it dispatches to. Renamed Clockwork → Torque, so `CW-` task
-ids and `clockwork` in older docs are historical.
+not host the agent it dispatches to. It was renamed from Clockwork, so `CW-`
+task ids and `clockwork` in older docs and code comments are historical.
 
 ## Start Here
 
 - `docs/README.md` indexes current docs. `docs/architecture/` is current
   reference; it is not the contract.
-- `tasks/`, `TEST-RUN-HANDOFF.md`, `docs/adr/`, `docs/superpowers/`,
-  `docs/reviews/`, and `docs/architecture/mcp-service-layer-audit.md` were
-  archived out of this repo to `~/dev/agent-os/archive/torque/` in a docs
-  cleanup pass — completed task tracking and design history, not current
-  contract. Code comments and older docs still cite those paths; the paths do
-  not resolve and are not coming back.
+- Older docs and code comments may cite planning and design-history paths that
+  are no longer in this repo; those paths do not resolve and are not current
+  contract.
 - `internal/service/task.go` owns the status vocabulary (`CanonicalStatuses`)
   and the transition policy (`checkTransition`).
 - `internal/persistence/sqlstore/store.go` splits one handle into a serialized
@@ -34,7 +31,7 @@ ids and `clockwork` in older docs are historical.
 make lint            # go vet ./...
 make test            # full backend suite
 make test-scheduler  # ./internal/runtime/... only
-make build-prod      # embeds the GUI; what Cerberus builds. make build omits it
+make build-prod      # embeds the GUI into the binary; make build omits it
 ```
 
 `make profiles-lint` validates `~/.config/torque/profiles.yaml`, operator state
@@ -42,17 +39,19 @@ rather than a repo file, so it can fail on a clean checkout.
 
 ## Boundaries
 
-Build and deploy authority is Cerberus, not git. Production is the
-`torque-api-service` resource — launchd, port 8990, run from a synced artifact,
-deployed with `cerberus_resource_deploy torque-api-service`.
+`torque serve` currently listens on the address from `TORQUE_HTTP_PORT` /
+`--addr`, which defaults to all interfaces, and the HTTP API has no
+authentication (only the admin endpoints are restricted to loopback). Do not
+widen that surface further, and pass `--addr 127.0.0.1:8990` when running it
+locally. See `SECURITY.md`.
 
-Task transitions are permissive (CW-20260909-0011): any status in
+Task transitions are permissive: any status in
 `CanonicalStatuses` reaches any other in one call, so nothing has to walk a
 path to record what already happened. Exactly two things are refused, and each
 error names its own remedy — a status outside the vocabulary, and leaving the
 terminal statuses `done`/`archived`. `ForceTransition` clears the second only;
 it does NOT bypass the vocabulary, because a typo under force is how the store
-accumulated 221 rows the old FSM had no key for.
+accumulated hundreds of rows the old FSM had no key for.
 
 Add a status to `CanonicalStatuses` and to the GUI's `TaskStatus` union
 together — they were allowed to drift apart once and produced three
