@@ -35,6 +35,9 @@ var (
 	restartFrontendLast time.Time
 )
 
+// forwardingHeaders mark a request relayed by a proxy.
+var forwardingHeaders = []string{"X-Forwarded-For", "X-Real-IP", "Forwarded"}
+
 func adminGate(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !isLocalRequest(r) {
@@ -51,7 +54,20 @@ func adminGate(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// isLocalRequest reports whether the TCP peer is loopback AND the request
+// did not arrive through a proxy. RemoteAddr is the real peer (the router
+// installs no RealIP rewriting); a forwarding header means the loopback
+// peer is a proxy relaying someone else, e.g. a same-host reverse proxy
+// in front of a token-protected serve, so the caller is not local. Torque
+// has no trusted-proxy configuration: no deployment fronts the admin
+// surface with a proxy, and the GUI dev server's Vite proxy adds no
+// forwarding headers (xfwd is off).
 func isLocalRequest(r *http.Request) bool {
+	for _, h := range forwardingHeaders {
+		if r.Header.Get(h) != "" {
+			return false
+		}
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
