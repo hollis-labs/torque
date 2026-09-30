@@ -85,10 +85,12 @@ const (
 )
 
 // editingToolNames are the tool names whose presence-or-absence in the
-// stream classifies a verdict. Mirrors the claude-code-side names; codex
-// uses identical tool labels for these primitives (Edit, Write, Bash,
-// MultiEdit, NotebookEdit). A worker that hasn't called ANY of these did
-// not touch the filesystem in a write-bearing way.
+// stream classifies a verdict, in claude-code's spelling. Codex tool calls
+// reach stream.jsonl already in this spelling (codex_events.go maps
+// commandExecution→Bash, fileChange→Edit). Other runtimes spell them
+// differently, so readToolHistogram canonicalizes names first; see
+// canonicalToolName. A worker that hasn't called ANY of these did not
+// touch the filesystem in a write-bearing way.
 //
 // Read-only tools (Read, Grep, Glob) are intentionally NOT in this list —
 // a worker that only read files and then signaled done deserves the
@@ -99,6 +101,34 @@ const (
 // verdict classification. Use EditingTools() if a caller outside this
 // package legitimately needs to read the list.
 var editingToolNames = []string{"Edit", "Write", "Bash", "MultiEdit", "NotebookEdit"}
+
+// editingToolAliases maps runtime-specific names for an editing primitive
+// that differ by more than case onto the canonical name. Every entry is
+// observed in real event streams, not guessed: OpenCode's patch-based file
+// edit is `apply_patch` (seen in OpenCode's own session store alongside
+// bash/edit/write), and it is Edit-class the way codex fileChange is.
+var editingToolAliases = map[string]string{
+	"apply_patch": "Edit",
+}
+
+// canonicalToolName folds a runtime's tool name onto editingToolNames'
+// spelling: an editing tool matched case-insensitively (OpenCode reports
+// bash/edit/write) or through editingToolAliases. Every other name is
+// returned unchanged, and matching is exact after folding, so a name that
+// merely contains an editing word (OpenCode's todowrite, an MCP
+// memory_write) never counts as an edit.
+func canonicalToolName(name string) string {
+	lower := strings.ToLower(name)
+	if alias, ok := editingToolAliases[lower]; ok {
+		return alias
+	}
+	for _, canonical := range editingToolNames {
+		if strings.EqualFold(name, canonical) {
+			return canonical
+		}
+	}
+	return name
+}
 
 // runtimeKindJsonRpcStdio mirrors agent.RuntimeKindJsonRpcStdio. It is
 // duplicated as a string literal here (not imported) because the agent
@@ -313,7 +343,8 @@ func revListCount(ctx context.Context, worktreePath, rangeArg string) (int, erro
 }
 
 // readToolHistogram parses the worker's stream.jsonl file and returns a
-// map of tool name → invocation count plus an `ok` flag reporting whether
+// map of tool name (canonicalized; see canonicalToolName) → invocation
+// count plus an `ok` flag reporting whether
 // the read completed cleanly. ok=true means the histogram is
 // authoritative — every tool_use line was either counted or
 // deliberately skipped (malformed JSON). ok=false means the data is
@@ -365,7 +396,7 @@ func readToolHistogram(workspaceLogDir string) (map[string]int, bool) {
 		if line.Type != "tool_use" || line.ToolUse == nil || line.ToolUse.Name == "" {
 			continue
 		}
-		hist[line.ToolUse.Name]++
+		hist[canonicalToolName(line.ToolUse.Name)]++
 	}
 	if err := scanner.Err(); err != nil {
 		// Any scanner error (I/O, ErrTooLong) means we have partial
