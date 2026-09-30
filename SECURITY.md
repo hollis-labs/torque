@@ -29,18 +29,30 @@ disclosure; response times are best effort.
 
 Torque is designed as a local-first tool for one operator on one machine.
 
-- **`torque serve` currently listens on all interfaces by default** (`:8990`, or
-  the port in `TORQUE_HTTP_PORT`), and its **HTTP API and GUI have no
-  authentication and no TLS**. Anyone who can reach the port can read task and
-  run data and create and dispatch tasks. Because the `cli` executor launches
-  agent processes with your user's permissions, that is equivalent to command
-  execution on the host. **Run it with `--addr 127.0.0.1:8990`** (or behind
-  firewall rules and an authenticating, TLS-terminating reverse proxy) and do
-  not expose the port to a network. Hardening this default is tracked as a known
-  limitation.
-- The admin endpoints (for example the GUI rebuild action) are restricted to
-  loopback callers, with an optional `TORQUE_ADMIN_TOKEN` (`X-Admin-Token`) on
-  top. That protects only those endpoints.
+- **`torque serve` binds `127.0.0.1` by default** (`127.0.0.1:8990`, or the
+  port in `TORQUE_HTTP_PORT`). Anyone who can call the API can read task and
+  run data and create and dispatch tasks, and because the `cli` executor
+  launches agent processes with your user's permissions, that is equivalent to
+  command execution on the host. Treat API access as host access.
+- **Without a token, the API is loopback-only.** It requires no
+  authentication, answers only requests addressed to a loopback host
+  (`127.0.0.1`, `localhost`, `::1`), which refuses DNS rebinding, and refuses
+  requests from browser origins that are not loopback, which refuses
+  cross-site request forgery from ordinary web pages. Any local process or
+  local user who can reach the port is still trusted.
+- **Binding any other address requires a token.** `torque serve` refuses to
+  start on a non-loopback `--addr` (including `:8990` and `0.0.0.0`) unless
+  `TORQUE_API_TOKEN` or `--token` is set. With a token set, every `/api`
+  request, loopback ones included, must send `Authorization: Bearer <token>`.
+  Other browser origins must be listed in `TORQUE_CORS_ORIGINS` or
+  `--cors-origin`. Serve has no TLS, so put a TLS-terminating proxy in front
+  of it before the token crosses a network.
+- The bundled GUI does not send a token. With a token set, use the API from
+  scripts and server-side clients; the GUI works only on the tokenless
+  loopback default.
+- The admin endpoints (for example the GUI rebuild action) are additionally
+  restricted to loopback callers, with an optional `TORQUE_ADMIN_TOKEN`
+  (`X-Admin-Token`) on top.
 - **`torque mcp`** speaks MCP over stdio to the process that launched it and can
   create and change tasks; run it only for clients you trust. Write and
   destructive tools are available to that client.
@@ -69,8 +81,8 @@ make network calls; review them before enabling.
 
 ## Current security limitations
 
-- HTTP API and GUI are unauthenticated, and `serve` binds all interfaces by
-  default
+- one shared bearer token, no per-user accounts or scopes; the GUI cannot use
+  it
 - no built-in TLS
 - no at-rest encryption
 - executors run with the operator's permissions; there is no sandbox beyond what

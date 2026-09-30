@@ -25,9 +25,15 @@ const appName = "torque"
 const legacyAppName = "clockwork"
 
 type Config struct {
-	DBPath       string
-	PostgresDSN  string
-	HTTPPort     int
+	DBPath      string
+	PostgresDSN string
+	HTTPPort    int
+	// APIToken, from TORQUE_API_TOKEN, is the bearer token serve requires
+	// on /api requests. Required to bind beyond loopback.
+	APIToken string
+	// CORSOrigins, from TORQUE_CORS_ORIGINS (comma-separated), are browser
+	// origins allowed besides loopback ones.
+	CORSOrigins  []string
 	RepoRoot     string
 	DataDir      string
 	StateDir     string
@@ -186,6 +192,8 @@ func Load() (*Config, error) {
 		DBPath:       layout.MainDB(),
 		PostgresDSN:  os.Getenv("TORQUE_POSTGRES_DSN"),
 		HTTPPort:     envInt("TORQUE_HTTP_PORT", 8990),
+		APIToken:     strings.TrimSpace(os.Getenv("TORQUE_API_TOKEN")),
+		CORSOrigins:  envList("TORQUE_CORS_ORIGINS"),
 		RepoRoot:     os.Getenv("TORQUE_REPO"),
 		DataDir:      envOr("TORQUE_DATA_DIR", layout.DataDir()),
 		StateDir:     layout.StateDir(),
@@ -279,6 +287,17 @@ func resolveQueueDBPath(stateDir string) string {
 		return v
 	}
 	return filepath.Join(stateDir, v)
+}
+
+// envList splits a comma-separated env var, dropping empty entries.
+func envList(key string) []string {
+	var out []string
+	for _, p := range strings.Split(os.Getenv(key), ",") {
+		if v := strings.TrimSpace(p); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func envOr(key, fallback string) string {

@@ -41,19 +41,40 @@ import (
 )
 
 func serveCmd() *cobra.Command {
-	var addr string
+	var (
+		addr        string
+		token       string
+		corsOrigins []string
+	)
 
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start Torque HTTP API server, scheduler, and GUI",
+		Long: `Start the Torque HTTP API server, scheduler, and GUI.
+
+The server binds to 127.0.0.1 by default. To listen on another interface,
+set a bearer token with --token or TORQUE_API_TOKEN; clients then send
+"Authorization: Bearer <token>". Binding beyond loopback without a token is
+refused. Browser origins other than loopback ones must be allowed with
+--cors-origin or TORQUE_CORS_ORIGINS.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
 			}
 
+			sec := httpserver.Security{Token: cfg.APIToken, CORSOrigins: cfg.CORSOrigins}
+			if token != "" {
+				sec.Token = token
+			}
+			if len(corsOrigins) > 0 {
+				sec.CORSOrigins = corsOrigins
+			}
 			if addr == "" {
-				addr = fmt.Sprintf(":%d", cfg.HTTPPort)
+				addr = httpserver.DefaultAddr(cfg.HTTPPort)
+			}
+			if err := httpserver.ValidateBind(addr, sec.Token); err != nil {
+				return err
 			}
 
 			ln, err := net.Listen("tcp", addr)
@@ -66,11 +87,13 @@ func serveCmd() *cobra.Command {
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 
-			return runServe(ctx, ln)
+			return runServe(ctx, ln, sec)
 		},
 	}
 
-	cmd.Flags().StringVar(&addr, "addr", "", "Listen address (default :8990 from config)")
+	cmd.Flags().StringVar(&addr, "addr", "", "Listen address (default 127.0.0.1:<TORQUE_HTTP_PORT>; non-loopback requires a token)")
+	cmd.Flags().StringVar(&token, "token", "", "Bearer token required on /api requests (default $TORQUE_API_TOKEN)")
+	cmd.Flags().StringSliceVar(&corsOrigins, "cors-origin", nil, "Browser origins allowed besides loopback ones (default $TORQUE_CORS_ORIGINS)")
 	return cmd
 }
 
@@ -81,7 +104,7 @@ func serveCmd() *cobra.Command {
 //
 // The caller supplies a net.Listener so tests can bind to 127.0.0.1:0 and
 // read the chosen port before handing the listener off.
-func runServe(ctx context.Context, ln net.Listener) error {
+func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
@@ -259,6 +282,7 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	// claim it for per-task MCP loopback wiring.
 	handler := httpserver.New(svc, sched)
 	handler.WithSessions(agentDeps.Sessions)
+	handler.WithSecurity(sec)
 
 	// Durable messaging substrate (CW-20260503-0012, S1.2). Same SQLite DB
 	// the rest of the runtime uses; migration 022_messages.sql created the
@@ -483,6 +507,11 @@ func runServe(ctx context.Context, ln net.Listener) error {
 	log.Printf("Torque HTTP server listening on %s", ln.Addr().String())
 	log.Printf("GUI available at http://%s", ln.Addr().String())
 	log.Printf("API available at http://%s/api/v1", ln.Addr().String())
+	if sec.Token != "" {
+		log.Printf("API auth: bearer token required")
+	} else {
+		log.Printf("API auth: disabled (loopback only)")
+	}
 	log.Printf("Scheduler: workers=%d interval=%ds stale_heartbeat_threshold=%ds enabled=%t",
 		cfg.Scheduler.Workers, cfg.Scheduler.IntervalSeconds, cfg.Scheduler.StaleSeconds, cfg.Scheduler.Enabled)
 

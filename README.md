@@ -90,7 +90,13 @@ torque profiles lint
 torque version
 ```
 
-`torque serve` starts the HTTP API, scheduler, and GUI on the configured HTTP port.
+`torque serve` starts the HTTP API, scheduler, and GUI on `127.0.0.1` and the
+configured HTTP port. It serves only loopback by default and needs no token
+there. To listen on another interface, set a token (`TORQUE_API_TOKEN` or
+`--token`); serve refuses a non-loopback `--addr` without one, and clients then
+send `Authorization: Bearer <token>`. Browser origins other than loopback ones
+must be allowed with `TORQUE_CORS_ORIGINS` or `--cors-origin`. See
+[SECURITY.md](SECURITY.md) before exposing the port.
 
 The standalone Vite frontend (`cd apps/gui && npm run dev`, or the Cerberus
 resource `torque-frontend-dev`) uses port **5182** and refuses to silently move
@@ -109,7 +115,12 @@ Common environment variables:
 
 - `TORQUE_DB_PATH` — SQLite DB path, default `torque.db`
 - `TORQUE_POSTGRES_DSN` — if set, use Postgres instead of SQLite
-- `TORQUE_HTTP_PORT` — HTTP port for `serve`, default `8990`
+- `TORQUE_HTTP_PORT` — HTTP port for `serve`, default `8990` (bound on
+  `127.0.0.1` unless `--addr` says otherwise)
+- `TORQUE_API_TOKEN` — bearer token required on `/api` requests; required to
+  bind beyond loopback
+- `TORQUE_CORS_ORIGINS` — comma-separated browser origins allowed besides
+  loopback ones
 - `TORQUE_DATA_DIR` — runtime data dir, default `.torque`
 - `TORQUE_PROFILES_PATH` — optional agent profile YAML path
 

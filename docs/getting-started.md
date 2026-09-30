@@ -19,7 +19,8 @@ Without extra configuration:
 
 - SQLite is used
 - The DB path defaults to `torque.db`
-- The HTTP server listens on port `8990`
+- The HTTP server listens on `127.0.0.1:8990`, with no token (loopback only;
+  see `SECURITY.md` before binding anything else)
 - Runtime data goes under `.torque/`
 
 ## Useful Environment Variables

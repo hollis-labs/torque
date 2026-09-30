@@ -39,11 +39,12 @@ rather than a repo file, so it can fail on a clean checkout.
 
 ## Boundaries
 
-`torque serve` currently listens on the address from `TORQUE_HTTP_PORT` /
-`--addr`, which defaults to all interfaces, and the HTTP API has no
-authentication (only the admin endpoints are restricted to loopback). Do not
-widen that surface further, and pass `--addr 127.0.0.1:8990` when running it
-locally. See `SECURITY.md`.
+`torque serve` binds `127.0.0.1:<TORQUE_HTTP_PORT>` by default and refuses a
+non-loopback `--addr` unless `TORQUE_API_TOKEN` is set; with a token, every
+`/api` request needs `Authorization: Bearer`. The policy lives in
+`internal/httpserver/security.go`. New routes go under `/api/v1` so they inherit
+it, and a new HTTP client of Torque must send the token when one is configured
+(see `proxySchedulerStatus`). See `SECURITY.md`.
 
 Task transitions are permissive: any status in
 `CanonicalStatuses` reaches any other in one call, so nothing has to walk a

@@ -76,6 +76,9 @@ func proxySchedulerStatus(ctx context.Context) (*scheduler.SchedulerStatus, erro
 	if err != nil {
 		return nil, fmt.Errorf("build scheduler status proxy request: %w", err)
 	}
+	if cfg.APIToken != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.APIToken)
+	}
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
