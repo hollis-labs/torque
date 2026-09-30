@@ -334,7 +334,10 @@ func translateStreamEvent(
 		result.Tokens.PromptTokens += ev.Usage.InputTokens
 		result.Tokens.CompletionTokens += ev.Usage.OutputTokens
 		if cb != nil {
-			cb(executor.TokenEvent(ev.Usage.InputTokens, ev.Usage.OutputTokens, 0))
+			tok := executor.TokenEvent(ev.Usage.InputTokens, ev.Usage.OutputTokens, 0)
+			tok.Tokens.CacheReadTokens = ev.Usage.CacheReadTokens
+			tok.Tokens.CacheWriteTokens = ev.Usage.CacheCreationTokens
+			cb(tok)
 		}
 	case llmtypes.EventError:
 		if ev.Error != "" && onError != nil {

@@ -121,8 +121,8 @@ function ItemRow({ item }: { item: ActivityItem }) {
           </div>
           <div className="text-[12px] text-zinc-300">
             prompt {item.tokens.prompt.toLocaleString()} · completion{' '}
-            {item.tokens.completion.toLocaleString()} ·{' '}
-            {formatCost(item.tokens.cost)}
+            {item.tokens.completion.toLocaleString()}
+            {item.tokens.cost > 0 && <> · {formatCost(item.tokens.cost)}</>}
           </div>
         </div>
       </div>
@@ -183,9 +183,15 @@ export function ActivityPanel({ taskId }: ActivityPanelProps) {
         <span className="ml-auto font-mono text-[12px] tabular-nums text-amber-100">
           {formatElapsed(elapsed)}
         </span>
-        {run.lastTokens && (
-          <span className="font-mono text-[11px] text-amber-200/80">
-            {formatCost(run.lastTokens.cost)}
+        {run.tokenTotals && (
+          <span
+            className="font-mono text-[11px] text-amber-200/80"
+            title="Run total so far: prompt / completion tokens"
+          >
+            {run.tokenTotals.prompt.toLocaleString()} /{' '}
+            {run.tokenTotals.completion.toLocaleString()} tok
+            {/* Live cost is 0 until the runtime reports one; never show a fake $0.00. */}
+            {run.tokenTotals.cost > 0 && <> · {formatCost(run.tokenTotals.cost)}</>}
           </span>
         )}
       </div>

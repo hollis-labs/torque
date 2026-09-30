@@ -67,6 +67,7 @@ type Scheduler struct {
 	healthscanner     *healthscan.Scanner
 	bus               *EventBus
 	progressThrottler *progressThrottler
+	tokenTotals       *runTokenTotals
 	progressHeartbeat *progressHeartbeat
 	cancels           *cancelRegistry
 	telemetryWriter   writequeue.TelemetryWriter
@@ -163,6 +164,7 @@ func New(
 		heartbeat:         NewHeartbeatMonitor(store),
 		bus:               bus,
 		progressThrottler: newProgressThrottler(progressTokensWindow),
+		tokenTotals:       newRunTokenTotals(),
 		progressHeartbeat: newProgressHeartbeat(bus, time.Duration(cfg.HeartbeatProgressSeconds)*time.Second),
 		cancels:           newCancelRegistry(),
 		telemetryWriter:   writequeue.NewDirect(store),
@@ -1143,6 +1145,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		defer s.heartbeat.Deregister(capturedWorkerID)
 		defer s.progressHeartbeat.stop(capturedRunID)
 		defer s.progressThrottler.release(capturedRunID)
+		defer s.tokenTotals.release(capturedRunID)
 		defer func() {
 			if capturedWorktree == "" {
 				return
@@ -1654,14 +1657,32 @@ func (s *Scheduler) publishProgress(taskID string, runID int64, event executor.E
 		})
 
 	case event.Type == executor.EventTokenUsage:
+		// Sum before the throttle so a dropped emission's tokens still
+		// reach the next one's totals.
+		var total executor.TokenUsage
+		if event.Tokens != nil {
+			total = s.tokenTotals.add(runID, *event.Tokens)
+		}
 		if !s.progressThrottler.allow(runID, time.Now()) {
 			return
 		}
 		data := map[string]interface{}{"kind": "tokens"}
 		if event.Tokens != nil {
+			// prompt/completion/cost are this event's delta, as before.
+			// totals is the run's cumulative usage so far; clients should
+			// display it rather than sum the (throttled) deltas themselves.
 			data["prompt"] = event.Tokens.PromptTokens
 			data["completion"] = event.Tokens.CompletionTokens
 			data["cost"] = event.Tokens.Cost
+			data["cache_read"] = event.Tokens.CacheReadTokens
+			data["cache_write"] = event.Tokens.CacheWriteTokens
+			data["totals"] = map[string]interface{}{
+				"prompt":      total.PromptTokens,
+				"completion":  total.CompletionTokens,
+				"cache_read":  total.CacheReadTokens,
+				"cache_write": total.CacheWriteTokens,
+				"cost":        total.Cost,
+			}
 		}
 		s.bus.Publish(SchedulerEvent{
 			Type:   "run.progress",
