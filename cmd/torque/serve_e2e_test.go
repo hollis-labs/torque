@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/torque/internal/httpserver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -61,7 +62,7 @@ func TestServeE2EMockTaskCompletes(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- runServe(ctx, ln)
+		done <- runServe(ctx, ln, httpserver.Security{})
 	}()
 
 	// Wait for the HTTP server to start answering requests. The scheduler
@@ -181,7 +182,7 @@ func TestRunServeUnblocksOnListenerClose(t *testing.T) {
 	defer cancel()
 
 	done := make(chan error, 1)
-	go func() { done <- runServe(ctx, ln) }()
+	go func() { done <- runServe(ctx, ln, httpserver.Security{}) }()
 
 	// Give runServe a moment to fully start (DB open, migrations, HTTP Serve).
 	time.Sleep(200 * time.Millisecond)

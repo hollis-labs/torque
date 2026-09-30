@@ -48,6 +48,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/torque/internal/httpserver"
 	"github.com/stretchr/testify/require"
 )
 
@@ -155,7 +156,7 @@ func runLiveServeSmoke(t *testing.T, profilesPath, profile, label string, worktr
 	defer cancel()
 
 	done := make(chan error, 1)
-	go func() { done <- runServe(ctx, ln) }()
+	go func() { done <- runServe(ctx, ln, httpserver.Security{}) }()
 
 	waitForListen(t, base+"/api/v1/scheduler/status", 10*time.Second)
 

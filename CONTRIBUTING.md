@@ -8,8 +8,8 @@ of what you need is written somewhere closer to the thing it describes.
 `README.md` has the commands and configuration, and `docs/README.md` indexes
 the current docs. `AGENTS.md` is the fastest orientation to the layout and the
 boundaries that are not obvious from reading the code. Run with a scratch
-database (`TORQUE_DB_PATH=/tmp/torque-dev.db`) and bind to loopback
-(`torque serve --addr 127.0.0.1:8990`) while you develop.
+database (`TORQUE_DB_PATH=/tmp/torque-dev.db`) while you develop; `torque
+serve` binds loopback by default.
 
 ## The sequence
 

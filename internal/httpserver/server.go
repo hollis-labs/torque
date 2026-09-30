@@ -29,6 +29,9 @@ type Server struct {
 	// broker is the typed envelope dispatcher (CW-20260503-0013, S1.3).
 	// Wired via SetBroker; /api/v1/broker/* routes 503 when nil.
 	broker *broker.Broker
+	// security is the /api auth and browser-origin policy. The zero value
+	// is the loopback default. Set via WithSecurity.
+	security Security
 }
 
 // New constructs an HTTP server with routes registered.
@@ -68,9 +71,11 @@ func (s *Server) routes() {
 
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RealIP)
-	r.Use(corsMiddleware)
 
 	r.Route("/api/v1", func(r chi.Router) {
+		r.Use(s.corsMiddleware)
+		r.Use(s.requireToken)
+
 		// Tasks
 		r.Get("/tasks", s.listTasks)
 		r.Post("/tasks", s.createTask)
@@ -257,19 +262,6 @@ func (s *Server) routes() {
 
 	// SPA fallback
 	r.NotFound(spaHandler())
-}
-
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
