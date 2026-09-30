@@ -52,7 +52,9 @@ Torque is designed as a local-first tool for one operator on one machine.
   loopback default.
 - The admin endpoints (for example the GUI rebuild action) are additionally
   restricted to loopback callers, with an optional `TORQUE_ADMIN_TOKEN`
-  (`X-Admin-Token`) on top.
+  (`X-Admin-Token`) on top. "Loopback" is the TCP peer: forwarding headers
+  (`X-Forwarded-For`, `X-Real-IP`, `Forwarded`) are never trusted, and a
+  request that carries one is treated as proxied and refused.
 - **`torque mcp`** speaks MCP over stdio to the process that launched it and can
   create and change tasks; run it only for clients you trust. Write and
   destructive tools are available to that client.

@@ -70,7 +70,10 @@ func (s *Server) routes() {
 	r := s.router
 
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.RealIP)
+	// No middleware.RealIP: it rewrites RemoteAddr from client-supplied
+	// X-Real-IP / X-Forwarded-For, which let any caller claim to be
+	// loopback and pass adminGate (CW-20260930-0224). RemoteAddr is the TCP
+	// peer; nothing here trusts forwarding headers.
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(s.corsMiddleware)
