@@ -1,9 +1,9 @@
 import { useMemo } from 'react'
 import { ActivityHeatmap as KitActivityHeatmap } from '@hollis-labs/sysop-ui/widgets'
-import type { Run, Task } from '@/lib/types'
+import type { Run, TaskSummary } from '@/lib/types'
 
 export interface ActivityHeatmapProps {
-  tasks: Task[]
+  tasks: TaskSummary[]
   runs: Run[]
   weekCount?: number
   className?: string

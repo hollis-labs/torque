@@ -19,6 +19,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- GUI pages refresh on task events at most once per 1.5 s burst instead of
+  on every event. The Ops Dashboard patches task status in place from
+  transition events and refetches only the tasks named by other events. Scope
+  detail pages show their tasks a page at a time, most recently updated
+  first, with counts from the rollup. Task lists ask for 200-row pages instead
+  of the server's default 50.
 - The MCP server adopted `go-mcp` (official SDK), dropping `mark3labs/mcp-go`.
 - Completed task tracking and design history archived out of the repository;
   README rewritten as a pre-release identity and stack-fit document.

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Card, CardContent, Skeleton, Tabs, TabsContent, TabsList, TabsTrigger, PageHeader, SummaryCards, EmptyState } from '@hollis-labs/sysop-ui'
 import { RestartFrontendButton } from '@/components/domain/restart-frontend-button'
@@ -13,9 +13,12 @@ import {
   TokenThroughput,
 } from '@/components/widgets'
 import { useApi } from '@/hooks/use-api'
+import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
+import { EVENT_REFETCH_DEBOUNCE_MS } from '@/lib/debounce'
+import { patchTaskStatus, taskIdFromEvent, transitionedStatus, upsertTasks } from '@/lib/dashboard-events'
 import { STATUS_COLOR_VAR } from '@/lib/constants'
 import { cn } from '@/lib/utils'
-import type { Run, SSEEvent, Task } from '@/lib/types'
+import type { Run, SSEEvent, TaskSummary } from '@/lib/types'
 
 type DashboardTab = 'activity' | 'mission-control' | 'usage'
 const TAB_VALUES: DashboardTab[] = ['activity', 'mission-control', 'usage']
@@ -38,6 +41,9 @@ const LIVE_EVENT_SET = new Set<string>(LIVE_EVENT_TYPES)
 const EVENT_BUFFER_CAP = 500
 const RUNS_LIMIT = 500
 const TASKS_LIMIT = 500
+// A burst naming more tasks than this refetches the sample once instead of
+// each task.
+const TASK_REFETCH_BATCH_MAX = 20
 const STALE_MS = 5 * 60 * 1000
 
 function DashboardSkeleton() {
@@ -123,7 +129,7 @@ export default function DashboardPage() {
   const api = useApi()
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const [tasks, setTasks] = useState<Task[]>([])
+  const [tasks, setTasks] = useState<TaskSummary[]>([])
   const [runs, setRuns] = useState<Run[]>([])
   const [events, setEvents] = useState<SSEEvent[]>([])
   const [loading, setLoading] = useState(true)
@@ -139,7 +145,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([api.listTasks({ limit: TASKS_LIMIT }), api.listAllRuns({ limit: RUNS_LIMIT })])
+    Promise.all([api.listTaskSummaries({ limit: TASKS_LIMIT }), api.listAllRuns({ limit: RUNS_LIMIT })])
       .then(([tasksRes, runsRes]) => {
         if (cancelled) return
         setTasks(tasksRes.tasks)
@@ -157,8 +163,40 @@ export default function DashboardPage() {
     }
   }, [api])
 
-  // SSE subscription — single stream feeds both the event buffer (Pulse)
-  // and run state updates. Filters to the five Ops-relevant types.
+  // Task events that don't carry the new row (task.created, task.updated, a
+  // transition without a status) queue their task id; one trailing refetch
+  // per burst then fetches just those tasks. A new task joins the sample; a
+  // change to a task outside it is not fetched at all.
+  const tasksRef = useRef(tasks)
+  useEffect(() => {
+    tasksRef.current = tasks
+  }, [tasks])
+  const pendingTasksRef = useRef(new Map<string, { created: boolean }>())
+  const refetchPendingTasks = useCallback(async () => {
+    const shown = new Set(tasksRef.current.map((t) => t.id))
+    const ids = [...pendingTasksRef.current]
+      .filter(([id, { created }]) => created || shown.has(id))
+      .map(([id]) => id)
+    pendingTasksRef.current.clear()
+    if (ids.length === 0) return
+    try {
+      if (ids.length > TASK_REFETCH_BATCH_MAX) {
+        const res = await api.listTaskSummaries({ limit: TASKS_LIMIT })
+        setTasks(res.tasks)
+        return
+      }
+      const settled = await Promise.allSettled(ids.map((id) => api.getTask(id)))
+      const fetched = settled.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []))
+      setTasks((prev) => upsertTasks(prev, fetched, TASKS_LIMIT))
+    } catch {
+      // background refresh — leave existing data in place
+    }
+  }, [api])
+  const scheduleTaskRefetch = useDebouncedCallback(() => void refetchPendingTasks(), EVENT_REFETCH_DEBOUNCE_MS)
+
+  // SSE subscription — single stream feeds the event buffer (Pulse), run
+  // state and task state, patching rows in place rather than refetching.
+  // Filters to the five Ops-relevant types.
   useEffect(() => {
     const unsubscribe = api.subscribeEvents(
       (ev) => {
@@ -169,12 +207,24 @@ export default function DashboardPage() {
         })
         if (ev.type === 'run.started' || ev.type === 'run.completed') {
           setRuns((prev) => applyRunEvent(prev, ev))
+          return
         }
+        const taskId = taskIdFromEvent(ev)
+        if (!taskId) return
+        const status = transitionedStatus(ev)
+        if (status) {
+          const at = new Date().toISOString()
+          setTasks((prev) => patchTaskStatus(prev, taskId, status, at))
+          return
+        }
+        const created = ev.type === 'task.created' || !!pendingTasksRef.current.get(taskId)?.created
+        pendingTasksRef.current.set(taskId, { created })
+        scheduleTaskRefetch()
       },
       (status) => setSseStatus(status)
     )
     return unsubscribe
-  }, [api])
+  }, [api, scheduleTaskRefetch])
 
   // Stale-data refresh — on tab change, refetch only when >5min since the
   // last successful load. Widgets keep rendering stale data in the meantime.
@@ -182,7 +232,7 @@ export default function DashboardPage() {
     if (loading) return
     if (Date.now() - lastFetchedRef.current < STALE_MS) return
     let cancelled = false
-    Promise.all([api.listTasks({ limit: TASKS_LIMIT }), api.listAllRuns({ limit: RUNS_LIMIT })])
+    Promise.all([api.listTaskSummaries({ limit: TASKS_LIMIT }), api.listAllRuns({ limit: RUNS_LIMIT })])
       .then(([tasksRes, runsRes]) => {
         if (cancelled) return
         setTasks(tasksRes.tasks)
@@ -304,7 +354,7 @@ function ActivityTabLayout({
   runs,
   events,
 }: {
-  tasks: Task[]
+  tasks: TaskSummary[]
   runs: Run[]
   events: SSEEvent[]
 }) {
@@ -351,7 +401,7 @@ function ActivityTabLayout({
   )
 }
 
-function MissionControlTabLayout({ tasks, runs }: { tasks: Task[]; runs: Run[] }) {
+function MissionControlTabLayout({ tasks, runs }: { tasks: TaskSummary[]; runs: Run[] }) {
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_minmax(260px,340px)]">
       <div className="flex flex-col gap-4">

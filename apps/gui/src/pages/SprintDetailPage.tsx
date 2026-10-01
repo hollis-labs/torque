@@ -7,9 +7,12 @@ import { ScopeDetailHero } from '@/components/domain/scope-detail-hero'
 import { ScopeMetaCard } from '@/components/domain/scope-meta-card'
 import { ScopeTaskPanel } from '@/components/domain/scope-task-panel'
 import { useApi } from '@/hooks/use-api'
+import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
+import { usePagedTaskSummaries } from '@/hooks/use-paged-task-summaries'
 import { useSSE } from '@/hooks/use-sse'
-import { buildTaskRollup } from '@/lib/scope-metrics'
-import type { Project, Sprint, TaskSummary } from '@/lib/types'
+import { EVENT_REFETCH_DEBOUNCE_MS } from '@/lib/debounce'
+import { rollupFromStatusCounts } from '@/lib/scope-metrics'
+import type { Project, Sprint, TaskScopeRollupResponse } from '@/lib/types'
 
 const SSE_EVENTS = ['sprint.updated', 'sprint.created', 'sprint.deleted', 'task.updated', 'task.created', 'task.transitioned']
 
@@ -20,20 +23,27 @@ export default function SprintDetailPage() {
   const { lastEvent } = useSSE(SSE_EVENTS)
   const [sprint, setSprint] = useState<Sprint | null>(null)
   const [project, setProject] = useState<Project | null>(null)
-  const [tasks, setTasks] = useState<TaskSummary[]>([])
+  const [taskRollup, setTaskRollup] = useState<TaskScopeRollupResponse | null>(null)
+  const taskPage = usePagedTaskSummaries({ sprint_id: id })
+  const reloadTasks = taskPage.reload
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const loadGeneration = useRef(0)
 
-  const load = useCallback(async () => {
+  // background: an event-driven refresh, which keeps the page on screen
+  // instead of swapping in the skeleton.
+  const load = useCallback(async ({ background = false } = {}) => {
     if (!id) return
     const myGen = ++loadGeneration.current
-    setLoading(true)
-    setError(null)
+    if (!background) {
+      setLoading(true)
+      setError(null)
+    }
     try {
-      const [nextSprint, taskRes] = await Promise.all([
+      const [nextSprint, rollupRes] = await Promise.all([
         api.getSprint(id),
-        api.listTaskSummaries({ sprint_id: id }),
+        api.taskRollup('sprint_id', { sprint_id: id }),
+        reloadTasks(),
       ])
       if (myGen !== loadGeneration.current) return
       const nextProject = nextSprint.project_id
@@ -41,26 +51,28 @@ export default function SprintDetailPage() {
         : null
       if (myGen !== loadGeneration.current) return
       setSprint(nextSprint)
-      setTasks(taskRes.tasks)
+      setTaskRollup(rollupRes)
       setProject(nextProject)
     } catch (err) {
-      if (myGen !== loadGeneration.current) return
+      // A failed background refresh leaves the loaded page in place.
+      if (myGen !== loadGeneration.current || background) return
       setError(err instanceof Error ? err.message : 'Failed to load sprint')
     } finally {
       if (myGen === loadGeneration.current) setLoading(false)
     }
-  }, [api, id])
+  }, [api, id, reloadTasks])
 
   useEffect(() => {
     void load()
   }, [load])
 
+  const scheduleReload = useDebouncedCallback(() => void load({ background: true }), EVENT_REFETCH_DEBOUNCE_MS)
   useEffect(() => {
     if (!lastEvent) return
-    void load()
-  }, [lastEvent, load])
+    scheduleReload()
+  }, [lastEvent, scheduleReload])
 
-  const rollup = useMemo(() => buildTaskRollup(tasks), [tasks])
+  const rollup = useMemo(() => rollupFromStatusCounts(taskRollup?.scopes[0]?.counts ?? {}), [taskRollup])
 
   if (loading) {
     return (
@@ -124,7 +136,12 @@ export default function SprintDetailPage() {
             <ScopeMetaCard label="Updated" value={new Date(sprint.updated_at).toLocaleString()} />
           </div>
 
-          <ScopeTaskPanel tasks={tasks} />
+          <ScopeTaskPanel
+            tasks={taskPage.tasks}
+            total={taskPage.total}
+            onLoadMore={() => void taskPage.loadMore()}
+            loadingMore={taskPage.loadingMore}
+          />
         </div>
       </div>
     </div>

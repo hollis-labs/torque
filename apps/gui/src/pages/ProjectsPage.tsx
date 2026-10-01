@@ -5,7 +5,9 @@ import { Skeleton, Button, PageHeader, SummaryCards, EmptyState } from '@hollis-
 import { ProjectCreateDialog } from '@/components/domain/project-create-dialog'
 import { ScopeOverviewCard } from '@/components/domain/scope-overview-card'
 import { useApi } from '@/hooks/use-api'
+import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
 import { useSSE } from '@/hooks/use-sse'
+import { EVENT_REFETCH_DEBOUNCE_MS } from '@/lib/debounce'
 import { rollupFromStatusCounts, rollupsByScope } from '@/lib/scope-metrics'
 import type { Epic, Project, Sprint, TaskScopeRollupResponse } from '@/lib/types'
 
@@ -33,10 +35,14 @@ export default function ProjectsPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const loadGeneration = useRef(0)
 
-  const load = useCallback(async () => {
+  // background: an event-driven refresh, which keeps the page on screen
+  // instead of swapping in the skeleton.
+  const load = useCallback(async ({ background = false } = {}) => {
     const myGen = ++loadGeneration.current
-    setLoading(true)
-    setError(null)
+    if (!background) {
+      setLoading(true)
+      setError(null)
+    }
     try {
       const [projectRes, rollupRes, sprintRes, epicRes] = await Promise.all([
         api.listProjects(),
@@ -50,7 +56,8 @@ export default function ProjectsPage() {
       setSprints(sprintRes.sprints)
       setEpics(epicRes.epics)
     } catch (err) {
-      if (myGen !== loadGeneration.current) return
+      // A failed background refresh leaves the loaded page in place.
+      if (myGen !== loadGeneration.current || background) return
       setError(err instanceof Error ? err.message : 'Failed to load projects')
     } finally {
       if (myGen === loadGeneration.current) setLoading(false)
@@ -61,10 +68,11 @@ export default function ProjectsPage() {
     void load()
   }, [load])
 
+  const scheduleReload = useDebouncedCallback(() => void load({ background: true }), EVENT_REFETCH_DEBOUNCE_MS)
   useEffect(() => {
     if (!lastEvent) return
-    void load()
-  }, [lastEvent, load])
+    scheduleReload()
+  }, [lastEvent, scheduleReload])
 
   const projectRollups = useMemo(() => rollupsByScope(taskRollup), [taskRollup])
   const activeCount = projects.filter((project) => project.status === 'active').length
@@ -112,7 +120,7 @@ export default function ProjectsPage() {
           <PageSkeleton />
         ) : error ? (
           <div className="p-6">
-            <EmptyState variant="error" title="Something went wrong" description={error} action={{ label: 'Retry', onClick: load }} />
+            <EmptyState variant="error" title="Something went wrong" description={error} action={{ label: 'Retry', onClick: () => void load() }} />
           </div>
         ) : projectCards.length === 0 ? (
           <div className="p-6">
