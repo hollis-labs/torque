@@ -190,7 +190,9 @@ func acpKickoff(opts Options, role string, bundle []agentlaunch.NativeFile, loop
 		body += "Your assigned task bundle follows. This session has no boot dir, so where it mentions `task.md`, `task.json` or `process.md`, read the matching section here instead of a file.\n\n"
 		body += strings.Join(sections, "\n") + "\n"
 	}
-	return body + kickoffFirstTurn(opts)
+	// An ACP agent without loadSession starts a new session without saying so,
+	// so the description is kept as the first turn even for a resumed one.
+	return body + kickoffFirstTurn(opts, false)
 }
 
 // bootACP launches an ACP session through go-agent-wrapper. It follows

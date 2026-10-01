@@ -4,26 +4,47 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
 )
 
 // sourceBootOptions are the Options that re-launch rec's session: a
-// long-lived boot of its agent profile in its workdir, bound to its task and
-// project, with the role its original boot announced. Manager.ResumeSession
-// and Manager.Resume both start from them, so a re-launched session, resumed
-// or fresh, is the same task's session and not an unlinked one.
-func sourceBootOptions(rec *sqlstore.SessionRecord) Options {
-	opts := Options{
+// long-lived boot of its agent profile in its workdir, with the role its
+// original boot announced, bound to its task and project. Manager.
+// ResumeSession and Manager.Resume both start from them, so a re-launched
+// session, resumed or fresh, is the same task's session and not an unlinked
+// one.
+//
+// A task-linked session is handed its task the way a dispatch hands it
+// (CW-20261001-0249): the task row goes through the scheduler's own mapping
+// (scheduler.BuildJob, then optsFromJob), so the planted task bundle
+// (task.md, task.json) and the kickoff match a normal dispatch, and the task's
+// kind, status, relationships, system prompt, agent file and environment are
+// carried. Only the launch the session already had stays its own: its agent
+// profile, workdir, role and, when the row has one, its project (the task's
+// project otherwise). The session is not given the task's running run: a
+// boot that carries a run id was dispatched by the scheduler, and a
+// re-launched session is not the run's worker, so RunID stays 0.
+//
+// A task that cannot be read leaves the bare task id, and an agent file that
+// cannot be loaded is dropped, each with a log line: a re-launch exists so
+// the task is not stranded, so it must not fail on context it can do without.
+func (m *Manager) sourceBootOptions(rec *sqlstore.SessionRecord, workdir string) Options {
+	if workdir == "" {
+		workdir = rec.Workdir
+	}
+	base := Options{
 		Mode:         ModeLongLived,
 		AgentProfile: rec.AgentProfile,
-		Workdir:      rec.Workdir,
+		Workdir:      workdir,
 	}
 	if rec.ProjectID.Valid {
-		opts.ProjectID = rec.ProjectID.String
+		base.ProjectID = rec.ProjectID.String
 	}
 	if rec.TaskID.Valid {
-		opts.TaskID = rec.TaskID.String
+		base.TaskID = rec.TaskID.String
 	}
 	// Preserve the role tag the original boot used so the re-launched
 	// transcript's planted CLAUDE.md still announces the same role.
@@ -33,10 +54,49 @@ func sourceBootOptions(rec *sqlstore.SessionRecord) Options {
 	// AgentProfile when empty, so falling through here is also safe.
 	if meta := decodeMeta(rec.MetaJSON); len(meta) > 0 {
 		if v := meta["role"]; v != "" {
-			opts.Role = v
+			base.Role = v
+		}
+	}
+	if base.TaskID == "" || m == nil || m.deps == nil || m.deps.Store == nil {
+		return base
+	}
+	task, err := m.deps.Store.GetTask(base.TaskID)
+	if err != nil || task == nil {
+		if err == nil {
+			err = errors.New("no such task")
+		}
+		log.Printf("agent: re-launching session %s: task %s not readable, booting with its id only: %v", rec.ID, base.TaskID, err)
+		return base
+	}
+	opts := optsFromJob(scheduler.BuildJob(m.deps.Store, *task, 0), base.Workdir)
+	opts.Mode = base.Mode
+	opts.AgentProfile = base.AgentProfile
+	opts.LaunchProfile = ""
+	opts.Workdir = base.Workdir
+	opts.Role = base.Role
+	if base.ProjectID != "" {
+		opts.ProjectID = base.ProjectID
+	}
+	if opts.AgentFile != "" {
+		if _, err := loadAgentFile(opts); err != nil {
+			log.Printf("agent: re-launching session %s: the task's agent file cannot be loaded, booting without it: %v", rec.ID, err)
+			opts.AgentFile = ""
 		}
 	}
 	return opts
+}
+
+// prependSystemPrompt puts front (a resume's diagnostic note or a caller's
+// system prompt) ahead of base (the task's own), so a note lands at the top
+// of the planted prompt without dropping the task's.
+func prependSystemPrompt(front, base string) string {
+	switch {
+	case front == "":
+		return base
+	case base == "":
+		return front
+	}
+	return front + "\n\n" + base
 }
 
 // ResumesSession reports whether ResumeSession tries to continue rec's
@@ -126,11 +186,12 @@ func (m *Manager) ResumeSession(ctx context.Context, sessionID string, opts Resu
 		return nil, fmt.Errorf("agent.Manager.ResumeSession: get session: %w", err)
 	}
 
-	bootOpts := sourceBootOptions(rec)
-	// composeSystemPrompt prepends Options.SystemPrompt in front of the
-	// agent-file persona so the DiagnosticNote (when set by α.5 stuck-task
-	// recovery) lands at the top of the resumed CLAUDE.md.
-	bootOpts.SystemPrompt = opts.DiagnosticNote
+	bootOpts := m.sourceBootOptions(rec, "")
+	// The DiagnosticNote (set by α.5 stuck-task recovery) goes ahead of the
+	// task's own system prompt in Options.SystemPrompt. composeSystemPrompt
+	// puts the agent-file persona and the worker template before that, so the
+	// note leads the task framing, not the planted file.
+	bootOpts.SystemPrompt = prependSystemPrompt(opts.DiagnosticNote, bootOpts.SystemPrompt)
 
 	var sess *Session
 	if m.ResumesSession(rec) {

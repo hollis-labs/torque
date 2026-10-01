@@ -1183,12 +1183,27 @@ func (m *Manager) Resume(ctx context.Context, req ResumeRequest) (string, error)
 		}
 	}
 
-	fresh := sourceBootOptions(src)
+	fresh := m.sourceBootOptions(src, workdir)
 	fresh.LaunchProfile = launchProfile
 	fresh.AgentProfile = profile
-	fresh.Workdir = workdir
-	fresh.SystemPrompt = req.SystemPrompt
-	fresh.Env = envMap
+	// The request's system prompt goes ahead of the task's, and its env wins
+	// over the task's. A request that moves the session to another runtime
+	// than the one that recorded it does not carry the task's environment: it
+	// was set for the original provider's CLI, and would reach the other's.
+	fresh.SystemPrompt = prependSystemPrompt(req.SystemPrompt, fresh.SystemPrompt)
+	if toProvider, _ := m.runtimeFor(launchProfile, profile); !SameRuntime(src.Provider, toProvider) {
+		fresh.Env = nil
+	}
+	if len(envMap) > 0 {
+		merged := make(map[string]string, len(fresh.Env)+len(envMap))
+		for k, v := range fresh.Env {
+			merged[k] = v
+		}
+		for k, v := range envMap {
+			merged[k] = v
+		}
+		fresh.Env = merged
+	}
 
 	// The checkpoint's id; a checkpoint written before checkpoints carried
 	// one falls back to the source session's own, which names the same
