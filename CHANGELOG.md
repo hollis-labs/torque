@@ -138,6 +138,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - OpenCode sessions get their briefing on the first turn. OpenCode runs in
   the project directory, so the `Boot @./boot.md` kickoff pointed at a file
   that is not there; it now receives `boot.md`'s content instead.
+- An agent CLI installed outside the daemon's PATH launches. Boot pins the
+  path go-providers' Detect resolves (its `*_CLI_PATH` override, PATH, then
+  install dirs such as `~/.opencode/bin` and `~/.local/bin`) as the planted
+  launch's binary. The go-agent-wrapper path spawned the bare name before,
+  so `opencode` in `~/.opencode/bin` failed with "executable file not found
+  in $PATH" (CW-20261001-0098).
 - `agentkit` v0.12.3 (CW-20261001-0102): a planted launch's provider flags
   and injected args go before the `--` that has ended a prompt-carrying argv
   since go-providers v0.34.1. With v0.12.2 they landed after it and reached
