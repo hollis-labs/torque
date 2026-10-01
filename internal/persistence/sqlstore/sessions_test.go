@@ -1,6 +1,7 @@
 package sqlstore_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -115,4 +116,82 @@ func TestSessionCheckpoints_CreateAndList(t *testing.T) {
 	none, err := store.LatestSessionCheckpoint("missing")
 	require.NoError(t, err)
 	assert.Nil(t, none)
+}
+
+// TestSessions_RuntimeKindReadsAsCurrentMode is CW-20261001-0063: rows
+// written before the runtimes.Mode spellings keep their stored token, and
+// read back as the current mode; nothing rewrites them. An unknown or empty
+// value must never fail the read: it passes through for boot validation.
+func TestSessions_RuntimeKindReadsAsCurrentMode(t *testing.T) {
+	store := setupTestStore(t)
+	stored := map[string]string{
+		"S-CLI":     "cli",
+		"S-SUBPROC": "subprocess",
+		"S-SERVE":   "serve-http",
+		"S-APPSRV":  "app-server",
+		"S-PTYDBG":  "pty-debug",
+		"S-STREAM":  "streaming-stdio",
+		"S-JSONRPC": "jsonrpc-stdio",
+		"S-FAKE":    "fake",
+		"S-EMPTY":   "",
+	}
+	for id, kind := range stored {
+		_, err := store.DB().Exec(`INSERT INTO sessions (id, runtime_kind) VALUES (?, ?)`, id, kind)
+		require.NoError(t, err)
+	}
+	want := map[string]string{
+		"S-CLI":     "subprocess-per-turn",
+		"S-SUBPROC": "subprocess-per-turn",
+		"S-SERVE":   "http-sse",
+		"S-APPSRV":  "jsonrpc-stdio",
+		"S-PTYDBG":  "pty",
+		"S-STREAM":  "streaming-stdio",
+		"S-JSONRPC": "jsonrpc-stdio",
+		"S-FAKE":    "fake",
+		"S-EMPTY":   "",
+	}
+	for id, kind := range want {
+		got, err := store.GetSession(id)
+		require.NoError(t, err)
+		assert.Equal(t, kind, got.RuntimeKind, "GetSession(%s)", id)
+	}
+	all, err := store.ListSessions(sqlstore.SessionFilter{})
+	require.NoError(t, err, "listing must work over legacy and unknown rows")
+	require.Len(t, all, len(want))
+	for _, rec := range all {
+		assert.Equal(t, want[rec.ID], rec.RuntimeKind, "ListSessions %s", rec.ID)
+	}
+
+	// The live-session scan (startup sweep) reads through the same path; a
+	// spare-everything callback sees each row without changing any.
+	live := map[string]string{}
+	swept, err := store.SweepStaleSessions(func(rec *sqlstore.SessionRecord) bool {
+		live[rec.ID] = rec.RuntimeKind
+		return true
+	})
+	require.NoError(t, err)
+	assert.Zero(t, swept)
+	assert.Equal(t, want, live, "SweepStaleSessions sees current modes")
+
+	var raw string
+	require.NoError(t, store.DB().QueryRow(`SELECT runtime_kind FROM sessions WHERE id = 'S-CLI'`).Scan(&raw))
+	assert.Equal(t, "cli", raw, "stored rows are not rewritten")
+}
+
+// New rows store only current tokens, even when handed a retired one, on
+// both write paths. Production writes go through WriteTx.CreateSession.
+func TestSessions_CreateStoresCurrentRuntimeKind(t *testing.T) {
+	store := setupTestStore(t)
+	require.NoError(t, store.CreateSession(&sqlstore.SessionRecord{ID: "S-NEW", RuntimeKind: "serve-http"}))
+
+	tx, err := store.BeginWriteTx(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, tx.CreateSession(&sqlstore.SessionRecord{ID: "S-TX", RuntimeKind: "cli"}))
+	require.NoError(t, tx.Commit())
+
+	for id, want := range map[string]string{"S-NEW": "http-sse", "S-TX": "subprocess-per-turn"} {
+		var raw string
+		require.NoError(t, store.DB().QueryRow(`SELECT runtime_kind FROM sessions WHERE id = ?`, id).Scan(&raw))
+		assert.Equal(t, want, raw, id)
+	}
 }

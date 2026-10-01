@@ -22,7 +22,7 @@ agent_profiles:
     output_format: stream-json
     timeout_seconds: 600
     max_agent_depth: 3
-    runtime_kind: subprocess
+    runtime_kind: subprocess-per-turn
 
   codex:
     executor: cli
@@ -68,7 +68,7 @@ agent_profiles:
 	assert.Equal(t, "stream-json", def.OutputFormat)
 	assert.Equal(t, 600, def.TimeoutSeconds)
 	assert.Equal(t, 3, def.MaxAgentDepth)
-	assert.Equal(t, "subprocess", def.RuntimeKind, "fixture has runtime_kind: subprocess explicit")
+	assert.Equal(t, "subprocess-per-turn", def.RuntimeKind, "fixture has runtime_kind: subprocess-per-turn explicit")
 
 	// Codex profile
 	codex := profiles["codex"]

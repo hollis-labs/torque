@@ -205,7 +205,7 @@ func (w *WriteTx) CreateSession(rec *SessionRecord) error {
 			id, launch_profile, agent_profile, provider, runtime_id, runtime_kind,
 			workdir, project_id, task_id, state, pid, meta
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		rec.ID, rec.LaunchProfile, rec.AgentProfile, rec.Provider, rec.RuntimeID, rec.RuntimeKind,
+		rec.ID, rec.LaunchProfile, rec.AgentProfile, rec.Provider, rec.RuntimeID, currentRuntimeKind(rec.RuntimeKind),
 		rec.Workdir, rec.ProjectID, rec.TaskID, state, rec.PID, meta,
 	)
 	if err != nil {
