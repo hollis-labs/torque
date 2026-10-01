@@ -131,9 +131,11 @@ arguments (token, scopes) kept, beside the `loopback`. It is the whole of the
 mux surface those sessions can reach.
 
 - Names come from a known set (`cerberus`, `fragments-engine`, `hadron`,
-  `loom`, `nanite`, `tangent`, `tesseract`, `tether`, `torque`, `vanta`). An
-  unknown, empty or repeated name is a **load-time error** naming the profile,
-  and `torque profiles lint` reports it.
+  `loom`, `nanite`, `sigil`, `tangent`, `tangent-dev`, `tesseract`, `tether`,
+  `torque`, `vanta`): the server ids mux proxies, from its catalog's
+  `mcp-servers/`, plus the two the daemon's default set and the interactive
+  config name. An unknown, empty or repeated name is a **load-time error**
+  naming the profile, and `torque profiles lint` reports it.
 - `cerberus` is **never granted by default**. A profile that names it gets a
   warning when profiles load and from `torque profiles lint` (a warning, which
   does not fail the lint), because it grants deploy and ssh.
