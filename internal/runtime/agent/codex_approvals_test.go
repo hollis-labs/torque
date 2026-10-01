@@ -148,3 +148,25 @@ func TestPlantsMux(t *testing.T) {
 		assert.Equal(t, tc.want, got, "%s/%s/%q", tc.provider, tc.kind, tc.mode)
 	}
 }
+
+// The launch plan's Provider.Permission is a go-permission Mode since
+// agentkit v0.17.0, which refuses Claude's own spellings; Torque sets it for
+// claude-code only (CW-20261001-0157).
+func TestResolveLaunchPermissionMode(t *testing.T) {
+	for _, tc := range []struct {
+		profile config.AgentProfile
+		want    gopermission.Mode
+	}{
+		{config.AgentProfile{Provider: "claude-code"}, gopermission.ModeAcceptEdits},
+		{config.AgentProfile{Provider: "claude-code", PermissionMode: "default"}, gopermission.ModeDefault},
+		{config.AgentProfile{Provider: "claude-code", PermissionMode: "acceptEdits"}, gopermission.ModeAcceptEdits},
+		{config.AgentProfile{Provider: "claude-code", PermissionMode: "plan"}, gopermission.ModePlan},
+		{config.AgentProfile{Provider: "claude-code", PermissionMode: "bypassPermissions"}, gopermission.ModeYolo},
+		{config.AgentProfile{Provider: "claude-code", Args: []string{"--dangerously-skip-permissions"}}, gopermission.ModeYolo},
+		{config.AgentProfile{Provider: "codex", PermissionMode: "bypassPermissions"}, ""},
+		{config.AgentProfile{Provider: "opencode", PermissionMode: "plan"}, ""},
+		{config.AgentProfile{Provider: "agy", PermissionMode: "acceptEdits"}, ""},
+	} {
+		assert.Equal(t, tc.want, resolveLaunchPermissionMode(tc.profile), "%+v", tc.profile)
+	}
+}

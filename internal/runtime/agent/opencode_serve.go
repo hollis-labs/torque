@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -60,24 +59,6 @@ func opencodeServeEnv(env []string, kind RuntimeKind, cli provider.CLIAdapter) [
 		return env
 	}
 	return append(out, opencodeConfigContentEnv+"="+string(b))
-}
-
-// serveHTTPLogName is where a serve-http session's runtime log goes.
-const serveHTTPLogName = "serve-http.log"
-
-// runtimeLogPath is the log file agentkit writes a session's raw output to.
-// agentkit opens it with os.Create, not O_APPEND, so each of its writes
-// lands at its own offset and overwrites whatever Torque appended to the
-// same file since: session.log's stderr lines and permission decisions. A
-// serve-http session's raw output (the serve process's stdout and every SSE
-// frame) goes to logs/serve-http.log instead, which keeps session.log
-// Torque's own (CW-20261001-0148). The other long-lived runtimes still
-// share session.log until agentkit appends.
-func runtimeLogPath(ws *WorkspaceLayout, kind RuntimeKind) string {
-	if kind == RuntimeKindServeHTTP && ws.LogDir != "" {
-		return filepath.Join(ws.LogDir, serveHTTPLogName)
-	}
-	return ws.LogPath
 }
 
 // usesOpencodePermissionReplies reports whether a session's permission

@@ -6,6 +6,8 @@ import (
 	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/hollis-labs/agentkit/agentlaunch"
 	"github.com/hollis-labs/torque/internal/config"
+
+	gopermission "github.com/hollis-labs/go-permission"
 )
 
 // TaskLaunchOverlay carries the per-task dynamic inputs that the stable
@@ -77,10 +79,13 @@ type TaskLaunchOverlay struct {
 	// loopback is disabled (the test path).
 	LoopbackURL string
 
-	// PermissionMode is the resolved permission posture for the spawn.
-	// Empty for non-claude providers; the caller decides whether to set
-	// it. agentlaunch's compile guard reads this on claude launches.
-	PermissionMode string
+	// PermissionMode is the resolved permission posture for the spawn, a
+	// go-permission Mode: agentkit v0.17.0 refuses a provider's own spelling
+	// (acceptEdits, bypassPermissions) and maps the Mode onto the provider's
+	// flags itself. Empty for non-claude providers; the caller decides
+	// whether to set it. agentlaunch's compile guard reads this on claude
+	// launches.
+	PermissionMode gopermission.Mode
 
 	// Injection is the runtime-bootdir injection spec the caller resolved
 	// from the agent runtime's bootdir builder. Carries the planted

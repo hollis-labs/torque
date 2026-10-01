@@ -33,7 +33,10 @@ import (
 // profile Torque must reply once to the read and reject the command, log
 // both to session.log, and start serve with the profile's model and
 // Torque's planted agent in OPENCODE_CONFIG_CONTENT. serve's raw output
-// goes to serve-http.log, so nothing overwrites session.log's decisions.
+// shares session.log with those decisions: since agentkit v0.19.1 opens the
+// log O_APPEND (CW-20261001-0158), its later writes land after Torque's
+// lines instead of over them, so the frames serve sends after both
+// decisions must leave them intact (CW-20261001-0157).
 func TestBoot_OpencodeServeHTTPAnswersPermissions(t *testing.T) {
 	const ocSession = "ses_serve_perms"
 	var (
@@ -137,14 +140,27 @@ func TestBoot_OpencodeServeHTTPAnswersPermissions(t *testing.T) {
 	assert.Contains(t, string(logText), "posture=default reply=once")
 	assert.Contains(t, string(logText), "tool=bash")
 	assert.Contains(t, string(logText), "posture=default reply=reject")
-	// agentkit's raw serve output (the listen line, every SSE frame) has a
-	// file of its own: written into session.log it overwrote the lines
-	// above.
-	serveLog, err := os.ReadFile(filepath.Join(filepath.Dir(sessionLog), "serve-http.log"))
-	require.NoError(t, err)
-	assert.Contains(t, string(serveLog), "opencode server listening on")
-	assert.Contains(t, string(serveLog), `"type":"permission.asked"`)
-	assert.NotContains(t, string(logText), `"type":"permission.asked"`)
+
+	// agentkit keeps writing serve's raw output to the same session.log after
+	// Torque's decisions: with agentkit's old os.Create log its writes
+	// landed at its own offset, over the lines above.
+	const late = 50
+	for i := range late {
+		events <- fmt.Sprintf(`{"type":"message.part.updated","properties":{"sessionID":%q,"part":{"type":"text","text":"late-frame-%d"},"time":2}}`, ocSession, i)
+	}
+	require.Eventually(t, func() bool {
+		b, _ := os.ReadFile(sessionLog)
+		return strings.Contains(string(b), fmt.Sprintf("late-frame-%d", late-1))
+	}, 5*time.Second, 20*time.Millisecond, "agentkit writes serve's later frames to session.log")
+	logText, _ = os.ReadFile(sessionLog)
+	assert.Equal(t, 2, strings.Count(string(logText), "opencode permission:"), "Torque's decision lines survive agentkit's later writes")
+	assert.Contains(t, string(logText), "opencode server listening on", "serve's raw output is in session.log")
+	assert.Contains(t, string(logText), `"type":"permission.asked"`)
+	for i := range late {
+		assert.Contains(t, string(logText), fmt.Sprintf("late-frame-%d\"", i))
+	}
+	_, err = os.Stat(filepath.Join(filepath.Dir(sessionLog), "serve-http.log"))
+	assert.True(t, os.IsNotExist(err), "no separate serve-http.log")
 
 	content, ok := fake.Call(0).Getenv("OPENCODE_CONFIG_CONTENT")
 	require.True(t, ok, "serve must start with the profile's model and agent")

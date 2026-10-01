@@ -23,9 +23,16 @@ import (
 // load-time validation would have rejected also falls back to default,
 // never to yolo.
 func permissionPosture(profile config.AgentProfile) gopermission.Mode {
-	switch config.PermissionMode(profile.PermissionMode) {
-	case config.PermissionModeDefault:
-		return gopermission.ModeDefault
+	return permissionModeFor(config.PermissionMode(profile.PermissionMode))
+}
+
+// permissionModeFor maps a profile's permission_mode, which profiles spell in
+// Claude's settings vocabulary, onto go-permission's Mode, the one spelling
+// the launch plan (agentkit v0.17.0) and the approval responders take. A
+// value load-time validation would have rejected falls back to default,
+// never to yolo.
+func permissionModeFor(mode config.PermissionMode) gopermission.Mode {
+	switch mode {
 	case config.PermissionModeAcceptEdits:
 		return gopermission.ModeAcceptEdits
 	case config.PermissionModePlan:
