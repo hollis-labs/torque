@@ -6,7 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger, Textarea, Button, Skeleton, E
 import { listCursorNeighbors } from '@hollis-labs/sysop-ui/api'
 import { CommentList } from '@/components/domain/comment-list'
 import { ArtifactCard } from '@/components/domain/artifact-card'
-import { ActivityTimeline } from '@/components/domain/activity-timeline'
+import { PagedActivityTimeline } from '@/components/domain/paged-activity-timeline'
 import { SubtodosPanel } from '@/components/domain/subtodos-panel'
 import { DebugTabStub } from '@/components/domain/debug-tab-stub'
 import {
@@ -33,7 +33,6 @@ import { readTaskListCursor } from '@/lib/task-list-cursor'
 import { notifyError, notifySuccess } from '@/lib/toast'
 import type {
   Task,
-  Run,
   Comment,
   Artifact,
   TaskStatus,
@@ -66,22 +65,6 @@ export default function TaskDetailPage() {
 
   // Tab data — lazy loaded
   const [comments, setComments] = useState<Comment[] | null>(null)
-  const [runs, setRuns] = useState<Run[] | null>(null)
-  const runTaskRef = useRef(id)
-  const [runTaskID, setRunTaskID] = useState(id)
-  const [runCursor, setRunCursor] = useState<string | null>(null)
-  const [loadingMoreRuns, setLoadingMoreRuns] = useState(false)
-  // Reset this task's run page before rendering a different task.
-  if (runTaskID !== id) {
-    setRunTaskID(id)
-    setRuns(null)
-    setRunCursor(null)
-    setLoadingMoreRuns(false)
-  }
-  useEffect(() => {
-    runTaskRef.current = id
-    return () => { runTaskRef.current = undefined }
-  }, [id])
   const [artifacts, setArtifacts] = useState<Artifact[] | null>(null)
   const [activeTab, setActiveTab] = useState('details')
 
@@ -118,10 +101,6 @@ export default function TaskDetailPage() {
     if (!hadActiveRun.current || !id) return
     hadActiveRun.current = false
     api.getTask(id).then(setTask).catch(() => {})
-    // Invalidate the runs cache so the Logs tab pulls the completed run
-    // on next visit.
-    setRuns(null)
-    setRunCursor(null)
   }, [activeRun, id, api])
 
   // Resolve the current task's position inside the last rendered list so
@@ -232,27 +211,10 @@ export default function TaskDetailPage() {
     if (activeTab === 'comments' && comments === null) {
       api.listComments('task', id).then((page) => setComments(page.items)).catch(() => setComments([]))
     }
-    if (activeTab === 'logs') {
-      // Timeline unions runs, comments, and artifacts — load any that are
-      // still missing so the view is coherent on first render.
-      if (runs === null) {
-        api.pageRuns({ task_id: id }).then((page) => {
-          if (runTaskRef.current !== id) return
-          setRuns(page.items)
-          setRunCursor(page.meta.next_cursor)
-        }).catch(() => { if (runTaskRef.current === id) setRuns([]) })
-      }
-      if (comments === null) {
-        api.listComments('task', id).then((page) => setComments(page.items)).catch(() => setComments([]))
-      }
-      if (artifacts === null) {
-        api.listArtifacts(id).then((page) => setArtifacts(page.items)).catch(() => setArtifacts([]))
-      }
-    }
     if (activeTab === 'artifacts' && artifacts === null) {
       api.listArtifacts(id).then((page) => setArtifacts(page.items)).catch(() => setArtifacts([]))
     }
-  }, [activeTab, id, taskLoaded, editing, comments, runs, artifacts, api])
+  }, [activeTab, id, taskLoaded, editing, comments, artifacts, api])
 
   // Seed draft from task if the user's first edit lands before the init
   // effect has run. Without this, the brief window between entering edit
@@ -675,24 +637,7 @@ export default function TaskDetailPage() {
 
             <TabsContent value="logs" className="px-4 py-3">
               {id && (
-                <>
-                <ActivityTimeline
-                  taskId={id}
-                  runs={runs}
-                  comments={comments}
-                  artifacts={artifacts}
-                />
-                {runCursor && <button className="mt-3 text-sm text-primary" disabled={loadingMoreRuns} onClick={async () => {
-                  if (!id) return
-                  setLoadingMoreRuns(true)
-                  try {
-                    const page = await api.pageRuns({ task_id: id, cursor: runCursor })
-                    if (runTaskRef.current !== id) return
-                    setRuns((prev) => [...(prev ?? []), ...page.items.filter((row) => !prev?.some((shown) => shown.id === row.id))])
-                    setRunCursor(page.meta.next_cursor)
-                  } catch (err) { notifyError(err, 'Failed to load older runs') } finally { if (runTaskRef.current === id) setLoadingMoreRuns(false) }
-                }}>{loadingMoreRuns ? 'Loading…' : 'Load older runs'}</button>}
-                </>
+                <PagedActivityTimeline key={id} taskId={id} />
               )}
             </TabsContent>
 

@@ -12,6 +12,8 @@ import {
 import { Skeleton, Button, Input, Label, Textarea, PageHeader, EmptyState, CopyableId } from '@hollis-labs/sysop-ui'
 import { StatusBadge } from '@/components/domain/status-badge'
 import { useApi } from '@/hooks/use-api'
+import { usePagedList } from '@/hooks/use-paged-list'
+import { ListPageControls } from '@/components/domain/list-page-controls'
 import { notifyError, notifySuccess } from '@/lib/toast'
 import type { PhaseRollup, PlanDetail, PlanPhase, Task } from '@/lib/types'
 
@@ -33,7 +35,13 @@ export default function PlanDetailPage() {
   const api = useApi()
 
   const [plan, setPlan] = useState<PlanDetail | null>(null)
-  const [children, setChildren] = useState<Task[]>([])
+  const childPage = usePagedList({
+    enabled: !!id,
+    params: { planId: id ?? '', sort_by: 'priority', sort_dir: 'asc' as const, include_total: true },
+    fetchPage: ({ params, cursor, signal }) => api.listPlanChildren(params.planId, undefined, { sort_by: params.sort_by, sort_dir: params.sort_dir, include_total: params.include_total, cursor }, signal),
+    getId: task => task.id,
+  })
+  const children = childPage.items
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -47,9 +55,8 @@ export default function PlanDetailPage() {
   const load = useCallback(async () => {
     if (!id) return
     try {
-      const [detail, kids] = await Promise.all([api.getPlan(id), api.listPlanChildren(id)])
+      const detail = await api.getPlan(id)
       setPlan(detail)
-      setChildren(kids.items ?? [])
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load plan')
@@ -171,6 +178,8 @@ export default function PlanDetailPage() {
         <ProgressSummary progress={plan.progress} />
       </div>
 
+      <p className="px-4 py-1 text-xs text-muted-foreground">Phase columns group the loaded child task pages. Progress totals come from the plan; load more to see older or lower-priority tasks.</p>
+      <ListPageControls page={childPage} label="child tasks" />
       {/* Phase columns */}
       <div className="flex-1 overflow-auto">
         <div className="flex h-full min-h-0 flex-row gap-3 overflow-x-auto p-4">
@@ -230,6 +239,7 @@ export default function PlanDetailPage() {
             } as unknown as Partial<Omit<Task, 'tags'>> & { tags?: string[] })
             notifySuccess(`Created task under ${addTaskOpen.name}`)
             setAddTaskOpen(null)
+            void childPage.reload()
             load()
           } catch (err) {
             notifyError(err, 'Failed to create task')

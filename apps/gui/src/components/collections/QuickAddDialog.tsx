@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Inbox, Plus } from 'lucide-react'
 import {
   Command,
@@ -18,6 +18,9 @@ import {
 } from '@hollis-labs/sysop-ui'
 import { Skeleton } from '@hollis-labs/sysop-ui'
 import { useApi } from '@/hooks/use-api'
+import { usePagedList } from '@/hooks/use-paged-list'
+import { useListSearch } from '@/hooks/use-list-search'
+import { ListPageControls } from '@/components/domain/list-page-controls'
 import { notifyError } from '@/lib/toast'
 import type { Collection, Task, TaskSummary } from '@/lib/types'
 
@@ -40,7 +43,7 @@ const RECENT_LIMIT = 8
  *
  * Empty input shows recent active collections (most-recently-updated
  * first) plus a pinned "Send to inbox" option. Typing filters by
- * case-insensitive substring; if no collection matches, a "Create new
+ * server-side text search; when a complete result page has no exact name match, a "Create new
  * collection" option appears at the bottom of the list.
  *
  * Selecting a collection routes through addTaskToCollection if the task
@@ -56,85 +59,29 @@ export function QuickAddDialog({
 }: QuickAddDialogProps) {
   const api = useApi()
   const [query, setQuery] = useState('')
-  const [collections, setCollections] = useState<Collection[] | null>(null)
-  const [currentName, setCurrentName] = useState<string | null>(null)
+  const [current, setCurrent] = useState<{ id: string; name: string } | null>(null)
   const [submitting, setSubmitting] = useState(false)
-
-  // Track the in-flight load so a fast re-open doesn't race with the
-  // previous fetch and overwrite a fresher result with a stale one.
-  const loadTokenRef = useRef(0)
-
-  // Re-fetch on open. Empty out stale state on close so the next open
-  // doesn't briefly flash the previous task's "Currently in" header.
-  useEffect(() => {
-    if (!open) {
-      setQuery('')
-      setCollections(null)
-      setCurrentName(null)
-      return
-    }
-
-    const token = ++loadTokenRef.current
-    setCollections(null)
-    setCurrentName(null)
-
-    api
-      .listCollections('active')
-      .then((list) => {
-        if (loadTokenRef.current !== token) return
-        setCollections(list.items)
-        if (task.collection_id) {
-          // Prefer the cached list — avoids an extra round-trip in the
-          // common case. Falls back to a direct fetch if (somehow) the
-          // task's collection isn't active anymore.
-          const hit = list.items.find((c) => c.id === task.collection_id)
-          if (hit) {
-            setCurrentName(hit.name)
-          } else {
-            api
-              .getCollection(task.collection_id)
-              .then((c) => {
-                if (loadTokenRef.current !== token) return
-                setCurrentName(c.name)
-              })
-              .catch(() => {
-                // Non-fatal — header just won't render.
-              })
-          }
-        }
-      })
-      .catch((err) => {
-        if (loadTokenRef.current !== token) return
-        notifyError(err, 'Failed to load collections')
-        setCollections([])
-      })
-  }, [open, api, task.collection_id])
-
   const trimmedQuery = query.trim()
-  const lowerQuery = trimmedQuery.toLowerCase()
-
-  // When the input is empty, surface the most-recently-updated active
-  // collections; when there's a query, filter the full list by case-
-  // insensitive substring. Both paths exclude the task's current
-  // collection so the user isn't offered a no-op assignment.
-  const visibleCollections = useMemo(() => {
-    if (!collections) return []
-    const filtered = trimmedQuery
-      ? collections.filter((c) => c.name.toLowerCase().includes(lowerQuery))
-      : [...collections]
-          .sort((a, b) => (b.updated_at ?? '').localeCompare(a.updated_at ?? ''))
-          .slice(0, RECENT_LIMIT)
-    return filtered.filter((c) => c.id !== task.collection_id)
-  }, [collections, trimmedQuery, lowerQuery, task.collection_id])
-
-  // Show "Create new" only when there's a query AND no exact-name match
-  // among ALL collections (active + filtered out). Prevents the user from
-  // accidentally creating a duplicate of an existing-but-filtered name.
-  const exactMatch = useMemo(() => {
-    if (!trimmedQuery || !collections) return false
-    return collections.some((c) => c.name.toLowerCase() === lowerQuery)
-  }, [trimmedQuery, lowerQuery, collections])
-  const showCreate = trimmedQuery.length > 0 && !exactMatch
+  const search = useListSearch(query)
+  const page = usePagedList({
+    enabled: open,
+    params: { search, sort_by: search ? 'name' : 'updated_at', sort_dir: search ? 'asc' as const : 'desc' as const, limit: search ? 50 : RECENT_LIMIT },
+    fetchPage: ({ params, cursor, signal }) => api.listCollections('active', { ...params, cursor }, signal),
+    getId: collection => collection.id,
+  })
+  // Excluding the current assignment is a no-op guard, not search over a local catalog.
+  const visibleCollections = page.items.filter(collection => collection.id !== task.collection_id)
+  const exactMatch = page.items.some(collection => collection.name.toLowerCase() === trimmedQuery.toLowerCase())
+  const showCreate = trimmedQuery.length > 0 && search === trimmedQuery && !page.loading && !page.hasMore && !page.error && !exactMatch
+  const currentName = current && current.id === task.collection_id ? current.name : null
+  useEffect(() => {
+    if (!open || !task.collection_id) return
+    let canceled = false
+    api.getCollection(task.collection_id).then(collection => {
+      if (!canceled) setCurrent({ id: collection.id, name: collection.name })
+    }).catch(() => {})
+    return () => { canceled = true }
+  }, [api, open, task.collection_id])
 
   const headerText = (() => {
     if (currentName) return `Currently in: ${currentName}`
@@ -204,7 +151,7 @@ export function QuickAddDialog({
     }
   }
 
-  const isLoading = collections === null
+  const isLoading = page.loading && !page.items.length
   // Always pin "Send to inbox" at the top — cmdk auto-highlights the first
   // item, which makes Enter-without-picking land the task in inbox per spec.
   // Hide only when the task already lives in inbox (no-op + clutter).
@@ -213,7 +160,7 @@ export function QuickAddDialog({
   const showInbox = !isCurrentlyInInbox
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(next) => { if (!next) setQuery(''); onOpenChange(next) }}>
       <DialogContent className="overflow-hidden p-0 sm:max-w-lg">
         <DialogHeader className="sr-only">
           <DialogTitle>Add to collection</DialogTitle>
@@ -235,6 +182,7 @@ export function QuickAddDialog({
             onValueChange={setQuery}
             disabled={submitting}
           />
+          <ListPageControls page={page} label="collections" />
           <CommandList className="max-h-80">
             {isLoading ? (
               <div className="space-y-2 p-3">
