@@ -15,6 +15,7 @@ func (a *Adapter) registerCheckpointTools() {
 Use for mid-run user-interaction gates or data-collection stops; sibling torque_task_checkpoint_respond to resolve, torque_task_checkpoint_cancel to abandon. torque_task_checkpoint_list/pending for discovery.
 Response shape: data = {<CheckpointRecord fields>} — singleton with correlation_id, status="pending".
 Canonical HITL types: %s, %s, %s. Payload contracts: pr_review={pr_url,title?,summary?,branch?,checklist?}; approval={title,prompt,context?,options?}; message={subject?,message,severity?,context?}. Unknown types are allowed and should be treated as opaque JSON.
+Escalation: a checkpoint still pending 24h after it is emitted (72h for message) is escalated once — a [system/checkpoint] comment on the task and a checkpoint.escalated event; it stays pending. Tune it in payload_json with "escalation":{"after_seconds":N} or opt out with "escalation":{"disabled":true}. timeout_at is the separate, later deadline that resolves it.
 Example: {"task_id":"T-123","type":"%s","payload_json":"{\"pr_url\":\"https://github.com/acme/app/pull/42\",\"title\":\"Review checkout fix\",\"summary\":\"Awaiting human review and merge.\"}","emitter_source_type":"agent"}`,
 			hitl.TypePRReview,
 			hitl.TypeApproval,

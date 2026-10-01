@@ -8,6 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Pending HITL checkpoints are escalated once when nobody answers them: after
+  24h (72h for `message`), the scheduler posts a `[system/checkpoint]`
+  comment on the task and publishes `checkpoint.escalated`, and the
+  checkpoint stays pending. A payload `escalation` object tunes it
+  (`{"after_seconds": N}`) or opts out (`{"disabled": true}`). The existing
+  `timeout_at` still resolves the checkpoint and blocks its task later.
 - GitHub Actions CI (`.github/workflows/ci.yml`) on pull requests and pushes
   to `main`: `make lint` and `make test` with Go from `go.mod`, and the GUI's
   `npm ci`, build and vitest, with Go and npm caches. The private
@@ -120,6 +126,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - OpenCode sessions get their briefing on the first turn. OpenCode runs in
   the project directory, so the `Boot @./boot.md` kickoff pointed at a file
   that is not there; it now receives `boot.md`'s content instead.
+- `agentkit` v0.12.3 (CW-20261001-0102): a planted launch's provider flags
+  and injected args go before the `--` that has ended a prompt-carrying argv
+  since go-providers v0.34.1. With v0.12.2 they landed after it and reached
+  the agent as prompt text.
 - OpenCode `serve-http` profiles launch `opencode serve --port 0 --hostname
   127.0.0.1` again. The wrapper launch path trimmed the prepared command to
   the bare executable, so the child started as plain `opencode`.
