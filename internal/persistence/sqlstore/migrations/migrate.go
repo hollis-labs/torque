@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
-//go:embed *.sql
+//go:embed *.sql postgres
 var migrationFS embed.FS
 
 func Run(db *sql.DB) error {
@@ -19,10 +21,15 @@ func Run(db *sql.DB) error {
 		return fmt.Errorf("pin migration connection: %w", err)
 	}
 	defer conn.Close()
+	_, postgres := db.Driver().(*stdlib.Driver)
+	timestampType, placeholder := "DATETIME", "?"
+	if postgres {
+		timestampType, placeholder = "TIMESTAMPTZ", "$1"
+	}
 
 	_, err = conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version TEXT PRIMARY KEY,
-		applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		applied_at `+timestampType+` DEFAULT CURRENT_TIMESTAMP
 	)`)
 	if err != nil {
 		return fmt.Errorf("create migrations table: %w", err)
@@ -43,7 +50,7 @@ func Run(db *sql.DB) error {
 
 	for _, f := range files {
 		var count int
-		err := conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations WHERE version = ?", f).Scan(&count)
+		err := conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations WHERE version = "+placeholder, f).Scan(&count)
 		if err != nil {
 			return fmt.Errorf("check migration %s: %w", f, err)
 		}
@@ -51,34 +58,50 @@ func Run(db *sql.DB) error {
 			continue
 		}
 
-		content, err := migrationFS.ReadFile(f)
+		path := f
+		if postgres {
+			// Both dialects record the same version. Historical SQLite table
+			// rebuilds are not PostgreSQL migrations: never run them as a fallback.
+			path = "postgres/" + f
+		}
+		content, err := migrationFS.ReadFile(path)
 		if err != nil {
-			return fmt.Errorf("read migration %s: %w", f, err)
+			return fmt.Errorf("read migration %s (dialect file %s): %w", f, path, err)
 		}
 
-		restoreForeignKeys, err := foreignKeyRestoreStmt(ctx, conn)
-		if err != nil {
-			return fmt.Errorf("read foreign key state for %s: %w", f, err)
+		restoreForeignKeys := ""
+		if !postgres {
+			restoreForeignKeys, err = foreignKeyRestoreStmt(ctx, conn)
+			if err != nil {
+				return fmt.Errorf("read foreign key state for %s: %w", f, err)
+			}
+			if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+				return fmt.Errorf("disable foreign keys for %s: %w", f, err)
+			}
 		}
-		if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
-			return fmt.Errorf("disable foreign keys for %s: %w", f, err)
+		restore := func() error {
+			if postgres {
+				return nil // PostgreSQL retains FK enforcement throughout the transaction.
+			}
+			_, err := conn.ExecContext(ctx, restoreForeignKeys)
+			return err
 		}
 
 		tx, err := conn.BeginTx(ctx, nil)
 		if err != nil {
-			_, _ = conn.ExecContext(ctx, restoreForeignKeys)
+			_ = restore()
 			return fmt.Errorf("begin tx for %s: %w", f, err)
 		}
 
 		if _, err := tx.Exec(string(content)); err != nil {
 			tx.Rollback()
-			_, _ = conn.ExecContext(ctx, restoreForeignKeys)
+			_ = restore()
 			return fmt.Errorf("execute migration %s: %w", f, err)
 		}
 
-		if _, err := tx.Exec("INSERT INTO schema_migrations (version) VALUES (?)", f); err != nil {
+		if _, err := tx.Exec("INSERT INTO schema_migrations (version) VALUES ("+placeholder+")", f); err != nil {
 			tx.Rollback()
-			_, _ = conn.ExecContext(ctx, restoreForeignKeys)
+			_ = restore()
 			return fmt.Errorf("record migration %s: %w", f, err)
 		}
 
@@ -92,18 +115,20 @@ func Run(db *sql.DB) error {
 		// check fails we roll back instead of leaving the schema change (and
 		// schema_migrations row) committed with a violation already sitting in
 		// it.
-		if err := checkForeignKeys(ctx, tx, f); err != nil {
-			tx.Rollback()
-			_, _ = conn.ExecContext(ctx, restoreForeignKeys)
-			return err
+		if !postgres {
+			if err := checkForeignKeys(ctx, tx, f); err != nil {
+				tx.Rollback()
+				_ = restore()
+				return err
+			}
 		}
 
 		if err := tx.Commit(); err != nil {
-			_, _ = conn.ExecContext(ctx, restoreForeignKeys)
+			_ = restore()
 			return fmt.Errorf("commit migration %s: %w", f, err)
 		}
 
-		if _, err := conn.ExecContext(ctx, restoreForeignKeys); err != nil {
+		if err := restore(); err != nil {
 			return fmt.Errorf("restore foreign keys after %s: %w", f, err)
 		}
 	}
