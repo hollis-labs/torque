@@ -178,6 +178,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - OpenCode sessions get their briefing on the first turn. OpenCode runs in
   the project directory, so the `Boot @./boot.md` kickoff pointed at a file
   that is not there; it now receives `boot.md`'s content instead.
+- An `opencode run` session with a long task description launches. Its
+  first turn carries `boot.md`'s content as one argument, which Linux
+  refuses past 128 KiB ("argument list too long"); above 100 KiB the turn is
+  `Boot @<boot dir>/boot.md`, an absolute path, and Torque logs why
+  (CW-20261001-0121).
 - A session whose first turn fails during start-up (an opencode, codex exec
   or agy run on the go-agent-wrapper path) reports why. The run's error now
   carries the provider's error line and the stderr tail (at most 2 KiB) after
