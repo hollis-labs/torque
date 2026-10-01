@@ -88,11 +88,39 @@ empty cohort. Omit `total` otherwise; do not substitute page length or an
 approximation. Additional metadata such as resolved sort, offset, or MCP
 `truncated`/`hint` may describe the page without changing these core fields.
 
-COUNT can scan many matching rows on Postgres even when the page query uses an
-index. Keep it opt-in, measure filtered and unfiltered cohorts with
-`EXPLAIN (ANALYZE, BUFFERS)`, and record query, data size, plan, and timings
-before claiming it is cheap. CW-20261001-0570 owns the index/COUNT evidence;
-measurements are pending and this draft makes no latency claim.
+### COUNT cost evidence
+
+Keep `include_total` opt-in on every list, including small tables. Exact
+COUNT visits the entire matching cohort; a bounded page can stop after its
+continuation probe. Migration 035 supplies sort/cohort indexes but does not
+make COUNT constant-cost.
+
+CW-20261001-0570 measured PostgreSQL 17.11 using synthetic data at the current
+4,330-task cardinality (read-only `/tasks/facets`, 2026-10-01) and 43,300 tasks.
+The run scenario uses the same sizes; these are not observed live run counts.
+The table gives median server-side execution milliseconds from seven warm
+`EXPLAIN (ANALYZE, BUFFERS)` samples after one warm-up and VACUUM ANALYZE,
+with migration 035 applied. Transport, cold caches, write churn and concurrent
+application load are excluded. Exact SQL, plans, ranges, fixture sizes and
+reproduction steps are in the [index/COUNT audit](list-index-plans.md).
+
+| Query | 4,330 rows | 43,300 rows |
+|---|---:|---:|
+| Tasks COUNT, all | 0.446 | 4.706 |
+| Tasks COUNT, status = todo | 0.179 | 1.126 |
+| Tasks COUNT, project cohort | 0.093 | 0.165 |
+| Tasks page, priority ASC + id ASC, LIMIT 51 | 0.101 | 0.153 |
+| Runs COUNT, all | 0.462 | 3.932 |
+| Runs COUNT, status = running | 0.161 | 1.013 |
+| Runs COUNT, project join | 0.278 | 1.816 |
+| Runs page, started_at DESC + id ASC, LIMIT 51 | 0.090 | 0.225 |
+
+Status cohorts match 1,083 / 10,830 rows, and project cohorts match 101 / 1,010.
+The unfiltered totals grow with table size while page work stays bounded.
+Small synthetic tables were cheap in this measurement (projects 43/430,
+epics 200/2,000, sprints 400/4,000), but that does not establish an always-on
+exception or a production latency bound. Keep one opt-in policy; dashboards
+can request explicit counts/facets when they need whole-cohort figures.
 
 MCP transport byte limits are distinct from row page size. If a byte limit trims
 a page, `returned`, `has_more`, and `next_cursor` must reflect the last item
