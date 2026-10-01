@@ -3,13 +3,15 @@ package worktree
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/hollis-labs/torque/internal/gitexec"
 )
 
 // PerRunOptions configures the per-run worktree behaviour. These map to
@@ -114,8 +116,15 @@ func SetupPerRun(opts PerRunOptions, workingDir string, runID int64) (string, er
 	// Refresh origin when the repo has one — best-effort. A fetch failure
 	// (offline, auth) must not block dispatch: perRunBaseRef falls back to a
 	// local ref below.
+	// It is skipped when the repository's own config would make the fetch
+	// run a command (gitexec.LocalRemoteExecKey): an agent can edit that
+	// config, and the daemon runs git outside any sandbox.
 	if hasOriginRemote(repoRoot) {
-		_ = runGit(repoRoot, "fetch", "origin")
+		if key, err := gitexec.LocalRemoteExecKey(context.Background(), repoRoot); err != nil || key != "" {
+			log.Printf("[worktree] not fetching origin in %s: the repository's config sets %q (err=%v); branching from the local ref", repoRoot, key, err)
+		} else {
+			_ = runGit(repoRoot, "fetch", "origin")
+		}
 	}
 	base := perRunBaseRef(repoRoot)
 	if err := runGit(repoRoot, "worktree", "add", "--detach", wtPath, base); err != nil {
@@ -326,9 +335,7 @@ func runGit(dir string, args ...string) error {
 }
 
 func runGitOutput(dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(context.Background(), "git", args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
+	out, err := gitexec.Command(context.Background(), dir, args...).CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("git %v in %s: %s: %w", args, dir, strings.TrimSpace(string(out)), err)
 	}

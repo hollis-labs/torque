@@ -207,6 +207,12 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: %s sessions take no go-sandbox profile (go-agent-wrapper refuses one for ACP agents)", ErrBootFailed, runtimeKind)
 	}
+	// Fail closed: go-agent-wrapper cannot write-protect an ACP launch
+	// without a resolved policy, which Torque's ACP launches do not have.
+	if len(pb.protectedPaths) > 0 {
+		shutdownLoopbackHandle(loopback)
+		return nil, fmt.Errorf("%w: %s", ErrBootFailed, errACPProtectUnsupported)
+	}
 
 	withMux := plantsMux(profile, runtimeKind)
 	if !withMux && deps.MuxCommand != "" {
@@ -262,6 +268,11 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 
 	persistedMeta := callerSessionMeta(opts.SessionMeta)
 	persistedMeta[metaKeyMode] = opts.Mode.String()
+	if cfg.SessionIDPreset != "" {
+		// The launch continues a stored provider conversation
+		// (Session.Resumed, CW-20261001-0203).
+		persistedMeta[metaKeyResumed] = "true"
+	}
 	persistedMeta[metaKeyWorkspaceDir] = ws.WorkspaceDir
 	if opts.RunID > 0 {
 		persistedMeta[metaKeyRunID] = strconv.FormatInt(opts.RunID, 10)
@@ -407,6 +418,7 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 		TaskID:          opts.TaskID,
 		ParentSessionID: opts.ParentSessionID,
 		Status:          StatusRunning,
+		Resumed:         cfg.SessionIDPreset != "",
 		Meta:            persistedMeta,
 		CreatedAt:       time.Now().UTC(),
 	}
