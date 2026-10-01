@@ -10,6 +10,7 @@ import (
 
 func (a *Adapter) registerRunTools() {
 	a.registerRunFacetTool()
+	a.registerRunTimeSeriesTool()
 	a.addTool(newTool("torque_run_list",
 		withDescription(`Query runs across tasks, newest first by default. Cursor pages default to 50 rows, maximum 200. Filters combine with AND; status accepts CSV.
 Sort by started_at/status/duration/cost, with ascending ID tie-break. Duration is completed elapsed milliseconds; unfinished runs sort at -1. include_total opts into counting the full cohort. Cursor binds sort_by/sort_dir; cannot combine cursor with positive offset.

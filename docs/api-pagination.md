@@ -166,6 +166,44 @@ all list pages to count them in the browser. Available aggregates are:
   Runs without ledger rows contribute zero cost. Ledger multiplicity never
   multiplies token or run counts. Empty cohorts return zero totals.
 
+- HTTP `GET /api/v1/runs/timeseries`, MCP `torque_run_timeseries`:
+  gap-free hourly/daily aggregates over the same run cohort. `since` and
+  `until` are required inclusive run-start bounds (RFC3339 or Unix millis).
+  `bucket=hour|day` defaults to day. `tz_offset_minutes` is a fixed offset
+  from UTC, default 0, integer -840 through 840; it does not apply DST rules.
+  Every intersecting bucket is present, including empty and partial edge
+  buckets. An inclusive `until` exactly on a bucket edge includes that bucket.
+  At most **200 buckets** may intersect the requested window. Larger windows
+  reject on `until`; output is never silently truncated. To request exactly
+  one local day, end just before the next day's edge.
+
+  Response:
+  ```json
+  {
+    "bucket": "day",
+    "tz_offset_minutes": 0,
+    "since": "2026-10-01T00:00:00Z",
+    "until": "2026-10-01T23:59:59.999999999Z",
+    "buckets": [{
+      "start": "2026-10-01T00:00:00Z",
+      "count": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "cost": 0,
+      "status_counts": {}
+    }],
+    "totals": {"count": 0, "prompt_tokens": 0, "completion_tokens": 0, "cost": 0}
+  }
+  ```
+  `start` is the UTC instant of the offset-local bucket edge; buckets are
+  chronological. `status_counts` preserves the exact stored statuses.
+  Summed counts match `/runs?include_total=true`; token/cost sums match
+  `/runs/facets` for the same filters. Cost is the canonical ledger total per
+  matching run, regardless of ledger date, and runs without ledger rows
+  contribute zero. MCP rejects on `until` if the complete series exceeds its
+  byte budget; callers shorten the window or narrow filters. Row paging/sort
+  and facet `bucket_limit` parameters are unsupported. There is no run-row cap.
+
 Entity and run facets return `{matching_count,bucket_limit,dimensions,
 facets:[{dimension,buckets:[{value,count}],total_distinct,returned,truncated}]}`
 plus the parent `task_rollups` or run `totals` described above. `bucket_limit`

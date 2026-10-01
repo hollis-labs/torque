@@ -221,6 +221,7 @@ func (s *Server) routes() {
 		// Runs
 		r.Get("/runs", s.listRuns)
 		r.Get("/runs/facets", s.runFacets)
+		r.Get("/runs/timeseries", s.runTimeSeries)
 		r.Get("/runs/{id}", s.getRun)
 
 		// Artifacts

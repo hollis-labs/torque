@@ -791,3 +791,31 @@ prefix. GUI consumption is S3 work.
 
 Example: `torque_run_facets` with `{"project_id":"PRJ-1",
 "since":"2026-10-01T00:00:00Z","dimensions":"status,profile","bucket_limit":"20"}`.
+
+
+## Run time-series aggregate
+
+`torque_run_timeseries` / HTTP `GET /api/v1/runs/timeseries` returns
+`{bucket,tz_offset_minutes,since,until,buckets,totals}`. Each bucket has
+`{start,count,prompt_tokens,completion_tokens,cost,status_counts}`; totals
+has `{count,prompt_tokens,completion_tokens,cost}`. Empty buckets are present
+with zero totals and an empty status map. Buckets are chronological and
+`start` is the UTC instant of the local bucket edge.
+
+Required `since`/`until` use the inclusive run-start filters from
+`torque_run_list` (RFC3339 or Unix millis). Optional `task_id`, `project_id`,
+`sprint_id`, `epic_id` and CSV `status` share the same cohort predicates.
+`bucket` is hour or day, default day; `tz_offset_minutes` is a fixed offset
+integer between -840 and 840, default 0. Fixed offsets do not model DST.
+An inclusive upper bound exactly on an edge includes that edge's bucket.
+
+The requested window may intersect at most 200 buckets; larger windows return
+`arg_invalid` on `until`, without truncation. Row limit/offset/cursor/sort,
+include_total and bucket_limit are rejected. Ledger cost sums by run ID
+through the matching cohort; ledger dates never define membership. Tokens
+come from runs and are not multiplied by ledger rows. Sums equal run facets
+and optional list counts for the same filters. If the whole MCP envelope
+exceeds the byte budget, it rejects on `until` and asks for a shorter window
+or narrower filters, retaining the complete-series contract.
+
+Example: `{"since":"2026-10-01T00:00:00Z","until":"2026-10-01T23:59:59.999999999Z","bucket":"hour","tz_offset_minutes":"0"}`.
