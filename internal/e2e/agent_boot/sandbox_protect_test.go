@@ -34,6 +34,15 @@ func requireWriteProtect(t *testing.T) {
 	}
 }
 
+// requireDenied asserts a write failed because the directory is
+// write-protected: a read-only bind mount on Linux, a sandbox denial on
+// macOS.
+func requireDenied(t *testing.T, got string) {
+	t.Helper()
+	got = strings.ToLower(got)
+	assert.True(t, strings.Contains(got, "read-only file system") || strings.Contains(got, "operation not permitted"), "the agent must not write a protected directory: %q", got)
+}
+
 // protectedDir returns a real, existing directory to protect, outside the
 // agent's working directory.
 func protectedDir(t *testing.T) string {
@@ -114,14 +123,15 @@ func TestBoot_ProtectedPathsDenyAgentWrites_Wrapper(t *testing.T) {
 		raw, err := os.ReadFile(record)
 		return err == nil && json.Unmarshal(raw, &rec) == nil
 	}, 10*time.Second, 20*time.Millisecond, "the helper never ran")
-	assert.Contains(t, strings.ToLower(rec.ProtectWrite), "read-only file system", "the agent must not write a protected directory")
+	requireDenied(t, rec.ProtectWrite)
 	assert.NoFileExists(t, filepath.Join(protect, "agent-wrote"))
 	assert.Equal(t, "wrote", rec.CwdWrite, "the agent still writes its working directory")
 	require.NoError(t, os.WriteFile(filepath.Join(protect, "host-wrote"), []byte("x"), 0o600), "the host still writes its own state")
 }
 
 // bootLegacy (codex app-server, agentkit StartOptions.ProtectedPaths): the
-// agent's write into the protected directory fails.
+// agent's write into the protected directory fails. The profile bypasses
+// codex's own sandbox (danger-full-access), so Torque's is the only one.
 func TestBoot_ProtectedPathsDenyAgentWrites_Legacy(t *testing.T) {
 	requireWriteProtect(t)
 	installHelper(t, "codex", "CODEX_CLI_PATH", "TestCodexRPCProcessHelper")
@@ -132,7 +142,7 @@ func TestBoot_ProtectedPathsDenyAgentWrites_Legacy(t *testing.T) {
 	cd := composeDeps(t, fakeRuntimeConfig{}, "codex")
 	cd.Deps.RuntimeFactory = nil
 	cd.Deps.ProtectedPaths = []string{protect}
-	cd.Deps.Profiles = config.ProfileMap{"worker": {Executor: "cli", Provider: "codex"}}
+	cd.Deps.Profiles = config.ProfileMap{"worker": {Executor: "cli", Provider: "codex", PermissionMode: "bypassPermissions"}}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
@@ -146,9 +156,69 @@ func TestBoot_ProtectedPathsDenyAgentWrites_Legacy(t *testing.T) {
 	require.NoError(t, err)
 	var rec codexProcessRecord
 	require.NoError(t, json.Unmarshal(raw, &rec))
-	assert.Contains(t, strings.ToLower(rec.ProtectWrite), "read-only file system")
+	requireDenied(t, rec.ProtectWrite)
 	assert.NoFileExists(t, filepath.Join(protect, "agent-wrote"))
 	require.NoError(t, os.WriteFile(filepath.Join(protect, "host-wrote"), []byte("x"), 0o600))
+}
+
+// A codex launch that runs its commands in codex's own sandbox (here
+// app-server under the default posture: workspace-write) is not wrapped in
+// Torque's, where codex's sandbox could not start (a nested user namespace
+// is denied). Codex's sandbox confines writes to the working directory,
+// temp and its writable_roots, and the config Torque plants names no
+// protected directory among them. The helper standing in for codex is not
+// sandboxed by anything, so its write into the protected directory lands:
+// that is the proof Torque left this launch alone.
+func TestBoot_CodexOwnSandboxIsNotWrapped(t *testing.T) {
+	installHelper(t, "codex", "CODEX_CLI_PATH", "TestCodexRPCProcessHelper")
+	protect := protectedDir(t)
+	recordPath := filepath.Join(t.TempDir(), "process.json")
+
+	cd := composeDeps(t, fakeRuntimeConfig{}, "codex")
+	cd.Deps.RuntimeFactory = nil
+	cd.Deps.ProtectedPaths = []string{protect}
+	cd.Deps.Profiles = config.ProfileMap{"worker": {Executor: "cli", Provider: "codex"}}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	sess, err := cd.Manager.Boot(ctx, agent.Options{
+		TaskID: "CW-TEST-PROTECT-CODEX-SANDBOX", AgentProfile: "worker", Workdir: t.TempDir(), Mode: agent.ModeLongLived,
+		Env: map[string]string{"TORQUE_TEST_CODEX_HELPER": "1", "TORQUE_TEST_CODEX_RECORD": recordPath, "TORQUE_TEST_PROTECT_DIR": protect},
+	})
+	require.NoError(t, err, "codex in its own sandbox launches with protection on")
+	t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), sess.ID) })
+
+	raw, err := os.ReadFile(recordPath)
+	require.NoError(t, err)
+	var rec codexProcessRecord
+	require.NoError(t, json.Unmarshal(raw, &rec))
+	assert.Equal(t, "wrote", rec.ProtectWrite, "Torque does not wrap a launch codex sandboxes itself")
+	settings, err := os.ReadFile(filepath.Join(rec.Home, "config.toml"))
+	require.NoError(t, err)
+	assert.Contains(t, string(settings), `sandbox_mode = "workspace-write"`)
+	for _, line := range strings.Split(string(settings), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "writable_roots") {
+			assert.NotContains(t, line, protect, "codex's writable_roots must not include a protected directory")
+		}
+	}
+}
+
+// Protection that is on but could not be set up refuses every launch, and
+// says how to turn it off: Torque fails closed.
+func TestBoot_ProtectRefusalRefusesLaunch(t *testing.T) {
+	fake := providertest.New(t, runtimes.Claude, providertest.Script(providertest.AwaitEOF()))
+	fake.ExpectErrors()
+	fake.Install()
+	cd := composeDeps(t, fakeRuntimeConfig{}, "claude-code")
+	cd.Deps.RuntimeFactory = nil
+	cd.Deps.ProtectRefusal = "no Torque control-plane directory could be write-protected, so agent launches are refused; set TORQUE_SANDBOX_PROTECT=0 to launch agents without protection"
+	cd.Deps.Profiles = config.ProfileMap{"worker": {Executor: "cli", Provider: "claude-code"}}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err := cd.Manager.Boot(ctx, agent.Options{TaskID: "CW-TEST-PROTECT-REFUSED", AgentProfile: "worker", Workdir: t.TempDir(), Mode: agent.ModeLongLived})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, agent.ErrBootFailed)
+	assert.Contains(t, err.Error(), "TORQUE_SANDBOX_PROTECT=0")
+	assert.Empty(t, fake.Calls(), "nothing is launched")
 }
 
 // An ACP launch is refused while protection is on: go-agent-wrapper cannot

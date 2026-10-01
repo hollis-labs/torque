@@ -209,7 +209,7 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 	}
 	// Fail closed: go-agent-wrapper cannot write-protect an ACP launch
 	// without a resolved policy, which Torque's ACP launches do not have.
-	if len(deps.ProtectedPaths) > 0 {
+	if len(pb.protectedPaths) > 0 {
 		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: %s", ErrBootFailed, errACPProtectUnsupported)
 	}

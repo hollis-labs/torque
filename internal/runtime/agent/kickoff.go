@@ -93,10 +93,15 @@ func oneShotTurn(prompt, bootDir, workdir, kickoffMD string) string {
 // the agent on its first turn (via the @./boot.md reference) and again post-
 // compaction (since the file lives on disk). Keep concise: the systemPrompt
 // already loaded via CLAUDE.md / AGENTS.md / agents/<name>.md carries the
-// persona; this file is task-specific.
-func kickoffMarkdown(opts Options, role string) string {
+// persona; this file is task-specific. muxOmitsTorque says the session's
+// mux server carries no torque tools (Dependencies.MuxOmitsTorque).
+func kickoffMarkdown(opts Options, role string, muxOmitsTorque bool) string {
 	body := kickoffHeader(opts, role)
-	body += kickoffLoopbackTools
+	if muxOmitsTorque {
+		body += kickoffLoopbackOnly
+	} else {
+		body += kickoffLoopbackTools
+	}
 	if opts.TaskID != "" {
 		body += "Your assigned task bundle is already planted under the boot dir's `tasks/` directory. Start with `tasks/README.md` and the task's `task.md`, `task.json`, and `process.md` files instead of calling MCP just to look up task, run, project, or session IDs. For opencode, resolve this under `$OPENCODE_CONFIG_DIR/tasks/` because the process cwd is the project dir.\n\n"
 	}
@@ -105,6 +110,11 @@ func kickoffMarkdown(opts Options, role string) string {
 
 // kickoffLoopbackTools points the agent at the per-task loopback's tools.
 const kickoffLoopbackTools = "Use the `loopback` MCP server's task-scoped tools (no `task_id` parameter required) for self-task operations. Prefer them over `mcp__mux__torque_*` for the booted task.\n\n"
+
+// kickoffLoopbackOnly replaces kickoffLoopbackTools while Torque
+// write-protects its state: mux then serves no torque tools, so the loopback
+// is the session's only way to reach Torque.
+const kickoffLoopbackOnly = "Use the `loopback` MCP server's task-scoped tools (no `task_id` parameter required) for self-task operations. They are this session's only Torque tools: while Torque write-protects its state, the `mux` server carries no `torque` tools.\n\n"
 
 // kickoffHeader is the kickoff's opening: who the agent is, the task and
 // plan it serves, and the workspace it writes in.

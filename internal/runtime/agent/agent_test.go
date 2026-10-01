@@ -305,7 +305,7 @@ func TestKickoffMarkdown(t *testing.T) {
 		RepoRoot:      "/repo/source",
 		OneShotPrompt: "Walk the plan.",
 		SessionMeta:   map[string]string{"plan_id": "CW-PLAN-001"},
-	}, "orchestrator")
+	}, "orchestrator", false)
 
 	assert.Contains(t, body, "`orchestrator`")
 	assert.Contains(t, body, "CW-PLAN-001")
@@ -315,13 +315,21 @@ func TestKickoffMarkdown(t *testing.T) {
 	assert.Contains(t, body, "$TORQUE_WORK_ROOT")
 	assert.Contains(t, body, "Walk the plan.")
 	assert.Contains(t, body, "`loopback` MCP server", "the name go-providers plants the per-task server under")
+	assert.Contains(t, body, "mcp__mux__torque_*")
+
+	// While Torque write-protects its state, mux carries no torque tools
+	// and the kickoff does not point at them (CW-20261001-0141).
+	protected := kickoffMarkdown(Options{AgentProfile: "worker", TaskID: "CW-1"}, "worker", true)
+	assert.Contains(t, protected, "`loopback` MCP server")
+	assert.Contains(t, protected, "only Torque tools")
+	assert.NotContains(t, protected, "mcp__mux__torque_")
 
 	// Empty role falls back to AgentProfile.
-	body = kickoffMarkdown(Options{AgentProfile: "planner"}, "")
+	body = kickoffMarkdown(Options{AgentProfile: "planner"}, "", false)
 	assert.Contains(t, body, "`planner`")
 
 	// No task id → "(no task_id)".
-	body = kickoffMarkdown(Options{AgentProfile: "x"}, "x")
+	body = kickoffMarkdown(Options{AgentProfile: "x"}, "x", false)
 	assert.Contains(t, body, "(no task_id)")
 }
 

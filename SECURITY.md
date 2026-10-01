@@ -95,4 +95,14 @@ make network calls; review them before enabling.
   code that runs outside it later (`~/.bashrc`, systemd user units, git hooks)
   or ask a same-uid service to write for it (`systemd-run --user`). Beyond
   that there is no sandbox other than what the launched tool provides.
+- under that protection, nested sandboxes do not work: a process inside it
+  cannot create its own user namespace, so a worker running bubblewrap- or
+  `unshare`-based tests, or Chromium with its sandbox, fails there.
+  `TORQUE_SANDBOX_PROTECT=0` is the escape hatch. Codex launches that use
+  codex's own sandbox are left to it, unwrapped.
+- Torque's own git runs unsandboxed in repositories agents can write. It
+  neutralizes fsmonitor, hooks, the repository's filter drivers and `ext::`
+  transports, and skips its best-effort fetch when the repository's config
+  sets remote commands; config inside a submodule's own git dir is not
+  covered.
 - pre-1.0 contracts and schema

@@ -258,15 +258,18 @@ launch write-protects Torque's state directories (CW-20261001-0141):
 
 - the data dir and the main database's dir (`~/.local/share/torque`);
 - the state dir and the queue database's dir (`~/.local/state/torque`);
-- the config dir and the profiles file's dir (`~/.config/torque`);
+- the config dir, and the dir of the profiles file the daemon reads
+  (`~/.config/torque`, or `TORQUE_PROFILES_PATH`'s dir);
 - the session workspaces root, and `~/.torque` (default workspaces, agent
-  templates).
+  templates);
+- `TORQUE_AGENT_TEMPLATE_DIR` and `TORQUE_END_AGENT_TEMPLATE_DIR`, when set.
 
-Each is protected by its real path, and only if it is an existing directory.
-Directories rather than files, because SQLite's `-wal`/`-shm` sidecars and
-atomic saves would defeat file-level protection. A path that is `/`, the home
-directory or an ancestor of it is never protected. `torque serve` logs the
-list at startup.
+Each is protected by its real path. Directories rather than files, because
+SQLite's `-wal`/`-shm` sidecars and atomic saves would defeat file-level
+protection. A missing one is created (0700) first, so a fresh host protects
+`~/.torque` before an agent can plant a template into it. A path that is `/`,
+the home directory or an ancestor of it is never protected. `torque serve`
+logs each directory as protected or skipped, and why.
 
 How it is applied: go-agent-wrapper's `Config.ProtectedPaths` on the wrapper
 path and agentkit's `StartOptions.ProtectedPaths` on the legacy path fold the
@@ -276,22 +279,75 @@ agent sees the host filesystem, writable, except these directories, which
 are read-only. The agent's working directory and everything else it writes
 are unaffected, and Torque itself writes its state as before.
 
-It fails closed:
+It fails closed. Each of these refuses every agent launch, with an error at
+startup that names `TORQUE_SANDBOX_PROTECT=0`:
 
-- A sandbox backend that cannot write-protect refuses every agent launch.
-  `torque serve` logs an error at startup when that is the case. On Linux the
-  backend is bubblewrap (`bwrap`).
-- An ACP launch (Copilot, Pi, or an `acp-*` runtime kind) is refused: the
-  wrapper has no protect-only sandbox for ACP yet (CW-20261001-0162).
+- a sandbox backend that cannot write-protect (on Linux the backend is
+  bubblewrap, `bwrap`);
+- no directory left to protect;
+- a directory reached through a symlink the agent could re-point, that is
+  one in a directory the operator's uid can write. The sandbox protects the
+  real path it resolves at launch, so a re-pointed link would send Torque to
+  a directory of the agent's.
+
+An ACP launch (Copilot, Pi, or an `acp-*` runtime kind) is refused too: the
+wrapper has no protect-only sandbox for ACP yet (CW-20261001-0162).
 
 `TORQUE_SANDBOX_PROTECT=0` (or `false`, `off`, `no`) turns protection off for
-the whole daemon, without a rollback, if the backend misbehaves on a host.
+the whole daemon, without a rollback; startup logs a warning with the value.
 
-Limits: the protection stops direct writes to those directories. It is not an
-isolation boundary. The agent can still plant code that runs outside the
-sandbox later (`~/.bashrc`, `~/.config/systemd/user`, a repository's git
-hooks), and can ask a same-uid service to write for it (`systemd-run --user`
-over the user bus). Closing those is go-sandbox's follow-up (CW-0128).
+### What changes for agents
+
+- **No `torque` tools on mux.** While protection is on, the planted `mux`
+  server proxies no `torque` server. mux would run `torque mcp` inside the
+  agent's sandbox, where Torque's database is read-only. The session's
+  loopback serves the task's Torque tools, and the kickoff says it is the
+  only Torque surface. Orchestrator-class roles (orchestrator, planner,
+  reviewer end-agent) get the full Torque surface on their loopback and lose
+  nothing. Workers lose cross-task reads (`torque_task_list`, search) until
+  `torque mcp` can proxy the daemon (CW-20261001-0199). When the mux args
+  cannot be narrowed (`--proxy` with no `--servers`), mux is not planted.
+- **Codex keeps its own sandbox.** A codex launch whose commands run in
+  codex's own OS sandbox (any `sandbox_mode` but `danger-full-access`: every
+  posture except an app-server launch under `bypassPermissions`) is not
+  wrapped in Torque's. Codex's sandbox could not start inside it, and it
+  already confines writes to the working directory, temp and its
+  `writable_roots`, where Torque adds no protected directory. The launch logs
+  that it was left to codex.
+- **No nested sandboxes.** Inside the protection a process cannot create its
+  own user namespace (on Ubuntu, AppArmor denies it), so anything that
+  sandboxes itself with bubblewrap or `unshare` fails there: tests that use
+  them, or Chromium's sandbox. `TORQUE_SANDBOX_PROTECT=0` is the escape
+  hatch.
+
+`torque mcp` no longer sweeps orphaned sessions at startup; `torque serve`,
+which owns them, does.
+
+### Limits
+
+The protection stops writes to those directories, and moving them aside:
+go-sandbox pins each protected directory's renameable ancestors (`~/.config`,
+`~/.local`, …), so an agent cannot rename one and recreate the directory
+under it. On top of that, the profiles watcher reloads only while the
+profiles file's directory is still the one Torque protected at startup
+(same device and inode). It is not an isolation boundary:
+
+- **Code that runs outside the sandbox later.** The agent can still plant it:
+  `~/.bashrc`, `~/.config/systemd/user`, a repository's git hooks.
+- **Same-uid services.** The agent can ask one to write for it:
+  `systemd-run --user` over the user bus.
+
+Closing those is go-sandbox's follow-up (CW-0128).
+
+Torque's own git, run outside any sandbox in repositories agents can write,
+does not run what an agent plants there: every daemon git carries
+`core.fsmonitor=false`, `core.hooksPath=/dev/null`,
+`protocol.ext.allow=never` and `submodule.recurse=false`, and the
+repository's own filter drivers are emptied. The per-run worktree's
+best-effort `fetch origin` is skipped when the repository's config sets a
+credential helper, `core.sshCommand`, `core.gitProxy`, a remote's
+`uploadpack`, a URL rewrite or a protocol policy. Config inside a
+submodule's own git dir is not covered.
 
 ## External constraints — not Torque's to fix
 

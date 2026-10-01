@@ -67,3 +67,38 @@ agent_profiles:
 
 	t.Fatal("profiles watcher did not reload updated file")
 }
+
+// While Torque write-protects the profiles directory, the watcher reloads
+// only while that path is still the directory recorded at startup
+// (CW-20261001-0141). One moved aside and recreated with other profiles is
+// refused, and the last good profiles stay live.
+func TestWatchProfilesRefusesReplacedDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "torque")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	path := filepath.Join(dir, "profiles.yaml")
+	write := func(provider string) {
+		require.NoError(t, os.WriteFile(path, []byte("agent_profiles:\n  default:\n    provider: "+provider+"\n"), 0o600))
+	}
+	write("claude")
+	profiles := config.NewReloadableProfiles(path, nil)
+	id, err := config.RecordDirIdentity(dir)
+	require.NoError(t, err)
+	profiles.SetReloadGuard(id.Check)
+	require.NoError(t, profiles.Reload())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go watchProfiles(ctx, profiles, 10*time.Millisecond)
+
+	// Control: an edit in place reloads.
+	write("codex")
+	require.Eventually(t, func() bool { return config.GetProfileOrDefault(profiles, "default").Provider == "codex" }, 2*time.Second, 10*time.Millisecond)
+
+	require.NoError(t, os.Rename(dir, dir+".moved"))
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	write("opencode")
+	time.Sleep(200 * time.Millisecond)
+	assert.Equal(t, "codex", config.GetProfileOrDefault(profiles, "default").Provider, "a replaced profiles directory is not reloaded")
+	assert.Error(t, profiles.Reload(), "an explicit reload is refused too")
+	assert.Equal(t, "codex", config.GetProfileOrDefault(profiles, "default").Provider)
+}

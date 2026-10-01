@@ -168,7 +168,21 @@ type Dependencies struct {
 	// as agentkit's StartOptions.ProtectedPaths; both fold them into the one
 	// sandbox around the child, and a backend that cannot write-protect
 	// refuses the launch. An ACP boot is refused while they are set
-	// (errACPProtectUnsupported). Empty when ProtectEnv turns protection off,
-	// and in tests that do not set it.
+	// (errACPProtectUnsupported). A codex launch that runs in codex's own
+	// sandbox is not wrapped (launchProtectedPaths). Empty when ProtectEnv
+	// turns protection off, and in tests that do not set it.
 	ProtectedPaths []string
+
+	// ProtectRefusal, when set, refuses every agent launch with it:
+	// protection is on but could not be set up (no control-plane directory
+	// to protect, or one reached through a symlink an agent could re-point),
+	// so Torque fails closed. bootstrap.ProtectControlPlane sets it.
+	ProtectRefusal string
+
+	// MuxOmitsTorque reports that the planted mux server carries no torque
+	// server: while Torque write-protects its state, a `torque mcp` that
+	// mux would spawn inside the agent's sandbox could not write its
+	// database. The session's loopback is then its only Torque surface, and
+	// the kickoff says so.
+	MuxOmitsTorque bool
 }
