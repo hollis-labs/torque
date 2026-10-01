@@ -14,6 +14,7 @@ import (
 	"github.com/hollis-labs/torque/internal/runtime/bootstrap"
 	"github.com/hollis-labs/torque/internal/service"
 	"github.com/hollis-labs/torque/internal/testutil/sqlitetest"
+	"github.com/hollis-labs/torque/internal/testutil/testenv"
 )
 
 // Sprint α.4 (CW-20260512-0062): when no session row is bound to the
@@ -25,7 +26,7 @@ import (
 // e.g. crashed during launch before persistence).
 func TestCheckpointResponseDispatcher_NoSessionRow_ReturnsSentinel(t *testing.T) {
 	store := sqlitetest.OpenStore(t)
-	deps := &agent.Dependencies{Store: store}
+	deps := &agent.Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store}
 	deps.Sessions = agent.NewManager(deps)
 
 	d := bootstrap.NewCheckpointResponseDispatcher(store, deps.Sessions)
@@ -65,7 +66,7 @@ func TestCheckpointResponseDispatcher_NilDeps_ReturnsSentinel(t *testing.T) {
 // fails, so postmortem queries can still see the chain.
 func TestCheckpointResponseDispatcher_SessionPresent_EmitsBreadcrumbAndAttemptsResume(t *testing.T) {
 	store := sqlitetest.OpenStore(t)
-	deps := &agent.Dependencies{Store: store}
+	deps := &agent.Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store}
 	deps.Sessions = agent.NewManager(deps)
 	d := bootstrap.NewCheckpointResponseDispatcher(store, deps.Sessions)
 

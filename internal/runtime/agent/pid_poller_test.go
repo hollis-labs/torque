@@ -5,6 +5,7 @@ import (
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/testutil/sqlitetest"
+	"github.com/hollis-labs/torque/internal/testutil/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,7 +19,7 @@ import (
 // session.
 func TestReconcileTerminalRow_NonTerminalRowGetsMarkedFailed(t *testing.T) {
 	store := sqlitetest.OpenStore(t)
-	deps := &Dependencies{Store: store}
+	deps := &Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store}
 	deps.Sessions = NewManager(deps)
 
 	const sessID = "SES-STALE-RECONCILE"
@@ -48,7 +49,7 @@ func TestReconcileTerminalRow_NonTerminalRowGetsMarkedFailed(t *testing.T) {
 // Defensive write is a fallback, not a normalizer.
 func TestReconcileTerminalRow_TerminalRowIsLeftAlone(t *testing.T) {
 	store := sqlitetest.OpenStore(t)
-	deps := &Dependencies{Store: store}
+	deps := &Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store}
 	deps.Sessions = NewManager(deps)
 
 	terminalStates := []Status{StatusDone, StatusFailed, StatusCrashed}
@@ -77,7 +78,7 @@ func TestReconcileTerminalRow_TerminalRowIsLeftAlone(t *testing.T) {
 // deleted (or never existed), reconcile must not panic or write a row.
 func TestReconcileTerminalRow_MissingSessionIsNoOp(t *testing.T) {
 	store := sqlitetest.OpenStore(t)
-	deps := &Dependencies{Store: store}
+	deps := &Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store}
 	deps.Sessions = NewManager(deps)
 
 	// Should not panic and should not produce a session row out of thin air.

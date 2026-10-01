@@ -18,6 +18,7 @@ import (
 	"github.com/hollis-labs/torque/internal/runtime/scheduler"
 	"github.com/hollis-labs/torque/internal/runtime/steering"
 	"github.com/hollis-labs/torque/internal/runtime/writeq"
+	"github.com/hollis-labs/torque/internal/testutil/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -144,7 +145,7 @@ func TestWorkerWaitsByDesign(t *testing.T) {
 	setup := func(t *testing.T) (*Dependencies, *sqlstore.Store) {
 		store := newTestStoreForLongLived(t)
 		require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: taskID, Title: "parent", Status: "doing", Executor: "cli", Kind: "agent", AgentProfile: "test"}))
-		return &Dependencies{Store: store, Reminder: steering.NewReminderRegistry(), Polls: steering.NewPollRegistry(time.Minute)}, store
+		return &Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store, Reminder: steering.NewReminderRegistry(), Polls: steering.NewPollRegistry(time.Minute)}, store
 	}
 
 	t.Run("nothing to wait on", func(t *testing.T) {
@@ -263,8 +264,9 @@ func TestRunLongLived_UnsignalledWorker(t *testing.T) {
 				},
 			}
 			deps := &Dependencies{
-				Store:       store,
-				StateWriter: writeq.NewDirect(store),
+				WorkspacesRoot: testenv.WorkspacesRoot(t),
+				Store:          store,
+				StateWriter:    writeq.NewDirect(store),
 				Profiles: config.ProfileMap{
 					"test": {Executor: "cli", Provider: "claude-code", RuntimeKind: "streaming-stdio"},
 				},
@@ -441,8 +443,9 @@ func startNudgeRun(t *testing.T, store *sqlstore.Store, taskID string, fr *nudge
 		Executor: "cli", Kind: "agent", AgentProfile: "test",
 	}))
 	deps := &Dependencies{
-		Store:       store,
-		StateWriter: writeq.NewDirect(store),
+		WorkspacesRoot: testenv.WorkspacesRoot(t),
+		Store:          store,
+		StateWriter:    writeq.NewDirect(store),
 		Profiles: config.ProfileMap{
 			"test": {Executor: "cli", Provider: "claude-code", RuntimeKind: "streaming-stdio"},
 		},

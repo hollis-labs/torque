@@ -209,6 +209,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- Torque's tests no longer write session workspaces into the operator's
+  `~/.torque/workspaces`. Every test's agent dependencies get a temp root
+  (`testenv.WorkspacesRoot(t)`), and under `go test` a workspaces root inside
+  the real `~/.torque` is refused with an error naming that helper
+  (CW-20261001-0175).
 - The reviewer end-agent's task description no longer names a reviewer
   version. It said "V1 reviewer" while the stamped template is V2, and one
   reviewer stopped to ask which protocol to follow instead of auditing. It
