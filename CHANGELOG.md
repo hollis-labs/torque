@@ -505,7 +505,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   names servers on a daemon with no mux is told so in the boot log. Codex and
   every ACP runtime still get mux only under `permission_mode:
   bypassPermissions`; OpenCode still gets it by default; `mux_servers` narrows
-  their sets. A Claude session over ACP (`runtime_kind: acp-stdio`) is not
+  their sets. Where a session gets the daemon's default set (OpenCode, Codex and
+  ACP under bypass), the same servers are planted with `--only`, so those
+  sessions lose `mux_discover`, `mux_call` into the rest of mux's catalog and
+  mux's own Tether tools. A Claude session over ACP (`runtime_kind: acp-stdio`) is not
   covered by `--strict-mcp-config`, whose bridge takes no such flag: it gets no
   default mux, and is warned about at launch and in the lint. See
   docs/agent-execution-environment.md.

@@ -80,7 +80,8 @@ func TestMuxArgsFor(t *testing.T) {
 	named := []string{"vanta", "tesseract"}
 	want := []string{"mcp", "--proxy", "--token", "local-dev", "--scopes", "session.write", "--only", "vanta,tesseract"}
 
-	assert.Equal(t, base, muxArgsFor(base, nil), "no servers named: the daemon's own argv stands")
+	// No servers named: the daemon's own servers, curated with --only.
+	assert.Equal(t, []string{"mcp", "--proxy", "--token", "local-dev", "--scopes", "session.write", "--only", "vanta,torque,cerberus"}, muxArgsFor(base, nil))
 	assert.Equal(t, want, muxArgsFor(base, named))
 	assert.NotContains(t, muxArgsFor(base, named), "--servers", "never --servers, which leaves mux_call open")
 
@@ -115,6 +116,11 @@ func TestPlanMux(t *testing.T) {
 	plan := planMux(daemon, claude, RuntimeKindStreamingStdio)
 	assert.False(t, plan.Plant)
 	assert.Contains(t, plan.Why, "mux_servers")
+
+	// Runtimes that keep mux by default get the daemon's servers, curated.
+	plan = planMux(daemon, config.AgentProfile{Provider: "opencode"}, RuntimeKindSubprocess)
+	assert.True(t, plan.Plant)
+	assert.Equal(t, []string{"mcp", "--proxy", "--token", "t", "--only", "vanta,torque,cerberus"}, plan.Args)
 
 	// A grant plants exactly those servers.
 	plan = planMux(daemon, granted, RuntimeKindStreamingStdio)
@@ -167,4 +173,27 @@ func TestMuxServersLogValue(t *testing.T) {
 	assert.Equal(t, "--only=vanta", muxServersLogValue([]string{"mcp", "--only=vanta"}))
 	assert.Equal(t, "--servers vanta", muxServersLogValue([]string{"mcp", "--servers", "vanta"}))
 	assert.Contains(t, muxServersLogValue([]string{"mcp", "--proxy"}), "default servers")
+}
+
+// The daemon's default set, for a session that names no servers (OpenCode,
+// Codex and ACP under bypassPermissions), keeps the same servers but is
+// curated with --only: no mux_discover/mux_call into the rest of the catalog,
+// no Tether mux_* tools. An argv with no set to curate is left alone.
+func TestCurateDaemonMuxArgs(t *testing.T) {
+	assert.Equal(t, []string{"mcp", "--proxy", "--token", "t", "--only", "vanta,torque,cerberus"},
+		curateDaemonMuxArgs([]string{"mcp", "--proxy", "--servers", "vanta,torque,cerberus", "--token", "t"}))
+	assert.Equal(t, []string{"mcp", "--proxy", "--only", "vanta,torque"},
+		curateDaemonMuxArgs([]string{"mcp", "--proxy", "--servers=vanta, torque"}), "the = spelling, with a space")
+	assert.Equal(t, []string{"mcp", "--proxy", "--only", "b"},
+		curateDaemonMuxArgs([]string{"mcp", "--proxy", "--servers", "a", "--servers", "b"}), "the last --servers wins, as mux reads it")
+
+	for name, argv := range map[string][]string{
+		"no servers named, so mux proxies every one": {"mcp", "--proxy", "--token", "t"},
+		"a dangling --servers":                       {"mcp", "--proxy", "--servers"},
+		"an empty list":                              {"mcp", "--proxy", "--servers="},
+		"already --only":                             {"mcp", "--proxy", "--only", "vanta"},
+		"--broker":                                   {"mcp", "--proxy", "--broker", "--servers", "vanta"},
+	} {
+		assert.Equal(t, argv, curateDaemonMuxArgs(argv), name)
+	}
 }

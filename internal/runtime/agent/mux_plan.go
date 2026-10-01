@@ -63,9 +63,45 @@ func plantsMux(profile config.AgentProfile, kind RuntimeKind) bool {
 // rest of the daemon's args (token, scopes) stay.
 func muxArgsFor(base []string, servers []string) []string {
 	if len(servers) == 0 {
-		return slices.Clone(base)
+		return curateDaemonMuxArgs(base)
 	}
 	return muxOnlyArgs(base, servers)
+}
+
+// curateDaemonMuxArgs is the daemon's mux argv for a session whose profile
+// names no servers (OpenCode, and Codex and ACP under bypassPermissions): the
+// same servers its `--servers` names, curated with `--only` so the session
+// gets those servers' tools and not mux_discover, mux_call into the rest of
+// the catalog, or mux's own Tether tools (least privilege). A daemon argv that
+// names no servers (mux then proxies all of them, so there is no set to
+// curate), already says `--only`, or asks for `--broker` is left as it is.
+func curateDaemonMuxArgs(base []string) []string {
+	var named []string
+	for i := 0; i < len(base); i++ {
+		flag, value, inline := strings.Cut(base[i], "=")
+		switch flag {
+		case "--only", "--broker":
+			return slices.Clone(base)
+		case "--servers":
+			if !inline {
+				if i+1 >= len(base) || strings.HasPrefix(base[i+1], "-") {
+					continue
+				}
+				i++
+				value = base[i]
+			}
+			named = nil
+			for _, name := range strings.Split(value, ",") {
+				if name = strings.TrimSpace(name); name != "" {
+					named = append(named, name)
+				}
+			}
+		}
+	}
+	if len(named) == 0 {
+		return slices.Clone(base)
+	}
+	return muxOnlyArgs(base, named)
 }
 
 // muxOnlyArgs is base with its server selection replaced by `--only

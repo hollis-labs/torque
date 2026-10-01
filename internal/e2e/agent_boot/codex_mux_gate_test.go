@@ -40,7 +40,7 @@ func TestBootCodexPlantsMuxOnlyUnderBypass(t *testing.T) {
 		{permissionMode: "default", wantMux: false},
 		{permissionMode: "acceptEdits", wantMux: false},
 		{permissionMode: "plan", wantMux: false},
-		{permissionMode: "bypassPermissions", wantMux: true, wantArgs: `"--servers"`},
+		{permissionMode: "bypassPermissions", wantMux: true, wantArgs: `"--only", "vanta,torque,cerberus"`},
 		{permissionMode: "acceptEdits", wantMux: false, muxServers: []string{"tesseract"}},
 		{permissionMode: "bypassPermissions", wantMux: true, muxServers: []string{"tesseract"}, wantArgs: `"--only", "tesseract"`},
 	}

@@ -113,6 +113,13 @@ The daemon's default server set is `vanta,torque,cerberus` (or
 `TORQUE_MUX_ARGS`). `cerberus` can deploy to and run commands on hosts, which
 is why a Claude worker no longer gets it by default.
 
+Where a session does get the default set, Torque plants it with mux's
+`--only`, not `--servers`: the same servers, but no `mux_discover` / `mux_call`
+into the rest of mux's catalog and none of mux's own Tether tools (session
+launch, send input, message send). A daemon argv that names no servers (mux
+then proxies all of them), already says `--only`, or asks for `--broker` is
+planted as it is.
+
 ### The `mux_servers` profile field
 
 A profile grants mux servers deliberately with `mux_servers`:

@@ -176,17 +176,22 @@ func TestBootCopilotACP_MuxOnlyUnderBypass(t *testing.T) {
 // (CW-20261001-0226).
 func TestBootCopilotACP_MuxServersNarrowUnderBypass(t *testing.T) {
 	for _, tc := range []struct {
+		name           string
 		permissionMode string
+		muxServers     []string
 		wantMuxArgs    []string // nil: no mux
 	}{
-		{"bypassPermissions", []string{"mcp", "--proxy", "--token", "local-dev", "--only", "tesseract"}},
-		{"acceptEdits", nil},
+		{"granted, bypass", "bypassPermissions", []string{"tesseract"}, []string{"mcp", "--proxy", "--token", "local-dev", "--only", "tesseract"}},
+		{"granted, not bypass", "acceptEdits", []string{"tesseract"}, nil},
+		// The daemon's default set, for a profile that names none, is curated
+		// with --only too: the same servers, no mux_call into the rest.
+		{"default set, bypass", "bypassPermissions", nil, []string{"mcp", "--proxy", "--token", "local-dev", "--only", "vanta,torque,cerberus"}},
 	} {
-		t.Run("mode="+tc.permissionMode, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			fake := providertest.New(t, runtimes.Copilot, providertest.Replay("copilot/acp_turn"))
 			fake.Install()
 			cd := composeACPDeps(t, "copilot")
-			cd.Deps.Profiles = config.ProfileMap{"worker": {Executor: "cli", Provider: "copilot", PermissionMode: tc.permissionMode, MuxServers: []string{"tesseract"}}}
+			cd.Deps.Profiles = config.ProfileMap{"worker": {Executor: "cli", Provider: "copilot", PermissionMode: tc.permissionMode, MuxServers: tc.muxServers}}
 			cd.Deps.MuxCommand = "/usr/local/bin/mux"
 			cd.Deps.MuxArgs = []string{"mcp", "--proxy", "--servers", "vanta,torque,cerberus", "--token", "local-dev"}
 

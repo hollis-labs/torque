@@ -240,16 +240,16 @@ func bootOpencodeConfig(t *testing.T, mux bool, servers []string) map[string]jso
 }
 
 // OpenCode on its native runtime is unchanged by the Claude decision: it
-// still gets the daemon's mux with the daemon's default servers, and a
-// profile's mux_servers narrows them.
-func TestOpencodeLaunch_MuxDefaultsUnchanged(t *testing.T) {
+// still gets the daemon's mux with the daemon's default servers (curated with
+// --only), and a profile's mux_servers narrows them.
+func TestOpencodeLaunch_MuxDefaultSetIsCurated(t *testing.T) {
 	var entry struct {
 		Command []string `json:"command"`
 	}
 	servers := bootOpencodeConfig(t, true, nil)
 	require.Contains(t, servers, "mux")
 	require.NoError(t, json.Unmarshal(servers["mux"], &entry))
-	assert.Equal(t, []string{"/usr/local/bin/mux", "mcp", "--proxy", "--servers", "vanta,torque,cerberus", "--token", "local-dev", "--scopes", "session.write,message.write"}, entry.Command)
+	assert.Equal(t, []string{"/usr/local/bin/mux", "mcp", "--proxy", "--token", "local-dev", "--scopes", "session.write,message.write", "--only", "vanta,torque,cerberus"}, entry.Command)
 
 	servers = bootOpencodeConfig(t, true, []string{"vanta"})
 	require.Contains(t, servers, "mux")
