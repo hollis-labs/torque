@@ -1107,7 +1107,7 @@ func sessionFromRecord(rec *sqlstore.SessionRecord) *Session {
 		AgentProfile:  rec.AgentProfile,
 		Provider:      rec.Provider,
 		RuntimeID:     rec.RuntimeID,
-		RuntimeKind:   rec.RuntimeKind,
+		RuntimeKind:   string(parseRuntimeKind(rec.RuntimeKind)),
 		Workdir:       rec.Workdir,
 		Status:        Status(rec.State),
 		PID:           rec.PID,

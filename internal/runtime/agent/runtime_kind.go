@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hollis-labs/agentkit/agentruntime/runtimekind"
 	"github.com/hollis-labs/agentkit/agentsessions"
 	"github.com/hollis-labs/torque/internal/config"
 )
@@ -40,15 +39,52 @@ import (
 //
 // The substrate's per-provider matrix lives in selectRuntimeKind below;
 // operators override per-profile via `profile.RuntimeKind: <kind>`.
+//
+// The spellings are Torque's own: they are what profiles.yaml carries and
+// what session rows store, so Torque owns them rather than borrowing a
+// library's (CW-20261001-0063). They equal agentkit's agentlaunch
+// RuntimeKind values today, which is why mapRuntimeKind is a 1:1 table.
 type RuntimeKind string
 
 const (
-	RuntimeKindSubprocess     RuntimeKind = RuntimeKind(runtimekind.Subprocess)
-	RuntimeKindPTY            RuntimeKind = RuntimeKind(runtimekind.PTY)
-	RuntimeKindStreamingStdio RuntimeKind = RuntimeKind(runtimekind.StreamingStdio)
-	RuntimeKindJsonRpcStdio   RuntimeKind = RuntimeKind(runtimekind.JSONRPCStdio)
-	RuntimeKindServeHTTP      RuntimeKind = RuntimeKind(runtimekind.ServeHTTP)
+	RuntimeKindSubprocess     RuntimeKind = "subprocess"
+	RuntimeKindPTY            RuntimeKind = "pty"
+	RuntimeKindStreamingStdio RuntimeKind = "streaming-stdio"
+	RuntimeKindJsonRpcStdio   RuntimeKind = "jsonrpc-stdio"
+	RuntimeKindServeHTTP      RuntimeKind = "serve-http"
 )
+
+// runtimeKindTokens maps each accepted runtime-kind token, after
+// parseRuntimeKind's case/space/underscore folding, to its RuntimeKind.
+// Every token here is a spelling profiles.yaml or a session row may hold.
+// Aliases are deliberately absent (app-server, opencode-serve, tui, ...):
+// Torque has never accepted them, and they still fail validate.
+var runtimeKindTokens = map[string]RuntimeKind{
+	"subprocess":      RuntimeKindSubprocess,
+	"pty":             RuntimeKindPTY,
+	"streaming-stdio": RuntimeKindStreamingStdio,
+	"jsonrpc-stdio":   RuntimeKindJsonRpcStdio,
+	"serve-http":      RuntimeKindServeHTTP,
+}
+
+// parseRuntimeKind is the one boundary every runtime-kind string crosses on
+// its way in: profile.RuntimeKind and the runtime_kind column of a stored
+// session (sessionFromRecord). It lower-cases, trims and folds `_` to `-`,
+// then maps the token through runtimeKindTokens. An empty input stays empty
+// (the per-provider default); an unknown token is returned folded so that
+// validate reports it by name.
+//
+// When the runtime spellings change, this table is where a legacy token
+// (`subprocess`, `serve-http`) keeps resolving to its new kind, for old
+// profiles and old session rows alike.
+func parseRuntimeKind(raw string) RuntimeKind {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	normalized = strings.ReplaceAll(normalized, "_", "-")
+	if kind, ok := runtimeKindTokens[normalized]; ok {
+		return kind
+	}
+	return RuntimeKind(normalized)
+}
 
 // validate reports whether the value is a known kind. Empty is the
 // substrate-default sentinel ("ask selectRuntimeKind") and is not
@@ -96,7 +132,7 @@ func (rk RuntimeKind) validate() error {
 //     feedback_no_compat_shims — pre-launch, no operator config relied
 //     on the old field name.
 func selectRuntimeKind(provider string, profileKind string) (RuntimeKind, error) {
-	kind := runtimeKindFromConfigValue(profileKind)
+	kind := parseRuntimeKind(profileKind)
 	if err := RuntimeKind(kind).validate(); err != nil {
 		return "", err
 	}
@@ -122,19 +158,6 @@ func selectRuntimeKind(provider string, profileKind string) (RuntimeKind, error)
 		// wrap the error.
 		return RuntimeKindSubprocess, nil
 	}
-}
-
-func runtimeKindFromConfigValue(raw string) RuntimeKind {
-	normalized := strings.ToLower(strings.TrimSpace(raw))
-	normalized = strings.ReplaceAll(normalized, "_", "-")
-	if normalized == "" {
-		return ""
-	}
-	parsed := runtimekind.Parse(normalized)
-	if parsed == runtimekind.Unknown || string(parsed) != normalized {
-		return RuntimeKind(normalized)
-	}
-	return RuntimeKind(parsed)
 }
 
 // resolveRuntimeKind composes the runtime-kind resolution chain: the

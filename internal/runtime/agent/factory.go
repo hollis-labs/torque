@@ -3,8 +3,8 @@ package agent
 import (
 	"fmt"
 
+	"github.com/hollis-labs/agentkit/agentlaunch"
 	"github.com/hollis-labs/agentkit/agentruntime/runtimebind"
-	"github.com/hollis-labs/agentkit/agentruntime/runtimekind"
 	"github.com/hollis-labs/agentkit/agentsessions"
 	"github.com/hollis-labs/go-providers/provider"
 	"github.com/hollis-labs/torque/internal/config"
@@ -114,7 +114,7 @@ func adapterFor(profile config.AgentProfile, profileName string, kind RuntimeKin
 		case RuntimeKindJsonRpcStdio:
 			appServer := provider.NewCodexAdapterAppServer()
 			policy := runtimebind.ResolveCodexPolicy(runtimebind.CodexPolicyRequest{
-				Runtime: runtimekind.JSONRPCStdio,
+				Runtime: agentlaunch.RuntimeJsonRpcStdio,
 				Bypass:  profile.ResolvedPermissionMode() == config.PermissionModeBypass,
 			})
 			if profile.ResolvedPermissionMode() == config.PermissionModeBypass {
