@@ -17,6 +17,7 @@ import (
 
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/runtime/writeq"
+	"github.com/hollis-labs/torque/internal/testutil/testenv"
 )
 
 // A Boot that fails after launcher.Prepare allocated the boot dir removes
@@ -87,7 +88,7 @@ func TestAdoptWrapperResources_EitherSideOfTheSessionEnding(t *testing.T) {
 	}
 
 	t.Run("handed over after the session ended", func(t *testing.T) {
-		m := NewManager(&Dependencies{})
+		m := NewManager(&Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t)})
 		h := &wrapperHandle{runDone: make(chan struct{})}
 		m.registerWrapperSession("S1", h)
 		m.finishWrapperSession("S1", h)
@@ -96,7 +97,7 @@ func TestAdoptWrapperResources_EitherSideOfTheSessionEnding(t *testing.T) {
 		released(t, lb, closes, dir)
 	})
 	t.Run("handed over before the session ended", func(t *testing.T) {
-		m := NewManager(&Dependencies{})
+		m := NewManager(&Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t)})
 		h := &wrapperHandle{runDone: make(chan struct{})}
 		m.registerWrapperSession("S2", h)
 		res, lb, closes, dir := newRes(t)
@@ -136,7 +137,7 @@ func TestAdoptLegacyResources_EitherSideOfTheSessionEnding(t *testing.T) {
 	}
 
 	t.Run("the session ended before the hand-over", func(t *testing.T) {
-		m := NewManager(&Dependencies{})
+		m := NewManager(&Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t)})
 		m.beginLegacyAdoption("L1")
 		m.teardownSession("L1") // the terminal event
 		res, lb, closes, dir := newRes(t)
@@ -145,7 +146,7 @@ func TestAdoptLegacyResources_EitherSideOfTheSessionEnding(t *testing.T) {
 		assert.Empty(t, m.pendingAdoption, "the mark is gone")
 	})
 	t.Run("the session ended after the hand-over", func(t *testing.T) {
-		m := NewManager(&Dependencies{})
+		m := NewManager(&Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t)})
 		m.beginLegacyAdoption("L2")
 		res, lb, closes, dir := newRes(t)
 		m.adoptLegacyResources("L2", res)
@@ -155,7 +156,7 @@ func TestAdoptLegacyResources_EitherSideOfTheSessionEnding(t *testing.T) {
 		assert.Empty(t, m.pendingAdoption)
 	})
 	t.Run("Boot failed before the hand-over", func(t *testing.T) {
-		m := NewManager(&Dependencies{})
+		m := NewManager(&Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t)})
 		m.beginLegacyAdoption("L3")
 		m.abandonLegacyAdoption("L3")
 		assert.Empty(t, m.pendingAdoption)

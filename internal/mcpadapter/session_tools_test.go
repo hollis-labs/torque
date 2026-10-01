@@ -14,6 +14,7 @@ import (
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
+	"github.com/hollis-labs/torque/internal/testutil/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
@@ -35,6 +36,7 @@ func mcpErrorJSON(t *testing.T, err error) string {
 func TestHandleSessionCreate_UnknownAgentProfile(t *testing.T) {
 	a := &Adapter{
 		sessions: agent.NewManager(&agent.Dependencies{
+			WorkspacesRoot: testenv.WorkspacesRoot(t),
 			Profiles: config.ProfileMap{
 				"default": {},
 				"fast":    {},
@@ -64,7 +66,8 @@ func TestHandleSessionCreate_UnknownAgentProfile(t *testing.T) {
 func TestHandleSessionCreate_NoSelectorSurfacesArgInvalid(t *testing.T) {
 	a := &Adapter{
 		sessions: agent.NewManager(&agent.Dependencies{
-			Profiles: config.ProfileMap{"default": {}},
+			WorkspacesRoot: testenv.WorkspacesRoot(t),
+			Profiles:       config.ProfileMap{"default": {}},
 		}),
 	}
 

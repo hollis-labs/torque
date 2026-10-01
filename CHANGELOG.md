@@ -209,6 +209,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- Torque's tests no longer write session workspaces into the operator's
+  `~/.torque/workspaces`. Every test's agent dependencies get a temp root
+  (`testenv.WorkspacesRoot(t)`), and under `go test` a workspaces root inside
+  the real `~/.torque` is refused with an error naming that helper
+  (CW-20261001-0175).
 - An ACP agent that exits during launch no longer crashes the Torque daemon
   with "send on closed channel" (go-agent-wrapper v0.21.1,
   CW-20261001-0129).
