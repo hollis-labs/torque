@@ -1,9 +1,13 @@
 package agent
 
 import (
+	"bytes"
 	"database/sql"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,10 +39,10 @@ func TestSessionFromRecord_Resumed(t *testing.T) {
 
 // A task-linked session is re-launched with its task the way a dispatch
 // hands it (CW-20261001-0249): the scheduler's own mapping fills the task's
-// title, description, kind, status, priority, relationships, system prompt,
-// agent file and environment, so the planted task bundle and the kickoff are
-// not blank, and the kind=agent idle nudge is armed. The session's own
-// profile, workdir and role stay.
+// title, description, kind, status, priority, relationships, system prompt and
+// environment, so the planted task bundle and the kickoff are not blank. The
+// session's own profile, workdir and role stay, and it is not given the task's
+// running run: only the scheduler's dispatch carries a run id.
 func TestSourceBootOptions_CarriesTheTask(t *testing.T) {
 	store := sqlitetest.OpenStore(t)
 	defer store.Close()
@@ -51,7 +55,6 @@ func TestSourceBootOptions_CarriesTheTask(t *testing.T) {
 		Kind: "agent", Status: "doing", Priority: 3, SystemPrompt: "Be brief.",
 		Environment: sql.NullString{String: `{"TASK_ENV":"from-task"}`, Valid: true},
 		ParentID:    sql.NullString{String: "CW-SRC-PARENT", Valid: true},
-		Metadata:    sql.NullString{String: `{"idle_nudge_seconds":45}`, Valid: true},
 	}))
 	require.NoError(t, store.SetTaskDependencies("CW-SRC-TASK", []string{"CW-SRC-DEP"}))
 	rec := &sqlstore.SessionRecord{
@@ -71,21 +74,81 @@ func TestSourceBootOptions_CarriesTheTask(t *testing.T) {
 	assert.Equal(t, []string{"CW-SRC-DEP"}, opts.DependsOn)
 	assert.Equal(t, "Be brief.", opts.SystemPrompt)
 	assert.Equal(t, map[string]string{"TASK_ENV": "from-task"}, opts.Env)
-	assert.EqualValues(t, 0, opts.RunID, "no running run: no run id")
 	// The session's own launch stays.
 	assert.Equal(t, "implementer", opts.AgentProfile)
 	assert.Equal(t, "/work/run-7", opts.Workdir)
 	assert.Equal(t, "implementer", opts.Role)
 	assert.Empty(t, opts.LaunchProfile)
-	// kind=agent arms the idle-after-done nudge, with the task's window.
-	assert.Equal(t, 45*time.Second, resolveIdleNudgeWindow(opts))
 
-	// A running run is the session's run.
-	runID, err := store.CreateRun(&sqlstore.RunRecord{TaskID: "CW-SRC-TASK", Executor: "cli", Status: sqlstore.RunStatusRunning})
+	// A running run is the scheduler's dispatch, not this session's: a boot
+	// that carries a run id is one the scheduler dispatched, and a re-launch
+	// is not the run's worker, so it stays 0.
+	_, err := store.CreateRun(&sqlstore.RunRecord{TaskID: "CW-SRC-TASK", Executor: "cli", Status: sqlstore.RunStatusRunning})
 	require.NoError(t, err)
-	_, err = store.CreateRun(&sqlstore.RunRecord{TaskID: "CW-SRC-TASK", Executor: "cli", Status: sqlstore.RunStatusDone})
-	require.NoError(t, err)
-	assert.Equal(t, runID, mgr.sourceBootOptions(rec).RunID)
+	assert.EqualValues(t, 0, mgr.sourceBootOptions(rec).RunID, "even with a running run")
+}
+
+// The row's project wins; a row with none inherits the task's.
+func TestSourceBootOptions_ProjectInheritance(t *testing.T) {
+	store := sqlitetest.OpenStore(t)
+	defer store.Close()
+	mgr := NewManager(&Dependencies{Store: store, StateWriter: writeq.NewDirect(store)})
+	require.NoError(t, store.CreateProject(&sqlstore.ProjectRecord{ID: "PRJ-TASK", Name: "task project"}))
+	require.NoError(t, store.CreateProject(&sqlstore.ProjectRecord{ID: "PRJ-ROW", Name: "row project"}))
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-PRJ-TASK", Title: "t", Priority: 2, ProjectID: sql.NullString{String: "PRJ-TASK", Valid: true},
+	}))
+	rec := &sqlstore.SessionRecord{AgentProfile: "w", Workdir: "/w", TaskID: sql.NullString{String: "CW-PRJ-TASK", Valid: true}}
+
+	assert.Equal(t, "PRJ-TASK", mgr.sourceBootOptions(rec).ProjectID, "inherited from the task")
+	rec.ProjectID = sql.NullString{String: "PRJ-ROW", Valid: true}
+	assert.Equal(t, "PRJ-ROW", mgr.sourceBootOptions(rec).ProjectID, "the row's own project wins")
+}
+
+// A task's agent file that cannot be loaded (missing, or relative with no
+// workdir to anchor it) is dropped with a log line instead of failing the
+// re-launch: a resume exists so the task is not stranded. A loadable one is
+// carried.
+func TestSourceBootOptions_AgentFileDegrades(t *testing.T) {
+	store := sqlitetest.OpenStore(t)
+	defer store.Close()
+	mgr := NewManager(&Dependencies{Store: store, StateWriter: writeq.NewDirect(store)})
+	good := filepath.Join(t.TempDir(), "agent.yaml")
+	require.NoError(t, os.WriteFile(good, []byte("name: a\nsystem_prompt: Be careful.\n"), 0o644))
+
+	for _, tc := range []struct {
+		name, agentFile, workdir, want string
+	}{
+		{"loadable", good, "/w", good},
+		{"missing", "/nonexistent/agent.yaml", "/w", ""},
+		{"relative, no workdir to anchor it", "agent.yaml", "", ""},
+		{"no system_prompt", writeAgentFile(t, "name: a\n"), "/w", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			log.SetOutput(&logs)
+			t.Cleanup(func() { log.SetOutput(os.Stderr) })
+			id := "CW-AF-" + strings.ReplaceAll(tc.name, " ", "-")
+			require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: id, Title: "kept", Priority: 2, AgentFile: tc.agentFile}))
+			opts := mgr.sourceBootOptions(&sqlstore.SessionRecord{
+				ID: "SES-AF", AgentProfile: "w", Workdir: tc.workdir, TaskID: sql.NullString{String: id, Valid: true},
+			})
+			assert.Equal(t, tc.want, opts.AgentFile)
+			assert.Equal(t, "kept", opts.TaskTitle, "the rest of the task is still carried")
+			if tc.want == "" {
+				assert.Contains(t, logs.String(), "agent file cannot be loaded, booting without it")
+			} else {
+				assert.NotContains(t, logs.String(), "agent file")
+			}
+		})
+	}
+}
+
+func writeAgentFile(t *testing.T, content string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "agent.yaml")
+	require.NoError(t, os.WriteFile(p, []byte(content), 0o644))
+	return p
 }
 
 // Without a readable task the re-launch keeps what it had, the bare task id
@@ -114,4 +177,28 @@ func TestPrependSystemPrompt(t *testing.T) {
 	assert.Equal(t, "task prompt", prependSystemPrompt("", "task prompt"))
 	assert.Equal(t, "note", prependSystemPrompt("note", ""))
 	assert.Equal(t, "", prependSystemPrompt("", ""))
+}
+
+// A boot that continues a provider conversation does not repeat the task's
+// description as a "## First turn": the conversation already holds the task,
+// and a continuation could read it as "restart the task". A fresh boot does,
+// and an explicit one-shot prompt always does.
+func TestKickoffFirstTurn_ContinuationOmitsTheDescription(t *testing.T) {
+	task := Options{TaskID: "CW-T", Description: "Summarize the README."}
+
+	assert.Contains(t, kickoffFirstTurn(task), "## First turn\n\nSummarize the README.")
+
+	resumed := task
+	resumed.ProviderSessionIDOverride = "ses_prior"
+	assert.NotContains(t, kickoffFirstTurn(resumed), "Summarize the README.")
+	assert.NotContains(t, kickoffFirstTurn(resumed), "## First turn")
+
+	checkpoint := task
+	checkpoint.Mode = ModeResume
+	assert.NotContains(t, kickoffFirstTurn(checkpoint), "Summarize the README.")
+
+	resumed.OneShotPrompt = "Answer the operator."
+	assert.Contains(t, kickoffFirstTurn(resumed), "## First turn\n\nAnswer the operator.")
+	resumed.SystemPrompt = "NOTE: be careful."
+	assert.Contains(t, kickoffFirstTurn(resumed), "## Task framing\n\nNOTE: be careful.", "the framing stays")
 }

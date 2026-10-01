@@ -142,6 +142,16 @@ func kickoffHeader(opts Options, role string) string {
 	return body
 }
 
+// continuesConversation reports whether the boot resumes a provider
+// conversation (a session id handed to the launch, or ModeResume): that
+// conversation already holds the task, so the kickoff does not repeat its
+// description as a first turn, which a continuation could read as "restart the
+// task". The planted task.md and task.json keep the full description either
+// way (CW-20261001-0249).
+func continuesConversation(opts Options) bool {
+	return opts.ProviderSessionIDOverride != "" || opts.Mode == ModeResume
+}
+
 // kickoffFirstTurn is the kickoff's close: the first turn's instruction and
 // any task framing the caller added.
 func kickoffFirstTurn(opts Options) string {
@@ -149,7 +159,7 @@ func kickoffFirstTurn(opts Options) string {
 	if opts.OneShotPrompt != "" {
 		body += "## First turn\n\n"
 		body += opts.OneShotPrompt + "\n"
-	} else if opts.Description != "" {
+	} else if opts.Description != "" && !continuesConversation(opts) {
 		body += "## First turn\n\n"
 		body += opts.Description + "\n"
 	}

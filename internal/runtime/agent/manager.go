@@ -1188,8 +1188,13 @@ func (m *Manager) Resume(ctx context.Context, req ResumeRequest) (string, error)
 	fresh.AgentProfile = profile
 	fresh.Workdir = workdir
 	// The request's system prompt goes ahead of the task's, and its env wins
-	// over the task's.
+	// over the task's. A request that moves the session to another runtime
+	// than the one that recorded it does not carry the task's environment: it
+	// was set for the original provider's CLI, and would reach the other's.
 	fresh.SystemPrompt = prependSystemPrompt(req.SystemPrompt, fresh.SystemPrompt)
+	if toProvider, _ := m.runtimeFor(launchProfile, profile); !SameRuntime(src.Provider, toProvider) {
+		fresh.Env = nil
+	}
 	if len(envMap) > 0 {
 		merged := make(map[string]string, len(fresh.Env)+len(envMap))
 		for k, v := range fresh.Env {

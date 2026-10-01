@@ -58,7 +58,7 @@ func assertPlantedTaskBundle(t *testing.T, bootDir string) {
 	require.NoError(t, json.Unmarshal(raw, &ctx), string(raw))
 	assert.Equal(t, resumeSourceTitle, ctx.Title)
 	assert.Equal(t, resumeSourceBody, ctx.Description)
-	assert.Equal(t, "agent", ctx.Kind, "kind=agent, so the idle-after-done nudge applies")
+	assert.Equal(t, "agent", ctx.Kind)
 	assert.Equal(t, "doing", ctx.Status)
 	assert.Equal(t, 3, ctx.Priority)
 }
@@ -148,6 +148,16 @@ func TestManagerResume_ClaudeCode_ResumesTheCheckpointsSession(t *testing.T) {
 	assert.True(t, sess.Resumed)
 	assert.Equal(t, agent.ModeLongLived, sess.Mode, "a resume is a long-lived boot, as ResumeSession's is")
 	assert.Equal(t, resumeSourceTask, sess.TaskID)
+
+	// The conversation already holds the task: the kickoff does not repeat its
+	// description as a first turn, which a continuation could read as "restart
+	// the task". The planted task.md and task.json keep it in full.
+	boot, err := os.ReadFile(filepath.Join(sess.BootDir, "boot.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(boot), resumeSourceTask)
+	assert.NotContains(t, string(boot), resumeSourceBody)
+	assert.NotContains(t, string(boot), "## First turn")
+	assertPlantedTaskBundle(t, sess.BootDir)
 }
 
 // Without a stored id, or when the profile now boots another runtime than
@@ -191,6 +201,9 @@ func TestManagerResume_NoIDOrOtherRuntime_FreshBootWithKickoff(t *testing.T) {
 				// The task bundle planted for the session names the task and the
 				// source session's role; an unlinked session planted none.
 				assertPlantedTaskBundle(t, sess.BootDir)
+				boot, err := os.ReadFile(filepath.Join(sess.BootDir, "boot.md"))
+				require.NoError(t, err)
+				assert.Contains(t, string(boot), "## First turn\n\n"+resumeSourceBody, "a fresh boot is given the task as its first turn")
 				bundle, err := os.ReadFile(filepath.Join(sess.BootDir, "tasks", resumeSourceTask, "task.md"))
 				require.NoError(t, err)
 				assert.Contains(t, string(bundle), "implementer", "the source session's role")
@@ -364,3 +377,146 @@ func TestResumeSession_FreshBoot_PlantsTheTask(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// resumeFreshClaude boots a fresh (no recorded id) claude Manager.Resume or
+// ResumeSession against a task built by mutate, and returns the fake CLI's
+// first launch and the new session.
+func freshClaudeRelaunch(t *testing.T, mutate func(*sqlstore.TaskRecord), relaunch func(*composedDeps, context.Context) (string, error)) (*providertest.Fake, *agent.Session) {
+	t.Helper()
+	fake := providertest.New(t, runtimes.Claude, claudeFreshRun(""))
+	fake.Install()
+	cd := composeDeps(t, fakeRuntimeConfig{}, "claude-code")
+	cd.Deps.RuntimeFactory = nil
+	cd.Deps.Profiles = config.ProfileMap{"worker": {Executor: "cli", Provider: "claude-code", PermissionMode: "acceptEdits"}}
+	task := &sqlstore.TaskRecord{
+		ID: resumeSourceTask, Title: resumeSourceTitle, Description: resumeSourceBody,
+		Kind: "agent", Status: "doing", Priority: 3,
+	}
+	mutate(task)
+	require.NoError(t, cd.Store.CreateTask(task))
+	plantResumeCheckpoint(t, cd.Store, "SES-RELAUNCH", "claude-code", "worker", "")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	id, err := relaunch(cd, ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), id) })
+	require.Eventually(t, func() bool { return len(fake.Calls()) > 0 }, 5*time.Second, 20*time.Millisecond)
+	sess, err := cd.Manager.Get(id)
+	require.NoError(t, err)
+	return fake, sess
+}
+
+// The request's env wins over the task's, the task's other env still reaches
+// the CLI, and the request's system prompt goes ahead of the task's own in the
+// planted prompt (neither replaces the other).
+func TestManagerResume_RequestEnvAndSystemPromptPrecedence(t *testing.T) {
+	fake, sess := freshClaudeRelaunch(t,
+		func(task *sqlstore.TaskRecord) {
+			task.SystemPrompt = "TASK PROMPT: be brief."
+			task.Environment = sql.NullString{String: `{"RELAUNCH_ENV":"from-task","RELAUNCH_TASK_ONLY":"task-only"}`, Valid: true}
+		},
+		func(cd *composedDeps, ctx context.Context) (string, error) {
+			return cd.Manager.Resume(ctx, agent.ResumeRequest{
+				SessionID: "SES-RELAUNCH", SystemPrompt: "REQUEST PROMPT: be careful.",
+				Env: []string{"RELAUNCH_ENV=from-request"},
+			})
+		})
+
+	env := fake.Call(0).Env
+	assert.Contains(t, env, "RELAUNCH_ENV=from-request", "the request's env wins")
+	assert.NotContains(t, env, "RELAUNCH_ENV=from-task")
+	assert.Contains(t, env, "RELAUNCH_TASK_ONLY=task-only", "the task's other env is carried")
+
+	claudeMD, err := os.ReadFile(filepath.Join(sess.BootDir, "CLAUDE.md"))
+	require.NoError(t, err)
+	req, task := strings.Index(string(claudeMD), "REQUEST PROMPT"), strings.Index(string(claudeMD), "TASK PROMPT")
+	require.NotEqual(t, -1, req, "the request's prompt is planted")
+	require.NotEqual(t, -1, task, "and so is the task's")
+	assert.Less(t, req, task, "the request's prompt comes first")
+}
+
+// A request that moves the session to another runtime than the one that
+// recorded it does not hand the task's environment to the other provider's
+// CLI: it was set for the original's. The request's own env still goes.
+func TestManagerResume_ProviderOverrideDoesNotCarryTheTaskEnv(t *testing.T) {
+	fake := providertest.New(t, runtimes.OpenCode, providertest.Replay("opencode/run_turn1"))
+	fake.Install()
+	cd := composeDeps(t, fakeRuntimeConfig{}, "opencode")
+	cd.Deps.RuntimeFactory = nil
+	cd.Deps.Profiles = config.ProfileMap{
+		"worker": {Executor: "cli", Provider: "claude-code", PermissionMode: "acceptEdits"},
+		"oc":     {Executor: "cli", Provider: "opencode"},
+	}
+	require.NoError(t, cd.Store.CreateTask(&sqlstore.TaskRecord{
+		ID: resumeSourceTask, Title: resumeSourceTitle, Description: resumeSourceBody, Kind: "agent", Status: "doing", Priority: 3,
+		Environment: sql.NullString{String: `{"CLAUDE_ONLY_ENV":"for-claude"}`, Valid: true},
+	}))
+	plantResumeCheckpoint(t, cd.Store, "SES-OVERRIDE", "claude-code", "worker", "")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	id, err := cd.Manager.Resume(ctx, agent.ResumeRequest{SessionID: "SES-OVERRIDE", AgentProfile: "oc", Env: []string{"REQUEST_ENV=1"}})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), id) })
+	require.Eventually(t, func() bool { return len(fake.Calls()) > 0 }, 5*time.Second, 20*time.Millisecond)
+
+	env := fake.Call(0).Env
+	assert.NotContains(t, env, "CLAUDE_ONLY_ENV=for-claude", "the task's env is not handed to the other provider's CLI")
+	assert.Contains(t, env, "REQUEST_ENV=1", "the request's own env still goes")
+}
+
+// A task's agent file that cannot be loaded does not fail the re-launch: the
+// session boots without it, as it did before the task was carried.
+func TestResumeSession_UnloadableAgentFileDegrades(t *testing.T) {
+	_, sess := freshClaudeRelaunch(t,
+		func(task *sqlstore.TaskRecord) { task.AgentFile = "/nonexistent/agent.yaml" },
+		func(cd *composedDeps, ctx context.Context) (string, error) {
+			s, err := cd.Manager.ResumeSession(ctx, "SES-RELAUNCH", agent.ResumeOptions{})
+			if err != nil {
+				return "", err
+			}
+			return s.ID, nil
+		})
+	assertPlantedTaskBundle(t, sess.BootDir)
+}
+
+// A re-launched session is not the run's worker: with the task's run still
+// running, it carries no run id: not in its env, its meta or its planted
+// task.json (only the scheduler's dispatch carries one).
+func TestRelaunch_CarriesNoRunID(t *testing.T) {
+	for name, relaunch := range map[string]func(*composedDeps, context.Context) (string, error){
+		"Manager.Resume": func(cd *composedDeps, ctx context.Context) (string, error) {
+			return cd.Manager.Resume(ctx, agent.ResumeRequest{SessionID: "SES-RELAUNCH"})
+		},
+		"ResumeSession": func(cd *composedDeps, ctx context.Context) (string, error) {
+			s, err := cd.Manager.ResumeSession(ctx, "SES-RELAUNCH", agent.ResumeOptions{})
+			if err != nil {
+				return "", err
+			}
+			return s.ID, nil
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var fake *providertest.Fake
+			var sess *agent.Session
+			fake, sess = freshClaudeRelaunch(t,
+				func(*sqlstore.TaskRecord) {},
+				func(cd *composedDeps, ctx context.Context) (string, error) {
+					// The task has a run in flight, as it does while its dispatched worker runs.
+					_, err := cd.Store.CreateRun(&sqlstore.RunRecord{TaskID: resumeSourceTask, Executor: "cli", Status: sqlstore.RunStatusRunning})
+					require.NoError(t, err)
+					return relaunch(cd, ctx)
+				})
+			assert.Contains(t, fake.Call(0).Env, "TORQUE_RUN_ID=0")
+			assert.NotContains(t, sess.Meta, "torque.run_id")
+			raw, err := os.ReadFile(filepath.Join(sess.BootDir, "tasks", resumeSourceTask, "task.json"))
+			require.NoError(t, err)
+			var ctx struct {
+				RunID int64 `json:"run_id"`
+			}
+			require.NoError(t, json.Unmarshal(raw, &ctx))
+			assert.EqualValues(t, 0, ctx.RunID)
+		})
+	}
+}
