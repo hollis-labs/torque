@@ -99,7 +99,17 @@ type bridge struct {
 
 	mu      sync.Mutex
 	remote  mcp.Connection
-	pending map[jsonrpc.ID]mcp.Connection // requests forwarded, not yet answered, by the connection they went on
+	pending map[jsonrpc.ID]*pendingCall // requests forwarded, not yet answered
+	dead    map[mcp.Connection]error    // connections that ended, and why
+}
+
+// pendingCall is a request owed an answer.
+type pendingCall struct {
+	conn mcp.Connection // the connection it went on
+	// sent is set once the daemon has accepted the request. Until then
+	// forward is still sending it and answers it itself, with what the
+	// daemon said; the relay answers only the requests that were accepted.
+	sent bool
 }
 
 func newBridge(opts Options, local mcp.Connection) *bridge {
@@ -108,7 +118,8 @@ func newBridge(opts Options, local mcp.Connection) *bridge {
 		endpoint: opts.Endpoint,
 		local:    local,
 		sem:      make(chan struct{}, maxInFlight),
-		pending:  map[jsonrpc.ID]mcp.Connection{},
+		pending:  map[jsonrpc.ID]*pendingCall{},
+		dead:     map[mcp.Connection]error{},
 	}
 	if u, err := url.Parse(opts.Endpoint); err == nil && u.User != nil {
 		// Credentials in the URL never reach a log line or an error.
@@ -187,6 +198,11 @@ func (b *bridge) forward(ctx context.Context, msg jsonrpc.Message) {
 			b.track(callID, remote)
 		}
 		if err = remote.Write(context.WithValue(ctx, noteKey{}, note), msg); err == nil {
+			if isCall {
+				if ended := b.markSent(callID); ended != nil {
+					b.answer(ctx, callID, b.connEnded(ended))
+				}
+			}
 			return
 		}
 		b.dropRemote(remote)
@@ -251,8 +267,31 @@ func (b *bridge) remoteConn(ctx context.Context) (mcp.Connection, error) {
 // track records a request about to be sent on conn, so its answer is owed.
 func (b *bridge) track(id jsonrpc.ID, conn mcp.Connection) {
 	b.mu.Lock()
-	b.pending[id] = conn
+	b.pending[id] = &pendingCall{conn: conn}
 	b.mu.Unlock()
+}
+
+// markSent records that the daemon accepted request id. It returns why the
+// connection ended when it ended before this was recorded: the relay, which
+// answers accepted requests when a connection ends, did not see this one.
+func (b *bridge) markSent(id jsonrpc.ID) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	p, ok := b.pending[id]
+	if !ok {
+		return nil // answered already
+	}
+	if err, ended := b.dead[p.conn]; ended {
+		return err
+	}
+	p.sent = true
+	return nil
+}
+
+// connEnded is the text of the error for a request whose connection ended
+// after the daemon accepted it.
+func (b *bridge) connEnded(cause error) string {
+	return b.scrub(fmt.Sprintf("torque daemon connection to %s ended before the reply: %v", b.endpoint, cause))
 }
 
 // takePending reports whether id was still owed an answer, and settles it.
@@ -302,12 +341,16 @@ func (b *bridge) relay(ctx context.Context, conn mcp.Connection) {
 	}
 }
 
-// failPending answers the requests that went out on conn.
+// failPending records that conn ended and answers the requests the daemon
+// had accepted on it. A request still being sent is not answered here:
+// forward answers it, naming what the daemon said (a refused send is what
+// ends the connection in the first place).
 func (b *bridge) failPending(ctx context.Context, conn mcp.Connection, cause error) {
 	b.mu.Lock()
+	b.dead[conn] = cause
 	var ids []jsonrpc.ID
-	for id, c := range b.pending {
-		if c == conn {
+	for id, p := range b.pending {
+		if p.conn == conn && p.sent {
 			ids = append(ids, id)
 		}
 	}
@@ -315,7 +358,7 @@ func (b *bridge) failPending(ctx context.Context, conn mcp.Connection, cause err
 	if len(ids) == 0 {
 		return
 	}
-	text := b.scrub(fmt.Sprintf("torque daemon connection to %s ended before the reply: %v", b.endpoint, cause))
+	text := b.connEnded(cause)
 	b.logf("%s", text)
 	for _, id := range ids {
 		b.answer(ctx, id, text)
