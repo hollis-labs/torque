@@ -20,7 +20,7 @@ require (
 	github.com/hollis-labs/go-queue v0.2.0
 	github.com/hollis-labs/go-runner v0.7.0
 	github.com/hollis-labs/go-runtime-events v0.2.1
-	github.com/hollis-labs/go-sandbox v0.5.0
+	github.com/hollis-labs/go-sandbox v0.5.1
 	github.com/hollis-labs/go-sqlite v0.1.0
 	github.com/hollis-labs/go-strutil v0.1.0
 	github.com/hollis-labs/go-toolbroker v0.2.0

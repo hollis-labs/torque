@@ -83,7 +83,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Changed
 
 - go-agent-wrapper v0.21.1, agentkit v0.19.1, go-providers v0.39.0 and
-  go-sandbox v0.5.0 (CW-20261001-0157). A claude-code launch now carries
+  go-sandbox v0.5.1 (CW-20261001-0157). A claude-code launch now carries
   `--permission-mode <mode>` (`acceptEdits` when the profile sets none,
   `bypassPermissions` in developer mode), the same posture its planted
   `settings.json` already set: agentkit maps the launch plan's permission,
