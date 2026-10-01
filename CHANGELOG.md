@@ -82,6 +82,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Torque's pre-wrapper launch path (bootLegacy) now runs only codex
+  app-server. Another runtime kind reaching it fails to boot with a reason
+  instead of spawning its command twice, the copy after the turn's
+  `-- <prompt>`. Nothing in production routes another kind there: claude,
+  opencode and agy launch through go-agent-wrapper, and PTY has no launch.
+  The fake-runtime test seam still runs every kind (CW-20261001-0080).
 - go-agent-wrapper v0.19.0, for ACP sessions' MCP servers (above). Its
   v0.18.0 change to the wrapper's own `plant` package does not reach Torque,
   which plants through agentkit.

@@ -497,6 +497,9 @@ type plantedBoot struct {
 // go-agent-wrapper has no equivalent for. Used for codex's runtime kind
 // always, and for every runtime kind when deps.RuntimeFactory is set
 // (Torque's fake-runtime test seam, which only this path can honor).
+//
+// In production it runs codex app-server (jsonrpc-stdio) alone; any other
+// kind is refused (legacyRuntimeKindAllowed, CW-20261001-0080).
 func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options, pb *plantedBoot) (sess *Session, err error) {
 	resolved := pb.resolved
 	profile := pb.profile
@@ -540,28 +543,23 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 		}
 	}()
 
-	// Thread the planted boot dir into the adapter / session argv.
-	//
-	// Two distinct mechanisms, by adapter shape:
-	//
-	//   - Bare-mode claude: the boot dir is referenced via four explicit
-	//     CLI flags (--mcp-config / --append-system-prompt-file /
-	//     --settings / --add-dir) that ClaudeAdapter.BuildArgs emits from
-	//     the adapter's own MCPConfigPath/AppendSystemPromptFile/
-	//     SettingsPath/ProjectDir fields. We populate them here from
-	//     BareInjectionPaths(plantedBootDir, projectDir). Because BuildArgs
-	//     already emits --add-dir for the bare adapter, the ExtraArgs
-	//     splice below is suppressed for bare claude to avoid a double
-	//     --add-dir.
-	//
-	//   - Non-bare adapters (claude PTY/streaming, codex subprocess,
-	//     opencode): the boot dir is referenced via the BootDirSpec's
-	//     ProjectDirArg (--add-dir / --cd / --dir) plus EnvAmendments
-	//     (CODEX_HOME / OPENCODE_CONFIG_DIR). providerplant.Plant resolved
-	//     both into prepared.Argv[1:] and prepared.Env; we thread Argv[1:]
-	//     into StartOptions.ExtraArgs (a public field consumers may set
-	//     directly — the runtime splices it after adapter.BuildArgs) and
-	//     merge prepared.Env into the spawn env.
+	if !legacyRuntimeKindAllowed(runtimeKind, deps.RuntimeFactory != nil) {
+		shutdownLoopbackHandle(loopback)
+		return nil, fmt.Errorf("%w: runtime kind %q has no launch on this path: outside the test runtime seam it runs only codex app-server (%s); other kinds launch through go-agent-wrapper", ErrBootFailed, runtimeKind, RuntimeKindJsonRpcStdio)
+	}
+
+	// StartOptions.ExtraArgs is spliced after the adapter's BuildArgs, and
+	// it starts as the prepared launch's argv past the executable. Since
+	// go-providers v0.33 that is the provider's whole projected command,
+	// planted flags included (--settings, --mcp-config, --add-dir, --cd,
+	// --dir, the profile's args). Only codex app-server's splice below is
+	// right to spawn: the options past the adapter's own `app-server -c
+	// model=…`. Every other kind reaches here only through the
+	// RuntimeFactory test seam (legacyRuntimeKindAllowed), whose runtimes
+	// spawn nothing; there ExtraArgs keeps the prepared argv whole for tests
+	// to inspect, and spawned it would repeat the command after the turn's
+	// `-- <prompt>` (CW-20261001-0080). The env amendments (CODEX_HOME,
+	// OPENCODE_CONFIG_DIR) are merged into the spawn env below.
 	var bootDirExtraArgs []string
 	bootDirExtraArgs = append([]string(nil), sessionLaunch.Options.ExtraArgs...)
 
