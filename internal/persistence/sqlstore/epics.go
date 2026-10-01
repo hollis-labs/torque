@@ -127,28 +127,8 @@ func epicCursorArg(sortBy, sv string) (any, error) {
 func (s *Store) ListEpics(f EpicFilter) ([]EpicRecord, error) {
 	query := `SELECT id, name, description, status, priority, project_id, archived_at, created_at, updated_at FROM epics`
 
-	var conditions []string
-	var args []interface{}
+	conditions, args := epicListPredicates(f)
 
-	if f.Status != "" {
-		conditions = append(conditions, "status = ?")
-		args = append(args, f.Status)
-	}
-	if f.ProjectID != "" {
-		conditions = append(conditions, "project_id = ?")
-		args = append(args, f.ProjectID)
-	}
-	if !f.IncludeArchived {
-		conditions = append(conditions, "archived_at IS NULL")
-	}
-	if f.Search != "" {
-		// SQLite's LIKE is case-insensitive for ASCII by default.
-		pattern := "%" + f.Search + "%"
-		conditions = append(conditions, "(id LIKE ? OR name LIKE ? OR description LIKE ?)")
-		args = append(args, pattern, pattern, pattern)
-	}
-
-	// PRIM-002 sort column + PRIM-001 cursor predicate.
 	sortCol := epicSortColumn(f.SortBy)
 	// Cursor predicates and ordering must compare the same precise key.
 	sortKey := s.timestampSortKey(sortCol)
@@ -337,4 +317,36 @@ func (s *Store) NextEpicID() (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%s%04d", prefix, maxSeq+1), nil
+}
+
+// epicListPredicates is shared by page and whole-cohort count queries.
+func epicListPredicates(f EpicFilter) ([]string, []any) {
+	var conditions []string
+	var args []interface{}
+
+	if f.Status != "" {
+		conditions = append(conditions, "status = ?")
+		args = append(args, f.Status)
+	}
+	if f.ProjectID != "" {
+		conditions = append(conditions, "project_id = ?")
+		args = append(args, f.ProjectID)
+	}
+	if !f.IncludeArchived {
+		conditions = append(conditions, "archived_at IS NULL")
+	}
+	if f.Search != "" {
+		// SQLite's LIKE is case-insensitive for ASCII by default.
+		pattern := "%" + f.Search + "%"
+		conditions = append(conditions, "(id LIKE ? OR name LIKE ? OR description LIKE ?)")
+		args = append(args, pattern, pattern, pattern)
+	}
+
+	return conditions, args
+}
+
+// CountEpics counts the filtered cohort, excluding cursor and page bounds.
+func (s *Store) CountEpics(f EpicFilter) (int, error) {
+	where, args := epicListPredicates(f)
+	return s.countFiltered("epics", where, args)
 }

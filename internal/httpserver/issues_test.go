@@ -51,7 +51,7 @@ func TestHTTP_IssueCreateAndList(t *testing.T) {
 	var listed map[string]interface{}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&listed))
 	resp.Body.Close()
-	require.Len(t, listed["issues"].([]interface{}), 1)
+	require.Len(t, listed["items"].([]interface{}), 1)
 }
 
 func TestHTTP_IssueCreateRequiresProjectID(t *testing.T) {

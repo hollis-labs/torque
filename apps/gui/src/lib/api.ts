@@ -1,5 +1,7 @@
 import type {
   Task,
+  ListPage,
+  ListQuery,
   TaskFilter,
   TaskScopeKey,
   TaskScopeRollupResponse,
@@ -413,13 +415,9 @@ export class TorqueApiClient {
   // Issues
   // -------------------------
 
-  async listIssues(filter?: { project_id?: string; search?: string; limit?: number }): Promise<{ issues: Task[]; total: number }> {
-    const params: Record<string, string | number | boolean | undefined> = {}
-    if (filter?.project_id) params['project_id'] = filter.project_id
-    if (filter?.search) params['q'] = filter.search
-    if (filter?.limit !== undefined) params['limit'] = filter.limit
-    const path = filter?.search ? '/issues/search' : '/issues'
-    return this.get<{ issues: Task[]; total: number }>(path, params)
+  async listIssues(filter?: ListQuery & { project_id?: string; status?: string }): Promise<ListPage<Task>> {
+    const { search, ...params } = filter ?? {}
+    return this.get<ListPage<Task>>('/issues', { ...params, query: search })
   }
 
   async getIssue(id: string): Promise<Task> {
@@ -525,16 +523,15 @@ export class TorqueApiClient {
    *
    * The HTTP layer keeps the nested /tasks/{id}/comments route alive for
    * task comments specifically; passing entity_type="task" routes through
-   * that endpoint so existing nested tests / clients keep working. All
+   * that endpoint. All
    * other entity types use the flat /comments?entity_type=…&entity_id=…
    * shape.
    */
-  async listComments(entityType: string, entityID: string): Promise<Comment[]> {
+  async listComments(entityType: string, entityID: string, query?: Omit<ListQuery, 'search'>): Promise<ListPage<Comment>> {
     if (entityType === 'task') {
-      return this.get<Comment[]>(`/tasks/${entityID}/comments`)
+      return this.get<ListPage<Comment>>(`/tasks/${entityID}/comments`, query)
     }
-    const qs = new URLSearchParams({ entity_type: entityType, entity_id: entityID })
-    return this.get<Comment[]>(`/comments?${qs.toString()}`)
+    return this.get<ListPage<Comment>>('/comments', { ...query, entity_type: entityType, entity_id: entityID })
   }
 
   async addComment(
@@ -682,10 +679,10 @@ export class TorqueApiClient {
   // Projects
   // -------------------------
 
-  async listProjects(status?: string): Promise<{ projects: Project[] }> {
-    const params: Record<string, string | number | boolean | undefined> = {}
+  async listProjects(status?: string, query?: ListQuery): Promise<ListPage<Project>> {
+    const params: Record<string, string | number | boolean | undefined> = { ...query }
     if (status) params['status'] = status
-    return this.get<{ projects: Project[] }>('/projects', params)
+    return this.get<ListPage<Project>>('/projects', params)
   }
 
   async getProject(id: string): Promise<Project> {
@@ -731,8 +728,8 @@ export class TorqueApiClient {
   // Sprints
   // -------------------------
 
-  async listSprints(params?: { status?: string; project_id?: string }): Promise<{ sprints: Sprint[] }> {
-    return this.get<{ sprints: Sprint[] }>('/sprints', params)
+  async listSprints(params?: ListQuery & { status?: string; project_id?: string; include_archived?: boolean }): Promise<ListPage<Sprint>> {
+    return this.get<ListPage<Sprint>>('/sprints', { ...params })
   }
 
   async getSprint(id: string): Promise<Sprint> {
@@ -759,8 +756,8 @@ export class TorqueApiClient {
   // Epics
   // -------------------------
 
-  async listEpics(params?: { status?: string; project_id?: string }): Promise<{ epics: Epic[] }> {
-    return this.get<{ epics: Epic[] }>('/epics', params)
+  async listEpics(params?: ListQuery & { status?: string; project_id?: string; include_archived?: boolean }): Promise<ListPage<Epic>> {
+    return this.get<ListPage<Epic>>('/epics', { ...params })
   }
 
   async getEpic(id: string): Promise<Epic> {

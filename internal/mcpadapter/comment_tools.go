@@ -27,7 +27,7 @@ Example: {"entity_type":"task","entity_id":"T-123","author":"reviewer","content"
 Use to review the discussion thread for a given entity (or set of entities); torque_comment_add to append. For newest-first cross-entity content search use torque_comment_search.
 Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under.
 entity_ids accepts a JSON array string or native string array; whole null, [null], non-string members, malformed JSON, and an empty list as the only scope reject. If both entity_id and entity_ids are supplied, entity_id takes precedence. Explicit malformed or negative limit values reject; default/max are 50/200.
-Response shape: data = {items: [<briefComment or CommentRecord>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
+Response shape: data = {items: [<briefComment or CommentRecord>...], meta: {truncated, returned, limit, has_more, next_cursor, total?}}.
 Example: {"entity_type":"task","entity_id":"T-123","limit":"50"}`),
 		withString("entity_type", required(), desc(`Entity kind. Valid: "task", "project", "epic", "sprint".`)),
 		withString("entity_id", desc("ID of the entity — required unless entity_ids is given instead")),
@@ -40,14 +40,15 @@ Example: {"entity_type":"task","entity_id":"T-123","limit":"50"}`),
 		withString("sort_by", desc(`Sort field: "created_at" (default, only supported value)`)),
 		withString("sort_dir", desc("Sort direction: asc|desc (default asc)")),
 		withString("cursor", desc("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
+		withString("include_total", desc("Include meta.total for the whole matching cohort (default false; COUNT is opt-in).")),
 	), a.handleCommentList)
 
 	a.addTool(newTool("torque_comment_search",
 		withDescription(`Search comments by content across all entities, optionally scoped to one entity (entity_type + entity_id), a set of entity refs (entity_type + entity_ids), an author, and/or a created_at range. Returns newest first (created_at DESC, tiebreak id ASC) by default; pass sort_by/sort_dir to change order.
 Use to discover comments by content; torque_comment_list for per-entity (or per-entity-set) chronological history.
 Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under.
-entity_ids accepts a JSON array string or native string array; whole null, [null], non-string members, and malformed JSON reject. If both entity_id and entity_ids are supplied, entity_id takes precedence. Explicit malformed or negative limit values reject; default/max are 25/100.
-Response shape: data = {items: [<CommentRecord>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
+entity_ids accepts a JSON array string or native string array; whole null, [null], non-string members, and malformed JSON reject. If both entity_id and entity_ids are supplied, entity_id takes precedence. Explicit malformed or negative limit values reject; default/max are 50/200.
+Response shape: data = {items: [<CommentRecord>...], meta: {truncated, returned, limit, has_more, next_cursor, total?}}.
 Example: {"query":"review notes","entity_type":"task","entity_id":"T-123"}`),
 		withString("query", required(), desc("Substring match on comment content")),
 		withString("entity_type", desc(`Restrict to one entity kind (optional). Valid: "task", "project", "epic", "sprint".`)),
@@ -56,10 +57,11 @@ Example: {"query":"review notes","entity_type":"task","entity_id":"T-123"}`),
 		withString("author", desc("Exact author match (optional)")),
 		withString("created_after", desc("Only comments created at/after this instant (RFC3339)")),
 		withString("created_before", desc("Only comments created at/before this instant (RFC3339)")),
-		withString("limit", desc("Max results (integer, default 25, max 100)")),
+		withString("limit", desc("Max results (integer, default 50, max 200)")),
 		withString("sort_by", desc(`Sort field: "created_at" (default, only supported value)`)),
 		withString("sort_dir", desc("Sort direction: asc|desc (default desc)")),
 		withString("cursor", desc("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
+		withString("include_total", desc("Include meta.total for the whole matching cohort (default false; COUNT is opt-in).")),
 	), a.handleCommentSearch)
 
 	a.addTool(newTool("torque_comment_update",
@@ -156,7 +158,7 @@ func commentCursorID(c sqlstore.CommentRecord) string {
 // commentListEnvelope builds the shared {items, meta} cursor-pagination
 // response for both torque_comment_list and torque_comment_search — see
 // taskListCursorEnvelope for the reference pattern this mirrors.
-func commentListEnvelope(comments []sqlstore.CommentRecord, limit int, verbose bool, sortBy, sortDir string, hasMoreFromQuery bool) (any, error) {
+func commentListEnvelope(comments []sqlstore.CommentRecord, limit int, verbose bool, sortBy, sortDir string, hasMoreFromQuery bool, total *int) (any, error) {
 	items := make([]any, 0, len(comments))
 	for _, c := range comments {
 		if verbose {
@@ -168,7 +170,7 @@ func commentListEnvelope(comments []sqlstore.CommentRecord, limit int, verbose b
 	cursorAt := func(i int) (sortValue, id string) {
 		return commentSortValue(comments[i], sortBy), commentCursorID(comments[i])
 	}
-	return cappedCursorJSONResult(items, limit, sortBy, sortDir, hasMoreFromQuery, cursorAt)
+	return cappedCursorJSONResultWithTotal(items, limit, total, sortBy, sortDir, hasMoreFromQuery, cursorAt)
 }
 
 func (a *Adapter) handleCommentList(ctx context.Context, req map[string]any) (any, error) {
@@ -224,7 +226,7 @@ func (a *Adapter) handleCommentList(ctx context.Context, req map[string]any) (an
 		return errFromService(err)
 	}
 
-	comments, err := a.svc.Comment.ListFiltered(filter)
+	comments, total, err := a.svc.Comment.ListFilteredWithTotal(filter, cursor.IncludeTotal)
 	if err != nil {
 		return errFromService(err)
 	}
@@ -233,7 +235,7 @@ func (a *Adapter) handleCommentList(ctx context.Context, req map[string]any) (an
 	if hasMoreFromQuery {
 		comments = comments[:normalized.Limit]
 	}
-	return commentListEnvelope(comments, normalized.Limit, verbose, normalized.SortBy, normalized.SortDir, hasMoreFromQuery)
+	return commentListEnvelope(comments, normalized.Limit, verbose, normalized.SortBy, normalized.SortDir, hasMoreFromQuery, total)
 }
 
 func (a *Adapter) handleCommentSearch(ctx context.Context, req map[string]any) (any, error) {
@@ -287,7 +289,7 @@ func (a *Adapter) handleCommentSearch(ctx context.Context, req map[string]any) (
 		return errFromService(err)
 	}
 
-	comments, err := a.svc.Comment.Search(filter)
+	comments, total, err := a.svc.Comment.ListFilteredWithTotal(filter, cursor.IncludeTotal)
 	if err != nil {
 		return errFromService(err)
 	}
@@ -299,7 +301,7 @@ func (a *Adapter) handleCommentSearch(ctx context.Context, req map[string]any) (
 	// torque_comment_search has always returned full CommentRecord items
 	// (no brief/verbose toggle existed pre-ENT-COMMENT) — preserved as-is;
 	// only pagination/sort/filter changed here.
-	return commentListEnvelope(comments, normalized.Limit, true, normalized.SortBy, normalized.SortDir, hasMoreFromQuery)
+	return commentListEnvelope(comments, normalized.Limit, true, normalized.SortBy, normalized.SortDir, hasMoreFromQuery, total)
 }
 
 func (a *Adapter) handleCommentUpdate(ctx context.Context, req map[string]any) (any, error) {

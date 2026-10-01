@@ -64,7 +64,7 @@ func projectsJSON(projects []sqlstore.ProjectRecord) []map[string]interface{} {
 }
 
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
-	allowed := map[string]bool{"status": true, "include_archived": true, "limit": true, "cursor": true, "sort_by": true, "sort_dir": true}
+	allowed := map[string]bool{"status": true, "include_archived": true, "limit": true, "cursor": true, "sort_by": true, "sort_dir": true, "include_total": true, "search": true}
 	q, qerr := parseStrictQuery(r, allowed)
 	if qerr != nil {
 		writeHTTPQueryError(w, qerr)
@@ -76,28 +76,13 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 		writeHTTPQueryError(w, qerr)
 		return
 	}
-	if !hasAnyQueryKey(q, "limit", "cursor", "sort_by", "sort_dir") {
-		projects, err := s.svc.Project.List(status, includeArchived)
-		if err != nil {
-			if _, ok := err.(*service.FeatureDisabledError); ok {
-				writeError(w, http.StatusNotFound, err.Error())
-				return
-			}
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if projects == nil {
-			projects = []sqlstore.ProjectRecord{}
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"projects": projectsJSON(projects)})
-		return
-	}
 	cursor, qerr := queryCursor(q)
 	if qerr != nil {
 		writeHTTPQueryError(w, qerr)
 		return
 	}
 	filter, normalized, err := service.NormalizeProjectQuery(service.ProjectQuery{
+		Search:          queryString(q, "search"),
 		Status:          status,
 		IncludeArchived: includeArchived,
 		CursorQuery:     cursor,
@@ -106,7 +91,7 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 		writeAdjacentServiceError(w, err)
 		return
 	}
-	projects, err := s.svc.Project.ListPage(filter)
+	projects, total, err := s.svc.Project.ListPageWithTotal(filter, cursor.IncludeTotal)
 	if err != nil {
 		writeAdjacentServiceError(w, err)
 		return
@@ -123,7 +108,7 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 		last := projects[len(projects)-1]
 		nextCursor = pagination.Encode(normalized.SortBy, normalized.SortDir, service.ProjectQuerySortValue(last, normalized.SortBy), last.ID)
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"items": projectsJSON(projects), "meta": advancedMeta(normalized.Limit, normalized.SortBy, normalized.SortDir, hasMore, nextCursor, len(projects))})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": projectsJSON(projects), "meta": advancedMeta(normalized.Limit, normalized.SortBy, normalized.SortDir, hasMore, nextCursor, len(projects), total)})
 }
 
 func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {

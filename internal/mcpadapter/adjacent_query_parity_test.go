@@ -45,6 +45,7 @@ type adjacentEnvelope struct {
 		Limit      int     `json:"limit"`
 		HasMore    bool    `json:"has_more"`
 		NextCursor *string `json:"next_cursor"`
+		Total      *int    `json:"total"`
 		SortBy     string  `json:"sort_by"`
 		SortDir    string  `json:"sort_dir"`
 	} `json:"meta"`
@@ -357,7 +358,7 @@ func TestFullStack_AdjacentHTTPMCPParity_ComposedQueriesAndCursors(t *testing.T)
 	})
 }
 
-func TestFullStack_AdjacentHTTPQueryValidationAndLegacyShapes(t *testing.T) {
+func TestFullStack_AdjacentHTTPQueryValidationAndDefaultPages(t *testing.T) {
 	a, ts, _ := setupAdjacentQueryParitySurfaces(t)
 	repoPath := t.TempDir()
 	for i := 0; i < service.DefaultGenericQueryLimit+2; i++ {
@@ -380,9 +381,12 @@ func TestFullStack_AdjacentHTTPQueryValidationAndLegacyShapes(t *testing.T) {
 		Meta     map[string]any   `json:"meta"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&legacy))
-	require.Empty(t, legacy.Items)
-	require.Empty(t, legacy.Meta)
-	require.Greater(t, len(legacy.Projects), service.DefaultGenericQueryLimit)
+	require.Empty(t, legacy.Projects)
+	require.Len(t, legacy.Items, 50)
+	require.Equal(t, float64(50), legacy.Meta["limit"])
+	require.Equal(t, true, legacy.Meta["has_more"])
+	require.NotEmpty(t, legacy.Meta["next_cursor"])
+	require.NotContains(t, legacy.Meta, "total")
 
 	resp, err = http.Get(ts.URL + "/api/v1/projects?unknown=1")
 	require.NoError(t, err)

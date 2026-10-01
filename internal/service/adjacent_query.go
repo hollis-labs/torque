@@ -11,13 +11,13 @@ import (
 )
 
 const (
-	DefaultGenericQueryLimit = 100
-	MaxGenericQueryLimit     = 500
+	DefaultGenericQueryLimit = 50
+	MaxGenericQueryLimit     = 200
 
 	DefaultCommentListLimit   = 50
 	MaxCommentListLimit       = 200
-	DefaultCommentSearchLimit = 25
-	MaxCommentSearchLimit     = 100
+	DefaultCommentSearchLimit = 50
+	MaxCommentSearchLimit     = 200
 
 	DefaultIssueQueryLimit = 50
 	MaxIssueQueryLimit     = 200
@@ -46,19 +46,22 @@ const (
 )
 
 type CursorQuery struct {
-	Limit   int
-	SortBy  string
-	SortDir string
-	Cursor  string
+	IncludeTotal bool
+	Limit        int
+	SortBy       string
+	SortDir      string
+	Cursor       string
 }
 
 type ProjectQuery struct {
+	Search          string
 	Status          string
 	IncludeArchived bool
 	CursorQuery
 }
 
 type SprintQuery struct {
+	Search          string
 	Status          string
 	ProjectID       string
 	IncludeArchived bool
@@ -108,6 +111,7 @@ func NormalizeProjectQuery(q ProjectQuery) (sqlstore.ProjectFilter, NormalizedCu
 		return sqlstore.ProjectFilter{}, NormalizedCursorQuery{}, err
 	}
 	return sqlstore.ProjectFilter{
+		Search:          q.Search,
 		Status:          q.Status,
 		IncludeArchived: q.IncludeArchived,
 		Limit:           n.Limit + 1,
@@ -130,6 +134,7 @@ func NormalizeSprintQuery(q SprintQuery) (sqlstore.SprintFilter, NormalizedCurso
 		return sqlstore.SprintFilter{}, NormalizedCursorQuery{}, err
 	}
 	return sqlstore.SprintFilter{
+		Search:          q.Search,
 		Status:          q.Status,
 		ProjectID:       q.ProjectID,
 		IncludeArchived: q.IncludeArchived,

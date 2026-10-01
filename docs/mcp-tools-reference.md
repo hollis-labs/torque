@@ -44,8 +44,9 @@ free-text messages; `field` is set when a single input field is at fault
 The shared [API pagination contract](api-pagination.md) defines the S1 target
 for HTTP and MCP: cursor defaults, universal 50/200 page sizes, opt-in totals,
 clean-break envelopes, and the [current/target endpoint matrix](api-pagination.md#endpoint-capability-matrix).
-The descriptions below record pre-S1 behavior and must be reconciled when S1
-lands; they do not override the target. See also the
+The adjacent entity section below reflects CW-20261001-0563. Other families
+still require S1 reconciliation; their current descriptions do not override
+the target. See also the
 [sort allow-lists](api-pagination.md#sort-allow-lists-and-defaults) and
 [counts, facets, and exports](api-pagination.md#counts-facets-and-exports).
 
@@ -283,18 +284,20 @@ Use the same cohort filters with `torque_task_facets` or
 ### Adjacent entity query defaults
 
 Project, Epic, Sprint, Issue, and Comment list/search tools share cursor
-validation with their HTTP advanced-query counterparts. They always return
-`data={items,meta}` and do not include a whole-cohort `total` unless the tool
-explicitly says it computed one.
+validation with their HTTP counterparts. Both always return the paged
+`{items,meta}` payload (MCP inside `data`), default 50/max 200. `include_total`
+defaults to false; true adds `meta.total` for the full filtered cohort, excluding
+cursor/limit. Otherwise total is omitted. Legacy HTTP fetch-all envelopes are
+removed, and offset is unsupported on these lists.
 
 | Tool | Filters/search | Default/max/order |
 |---|---|---|
-| `torque_project_list` | `status`, `include_archived`; no free-text search | 100/500, `name asc`; sort fields `name,status,updated_at,created_at` |
-| `torque_sprint_list` | `status`, `project_id`, `include_archived`, `over_budget`, `cost_budget_min`, `cost_budget_max`; no free-text search | 100/500, `updated_at desc`; sort fields `name,status,updated_at,created_at` |
-| `torque_epic_list` | `status`, `project_id`, `include_archived`, `search` over id/name/description | 100/500, `updated_at desc`; sort fields `name,status,updated_at,created_at` |
+| `torque_project_list` | `status`, `include_archived`, `search` over ID/name/description | 50/200, `name asc`; sort fields `name,status,updated_at,created_at` |
+| `torque_sprint_list` | `status`, `project_id`, `include_archived`, `over_budget`, `cost_budget_min`, `cost_budget_max`, `search` over ID/name/goal | 50/200, `updated_at desc`; sort fields `name,status,updated_at,created_at` |
+| `torque_epic_list` | `status`, `project_id`, `include_archived`, `search` over id/name/description | 50/200, `updated_at desc`; sort fields `name,status,updated_at,created_at` |
 | `torque_issue_list` | `project_id`, `status`, `query` over id/title/body | 50/200, `priority asc`; sort fields `priority,status,updated_at,created_at` |
 | `torque_comment_list` | Required `entity_type` plus `entity_id` or non-empty `entity_ids`; optional `author`, `created_after`, `created_before` | 50/200, `created_at asc`; only sort field `created_at` |
-| `torque_comment_search` | Required `query`; optional `entity_type`, `entity_id`, `entity_ids`, `author`, `created_after`, `created_before` | 25/100, `created_at desc`; only sort field `created_at` |
+| `torque_comment_search` | Required `query`; optional `entity_type`, `entity_id`, `entity_ids`, `author`, `created_after`, `created_before` | 50/200, `created_at desc`; only sort field `created_at` |
 
 When both `entity_id` and `entity_ids` are supplied to comment tools,
 `entity_id` takes precedence in the store predicate. Use RFC3339 for

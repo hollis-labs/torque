@@ -69,18 +69,19 @@ Example: {"id":"EP-4"}`),
 		withDescription(`List epics with optional status/project filters and free-text search, ordered updated_at DESC by default. Pass sort_by (name|status|updated_at|created_at) and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid.
 Use for browsing, filtered cohorts, or free-text discovery in one call (no separate _search tool); torque_epic_get when you know the ID. Default brief shape; pass verbose="true" for full records.
 Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under — pass a different sort_by/sort_dir without dropping cursor and you get error.code=arg_invalid.
-Explicit malformed, blank, fractional, overflow, unsafe native-float, or negative limit values reject with error.code=arg_invalid, field=limit; omitted limit defaults to 100 and oversized limits clamp to 500.
-Response shape: data = {items: [<briefEpic or EpicRecord>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
+Explicit malformed, blank, fractional, overflow, unsafe native-float, or negative limit values reject with error.code=arg_invalid, field=limit; omitted limit defaults to 50 and oversized limits clamp to 200.
+Response shape: data = {items: [<briefEpic or EpicRecord>...], meta: {truncated, returned, limit, has_more, next_cursor, total?}}.
 Example: {"status":"active","search":"auth","limit":"50","sort_by":"updated_at","sort_dir":"desc"}`),
 		withString("status", desc("Filter: active|inactive")),
 		withString("project_id", desc("Filter by project ID (requires features.projects)")),
 		withString("search", desc("Substring match on id + name + description (case-insensitive)")),
 		withString("include_archived", desc("Include archived rows. Default false: archived epics are hidden unless requested. Accepts 'true'/'1'/'yes'.")),
-		withString("limit", desc("Max results (integer, default 100, max 500)")),
+		withString("limit", desc("Max results (integer, default 50, max 200)")),
 		withString("verbose", desc("Return full records instead of brief (string 'true'/'false', default false)")),
 		withString("sort_by", desc("Sort field: name|status|updated_at|created_at (default updated_at)")),
 		withString("sort_dir", desc("Sort direction: asc|desc (default desc)")),
 		withString("cursor", desc("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
+		withString("include_total", desc("Include meta.total for the whole matching cohort (default false; COUNT is opt-in).")),
 	), a.handleEpicList)
 
 	a.addTool(newTool("torque_epic_bulk_update",
@@ -293,7 +294,7 @@ func (a *Adapter) handleEpicList(ctx context.Context, req map[string]any) (any, 
 	if err != nil {
 		return errFromService(err)
 	}
-	epics, err := a.svc.Epic.ListPaginated(input)
+	epics, total, err := a.svc.Epic.ListPaginatedWithTotal(input, cursor.IncludeTotal)
 	if err != nil {
 		return errFromService(err)
 	}
@@ -302,7 +303,7 @@ func (a *Adapter) handleEpicList(ctx context.Context, req map[string]any) (any, 
 	if hasMoreFromQuery {
 		epics = epics[:normalized.Limit]
 	}
-	return epicListCursorEnvelope(epics, normalized.Limit, verbose, normalized.SortBy, normalized.SortDir, hasMoreFromQuery)
+	return epicListCursorEnvelope(epics, normalized.Limit, verbose, normalized.SortBy, normalized.SortDir, hasMoreFromQuery, total)
 }
 
 // epicListCursorEnvelope builds torque_epic_list's {items, meta} cursor-
@@ -310,7 +311,7 @@ func (a *Adapter) handleEpicList(ctx context.Context, req map[string]any) (any, 
 // (task_tools.go). epics must already be trimmed to at most `limit`
 // records — handleEpicList over-fetches limit+1 to compute
 // hasMoreFromQuery, then drops the extra row before calling this.
-func epicListCursorEnvelope(epics []sqlstore.EpicRecord, limit int, verbose bool, sortBy, sortDir string, hasMoreFromQuery bool) (any, error) {
+func epicListCursorEnvelope(epics []sqlstore.EpicRecord, limit int, verbose bool, sortBy, sortDir string, hasMoreFromQuery bool, total *int) (any, error) {
 	items := make([]any, 0, len(epics))
 	for _, e := range epics {
 		if verbose {
@@ -323,7 +324,7 @@ func epicListCursorEnvelope(epics []sqlstore.EpicRecord, limit int, verbose bool
 	cursorAt := func(i int) (sortValue, id string) {
 		return service.EpicQuerySortValue(epics[i], sortBy), epics[i].ID
 	}
-	return cappedCursorJSONResult(items, limit, sortBy, sortDir, hasMoreFromQuery, cursorAt)
+	return cappedCursorJSONResultWithTotal(items, limit, total, sortBy, sortDir, hasMoreFromQuery, cursorAt)
 }
 
 func (a *Adapter) handleEpicBulkUpdate(ctx context.Context, req map[string]any) (any, error) {

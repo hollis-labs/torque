@@ -33,7 +33,7 @@ export default function EpicEditPage() {
       .then(([nextEpic, projectRes]) => {
         if (cancelled) return
         setEpic(nextEpic)
-        setProjects(projectRes.projects)
+        setProjects(projectRes.items)
         setDraft({
           name: nextEpic.name,
           description: nextEpic.description ?? '',

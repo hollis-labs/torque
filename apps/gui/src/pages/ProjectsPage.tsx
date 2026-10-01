@@ -51,10 +51,10 @@ export default function ProjectsPage() {
         api.listEpics(),
       ])
       if (myGen !== loadGeneration.current) return
-      setProjects(projectRes.projects)
+      setProjects(projectRes.items)
       setTaskRollup(rollupRes)
-      setSprints(sprintRes.sprints)
-      setEpics(epicRes.epics)
+      setSprints(sprintRes.items)
+      setEpics(epicRes.items)
     } catch (err) {
       // A failed background refresh leaves the loaded page in place.
       if (myGen !== loadGeneration.current || background) return

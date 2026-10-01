@@ -63,10 +63,10 @@ export function CreatePlanDialog({
   useEffect(() => {
     if (!open) return
     if (!projects) {
-      api.listProjects().then((r) => setOwnProjects(r.projects)).catch(() => setOwnProjects([]))
+      api.listProjects().then((r) => setOwnProjects(r.items)).catch(() => setOwnProjects([]))
     }
     if (!sprints) {
-      api.listSprints().then((r) => setOwnSprints(r.sprints)).catch(() => setOwnSprints([]))
+      api.listSprints().then((r) => setOwnSprints(r.items)).catch(() => setOwnSprints([]))
     }
   }, [open, api, projects, sprints])
 
