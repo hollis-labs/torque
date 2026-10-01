@@ -153,6 +153,11 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 	// task already carries, so the verifier can tell whether the worker
 	// left anything on it during this run (CW-20261001-0013).
 	outputBefore, outputBeforeOK := taskOutputCount(e.deps.Store, opts.TaskID)
+	// Baseline for the git-safety check: the run directory's repository,
+	// commit and remotes before the worker touches them (CW-20260918-0009).
+	snapCtx, snapCancel := context.WithTimeout(context.Background(), workerVerifyTimeout)
+	gitBefore := scheduler.SnapshotRunGit(snapCtx, opts.Workdir)
+	snapCancel()
 
 	opts = opts.withEventFanout(fanout).withTerminalFailure(terminalFailureCh)
 	sess, bootErr := Boot(ctx, e.deps, opts)
@@ -260,6 +265,7 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 			taskOutput = outputAfter - outputBefore
 		}
 		verdict := scheduler.VerifyWorkerCompletion(verifyCtx, opts.RepoRoot, opts.Workdir, filepath.Join(sess.WorkspaceDir, "logs"), "", taskOutput)
+		gitSafety := scheduler.CheckRunGitSafety(verifyCtx, opts.Workdir, gitBefore)
 		verifyCancel()
 		res.ToolUseHistogram = verdict.ToolUseHistogram
 		res.CommitsOnRunBranch = verdict.CommitCount
@@ -277,6 +283,15 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 		// is supplemental, not authoritative.
 		if outcome.TaskStatus == "review" || outcome.TaskStatus == "done" {
 			res.Status, res.Reason = verdict.ApplyTo(res.Status, res.Reason)
+			// A remote added or repointed, or history swapped for unrelated
+			// history, outranks the commit verdict: the run may have pushed
+			// somewhere it should not have.
+			if gitSafety != "" {
+				if res.Status == "blocked" && res.Reason != "" {
+					gitSafety += "; also: " + res.Reason
+				}
+				res.Status, res.Reason = "blocked", gitSafety
+			}
 		}
 	}
 

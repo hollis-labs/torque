@@ -37,6 +37,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- Dispatched workers are told the repository's configured remote is the
+  only push target: never add, guess or repoint a remote, and stop with
+  `torque_task_blocked` and the evidence on unrelated history or someone
+  else's commits instead of resetting or force-pushing. The engine now
+  snapshots the run's remotes and HEAD before the worker boots and parks a
+  run in `blocked` when a remote was added, removed or repointed, or HEAD
+  shares no history with where it started. A worker had inferred a remote
+  from the project name and opened a PR that would have wiped an unrelated
+  app.
 - A manual task in `doing` no longer holds its project's scheduler slot. The
   picker never dispatches manual tasks, so one being worked outside the
   scheduler kept every dispatchable task in its project at `project_busy`.
