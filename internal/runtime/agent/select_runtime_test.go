@@ -140,3 +140,20 @@ func TestWrapperSink_IgnoresUntranslatedKinds(t *testing.T) {
 		t.Fatalf("untranslated kind produced a stream event: %+v", ev)
 	}
 }
+
+type detectStub struct {
+	provider.CLIAdapter
+	path string
+	ok   bool
+}
+
+func (d detectStub) Detect() (string, bool) { return d.path, d.ok }
+
+// detectedBinary pins only an absolute Detect result (CW-20261001-0098); a
+// miss or a bare name leaves the launch on its bare-name fallback.
+func TestDetectedBinary(t *testing.T) {
+	assert.Equal(t, "/opt/agents/opencode", detectedBinary(detectStub{path: "/opt/agents/opencode", ok: true}))
+	assert.Empty(t, detectedBinary(detectStub{path: "opencode", ok: true}), "a bare name is not pinned")
+	assert.Empty(t, detectedBinary(detectStub{ok: false}))
+	assert.Empty(t, detectedBinary(nil))
+}
