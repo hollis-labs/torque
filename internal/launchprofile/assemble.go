@@ -45,7 +45,7 @@ type TaskLaunchOverlay struct {
 
 	// ProviderID is the already-mapped agentlaunch provider id (e.g.
 	// "claude" for Torque's "claude-code"). The caller owns the
-	// torque-provider→agentlaunch-provider translation (mapProviderID).
+	// torque-provider→registry runtime id translation (runtimeIDFor).
 	ProviderID string
 
 	// ProjectID / Workdir / WorkspaceDir / BuildDirRoot come from

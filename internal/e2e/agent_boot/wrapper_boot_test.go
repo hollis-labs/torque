@@ -34,15 +34,21 @@ done
 exit 0
 `
 
-// writeClaudeFixture publishes the fixture script and points go-providers'
-// ClaudeAdapter.Detect() at it via CLAUDE_CLI_PATH, so runtime.Prepare's
-// binary resolution finds it instead of a real claude install.
+// writeClaudeFixture publishes the fixture script as `claude` and makes both
+// resolution paths find it instead of a real claude install:
+// CLAUDE_CLI_PATH for go-providers' ClaudeAdapter.Detect(), and PATH for the
+// wrapper path, whose PreparedExecution argv[0] is the bare descriptor
+// binary name `claude`, resolved through PATH at exec time.
+// CLAUDE_CLI_PATH alone let these tests spawn the developer's real Claude
+// Code CLI, which made a paid model call per run, ran the user's own hooks,
+// and took seconds per turn (CW-20261001-0041).
 func writeClaudeFixture(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "claude-fixture.sh")
+	path := filepath.Join(dir, "claude")
 	require.NoError(t, os.WriteFile(path, []byte(claudeStreamJSONFixture), 0o755))
 	t.Setenv("CLAUDE_CLI_PATH", path)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return path
 }
 
