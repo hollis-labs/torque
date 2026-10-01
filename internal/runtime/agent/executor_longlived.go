@@ -210,6 +210,11 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 	// buffered channel absorbing anything that fired before we got here.
 	// Survives the wait loop's exit and is joined below after Stop has
 	// drained the fanout.
+	// Every turn Torque sends this session from here on (the reminders, a
+	// steering message, the stuck probe) opens a turn on the tracker.
+	untrack := e.deps.Sessions.trackTurns(sess.ID, &turn)
+	defer untrack()
+
 	var reminderWG sync.WaitGroup
 	reminderWG.Add(1)
 	go runReminderPump(ctx, managerTurnSender{mgr: e.deps.Sessions}, e.deps.Reminder, opts.TaskID, sess, turnDoneCh, &reminderWG)
@@ -324,6 +329,17 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 		// is supplemental, not authoritative.
 		unsignalled := outcome.Kind == outcomeUnsignalled
 		if unsignalled {
+			// Re-read the task right before routing: an operator, or the
+			// worker itself, may have moved it while the run stopped and
+			// verified. Then it is an ordinary transition, and Torque does
+			// not route over it (CW-20261001-0117).
+			if rec, err := e.deps.Store.GetTask(opts.TaskID); err == nil && rec != nil && rec.Status != "doing" {
+				outcome = longLivedOutcome{Kind: outcomeTransition, TaskStatus: rec.Status, BlockedReason: rec.BlockedReason}
+				res = outcome.toExecutionResult(result, streamErr)
+				unsignalled = false
+			}
+		}
+		if unsignalled {
 			res.Status, res.Reason = routeUnsignalled(verdict, taskOutput)
 		} else if outcome.TaskStatus == "review" || outcome.TaskStatus == "done" {
 			res.Status, res.Reason = verdict.ApplyTo(res.Status, res.Reason)
@@ -339,7 +355,7 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 		}
 		if unsignalled {
 			log.Printf("agent: runLongLived task %s session %s: %s (%s)", opts.TaskID, sess.ID, res.Status, res.Reason)
-			commentAutoRoute(e.deps.Store, opts.TaskID, res.Status, res.Reason)
+			res.TaskComment = autoRouteComment(res.Status, res.Reason)
 		}
 	}
 
@@ -394,6 +410,33 @@ func (t *turnTracker) waitEnd(grace time.Duration) bool {
 		return true
 	case <-timer.C:
 		return false
+	}
+}
+
+// beginSend opens a turn for one Torque is about to send the session (the
+// idle reminder, a steering message, the stuck probe): from then the session
+// is in flight until a done or error closes it, whether or not the reply's
+// first events parse to anything. A reply can open with seconds of thinking,
+// rate-limit backoff or retries that produce no stream event, and must not
+// read as idle meanwhile (CW-20261001-0117). It is a no-op while a turn is
+// already open. The returned abort closes the turn it opened, if nothing has
+// closed it since, for a send that failed.
+func (t *turnTracker) beginSend() (abort func()) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.inFlight {
+		return func() {}
+	}
+	t.inFlight = true
+	t.ended = make(chan struct{})
+	opened := t.ended
+	return func() {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		if t.inFlight && t.ended == opened {
+			t.inFlight = false
+			close(t.ended)
+		}
 	}
 }
 

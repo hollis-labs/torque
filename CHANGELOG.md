@@ -12,10 +12,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   `doing` is reminded once, then routed, instead of holding its project's
   slot until the 30-minute inactivity threshold. After 90 seconds idle
   following a completed turn it gets one reminder turn to call
-  `torque_task_review` or `torque_task_blocked`. Still idle 90 seconds later,
-  engine-side verification routes the run: to review if it left commits on
-  its branch or comments or artifacts on the task, to blocked otherwise, with
-  a `[system/auto-route]` comment on the task saying so. The window is task
+  `torque_task_review` or `torque_task_blocked`. If it answers and then ends
+  that turn without signalling, engine-side verification routes the run 90
+  seconds later: to review if it left commits on its branch or comments or
+  artifacts on the task, to blocked otherwise, with a `[system/auto-route]`
+  comment posted once the task has moved. Every turn Torque sends a session
+  (the reminder, a steering message, the stuck probe) counts as in flight
+  until it ends, so a slow reply is never routed mid-answer; a worker that
+  never answers is left to the inactivity threshold. A task moved by anyone
+  else before the route is left as they moved it. The window is task
   metadata `idle_nudge_seconds` (0 to 3600; 0 turns it off). It applies to
   `kind=agent` worker tasks only, never mid-turn, and never while the worker
   waits by design: on a pending checkpoint, on a child task still open, on
@@ -230,6 +235,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   carries the provider's error line and the stderr tail (at most 2 KiB) after
   "process exited 1", and the turn's output reaches `session.log` and
   `stream.jsonl`, which stayed empty before (CW-20261001-0105).
+- A session no longer persists a credential its agent CLI echoes. The
+  value of every secret-named variable in the launch env (`*TOKEN*`,
+  `*API_KEY*`, `*SECRET*` and the like, from the session's env, the
+  daemon's env and the mux env) is replaced with `[redacted]`, matching
+  exactly, in the run's error, `session.log`, the per-run stderr log,
+  `stream.jsonl` and the events the executor records (CW-20261001-0123).
 - A profile's `args` may not contain `--` or start with a non-option: they
   go among the agent CLI's options, ahead of the `--` before the prompt, where
   either would turn flags into prompt text. `profiles.yaml` loading and

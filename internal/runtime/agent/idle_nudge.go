@@ -8,6 +8,7 @@ import (
 
 	gomsg "github.com/hollis-labs/go-messaging"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
 	"github.com/hollis-labs/torque/internal/runtime/scheduler"
 )
 
@@ -26,7 +27,7 @@ const idleNudgeMaxSeconds = 3600
 const idleNudgeSendTimeout = 30 * time.Second
 
 // idleNudgeText is the one reminder turn a worker gets.
-const idleNudgeText = "You ended your turn without signalling. Call torque_task_review if the work is complete, or torque_task_blocked with the reason. This is the only reminder: if you stay idle, Torque routes the task itself, to review if commits or task output landed and to blocked otherwise."
+const idleNudgeText = "You ended your turn without signalling. Call torque_task_review if the work is complete, or torque_task_blocked with the reason. Ending your turn again without signalling routes the task. If you are waiting on something, keep waiting inside this turn (poll it) or raise a checkpoint."
 
 // autoRouteCommentAuthor marks the comment that tells the task's readers it
 // was routed by Torque, not by its worker.
@@ -50,9 +51,13 @@ func resolveIdleNudgeWindow(opts Options) time.Duration {
 // task out of doing (CW-20261001-0117). A worker that finished but never
 // called torque_task_review otherwise holds its project's slot until the
 // inactivity threshold. Once no turn has been in flight for window since the
-// last one ended, it sends the worker one reminder turn. If the worker is
-// still idle a window after that, the reminder or the worker's reply to it,
-// step reports that the run should be routed.
+// last one ended, it sends the worker one reminder turn. The reminder's turn
+// is in flight from the send until a done or error closes it (beginSend), so
+// a reply that thinks, backs off or retries for a while before its first
+// event is never read as idle. Only once a turn has ended after the reminder
+// and the worker has been idle a window since does step report that the run
+// should be routed. A worker that never answers is left to the inactivity
+// threshold.
 //
 // runLongLived's status poll drives it, so it needs no loop of its own:
 // step runs only on polls that find the task still doing. It never acts
@@ -80,16 +85,17 @@ func (n *idleNudger) step(now time.Time) bool {
 		return false
 	}
 	if !n.sentAt.IsZero() {
-		since := ended
-		if n.sentAt.After(since) {
-			since = n.sentAt
+		if !ended.After(n.sentAt) {
+			return false
 		}
-		return now.Sub(since) >= n.window && !n.isWaiting()
+		return now.Sub(ended) >= n.window && !n.isWaiting()
 	}
 	if now.Sub(ended) < n.window || n.isWaiting() {
 		return false
 	}
+	abort := n.turn.beginSend()
 	if err := n.nudge(); err != nil {
+		abort()
 		log.Printf("agent: idle reminder failed (will retry on the next status poll): %v", err)
 		return false
 	}
@@ -183,19 +189,12 @@ func routeUnsignalled(v scheduler.WorkerVerdict, taskOutput int) (status, reason
 	return "blocked", lead + ", and left no commits on the run branch and no comments or artifacts on the task"
 }
 
-// commentAutoRoute records the route on the task. A review result's reason
+// autoRouteComment records the route on the task. A review result's reason
 // reaches no reader otherwise: the lifecycle moves the task to review
-// without one.
-func commentAutoRoute(store *sqlstore.Store, taskID, status, reason string) {
-	if store == nil || taskID == "" {
-		return
-	}
-	if err := store.AddComment(&sqlstore.CommentRecord{
-		EntityType: "task",
-		EntityID:   taskID,
-		Author:     autoRouteCommentAuthor,
-		Content:    fmt.Sprintf("Moved to %s by Torque: %s.", status, reason),
-	}); err != nil {
-		log.Printf("agent: auto-route comment on %s failed: %v", taskID, err)
+// without one. The lifecycle posts it once it has moved the task.
+func autoRouteComment(status, reason string) *executor.TaskComment {
+	return &executor.TaskComment{
+		Author:  autoRouteCommentAuthor,
+		Content: fmt.Sprintf("Moved to %s by Torque: %s.", status, reason),
 	}
 }
