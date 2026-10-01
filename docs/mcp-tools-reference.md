@@ -704,3 +704,51 @@ size defaults to 50 and clamps at 200, total is opt-in, and the final cursor
 is null. Cursor/sort mismatches and positive offset plus cursor reject with
 `arg_invalid`. Byte trimming preserves continuation from the last emitted
 row. See [the runs contract](api-pagination.md#runs-implementation-reconciliation-cw-20261001-0562).
+
+## Entity and run facets (CW-20261001-0564)
+
+Use facets for stat cards and filter choices without paging list records.
+These tools are read-only and idempotent. Parent tools follow their entity's
+feature flag; run facets are always registered.
+
+| Tool | Filters (same as list) | Dimensions |
+|---|---|---|
+| `torque_project_facets` | `status`, `search`, `include_archived` | `status` |
+| `torque_epic_facets` | `status`, `project_id`, `search`, `include_archived` | `status`, `project_id`, `priority` |
+| `torque_sprint_facets` | `status`, `project_id`, `search`, `include_archived`, `over_budget`, `cost_budget_min`, `cost_budget_max` | `status`, `project_id`, `approval_mode` |
+| `torque_run_facets` | `task_id`, `project_id`, `sprint_id`, `epic_id`, CSV `status`, inclusive `since`/`until` (RFC3339 or Unix milliseconds) | `status`, `executor`, `profile` |
+
+`dimensions` is CSV (defaults to all supported, duplicates removed).
+`bucket_limit` defaults to 50, zero uses the default, values above 200 clamp,
+and negative/malformed values reject. Row `limit`, `offset`, `cursor`,
+`sort_by`, `sort_dir` reject, even when blank. Unknown arguments reject.
+
+Response `data` is `{matching_count,bucket_limit,dimensions,facets:[{dimension,
+buckets:[{value,count}],total_distinct,returned,truncated}]}`. Buckets order by
+count descending, then typed value ascending with null last among equal counts.
+Null is distinct from empty strings. Filters apply to every dimension, including
+its own dimension. Empty cohorts return empty buckets and zero counts.
+
+Parent responses add `task_rollups:{scopes:[{scope_id,total,counts}],
+total_distinct,returned,truncated}`. Each matching parent contributes a scope,
+including parents with no tasks. Internal tasks are excluded. `counts` maps raw
+task statuses to counts; all statuses for each returned parent are complete.
+Parents order by task total descending, then ID ascending. `bucket_limit`
+bounds the number of parent groups independently of each facet dimension.
+
+Run responses add `totals:{cost,prompt_tokens,completion_tokens}`. Cost sums
+canonical `cost_ledger` entries joined by run ID to the exact matching runs;
+run records supply tokens. `since`/`until` filter run start times, not ledger
+entry timestamps. Runs without ledger entries contribute zero cost. Multiple
+ledger entries never multiply token/count totals. `profile` is the **current
+task profile, not the profile at run time**: nonempty task `launch_profile`,
+fallback `agent_profile`. No historical profile snapshot is stored on runs.
+
+MCP's byte budget can further trim value buckets or whole parent groups;
+`returned` and `truncated` describe that reduction. Exact `matching_count`,
+`total_distinct`, and run totals are retained. HTTP routes are `/api/v1/projects/facets`,
+`/epics/facets`, `/sprints/facets`, and `/runs/facets` under the same `/api/v1`
+prefix. GUI consumption is S3 work.
+
+Example: `torque_run_facets` with `{"project_id":"PRJ-1",
+"since":"2026-10-01T00:00:00Z","dimensions":"status,profile","bucket_limit":"20"}`.

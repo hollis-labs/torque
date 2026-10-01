@@ -156,6 +156,7 @@ func (s *Server) routes() {
 
 		// Projects
 		r.Get("/projects", s.listProjects)
+		r.Get("/projects/facets", s.entityFacets("projects"))
 		r.Post("/projects", s.createProject)
 		r.Get("/projects/{id}", s.getProject)
 		r.Put("/projects/{id}", s.updateProject)
@@ -167,6 +168,7 @@ func (s *Server) routes() {
 
 		// Sprints
 		r.Get("/sprints", s.listSprints)
+		r.Get("/sprints/facets", s.entityFacets("sprints"))
 		r.Post("/sprints", s.createSprint)
 		r.Get("/sprints/{id}", s.getSprint)
 		r.Put("/sprints/{id}", s.updateSprint)
@@ -193,6 +195,7 @@ func (s *Server) routes() {
 
 		// Epics
 		r.Get("/epics", s.listEpics)
+		r.Get("/epics/facets", s.entityFacets("epics"))
 		r.Post("/epics", s.createEpic)
 		r.Get("/epics/{id}", s.getEpic)
 		r.Put("/epics/{id}", s.updateEpic)
@@ -217,6 +220,7 @@ func (s *Server) routes() {
 
 		// Runs
 		r.Get("/runs", s.listRuns)
+		r.Get("/runs/facets", s.runFacets)
 		r.Get("/runs/{id}", s.getRun)
 
 		// Artifacts
