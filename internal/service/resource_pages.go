@@ -43,7 +43,7 @@ func ResourceSortPolicy(resource string) (fields []string, by, dir string) {
 	case "pending_checkpoints":
 		return []string{"created_at", "status"}, "created_at", "asc"
 	case "models":
-		return []string{"name", "provider_id", "id"}, "name", "asc"
+		return []string{"name", "provider_id", "id", "cost", "context", "output"}, "name", "asc"
 	case "messages":
 		return []string{"created_at"}, "created_at", "asc"
 	}
