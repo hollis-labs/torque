@@ -84,6 +84,7 @@ func (s *Server) routes() {
 		r.Post("/tasks", s.createTask)
 		r.Get("/tasks/search", s.searchTasks)
 		r.Get("/tasks/facets", s.taskFacets)
+		r.Get("/tasks/rollup", s.taskRollup)
 		r.Post("/tasks/bulk-transition", s.bulkTransitionTasks)
 		r.Get("/tasks/{id}", s.getTask)
 		r.Put("/tasks/{id}", s.updateTask)

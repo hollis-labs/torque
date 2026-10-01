@@ -1,6 +1,9 @@
 import type {
   Task,
   TaskFilter,
+  TaskScopeKey,
+  TaskScopeRollupResponse,
+  TaskSummary,
   Run,
   Artifact,
   Collection,
@@ -99,8 +102,8 @@ interface ApiArtifactRecord {
   CreatedAt: string
 }
 
-interface TaskListResponse {
-  tasks: Task[]
+interface TaskListResponse<T = Task> {
+  tasks: T[]
   total: number
   returned?: number
   limit?: number
@@ -114,6 +117,24 @@ interface TaskListResponse {
 }
 
 const TASK_LIST_PAGE_SIZE = 200
+
+function taskFilterParams(filter?: TaskFilter): Record<string, string | number | boolean | undefined> {
+  const params: Record<string, string | number | boolean | undefined> = {}
+  if (filter?.status?.length) params['status'] = filter.status.join(',')
+  if (filter?.priority?.length) params['priority'] = filter.priority.join(',')
+  if (filter?.tags?.length) params['tags'] = filter.tags.join(',')
+  if (filter?.sprint_id) params['sprint_id'] = filter.sprint_id
+  if (filter?.project_id) params['project_id'] = filter.project_id
+  if (filter?.epic_id) params['epic_id'] = filter.epic_id
+  if (filter?.search) params['search'] = filter.search
+  if (filter?.limit !== undefined) params['limit'] = filter.limit
+  if (filter?.offset !== undefined) params['offset'] = filter.offset
+  if (filter?.kind) params['kind'] = filter.kind
+  if (filter?.parent_id !== undefined) params['parent_id'] = filter.parent_id
+  if (filter?.manual !== undefined) params['manual'] = filter.manual ? 'true' : 'false'
+  if (filter?.include_internal) params['include_internal'] = 'true'
+  return params
+}
 
 /**
  * Coerce any of the shapes the artifact list endpoints have historically
@@ -277,6 +298,28 @@ export class TorqueApiClient {
   // -------------------------
 
   async listTasks(filter?: TaskFilter): Promise<{ tasks: Task[]; total: number }> {
+    return this.pageTasks<Task>(filter)
+  }
+
+  /**
+   * listTasks without each task's description and system_prompt
+   * (`fields=summary`), for list views that render neither. The bodies were
+   * most of a task list's bytes (CW-20261001-0005).
+   */
+  async listTaskSummaries(filter?: TaskFilter): Promise<{ tasks: TaskSummary[]; total: number }> {
+    return this.pageTasks<TaskSummary>(filter, 'summary')
+  }
+
+  /**
+   * Per-scope task counts by status, computed server-side in one query
+   * instead of paging every task to count it. `filter` narrows the cohort
+   * the same way it narrows listTasks; paging fields are not accepted.
+   */
+  async taskRollup(groupBy: TaskScopeKey, filter?: Omit<TaskFilter, 'limit' | 'offset'>): Promise<TaskScopeRollupResponse> {
+    return this.get<TaskScopeRollupResponse>('/tasks/rollup', { group_by: groupBy, ...taskFilterParams(filter) })
+  }
+
+  private async pageTasks<T extends TaskSummary>(filter: TaskFilter | undefined, fields?: 'summary'): Promise<{ tasks: T[]; total: number }> {
     const explicitLimit = filter?.limit
     const startOffset = filter?.offset ?? 0
     if (explicitLimit !== undefined && (!Number.isSafeInteger(explicitLimit) || !Number.isFinite(explicitLimit))) {
@@ -286,7 +329,7 @@ export class TorqueApiClient {
       throw new ApiError(0, 'Task list offset must be a non-negative safe integer.')
     }
     const target = explicitLimit !== undefined && explicitLimit > 0 ? explicitLimit : undefined
-    const tasks: Task[] = []
+    const tasks: T[] = []
     let total = 0
     let offset = startOffset
     let nextLimit = target === undefined ? undefined : Math.min(target, TASK_LIST_PAGE_SIZE)
@@ -295,7 +338,7 @@ export class TorqueApiClient {
       if (target !== undefined && target - tasks.length <= 0) {
         return { tasks, total }
       }
-      const page = await this.fetchTaskPage({ ...filter, limit: nextLimit, offset })
+      const page = await this.fetchTaskPage<T>({ ...filter, limit: nextLimit, offset }, fields)
       total = page.total
       tasks.push(...page.tasks)
 
@@ -325,22 +368,10 @@ export class TorqueApiClient {
     }
   }
 
-  private async fetchTaskPage(filter?: TaskFilter): Promise<TaskListResponse> {
-    const params: Record<string, string | number | boolean | undefined> = {}
-    if (filter?.status?.length) params['status'] = filter.status.join(',')
-    if (filter?.priority?.length) params['priority'] = filter.priority.join(',')
-    if (filter?.tags?.length) params['tags'] = filter.tags.join(',')
-    if (filter?.sprint_id) params['sprint_id'] = filter.sprint_id
-    if (filter?.project_id) params['project_id'] = filter.project_id
-    if (filter?.epic_id) params['epic_id'] = filter.epic_id
-    if (filter?.search) params['search'] = filter.search
-    if (filter?.limit !== undefined) params['limit'] = filter.limit
-    if (filter?.offset !== undefined) params['offset'] = filter.offset
-    if (filter?.kind) params['kind'] = filter.kind
-    if (filter?.parent_id !== undefined) params['parent_id'] = filter.parent_id
-    if (filter?.manual !== undefined) params['manual'] = filter.manual ? 'true' : 'false'
-    if (filter?.include_internal) params['include_internal'] = 'true'
-    return this.get<TaskListResponse>('/tasks', params)
+  private async fetchTaskPage<T>(filter: TaskFilter, fields?: 'summary'): Promise<TaskListResponse<T>> {
+    const params = taskFilterParams(filter)
+    if (fields) params['fields'] = fields
+    return this.get<TaskListResponse<T>>('/tasks', params)
   }
 
   async getTask(id: string): Promise<Task> {

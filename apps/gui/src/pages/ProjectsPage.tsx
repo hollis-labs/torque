@@ -6,8 +6,8 @@ import { ProjectCreateDialog } from '@/components/domain/project-create-dialog'
 import { ScopeOverviewCard } from '@/components/domain/scope-overview-card'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
-import { buildTaskRollup, groupTasksByScope } from '@/lib/scope-metrics'
-import type { Epic, Project, Sprint, Task } from '@/lib/types'
+import { rollupFromStatusCounts, rollupsByScope } from '@/lib/scope-metrics'
+import type { Epic, Project, Sprint, TaskScopeRollupResponse } from '@/lib/types'
 
 const SSE_EVENTS = ['project.updated', 'project.created', 'project.deleted', 'task.updated', 'task.created', 'task.transitioned']
 
@@ -25,7 +25,7 @@ export default function ProjectsPage() {
   const navigate = useNavigate()
   const { lastEvent } = useSSE(SSE_EVENTS)
   const [projects, setProjects] = useState<Project[]>([])
-  const [tasks, setTasks] = useState<Task[]>([])
+  const [taskRollup, setTaskRollup] = useState<TaskScopeRollupResponse | null>(null)
   const [sprints, setSprints] = useState<Sprint[]>([])
   const [epics, setEpics] = useState<Epic[]>([])
   const [loading, setLoading] = useState(true)
@@ -38,15 +38,15 @@ export default function ProjectsPage() {
     setLoading(true)
     setError(null)
     try {
-      const [projectRes, taskRes, sprintRes, epicRes] = await Promise.all([
+      const [projectRes, rollupRes, sprintRes, epicRes] = await Promise.all([
         api.listProjects(),
-        api.listTasks(),
+        api.taskRollup('project_id'),
         api.listSprints(),
         api.listEpics(),
       ])
       if (myGen !== loadGeneration.current) return
       setProjects(projectRes.projects)
-      setTasks(taskRes.tasks)
+      setTaskRollup(rollupRes)
       setSprints(sprintRes.sprints)
       setEpics(epicRes.epics)
     } catch (err) {
@@ -66,9 +66,9 @@ export default function ProjectsPage() {
     void load()
   }, [lastEvent, load])
 
-  const projectTasks = useMemo(() => groupTasksByScope(tasks, 'project_id'), [tasks])
+  const projectRollups = useMemo(() => rollupsByScope(taskRollup), [taskRollup])
   const activeCount = projects.filter((project) => project.status === 'active').length
-  const scopedTaskCount = tasks.filter((task) => task.project_id).length
+  const scopedTaskCount = taskRollup?.total ?? 0
 
   const summaryCards = [
     { label: 'Projects', value: projects.length },
@@ -80,12 +80,12 @@ export default function ProjectsPage() {
 
   const projectCards = useMemo(() => {
     return projects.map((project) => {
-      const rollup = buildTaskRollup(projectTasks.get(project.id) ?? [])
+      const rollup = projectRollups.get(project.id) ?? rollupFromStatusCounts({})
       const projectSprintCount = sprints.filter((sprint) => sprint.project_id === project.id).length
       const projectEpicCount = epics.filter((epic) => epic.project_id === project.id).length
       return { project, rollup, projectSprintCount, projectEpicCount }
     })
-  }, [projects, projectTasks, sprints, epics])
+  }, [projects, projectRollups, sprints, epics])
 
   return (
     <div className="flex h-full flex-col">

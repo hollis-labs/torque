@@ -335,6 +335,13 @@ type TaskFacetRequest struct {
 	Limit      int
 }
 
+// TaskScopeStatusCount is one (scope, status) cell of TaskScopeRollup.
+type TaskScopeStatusCount struct {
+	ScopeID string
+	Status  string
+	Count   int
+}
+
 // TaskUpdate holds optional fields to update; nil pointer = no change.
 type TaskUpdate struct {
 	Title             *string
@@ -671,6 +678,53 @@ func (s *Store) TaskFacets(req TaskFacetRequest) ([]TaskFacetResult, int, error)
 		results = append(results, r)
 	}
 	return results, matching, nil
+}
+
+// TaskScopeRollup counts the filtered tasks per (scope, status) for one scope
+// column — project_id, epic_id or sprint_id — in a single GROUP BY, so a
+// caller can show per-scope progress without loading the tasks
+// (CW-20261001-0005). Tasks whose scope column is NULL or empty are left
+// out, as they belong to no scope. Rows come back ordered by scope, then
+// status.
+func (s *Store) TaskScopeRollup(f TaskFilter, column string) ([]TaskScopeStatusCount, error) {
+	col, ok := taskRollupColumn(column)
+	if !ok {
+		return nil, fmt.Errorf("unsupported task rollup column %q", column)
+	}
+	f.Limit = 0
+	f.Offset = 0
+	f.AfterSortValue = ""
+	f.AfterID = ""
+	where, args, err := s.taskListPredicates(f)
+	if err != nil {
+		return nil, err
+	}
+	where = append(where, col+" IS NOT NULL", col+" <> ''")
+	q := "SELECT " + col + ", status, COUNT(*) FROM tasks WHERE " + strings.Join(where, " AND ") +
+		" GROUP BY " + col + ", status ORDER BY " + col + " ASC, status ASC"
+	rows, err := s.ReadDB().Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []TaskScopeStatusCount{}
+	for rows.Next() {
+		var c TaskScopeStatusCount
+		if err := rows.Scan(&c.ScopeID, &c.Status, &c.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func taskRollupColumn(column string) (string, bool) {
+	switch column {
+	case "project_id", "epic_id", "sprint_id":
+		return column, true
+	default:
+		return "", false
+	}
 }
 
 func (s *Store) taskColumnFacet(dim string, where []string, args []any, limit int) (TaskFacetResult, error) {

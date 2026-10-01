@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -252,6 +253,73 @@ func (s *TaskService) Facets(q TaskFacetQuery) (TaskFacetQueryResult, error) {
 		Dimensions:    dims,
 		Facets:        facets,
 	}, nil
+}
+
+// TaskScopeRollupColumns are the scope columns ScopeRollup can group by.
+var TaskScopeRollupColumns = []string{"project_id", "epic_id", "sprint_id"}
+
+type TaskScopeRollupQuery struct {
+	TaskQuery
+	GroupBy string
+}
+
+// TaskScopeRollup is one scope's task counts. Counts is keyed by raw status
+// so callers derive their own buckets (open, done, completion) and a status
+// added later appears without a contract change.
+type TaskScopeRollup struct {
+	ScopeID string         `json:"scope_id"`
+	Total   int            `json:"total"`
+	Counts  map[string]int `json:"counts"`
+}
+
+// TaskScopeRollupResult lists every scope with at least one matching task,
+// ordered by scope id. Total counts the matching tasks that have the
+// group_by scope set at all.
+type TaskScopeRollupResult struct {
+	GroupBy string            `json:"group_by"`
+	Total   int               `json:"total"`
+	Scopes  []TaskScopeRollup `json:"scopes"`
+}
+
+// ScopeRollup counts the tasks matching q per scope and status, so a scope
+// overview can show progress without paging every task to the client
+// (CW-20261001-0005). Filtering is the task-list contract, including the
+// default that leaves out internal tasks; paging and sort do not apply.
+func (s *TaskService) ScopeRollup(q TaskScopeRollupQuery) (TaskScopeRollupResult, error) {
+	if !slices.Contains(TaskScopeRollupColumns, q.GroupBy) {
+		return TaskScopeRollupResult{}, &ValidationError{Field: "group_by", Message: "group_by must be one of " + strings.Join(TaskScopeRollupColumns, ", ")}
+	}
+	for _, p := range []struct {
+		field string
+		set   bool
+	}{
+		{"limit", q.Limit != 0}, {"offset", q.Offset != 0}, {"cursor", q.Cursor != ""},
+		{"sort_by", q.SortBy != ""}, {"sort_dir", q.SortDir != ""},
+	} {
+		if p.set {
+			return TaskScopeRollupResult{}, &ValidationError{Field: p.field, Message: p.field + " is not supported by the task rollup; it always counts the whole matching cohort"}
+		}
+	}
+	filter, _, _, _, err := normalizeTaskQuery(q.TaskQuery)
+	if err != nil {
+		return TaskScopeRollupResult{}, err
+	}
+	cells, err := s.store.TaskScopeRollup(filter, q.GroupBy)
+	if err != nil {
+		return TaskScopeRollupResult{}, err
+	}
+	result := TaskScopeRollupResult{GroupBy: q.GroupBy, Scopes: []TaskScopeRollup{}}
+	// The store orders cells by scope, so each scope's cells are adjacent.
+	for _, c := range cells {
+		if n := len(result.Scopes); n == 0 || result.Scopes[n-1].ScopeID != c.ScopeID {
+			result.Scopes = append(result.Scopes, TaskScopeRollup{ScopeID: c.ScopeID, Counts: map[string]int{}})
+		}
+		scope := &result.Scopes[len(result.Scopes)-1]
+		scope.Counts[c.Status] += c.Count
+		scope.Total += c.Count
+		result.Total += c.Count
+	}
+	return result, nil
 }
 
 func normalizeTaskFacetDimensions(values []string) ([]string, error) {

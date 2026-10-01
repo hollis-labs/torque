@@ -4,10 +4,10 @@ import { FolderClosed, FolderPlus, Inbox } from 'lucide-react'
 import { QuickAddDialog } from '@/components/collections/QuickAddDialog'
 import { useApi } from '@/hooks/use-api'
 import { notifyError, notifySuccess } from '@/lib/toast'
-import type { Task } from '@/lib/types'
+import type { Task, TaskSummary } from '@/lib/types'
 
 interface CollectionBadgeProps {
-  task: Task
+  task: TaskSummary
   /** Compact = row-style (smaller text, subtle border). */
   variant?: 'compact' | 'header'
   /**
@@ -63,7 +63,7 @@ export function CollectionBadge({ task, variant = 'compact', onChange }: Collect
 }
 
 interface InboxOrFreshActionsProps {
-  task: Task
+  task: TaskSummary
   variant: 'compact' | 'header'
   onChange?: (task: Task) => void
   inInbox: boolean

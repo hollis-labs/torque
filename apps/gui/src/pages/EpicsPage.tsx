@@ -6,8 +6,8 @@ import { EpicCreateDialog } from '@/components/domain/epic-create-dialog'
 import { ScopeOverviewCard } from '@/components/domain/scope-overview-card'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
-import { buildTaskRollup, groupTasksByScope } from '@/lib/scope-metrics'
-import type { Epic, Project, Task } from '@/lib/types'
+import { rollupFromStatusCounts, rollupsByScope } from '@/lib/scope-metrics'
+import type { Epic, Project, TaskScopeRollupResponse } from '@/lib/types'
 
 const SSE_EVENTS = ['epic.updated', 'epic.created', 'epic.deleted', 'task.updated', 'task.created', 'task.transitioned']
 
@@ -26,7 +26,7 @@ export default function EpicsPage() {
   const { lastEvent } = useSSE(SSE_EVENTS)
   const [epics, setEpics] = useState<Epic[]>([])
   const [projects, setProjects] = useState<Project[]>([])
-  const [tasks, setTasks] = useState<Task[]>([])
+  const [taskRollup, setTaskRollup] = useState<TaskScopeRollupResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
@@ -37,15 +37,15 @@ export default function EpicsPage() {
     setLoading(true)
     setError(null)
     try {
-      const [epicRes, projectRes, taskRes] = await Promise.all([
+      const [epicRes, projectRes, rollupRes] = await Promise.all([
         api.listEpics(),
         api.listProjects(),
-        api.listTasks(),
+        api.taskRollup('epic_id'),
       ])
       if (myGen !== loadGeneration.current) return
       setEpics(epicRes.epics)
       setProjects(projectRes.projects)
-      setTasks(taskRes.tasks)
+      setTaskRollup(rollupRes)
     } catch (err) {
       if (myGen !== loadGeneration.current) return
       setError(err instanceof Error ? err.message : 'Failed to load epics')
@@ -63,7 +63,7 @@ export default function EpicsPage() {
     void load()
   }, [lastEvent, load])
 
-  const epicTasks = useMemo(() => groupTasksByScope(tasks, 'epic_id'), [tasks])
+  const epicRollups = useMemo(() => rollupsByScope(taskRollup), [taskRollup])
   const projectNames = useMemo(
     () => new Map(projects.map((project) => [project.id, project.name])),
     [projects]
@@ -72,15 +72,15 @@ export default function EpicsPage() {
   const summaryCards = [
     { label: 'Epics', value: epics.length },
     { label: 'Active', value: epics.filter((epic) => epic.status === 'active').length, accentColor: '#34d399' },
-    { label: 'Scoped Tasks', value: tasks.filter((task) => task.epic_id).length, accentColor: '#a78bfa' },
+    { label: 'Scoped Tasks', value: taskRollup?.total ?? 0, accentColor: '#a78bfa' },
     { label: 'P1', value: epics.filter((epic) => epic.priority === 1).length, accentColor: '#f87171' },
   ]
 
   const epicCards = useMemo(() => {
     return epics.map((epic) => {
-      return { epic, rollup: buildTaskRollup(epicTasks.get(epic.id) ?? []) }
+      return { epic, rollup: epicRollups.get(epic.id) ?? rollupFromStatusCounts({}) }
     })
-  }, [epics, epicTasks])
+  }, [epics, epicRollups])
 
   return (
     <div className="flex h-full flex-col">

@@ -446,9 +446,14 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 		writeFieldError(w, http.StatusBadRequest, "query", "invalid query string: "+err.Error())
 		return
 	}
-	query, qerr := parseHTTPTaskQuery(q, false)
+	query, qerr := parseHTTPTaskQuery(q, "fields")
 	if qerr != nil {
 		writeFieldError(w, http.StatusBadRequest, qerr.field, qerr.Error())
+		return
+	}
+	fields := q.Get("fields")
+	if fields != "" && fields != "summary" {
+		writeFieldError(w, http.StatusBadRequest, "fields", "fields must be summary or omitted")
 		return
 	}
 	query.WithTotal = true
@@ -471,6 +476,13 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if fields == "summary" {
+		for _, task := range out {
+			for _, key := range taskSummaryOmitted {
+				delete(task, key)
+			}
+		}
 	}
 	hasMore := result.HasMoreFromQuery
 	var nextOffset interface{}
@@ -531,7 +543,7 @@ func (s *Server) taskFacets(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	query, qerr := parseHTTPTaskQuery(q, true)
+	query, qerr := parseHTTPTaskQuery(q, "dimensions", "bucket_limit")
 	if qerr != nil {
 		writeFieldError(w, http.StatusBadRequest, qerr.field, qerr.Error())
 		return
@@ -561,9 +573,44 @@ func (s *Server) taskFacets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-func parseHTTPTaskQuery(q url.Values, facet bool) (service.TaskQuery, *taskListQueryError) {
+// taskSummaryOmitted are the free-text bodies GET /tasks?fields=summary
+// leaves out. description alone was most of a list page's bytes, and list
+// views render neither (CW-20261001-0005).
+var taskSummaryOmitted = []string{"description", "system_prompt"}
+
+// taskRollup serves GET /api/v1/tasks/rollup?group_by=project_id|epic_id|sprint_id
+// plus any task-list filter: per-scope task counts by status, computed in
+// one GROUP BY instead of by paging every task to the client.
+func (s *Server) taskRollup(w http.ResponseWriter, r *http.Request) {
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		writeFieldError(w, http.StatusBadRequest, "query", "invalid query string: "+err.Error())
+		return
+	}
+	query, qerr := parseHTTPTaskQuery(q, "group_by")
+	if qerr != nil {
+		writeFieldError(w, http.StatusBadRequest, qerr.field, qerr.Error())
+		return
+	}
+	result, err := s.svc.Task.ScopeRollup(service.TaskScopeRollupQuery{TaskQuery: query, GroupBy: q.Get("group_by")})
+	if err != nil {
+		var verr *service.ValidationError
+		if errors.As(err, &verr) {
+			writeFieldError(w, http.StatusBadRequest, verr.Field, verr.Message)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// parseHTTPTaskQuery decodes the task-list filter shared by the list,
+// facets and rollup routes. extra names the route's own parameters, which
+// the caller reads itself.
+func parseHTTPTaskQuery(q url.Values, extra ...string) (service.TaskQuery, *taskListQueryError) {
 	query := service.TaskQuery{}
-	if err := validateTaskListQueryKeys(q, facet); err != nil {
+	if err := validateTaskListQueryKeys(q, extra...); err != nil {
 		return query, err
 	}
 	if v := q.Get("status"); v != "" {
@@ -729,7 +776,7 @@ func writeFieldError(w http.ResponseWriter, status int, field, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg, "field": field})
 }
 
-func validateTaskListQueryKeys(q url.Values, facet bool) *taskListQueryError {
+func validateTaskListQueryKeys(q url.Values, extra ...string) *taskListQueryError {
 	supported := map[string]bool{
 		"status": true, "priority": true, "priority_gte": true, "priority_lte": true, "sprint_id": true, "project_id": true, "epic_id": true,
 		"executor": true, "kind": true, "include_internal": true, "source_type": true,
@@ -743,15 +790,14 @@ func validateTaskListQueryKeys(q url.Values, facet bool) *taskListQueryError {
 		"max_retries_gte": true, "max_retries_lte": true,
 		"sort_by": true, "sort_dir": true, "cursor": true,
 	}
-	if facet {
-		supported["dimensions"] = true
-		supported["bucket_limit"] = true
+	for _, key := range extra {
+		supported[key] = true
 	}
 	for key, values := range q {
 		if !supported[key] {
 			return &taskListQueryError{
 				field:   key,
-				message: "unsupported query parameter " + key + "; supported task-list parameters are status, priority, priority_gte, priority_lte, sprint_id, project_id, epic_id, executor, kind, include_internal, source_type, source_ref, trust, checkpoint_mode, parent_id, manual, tags, tag, tags_any, tags_none, missing, present, search, agent_profile, launch_profile, created_after, created_before, updated_after, updated_before, cost_budget_gte, cost_budget_lte, token_budget_gte, token_budget_lte, max_duration_ms_gte, max_duration_ms_lte, max_retries_gte, max_retries_lte, sort_by, sort_dir, cursor, limit, offset",
+				message: "unsupported query parameter " + key + "; supported task-list parameters are status, priority, priority_gte, priority_lte, sprint_id, project_id, epic_id, executor, kind, include_internal, source_type, source_ref, trust, checkpoint_mode, parent_id, manual, tags, tag, tags_any, tags_none, missing, present, search, agent_profile, launch_profile, created_after, created_before, updated_after, updated_before, cost_budget_gte, cost_budget_lte, token_budget_gte, token_budget_lte, max_duration_ms_gte, max_duration_ms_lte, max_retries_gte, max_retries_lte, sort_by, sort_dir, cursor, limit, offset" + strings.Join(append([]string{""}, extra...), ", "),
 			}
 		}
 		if len(values) > 1 {
