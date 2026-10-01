@@ -157,7 +157,7 @@ type Session struct {
 	PID             int               `json:"PID"`
 	ExitCode        *int              `json:"ExitCode,omitempty"`
 	ResumeHint      []byte            `json:"ResumeHint,omitempty"`
-	Resumed         bool              `json:"Resumed,omitempty"` // ResumeSession continued the stored provider conversation (CW-20261001-0174)
+	Resumed         bool              `json:"Resumed,omitempty"` // launched continuing a stored provider conversation (meta torque.resumed; CW-20261001-0174, -0203)
 	Meta            map[string]string `json:"Meta,omitempty"`
 	CreatedAt       time.Time         `json:"CreatedAt"`
 	UpdatedAt       time.Time         `json:"UpdatedAt"`
@@ -216,8 +216,14 @@ type CheckpointRequest struct {
 	Note      string
 }
 
-// ResumeRequest re-launches a session against a previously persisted
-// checkpoint. Only the lifecycle path; the boot-time entry uses
+// ResumeRequest re-launches a session from a previously persisted
+// checkpoint, as a new long-lived session bound to the source session's task,
+// project and role (Manager.Resume). The new session continues the
+// checkpoint's provider conversation only when it recorded an id, the
+// profile still boots the runtime that recorded it, and Torque wires that
+// runtime's resume (GenuinelyResumable); otherwise it boots fresh with the
+// kickoff. Its Resumed field says whether the launch carried the id. Only the
+// lifecycle path; the boot-time entry uses
 // agent.Boot(Mode=ModeResume, ResumeFromCheckpoint=...) instead.
 type ResumeRequest struct {
 	SessionID     string

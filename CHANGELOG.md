@@ -240,6 +240,36 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- The HTTP and MCP session resume (`POST /api/v1/sessions/{id}/resume`,
+  `torque_session_resume`, `Manager.Resume`) makes the same decision as
+  `ResumeSession` (CW-20261001-0203). It continues the checkpoint's provider
+  conversation only when a provider session id was recorded, the profile
+  still boots the runtime that recorded it, and Torque wires that runtime's
+  resume; otherwise it boots fresh with the kickoff. What changes:
+  - **codex app-server:** a resume used to pass the thread id, which the
+    app-server ignores, and skip the kickoff, so the new session sat silent.
+    It now boots fresh and fires the kickoff on a new thread.
+  - **claude-code (and opencode run, pi, the other wired runtimes):**
+    `Checkpoint` never recorded the provider session id, so a checkpoint
+    resume always started a session with no conversation to continue and, as
+    `ModeResume`, no kickoff. A checkpoint now records the session's provider
+    session id (a checkpoint written before this falls back to its session's
+    own), and a resume launches the CLI with it (`claude --resume <id>`).
+  - **Every resume is a long-lived boot that runs the kickoff,** like
+    `ResumeSession`'s, as a new session bound to the source session's task,
+    project and role, with the task bundle planted. It was an unlinked
+    session with no task before. On subprocess-per-turn runtimes (claude
+    subprocess, opencode run) the call now returns after the kickoff turn
+    ends; streaming-stdio is unaffected.
+  - **A lost provider session boots fresh once** when the loss shows before
+    Boot returns, which is the case on subprocess-per-turn runtimes. A
+    streaming-stdio resume finds out on its first turn, and an ACP agent
+    without `loadSession` opens a new session without saying so
+    (CW-20261001-0202).
+  - The session's `Resumed` field (meta `torque.resumed`) is true when the
+    launch carried a provider session id: what Torque asked for, which an
+    ACP agent without `loadSession` can still ignore. It reads back on every
+    session read.
 - A long-lived run on the go-agent-wrapper path (opencode serve, claude-code,
   agy, ACP) ends as soon as a turn fails, blocked with the provider's
   message, as a Codex app-server run already did. An opencode serve worker
