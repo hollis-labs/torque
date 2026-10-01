@@ -76,35 +76,33 @@ export default function DashboardPage() {
     return value && TAB_VALUES.includes(value) ? value : 'activity'
   }, [searchParams])
 
-  const refreshAggregates = useCallback(async () => {
+  const refreshAggregates = useCallback(() => {
     const state = lifecycle.current
     const request = ++state.aggregateRequest
-    try {
-      const result = await loadAggregates(api)
+    return loadAggregates(api).then((result) => {
       if (!state.active || request !== state.aggregateRequest) return
       setData(result)
       setError(null)
       state.lastFetched = Date.now()
-    } catch (err) {
+    }).catch((err: unknown) => {
       if (state.active && request === state.aggregateRequest) setError(err instanceof Error ? err.message : 'Failed to refresh dashboard')
-    }
+    })
   }, [api])
 
-  const loadRecentPage = useCallback(async (cursor?: string | null) => {
+  const loadRecentPage = useCallback((cursor?: string | null) => {
     const state = lifecycle.current
     const request = ++state.rowRequest
-    try {
-      const page = await api.pageRuns({ limit: RECENT_PAGE_SIZE, sort_by: 'started_at', sort_dir: 'desc', ...(cursor ? { cursor } : {}) })
+    return api.pageRuns({ limit: RECENT_PAGE_SIZE, sort_by: 'started_at', sort_dir: 'desc', ...(cursor ? { cursor } : {}) }).then((page) => {
       if (!state.active || request !== state.rowRequest) return
       setRuns(page.items)
       setNextCursor(page.meta.next_cursor)
       setOlderPage(!!cursor)
       setRowsError(null)
-    } catch (err) {
+    }).catch((err: unknown) => {
       if (state.active && request === state.rowRequest) setRowsError(err instanceof Error ? err.message : 'Failed to load recent runs')
-    } finally {
+    }).finally(() => {
       if (state.active && request === state.rowRequest) setRowsLoading(false)
-    }
+    })
   }, [api])
 
   useEffect(() => {

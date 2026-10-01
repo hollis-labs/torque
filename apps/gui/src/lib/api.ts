@@ -431,7 +431,7 @@ export class TorqueApiClient {
     return { tasks: page.items, ...page.meta }
   }
 
-  async taskFacets(filter?: TaskFilter, dimensions = 'status'): Promise<TaskFacetResult> {
+  async taskFacets(filter?: Omit<TaskFilter, "limit" | "offset" | "sort_by" | "sort_dir">, dimensions = 'status'): Promise<TaskFacetResult> {
     return this.get<TaskFacetResult>('/tasks/facets', { ...taskFilterParams(filter), dimensions })
   }
 

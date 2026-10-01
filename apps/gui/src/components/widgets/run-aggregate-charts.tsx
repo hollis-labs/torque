@@ -1,7 +1,26 @@
-import { TimeSeriesChart } from '@hollis-labs/sysop-ui/charts'
+import { Area, AreaChart, Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { BarMeter, DonutChart, type BarMeterRow } from '@hollis-labs/sysop-ui/widgets'
-import type { AggregateFacet, RunTimeSeries } from '@/lib/api'
+import type { AggregateFacet, RunTimeBucket, RunTimeSeries } from '@/lib/api'
 import { STATUS_COLOR_VAR, STATUS_LABEL, TASK_STATUSES } from '@/lib/constants'
+
+// Plot the server window directly; the kit chart rebuilds a browser-local
+// last-N-days window, which can discard a boundary bucket after midnight.
+function BucketChart({ items, series, title, height, kind = 'bar', formatValue = String }: {
+  items: RunTimeBucket[]
+  title: string
+  height: number
+  kind?: 'bar' | 'area'
+  formatValue?: (value: number) => string
+  series: { key: string; label: string; color: string; value: (bucket: RunTimeBucket) => number }[]
+}) {
+  const data = items.map((bucket) => Object.fromEntries([['day', bucket.start.slice(5, 10)], ...series.map((entry) => [entry.key, entry.value(bucket)])]))
+  const tick = { fill: 'currentColor', fontSize: 9, fontFamily: 'ui-monospace' }
+  const axes = <><XAxis dataKey="day" tick={tick} axisLine={false} tickLine={false} /><YAxis width={58} tick={tick} axisLine={false} tickLine={false} allowDecimals={false} tickFormatter={formatValue} /><Tooltip formatter={(value) => formatValue(Number(value))} contentStyle={{ background: 'var(--color-popover)', color: 'var(--color-popover-foreground)', border: '1px solid var(--color-border)', fontFamily: 'ui-monospace', fontSize: 11 }} /></>
+  return <div className="flex flex-col gap-2 text-muted-foreground" aria-label={title}>
+    <div className="flex items-center justify-between font-mono text-[9px] uppercase tracking-[0.2em]"><span>{title} — last 14d</span><div className="flex gap-3">{series.map((entry) => <span key={entry.key} className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ backgroundColor: entry.color }} />{entry.label}</span>)}</div></div>
+    <ResponsiveContainer width="100%" height={height}>{kind === 'area' ? <AreaChart data={data} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>{axes}{series.map((entry) => <Area key={entry.key} dataKey={entry.key} name={entry.label} type="monotone" stroke={entry.color} fill={entry.color} fillOpacity={0.2} />)}</AreaChart> : <BarChart data={data} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>{axes}{series.map((entry) => <Bar key={entry.key} dataKey={entry.key} name={entry.label} stackId="series" fill={entry.color} />)}</BarChart>}</ResponsiveContainer>
+  </div>
+}
 
 function formatTokens(value: number) {
   return value.toLocaleString()
@@ -14,7 +33,7 @@ function runKind(status: string): 'success' | 'error' | 'active' {
 }
 
 export function AggregateRunHistory({ series }: { series: RunTimeSeries }) {
-  return <TimeSeriesChart items={series.buckets} date={(b) => b.start} days={14} title="Runs / day · UTC" height={160} series={[
+  return <BucketChart items={series.buckets} title="Runs / day · UTC" height={160} series={[
     { key: 'success', label: 'success', color: STATUS_COLOR_VAR.done, value: (b) => Object.entries(b.status_counts).reduce((n, [s, count]) => n + (runKind(s) === 'success' ? count : 0), 0) },
     { key: 'error', label: 'error', color: STATUS_COLOR_VAR.blocked, value: (b) => Object.entries(b.status_counts).reduce((n, [s, count]) => n + (runKind(s) === 'error' ? count : 0), 0) },
     { key: 'active', label: 'active', color: STATUS_COLOR_VAR.doing, value: (b) => Object.entries(b.status_counts).reduce((n, [s, count]) => n + (runKind(s) === 'active' ? count : 0), 0) },
@@ -23,7 +42,7 @@ export function AggregateRunHistory({ series }: { series: RunTimeSeries }) {
 
 export function AggregateTokens({ series }: { series: RunTimeSeries }) {
   return <div className="flex flex-col gap-2">
-    <TimeSeriesChart items={series.buckets} date={(b) => b.start} days={14} title="Tokens / day · UTC" height={160} formatValue={formatTokens} series={[
+    <BucketChart items={series.buckets} title="Tokens / day · UTC" height={160} formatValue={formatTokens} series={[
       { key: 'prompt', label: 'prompt', color: STATUS_COLOR_VAR.doing, value: (b) => b.prompt_tokens },
       { key: 'completion', label: 'completion', color: STATUS_COLOR_VAR.done, value: (b) => b.completion_tokens },
     ]} />
@@ -34,7 +53,7 @@ export function AggregateTokens({ series }: { series: RunTimeSeries }) {
 export function AggregateCost({ series }: { series: RunTimeSeries }) {
   return <div className="flex flex-col gap-2">
     <span className="text-right font-mono text-[10px] text-muted-foreground">${series.totals.cost.toFixed(2)} total</span>
-    <TimeSeriesChart items={series.buckets} date={(b) => b.start} days={14} title="Cost / day · UTC" height={140} kind="area" formatValue={(v) => `$${v.toFixed(2)}`} series={[
+    <BucketChart items={series.buckets} title="Cost / day · UTC" height={140} kind="area" formatValue={(v) => `$${v.toFixed(2)}`} series={[
       { key: 'cost', label: 'cost', color: STATUS_COLOR_VAR.review, value: (b) => b.cost },
     ]} />
   </div>
