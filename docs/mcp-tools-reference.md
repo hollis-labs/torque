@@ -841,3 +841,12 @@ There is no pure-read MCP message-thread list. `torque_broker_inbox` and
 batches with a non-mutating continuation peek; HTTP thread uses bounded
 federated read pages. The [messages contract](api-pagination.md#endpoint-capability-matrix)
 describes their count and continuation differences.
+
+Models numeric sorts (`CW-20261001-0670`): `torque_models_list` and HTTP
+`GET /models` accept `sort_by=cost` (input USD/million tokens), `context`
+(context-window tokens), and `output` (maximum output tokens), in addition to
+name/provider_id/id. Both directions compare numeric values before cursor or
+offset paging, with provider/model identity ascending for ties. Cost/limit
+fields of 0 mean free or unknown; the catalog does not distinguish them.
+Zero sorts first ascending and last descending, matching the Models page's
+existing comparator. See the [sort matrix](api-pagination.md#sort-allow-lists-and-defaults).
