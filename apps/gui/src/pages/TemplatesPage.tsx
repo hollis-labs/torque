@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Skeleton, PageHeader, SummaryCards, CopyableId, EmptyState } from '@hollis-labs/sysop-ui'
 import { RowActionMenu } from '@hollis-labs/sysop-ui/data'
 import { useApi } from '@/hooks/use-api'
 import { notifyError, notifySuccess } from '@/lib/toast'
-import type { Template } from '@/lib/types'
+import { usePagedList } from '@/hooks/use-paged-list'
+import { ListPageControls } from '@/components/domain/list-page-controls'
 
 type SortKey = 'name' | 'kind' | 'updated_at'
 type SortDir = 'asc' | 'desc'
@@ -19,15 +20,6 @@ function TableSkeleton() {
   )
 }
 
-function sortTemplates(list: Template[], key: SortKey, dir: SortDir): Template[] {
-  return [...list].sort((a, b) => {
-    const av = a[key] ?? ''
-    const bv = b[key] ?? ''
-    const cmp = av < bv ? -1 : av > bv ? 1 : 0
-    return dir === 'asc' ? cmp : -cmp
-  })
-}
-
 const COLUMNS: { key: SortKey; label: string }[] = [
   { key: 'name', label: 'Template' },
   { key: 'kind', label: 'Kind' },
@@ -38,29 +30,15 @@ export default function TemplatesPage() {
   const api = useApi()
   const navigate = useNavigate()
 
-  const [templates, setTemplates] = useState<Template[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [includeArchived, setIncludeArchived] = useState(false)
   const [sortKey, setSortKey] = useState<SortKey>('updated_at')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
-
-  const fetchTemplates = useCallback(async () => {
-    try {
-      const result = await api.listTemplates({ include_archived: includeArchived })
-      setTemplates(result.items)
-      setError(null)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load templates')
-    } finally {
-      setLoading(false)
-    }
-  }, [api, includeArchived])
-
-  useEffect(() => {
-    setLoading(true)
-    fetchTemplates()
-  }, [fetchTemplates])
+  const page = usePagedList({
+    params: { include_archived: includeArchived, sort_by: sortKey, sort_dir: sortDir, include_total: true },
+    fetchPage: ({ params, cursor, signal }) => api.listTemplates({ ...params, cursor }, signal),
+    getId: template => `${template.id}:${template.version}`,
+  })
+  const { items: templates, loading, error, reload: fetchTemplates } = page
 
   function handleSortClick(key: SortKey) {
     if (sortKey === key) {
@@ -86,13 +64,13 @@ export default function TemplatesPage() {
   const autoExecuteCount = templates.filter((t) => t.auto_execute).length
 
   const summaryCards = [
-    { label: 'Total Templates', value: templates.length },
-    { label: 'Active', value: activeCount, accentColor: '#34d399' },
-    { label: 'Archived', value: archivedCount },
-    { label: 'Auto-execute', value: autoExecuteCount, subtitle: 'on done' },
+    { label: 'Loaded Templates', value: templates.length },
+    { label: 'Loaded active', value: activeCount, accentColor: '#34d399' },
+    { label: 'Loaded archived', value: archivedCount },
+    { label: 'Loaded auto-execute', value: autoExecuteCount, subtitle: 'on done' },
   ]
 
-  const sorted = sortTemplates(templates, sortKey, sortDir)
+  const sorted = templates
 
   return (
     <div className="flex h-full flex-col">
@@ -127,14 +105,15 @@ export default function TemplatesPage() {
         </button>
       </div>
 
+      <ListPageControls page={page} label="templates" />
       <div className="flex-1 overflow-auto">
-        {loading ? (
+        {loading && templates.length === 0 ? (
           <TableSkeleton />
-        ) : error ? (
+        ) : error && templates.length === 0 ? (
           <EmptyState
             variant="error"
             title="Something went wrong"
-            description={error}
+            description={error.message}
             action={{ label: 'Retry', onClick: fetchTemplates }}
           />
         ) : templates.length === 0 ? (
