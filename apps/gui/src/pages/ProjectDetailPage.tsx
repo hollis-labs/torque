@@ -16,7 +16,7 @@ import { isHtmlApiFallbackError } from '@/lib/api'
 import { rollupFromStatusCounts, rollupsByScope } from '@/lib/scope-metrics'
 import type { Epic, Project, ProjectArtifact, Sprint, TaskScopeRollupResponse } from '@/lib/types'
 
-const SSE_EVENTS = ['project.updated', 'project.created', 'project.deleted', 'task.updated', 'task.created', 'task.transitioned']
+const SSE_EVENTS = ['project.updated', 'project.created', 'project.deleted']
 
 function preformatted(value: string[] | Record<string, string> | string) {
   if (Array.isArray(value)) return value.length > 0 ? value.join('\n') : 'None'
@@ -36,8 +36,6 @@ export default function ProjectDetailPage() {
   const [taskRollup, setTaskRollup] = useState<TaskScopeRollupResponse | null>(null)
   const [sprintRollup, setSprintRollup] = useState<TaskScopeRollupResponse | null>(null)
   const [epicRollup, setEpicRollup] = useState<TaskScopeRollupResponse | null>(null)
-  const taskPage = usePagedTaskSummaries({ project_id: id })
-  const reloadTasks = taskPage.reload
   const [sprints, setSprints] = useState<Sprint[]>([])
   const [epics, setEpics] = useState<Epic[]>([])
   const [artifacts, setArtifacts] = useState<ProjectArtifact[]>([])
@@ -45,6 +43,23 @@ export default function ProjectDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const loadGeneration = useRef(0)
+
+  const refreshCounts = useCallback(async () => {
+    if (!id) return
+    const gen = loadGeneration.current
+    try {
+      const [tasks, sprints, epics] = await Promise.all([
+        api.taskRollup('project_id', { project_id: id }),
+        api.taskRollup('sprint_id', { project_id: id }),
+        api.taskRollup('epic_id', { project_id: id }),
+      ])
+      if (gen !== loadGeneration.current) return
+      setTaskRollup(tasks)
+      setSprintRollup(sprints)
+      setEpicRollup(epics)
+    } catch { /* Keep the current counts on a failed background refresh. */ }
+  }, [api, id])
+  const taskPage = usePagedTaskSummaries({ project_id: id }, undefined, refreshCounts)
 
   // background: an event-driven refresh, which keeps the page on screen
   // instead of swapping in the skeleton.
@@ -65,7 +80,6 @@ export default function ProjectDetailPage() {
         api.taskRollup('epic_id', { project_id: id }),
         api.listSprints({ project_id: id }),
         api.listEpics({ project_id: id }),
-        reloadTasks(),
       ])
       if (myGen !== loadGeneration.current) return
       setProject(nextProject)
@@ -96,7 +110,7 @@ export default function ProjectDetailPage() {
     } finally {
       if (myGen === loadGeneration.current) setLoading(false)
     }
-  }, [api, id, reloadTasks])
+  }, [api, id])
 
   useEffect(() => {
     void load()
@@ -244,6 +258,11 @@ export default function ProjectDetailPage() {
           <ScopeTaskPanel
             tasks={taskPage.tasks}
             total={taskPage.total}
+            hasMore={taskPage.hasMore}
+            isStale={taskPage.isStale}
+            loading={taskPage.loading}
+            error={taskPage.error}
+            onRetry={() => void taskPage.reload()}
             onLoadMore={() => void taskPage.loadMore()}
             loadingMore={taskPage.loadingMore}
           />
