@@ -267,6 +267,17 @@ func TestFirstTurnKickoff(t *testing.T) {
 	assert.Equal(t, "Boot @./boot.md", firstTurnKickoff(boot, "/work/project", ""), "no content to inline")
 }
 
+// One-shot: the prompt alone where the runtime runs in its boot dir, as
+// before; boot.md's content, which carries the prompt, where it does not.
+func TestOneShotTurn(t *testing.T) {
+	const boot, md = "/tmp/torque-boot/b1", "# Boot\n\n## First turn\n\nwrite the report\n"
+	assert.Equal(t, "write the report", oneShotTurn("write the report", boot, boot, md), "claude: the prompt alone")
+	assert.Equal(t, md, oneShotTurn("write the report", boot, "/work/project", md), "opencode: the briefing, prompt included")
+	assert.Equal(t, "Boot @./boot.md", oneShotTurn("", boot, boot, md), "no prompt: the kickoff pointer")
+	assert.Equal(t, md, oneShotTurn("", boot, "/work/project", md))
+	assert.Equal(t, "write the report", oneShotTurn("write the report", "", "/work/project", ""), "nothing planted")
+}
+
 // TestKickoffMarkdown verifies the planted boot.md content carries the
 // task framing the LLM needs on its first turn (and after compaction
 // when re-reading the file).

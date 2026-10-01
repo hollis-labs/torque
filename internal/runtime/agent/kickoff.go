@@ -52,6 +52,21 @@ func firstTurnKickoff(bootDir, workdir, kickoffMD string) string {
 	return kickoffMD
 }
 
+// oneShotTurn is the wrapper path's one-shot turn: the caller's prompt (the
+// one-shot prompt or the task description), or the kickoff when there is
+// none. A runtime that does not run in its boot dir gets boot.md's content
+// even with a prompt: the content already carries the prompt under "First
+// turn", plus the briefing the agent cannot reach through the pointer. That
+// is what opencode run's one-shot argv carried before agentkit v0.13.0.
+// Claude one-shot stays the prompt alone, as before.
+func oneShotTurn(prompt, bootDir, workdir, kickoffMD string) string {
+	kickoff := firstTurnKickoff(bootDir, workdir, kickoffMD)
+	if prompt == "" || (kickoffMD != "" && kickoff == kickoffMD) {
+		return kickoff
+	}
+	return prompt
+}
+
 // kickoffMarkdown returns the content planted into <bootDir>/boot.md. Read by
 // the agent on its first turn (via the @./boot.md reference) and again post-
 // compaction (since the file lives on disk). Keep concise: the systemPrompt

@@ -569,8 +569,15 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 		// and -c model=… from CodexAdapter.Model) followed by ExtraArgs.
 		// The prepared argv opens with that same command; only what follows
 		// it, the launch's own flags and torqueLaunchArgs, belongs in the
-		// splice.
-		bootDirExtraArgs = trimArgvPrefix(bootDirExtraArgs, cliAdapter.BuildArgs("", "", ""))
+		// splice. If it does not open with it, splicing it whole would run
+		// the command twice (`app-server -c model=… app-server -c model=…`),
+		// so the boot fails and names both instead.
+		rest, err := codexAppServerArgs(bootDirExtraArgs, cliAdapter.BuildArgs("", "", ""))
+		if err != nil {
+			shutdownLoopbackHandle(loopback)
+			return nil, fmt.Errorf("%w: %v", ErrBootFailed, err)
+		}
+		bootDirExtraArgs = rest
 	}
 
 	// Merge the bootdir-derived env amendments (CODEX_HOME /
@@ -1544,10 +1551,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 			defer func() { _ = os.RemoveAll(capturedBootDir) }()
 		}
 
-		prompt := composeUserPrompt(opts)
-		if prompt == "" {
-			prompt = firstTurnKickoff(capturedBootDir, spawnWorkdir, pb.kickoffMD)
-		}
+		prompt := oneShotTurn(composeUserPrompt(opts), capturedBootDir, spawnWorkdir, pb.kickoffMD)
 		// SendTurn (not raw SendInput) so streaming-stdio's turn.Frame NDJSON
 		// encoding is applied -- claude rejects unframed plaintext on stdin
 		// when running --input-format stream-json.
@@ -1739,13 +1743,26 @@ func insertBeforeEndOfOptions(argv []string, extra ...string) []string {
 	return append(out, argv[i:]...)
 }
 
-// trimArgvPrefix returns argv without its leading prefix, or argv itself
-// when it does not start with prefix.
-func trimArgvPrefix(argv, prefix []string) []string {
-	if len(prefix) == 0 || len(argv) < len(prefix) || !slices.Equal(argv[:len(prefix)], prefix) {
-		return argv
+// codexAppServerArgs returns the codex app-server options the JSON-RPC
+// runtime splices after the adapter's own command: the prepared argv past
+// that command. A prepared argv that does not open with it is an error
+// rather than a splice of the whole argv, which would run
+// `app-server -c model=… app-server -c model=…`.
+func codexAppServerArgs(prepared, command []string) ([]string, error) {
+	rest, ok := trimArgvPrefix(prepared, command)
+	if !ok {
+		return nil, fmt.Errorf("codex app-server: the prepared argv %q does not open with the adapter's command %q", prepared, command)
 	}
-	return argv[len(prefix):]
+	return rest, nil
+}
+
+// trimArgvPrefix returns argv without its leading prefix, and false when
+// argv does not start with prefix.
+func trimArgvPrefix(argv, prefix []string) ([]string, bool) {
+	if len(argv) < len(prefix) || !slices.Equal(argv[:len(prefix)], prefix) {
+		return argv, false
+	}
+	return argv[len(prefix):], true
 }
 
 // resolveRepoRoot returns the canonical project checkout (repo_root) for a
