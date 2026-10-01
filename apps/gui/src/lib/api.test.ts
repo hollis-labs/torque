@@ -67,168 +67,30 @@ describe('TorqueApiClient.listTasks', () => {
     return fetchMock.mock.calls.map((c) => String(c[0]))
   }
 
-  it('fetches all pages when no caller limit is supplied', async () => {
-    fetchMock
-      .mockResolvedValueOnce(jsonResponse({
-        items: [{ id: 'TASK-1' }, { id: 'TASK-2' }],
-        meta: {
-          total: 3,
-          returned: 2,
-          limit: 2,
-          offset: 0,
-          has_more: true,
-          next_offset: 2,
-        },
-      }))
-      .mockResolvedValueOnce(jsonResponse({
-        items: [{ id: 'TASK-3' }],
-        meta: {
-          total: 3,
-          returned: 1,
-          limit: 2,
-          offset: 2,
-          has_more: false,
-          next_offset: null,
-        },
-      }))
-
+  it('returns exactly one page, leaving continuation and optional totals to the caller', async () => {
+    const page = { items: [{ id: 'TASK-1' }, { id: 'TASK-2' }], meta: {
+      returned: 2, limit: 2, has_more: true, next_cursor: 'next',
+    } }
+    fetchMock.mockResolvedValueOnce(jsonResponse(page))
     const out = await client.listTasks({ status: ['todo'], tags: ['torque', 'api'] })
-
-    expect(out.tasks.map((t) => t.id)).toEqual(['TASK-1', 'TASK-2', 'TASK-3'])
-    expect(out.total).toBe(3)
-    expect(calledUrls()).toEqual([
-      '/api/v1/tasks?status=todo&tags=torque%2Capi&limit=200&offset=0&include_total=true',
-      '/api/v1/tasks?status=todo&tags=torque%2Capi&limit=2&offset=2&include_total=true',
-    ])
+    expect(out).toEqual(page)
+    expect(calledUrls()).toEqual(['/api/v1/tasks?status=todo&tags=torque%2Capi'])
   })
 
-  it('treats an explicit limit as the caller cap across server-sized pages', async () => {
-    const first = Array.from({ length: 200 }, (_, i) => ({ id: `TASK-${i + 1}` }))
-    const second = Array.from({ length: 50 }, (_, i) => ({ id: `TASK-${i + 201}` }))
-    fetchMock
-      .mockResolvedValueOnce(jsonResponse({
-        items: first,
-        meta: {
-          total: 400,
-          returned: 200,
-          limit: 200,
-          offset: 10,
-          has_more: true,
-          next_offset: 210,
-        },
-      }))
-      .mockResolvedValueOnce(jsonResponse({
-        items: second,
-        meta: {
-          total: 400,
-          returned: 50,
-          limit: 50,
-          offset: 210,
-          has_more: true,
-        },
-      }))
-
-    const out = await client.listTasks({ limit: 250, offset: 10, manual: true })
-
-    expect(out.tasks).toHaveLength(250)
-    expect(out.total).toBe(400)
-    expect(calledUrls()).toEqual([
-      '/api/v1/tasks?limit=200&offset=10&manual=true&include_total=true',
-      '/api/v1/tasks?limit=50&offset=210&manual=true&include_total=true',
-    ])
+  it('preserves an explicit offset and requested total without collecting subsequent pages', async () => {
+    const page = { items: [{ id: 'TASK-1' }], meta: {
+      total: 400, returned: 1, limit: 50, offset: 10, has_more: true, next_cursor: null, next_offset: 60,
+    } }
+    fetchMock.mockResolvedValueOnce(jsonResponse(page))
+    expect(await client.listTasks({ limit: 50, offset: 10, include_total: true, manual: true })).toEqual(page)
+    expect(calledUrls()).toEqual(['/api/v1/tasks?limit=50&offset=10&include_total=true&manual=true'])
   })
 
-  it('treats zero and negative caller limits as uncapped overall', async () => {
-    fetchMock
-      .mockResolvedValueOnce(jsonResponse({
-        items: [{ id: 'TASK-1' }],
-        meta: {
-          total: 1,
-          returned: 1,
-          limit: 200,
-          offset: 0,
-          has_more: false,
-        },
-      }))
-      .mockResolvedValueOnce(jsonResponse({
-        items: [{ id: 'TASK-2' }],
-        meta: {
-          total: 1,
-          returned: 1,
-          limit: 200,
-          offset: 0,
-          has_more: false,
-        },
-      }))
-
-    await expect(client.listTasks({ limit: 0 })).resolves.toMatchObject({ total: 1 })
-    await expect(client.listTasks({ limit: -1 })).resolves.toMatchObject({ total: 1 })
-    expect(calledUrls()).toEqual([
-      '/api/v1/tasks?limit=200&offset=0&include_total=true',
-      '/api/v1/tasks?limit=200&offset=0&include_total=true',
-    ])
-  })
-
-  it('rejects fractional and non-finite caller pagination values before fetch', async () => {
-    await expect(client.listTasks({ limit: 1.5 })).rejects.toThrow(/limit must be/i)
-    await expect(client.listTasks({ limit: Number.POSITIVE_INFINITY })).rejects.toThrow(/limit must be/i)
-    await expect(client.listTasks({ offset: 0.5 })).rejects.toThrow(/offset must be/i)
-    await expect(client.listTasks({ offset: -1 })).rejects.toThrow(/offset must be/i)
-    expect(fetchMock).not.toHaveBeenCalled()
-  })
-
-  it('rejects non-progressing continuation metadata', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({
-      items: [{ id: 'TASK-1' }],
-      meta: {
-        total: 2,
-        returned: 1,
-        limit: 1,
-        offset: 0,
-        has_more: true,
-        next_offset: 0,
-      },
-    }))
-
-    await expect(client.listTasks()).rejects.toThrow(/usable forward continuation/i)
-  })
-
-  it('rejects fractional continuation metadata', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({
-      items: [{ id: 'TASK-1' }],
-      meta: {
-        total: 2,
-        returned: 1,
-        limit: 1,
-        offset: 0,
-        has_more: true,
-        next_offset: 1.5,
-      },
-    }))
-
-    await expect(client.listTasks()).rejects.toThrow(/usable forward continuation/i)
-  })
-
-  it('listTaskSummaries pages with fields=summary', async () => {
-    fetchMock
-      .mockResolvedValueOnce(jsonResponse({
-        items: [{ id: 'TASK-1' }],
-        meta: {
-          total: 2,
-          limit: 1,
-          has_more: true,
-          next_offset: 1,
-        },
-      }))
-      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'TASK-2' }], meta: { total: 2, limit: 1, has_more: false, next_cursor: null, next_offset: null } }))
-
-    const out = await client.listTaskSummaries({ project_id: 'PRJ-1' })
-
-    expect(out.tasks.map((t) => t.id)).toEqual(['TASK-1', 'TASK-2'])
-    expect(calledUrls()).toEqual([
-      '/api/v1/tasks?project_id=PRJ-1&limit=200&offset=0&fields=summary&include_total=true',
-      '/api/v1/tasks?project_id=PRJ-1&limit=1&offset=1&fields=summary&include_total=true',
-    ])
+  it('listTaskSummaries returns one summary page without forcing totals or offsets', async () => {
+    const page = { items: [{ id: 'TASK-1' }], meta: { returned: 1, limit: 50, has_more: true, next_cursor: 'next' } }
+    fetchMock.mockResolvedValueOnce(jsonResponse(page))
+    expect(await client.listTaskSummaries({ project_id: 'PRJ-1' })).toEqual(page)
+    expect(calledUrls()).toEqual(['/api/v1/tasks?project_id=PRJ-1&fields=summary'])
   })
 })
 

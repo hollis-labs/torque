@@ -109,9 +109,9 @@ resources currently use cursors. Never combine cursor and offset.
 `TorqueApiClient` provides `listTaskPage`, `listTaskSummaryPage`, `pageRuns`,
 `listProjects`, `listEpics`, `listSprints`, `listIssues`, and `listComments` as
 single-page adapters accepting an optional final `AbortSignal`. Adapt arguments
-with a stable `useCallback`. The older `listTasks` / `listTaskSummaries` wrappers
-still collect pages for consumers pending migration; use the single-page methods
-for new list views.
+with a stable `useCallback`. `listTasks` / `listTaskSummaries` also return exactly one page with `items`
+and `meta`; no client API implicitly collects subsequent pages. Complete
+exports are unavailable until a streaming export endpoint is implemented.
 
 For SSE, either call `list.applyEvent({ id, patch, item, remove, refresh })` or
 provide `subscribe(onChange) => unsubscribe` that converts transport events into
