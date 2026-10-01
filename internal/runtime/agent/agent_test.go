@@ -398,7 +398,7 @@ func TestAdapterFor_OpencodeUnsupportedRuntimeKind(t *testing.T) {
 		t.Run(string(kind), func(t *testing.T) {
 			_, _, err := adapterFor(profile, "executor", kind)
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "supported: subprocess, serve-http",
+			assert.Contains(t, err.Error(), "supported: subprocess-per-turn, http-sse",
 				"error should name the supported runtime kinds for operator triage")
 		})
 	}
