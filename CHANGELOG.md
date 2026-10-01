@@ -104,11 +104,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   arrives as the wrapper's `session.lost` event after Boot has returned, so
   `ResumeSession` and `Manager.Resume` now watch a resumed streaming session
   until the provider reports the session gone (they stop it and boot fresh),
-  the first turn shows content (the resume holds), the session ends, or 8
-  seconds pass. The fresh boot happens at most once and is not watched; the
-  wait adds up to the time to the first content of a healthy resume. Not
-  covered: planstart's redispatch, which still only sees a loss that fails
-  Boot.
+  the CLI reports its session id (its init, before any content: the resume
+  holds), the turn shows content, the session ends, or 8 seconds pass. A
+  provider that lost the session writes no init, so a healthy resume ends the
+  watch at its init and does not wait for its first reply. The fresh boot
+  happens at most once and is not watched. Not covered: planstart's
+  redispatch, which still only sees a loss that fails Boot.
 - go-agent-wrapper v0.25.6 (from v0.23.0), agentkit v0.21.1 (from v0.20.3),
   go-providers v0.42.0 (from v0.40.0), go-sandbox v0.6.0 (from v0.5.1),
   go-runner v0.8.2 (from v0.7.0) and go-llm-contracts v0.4.0 (from v0.3.0);
@@ -747,8 +748,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
       `TORQUE_DB_PATH=/tmp/x.db`, which would make it read-only to every
       agent.
 
-    An ACP launch is refused ("ACP sandbox protect not yet supported
-    (CW-20261001-0162)").
+    An ACP launch was refused here too, until wrapper v0.25.0 gave ACP a
+    protect-only sandbox: it is now write-protected like any other launch
+    (see the ACP entry above, CW-20261001-0162).
   - While it is on, the planted `mux` server proxies no `torque` server.
     Inside the sandbox `torque mcp` cannot write its database. The
     session's loopback carries the task's Torque tools, and the kickoff says

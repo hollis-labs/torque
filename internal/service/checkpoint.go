@@ -447,8 +447,9 @@ func (s *CheckpointService) redispatchOrchestrator(ctx context.Context, cp *sqls
 // hung ResumeSession/SendInput can't keep the HTTP/MCP respond handler open
 // indefinitely. On deadline the catch-all error branch below falls back to
 // the legacy todo redispatch so the task progresses on the scheduler's next
-// tick. 30s covers a Boot+Start on a cold adapter with margin; well-behaved
-// resumes return in <2s.
+// tick. 30s covers a Boot+Start on a cold adapter with margin. A streaming-
+// stdio resume is also watched until the CLI's init, and a silent one for at
+// most 8s (agent resumeLossGrace), before a lost session's one fresh boot.
 const checkpointDispatchTimeout = 30 * time.Second
 
 // dispatchResumeOrFallback is the sprint α.4 fork point: with a dispatcher

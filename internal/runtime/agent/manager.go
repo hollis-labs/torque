@@ -1110,13 +1110,15 @@ func (m *Manager) Boot(ctx context.Context, opts Options) (*Session, error) {
 // kickoff and sit silent (CW-20261001-0203).
 //
 // Both are long-lived boots that run the kickoff, like ResumeSession's. A
-// resume whose provider no longer has the session boots fresh once, when the
-// loss shows before Boot returns: on a subprocess-per-turn runtime (claude
-// subprocess, opencode run) Boot runs the kickoff turn before it returns, so
-// it blocks until that turn ends, resumed or fresh; a streaming-stdio resume
-// only finds out on its first turn (CW-20261001-0202). The new session's
-// Resumed says whether the launch carried the provider's session id, which
-// an ACP agent without loadSession can still ignore.
+// resume whose provider no longer has the session boots fresh once. On a
+// subprocess-per-turn runtime (claude subprocess, opencode run) Boot runs
+// the kickoff turn before it returns, so it blocks until that turn ends,
+// resumed or fresh. A streaming-stdio resume finds out after Boot returns, so
+// Resume watches it until the CLI's init (the resume holds), the provider
+// reports the session lost (it boots fresh), the session ends, or
+// resumeLossGrace (8 s) passes (CW-20261001-0202). The new session's Resumed
+// says whether the launch carried the provider's session id, which an ACP
+// agent without loadSession can still ignore.
 func (m *Manager) Resume(ctx context.Context, req ResumeRequest) (string, error) {
 	if req.SessionID == "" {
 		return "", fmt.Errorf("agent.Manager.Resume: SessionID required")
@@ -1248,8 +1250,9 @@ func (m *Manager) resumes(recordedBy string, hint []byte, launchProfile, agentPr
 // resumeLossGrace bounds how long bootWithFreshFallback waits, after a
 // streaming-stdio resume boots, for the provider to say the session it was
 // asked to resume is gone. A lost session shows within the first turn's
-// start-up (the CLI reports it and exits); a resume that holds shows content
-// sooner than this, which ends the wait.
+// start-up (the CLI reports it and exits, without an init); a resume that
+// holds reports its session id (the init) before any content, which ends the
+// wait. Only a session that stays silent past this is given up on.
 var resumeLossGrace = 8 * time.Second
 
 // bootWithFreshFallback boots resume, a launch that continues a stored
@@ -1263,9 +1266,10 @@ var resumeLossGrace = 8 * time.Second
 // kickoff after Boot returns: the loss arrives as the wrapper's session.lost
 // event (agentkit v0.21.1), so Boot has succeeded, and the attempt is watched
 // until the provider says the session is gone (then it is stopped and a fresh
-// one booted), the turn shows content (the resume holds), the session ends,
-// or resumeLossGrace passes. Either way the fresh boot happens at most once
-// and is not itself watched (CW-20261001-0202).
+// one booted), the turn shows content (the resume holds), the session ends
+// (its loss event, if any, comes first), or resumeLossGrace passes. Either
+// way the fresh boot happens at most once and is not itself watched
+// (CW-20261001-0202).
 func (m *Manager) bootWithFreshFallback(ctx context.Context, resume, fresh Options, what string) (*Session, error) {
 	lost := make(chan struct{}, 1)
 	progress := make(chan struct{}, 1)
@@ -1280,25 +1284,46 @@ func (m *Manager) bootWithFreshFallback(ctx context.Context, resume, fresh Optio
 	if sess == nil || sess.RuntimeKind != string(RuntimeKindStreamingStdio) {
 		return sess, nil
 	}
-	if _, wrapped := m.wrapperHandleFor(sess.ID); !wrapped {
-		// Only a go-agent-wrapper session reports session.lost; there is
-		// nothing to wait for on any other.
-		return sess, nil
-	}
-	select {
-	case <-lost:
-	case <-progress:
-		// Content can race the lost event only if the provider both answered
-		// and reported the session gone; the loss wins.
+	// The wrapper emits session.lost before wr.Run returns, and the run
+	// goroutine drops the handle after that (finishWrapperSession), so a
+	// loss is signalled on lost by the time the handle is gone or runDone
+	// has closed: check it then rather than concluding the resume held.
+	signalled := func() bool {
 		select {
 		case <-lost:
+			return true
 		default:
+			return false
+		}
+	}
+	h, wrapped := m.wrapperHandleFor(sess.ID)
+	switch {
+	case !wrapped:
+		// Only a go-agent-wrapper session reports session.lost; there is
+		// nothing to wait for on any other. A wrapper session whose child
+		// already exited has dropped its handle but not its loss.
+		if !signalled() {
 			return sess, nil
 		}
-	case <-time.After(resumeLossGrace):
-		return sess, nil
-	case <-ctx.Done():
-		return sess, nil
+	default:
+		select {
+		case <-lost:
+		case <-progress:
+			// Content can race the lost event only if the provider both
+			// answered and reported the session gone; the loss wins.
+			if !signalled() {
+				return sess, nil
+			}
+		case <-h.runDone:
+			// The session ended with nothing more to wait for.
+			if !signalled() {
+				return sess, nil
+			}
+		case <-time.After(resumeLossGrace):
+			return sess, nil
+		case <-ctx.Done():
+			return sess, nil
+		}
 	}
 	log.Printf("agent: %s: the provider no longer has the session (session.lost); stopping %s and booting fresh", what, sess.ID)
 	stopCtx, cancel := context.WithTimeout(context.Background(), stopGraceWindow)
