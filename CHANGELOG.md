@@ -49,6 +49,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Codex sessions get the daemon's `mux` MCP server only under
+  `permission_mode: bypassPermissions`; every other posture, unset included,
+  plants just the run's own loopback (CW-20261001-0110). Codex runs MCP tools
+  marked read-only without asking, so the approval responder could not gate
+  mux's tools. Claude and OpenCode planting is unchanged.
 - Runtimes are selected through the go-providers registry and
   go-agent-wrapper v0.15.0's `launch.Select` (agentkit v0.12.2, go-providers
   v0.34.1, go-sandbox v0.4.1), with the profile's runtime kind passed as the
