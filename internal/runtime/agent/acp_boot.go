@@ -318,6 +318,8 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 		redact:  pb.redact,
 		onReady: func() { readyOnce.Do(func() { close(readyCh) }) },
 		onDone:  oneshotOnDone,
+
+		terminalFailure: opts.terminalFailure,
 	})
 
 	wr, err := wrapper.New(cfg)

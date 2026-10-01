@@ -3,12 +3,15 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	llmtypes "github.com/hollis-labs/go-llm-types"
 	runtimeevents "github.com/hollis-labs/go-runtime-events/runtimeevents"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hollis-labs/torque/internal/redact"
 )
 
 // sinkEvents runs one runtime event through a bare torqueRuntimeEventSink and
@@ -101,4 +104,51 @@ func TestWrapperSink_DeltaShapes(t *testing.T) {
 			assert.Equal(t, tc.content, got[0].Content)
 		})
 	}
+}
+
+// A failed turn reaches a long-lived run's terminal-failure channel with
+// the provider's message as its reason (CW-20261001-0169). opencode serve's
+// failure is its whole session.error event, the second report with a stack
+// trace; the reason is the message's first line, redacted.
+func TestWrapperSink_TurnFailedSignalsTerminalFailure(t *testing.T) {
+	const opencodeEvent = `{"id":"evt_1","type":"session.error","properties":{"sessionID":"ses_1","error":{"name":"UnknownError","data":{"message":"ProviderModelNotFoundError: Model not found: opencode/claude-sonnet-4-5. Did you mean: claude-sonnet-4-5?\n    at <anonymous> (/$bunfs/root/chunk.js:439:94601)"}}}}`
+	cases := []struct {
+		name, err, want string
+	}{
+		{"opencode serve session.error", opencodeEvent, "ProviderModelNotFoundError: Model not found: opencode/claude-sonnet-4-5. Did you mean: claude-sonnet-4-5?"},
+		{"plain message", "wrapper: process exited before the turn completed", "wrapper: process exited before the turn completed"},
+		{"JSON with a top-level message", `{"message":"rate limited"}`, "rate limited"},
+		{"error as a string", `{"error":"invalid model"}`, "invalid model"},
+		{"long", strings.Repeat("x", 600), strings.Repeat("x", turnFailureMaxLen) + "…"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			failures := make(chan string, 1)
+			fanout := make(chan llmtypes.StreamEvent, 8)
+			s := &torqueRuntimeEventSink{fanout: fanout, terminalFailure: failures}
+			raw, err := json.Marshal(map[string]any{"error": tc.err})
+			require.NoError(t, err)
+			require.NoError(t, s.Write(context.Background(), runtimeevents.Event{Kind: runtimeevents.KindTurnFailed, Payload: raw}))
+			select {
+			case got := <-failures:
+				assert.Equal(t, tc.want, got)
+			default:
+				t.Fatal("a failed turn must signal the run's terminal failure")
+			}
+			ev := <-fanout
+			assert.Equal(t, llmtypes.EventError, ev.Type, "the stream still gets the error")
+			assert.Equal(t, tc.want, ev.Error, "the stream carries the same message as the run's reason")
+		})
+	}
+
+	// A sink with no run waiting (manual sessions, ModeOneShot) is unchanged.
+	s := &torqueRuntimeEventSink{fanout: make(chan llmtypes.StreamEvent, 2)}
+	require.NoError(t, s.Write(context.Background(), runtimeevents.Event{Kind: runtimeevents.KindTurnFailed, Payload: json.RawMessage(`{"error":"x"}`)}))
+
+	// The reason is redacted like the rest of the session's output.
+	failures := make(chan string, 1)
+	r := redact.New("sk-test-secret-value")
+	s = &torqueRuntimeEventSink{fanout: make(chan llmtypes.StreamEvent, 2), terminalFailure: failures, redact: r}
+	require.NoError(t, s.Write(context.Background(), runtimeevents.Event{Kind: runtimeevents.KindTurnFailed, Payload: json.RawMessage(`{"error":"auth failed for key sk-test-secret-value"}`)}))
+	assert.NotContains(t, <-failures, "sk-test-secret-value")
 }

@@ -1448,6 +1448,8 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		capture: &bootCapture{},
 		onReady: func() { readyOnce.Do(func() { close(readyCh) }) },
 		onDone:  oneshotOnDone,
+
+		terminalFailure: opts.terminalFailure,
 	}
 	if usesOpencodePermissionReplies(profile, runtimeKind) {
 		sink.opencodePerms = newOpencodePermissionResponder(permissionPosture(profile), spawnWorkdir, stderrWriter)

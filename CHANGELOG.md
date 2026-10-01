@@ -186,6 +186,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- A long-lived run on the go-agent-wrapper path (opencode serve, claude-code,
+  agy, ACP) ends as soon as a turn fails, blocked with the provider's
+  message, as a Codex app-server run already did. An opencode serve worker
+  whose model opencode did not know (`session.error`: "Model not found: …")
+  left its task in `doing` and its run running with no tokens until the
+  30-minute inactivity threshold. The reason, and the error in the session's
+  stream, is the provider's message (its first line, at most 500 bytes,
+  redacted), not opencode's raw event and stack trace, which stay in
+  `serve-http.log` (CW-20261001-0169).
 - A session on the go-agent-wrapper path (claude-code, opencode, agy, ACP)
   is torn down however it ends: its boot dir is removed and its loopback MCP
   listener, stderr and stream sidecars closed when the agent exits on its

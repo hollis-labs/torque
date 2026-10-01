@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strings"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
 	llmtypes "github.com/hollis-labs/go-llm-types"
@@ -61,6 +62,14 @@ type torqueRuntimeEventSink struct {
 	// from the stdout lines carrying its SSE frames (CW-20261001-0148).
 	// Nil for every other session.
 	opencodePerms *opencodePermissionResponder
+
+	// terminalFailure, when non-nil, receives the reason of every failed
+	// turn: a long-lived scheduler run ends on it at once
+	// (outcomeTerminalFailure), as it does for a Codex app-server turn that
+	// completes as failed. Without it a turn the provider refused, such as
+	// opencode serve's session.error for an unknown model, left the task in
+	// doing until the inactivity threshold (CW-20261001-0169).
+	terminalFailure chan<- string
 
 	onReady func()
 	onDone  func()
@@ -259,7 +268,83 @@ func (s *torqueRuntimeEventSink) handleTurnFailed(_ context.Context, raw json.Ra
 	if u := turnUsageFrom(raw); u != nil {
 		s.emit(llmtypes.StreamEvent{Type: llmtypes.EventUsage, Usage: u})
 	}
-	s.emit(llmtypes.StreamEvent{Type: llmtypes.EventError, Error: p.Error})
+	// The stream and the run's reason carry the same readable message, as
+	// the Codex path's do; opencode serve's raw event stays in its
+	// serve-http.log.
+	msg := turnFailureText(p.Error)
+	s.emit(llmtypes.StreamEvent{Type: llmtypes.EventError, Error: msg})
+	if s.terminalFailure != nil {
+		select {
+		case s.terminalFailure <- s.redact.Text(msg):
+		default:
+		}
+	}
+}
+
+// turnFailureMaxLen bounds a failed turn's reason.
+const turnFailureMaxLen = 500
+
+// turnFailureText is the reason a failed turn gives its run: the provider's
+// message. opencode serve's turn failure carries its whole session.error SSE
+// event, with the message at properties.error.data.message and, on the
+// second report, a stack trace after it; the other runtimes send the
+// message itself. Only the first line is kept, bounded to
+// turnFailureMaxLen bytes.
+func turnFailureText(raw string) string {
+	text := strings.TrimSpace(raw)
+	if strings.HasPrefix(text, "{") {
+		var ev struct {
+			Message    string `json:"message"`
+			Error      json.RawMessage
+			Properties struct {
+				Error json.RawMessage `json:"error"`
+			} `json:"properties"`
+		}
+		if json.Unmarshal([]byte(text), &ev) == nil {
+			for _, candidate := range []json.RawMessage{ev.Properties.Error, ev.Error} {
+				if msg := errorMessage(candidate); msg != "" {
+					text = msg
+					break
+				}
+			}
+			if ev.Message != "" && strings.HasPrefix(text, "{") {
+				text = ev.Message
+			}
+		}
+	}
+	if i := strings.IndexByte(text, '\n'); i >= 0 {
+		text = text[:i]
+	}
+	text = strings.TrimSpace(text)
+	if len(text) > turnFailureMaxLen {
+		text = text[:turnFailureMaxLen] + "…"
+	}
+	return text
+}
+
+// errorMessage reads an error object's message, at data.message or message,
+// or the error itself when it is a string.
+func errorMessage(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var asString string
+	if json.Unmarshal(raw, &asString) == nil {
+		return asString
+	}
+	var obj struct {
+		Message string `json:"message"`
+		Data    struct {
+			Message string `json:"message"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(raw, &obj) != nil {
+		return ""
+	}
+	if obj.Data.Message != "" {
+		return obj.Data.Message
+	}
+	return obj.Message
 }
 
 // stderrLinePayload mirrors go-agent-wrapper's io_streams.go newStreamWriter
