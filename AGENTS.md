@@ -32,7 +32,12 @@ make lint            # go vet ./...
 make test            # full backend suite
 make test-scheduler  # ./internal/runtime/... only
 make build-prod      # embeds the GUI into the binary; make build omits it
+make install         # build-prod, then installs to BINDIR (default ~/go/bin)
 ```
+
+`make install BINDIR=$HOME/.local/bin` installs elsewhere. `make gui` installs
+with `npm ci`, so it never rewrites `apps/gui/package-lock.json`; after changing
+dependencies, run `npm install` in `apps/gui` and commit the lockfile it writes.
 
 `make profiles-lint` validates `~/.config/torque/profiles.yaml`, operator state
 rather than a repo file, so it can fail on a clean checkout.
