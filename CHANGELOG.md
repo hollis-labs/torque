@@ -111,6 +111,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- An agent CLI installed outside the daemon's PATH launches. Boot pins the
+  path go-providers' Detect resolves (its `*_CLI_PATH` override, PATH, then
+  install dirs such as `~/.opencode/bin` and `~/.local/bin`) as the planted
+  launch's binary. The go-agent-wrapper path spawned the bare name before,
+  so `opencode` in `~/.opencode/bin` failed with "executable file not found
+  in $PATH" (CW-20261001-0098).
 - OpenCode `serve-http` profiles launch `opencode serve --port 0 --hostname
   127.0.0.1` again. The wrapper launch path trimmed the prepared command to
   the bare executable, so the child started as plain `opencode`.
