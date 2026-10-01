@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"log"
+	"time"
 
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/launchprofile"
@@ -253,6 +254,11 @@ func hasTokens(t executor.TokenUsage) bool {
 	return t.PromptTokens > 0 || t.CompletionTokens > 0 || t.CacheReadTokens > 0 || t.CacheWriteTokens > 0
 }
 
+// unresolvedProfileTTL is how long a task profile that resolved to no provider
+// is remembered as unresolved before it is resolved again (and a profile added
+// to the registry since is picked up).
+const unresolvedProfileTTL = 5 * time.Minute
+
 // resolveCost adapts the Scheduler's instance fields into ResolveCost's
 // function-typed inputs. Each closure is nil when its source is unwired so
 // the policy short-circuits cleanly. Backfill is on by default; the
@@ -265,11 +271,22 @@ func (s *Scheduler) resolveCost(task *sqlstore.TaskRecord, result *executor.Exec
 		estimate = s.Models.EstimateUsageCost
 	}
 	resolveProfile := func(tp TaskProfile) (string, string, bool) {
+		// A profile that is not in the registry resolves to an empty one, and
+		// config logs a warning each time. Resolve it once per
+		// unresolvedProfileTTL, and until then answer "unknown" without
+		// resolving again.
+		if until, ok := s.unresolvedProfiles.Load(tp); ok && time.Now().Before(until.(time.Time)) {
+			return "", "", false
+		}
 		p := launchprofile.Resolve(launchprofile.ResolveRequest{
 			LaunchProfile:      tp.LaunchProfile,
 			LegacyAgentProfile: tp.AgentProfile,
 			Source:             s.Profiles,
 		}).AgentProfile
+		if p.Provider == "" {
+			s.unresolvedProfiles.Store(tp, time.Now().Add(unresolvedProfileTTL))
+			return "", "", false
+		}
 		return p.Provider, p.Model, true
 	}
 	profile := TaskProfile{LaunchProfile: task.LaunchProfile, AgentProfile: task.AgentProfile}
@@ -303,6 +320,9 @@ func usageOrNil(result *executor.ExecutionResult) *executor.ExecutionResult {
 func (s *Scheduler) costWrite(task *sqlstore.TaskRecord, result *executor.ExecutionResult, status, reason string) (sqlstore.RunCompletion, *sqlstore.CostLedgerRecord, ResolvedCost) {
 	comp := sqlstore.RunCompletion{Status: status, ErrorMessage: reason}
 	if result == nil {
+		// A run that ended without usage is `none`, as one completed without
+		// tokens is; it has no ledger row, so runs.cost and the ledger agree at 0.
+		comp.CostSource = string(CostSourceNone)
 		return comp, nil, ResolvedCost{Source: CostSourceNone}
 	}
 	cost := s.resolveCost(task, result)

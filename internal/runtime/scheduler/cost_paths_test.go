@@ -13,6 +13,7 @@ import (
 	"github.com/hollis-labs/torque/internal/runtime/executor"
 	"github.com/hollis-labs/torque/internal/runtime/queue"
 	"github.com/hollis-labs/torque/internal/runtime/scheduler"
+	"github.com/hollis-labs/torque/internal/runtime/writeq"
 	"github.com/hollis-labs/torque/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -82,7 +83,7 @@ func TestSchedulerStopDaemonInterruptionWithoutUsageRecordsNoCost(t *testing.T) 
 	run := requireSingleRun(t, store, "CW-SHUTDOWN-NOUSAGE")
 	assert.Equal(t, sqlstore.RunStatusKilled, run.Status)
 	assert.Zero(t, run.Cost)
-	assert.Empty(t, run.CostSource)
+	assert.Equal(t, "none", run.CostSource, "a run that ended without usage is none, like one completed without tokens")
 	requireCostAgrees(t, store, run, 0)
 }
 
@@ -154,4 +155,115 @@ func TestResolveCost_ReportsACacheFallback(t *testing.T) {
 		&executor.ExecutionResult{Tokens: executor.TokenUsage{PromptTokens: 10, CacheWriteTokens: 5}}, estimate, resolve, true)
 	assert.True(t, rc.CacheFallback)
 	assert.Equal(t, scheduler.CostSourceEstimate, rc.Source)
+}
+
+// finishFirstWriter lets a run finish for real just before the submit named op
+// runs: a run that completed between the scheduler's decision and its write.
+type finishFirstWriter struct {
+	writeq.Writer
+	op     string
+	finish func()
+}
+
+func (w *finishFirstWriter) Submit(ctx context.Context, name string, fn func(*sqlstore.WriteTx) error) error {
+	if name == w.op {
+		w.finish()
+	}
+	return w.Writer.Submit(ctx, name, fn)
+}
+
+// A daemon-shutdown kill only writes a run that is still running. One that
+// finished first keeps its status, tokens and cost (so it still matches its
+// ledger row), and the kill records no interruption and does not block the
+// task.
+func TestSchedulerStopDaemonInterruptionLeavesARunThatFinishedFirst(t *testing.T) {
+	sched, store, exec, cleanup := setupShutdownCauseScheduler(t, partialUsage)
+	defer cleanup()
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-SHUTDOWN-RACE", Title: "finishes as the daemon stops", Status: "todo", Priority: 1,
+		Executor: "cause", AgentProfile: "mock", OnFail: "retry", MaxRetries: 3,
+	}))
+	require.NoError(t, sched.Tick(context.Background()))
+	require.Eventually(t, func() bool { return exec.RunCount() == 1 }, time.Second, 10*time.Millisecond)
+	run := requireSingleRun(t, store, "CW-SHUTDOWN-RACE")
+	sched.SetStateWriter(&finishFirstWriter{Writer: writeq.NewDirect(store), op: "scheduler_run_interrupted", finish: func() {
+		require.NoError(t, store.CompleteRun(run.ID, sqlstore.RunCompletion{Status: "done", PromptTokens: 10, Cost: 0.5, CostSource: "provider"}))
+		_, err := store.AppendCostLedger(&sqlstore.CostLedgerRecord{TaskID: "CW-SHUTDOWN-RACE", RunID: run.ID, Cost: 0.5, CostSource: "provider", ProviderCost: 0.5})
+		require.NoError(t, err)
+	}})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, sched.Stop(ctx))
+
+	after := requireSingleRun(t, store, "CW-SHUTDOWN-RACE")
+	assert.Equal(t, "done", after.Status, "the run that finished first is not killed")
+	assert.InDelta(t, 0.5, after.Cost, 1e-9)
+	requireCostAgrees(t, store, after, 1)
+	events, err := store.ListRunEvents(sqlstore.RunEventFilter{TaskID: "CW-SHUTDOWN-RACE", Types: []string{"run_interrupted"}})
+	require.NoError(t, err)
+	assert.Empty(t, events)
+	task, err := store.GetTask("CW-SHUTDOWN-RACE")
+	require.NoError(t, err)
+	assert.Equal(t, "doing", task.Status, "and its task is not blocked as interrupted")
+}
+
+// blockUntilCancelExecutor blocks until its context is cancelled, then returns
+// the partial usage it had accumulated, with no status: what an executor does
+// when its task is transitioned out of doing under it.
+type blockUntilCancelExecutor struct {
+	result  *executor.ExecutionResult
+	started chan struct{}
+}
+
+func (e *blockUntilCancelExecutor) Name() string { return "blockcancel" }
+func (e *blockUntilCancelExecutor) Run(ctx context.Context, _ *executor.ExecutionJob, _ executor.EventCallback) (*executor.ExecutionResult, error) {
+	close(e.started)
+	<-ctx.Done()
+	cp := *e.result
+	return &cp, nil
+}
+func (e *blockUntilCancelExecutor) Validate(*executor.ExecutionJob) error { return nil }
+func (e *blockUntilCancelExecutor) Capabilities() executor.ExecutorCapabilities {
+	return executor.ExecutorCapabilities{}
+}
+
+// A run cancelled by its task leaving `doing` keeps the usage the executor had
+// accumulated, like every other way a run ends.
+func TestSchedulerRunCanceledOutOfDoingKeepsAccumulatedUsage(t *testing.T) {
+	store := sqlitetest.OpenStore(t)
+	q, err := queue.Open(context.Background(), filepath.Join(t.TempDir(), "queue.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = q.Close(); _ = store.Close() })
+	exec := &blockUntilCancelExecutor{
+		result:  &executor.ExecutionResult{Cost: 0.25, Tokens: executor.TokenUsage{PromptTokens: 1000, CompletionTokens: 500, CacheReadTokens: 2000, CacheWriteTokens: 300}},
+		started: make(chan struct{}),
+	}
+	registry := executor.NewRegistry()
+	registry.Register(exec)
+	sched := scheduler.New(store, q, registry, nil, &config.SchedulerConfig{Workers: 1, IntervalSeconds: 1, RetryBudget: 3, Enabled: true, StaleSeconds: 300, HeartbeatProgressSeconds: 1})
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-CANCEL-USAGE", Title: "cancelled with usage", Status: "todo", Priority: 1,
+		Executor: "blockcancel", AgentProfile: "mock", OnFail: "block", MaxRetries: 0,
+	}))
+	require.NoError(t, sched.Tick(context.Background()))
+	select {
+	case <-exec.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the executor never started")
+	}
+	require.NoError(t, store.TransitionTask("CW-CANCEL-USAGE", "review"))
+	require.Eventually(t, func() bool {
+		runs, err := store.ListRuns("CW-CANCEL-USAGE")
+		return err == nil && len(runs) == 1 && runs[0].Status == "canceled"
+	}, 5*time.Second, 25*time.Millisecond)
+	sched.DrainResults()
+
+	run := requireSingleRun(t, store, "CW-CANCEL-USAGE")
+	assert.Equal(t, "canceled", run.Status)
+	assert.Equal(t, 1000, run.PromptTokens)
+	assert.Equal(t, 2000, run.CacheReadTokens)
+	assert.InDelta(t, 0.25, run.Cost, 1e-9)
+	assert.Equal(t, "provider", run.CostSource)
+	requireCostAgrees(t, store, run, 1)
 }

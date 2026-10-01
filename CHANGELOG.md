@@ -265,9 +265,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
     launch_profile used to look up no profile and cost 0.
   - **Every way a run ends keeps its usage.** A run killed by daemon
     shutdown, or failed or cancelled after the executor had accumulated
-    usage, records that usage and its cost. The orphan reapers only reclaim a
-    run that is still running, so a run that finished a moment earlier is not
-    reset to failed at cost 0.
+    usage, records that usage and its cost; one that ended without usage
+    has the source `none`. The orphan reapers only reclaim a run that is
+    still running, so a run that finished a moment earlier is not reset to
+    failed at cost 0, and for it they record no orphan event, do not requeue
+    its task and leave its worktree alone.
   - **Catalog lookups.** The `claude-code` provider now finds Anthropic's
     prices (CW-20261001-0182), and an opencode model id `<provider>/<model>`
     finds that provider's.
@@ -277,6 +279,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
     model the catalog lacks keeps the provider's figure and is labelled
     `provider` even if some tokens could not be priced. Costs are reported,
     not enforced: `CostBudget` still stops nothing.
+  - **A run an operator already cancelled, superseded or killed gets no
+    write and no ledger row.** It keeps its row as stamped, so a result that
+    arrives late and the usage in it are dropped, where before this the
+    ledger took a row for a run whatever its status. That spend is therefore
+    absent from `total_cost` and from the global cost ceiling check, which
+    read the ledger. It is deliberate: the run row and the ledger never
+    disagree. Whether such a run should still be costed is a separate
+    decision (a follow-up task).
   - **History is not repriced.** Existing rows keep their figures, and
     `runs.cost` and the ledger were not written together before, so for
     older runs they do not all agree; the all-time `total_cost` still

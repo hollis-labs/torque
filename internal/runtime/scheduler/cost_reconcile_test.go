@@ -1,10 +1,14 @@
 package scheduler_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -174,4 +178,27 @@ func TestSchedulerRunCostIsOneFigure(t *testing.T) {
 	assert.InDelta(t, status.TotalCost, bySource, 1e-9, "the by-source split adds up to total_cost")
 	assert.InDelta(t, 0.135672, status.TotalCostBySource["estimate"], 1e-9)
 	assert.Contains(t, status.TotalCostBySource, "none")
+}
+
+// A task whose profile is not in the registry resolves to an empty profile,
+// and config logs a warning for it. Cost resolution adds none of its own on
+// each completion: across several completions of such tasks the warning from
+// cost resolution appears once (the executor, which launched with the same
+// profile, logs its own).
+func TestSchedulerLogsAnUnresolvedProfileOnceWhilePricing(t *testing.T) {
+	sched, store, mock := setupCostScheduler(t)
+	// A registry with no "default" profile, so an unknown name resolves to empty.
+	sched.Profiles = staticProfiles{"codex-worker": {Executor: "cli", Provider: "codex", Model: "gpt-5.5"}}
+
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	usage := executor.TokenUsage{PromptTokens: 100, CompletionTokens: 10}
+	for i, id := range []string{"CW-UNRES-1", "CW-UNRES-2", "CW-UNRES-3"} {
+		run := runToCompletion(t, sched, store, mock, sqlstore.TaskRecord{ID: id, AgentProfile: "not-in-the-registry"}, executor.ExecutionResult{Status: "done", Tokens: usage})
+		assert.Equal(t, "none", run.CostSource, "run %d: nothing to price against", i)
+	}
+	warnings := strings.Count(buf.String(), `agent_profile "not-in-the-registry" not found`)
+	assert.Equal(t, 1, warnings, "the not-found warning is logged once, not on every completion")
 }
