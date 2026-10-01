@@ -231,6 +231,26 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	// amendments against the planted bootdir).
 	env := composeEnv(profile, opts, agentFile)
 
+	// An ACP session plants nothing: its MCP servers go in session/new and
+	// its task bundle and kickoff ride the first turn (acp_boot.go).
+	if runtimeKind.ACP() {
+		return bootACP(ctx, deps, mgr, opts, &plantedBoot{
+			resolved:         resolved,
+			profile:          profile,
+			agentProfileName: agentProfileName,
+			runtimeKind:      runtimeKind,
+			wrapperAdapter:   selected.wrapper,
+			caps:             caps,
+			sessID:           sessID,
+			role:             role,
+			systemPrompt:     systemPrompt,
+			loopback:         loopback,
+			loopbackURL:      loopbackURL,
+			ws:               ws,
+			env:              env,
+		})
+	}
+
 	// Shared-launch preparation + boot-dir planting (CW-20260515-0020).
 	//
 	// Torque builds a go-agent-launch LaunchPlan from its own Boot inputs,
@@ -430,7 +450,8 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 
 // plantedBoot bundles everything Boot's shared prefix (profile resolution
 // through boot-dir planting) computes, so bootLegacy and bootWrapper can
-// consume it without re-deriving or re-planting.
+// consume it without re-deriving or re-planting. bootACP takes the fields
+// computed before planting; the planting ones stay zero.
 type plantedBoot struct {
 	resolved          launchprofile.CompiledLaunchProfile
 	profile           config.AgentProfile

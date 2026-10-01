@@ -103,6 +103,11 @@ func (e *Executor) Validate(job *executor.ExecutionJob) error {
 	if _, _, err := adapterFor(profile, resolved.AgentProfileName, kind); err != nil {
 		return executor.NewPermanentError(err)
 	}
+	// Every job here is a task run; refuse a runtime its worker could not
+	// report from, before a run is spent on it (bootACP refuses it too).
+	if reason := acpTaskDispatchRefusal(profile.Provider, kind); reason != "" {
+		return executor.NewPermanentError(fmt.Errorf("%s provider: %s", profile.Provider, reason))
+	}
 	resolvedWD, err := executor.ResolveWorkingDir(job.WorkingDir)
 	if err != nil {
 		return executor.NewPermanentError(fmt.Errorf("resolve working_dir: %w", err))
