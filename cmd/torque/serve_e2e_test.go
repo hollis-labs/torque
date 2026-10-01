@@ -184,8 +184,13 @@ func TestRunServeUnblocksOnListenerClose(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- runServe(ctx, ln, httpserver.Security{}) }()
 
-	// Give runServe a moment to fully start (DB open, migrations, HTTP Serve).
-	time.Sleep(200 * time.Millisecond)
+	// Wait until runServe is actually serving (DB open, migrations, HTTP
+	// Serve) before pulling the listener, so the 3s bound below measures
+	// only the abnormal-shutdown path. A fixed 200ms sleep closed the
+	// listener mid-startup under -race, where startup alone runs ~3s, and
+	// the bound timed out on startup rather than on a deadlock
+	// (CW-20260907-0025).
+	waitForListen(t, "http://"+ln.Addr().String()+"/api/v1/scheduler/status", 30*time.Second)
 
 	// Force abnormal Serve exit by closing the listener out from under it.
 	// srv.Serve will return a non-ErrServerClosed error and runServe must

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"time"
 
@@ -153,6 +154,38 @@ type TaskService struct {
 	tags               *TagService
 	transitionObserver TaskTransitionObserver // optional; nil disables the observer hook
 	commentObserver    CommentObserver        // optional; nil disables the observer hook
+	// registeredExecutors lists the executor names this process can
+	// dispatch to; nil disables the executor check. See
+	// SetRegisteredExecutors.
+	registeredExecutors func() []string
+}
+
+// SetRegisteredExecutors installs where Create and Update look up the
+// executor names a task may name (CW-20260910-0087): bootstrap passes the
+// executor registry's List. It is a func rather than a list because torque
+// serve builds the service before the registry is populated. nil (the
+// default) disables the check, so a process that builds no registry accepts
+// any executor instead of refusing every one. Install once at bootstrap
+// before serving traffic.
+func (s *TaskService) SetRegisteredExecutors(names func() []string) {
+	s.registeredExecutors = names
+}
+
+// validateExecutor rejects a caller-supplied executor the registry does not
+// have. Empty is allowed: it means the default. Without a registry, or with
+// one not yet populated, there is nothing to check against.
+func (s *TaskService) validateExecutor(executor string) error {
+	if executor == "" || s.registeredExecutors == nil {
+		return nil
+	}
+	names := s.registeredExecutors()
+	if len(names) == 0 || slices.Contains(names, executor) {
+		return nil
+	}
+	return &ValidationError{
+		Field:   "executor",
+		Message: "invalid executor: got '" + executor + "', expected one of: " + strings.Join(names, ", ") + " (or empty for the default)",
+	}
 }
 
 // SetTransitionObserver installs a TaskTransitionObserver that runs after
@@ -301,6 +334,9 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		input.Manual,
 		input.Metadata,
 	); err != nil {
+		return nil, err
+	}
+	if err := s.validateExecutor(input.Executor); err != nil {
 		return nil, err
 	}
 	if err := validateRequiredWorkflowMetadata(input.Metadata); err != nil {
@@ -635,6 +671,13 @@ func (s *TaskService) Update(id string, input TaskUpdateInput) error {
 		effectiveMetadata,
 	); err != nil {
 		return err
+	}
+	// Only a new value is checked: a row already carrying an executor that
+	// is no longer registered can still have its other fields edited.
+	if input.Executor != nil {
+		if err := s.validateExecutor(*input.Executor); err != nil {
+			return err
+		}
 	}
 	if err := validateRequiredWorkflowMetadata(effectiveMetadata); err != nil {
 		return err

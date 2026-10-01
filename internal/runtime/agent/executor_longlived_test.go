@@ -355,7 +355,7 @@ func TestRunLongLived_TaskDeadlineStopsSession(t *testing.T) {
 		OnFail:       "retry",
 		MaxRetries:   0,
 	}))
-	deadline := 120 * time.Millisecond
+	deadline := deadlineTestBudget
 	fr := &deadlineFakeRuntime{}
 	deps := &Dependencies{
 		Store:       store,
@@ -386,7 +386,7 @@ func TestRunLongLived_TaskDeadlineStopsSession(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, "failed", result.Status)
 	assert.Contains(t, result.Reason, "task deadline exceeded")
-	assert.Eventually(t, func() bool { return fr.stopCount.Load() == 1 }, time.Second, 10*time.Millisecond)
+	assert.Eventually(t, func() bool { return fr.stopCount.Load() == 1 }, 10*time.Second, 10*time.Millisecond)
 
 	rec, err := store.GetSession("SES-DEADLINE")
 	require.NoError(t, err)
@@ -409,7 +409,7 @@ func TestRunLongLived_TaskDeadlineCoversLaunch(t *testing.T) {
 		OnFail:       "retry",
 		MaxRetries:   0,
 	}))
-	deadline := 75 * time.Millisecond
+	deadline := deadlineTestBudget
 	deps := &Dependencies{
 		Store:       store,
 		StateWriter: writeq.NewDirect(store),
@@ -684,7 +684,7 @@ func TestRunLongLived_OperatorPauseCancelsRunAndSession(t *testing.T) {
 	require.Eventually(t, func() bool {
 		rec, err := store.GetSession("SES-PAUSE")
 		return err == nil && rec.State == string(StatusRunning)
-	}, time.Second, 10*time.Millisecond)
+	}, 10*time.Second, 10*time.Millisecond)
 
 	require.NoError(t, store.TransitionTask(taskID, "paused"))
 
@@ -699,7 +699,7 @@ func TestRunLongLived_OperatorPauseCancelsRunAndSession(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, "canceled", result.Status)
 	assert.Equal(t, operatorPauseReason, result.Reason)
-	assert.Eventually(t, func() bool { return fr.stopCount.Load() == 1 }, time.Second, 10*time.Millisecond)
+	assert.Eventually(t, func() bool { return fr.stopCount.Load() == 1 }, 10*time.Second, 10*time.Millisecond)
 
 	rec, err := store.GetSession("SES-PAUSE")
 	require.NoError(t, err)
@@ -936,6 +936,15 @@ func TestAwaitLongLivedCompletion_TerminalFailureBlocks(t *testing.T) {
 	assert.Equal(t, "blocked", res.Status)
 	assert.Contains(t, res.Reason, "unexpected status 401")
 }
+
+// deadlineTestBudget is the task deadline the TaskDeadline tests give a
+// run. It must outlast Boot's own work (planting, session row, Start),
+// which is ~50-100ms on a quiet box but stretches under a parallel `make
+// test`: with 120ms and 75ms the deadline sometimes fired before Start, so
+// StopsSession saw no Stop and CoversLaunch found no session row
+// (CW-20261001-0041). The deadline still ends both runs; the tests just
+// take this long.
+const deadlineTestBudget = 2 * time.Second
 
 type deadlineFakeRuntime struct {
 	stopCount                  atomic.Int32
