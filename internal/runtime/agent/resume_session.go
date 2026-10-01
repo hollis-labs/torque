@@ -8,6 +8,37 @@ import (
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
+// sourceBootOptions are the Options that re-launch rec's session: a
+// long-lived boot of its agent profile in its workdir, bound to its task and
+// project, with the role its original boot announced. Manager.ResumeSession
+// and Manager.Resume both start from them, so a re-launched session, resumed
+// or fresh, is the same task's session and not an unlinked one.
+func sourceBootOptions(rec *sqlstore.SessionRecord) Options {
+	opts := Options{
+		Mode:         ModeLongLived,
+		AgentProfile: rec.AgentProfile,
+		Workdir:      rec.Workdir,
+	}
+	if rec.ProjectID.Valid {
+		opts.ProjectID = rec.ProjectID.String
+	}
+	if rec.TaskID.Valid {
+		opts.TaskID = rec.TaskID.String
+	}
+	// Preserve the role tag the original boot used so the re-launched
+	// transcript's planted CLAUDE.md still announces the same role.
+	// Convention: planstart stamps SessionMeta["role"] for orchestrator
+	// boots (orchestrator.SessionMetaRole) — that key is the canonical
+	// human-readable role tag. Boot's own Options.Role defaults to the
+	// AgentProfile when empty, so falling through here is also safe.
+	if meta := decodeMeta(rec.MetaJSON); len(meta) > 0 {
+		if v := meta["role"]; v != "" {
+			opts.Role = v
+		}
+	}
+	return opts
+}
+
 // ResumesSession reports whether ResumeSession tries to continue rec's
 // conversation rather than booting fresh (D4: the single decision point, a
 // declared capability, not a runtime probe). It does when rec has a stored
@@ -95,38 +126,11 @@ func (m *Manager) ResumeSession(ctx context.Context, sessionID string, opts Resu
 		return nil, fmt.Errorf("agent.Manager.ResumeSession: get session: %w", err)
 	}
 
-	projectID := ""
-	if rec.ProjectID.Valid {
-		projectID = rec.ProjectID.String
-	}
-	taskID := ""
-	if rec.TaskID.Valid {
-		taskID = rec.TaskID.String
-	}
-
-	bootOpts := Options{
-		Mode:         ModeLongLived,
-		AgentProfile: rec.AgentProfile,
-		Workdir:      rec.Workdir,
-		ProjectID:    projectID,
-		TaskID:       taskID,
-		// composeSystemPrompt prepends Options.SystemPrompt in front of
-		// the agent-file persona so the DiagnosticNote (when set by α.5
-		// stuck-task recovery) lands at the top of the resumed CLAUDE.md.
-		SystemPrompt: opts.DiagnosticNote,
-	}
-
-	// Preserve the role tag the original boot used so the resumed
-	// transcript's planted CLAUDE.md still announces the same role.
-	// Convention: planstart stamps SessionMeta["role"] for orchestrator
-	// boots (orchestrator.SessionMetaRole) — that key is the canonical
-	// human-readable role tag. Boot's own Options.Role defaults to the
-	// AgentProfile when empty, so falling through here is also safe.
-	if meta := decodeMeta(rec.MetaJSON); len(meta) > 0 {
-		if v := meta["role"]; v != "" {
-			bootOpts.Role = v
-		}
-	}
+	bootOpts := sourceBootOptions(rec)
+	// composeSystemPrompt prepends Options.SystemPrompt in front of the
+	// agent-file persona so the DiagnosticNote (when set by α.5 stuck-task
+	// recovery) lands at the top of the resumed CLAUDE.md.
+	bootOpts.SystemPrompt = opts.DiagnosticNote
 
 	var sess *Session
 	if m.ResumesSession(rec) {

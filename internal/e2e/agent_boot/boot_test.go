@@ -354,6 +354,13 @@ func TestBoot_ModeResume_LoadsCheckpoint(t *testing.T) {
 	rec, err := cd.Store.GetSession(sess.ID)
 	require.NoError(t, err)
 	assert.Equal(t, sess.ID, rec.ID)
+
+	// The legacy boot path stamps the session as resumed, since its launch
+	// carries a provider session id: Session.Resumed and the persisted
+	// torque.resumed meta (CW-20261001-0203).
+	assert.True(t, sess.Resumed)
+	assert.Equal(t, "true", sess.Meta["torque.resumed"])
+	assert.Contains(t, rec.MetaJSON, `"torque.resumed":"true"`)
 }
 
 // TestBoot_ModeResume_MissingCheckpointRejected validates the validation

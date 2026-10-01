@@ -746,7 +746,8 @@ func (m *Manager) Checkpoint(req CheckpointRequest) (*Checkpoint, error) {
 	if m.deps.Store == nil {
 		return nil, fmt.Errorf("agent.Manager.Checkpoint: nil store")
 	}
-	if _, err := m.deps.Store.GetSession(req.SessionID); err != nil {
+	src, err := m.deps.Store.GetSession(req.SessionID)
+	if err != nil {
 		if errors.Is(err, sqlstore.ErrSessionNotFound) {
 			return nil, ErrSessionNotFound
 		}
@@ -758,17 +759,22 @@ func (m *Manager) Checkpoint(req CheckpointRequest) (*Checkpoint, error) {
 		SessionID: req.SessionID,
 		Payload:   req.Payload,
 		Note:      req.Note,
+		// The provider conversation this checkpoint is of: what Resume
+		// continues. Left out, a resume from this checkpoint never found
+		// an id (CW-20261001-0203).
+		ResumeHint: src.ResumeHint,
 	}
 	if err := m.deps.Store.CreateSessionCheckpoint(rec); err != nil {
 		return nil, fmt.Errorf("create session checkpoint: %w", err)
 	}
 	_ = m.deps.TouchSession(context.Background(), req.SessionID)
 	return &Checkpoint{
-		ID:        cpID,
-		SessionID: req.SessionID,
-		Payload:   rec.Payload,
-		Note:      req.Note,
-		CreatedAt: m.nowFn().UTC(),
+		ID:         cpID,
+		SessionID:  req.SessionID,
+		Payload:    rec.Payload,
+		ResumeHint: rec.ResumeHint,
+		Note:       req.Note,
+		CreatedAt:  m.nowFn().UTC(),
 	}, nil
 }
 
@@ -1095,14 +1101,22 @@ func (m *Manager) Boot(ctx context.Context, opts Options) (*Session, error) {
 	return Boot(ctx, m.deps, opts)
 }
 
-// Resume re-launches a session against a previous checkpoint (the HTTP and
-// MCP session resume). It continues the provider conversation the
-// checkpoint stored only where ResumeSession would (resumes: a stored id,
-// the same registry runtime, and a resume Torque wires), booting with
-// Mode=ModeResume. Otherwise it boots fresh, long-lived, with the kickoff:
-// a codex app-server boot handed an id it ignores would skip its kickoff
-// and sit silent (CW-20261001-0203). A resume whose provider has lost the
-// session boots fresh once. The new session's Resumed says which it did.
+// Resume re-launches a session from a previous checkpoint (the HTTP and MCP
+// session resume), as a NEW session bound to the source session's task,
+// project and role. It continues the provider conversation the checkpoint
+// recorded only where ResumeSession would (resumes: a stored id, the same
+// registry runtime, and a resume Torque wires). Otherwise it boots fresh with
+// the kickoff: a codex app-server boot handed an id it ignores would skip its
+// kickoff and sit silent (CW-20261001-0203).
+//
+// Both are long-lived boots that run the kickoff, like ResumeSession's. A
+// resume whose provider no longer has the session boots fresh once, when the
+// loss shows before Boot returns: on a subprocess-per-turn runtime (claude
+// subprocess, opencode run) Boot runs the kickoff turn before it returns, so
+// it blocks until that turn ends, resumed or fresh; a streaming-stdio resume
+// only finds out on its first turn (CW-20261001-0202). The new session's
+// Resumed says whether the launch carried the provider's session id, which
+// an ACP agent without loadSession can still ignore.
 func (m *Manager) Resume(ctx context.Context, req ResumeRequest) (string, error) {
 	if req.SessionID == "" {
 		return "", fmt.Errorf("agent.Manager.Resume: SessionID required")
@@ -1169,19 +1183,24 @@ func (m *Manager) Resume(ctx context.Context, req ResumeRequest) (string, error)
 		}
 	}
 
-	fresh := Options{
-		Mode:          ModeLongLived,
-		LaunchProfile: launchProfile,
-		AgentProfile:  profile,
-		Workdir:       workdir,
-		SystemPrompt:  req.SystemPrompt,
-		Env:           envMap,
+	fresh := sourceBootOptions(src)
+	fresh.LaunchProfile = launchProfile
+	fresh.AgentProfile = profile
+	fresh.Workdir = workdir
+	fresh.SystemPrompt = req.SystemPrompt
+	fresh.Env = envMap
+
+	// The checkpoint's id; a checkpoint written before checkpoints carried
+	// one falls back to the source session's own, which names the same
+	// provider conversation.
+	hint := cp.ResumeHint
+	if len(hint) == 0 {
+		hint = src.ResumeHint
 	}
 	var sess *Session
-	if m.resumes(src.Provider, cp.ResumeHint, launchProfile, profile) {
+	if m.resumes(src.Provider, hint, launchProfile, profile) {
 		resume := fresh
-		resume.Mode = ModeResume
-		resume.ResumeFromCheckpoint = cp.ID
+		resume.ProviderSessionIDOverride = string(hint)
 		sess, err = bootWithFreshFallback(ctx, m.deps, resume, fresh, "Resume "+req.SessionID)
 	} else {
 		sess, err = Boot(ctx, m.deps, fresh)
@@ -1197,6 +1216,12 @@ func (m *Manager) Resume(ctx context.Context, req ResumeRequest) (string, error)
 // stored: there is an id, the profile still boots that registry runtime,
 // and Torque genuinely resumes it in the profile's kind (GenuinelyResumable,
 // CW-20261001-0174). The single decision point for every resume (D4).
+//
+// The recorded session's own mode is not compared: a provider session id is
+// the provider's own and works across its modes (claude --resume and
+// opencode --session take the same id from streaming and per-turn runs), so
+// what matters is that the runtime is the same one and that Torque wires
+// resume in the mode the profile boots now.
 func (m *Manager) resumes(recordedBy string, hint []byte, launchProfile, agentProfile string) bool {
 	if len(hint) == 0 {
 		return false
