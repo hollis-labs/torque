@@ -20,6 +20,12 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// RemoteEnv selects `torque mcp --remote` without the flag: "1" (or
+// "true") for the daemon on this host, or a URL. Torque sets it in the
+// planted mux entry's env for agents under ProtectedPaths; mux passes its
+// env to the `torque mcp` it starts.
+const RemoteEnv = "TORQUE_MCP_REMOTE"
+
 // Options configures a bridge.
 type Options struct {
 	// Endpoint is the daemon's MCP URL, e.g. http://127.0.0.1:8990/mcp.

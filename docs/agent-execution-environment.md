@@ -287,6 +287,14 @@ It fails closed:
 `TORQUE_SANDBOX_PROTECT=0` (or `false`, `off`, `no`) turns protection off for
 the whole daemon, without a rollback, if the backend misbehaves on a host.
 
+The planted mux keeps its `torque` server. The `torque mcp` mux starts runs
+inside the sandbox, where it cannot open `main.db`, so while protection is on
+`torque serve` sets `TORQUE_MCP_REMOTE=http://127.0.0.1:<port>/mcp` in the
+planted mux entry's env. mux passes its env to the servers it starts, and
+`torque mcp` then relays to the daemon's `/mcp` endpoint instead of opening
+the database (CW-20261001-0199). When the API requires `TORQUE_API_TOKEN`,
+which agents never receive, it is not set.
+
 Limits: the protection stops direct writes to those directories. It is not an
 isolation boundary. The agent can still plant code that runs outside the
 sandbox later (`~/.bashrc`, `~/.config/systemd/user`, a repository's git

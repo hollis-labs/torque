@@ -38,7 +38,7 @@ http://127.0.0.1:$TORQUE_HTTP_PORT/mcp; a URL selects another endpoint.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Before config.Load: resolving app paths materializes the data
 			// dir, which --remote must never create or touch.
-			if endpoint := remoteMCPEndpoint(remote, os.Getenv("TORQUE_MCP_REMOTE"), config.HTTPPortFromEnv()); endpoint != "" {
+			if endpoint := remoteMCPEndpoint(remote, os.Getenv(mcpbridge.RemoteEnv), config.HTTPPortFromEnv()); endpoint != "" {
 				return runRemoteMCP(cmd, endpoint, config.APITokenFromEnv())
 			}
 			cfg, err := config.Load()
