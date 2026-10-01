@@ -147,7 +147,7 @@ export default function EpicDetailPage() {
             isStale={taskPage.isStale}
             loading={taskPage.loading}
             error={taskPage.error}
-            onRetry={() => void taskPage.reload()}
+            onRetry={() => { void taskPage.refresh(); void refreshCounts() }}
             onLoadMore={() => void taskPage.loadMore()}
             loadingMore={taskPage.loadingMore}
           />

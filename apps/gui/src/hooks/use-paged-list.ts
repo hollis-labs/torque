@@ -114,8 +114,8 @@ export function usePagedList<T, P>(options: PagedListOptions<T, P>) {
     }
   }, [commit, mode, params])
 
-  const reload = useCallback(async () => {
-    const gen = ++generation.current
+  const cancelRequests = useCallback(() => {
+    ++generation.current
     controller.current?.abort()
     invalidation.current?.cancel()
     rowDebounce.current?.cancel()
@@ -124,6 +124,11 @@ export function usePagedList<T, P>(options: PagedListOptions<T, P>) {
     rowRevisions.current.clear()
     rowControllers.current.forEach(abort => abort.abort())
     rowControllers.current.clear()
+  }, [])
+
+  const reload = useCallback(async () => {
+    cancelRequests()
+    const gen = generation.current
     commit({ items: [], loading: false, loadingMore: false, error: null, isStale: false })
     if (!enabled) return
     if (mode === 'offset' && (!Number.isSafeInteger(initialOffset) || initialOffset < 0)) {
@@ -131,22 +136,14 @@ export function usePagedList<T, P>(options: PagedListOptions<T, P>) {
       return
     }
     await request(mode === 'offset' ? { offset: initialOffset } : {}, false, gen)
-  }, [commit, enabled, initialOffset, mode, request])
+  }, [cancelRequests, commit, enabled, initialOffset, mode, request])
 
   useEffect(() => {
+    // Synchronize the remote query lifecycle; resetting rows before its request is intentional.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void reload()
-    return () => {
-      ++generation.current
-      controller.current?.abort()
-      invalidation.current?.cancel()
-      rowDebounce.current?.cancel()
-      rowQueue.current.clear()
-      runningRows.current.clear()
-      rowRevisions.current.clear()
-      rowControllers.current.forEach(abort => abort.abort())
-      rowControllers.current.clear()
-    }
-  }, [reload, queryKey])
+    return cancelRequests
+  }, [reload, queryKey, cancelRequests])
 
   const loadMore = useCallback(async () => {
     const { meta, loading } = current.current
@@ -175,18 +172,21 @@ export function usePagedList<T, P>(options: PagedListOptions<T, P>) {
       if (rowControllers.current.size) { rowDebounce.current?.schedule(); return }
       const ids = [...rowQueue.current]
       rowQueue.current.clear()
+      ids.forEach(id => runningRows.current.add(id))
       const gen = generation.current
       // The queue is capped before dispatch; workers process only these loaded IDs.
       let next = 0
       const worker = async (): Promise<void> => {
         const id = ids[next++]
         if (id === undefined || gen !== generation.current || current.current.isStale) return
-        if (!current.current.items.some(item => latest.current.getId(item) === id)) return worker()
+        if (!current.current.items.some(item => latest.current.getId(item) === id)) {
+          runningRows.current.delete(id)
+          return worker()
+        }
         const fetchItem = latest.current.fetchItem
         if (!fetchItem) return
         const abort = new AbortController()
         rowControllers.current.add(abort)
-        runningRows.current.add(id)
         const revision = rowRevisions.current.get(id)
         try {
           const item = await fetchItem(id, { params, signal: abort.signal })
@@ -207,6 +207,7 @@ export function usePagedList<T, P>(options: PagedListOptions<T, P>) {
   }, [commit, params, patchRow, rowRefreshConcurrency, rowRefreshDelayMs])
 
   const applyEvent = useCallback((change: ListChange<T>) => {
+    const refreshLimit = Number.isSafeInteger(rowRefreshLimit) && rowRefreshLimit > 0 ? rowRefreshLimit : 20
     const visible = current.current.items.some(item => latest.current.getId(item) === change.id)
     if (visible) {
       rowRevisions.current.set(change.id, (rowRevisions.current.get(change.id) ?? 0) + 1)
@@ -218,7 +219,7 @@ export function usePagedList<T, P>(options: PagedListOptions<T, P>) {
         if (!latest.current.fetchItem) commit({ ...current.current, isStale: true })
         else {
           rowQueue.current.add(change.id)
-          if (new Set([...rowQueue.current, ...runningRows.current]).size > Math.max(1, rowRefreshLimit)) {
+          if (new Set([...rowQueue.current, ...runningRows.current]).size > refreshLimit) {
             rowQueue.current.clear()
             rowDebounce.current?.cancel()
             rowControllers.current.forEach(abort => abort.abort())

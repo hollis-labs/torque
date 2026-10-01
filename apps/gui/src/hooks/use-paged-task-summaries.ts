@@ -29,7 +29,8 @@ export function usePagedTaskSummaries(scope: ScopeFilter, pageSize = SCOPE_TASK_
   const page = usePagedList({ fetchPage, params: { ...scope, limit: pageSize,
     sort_by: 'updated_at', sort_dir: 'desc' } as SummaryParams,
     getId: (task: TaskSummary) => task.id, subscribe, onInvalidate, fetchItem,
-    matches: (task: TaskSummary) => (!scope.project_id || task.project_id === scope.project_id)
+    enabled: Boolean(scope.project_id || scope.epic_id || scope.sprint_id),
+    matches: (task: TaskSummary) => task.kind !== 'internal' && (!scope.project_id || task.project_id === scope.project_id)
       && (!scope.epic_id || task.epic_id === scope.epic_id)
       && (!scope.sprint_id || task.sprint_id === scope.sprint_id) })
   return { ...page, tasks: page.items }

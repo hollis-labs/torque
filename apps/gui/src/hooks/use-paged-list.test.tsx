@@ -63,7 +63,7 @@ describe('usePagedList', () => {
   it('resets on sort changes, passes include_total only as requested, and ignores equivalent param order', async () => {
     const fetchPage = vi.fn().mockResolvedValue(page([row(1)], null, 10))
     const { result, rerender } = renderHook(({ params }: { params: Params }) => usePagedList({ fetchPage, params, getId }), {
-      initialProps: { params: { sort_by: 'status', include_total: true } },
+      initialProps: { params: { sort_by: 'status', include_total: true } as Params },
     })
     await waitFor(() => expect(result.current.total).toBe(10))
     rerender({ params: { include_total: true, sort_by: 'status' } })
@@ -165,7 +165,7 @@ describe('usePagedList', () => {
   it('aborts row refreshes and subscriptions on query changes and unmount', async () => {
     const oldRow = deferred<Row>()
     const fetchPage = vi.fn().mockResolvedValue(page([row(1)]))
-    const fetchItem = vi.fn((_id: string | number, _request: { signal: AbortSignal }) => oldRow.promise)
+    const fetchItem = vi.fn((_id: string | number, _request: { signal: AbortSignal }) => { void _id; void _request; return oldRow.promise })
     const unsubscribe = vi.fn()
     const subscribe = vi.fn(() => unsubscribe)
     const { result, rerender, unmount } = renderHook(({ search }) => usePagedList({ fetchPage, params: { search }, getId, fetchItem, subscribe }), { initialProps: { search: 'old' } })
