@@ -87,6 +87,37 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Resume capabilities come from the go-providers registry, per runtime and
+  mode, instead of provider-name switches (CW-20261001-0174).
+  `agent.Resume(provider, kind)` reports what the registry declares and
+  whether Torque wires it. Wired is an allow-list of the (runtime, mode)
+  pairs whose launch takes the stored session id, so a resume a library
+  bump declares for a new mode stays off until Torque wires it.
+  - **Resumes:** claude-code (streaming-stdio, subprocess) via
+    `--resume <id>`; opencode `run` via `--session <id>`; Pi and opencode
+    over ACP via `session/load`. opencode `run` booted fresh before.
+  - **The session id is stored for subprocess runtimes too.** A
+    subprocess-per-turn session (claude-code subprocess, opencode `run`)
+    now stores the provider session id its first turn reports, as
+    streaming-stdio and ACP sessions already did. Without it, there was
+    nothing to resume.
+  - **A lost provider session boots fresh once.** If a subprocess resume's
+    first turn finds the provider no longer has the session (claude: "No
+    conversation found", a `SessionLostError`), `ResumeSession` and
+    planstart's redispatch boot fresh once, with the kickoff, rather than
+    fail. Not covered yet (CW-20261001-0202): a streaming-stdio resume
+    whose id is lost fails its first turn after Boot, and an ACP agent
+    without `loadSession` opens a new session without saying so.
+  - **Declared but not wired yet:** codex app-server (CW-20261001-0180)
+    and agy (CW-20261001-0181). A Codex `ResumeSession` now boots fresh
+    instead of passing an id the app-server ignored.
+  - **Same runtime required:** `ResumeSession` and planstart's redispatch
+    resume only when the session's profile still boots the runtime that
+    recorded the id (registry runtime, any case).
+  - **Breadcrumb:** the HITL response breadcrumb's `used_resume` is the
+    resumed session's `Resumed`, false when no stored id existed or the
+    provider had lost the session. It used to claim a resume for a row with
+    no stored session id.
 - Codex app-server's MCP tool-call approvals keep the run's loopback as the
   only server approved outside `bypassPermissions`, now through agentkit's
   `CodexApprovalResponder.MCPAllow` instead of Torque's own override.

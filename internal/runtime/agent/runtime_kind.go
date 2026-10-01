@@ -227,9 +227,13 @@ func capabilitiesForRuntimeKind(kind RuntimeKind) agentsessions.Capabilities {
 			ServeHTTP:         true,
 		}
 	default:
-		// Subprocess + empty default both land here.
+		// Subprocess + empty default both land here. A subprocess turn
+		// reports the provider's session id too (claude's stream-json
+		// init, opencode run's events), and a resume needs it stored
+		// (CW-20261001-0174).
 		return agentsessions.Capabilities{
-			BinaryRequired: true,
+			BinaryRequired:    true,
+			ProviderSessionID: true,
 		}
 	}
 }
