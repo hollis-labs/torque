@@ -1,0 +1,3070 @@
+{
+  "fixture": {
+    "tasks": 4330,
+    "internal_tasks": 50,
+    "runs": 4330
+  },
+  "interactive_ms": 9105,
+  "mount_requests": [
+    {
+      "url": "http://127.0.0.1:5197/api/v1/tasks/facets?dimensions=status",
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:5197/api/v1/tasks/rollup?group_by=project_id",
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:5197/api/v1/runs/facets?since=2026-09-18T00%3A00%3A00.000Z&until=2026-10-01T23%3A05%3A21.238Z&dimensions=status%2Cexecutor%2Cprofile",
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:5197/api/v1/runs/timeseries?bucket=day&since=2026-09-18T00%3A00%3A00.000Z&until=2026-10-01T23%3A05%3A21.238Z",
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:5197/api/v1/runs/timeseries?bucket=day&since=2026-06-14T00%3A00%3A00.000Z&until=2026-10-01T23%3A05%3A21.238Z",
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:5197/api/v1/runs/timeseries?bucket=hour&since=2026-09-30T23%3A05%3A21.238Z&until=2026-10-01T23%3A05%3A21.238Z",
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:5197/api/v1/runs?limit=12&sort_by=started_at&sort_dir=desc",
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:5197/api/v1/events",
+      "method": "GET"
+    }
+  ],
+  "requests": [
+    {
+      "url": "http://127.0.0.1:5197/api/v1/tasks/facets?dimensions=status",
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:5197/api/v1/tasks/rollup?group_by=project_id",
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:5197/api/v1/runs/facets?since=2026-09-18T00%3A00%3A00.000Z&until=2026-10-01T23%3A05%3A21.238Z&dimensions=status%2Cexecutor%2Cprofile",
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:5197/api/v1/runs/timeseries?bucket=day&since=2026-09-18T00%3A00%3A00.000Z&until=2026-10-01T23%3A05%3A21.238Z",
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:5197/api/v1/runs/timeseries?bucket=day&since=2026-06-14T00%3A00%3A00.000Z&until=2026-10-01T23%3A05%3A21.238Z",
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:5197/api/v1/runs/timeseries?bucket=hour&since=2026-09-30T23%3A05%3A21.238Z&until=2026-10-01T23%3A05%3A21.238Z",
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:5197/api/v1/runs?limit=12&sort_by=started_at&sort_dir=desc",
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:5197/api/v1/events",
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:5197/api/v1/runs?limit=12&sort_by=started_at&sort_dir=desc&cursor=eyJ2IjoxLCJzYiI6InN0YXJ0ZWRfYXQiLCJzZCI6ImRlc2MiLCJzdiI6IjIwMjYtMTAtMDEgMjI6MDk6MDAiLCJpZCI6IjEwMDkifQ",
+      "method": "GET"
+    }
+  ],
+  "responses": [
+    {
+      "url": "http://127.0.0.1:5197/api/v1/tasks/facets?dimensions=status",
+      "status": 200,
+      "body": {
+        "matching_count": 4330,
+        "bucket_limit": 50,
+        "dimensions": [
+          "status"
+        ],
+        "facets": [
+          {
+            "dimension": "status",
+            "buckets": [
+              {
+                "value": "doing",
+                "count": 1083
+              },
+              {
+                "value": "todo",
+                "count": 1083
+              },
+              {
+                "value": "done",
+                "count": 1082
+              },
+              {
+                "value": "review",
+                "count": 1082
+              }
+            ],
+            "total_distinct": 4,
+            "returned": 4,
+            "truncated": false
+          }
+        ]
+      }
+    },
+    {
+      "url": "http://127.0.0.1:5197/api/v1/tasks/rollup?group_by=project_id",
+      "status": 200,
+      "body": {
+        "group_by": "project_id",
+        "total": 4330,
+        "scopes": [
+          {
+            "scope_id": "project-00",
+            "total": 101,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 25,
+              "todo": 26
+            }
+          },
+          {
+            "scope_id": "project-01",
+            "total": 101,
+            "counts": {
+              "doing": 26,
+              "done": 25,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-02",
+            "total": 101,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 26,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-03",
+            "total": 101,
+            "counts": {
+              "doing": 25,
+              "done": 26,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-04",
+            "total": 101,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 25,
+              "todo": 26
+            }
+          },
+          {
+            "scope_id": "project-05",
+            "total": 101,
+            "counts": {
+              "doing": 26,
+              "done": 25,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-06",
+            "total": 101,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 26,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-07",
+            "total": 101,
+            "counts": {
+              "doing": 25,
+              "done": 26,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-08",
+            "total": 101,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 25,
+              "todo": 26
+            }
+          },
+          {
+            "scope_id": "project-09",
+            "total": 101,
+            "counts": {
+              "doing": 26,
+              "done": 25,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-10",
+            "total": 101,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 26,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-11",
+            "total": 101,
+            "counts": {
+              "doing": 25,
+              "done": 26,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-12",
+            "total": 101,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 25,
+              "todo": 26
+            }
+          },
+          {
+            "scope_id": "project-13",
+            "total": 101,
+            "counts": {
+              "doing": 26,
+              "done": 25,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-14",
+            "total": 101,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 26,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-15",
+            "total": 101,
+            "counts": {
+              "doing": 25,
+              "done": 26,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-16",
+            "total": 101,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 25,
+              "todo": 26
+            }
+          },
+          {
+            "scope_id": "project-17",
+            "total": 101,
+            "counts": {
+              "doing": 26,
+              "done": 25,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-18",
+            "total": 101,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 26,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-19",
+            "total": 101,
+            "counts": {
+              "doing": 25,
+              "done": 26,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-20",
+            "total": 101,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 25,
+              "todo": 26
+            }
+          },
+          {
+            "scope_id": "project-21",
+            "total": 101,
+            "counts": {
+              "doing": 26,
+              "done": 25,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-22",
+            "total": 101,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 26,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-23",
+            "total": 101,
+            "counts": {
+              "doing": 25,
+              "done": 26,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-24",
+            "total": 101,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 25,
+              "todo": 26
+            }
+          },
+          {
+            "scope_id": "project-25",
+            "total": 101,
+            "counts": {
+              "doing": 26,
+              "done": 25,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-26",
+            "total": 101,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 26,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-27",
+            "total": 101,
+            "counts": {
+              "doing": 25,
+              "done": 26,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-28",
+            "total": 101,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 25,
+              "todo": 26
+            }
+          },
+          {
+            "scope_id": "project-29",
+            "total": 101,
+            "counts": {
+              "doing": 26,
+              "done": 25,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-30",
+            "total": 100,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-31",
+            "total": 100,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-32",
+            "total": 100,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-33",
+            "total": 100,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-34",
+            "total": 100,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-35",
+            "total": 100,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-36",
+            "total": 100,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-37",
+            "total": 100,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-38",
+            "total": 100,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-39",
+            "total": 100,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-40",
+            "total": 100,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-41",
+            "total": 100,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 25,
+              "todo": 25
+            }
+          },
+          {
+            "scope_id": "project-42",
+            "total": 100,
+            "counts": {
+              "doing": 25,
+              "done": 25,
+              "review": 25,
+              "todo": 25
+            }
+          }
+        ]
+      }
+    },
+    {
+      "url": "http://127.0.0.1:5197/api/v1/runs/timeseries?bucket=day&since=2026-09-18T00%3A00%3A00.000Z&until=2026-10-01T23%3A05%3A21.238Z",
+      "status": 200,
+      "body": {
+        "bucket": "day",
+        "tz_offset_minutes": 0,
+        "since": "2026-09-18T00:00:00Z",
+        "until": "2026-10-01T23:05:21.238Z",
+        "buckets": [
+          {
+            "start": "2026-09-18T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 61800,
+            "completion_tokens": 6360,
+            "cost": 2.38,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-19T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 57900,
+            "completion_tokens": 6180,
+            "cost": 1.9900000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-20T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 60000,
+            "completion_tokens": 6000,
+            "cost": 2.3,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-21T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 56100,
+            "completion_tokens": 6120,
+            "cost": 1.9100000000000001,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-22T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 61200,
+            "completion_tokens": 6240,
+            "cost": 2.3200000000000003,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-23T00:00:00Z",
+            "count": 52,
+            "prompt_tokens": 80100,
+            "completion_tokens": 8820,
+            "cost": 2.71,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 26
+            }
+          },
+          {
+            "start": "2026-09-24T00:00:00Z",
+            "count": 29,
+            "prompt_tokens": 48300,
+            "completion_tokens": 4860,
+            "cost": 1.83,
+            "status_counts": {
+              "done": 13,
+              "failed": 16
+            }
+          },
+          {
+            "start": "2026-09-25T00:00:00Z",
+            "count": 36,
+            "prompt_tokens": 49800,
+            "completion_tokens": 5460,
+            "cost": 1.6800000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 10,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-26T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 60600,
+            "completion_tokens": 6120,
+            "cost": 2.3600000000000003,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-27T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 56700,
+            "completion_tokens": 5940,
+            "cost": 1.9700000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-28T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 61800,
+            "completion_tokens": 6060,
+            "cost": 2.38,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-29T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 57900,
+            "completion_tokens": 6180,
+            "cost": 1.9900000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-30T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 63000,
+            "completion_tokens": 6300,
+            "cost": 2.3,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-10-01T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 59100,
+            "completion_tokens": 6420,
+            "cost": 1.9100000000000001,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          }
+        ],
+        "totals": {
+          "count": 546,
+          "prompt_tokens": 834300,
+          "completion_tokens": 87060,
+          "cost": 30.030000000000005
+        }
+      }
+    },
+    {
+      "url": "http://127.0.0.1:5197/api/v1/runs/timeseries?bucket=hour&since=2026-09-30T23%3A05%3A21.238Z&until=2026-10-01T23%3A05%3A21.238Z",
+      "status": 200,
+      "body": {
+        "bucket": "hour",
+        "tz_offset_minutes": 0,
+        "since": "2026-09-30T23:05:21.238Z",
+        "until": "2026-10-01T23:05:21.238Z",
+        "buckets": [
+          {
+            "start": "2026-09-30T23:00:00Z",
+            "count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "status_counts": {}
+          },
+          {
+            "start": "2026-10-01T00:00:00Z",
+            "count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "status_counts": {}
+          },
+          {
+            "start": "2026-10-01T01:00:00Z",
+            "count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "status_counts": {}
+          },
+          {
+            "start": "2026-10-01T02:00:00Z",
+            "count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "status_counts": {}
+          },
+          {
+            "start": "2026-10-01T03:00:00Z",
+            "count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "status_counts": {}
+          },
+          {
+            "start": "2026-10-01T04:00:00Z",
+            "count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "status_counts": {}
+          },
+          {
+            "start": "2026-10-01T05:00:00Z",
+            "count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "status_counts": {}
+          },
+          {
+            "start": "2026-10-01T06:00:00Z",
+            "count": 13,
+            "prompt_tokens": 22700,
+            "completion_tokens": 2140,
+            "cost": 0.67,
+            "status_counts": {
+              "failed": 13
+            }
+          },
+          {
+            "start": "2026-10-01T07:00:00Z",
+            "count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "status_counts": {}
+          },
+          {
+            "start": "2026-10-01T08:00:00Z",
+            "count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "status_counts": {}
+          },
+          {
+            "start": "2026-10-01T09:00:00Z",
+            "count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "status_counts": {}
+          },
+          {
+            "start": "2026-10-01T10:00:00Z",
+            "count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "status_counts": {}
+          },
+          {
+            "start": "2026-10-01T11:00:00Z",
+            "count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "status_counts": {}
+          },
+          {
+            "start": "2026-10-01T12:00:00Z",
+            "count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "status_counts": {}
+          },
+          {
+            "start": "2026-10-01T13:00:00Z",
+            "count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "status_counts": {}
+          },
+          {
+            "start": "2026-10-01T14:00:00Z",
+            "count": 13,
+            "prompt_tokens": 21300,
+            "completion_tokens": 2460,
+            "cost": 0.63,
+            "status_counts": {
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-10-01T15:00:00Z",
+            "count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "status_counts": {}
+          },
+          {
+            "start": "2026-10-01T16:00:00Z",
+            "count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "status_counts": {}
+          },
+          {
+            "start": "2026-10-01T17:00:00Z",
+            "count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "status_counts": {}
+          },
+          {
+            "start": "2026-10-01T18:00:00Z",
+            "count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "status_counts": {}
+          },
+          {
+            "start": "2026-10-01T19:00:00Z",
+            "count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "status_counts": {}
+          },
+          {
+            "start": "2026-10-01T20:00:00Z",
+            "count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "status_counts": {}
+          },
+          {
+            "start": "2026-10-01T21:00:00Z",
+            "count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "status_counts": {}
+          },
+          {
+            "start": "2026-10-01T22:00:00Z",
+            "count": 13,
+            "prompt_tokens": 15100,
+            "completion_tokens": 1820,
+            "cost": 0.61,
+            "status_counts": {
+              "done": 13
+            }
+          },
+          {
+            "start": "2026-10-01T23:00:00Z",
+            "count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "status_counts": {}
+          }
+        ],
+        "totals": {
+          "count": 39,
+          "prompt_tokens": 59100,
+          "completion_tokens": 6420,
+          "cost": 1.9100000000000001
+        }
+      }
+    },
+    {
+      "url": "http://127.0.0.1:5197/api/v1/runs/facets?since=2026-09-18T00%3A00%3A00.000Z&until=2026-10-01T23%3A05%3A21.238Z&dimensions=status%2Cexecutor%2Cprofile",
+      "status": 200,
+      "body": {
+        "matching_count": 546,
+        "bucket_limit": 50,
+        "dimensions": [
+          "status",
+          "executor",
+          "profile"
+        ],
+        "facets": [
+          {
+            "dimension": "status",
+            "buckets": [
+              {
+                "value": "done",
+                "count": 182
+              },
+              {
+                "value": "failed",
+                "count": 182
+              },
+              {
+                "value": "running",
+                "count": 182
+              }
+            ],
+            "total_distinct": 3,
+            "returned": 3,
+            "truncated": false
+          },
+          {
+            "dimension": "executor",
+            "buckets": [
+              {
+                "value": "agent",
+                "count": 273
+              },
+              {
+                "value": "cli",
+                "count": 273
+              }
+            ],
+            "total_distinct": 2,
+            "returned": 2,
+            "truncated": false
+          },
+          {
+            "dimension": "profile",
+            "buckets": [
+              {
+                "value": "claude",
+                "count": 182
+              },
+              {
+                "value": "codex",
+                "count": 182
+              },
+              {
+                "value": "default",
+                "count": 182
+              }
+            ],
+            "total_distinct": 3,
+            "returned": 3,
+            "truncated": false
+          }
+        ],
+        "totals": {
+          "cost": 30.03,
+          "prompt_tokens": 834300,
+          "completion_tokens": 87060
+        }
+      }
+    },
+    {
+      "url": "http://127.0.0.1:5197/api/v1/runs/timeseries?bucket=day&since=2026-06-14T00%3A00%3A00.000Z&until=2026-10-01T23%3A05%3A21.238Z",
+      "status": 200,
+      "body": {
+        "bucket": "day",
+        "tz_offset_minutes": 0,
+        "since": "2026-06-14T00:00:00Z",
+        "until": "2026-10-01T23:05:21.238Z",
+        "buckets": [
+          {
+            "start": "2026-06-14T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 59600,
+            "completion_tokens": 5920,
+            "cost": 2.26,
+            "status_counts": {
+              "done": 12,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-06-15T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 55800,
+            "completion_tokens": 5760,
+            "cost": 1.88,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 12
+            }
+          },
+          {
+            "start": "2026-06-16T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 61000,
+            "completion_tokens": 5900,
+            "cost": 2.3,
+            "status_counts": {
+              "done": 13,
+              "failed": 12,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-06-17T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 57200,
+            "completion_tokens": 6040,
+            "cost": 1.92,
+            "status_counts": {
+              "done": 12,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-06-18T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 62400,
+            "completion_tokens": 6180,
+            "cost": 2.34,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 12
+            }
+          },
+          {
+            "start": "2026-06-19T00:00:00Z",
+            "count": 51,
+            "prompt_tokens": 80200,
+            "completion_tokens": 8540,
+            "cost": 2.72,
+            "status_counts": {
+              "done": 13,
+              "failed": 12,
+              "running": 26
+            }
+          },
+          {
+            "start": "2026-06-20T00:00:00Z",
+            "count": 27,
+            "prompt_tokens": 45000,
+            "completion_tokens": 4500,
+            "cost": 1.7,
+            "status_counts": {
+              "done": 12,
+              "failed": 15
+            }
+          },
+          {
+            "start": "2026-06-21T00:00:00Z",
+            "count": 36,
+            "prompt_tokens": 51200,
+            "completion_tokens": 5440,
+            "cost": 1.7200000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 11,
+              "running": 12
+            }
+          },
+          {
+            "start": "2026-06-22T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 59200,
+            "completion_tokens": 5840,
+            "cost": 2.2199999999999998,
+            "status_counts": {
+              "done": 13,
+              "failed": 12,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-06-23T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 55400,
+            "completion_tokens": 5980,
+            "cost": 1.8399999999999999,
+            "status_counts": {
+              "done": 12,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-06-24T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 60600,
+            "completion_tokens": 6120,
+            "cost": 2.26,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 12
+            }
+          },
+          {
+            "start": "2026-06-25T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 56800,
+            "completion_tokens": 6260,
+            "cost": 1.88,
+            "status_counts": {
+              "done": 13,
+              "failed": 12,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-06-26T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 62000,
+            "completion_tokens": 6400,
+            "cost": 2.3,
+            "status_counts": {
+              "done": 12,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-06-27T00:00:00Z",
+            "count": 51,
+            "prompt_tokens": 79800,
+            "completion_tokens": 8460,
+            "cost": 2.68,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 25
+            }
+          },
+          {
+            "start": "2026-06-28T00:00:00Z",
+            "count": 27,
+            "prompt_tokens": 44600,
+            "completion_tokens": 4420,
+            "cost": 1.7600000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 14
+            }
+          },
+          {
+            "start": "2026-06-29T00:00:00Z",
+            "count": 36,
+            "prompt_tokens": 50800,
+            "completion_tokens": 5360,
+            "cost": 1.7800000000000002,
+            "status_counts": {
+              "done": 12,
+              "failed": 11,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-06-30T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 58800,
+            "completion_tokens": 5760,
+            "cost": 2.2800000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 12
+            }
+          },
+          {
+            "start": "2026-07-01T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 55000,
+            "completion_tokens": 5900,
+            "cost": 1.9,
+            "status_counts": {
+              "done": 13,
+              "failed": 12,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-07-02T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 60200,
+            "completion_tokens": 6040,
+            "cost": 2.2199999999999998,
+            "status_counts": {
+              "done": 12,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-07-03T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 56400,
+            "completion_tokens": 6180,
+            "cost": 1.84,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 12
+            }
+          },
+          {
+            "start": "2026-07-04T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 61600,
+            "completion_tokens": 6320,
+            "cost": 2.26,
+            "status_counts": {
+              "done": 13,
+              "failed": 12,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-07-05T00:00:00Z",
+            "count": 50,
+            "prompt_tokens": 78800,
+            "completion_tokens": 8260,
+            "cost": 2.58,
+            "status_counts": {
+              "done": 12,
+              "failed": 13,
+              "running": 25
+            }
+          },
+          {
+            "start": "2026-07-06T00:00:00Z",
+            "count": 28,
+            "prompt_tokens": 44800,
+            "completion_tokens": 4460,
+            "cost": 1.78,
+            "status_counts": {
+              "done": 13,
+              "failed": 15
+            }
+          },
+          {
+            "start": "2026-07-07T00:00:00Z",
+            "count": 36,
+            "prompt_tokens": 50400,
+            "completion_tokens": 5280,
+            "cost": 1.7400000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 10,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-07-08T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 61400,
+            "completion_tokens": 5980,
+            "cost": 2.34,
+            "status_counts": {
+              "done": 12,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-07-09T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 57600,
+            "completion_tokens": 6120,
+            "cost": 1.96,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 12
+            }
+          },
+          {
+            "start": "2026-07-10T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 62800,
+            "completion_tokens": 6260,
+            "cost": 2.2800000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 12,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-07-11T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 59000,
+            "completion_tokens": 6400,
+            "cost": 1.9,
+            "status_counts": {
+              "done": 12,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-07-12T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 61200,
+            "completion_tokens": 6240,
+            "cost": 2.22,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 12
+            }
+          },
+          {
+            "start": "2026-07-13T00:00:00Z",
+            "count": 51,
+            "prompt_tokens": 80800,
+            "completion_tokens": 8360,
+            "cost": 2.58,
+            "status_counts": {
+              "done": 13,
+              "failed": 12,
+              "running": 26
+            }
+          },
+          {
+            "start": "2026-07-14T00:00:00Z",
+            "count": 27,
+            "prompt_tokens": 42000,
+            "completion_tokens": 4200,
+            "cost": 1.7,
+            "status_counts": {
+              "done": 12,
+              "failed": 15
+            }
+          },
+          {
+            "start": "2026-07-15T00:00:00Z",
+            "count": 36,
+            "prompt_tokens": 50000,
+            "completion_tokens": 5200,
+            "cost": 1.7000000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 11,
+              "running": 12
+            }
+          },
+          {
+            "start": "2026-07-16T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 61000,
+            "completion_tokens": 5900,
+            "cost": 2.3,
+            "status_counts": {
+              "done": 13,
+              "failed": 12,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-07-17T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 57200,
+            "completion_tokens": 6040,
+            "cost": 1.92,
+            "status_counts": {
+              "done": 12,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-07-18T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 62400,
+            "completion_tokens": 6180,
+            "cost": 2.34,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 12
+            }
+          },
+          {
+            "start": "2026-07-19T00:00:00Z",
+            "count": 38,
+            "prompt_tokens": 58600,
+            "completion_tokens": 6320,
+            "cost": 1.96,
+            "status_counts": {
+              "done": 13,
+              "failed": 12,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-07-20T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 61800,
+            "completion_tokens": 6360,
+            "cost": 2.38,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-07-21T00:00:00Z",
+            "count": 52,
+            "prompt_tokens": 81300,
+            "completion_tokens": 8460,
+            "cost": 2.73,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 26
+            }
+          },
+          {
+            "start": "2026-07-22T00:00:00Z",
+            "count": 28,
+            "prompt_tokens": 42400,
+            "completion_tokens": 4280,
+            "cost": 1.7400000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 15
+            }
+          },
+          {
+            "start": "2026-07-23T00:00:00Z",
+            "count": 37,
+            "prompt_tokens": 50300,
+            "completion_tokens": 5560,
+            "cost": 1.73,
+            "status_counts": {
+              "done": 13,
+              "failed": 11,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-07-24T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 61200,
+            "completion_tokens": 6240,
+            "cost": 2.3200000000000003,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-07-25T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 57300,
+            "completion_tokens": 6360,
+            "cost": 1.9300000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-07-26T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 62400,
+            "completion_tokens": 6480,
+            "cost": 2.34,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-07-27T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 58500,
+            "completion_tokens": 6300,
+            "cost": 1.9500000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-07-28T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 60600,
+            "completion_tokens": 6120,
+            "cost": 2.3600000000000003,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-07-29T00:00:00Z",
+            "count": 52,
+            "prompt_tokens": 81900,
+            "completion_tokens": 8280,
+            "cost": 2.79,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 26
+            }
+          },
+          {
+            "start": "2026-07-30T00:00:00Z",
+            "count": 29,
+            "prompt_tokens": 45300,
+            "completion_tokens": 4560,
+            "cost": 1.83,
+            "status_counts": {
+              "done": 13,
+              "failed": 16
+            }
+          },
+          {
+            "start": "2026-07-31T00:00:00Z",
+            "count": 36,
+            "prompt_tokens": 49200,
+            "completion_tokens": 5340,
+            "cost": 1.7200000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 10,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-01T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 63000,
+            "completion_tokens": 6300,
+            "cost": 2.3,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-02T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 59100,
+            "completion_tokens": 6420,
+            "cost": 1.9100000000000001,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-03T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 64200,
+            "completion_tokens": 6540,
+            "cost": 2.3200000000000003,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-04T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 60300,
+            "completion_tokens": 6360,
+            "cost": 1.9300000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-05T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 62400,
+            "completion_tokens": 6180,
+            "cost": 2.34,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-06T00:00:00Z",
+            "count": 52,
+            "prompt_tokens": 83700,
+            "completion_tokens": 8340,
+            "cost": 2.77,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 26
+            }
+          },
+          {
+            "start": "2026-08-07T00:00:00Z",
+            "count": 29,
+            "prompt_tokens": 47100,
+            "completion_tokens": 4620,
+            "cost": 1.81,
+            "status_counts": {
+              "done": 13,
+              "failed": 16
+            }
+          },
+          {
+            "start": "2026-08-08T00:00:00Z",
+            "count": 36,
+            "prompt_tokens": 51000,
+            "completion_tokens": 5400,
+            "cost": 1.7000000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 10,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-09T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 64800,
+            "completion_tokens": 6360,
+            "cost": 2.38,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-10T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 60900,
+            "completion_tokens": 6480,
+            "cost": 1.9900000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-11T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 63000,
+            "completion_tokens": 6300,
+            "cost": 2.3,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-12T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 59100,
+            "completion_tokens": 6120,
+            "cost": 1.9100000000000001,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-13T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 61200,
+            "completion_tokens": 5940,
+            "cost": 2.3200000000000003,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-14T00:00:00Z",
+            "count": 52,
+            "prompt_tokens": 82500,
+            "completion_tokens": 8400,
+            "cost": 2.75,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 26
+            }
+          },
+          {
+            "start": "2026-08-15T00:00:00Z",
+            "count": 29,
+            "prompt_tokens": 45900,
+            "completion_tokens": 4680,
+            "cost": 1.79,
+            "status_counts": {
+              "done": 13,
+              "failed": 16
+            }
+          },
+          {
+            "start": "2026-08-16T00:00:00Z",
+            "count": 36,
+            "prompt_tokens": 49800,
+            "completion_tokens": 5460,
+            "cost": 1.6800000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 10,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-17T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 63600,
+            "completion_tokens": 6420,
+            "cost": 2.3600000000000003,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-18T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 59700,
+            "completion_tokens": 6540,
+            "cost": 1.9700000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-19T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 61800,
+            "completion_tokens": 6360,
+            "cost": 2.38,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-20T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 57900,
+            "completion_tokens": 6180,
+            "cost": 1.9900000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-21T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 60000,
+            "completion_tokens": 6000,
+            "cost": 2.3,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-22T00:00:00Z",
+            "count": 52,
+            "prompt_tokens": 80100,
+            "completion_tokens": 8520,
+            "cost": 2.71,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 26
+            }
+          },
+          {
+            "start": "2026-08-23T00:00:00Z",
+            "count": 29,
+            "prompt_tokens": 45900,
+            "completion_tokens": 4680,
+            "cost": 1.79,
+            "status_counts": {
+              "done": 13,
+              "failed": 16
+            }
+          },
+          {
+            "start": "2026-08-24T00:00:00Z",
+            "count": 36,
+            "prompt_tokens": 48600,
+            "completion_tokens": 5520,
+            "cost": 1.6600000000000001,
+            "status_counts": {
+              "done": 13,
+              "failed": 10,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-25T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 62400,
+            "completion_tokens": 6480,
+            "cost": 2.34,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-26T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 58500,
+            "completion_tokens": 6300,
+            "cost": 1.9500000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-27T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 60600,
+            "completion_tokens": 6120,
+            "cost": 2.3600000000000003,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-28T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 56700,
+            "completion_tokens": 5940,
+            "cost": 1.9700000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-29T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 61800,
+            "completion_tokens": 6060,
+            "cost": 2.38,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-08-30T00:00:00Z",
+            "count": 52,
+            "prompt_tokens": 81900,
+            "completion_tokens": 8580,
+            "cost": 2.79,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 26
+            }
+          },
+          {
+            "start": "2026-08-31T00:00:00Z",
+            "count": 29,
+            "prompt_tokens": 47700,
+            "completion_tokens": 4740,
+            "cost": 1.77,
+            "status_counts": {
+              "done": 13,
+              "failed": 16
+            }
+          },
+          {
+            "start": "2026-09-01T00:00:00Z",
+            "count": 36,
+            "prompt_tokens": 50400,
+            "completion_tokens": 5580,
+            "cost": 1.6400000000000001,
+            "status_counts": {
+              "done": 13,
+              "failed": 10,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-02T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 64200,
+            "completion_tokens": 6540,
+            "cost": 2.3200000000000003,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-03T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 60300,
+            "completion_tokens": 6360,
+            "cost": 1.9300000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-04T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 62400,
+            "completion_tokens": 6180,
+            "cost": 2.34,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-05T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 58500,
+            "completion_tokens": 6000,
+            "cost": 1.9500000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-06T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 63600,
+            "completion_tokens": 6120,
+            "cost": 2.3600000000000003,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-07T00:00:00Z",
+            "count": 52,
+            "prompt_tokens": 83700,
+            "completion_tokens": 8640,
+            "cost": 2.77,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 26
+            }
+          },
+          {
+            "start": "2026-09-08T00:00:00Z",
+            "count": 29,
+            "prompt_tokens": 49500,
+            "completion_tokens": 4800,
+            "cost": 1.85,
+            "status_counts": {
+              "done": 13,
+              "failed": 16
+            }
+          },
+          {
+            "start": "2026-09-09T00:00:00Z",
+            "count": 36,
+            "prompt_tokens": 52200,
+            "completion_tokens": 5640,
+            "cost": 1.7200000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 10,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-10T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 63000,
+            "completion_tokens": 6300,
+            "cost": 2.3,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-11T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 59100,
+            "completion_tokens": 6120,
+            "cost": 1.9100000000000001,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-12T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 61200,
+            "completion_tokens": 5940,
+            "cost": 2.3200000000000003,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-13T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 57300,
+            "completion_tokens": 6060,
+            "cost": 1.9300000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-14T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 62400,
+            "completion_tokens": 6180,
+            "cost": 2.34,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-15T00:00:00Z",
+            "count": 52,
+            "prompt_tokens": 81300,
+            "completion_tokens": 8760,
+            "cost": 2.73,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 26
+            }
+          },
+          {
+            "start": "2026-09-16T00:00:00Z",
+            "count": 29,
+            "prompt_tokens": 49500,
+            "completion_tokens": 4800,
+            "cost": 1.85,
+            "status_counts": {
+              "done": 13,
+              "failed": 16
+            }
+          },
+          {
+            "start": "2026-09-17T00:00:00Z",
+            "count": 36,
+            "prompt_tokens": 51000,
+            "completion_tokens": 5700,
+            "cost": 1.7000000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 10,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-18T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 61800,
+            "completion_tokens": 6360,
+            "cost": 2.38,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-19T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 57900,
+            "completion_tokens": 6180,
+            "cost": 1.9900000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-20T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 60000,
+            "completion_tokens": 6000,
+            "cost": 2.3,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-21T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 56100,
+            "completion_tokens": 6120,
+            "cost": 1.9100000000000001,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-22T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 61200,
+            "completion_tokens": 6240,
+            "cost": 2.3200000000000003,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-23T00:00:00Z",
+            "count": 52,
+            "prompt_tokens": 80100,
+            "completion_tokens": 8820,
+            "cost": 2.71,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 26
+            }
+          },
+          {
+            "start": "2026-09-24T00:00:00Z",
+            "count": 29,
+            "prompt_tokens": 48300,
+            "completion_tokens": 4860,
+            "cost": 1.83,
+            "status_counts": {
+              "done": 13,
+              "failed": 16
+            }
+          },
+          {
+            "start": "2026-09-25T00:00:00Z",
+            "count": 36,
+            "prompt_tokens": 49800,
+            "completion_tokens": 5460,
+            "cost": 1.6800000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 10,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-26T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 60600,
+            "completion_tokens": 6120,
+            "cost": 2.3600000000000003,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-27T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 56700,
+            "completion_tokens": 5940,
+            "cost": 1.9700000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-28T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 61800,
+            "completion_tokens": 6060,
+            "cost": 2.38,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-29T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 57900,
+            "completion_tokens": 6180,
+            "cost": 1.9900000000000002,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-09-30T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 63000,
+            "completion_tokens": 6300,
+            "cost": 2.3,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          },
+          {
+            "start": "2026-10-01T00:00:00Z",
+            "count": 39,
+            "prompt_tokens": 59100,
+            "completion_tokens": 6420,
+            "cost": 1.9100000000000001,
+            "status_counts": {
+              "done": 13,
+              "failed": 13,
+              "running": 13
+            }
+          }
+        ],
+        "totals": {
+          "count": 4254,
+          "prompt_tokens": 6582900,
+          "completion_tokens": 679980,
+          "cost": 234.09000000000006
+        }
+      }
+    },
+    {
+      "url": "http://127.0.0.1:5197/api/v1/runs?limit=12&sort_by=started_at&sort_dir=desc",
+      "status": 200,
+      "body": {
+        "items": [
+          {
+            "ID": 1,
+            "TaskID": "CW-FIXTURE-0000",
+            "Executor": "cli",
+            "Status": "done",
+            "StartedAt": "2026-10-01T22:57:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 100,
+            "CompletionTokens": 20,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          },
+          {
+            "ID": 1681,
+            "TaskID": "CW-FIXTURE-1680",
+            "Executor": "cli",
+            "Status": "done",
+            "StartedAt": "2026-10-01T22:57:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 100,
+            "CompletionTokens": 20,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          },
+          {
+            "ID": 3361,
+            "TaskID": "CW-FIXTURE-3360",
+            "Executor": "cli",
+            "Status": "done",
+            "StartedAt": "2026-10-01T22:57:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 100,
+            "CompletionTokens": 20,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          },
+          {
+            "ID": 673,
+            "TaskID": "CW-FIXTURE-0672",
+            "Executor": "cli",
+            "Status": "done",
+            "StartedAt": "2026-10-01T22:45:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 1300,
+            "CompletionTokens": 260,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          },
+          {
+            "ID": 2353,
+            "TaskID": "CW-FIXTURE-2352",
+            "Executor": "cli",
+            "Status": "done",
+            "StartedAt": "2026-10-01T22:45:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 1300,
+            "CompletionTokens": 260,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          },
+          {
+            "ID": 4033,
+            "TaskID": "CW-FIXTURE-4032",
+            "Executor": "cli",
+            "Status": "done",
+            "StartedAt": "2026-10-01T22:45:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 1300,
+            "CompletionTokens": 260,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          },
+          {
+            "ID": 1345,
+            "TaskID": "CW-FIXTURE-1344",
+            "Executor": "cli",
+            "Status": "done",
+            "StartedAt": "2026-10-01T22:33:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 2500,
+            "CompletionTokens": 200,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          },
+          {
+            "ID": 3025,
+            "TaskID": "CW-FIXTURE-3024",
+            "Executor": "cli",
+            "Status": "done",
+            "StartedAt": "2026-10-01T22:33:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 2500,
+            "CompletionTokens": 200,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          },
+          {
+            "ID": 337,
+            "TaskID": "CW-FIXTURE-0336",
+            "Executor": "cli",
+            "Status": "done",
+            "StartedAt": "2026-10-01T22:21:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 700,
+            "CompletionTokens": 140,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          },
+          {
+            "ID": 2017,
+            "TaskID": "CW-FIXTURE-2016",
+            "Executor": "cli",
+            "Status": "done",
+            "StartedAt": "2026-10-01T22:21:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 700,
+            "CompletionTokens": 140,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          },
+          {
+            "ID": 3697,
+            "TaskID": "CW-FIXTURE-3696",
+            "Executor": "cli",
+            "Status": "done",
+            "StartedAt": "2026-10-01T22:21:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 700,
+            "CompletionTokens": 140,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          },
+          {
+            "ID": 1009,
+            "TaskID": "CW-FIXTURE-1008",
+            "Executor": "cli",
+            "Status": "done",
+            "StartedAt": "2026-10-01T22:09:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 1900,
+            "CompletionTokens": 80,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          }
+        ],
+        "meta": {
+          "returned": 12,
+          "limit": 12,
+          "has_more": true,
+          "next_cursor": "eyJ2IjoxLCJzYiI6InN0YXJ0ZWRfYXQiLCJzZCI6ImRlc2MiLCJzdiI6IjIwMjYtMTAtMDEgMjI6MDk6MDAiLCJpZCI6IjEwMDkifQ"
+        }
+      }
+    },
+    {
+      "url": "http://127.0.0.1:5197/api/v1/runs?limit=12&sort_by=started_at&sort_dir=desc&cursor=eyJ2IjoxLCJzYiI6InN0YXJ0ZWRfYXQiLCJzZCI6ImRlc2MiLCJzdiI6IjIwMjYtMTAtMDEgMjI6MDk6MDAiLCJpZCI6IjEwMDkifQ",
+      "status": 200,
+      "body": {
+        "items": [
+          {
+            "ID": 2689,
+            "TaskID": "CW-FIXTURE-2688",
+            "Executor": "cli",
+            "Status": "done",
+            "StartedAt": "2026-10-01T22:09:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 1900,
+            "CompletionTokens": 80,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          },
+          {
+            "ID": 1569,
+            "TaskID": "CW-FIXTURE-1568",
+            "Executor": "cli",
+            "Status": "running",
+            "StartedAt": "2026-10-01T14:49:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 900,
+            "CompletionTokens": 180,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          },
+          {
+            "ID": 3249,
+            "TaskID": "CW-FIXTURE-3248",
+            "Executor": "cli",
+            "Status": "running",
+            "StartedAt": "2026-10-01T14:49:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 900,
+            "CompletionTokens": 180,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          },
+          {
+            "ID": 561,
+            "TaskID": "CW-FIXTURE-0560",
+            "Executor": "cli",
+            "Status": "running",
+            "StartedAt": "2026-10-01T14:37:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 2100,
+            "CompletionTokens": 120,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          },
+          {
+            "ID": 2241,
+            "TaskID": "CW-FIXTURE-2240",
+            "Executor": "cli",
+            "Status": "running",
+            "StartedAt": "2026-10-01T14:37:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 2100,
+            "CompletionTokens": 120,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          },
+          {
+            "ID": 3921,
+            "TaskID": "CW-FIXTURE-3920",
+            "Executor": "cli",
+            "Status": "running",
+            "StartedAt": "2026-10-01T14:37:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 2100,
+            "CompletionTokens": 120,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          },
+          {
+            "ID": 1233,
+            "TaskID": "CW-FIXTURE-1232",
+            "Executor": "cli",
+            "Status": "running",
+            "StartedAt": "2026-10-01T14:25:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 300,
+            "CompletionTokens": 60,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          },
+          {
+            "ID": 2913,
+            "TaskID": "CW-FIXTURE-2912",
+            "Executor": "cli",
+            "Status": "running",
+            "StartedAt": "2026-10-01T14:25:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 300,
+            "CompletionTokens": 60,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          },
+          {
+            "ID": 225,
+            "TaskID": "CW-FIXTURE-0224",
+            "Executor": "cli",
+            "Status": "running",
+            "StartedAt": "2026-10-01T14:13:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 1500,
+            "CompletionTokens": 300,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          },
+          {
+            "ID": 1905,
+            "TaskID": "CW-FIXTURE-1904",
+            "Executor": "cli",
+            "Status": "running",
+            "StartedAt": "2026-10-01T14:13:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 1500,
+            "CompletionTokens": 300,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          },
+          {
+            "ID": 3585,
+            "TaskID": "CW-FIXTURE-3584",
+            "Executor": "cli",
+            "Status": "running",
+            "StartedAt": "2026-10-01T14:13:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 1500,
+            "CompletionTokens": 300,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          },
+          {
+            "ID": 897,
+            "TaskID": "CW-FIXTURE-0896",
+            "Executor": "cli",
+            "Status": "running",
+            "StartedAt": "2026-10-01T14:01:00Z",
+            "EndedAt": {
+              "Time": "0001-01-01T00:00:00Z",
+              "Valid": false
+            },
+            "PromptTokens": 2700,
+            "CompletionTokens": 240,
+            "Cost": 999,
+            "ExitCode": {
+              "Int64": 0,
+              "Valid": false
+            },
+            "ErrorMessage": "",
+            "Metadata": {
+              "String": "{\"provider\":\"mock\",\"model\":\"fixture\"}",
+              "Valid": true
+            },
+            "CacheReadTokens": 0,
+            "CacheWriteTokens": 0,
+            "CostSource": "",
+            "Provider": "mock",
+            "Model": "fixture"
+          }
+        ],
+        "meta": {
+          "returned": 12,
+          "limit": 12,
+          "has_more": true,
+          "next_cursor": "eyJ2IjoxLCJzYiI6InN0YXJ0ZWRfYXQiLCJzZCI6ImRlc2MiLCJzdiI6IjIwMjYtMTAtMDEgMTQ6MDE6MDAiLCJpZCI6Ijg5NyJ9"
+        }
+      }
+    }
+  ],
+  "errors": []
+}
