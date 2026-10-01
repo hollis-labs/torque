@@ -90,7 +90,7 @@ type IssueListInput struct {
 	// fixing the pre-merge bug where List never set Limit and the MCP
 	// adapter fetched every row before truncating in Go. Limit<=0 means
 	// "no limit" (sqlstore.ListTasks only applies LIMIT when > 0),
-	// preserving the HTTP layer's existing unbounded-list behavior.
+	// for internal callers. Public lists always normalize a bounded page.
 	Limit int
 
 	// Sort + cursor pagination (PRIM-001/PRIM-002). Callers that don't pass
@@ -114,17 +114,7 @@ func (s *IssueService) List(input IssueListInput) ([]sqlstore.TaskRecord, error)
 			return nil, err
 		}
 	}
-	return s.tasks.List(sqlstore.TaskFilter{
-		Kind:           "issue",
-		ProjectID:      input.ProjectID,
-		Status:         input.Status,
-		Search:         input.Query,
-		Limit:          input.Limit,
-		SortBy:         input.SortBy,
-		SortDir:        input.SortDir,
-		AfterSortValue: input.AfterSortValue,
-		AfterID:        input.AfterID,
-	})
+	return s.tasks.List(issueListFilter(input))
 }
 
 // Update applies a minimal issue edit and keeps the row kind-scoped.

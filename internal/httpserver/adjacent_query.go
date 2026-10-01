@@ -13,22 +13,10 @@ import (
 	"github.com/hollis-labs/torque/internal/service"
 )
 
-// Adjacent list compatibility contract:
-//
-// Family    Legacy keys                      Advanced opt-in keys                                             Defaults / max / order               Shape
-// project   status, include_archived         limit, cursor, sort_by, sort_dir                                  100 / 500 / name asc                {items,meta}
-// sprint    status, project_id               include_archived, over_budget, cost_budget_min, cost_budget_max,  100 / 500 / updated_at desc         {items,meta}
-//                                             limit, cursor, sort_by, sort_dir
-// epic      status, project_id               include_archived, search, limit, cursor, sort_by, sort_dir        100 / 500 / updated_at desc         {items,meta}
-// issue     project_id; search: q,limit      status, query, limit, cursor, sort_by, sort_dir                   50 / 200 / priority asc             {items,meta}; legacy search total=len(page), q+query rejected
-// comment   entity_type, entity_id           author, created_after, created_before, entity_ids, limit,         list 50/200 asc; search 25/100 desc {items,meta}; entity_id wins when both entity_id/entity_ids are supplied
-//                                             cursor, sort_by, sort_dir
-//
-// Every handler parses RawQuery first and rejects malformed URL encodings,
-// unknown keys, and repeated scalar keys before choosing legacy vs advanced.
-// Valid legacy calls keep their old response shapes and fetch-all behavior.
-// Advanced mode uses +1 overfetch and returns no total unless a real count is
-// computed; today meta contains returned/limit/has_more/next_cursor only.
+// Adjacent lists always use bounded cursor pages (default 50, max 200).
+// HTTP and MCP share service normalization. include_total is opt-in and counts
+// the complete filtered cohort, excluding cursor and page bounds. There is no
+// legacy fetch-all mode; malformed, unknown and repeated query keys reject.
 
 type httpQueryError struct {
 	field   string
@@ -124,11 +112,16 @@ func queryCursor(q url.Values) (service.CursorQuery, *httpQueryError) {
 	if err != nil {
 		return service.CursorQuery{}, err
 	}
+	includeTotal, err := queryBool(q, "include_total")
+	if err != nil {
+		return service.CursorQuery{}, err
+	}
 	return service.CursorQuery{
-		Limit:   limit,
-		SortBy:  queryString(q, "sort_by"),
-		SortDir: queryString(q, "sort_dir"),
-		Cursor:  queryString(q, "cursor"),
+		IncludeTotal: includeTotal,
+		Limit:        limit,
+		SortBy:       queryString(q, "sort_by"),
+		SortDir:      queryString(q, "sort_dir"),
+		Cursor:       queryString(q, "cursor"),
 	}, nil
 }
 
@@ -151,8 +144,8 @@ func writeAdjacentServiceError(w http.ResponseWriter, err error) {
 	}
 }
 
-func advancedMeta(limit int, sortBy, sortDir string, hasMore bool, nextCursor string, returned int) map[string]any {
-	return map[string]any{
+func advancedMeta(limit int, sortBy, sortDir string, hasMore bool, nextCursor string, returned int, total ...*int) map[string]any {
+	meta := map[string]any{
 		"returned":    returned,
 		"limit":       limit,
 		"has_more":    hasMore,
@@ -160,4 +153,8 @@ func advancedMeta(limit int, sortBy, sortDir string, hasMore bool, nextCursor st
 		"sort_by":     sortBy,
 		"sort_dir":    sortDir,
 	}
+	if len(total) > 0 && total[0] != nil {
+		meta["total"] = *total[0]
+	}
+	return meta
 }

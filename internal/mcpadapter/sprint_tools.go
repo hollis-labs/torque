@@ -85,8 +85,8 @@ Example: {"id":"SP-17"}`),
 		withDescription(`List sprints with optional status/project/budget filters; ordered updated_at DESC (tiebreak id ASC, per DEC-001) by default. Pass sort_by (name|status|updated_at|created_at) and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid.
 Use for browsing; torque_sprint_get when you know the ID. Default brief shape drops goal body for size; pass verbose="true" for full records. Archived sprints are excluded unless include_archived="true".
 Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under — pass a different sort_by/sort_dir without dropping cursor and you get error.code=arg_invalid.
-Explicit malformed, blank, fractional, overflow, unsafe native-float, or negative limit values reject with error.code=arg_invalid, field=limit; omitted limit defaults to 100 and oversized limits clamp to 500. Cost budget bounds must be finite numbers when present.
-Response shape: data = {items: [<briefSprint or SprintRecord>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
+Explicit malformed, blank, fractional, overflow, unsafe native-float, or negative limit values reject with error.code=arg_invalid, field=limit; omitted limit defaults to 50 and oversized limits clamp to 200. Cost budget bounds must be finite numbers when present.
+Response shape: data = {items: [<briefSprint or SprintRecord>...], meta: {truncated, returned, limit, has_more, next_cursor, total?}}.
 Example: {"status":"active","cost_budget_min":"10","sort_by":"updated_at","sort_dir":"desc"}`),
 		withString("status", desc("Filter: active|inactive|completed")),
 		withString("project_id", desc("Filter by project ID (requires features.projects)")),
@@ -95,10 +95,12 @@ Example: {"status":"active","cost_budget_min":"10","sort_by":"updated_at","sort_
 		withString("cost_budget_max", desc("Only sprints with cost_budget <= this value (numeric; sprints with no budget set never match)")),
 		withString("over_budget", desc("Only sprints whose total run cost exceeds their cost_budget (string 'true'/'false', default false)")),
 		withString("verbose", desc("Return full records instead of brief (string 'true'/'false', default false)")),
-		withString("limit", desc("Max results (integer, default 100, max 500)")),
+		withString("limit", desc("Max results (integer, default 50, max 200)")),
+		withString("search", desc("Substring search over ID, name and description/goal")),
 		withString("sort_by", desc("Sort field: name|status|updated_at|created_at (default updated_at)")),
 		withString("sort_dir", desc("Sort direction: asc|desc (default desc)")),
 		withString("cursor", desc("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
+		withString("include_total", desc("Include meta.total for the whole matching cohort (default false; COUNT is opt-in).")),
 	), a.handleSprintList)
 
 	a.addTool(newTool("torque_sprint_approve",
@@ -275,12 +277,17 @@ func (a *Adapter) handleSprintList(ctx context.Context, req map[string]any) (any
 	if errRes != nil {
 		return nil, errRes
 	}
+	search, errRes := reqQueryString(req, "search")
+	if errRes != nil {
+		return nil, errRes
+	}
 	cursor, errRes := reqQueryCursor(req)
 	if errRes != nil {
 		return nil, errRes
 	}
 
 	query := service.SprintQuery{
+		Search:          search,
 		Status:          status,
 		ProjectID:       projectID,
 		IncludeArchived: includeArchived,
@@ -306,7 +313,7 @@ func (a *Adapter) handleSprintList(ctx context.Context, req map[string]any) (any
 		return errFromService(err)
 	}
 
-	sprints, err := a.svc.Sprint.List(filter)
+	sprints, total, err := a.svc.Sprint.ListWithTotal(filter, cursor.IncludeTotal)
 	if err != nil {
 		return errFromService(err)
 	}
@@ -315,13 +322,13 @@ func (a *Adapter) handleSprintList(ctx context.Context, req map[string]any) (any
 	if hasMoreFromQuery {
 		sprints = sprints[:normalized.Limit]
 	}
-	return a.sprintListCursorEnvelope(sprints, normalized.Limit, verbose, normalized.SortBy, normalized.SortDir, hasMoreFromQuery)
+	return a.sprintListCursorEnvelope(sprints, normalized.Limit, verbose, normalized.SortBy, normalized.SortDir, hasMoreFromQuery, total)
 }
 
 // sprintListCursorEnvelope builds torque_sprint_list's {items, meta} cursor-
 // pagination response, mirroring taskListCursorEnvelope's contract. sprints
 // must already be trimmed to at most `limit` records.
-func (a *Adapter) sprintListCursorEnvelope(sprints []sqlstore.SprintRecord, limit int, verbose bool, sortBy, sortDir string, hasMoreFromQuery bool) (any, error) {
+func (a *Adapter) sprintListCursorEnvelope(sprints []sqlstore.SprintRecord, limit int, verbose bool, sortBy, sortDir string, hasMoreFromQuery bool, total *int) (any, error) {
 	items := make([]any, 0, len(sprints))
 	for _, sp := range sprints {
 		if verbose {
@@ -334,7 +341,7 @@ func (a *Adapter) sprintListCursorEnvelope(sprints []sqlstore.SprintRecord, limi
 	cursorAt := func(i int) (sortValue, id string) {
 		return service.SprintQuerySortValue(sprints[i], sortBy), sprints[i].ID
 	}
-	return cappedCursorJSONResult(items, limit, sortBy, sortDir, hasMoreFromQuery, cursorAt)
+	return cappedCursorJSONResultWithTotal(items, limit, total, sortBy, sortDir, hasMoreFromQuery, cursorAt)
 }
 
 // handleSprintArchive/handleSprintUnarchive wire PRIM-004's archive

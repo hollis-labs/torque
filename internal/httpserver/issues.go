@@ -89,30 +89,13 @@ func (s *Server) issuesJSON(tasks []sqlstore.TaskRecord) ([]map[string]interface
 }
 
 func (s *Server) listIssues(w http.ResponseWriter, r *http.Request) {
-	allowed := map[string]bool{"project_id": true, "status": true, "query": true, "limit": true, "cursor": true, "sort_by": true, "sort_dir": true}
+	allowed := map[string]bool{"project_id": true, "status": true, "query": true, "limit": true, "cursor": true, "sort_by": true, "sort_dir": true, "include_total": true}
 	q, qerr := parseStrictQuery(r, allowed)
 	if qerr != nil {
 		writeHTTPQueryError(w, qerr)
 		return
 	}
 	projectID := queryString(q, "project_id")
-	if !hasAnyQueryKey(q, "status", "query", "limit", "cursor", "sort_by", "sort_dir") {
-		issues, err := s.svc.Issue.List(service.IssueListInput{ProjectID: projectID})
-		if err != nil {
-			writeIssueError(w, err)
-			return
-		}
-		if issues == nil {
-			issues = []sqlstore.TaskRecord{}
-		}
-		out, err := s.issuesJSON(issues)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"issues": out, "total": len(out)})
-		return
-	}
 	cursor, qerr := queryCursor(q)
 	if qerr != nil {
 		writeHTTPQueryError(w, qerr)
@@ -128,7 +111,7 @@ func (s *Server) listIssues(w http.ResponseWriter, r *http.Request) {
 		writeAdjacentServiceError(w, err)
 		return
 	}
-	issues, err := s.svc.Issue.List(input)
+	issues, total, err := s.svc.Issue.ListWithTotal(input, cursor.IncludeTotal)
 	if err != nil {
 		writeAdjacentServiceError(w, err)
 		return
@@ -150,11 +133,11 @@ func (s *Server) listIssues(w http.ResponseWriter, r *http.Request) {
 		last := issues[len(issues)-1]
 		nextCursor = pagination.Encode(normalized.SortBy, normalized.SortDir, service.TaskQuerySortValue(last, normalized.SortBy), last.ID)
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"items": out, "meta": advancedMeta(normalized.Limit, normalized.SortBy, normalized.SortDir, hasMore, nextCursor, len(issues))})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": out, "meta": advancedMeta(normalized.Limit, normalized.SortBy, normalized.SortDir, hasMore, nextCursor, len(issues), total)})
 }
 
 func (s *Server) searchIssues(w http.ResponseWriter, r *http.Request) {
-	allowed := map[string]bool{"q": true, "project_id": true, "limit": true, "status": true, "query": true, "cursor": true, "sort_by": true, "sort_dir": true}
+	allowed := map[string]bool{"q": true, "project_id": true, "limit": true, "status": true, "query": true, "cursor": true, "sort_by": true, "sort_dir": true, "include_total": true}
 	values, qerr := parseStrictQuery(r, allowed)
 	if qerr != nil {
 		writeHTTPQueryError(w, qerr)
@@ -183,27 +166,6 @@ func (s *Server) searchIssues(w http.ResponseWriter, r *http.Request) {
 	if search == "" {
 		search = queryString(values, "query")
 	}
-	if !hasAnyQueryKey(values, "status", "query", "cursor", "sort_by", "sort_dir") {
-		issues, err := s.svc.Issue.List(service.IssueListInput{
-			Query:     search,
-			ProjectID: queryString(values, "project_id"),
-			Limit:     limit,
-		})
-		if err != nil {
-			writeIssueError(w, err)
-			return
-		}
-		if issues == nil {
-			issues = []sqlstore.TaskRecord{}
-		}
-		out, err := s.issuesJSON(issues)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"issues": out, "total": len(out)})
-		return
-	}
 	cursor, qerr := queryCursor(values)
 	if qerr != nil {
 		writeHTTPQueryError(w, qerr)
@@ -220,7 +182,7 @@ func (s *Server) searchIssues(w http.ResponseWriter, r *http.Request) {
 		writeAdjacentServiceError(w, err)
 		return
 	}
-	issues, err := s.svc.Issue.List(input)
+	issues, total, err := s.svc.Issue.ListWithTotal(input, cursor.IncludeTotal)
 	if err != nil {
 		writeAdjacentServiceError(w, err)
 		return
@@ -242,7 +204,7 @@ func (s *Server) searchIssues(w http.ResponseWriter, r *http.Request) {
 		last := issues[len(issues)-1]
 		nextCursor = pagination.Encode(normalized.SortBy, normalized.SortDir, service.TaskQuerySortValue(last, normalized.SortBy), last.ID)
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"items": out, "meta": advancedMeta(normalized.Limit, normalized.SortBy, normalized.SortDir, hasMore, nextCursor, len(issues))})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": out, "meta": advancedMeta(normalized.Limit, normalized.SortBy, normalized.SortDir, hasMore, nextCursor, len(issues), total)})
 }
 
 func (s *Server) getIssue(w http.ResponseWriter, r *http.Request) {

@@ -84,7 +84,7 @@ func (s *EpicService) Get(id string) (*sqlstore.EpicRecord, error) {
 // surface them too.
 //
 // This is the pre-PRIM-001/002 signature, kept unchanged for its existing
-// callers (HTTP's listEpics). New callers that need free-text search,
+// internal callers. Public HTTP/MCP callers that need free-text search,
 // sort, or cursor pagination should use ListPaginated instead.
 func (s *EpicService) List(status, projectID string, includeArchived bool) ([]sqlstore.EpicRecord, error) {
 	if err := s.feature.Require("epics"); err != nil {
@@ -119,17 +119,7 @@ func (s *EpicService) ListPaginated(input EpicListInput) ([]sqlstore.EpicRecord,
 	if err := s.feature.Require("epics"); err != nil {
 		return nil, err
 	}
-	return s.store.ListEpics(sqlstore.EpicFilter{
-		Status:          input.Status,
-		ProjectID:       input.ProjectID,
-		Search:          input.Search,
-		IncludeArchived: input.IncludeArchived,
-		Limit:           input.Limit,
-		SortBy:          input.SortBy,
-		SortDir:         input.SortDir,
-		AfterSortValue:  input.AfterSortValue,
-		AfterID:         input.AfterID,
-	})
+	return s.store.ListEpics(epicListFilter(input))
 }
 
 // Update applies a partial update to an epic.

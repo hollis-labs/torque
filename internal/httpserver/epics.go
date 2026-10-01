@@ -35,7 +35,7 @@ func epicsJSON(epics []sqlstore.EpicRecord) []map[string]interface{} {
 }
 
 func (s *Server) listEpics(w http.ResponseWriter, r *http.Request) {
-	allowed := map[string]bool{"status": true, "project_id": true, "include_archived": true, "search": true, "limit": true, "cursor": true, "sort_by": true, "sort_dir": true}
+	allowed := map[string]bool{"status": true, "project_id": true, "include_archived": true, "search": true, "limit": true, "cursor": true, "sort_by": true, "sort_dir": true, "include_total": true}
 	q, qerr := parseStrictQuery(r, allowed)
 	if qerr != nil {
 		writeHTTPQueryError(w, qerr)
@@ -43,22 +43,6 @@ func (s *Server) listEpics(w http.ResponseWriter, r *http.Request) {
 	}
 	status := queryString(q, "status")
 	projectID := queryString(q, "project_id")
-	if !hasAnyQueryKey(q, "include_archived", "search", "limit", "cursor", "sort_by", "sort_dir") {
-		epics, err := s.svc.Epic.List(status, projectID, false)
-		if err != nil {
-			if _, ok := err.(*service.FeatureDisabledError); ok {
-				writeError(w, http.StatusNotFound, err.Error())
-				return
-			}
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if epics == nil {
-			epics = []sqlstore.EpicRecord{}
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"epics": epicsJSON(epics)})
-		return
-	}
 	includeArchived, qerr := queryBool(q, "include_archived")
 	if qerr != nil {
 		writeHTTPQueryError(w, qerr)
@@ -80,7 +64,7 @@ func (s *Server) listEpics(w http.ResponseWriter, r *http.Request) {
 		writeAdjacentServiceError(w, err)
 		return
 	}
-	epics, err := s.svc.Epic.ListPaginated(input)
+	epics, total, err := s.svc.Epic.ListPaginatedWithTotal(input, cursor.IncludeTotal)
 	if err != nil {
 		writeAdjacentServiceError(w, err)
 		return
@@ -97,7 +81,7 @@ func (s *Server) listEpics(w http.ResponseWriter, r *http.Request) {
 		last := epics[len(epics)-1]
 		nextCursor = pagination.Encode(normalized.SortBy, normalized.SortDir, service.EpicQuerySortValue(last, normalized.SortBy), last.ID)
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"items": epicsJSON(epics), "meta": advancedMeta(normalized.Limit, normalized.SortBy, normalized.SortDir, hasMore, nextCursor, len(epics))})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": epicsJSON(epics), "meta": advancedMeta(normalized.Limit, normalized.SortBy, normalized.SortDir, hasMore, nextCursor, len(epics), total)})
 }
 
 func (s *Server) getEpic(w http.ResponseWriter, r *http.Request) {

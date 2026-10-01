@@ -47,9 +47,9 @@ describe('ScopeManagerDialog', () => {
     vi.restoreAllMocks()
     globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
       const url = String(input)
-      if (url.endsWith('/projects')) return Promise.resolve(jsonResponse({ projects: [projectA, projectB] }))
-      if (url.endsWith('/epics')) return Promise.resolve(jsonResponse({ epics: [] }))
-      if (url.endsWith('/sprints')) return Promise.resolve(jsonResponse({ sprints: [] }))
+      if (url.endsWith('/projects')) return Promise.resolve(jsonResponse({ items: [projectA, projectB], meta: { returned: 2, limit: 50, has_more: false, next_cursor: null } }))
+      if (url.endsWith('/epics')) return Promise.resolve(jsonResponse({ items: [], meta: { returned: 0, limit: 50, has_more: false, next_cursor: null } }))
+      if (url.endsWith('/sprints')) return Promise.resolve(jsonResponse({ items: [], meta: { returned: 0, limit: 50, has_more: false, next_cursor: null } }))
       if (url.endsWith('/projects/PRJ-1/artifacts')) return Promise.resolve(jsonResponse({ artifacts: [] }))
       if (url.endsWith('/projects/PRJ-2/artifacts')) return Promise.resolve(jsonResponse({ artifacts: [] }))
       return Promise.reject(new Error(`Unhandled fetch: ${url}`))

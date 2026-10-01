@@ -46,7 +46,7 @@ func commentEntityFromRequest(r *http.Request) (entityType, entityID string) {
 const legacyTaskIDError = "task_id is no longer accepted on /comments; use entity_type=task&entity_id=<id> (or POST {\"entity_type\":\"task\",\"entity_id\":\"<id>\"})"
 
 func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
-	allowed := map[string]bool{"entity_type": true, "entity_id": true, "task_id": true, "entity_ids": true, "author": true, "created_after": true, "created_before": true, "limit": true, "cursor": true, "sort_by": true, "sort_dir": true}
+	allowed := map[string]bool{"entity_type": true, "entity_id": true, "task_id": true, "entity_ids": true, "author": true, "created_after": true, "created_before": true, "limit": true, "cursor": true, "sort_by": true, "sort_dir": true, "include_total": true}
 	q, qerr := parseStrictQuery(r, allowed)
 	if qerr != nil {
 		writeHTTPQueryError(w, qerr)
@@ -91,18 +91,6 @@ func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
 		writeFieldError(w, http.StatusBadRequest, "entity_id", "entity_id or entity_ids is required")
 		return
 	}
-	if !hasAnyQueryKey(q, "entity_ids", "author", "created_after", "created_before", "limit", "cursor", "sort_by", "sort_dir") {
-		comments, err := s.svc.Comment.List(entityType, entityID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if comments == nil {
-			comments = []sqlstore.CommentRecord{}
-		}
-		writeJSON(w, http.StatusOK, comments)
-		return
-	}
 	cursor, qerr := queryCursor(q)
 	if qerr != nil {
 		writeHTTPQueryError(w, qerr)
@@ -121,7 +109,7 @@ func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
 		writeAdjacentServiceError(w, err)
 		return
 	}
-	comments, err := s.svc.Comment.ListFiltered(filter)
+	comments, total, err := s.svc.Comment.ListFilteredWithTotal(filter, cursor.IncludeTotal)
 	if err != nil {
 		writeAdjacentServiceError(w, err)
 		return
@@ -138,11 +126,11 @@ func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
 		last := comments[len(comments)-1]
 		nextCursor = pagination.Encode(normalized.SortBy, normalized.SortDir, service.CommentQuerySortValue(last, normalized.SortBy), service.CommentQueryCursorID(last))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": comments, "meta": advancedMeta(normalized.Limit, normalized.SortBy, normalized.SortDir, hasMore, nextCursor, len(comments))})
+	writeJSON(w, http.StatusOK, map[string]any{"items": comments, "meta": advancedMeta(normalized.Limit, normalized.SortBy, normalized.SortDir, hasMore, nextCursor, len(comments), total)})
 }
 
 func (s *Server) searchComments(w http.ResponseWriter, r *http.Request) {
-	allowed := map[string]bool{"query": true, "entity_type": true, "entity_id": true, "entity_ids": true, "author": true, "created_after": true, "created_before": true, "limit": true, "cursor": true, "sort_by": true, "sort_dir": true}
+	allowed := map[string]bool{"query": true, "entity_type": true, "entity_id": true, "entity_ids": true, "author": true, "created_after": true, "created_before": true, "limit": true, "cursor": true, "sort_by": true, "sort_dir": true, "include_total": true}
 	q, qerr := parseStrictQuery(r, allowed)
 	if qerr != nil {
 		writeHTTPQueryError(w, qerr)
@@ -176,7 +164,7 @@ func (s *Server) searchComments(w http.ResponseWriter, r *http.Request) {
 		writeAdjacentServiceError(w, err)
 		return
 	}
-	comments, err := s.svc.Comment.Search(filter)
+	comments, total, err := s.svc.Comment.ListFilteredWithTotal(filter, cursor.IncludeTotal)
 	if err != nil {
 		writeAdjacentServiceError(w, err)
 		return
@@ -193,7 +181,7 @@ func (s *Server) searchComments(w http.ResponseWriter, r *http.Request) {
 		last := comments[len(comments)-1]
 		nextCursor = pagination.Encode(normalized.SortBy, normalized.SortDir, service.CommentQuerySortValue(last, normalized.SortBy), service.CommentQueryCursorID(last))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": comments, "meta": advancedMeta(normalized.Limit, normalized.SortBy, normalized.SortDir, hasMore, nextCursor, len(comments))})
+	writeJSON(w, http.StatusOK, map[string]any{"items": comments, "meta": advancedMeta(normalized.Limit, normalized.SortBy, normalized.SortDir, hasMore, nextCursor, len(comments), total)})
 }
 
 func queryExactBool(q url.Values, key string) (bool, *httpQueryError) {

@@ -72,8 +72,8 @@ export default function ProjectDetailPage() {
       setTaskRollup(rollupRes)
       setSprintRollup(sprintRollupRes)
       setEpicRollup(epicRollupRes)
-      setSprints(sprintRes.sprints)
-      setEpics(epicRes.epics)
+      setSprints(sprintRes.items)
+      setEpics(epicRes.items)
 
       try {
         const artifactRes = await api.listProjectArtifacts(id)

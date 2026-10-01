@@ -49,8 +49,8 @@ export default function EpicsPage() {
         api.taskRollup('epic_id'),
       ])
       if (myGen !== loadGeneration.current) return
-      setEpics(epicRes.epics)
-      setProjects(projectRes.projects)
+      setEpics(epicRes.items)
+      setProjects(projectRes.items)
       setTaskRollup(rollupRes)
     } catch (err) {
       // A failed background refresh leaves the loaded page in place.

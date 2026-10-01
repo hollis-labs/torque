@@ -61,16 +61,18 @@ Example: {"id":"PRJ-20260820-0001","status":"inactive"}`),
 		withDescription(`List projects with optional status filter; ordered name ASC (tiebreak id ASC) by default. Pass sort_by (name|status|updated_at|created_at) and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid.
 Use for project discovery; torque_project_get when you know the ID, torque_task_list with project_id filter for the project's task set. Default brief shape; pass verbose="true" for full records.
 Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under.
-Explicit malformed, blank, fractional, overflow, unsafe native-float, or negative limit values reject with error.code=arg_invalid, field=limit; omitted limit defaults to 100 and oversized limits clamp to 500.
-Response shape: data = {items: [<briefProject or ProjectRecord>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
+Explicit malformed, blank, fractional, overflow, unsafe native-float, or negative limit values reject with error.code=arg_invalid, field=limit; omitted limit defaults to 50 and oversized limits clamp to 200.
+Response shape: data = {items: [<briefProject or ProjectRecord>...], meta: {truncated, returned, limit, has_more, next_cursor, total?}}.
 Example: {"status":"active","limit":"50"}`),
 		withString("status", desc("Filter: active|inactive")),
 		withString("include_archived", desc("Include archived projects (default false, string 'true'/'false')")),
-		withString("limit", desc("Max results (integer, default 100, max 500)")),
+		withString("limit", desc("Max results (integer, default 50, max 200)")),
 		withString("verbose", desc("Return full records instead of brief (string 'true'/'false', default false)")),
+		withString("search", desc("Substring search over ID, name and description/goal")),
 		withString("sort_by", desc("Sort field: name|status|updated_at|created_at (default name)")),
 		withString("sort_dir", desc("Sort direction: asc|desc (default asc)")),
 		withString("cursor", desc("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
+		withString("include_total", desc("Include meta.total for the whole matching cohort (default false; COUNT is opt-in).")),
 	), a.handleProjectList)
 
 	a.addTool(newTool("torque_project_delete",
@@ -303,11 +305,16 @@ func (a *Adapter) handleProjectList(ctx context.Context, req map[string]any) (an
 	if errRes != nil {
 		return nil, errRes
 	}
+	search, errRes := reqQueryString(req, "search")
+	if errRes != nil {
+		return nil, errRes
+	}
 	cursor, errRes := reqQueryCursor(req)
 	if errRes != nil {
 		return nil, errRes
 	}
 	filter, normalized, err := service.NormalizeProjectQuery(service.ProjectQuery{
+		Search:          search,
 		Status:          status,
 		IncludeArchived: includeArchived,
 		CursorQuery:     cursor,
@@ -315,7 +322,7 @@ func (a *Adapter) handleProjectList(ctx context.Context, req map[string]any) (an
 	if err != nil {
 		return errFromService(err)
 	}
-	projects, err := a.svc.Project.ListPage(filter)
+	projects, total, err := a.svc.Project.ListPageWithTotal(filter, cursor.IncludeTotal)
 	if err != nil {
 		return errFromService(err)
 	}
@@ -337,7 +344,7 @@ func (a *Adapter) handleProjectList(ctx context.Context, req map[string]any) (an
 	cursorAt := func(i int) (sortValue, id string) {
 		return service.ProjectQuerySortValue(projects[i], normalized.SortBy), projects[i].ID
 	}
-	return cappedCursorJSONResult(items, normalized.Limit, normalized.SortBy, normalized.SortDir, hasMoreFromQuery, cursorAt)
+	return cappedCursorJSONResultWithTotal(items, normalized.Limit, total, normalized.SortBy, normalized.SortDir, hasMoreFromQuery, cursorAt)
 }
 
 func (a *Adapter) handleProjectDelete(ctx context.Context, req map[string]any) (any, error) {

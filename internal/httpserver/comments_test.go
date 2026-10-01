@@ -73,14 +73,17 @@ func TestHTTP_NestedComments_PostAndList(t *testing.T) {
 	assert.Equal(t, "user", created["author"])
 	assert.NotEmpty(t, created["created_at"])
 
-	// GET nested returns a Comment[] directly (no wrapper).
+	// GET nested returns a bounded {items, meta} page.
 	getResp, err := http.Get(ts.URL + "/api/v1/tasks/" + taskID + "/comments")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, getResp.StatusCode)
 
-	var listed []map[string]interface{}
-	require.NoError(t, json.NewDecoder(getResp.Body).Decode(&listed))
+	var page struct {
+		Items []map[string]interface{} `json:"items"`
+	}
+	require.NoError(t, json.NewDecoder(getResp.Body).Decode(&page))
 	getResp.Body.Close()
+	listed := page.Items
 	require.Len(t, listed, 1)
 	assert.Equal(t, "hello from composer", listed[0]["content"])
 	assert.Equal(t, "user", listed[0]["author"])
@@ -251,10 +254,12 @@ func TestHTTP_DeleteComment_ForceGuardMatrix(t *testing.T) {
 		resp, err := http.Get(ts.URL + "/api/v1/comments?entity_type=task&entity_id=" + taskID)
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, resp.StatusCode)
-		var listed []map[string]interface{}
-		require.NoError(t, json.NewDecoder(resp.Body).Decode(&listed))
+		var page struct {
+			Items []map[string]interface{} `json:"items"`
+		}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&page))
 		resp.Body.Close()
-		for _, item := range listed {
+		for _, item := range page.Items {
 			if int64(item["id"].(float64)) == id {
 				return true
 			}
@@ -320,9 +325,12 @@ func TestHTTP_DeleteComment_ExactParsingAndMissingRemainGuarded(t *testing.T) {
 	getResp, err := http.Get(ts.URL + "/api/v1/comments?entity_type=task&entity_id=" + taskID)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, getResp.StatusCode)
-	var listed []map[string]interface{}
-	require.NoError(t, json.NewDecoder(getResp.Body).Decode(&listed))
+	var page struct {
+		Items []map[string]interface{} `json:"items"`
+	}
+	require.NoError(t, json.NewDecoder(getResp.Body).Decode(&page))
 	getResp.Body.Close()
+	listed := page.Items
 	require.Len(t, listed, 1)
 	assert.Equal(t, "survives bad delete", listed[0]["content"])
 }

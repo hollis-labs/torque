@@ -261,17 +261,17 @@ export function ScopeManagerDialog({ open, onOpenChange, flags, onDataChange }: 
     void (async () => {
       try {
         const [projectRes, epicRes, sprintRes] = await Promise.all([
-          flags.projects ? api.listProjects() : Promise.resolve({ projects: [] as Project[] }),
-          flags.epics ? api.listEpics() : Promise.resolve({ epics: [] as Epic[] }),
-          flags.sprints ? api.listSprints() : Promise.resolve({ sprints: [] as Sprint[] }),
+          flags.projects ? api.listProjects() : Promise.resolve({ items: [] as Project[] }),
+          flags.epics ? api.listEpics() : Promise.resolve({ items: [] as Epic[] }),
+          flags.sprints ? api.listSprints() : Promise.resolve({ items: [] as Sprint[] }),
         ])
         if (cancelled) return
-        setProjects(projectRes.projects)
-        setEpics(epicRes.epics)
-        setSprints(sprintRes.sprints)
-        const firstProject = projectRes.projects[0] ?? null
-        const firstEpic = epicRes.epics[0] ?? null
-        const firstSprint = sprintRes.sprints[0] ?? null
+        setProjects(projectRes.items)
+        setEpics(epicRes.items)
+        setSprints(sprintRes.items)
+        const firstProject = projectRes.items[0] ?? null
+        const firstEpic = epicRes.items[0] ?? null
+        const firstSprint = sprintRes.items[0] ?? null
         setSelectedProjectId((prev) => prev === undefined ? firstProject?.id ?? null : prev)
         setSelectedEpicId((prev) => prev === undefined ? firstEpic?.id ?? null : prev)
         setSelectedSprintId((prev) => prev === undefined ? firstSprint?.id ?? null : prev)
@@ -341,36 +341,36 @@ export function ScopeManagerDialog({ open, onOpenChange, flags, onDataChange }: 
 
   async function refreshProjects(selectId?: string | null) {
     const res = await api.listProjects()
-    setProjects(res.projects)
+    setProjects(res.items)
     const nextId = selectId ?? selectedProjectId
     if (nextId === null) {
       setSelectedProjectId(null)
     } else {
-      setSelectedProjectId(nextId && res.projects.some((project) => project.id === nextId) ? nextId : res.projects[0]?.id ?? null)
+      setSelectedProjectId(nextId && res.items.some((project) => project.id === nextId) ? nextId : res.items[0]?.id ?? null)
     }
     onDataChange?.()
   }
 
   async function refreshEpics(selectId?: string | null) {
     const res = await api.listEpics()
-    setEpics(res.epics)
+    setEpics(res.items)
     const nextId = selectId ?? selectedEpicId
     if (nextId === null) {
       setSelectedEpicId(null)
     } else {
-      setSelectedEpicId(nextId && res.epics.some((epic) => epic.id === nextId) ? nextId : res.epics[0]?.id ?? null)
+      setSelectedEpicId(nextId && res.items.some((epic) => epic.id === nextId) ? nextId : res.items[0]?.id ?? null)
     }
     onDataChange?.()
   }
 
   async function refreshSprints(selectId?: string | null) {
     const res = await api.listSprints()
-    setSprints(res.sprints)
+    setSprints(res.items)
     const nextId = selectId ?? selectedSprintId
     if (nextId === null) {
       setSelectedSprintId(null)
     } else {
-      setSelectedSprintId(nextId && res.sprints.some((sprint) => sprint.id === nextId) ? nextId : res.sprints[0]?.id ?? null)
+      setSelectedSprintId(nextId && res.items.some((sprint) => sprint.id === nextId) ? nextId : res.items[0]?.id ?? null)
     }
     onDataChange?.()
   }

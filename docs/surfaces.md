@@ -124,30 +124,36 @@ page stably. Default limit is 50, max is 200; explicit `limit<=0`, fractions,
 and overflows are rejected.
 
 Adjacent entity HTTP lists (`/projects`, `/sprints`, `/epics`, `/issues`, and
-`/comments`) preserve their legacy fetch-all response shapes for existing
-simple calls, and opt into bounded cursor mode only when an advanced key is
-present. Before that mode choice, handlers reject malformed raw query strings,
-unknown keys, and repeated scalar keys with `400` plus `field`; an
-unknown-only request never falls through to a successful unfiltered legacy
-list. Explicit blank, malformed, fractional, overflow, unsafe, or negative
-`limit` values are rejected. Cursor tokens are opaque and tied to the
-`sort_by`/`sort_dir` that issued them.
+`/comments`, including searches and nested task comments) always return
+`{items:[...], meta:{returned, limit, has_more, next_cursor, sort_by, sort_dir}}`.
+There is no legacy fetch-all mode or compatibility response. With no paging
+parameters, the server returns the first 50 rows; positive limits clamp to 200.
+Zero uses the default. Malformed, blank, fractional, overflow, negative limits,
+malformed query strings, unknown keys, and repeated scalar keys return `400`
+with `field`. These lists are cursor-only: `offset` is unsupported. Cursors are
+opaque and tied to the request's resolved `sort_by`/`sort_dir`.
 
-Advanced adjacent responses use `{items:[...], meta:{returned, limit,
-has_more, next_cursor, sort_by, sort_dir}}`. They deliberately make no
-whole-cohort `total` claim unless a count is actually computed. Legacy
-`GET /api/v1/issues/search?q=...` keeps its old `total=len(page)` value; that
-is page length compatibility, not a cohort count.
+All these routes accept `include_total` (default false). When true, `meta.total`
+is the exact filtered cohort size before cursor/limit, computed from the same
+filter predicates as the page. Otherwise total is omitted. `returned` is page
+length, never a cohort count. `next_cursor` is null on the final/empty page.
+See [the shared pagination contract](api-pagination.md) for count cost and the
+current/target matrix for the other resource families.
 
-| Route | Legacy keys and shape | Advanced opt-in keys | Default/max/order |
-|---|---|---|---|
-| `GET /projects` | `status`, `include_archived`; `{projects:[...]}` fetch-all | `limit`, `cursor`, `sort_by`, `sort_dir` | 100/500, `name asc`; sort fields `name,status,updated_at,created_at` |
-| `GET /sprints` | `status`, `project_id`; `{sprints:[...]}` fetch-all | `include_archived`, `over_budget`, `cost_budget_min`, `cost_budget_max`, `limit`, `cursor`, `sort_by`, `sort_dir` | 100/500, `updated_at desc`; sort fields `name,status,updated_at,created_at` |
-| `GET /epics` | `status`, `project_id`; `{epics:[...]}` fetch-all | `include_archived`, `search`, `limit`, `cursor`, `sort_by`, `sort_dir` | 100/500, `updated_at desc`; sort fields `name,status,updated_at,created_at` |
-| `GET /issues` | `project_id`; `{issues:[...], total}` fetch-all | `status`, `query`, `limit`, `cursor`, `sort_by`, `sort_dir` | 50/200, `priority asc`; sort fields `priority,status,updated_at,created_at` |
-| `GET /issues/search` | `q`, optional `project_id`, `limit`; `{issues:[...], total=len(page)}` | `status`, `query`, `cursor`, `sort_by`, `sort_dir`; `limit` is shared | 50/200, `priority asc`; `q` and `query` together are rejected as ambiguous |
-| `GET /comments` | `entity_type`, `entity_id`; raw `[...]` fetch-all | `author`, `created_after`, `created_before`, `entity_ids`, `limit`, `cursor`, `sort_by`, `sort_dir` | 50/200, `created_at asc`; only sort field `created_at` |
-| `GET /comments/search` | none | `query`, optional `entity_type`, `entity_id`, `entity_ids`, `author`, `created_after`, `created_before`, `limit`, `cursor`, `sort_by`, `sort_dir` | 25/100, `created_at desc`; only sort field `created_at` |
+| Route | Filters/search | Default/max/order |
+|---|---|---|
+| `GET /projects` | `status`, `include_archived`, `search` over ID/name/description | 50/200, `name asc`; sort fields `name,status,updated_at,created_at` |
+| `GET /sprints` | `status`, `project_id`, `include_archived`, `over_budget`, `cost_budget_min`, `cost_budget_max`, `search` over ID/name/goal | 50/200, `updated_at desc`; sort fields `name,status,updated_at,created_at` |
+| `GET /epics` | `status`, `project_id`, `include_archived`, `search` over ID/name/description | 50/200, `updated_at desc`; sort fields `name,status,updated_at,created_at` |
+| `GET /issues` | `project_id`, `status`, `query` over ID/title/body | 50/200, `priority asc`; sort fields `priority,status,updated_at,created_at` |
+| `GET /issues/search` | Required `q` or `query`, optional `project_id`, `status`; `q` and `query` together reject as ambiguous | 50/200, `priority asc`; same issue sort fields |
+| `GET /comments`, `GET /tasks/{id}/comments` | Entity scope, `author`, `created_after`, `created_before`, `entity_ids` (flat only) | 50/200, `created_at asc`; only sort field `created_at` |
+| `GET /comments/search` | Required `query`, optional entity scope, `entity_ids`, `author`, `created_after`, `created_before` | 50/200, `created_at desc`; only sort field `created_at` |
+
+Every route also accepts `limit`, `cursor`, `sort_by`, `sort_dir`, and
+`include_total`. Filters apply before paging; keep scope, filters, and sort
+unchanged for continuation. GUI callers parse `items` and make one page request;
+full paging UI and remote picker conversion are follow-ups in S2/S3.
 
 HTTP `entity_ids` is a JSON-string query value such as
 `entity_ids=["T-1","T-2"]`; URL-encode it in real requests. Whole `null`,
