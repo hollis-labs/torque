@@ -228,6 +228,10 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 		HeartbeatInterval: mgr.pidPollInterval,
 		ACPMCPServers:     acpMCPServers(pb.loopbackURL, deps, withMux),
 		OnACPDiagnostic:   diagnostics.observe,
+		// The agent's permission requests are answered from the profile's
+		// posture, each decision written to the session log
+		// (acp_permissions.go).
+		ACPBestEffortPermissionRequestResponder: acpPermissionResponder(permissionPosture(profile), diagnostics),
 	}
 
 	// Resume: ACP's session/load takes the provider session id, through the

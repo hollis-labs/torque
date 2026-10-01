@@ -13,24 +13,16 @@ import (
 	"github.com/hollis-labs/torque/internal/config"
 )
 
-// codexApprovalMode maps a profile's permission_mode onto the posture
-// agentkit's turn.CodexApprovalResponder answers Codex app-server approval
-// requests with (CW-20261001-0055). Profiles spell the mode in Claude's
-// settings vocabulary for every provider; go-permission spells the same four
-// postures differently. What each grants, per the responder's table (Codex
-// asks about a command or file change only when it would leave the sandbox):
-//
-//	default           → default       MCP tool calls approved, escalations declined
-//	acceptEdits       → accept-edits  also file changes outside the writable roots
-//	plan              → plan          everything declined
-//	bypassPermissions → yolo          everything approved
-//
-// An unset mode gets the responder's headless default, not the acceptEdits
-// that ResolvedPermissionMode gives Claude: for Codex a file-change approval
-// is a write outside the writable roots, which an operator should opt into
-// rather than inherit. A value load-time validation would have rejected also
-// falls back to the default posture, never to yolo.
-func codexApprovalMode(profile config.AgentProfile) gopermission.Mode {
+// permissionPosture maps a profile's permission_mode onto go-permission's
+// posture vocabulary, for the runtimes whose approval requests Torque
+// answers itself: Codex app-server (codexApprovalHook) and ACP agents
+// (acpPermissionResponder). Profiles spell the mode in Claude's settings
+// vocabulary for every provider; go-permission spells the same four
+// postures differently. An unset mode gets the default posture, not the
+// acceptEdits that ResolvedPermissionMode gives Claude, and a value
+// load-time validation would have rejected also falls back to default,
+// never to yolo.
+func permissionPosture(profile config.AgentProfile) gopermission.Mode {
 	switch config.PermissionMode(profile.PermissionMode) {
 	case config.PermissionModeDefault:
 		return gopermission.ModeDefault
@@ -43,6 +35,23 @@ func codexApprovalMode(profile config.AgentProfile) gopermission.Mode {
 	default:
 		return gopermission.ModeDefault
 	}
+}
+
+// codexApprovalMode is the posture agentkit's turn.CodexApprovalResponder
+// answers Codex app-server approval requests with (CW-20261001-0055). What
+// each grants, per the responder's table (Codex asks about a command or file
+// change only when it would leave the sandbox):
+//
+//	default           → default       MCP tool calls approved, escalations declined
+//	acceptEdits       → accept-edits  also file changes outside the writable roots
+//	plan              → plan          everything declined
+//	bypassPermissions → yolo          everything approved
+//
+// Unset is default for Codex because a file-change approval is a write
+// outside the writable roots, which an operator should opt into rather than
+// inherit.
+func codexApprovalMode(profile config.AgentProfile) gopermission.Mode {
+	return permissionPosture(profile)
 }
 
 // plantsMux reports whether a session gets the daemon's `mux` MCP server

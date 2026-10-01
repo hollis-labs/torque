@@ -292,3 +292,59 @@ func TestBootPiACP_ManualSession(t *testing.T) {
 	assert.Contains(t, prompts[0], "Torque's task-scoped MCP tools are not available in this session")
 	assert.Contains(t, acpSessionLog(t, cd), "not sent: loopback")
 }
+
+// acpPermissionAnswers returns the outcome of each answer the fake received
+// to a session/request_permission it sent (go-providers' copilot/
+// acp_permission fixture asks once, as request id 0).
+func acpPermissionAnswers(t *testing.T, call providertest.Call) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, line := range call.Stdin {
+		var frame struct {
+			ID     *json.RawMessage `json:"id"`
+			Method string           `json:"method"`
+			Result struct {
+				Outcome map[string]any `json:"outcome"`
+			} `json:"result"`
+		}
+		if json.Unmarshal([]byte(line), &frame) != nil || frame.Method != "" || frame.ID == nil || string(*frame.ID) != "0" {
+			continue
+		}
+		out = append(out, frame.Result.Outcome)
+	}
+	return out
+}
+
+// TestBootCopilotACP_PermissionRequestFollowsPosture is CW-20261001-0113:
+// Copilot asks before running a shell command (`execute`). Torque answers
+// from the profile's posture: declined (reject_once) under the default
+// posture, allowed once under bypassPermissions, and each decision is in
+// session.log.
+func TestBootCopilotACP_PermissionRequestFollowsPosture(t *testing.T) {
+	for _, tc := range []struct {
+		permissionMode string
+		wantOption     string
+		wantLog        string
+	}{
+		{"", "reject_once", `acp permission: kind=execute tool="Run shell command: pwd" posture=default option=reject_once (execute is not granted under default)`},
+		{"bypassPermissions", "allow_once", `acp permission: kind=execute tool="Run shell command: pwd" posture=yolo option=allow_once (execute is granted under yolo)`},
+	} {
+		t.Run("mode="+tc.permissionMode, func(t *testing.T) {
+			fake := providertest.New(t, runtimes.Copilot, providertest.Replay("copilot/acp_permission"))
+			fake.Install()
+			cd := composeACPDeps(t, "copilot")
+			cd.Deps.Profiles = config.ProfileMap{"worker": {Executor: "cli", Provider: "copilot", PermissionMode: tc.permissionMode}}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			sess, err := cd.Manager.Boot(ctx, agent.Options{
+				TaskID: "CW-ACP-PERMISSION", AgentProfile: "worker", Workdir: t.TempDir(), Mode: agent.ModeOneShot, Description: "Run pwd",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, agent.StatusDone, sess.Status)
+			require.Len(t, fake.Calls(), 1)
+			assert.Equal(t, []map[string]any{{"outcome": "selected", "optionId": tc.wantOption}}, acpPermissionAnswers(t, fake.Calls()[0]))
+			assert.Contains(t, acpSessionLog(t, cd), tc.wantLog)
+		})
+	}
+}

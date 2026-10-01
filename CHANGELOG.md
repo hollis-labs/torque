@@ -49,6 +49,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   `mcpCapabilities.http` is not sent the loopback; a long-lived task run on
   one is stopped at launch for the same reason. One-shot runs and manual
   sessions launch (CW-20261001-0097).
+- An ACP agent's permission requests are answered from the profile's
+  `permission_mode` (CW-20261001-0113); they were all declined. `plan`
+  grants nothing; `default` and unset grant read-only tool kinds (`read`,
+  `search`, `think`); `acceptEdits` also grants `edit`, but not `delete` or
+  `move`, which ACP classes apart from edits; `bypassPermissions` grants
+  every kind. `execute`, `fetch` and any other or unknown kind are granted
+  only under `bypassPermissions`. A grant always takes the agent's
+  `allow_once`, never `allow_always`, and is declined when the agent offers
+  no `allow_once`; a decline takes `reject_once`. Each decision (kind, tool,
+  option) is written to the session log. An agent may run some operations
+  without asking, so this is not an execution gate.
 - Open-source project documents: `CHANGELOG.md`, `CONTRIBUTING.md`,
   `SECURITY.md`, `TRADEMARK.md`; MIT `LICENSE`.
 
