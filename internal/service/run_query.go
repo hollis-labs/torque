@@ -18,6 +18,8 @@ type RunQuery struct {
 	ProjectID    string
 	SprintID     string
 	EpicID       string
+	Executors    []string
+	Profiles     []string
 	Statuses     []string
 	Since        string
 	Until        string
@@ -74,7 +76,7 @@ func NormalizeRunQuery(q RunQuery) (sqlstore.RunFilter, int, string, string, err
 	if err != nil {
 		return invalid("sort_dir", err.Error())
 	}
-	f := sqlstore.RunFilter{TaskID: q.TaskID, ProjectID: q.ProjectID, SprintID: q.SprintID, EpicID: q.EpicID, Statuses: trimUniqueNonEmpty(q.Statuses), Limit: limit + 1, Offset: q.Offset, SortBy: sortBy, SortDir: dir}
+	f := sqlstore.RunFilter{TaskID: q.TaskID, ProjectID: q.ProjectID, SprintID: q.SprintID, EpicID: q.EpicID, Statuses: trimUniqueNonEmpty(q.Statuses), Executors: trimUniqueNonEmpty(q.Executors), Profiles: trimUniqueNonEmpty(q.Profiles), Limit: limit + 1, Offset: q.Offset, SortBy: sortBy, SortDir: dir}
 	if f.Since, err = ParseRunQueryTime(q.Since); err != nil {
 		return invalid("since", err.Error())
 	}
