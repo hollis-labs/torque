@@ -28,6 +28,9 @@ const torqueClientVersion = "0.1-dev"
 //     via go-agent-runtime/turn.Frame — claude-code runs
 //     `--input-format stream-json` and rejects a raw plaintext line.
 //
+//   - acp-stdio / acp-tcp: one ACP session/prompt through the wrapper's
+//     ACP session (bootACP).
+//
 //   - subprocess / pty: classic plaintext SendInput. The lib writes the
 //     bytes to stdin verbatim; the receiving CLI parses them as user
 //     input.
@@ -77,6 +80,14 @@ func (m *Manager) SendTurn(ctx context.Context, sess *Session, text string) (err
 			ClientVersion: torqueClientVersion,
 			CWD:           sess.Workdir,
 		})
+	case RuntimeKindACPStdio, RuntimeKindACPTCP:
+		// An ACP turn is one session/prompt with a text content block,
+		// which go-agent-wrapper's ACP session sends for the plaintext as
+		// given; agentkit's turn.Frame has no ACP case because there is no
+		// framing to apply. ACP sessions are always wrapper-routed
+		// (bootACP), so m.SendInput reaches the wrapper. A prompt sent while
+		// a turn is in flight fails: ACP has no input queue.
+		return m.SendInput(sess.ID, []byte(text))
 	case RuntimeKindStreamingStdio:
 		// claude-code runs `claude --input-format stream-json`: every
 		// line on stdin must be one JSON object. Wrap the plaintext turn

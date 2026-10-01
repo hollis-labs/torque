@@ -231,6 +231,26 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	// amendments against the planted bootdir).
 	env := composeEnv(profile, opts, agentFile)
 
+	// An ACP session plants nothing: its MCP servers go in session/new and
+	// its task bundle and kickoff ride the first turn (acp_boot.go).
+	if runtimeKind.ACP() {
+		return bootACP(ctx, deps, mgr, opts, &plantedBoot{
+			resolved:         resolved,
+			profile:          profile,
+			agentProfileName: agentProfileName,
+			runtimeKind:      runtimeKind,
+			wrapperAdapter:   selected.wrapper,
+			caps:             caps,
+			sessID:           sessID,
+			role:             role,
+			systemPrompt:     systemPrompt,
+			loopback:         loopback,
+			loopbackURL:      loopbackURL,
+			ws:               ws,
+			env:              env,
+		})
+	}
+
 	// Shared-launch preparation + boot-dir planting (CW-20260515-0020).
 	//
 	// Torque builds a go-agent-launch LaunchPlan from its own Boot inputs,
@@ -279,6 +299,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		AgentFilePath:  opts.AgentFile,
 		RuntimeKind:    rtKind,
 		ProviderID:     runtimeIDFor(profile.Provider),
+		ProviderBinary: detectedBinary(cliAdapter),
 		ProjectID:      opts.ProjectID,
 		Workdir:        opts.Workdir,
 		WorkspaceDir:   ws.WorkspaceDir,
@@ -434,7 +455,8 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 
 // plantedBoot bundles everything Boot's shared prefix (profile resolution
 // through boot-dir planting) computes, so bootLegacy and bootWrapper can
-// consume it without re-deriving or re-planting.
+// consume it without re-deriving or re-planting. bootACP takes the fields
+// computed before planting; the planting ones stay zero.
 type plantedBoot struct {
 	resolved          launchprofile.CompiledLaunchProfile
 	profile           config.AgentProfile
@@ -1574,6 +1596,25 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 	}
 
 	return sess, nil
+}
+
+// detectedBinary returns the absolute path the adapter's Detect resolves
+// for its CLI, or "" when it finds none or returns a bare name. Boot pins it
+// as the launch plan's provider binary so the planted launch execs that
+// path instead of a bare name looked up in the daemon's PATH: an install
+// only in a registry lookup dir (~/.opencode/bin, ~/.local/bin) then works
+// without host changes (CW-20261001-0098). bootLegacy already spawns the
+// adapter's Detect result; this brings the go-agent-wrapper path, whose
+// spawn binary is the planted argv[0], to the same place.
+func detectedBinary(cli provider.CLIAdapter) string {
+	if cli == nil {
+		return ""
+	}
+	bin, ok := cli.Detect()
+	if !ok || !filepath.IsAbs(bin) {
+		return ""
+	}
+	return bin
 }
 
 // mergeCallerEnvIntoPrepared merges Torque's caller-side "K=V" env slice

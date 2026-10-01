@@ -101,3 +101,18 @@ func TestBuildLaunchPlan_PermissionMode_OnlyWhenSupplied(t *testing.T) {
 	plan := BuildLaunchPlan(compiled, overlay)
 	assert.Equal(t, "acceptEdits", plan.Provider.Permission)
 }
+
+// TestBuildLaunchPlan_ProviderBinary pins CW-20261001-0098: the detected CLI
+// path rides on ProviderSpec.Binary, which the planted launch takes as its
+// argv[0]; with none the binary stays empty and the launcher falls back to
+// the descriptor's bare name, as before.
+func TestBuildLaunchPlan_ProviderBinary(t *testing.T) {
+	compiled := CompiledLaunchProfile{AgentProfile: config.AgentProfile{Provider: "opencode"}, AgentProfileName: "worker"}
+	base := TaskLaunchOverlay{RuntimeKind: runtimes.ModeSubprocessPerTurn, ProviderID: "opencode", Workdir: "/repo"}
+
+	assert.Empty(t, BuildLaunchPlan(compiled, base).Provider.Binary)
+
+	withBinary := base
+	withBinary.ProviderBinary = "/home/u/.opencode/bin/opencode"
+	assert.Equal(t, "/home/u/.opencode/bin/opencode", BuildLaunchPlan(compiled, withBinary).Provider.Binary)
+}
