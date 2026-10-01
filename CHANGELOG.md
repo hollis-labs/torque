@@ -8,6 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- GitHub Actions CI (`.github/workflows/ci.yml`) on pull requests and pushes
+  to `main`: `make lint` and `make test` with Go from `go.mod`, and the GUI's
+  `npm ci`, build and vitest, with Go and npm caches. The private
+  `github.com/hollis-labs/plugin` module is not reachable from CI yet, so
+  until access is granted the Go job vets and tests every package except the
+  three that need it (`cmd/torque`, `internal/plugin`, `plugins/core`) and
+  says so in the run summary.
 - `GET /api/v1/tasks/rollup?group_by=project_id|epic_id|sprint_id` counts
   tasks per scope and status in one query, and `GET /api/v1/tasks?fields=summary`
   leaves out each task's `description` and `system_prompt`. The GUI's
