@@ -26,6 +26,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Every turn of a launch runs its own argv, resolved from the prepared launch
+  template (agentkit v0.13.0, go-agent-wrapper v0.16.0): the turn's prompt,
+  last after `--`, and the session the previous turn reported. The profile's
+  model is set on each runtime's adapter (Claude and Codex join OpenCode and
+  agy), and its args and Claude's `--settings` go to the template's own
+  extra-argument slot. Codex app-server now receives `-c model=…` before the
+  profile's args.
 - Runtimes are selected through the go-providers registry and
   go-agent-wrapper v0.15.0's `launch.Select` (agentkit v0.12.2, go-providers
   v0.34.1, go-sandbox v0.4.1), with the profile's runtime kind passed as the
@@ -105,6 +112,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- Later turns of `codex exec` and `opencode run` sessions reach the CLI.
+  Every turn re-ran the first turn's argv, so text sent with SendTurn never
+  arrived; codex exec also dropped the profile's model and args. Codex exec
+  still starts a new thread each turn: go-providers' exec convention has no
+  resume argument yet.
+- OpenCode sessions get their briefing on the first turn. OpenCode runs in
+  the project directory, so the `Boot @./boot.md` kickoff pointed at a file
+  that is not there; it now receives `boot.md`'s content instead.
 - OpenCode `serve-http` profiles launch `opencode serve --port 0 --hostname
   127.0.0.1` again. The wrapper launch path trimmed the prepared command to
   the bare executable, so the child started as plain `opencode`.
