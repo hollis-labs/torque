@@ -112,7 +112,7 @@ describe('Board server paging and cohorts', () => {
     fireEvent.change(input, { target: { value: 'different' } })
     await waitFor(() => expect(taskQueries().at(-1)?.searchParams.get('search')).toBe('different'))
     expect(readOpsViews()[0].filters.search).toBe('needle')
-    fireEvent.click(screen.getByRole('button', { name: 'Reset', exact: true }))
+    fireEvent.click(screen.getByRole('button', { name: 'Reset' }))
     expect((input as HTMLInputElement).value).toBe('needle')
     fireEvent.change(input, { target: { value: 'saved edit' } })
     await waitFor(() => expect(taskQueries().at(-1)?.searchParams.get('search')).toBe('saved edit'))
@@ -120,7 +120,7 @@ describe('Board server paging and cohorts', () => {
     expect(readOpsViews()[0].filters.search).toBe('saved edit')
     fireEvent.click(screen.getByRole('button', { name: /Clear/ }))
     expect(readOpsViews()[0].filters.search).toBe('saved edit')
-    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
     expect((input as HTMLInputElement).value).toBe('saved edit')
   })
 
