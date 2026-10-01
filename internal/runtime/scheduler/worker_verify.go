@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -25,34 +26,37 @@ import (
 //   - edits-without-commits is an agent-correctness bug ("forgot to
 //     commit") → retry-or-block per the on_fail rule, the operator will
 //     usually re-run the same scope.
-//   - no-edits-no-commits is a task-spec bug ("scope unclear or task
-//     malformed") → blocked with reason, the operator needs to fix the
-//     task before redispatch makes sense.
+//   - no-action is a task-spec bug ("scope unclear or task malformed")
+//     → blocked with reason, the operator needs to fix the task before
+//     redispatch makes sense.
 type WorkerVerdict struct {
 	// Kind selects the verdict's downstream behavior.
 	Kind WorkerVerdictKind
 
 	// CommitCount is the number of commits the worker landed on the run
-	// branch (vs the configured base). Zero is the failure signal for
-	// VerdictFailedNoCommitsWithEdits and VerdictBlockedNoAction.
+	// branch (vs the configured base). Zero sends classification on to
+	// the worktree's uncommitted changes and the worker's activity.
 	CommitCount int
 
 	// ToolUseHistogram tallies how many times each tool fired during the
 	// worker's session. The keys are the canonical tool names emitted by
 	// claude/codex/opencode (Edit, Write, Bash, MultiEdit, NotebookEdit,
 	// plus whatever else the agent used). Surfaced on the run_completed
-	// event for monitoring and the (3B) classification.
+	// event for monitoring, and counted as worker activity when the run
+	// landed no commits.
 	ToolUseHistogram map[string]int
 
 	// Reason carries the operator-facing explanation for the verdict.
-	// Empty for VerdictPassed.
+	// Empty for VerdictPassed and VerdictPassedNoEditsExpected.
 	Reason string
 
 	// SkipReason is non-empty when verification was skipped (e.g. shared
-	// mode without a per-run worktree, missing log file). Treated as
-	// "passed" for routing but surfaced to the run_completed event so
-	// monitors see the skip rather than silently believing the engine
-	// verified.
+	// mode without a per-run worktree, missing log file), and on
+	// VerdictPassedNoEditsExpected, where it says why a run with nothing
+	// to commit still passed. Treated as "passed" for routing but
+	// surfaced to the run_completed event so monitors see the skip or the
+	// commit-free pass rather than silently believing the engine counted
+	// commits.
 	SkipReason string
 }
 
@@ -64,42 +68,39 @@ const (
 	// run-branch; the normal review→reviewer-end-agent pipeline proceeds.
 	VerdictPassed WorkerVerdictKind = iota
 
-	// VerdictFailedNoCommitsWithEdits — the worker fired Edit/Write/Bash
-	// tools but committed nothing on the run-branch. "Did work but
-	// didn't ship it." Lifecycle picks failed → on_fail rule.
+	// VerdictFailedNoCommitsWithEdits — the worker left uncommitted
+	// changes in its worktree (`git status --porcelain` is non-empty) but
+	// committed nothing on the run-branch. "Did work but didn't ship
+	// it." Lifecycle picks failed → on_fail rule. Tool names do not
+	// decide this: a Bash call is not an edit unless it left a diff.
 	VerdictFailedNoCommitsWithEdits
 
-	// VerdictBlockedNoAction — the worker fired zero file-mutating tools
-	// AND committed nothing. Scope-mismatch or task-malformed. Lifecycle
-	// picks blocked-with-reason.
+	// VerdictBlockedNoAction — no commits, a clean worktree, no tool
+	// activity in the stream and nothing posted to the task during the
+	// run. Scope-mismatch or task-malformed. Lifecycle picks
+	// blocked-with-reason.
 	VerdictBlockedNoAction
 
-	// VerdictPassedNoEditsExpected — the worker landed zero commits AND
-	// zero file-mutating tools, but the task's contract did not require
-	// either (e.g. a research / triage task where the deliverable is a
-	// comment). Reserved for future use; currently the verifier does not
-	// emit this verdict because the substrate has no signal for "task
-	// requires no edits". The kind exists so the lifecycle path can
-	// route on it without a new code path when we add the signal.
+	// VerdictPassedNoEditsExpected — no commits and a clean worktree, but
+	// the worker acted: tools fired, or it left comments/artifacts on the
+	// task during the run. Read-only work (research, triage, review) whose
+	// deliverable is a comment lands here. Routed like VerdictPassed; the
+	// SkipReason says what the worker did. CW-20261001-0013.
 	VerdictPassedNoEditsExpected
 )
 
-// editingToolNames are the tool names whose presence-or-absence in the
-// stream classifies a verdict, in claude-code's spelling. Codex tool calls
-// reach stream.jsonl already in this spelling (codex_events.go maps
-// commandExecution→Bash, fileChange→Edit). Other runtimes spell them
-// differently, so readToolHistogram canonicalizes names first; see
-// canonicalToolName. A worker that hasn't called ANY of these did not
-// touch the filesystem in a write-bearing way.
-//
-// Read-only tools (Read, Grep, Glob) are intentionally NOT in this list —
-// a worker that only read files and then signaled done deserves the
-// VerdictBlockedNoAction route because reading is not delivery.
+// editingToolNames are the file-mutating tool names, in claude-code's
+// spelling. Codex tool calls reach stream.jsonl already in this spelling
+// (codex_events.go maps commandExecution→Bash, fileChange→Edit). Other
+// runtimes spell them differently, so readToolHistogram canonicalizes names
+// first; see canonicalToolName. They no longer classify a verdict — the
+// worktree diff does (CW-20261001-0013) — but folding them keeps the
+// histogram on run_completed comparable across runtimes, and
+// formatHistogram lists them first.
 //
 // Unexported var (was EditingToolNames pre-review): external callers
-// could otherwise mutate the slice at runtime and silently change the
-// verdict classification. Use EditingTools() if a caller outside this
-// package legitimately needs to read the list.
+// could otherwise mutate the slice at runtime. Use EditingTools() if a
+// caller outside this package legitimately needs to read the list.
 var editingToolNames = []string{"Edit", "Write", "Bash", "MultiEdit", "NotebookEdit"}
 
 // editingToolAliases maps runtime-specific names for an editing primitive
@@ -130,16 +131,8 @@ func canonicalToolName(name string) string {
 	return name
 }
 
-// runtimeKindJsonRpcStdio mirrors agent.RuntimeKindJsonRpcStdio. It is
-// duplicated as a string literal here (not imported) because the agent
-// package imports this scheduler package for VerifyWorkerCompletion;
-// importing back would be a cycle. Keep in sync with
-// internal/runtime/agent/runtime_kind.go.
-const runtimeKindJsonRpcStdio = "jsonrpc-stdio"
-
 // EditingTools returns a fresh copy of the canonical editing-tool name
-// list. Reserved for documentation / tooling consumers; the verdict
-// classification path consults editingToolNames directly.
+// list. Reserved for documentation / tooling consumers.
 func EditingTools() []string {
 	out := make([]string, len(editingToolNames))
 	copy(out, editingToolNames)
@@ -147,15 +140,28 @@ func EditingTools() []string {
 }
 
 // VerifyWorkerCompletion is the engine-side completion check that fires
-// when a ModeLongLived worker self-transitions to "review". It does two
-// things:
+// when a ModeLongLived worker self-transitions to "review". It classifies
+// the run by one rule for every runtime:
 //
-//  1. Counts commits on the worker's run-branch via `git rev-list --count
-//     <base>..HEAD` in the worktree.
-//  2. Tallies file-mutating tool calls from the worker's stream.jsonl.
+//  1. Commits on the worker's run-branch (`git rev-list --count
+//     <base>..HEAD` in the worktree) → VerdictPassed.
+//  2. No commits, but the worktree has uncommitted changes (`git status
+//     --porcelain`) → VerdictFailedNoCommitsWithEdits.
+//  3. No commits, a clean worktree, and the worker acted — any tool call
+//     in its stream.jsonl, or taskOutput > 0 → VerdictPassedNoEditsExpected.
+//  4. None of the above → VerdictBlockedNoAction.
 //
-// The combination produces a WorkerVerdict the executor surfaces back to
-// the lifecycle manager.
+// taskOutput is how many comments and artifacts landed on the task while
+// the run was live, measured by the caller (the verifier does not read the
+// store). Pass 0 when it is unknown; the histogram alone then decides
+// step 3.
+//
+// Before CW-20261001-0013, step 2 counted Edit/Write/Bash tool calls rather
+// than a diff, and only codex (jsonrpc-stdio) got step 3. A read-only
+// claude-code run that reported through comments was graded blocked, or
+// failed if it had run Bash. Codex still lands in step 3 when its
+// worktree-HEAD commit count reads 0 after a real commit+push elsewhere
+// (CW-20260519-0103), because its tool activity is in the histogram.
 //
 // Skips (returns VerdictPassed with SkipReason set) when:
 //
@@ -167,6 +173,7 @@ func EditingTools() []string {
 //   - stream.jsonl is missing or unreadable (forensic data unavailable;
 //     downgrade to no-verdict so we don't false-flag a working agent
 //     whose stream sidecar degraded to no-op).
+//   - git rev-list or git status fails in the worktree.
 //
 // Soft-error policy throughout. Failure to read git/stream is reported
 // via SkipReason; the verifier never returns an error — bad state
@@ -174,20 +181,11 @@ func EditingTools() []string {
 // the verification passed, preserving the pre-Phase-3 behavior on
 // environments where verification can't run.
 //
-// ctx bounds the git invocation so scheduler shutdown / per-task cancel
+// ctx bounds the git invocations so scheduler shutdown / per-task cancel
 // can tear the verifier down promptly. A nil ctx falls back to
 // context.Background; pass context.Background explicitly when the
 // caller has no ctx of its own.
-//
-// runtimeKind is the session's RuntimeKind (e.g. "jsonrpc-stdio",
-// "streaming-stdio", "subprocess"; see internal/runtime/agent/runtime_kind.go),
-// passed by the caller from Session.RuntimeKind. It selects runtime-specific
-// classification: codex (runtimeKindJsonRpcStdio) has an unreliable
-// worktree-HEAD commit count, so a 0-commit reading is classified off the
-// projected tool histogram rather than treated as failure (see the
-// count==0 branch below). Empty / any other value uses the
-// runtime-agnostic path.
-func VerifyWorkerCompletion(ctx context.Context, workdirRepoRoot, worktreePath, workspaceLogDir, base, runtimeKind string) WorkerVerdict {
+func VerifyWorkerCompletion(ctx context.Context, workdirRepoRoot, worktreePath, workspaceLogDir, base string, taskOutput int) WorkerVerdict {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -236,27 +234,20 @@ func VerifyWorkerCompletion(ctx context.Context, workdirRepoRoot, worktreePath, 
 		v.Kind = VerdictPassed
 		return v
 	}
-	// codex (jsonrpc-stdio): the worktree-HEAD commit count is unreliable —
-	// codex's branch/commit handling can leave the worktree HEAD at base
-	// even after it committed + pushed + opened a PR (observed:
-	// CW-20260519-0103 produced a real merged PR yet rev-list read 0). And
-	// codex self-transitions explicitly (torque_task_review) before this
-	// runs. So on a 0-commit reading, classify off the projected tool
-	// histogram (codex item/* → stream.jsonl, CW-20260521-0024) instead of
-	// the commit count: any recorded activity means codex took action —
-	// trust the self-transition rather than override it with a failure. A
-	// genuinely empty histogram still falls through to BlockedNoAction
-	// (truly idle worker). The commit-count gate above (count>0 → Passed)
-	// is unchanged and runtime-agnostic.
-	if runtimeKind == runtimeKindJsonRpcStdio && len(hist) > 0 {
+	changed, statusErr := countUncommittedChanges(ctx, worktreePath)
+	if statusErr != nil {
 		v.Kind = VerdictPassed
-		v.SkipReason = "jsonrpc-stdio runtime: worktree-HEAD commit count unreliable for codex; tool activity present, trusting worker self-transition (CW-20260521-0024)"
+		v.SkipReason = fmt.Sprintf("git status at %s failed: %v; engine-side commit verification skipped", worktreePath, statusErr)
 		return v
 	}
-	edits := sumEditingTools(hist)
-	if edits > 0 {
+	if changed > 0 {
 		v.Kind = VerdictFailedNoCommitsWithEdits
-		v.Reason = fmt.Sprintf("worker exited with edits but no commits on run-branch (tool calls: %s)", formatHistogram(hist))
+		v.Reason = fmt.Sprintf("worker exited with edits but no commits on run-branch (%d uncommitted path(s) in worktree; tool calls: %s)", changed, formatHistogram(hist))
+		return v
+	}
+	if len(hist) > 0 || taskOutput > 0 {
+		v.Kind = VerdictPassedNoEditsExpected
+		v.SkipReason = fmt.Sprintf("no commits and a clean worktree, but the worker acted (tool calls: %s; comments/artifacts posted to the task during the run: %d); nothing to commit, passing (CW-20261001-0013)", formatHistogram(hist), taskOutput)
 		return v
 	}
 	v.Kind = VerdictBlockedNoAction
@@ -342,6 +333,32 @@ func revListCount(ctx context.Context, worktreePath, rangeArg string) (int, erro
 	return n, nil
 }
 
+// countUncommittedChanges returns how many paths `git status --porcelain`
+// reports in the worktree: modified, staged, deleted and untracked files
+// alike. It matches the check per-run worktree cleanup uses to decide a
+// worktree holds work (worktree.worktreeHasWork), so a run graded "edits
+// but no commits" is also one whose worktree is preserved for inspection.
+func countUncommittedChanges(ctx context.Context, worktreePath string) (int, error) {
+	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
+	cmd.Dir = worktreePath
+	out, err := cmd.Output()
+	if err != nil {
+		var detail string
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			detail = strings.TrimSpace(string(exitErr.Stderr))
+		}
+		return 0, fmt.Errorf("git status --porcelain in %s: %s: %w", worktreePath, detail, err)
+	}
+	n := 0
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.TrimSpace(line) != "" {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // readToolHistogram parses the worker's stream.jsonl file and returns a
 // map of tool name (canonicalized; see canonicalToolName) → invocation
 // count plus an `ok` flag reporting whether
@@ -406,15 +423,6 @@ func readToolHistogram(workspaceLogDir string) (map[string]int, bool) {
 		return hist, false
 	}
 	return hist, true
-}
-
-// sumEditingTools returns the total invocations of file-mutating tools.
-func sumEditingTools(hist map[string]int) int {
-	total := 0
-	for _, name := range editingToolNames {
-		total += hist[name]
-	}
-	return total
 }
 
 // formatHistogram renders the histogram in a stable, log-friendly shape.

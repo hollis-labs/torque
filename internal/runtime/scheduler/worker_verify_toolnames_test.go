@@ -57,28 +57,27 @@ func TestReadToolHistogram_CanonicalizesRuntimeSpellings(t *testing.T) {
 	hist, ok := readToolHistogram(logDir)
 	assert.True(t, ok)
 	assert.Equal(t, map[string]int{"Edit": 3, "Bash": 1, "Write": 1, "todowrite": 1, "read": 1}, hist)
-	assert.Equal(t, 5, sumEditingTools(hist))
 }
 
-// Before canonicalization an OpenCode worker that edited files but never
-// committed was misread as "did nothing" (BlockedNoAction) because its
-// lowercase names matched no editing tool. It must read as edits-without-
-// commits, same as the claude spelling does.
+// An OpenCode worker that edited files but never committed reads as
+// edits-without-commits, same as a claude worker: the worktree diff decides,
+// and the reason carries the canonical tool names.
 func TestVerifyWorkerCompletion_OpenCodeEditsWithoutCommits(t *testing.T) {
 	worktreePath := makeGitRepoWithCommits(t, 0)
+	dirtyWorktree(t, worktreePath)
 	logDir := writeStreamJSONL(t, []toolUseEntry{{Tool: "read"}, {Tool: "edit"}, {Tool: "bash"}})
 
-	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", "")
+	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", 0)
 	assert.Equal(t, VerdictFailedNoCommitsWithEdits, verdict.Kind)
 	assert.Contains(t, verdict.Reason, "Edit=1")
 }
 
-// And an OpenCode worker that only read and kept a todo list still did
-// nothing: todowrite is not an edit.
-func TestVerifyWorkerCompletion_OpenCodeReadOnlyIsNoAction(t *testing.T) {
+// An OpenCode worker that only read and kept a todo list left a clean
+// worktree: nothing to commit, and its tool activity counts as action.
+func TestVerifyWorkerCompletion_OpenCodeReadOnlyCleanTree(t *testing.T) {
 	worktreePath := makeGitRepoWithCommits(t, 0)
 	logDir := writeStreamJSONL(t, []toolUseEntry{{Tool: "read"}, {Tool: "todowrite"}, {Tool: "grep"}})
 
-	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", "")
-	assert.Equal(t, VerdictBlockedNoAction, verdict.Kind)
+	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", 0)
+	assert.Equal(t, VerdictPassedNoEditsExpected, verdict.Kind)
 }

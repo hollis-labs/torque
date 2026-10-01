@@ -12,6 +12,7 @@ import (
 
 	llmtypes "github.com/hollis-labs/go-llm-types"
 	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/runtime/executor"
 	"github.com/hollis-labs/torque/internal/runtime/scheduler"
 	"github.com/hollis-labs/torque/internal/runtime/steering"
@@ -148,6 +149,11 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 	hardCeiling := resolveHardCeiling(opts)
 	taskDeadlineCeiling := hardCeilingIsTaskDeadline(opts, hardCeiling)
 
+	// Baseline for engine-side verification: comments and artifacts the
+	// task already carries, so the verifier can tell whether the worker
+	// left anything on it during this run (CW-20261001-0013).
+	outputBefore, outputBeforeOK := taskOutputCount(e.deps.Store, opts.TaskID)
+
 	opts = opts.withEventFanout(fanout).withTerminalFailure(terminalFailureCh)
 	sess, bootErr := Boot(ctx, e.deps, opts)
 	if bootErr != nil {
@@ -249,7 +255,11 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 		// generous — `git rev-list --count` is sub-second on a healthy
 		// repo, but we'd rather not race the scheduler shutdown.
 		verifyCtx, verifyCancel := context.WithTimeout(context.Background(), workerVerifyTimeout)
-		verdict := scheduler.VerifyWorkerCompletion(verifyCtx, opts.RepoRoot, opts.Workdir, filepath.Join(sess.WorkspaceDir, "logs"), "", sess.RuntimeKind)
+		taskOutput := 0
+		if outputAfter, ok := taskOutputCount(e.deps.Store, opts.TaskID); ok && outputBeforeOK && outputAfter > outputBefore {
+			taskOutput = outputAfter - outputBefore
+		}
+		verdict := scheduler.VerifyWorkerCompletion(verifyCtx, opts.RepoRoot, opts.Workdir, filepath.Join(sess.WorkspaceDir, "logs"), "", taskOutput)
 		verifyCancel()
 		res.ToolUseHistogram = verdict.ToolUseHistogram
 		res.CommitsOnRunBranch = verdict.CommitCount
@@ -271,6 +281,30 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 	}
 
 	return res, nil
+}
+
+// taskOutputCount returns how many comments and artifacts the task carries.
+// runLongLived reads it before Boot and again at verification; the
+// difference is the task-visible output the worker left during the run,
+// which counts as action for a run with nothing to commit. Anyone else
+// commenting on the task mid-run is counted too — a pass is the cheaper
+// error, since review follows either way. ok=false when either count fails;
+// the verifier then decides on the tool histogram alone.
+func taskOutputCount(store *sqlstore.Store, taskID string) (int, bool) {
+	if store == nil || taskID == "" {
+		return 0, false
+	}
+	comments, err := store.CountCommentsForEntity(sqlstore.EntityTypeTask, taskID)
+	if err != nil {
+		log.Printf("agent: count comments for %s failed: %v", taskID, err)
+		return 0, false
+	}
+	artifacts, err := store.CountArtifacts(taskID)
+	if err != nil {
+		log.Printf("agent: count artifacts for %s failed: %v", taskID, err)
+		return 0, false
+	}
+	return comments + artifacts, true
 }
 
 func (m *Manager) markOperatorPaused(ctx context.Context, id, reason string) error {

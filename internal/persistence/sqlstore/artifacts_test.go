@@ -54,6 +54,27 @@ func TestListArtifacts_Empty(t *testing.T) {
 	assert.Empty(t, artifacts)
 }
 
+func TestCountArtifacts(t *testing.T) {
+	store := setupTestStore(t)
+
+	task := sampleTask("CW-20260407-0001")
+	require.NoError(t, store.CreateTask(task))
+	other := sampleTask("CW-20260407-0002")
+	require.NoError(t, store.CreateTask(other))
+
+	n, err := store.CountArtifacts(task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+
+	require.NoError(t, store.CreateArtifact(&sqlstore.ArtifactRecord{TaskID: task.ID, Type: "log", Content: "a"}))
+	require.NoError(t, store.CreateArtifact(&sqlstore.ArtifactRecord{TaskID: task.ID, Type: "url", URL: "https://example.com"}))
+	require.NoError(t, store.CreateArtifact(&sqlstore.ArtifactRecord{TaskID: other.ID, Type: "log", Content: "b"}))
+
+	n, err = store.CountArtifacts(task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+}
+
 func TestGetArtifact(t *testing.T) {
 	store := setupTestStore(t)
 

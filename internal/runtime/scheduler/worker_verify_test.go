@@ -25,7 +25,7 @@ func TestVerifyWorkerCompletion_Passed(t *testing.T) {
 		{Tool: "Bash"},
 	})
 
-	verdict := VerifyWorkerCompletion(context.Background(), "" /*repoRoot unused*/, worktreePath, logDir, "", "")
+	verdict := VerifyWorkerCompletion(context.Background(), "" /*repoRoot unused*/, worktreePath, logDir, "", 0)
 	assert.Equal(t, VerdictPassed, verdict.Kind)
 	assert.Equal(t, 2, verdict.CommitCount)
 	assert.Equal(t, 2, verdict.ToolUseHistogram["Edit"])
@@ -34,73 +34,155 @@ func TestVerifyWorkerCompletion_Passed(t *testing.T) {
 }
 
 // TestVerifyWorkerCompletion_FailedNoCommitsWithEdits is the "did work
-// but didn't ship it" path — the worker fired editing tools but landed
-// zero commits. Lifecycle picks this up as a failed run.
+// but didn't ship it" path — the worker left uncommitted changes in its
+// worktree and landed zero commits. Lifecycle picks this up as a failed run.
 func TestVerifyWorkerCompletion_FailedNoCommitsWithEdits(t *testing.T) {
 	worktreePath := makeGitRepoWithCommits(t, 0)
+	dirtyWorktree(t, worktreePath)
 	logDir := writeStreamJSONL(t, []toolUseEntry{
 		{Tool: "Edit"},
 		{Tool: "Write"},
 		{Tool: "Bash"},
 	})
 
-	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", "")
+	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", 0)
 	assert.Equal(t, VerdictFailedNoCommitsWithEdits, verdict.Kind)
 	assert.Equal(t, 0, verdict.CommitCount)
 	assert.Contains(t, verdict.Reason, "edits but no commits")
+	assert.Contains(t, verdict.Reason, "2 uncommitted path(s)")
 	assert.Contains(t, verdict.Reason, "Edit=1")
+	assert.Empty(t, verdict.SkipReason)
 }
 
-// TestVerifyWorkerCompletion_BlockedNoAction is the scope-mismatch path:
-// no commits AND no editing tools fired. Lifecycle picks this up as
-// blocked-with-reason (the operator should fix the task, not retry the
-// agent).
-func TestVerifyWorkerCompletion_BlockedNoAction(t *testing.T) {
+// TestVerifyWorkerCompletion_DiffDecidesEdits pins that the worktree diff,
+// not the tool names, decides "edits": a Bash call that left a diff is an
+// edit, and output posted to the task does not excuse the missing commit.
+func TestVerifyWorkerCompletion_DiffDecidesEdits(t *testing.T) {
+	worktreePath := makeGitRepoWithCommits(t, 0)
+	require.NoError(t, os.WriteFile(filepath.Join(worktreePath, "README.md"), []byte("changed by sed\n"), 0o644))
+	logDir := writeStreamJSONL(t, []toolUseEntry{{Tool: "Bash"}})
+
+	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", 3)
+	assert.Equal(t, VerdictFailedNoCommitsWithEdits, verdict.Kind)
+	assert.Contains(t, verdict.Reason, "1 uncommitted path(s)")
+}
+
+// TestVerifyWorkerCompletion_CommitsWinOverDirtyTree: a worker that
+// committed and also left stray changes still passes on its commits.
+func TestVerifyWorkerCompletion_CommitsWinOverDirtyTree(t *testing.T) {
+	worktreePath := makeGitRepoWithCommits(t, 1)
+	dirtyWorktree(t, worktreePath)
+	logDir := writeStreamJSONL(t, []toolUseEntry{{Tool: "Edit"}})
+
+	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", 0)
+	assert.Equal(t, VerdictPassed, verdict.Kind)
+	assert.Equal(t, 1, verdict.CommitCount)
+}
+
+// TestVerifyWorkerCompletion_ReadOnlyWithComments is the claude-code
+// read-only run from the agent-os smoke test (CW-20261001-0006, run 1137):
+// it read, reported through comments and self-transitioned to review. No
+// commits, clean worktree, task-visible output — it passes, and says why.
+func TestVerifyWorkerCompletion_ReadOnlyWithComments(t *testing.T) {
 	worktreePath := makeGitRepoWithCommits(t, 0)
 	logDir := writeStreamJSONL(t, []toolUseEntry{
 		{Tool: "Read"},
 		{Tool: "Grep"},
+		{Tool: "mcp__loopback__torque_comment_add"},
+		{Tool: "mcp__loopback__torque_task_review"},
 	})
 
-	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", "")
+	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", 2)
+	assert.Equal(t, VerdictPassedNoEditsExpected, verdict.Kind)
+	assert.Equal(t, 0, verdict.CommitCount)
+	assert.Empty(t, verdict.Reason)
+	assert.Contains(t, verdict.SkipReason, "clean worktree")
+	assert.Contains(t, verdict.SkipReason, "during the run: 2")
+	assert.Contains(t, verdict.SkipReason, "mcp__loopback__torque_comment_add=1")
+
+	s, r := verdict.ApplyTo("review", "")
+	assert.Equal(t, "review", s)
+	assert.Empty(t, r)
+}
+
+// TestVerifyWorkerCompletion_BashOnlyIsNotAnEdit is CW-20261001-0007 (run
+// 1138): the worker ran Bash to inspect things, changed nothing and
+// committed nothing. Bash alone is not an edit — without a diff this is a
+// commit-free pass, not "edits but no commits".
+func TestVerifyWorkerCompletion_BashOnlyIsNotAnEdit(t *testing.T) {
+	worktreePath := makeGitRepoWithCommits(t, 0)
+	logDir := writeStreamJSONL(t, []toolUseEntry{{Tool: "Bash"}, {Tool: "Bash"}, {Tool: "Read"}})
+
+	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", 0)
+	assert.Equal(t, VerdictPassedNoEditsExpected, verdict.Kind)
+	assert.Empty(t, verdict.Reason)
+	assert.Contains(t, verdict.SkipReason, "Bash=2")
+}
+
+// TestVerifyWorkerCompletion_EditsRevertedIsNoDiff: Edit calls whose
+// changes were undone before exit leave nothing to commit.
+func TestVerifyWorkerCompletion_EditsRevertedIsNoDiff(t *testing.T) {
+	worktreePath := makeGitRepoWithCommits(t, 0)
+	logDir := writeStreamJSONL(t, []toolUseEntry{{Tool: "Edit"}, {Tool: "Edit"}})
+
+	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", 0)
+	assert.Equal(t, VerdictPassedNoEditsExpected, verdict.Kind)
+}
+
+// TestVerifyWorkerCompletion_TaskOutputAloneIsAction: a stream with no
+// tool_use lines still passes when comments or artifacts landed on the
+// task during the run.
+func TestVerifyWorkerCompletion_TaskOutputAloneIsAction(t *testing.T) {
+	worktreePath := makeGitRepoWithCommits(t, 0)
+	logDir := writeStreamJSONL(t, nil)
+
+	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", 1)
+	assert.Equal(t, VerdictPassedNoEditsExpected, verdict.Kind)
+	assert.Contains(t, verdict.SkipReason, "tool calls: none")
+}
+
+// TestVerifyWorkerCompletion_BlockedNoAction is the scope-mismatch path:
+// no commits, a clean worktree, no tool activity and nothing posted to the
+// task. Lifecycle picks this up as blocked-with-reason (the operator should
+// fix the task, not retry the agent).
+func TestVerifyWorkerCompletion_BlockedNoAction(t *testing.T) {
+	worktreePath := makeGitRepoWithCommits(t, 0)
+	logDir := writeStreamJSONL(t, nil)
+
+	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", 0)
 	assert.Equal(t, VerdictBlockedNoAction, verdict.Kind)
 	assert.Equal(t, 0, verdict.CommitCount)
 	assert.Contains(t, verdict.Reason, "scope unclear or task malformed")
 }
 
-// TestVerifyWorkerCompletion_JsonRpcStdioSkipsWhenActivityPresent covers the
-// codex (jsonrpc-stdio) 0-commit path WITH tool activity in the histogram.
-// codex's worktree-HEAD commit count is unreliable (its branch handling can
-// leave HEAD at base after a real commit+push+PR — CW-20260519-0103), so
-// when activity is present the verifier trusts the worker's self-transition
-// and skips rather than returning a failure verdict. The commit-count gate
-// is unaffected: a codex run with commits passes via the count>0 branch.
-func TestVerifyWorkerCompletion_JsonRpcStdioSkipsWhenActivityPresent(t *testing.T) {
+// TestVerifyWorkerCompletion_CodexZeroCommitsWithActivity covers the case
+// the old jsonrpc-stdio special case existed for: codex's worktree-HEAD
+// commit count can read 0 after a real commit+push+PR (CW-20260519-0103).
+// Its activity is in the histogram and the worktree is clean, so the one
+// runtime-agnostic rule passes it without knowing the runtime.
+func TestVerifyWorkerCompletion_CodexZeroCommitsWithActivity(t *testing.T) {
 	worktreePath := makeGitRepoWithCommits(t, 0)
 	logDir := writeStreamJSONL(t, []toolUseEntry{
 		{Tool: "Bash"}, // codex commandExecution projects to "Bash"
+		{Tool: "Edit"}, // codex fileChange projects to "Edit"
 	})
 
-	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", "jsonrpc-stdio")
-	assert.Equal(t, VerdictPassed, verdict.Kind)
-	assert.Equal(t, 0, verdict.CommitCount)
-	assert.Contains(t, verdict.SkipReason, "jsonrpc-stdio")
+	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", 0)
+	assert.Equal(t, VerdictPassedNoEditsExpected, verdict.Kind)
 	assert.Empty(t, verdict.Reason)
 }
 
-// TestVerifyWorkerCompletion_JsonRpcStdioBlocksWhenIdle confirms the codex
-// guard is not a blanket pass: a jsonrpc-stdio run with ZERO commits AND an
-// empty histogram (codex took no action at all) still blocks. The projected
-// item/* events mean a working codex run always has histogram entries, so an
-// empty histogram on this runtime is a genuinely idle worker.
-func TestVerifyWorkerCompletion_JsonRpcStdioBlocksWhenIdle(t *testing.T) {
+// TestVerifyWorkerCompletion_SkipsWhenGitStatusFails: a 0-commit run whose
+// worktree git cannot read collapses to a skip rather than a verdict.
+func TestVerifyWorkerCompletion_SkipsWhenGitStatusFails(t *testing.T) {
 	worktreePath := makeGitRepoWithCommits(t, 0)
-	logDir := writeStreamJSONL(t, nil) // no tool activity recorded
+	// A corrupt index breaks `git status` but not `git rev-list`.
+	require.NoError(t, os.WriteFile(filepath.Join(worktreePath, ".git", "index"), []byte("garbage"), 0o644))
+	logDir := writeStreamJSONL(t, []toolUseEntry{{Tool: "Edit"}})
 
-	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", "jsonrpc-stdio")
-	assert.Equal(t, VerdictBlockedNoAction, verdict.Kind)
-	assert.Equal(t, 0, verdict.CommitCount)
-	assert.Contains(t, verdict.Reason, "scope unclear or task malformed")
+	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, logDir, "", 0)
+	assert.Equal(t, VerdictPassed, verdict.Kind)
+	assert.Contains(t, verdict.SkipReason, "git status")
 }
 
 // TestVerifyWorkerCompletion_SkipsOnSharedMode confirms an empty worktree
@@ -109,7 +191,7 @@ func TestVerifyWorkerCompletion_JsonRpcStdioBlocksWhenIdle(t *testing.T) {
 // the run_completed event has tool-use data.
 func TestVerifyWorkerCompletion_SkipsOnSharedMode(t *testing.T) {
 	logDir := writeStreamJSONL(t, []toolUseEntry{{Tool: "Edit"}})
-	verdict := VerifyWorkerCompletion(context.Background(), "", "", logDir, "", "")
+	verdict := VerifyWorkerCompletion(context.Background(), "", "", logDir, "", 0)
 	assert.Equal(t, VerdictPassed, verdict.Kind)
 	assert.NotEmpty(t, verdict.SkipReason)
 	assert.Equal(t, 1, verdict.ToolUseHistogram["Edit"])
@@ -122,7 +204,7 @@ func TestVerifyWorkerCompletion_SkipsOnSharedMode(t *testing.T) {
 // than mark the worker failed for an absent path.
 func TestVerifyWorkerCompletion_SkipsOnMissingWorktree(t *testing.T) {
 	logDir := writeStreamJSONL(t, []toolUseEntry{{Tool: "Edit"}})
-	verdict := VerifyWorkerCompletion(context.Background(), "", filepath.Join(t.TempDir(), "does-not-exist"), logDir, "", "")
+	verdict := VerifyWorkerCompletion(context.Background(), "", filepath.Join(t.TempDir(), "does-not-exist"), logDir, "", 0)
 	assert.Equal(t, VerdictPassed, verdict.Kind)
 	assert.Contains(t, verdict.SkipReason, "no longer present")
 }
@@ -139,7 +221,7 @@ func TestVerifyWorkerCompletion_SkipsOnMissingWorktree(t *testing.T) {
 func TestVerifyWorkerCompletion_SkipsOnMissingStreamLog(t *testing.T) {
 	worktreePath := makeGitRepoWithCommits(t, 1)
 
-	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, filepath.Join(t.TempDir(), "no-logs"), "", "")
+	verdict := VerifyWorkerCompletion(context.Background(), "", worktreePath, filepath.Join(t.TempDir(), "no-logs"), "", 0)
 	assert.Equal(t, VerdictPassed, verdict.Kind)
 	assert.Contains(t, verdict.SkipReason, "missing or unreadable")
 	assert.Empty(t, verdict.ToolUseHistogram)
@@ -162,6 +244,13 @@ func TestApplyTo_OverridesOnlyForFailures(t *testing.T) {
 		s, r := v.ApplyTo("review", "")
 		assert.Equal(t, "review", s)
 		assert.Equal(t, "", r)
+	})
+
+	t.Run("passed-no-edits-expected leaves status unchanged", func(t *testing.T) {
+		v := WorkerVerdict{Kind: VerdictPassedNoEditsExpected, SkipReason: "read-only run"}
+		s, r := v.ApplyTo("review", "original")
+		assert.Equal(t, "review", s)
+		assert.Equal(t, "original", r)
 	})
 
 	t.Run("failed-no-commits overrides to failed", func(t *testing.T) {
@@ -304,6 +393,14 @@ func makeGitRepoWithCommits(t *testing.T, commits int) string {
 		mustGit(t, dir, "commit", "-m", "test commit "+idx)
 	}
 	return dir
+}
+
+// dirtyWorktree leaves two uncommitted paths in the worktree: a modified
+// tracked file and an untracked one.
+func dirtyWorktree(t *testing.T, dir string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("edited\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "new.txt"), []byte("new\n"), 0o644))
 }
 
 func mustGit(t *testing.T, dir string, args ...string) {
