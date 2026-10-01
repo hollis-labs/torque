@@ -73,6 +73,39 @@ Torque is designed as a local-first tool for one operator on one machine.
   profile grants. Review profiles and task definitions from untrusted sources
   before dispatching them.
 
+## External session launch paths
+
+`torque_session_create` / `torque_session_launch` over stdio or `/mcp`, and
+`POST /api/v1/sessions/launch`, share a server-side path policy. Session resumes
+use it too. Both `workdir` and the optional `repo_root` must be existing absolute
+directories inside an unarchived registered project's `repo_path` or an
+operator-set allowed base. Symlinks are resolved before containment is checked;
+the canonical paths are used for the boot. A relative path, a sibling prefix,
+or a symlink escaping all bases is refused before any runtime starts.
+
+At deploy, the operator must add `TORQUE_SESSION_ALLOWED_ROOTS` for launch
+locations beyond registered repositories, such as worktrees. It is a
+colon-separated list of absolute directories, read once at manager startup.
+For example, `TORQUE_SESSION_ALLOWED_ROOTS=/srv/projects:/srv/worktrees`.
+No base is guessed when the list and registered project paths are empty;
+external launch fails closed and names this setting. A request's `env`, `meta`,
+project or task ID cannot replace the server's configured bases. Scheduler
+launches keep their trusted internal path.
+
+The denylist wins even beneath an allowed base. The operator's home itself,
+its ancestors, `~/.tether`, `~/tether`, `~/.torque`, `~/.config`,
+`~/.local/share`, `~/.local/state`, `~/.claude*`, `~/.codex*`, `~/.gemini*`,
+and Torque's configured protected directories cannot become launch roots.
+Their ancestors are refused too, because granting that root would grant writes
+to the protected subtree. Denied paths are canonicalized as well, so an alias
+does not exempt them.
+
+This bounds externally requested launch roots against server-known paths. It
+does not authenticate callers or decide which registered project a particular
+caller may use. Caller identity (CW-20260930-0253) is still required for
+per-caller authorization, and the API's existing host-access boundary applies
+to task dispatch and other tools.
+
 ## Data at rest
 
 Torque stores tasks, runs, comments, artifacts and audit data in SQLite

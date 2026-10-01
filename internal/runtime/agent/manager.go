@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"syscall"
@@ -44,10 +45,11 @@ func defaultSessionID() string {
 // Manager keeps everything Boot doesn't (lifecycle proxy, checkpoint /
 // resume, orphan sweep on startup, per-session loopback teardown).
 type Manager struct {
-	deps            *Dependencies
-	idFn            IDFunc
-	nowFn           func() time.Time
-	pidPollInterval time.Duration
+	sessionAllowedRoots []string
+	deps                *Dependencies
+	idFn                IDFunc
+	nowFn               func() time.Time
+	pidPollInterval     time.Duration
 
 	mu        sync.RWMutex
 	stopped   bool
@@ -113,6 +115,10 @@ func NewManager(deps *Dependencies) *Manager {
 		terminalFailed:   make(map[string]struct{}),
 		terminalCanceled: make(map[string]struct{}),
 		wrapperSessions:  make(map[string]*wrapperHandle),
+	}
+	m.sessionAllowedRoots = append([]string(nil), deps.SessionAllowedRoots...)
+	if deps.SessionAllowedRoots == nil {
+		m.sessionAllowedRoots = filepath.SplitList(os.Getenv(SessionAllowedRootsEnv))
 	}
 	emitter := NewSchedulerEmitter(deps.Bus)
 	stateSink := &storeStateSink{deps: deps, manager: m}

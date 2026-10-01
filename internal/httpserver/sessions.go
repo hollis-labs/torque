@@ -48,6 +48,7 @@ type launchSessionBody struct {
 	LaunchProfile string            `json:"launch_profile,omitempty"`
 	AgentProfile  string            `json:"agent_profile,omitempty"`
 	Workdir       string            `json:"workdir"`
+	RepoRoot      string            `json:"repo_root,omitempty"`
 	ProjectID     string            `json:"project_id,omitempty"`
 	TaskID        string            `json:"task_id,omitempty"`
 	SystemPrompt  string            `json:"system_prompt,omitempty"`
@@ -94,11 +95,12 @@ func (s *Server) launchSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	envMap := envSliceToMap(body.Env)
-	sess, err := s.sessions.Boot(r.Context(), agent.Options{
+	sess, err := s.sessions.BootExternal(r.Context(), agent.Options{
 		Mode:          agent.ModeLongLived,
 		LaunchProfile: body.LaunchProfile,
 		AgentProfile:  body.AgentProfile,
 		Workdir:       body.Workdir,
+		RepoRoot:      body.RepoRoot,
 		ProjectID:     body.ProjectID,
 		TaskID:        body.TaskID,
 		SystemPrompt:  body.SystemPrompt,
@@ -117,7 +119,8 @@ func (s *Server) launchSession(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 		case errors.Is(err, agent.ErrAdapterNotFound):
 			writeError(w, http.StatusBadRequest, err.Error())
-		case errors.Is(err, agent.ErrWorkdirRequired),
+		case errors.Is(err, agent.ErrLaunchPathRefused),
+			errors.Is(err, agent.ErrWorkdirRequired),
 			errors.Is(err, agent.ErrParentSessionRequired),
 			errors.Is(err, agent.ErrResumeCheckpointRequired):
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -333,7 +336,7 @@ func (s *Server) resumeSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	newID, err := s.sessions.Resume(r.Context(), agent.ResumeRequest{
+	newID, err := s.sessions.ResumeExternal(r.Context(), agent.ResumeRequest{
 		SessionID:     id,
 		CheckpointID:  body.CheckpointID,
 		LaunchProfile: body.LaunchProfile,
@@ -346,6 +349,8 @@ func (s *Server) resumeSession(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, agent.ErrSessionNotFound):
 			writeError(w, http.StatusNotFound, err.Error())
+		case errors.Is(err, agent.ErrLaunchPathRefused):
+			writeError(w, http.StatusBadRequest, err.Error())
 		case errors.Is(err, agent.ErrNoCheckpoint):
 			writeError(w, http.StatusBadRequest, err.Error())
 		default:

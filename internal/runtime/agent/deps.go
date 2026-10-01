@@ -34,6 +34,10 @@ type RuntimeFactory func(cfg agentsessions.AdapterRuntimeConfig) (agentsessions.
 //     OneShot scheduler path still has a non-nil router.
 //   - Bus may be nil; events are silently dropped (nil-sink convention).
 type Dependencies struct {
+	// SessionAllowedRoots augments registered projects for external launches.
+	// nil reads TORQUE_SESSION_ALLOWED_ROOTS once at manager construction.
+	SessionAllowedRoots []string
+
 	// Store is the canonical session/checkpoint persistence layer.
 	Store *sqlstore.Store
 
