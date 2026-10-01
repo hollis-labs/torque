@@ -1996,18 +1996,21 @@ func TestFullStack_TaskList_HTTPMCPParity_CursorTraversal(t *testing.T) {
 	var cursor string
 	for pages := 0; pages < 4; pages++ {
 		cursorMode := cursor != ""
-		q := url.Values{"limit": {"2"}, "sort_by": {"created_at"}, "sort_dir": {"asc"}}
+		q := url.Values{"limit": {"2"}, "sort_by": {"created_at"}, "sort_dir": {"asc"}, "include_total": {"true"}}
 		if cursorMode {
 			q.Set("cursor", cursor)
 		}
 		page := httpTaskPage(t, ts.URL+"/api/v1/tasks?"+q.Encode())
-		require.Equal(t, 5, int(page["total"].(float64)))
-		for _, item := range page["tasks"].([]interface{}) {
+		meta := page["meta"].(map[string]interface{})
+		require.NotContains(t, meta, "offset")
+		require.NotContains(t, meta, "next_offset")
+		require.Equal(t, 5, int(meta["total"].(float64)))
+		for _, item := range page["items"].([]interface{}) {
 			httpIDs = append(httpIDs, item.(map[string]interface{})["id"].(string))
 		}
-		if !page["has_more"].(bool) {
-			require.Nil(t, page["next_cursor"])
-			require.Nil(t, page["next_offset"])
+		if !meta["has_more"].(bool) {
+			require.Nil(t, meta["next_cursor"])
+			require.Nil(t, meta["next_offset"])
 			require.Equal(t, seededIDs, httpIDs)
 			descIDs := httpTaskIDs(t, ts.URL+"/api/v1/tasks?limit=5&sort_by=created_at&sort_dir=desc")
 			require.Equal(t, reverseStrings(seededIDs), descIDs)
@@ -2016,16 +2019,8 @@ func TestFullStack_TaskList_HTTPMCPParity_CursorTraversal(t *testing.T) {
 			require.Len(t, httpIDs, 5)
 			return
 		}
-		next, ok := page["next_cursor"].(string)
+		next, ok := meta["next_cursor"].(string)
 		require.True(t, ok)
-		continuation := page["continuation"].(map[string]interface{})
-		if cursorMode {
-			require.Equal(t, next, continuation["cursor"])
-			require.Nil(t, page["next_offset"])
-		} else {
-			require.NotContains(t, continuation, "cursor")
-			require.NotNil(t, page["next_offset"])
-		}
 		cursor = next
 	}
 	t.Fatal("cursor traversal did not terminate within expected page count")
@@ -2108,7 +2103,7 @@ func httpTaskPage(t *testing.T, rawURL string) map[string]interface{} {
 func httpTaskIDs(t *testing.T, rawURL string) []string {
 	t.Helper()
 	page := httpTaskPage(t, rawURL)
-	rawTasks := page["tasks"].([]interface{})
+	rawTasks := page["items"].([]interface{})
 	ids := make([]string, 0, len(rawTasks))
 	for _, raw := range rawTasks {
 		ids = append(ids, raw.(map[string]interface{})["id"].(string))
