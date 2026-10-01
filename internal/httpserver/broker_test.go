@@ -89,6 +89,90 @@ func TestHTTP_Broker_SendValidation422(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 }
 
+// CW-20261001-0014: from/to accept the structured {kind, authority, id}
+// form as well as the URN string, and both decode to the same address.
+func TestHTTP_Broker_SendObjectAddress(t *testing.T) {
+	ts := setupBrokerServer(t)
+	body := `{
+        "kind": "notice",
+        "from": {"kind":"agent","authority":"test","id":"alice"},
+        "to":   {"kind":"agent","scope":"test","id":"bob","sub_id":"inbox"},
+        "payload": {}
+    }`
+	resp, err := http.Post(ts.URL+"/api/v1/broker/send", "application/json", strings.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	var env gomsg.Envelope
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&env))
+	assert.Equal(t, "msg://agent/test/alice", env.From.URN())
+	assert.Equal(t, "msg://agent/test/bob/inbox", env.To.URN())
+}
+
+func TestHTTP_Broker_RequestObjectAddress(t *testing.T) {
+	ts := setupBrokerServer(t)
+	// An out-of-range timeout is checked after the addresses decode, so a
+	// 422 (not 400) shows the object form was accepted without waiting
+	// out a real request.
+	body := `{
+        "from": {"kind":"agent","scope":"test","id":"asker"},
+        "to":   "msg://agent/test/silent",
+        "timeout_seconds": 99999
+    }`
+	resp, err := http.Post(ts.URL+"/api/v1/broker/request", "application/json", strings.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+}
+
+func TestHTTP_Broker_MalformedAddress400(t *testing.T) {
+	ts := setupBrokerServer(t)
+	const shape = `must be a msg://<kind>/<authority>/<id> string or {"kind","authority","id"} object`
+	cases := []struct {
+		name, from, to, field string
+	}{
+		{"object missing id", `{"kind":"agent","authority":"test"}`, `"msg://agent/test/bob"`, "from"},
+		{"object missing authority", `{"kind":"agent","id":"alice"}`, `"msg://agent/test/bob"`, "from"},
+		{"object unknown key", `{"kind":"agent","authorty":"test","id":"alice"}`, `"msg://agent/test/bob"`, "from"},
+		{"object unknown kind", `{"kind":"robot","authority":"test","id":"alice"}`, `"msg://agent/test/bob"`, "from"},
+		{"object non-string id", `{"kind":"agent","authority":"test","id":7}`, `"msg://agent/test/bob"`, "from"},
+		{"object slash in segment", `{"kind":"agent","authority":"a/b","id":"alice"}`, `"msg://agent/test/bob"`, "from"},
+		{"object scope and authority disagree", `{"kind":"agent","authority":"a","scope":"b","id":"alice"}`, `"msg://agent/test/bob"`, "from"},
+		{"bad URN string", `"agent/test/alice"`, `"msg://agent/test/bob"`, "from"},
+		{"number", `42`, `"msg://agent/test/bob"`, "from"},
+		{"array", `["msg://agent/test/alice"]`, `"msg://agent/test/bob"`, "from"},
+		{"bad to names to", `"msg://agent/test/alice"`, `{"kind":"agent"}`, "to"},
+	}
+	for _, path := range []string{"/api/v1/broker/send", "/api/v1/broker/request"} {
+		for _, tc := range cases {
+			t.Run(path+"/"+tc.name, func(t *testing.T) {
+				// /request ignores "kind"; both reject before reaching the broker.
+				body := `{"kind":"notice","from":` + tc.from + `,"to":` + tc.to + `}`
+				resp, err := http.Post(ts.URL+path, "application/json", strings.NewReader(body))
+				require.NoError(t, err)
+				defer resp.Body.Close()
+				assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+				var out struct {
+					Error string `json:"error"`
+				}
+				require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
+				assert.Contains(t, out.Error, `"`+tc.field+`" `+shape)
+			})
+		}
+	}
+}
+
+// A null address is treated as absent, so broker validation reports it
+// as missing (422) rather than as a shape error.
+func TestHTTP_Broker_NullAddressIsMissing(t *testing.T) {
+	ts := setupBrokerServer(t)
+	body := `{"kind":"notice","from":null,"to":"msg://agent/test/bob"}`
+	resp, err := http.Post(ts.URL+"/api/v1/broker/send", "application/json", strings.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+}
+
 func TestHTTP_Broker_RequestTimeout504(t *testing.T) {
 	ts := setupBrokerServer(t)
 	// No responder is subscribed, so the request will exhaust timeout_seconds
