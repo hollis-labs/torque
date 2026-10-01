@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/hollis-labs/torque/internal/service/pagination"
 
 	"github.com/hollis-labs/torque/internal/service"
 )
@@ -133,7 +132,7 @@ func (a *Adapter) handleCollectionList(ctx context.Context, req map[string]any) 
 	if err != nil {
 		return errFromService(err)
 	}
-	limit := pagination.DefaultLimit
+	limit := defaultGenericListLimit
 	items := make([]any, 0, len(collections))
 	for _, c := range collections {
 		items = append(items, c)
@@ -287,7 +286,7 @@ func (a *Adapter) handleCollectionInboxList(ctx context.Context, req map[string]
 	if err != nil {
 		return errFromService(err)
 	}
-	limit := pagination.DefaultLimit
+	limit := defaultGenericListLimit
 	items := make([]any, 0, len(tasks))
 	for _, t := range tasks {
 		items = append(items, toBriefTask(t, briefTagSlugs(a.svc, t.ID)))
@@ -301,7 +300,7 @@ func (a *Adapter) handleCollectionTasksList(ctx context.Context, req map[string]
 	if err != nil {
 		return errFromService(err)
 	}
-	limit := pagination.DefaultLimit
+	limit := defaultGenericListLimit
 	items := make([]any, 0, len(tasks))
 	for _, t := range tasks {
 		items = append(items, toBriefTask(t, briefTagSlugs(a.svc, t.ID)))

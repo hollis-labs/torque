@@ -3,7 +3,6 @@ package mcpadapter
 import (
 	"context"
 	"errors"
-	"github.com/hollis-labs/torque/internal/service/pagination"
 
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
@@ -244,7 +243,7 @@ func (a *Adapter) handleSessionList(ctx context.Context, req map[string]any) (an
 	for _, s := range out {
 		items = append(items, s)
 	}
-	return cappedJSONResult(items, pagination.DefaultLimit)
+	return cappedJSONResult(items, defaultGenericListLimit)
 }
 
 func (a *Adapter) handleSessionStop(ctx context.Context, req map[string]any) (any, error) {

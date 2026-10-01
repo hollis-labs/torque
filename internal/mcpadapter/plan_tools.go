@@ -66,7 +66,7 @@ Example: {"status":"todo","limit":"25","sort_by":"updated_at","sort_dir":"desc"}
 		withString("epic_id", desc("Filter by epic ID (requires features.epics)")),
 		withString("tags", desc("JSON array of tag slugs — AND-match; plan must have all listed tags")),
 		withString("search", desc("Substring match on title + description (case-insensitive)")),
-		withString("limit", desc("Max results (integer, default 50, max 200)")),
+		withString("limit", desc("Max results (integer, default 100, max 200)")),
 		withString("verbose", desc("Return full records instead of brief (string 'true'/'false', default false)")),
 		withString("sort_by", desc("Sort field: priority|status|updated_at|created_at (default priority)")),
 		withString("sort_dir", desc("Sort direction: asc|desc (default asc)")),
@@ -122,7 +122,7 @@ Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated,
 Example: {"plan_id":"T-999","phase_id":"ph-1"}`),
 		withString("plan_id", required(), desc("Plan task ID")),
 		withString("phase_id", desc("Optional phase_id filter")),
-		withString("limit", desc("Max results (integer, default 50, max 200)")),
+		withString("limit", desc("Max results (integer, default 100, max 200)")),
 		withString("verbose", desc("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handlePlanListChildren)
 
@@ -188,7 +188,7 @@ func (a *Adapter) handlePlanGet(ctx context.Context, req map[string]any) (any, e
 // and the same taskListCursorEnvelope response builder (plans are Task rows,
 // so the envelope needs no plan-specific variant).
 func (a *Adapter) handlePlanList(ctx context.Context, req map[string]any) (any, error) {
-	limit := clampLimit(reqInt(req, "limit"), pagination.DefaultLimit, pagination.MaxLimit)
+	limit := clampLimit(reqInt(req, "limit"), defaultGenericListLimit, maxTaskListLimit)
 	verbose := reqStrBool(req, "verbose")
 
 	sortBy := planSortDefaultBy
@@ -350,15 +350,15 @@ func (a *Adapter) handlePlanRemovePhase(ctx context.Context, req map[string]any)
 }
 
 func (a *Adapter) handlePlanListChildren(ctx context.Context, req map[string]any) (any, error) {
-	// limit was previously hardcoded to pagination.MaxLimit (200, the system
+	// limit was previously hardcoded to maxTaskListLimit (200, the system
 	// maximum) regardless of caller intent, with no actual truncation
 	// applied — tasksToEnvelope/cappedJSONResult don't slice items down to
 	// limit themselves (see handleIssueList for the established truncate-
 	// before-envelope pattern), so every call silently returned the FULL
 	// unbounded child set with meta.limit just stamped at 200. Now a real,
 	// caller-adjustable param with a sane default (matches the other
-	// public page-size policy, pagination.DefaultLimit).
-	limit := clampLimit(reqInt(req, "limit"), pagination.DefaultLimit, pagination.MaxLimit)
+	// generic list tools' default, response.go's defaultGenericListLimit).
+	limit := clampLimit(reqInt(req, "limit"), defaultGenericListLimit, maxTaskListLimit)
 	verbose := reqStrBool(req, "verbose")
 	children, err := a.svc.Plan.ListChildren(reqStr(req, "plan_id"), reqStr(req, "phase_id"))
 	if err != nil {

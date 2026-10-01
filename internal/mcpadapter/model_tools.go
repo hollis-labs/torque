@@ -2,7 +2,6 @@ package mcpadapter
 
 import (
 	"context"
-	"github.com/hollis-labs/torque/internal/service/pagination"
 
 	"github.com/hollis-labs/go-modelsdev/modelsdev"
 )
@@ -45,7 +44,7 @@ Response shape: data = {items: [<briefModel or ModelRef>...], meta: {truncated, 
 Example: {"provider":"anthropic","limit":"50"}`),
 		withString("provider", desc("Filter to a single provider id (e.g. 'anthropic', 'openai')")),
 		withString("verbose", desc("Return full ModelRef records instead of brief (string 'true'/'false', default false)")),
-		withString("limit", desc("Max records to return (default 50, capped at 200)")),
+		withString("limit", desc("Max records to return (default 100, capped at 500)")),
 	), a.handleModelsList)
 
 	a.addTool(newTool("torque_models_get",
@@ -60,11 +59,11 @@ Example: {"provider":"anthropic","model":"claude-sonnet-4-6"}`),
 
 func (a *Adapter) handleModelsList(ctx context.Context, req map[string]any) (any, error) {
 	if a.svc.Models == nil {
-		return cappedJSONResult(nil, pagination.DefaultLimit)
+		return cappedJSONResult(nil, defaultGenericListLimit)
 	}
 	provider := reqStr(req, "provider")
 	verbose := reqStrBool(req, "verbose")
-	limit := clampLimit(reqInt(req, "limit"), pagination.DefaultLimit, pagination.MaxLimit)
+	limit := clampLimit(reqInt(req, "limit"), defaultGenericListLimit, 500)
 
 	all := a.svc.Models.List()
 	out := make([]any, 0, len(all))

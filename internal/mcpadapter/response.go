@@ -21,6 +21,18 @@ import (
 // CW-20260418-0012.
 const maxMCPResponseBytes = 100 * 1024 // 100KB
 
+// Transitional names keep CW-0565's family adapters compiling during their
+// rewrite. Values come from the shared policy; remove aliases after integration.
+const (
+	maxTaskListLimit         = pagination.MaxLimit
+	defaultGenericListLimit  = pagination.DefaultLimit
+	maxGenericListLimit      = pagination.MaxLimit
+	defaultTemplateListLimit = pagination.DefaultLimit
+	maxTemplateListLimit     = pagination.MaxLimit
+	defaultCommentListLimit  = pagination.DefaultLimit
+	maxCommentListLimit      = pagination.MaxLimit
+)
+
 // listMeta is the companion to items[] in the list/search response envelope.
 // Fields are intentionally lower-case + snake_case to match the eventual
 // {ok, data, error} Phase C envelope style — every per-tool response is
