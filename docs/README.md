@@ -2,12 +2,16 @@
 
 This directory now follows a simple rule: current docs should match the code that exists today.
 
+The pagination contract is an explicit S1 target draft; its current/target
+matrix records implementation gaps until the end-of-S1 reconciliation.
+
 Start with:
 
 - [overview.md](overview.md) — what Torque is and what it is not
 - [getting-started.md](getting-started.md) — how to run the server and MCP locally
 - [runtime.md](runtime.md) — storage, scheduler, executors, and feature flags
 - [surfaces.md](surfaces.md) — the current HTTP and MCP surfaces at a high level
+- [api-pagination.md](api-pagination.md) — shared HTTP/MCP list target contract, endpoint matrix, and S1 reconciliation status
 - [mcp-tools-reference.md](mcp-tools-reference.md) — per-tool index and shared conventions (envelope, pagination, sort, bulk) for the Task/Subtodo/Comment/Project/Epic/Sprint/Issue/Plan MCP tools
 - [architecture/sqlite-concurrency-pattern.md](architecture/sqlite-concurrency-pattern.md) — the production SQLite concurrency pattern and reuse guidance
 - [hitl-workflows.md](hitl-workflows.md) — typed human-in-the-loop checkpoint workflow contracts
