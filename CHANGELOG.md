@@ -82,6 +82,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- go-agent-wrapper v0.21.1, agentkit v0.17.0 and go-providers v0.37.0
+  (CW-20261001-0157). A claude-code launch now carries
+  `--permission-mode <mode>` (`acceptEdits` when the profile sets none,
+  `bypassPermissions` in developer mode), the same posture its planted
+  `settings.json` already set: agentkit maps the launch plan's permission,
+  now a go-permission Mode (`accept-edits`, `yolo`, ...), onto Claude's
+  flag. Codex, OpenCode and agy launches carry no posture flags or
+  environment, as before; Codex keeps its `never` / `workspace-write`
+  default. Planted MCP config (loopback and mux) is unchanged for every
+  runtime.
 - go-agent-wrapper v0.19.0, for ACP sessions' MCP servers (above). Its
   v0.18.0 change to the wrapper's own `plant` package does not reach Torque,
   which plants through agentkit.
@@ -186,6 +196,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- An ACP agent that exits during launch no longer crashes the Torque daemon
+  with "send on closed channel" (go-agent-wrapper v0.21.1,
+  CW-20261001-0129).
 - Thinking from Claude, Codex, OpenCode and Pi over ACP is recorded as
   thinking, not as the agent's output. Their ACP thought chunks are marked
   only `phase: "thought"`, which Torque's event sink did not read

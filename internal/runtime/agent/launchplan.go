@@ -8,6 +8,8 @@ import (
 	"github.com/hollis-labs/go-providers/registry"
 
 	"github.com/hollis-labs/torque/internal/config"
+
+	gopermission "github.com/hollis-labs/go-permission"
 )
 
 // buildLaunchPlan and buildLaunchPlanInput moved to
@@ -53,19 +55,23 @@ func mapRuntimeKind(k RuntimeKind) (runtimes.Mode, error) {
 // posture fails fast, instead of dispatching a run structurally guaranteed
 // to hang on the first approval prompt.
 //
-// This is guard input only — the posture is actually delivered to the
-// spawned agent by the adapter (factory.go: ClaudeAdapter.PermissionMode),
-// since Torque plants via providerplant.WithAdapter, not DefaultResolver.
-// codex is left empty: the guard exempts it (go-providers defaults codex
-// approval_policy to the non-interactive "never").
-func resolveLaunchPermissionMode(profile config.AgentProfile) string {
+// It is a go-permission Mode (agentkit v0.17.0 refuses Claude's own
+// spellings), and since v0.17.0 it is also delivered: PrepareExecution maps
+// it onto `--permission-mode <claude's spelling>` at the launch's
+// extra-argument slot. The adapter still plants the same posture as
+// settings.json's permissions.defaultMode (factory.go:
+// ClaudeAdapter.PermissionMode), so the flag and the plant agree. Codex,
+// OpenCode and agy are left empty: no posture flags or environment, so their
+// launches are unchanged (codex keeps go-providers' non-interactive
+// `never` / `workspace-write` default, which the guard exempts).
+func resolveLaunchPermissionMode(profile config.AgentProfile) gopermission.Mode {
 	if profile.Provider != "claude-code" {
 		return ""
 	}
 	if profileIsDevMode(profile) {
-		return string(config.PermissionModeBypass)
+		return gopermission.ModeYolo
 	}
-	return string(profile.ResolvedPermissionMode())
+	return permissionModeFor(profile.ResolvedPermissionMode())
 }
 
 // muxEnvSliceToMap converts Torque's Dependencies.MuxEnv ([]string of

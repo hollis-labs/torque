@@ -8,6 +8,8 @@ import (
 	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/hollis-labs/agentkit/agentlaunch"
 	"github.com/hollis-labs/torque/internal/config"
+
+	gopermission "github.com/hollis-labs/go-permission"
 )
 
 func TestBuildLaunchPlan_StampsAnnotationsAndIdentity(t *testing.T) {
@@ -94,12 +96,12 @@ func TestBuildLaunchPlan_PermissionMode_OnlyWhenSupplied(t *testing.T) {
 		AgentProfileName: "default",
 	}
 	overlay := TaskLaunchOverlay{
-		PermissionMode: "acceptEdits",
+		PermissionMode: gopermission.ModeAcceptEdits,
 		Workdir:        "/repo",
 		ProjectID:      "p",
 	}
 	plan := BuildLaunchPlan(compiled, overlay)
-	assert.Equal(t, "acceptEdits", plan.Provider.Permission)
+	assert.Equal(t, gopermission.ModeAcceptEdits, plan.Provider.Permission)
 }
 
 // TestBuildLaunchPlan_ProviderBinary pins CW-20261001-0098: the detected CLI
