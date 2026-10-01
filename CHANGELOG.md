@@ -117,6 +117,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   launch's binary. The go-agent-wrapper path spawned the bare name before,
   so `opencode` in `~/.opencode/bin` failed with "executable file not found
   in $PATH" (CW-20261001-0098).
+- `agentkit` v0.12.3 (CW-20261001-0102): a planted launch's provider flags
+  and injected args go before the `--` that has ended a prompt-carrying argv
+  since go-providers v0.34.1. With v0.12.2 they landed after it and reached
+  the agent as prompt text.
 - OpenCode `serve-http` profiles launch `opencode serve --port 0 --hostname
   127.0.0.1` again. The wrapper launch path trimmed the prepared command to
   the bare executable, so the child started as plain `opencode`.
