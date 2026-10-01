@@ -581,3 +581,35 @@ describe('TorqueApiClient messaging client', () => {
     await expect(client.brokerInbox('msg://agent/local/orchestrator')).resolves.toEqual([])
   })
 })
+
+describe('TorqueApiClient.pageRuns', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('normalizes rows and preserves cursor metadata and server filters', async () => {
+    const meta = { returned: 1, limit: 50, has_more: true, next_cursor: 'opaque-cursor', total: 80 }
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      items: [{ ID: 9, TaskID: 'T-9', Status: 'done', Executor: 'mock', StartedAt: '2026-10-01T00:00:00Z', Cost: 1.25 }], meta,
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new TorqueApiClient('/api/v1')
+    const page = await client.pageRuns({ status: 'done,failed', sort_by: 'cost', sort_dir: 'desc', cursor: 'previous', include_total: true })
+    expect(page.items[0]).toMatchObject({ id: 9, task_id: 'T-9', status: 'done', cost: 1.25 })
+    expect(page.meta).toEqual(meta)
+    const params = new URL(fetchMock.mock.calls[0][0], 'http://localhost').searchParams
+    expect(params.get('status')).toBe('done,failed')
+    expect(params.get('cursor')).toBe('previous')
+    expect(params.get('include_total')).toBe('true')
+    expect(params.has('limit')).toBe(false)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns an empty final page without synthesizing a count or prefetching', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ items: [], meta: { returned: 0, limit: 50, has_more: false, next_cursor: null } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const page = await new TorqueApiClient('/api/v1').pageRuns({ task_id: 'T-1' })
+    expect(page.items).toEqual([])
+    expect(page.meta.total).toBeUndefined()
+    expect(page.meta.next_cursor).toBeNull()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})

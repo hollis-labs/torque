@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Skeleton, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, EmptyState } from '@hollis-labs/sysop-ui'
 import { RunCard } from '@/components/domain/run-card'
 import { useApi } from '@/hooks/use-api'
@@ -7,14 +7,6 @@ import type { Run } from '@/lib/types'
 
 type StatusFilter = 'all' | 'running' | 'completed' | 'failed'
 
-// Browse window for the cross-task feed. The backend clamps to [1, 1000];
-// 200 keeps the page snappy while still spanning plenty of history.
-const RUNS_LIMIT = 200
-
-// Backstop poll interval — refreshes the feed even if no SSE event lands,
-// covering runs missed during an SSE disconnect.
-const POLL_INTERVAL_MS = 30_000
-
 export default function RunsPage() {
   const api = useApi()
   const [runs, setRuns] = useState<Run[]>([])
@@ -22,47 +14,75 @@ export default function RunsPage() {
   const [error, setError] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
 
-  // run.started / run.finished change the run list; run.progress is omitted
-  // so high-frequency mid-run updates don't trigger a refetch storm.
-  const { lastEvent, connected } = useSSE(['run.started', 'run.finished'])
+  const [cursor, setCursor] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [sortBy, setSortBy] = useState<'started_at' | 'duration' | 'cost'>('started_at')
+  const generation = useRef(0)
+  const sentinel = useRef<HTMLDivElement>(null)
+  const scrollRoot = useRef<HTMLDivElement>(null)
+  const runsRef = useRef(runs)
+  useEffect(() => { runsRef.current = runs }, [runs])
+  const { lastEvent, connected } = useSSE(['run.started', 'run.completed'])
+  const serverStatus = statusFilter === 'completed' ? 'done' : statusFilter === 'all' ? undefined : statusFilter
 
-  const load = useCallback(
-    async (silent = false) => {
-      try {
-        if (!silent) setLoading(true)
-        const all = await api.listAllRuns({ limit: RUNS_LIMIT })
-        setRuns(all)
-        setError(null)
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load runs')
-      } finally {
-        if (!silent) setLoading(false)
-      }
-    },
-    [api],
-  )
+  const load = useCallback(async () => {
+    const current = ++generation.current
+    setLoading(true)
+    setLoadingMore(false)
+    setCursor(null)
+    try {
+      const page = await api.pageRuns({ status: serverStatus, sort_by: sortBy })
+      if (current !== generation.current) return
+      setRuns(page.items)
+      setCursor(page.meta.next_cursor)
+      setError(null)
+    } catch (err) {
+      if (current === generation.current) setError(err instanceof Error ? err.message : 'Failed to load runs')
+    } finally {
+      if (current === generation.current) setLoading(false)
+    }
+  }, [api, serverStatus, sortBy])
 
-  // Initial load (shows skeletons).
+  useEffect(() => { void load(); return () => { generation.current++ } }, [load])
+
+  const loadMore = useCallback(async () => {
+    if (!cursor || loadingMore || loading) return
+    const current = generation.current
+    setLoadingMore(true)
+    try {
+      const page = await api.pageRuns({ status: serverStatus, sort_by: sortBy, cursor })
+      if (current !== generation.current) return
+      setRuns((prev) => [...prev, ...page.items.filter((row) => !prev.some((shown) => shown.id === row.id))])
+      setCursor(page.meta.next_cursor)
+      setError(null)
+    } catch (err) {
+      if (current === generation.current) setError(err instanceof Error ? err.message : 'Failed to load older runs')
+    } finally {
+      if (current === generation.current) setLoadingMore(false)
+    }
+  }, [api, cursor, loadingMore, loading, serverStatus, sortBy])
+
   useEffect(() => {
-    load()
-  }, [load])
+    if (!cursor || loading || loadingMore || error || !sentinel.current) return
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) void loadMore()
+    }, { root: scrollRoot.current, rootMargin: '200px' })
+    observer.observe(sentinel.current)
+    return () => observer.disconnect()
+  }, [cursor, loading, loadingMore, error, loadMore])
 
-  // Live refresh on run lifecycle events — silent so the list doesn't flash
-  // skeletons while a run starts or finishes.
+  // Patch loaded rows only; new runs appear on Refresh without shifting a
+  // cursor already being browsed. The server controls membership and sort.
   useEffect(() => {
-    if (lastEvent) load(true)
-  }, [lastEvent, load])
-
-  // Periodic poll as a backstop — catches runs missed while SSE was
-  // disconnected. Silent, so it never disrupts the visible list.
-  useEffect(() => {
-    const id = setInterval(() => load(true), POLL_INTERVAL_MS)
-    return () => clearInterval(id)
-  }, [load])
-
-  const filtered = statusFilter === 'all'
-    ? runs
-    : runs.filter((r) => r.status === statusFilter)
+    const runId = lastEvent?.data.run_id
+    if (typeof runId !== 'number' || !runsRef.current.some((row) => row.id === runId)) return
+    const current = generation.current
+    void api.getRun(runId).then((updated) => {
+      if (current !== generation.current) return
+      setRuns((prev) => prev.flatMap((row) => row.id !== runId ? [row] :
+        serverStatus && updated.status !== serverStatus ? [] : [updated]))
+    }).catch(() => {})
+  }, [lastEvent, api, serverStatus, statusFilter])
 
   return (
     <div className="flex h-full flex-col">
@@ -84,6 +104,16 @@ export default function RunsPage() {
             {connected ? 'Live' : 'Offline'}
           </span>
         </div>
+        <div className="flex items-center gap-2">
+        <button className="text-sm text-primary" onClick={() => void load()}>Refresh</button>
+        <Select value={sortBy} onValueChange={(v) => setSortBy(v as typeof sortBy)}>
+          <SelectTrigger className="h-8 w-36 text-sm"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="started_at">Newest first</SelectItem>
+            <SelectItem value="duration">Longest first</SelectItem>
+            <SelectItem value="cost">Highest cost</SelectItem>
+          </SelectContent>
+        </Select>
         <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
           <SelectTrigger className="h-8 w-36 text-sm">
             <SelectValue placeholder="All statuses" />
@@ -95,10 +125,11 @@ export default function RunsPage() {
             <SelectItem value="failed">Failed</SelectItem>
           </SelectContent>
         </Select>
+        </div>
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-auto p-6">
+      <div ref={scrollRoot} className="flex-1 overflow-auto p-6">
         {loading ? (
           <div className="flex flex-col gap-3">
             {Array.from({ length: 4 }).map((_, i) => (
@@ -107,7 +138,7 @@ export default function RunsPage() {
           </div>
         ) : error ? (
           <EmptyState variant="error" title="Something went wrong" description={error} action={{ label: 'Retry', onClick: () => load() }} />
-        ) : filtered.length === 0 ? (
+        ) : runs.length === 0 ? (
           <EmptyState
             variant="no-results"
             title={statusFilter === 'all' ? 'No runs yet' : `No ${statusFilter} runs`}
@@ -115,11 +146,16 @@ export default function RunsPage() {
           />
         ) : (
           <div className="flex flex-col gap-3 max-w-2xl">
-            {filtered.map((run) => (
+            {runs.map((run) => (
               <RunCard key={run.id} run={run} showTaskLink />
             ))}
           </div>
         )}
+        {cursor && !error && <div ref={sentinel} className="py-4">
+          <button className="text-sm text-primary" disabled={loadingMore} onClick={() => void loadMore()}>
+            {loadingMore ? 'Loading…' : 'Load older runs'}
+          </button>
+        </div>}
       </div>
     </div>
   )

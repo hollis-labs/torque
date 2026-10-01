@@ -2,18 +2,14 @@ package httpserver
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
-)
-
-const (
-	defaultRunsLimit = 200
-	maxRunsLimit     = 1000
+	"github.com/hollis-labs/torque/internal/service"
 )
 
 // runResponse wraps sqlstore.RunRecord with derived provider/model fields
@@ -27,80 +23,50 @@ type runResponse struct {
 }
 
 func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-
-	filter := sqlstore.RunFilter{
-		TaskID:    q.Get("task_id"),
-		ProjectID: q.Get("project_id"),
+	allowed := map[string]bool{}
+	for _, key := range []string{"task_id", "project_id", "sprint_id", "epic_id", "status", "since", "until", "limit", "offset", "sort_by", "sort_dir", "cursor", "include_total"} {
+		allowed[key] = true
 	}
-
-	if raw := strings.TrimSpace(q.Get("status")); raw != "" {
-		for _, s := range strings.Split(raw, ",") {
-			if s = strings.TrimSpace(s); s != "" {
-				filter.Statuses = append(filter.Statuses, s)
-			}
-		}
-	}
-
-	if raw := strings.TrimSpace(q.Get("since")); raw != "" {
-		since, err := parseSince(raw)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid since: "+err.Error())
-			return
-		}
-		filter.Since = since
-	}
-
-	filter.Limit = parseLimit(q.Get("limit"))
-
-	runs, err := s.svc.Run.ListFiltered(filter)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	q, e := parseStrictQuery(r, allowed)
+	if e != nil {
+		writeError(w, http.StatusBadRequest, e.Error())
 		return
 	}
-
-	resp := make([]runResponse, 0, len(runs))
-	for _, rec := range runs {
-		resp = append(resp, decorateRun(rec))
+	query := service.RunQuery{TaskID: q.Get("task_id"), ProjectID: q.Get("project_id"), SprintID: q.Get("sprint_id"), EpicID: q.Get("epic_id"), Statuses: strings.Split(q.Get("status"), ","), Since: q.Get("since"), Until: q.Get("until"), SortBy: q.Get("sort_by"), SortDir: q.Get("sort_dir"), Cursor: q.Get("cursor")}
+	query.Limit, e = queryInt(q, "limit")
+	if e != nil {
+		writeError(w, http.StatusBadRequest, e.Error())
+		return
 	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{"runs": resp})
+	query.Offset, e = queryInt(q, "offset")
+	if e != nil {
+		writeError(w, http.StatusBadRequest, e.Error())
+		return
+	}
+	if raw, ok := q["include_total"]; ok {
+		v, err := strconv.ParseBool(raw[0])
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "include_total must be a boolean")
+			return
+		}
+		query.IncludeTotal = v
+	}
+	result, err := s.svc.Run.Query(query)
+	if err != nil {
+		var ve *service.ValidationError
+		if errors.As(err, &ve) {
+			writeError(w, http.StatusBadRequest, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	items := make([]runResponse, 0, len(result.Runs))
+	for _, rec := range result.Runs {
+		items = append(items, decorateRun(rec))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "meta": result.Meta})
 }
-
-// parseLimit clamps the requested limit to [1, maxRunsLimit]. Invalid or
-// missing values fall back to defaultRunsLimit so aggregate dashboards get
-// a bounded response by default.
-func parseLimit(raw string) int {
-	if raw == "" {
-		return defaultRunsLimit
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || n <= 0 {
-		return defaultRunsLimit
-	}
-	if n > maxRunsLimit {
-		return maxRunsLimit
-	}
-	return n
-}
-
-// parseSince accepts either an RFC3339 timestamp or a unix millisecond
-// integer. The widgets use RFC3339; the unix path is for quick curl calls.
-func parseSince(raw string) (time.Time, error) {
-	if t, err := time.Parse(time.RFC3339, raw); err == nil {
-		return t.UTC(), nil
-	}
-	if ms, err := strconv.ParseInt(raw, 10, 64); err == nil {
-		return time.UnixMilli(ms).UTC(), nil
-	}
-	return time.Time{}, errInvalidSince
-}
-
-var errInvalidSince = &parseError{"expected RFC3339 timestamp or unix millis"}
-
-type parseError struct{ msg string }
-
-func (e *parseError) Error() string { return e.msg }
 
 // decorateRun extracts provider and model from the run's metadata JSON.
 // Provider falls back to the executor field so dashboards always have a

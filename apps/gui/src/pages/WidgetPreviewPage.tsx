@@ -25,15 +25,11 @@ export default function WidgetPreviewPage() {
       .then(({ tasks: t }) => {
         if (cancelled) return
         setTasks(t)
-        const recent = t
-          .slice()
-          .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
-          .slice(0, 20)
-        return Promise.all(recent.map((x) => api.listRuns(x.id).catch(() => [] as Run[])))
+        return api.pageRuns()
       })
-      .then((lists) => {
-        if (cancelled || !lists) return
-        setRuns(lists.flat())
+      .then((page) => {
+        if (cancelled || !page) return
+        setRuns(page.items)
       })
       .catch(() => {
         // swallow; widgets render empty states
