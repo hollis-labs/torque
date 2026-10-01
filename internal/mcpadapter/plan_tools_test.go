@@ -13,6 +13,7 @@ import (
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
 	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/testutil/testenv"
 
 	_ "modernc.org/sqlite"
 )
@@ -78,7 +79,7 @@ func TestPlanStart_SessionsWired_PassesNilCheck(t *testing.T) {
 	t.Cleanup(func() { store.Close() })
 
 	svc := service.New(store)
-	deps := &agent.Dependencies{Store: store}
+	deps := &agent.Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store}
 	deps.Sessions = agent.NewManager(deps)
 
 	a := mcpadapter.New(svc, nil).WithSessions(deps.Sessions)
@@ -108,7 +109,7 @@ func TestPlanStart_SessionsWired_MissingPlanID(t *testing.T) {
 	t.Cleanup(func() { store.Close() })
 
 	svc := service.New(store)
-	deps := &agent.Dependencies{Store: store}
+	deps := &agent.Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store}
 	deps.Sessions = agent.NewManager(deps)
 
 	a := mcpadapter.New(svc, nil).WithSessions(deps.Sessions)

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"testing"
 )
 
 // BuildDirRootName is the basename of the parent directory under $TMPDIR that
@@ -127,6 +129,9 @@ func WorkspaceCreate(workspacesRoot, projectID, sessID, repoRoot, workRoot strin
 		}
 		workspacesRoot = filepath.Join(home, ".torque", "workspaces")
 	}
+	if err := refuseRealHomeInTests(workspacesRoot); err != nil {
+		return nil, err
+	}
 	projectKey := projectID
 	if projectKey == "" {
 		projectKey = "unscoped"
@@ -158,4 +163,23 @@ func WorkspaceCreate(workspacesRoot, projectID, sessID, repoRoot, workRoot strin
 		LogPath:      filepath.Join(root, "logs", "session.log"),
 		BuildDirRoot: DefaultBuildDirRoot(),
 	}, nil
+}
+
+// startHome is $HOME as the process started, before any test redirects it.
+var startHome, _ = os.UserHomeDir()
+
+// refuseRealHomeInTests fails a test binary's workspace under the real
+// $HOME. A test's Dependencies left WorkspacesRoot empty and its sessions
+// landed in the operator's ~/.torque/workspaces: 214 session dirs in one
+// overnight run (CW-20261001-0175). Production is unaffected
+// (testing.Testing reports false outside `go test`).
+func refuseRealHomeInTests(root string) error {
+	if !testing.Testing() || startHome == "" {
+		return nil
+	}
+	rel, err := filepath.Rel(startHome, root)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil
+	}
+	return fmt.Errorf("agent: workspaces root %s is under the real $HOME (%s) in a test: give the test's Dependencies WorkspacesRoot: testenv.WorkspacesRoot(t) (internal/testutil/testenv)", root, startHome)
 }
