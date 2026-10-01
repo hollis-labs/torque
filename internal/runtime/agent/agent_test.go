@@ -306,7 +306,7 @@ func TestKickoffMarkdown(t *testing.T) {
 		RepoRoot:      "/repo/source",
 		OneShotPrompt: "Walk the plan.",
 		SessionMeta:   map[string]string{"plan_id": "CW-PLAN-001"},
-	}, "orchestrator")
+	}, "orchestrator", false)
 
 	assert.Contains(t, body, "`orchestrator`")
 	assert.Contains(t, body, "CW-PLAN-001")
@@ -316,13 +316,35 @@ func TestKickoffMarkdown(t *testing.T) {
 	assert.Contains(t, body, "$TORQUE_WORK_ROOT")
 	assert.Contains(t, body, "Walk the plan.")
 	assert.Contains(t, body, "`loopback` MCP server", "the name go-providers plants the per-task server under")
+	assert.Contains(t, body, "mcp__mux__torque_*")
+
+	// While Torque write-protects its state, mux carries no torque tools
+	// and the kickoff does not point at them (CW-20261001-0141).
+	protected := kickoffMarkdown(Options{AgentProfile: "worker", TaskID: "CW-1"}, "worker", true)
+	assert.Contains(t, protected, "`loopback` MCP server")
+	assert.Contains(t, protected, "only Torque tools")
+	assert.NotContains(t, protected, "mcp__mux__torque_")
+
+	// A worker's loopback is bound to its task; an orchestrator-class role's is
+	// the full surface and takes explicit task ids, so the kickoff must not
+	// tell it no task_id is needed.
+	assert.Contains(t, kickoffMarkdown(Options{TaskID: "CW-1"}, "worker", false), "no `task_id` parameter required")
+	for _, role := range []string{"orchestrator", "planner", "reviewer-end-agent"} {
+		for _, omits := range []bool{false, true} {
+			got := kickoffMarkdown(Options{TaskID: "CW-1"}, role, omits)
+			assert.Contains(t, got, "the full surface: pass the `task_id`", "%s omits=%v", role, omits)
+			assert.NotContains(t, got, "no `task_id` parameter required", "%s omits=%v", role, omits)
+		}
+		assert.Contains(t, kickoffMarkdown(Options{TaskID: "CW-1"}, role, true), "only Torque tools")
+		assert.NotContains(t, kickoffMarkdown(Options{TaskID: "CW-1"}, role, true), "mcp__mux__torque_")
+	}
 
 	// Empty role falls back to AgentProfile.
-	body = kickoffMarkdown(Options{AgentProfile: "planner"}, "")
+	body = kickoffMarkdown(Options{AgentProfile: "planner"}, "", false)
 	assert.Contains(t, body, "`planner`")
 
 	// No task id → "(no task_id)".
-	body = kickoffMarkdown(Options{AgentProfile: "x"}, "x")
+	body = kickoffMarkdown(Options{AgentProfile: "x"}, "x", false)
 	assert.Contains(t, body, "(no task_id)")
 }
 

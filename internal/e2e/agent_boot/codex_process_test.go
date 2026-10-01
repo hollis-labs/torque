@@ -27,6 +27,9 @@ type codexProcessRecord struct {
 	// TORQUE_TEST_CODEX_APPROVAL is set.
 	ApprovalResult json.RawMessage `json:"approval_result,omitempty"`
 	ApprovalError  json.RawMessage `json:"approval_error,omitempty"`
+	// ProtectWrite is the error the helper got writing into
+	// TORQUE_TEST_PROTECT_DIR at start ("" when it wrote), when that is set.
+	ProtectWrite string `json:"protect_write,omitempty"`
 }
 
 // Run the real JSON-RPC runtime against a controlled subprocess. Replacing
@@ -73,6 +76,12 @@ func TestCodexRPCProcessHelper(t *testing.T) {
 		return
 	}
 	rec := codexProcessRecord{Home: os.Getenv("CODEX_HOME")}
+	if dir := os.Getenv("TORQUE_TEST_PROTECT_DIR"); dir != "" {
+		rec.ProtectWrite = "wrote"
+		if err := os.WriteFile(filepath.Join(dir, "agent-wrote"), []byte("x"), 0o600); err != nil {
+			rec.ProtectWrite = err.Error()
+		}
+	}
 	// Record only whether the synthetic fixture arrived, never its contents.
 	if auth, err := os.ReadFile(filepath.Join(rec.Home, "auth.json")); err == nil {
 		st, statErr := os.Stat(filepath.Join(rec.Home, "auth.json"))
