@@ -135,7 +135,9 @@ func TestHTTP_Messages_InboxDrains(t *testing.T) {
 	resp, err := http.Get(ts.URL + "/api/v1/messages/inbox?" + q.Encode())
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	var first struct{ Messages []gomsg.Envelope }
+	var first struct {
+		Messages []gomsg.Envelope `json:"items"`
+	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&first))
 	resp.Body.Close()
 	require.Len(t, first.Messages, 3)
@@ -144,7 +146,9 @@ func TestHTTP_Messages_InboxDrains(t *testing.T) {
 	resp, err = http.Get(ts.URL + "/api/v1/messages/inbox?" + q.Encode())
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	var second struct{ Messages []gomsg.Envelope }
+	var second struct {
+		Messages []gomsg.Envelope `json:"items"`
+	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&second))
 	resp.Body.Close()
 	require.Len(t, second.Messages, 0)
@@ -169,7 +173,9 @@ func TestHTTP_Messages_ThreadIsReadOnly(t *testing.T) {
 	resp, err := http.Get(ts.URL + "/api/v1/messages/thread/TT")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	var first struct{ Messages []gomsg.Envelope }
+	var first struct {
+		Messages []gomsg.Envelope `json:"items"`
+	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&first))
 	resp.Body.Close()
 	require.Len(t, first.Messages, 2)
@@ -177,7 +183,9 @@ func TestHTTP_Messages_ThreadIsReadOnly(t *testing.T) {
 	// Inbox should still show both — Thread did not mutate delivery state.
 	resp, err = http.Get(ts.URL + "/api/v1/messages/inbox?to=" + url.QueryEscape(to))
 	require.NoError(t, err)
-	var inbox struct{ Messages []gomsg.Envelope }
+	var inbox struct {
+		Messages []gomsg.Envelope `json:"items"`
+	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&inbox))
 	resp.Body.Close()
 	require.Len(t, inbox.Messages, 2)

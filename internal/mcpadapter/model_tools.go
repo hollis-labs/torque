@@ -40,11 +40,12 @@ func (a *Adapter) registerModelTools() {
 	a.addTool(newTool("torque_models_list",
 		withDescription(`List every (provider, model) pair in the models.dev catalog with pricing, context-window, and capability data.
 Use to discover what's available before configuring a profile or estimating cost. Filter with provider="anthropic" to narrow. Cold cache returns an empty list — retry rather than treat absence as fatal. Brief shape drops cache pricing + modality; pass verbose="true" for the full record.
-Response shape: data = {items: [<briefModel or ModelRef>...], meta: {truncated, returned, limit, hint?}}.
+Response shape: data = {items: [<briefModel or ModelRef>...], meta: {truncated, returned, limit, has_more, next_cursor, total?, offset?, next_offset?, hint?}}.
 Example: {"provider":"anthropic","limit":"50"}`),
 		withString("provider", desc("Filter to a single provider id (e.g. 'anthropic', 'openai')")),
 		withString("verbose", desc("Return full ModelRef records instead of brief (string 'true'/'false', default false)")),
-		withString("limit", desc("Max records to return (default 100, capped at 500)")),
+		withString("limit", desc("Max records to return (default 50, capped at 200)")),
+		withResourcePageParams("models"),
 	), a.handleModelsList)
 
 	a.addTool(newTool("torque_models_get",
@@ -58,26 +59,40 @@ Example: {"provider":"anthropic","model":"claude-sonnet-4-6"}`),
 }
 
 func (a *Adapter) handleModelsList(ctx context.Context, req map[string]any) (any, error) {
-	if a.svc.Models == nil {
-		return cappedJSONResult(nil, defaultGenericListLimit)
+	q, err := reqResourceQuery(req)
+	if err != nil {
+		return nil, err
 	}
-	provider := reqStr(req, "provider")
-	verbose := reqStrBool(req, "verbose")
-	limit := clampLimit(reqInt(req, "limit"), defaultGenericListLimit, 500)
-
-	all := a.svc.Models.List()
-	out := make([]any, 0, len(all))
-	for _, m := range all {
-		if provider != "" && m.ProviderID != provider {
-			continue
-		}
-		if verbose {
-			out = append(out, m)
+	provider, err := reqQueryString(req, "provider")
+	if err != nil {
+		return nil, err
+	}
+	search, err := reqQueryString(req, "search")
+	if err != nil {
+		return nil, err
+	}
+	page, err := a.svc.ListModelPage(provider, search, q)
+	if err != nil {
+		return errFromService(err)
+	}
+	more := len(page.Rows) > page.Query.Limit
+	if more {
+		page.Rows = page.Rows[:page.Query.Limit]
+	}
+	items := make([]any, 0, len(page.Rows))
+	for _, row := range page.Rows {
+		m := row.Record.(modelsdev.ModelRef)
+		if reqStrBool(req, "verbose") {
+			items = append(items, m)
 		} else {
-			out = append(out, toBriefModel(m))
+			items = append(items, toBriefModel(m))
 		}
 	}
-	return cappedJSONResult(out, limit)
+	offset := []int{}
+	if page.Offset != nil {
+		offset = append(offset, *page.Offset)
+	}
+	return cappedCursorJSONResultWithTotal(items, page.Query.Limit, page.Total, page.Query.SortBy, page.Query.SortDir, more, func(i int) (string, string) { return page.Rows[i].SortValue, page.Rows[i].ID }, offset...)
 }
 
 func (a *Adapter) handleModelsGet(ctx context.Context, req map[string]any) (any, error) {

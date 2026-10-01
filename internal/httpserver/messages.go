@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	clockmsg "github.com/hollis-labs/torque/internal/messaging"
 	"net/http"
 	"strconv"
 	"time"
@@ -167,50 +168,57 @@ func (s *Server) consumeMessage(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) listInbox(w http.ResponseWriter, r *http.Request) {
+func (s *Server) listInbox(w http.ResponseWriter, r *http.Request)  { s.serveMessagePage(w, r, true) }
+func (s *Server) listThread(w http.ResponseWriter, r *http.Request) { s.serveMessagePage(w, r, false) }
+func (s *Server) serveMessagePage(w http.ResponseWriter, r *http.Request, drain bool) {
 	if s.msg == nil {
-		writeError(w, http.StatusServiceUnavailable, "messaging store not configured")
+		writeError(w, 503, "messaging store not configured")
 		return
 	}
-	addr, err := parseAddrParam(r, "to")
+	q, err := clockmsg.ParsePageQuery(r.URL.Query(), drain)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		s.writeMessagePageError(w, err)
 		return
 	}
 	filter, err := parseFilter(r)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		writeError(w, 400, err.Error())
 		return
 	}
-	envs, err := s.msg.Inbox(r.Context(), addr, filter)
+	store, ok := s.msg.(clockmsg.PageStore)
+	if !ok {
+		writeError(w, 503, "message store does not support bounded pages")
+		return
+	}
+	var page clockmsg.MessagePage
+	if drain {
+		addr, err := parseAddrParam(r, "to")
+		if err != nil {
+			writeError(w, 422, err.Error())
+			return
+		}
+		page, err = store.DrainInboxPage(r.Context(), addr, filter, q)
+	} else {
+		thread := chi.URLParam(r, "thread_id")
+		if thread == "" {
+			writeError(w, 400, "missing thread_id")
+			return
+		}
+		page, err = store.ThreadPage(r.Context(), thread, filter, q)
+	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeMessagePageError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"messages": envs})
+	writeJSON(w, 200, clockmsg.MessageEnvelope(page, q, drain))
 }
-
-func (s *Server) listThread(w http.ResponseWriter, r *http.Request) {
-	if s.msg == nil {
-		writeError(w, http.StatusServiceUnavailable, "messaging store not configured")
+func (s *Server) writeMessagePageError(w http.ResponseWriter, err error) {
+	var query *clockmsg.PageQueryError
+	if errors.As(err, &query) {
+		writeFieldError(w, 400, query.Field, query.Message)
 		return
 	}
-	threadID := chi.URLParam(r, "thread_id")
-	if threadID == "" {
-		writeError(w, http.StatusBadRequest, "missing thread_id")
-		return
-	}
-	filter, err := parseFilter(r)
-	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
-		return
-	}
-	envs, err := s.msg.Thread(r.Context(), threadID, filter)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"messages": envs})
+	writeError(w, 500, err.Error())
 }
 
 // subscribeMessages opens an SSE stream of new envelopes for ?to=<urn>.

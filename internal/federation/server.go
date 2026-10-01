@@ -17,6 +17,7 @@ import (
 	gomsg "github.com/hollis-labs/go-messaging"
 
 	"github.com/hollis-labs/torque/internal/broker"
+	clockmsg "github.com/hollis-labs/torque/internal/messaging"
 )
 
 // FederationBasePath is the route prefix the federation surface is mounted at
@@ -216,30 +217,46 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 // nothing and returns an empty list.
 func (s *Server) handleThread(w http.ResponseWriter, r *http.Request) {
 	id, _ := peerFromContext(r.Context())
-	threadID := chi.URLParam(r, "thread_id")
-	if threadID == "" {
-		writeError(w, http.StatusBadRequest, "federation: missing thread_id")
+	thread := chi.URLParam(r, "thread_id")
+	if thread == "" {
+		writeError(w, 400, "federation: missing thread_id")
+		return
+	}
+	query, err := clockmsg.ParsePageQuery(r.URL.Query(), false)
+	if err != nil {
+		writeError(w, 400, err.Error())
 		return
 	}
 	filter, err := parseFilter(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "federation: "+err.Error())
+		writeError(w, 400, err.Error())
 		return
 	}
-	envs, err := s.store.Thread(r.Context(), threadID, filter)
+	paged, ok := s.store.(interface {
+		clockmsg.PageStore
+		ThreadParty(context.Context, string, []string) (bool, bool, error)
+	})
+	if !ok {
+		writeError(w, 503, "federation: store does not support bounded thread pages")
+		return
+	}
+	exists, party, err := paged.ThreadParty(r.Context(), thread, id.peer.Authorities())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, 500, err.Error())
 		return
 	}
-	if len(envs) > 0 && !s.peerIsThreadParty(id.peer, envs) {
-		probe := gomsg.Envelope{ThreadID: threadID}
-		s.audit(id, OpThread, probe, false, "peer is not a party to the thread")
-		writeError(w, http.StatusForbidden, errForbidden.Error())
+	if exists && !party {
+		s.audit(id, OpThread, gomsg.Envelope{ThreadID: thread}, false, "peer is not a party to the thread")
+		writeError(w, 403, errForbidden.Error())
 		return
 	}
-	log.Printf("[federation] peer=%s op=thread thread=%s envelopes=%d decision=allow",
-		id.peer.Label, threadID, len(envs))
-	writeJSON(w, http.StatusOK, map[string]any{"messages": envs})
+	page, err := paged.ThreadPage(r.Context(), thread, filter, query)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	log.Printf("[federation] peer=%s op=thread thread=%s envelopes=%d decision=allow", id.peer.Label, thread, len(page.Items))
+	writeJSON(w, 200, clockmsg.MessageEnvelope(page, query, false))
 }
 
 // handleConsume — POST /federation/v1/messages/{id}/consume, body

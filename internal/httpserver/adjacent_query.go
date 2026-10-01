@@ -11,6 +11,7 @@ import (
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 )
 
 // Adjacent lists always use bounded cursor pages (default 50, max 200).
@@ -144,17 +145,23 @@ func writeAdjacentServiceError(w http.ResponseWriter, err error) {
 	}
 }
 
-func advancedMeta(limit int, sortBy, sortDir string, hasMore bool, nextCursor string, returned int, total ...*int) map[string]any {
-	meta := map[string]any{
-		"returned":    returned,
-		"limit":       limit,
-		"has_more":    hasMore,
-		"next_cursor": nullableString(nextCursor),
-		"sort_by":     sortBy,
-		"sort_dir":    sortDir,
+type sortedPageMeta struct {
+	pagination.PageMeta
+	SortBy  string `json:"sort_by"`
+	SortDir string `json:"sort_dir"`
+}
+
+func advancedPageMeta(limit int, sortBy, sortDir string, hasMore bool, nextCursor string, returned int, total, offset *int) sortedPageMeta {
+	var next *string
+	if nextCursor != "" {
+		next = &nextCursor
 	}
-	if len(total) > 0 && total[0] != nil {
-		meta["total"] = *total[0]
+	return sortedPageMeta{pagination.NewPageMeta(returned, limit, hasMore, next, total, offset), sortBy, sortDir}
+}
+func advancedMeta(limit int, sortBy, sortDir string, hasMore bool, nextCursor string, returned int, total ...*int) sortedPageMeta {
+	var count *int
+	if len(total) > 0 {
+		count = total[0]
 	}
-	return meta
+	return advancedPageMeta(limit, sortBy, sortDir, hasMore, nextCursor, returned, count, nil)
 }

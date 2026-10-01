@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
 	"github.com/hollis-labs/torque/internal/sessioninput"
 )
@@ -14,6 +15,11 @@ import (
 // agent.Manager handle wired (mcp-only stdio path); each handler returns a
 // `domain` envelope explaining the missing wiring rather than panicking.
 func (a *Adapter) registerSessionTools() {
+	a.addTool(newTool("torque_session_checkpoint_list", withDescription(`List recovery checkpoints for a session as bounded items/meta pages.
+These records describe runtime recovery, separate from task HITL checkpoints.
+Pass meta.next_cursor for continuation; counts are opt-in through include_total.
+Example: {"session_id":"SES-123","limit":"50","include_total":"true"}`), withString("session_id", required()), withResourcePageParams("session_checkpoints")), a.handleSessionCheckpointList)
+
 	a.addTool(newTool("torque_session_create",
 		withDescription(`Boot a long-lived agent session via the unified agent.Manager.Boot path.
 Use to spawn an agent (Reviewer end-agent, Orchestrator, planner, etc.) whose lifetime exceeds a single task — Mode=ModeLongLived. Per-task scheduler-dispatched (one-turn) executions go through the kind=agent task path, not this tool.
@@ -71,6 +77,7 @@ Example: {"state":"running","task_id":"T-123"}`),
 		withString("task_id"),
 		withString("project_id"),
 		withString("limit"),
+		withResourcePageParams("sessions"),
 	), a.handleSessionList)
 
 	a.addTool(newTool("torque_session_stop",
@@ -224,26 +231,18 @@ func (a *Adapter) handleSessionGet(ctx context.Context, req map[string]any) (any
 	return okResult(sess)
 }
 
-func (a *Adapter) handleSessionList(ctx context.Context, req map[string]any) (any, error) {
-	mgr, err := a.requireSessionMgr()
-	if err != nil {
+func (a *Adapter) handleSessionCheckpointList(ctx context.Context, req map[string]any) (any, error) {
+	if _, err := a.requireSessionMgr(); err != nil {
 		return errResult(ErrCodeDomain, err.Error(), "")
 	}
-	limit := reqInt(req, "limit")
-	out, err := mgr.List(
-		agent.Status(reqStr(req, "state")),
-		reqStr(req, "task_id"),
-		reqStr(req, "project_id"),
-		limit,
-	)
-	if err != nil {
-		return errFromService(err)
+	return a.handleResourceList(ctx, req, "session_checkpoints", sqlstore.ResourcePageFilter{SessionID: reqStr(req, "session_id")})
+}
+
+func (a *Adapter) handleSessionList(ctx context.Context, req map[string]any) (any, error) {
+	if _, err := a.requireSessionMgr(); err != nil {
+		return errResult(ErrCodeDomain, err.Error(), "")
 	}
-	items := make([]any, 0, len(out))
-	for _, s := range out {
-		items = append(items, s)
-	}
-	return cappedJSONResult(items, defaultGenericListLimit)
+	return a.handleResourceList(ctx, req, "sessions", sqlstore.ResourcePageFilter{})
 }
 
 func (a *Adapter) handleSessionStop(ctx context.Context, req map[string]any) (any, error) {

@@ -671,7 +671,7 @@ Source: `internal/mcpadapter/plan_tools.go`.
 | `torque_plan_delete` | Hard delete the plan row; children are **not** deleted — their `parent_id` clears (`ON DELETE SET NULL`). |
 | `torque_plan_add_phase` | Append a phase; returns the assigned `phase_id` (e.g. `ph-3`). |
 | `torque_plan_remove_phase` | Remove a phase; rejected with `error.code=conflict` if any child still references it via `metadata.phase_id`. |
-| `torque_plan_list_children` | List tasks under the plan (optionally narrowed to one `phase_id`). Byte-capped only, no cursor. |
+| `torque_plan_list_children` | List tasks under the plan (optionally narrowed to one `phase_id`). Cursor-paged with the shared 50/200 policy and opt-in cohort total; phase/task filters apply before paging. |
 | `torque_plan_start` | Boot an Orchestrator session for the plan and transition it to `doing`. Execution-adjacent (out of ADR-0004's data-ergonomics scope) — kept as-is. Idempotent: an already-running session returns `error.code=conflict` with the live `session_id` embedded in the message text. |
 
 `torque_plan_list` sort: same allow-list/default as Task
@@ -819,3 +819,25 @@ exceeds the byte budget, it rejects on `until` and asks for a shorter window
 or narrower filters, retaining the complete-series contract.
 
 Example: `{"since":"2026-10-01T00:00:00Z","until":"2026-10-01T23:59:59.999999999Z","bucket":"hour","tz_offset_minutes":"0"}`.
+
+## Remaining cursor list families (CW-20261001-0565)
+
+Sessions, artifacts, collections and their task/inbox views, plans and their
+children, task/pending/recovery checkpoints, templates, and models now use
+`{items,meta}` with default 50/max 200, cursor continuation, optional explicit
+offset, and opt-in `include_total`. Their existing brief/verbose record shapes
+remain. HTTP and MCP share the normalized service/store queries; MCP byte
+trimming resumes after the last emitted item. See the implemented
+[endpoint and sort matrices](api-pagination.md#endpoint-capability-matrix).
+
+`torque_session_checkpoint_list` takes required `session_id` and the shared
+page query; it lists runtime recovery records, separate from task HITL records.
+Task checkpoint lists keep required `task_id`; pending checkpoints retain the
+pending scope. Templates list version rows with ID/version identity, and
+models use provider/model identity.
+
+There is no pure-read MCP message-thread list. `torque_broker_inbox` and
+`torque_inbox_poll` remain delivery actions. HTTP inbox uses exact-size drain
+batches with a non-mutating continuation peek; HTTP thread uses bounded
+federated read pages. The [messages contract](api-pagination.md#endpoint-capability-matrix)
+describes their count and continuation differences.

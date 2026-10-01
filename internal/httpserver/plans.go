@@ -29,17 +29,7 @@ type PlanAddPhaseRequest struct {
 }
 
 func (s *Server) listPlans(w http.ResponseWriter, r *http.Request) {
-	tasks, err := s.svc.Task.List(sqlstore.TaskFilter{Kind: "plan"})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	out, err := s.tasksJSON(tasks)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"plans": out})
+	s.serveResourceList(w, r, "plans", sqlstore.ResourcePageFilter{})
 }
 
 func (s *Server) getPlan(w http.ResponseWriter, r *http.Request) {
@@ -243,17 +233,5 @@ func (s *Server) startPlan(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listPlanChildren(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	phaseID := r.URL.Query().Get("phase_id")
-	children, err := s.svc.Plan.ListChildren(id, phaseID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	out, err := s.tasksJSON(children)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"tasks": out})
+	s.serveResourceList(w, r, "plan_children", sqlstore.ResourcePageFilter{ParentID: chi.URLParam(r, "id")})
 }
