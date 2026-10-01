@@ -19,10 +19,12 @@ func (a *Adapter) registerSessionTools() {
 Use to spawn an agent (Reviewer end-agent, Orchestrator, planner, etc.) whose lifetime exceeds a single task — Mode=ModeLongLived. Per-task scheduler-dispatched (one-turn) executions go through the kind=agent task path, not this tool.
 Pair with torque_session_checkpoint mid-run and torque_session_resume to seed a fresh session from prior checkpoint state.
 Response shape: data = <Session> singleton — ID, status, runtime descriptors, project/task soft-FKs, Mode, BootDir, WorkspaceDir, ParentSessionID.
-Example: {"agent_profile":"default","workdir":"/tmp/sess","task_id":"T-123"}`),
+workdir and repo_root must be existing absolute paths inside registered project repo paths or operator-set TORQUE_SESSION_ALLOWED_ROOTS; control-plane directories and their ancestors are refused.
+Example: {"agent_profile":"default","workdir":"/path/to/registered/repo","task_id":"T-123"}`),
 		withString("launch_profile", desc("Torque launch_profile id (preferred). When set, drives the stable launch family resolution.")),
 		withString("agent_profile", desc("Legacy agent_profile name. Honored when launch_profile is empty.")),
-		withString("workdir", required(), desc("Spawned process working directory (boot dir for claude)")),
+		withString("workdir", required(), desc("Existing absolute working directory within registered project roots or TORQUE_SESSION_ALLOWED_ROOTS; control-plane paths and their ancestors are forbidden")),
+		withString("repo_root", desc("Canonical repository root; defaults to workdir and obeys the same path policy")),
 		withString("project_id", desc("Optional project soft-FK")),
 		withString("task_id", desc("Optional task soft-FK")),
 		withString("system_prompt", desc("Boot/system prompt for the agent")),
@@ -34,13 +36,15 @@ Example: {"agent_profile":"default","workdir":"/tmp/sess","task_id":"T-123"}`),
 	// distinct registrations so MCP descriptions can diverge later if
 	// create-then-launch splits into two phases.
 	a.addTool(newTool("torque_session_launch",
-		withDescription(`Alias for torque_session_create — boots a Mode=ModeLongLived agent session via agent.Manager.Boot. Same args, same response.
+		withDescription(`Alias for torque_session_create — boots a Mode=ModeLongLived agent session via agent.Manager.BootExternal. Same args, same response.
 Kept distinct in the registry so create-then-launch can split into two phases without a breaking rename. Today both names route to the same handler.
 Response shape: data = <Session> singleton.
-Example: {"agent_profile":"default","workdir":"/tmp/sess"}`),
+workdir and repo_root must be existing absolute paths inside registered project repo paths or operator-set TORQUE_SESSION_ALLOWED_ROOTS; control-plane directories and their ancestors are refused.
+Example: {"agent_profile":"default","workdir":"/path/to/registered/repo"}`),
 		withString("launch_profile"),
 		withString("agent_profile"),
 		withString("workdir", required()),
+		withString("repo_root", desc("Canonical repository root; must satisfy the same server-side allowed-base policy as workdir")),
 		withString("project_id"),
 		withString("task_id"),
 		withString("system_prompt"),
@@ -172,11 +176,12 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req map[string]any) (
 	if res != nil {
 		return nil, res
 	}
-	sess, err := mgr.Boot(ctx, agent.Options{
+	sess, err := mgr.BootExternal(ctx, agent.Options{
 		Mode:          agent.ModeLongLived,
 		LaunchProfile: launchProfile,
 		AgentProfile:  agentProfile,
 		Workdir:       reqStr(req, "workdir"),
+		RepoRoot:      reqStr(req, "repo_root"),
 		ProjectID:     reqStr(req, "project_id"),
 		TaskID:        reqStr(req, "task_id"),
 		SystemPrompt:  reqStr(req, "system_prompt"),
@@ -184,6 +189,9 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req map[string]any) (
 		SessionMeta:   meta,
 	})
 	if err != nil {
+		if errors.Is(err, agent.ErrLaunchPathRefused) {
+			return errResult(ErrCodeArgInvalid, err.Error(), "workdir/repo_root")
+		}
 		return errResult(ErrCodeDomain, err.Error(), "")
 	}
 	return okResult(sess)
@@ -295,7 +303,7 @@ func (a *Adapter) handleSessionResume(ctx context.Context, req map[string]any) (
 	if err != nil {
 		return errResult(ErrCodeDomain, err.Error(), "")
 	}
-	newID, err := mgr.Resume(ctx, agent.ResumeRequest{
+	newID, err := mgr.ResumeExternal(ctx, agent.ResumeRequest{
 		SessionID:     reqStr(req, "id"),
 		CheckpointID:  reqStr(req, "checkpoint_id"),
 		LaunchProfile: reqStr(req, "launch_profile"),
@@ -307,6 +315,8 @@ func (a *Adapter) handleSessionResume(ctx context.Context, req map[string]any) (
 		switch {
 		case errors.Is(err, agent.ErrSessionNotFound):
 			return errResult(ErrCodeNotFound, err.Error(), "")
+		case errors.Is(err, agent.ErrLaunchPathRefused):
+			return errResult(ErrCodeArgInvalid, err.Error(), "workdir/repo_root")
 		case errors.Is(err, agent.ErrNoCheckpoint):
 			return errResult(ErrCodeArgInvalid, err.Error(), "checkpoint_id")
 		}
