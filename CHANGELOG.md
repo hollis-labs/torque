@@ -19,6 +19,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- agentkit v0.12.0, go-providers v0.33.0, go-sandbox v0.4.1 (security fix)
+  and agent-contracts-leaf v0.3.0 (Sprint 4 PR1). Runtime kinds use the
+  shared vocabulary: `subprocess` is now `subprocess-per-turn` and
+  `serve-http` is `http-sse`. Profiles and stored session rows that carry
+  the older spellings (`subprocess`, `cli`, `serve-http`, `app-server`,
+  `pty-debug`) are still read, through the new `internal/runtimetoken`.
+  Runtime defaults, provider ids and profile lint's cli providers come from
+  the go-providers runtime registry; a cli provider the registry does not
+  know (`gemini`) is no longer listed, and registered runtimes Torque cannot
+  launch yet (Antigravity, Copilot, Pi) lint with the reason.
 - `agentkit` v0.11.1: a child that prints its last lines and exits at once
   no longer has them dropped (jsonrpc-stdio, serve-http, PTY).
 - `go-agent-wrapper` v0.14.0 and `agentkit` v0.11.0 (adds `go-permission`
