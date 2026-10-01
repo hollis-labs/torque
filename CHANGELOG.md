@@ -66,6 +66,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   worktree passes when the worker made tool calls or left comments or
   artifacts on its task. Read-only claude-code runs are no longer graded
   blocked or failed.
+- Long-lived claude-code runs record token usage. claude reports usage only
+  in a turn's final `result` event, and a worker ends its run with a tool
+  call that moves its task to review, so the session was stopped before that
+  event and the run recorded 0/0. A streaming-stdio session now gets up to
+  30s to finish the open turn before it is stopped. Cost stays 0: no pricing
+  is applied to these runs, as for codex.
 - A long-lived run graded "edits but no commits" now parks its task in
   `blocked` instead of retrying under `on_fail`. The reason names the
   preserved worktree, how many paths are uncommitted, and the remedy: commit
