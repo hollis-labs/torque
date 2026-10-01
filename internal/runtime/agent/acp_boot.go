@@ -212,7 +212,8 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 	if !withMux && deps.MuxCommand != "" {
 		log.Printf("agent.Boot: session=%s: mux MCP not offered to the ACP session for permission_mode %q; only bypassPermissions gets it (CW-20261001-0120)", sessID, profile.PermissionMode)
 	}
-	stderrWriter, _, closeStderr := openStderrSidecar(opts.RunID, ws.LogPath)
+	rawStderr, _, closeRawStderr := openStderrSidecar(opts.RunID, ws.LogPath)
+	stderrWriter, closeStderr := redactStderr(rawStderr, closeRawStderr, pb.redact)
 	diagnostics := &acpDiagnostics{w: stderrWriter}
 	cfg := wrapper.Config{
 		App:     "torque",
@@ -314,6 +315,7 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 		sidecar: sidecar,
 		fanout:  opts.eventFanout,
 		stderr:  diagnostics,
+		redact:  pb.redact,
 		onReady: func() { readyOnce.Do(func() { close(readyCh) }) },
 		onDone:  oneshotOnDone,
 	})
