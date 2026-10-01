@@ -189,9 +189,12 @@ func TestSelectRuntimeKind(t *testing.T) {
 
 		// Invalid profile kind.
 		{"invalid kind → error", "codex", "tui", "", true},
-		// A leaf mode Torque cannot launch yet (ACP arrives with the
-		// registry-driven wrapper Select, CW-20260930-0134).
-		{"acp-stdio → error", "codex", "acp-stdio", "", true},
+		// ACP modes (CW-20261001-0097): a profile opts Claude, Codex or
+		// OpenCode into acp-stdio; Copilot and Pi default to it.
+		{"profile kind acp-stdio", "codex", "acp-stdio", RuntimeKindACPStdio, false},
+		{"profile kind acp-tcp", "copilot", "acp-tcp", RuntimeKindACPTCP, false},
+		{"copilot default → acp-stdio", "copilot", "", RuntimeKindACPStdio, false},
+		{"pi default → acp-stdio", "pi", "", RuntimeKindACPStdio, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -270,7 +273,7 @@ func TestKickoffMarkdown(t *testing.T) {
 	assert.Contains(t, body, "/repo/source")
 	assert.Contains(t, body, "$TORQUE_WORK_ROOT")
 	assert.Contains(t, body, "Walk the plan.")
-	assert.Contains(t, body, "torque_loopback")
+	assert.Contains(t, body, "`loopback` MCP server", "the name go-providers plants the per-task server under")
 
 	// Empty role falls back to AgentProfile.
 	body = kickoffMarkdown(Options{AgentProfile: "planner"}, "")

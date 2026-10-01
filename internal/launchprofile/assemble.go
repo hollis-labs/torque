@@ -48,6 +48,15 @@ type TaskLaunchOverlay struct {
 	// torque-provider→registry runtime id translation (runtimeIDFor).
 	ProviderID string
 
+	// ProviderBinary is the absolute path of the runtime's CLI as the
+	// selected adapter's Detect resolved it (its *_CLI_PATH override, PATH,
+	// then the registry's install dirs such as ~/.opencode/bin). It becomes
+	// ProviderSpec.Binary, which the planted launch takes as argv[0];
+	// without it argv[0] is the bare binary name and the spawn resolves it
+	// through the daemon's PATH alone (CW-20261001-0098). Empty keeps that
+	// bare-name fallback.
+	ProviderBinary string
+
 	// ProjectID / Workdir / WorkspaceDir / BuildDirRoot come from
 	// Options + the resolved WorkspaceLayout.
 	ProjectID    string
@@ -161,6 +170,7 @@ func BuildLaunchPlan(compiled CompiledLaunchProfile, overlay TaskLaunchOverlay) 
 		},
 		Provider: agentlaunch.ProviderSpec{
 			ID:            overlay.ProviderID,
+			Binary:        overlay.ProviderBinary,
 			ModelOverride: compiled.AgentProfile.Model,
 			Permission:    overlay.PermissionMode,
 			// Flags intentionally empty — see the function godoc.

@@ -39,6 +39,12 @@ import (
 //     for session + message endpoints. Added 2026-05-21 alongside
 //     go-providers v0.23.0 (NewOpencodeAdapterServeHTTP) +
 //     go-agent-sessions v0.10.0 (serve_http_session.go).
+//   - ACPStdio / ACPTCP: an Agent Client Protocol session, over the child's
+//     stdio or (Copilot) a TCP port. go-agent-wrapper's ACP client owns
+//     initialize, session/new and session/prompt; Torque plants no boot dir
+//     for it (acp_boot.go). Copilot and Pi run only this way; Claude, Codex
+//     and OpenCode reach it through profile.RuntimeKind=acp-stdio
+//     (CW-20261001-0097).
 //
 // The per-runtime default comes from the go-providers registry (see
 // selectRuntimeKind); operators override per-profile via
@@ -58,10 +64,15 @@ const (
 	RuntimeKindStreamingStdio RuntimeKind = RuntimeKind(runtimes.ModeStreamingStdio)
 	RuntimeKindJsonRpcStdio   RuntimeKind = RuntimeKind(runtimes.ModeJSONRPCStdio)
 	RuntimeKindServeHTTP      RuntimeKind = RuntimeKind(runtimes.ModeHTTPSSE)
+	RuntimeKindACPStdio       RuntimeKind = RuntimeKind(runtimes.ModeACPStdio)
+	RuntimeKindACPTCP         RuntimeKind = RuntimeKind(runtimes.ModeACPTCP)
 )
 
 // Mode returns the kind as the runtimes.Mode the libraries take.
 func (rk RuntimeKind) Mode() runtimes.Mode { return runtimes.Mode(rk) }
+
+// ACP reports whether the kind is an Agent Client Protocol session.
+func (rk RuntimeKind) ACP() bool { return rk.Mode().ACP() }
 
 // validate reports whether the value is a known kind. Empty is the
 // substrate-default sentinel ("ask selectRuntimeKind") and is not
@@ -69,10 +80,11 @@ func (rk RuntimeKind) Mode() runtimes.Mode { return runtimes.Mode(rk) }
 // non-default kind check string equality directly.
 func (rk RuntimeKind) validate() error {
 	switch rk {
-	case "", RuntimeKindSubprocess, RuntimeKindPTY, RuntimeKindStreamingStdio, RuntimeKindJsonRpcStdio, RuntimeKindServeHTTP:
+	case "", RuntimeKindSubprocess, RuntimeKindPTY, RuntimeKindStreamingStdio, RuntimeKindJsonRpcStdio, RuntimeKindServeHTTP,
+		RuntimeKindACPStdio, RuntimeKindACPTCP:
 		return nil
 	default:
-		return fmt.Errorf("unknown runtime kind %q (expected: subprocess-per-turn|pty|streaming-stdio|jsonrpc-stdio|http-sse, the older subprocess|serve-http, or empty for the runtime's default)", string(rk))
+		return fmt.Errorf("unknown runtime kind %q (expected: subprocess-per-turn|pty|streaming-stdio|jsonrpc-stdio|http-sse|acp-stdio|acp-tcp, the older subprocess|serve-http, or empty for the runtime's default)", string(rk))
 	}
 }
 
@@ -176,10 +188,20 @@ func resolveRuntimeKind(profile config.AgentProfile, opts Options) (RuntimeKind,
 // (enforced in go-agent-sessions v0.10.0's Capabilities.Validate).
 // Subprocess sets none of the lifecycle flags — it's the fallback shape
 // (one-shot fork-exec per turn), distinguished by absence rather than a
-// dedicated flag. All five kinds set BinaryRequired=true here (every
+// dedicated flag. All kinds set BinaryRequired=true here (every
 // adapter today shells out to a CLI binary).
+//
+// The ACP kinds set no lifecycle flag either: agentsessions does not drive
+// them, go-agent-wrapper's ACP client does. They report ProviderSessionID
+// because session/new returns the agent's sessionId, which the wrapper
+// hands to OnSessionID.
 func capabilitiesForRuntimeKind(kind RuntimeKind) agentsessions.Capabilities {
 	switch kind {
+	case RuntimeKindACPStdio, RuntimeKindACPTCP:
+		return agentsessions.Capabilities{
+			BinaryRequired:    true,
+			ProviderSessionID: true,
+		}
 	case RuntimeKindPTY:
 		return agentsessions.Capabilities{
 			BinaryRequired: true,

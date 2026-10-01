@@ -24,6 +24,10 @@ agent_profiles:
     executor: cli
     provider: copilot
 
+  retired-claude:
+    executor: cli
+    provider: claude
+
   codex-runner:
     executor: cli
     provider: opencode
@@ -44,7 +48,10 @@ agent_profiles:
 
 	assert.Contains(t, joined, "agent_profiles.nanite-backend: dishonest profile name: missing provider binding")
 	assert.Contains(t, joined, "agent_profiles.api-missing-provider-openai.provider: missing provider")
-	assert.Contains(t, joined, "agent_profiles.old-copilot.provider: provider \"copilot\" is not executable for executor \"cli\"")
+	// Copilot launches over ACP (CW-20261001-0097); the retired bare claude
+	// is the cli runtime that still does not.
+	assert.NotContains(t, joined, "old-copilot")
+	assert.Contains(t, joined, "agent_profiles.retired-claude.provider: provider \"claude\" is not executable for executor \"cli\": bare claude provider retired")
 	assert.Contains(t, joined, "agent_profiles.codex-runner.mystery_flag: unknown field")
 	assert.Contains(t, joined, "agent_profiles.codex-runner: dishonest profile name: suggests provider \"codex\" but config provider is \"opencode\"")
 	assert.Contains(t, joined, "agent_profiles.ollama-local.provider: unknown provider \"ollama\"")
@@ -120,8 +127,8 @@ agent_profile_aliases:
 }
 
 // The cli providers come from the go-providers runtime registry
-// (CW-20261001-0064): a registered runtime Torque cannot launch yet says
-// why, and a name the registry does not know is unknown.
+// (CW-20261001-0064): every registered runtime launches, natively or over
+// ACP, and a name the registry does not know is unknown.
 func TestLintProfilesYAML_CLIProvidersFromRegistry(t *testing.T) {
 	problems, err := config.LintProfilesYAML([]byte(`
 agent_profiles:
@@ -134,6 +141,9 @@ agent_profiles:
   worker-pi:
     executor: cli
     provider: pi
+  worker-copilot:
+    executor: cli
+    provider: copilot
   worker-open-code:
     executor: cli
     provider: open-code
@@ -153,16 +163,18 @@ agent_profiles:
 	assert.NotContains(t, all, "worker-claude-code")
 	assert.NotContains(t, all, "worker-agy")
 	assert.NotContains(t, all, "worker-open-code")
-	assert.Contains(t, all, `agent_profiles.worker-pi.provider: provider "pi" is not executable for executor "cli": pi is ACP-only and Torque does not launch ACP sessions yet`)
+	// Copilot and Pi are ACP-only and launch over ACP (CW-20261001-0097).
+	assert.NotContains(t, all, "worker-pi")
+	assert.NotContains(t, all, "worker-copilot")
 	assert.Contains(t, all, `agent_profiles.worker-gemini.provider: provider "gemini" is not available for executor "cli"`)
 }
 
 func TestLaunchableProvidersFollowLaunchSelect(t *testing.T) {
 	got := config.LaunchableProviders()
-	for _, name := range []string{"claude-code", "codex", "opencode", "antigravity", "agy"} {
+	for _, name := range []string{"claude-code", "codex", "opencode", "antigravity", "agy", "copilot", "copilot-cli", "pi", "pi-acp"} {
 		assert.Contains(t, got, name)
 	}
-	for _, name := range []string{"claude", "copilot", "pi", "gemini"} {
+	for _, name := range []string{"claude", "gemini"} {
 		assert.NotContains(t, got, name)
 	}
 }
