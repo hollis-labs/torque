@@ -133,21 +133,16 @@ func TestSelectRuntime_ACP(t *testing.T) {
 }
 
 func TestACPTaskDispatchRefusal(t *testing.T) {
-	// Pi never reaches the loopback, in any mode.
-	for _, mode := range []Mode{ModeOneShot, ModeLongLived} {
-		assert.Contains(t, acpTaskDispatchRefusal("pi", RuntimeKindACPStdio, mode), "pi-acp cannot reach Torque's loopback MCP")
-		assert.Contains(t, acpTaskDispatchRefusal("pi-acp", RuntimeKindACPStdio, mode), "pi-acp cannot reach Torque's loopback MCP")
-	}
-	// Until the wrapper delivers mcpServers, no ACP runtime can run a
-	// long-lived task worker; a one-shot run ends with its turn.
-	require.False(t, acpSessionsGetMCPServers, "update this test with the go-agent-wrapper v0.19.0 bump")
+	// Pi's bridge never passes MCP servers on, so it is refused up front.
+	assert.Contains(t, acpTaskDispatchRefusal("pi", RuntimeKindACPStdio), "pi-acp cannot reach Torque's loopback MCP")
+	assert.Contains(t, acpTaskDispatchRefusal("pi-acp", RuntimeKindACPStdio), "pi-acp cannot reach Torque's loopback MCP")
+	// Every other ACP agent is judged at launch, from its mcpCapabilities.
 	for _, provider := range []string{"copilot", "claude-code", "codex", "opencode"} {
-		assert.Equal(t, acpLongLivedTaskRunRefusal, acpTaskDispatchRefusal(provider, RuntimeKindACPStdio, ModeLongLived), provider)
-		assert.Empty(t, acpTaskDispatchRefusal(provider, RuntimeKindACPStdio, ModeOneShot), provider)
+		assert.Empty(t, acpTaskDispatchRefusal(provider, RuntimeKindACPStdio), provider)
 	}
-	assert.Equal(t, acpLongLivedTaskRunRefusal, acpTaskDispatchRefusal("copilot", RuntimeKindACPTCP, ModeLongLived))
+	assert.Empty(t, acpTaskDispatchRefusal("copilot", RuntimeKindACPTCP))
 	// Native kinds are never refused here.
-	assert.Empty(t, acpTaskDispatchRefusal("claude-code", RuntimeKindStreamingStdio, ModeLongLived))
+	assert.Empty(t, acpTaskDispatchRefusal("claude-code", RuntimeKindStreamingStdio))
 }
 
 func TestSelectRuntime_ClaudeDevModeAndAntigravityPosture(t *testing.T) {

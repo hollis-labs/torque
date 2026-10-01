@@ -42,25 +42,44 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - ACP runtimes launch from Torque: Copilot (`acp-stdio`, `acp-tcp`) and Pi,
   which run only over ACP, and Claude, Codex and OpenCode with
   `runtime_kind: acp-stdio`. go-agent-wrapper owns the ACP session; Torque
-  plants no boot dir for it and sends the task bundle and kickoff as the
-  first prompt, and `SendTurn` sends each later turn as a `session/prompt`.
-  Profile lint accepts `copilot` and `pi`. A scheduler-dispatched task run on
-  Pi is refused, at enqueue and in Boot: pi-acp drops the MCP servers it is
-  given, so its worker could not reach the loopback to comment or signal
-  review. Manual Pi sessions launch. Until the wrapper delivers MCP servers
-  (below), a long-lived task run (kind `agent`) on any ACP runtime is refused
-  the same way; one-shot runs and manual sessions launch. Known gap: go-agent-wrapper v0.15.0
-  sends `session/new` an empty `mcpServers`, so no ACP session gets the
-  loopback or mux MCP yet. Torque builds the list (`loopback` over HTTP,
-  `mux` over stdio, as planted for native runtimes) and tells the worker its
-  MCP tools are unavailable until the wrapper takes it; that field arrives in
-  go-agent-wrapper v0.19.0, and the loopback wiring activates with the bump
-  to it (CW-20261001-0097).
+  plants no boot dir for it. `session/new` carries the run's MCP servers
+  under the names native boot dirs use (go-agent-wrapper v0.19.0,
+  CW-20261001-0120): `loopback` over HTTP, and the daemon's `mux` over stdio
+  only under `permission_mode: bypassPermissions`. Every other posture,
+  unset included, offers the loopback alone, as for Codex
+  (CW-20261001-0110): whether an ACP agent asks before running an MCP tool
+  is unverified, and Torque answers no ACP permission request yet. The task bundle and kickoff are the first prompt, sent
+  once the session exists so the kickoff can say whether the loopback's
+  tools are there, and `SendTurn` sends each later turn as a
+  `session/prompt`. The session's ACP diagnostics (the agent's stderr,
+  dropped MCP servers) go to its `session.log`. Profile lint accepts
+  `copilot` and `pi`.
+
+  A scheduler-dispatched task run on Pi is refused, at enqueue and in Boot:
+  pi-acp passes no MCP server to Pi, so its worker could not comment or
+  signal review. Any other agent that does not advertise
+  `mcpCapabilities.http` is not sent the loopback; a long-lived task run on
+  one is stopped at launch for the same reason. One-shot runs and manual
+  sessions launch (CW-20261001-0097).
+- An ACP agent's permission requests are answered from the profile's
+  `permission_mode` (CW-20261001-0113); they were all declined. `plan`
+  grants nothing; `default` and unset grant read-only tool kinds (`read`,
+  `search`, `think`); `acceptEdits` also grants `edit`, but not `delete` or
+  `move`, which ACP classes apart from edits; `bypassPermissions` grants
+  every kind. `execute`, `fetch` and any other or unknown kind are granted
+  only under `bypassPermissions`. A grant always takes the agent's
+  `allow_once`, never `allow_always`, and is declined when the agent offers
+  no `allow_once`; a decline takes `reject_once`. Each decision (kind, tool,
+  option) is written to the session log. An agent may run some operations
+  without asking, so this is not an execution gate.
 - Open-source project documents: `CHANGELOG.md`, `CONTRIBUTING.md`,
   `SECURITY.md`, `TRADEMARK.md`; MIT `LICENSE`.
 
 ### Changed
 
+- go-agent-wrapper v0.19.0, for ACP sessions' MCP servers (above). Its
+  v0.18.0 change to the wrapper's own `plant` package does not reach Torque,
+  which plants through agentkit.
 - go-agent-wrapper v0.17.1, agentkit v0.14.2 and go-providers v0.36.0 (with
   go-llm-types v0.5.1 and go-runtime-events v0.2.1). Per-turn runtimes always
   report typed events: a denied tool or a failed sign-in now also appears as
@@ -162,6 +181,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- Thinking from Claude, Codex, OpenCode and Pi over ACP is recorded as
+  thinking, not as the agent's output. Their ACP thought chunks are marked
+  only `phase: "thought"`, which Torque's event sink did not read
+  (CW-20261001-0120).
 - A Codex app-server session whose output reader fails on a read error now
   reads as not alive (agentkit v0.14.1), so Torque's session poller stops it
   and its session row goes terminal. Before, the reader stopped silently and
