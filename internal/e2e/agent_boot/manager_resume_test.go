@@ -138,10 +138,11 @@ func TestManagerResume_ClaudeCode_ResumesTheCheckpointsSession(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), newID) })
 
-	require.Eventually(t, func() bool { return len(fake.Calls()) > 0 }, 5*time.Second, 20*time.Millisecond)
+	_ = firstCall(t, fake)
 	got, ok := fake.Call(0).ArgAfter("--resume")
 	require.True(t, ok, "claude must be launched with --resume: %v", fake.Call(0).Args)
 	assert.Equal(t, hint, got)
+	assertStrictOnce(t, fake.Call(0).Args)
 
 	sess, err := cd.Manager.Get(newID)
 	require.NoError(t, err)
@@ -189,8 +190,7 @@ func TestManagerResume_NoIDOrOtherRuntime_FreshBootWithKickoff(t *testing.T) {
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), newID) })
 
-				require.Eventually(t, func() bool { return len(fake.Calls()) > 0 }, 5*time.Second, 20*time.Millisecond,
-					"the kickoff runs a first turn")
+				_ = waitCalls(t, fake, 1)
 				assert.False(t, fake.Call(0).HasArg("--resume"), "a fresh boot: %v", fake.Call(0).Args)
 
 				sess, err := cd.Manager.Get(newID)
@@ -244,7 +244,7 @@ func TestManagerResume_LostProviderSession_BootsFreshOnce(t *testing.T) {
 	require.NoError(t, err, "a lost provider session boots fresh rather than failing the resume")
 	t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), newID) })
 
-	require.Eventually(t, func() bool { return len(fake.Calls()) > 1 }, 5*time.Second, 20*time.Millisecond)
+	_ = waitCalls(t, fake, 2)
 	got, ok := fake.Call(0).ArgAfter("--resume")
 	require.True(t, ok)
 	assert.Equal(t, lostID, got, "the resume was tried first")
@@ -317,7 +317,7 @@ func TestManagerResume_RealCheckpointThenResume_ThreadsTheID(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), newID) })
 
-			require.Eventually(t, func() bool { return len(fake.Calls()) > 1 }, 5*time.Second, 20*time.Millisecond)
+			_ = waitCalls(t, fake, 2)
 			got, ok := fake.Call(1).ArgAfter("--resume")
 			require.True(t, ok, "the resumed launch carries --resume: %v", fake.Call(1).Args)
 			assert.Equal(t, capturedID, got)

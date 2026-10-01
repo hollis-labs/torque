@@ -74,7 +74,9 @@ func AgentDeps(
 	// loopback (existing behavior). Non-empty Command → plants gain
 	// a parallel `mux` MCP server entry that spawns Mux as an stdio
 	// child, exposing Vanta + cross-task torque + cerberus to the
-	// spawned agent.
+	// spawned agent, for the sessions that get one: not a Claude worker
+	// unless its profile names mux_servers (plantsMux,
+	// CW-20261001-0226).
 	muxCfg := resolveMuxConfig()
 
 	deps := &agent.Dependencies{

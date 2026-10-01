@@ -63,12 +63,25 @@ func runProfilesLint(out io.Writer, path string) error {
 		return nil
 	}
 
+	errs := 0
 	for _, problem := range problems {
+		message := problem.Message
+		if problem.Warning {
+			message = "warning: " + message
+		} else {
+			errs++
+		}
 		if problem.Line > 0 {
-			_, _ = fmt.Fprintf(out, "%s:%d: %s: %s\n", path, problem.Line, problem.Path, problem.Message)
+			_, _ = fmt.Fprintf(out, "%s:%d: %s: %s\n", path, problem.Line, problem.Path, message)
 			continue
 		}
-		_, _ = fmt.Fprintf(out, "%s: %s: %s\n", path, problem.Path, problem.Message)
+		_, _ = fmt.Fprintf(out, "%s: %s: %s\n", path, problem.Path, message)
 	}
-	return fmt.Errorf("profiles lint failed: %d problem(s)", len(problems))
+	if errs == 0 {
+		// Warnings tell the operator what a profile grants; they do not fail
+		// the lint.
+		_, _ = fmt.Fprintf(out, "profiles OK with %d warning(s): %s\n", len(problems), path)
+		return nil
+	}
+	return fmt.Errorf("profiles lint failed: %d problem(s)", errs)
 }

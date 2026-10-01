@@ -13,6 +13,8 @@ import (
 	"github.com/hollis-labs/go-agent-wrapper/launch"
 	"github.com/hollis-labs/go-providers/registry"
 	"gopkg.in/yaml.v3"
+
+	"github.com/hollis-labs/torque/internal/runtimetoken"
 )
 
 // ProfileLintProblem is one lint finding in a profiles.yaml file.
@@ -20,13 +22,21 @@ type ProfileLintProblem struct {
 	Line    int
 	Path    string
 	Message string
+	// Warning marks a finding that is not an error: the profile loads and
+	// runs, and the operator is told what it grants. `torque profiles lint`
+	// prints it and does not fail on it.
+	Warning bool
 }
 
 func (p ProfileLintProblem) String() string {
-	if p.Line > 0 {
-		return fmt.Sprintf("line %d: %s: %s", p.Line, p.Path, p.Message)
+	prefix := ""
+	if p.Warning {
+		prefix = "warning: "
 	}
-	return fmt.Sprintf("%s: %s", p.Path, p.Message)
+	if p.Line > 0 {
+		return fmt.Sprintf("line %d: %s: %s%s", p.Line, p.Path, prefix, p.Message)
+	}
+	return fmt.Sprintf("%s: %s%s", p.Path, prefix, p.Message)
 }
 
 type profileProviderSpec struct {
@@ -330,6 +340,9 @@ func lintProfileDefinition(line int, name string, profile AgentProfile) []Profil
 		})
 	}
 
+	problems = append(problems, lintMuxServers(line, basePath, profile)...)
+	problems = append(problems, lintClaudeACP(line, basePath, profile)...)
+
 	if prob, ok := dishonestProfileNameProblem(line, name, provider); ok {
 		problems = append(problems, prob)
 	}
@@ -445,4 +458,70 @@ func allowedAgentProfileFields() map[string]struct{} {
 		}
 	}
 	return out
+}
+
+// lintMuxServers checks a profile's mux_servers (CW-20261001-0226): each name
+// must be a known mux server (an error), cerberus is warned about because it
+// grants deploy and ssh, and a Codex or ACP profile is told the grant takes
+// effect only under bypassPermissions.
+func lintMuxServers(line int, basePath string, profile AgentProfile) []ProfileLintProblem {
+	if len(profile.MuxServers) == 0 {
+		return nil
+	}
+	path := basePath + ".mux_servers"
+	var problems []ProfileLintProblem
+	for _, msg := range validateMuxServers(profile.MuxServers) {
+		problems = append(problems, ProfileLintProblem{Line: line, Path: path, Message: msg})
+	}
+	for _, g := range profile.DangerousMuxGrants() {
+		problems = append(problems, ProfileLintProblem{
+			Line: line, Path: path, Warning: true,
+			Message: fmt.Sprintf("%s grants %s", g.Server, g.Grants),
+		})
+	}
+	if muxNeedsBypass(profile) && PermissionMode(profile.PermissionMode) != PermissionModeBypass {
+		problems = append(problems, ProfileLintProblem{
+			Line: line, Path: path, Warning: true,
+			Message: fmt.Sprintf("%s sessions get mux only under permission_mode %s, so these servers are not planted for permission_mode %q", profile.Provider, PermissionModeBypass, profile.ResolvedPermissionMode()),
+		})
+	}
+	return problems
+}
+
+// muxNeedsBypass reports whether the profile's runtime gets the mux server
+// only under bypassPermissions: Codex, and every ACP runtime, where Torque
+// cannot gate mux's tools by posture (agent.plantsMux).
+func muxNeedsBypass(profile AgentProfile) bool {
+	desc, ok := registry.Lookup(profile.Provider)
+	if !ok {
+		return false
+	}
+	if desc.ID == runtimes.Codex {
+		return true
+	}
+	mode := desc.DefaultMode
+	if tok, err := runtimetoken.NormalizeProfile(profile.RuntimeKind); err == nil && tok.Mode != "" {
+		mode = tok.Mode
+	}
+	return mode.ACP()
+}
+
+// lintClaudeACP warns about a Claude profile on an ACP runtime kind
+// (CW-20261001-0226). Native Claude is launched with --strict-mcp-config, so
+// it loads only the MCP servers Torque plants; over ACP Claude runs behind a
+// third-party bridge that takes no such flag, so Torque cannot confirm that
+// it loads only the servers it sends in session/new.
+func lintClaudeACP(line int, basePath string, profile AgentProfile) []ProfileLintProblem {
+	desc, ok := registry.Lookup(profile.Provider)
+	if !ok || desc.ID != runtimes.Claude {
+		return nil
+	}
+	tok, err := runtimetoken.NormalizeProfile(profile.RuntimeKind)
+	if err != nil || tok.Mode == "" || !tok.Mode.ACP() {
+		return nil
+	}
+	return []ProfileLintProblem{{
+		Line: line, Path: basePath + ".runtime_kind", Warning: true,
+		Message: fmt.Sprintf("%s over %s cannot be launched with --strict-mcp-config (the ACP bridge takes no such flag), so Torque cannot confirm it loads only the MCP servers it plants; native claude-code (streaming-stdio) does", profile.Provider, tok.Mode),
+	}}
 }

@@ -43,10 +43,11 @@ func TestResumeSession_ClaudeCode_LaunchesWithResumeArg(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), sess.ID) })
 
-	require.Eventually(t, func() bool { return len(fake.Calls()) > 0 }, 5*time.Second, 20*time.Millisecond)
+	_ = firstCall(t, fake)
 	got, ok := fake.Call(0).ArgAfter("--resume")
 	require.True(t, ok, "claude must be launched with --resume: %v", fake.Call(0).Args)
 	assert.Equal(t, providerSessionID, got)
+	assertStrictOnce(t, fake.Call(0).Args)
 }
 
 // opencode run (subprocess-per-turn) is spawned with --session <id>.
@@ -66,7 +67,7 @@ func TestResumeSession_Opencode_LaunchesWithSessionArg(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), sess.ID) })
 
-	require.Eventually(t, func() bool { return len(fake.Calls()) > 0 }, 5*time.Second, 20*time.Millisecond)
+	_ = firstCall(t, fake)
 	got, ok := fake.Call(0).ArgAfter("--session")
 	require.True(t, ok, "opencode run must be launched with --session: %v", fake.Call(0).Args)
 	assert.Equal(t, providerSessionID, got)
@@ -115,7 +116,7 @@ func TestResumeSession_FreshBootThenResume_ThreadsTheCapturedID(t *testing.T) {
 			t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), sess.ID) })
 			assert.True(t, sess.Resumed)
 
-			require.Eventually(t, func() bool { return len(fake.Calls()) > 1 }, 5*time.Second, 20*time.Millisecond)
+			_ = waitCalls(t, fake, 2)
 			got, ok := fake.Call(1).ArgAfter(tc.resumeFlag)
 			require.True(t, ok, "the resumed launch carries %s: %v", tc.resumeFlag, fake.Call(1).Args)
 			assert.Equal(t, tc.capturedID, got)
@@ -155,7 +156,7 @@ func TestResumeSession_LostProviderSession_BootsFreshOnce(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(boot), "## First turn\n\n"+resumeSourceBody)
 
-	require.Eventually(t, func() bool { return len(fake.Calls()) > 1 }, 5*time.Second, 20*time.Millisecond)
+	_ = waitCalls(t, fake, 2)
 	got, ok := fake.Call(0).ArgAfter("--resume")
 	require.True(t, ok)
 	assert.Equal(t, lostID, got, "the resume was tried first")
