@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  go:
+    name: Go (make lint, make test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GOFLAGS: -mod=readonly
+      # The one private dependency. Fetched directly (not via the public
+      # proxy or checksum DB) whenever the runner has git access to it.
+      GOPRIVATE: github.com/hollis-labs/plugin
+      GIT_TERMINAL_PROMPT: "0"
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      # github.com/hollis-labs/plugin is a private repo and this workflow
+      # carries no token for it, so the download fails on GitHub's runners.
+      # Every other dependency is public. Only cmd/torque, internal/plugin
+      # and plugins/core need the private module; the fallback step below
+      # still vets and tests everything else. Granting access is tracked as
+      # a follow-up (see CW-20261001-0067).
+      - name: Download modules
+        id: modules
+        run: |
+          if go mod download; then
+            echo "private=available" >> "$GITHUB_OUTPUT"
+          else
+            echo "private=missing" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Private module unavailable::github.com/hollis-labs/plugin is private and this workflow has no access to it, so make lint and make test are skipped; the packages that need it are not built, vetted or tested in CI. See the job summary."
+          fi
+
+      - name: make lint
+        if: steps.modules.outputs.private == 'available'
+        run: make lint
+
+      - name: make test
+        if: steps.modules.outputs.private == 'available'
+        run: make test
+
+      - name: go vet and go test (packages that do not need the private module)
+        if: steps.modules.outputs.private == 'missing'
+        run: |
+          # Packages whose code or tests depend on the unreachable module
+          # report DepsErrors; everything else is vetted and tested exactly
+          # as make lint / make test would.
+          blocked=$(go list -e -test -f '{{if .DepsErrors}}{{.ImportPath}}{{end}}' ./... \
+            | sed -E 's/ \[.*//; s/\.test$//; s/_test$//' | sort -u)
+          pkgs=$(go list -e -f '{{.ImportPath}}' ./... | grep -vxF -f <(printf '%s\n' $blocked))
+          {
+            echo "### Go: private module unavailable"
+            echo
+            echo "\`github.com/hollis-labs/plugin\` could not be fetched, so these packages were **not** built, vetted or tested:"
+            echo
+            printf -- '- `%s`\n' $blocked
+            echo
+            echo "All $(echo "$pkgs" | wc -l) other packages ran \`go vet\` and \`go test -v -count=1\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+          go vet $pkgs
+          go test -v -count=1 $pkgs
+
+  gui:
+    name: GUI (npm ci, build, vitest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/gui
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/gui/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - run: npm run test:run

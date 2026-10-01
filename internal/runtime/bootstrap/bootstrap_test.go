@@ -75,3 +75,19 @@ func TestBootstrapExecutorsListAll(t *testing.T) {
 	list := reg.List()
 	assert.GreaterOrEqual(t, len(list), 2, "should have at least cli and api executors")
 }
+
+// NewExecutorRegistry plus Executors is the registry torque serve dispatches
+// through and torque mcp validates task executors against
+// (CW-20260910-0087); both processes must see the same names.
+func TestNewExecutorRegistryNames(t *testing.T) {
+	deps := &agent.Dependencies{
+		Profiles: config.ProfileMap{"default": {Executor: "cli", Provider: "claude-code"}},
+		Tools:    toolbroker.NewDefault(),
+	}
+	deps.Sessions = agent.NewManager(deps)
+
+	reg := bootstrap.NewExecutorRegistry()
+	assert.Equal(t, []string{"mock"}, reg.List())
+	require.NoError(t, bootstrap.Executors(reg, deps))
+	assert.Equal(t, []string{"api", "cli", "mock"}, reg.List())
+}

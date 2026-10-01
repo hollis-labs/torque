@@ -189,14 +189,12 @@ func (r *resolver) resolve() (string, error) {
 // resolveFromKeychain extracts the OAuth access token from the macOS
 // keychain entry written by `claude` interactive login. Returns an error
 // (not exit) so main() can format the stderr message uniformly.
+//
+// The macOS-only gate lives on the production accessor (macOSKeychain),
+// not here: everything in this function past the read is platform-neutral,
+// and keeping the gate there lets the tests drive it with a fake keychain
+// on any OS.
 func (r *resolver) resolveFromKeychain() (string, error) {
-	if runtime.GOOS != "darwin" {
-		return "", fmt.Errorf(
-			"keychain fallback only available on macOS (GOOS=%s); "+
-				"set ANTHROPIC_API_KEY in env or run `claude setup-token` to generate one",
-			runtime.GOOS)
-	}
-
 	user := os.Getenv("USER")
 	if user == "" {
 		// LOGNAME is the POSIX-portable spelling; some daemon contexts (e.g.
@@ -410,10 +408,23 @@ func rewriteKeychainPayload(raw, accessToken, refreshToken string, expiresAt int
 }
 
 // macOSKeychain is the production keychainAccessor implementation,
-// shelling out to the `security` binary.
+// shelling out to the `security` binary. Off macOS both methods fail with
+// errKeychainUnsupported before running anything.
 type macOSKeychain struct{}
 
+// errKeychainUnsupported is the error the production accessor returns off
+// macOS, where there is no `security` keychain to read.
+func errKeychainUnsupported() error {
+	return fmt.Errorf(
+		"keychain fallback only available on macOS (GOOS=%s); "+
+			"set ANTHROPIC_API_KEY in env or run `claude setup-token` to generate one",
+		runtime.GOOS)
+}
+
 func (macOSKeychain) Read(account string) (string, error) {
+	if runtime.GOOS != "darwin" {
+		return "", errKeychainUnsupported()
+	}
 	cmd := exec.Command("security",
 		"find-generic-password",
 		"-s", keychainServiceName,
@@ -449,6 +460,9 @@ func (macOSKeychain) Read(account string) (string, error) {
 }
 
 func (macOSKeychain) Write(account, payload string) error {
+	if runtime.GOOS != "darwin" {
+		return errKeychainUnsupported()
+	}
 	// `security add-generic-password -U` updates in place when the entry
 	// exists, but historical reports show edge cases where ACLs end up
 	// stripped. Delete-then-add is the documented-safe path; failure of
