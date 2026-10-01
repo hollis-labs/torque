@@ -17,11 +17,12 @@ func TestRunCompletedEventPayload_MinimalShape(t *testing.T) {
 	got := runCompletedEventPayload(&executor.ExecutionResult{
 		Status: "done",
 		Cost:   0.123,
-	})
+	}, ResolvedCost{Cost: 0.123, Source: CostSourceProvider})
 	var decoded map[string]any
 	require.NoError(t, json.Unmarshal([]byte(got), &decoded))
 	assert.Equal(t, "done", decoded["status"])
-	assert.Equal(t, 0.123, decoded["cost"])
+	assert.Equal(t, 0.123, decoded["cost"], "the resolved cost, not the executor's")
+	assert.Equal(t, "provider", decoded["cost_source"])
 	assert.NotContains(t, decoded, "verification_ran")
 	assert.NotContains(t, decoded, "tool_use_histogram")
 	assert.NotContains(t, decoded, "commits_on_run_branch")
@@ -39,7 +40,7 @@ func TestRunCompletedEventPayload_PopulatedVerification(t *testing.T) {
 		VerificationRan:    true,
 		CommitsOnRunBranch: 3,
 		ToolUseHistogram:   map[string]int{"Edit": 4, "Bash": 1},
-	})
+	}, ResolvedCost{Cost: 0.123, Source: CostSourceProvider})
 	var decoded map[string]any
 	require.NoError(t, json.Unmarshal([]byte(got), &decoded))
 	assert.Equal(t, "review", decoded["status"])
@@ -65,7 +66,7 @@ func TestRunCompletedEventPayload_VerifiedZeroCommits(t *testing.T) {
 		VerificationRan:    true,
 		CommitsOnRunBranch: 0,
 		ToolUseHistogram:   map[string]int{"Edit": 7, "Bash": 2},
-	})
+	}, ResolvedCost{Cost: 0.123, Source: CostSourceProvider})
 	var decoded map[string]any
 	require.NoError(t, json.Unmarshal([]byte(got), &decoded))
 	assert.Equal(t, "failed", decoded["status"])
@@ -87,7 +88,7 @@ func TestRunCompletedEventPayload_SkipReason(t *testing.T) {
 		Cost:                   0,
 		VerificationRan:        true,
 		VerificationSkipReason: "shared mode; engine-side commit verification skipped",
-	})
+	}, ResolvedCost{Cost: 0.123, Source: CostSourceProvider})
 	var decoded map[string]any
 	require.NoError(t, json.Unmarshal([]byte(got), &decoded))
 	assert.Equal(t, true, decoded["verification_ran"])

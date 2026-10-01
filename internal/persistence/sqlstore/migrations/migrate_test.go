@@ -489,6 +489,96 @@ func TestMigration032SessionCanceledStateRebuildPreservesRows(t *testing.T) {
 	require.True(t, sessIdx["idx_sessions_last_activity"])
 }
 
+// Migration 034 adds cache and provenance columns to runs and cost_ledger
+// (CW-20260912-0003). On a database at 033 holding runs and ledger rows from
+// before it, nothing is lost or rewritten: every existing value is intact, the
+// new columns take their defaults (a run's cost_source is the empty string,
+// meaning recorded before provenance, the ledger's existing sources are kept, the new token
+// counts and the provider/estimated split are 0), the new columns accept
+// values, and a second Run is a no-op.
+func TestMigration034RunCostProvenanceKeepsRows(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	applyMigrationFilesThroughAndMarkApplied(t, db, "033_checkpoint_escalated_at.sql")
+
+	_, err = db.Exec(`INSERT INTO tasks (id, title) VALUES ('T34-pre', 'before 034')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO runs (id, task_id, executor, status, started_at, prompt_tokens, completion_tokens, cost)
+		VALUES (1, 'T34-pre', 'cli', 'done', '2026-09-12 01:02:03', 21843564, 58037, 110.95893),
+		       (2, 'T34-pre', 'cli', 'done', '2026-09-12 02:02:03', 36, 1804, 0)`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO cost_ledger (task_id, run_id, cost, prompt_tokens, completion_tokens, cost_source)
+		VALUES ('T34-pre', 1, 110.95893, 21843564, 58037, 'models_dev'),
+		       ('T34-pre', 2, 0, 36, 1804, 'unknown'),
+		       ('T34-pre', 2, 0.01, 0, 0, 'executor')`)
+	require.NoError(t, err)
+	var runsBefore, ledgerBefore int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM runs`).Scan(&runsBefore))
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM cost_ledger`).Scan(&ledgerBefore))
+
+	_, err = db.Exec(`SELECT cost_source FROM runs LIMIT 0`)
+	require.Error(t, err, "runs.cost_source should not exist before 034")
+
+	_, err = db.Exec(`PRAGMA foreign_keys = ON`)
+	require.NoError(t, err)
+	require.NoError(t, migrations.Run(db), "production migration runner should apply 034")
+	assertNoForeignKeyViolations(t, db)
+
+	var runsAfter, ledgerAfter int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM runs`).Scan(&runsAfter))
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM cost_ledger`).Scan(&ledgerAfter))
+	require.Equal(t, runsBefore, runsAfter, "no run lost")
+	require.Equal(t, ledgerBefore, ledgerAfter, "no ledger row lost")
+
+	// Existing runs: values intact, new columns at their defaults.
+	var prompt, completion, cacheRead, cacheWrite int
+	var cost float64
+	var costSource string
+	require.NoError(t, db.QueryRow(`SELECT prompt_tokens, completion_tokens, cost, cache_read_tokens, cache_write_tokens, cost_source
+		FROM runs WHERE id = 1`).Scan(&prompt, &completion, &cost, &cacheRead, &cacheWrite, &costSource))
+	require.Equal(t, 21843564, prompt)
+	require.Equal(t, 58037, completion)
+	require.InDelta(t, 110.95893, cost, 1e-9)
+	require.Zero(t, cacheRead)
+	require.Zero(t, cacheWrite)
+	require.Equal(t, "", costSource, "a run recorded before provenance has no cost_source")
+
+	// Existing ledger rows: values and sources intact, the split at 0.
+	rows, err := db.Query(`SELECT cost_source, cost, cache_read_tokens, cache_write_tokens, provider_cost, estimated_cost
+		FROM cost_ledger ORDER BY id`)
+	require.NoError(t, err)
+	defer rows.Close()
+	var sources []string
+	for rows.Next() {
+		var src string
+		var c, pc, ec float64
+		var cr, cw int
+		require.NoError(t, rows.Scan(&src, &c, &cr, &cw, &pc, &ec))
+		require.Zero(t, cr)
+		require.Zero(t, cw)
+		require.Zero(t, pc)
+		require.Zero(t, ec)
+		sources = append(sources, src)
+	}
+	require.NoError(t, rows.Err())
+	require.Equal(t, []string{"models_dev", "unknown", "executor"}, sources, "the ledger's existing sources are kept")
+
+	// The new columns take values.
+	_, err = db.Exec(`INSERT INTO runs (id, task_id, executor, status, cache_read_tokens, cache_write_tokens, cost_source)
+		VALUES (3, 'T34-pre', 'cli', 'done', 132711, 20565, 'provider')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO cost_ledger (task_id, run_id, cost, cost_source, cache_read_tokens, cache_write_tokens, provider_cost, estimated_cost)
+		VALUES ('T34-pre', 3, 0.1904, 'provider', 132711, 20565, 0.1904, 0)`)
+	require.NoError(t, err)
+
+	require.NoError(t, migrations.Run(db), "a second Run changes nothing")
+	var applied int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = '034_run_cost_provenance.sql'`).Scan(&applied))
+	require.Equal(t, 1, applied)
+}
+
 func applyMigrationFilesThroughAndMarkApplied(t *testing.T, db *sql.DB, through string) {
 	t.Helper()
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (

@@ -40,7 +40,13 @@ type SchedulerStatus struct {
 	QueueDepth          int     `json:"queue_depth"`
 	TelemetryQueueDepth int     `json:"telemetry_queue_depth"`
 	TotalCost           float64 `json:"total_cost"`
-	Subscribers         int     `json:"subscribers"`
+	// TotalCostBySource splits TotalCost by each ledger row's cost source,
+	// so an agent can tell provider-reported cost from estimates: provider,
+	// estimate, mixed and none since migration 034, and the older
+	// executor, models_dev (cache-unaware estimates) and unknown rows under
+	// their own names (CW-20260912-0003).
+	TotalCostBySource map[string]float64 `json:"total_cost_by_source,omitempty"`
+	Subscribers       int                `json:"subscribers"`
 	// StaleHeartbeatThresholdSeconds is the number of seconds since a
 	// worker's last heartbeat after which it is considered stale and its
 	// row is pruned by the next scheduler tick. Surfaced here so operators
@@ -53,6 +59,12 @@ type SchedulerStatus struct {
 // dispatches them to executors via a worker pool, and handles results
 // through the lifecycle manager.
 type Scheduler struct {
+	// unresolvedProfiles remembers, for unresolvedProfileTTL, the task
+	// profiles that resolved to no provider (TaskProfile -> expiry), so cost
+	// resolution does not re-log config's "profile not found" warning on every
+	// completion of a task whose profile is not in the registry.
+	unresolvedProfiles sync.Map
+
 	store      *sqlstore.Store
 	queue      *queue.Queue
 	registry   *executor.Registry
@@ -278,7 +290,13 @@ func (s *Scheduler) Status() SchedulerStatus {
 	if s.telemetryWriter != nil {
 		telemetryDepth, _ = s.telemetryWriter.Depth(context.Background())
 	}
-	total, _ := s.cost.GlobalTotal()
+	// One read of the ledger gives both figures, so total_cost is exactly the
+	// sum of its per-source split, never two reads that straddle a write.
+	bySource, _ := s.cost.TotalsBySource()
+	var total float64
+	for _, v := range bySource {
+		total += v
+	}
 
 	return SchedulerStatus{
 		Enabled:                        enabled,
@@ -287,6 +305,7 @@ func (s *Scheduler) Status() SchedulerStatus {
 		QueueDepth:                     depth,
 		TelemetryQueueDepth:            telemetryDepth,
 		TotalCost:                      total,
+		TotalCostBySource:              bySource,
 		Subscribers:                    s.bus.SubscriberCount(),
 		StaleHeartbeatThresholdSeconds: s.cfg.StaleSeconds,
 	}
@@ -663,25 +682,31 @@ func (s *Scheduler) recoverStuckTask(ctx context.Context, mode healthscan.Mode, 
 		log.Printf("[healthscan] %s recovery: list running runs for %s: %v",
 			mode, a.TaskID, rerr)
 	}
+	var reclaimedRuns []sqlstore.RunRecord
+	lost := 0 // runs that finished before they could be reclaimed
 	for _, r := range runs {
-		if werr := s.stateWriter.Submit(ctx, "scheduler_stuck_task_recovery", func(tx *sqlstore.WriteTx) error {
-			if err := tx.CompleteRun(r.ID, sqlstore.RunCompletion{
-				Status:       "failed",
-				ErrorMessage: "orphaned: no worker heartbeat, auto-recovered by session-recovery sweep",
-			}); err != nil {
-				return err
-			}
-			_, err := tx.AppendRunEvent(&sqlstore.RunEventRecord{
-				RunID:   sql.NullInt64{Int64: r.ID, Valid: true},
-				TaskID:  a.TaskID,
-				Type:    "run_orphan_recovered",
-				Payload: `{"reason":"no_worker_heartbeat","source":"session_recovery"}`,
-			})
-			return err
-		}); werr != nil {
+		reclaimed, werr := s.reclaimRun(ctx, "scheduler_stuck_task_recovery", r.ID, a.TaskID,
+			"orphaned: no worker heartbeat, auto-recovered by session-recovery sweep",
+			`{"reason":"no_worker_heartbeat","source":"session_recovery"}`)
+		switch {
+		case werr != nil:
 			log.Printf("[healthscan] %s recovery: fail run %d for %s: %v",
 				mode, r.ID, a.TaskID, werr)
+		case reclaimed:
+			reclaimedRuns = append(reclaimedRuns, r)
+		default:
+			lost++
+			log.Printf("[healthscan] %s recovery: run %d for %s finished before it could be reclaimed",
+				mode, r.ID, a.TaskID)
 		}
+	}
+	// Every run it found had finished by the time it wrote: the task is moving
+	// on through its own lifecycle, so it is neither requeued nor its
+	// worktrees cleaned up here.
+	if lost > 0 && len(reclaimedRuns) == 0 && lost == len(runs) {
+		log.Printf("[healthscan] %s recovery: %s left alone, its running run(s) finished first",
+			mode, a.TaskID)
+		return
 	}
 
 	// Re-queue the task. The status guard above means we know the task
@@ -713,7 +738,7 @@ func (s *Scheduler) recoverStuckTask(ctx context.Context, mode healthscan.Mode, 
 	// path. CleanupPerRun is idempotent and safe when the path doesn't
 	// exist, so we don't have to know which run actually got a worktree.
 	if spec := s.worktreeSpec(); spec.WorktreeEnabled() && task.WorkingDir != "" {
-		for _, r := range runs {
+		for _, r := range reclaimedRuns {
 			wtPath := worktree.PerRunPath(task.WorkingDir, spec.Root, r.ID)
 			removed, werr := worktree.CleanupPerRun(task.WorkingDir, wtPath)
 			switch {
@@ -726,6 +751,39 @@ func (s *Scheduler) recoverStuckTask(ctx context.Context, mode healthscan.Mode, 
 			}
 		}
 	}
+}
+
+// reclaimRun fails a run a reaper believes orphaned and records the
+// run_orphan_recovered event, in one transaction, only while the run is still
+// `running`. It reports whether it did. A run that finished between the
+// reaper's read and its write (its worker was only slow, or finishing) keeps
+// its status, tokens and cost, and gets no event: reclaimed is false, and the
+// caller must not requeue the task or clean up the run's worktree as if the
+// run had been lost (CW-20260912-0003).
+func (s *Scheduler) reclaimRun(ctx context.Context, op string, runID int64, taskID, message, eventPayload string) (reclaimed bool, err error) {
+	err = s.stateWriter.Submit(ctx, op, func(tx *sqlstore.WriteTx) error {
+		reclaimed = false
+		updated, err := tx.CompleteRunWithCost(runID, sqlstore.RunCompletion{
+			Status:        "failed",
+			ErrorMessage:  message,
+			CostSource:    string(CostSourceNone), // a reclaimed run has no usage to price
+			OnlyIfRunning: true,
+		}, nil)
+		if err != nil || !updated {
+			return err
+		}
+		if _, err := tx.AppendRunEvent(&sqlstore.RunEventRecord{
+			RunID:   sql.NullInt64{Int64: runID, Valid: true},
+			TaskID:  taskID,
+			Type:    "run_orphan_recovered",
+			Payload: eventPayload,
+		}); err != nil {
+			return err
+		}
+		reclaimed = true
+		return nil
+	})
+	return reclaimed && err == nil, err
 }
 
 // recoverOrphanRun reclaims a run pinned at `running` with no
@@ -775,22 +833,16 @@ func (s *Scheduler) recoverOrphanRun(ctx context.Context, mode healthscan.Mode, 
 		return
 	}
 
-	if werr := s.stateWriter.Submit(ctx, "scheduler_orphan_run_recovery", func(tx *sqlstore.WriteTx) error {
-		if err := tx.CompleteRun(a.RunID, sqlstore.RunCompletion{
-			Status:       "failed",
-			ErrorMessage: "orphaned: no worker heartbeat keyed by run_id, auto-recovered by session-recovery sweep",
-		}); err != nil {
-			return err
-		}
-		_, err := tx.AppendRunEvent(&sqlstore.RunEventRecord{
-			RunID:   sql.NullInt64{Int64: a.RunID, Valid: true},
-			TaskID:  a.TaskID,
-			Type:    "run_orphan_recovered",
-			Payload: `{"reason":"no_worker_heartbeat","source":"session_recovery"}`,
-		})
-		return err
-	}); werr != nil {
+	reclaimed, werr := s.reclaimRun(ctx, "scheduler_orphan_run_recovery", a.RunID, a.TaskID,
+		"orphaned: no worker heartbeat keyed by run_id, auto-recovered by session-recovery sweep",
+		`{"reason":"no_worker_heartbeat","source":"session_recovery"}`)
+	if werr != nil {
 		log.Printf("[healthscan] %s recovery: fail run %d: %v", mode, a.RunID, werr)
+		return
+	}
+	if !reclaimed {
+		log.Printf("[healthscan] %s recovery: run %d finished before it could be reclaimed, skipping",
+			mode, a.RunID)
 		return
 	}
 	log.Printf("[healthscan] %s recovery: orphan run %d (task %s) failed (age %s)",
@@ -879,26 +931,20 @@ func (s *Scheduler) recoverOrphanedWorker(ctx context.Context, w StaleWorker) {
 	//    skip non-running rows (a manual transition may have already
 	//    stamped canceled/superseded/killed; respect that — see
 	//    sqlstore.IsOperatorTerminalRunStatus).
+	runFinished := false // the run finished before it could be reclaimed
 	if w.RunID > 0 {
 		if run, rerr := s.store.GetRun(w.RunID); rerr != nil {
 			log.Printf("[scheduler] orphan recovery: get run %d: %v", w.RunID, rerr)
 		} else if run.Status == "running" {
-			if werr := s.stateWriter.Submit(ctx, "scheduler_orphan_recovery", func(tx *sqlstore.WriteTx) error {
-				if err := tx.CompleteRun(w.RunID, sqlstore.RunCompletion{
-					Status:       "failed",
-					ErrorMessage: "orphaned: worker process gone, auto-recovered by scheduler",
-				}); err != nil {
-					return err
-				}
-				_, err := tx.AppendRunEvent(&sqlstore.RunEventRecord{
-					RunID:   sql.NullInt64{Int64: w.RunID, Valid: true},
-					TaskID:  w.TaskID,
-					Type:    "run_orphan_recovered",
-					Payload: `{"reason":"worker_process_gone"}`,
-				})
-				return err
-			}); werr != nil {
+			reclaimed, werr := s.reclaimRun(ctx, "scheduler_orphan_recovery", w.RunID, w.TaskID,
+				"orphaned: worker process gone, auto-recovered by scheduler",
+				`{"reason":"worker_process_gone"}`)
+			switch {
+			case werr != nil:
 				log.Printf("[scheduler] orphan recovery: fail run %d: %v", w.RunID, werr)
+			case !reclaimed:
+				runFinished = true
+				log.Printf("[scheduler] orphan recovery: run %d finished before it could be reclaimed", w.RunID)
 			}
 		}
 	}
@@ -907,7 +953,9 @@ func (s *Scheduler) recoverOrphanedWorker(ctx context.Context, w StaleWorker) {
 	//    status means an operator (or another path) has already moved
 	//    it; touching it would clobber that intent — same guard the
 	//    lifecycle manager applies for late-arriving results.
-	if task.Status == "doing" {
+	if runFinished {
+		log.Printf("[scheduler] orphan recovery: %s left alone, its run finished first", w.TaskID)
+	} else if task.Status == "doing" {
 		if err := s.stateWriter.Submit(ctx, "scheduler_orphan_requeue", func(tx *sqlstore.WriteTx) error {
 			return tx.TransitionTask(w.TaskID, "todo")
 		}); err != nil {
@@ -929,7 +977,7 @@ func (s *Scheduler) recoverOrphanedWorker(ctx context.Context, w StaleWorker) {
 	//    persisting it; CleanupPerRun is idempotent and safe when the
 	//    path doesn't exist. Only attempted when per-run worktree
 	//    dispatch is on AND the task carried a working_dir.
-	if spec := s.worktreeSpec(); spec.WorktreeEnabled() && task.WorkingDir != "" && w.RunID > 0 {
+	if spec := s.worktreeSpec(); spec.WorktreeEnabled() && task.WorkingDir != "" && w.RunID > 0 && !runFinished {
 		wtPath := worktree.PerRunPath(task.WorkingDir, spec.Root, w.RunID)
 		removed, werr := worktree.CleanupPerRun(task.WorkingDir, wtPath)
 		switch {
@@ -1235,6 +1283,10 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 
 		if capturedDispatchCtx.Err() != nil && isDaemonShutdownCancel(capturedDispatchCtx) && !definitiveCompletionResult(result) {
 			reason := "daemon shutdown interrupted active worker; partial work may exist; inspect run/session logs and resume or repair manually"
+			// A killed run keeps whatever usage the executor accumulated, and
+			// is only killed while it is still running.
+			interrupted, interruptedLedger, _ := s.costWrite(&task, usageOrNil(result), sqlstore.RunStatusKilled, reason)
+			interrupted.OnlyIfRunning = true
 			if err := s.stateWriter.Submit(context.Background(), "scheduler_run_interrupted", func(tx *sqlstore.WriteTx) error {
 				var taskStatus string
 				var manual int
@@ -1248,19 +1300,11 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 				).Scan(&newerRuns); err != nil {
 					return err
 				}
-				res, err := tx.Exec(
-					`UPDATE runs SET status = ?, ended_at = ?, error_message = ?
-					 WHERE id = ? AND status = ?`,
-					sqlstore.RunStatusKilled, time.Now().UTC(), reason, capturedRunID, sqlstore.RunStatusRunning,
-				)
+				updated, err := tx.CompleteRunWithCost(capturedRunID, interrupted, interruptedLedger)
 				if err != nil {
 					return err
 				}
-				n, err := res.RowsAffected()
-				if err != nil {
-					return err
-				}
-				if n == 0 {
+				if !updated {
 					return nil
 				}
 				_, err = tx.AppendRunEvent(&sqlstore.RunEventRecord{
@@ -1311,11 +1355,9 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		// "canceled".
 		if capturedDispatchCtx.Err() != nil && (result == nil || result.Status == "") {
 			reason := "task_transition_out_of_doing"
+			comp, ledger, _ := s.costWrite(&task, usageOrNil(result), "canceled", reason)
 			if err := s.stateWriter.Submit(context.Background(), "scheduler_run_canceled", func(tx *sqlstore.WriteTx) error {
-				if err := tx.CompleteRun(capturedRunID, sqlstore.RunCompletion{
-					Status:       "canceled",
-					ErrorMessage: reason,
-				}); err != nil {
+				if _, err := tx.CompleteRunWithCost(capturedRunID, comp, ledger); err != nil {
 					return err
 				}
 				_, err := tx.AppendRunEvent(&sqlstore.RunEventRecord{
@@ -1345,11 +1387,12 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		}
 
 		if err != nil {
+			// Whatever usage the executor accumulated before it failed is
+			// recorded: the tokens were spent.
+			comp, ledger, _ := s.costWrite(&task, usageOrNil(result), "failed", err.Error())
 			if werr := s.stateWriter.Submit(context.Background(), "scheduler_run_failed", func(tx *sqlstore.WriteTx) error {
-				return tx.CompleteRun(capturedRunID, sqlstore.RunCompletion{
-					Status:       "failed",
-					ErrorMessage: err.Error(),
-				})
+				_, err := tx.CompleteRunWithCost(capturedRunID, comp, ledger)
+				return err
 			}); werr != nil {
 				log.Printf("[scheduler] run failure write failed for %s (run %d): %v", capturedTaskID, capturedRunID, werr)
 			}
@@ -1359,16 +1402,13 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 			return nil, err
 		}
 
-		runCompletedPayload := runCompletedEventPayload(result)
+		// Resolve the run's cost once, provider first then a cache-aware
+		// estimate, and write the same figure to runs.cost and the run's
+		// cost_ledger row in one transaction (CW-20260912-0003).
+		comp, ledger, cost := s.costWrite(&task, result, result.Status, result.Reason)
+		runCompletedPayload := runCompletedEventPayload(result, cost)
 		if err := s.stateWriter.Submit(context.Background(), "scheduler_run_completed", func(tx *sqlstore.WriteTx) error {
-			if err := tx.CompleteRun(capturedRunID, sqlstore.RunCompletion{
-				Status:           result.Status,
-				PromptTokens:     result.Tokens.PromptTokens,
-				CompletionTokens: result.Tokens.CompletionTokens,
-				Cost:             result.Cost,
-				ExitCode:         result.ExitCode,
-				ErrorMessage:     result.Reason,
-			}); err != nil {
+			if _, err := tx.CompleteRunWithCost(capturedRunID, comp, ledger); err != nil {
 				return err
 			}
 			_, err := tx.AppendRunEvent(&sqlstore.RunEventRecord{
@@ -1382,28 +1422,10 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 			log.Printf("[scheduler] run completion write failed for %s (run %d): %v", capturedTaskID, capturedRunID, err)
 		}
 
-		// Record cost. resolveCost decides whether the executor's reported
-		// figure is authoritative or whether to backfill from the models.dev
-		// catalog when result.Cost is 0 but tokens > 0 (Phase 2 of the
-		// modelcatalog series).
-		sprintID := ""
-		if task.SprintID.Valid {
-			sprintID = task.SprintID.String
-		}
-		cost, source := s.resolveCost(task.AgentProfile, result)
-		s.cost.Record(CostEntry{
-			TaskID:           capturedTaskID,
-			RunID:            capturedRunID,
-			SprintID:         sprintID,
-			Cost:             cost,
-			PromptTokens:     result.Tokens.PromptTokens,
-			CompletionTokens: result.Tokens.CompletionTokens,
-			Source:           source,
-		})
-
 		runCompletedSSE := map[string]interface{}{
-			"status": result.Status,
-			"cost":   result.Cost,
+			"status":      result.Status,
+			"cost":        cost.Cost,
+			"cost_source": string(cost.Source),
 		}
 		// VerificationRan is the gate for the Phase 3 observability
 		// fields. Keying off VerificationRan (not off the content
@@ -1946,10 +1968,11 @@ func mergeStringMaps(base map[string]string, overlay map[string]string) map[stri
 // see; omitting the field whenever it's 0 would make that case
 // indistinguishable from a ModeOneShot run where verification didn't
 // fire at all.
-func runCompletedEventPayload(result *executor.ExecutionResult) string {
+func runCompletedEventPayload(result *executor.ExecutionResult, cost ResolvedCost) string {
 	payload := map[string]any{
-		"status": result.Status,
-		"cost":   result.Cost,
+		"status":      result.Status,
+		"cost":        cost.Cost,
+		"cost_source": string(cost.Source),
 	}
 	if result.VerificationRan {
 		payload["verification_ran"] = true
@@ -1966,7 +1989,7 @@ func runCompletedEventPayload(result *executor.ExecutionResult) string {
 		// Fallback to the pre-Phase-3 minimal shape so observers always
 		// see something parseable. The marshal failure is logged
 		// upstream by the caller via writeq's error path.
-		return fmt.Sprintf(`{"status":%q,"cost":%v}`, result.Status, result.Cost)
+		return fmt.Sprintf(`{"status":%q,"cost":%v,"cost_source":%q}`, result.Status, cost.Cost, cost.Source)
 	}
 	return string(b)
 }

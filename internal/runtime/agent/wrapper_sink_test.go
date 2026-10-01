@@ -53,6 +53,17 @@ func TestWrapperSink_TurnCompletedWithUsage_EmitsUsageThenDone(t *testing.T) {
 	assert.Equal(t, 1, done)
 }
 
+// go-agent-wrapper sums a turn's usage, provider cost included, onto its
+// terminal event; the sink hands the cost on with the tokens
+// (CW-20260912-0003).
+func TestWrapperSink_TurnCompletedUsageCarriesProviderCost(t *testing.T) {
+	usage := &llmtypes.Usage{InputTokens: 36, OutputTokens: 1804, CacheReadTokens: 132711, CacheCreationTokens: 20565, CostUSD: 0.1904}
+	got, _ := sinkEvents(t, runtimeevents.KindTurnCompleted, map[string]any{"usage": usage})
+	require.NotEmpty(t, got)
+	require.NotNil(t, got[0].Usage)
+	assert.Equal(t, *usage, *got[0].Usage)
+}
+
 func TestWrapperSink_TurnCompletedBare_EmitsDone(t *testing.T) {
 	got, done := sinkEvents(t, runtimeevents.KindTurnCompleted, nil)
 	require.Len(t, got, 1)

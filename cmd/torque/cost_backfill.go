@@ -41,6 +41,15 @@ func costBackfillCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cost-backfill",
 		Short: "Backfill unknown cost_ledger rows from models.dev",
+		Long: `Backfill unknown cost_ledger rows from models.dev.
+
+It prices a row from its stored input and output tokens alone and labels it
+models_dev. Rows written before migration 034 carry no cache token counts, so
+this is a cache-unaware estimate: it overstates a runtime whose input counts
+its cached tokens (codex), and Claude runs are skipped, since most of their
+usage is cache and an input/output-only price would understate them several
+times over. Only rows whose cost_source is unknown are candidates: a run
+recorded since migration 034 with source none is not backfilled.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCostBackfill(cmd.Context(), since, includePositiveUnknown, map[string]string{
 				"claude": assumedClaudeModel,
@@ -113,6 +122,7 @@ func runCostBackfill(ctx context.Context, since time.Duration, includePositiveUn
 		skippedNoEstimate  int
 		skippedPositive    int
 		skippedNoUpdate    int
+		skippedCacheHeavy  int
 		relabelledPositive int
 		usedAssumedModel   int
 	}
@@ -151,6 +161,10 @@ func runCostBackfill(ctx context.Context, since time.Duration, includePositiveUn
 		}
 		if usedAssumed {
 			counts.usedAssumedModel++
+		}
+		if backfillSkipsProvider(providerID) {
+			counts.skippedCacheHeavy++
+			continue
 		}
 		if row.Cost > 0 && !includePositiveUnknown {
 			counts.skippedPositive++
@@ -193,10 +207,10 @@ func runCostBackfill(ctx context.Context, since time.Duration, includePositiveUn
 		return fmt.Errorf("commit tx: %w", err)
 	}
 
-	log.Printf("[cost-backfill] since=%s considered=%d updated=%d relabelled_positive=%d skipped_no_session=%d skipped_no_profile=%d skipped_provider=%d skipped_no_model=%d skipped_no_estimate=%d skipped_positive=%d skipped_no_update=%d",
+	log.Printf("[cost-backfill] since=%s considered=%d updated=%d relabelled_positive=%d skipped_no_session=%d skipped_no_profile=%d skipped_provider=%d skipped_no_model=%d skipped_no_estimate=%d skipped_positive=%d skipped_no_update=%d skipped_cache_heavy=%d",
 		since, counts.considered, counts.updated, counts.relabelledPositive, counts.skippedNoSession,
 		counts.skippedNoProfile, counts.skippedProvider, counts.skippedNoModel, counts.skippedNoEstimate,
-		counts.skippedPositive, counts.skippedNoUpdate)
+		counts.skippedPositive, counts.skippedNoUpdate, counts.skippedCacheHeavy)
 	log.Printf("[cost-backfill] used_assumed_model=%d assumed_models=%v", counts.usedAssumedModel, assumedModels)
 	return nil
 }
@@ -246,6 +260,16 @@ func loadRunProviders(db *sql.DB, since time.Time) (map[int64]string, error) {
 		out[runID] = providerName
 	}
 	return out, rows.Err()
+}
+
+// backfillSkipsProvider reports whether a legacy ledger row for providerID is
+// left unpriced. A legacy row holds input and output tokens only, and Claude's
+// usage is mostly cache reads and writes, so an input/output-only price,
+// labelled models_dev, would understate it several times over (run 1189: about
+// $0.03 against Claude's own $0.19) and leave runs.cost out of step with the
+// ledger.
+func backfillSkipsProvider(providerID string) bool {
+	return config.CatalogProviderID(providerID) == "anthropic"
 }
 
 func loadCostBackfillCandidates(db *sql.DB, since time.Time) ([]costBackfillCandidate, error) {
