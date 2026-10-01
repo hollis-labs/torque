@@ -262,7 +262,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		LoopbackURL:      loopbackURL,
 	})
 	injection, _, err := runtimebootdir.BuildInjection(runtimebootdir.Request{
-		Provider:    mapProviderID(profile.Provider),
+		Provider:    runtimeIDFor(profile.Provider),
 		Runtime:     rtKind,
 		NativeFiles: nativeFiles,
 	})
@@ -276,7 +276,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		Role:           role,
 		AgentFilePath:  opts.AgentFile,
 		RuntimeKind:    rtKind,
-		ProviderID:     mapProviderID(profile.Provider),
+		ProviderID:     runtimeIDFor(profile.Provider),
 		ProjectID:      opts.ProjectID,
 		Workdir:        opts.Workdir,
 		WorkspaceDir:   ws.WorkspaceDir,
@@ -522,26 +522,8 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 	var bootDirExtraArgs []string
 	bootDirExtraArgs = append([]string(nil), sessionLaunch.Options.ExtraArgs...)
 
-	// opencode serve-http hot-fix: `opencode serve` does NOT accept
-	// `--dir <path>` (that's an `opencode run` flag) and exits printing
-	// help-to-stderr when an unknown flag arrives, producing the
-	// "process exited before printing listen URL" failure mode at the
-	// go-agent-sessions serve-http startup gate. The providerplant
-	// resolver currently emits OpencodeBootDirSpec.ProjectDirArg
-	// ("--dir {{.ProjectDir}}") unconditionally regardless of runtime;
-	// for serve-http mode the projectDir is already conveyed via
-	// spawnWorkdir (cwd) + OPENCODE_CONFIG_DIR env, so dropping the
-	// bootdir-derived argv splice is safe.
-	//
-	// Discovered 2026-05-21 during the PR #92 smoke test of profile
-	// opencode-claude-long against opencode 1.15.6 (4 consecutive
-	// runs failed ~300ms each before this fix).
-	//
-	// Substrate-side follow-up: providerplant.DefaultResolver should
-	// suppress ProjectDirArg when plan.Runtime == RuntimeServeHTTP
-	// (a go-agent-launch matrix or providerplant patch). When that
-	// lands, this Torque-side branch becomes redundant and can be
-	// removed.
+	// opencode serve-http builds its own serve argv; the prepared copy
+	// must not be spliced after it. See shouldDropBootDirExtraArgs.
 	if shouldDropBootDirExtraArgs(profile.Provider, runtimeKind) {
 		bootDirExtraArgs = nil
 	}
@@ -1258,13 +1240,9 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 	execution := *preparedExecution
 	execution.Access.Mode = agentlaunch.AccessOptional
 
-	// opencode serve-http hot-fix (factory.go's shouldDropBootDirExtraArgs,
-	// ported from the legacy path): `opencode serve` rejects `--dir <path>`
-	// (an `opencode run`-only flag); providerplant's OpencodeBootDirSpec
-	// emits it unconditionally. agentsessions.applyStartOptions derives
-	// StartOptions.ExtraArgs from Bindings.Argv[1:] unconditionally once
-	// PreparedExecution is set, so the trim has to happen on the bindings
-	// themselves rather than on a separate ExtraArgs override.
+	// opencode serve-http (see shouldDropBootDirExtraArgs). agentsessions
+	// derives StartOptions.ExtraArgs from Bindings.Argv[1:] once
+	// PreparedExecution is set, so the trim happens on the bindings.
 	if shouldDropBootDirExtraArgs(profile.Provider, runtimeKind) && len(execution.Bindings.Argv) > 0 {
 		execution.Bindings.Argv = execution.Bindings.Argv[:1]
 	}
@@ -1306,7 +1284,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 	// is still authoritative for all of it) into the shape wrapper.Config.
 	// Adapter needs, without reimplementing per-provider adapter construction.
 	wrapperAdapter, err := adapters.Select(adapters.Selection{
-		Provider:   adaptersProviderFor(profile.Provider),
+		Provider:   adapters.Provider(runtimeIDFor(profile.Provider)),
 		LaunchMode: launchMode,
 		CLIAdapter: cliAdapter,
 	})
@@ -1475,6 +1453,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 			state = string(StatusFailed)
 		}
 		_ = deps.UpdateSessionState(context.Background(), sessID, state, 0, nil)
+		mgr.finishWrapperSession(sessID, h)
 	}()
 
 	// Block until KindSessionReady (SendInput/Stop become safe -- mirrors
@@ -1581,8 +1560,11 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		_ = mgr.Stop(stopCtx, sessID)
 		stopCancel()
 
+		// Wait on this run's own handle, not mgr.Wait: the session's
+		// terminal state is written before h.runDone closes, so Boot returns
+		// with the row already final (CW-20261001-0041).
 		waitCtx, waitCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		exitCode, _ := mgr.Wait(waitCtx, sessID)
+		exitCode, _ := h.wait(waitCtx)
 		waitCancel()
 
 		sess.ExitCode = &exitCode
@@ -1622,24 +1604,6 @@ func mergeCallerEnvIntoPrepared(callerEnv []string, existing map[string]agentlau
 		out[key] = agentlaunch.EnvVar{Value: val, Source: "caller", Precedence: 10}
 	}
 	return out
-}
-
-// adaptersProviderFor maps Torque's config.AgentProfile.Provider string onto
-// go-agent-wrapper's adapters.Provider vocabulary. "claude-code" (Torque's
-// public profile provider name) maps to go-providers' ClaudeAdapter.Name()
-// == "claude", which is also adapters.ProviderClaude's wire value --
-// adapters.Select validates the two agree.
-func adaptersProviderFor(providerName string) adapters.Provider {
-	switch providerName {
-	case "claude-code":
-		return adapters.ProviderClaude
-	case "codex":
-		return adapters.ProviderCodex
-	case "opencode":
-		return adapters.ProviderOpenCode
-	default:
-		return adapters.Provider(providerName)
-	}
 }
 
 // adaptersLaunchModeFor maps a bootWrapper-reachable RuntimeKind onto

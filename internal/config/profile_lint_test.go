@@ -118,3 +118,38 @@ agent_profile_aliases:
 	assert.Contains(t, joined, `alias target "no-such-profile" is not a defined agent_profiles entry`)
 	assert.Contains(t, joined, "alias name collides with an agent_profiles entry")
 }
+
+// The cli providers come from the go-providers runtime registry
+// (CW-20261001-0064): a registered runtime Torque cannot launch yet says
+// why, and a name the registry does not know is unknown.
+func TestLintProfilesYAML_CLIProvidersFromRegistry(t *testing.T) {
+	problems, err := config.LintProfilesYAML([]byte(`
+agent_profiles:
+  worker-claude-code:
+    executor: cli
+    provider: claude-code
+  worker-agy:
+    executor: cli
+    provider: agy
+  worker-pi:
+    executor: cli
+    provider: pi
+  worker-open-code:
+    executor: cli
+    provider: open-code
+  worker-gemini:
+    executor: cli
+    provider: gemini
+`))
+	require.NoError(t, err)
+	var joined []string
+	for _, p := range problems {
+		joined = append(joined, p.String())
+	}
+	all := strings.Join(joined, "\n")
+	assert.NotContains(t, all, "worker-claude-code")
+	assert.Contains(t, all, `agent_profiles.worker-agy.provider: provider "agy" is not executable for executor "cli": Torque builds antigravity adapters only under the names claude-code, codex and opencode`)
+	assert.Contains(t, all, `agent_profiles.worker-pi.provider: provider "pi" is not executable for executor "cli": pi is ACP-only`)
+	assert.Contains(t, all, `agent_profiles.worker-open-code.provider: provider "open-code" is not executable for executor "cli"`)
+	assert.Contains(t, all, `agent_profiles.worker-gemini.provider: provider "gemini" is not available for executor "cli"`)
+}

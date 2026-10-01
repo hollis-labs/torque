@@ -155,11 +155,16 @@ func TestSelectRuntimeKind(t *testing.T) {
 		want        RuntimeKind
 		wantErr     bool
 	}{
-		// Per-provider defaults (profileKind="" → matrix).
+		// Per-runtime defaults (profileKind="" → the registry descriptor's
+		// DefaultMode).
 		{"codex default → jsonrpc-stdio", "codex", "", RuntimeKindJsonRpcStdio, false},
 		{"claude-code default → streaming-stdio", "claude-code", "", RuntimeKindStreamingStdio, false},
-		{"claude default → subprocess", "claude", "", RuntimeKindSubprocess, false},
-		{"opencode default → subprocess", "opencode", "", RuntimeKindSubprocess, false},
+		// "claude" is the registry's canonical id for the same runtime
+		// (claude-code is its alias). adapterFor still refuses the retired
+		// bare "claude" provider; this is only the kind that error carries.
+		{"claude default → streaming-stdio", "claude", "", RuntimeKindStreamingStdio, false},
+		{"opencode default → subprocess-per-turn", "opencode", "", RuntimeKindSubprocess, false},
+		{"unknown provider → subprocess-per-turn, adapterFor errors", "gemini", "", RuntimeKindSubprocess, false},
 
 		// Profile override wins.
 		{"profile override: codex subprocess (escape hatch)", "codex", "subprocess", RuntimeKindSubprocess, false},
@@ -171,8 +176,18 @@ func TestSelectRuntimeKind(t *testing.T) {
 		// go-providers v0.23.0 + go-agent-sessions v0.10.0.
 		{"profile override: opencode serve-http (long-lived opt-in)", "opencode", "serve-http", RuntimeKindServeHTTP, false},
 
+		// Current spellings, and the older ones runtimetoken maps.
+		{"profile kind subprocess-per-turn", "codex", "subprocess-per-turn", RuntimeKindSubprocess, false},
+		{"profile kind http-sse", "opencode", "http-sse", RuntimeKindServeHTTP, false},
+		{"profile kind cli (older) → subprocess-per-turn", "opencode", "cli", RuntimeKindSubprocess, false},
+		{"profile kind app-server (older) → jsonrpc-stdio", "codex", "app-server", RuntimeKindJsonRpcStdio, false},
+		{"profile kind Serve_HTTP normalizes", "opencode", " Serve_HTTP ", RuntimeKindServeHTTP, false},
+
 		// Invalid profile kind.
 		{"invalid kind → error", "codex", "tui", "", true},
+		// A leaf mode Torque cannot launch yet (ACP arrives with the
+		// registry-driven wrapper Select, CW-20260930-0134).
+		{"acp-stdio → error", "codex", "acp-stdio", "", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
