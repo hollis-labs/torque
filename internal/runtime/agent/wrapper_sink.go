@@ -171,28 +171,38 @@ func (s *torqueRuntimeEventSink) handleToolUse(_ context.Context, raw json.RawMe
 	s.emit(llmtypes.StreamEvent{Type: llmtypes.EventToolUse, ToolUse: p.ToolUse})
 }
 
-// turnCompletedPayload mirrors translateStreamEvent's two
-// llmtypes.StreamEvent -> KindTurnCompleted shapes: {"usage": ev.Usage} for
-// EventUsage and a nil/empty payload for EventDone.
-type turnCompletedPayload struct {
+// turnUsagePayload reads the usage go-agent-wrapper attaches to a turn's
+// terminal event. Since v0.13.1 usage is no longer its own turn.completed:
+// the wrapper sums it over the turn and puts it under "usage" on the turn's
+// one terminal event, turn.completed or turn.failed (CW-20260930-0137).
+type turnUsagePayload struct {
 	Usage *llmtypes.Usage `json:"usage"`
 }
 
-func (s *torqueRuntimeEventSink) handleTurnCompleted(_ context.Context, raw json.RawMessage) {
+func turnUsageFrom(raw json.RawMessage) *llmtypes.Usage {
 	if len(raw) == 0 {
-		s.emit(llmtypes.StreamEvent{Type: llmtypes.EventDone})
-		return
+		return nil
 	}
-	var p turnCompletedPayload
-	if err := json.Unmarshal(raw, &p); err != nil || p.Usage == nil {
-		s.emit(llmtypes.StreamEvent{Type: llmtypes.EventDone})
-		return
+	var p turnUsagePayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil
 	}
-	s.emit(llmtypes.StreamEvent{Type: llmtypes.EventUsage, Usage: p.Usage})
+	return p.Usage
+}
+
+// handleTurnCompleted reconstructs the turn's usage (if it reported any) and
+// then its EventDone. The order matches the legacy stream, where usage
+// arrived before done, and EventDone must always follow: it is the turn
+// boundary onDone (ModeOneShot) and the reminder pump wait on.
+func (s *torqueRuntimeEventSink) handleTurnCompleted(_ context.Context, raw json.RawMessage) {
+	if u := turnUsageFrom(raw); u != nil {
+		s.emit(llmtypes.StreamEvent{Type: llmtypes.EventUsage, Usage: u})
+	}
+	s.emit(llmtypes.StreamEvent{Type: llmtypes.EventDone})
 }
 
 // turnFailedPayload mirrors translateStreamEvent's {"error": ev.Error} shape
-// for llmtypes.EventError.
+// for llmtypes.EventError; a failed turn can also carry the turn's usage.
 type turnFailedPayload struct {
 	Error string `json:"error"`
 }
@@ -201,6 +211,9 @@ func (s *torqueRuntimeEventSink) handleTurnFailed(_ context.Context, raw json.Ra
 	var p turnFailedPayload
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &p)
+	}
+	if u := turnUsageFrom(raw); u != nil {
+		s.emit(llmtypes.StreamEvent{Type: llmtypes.EventUsage, Usage: u})
 	}
 	s.emit(llmtypes.StreamEvent{Type: llmtypes.EventError, Error: p.Error})
 }

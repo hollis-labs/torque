@@ -23,6 +23,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   per-step token usage and a done event per turn instead of plain-text lines.
   The OpenCode boot dir defines the agent in `agents/<name>.md` frontmatter
   and no longer plants `agents.json` or an `opencode.json` agent block.
+- go-agent-wrapper v0.13.1: a turn's usage now arrives on its single terminal
+  event instead of a second `turn.completed`. The wrapper event sink reads
+  usage from `turn.completed` and `turn.failed` and still emits the turn's
+  done event; without that, a wrapper-path ModeOneShot run timed out waiting
+  for its turn to finish.
 
 ### Fixed
 
