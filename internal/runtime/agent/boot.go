@@ -231,6 +231,26 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	// amendments against the planted bootdir).
 	env := composeEnv(profile, opts, agentFile)
 
+	// An ACP session plants nothing: its MCP servers go in session/new and
+	// its task bundle and kickoff ride the first turn (acp_boot.go).
+	if runtimeKind.ACP() {
+		return bootACP(ctx, deps, mgr, opts, &plantedBoot{
+			resolved:         resolved,
+			profile:          profile,
+			agentProfileName: agentProfileName,
+			runtimeKind:      runtimeKind,
+			wrapperAdapter:   selected.wrapper,
+			caps:             caps,
+			sessID:           sessID,
+			role:             role,
+			systemPrompt:     systemPrompt,
+			loopback:         loopback,
+			loopbackURL:      loopbackURL,
+			ws:               ws,
+			env:              env,
+		})
+	}
+
 	// Shared-launch preparation + boot-dir planting (CW-20260515-0020).
 	//
 	// Torque builds a go-agent-launch LaunchPlan from its own Boot inputs,
@@ -320,9 +340,13 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	// (deps.MuxCommand/MuxArgs/MuxEnv). These are runtime values, kept
 	// off the persisted-at-rest LaunchPlan deliberately.
 	prepared.PlantContext.MCPLoopbackURL = loopbackURL
-	prepared.PlantContext.SelfMCPCommand = deps.MuxCommand
-	prepared.PlantContext.SelfMCPArgs = append([]string(nil), deps.MuxArgs...)
-	prepared.PlantContext.SelfMCPEnv = muxEnvSliceToMap(deps.MuxEnv)
+	if plantsMux(profile) {
+		prepared.PlantContext.SelfMCPCommand = deps.MuxCommand
+		prepared.PlantContext.SelfMCPArgs = append([]string(nil), deps.MuxArgs...)
+		prepared.PlantContext.SelfMCPEnv = muxEnvSliceToMap(deps.MuxEnv)
+	} else if deps.MuxCommand != "" {
+		log.Printf("agent.Boot: session=%s: mux MCP not planted for codex permission_mode %q; only bypassPermissions gets it (CW-20261001-0110)", sessID, profile.PermissionMode)
+	}
 	// Plant the provider boot dir. WithAdapter pins the exact adapter
 	// Torque resolved (adapterFor) — critically the BARE-mode claude
 	// adapter, which providerplant's DefaultResolver would not select
@@ -438,7 +462,8 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 
 // plantedBoot bundles everything Boot's shared prefix (profile resolution
 // through boot-dir planting) computes, so bootLegacy and bootWrapper can
-// consume it without re-deriving or re-planting.
+// consume it without re-deriving or re-planting. bootACP takes the fields
+// computed before planting; the planting ones stay zero.
 type plantedBoot struct {
 	resolved          launchprofile.CompiledLaunchProfile
 	profile           config.AgentProfile
