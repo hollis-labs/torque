@@ -1,10 +1,10 @@
 import { useMemo } from 'react'
 import { BarMeter, type BarMeterRow } from '@hollis-labs/sysop-ui/widgets'
 import { STATUS_COLOR_VAR, STATUS_LABEL } from '@/lib/constants'
-import type { Task, TaskStatus } from '@/lib/types'
+import type { TaskStatus, TaskSummary } from '@/lib/types'
 
 export interface TaskPipelineProps {
-  tasks: Task[]
+  tasks: TaskSummary[]
   statuses?: readonly TaskStatus[]
   className?: string
   title?: string

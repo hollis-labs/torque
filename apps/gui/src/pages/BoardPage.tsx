@@ -11,7 +11,9 @@ import { RestartFrontendButton } from '@/components/domain/restart-frontend-butt
 import { SchedulerToggleButton } from '@/components/domain/scheduler-toggle-button'
 import { ScopeManagerDialog } from '@/components/domain/scope-manager-dialog'
 import { useApi } from '@/hooks/use-api'
+import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
 import { useSSE } from '@/hooks/use-sse'
+import { EVENT_REFETCH_DEBOUNCE_MS } from '@/lib/debounce'
 import { notifyError } from '@/lib/toast'
 import { DEFAULT_ACTIVE_STATUSES, TASK_STATUSES } from '@/lib/constants'
 import { saveTaskListCursor } from '@/lib/task-list-cursor'
@@ -327,11 +329,13 @@ export default function BoardPage() {
     fetchTasks()
   }, [hydrated, fetchTasks])
 
-  // Refresh on SSE events
+  // Refresh on SSE events, once per burst: each refresh pages the whole
+  // filtered task list.
+  const scheduleRefresh = useDebouncedCallback(() => void fetchTasks(), EVENT_REFETCH_DEBOUNCE_MS)
   useEffect(() => {
     if (!hydrated) return
-    if (lastEvent) fetchTasks()
-  }, [hydrated, lastEvent, fetchTasks])
+    if (lastEvent) scheduleRefresh()
+  }, [hydrated, lastEvent, scheduleRefresh])
 
   function updateParams(mutate: (params: URLSearchParams) => void) {
     setSearchParams(

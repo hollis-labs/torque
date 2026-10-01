@@ -133,6 +133,8 @@ function taskFilterParams(filter?: TaskFilter): Record<string, string | number |
   if (filter?.parent_id !== undefined) params['parent_id'] = filter.parent_id
   if (filter?.manual !== undefined) params['manual'] = filter.manual ? 'true' : 'false'
   if (filter?.include_internal) params['include_internal'] = 'true'
+  if (filter?.sort_by) params['sort_by'] = filter.sort_by
+  if (filter?.sort_dir) params['sort_dir'] = filter.sort_dir
   return params
 }
 
@@ -315,7 +317,7 @@ export class TorqueApiClient {
    * instead of paging every task to count it. `filter` narrows the cohort
    * the same way it narrows listTasks; paging fields are not accepted.
    */
-  async taskRollup(groupBy: TaskScopeKey, filter?: Omit<TaskFilter, 'limit' | 'offset'>): Promise<TaskScopeRollupResponse> {
+  async taskRollup(groupBy: TaskScopeKey, filter?: Omit<TaskFilter, 'limit' | 'offset' | 'sort_by' | 'sort_dir'>): Promise<TaskScopeRollupResponse> {
     return this.get<TaskScopeRollupResponse>('/tasks/rollup', { group_by: groupBy, ...taskFilterParams(filter) })
   }
 
@@ -332,7 +334,10 @@ export class TorqueApiClient {
     const tasks: T[] = []
     let total = 0
     let offset = startOffset
-    let nextLimit = target === undefined ? undefined : Math.min(target, TASK_LIST_PAGE_SIZE)
+    // Ask for the server's maximum page from the start. Without a limit the
+    // server answers with its default of 50 and continuation keeps that size,
+    // which quadrupled the request count (CW-20261001-0023).
+    let nextLimit = target === undefined ? TASK_LIST_PAGE_SIZE : Math.min(target, TASK_LIST_PAGE_SIZE)
 
     for (;;) {
       if (target !== undefined && target - tasks.length <= 0) {

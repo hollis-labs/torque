@@ -7,9 +7,12 @@ import { ScopeDetailHero } from '@/components/domain/scope-detail-hero'
 import { ScopeMetaCard } from '@/components/domain/scope-meta-card'
 import { ScopeTaskPanel } from '@/components/domain/scope-task-panel'
 import { useApi } from '@/hooks/use-api'
+import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
+import { usePagedTaskSummaries } from '@/hooks/use-paged-task-summaries'
 import { useSSE } from '@/hooks/use-sse'
-import { buildTaskRollup } from '@/lib/scope-metrics'
-import type { Epic, Project, TaskSummary } from '@/lib/types'
+import { EVENT_REFETCH_DEBOUNCE_MS } from '@/lib/debounce'
+import { rollupFromStatusCounts } from '@/lib/scope-metrics'
+import type { Epic, Project, TaskScopeRollupResponse } from '@/lib/types'
 
 const SSE_EVENTS = ['epic.updated', 'epic.created', 'epic.deleted', 'task.updated', 'task.created', 'task.transitioned']
 
@@ -20,20 +23,27 @@ export default function EpicDetailPage() {
   const { lastEvent } = useSSE(SSE_EVENTS)
   const [epic, setEpic] = useState<Epic | null>(null)
   const [project, setProject] = useState<Project | null>(null)
-  const [tasks, setTasks] = useState<TaskSummary[]>([])
+  const [taskRollup, setTaskRollup] = useState<TaskScopeRollupResponse | null>(null)
+  const taskPage = usePagedTaskSummaries({ epic_id: id })
+  const reloadTasks = taskPage.reload
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const loadGeneration = useRef(0)
 
-  const load = useCallback(async () => {
+  // background: an event-driven refresh, which keeps the page on screen
+  // instead of swapping in the skeleton.
+  const load = useCallback(async ({ background = false } = {}) => {
     if (!id) return
     const myGen = ++loadGeneration.current
-    setLoading(true)
-    setError(null)
+    if (!background) {
+      setLoading(true)
+      setError(null)
+    }
     try {
-      const [nextEpic, taskRes] = await Promise.all([
+      const [nextEpic, rollupRes] = await Promise.all([
         api.getEpic(id),
-        api.listTaskSummaries({ epic_id: id }),
+        api.taskRollup('epic_id', { epic_id: id }),
+        reloadTasks(),
       ])
       if (myGen !== loadGeneration.current) return
       const nextProject = nextEpic.project_id
@@ -41,26 +51,28 @@ export default function EpicDetailPage() {
         : null
       if (myGen !== loadGeneration.current) return
       setEpic(nextEpic)
-      setTasks(taskRes.tasks)
+      setTaskRollup(rollupRes)
       setProject(nextProject)
     } catch (err) {
-      if (myGen !== loadGeneration.current) return
+      // A failed background refresh leaves the loaded page in place.
+      if (myGen !== loadGeneration.current || background) return
       setError(err instanceof Error ? err.message : 'Failed to load epic')
     } finally {
       if (myGen === loadGeneration.current) setLoading(false)
     }
-  }, [api, id])
+  }, [api, id, reloadTasks])
 
   useEffect(() => {
     void load()
   }, [load])
 
+  const scheduleReload = useDebouncedCallback(() => void load({ background: true }), EVENT_REFETCH_DEBOUNCE_MS)
   useEffect(() => {
     if (!lastEvent) return
-    void load()
-  }, [lastEvent, load])
+    scheduleReload()
+  }, [lastEvent, scheduleReload])
 
-  const rollup = useMemo(() => buildTaskRollup(tasks), [tasks])
+  const rollup = useMemo(() => rollupFromStatusCounts(taskRollup?.scopes[0]?.counts ?? {}), [taskRollup])
 
   if (loading) {
     return (
@@ -121,7 +133,12 @@ export default function EpicDetailPage() {
             <ScopeMetaCard label="Description" value={epic.description || 'No description set.'} className="md:col-span-2 xl:col-span-4" />
           </div>
 
-          <ScopeTaskPanel tasks={tasks} />
+          <ScopeTaskPanel
+            tasks={taskPage.tasks}
+            total={taskPage.total}
+            onLoadMore={() => void taskPage.loadMore()}
+            loadingMore={taskPage.loadingMore}
+          />
         </div>
       </div>
     </div>
