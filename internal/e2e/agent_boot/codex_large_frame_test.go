@@ -126,15 +126,14 @@ func TestBootCodexLargeFrameUnderLineLimit(t *testing.T) {
 		"steering after a 900 KiB command output must be delivered")
 }
 
-// A frame over the limit must not silently kill the control channel:
-// either the reader keeps framing and steering is answered, or the session
-// fails with an error that names the reader — never a bare timeout while
-// the session still reads as running.
+// A frame over the old 1 MiB line limit must not kill the control channel.
+// Since agentkit v0.14.1 the reader routes lines up to 64 MiB whole
+// (CW-20261001-0086, CW-20260913-0001), so steering after a 1.5 MiB command
+// output is answered; before, the reader stopped silently and steering timed
+// out while the session still read as running.
 func TestBootCodexOversizedFrameKeepsSteeringUsable(t *testing.T) {
-	t.Skip("CW-20260913-0001: agentkit jsonrpc_stdio_session runReaderLoop ends silently on a stdout line over 1 MiB; unskip once the agentkit fix is pinned")
 	err := bootCodexLargeFrame(t, 3*1024*1024/2)
-	if err != nil {
-		require.NotErrorIs(t, err, context.DeadlineExceeded,
-			"a 1.5 MiB command output left steering to time out instead of reporting the reader failure: %v", err)
-	}
+	require.NotErrorIs(t, err, context.DeadlineExceeded,
+		"a 1.5 MiB command output left steering to time out instead of reporting the reader failure: %v", err)
+	require.NoError(t, err, "steering after a 1.5 MiB command output must be delivered")
 }

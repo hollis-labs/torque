@@ -7,19 +7,19 @@ require (
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/google/uuid v1.6.0
 	github.com/hollis-labs/agent-contracts-leaf v0.3.0
-	github.com/hollis-labs/agentkit v0.13.0
-	github.com/hollis-labs/go-agent-wrapper v0.16.0
+	github.com/hollis-labs/agentkit v0.14.2
+	github.com/hollis-labs/go-agent-wrapper v0.17.0
 	github.com/hollis-labs/go-apppaths v0.1.0
-	github.com/hollis-labs/go-llm-types v0.3.0
+	github.com/hollis-labs/go-llm-types v0.5.1
 	github.com/hollis-labs/go-mcp v0.4.3
 	github.com/hollis-labs/go-messaging v0.5.0
 	github.com/hollis-labs/go-modelsdev v0.2.0
 	github.com/hollis-labs/go-otel v0.6.1
 	github.com/hollis-labs/go-permission v0.1.0
-	github.com/hollis-labs/go-providers v0.34.1
+	github.com/hollis-labs/go-providers v0.36.0
 	github.com/hollis-labs/go-queue v0.2.0
 	github.com/hollis-labs/go-runner v0.7.0
-	github.com/hollis-labs/go-runtime-events v0.1.2
+	github.com/hollis-labs/go-runtime-events v0.2.1
 	github.com/hollis-labs/go-sandbox v0.4.1
 	github.com/hollis-labs/go-sqlite v0.1.0
 	github.com/hollis-labs/go-strutil v0.1.0
