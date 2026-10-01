@@ -39,7 +39,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   sends `session/new` an empty `mcpServers`, so no ACP session gets the
   loopback or mux MCP yet. Torque builds the list (`loopback` over HTTP,
   `mux` over stdio, as planted for native runtimes) and tells the worker its
-  MCP tools are unavailable until the wrapper takes it (CW-20261001-0097).
+  MCP tools are unavailable until the wrapper takes it; that field arrives in
+  go-agent-wrapper v0.19.0, and the loopback wiring activates with the bump
+  to it (CW-20261001-0097).
 - Open-source project documents: `CHANGELOG.md`, `CONTRIBUTING.md`,
   `SECURITY.md`, `TRADEMARK.md`; MIT `LICENSE`.
 

@@ -98,9 +98,9 @@ func acpMCPServers(loopbackURL string, deps *Dependencies) []provider.MCPServerS
 
 // attachACPMCPServers hands servers to the wrapper for session/new and
 // reports whether they reach the agent. go-agent-wrapper v0.15.0 has no
-// field for them: every ACP client it ships sends `"mcpServers": []`. Until
-// the wrapper takes a server list, this returns false and the session runs
-// without Torque's MCP tools.
+// field for them: every ACP client it ships sends `"mcpServers": []`. The
+// field arrives in v0.19.0; until Torque pins it and sets the field here,
+// this returns false and the session runs without Torque's MCP tools.
 func attachACPMCPServers(_ *wrapper.Config, _ []provider.MCPServerSpec) bool {
 	return false
 }
