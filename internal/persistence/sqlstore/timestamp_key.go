@@ -8,7 +8,7 @@ import (
 const timestampKeyLayout = "2006-01-02 15:04:05.000000000"
 
 func isTimestampSortColumn(col string) bool {
-	return col == "created_at" || col == "updated_at"
+	return col == "created_at" || col == "updated_at" || col == "started_at" || col == "ended_at" || col == "r.started_at" || col == "r.ended_at"
 }
 
 // timestampSortKey gives SQLite's canonical and legacy UTC timestamp text

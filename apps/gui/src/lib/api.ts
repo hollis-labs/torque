@@ -33,6 +33,27 @@ import type {
   BrokerRequest,
 } from './types'
 
+export interface RunQuery {
+  task_id?: string
+  project_id?: string
+  sprint_id?: string
+  epic_id?: string
+  status?: string
+  since?: string
+  until?: string
+  limit?: number
+  offset?: number
+  cursor?: string
+  sort_by?: 'started_at' | 'status' | 'duration' | 'cost'
+  sort_dir?: 'asc' | 'desc'
+  include_total?: boolean
+}
+
+export interface RunPage {
+  items: Run[]
+  meta: { returned: number; limit: number; has_more: boolean; next_cursor: string | null; total?: number }
+}
+
 export class ApiError extends Error {
   status: number
   url?: string
@@ -438,29 +459,9 @@ export class TorqueApiClient {
   // Runs
   // -------------------------
 
-  async listRuns(taskId: string): Promise<Run[]> {
-    const res = await this.get<{ runs: ApiRunRecord[] }>('/runs', { task_id: taskId })
-    return (res.runs ?? []).map(normalizeRun)
-  }
-
-  /**
-   * Aggregate feed across all tasks, newest-first. Clamped server-side to
-   * [1, 1000]; default 200. Powers the Ops dashboard widgets which need a
-   * single cross-task window instead of a per-task fan-out.
-   */
-  async listAllRuns(params?: {
-    limit?: number
-    since?: string
-    status?: string
-    project_id?: string
-  }): Promise<Run[]> {
-    const qs: Record<string, string | number | boolean | undefined> = {}
-    if (params?.limit !== undefined) qs['limit'] = params.limit
-    if (params?.since) qs['since'] = params.since
-    if (params?.status) qs['status'] = params.status
-    if (params?.project_id) qs['project_id'] = params.project_id
-    const res = await this.get<{ runs: ApiRunRecord[] }>('/runs', qs)
-    return (res.runs ?? []).map(normalizeRun)
+  async pageRuns(params: RunQuery = {}): Promise<RunPage> {
+    const res = await this.get<{ items: ApiRunRecord[]; meta: RunPage['meta'] }>('/runs', { ...params })
+    return { items: res.items.map(normalizeRun), meta: res.meta }
   }
 
   async getRun(id: number): Promise<Run> {

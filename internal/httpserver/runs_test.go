@@ -27,7 +27,7 @@ type runListResp struct {
 		Status   string
 		Provider string
 		Model    string
-	} `json:"runs"`
+	} `json:"items"`
 }
 
 // setupRunsTestServer returns an httptest server plus the underlying store
