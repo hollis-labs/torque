@@ -238,7 +238,7 @@ func TestAwaitLongLivedCompletion_SelfTransitionToReview(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	activityCh := make(chan struct{}, 1)
-	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, nil, time.Hour, time.Hour, false)
+	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, nil, time.Hour, time.Hour, false, nil)
 	assert.Equal(t, outcomeTransition, out.Kind)
 	assert.Equal(t, "review", out.TaskStatus)
 }
@@ -268,7 +268,7 @@ func TestAwaitLongLivedCompletion_IdleReap(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	activityCh := make(chan struct{}, 1)
-	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, nil, 200*time.Millisecond, time.Hour, false)
+	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, nil, 200*time.Millisecond, time.Hour, false, nil)
 	assert.Equal(t, outcomeIdle, out.Kind)
 	assert.Equal(t, 200*time.Millisecond, out.IdleFor)
 }
@@ -319,7 +319,7 @@ func TestAwaitLongLivedCompletion_HardCeiling(t *testing.T) {
 	}()
 	defer close(stop)
 
-	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, nil, time.Hour, 250*time.Millisecond, false)
+	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, nil, time.Hour, 250*time.Millisecond, false, nil)
 	assert.Equal(t, outcomeHardCeiling, out.Kind)
 	assert.Equal(t, 250*time.Millisecond, out.CeilingAt)
 }
@@ -516,7 +516,7 @@ func TestAwaitLongLivedCompletion_TaskDeadlinePreservesTransitionPrecedence(t *t
 		require.NoError(t, store.TransitionTask(taskID, "review"))
 	}()
 	activityCh := make(chan struct{}, 1)
-	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, nil, time.Hour, 100*time.Millisecond, true)
+	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, nil, time.Hour, 100*time.Millisecond, true, nil)
 	assert.Equal(t, outcomeTransition, out.Kind)
 	assert.Equal(t, "review", out.TaskStatus)
 }
@@ -552,7 +552,7 @@ func TestAwaitLongLivedCompletion_CtxCancelWhileDoing(t *testing.T) {
 		cancel()
 	}()
 	activityCh := make(chan struct{}, 1)
-	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, nil, time.Hour, time.Hour, false)
+	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, nil, time.Hour, time.Hour, false, nil)
 	assert.Equal(t, outcomeCtxCanceled, out.Kind)
 	assert.Error(t, out.CauseErr)
 }
@@ -592,7 +592,7 @@ func TestAwaitLongLivedCompletion_CtxCancelAfterSelfTransition(t *testing.T) {
 		cancel()
 	}()
 	activityCh := make(chan struct{}, 1)
-	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, nil, time.Hour, time.Hour, false)
+	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, nil, time.Hour, time.Hour, false, nil)
 	assert.Equal(t, outcomeTransition, out.Kind)
 	assert.Equal(t, "review", out.TaskStatus)
 }
@@ -623,7 +623,7 @@ func TestAwaitLongLivedCompletion_CtxCancelAfterOperatorPause(t *testing.T) {
 		cancel()
 	}()
 	activityCh := make(chan struct{}, 1)
-	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, nil, time.Hour, time.Hour, false)
+	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, nil, time.Hour, time.Hour, false, nil)
 	assert.Equal(t, outcomeTransition, out.Kind)
 	assert.Equal(t, "paused", out.TaskStatus)
 
@@ -930,7 +930,7 @@ func TestAwaitLongLivedCompletion_TerminalFailureBlocks(t *testing.T) {
 	terminalFailureCh := make(chan string, 1)
 	terminalFailureCh <- "codex terminal turn failed: unexpected status 401"
 
-	out := awaitLongLivedCompletion(context.Background(), deps, taskID, "SES-TEST", nil, terminalFailureCh, time.Hour, time.Hour, false)
+	out := awaitLongLivedCompletion(context.Background(), deps, taskID, "SES-TEST", nil, terminalFailureCh, time.Hour, time.Hour, false, nil)
 	require.Equal(t, outcomeTerminalFailure, out.Kind)
 	res := out.toExecutionResult(&executor.ExecutionResult{}, nil)
 	assert.Equal(t, "blocked", res.Status)
