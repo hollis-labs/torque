@@ -280,3 +280,74 @@ func TestMCPRemoteDoesNotEchoCredentialsItCannotValidate(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `"127.0.0.1:8990/mcp"`)
 }
+
+// A password with an unencoded / # or ? after an all-digit or empty prefix
+// makes url.Parse accept the value: `http://alice:12/PW@127.0.0.1:1/mcp`
+// parses as host "alice:12" with "PW@127.0.0.1:1/mcp" in the path, so
+// u.User is nil. The user name would be dialed as a hostname and the
+// credentials echoed. A real user:password@ always parses into u.User, so an
+// '@' that did not is refused, hidden, before anything is dialed.
+func TestMCPRemoteRefusesAnAtSignThatIsNotUserinfo(t *testing.T) {
+	values := []string{
+		"http://alice:12/PW@127.0.0.1:1/mcp", // /
+		"http://alice:12#PW@127.0.0.1:1/mcp", // #
+		"http://alice:12?PW@127.0.0.1:1/mcp", // ?
+		"http://alice:/PW@127.0.0.1:1/mcp",   // empty port prefix
+		"http://alice:12/PW@127.0.0.1:1/mcp?key=SECRET",
+		"https://127.0.0.1:1/mcp/user@example.com", // '@' in the path, no userinfo
+	}
+	check := func(t *testing.T, err error, out, errOut string) {
+		t.Helper()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "is refused", "refused at validation, before any dial")
+		for _, text := range []string{err.Error(), out, errOut} {
+			for _, secret := range []string{"alice", "PW", "SECRET", "example.com"} {
+				assert.NotContains(t, text, secret)
+			}
+		}
+		assert.Empty(t, out)
+	}
+	for _, v := range values {
+		t.Run("flag "+v, func(t *testing.T) {
+			untouched := lockedState(t)
+			err, out, errOut := runMCP(t, "--remote="+v)
+			check(t, err, out, errOut)
+			untouched()
+		})
+		t.Run("env "+v, func(t *testing.T) {
+			untouched := lockedState(t)
+			t.Setenv("TORQUE_MCP_REMOTE", v)
+			err, out, errOut := runMCP(t)
+			check(t, err, out, errOut)
+			untouched()
+		})
+	}
+	// A real userinfo is still accepted by the validation (it is scrubbed
+	// from everything shown).
+	err, _, _ := runRemoteURLCheck("http://alice:pw@127.0.0.1:1/mcp")
+	assert.NoError(t, err)
+}
+
+// runRemoteURLCheck runs only runRemoteMCP's URL validation: a stdin that is
+// already closed ends the bridge at once, so nothing is dialed.
+func runRemoteURLCheck(endpoint string) (error, string, string) {
+	cmd := mcpCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetContext(context.Background())
+	return runRemoteMCP(cmd, endpoint, ""), out.String(), errOut.String()
+}
+
+// A query string can carry a key, so an error never shows one.
+func TestMCPRemoteDoesNotEchoAQueryString(t *testing.T) {
+	for _, v := range []string{"127.0.0.1:8990/mcp?key=QUERYSECRET", "ftp://127.0.0.1:8990/mcp?key=QUERYSECRET", "http:///mcp?key=QUERYSECRET#FRAGSECRET"} {
+		err, out, errOut := runMCP(t, "--remote="+v)
+		require.Error(t, err, v)
+		for _, text := range []string{err.Error(), out, errOut} {
+			assert.NotContains(t, text, "QUERYSECRET", v)
+			assert.NotContains(t, text, "FRAGSECRET", v)
+		}
+	}
+}

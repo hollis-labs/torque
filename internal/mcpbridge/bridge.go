@@ -19,9 +19,13 @@
 //   - the order in which concurrent messages reach the daemon, notifications
 //     included (a notification may overtake the request sent before it);
 //   - a client's cancellation of a request: the daemon finishes the call and
-//     its reply is dropped.
+//     its reply is dropped;
+//   - the reply to a request the daemon itself makes (sampling, roots): the
+//     request reaches the client on the call's connection, but the client's
+//     reply goes out on a new one the stateless daemon cannot match, so it
+//     is lost.
 //
-// Either would matter if the daemon's MCP handler became stateful.
+// Any of these would matter if the daemon's MCP handler became stateful.
 package mcpbridge
 
 import (
@@ -105,10 +109,13 @@ type bridge struct {
 	endpoint string // Options.Endpoint without credentials, for messages
 	scrubs   []string
 	client   *http.Client
-	local    mcp.Connection
-	localMu  sync.Mutex // one message at a time to the client
-	sem      chan struct{}
-	wg       sync.WaitGroup
+	// dial opens the connection one forwarded message uses; the tests count
+	// its calls to pin that no connection is shared.
+	dial    func(ctx context.Context) (mcp.Connection, error)
+	local   mcp.Connection
+	localMu sync.Mutex // one message at a time to the client
+	sem     chan struct{}
+	wg      sync.WaitGroup
 }
 
 func newBridge(opts Options, local mcp.Connection) *bridge {
@@ -119,17 +126,38 @@ func newBridge(opts Options, local mcp.Connection) *bridge {
 		sem:      make(chan struct{}, maxInFlight),
 	}
 	b.client = b.httpClient()
-	if u, err := url.Parse(opts.Endpoint); err == nil && u.User != nil {
-		// Credentials in the URL never reach a log line or an error.
+	b.dial = func(ctx context.Context) (mcp.Connection, error) {
+		t := &mcp.StreamableClientTransport{
+			Endpoint:             opts.Endpoint,
+			HTTPClient:           b.client,
+			MaxRetries:           -1,
+			DisableStandaloneSSE: true, // the daemon's endpoint is stateless
+		}
+		return t.Connect(ctx)
+	}
+	u, err := url.Parse(opts.Endpoint)
+	if err != nil {
+		b.endpoint = "the daemon endpoint"
+		return b
+	}
+	// Credentials, query and fragment never reach a log line or an error: a
+	// query can carry a key, and the SDK's own errors quote the full URL.
+	if u.User != nil {
 		user := u.User.Username()
 		pass, _ := u.User.Password()
-		b.scrubs = []string{u.User.String() + "@", user + ":***@", user + "@"}
+		b.scrubs = append(b.scrubs, u.User.String()+"@", user+":***@", user+"@")
 		if pass != "" {
 			b.scrubs = append(b.scrubs, pass)
 		}
-		u.User = nil
-		b.endpoint = u.String()
 	}
+	if u.RawQuery != "" {
+		b.scrubs = append(b.scrubs, "?"+u.RawQuery)
+	}
+	if u.Fragment != "" {
+		b.scrubs = append(b.scrubs, "#"+u.Fragment)
+	}
+	u.User, u.RawQuery, u.Fragment = nil, "", ""
+	b.endpoint = u.String()
 	return b
 }
 
@@ -191,14 +219,8 @@ func (b *bridge) forward(ctx context.Context, msg jsonrpc.Message) {
 		callID, isCall = req.ID, true
 	}
 	note := &respNote{}
-	t := &mcp.StreamableClientTransport{
-		Endpoint:             b.opts.Endpoint,
-		HTTPClient:           b.client,
-		MaxRetries:           -1,
-		DisableStandaloneSSE: true, // the daemon's endpoint is stateless
-	}
 	accepted := false
-	conn, err := t.Connect(ctx)
+	conn, err := b.dial(ctx)
 	if err == nil {
 		defer conn.Close()
 		if err = conn.Write(context.WithValue(ctx, noteKey{}, note), msg); err == nil {
@@ -219,22 +241,29 @@ func (b *bridge) forward(ctx context.Context, msg jsonrpc.Message) {
 	}
 }
 
+// errWrongReply is a reply on a call's connection that answers another id.
+var errWrongReply = errors.New("the daemon replied to a different request than the one sent")
+
 // await relays what the daemon sends on conn (notifications that belong to
 // the call, then its reply) to the client, and returns nil once the reply
-// for id has been relayed, or the error that ended the connection first.
+// for id has been relayed, or the error that ended the connection first. The
+// connection carries this one request, so its first reply is the reply: one
+// that names another id is an error, not something to keep waiting past,
+// which would hold the call and one of the in-flight slots for good.
 func (b *bridge) await(ctx context.Context, conn mcp.Connection, id jsonrpc.ID) error {
 	for {
 		msg, err := conn.Read(ctx)
 		if err != nil {
 			return err
 		}
-		if resp, ok := msg.(*jsonrpc.Response); ok && resp.ID != id {
-			continue // not this call's reply
+		resp, isReply := msg.(*jsonrpc.Response)
+		if isReply && resp.ID != id {
+			return errWrongReply
 		}
 		if err := b.writeLocal(ctx, msg); err != nil {
 			return err
 		}
-		if _, ok := msg.(*jsonrpc.Response); ok {
+		if isReply {
 			return nil
 		}
 	}
@@ -261,6 +290,8 @@ func (b *bridge) describe(err error, note *respNote, accepted bool) string {
 			text += " (the bridge does not follow redirects; point --remote at the daemon's own /mcp URL)"
 		}
 		return b.scrub(text)
+	case errors.Is(err, errWrongReply):
+		return b.scrub(fmt.Sprintf("torque daemon at %s %v", b.endpoint, "replied to a different request than the one sent"))
 	case accepted:
 		return b.scrub(fmt.Sprintf("torque daemon connection to %s ended before the reply: %v", b.endpoint, err))
 	}

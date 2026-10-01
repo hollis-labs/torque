@@ -34,7 +34,10 @@ endpoint instead of opening the database: the same tool surface, for
 clients that must not open main.db, such as an agent under ProtectedPaths.
 --remote alone, or TORQUE_MCP_REMOTE=1, uses
 http://127.0.0.1:$TORQUE_HTTP_PORT/mcp; --remote=URL (with the equals sign) or
-TORQUE_MCP_REMOTE=URL selects another endpoint. The tools are those the daemon
+TORQUE_MCP_REMOTE=URL selects another endpoint. An empty --remote= or an
+empty TORQUE_MCP_REMOTE is an error, not the local database (0 or false ask
+for that); a launcher that exports the variable empty to mean "unset" must
+unset it instead. The tools are those the daemon
 registered when it started, so enabling a feature takes a daemon restart, not a
 new torque mcp process.`,
 		// stdout carries the MCP protocol: an error must not print usage
@@ -189,10 +192,13 @@ new torque mcp process.`,
 // validated is not echoed when it could carry credentials: a URL with the
 // scheme forgotten, a bad port or a stray bracket fails to parse, and what
 // url.Parse cannot split, a scrubber cannot either. Anything containing '@'
-// is hidden whole.
+// is hidden whole, and a query or fragment, which can carry a key, is cut.
 func shownValue(v string) string {
 	if strings.Contains(v, "@") {
 		return "the value (hidden: it contains '@', so it may carry credentials)"
+	}
+	if i := strings.IndexAny(v, "?#"); i >= 0 {
+		return strconv.Quote(v[:i]) + " (query or fragment hidden: it may carry a key)"
 	}
 	return strconv.Quote(v)
 }
@@ -236,6 +242,14 @@ func runRemoteMCP(cmd *cobra.Command, endpoint, token string) error {
 	u, err := url.Parse(endpoint)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return fmt.Errorf("torque mcp --remote: %s is not an http(s) URL (want http://host:port/mcp)", shownValue(endpoint))
+	}
+	// A real user:password@ always parses into u.User. An '@' that did not
+	// is not credentials the parser understood: `http://alice:12/PW@host/`
+	// parses as host "alice:12" with "PW@host/" in the path (a password
+	// holding an unencoded / # or ?), so the user name would be dialed as a
+	// hostname and the password echoed. Refuse it before anything is dialed.
+	if u.User == nil && strings.Contains(endpoint, "@") {
+		return fmt.Errorf("torque mcp --remote: %s has an '@' that is not part of user:password@host, so it is refused (percent-encode / # ? and @ in a password; the API token belongs in TORQUE_API_TOKEN)", shownValue(endpoint))
 	}
 	local := &mcp.IOTransport{Reader: io.NopCloser(cmd.InOrStdin()), Writer: nopWriteCloser{cmd.OutOrStdout()}}
 	return mcpbridge.Run(cmd.Context(), local, mcpbridge.Options{
