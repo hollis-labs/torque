@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -120,13 +121,21 @@ func TestLaunchSessionHTTP_InvalidMetaRejectedBeforeBoot(t *testing.T) {
 	assert.Nil(t, rt.lastStart)
 }
 
-func launchSessionFixture(t *testing.T) (*Server, *sqlstore.Store, *httpRecordingRuntime) {
+func launchSessionFixture(t *testing.T, allowedRoot ...string) (*Server, *sqlstore.Store, *httpRecordingRuntime) {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	require.NoError(t, migrations.Run(db))
 	store, err := sqlstore.New(db, "sqlite")
 	require.NoError(t, err)
+	if len(allowedRoot) == 0 {
+		t.Setenv("HOME", t.TempDir())
+	}
+	root := filepath.Dir(t.TempDir())
+	if len(allowedRoot) > 0 {
+		root = allowedRoot[0]
+	}
+	require.NoError(t, store.CreateProject(&sqlstore.ProjectRecord{ID: "PRJ-ALLOWED", Name: "allowed", RepoPath: root, Status: "active"}))
 	rt := &httpRecordingRuntime{}
 	prof := config.AgentProfile{Executor: "cli", Provider: "claude-code"}
 	deps := &agent.Dependencies{

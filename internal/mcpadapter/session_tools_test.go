@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -215,13 +216,21 @@ func TestHandleSessionCreate_RejectsInvalidEnvMeta(t *testing.T) {
 	}
 }
 
-func sessionCreateFixture(t *testing.T) (*Adapter, *sqlstore.Store, *recordingRuntime) {
+func sessionCreateFixture(t *testing.T, allowedRoot ...string) (*Adapter, *sqlstore.Store, *recordingRuntime) {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	require.NoError(t, migrations.Run(db))
 	store, err := sqlstore.New(db, "sqlite")
 	require.NoError(t, err)
+	if len(allowedRoot) == 0 {
+		t.Setenv("HOME", t.TempDir())
+	}
+	root := filepath.Dir(t.TempDir())
+	if len(allowedRoot) > 0 {
+		root = allowedRoot[0]
+	}
+	require.NoError(t, store.CreateProject(&sqlstore.ProjectRecord{ID: "PRJ-ALLOWED", Name: "allowed", RepoPath: root, Status: "active"}))
 	rt := &recordingRuntime{}
 	prof := config.AgentProfile{Executor: "cli", Provider: "claude-code"}
 	deps := &agent.Dependencies{

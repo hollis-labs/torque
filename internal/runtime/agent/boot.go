@@ -63,6 +63,12 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	if err := mgr.checkStopped(); err != nil {
 		return nil, err
 	}
+	if external, _ := ctx.Value(externalLaunchKey{}).(bool); external {
+		opts, err = mgr.constrainExternalLaunch(opts)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	// Resolve the launch profile (and the underlying config.AgentProfile) up
 	// front. LaunchProfile is the first-class user-facing selector; when

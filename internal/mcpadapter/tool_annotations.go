@@ -130,6 +130,7 @@ var toolAnnotations = map[string]toolHints{
 	"torque_project_facets":            {true, false, true},
 	"torque_epic_facets":               {true, false, true},
 	"torque_sprint_facets":             {true, false, true},
+	"torque_run_timeseries":            {true, false, true},
 	"torque_run_facets":                {true, false, true},
 	"torque_task_facets":               {true, false, true},
 	"torque_task_get":                  {true, false, true},
