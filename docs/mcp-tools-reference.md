@@ -688,3 +688,19 @@ provides a deliberate override without claiming an authorization model.
 - `tasks/INDEX.md` — the phased task breakdown that executed the ADR.
 - `docs/surfaces.md` — the full HTTP + MCP tool-area list, including
   entities out of this doc's scope.
+
+### Run list cursor contract
+
+`torque_run_list` queries across tasks by default; `task_id` is optional.
+It accepts task/project/sprint/epic scopes, CSV `status`, inclusive `since`
+and `until` (RFC3339 or Unix milliseconds), `limit`, `offset`, `cursor`,
+`sort_by`, `sort_dir`, `include_total`, and `verbose`. Sorts are `started_at`
+(default descending), `status`, `duration` and `cost`, with numeric ID
+ascending for ties. Duration is rounded completed elapsed milliseconds;
+unfinished runs sort at -1.
+
+The payload is `{items,meta:{returned,limit,has_more,next_cursor,total?}}`: page
+size defaults to 50 and clamps at 200, total is opt-in, and the final cursor
+is null. Cursor/sort mismatches and positive offset plus cursor reject with
+`arg_invalid`. Byte trimming preserves continuation from the last emitted
+row. See [the runs contract](api-pagination.md#runs-implementation-reconciliation-cw-20261001-0562).

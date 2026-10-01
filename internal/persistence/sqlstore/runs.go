@@ -3,12 +3,12 @@ package sqlstore
 import (
 	"database/sql"
 	"fmt"
-	"strings"
 	"time"
 )
 
 // RunRecord mirrors the runs table row.
 type RunRecord struct {
+	QuerySortValue   string `json:"-"`
 	ID               int64
 	TaskID           string
 	Executor         string
@@ -187,79 +187,25 @@ func (s *Store) ListRuns(taskID string) ([]RunRecord, error) {
 // treated as "no filter"; Limit <= 0 means "no limit" at the store layer
 // (HTTP handlers cap this before it gets here).
 type RunFilter struct {
-	TaskID    string
-	ProjectID string
-	Statuses  []string
-	Since     time.Time
-	Limit     int
+	TaskID         string
+	ProjectID      string
+	SprintID       string
+	EpicID         string
+	Statuses       []string
+	Since          time.Time
+	Until          time.Time
+	Limit          int
+	Offset         int
+	SortBy         string
+	SortDir        string
+	AfterSortValue string
+	AfterID        int64
 }
 
-// ListRunsFiltered returns runs matching the filter, newest first
-// (ORDER BY started_at DESC). When ProjectID is set, runs are joined
-// against tasks to filter on the task's project. All filters combine
-// with AND. An empty filter returns every run in the store (bounded
-// only by Limit).
+// ListRunsFiltered also serves internal lifecycle callers; a zero limit is
+// unbounded there. Public list surfaces apply the shared page policy in service.
 func (s *Store) ListRunsFiltered(f RunFilter) ([]RunRecord, error) {
-	var (
-		where []string
-		args  []interface{}
-	)
-
-	sel := `SELECT r.id, r.task_id, r.executor, r.status, r.started_at, r.ended_at,
-		r.prompt_tokens, r.completion_tokens, r.cost, r.exit_code, r.error_message, r.metadata,
-		r.cache_read_tokens, r.cache_write_tokens, r.cost_source
-		FROM runs r`
-	if f.ProjectID != "" {
-		sel += ` INNER JOIN tasks t ON t.id = r.task_id`
-		where = append(where, "t.project_id = ?")
-		args = append(args, f.ProjectID)
-	}
-	if f.TaskID != "" {
-		where = append(where, "r.task_id = ?")
-		args = append(args, f.TaskID)
-	}
-	if !f.Since.IsZero() {
-		where = append(where, "r.started_at >= ?")
-		args = append(args, f.Since.UTC())
-	}
-	if len(f.Statuses) > 0 {
-		placeholders := make([]string, len(f.Statuses))
-		for i, s := range f.Statuses {
-			placeholders[i] = "?"
-			args = append(args, s)
-		}
-		where = append(where, "r.status IN ("+strings.Join(placeholders, ",")+")")
-	}
-
-	q := sel
-	if len(where) > 0 {
-		q += " WHERE " + strings.Join(where, " AND ")
-	}
-	q += " ORDER BY r.started_at DESC"
-	if f.Limit > 0 {
-		q += " LIMIT ?"
-		args = append(args, f.Limit)
-	}
-
-	rows, err := s.ReadDB().Query(q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var runs []RunRecord
-	for rows.Next() {
-		var r RunRecord
-		if err := rows.Scan(
-			&r.ID, &r.TaskID, &r.Executor, &r.Status, &r.StartedAt, &r.EndedAt,
-			&r.PromptTokens, &r.CompletionTokens, &r.Cost, &r.ExitCode, &r.ErrorMessage, &r.Metadata,
-			&r.CacheReadTokens, &r.CacheWriteTokens, &r.CostSource,
-		); err != nil {
-			return nil, err
-		}
-		runs = append(runs, r)
-	}
-	return runs, rows.Err()
+	return s.queryRuns(s.ReadDB(), f)
 }
 
 // Run status constants covering the full taxonomy introduced in

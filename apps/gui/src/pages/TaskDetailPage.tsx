@@ -67,6 +67,15 @@ export default function TaskDetailPage() {
   // Tab data — lazy loaded
   const [comments, setComments] = useState<Comment[] | null>(null)
   const [runs, setRuns] = useState<Run[] | null>(null)
+  const runTaskRef = useRef(id)
+  runTaskRef.current = id
+  const [runCursor, setRunCursor] = useState<string | null>(null)
+  const [loadingMoreRuns, setLoadingMoreRuns] = useState(false)
+  useEffect(() => {
+    setRuns(null)
+    setRunCursor(null)
+    setLoadingMoreRuns(false)
+  }, [id])
   const [artifacts, setArtifacts] = useState<Artifact[] | null>(null)
   const [activeTab, setActiveTab] = useState('details')
 
@@ -106,6 +115,7 @@ export default function TaskDetailPage() {
     // Invalidate the runs cache so the Logs tab pulls the completed run
     // on next visit.
     setRuns(null)
+    setRunCursor(null)
   }, [activeRun, id, api])
 
   // Resolve the current task's position inside the last rendered list so
@@ -220,7 +230,11 @@ export default function TaskDetailPage() {
       // Timeline unions runs, comments, and artifacts — load any that are
       // still missing so the view is coherent on first render.
       if (runs === null) {
-        api.listRuns(id).then(setRuns).catch(() => setRuns([]))
+        api.pageRuns({ task_id: id }).then((page) => {
+          if (runTaskRef.current !== id) return
+          setRuns(page.items)
+          setRunCursor(page.meta.next_cursor)
+        }).catch(() => { if (runTaskRef.current === id) setRuns([]) })
       }
       if (comments === null) {
         api.listComments('task', id).then((page) => setComments(page.items)).catch(() => setComments([]))
@@ -655,12 +669,24 @@ export default function TaskDetailPage() {
 
             <TabsContent value="logs" className="px-4 py-3">
               {id && (
+                <>
                 <ActivityTimeline
                   taskId={id}
                   runs={runs}
                   comments={comments}
                   artifacts={artifacts}
                 />
+                {runCursor && <button className="mt-3 text-sm text-primary" disabled={loadingMoreRuns} onClick={async () => {
+                  if (!id) return
+                  setLoadingMoreRuns(true)
+                  try {
+                    const page = await api.pageRuns({ task_id: id, cursor: runCursor })
+                    if (runTaskRef.current !== id) return
+                    setRuns((prev) => [...(prev ?? []), ...page.items.filter((row) => !prev?.some((shown) => shown.id === row.id))])
+                    setRunCursor(page.meta.next_cursor)
+                  } catch (err) { notifyError(err, 'Failed to load older runs') } finally { if (runTaskRef.current === id) setLoadingMoreRuns(false) }
+                }}>{loadingMoreRuns ? 'Loading…' : 'Load older runs'}</button>}
+                </>
               )}
             </TabsContent>
 
