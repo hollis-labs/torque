@@ -1241,12 +1241,10 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 	execution := *preparedExecution
 	execution.Access.Mode = agentlaunch.AccessOptional
 
-	// opencode serve-http (see shouldDropBootDirExtraArgs). agentsessions
-	// derives StartOptions.ExtraArgs from Bindings.Argv[1:] once
-	// PreparedExecution is set, so the trim happens on the bindings.
-	if shouldDropBootDirExtraArgs(profile.Provider, runtimeKind) && len(execution.Bindings.Argv) > 0 {
-		execution.Bindings.Argv = execution.Bindings.Argv[:1]
-	}
+	// No serve-http trim here, unlike bootLegacy: on this path the prepared
+	// argv is the whole command (the wrapper adapter contributes no args),
+	// so `opencode serve --port 0 --hostname 127.0.0.1` must reach the
+	// child as planted. Trimming it launched a bare `opencode`.
 	// PreparedExecution is the wrapper's complete spawn command; it suppresses
 	// CLIAdapter.BuildArgs. Carry Claude's profile options on that command,
 	// rather than an adapter callback that the prepared path never invokes.

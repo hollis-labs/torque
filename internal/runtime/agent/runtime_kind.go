@@ -109,8 +109,15 @@ func (rk RuntimeKind) validate() error {
 //     feedback_no_compat_shims — pre-launch, no operator config relied
 //     on the old field name.
 func selectRuntimeKind(provider string, profileKind string) (RuntimeKind, error) {
-	kind := runtimeKindFromConfigValue(profileKind)
-	if err := RuntimeKind(kind).validate(); err != nil {
+	// A profile accepts the older subprocess and serve-http spellings but
+	// not cli, app-server or pty-debug, which were never valid there
+	// (runtimetoken.NormalizeProfile).
+	tok, err := runtimetoken.NormalizeProfile(profileKind)
+	if err != nil {
+		return "", fmt.Errorf("profile runtime_kind: %w", err)
+	}
+	kind := RuntimeKind(tok.Mode)
+	if err := kind.validate(); err != nil {
 		return "", err
 	}
 	if kind != "" {
@@ -126,17 +133,14 @@ func selectRuntimeKind(provider string, profileKind string) (RuntimeKind, error)
 	return RuntimeKindSubprocess, nil
 }
 
-// ParseRuntimeKind normalizes a runtime-kind token from a profile or a
-// stored session row through runtimetoken: the pre-v0.12.0 spellings
-// (subprocess, cli, serve-http, app-server, pty-debug) map onto their
-// current ones. agentkit fails an old token with ErrUnknownRuntime, so this
-// translation happens at Torque's boundary. An unknown token is returned
-// as given for validate to reject.
+// ParseRuntimeKind normalizes a runtime-kind token read from a stored
+// session row through runtimetoken.Normalize, which accepts every
+// pre-v0.12.0 spelling (subprocess, cli, serve-http, app-server, pty-debug).
+// agentkit fails an old token with ErrUnknownRuntime, so this translation
+// happens at Torque's boundary. An unknown token is returned as given for
+// validate to reject. Profile values go through selectRuntimeKind instead,
+// which is stricter.
 func ParseRuntimeKind(raw string) RuntimeKind {
-	return runtimeKindFromConfigValue(raw)
-}
-
-func runtimeKindFromConfigValue(raw string) RuntimeKind {
 	tok, err := runtimetoken.Normalize(raw)
 	if err != nil {
 		return RuntimeKind(strings.TrimSpace(raw))

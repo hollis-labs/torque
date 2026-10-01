@@ -2,9 +2,10 @@ package agent
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/hollis-labs/go-providers/registry"
-	"strings"
 
 	"github.com/hollis-labs/torque/internal/config"
 )

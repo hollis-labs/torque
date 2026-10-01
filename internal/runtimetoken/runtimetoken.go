@@ -42,12 +42,23 @@ var legacy = map[string]Token{
 	"pty-debug":  {Mode: runtimes.ModePTY, Legacy: true, Debug: true},
 }
 
-// Normalize maps raw onto its canonical mode. Case and surrounding space
-// are ignored and `_` reads as `-`. An empty token is the zero Token and no
+// profileLegacy are the older spellings a profile's runtime_kind accepted
+// before agentkit v0.12.0. The other older spellings (cli, app-server,
+// pty-debug) were never valid in a profile; they occur only in stored
+// session rows.
+var profileLegacy = map[string]bool{"subprocess": true, "serve-http": true}
+
+// ErrNotAProfileKind is returned by NormalizeProfile for an older spelling
+// that is valid in a stored session row but was never valid in a profile.
+var ErrNotAProfileKind = errors.New("runtime kind not accepted in a profile")
+
+// Normalize maps raw onto its canonical mode, accepting every older
+// spelling: it reads stored session rows. Case and surrounding space are
+// ignored and `_` reads as `-`. An empty token is the zero Token and no
 // error: it means "use the runtime's default". Any other token that is not
 // a runtimes.Mode or a known older spelling is ErrUnknown.
 func Normalize(raw string) (Token, error) {
-	s := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(raw)), "_", "-")
+	s := canonical(raw)
 	if s == "" {
 		return Token{}, nil
 	}
@@ -58,6 +69,27 @@ func Normalize(raw string) (Token, error) {
 		return Token{Mode: m}, nil
 	}
 	return Token{}, fmt.Errorf("%w %q (expected one of %s, or an older spelling: subprocess, cli, serve-http, app-server, pty-debug)", ErrUnknown, raw, modeList())
+}
+
+// NormalizeProfile is Normalize for a profile's runtime_kind
+// (CW-20261001-0064 review). Of the older spellings it accepts only those a
+// profile accepted before agentkit v0.12.0, subprocess and serve-http,
+// reported with Legacy set so the loader can warn. cli, app-server and
+// pty-debug stay errors in a profile, as they were: accepting them quietly
+// would change what an existing profile launches.
+func NormalizeProfile(raw string) (Token, error) {
+	t, err := Normalize(raw)
+	if err != nil {
+		return Token{}, err
+	}
+	if t.Legacy && !profileLegacy[canonical(raw)] {
+		return Token{}, fmt.Errorf("%w: %q; use %q", ErrNotAProfileKind, raw, t.Mode)
+	}
+	return t, nil
+}
+
+func canonical(raw string) string {
+	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(raw)), "_", "-")
 }
 
 func modeList() string {
