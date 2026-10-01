@@ -214,10 +214,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   message, as a Codex app-server run already did. An opencode serve worker
   whose model opencode did not know (`session.error`: "Model not found: …")
   left its task in `doing` and its run running with no tokens until the
-  30-minute inactivity threshold. The reason, and the error in the session's
-  stream, is the provider's message (its first line, at most 500 bytes,
-  redacted), not opencode's raw event and stack trace, which stay in
-  `serve-http.log` (CW-20261001-0169).
+  30-minute inactivity threshold. The policy is that any genuine failed turn
+  blocks the run. That includes the turn the reminder pump sends a worker
+  that stopped without moving its task (#166): when that turn fails, the
+  run is now blocked rather than taking the unsignalled route. opencode
+  serve errors that do not end its turn stay in the session's stream and
+  leave the run going: one naming no session (a plugin that fails to load,
+  a skill opencode cannot parse), a context overflow (opencode compacts the
+  session and continues), and an abort (Torque's own Stop). The reason, and
+  the error in the stream, is the provider's message: its first line, at
+  most 500 bytes, redacted before it is cut. opencode's raw event and stack
+  trace stay in `serve-http.log`. The session stays `failed` when the agent
+  exits cleanly once stopped (CW-20261001-0169).
+- A Codex app-server turn failure that echoed a launch secret put the
+  secret in the run's reason: the stream's copy of the message was
+  redacted, the copy that ended the run was not. Both are redacted now,
+  before the message is cut to its bound (CW-20261001-0169).
 - An ACP agent that exits during launch no longer crashes the Torque daemon
   with "send on closed channel" (go-agent-wrapper v0.21.1,
   CW-20261001-0129).

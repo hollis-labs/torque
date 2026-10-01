@@ -282,3 +282,38 @@ func seedSessionMeta(t *testing.T, store *sqlstore.Store, id, state, taskID, met
 		State: state, MetaJSON: meta,
 	}))
 }
+
+// A wrapper-path session a long-lived run blocked stays failed when its
+// agent exits cleanly after Stop, and the classification is dropped
+// (CW-20261001-0169).
+func TestManagerEndWrapperStateKeepsTerminalClassification(t *testing.T) {
+	store := sqlitetest.OpenStore(t)
+	defer store.Close()
+	mgr := NewManager(&Dependencies{Store: store, StateWriter: writeq.NewDirect(store)})
+	ctx := context.Background()
+
+	seedSessionMeta(t, store, "SES-WRAPPER-FAIL", "running", "CW-WRAPPER-FAIL", `{}`)
+	require.NoError(t, mgr.protectTerminalFailure(ctx, "SES-WRAPPER-FAIL"))
+	mgr.endWrapperState(ctx, mgr.deps, "SES-WRAPPER-FAIL", string(StatusDone))
+	sess, err := store.GetSession("SES-WRAPPER-FAIL")
+	require.NoError(t, err)
+	assert.Equal(t, "failed", sess.State)
+	assert.EqualValues(t, -1, sess.ExitCode.Int64)
+
+	seedSessionMeta(t, store, "SES-WRAPPER-CANCEL", "running", "CW-WRAPPER-CANCEL", `{}`)
+	require.NoError(t, mgr.protectTerminalCanceled(ctx, "SES-WRAPPER-CANCEL"))
+	mgr.endWrapperState(ctx, mgr.deps, "SES-WRAPPER-CANCEL", string(StatusDone))
+	sess, err = store.GetSession("SES-WRAPPER-CANCEL")
+	require.NoError(t, err)
+	assert.Equal(t, "canceled", sess.State)
+
+	assert.Empty(t, mgr.terminalFailed, "the classification is dropped once the session ends")
+	assert.Empty(t, mgr.terminalCanceled)
+
+	// An unclassified session gets the state it ended in.
+	seedSessionMeta(t, store, "SES-WRAPPER-DONE", "running", "CW-WRAPPER-DONE", `{}`)
+	mgr.endWrapperState(ctx, mgr.deps, "SES-WRAPPER-DONE", string(StatusDone))
+	sess, err = store.GetSession("SES-WRAPPER-DONE")
+	require.NoError(t, err)
+	assert.Equal(t, "done", sess.State)
+}
