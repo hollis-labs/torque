@@ -81,7 +81,20 @@ func TestRunListHTTPMCPParity(t *testing.T) {
 	page = get(map[string]any{"limit": "1000"})
 	require.Equal(t, 200, page.Meta.Limit)
 	require.Nil(t, page.Meta.Total)
-	for _, args := range []map[string]any{{"limit": "garbage"}, {"limit": "-1"}, {"include_total": "perhaps"}, {"sort_by": "task_id"}, {"offset": "-1"}, {"cursor": "broken"}} {
+	firstOffset := get(map[string]any{"limit": "2", "offset": "0"})
+	require.NotNil(t, firstOffset.Meta.OffsetMeta)
+	require.Equal(t, 0, firstOffset.Meta.Offset)
+	require.Equal(t, 2, *firstOffset.Meta.NextOffset)
+	cursorPage := get(map[string]any{"limit": "2", "offset": "0", "cursor": *firstOffset.Meta.NextCursor})
+	require.Nil(t, cursorPage.Meta.OffsetMeta)
+	lastOffset := get(map[string]any{"limit": "1", "offset": "4", "include_total": "true"})
+	require.Equal(t, 4, lastOffset.Meta.Offset)
+	require.Nil(t, lastOffset.Meta.NextOffset)
+	require.Nil(t, lastOffset.Meta.NextCursor)
+	require.False(t, lastOffset.Meta.HasMore)
+	require.Equal(t, 5, *lastOffset.Meta.Total)
+	require.Nil(t, get(map[string]any{"limit": "2"}).Meta.OffsetMeta)
+	for _, args := range []map[string]any{{"limit": "garbage"}, {"limit": "-1"}, {"include_total": "perhaps"}, {"sort_by": "task_id"}, {"offset": "-1"}, {"cursor": "broken"}, {"offset": "1", "cursor": *firstOffset.Meta.NextCursor}} {
 		text, isErr := callTool(t, a, "torque_run_list", args)
 		require.True(t, isErr, text)
 		require.Contains(t, text, "arg_invalid")
@@ -128,6 +141,27 @@ func TestRunListByteTrimPreservesCursor(t *testing.T) {
 		cursor = *page.Meta.NextCursor
 	}
 	require.Equal(t, []int64{1, 2, 3, 4}, ids)
+	offset := 0
+	var offsetIDs []int64
+	for n := 0; ; n++ {
+		require.Less(t, n, 4)
+		text, isErr := callTool(t, a, "torque_run_list", map[string]any{"verbose": "true", "limit": "4", "offset": offset})
+		require.False(t, isErr, text)
+		var page envelope
+		parseData(t, text, &page)
+		require.Equal(t, offset, page.Meta.Offset)
+		for _, row := range page.Items {
+			offsetIDs = append(offsetIDs, row.ID)
+		}
+		if !page.Meta.HasMore {
+			require.Nil(t, page.Meta.NextOffset)
+			break
+		}
+		require.Less(t, page.Meta.Returned, 4)
+		require.Equal(t, offset+len(page.Items), *page.Meta.NextOffset)
+		offset = *page.Meta.NextOffset
+	}
+	require.Equal(t, []int64{1, 2, 3, 4}, offsetIDs)
 	_, err = db.Exec(`UPDATE runs SET error_message=? WHERE id=1`, strings.Repeat("x", 110000))
 	require.NoError(t, err)
 	text, isErr := callTool(t, a, "torque_run_list", map[string]any{"verbose": "true"})

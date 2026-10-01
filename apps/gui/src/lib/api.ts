@@ -133,7 +133,6 @@ interface TaskListResponse<T = Task> {
   offset?: number
   has_more?: boolean
   next_offset?: number | null
-
 }
 
 const TASK_LIST_PAGE_SIZE = 200

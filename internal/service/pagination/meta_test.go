@@ -2,9 +2,10 @@ package pagination_test
 
 import (
 	"encoding/json"
+	"testing"
+
 	"github.com/hollis-labs/torque/internal/service/pagination"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestPageMetaModes(t *testing.T) {

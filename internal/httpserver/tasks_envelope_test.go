@@ -100,6 +100,13 @@ func TestTaskListPageEnvelope(t *testing.T) {
 	require.Len(t, searchLast.Items, 1)
 	require.False(t, searchLast.Meta["has_more"].(bool))
 	require.Nil(t, searchLast.Meta["next_offset"])
+	searchEmpty := get("/api/v1/tasks/search", url.Values{"q": {"absent text"}, "include_total": {"true"}})
+	require.Empty(t, searchEmpty.Items)
+	require.NotNil(t, searchEmpty.Items)
+	require.Equal(t, float64(0), searchEmpty.Meta["total"])
+	require.False(t, searchEmpty.Meta["has_more"].(bool))
+	require.Nil(t, searchEmpty.Meta["next_cursor"])
+	require.NotContains(t, searchEmpty.Meta, "offset")
 	for _, path := range []string{"/api/v1/tasks", "/api/v1/tasks/search"} {
 		for _, query := range []url.Values{
 			{"unknown": {"x"}}, {"limit": {"-1"}}, {"limit": {"bad"}}, {"include_total": {"bad"}}, {"sort_by": {"bad"}}, {"cursor": {cursor}, "offset": {"1"}}, {"cursor": {cursor}, "sort_dir": {"desc"}}, {"include_total": {"true", "false"}},
