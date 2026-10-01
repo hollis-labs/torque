@@ -240,6 +240,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- A reviewer end-agent that ends `done` without auditing its target no
+  longer passes silently (CW-20261001-0195). When its target is still in
+  `review`, is not tagged `agent-closed` and has no comment by the end-agent
+  since the end-agent was created, Torque posts `[system/end-agent] <id>
+  finished without recording an audit — target stays at review; human
+  follow-up required.` on the target, once. The end-agent's comments are
+  matched by the author prefix `[system/end-agent]`: the author is stored as
+  given through a run's loopback and caller-suffixed
+  (`[system/end-agent]-<8 hex>`) through mux, and the audit comments posted
+  through mux do not carry the prefix in their content.
 - A long-lived run on the go-agent-wrapper path (opencode serve, claude-code,
   agy, ACP) ends as soon as a turn fails, blocked with the provider's
   message, as a Codex app-server run already did. An opencode serve worker
