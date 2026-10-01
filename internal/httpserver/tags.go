@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 )
 
 // tagJSON converts a TagRecord to a JSON-friendly map.
@@ -35,19 +36,7 @@ func tagsJSON(tags []sqlstore.TagRecord) []map[string]interface{} {
 }
 
 func (s *Server) listTags(w http.ResponseWriter, r *http.Request) {
-	if r.URL.RawQuery != "" {
-		s.listTagsPage(w, r)
-		return
-	}
-	tags, err := s.svc.Tag.List()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if tags == nil {
-		tags = []sqlstore.TagRecord{}
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"tags": tagsJSON(tags)})
+	s.listTagsPage(w, r)
 }
 
 func (s *Server) listTagsPage(w http.ResponseWriter, r *http.Request) {
@@ -79,35 +68,44 @@ func (s *Server) listTagsPage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	includeTotal, queryErr := queryBool(q, "include_total")
+	if queryErr != nil {
+		writeHTTPQueryError(w, queryErr)
+		return
+	}
 	result, err := s.svc.Tag.ListPage(service.TagListInput{
-		Query:     q.Get("query"),
-		Color:     q.Get("color"),
-		Limit:     limit,
-		AfterName: afterName,
-		AfterSlug: afterSlug,
+		IncludeTotal: includeTotal,
+		SortBy:       q.Get("sort_by"),
+		SortDir:      q.Get("sort_dir"),
+		Query:        q.Get("query"),
+		Color:        q.Get("color"),
+		Limit:        limit,
+		AfterName:    afterName,
+		AfterSlug:    afterSlug,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeAdjacentServiceError(w, err)
 		return
 	}
 	tags := result.Tags
 	if tags == nil {
 		tags = []sqlstore.TagRecord{}
 	}
-	var nextCursor interface{}
+	var nextCursor *string
 	if result.HasMoreFromQuery && len(tags) > 0 {
-		nextCursor = service.TagListCursor(tags[len(tags)-1])
+		v := service.TagListCursor(tags[len(tags)-1])
+		nextCursor = &v
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"tags":        tagsJSON(tags),
-		"total":       result.Total,
-		"returned":    len(tags),
-		"limit":       result.Limit,
-		"has_more":    result.HasMoreFromQuery,
-		"next_cursor": nextCursor,
-		"sort_by":     service.TagListSortBy,
-		"sort_dir":    service.TagListSortDir,
-	})
+	var total *int
+	if includeTotal {
+		total = &result.Total
+	}
+	meta := pagination.NewPageMeta(len(tags), result.Limit, result.HasMoreFromQuery, nextCursor, total, nil)
+	writeJSON(w, http.StatusOK, map[string]any{"items": tagsJSON(tags), "meta": struct {
+		pagination.PageMeta
+		SortBy  string `json:"sort_by"`
+		SortDir string `json:"sort_dir"`
+	}{meta, service.TagListSortBy, service.TagListSortDir}})
 }
 
 type tagListQueryError struct {
@@ -119,13 +117,13 @@ func (e tagListQueryError) Error() string { return e.message }
 
 func validateTagListQueryKeys(q url.Values) *tagListQueryError {
 	supported := map[string]bool{
-		"query": true, "color": true, "limit": true, "cursor": true,
+		"query": true, "color": true, "limit": true, "cursor": true, "sort_by": true, "sort_dir": true, "include_total": true,
 	}
 	for key, values := range q {
 		if !supported[key] {
 			return &tagListQueryError{
 				field:   key,
-				message: "unsupported query parameter " + key + "; supported tag-list parameters are query, color, limit, cursor",
+				message: "unsupported query parameter " + key + "; supported tag-list parameters are query, color, limit, cursor, sort_by, sort_dir, include_total",
 			}
 		}
 		if len(values) > 1 {
@@ -147,8 +145,8 @@ func parseTagListInt(raw, field string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("%s must be an integer", field)
 	}
-	if n <= 0 {
-		return 0, fmt.Errorf("%s must be greater than 0", field)
+	if n < 0 {
+		return 0, fmt.Errorf("%s must be non-negative", field)
 	}
 	return n, nil
 }
