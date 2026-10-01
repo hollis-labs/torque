@@ -194,6 +194,16 @@ type Options struct {
 	// from Codex JSON-RPC turn/completed notifications, to long-lived
 	// scheduler workers. It is private for the same reason as eventFanout.
 	terminalFailure chan<- string
+
+	// sessionLost and resumeProgress watch a resume attempt on a runtime whose
+	// turns run after Boot returns (streaming-stdio, CW-20261001-0202).
+	// sessionLost receives when the provider reports the session it was asked
+	// to resume is gone (go-agent-wrapper's session.lost, from agentkit
+	// v0.21.1); resumeProgress when the turn shows content (a delta, a tool
+	// use, its completion), which means the resume holds. Both are private
+	// for the same reason as eventFanout.
+	sessionLost    chan<- struct{}
+	resumeProgress chan<- struct{}
 }
 
 // withEventFanout sets the unexported eventFanout field. Used by the
@@ -205,6 +215,13 @@ func (o Options) withEventFanout(c chan<- llmtypes.StreamEvent) Options {
 
 func (o Options) withTerminalFailure(c chan<- string) Options {
 	o.terminalFailure = c
+	return o
+}
+
+// withResumeSignals sets the unexported channels the wrapper sink signals a
+// resume attempt's outcome on (Manager.bootWithFreshFallback).
+func (o Options) withResumeSignals(lost, progress chan<- struct{}) Options {
+	o.sessionLost, o.resumeProgress = lost, progress
 	return o
 }
 

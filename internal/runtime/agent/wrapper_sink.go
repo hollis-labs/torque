@@ -71,6 +71,12 @@ type torqueRuntimeEventSink struct {
 	// doing until the inactivity threshold (CW-20261001-0169).
 	terminalFailure chan<- string
 
+	// sessionLost and resumeProgress carry a resume attempt's outcome to
+	// Manager.bootWithFreshFallback (Options.sessionLost). Nil outside a
+	// resume attempt.
+	sessionLost    chan<- struct{}
+	resumeProgress chan<- struct{}
+
 	onReady func()
 	onDone  func()
 }
@@ -117,6 +123,11 @@ func (s *torqueRuntimeEventSink) Write(ctx context.Context, ev runtimeevents.Eve
 		s.handleToolUse(ctx, ev.Payload)
 	case runtimeevents.KindTurnCompleted:
 		s.handleTurnCompleted(ctx, ev.Payload)
+	case runtimeevents.KindSessionLost:
+		// The provider no longer has the session this launch asked to resume
+		// (go-agent-wrapper emits it after agentkit's SessionLost, which
+		// arrives once the first turn fails: Boot has returned by then).
+		signal(s.sessionLost)
 	case runtimeevents.KindTurnFailed:
 		s.handleTurnFailed(ctx, ev.Payload, ev.Process.ProviderSessionID)
 	case runtimeevents.KindStderrLine:
@@ -152,6 +163,11 @@ func (s *torqueRuntimeEventSink) Write(ctx context.Context, ev runtimeevents.Eve
 // executor's fanout channel (translateStreamEvent's cost/plan-phase-emitter
 // consumer), and fire onDone for ModeOneShot's turn-complete wait.
 func (s *torqueRuntimeEventSink) emit(ev llmtypes.StreamEvent) {
+	switch ev.Type {
+	case llmtypes.EventDelta, llmtypes.EventToolUse, llmtypes.EventDone:
+		// The turn produced content or completed: a resume attempt holds.
+		signal(s.resumeProgress)
+	}
 	ev = redactEvent(s.redact, ev)
 	s.sidecar.Write(ev)
 	s.mgr.observeStreamEvent(s.sessID, ev)
@@ -439,4 +455,15 @@ func (s *torqueRuntimeEventSink) handleStderrLine(raw json.RawMessage) {
 		return
 	}
 	_, _ = s.stderr.Write([]byte(p.Line + "\n"))
+}
+
+// signal sends on c without blocking; a nil or full channel drops it.
+func signal(c chan<- struct{}) {
+	if c == nil {
+		return
+	}
+	select {
+	case c <- struct{}{}:
+	default:
+	}
 }

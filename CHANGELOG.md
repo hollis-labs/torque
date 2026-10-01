@@ -82,6 +82,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- A claude-code (streaming-stdio) resume whose provider session is gone boots
+  fresh once, with the kickoff, as a subprocess resume already did
+  (CW-20261001-0202). With agentkit v0.21.1 and wrapper v0.25.6 the loss
+  arrives as the wrapper's `session.lost` event after Boot has returned, so
+  `ResumeSession` and `Manager.Resume` now watch a resumed streaming session
+  until the provider reports the session gone (they stop it and boot fresh),
+  the first turn shows content (the resume holds), the session ends, or 8
+  seconds pass. The fresh boot happens at most once and is not watched; the
+  wait adds up to the time to the first content of a healthy resume. Not
+  covered: planstart's redispatch, which still only sees a loss that fails
+  Boot.
 - go-agent-wrapper v0.25.6 (from v0.23.0), agentkit v0.21.1 (from v0.20.3),
   go-providers v0.42.0 (from v0.40.0), go-sandbox v0.6.0 (from v0.5.1),
   go-runner v0.8.2 (from v0.7.0) and go-llm-contracts v0.4.0 (from v0.3.0);
@@ -142,9 +153,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
     first turn finds the provider no longer has the session (claude: "No
     conversation found", a `SessionLostError`), `ResumeSession` and
     planstart's redispatch boot fresh once, with the kickoff, rather than
-    fail. Not covered yet (CW-20261001-0202): a streaming-stdio resume
-    whose id is lost fails its first turn after Boot, and an ACP agent
-    without `loadSession` opens a new session without saying so.
+    fail. A streaming-stdio resume whose id is lost is covered the same way
+    since agentkit v0.21.1 (below). Not covered yet (CW-20261001-0202): an
+    ACP agent without `loadSession` opens a new session without saying so.
   - **Declared but not wired yet:** codex app-server (CW-20261001-0180)
     and agy (CW-20261001-0181). A Codex `ResumeSession` now boots fresh
     instead of passing an id the app-server ignored.

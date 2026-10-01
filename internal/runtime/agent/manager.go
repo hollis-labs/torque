@@ -1201,7 +1201,7 @@ func (m *Manager) Resume(ctx context.Context, req ResumeRequest) (string, error)
 	if m.resumes(src.Provider, hint, launchProfile, profile) {
 		resume := fresh
 		resume.ProviderSessionIDOverride = string(hint)
-		sess, err = bootWithFreshFallback(ctx, m.deps, resume, fresh, "Resume "+req.SessionID)
+		sess, err = m.bootWithFreshFallback(ctx, resume, fresh, "Resume "+req.SessionID)
 	} else {
 		sess, err = Boot(ctx, m.deps, fresh)
 	}
@@ -1230,21 +1230,68 @@ func (m *Manager) resumes(recordedBy string, hint []byte, launchProfile, agentPr
 	return SameRuntime(recordedBy, bootProvider) && GenuinelyResumable(bootProvider, kind)
 }
 
+// resumeLossGrace bounds how long bootWithFreshFallback waits, after a
+// streaming-stdio resume boots, for the provider to say the session it was
+// asked to resume is gone. A lost session shows within the first turn's
+// start-up (the CLI reports it and exits); a resume that holds shows content
+// sooner than this, which ends the wait.
+var resumeLossGrace = 8 * time.Second
+
 // bootWithFreshFallback boots resume, a launch that continues a stored
 // provider conversation. When the provider no longer has it (an expired or
-// pruned session, an id from another machine), Boot fails with
-// provider.ErrProviderSessionLost and fresh boots once instead, with the
-// kickoff, rather than the resume failing outright. Boot only sees the
-// loss when the launch runs a turn before it returns (a subprocess
-// session's kickoff); otherwise it surfaces on the first turn
-// (CW-20261001-0202).
-func bootWithFreshFallback(ctx context.Context, deps *Dependencies, resume, fresh Options, what string) (*Session, error) {
-	sess, err := Boot(ctx, deps, resume)
-	if err != nil && errors.Is(err, provider.ErrProviderSessionLost) {
-		log.Printf("agent: %s: the provider no longer has the session; booting fresh: %v", what, err)
-		return Boot(ctx, deps, fresh)
+// pruned session, an id from another machine), it boots fresh once instead,
+// with the kickoff, rather than the resume failing outright.
+//
+// How the loss shows depends on the runtime. A subprocess-per-turn session
+// runs its kickoff turn inside Boot, so Boot fails with
+// provider.ErrProviderSessionLost. A streaming-stdio session sends the
+// kickoff after Boot returns: the loss arrives as the wrapper's session.lost
+// event (agentkit v0.21.1), so Boot has succeeded, and the attempt is watched
+// until the provider says the session is gone (then it is stopped and a fresh
+// one booted), the turn shows content (the resume holds), the session ends,
+// or resumeLossGrace passes. Either way the fresh boot happens at most once
+// and is not itself watched (CW-20261001-0202).
+func (m *Manager) bootWithFreshFallback(ctx context.Context, resume, fresh Options, what string) (*Session, error) {
+	lost := make(chan struct{}, 1)
+	progress := make(chan struct{}, 1)
+	sess, err := Boot(ctx, m.deps, resume.withResumeSignals(lost, progress))
+	if err != nil {
+		if errors.Is(err, provider.ErrProviderSessionLost) {
+			log.Printf("agent: %s: the provider no longer has the session; booting fresh: %v", what, err)
+			return Boot(ctx, m.deps, fresh)
+		}
+		return sess, err
 	}
-	return sess, err
+	if sess == nil || sess.RuntimeKind != string(RuntimeKindStreamingStdio) {
+		return sess, nil
+	}
+	if _, wrapped := m.wrapperHandleFor(sess.ID); !wrapped {
+		// Only a go-agent-wrapper session reports session.lost; there is
+		// nothing to wait for on any other.
+		return sess, nil
+	}
+	select {
+	case <-lost:
+	case <-progress:
+		// Content can race the lost event only if the provider both answered
+		// and reported the session gone; the loss wins.
+		select {
+		case <-lost:
+		default:
+			return sess, nil
+		}
+	case <-time.After(resumeLossGrace):
+		return sess, nil
+	case <-ctx.Done():
+		return sess, nil
+	}
+	log.Printf("agent: %s: the provider no longer has the session (session.lost); stopping %s and booting fresh", what, sess.ID)
+	stopCtx, cancel := context.WithTimeout(context.Background(), stopGraceWindow)
+	defer cancel()
+	if err := m.Stop(stopCtx, sess.ID); err != nil {
+		log.Printf("agent: %s: stop %s: %v", what, sess.ID, err)
+	}
+	return Boot(ctx, m.deps, fresh)
 }
 
 // providerFromRuntime extracts a stable provider token from a Runtime ID

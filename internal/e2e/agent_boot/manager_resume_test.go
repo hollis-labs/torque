@@ -295,3 +295,66 @@ func TestBootPiACP_ResumedMetaFollowsTheSessionIDPreset(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, got.Resumed, "and it reads back from the row")
 }
+
+// lostStreamingRun is a claude streaming-stdio CLI resumed with an id it does
+// not have: it reads the first user turn, reports the lost conversation in a
+// result frame and on stderr, and exits 1 (go-providers' captured
+// claude/stream_resume_unknown_id, with its recv widened to any first turn,
+// since Torque's kickoff is its own text).
+func lostStreamingRun(t *testing.T) providertest.Run {
+	t.Helper()
+	steps := providertest.FixtureSteps(t, "claude/stream_resume_unknown_id")
+	require.NotEmpty(t, steps)
+	return providertest.Script(append([]providertest.Step{providertest.RecvLine()}, steps[1:]...)...).When("--resume")
+}
+
+// A streaming-stdio resume whose provider session is gone (the CLI exits on
+// its first turn): with agentkit v0.21.1 the loss is a typed error, which
+// reaches the one fresh-boot fallback ResumeSession and Manager.Resume share:
+// one fresh boot with the kickoff, Resumed=false, and no loop.
+func TestStreamingLostSession_BootsFreshOnce(t *testing.T) {
+	const lostID = "00000000-0000-4000-8000-0000000000ff"
+	for name, relaunch := range map[string]func(*composedDeps, context.Context) (*agent.Session, error){
+		"ResumeSession": func(cd *composedDeps, ctx context.Context) (*agent.Session, error) {
+			return cd.Manager.ResumeSession(ctx, "SES-STREAM-LOST", agent.ResumeOptions{})
+		},
+		"Manager.Resume": func(cd *composedDeps, ctx context.Context) (*agent.Session, error) {
+			id, err := cd.Manager.Resume(ctx, agent.ResumeRequest{SessionID: "SES-STREAM-LOST"})
+			if err != nil {
+				return nil, err
+			}
+			return cd.Manager.Get(id)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := providertest.New(t, runtimes.Claude, lostStreamingRun(t), providertest.Script(providertest.AwaitEOF()))
+			fake.ExpectErrors()
+			fake.Install()
+			cd := composeDeps(t, fakeRuntimeConfig{}, "claude-code")
+			cd.Deps.RuntimeFactory = nil
+			cd.Deps.Profiles = config.ProfileMap{"worker": {Executor: "cli", Provider: "claude-code", PermissionMode: "acceptEdits"}}
+			plantResumeCheckpoint(t, cd.Store, "SES-STREAM-LOST", "claude-code", "worker", lostID)
+			// ResumeSession reads the id off the session row, Manager.Resume off the checkpoint.
+			require.NoError(t, cd.Store.UpdateSessionResumeHint("SES-STREAM-LOST", []byte(lostID)))
+
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			sess, err := relaunch(cd, ctx)
+			require.NoError(t, err, "a lost streaming session boots fresh rather than failing the resume")
+			t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), sess.ID) })
+
+			var calls []providertest.Call
+			require.Eventually(t, func() bool {
+				calls = fake.Calls()
+				return len(calls) >= 2 && len(calls[0].Args) > 0 && len(calls[1].Args) > 0
+			}, 5*time.Second, 20*time.Millisecond, "both launches record their argv")
+			got, ok := calls[0].ArgAfter("--resume")
+			require.True(t, ok, "the resume was tried first: %v", calls[0].Args)
+			assert.Equal(t, lostID, got)
+			assert.False(t, calls[1].HasArg("--resume"), "then one fresh boot: %v", calls[1].Args)
+			assert.Len(t, fake.Calls(), 2, "once, no loop")
+			assert.False(t, sess.Resumed)
+			assert.Equal(t, resumeSourceTask, sess.TaskID)
+		})
+	}
+}
