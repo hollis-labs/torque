@@ -171,6 +171,56 @@ func TestBootCopilotACP_MuxOnlyUnderBypass(t *testing.T) {
 	}
 }
 
+// A profile's mux_servers narrows the mux an ACP session gets under
+// bypassPermissions, and never gets it outside bypassPermissions
+// (CW-20261001-0226).
+func TestBootCopilotACP_MuxServersNarrowUnderBypass(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		permissionMode string
+		muxServers     []string
+		wantMuxArgs    []string // nil: no mux
+	}{
+		{"granted, bypass", "bypassPermissions", []string{"tesseract"}, []string{"mcp", "--proxy", "--token", "local-dev", "--only", "tesseract"}},
+		{"granted, not bypass", "acceptEdits", []string{"tesseract"}, nil},
+		// The daemon's default set, for a profile that names none, is curated
+		// with --only too: the same servers, no mux_call into the rest.
+		{"default set, bypass", "bypassPermissions", nil, []string{"mcp", "--proxy", "--token", "local-dev", "--only", "vanta,torque,cerberus"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := providertest.New(t, runtimes.Copilot, providertest.Replay("copilot/acp_turn"))
+			fake.Install()
+			cd := composeACPDeps(t, "copilot")
+			cd.Deps.Profiles = config.ProfileMap{"worker": {Executor: "cli", Provider: "copilot", PermissionMode: tc.permissionMode, MuxServers: tc.muxServers}}
+			cd.Deps.MuxCommand = "/usr/local/bin/mux"
+			cd.Deps.MuxArgs = []string{"mcp", "--proxy", "--servers", "vanta,torque,cerberus", "--token", "local-dev"}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			_, err := cd.Manager.Boot(ctx, agent.Options{
+				TaskID: "CW-ACP-MUX-NARROW", AgentProfile: "worker", Workdir: t.TempDir(), Mode: agent.ModeOneShot, Description: "say hello",
+			})
+			require.NoError(t, err)
+			require.Len(t, fake.Calls(), 1)
+			var muxArgv []any
+			for _, srv := range acpSessionNewServers(t, fake.Calls()[0]) {
+				if srv["name"] == "mux" {
+					muxArgv, _ = srv["args"].([]any)
+				}
+			}
+			if tc.wantMuxArgs == nil {
+				assert.Empty(t, muxArgv, "outside bypassPermissions mux is not offered")
+				return
+			}
+			got := make([]string, len(muxArgv))
+			for i, a := range muxArgv {
+				got[i], _ = a.(string)
+			}
+			assert.Equal(t, tc.wantMuxArgs, got)
+		})
+	}
+}
+
 // TestBootCopilotACP_LongLivedSendTurn: a long-lived copilot session gets
 // its kickoff as the first prompt, and a later SendTurn reaches the same
 // ACP session as a second session/prompt.

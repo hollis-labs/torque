@@ -136,6 +136,29 @@ type AgentProfile struct {
 	// posture. The two systems do not share state.
 	PermissionMode string `yaml:"permission_mode,omitempty"`
 
+	// MuxServers names the servers of the daemon's `mux` MCP aggregator a
+	// session of this profile is granted: Torque plants `mux mcp --proxy
+	// --servers <exactly these>`, beside the run's own `loopback`. Names come
+	// from KnownMuxServers; an unknown or repeated name is a load-time error.
+	//
+	// Unset (the default) grants none to a Claude session: Claude workers get
+	// the loopback only, and Claude also loads no MCP server Torque did not
+	// plant (--strict-mcp-config), so what a profile names here is the whole
+	// of the mux surface its sessions can reach. The other runtimes keep their
+	// own defaults when it is unset: OpenCode on its native runtime gets mux
+	// with the daemon's default server set, and Codex and every ACP session
+	// get it only under permission_mode bypassPermissions. A Codex or ACP
+	// profile that sets mux_servers still gets mux only under
+	// bypassPermissions, with these servers.
+	//
+	// `cerberus` (deploy and ssh) and `nanite` (its dev_bash runs shell
+	// commands) are never in a default; naming one here is deliberate, and
+	// both the load and `torque profiles lint` warn what it grants. The
+	// servers are curated with mux's `--only`, so a session reaches exactly
+	// these servers' tools: not mux_call or discovery into the others, and not
+	// mux's own Tether tools. (CW-20261001-0226)
+	MuxServers []string `yaml:"mux_servers,omitempty"`
+
 	// API-specific fields
 	Temperature  float64  `yaml:"temperature,omitempty"`
 	MaxTokens    int      `yaml:"max_tokens,omitempty"`
@@ -414,6 +437,13 @@ func LoadProfilesFile(path string) (Profiles, error) {
 		}
 		if err := validateProfileArgs(name, prof.Args); err != nil {
 			return Profiles{}, fmt.Errorf("parse profiles %s: %w", path, err)
+		}
+		if problems := validateMuxServers(prof.MuxServers); len(problems) > 0 {
+			return Profiles{}, fmt.Errorf("parse profiles %s: agent_profiles[%q]: %s", path, name, strings.Join(problems, "; "))
+		}
+		for _, g := range prof.DangerousMuxGrants() {
+			log.Printf("[config] WARNING: %s: agent_profiles[%q] mux_servers names %s, which grants %s",
+				path, name, g.Server, g.Grants)
 		}
 	}
 

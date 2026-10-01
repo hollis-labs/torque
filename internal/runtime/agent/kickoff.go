@@ -104,14 +104,16 @@ func kickoffMarkdown(opts Options, role string, muxOmitsTorque bool) string {
 	return body + kickoffFirstTurn(opts)
 }
 
-// kickoffLoopbackTools points the agent at the per-task loopback's tools.
-const kickoffLoopbackTools = "Use the `loopback` MCP server's task-scoped tools (no `task_id` parameter required) for self-task operations. Prefer them over `mcp__mux__torque_*` for the booted task.\n\n"
+// kickoffLoopbackTools points the agent at the per-task loopback's tools. The
+// mux preference is conditional: a Claude worker's session has no mux server
+// unless its profile names mux_servers (CW-20261001-0226).
+const kickoffLoopbackTools = "Use the `loopback` MCP server's task-scoped tools (no `task_id` parameter required) for self-task operations. If your session also has a `mux` server, prefer them over its `mcp__mux__torque_*` tools for the booted task.\n\n"
 
 // kickoffLoopbackFullSurface is kickoffLoopbackTools for an orchestrator-class
 // role, whose loopback carries the full Torque surface: unlike a worker's, it
 // is not bound to one task, so every call names the task it acts on, under
 // whichever parameter name that tool's schema uses (`id` or `task_id`).
-const kickoffLoopbackFullSurface = "Use the `loopback` MCP server's Torque tools (the full surface: each call names the task it acts on, so pass the task id as the tool's schema asks, which is `id` on some tools and `task_id` on others). Prefer them over `mcp__mux__torque_*`.\n\n"
+const kickoffLoopbackFullSurface = "Use the `loopback` MCP server's Torque tools (the full surface: each call names the task it acts on, so pass the task id as the tool's schema asks, which is `id` on some tools and `task_id` on others). If your session also has a `mux` server, prefer them over its `mcp__mux__torque_*` tools.\n\n"
 
 // kickoffLoopbackFullSurfaceOnly is kickoffLoopbackFullSurface while Torque
 // write-protects its state: mux serves no `torque` tools, so the loopback
