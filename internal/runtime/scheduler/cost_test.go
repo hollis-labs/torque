@@ -136,8 +136,8 @@ func TestResolveCost(t *testing.T) {
 		return (float64(u.Input)*3 + float64(u.Output)*15 + float64(u.CacheRead)*0.3 + float64(u.CacheWrite)*3.75) / 1_000_000, false, true
 	}
 	estimateMiss := func(string, string, modelcatalog.UsageTokens) (float64, bool, bool) { return 0, false, false }
-	resolveProfile := func(name string) (string, string, bool) {
-		if name == "claude" {
+	resolveProfile := func(tp scheduler.TaskProfile) (string, string, bool) {
+		if tp.AgentProfile == "claude" {
 			return "claude-code", "claude-sonnet-4-5", true
 		}
 		return "", "", false
@@ -145,14 +145,14 @@ func TestResolveCost(t *testing.T) {
 	tokens := executor.TokenUsage{PromptTokens: 1000, CompletionTokens: 500}
 
 	t.Run("provider-reported for every event", func(t *testing.T) {
-		rc := scheduler.ResolveCost("claude", &executor.ExecutionResult{Cost: 0.42, Tokens: tokens}, estimateOK, resolveProfile, true)
+		rc := scheduler.ResolveCost(scheduler.TaskProfile{AgentProfile: "claude"}, &executor.ExecutionResult{Cost: 0.42, Tokens: tokens}, estimateOK, resolveProfile, true)
 		assert.Equal(t, scheduler.ResolvedCost{Cost: 0.42, ProviderCost: 0.42, Source: scheduler.CostSourceProvider}, rc)
 	})
 
 	t.Run("part provider-reported, part estimated", func(t *testing.T) {
 		// A resumed Claude session: its first turn reports no cost and is
 		// estimated; the others carry Claude's own figure.
-		rc := scheduler.ResolveCost("claude", &executor.ExecutionResult{
+		rc := scheduler.ResolveCost(scheduler.TaskProfile{AgentProfile: "claude"}, &executor.ExecutionResult{
 			Cost:           0.42,
 			Tokens:         executor.TokenUsage{PromptTokens: 2000, CompletionTokens: 1000},
 			UnpricedTokens: tokens,
@@ -164,21 +164,21 @@ func TestResolveCost(t *testing.T) {
 	})
 
 	t.Run("estimated when no event carried a cost", func(t *testing.T) {
-		rc := scheduler.ResolveCost("claude", &executor.ExecutionResult{Tokens: tokens, UnpricedTokens: tokens}, estimateOK, resolveProfile, true)
+		rc := scheduler.ResolveCost(scheduler.TaskProfile{AgentProfile: "claude"}, &executor.ExecutionResult{Tokens: tokens, UnpricedTokens: tokens}, estimateOK, resolveProfile, true)
 		assert.Equal(t, scheduler.CostSourceEstimate, rc.Source)
 		assert.InDelta(t, 0.0105, rc.Cost, 1e-9)
 		assert.Equal(t, rc.Cost, rc.EstimatedCost)
 	})
 
 	t.Run("an executor that does not split has all its tokens estimated", func(t *testing.T) {
-		rc := scheduler.ResolveCost("claude", &executor.ExecutionResult{Tokens: tokens}, estimateOK, resolveProfile, true)
+		rc := scheduler.ResolveCost(scheduler.TaskProfile{AgentProfile: "claude"}, &executor.ExecutionResult{Tokens: tokens}, estimateOK, resolveProfile, true)
 		assert.Equal(t, scheduler.CostSourceEstimate, rc.Source)
 		assert.InDelta(t, 0.0105, rc.Cost, 1e-9)
 	})
 
 	t.Run("cache tokens are priced at their own rates", func(t *testing.T) {
 		u := executor.TokenUsage{PromptTokens: 36, CompletionTokens: 1804, CacheReadTokens: 132711, CacheWriteTokens: 20565}
-		rc := scheduler.ResolveCost("claude", &executor.ExecutionResult{Tokens: u, UnpricedTokens: u}, estimateOK, resolveProfile, true)
+		rc := scheduler.ResolveCost(scheduler.TaskProfile{AgentProfile: "claude"}, &executor.ExecutionResult{Tokens: u, UnpricedTokens: u}, estimateOK, resolveProfile, true)
 		assert.InDelta(t, 0.14410005, rc.Cost, 1e-9)
 	})
 
@@ -198,13 +198,13 @@ func TestResolveCost(t *testing.T) {
 	}
 	for _, tc := range none {
 		t.Run("none: "+tc.name, func(t *testing.T) {
-			rc := scheduler.ResolveCost(tc.profile, tc.result, tc.estimate, resolveProfile, tc.backfill)
+			rc := scheduler.ResolveCost(scheduler.TaskProfile{AgentProfile: tc.profile}, tc.result, tc.estimate, resolveProfile, tc.backfill)
 			assert.Equal(t, scheduler.ResolvedCost{Source: scheduler.CostSourceNone}, rc, "0 here means unknown, not free")
 		})
 	}
 
 	t.Run("provider cost stands when the rest cannot be priced", func(t *testing.T) {
-		rc := scheduler.ResolveCost("claude", &executor.ExecutionResult{Cost: 0.42, Tokens: tokens, UnpricedTokens: tokens}, estimateMiss, resolveProfile, true)
+		rc := scheduler.ResolveCost(scheduler.TaskProfile{AgentProfile: "claude"}, &executor.ExecutionResult{Cost: 0.42, Tokens: tokens, UnpricedTokens: tokens}, estimateMiss, resolveProfile, true)
 		assert.Equal(t, scheduler.CostSourceProvider, rc.Source)
 		assert.InDelta(t, 0.42, rc.Cost, 1e-9)
 	})
@@ -233,8 +233,8 @@ func TestResolveCost_CatalogProviderAndInputConvention(t *testing.T) {
 				gotProvider, gotModel, gotUsage = p, m, u
 				return 0.01, false, true
 			}
-			resolveProfile := func(string) (string, string, bool) { return tc.provider, tc.model, true }
-			rc := scheduler.ResolveCost("worker", &executor.ExecutionResult{Tokens: executor.TokenUsage{PromptTokens: 10, CacheReadTokens: 5}}, estimate, resolveProfile, true)
+			resolveProfile := func(scheduler.TaskProfile) (string, string, bool) { return tc.provider, tc.model, true }
+			rc := scheduler.ResolveCost(scheduler.TaskProfile{AgentProfile: "worker"}, &executor.ExecutionResult{Tokens: executor.TokenUsage{PromptTokens: 10, CacheReadTokens: 5}}, estimate, resolveProfile, true)
 			assert.Equal(t, scheduler.CostSourceEstimate, rc.Source)
 			assert.Equal(t, tc.wantProvider, gotProvider)
 			assert.Equal(t, tc.model, gotModel)

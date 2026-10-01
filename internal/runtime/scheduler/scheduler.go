@@ -1374,7 +1374,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		if task.SprintID.Valid {
 			sprintID = task.SprintID.String
 		}
-		cost := s.resolveCost(task.AgentProfile, result)
+		cost := s.resolveCost(&task, result)
 		runCompletedPayload := runCompletedEventPayload(result, cost)
 		if err := s.stateWriter.Submit(context.Background(), "scheduler_run_completed", func(tx *sqlstore.WriteTx) error {
 			if err := tx.CompleteRunWithCost(capturedRunID, sqlstore.RunCompletion{

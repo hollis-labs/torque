@@ -13,6 +13,7 @@ import (
 	"github.com/hollis-labs/torque/internal/modelcatalog"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/runtime/scheduler"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,12 +22,10 @@ type staticProfiles config.ProfileMap
 
 func (p staticProfiles) CurrentProfiles() config.ProfileMap { return config.ProfileMap(p) }
 
-// A run's cost is resolved once and written to runs.cost and its
-// cost_ledger row together, so the run, its task's aggregate and the
-// scheduler's total_cost all read the same figures (CW-20260912-0003). Four
-// runs through the real completion path, one per provenance, with a
-// models.dev fixture and tonight's run 1140 as the codex estimate.
-func TestSchedulerRunCostIsOneFigure(t *testing.T) {
+// setupCostScheduler is a scheduler wired with a models.dev fixture catalog
+// and two profiles, codex-worker (gpt-5.5) and claude-worker (sonnet 4.5).
+func setupCostScheduler(t *testing.T) (*scheduler.Scheduler, *sqlstore.Store, *executor.MockExecutor) {
+	t.Helper()
 	sched, store, mock := setupScheduler(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]modelsdev.Provider{
@@ -34,7 +33,7 @@ func TestSchedulerRunCostIsOneFigure(t *testing.T) {
 			"anthropic": {ID: "anthropic", Models: map[string]modelsdev.Model{"claude-sonnet-4-5": {ID: "claude-sonnet-4-5", Cost: modelsdev.Pricing{Input: 3, Output: 15, CacheWrite: 3.75, CacheRead: 0.3}}}},
 		})
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 	catalog := modelcatalog.New(modelsdev.WithURL(srv.URL), modelsdev.WithHTTPClient(srv.Client()), modelsdev.WithCacheDir(t.TempDir()), modelsdev.WithCacheTTL(24*time.Hour))
 	require.NoError(t, catalog.Refresh(context.Background()))
 	sched.Models = catalog
@@ -42,6 +41,65 @@ func TestSchedulerRunCostIsOneFigure(t *testing.T) {
 		"codex-worker":  {Executor: "cli", Provider: "codex", Model: "gpt-5.5"},
 		"claude-worker": {Executor: "cli", Provider: "claude-code", Model: "claude-sonnet-4-5"},
 	}
+	return sched, store, mock
+}
+
+// runToCompletion creates a mock task, runs it through the real completion
+// path with result, and returns its single run.
+func runToCompletion(t *testing.T, sched *scheduler.Scheduler, store *sqlstore.Store, mock *executor.MockExecutor, task sqlstore.TaskRecord, result executor.ExecutionResult) sqlstore.RunRecord {
+	t.Helper()
+	task.Status, task.Priority, task.Executor, task.OnDone = "todo", 1, "mock", "close"
+	require.NoError(t, store.CreateTask(&task))
+	mock.SetResult(&result)
+	require.NoError(t, sched.Tick(context.Background()))
+	require.Eventually(t, func() bool {
+		runs, err := store.ListRuns(task.ID)
+		return err == nil && len(runs) == 1 && runs[0].Status != "running"
+	}, 5*time.Second, 10*time.Millisecond, "run for %s never completed", task.ID)
+	sched.DrainResults()
+	return requireSingleRun(t, store, task.ID)
+}
+
+// A task's profile resolves for pricing as the executor resolves it:
+// launch_profile first, then agent_profile (launchprofile.Resolve). A task
+// with only a launch_profile used to look up profile "" and cost 0, source
+// none (CW-20260912-0003 review); one with both set to different profiles was
+// priced against the wrong model.
+func TestSchedulerPricesTheProfileTheExecutorResolves(t *testing.T) {
+	sched, store, mock := setupCostScheduler(t)
+	// Tonight's run 1140: codex gpt-5.5, input includes its 40,064 cached tokens.
+	usage := executor.TokenUsage{PromptTokens: 58212, CompletionTokens: 830, CacheReadTokens: 40064}
+	const codexPrice = 0.135672
+	// The same tokens priced as a Claude run (input excludes the cache reads):
+	// a different figure, so the wrong profile cannot pass by coincidence.
+	const claudePrice = (58212*3 + 830*15 + 40064*0.3) / 1e6
+	require.NotEqual(t, codexPrice, claudePrice)
+
+	for _, tc := range []struct {
+		name string
+		task sqlstore.TaskRecord
+		want float64
+	}{
+		{"launch_profile only", sqlstore.TaskRecord{ID: "CW-LP-ONLY", LaunchProfile: "codex-worker"}, codexPrice},
+		{"agent_profile only", sqlstore.TaskRecord{ID: "CW-AP-ONLY", AgentProfile: "codex-worker"}, codexPrice},
+		{"both set, to different profiles: the launch_profile wins", sqlstore.TaskRecord{ID: "CW-BOTH", LaunchProfile: "codex-worker", AgentProfile: "claude-worker"}, codexPrice},
+		{"both set, the other way round", sqlstore.TaskRecord{ID: "CW-BOTH-2", LaunchProfile: "claude-worker", AgentProfile: "codex-worker"}, claudePrice},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			run := runToCompletion(t, sched, store, mock, tc.task, executor.ExecutionResult{Status: "done", Tokens: usage})
+			assert.Equal(t, "estimate", run.CostSource)
+			assert.InDelta(t, tc.want, run.Cost, 1e-9)
+		})
+	}
+}
+
+// A run's cost is resolved once and written to runs.cost and its
+// cost_ledger row together, so the run, its task's aggregate and the
+// scheduler's total_cost all read the same figures (CW-20260912-0003). Four
+// runs through the real completion path, one per provenance, with a
+// models.dev fixture and tonight's run 1140 as the codex estimate.
+func TestSchedulerRunCostIsOneFigure(t *testing.T) {
+	sched, store, mock := setupCostScheduler(t)
 
 	resumed := executor.TokenUsage{PromptTokens: 12, CompletionTokens: 300, CacheReadTokens: 40000, CacheWriteTokens: 5000}
 	runs := []struct {

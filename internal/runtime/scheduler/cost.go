@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/launchprofile"
 	"github.com/hollis-labs/torque/internal/modelcatalog"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/persistence/writequeue"
@@ -165,9 +166,19 @@ func nullableString(s string) interface{} {
 // tested without a real catalog. Pass nil to disable estimating.
 type EstimateUsageFn func(providerID, modelID string, u modelcatalog.UsageTokens) (cost float64, cacheFallback bool, ok bool)
 
+// TaskProfile is the pair of profile fields a task launches with. The
+// executor resolves them together, launch_profile first
+// (launchprofile.Resolve), so cost resolution must too: a task with only a
+// launch_profile has no agent_profile to look up.
+type TaskProfile struct {
+	LaunchProfile string
+	AgentProfile  string
+}
+
 // ProfileResolverFn returns the provider (the profile's runtime, as
-// configured) and model of a profile. Pass nil to disable estimating.
-type ProfileResolverFn func(profileName string) (provider, model string, ok bool)
+// configured) and model a task's profile resolves to, the way the executor
+// resolves it. Pass nil to disable estimating.
+type ProfileResolverFn func(profile TaskProfile) (provider, model string, ok bool)
 
 // ResolvedCost is a run's cost and where it came from. Cost is
 // ProviderCost + EstimatedCost.
@@ -195,7 +206,7 @@ type ResolvedCost struct {
 // or backfill turned off leave the unpriced tokens unpriced, and a run with
 // no figure at all is CostSourceNone.
 func ResolveCost(
-	profileName string,
+	profile TaskProfile,
 	result *executor.ExecutionResult,
 	estimate EstimateUsageFn,
 	resolveProfile ProfileResolverFn,
@@ -211,7 +222,7 @@ func ResolveCost(
 	}
 	estimated := false
 	if hasTokens(unpriced) && backfillEnabled && estimate != nil && resolveProfile != nil {
-		if provider, model, ok := resolveProfile(profileName); ok && provider != "" && model != "" {
+		if provider, model, ok := resolveProfile(profile); ok && provider != "" && model != "" {
 			cost, fallback, ok := estimate(config.CatalogProviderID(provider), model, modelcatalog.UsageTokens{
 				Input:                  unpriced.PromptTokens,
 				Output:                 unpriced.CompletionTokens,
@@ -245,26 +256,26 @@ func hasTokens(t executor.TokenUsage) bool {
 // resolveCost adapts the Scheduler's instance fields into ResolveCost's
 // function-typed inputs. Each closure is nil when its source is unwired so
 // the policy short-circuits cleanly. Backfill is on by default; the
-// CostBackfillDisabled flag turns estimating off.
-func (s *Scheduler) resolveCost(profileName string, result *executor.ExecutionResult) ResolvedCost {
+// CostBackfillDisabled flag turns estimating off. The task's profile resolves
+// exactly as the executor resolves it, launch_profile first, so a task
+// launched by launch_profile alone is priced against the model that ran.
+func (s *Scheduler) resolveCost(task *sqlstore.TaskRecord, result *executor.ExecutionResult) ResolvedCost {
 	var estimate EstimateUsageFn
 	if s.Models != nil {
 		estimate = s.Models.EstimateUsageCost
 	}
-	var resolveProfile ProfileResolverFn
-	profiles := config.CurrentProfiles(s.Profiles)
-	if len(profiles) > 0 {
-		resolveProfile = func(name string) (string, string, bool) {
-			p, ok := profiles[name]
-			if !ok {
-				return "", "", false
-			}
-			return p.Provider, p.Model, true
-		}
+	resolveProfile := func(tp TaskProfile) (string, string, bool) {
+		p := launchprofile.Resolve(launchprofile.ResolveRequest{
+			LaunchProfile:      tp.LaunchProfile,
+			LegacyAgentProfile: tp.AgentProfile,
+			Source:             s.Profiles,
+		}).AgentProfile
+		return p.Provider, p.Model, true
 	}
-	rc := ResolveCost(profileName, result, estimate, resolveProfile, !s.CostBackfillDisabled)
+	profile := TaskProfile{LaunchProfile: task.LaunchProfile, AgentProfile: task.AgentProfile}
+	rc := ResolveCost(profile, result, estimate, resolveProfile, !s.CostBackfillDisabled)
 	if rc.CacheFallback {
-		log.Printf("[scheduler] cost for profile %q priced a cache read or write at the input price: the catalog has no cache price for its model", profileName)
+		log.Printf("[scheduler] cost for task %s (launch_profile %q, agent_profile %q) priced a cache read or write at the input price: the catalog has no cache price for its model", task.ID, profile.LaunchProfile, profile.AgentProfile)
 	}
 	return rc
 }
