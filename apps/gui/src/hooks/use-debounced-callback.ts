@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { createTrailingDebounce } from '@/lib/debounce'
+import { useCallback, useEffect, useRef } from 'react'
+import { createTrailingDebounce, type TrailingDebounce } from '@/lib/debounce'
 
 /**
  * A stable `schedule()` that runs the latest `fn` once a burst of calls has
@@ -11,7 +11,14 @@ export function useDebouncedCallback(fn: () => void, delayMs: number, maxWaitMs?
   useEffect(() => {
     fnRef.current = fn
   }, [fn])
-  const [debounce] = useState(() => createTrailingDebounce(() => fnRef.current(), delayMs, maxWaitMs))
-  useEffect(() => debounce.cancel, [debounce])
-  return debounce.schedule
+  const debounceRef = useRef<TrailingDebounce | null>(null)
+  useEffect(() => {
+    const debounce = createTrailingDebounce(() => fnRef.current(), delayMs, maxWaitMs)
+    debounceRef.current = debounce
+    return () => {
+      debounce.cancel()
+      debounceRef.current = null
+    }
+  }, [delayMs, maxWaitMs])
+  return useCallback(() => debounceRef.current?.schedule(), [])
 }
