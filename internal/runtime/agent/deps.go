@@ -160,4 +160,15 @@ type Dependencies struct {
 	// idle reminder leaves it alone (CW-20261001-0117). nil reads as nobody
 	// polling.
 	Polls *steering.PollRegistry
+
+	// ProtectedPaths are the control-plane directories every agent launch
+	// write-protects (CW-20261001-0141): Torque's databases, config and
+	// session workspaces, real absolute paths that exist. The wrapper path
+	// passes them as go-agent-wrapper's Config.ProtectedPaths and bootLegacy
+	// as agentkit's StartOptions.ProtectedPaths; both fold them into the one
+	// sandbox around the child, and a backend that cannot write-protect
+	// refuses the launch. An ACP boot is refused while they are set
+	// (errACPProtectUnsupported). Empty when ProtectEnv turns protection off,
+	// and in tests that do not set it.
+	ProtectedPaths []string
 }

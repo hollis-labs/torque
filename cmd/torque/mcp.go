@@ -106,6 +106,7 @@ func mcpCmd() *cobra.Command {
 				return fmt.Errorf("bootstrap agent deps: %w", err)
 			}
 			defer agentDepsClose()
+			bootstrap.ProtectControlPlane(agentDeps, cfg)
 
 			// No scheduler runs here, but agents create and update most
 			// tasks through this process, so task writes validate against

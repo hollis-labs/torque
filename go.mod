@@ -8,7 +8,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hollis-labs/agent-contracts-leaf v0.3.0
 	github.com/hollis-labs/agentkit v0.19.1
-	github.com/hollis-labs/go-agent-wrapper v0.21.1
+	github.com/hollis-labs/go-agent-wrapper v0.23.0
 	github.com/hollis-labs/go-apppaths v0.1.0
 	github.com/hollis-labs/go-llm-types v0.5.1
 	github.com/hollis-labs/go-mcp v0.4.3

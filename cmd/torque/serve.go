@@ -265,6 +265,7 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 		return fmt.Errorf("bootstrap agent deps: %w", err)
 	}
 	defer agentDepsClose()
+	bootstrap.ProtectControlPlane(agentDeps, cfg)
 	if reconciled, err := agentDeps.Sessions.ReconcileInterruptedRuns(context.Background()); err != nil {
 		return fmt.Errorf("reconcile interrupted runs: %w", err)
 	} else if reconciled > 0 {
