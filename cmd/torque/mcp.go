@@ -107,6 +107,19 @@ func mcpCmd() *cobra.Command {
 			}
 			defer agentDepsClose()
 
+			// No scheduler runs here, but agents create and update most
+			// tasks through this process, so task writes validate against
+			// the same executor names torque serve registers
+			// (CW-20260910-0087). The registry is built only to read its
+			// names; if that fails the check stays off rather than
+			// refusing every executor.
+			executors := bootstrap.NewExecutorRegistry()
+			if err := bootstrap.Executors(executors, agentDeps); err != nil {
+				fmt.Fprintf(os.Stderr, "torque mcp: executor registry unavailable, task executors are not validated: %v\n", err)
+			} else {
+				svc.Task.SetRegisteredExecutors(executors.List)
+			}
+
 			// stdio MCP reserves stdout for the JSON-RPC protocol stream;
 			// route go-mcp-sanitize warn telemetry to stderr (CW-20260509-0033,
 			// mirrors vanta-conduit v0.6.1).

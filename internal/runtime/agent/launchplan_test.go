@@ -43,3 +43,20 @@ func TestMapRuntimeKind_LeafModes(t *testing.T) {
 	_, err := mapRuntimeKind("subprocess")
 	assert.Error(t, err)
 }
+
+// Stored session rows carry every older runtime-kind token, including cli
+// (243 rows on agent-os) that a profile no longer accepts.
+func TestParseRuntimeKind_SessionRowsAcceptEveryOlderToken(t *testing.T) {
+	for raw, want := range map[string]RuntimeKind{
+		"subprocess":          RuntimeKindSubprocess,
+		"cli":                 RuntimeKindSubprocess,
+		"serve-http":          RuntimeKindServeHTTP,
+		"app-server":          RuntimeKindJsonRpcStdio,
+		"pty-debug":           RuntimeKindPTY,
+		"streaming-stdio":     RuntimeKindStreamingStdio,
+		"subprocess-per-turn": RuntimeKindSubprocess,
+	} {
+		assert.Equal(t, want, ParseRuntimeKind(raw), raw)
+	}
+	assert.Equal(t, RuntimeKind("tui"), ParseRuntimeKind(" tui "), "an unknown token is returned for validate to reject")
+}

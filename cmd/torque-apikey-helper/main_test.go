@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -573,3 +574,22 @@ func TestRewriteKeychainPayload_PreservesUnknownFields(t *testing.T) {
 type httpDoerFunc func(*http.Request) (*http.Response, error)
 
 func (f httpDoerFunc) Do(req *http.Request) (*http.Response, error) { return f(req) }
+
+// TestMacOSKeychain_RefusesOffDarwin pins where the macOS-only gate lives:
+// on the production accessor, so resolveFromKeychain's own logic runs (and
+// is tested above with a fake) on every OS, while a real lookup off macOS
+// still fails with the same actionable message before shelling out.
+func TestMacOSKeychain_RefusesOffDarwin(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("the gate only applies off macOS; on darwin the accessor shells out to `security`")
+	}
+	t.Setenv("USER", "someone")
+	r := &resolver{keychain: macOSKeychain{}, stderr: &bytes.Buffer{}}
+	_, err := r.resolveFromKeychain()
+	if err == nil || !strings.Contains(err.Error(), "keychain fallback only available on macOS") {
+		t.Fatalf("want the macOS-only error from the production accessor, got %v", err)
+	}
+	if err := (macOSKeychain{}).Write("someone", "{}"); err == nil || !strings.Contains(err.Error(), "only available on macOS") {
+		t.Fatalf("Write off darwin: want the macOS-only error, got %v", err)
+	}
+}

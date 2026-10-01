@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -356,7 +357,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		// Load the operator-selected settings explicitly so headless launches
 		// honor the planted permission mode and auth helper from the outset.
 		if profile.Provider == "claude-code" {
-			preparedExecution.Bindings.Argv = append(preparedExecution.Bindings.Argv,
+			preparedExecution.Bindings.Argv = insertBeforeEndOfOptions(preparedExecution.Bindings.Argv,
 				"--settings", filepath.Join(prepared.PlantedBootDir, ".claude", "settings.json"))
 		}
 		prepared.Argv = append([]string(nil), preparedExecution.Bindings.Argv...)
@@ -538,7 +539,7 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 		// app-server accepts model configuration via -c, not --model.
 		bootDirExtraArgs = append(append([]string(nil), profile.Args...), bootDirExtraArgs...)
 		if profile.Model != "" {
-			bootDirExtraArgs = append(bootDirExtraArgs, "-c", fmt.Sprintf("model=%q", profile.Model))
+			bootDirExtraArgs = insertBeforeEndOfOptions(bootDirExtraArgs, "-c", fmt.Sprintf("model=%q", profile.Model))
 		}
 	}
 
@@ -1240,23 +1241,15 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 	execution := *preparedExecution
 	execution.Access.Mode = agentlaunch.AccessOptional
 
-	// opencode serve-http (see shouldDropBootDirExtraArgs). agentsessions
-	// derives StartOptions.ExtraArgs from Bindings.Argv[1:] once
-	// PreparedExecution is set, so the trim happens on the bindings.
-	if shouldDropBootDirExtraArgs(profile.Provider, runtimeKind) && len(execution.Bindings.Argv) > 0 {
-		execution.Bindings.Argv = execution.Bindings.Argv[:1]
-	}
+	// No serve-http trim here, unlike bootLegacy: on this path the prepared
+	// argv is the whole command (the wrapper adapter contributes no args),
+	// so `opencode serve --port 0 --hostname 127.0.0.1` must reach the
+	// child as planted. Trimming it launched a bare `opencode`.
 	// PreparedExecution is the wrapper's complete spawn command; it suppresses
 	// CLIAdapter.BuildArgs. Carry Claude's profile options on that command,
 	// rather than an adapter callback that the prepared path never invokes.
 	if profile.Provider == "claude-code" && len(execution.Bindings.Argv) > 0 {
-		argv := []string{execution.Bindings.Argv[0]}
-		argv = append(argv, profileArgsExcludingDevFlag(profile)...)
-		argv = append(argv, execution.Bindings.Argv[1:]...)
-		if profile.Model != "" {
-			argv = append(argv, "--model", profile.Model)
-		}
-		execution.Bindings.Argv = argv
+		execution.Bindings.Argv = claudeProfileArgv(execution.Bindings.Argv, profile)
 	}
 
 	// Merge Torque's own composeEnv output (TORQUE_TASK_ID/RUN_ID, filtered
@@ -1700,12 +1693,43 @@ type buildArgsParams struct {
 func composeBuildArgs(p buildArgsParams) []string {
 	args := p.Adapter.BuildArgs(p.TurnPrompt, p.SystemPrompt, p.SessionID)
 	if !p.SkipModelSuffix && p.Profile.Model != "" {
-		args = append(args, "--model", p.Profile.Model)
+		args = insertBeforeEndOfOptions(args, "--model", p.Profile.Model)
 	}
 	if filtered := profileArgsExcludingDevFlag(p.Profile); len(filtered) > 0 {
 		args = append(filtered, args...)
 	}
 	return args
+}
+
+// claudeProfileArgv carries a claude-code profile's options on the prepared
+// spawn command the wrapper path runs: the profile's args right after the
+// executable, and --model before any end-of-options marker.
+func claudeProfileArgv(prepared []string, profile config.AgentProfile) []string {
+	argv := []string{prepared[0]}
+	argv = append(argv, profileArgsExcludingDevFlag(profile)...)
+	argv = append(argv, prepared[1:]...)
+	if profile.Model != "" {
+		argv = insertBeforeEndOfOptions(argv, "--model", profile.Model)
+	}
+	return argv
+}
+
+// insertBeforeEndOfOptions returns argv with extra placed before its first
+// "--", or appended when argv has none. Since go-providers v0.34.1 a
+// convention that passes the turn's prompt in argv ends `-- <prompt>`, so
+// untrusted turn text is never parsed as a flag (CW-20261001-0069); a flag
+// Torque appended after the `--` would become part of the prompt instead of
+// an option. Every Torque-side argv splice goes through here
+// (CW-20261001-0064). argv is not modified.
+func insertBeforeEndOfOptions(argv []string, extra ...string) []string {
+	i := slices.Index(argv, "--")
+	if i < 0 {
+		return append(slices.Clone(argv), extra...)
+	}
+	out := make([]string, 0, len(argv)+len(extra))
+	out = append(out, argv[:i]...)
+	out = append(out, extra...)
+	return append(out, argv[i:]...)
 }
 
 // skipModelSuffixForProvider reports whether the generic --model
