@@ -44,6 +44,11 @@ type torqueRuntimeEventSink struct {
 	// only place left to preserve that forensic surface.
 	stderr io.Writer
 
+	// capture keeps stdout/stderr from before session.ready, so Boot can
+	// report a first turn that fails inside runtime.Start
+	// (flushBootFailure, CW-20261001-0105). Nil disables it.
+	capture *bootCapture
+
 	onReady func()
 	onDone  func()
 }
@@ -58,6 +63,9 @@ var _ runtimeevents.Sink = (*torqueRuntimeEventSink)(nil)
 func (s *torqueRuntimeEventSink) Write(ctx context.Context, ev runtimeevents.Event) error {
 	switch ev.Kind {
 	case runtimeevents.KindSessionReady:
+		if s.capture != nil {
+			s.capture.markReady()
+		}
 		if s.onReady != nil {
 			s.onReady()
 		}
@@ -91,6 +99,15 @@ func (s *torqueRuntimeEventSink) Write(ctx context.Context, ev runtimeevents.Eve
 		s.handleTurnFailed(ctx, ev.Payload)
 	case runtimeevents.KindStderrLine:
 		s.handleStderrLine(ev.Payload)
+		if line, ok := decodeStreamLine(ev.Payload); ok && s.capture != nil {
+			s.capture.addStderr(line)
+		}
+	case runtimeevents.KindStdoutLine:
+		// Only kept before session.ready: afterwards every parsed event
+		// reaches the sink through the wrapper's translator.
+		if line, ok := decodeStreamLine(ev.Payload); ok && s.capture != nil {
+			s.capture.addStdout(line)
+		}
 	default:
 		// process.exited / plant.* / sandbox.* / interrupt.* / raw stdio --
 		// no legacy llmtypes.StreamEvent equivalent. wr.Run()'s own return
