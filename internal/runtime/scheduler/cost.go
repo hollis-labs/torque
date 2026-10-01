@@ -279,3 +279,52 @@ func (s *Scheduler) resolveCost(task *sqlstore.TaskRecord, result *executor.Exec
 	}
 	return rc
 }
+
+// hasUsage reports whether an executor result carries any usage or cost worth
+// recording: tokens of any kind, or a provider-reported cost.
+func hasUsage(result *executor.ExecutionResult) bool {
+	return result != nil && (hasTokens(result.Tokens) || hasTokens(result.UnpricedTokens) || result.Cost > 0)
+}
+
+// usageOrNil returns result when it carries usage or cost to record, and nil
+// otherwise, so a run that ended without any writes no cost fields.
+func usageOrNil(result *executor.ExecutionResult) *executor.ExecutionResult {
+	if hasUsage(result) {
+		return result
+	}
+	return nil
+}
+
+// costWrite builds what a run's completion row and its cost_ledger row carry
+// for result, priced once by resolveCost. Every path that ends a run writes
+// them through here, so a run completed, failed, cancelled or interrupted with
+// usage records the same fields the same way. The ledger record is nil when
+// result is nil.
+func (s *Scheduler) costWrite(task *sqlstore.TaskRecord, result *executor.ExecutionResult, status, reason string) (sqlstore.RunCompletion, *sqlstore.CostLedgerRecord, ResolvedCost) {
+	comp := sqlstore.RunCompletion{Status: status, ErrorMessage: reason}
+	if result == nil {
+		return comp, nil, ResolvedCost{Source: CostSourceNone}
+	}
+	cost := s.resolveCost(task, result)
+	comp.PromptTokens = result.Tokens.PromptTokens
+	comp.CompletionTokens = result.Tokens.CompletionTokens
+	comp.CacheReadTokens = result.Tokens.CacheReadTokens
+	comp.CacheWriteTokens = result.Tokens.CacheWriteTokens
+	comp.Cost = cost.Cost
+	comp.CostSource = string(cost.Source)
+	comp.ExitCode = result.ExitCode
+	sprintID := ""
+	if task.SprintID.Valid {
+		sprintID = task.SprintID.String
+	}
+	return comp, &sqlstore.CostLedgerRecord{
+		TaskID:           task.ID,
+		SprintID:         sprintID,
+		PromptTokens:     result.Tokens.PromptTokens,
+		CompletionTokens: result.Tokens.CompletionTokens,
+		CacheReadTokens:  result.Tokens.CacheReadTokens,
+		CacheWriteTokens: result.Tokens.CacheWriteTokens,
+		ProviderCost:     cost.ProviderCost,
+		EstimatedCost:    cost.EstimatedCost,
+	}, cost
+}

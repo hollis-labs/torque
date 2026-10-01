@@ -674,8 +674,9 @@ func (s *Scheduler) recoverStuckTask(ctx context.Context, mode healthscan.Mode, 
 	for _, r := range runs {
 		if werr := s.stateWriter.Submit(ctx, "scheduler_stuck_task_recovery", func(tx *sqlstore.WriteTx) error {
 			if err := tx.CompleteRun(r.ID, sqlstore.RunCompletion{
-				Status:       "failed",
-				ErrorMessage: "orphaned: no worker heartbeat, auto-recovered by session-recovery sweep",
+				Status:        "failed",
+				ErrorMessage:  "orphaned: no worker heartbeat, auto-recovered by session-recovery sweep",
+				OnlyIfRunning: true,
 			}); err != nil {
 				return err
 			}
@@ -785,8 +786,9 @@ func (s *Scheduler) recoverOrphanRun(ctx context.Context, mode healthscan.Mode, 
 
 	if werr := s.stateWriter.Submit(ctx, "scheduler_orphan_run_recovery", func(tx *sqlstore.WriteTx) error {
 		if err := tx.CompleteRun(a.RunID, sqlstore.RunCompletion{
-			Status:       "failed",
-			ErrorMessage: "orphaned: no worker heartbeat keyed by run_id, auto-recovered by session-recovery sweep",
+			Status:        "failed",
+			ErrorMessage:  "orphaned: no worker heartbeat keyed by run_id, auto-recovered by session-recovery sweep",
+			OnlyIfRunning: true,
 		}); err != nil {
 			return err
 		}
@@ -893,8 +895,9 @@ func (s *Scheduler) recoverOrphanedWorker(ctx context.Context, w StaleWorker) {
 		} else if run.Status == "running" {
 			if werr := s.stateWriter.Submit(ctx, "scheduler_orphan_recovery", func(tx *sqlstore.WriteTx) error {
 				if err := tx.CompleteRun(w.RunID, sqlstore.RunCompletion{
-					Status:       "failed",
-					ErrorMessage: "orphaned: worker process gone, auto-recovered by scheduler",
+					Status:        "failed",
+					ErrorMessage:  "orphaned: worker process gone, auto-recovered by scheduler",
+					OnlyIfRunning: true,
 				}); err != nil {
 					return err
 				}
@@ -1243,6 +1246,10 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 
 		if capturedDispatchCtx.Err() != nil && isDaemonShutdownCancel(capturedDispatchCtx) && !definitiveCompletionResult(result) {
 			reason := "daemon shutdown interrupted active worker; partial work may exist; inspect run/session logs and resume or repair manually"
+			// A killed run keeps whatever usage the executor accumulated, and
+			// is only killed while it is still running.
+			interrupted, interruptedLedger, _ := s.costWrite(&task, usageOrNil(result), sqlstore.RunStatusKilled, reason)
+			interrupted.OnlyIfRunning = true
 			if err := s.stateWriter.Submit(context.Background(), "scheduler_run_interrupted", func(tx *sqlstore.WriteTx) error {
 				var taskStatus string
 				var manual int
@@ -1256,19 +1263,11 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 				).Scan(&newerRuns); err != nil {
 					return err
 				}
-				res, err := tx.Exec(
-					`UPDATE runs SET status = ?, ended_at = ?, error_message = ?
-					 WHERE id = ? AND status = ?`,
-					sqlstore.RunStatusKilled, time.Now().UTC(), reason, capturedRunID, sqlstore.RunStatusRunning,
-				)
+				updated, err := tx.CompleteRunWithCost(capturedRunID, interrupted, interruptedLedger)
 				if err != nil {
 					return err
 				}
-				n, err := res.RowsAffected()
-				if err != nil {
-					return err
-				}
-				if n == 0 {
+				if !updated {
 					return nil
 				}
 				_, err = tx.AppendRunEvent(&sqlstore.RunEventRecord{
@@ -1319,11 +1318,9 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		// "canceled".
 		if capturedDispatchCtx.Err() != nil && (result == nil || result.Status == "") {
 			reason := "task_transition_out_of_doing"
+			comp, ledger, _ := s.costWrite(&task, usageOrNil(result), "canceled", reason)
 			if err := s.stateWriter.Submit(context.Background(), "scheduler_run_canceled", func(tx *sqlstore.WriteTx) error {
-				if err := tx.CompleteRun(capturedRunID, sqlstore.RunCompletion{
-					Status:       "canceled",
-					ErrorMessage: reason,
-				}); err != nil {
+				if _, err := tx.CompleteRunWithCost(capturedRunID, comp, ledger); err != nil {
 					return err
 				}
 				_, err := tx.AppendRunEvent(&sqlstore.RunEventRecord{
@@ -1353,11 +1350,12 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		}
 
 		if err != nil {
+			// Whatever usage the executor accumulated before it failed is
+			// recorded: the tokens were spent.
+			comp, ledger, _ := s.costWrite(&task, usageOrNil(result), "failed", err.Error())
 			if werr := s.stateWriter.Submit(context.Background(), "scheduler_run_failed", func(tx *sqlstore.WriteTx) error {
-				return tx.CompleteRun(capturedRunID, sqlstore.RunCompletion{
-					Status:       "failed",
-					ErrorMessage: err.Error(),
-				})
+				_, err := tx.CompleteRunWithCost(capturedRunID, comp, ledger)
+				return err
 			}); werr != nil {
 				log.Printf("[scheduler] run failure write failed for %s (run %d): %v", capturedTaskID, capturedRunID, werr)
 			}
@@ -1370,33 +1368,10 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		// Resolve the run's cost once, provider first then a cache-aware
 		// estimate, and write the same figure to runs.cost and the run's
 		// cost_ledger row in one transaction (CW-20260912-0003).
-		sprintID := ""
-		if task.SprintID.Valid {
-			sprintID = task.SprintID.String
-		}
-		cost := s.resolveCost(&task, result)
+		comp, ledger, cost := s.costWrite(&task, result, result.Status, result.Reason)
 		runCompletedPayload := runCompletedEventPayload(result, cost)
 		if err := s.stateWriter.Submit(context.Background(), "scheduler_run_completed", func(tx *sqlstore.WriteTx) error {
-			if err := tx.CompleteRunWithCost(capturedRunID, sqlstore.RunCompletion{
-				Status:           result.Status,
-				PromptTokens:     result.Tokens.PromptTokens,
-				CompletionTokens: result.Tokens.CompletionTokens,
-				CacheReadTokens:  result.Tokens.CacheReadTokens,
-				CacheWriteTokens: result.Tokens.CacheWriteTokens,
-				Cost:             cost.Cost,
-				CostSource:       string(cost.Source),
-				ExitCode:         result.ExitCode,
-				ErrorMessage:     result.Reason,
-			}, &sqlstore.CostLedgerRecord{
-				TaskID:           capturedTaskID,
-				SprintID:         sprintID,
-				PromptTokens:     result.Tokens.PromptTokens,
-				CompletionTokens: result.Tokens.CompletionTokens,
-				CacheReadTokens:  result.Tokens.CacheReadTokens,
-				CacheWriteTokens: result.Tokens.CacheWriteTokens,
-				ProviderCost:     cost.ProviderCost,
-				EstimatedCost:    cost.EstimatedCost,
-			}); err != nil {
+			if _, err := tx.CompleteRunWithCost(capturedRunID, comp, ledger); err != nil {
 				return err
 			}
 			_, err := tx.AppendRunEvent(&sqlstore.RunEventRecord{

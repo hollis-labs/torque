@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"time"
 
@@ -132,19 +133,35 @@ func (w *WriteTx) CompleteRun(id int64, c RunCompletion) error {
 
 // CompleteRunWithCost stamps terminal run fields and, when the run row took
 // them, inserts the run's cost_ledger row in the same transaction, so
-// runs.cost and the ledger hold the same figure (CW-20260912-0003). A run an
-// operator already cancelled, superseded or killed keeps its row as stamped
-// and gets no ledger row: the two never disagree.
-func (w *WriteTx) CompleteRunWithCost(id int64, c RunCompletion, ledger *CostLedgerRecord) error {
+// runs.cost and the ledger hold the same figure (CW-20260912-0003). It reports
+// whether the run row was updated. A run an operator already cancelled,
+// superseded or killed keeps its row as stamped and gets no ledger row: the
+// two never disagree.
+//
+// The ledger row is observability, so a failure to write it never fails the
+// completion: the insert runs in a savepoint, which is rolled back, and the
+// error is logged. The run is completed with its cost, and only that run's
+// ledger row is missing (runs.cost then exceeds the run's ledger sum). Failing
+// the whole transaction instead would strand the run in `running` while its
+// task carried on.
+func (w *WriteTx) CompleteRunWithCost(id int64, c RunCompletion, ledger *CostLedgerRecord) (bool, error) {
 	updated, err := w.completeRun(id, c)
 	if err != nil || !updated || ledger == nil {
-		return err
+		return updated, err
 	}
 	ledger.RunID = id
 	ledger.Cost = c.Cost
 	ledger.CostSource = c.CostSource
-	_, err = appendCostLedger(w.tx, ledger)
-	return err
+	if _, err := w.tx.Exec(`SAVEPOINT cost_ledger_row`); err != nil {
+		return updated, err
+	}
+	if _, lerr := appendCostLedger(w.tx, ledger); lerr != nil {
+		log.Printf("[sqlstore] ERROR: cost ledger row for run %d (task %s) not written, the run is completed without it: %v", id, ledger.TaskID, lerr)
+		_, err := w.tx.Exec(`ROLLBACK TO SAVEPOINT cost_ledger_row`)
+		return updated, err
+	}
+	_, err = w.tx.Exec(`RELEASE SAVEPOINT cost_ledger_row`)
+	return updated, err
 }
 
 // completeRun reports whether the run row was updated.
@@ -154,10 +171,16 @@ func (w *WriteTx) completeRun(id int64, c RunCompletion) (bool, error) {
 		exitCode = sql.NullInt64{Int64: int64(*c.ExitCode), Valid: true}
 	}
 
-	const q = `UPDATE runs SET status = ?, ended_at = ?, prompt_tokens = ?,
+	q := `UPDATE runs SET status = ?, ended_at = ?, prompt_tokens = ?,
 		completion_tokens = ?, cost = ?, exit_code = ?, error_message = ?,
 		cache_read_tokens = ?, cache_write_tokens = ?, cost_source = ?
 		WHERE id = ? AND status NOT IN ('cancelled','superseded','killed')`
+	if c.OnlyIfRunning {
+		q = `UPDATE runs SET status = ?, ended_at = ?, prompt_tokens = ?,
+		completion_tokens = ?, cost = ?, exit_code = ?, error_message = ?,
+		cache_read_tokens = ?, cache_write_tokens = ?, cost_source = ?
+		WHERE id = ? AND status = 'running'`
+	}
 
 	res, err := w.tx.Exec(q,
 		c.Status, time.Now().UTC(),

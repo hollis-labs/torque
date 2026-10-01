@@ -40,6 +40,11 @@ type RunCompletion struct {
 	CostSource       string
 	ExitCode         *int
 	ErrorMessage     string
+	// OnlyIfRunning limits the write to a run that is still `running`. A
+	// path that reclaims a run it believes is orphaned sets it, so a run that
+	// finished between its check and its write keeps its status, tokens and
+	// cost instead of being reset (CW-20260912-0003).
+	OnlyIfRunning bool
 }
 
 // TaskRunAggregate is the per-task roll-up of run counts, token usage, and
