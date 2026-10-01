@@ -1,5 +1,11 @@
 package mcpadapter
 
+import (
+	"fmt"
+
+	"github.com/hollis-labs/torque/internal/service/pagination"
+)
+
 // go-mcp tool-schema DSL shim: go-mcp's server.Tool takes a raw JSON-schema
 // InputSchema (any) rather than mark3labs/mcp-go's typed builder. This
 // reproduces the small subset of that builder Torque used (~830 call sites
@@ -71,6 +77,12 @@ func newTool(name string, opts ...toolOpt) toolSpec {
 	t := toolSpec{Name: name}
 	for _, opt := range opts {
 		opt(&t)
+	}
+	if _, cursor := t.Properties["cursor"]; cursor {
+		if _, limit := t.Properties["limit"]; limit {
+			policy := fmt.Sprintf("Server pages default to %d records and clamp at %d. Continue by calling this Torque tool with meta.next_cursor as cursor and unchanged filters/sort; host preview/cache pagination only retrieves bytes of the current response.", pagination.DefaultLimit, pagination.MaxLimit)
+			t.Description += "\n" + policy
+		}
 	}
 	return t
 }

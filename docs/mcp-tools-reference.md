@@ -50,27 +50,66 @@ the target. See also the
 [sort allow-lists](api-pagination.md#sort-allow-lists-and-defaults) and
 [counts, facets, and exports](api-pagination.md#counts-facets-and-exports).
 
-List/search tools return `data = {items: [...], meta: {...}}`. Two envelope
-shapes exist:
+List/search tools return `data = {items: [...], meta: {...}}`. The shared
+public page-size policy is **default 50 / maximum 200**, from
+`pagination.DefaultLimit` and `pagination.MaxLimit`. It limits one response,
+not the number of rows that continuation can traverse.
 
-- **Cursor-paginated** (Task, Comment, Project, Epic, Sprint, Issue, Plan
-  list/search tools): `meta = {truncated, returned, limit, has_more,
-  next_cursor}`. Pass a previous call's `meta.next_cursor` back as `cursor`
-  to fetch the next page; `next_cursor` is `null` once exhausted. A cursor
-  is only valid for the exact `sort_by`/`sort_dir` it was issued under —
-  changing either without dropping `cursor` returns `error.code=arg_invalid`.
-  The cursor is an opaque, versioned, base64url-encoded token
-  (`internal/service/pagination/cursor.go`); do not attempt to construct or
-  parse one client-side.
-- **Byte-capped only, no cursor** (Subtodo list, Plan `list_children`):
-  `meta = {truncated, returned, limit, hint?}` — no `has_more`/`next_cursor`.
-  These lists are bounded by their parent (a task's checklist, a plan's
-  children) rather than needing real pagination.
+Cursor metadata includes `{returned, limit, has_more, next_cursor, truncated}`
+and optional `total`/`hint`. `next_cursor` is null on the final page. `returned`
+is the number of records actually emitted, including after byte-cap trimming.
+Cursors bind `sort_by` and `sort_dir`; changing either while retaining a cursor
+returns `arg_invalid`. Keep filters unchanged when continuing. Treat the token
+as opaque; never construct or parse it client-side.
 
-Either way, `truncated=true` means the ~100KB per-response byte cap
-(`internal/mcpadapter/response.go`, `maxMCPResponseBytes`) trimmed the page
-itself — orthogonal to `has_more`, which reflects whether the underlying
-query has more rows beyond this page.
+Task, Run, Comment, Project, Epic, Sprint, Issue, Plan, Tag, and Subtodo lists
+currently use cursor envelopes. Subtodos retain checklist position order
+(`sort_by=position`, `sort_dir=asc` by default; desc is supported); their parent
+stores the whole checklist as JSON, so paging bounds responses rather than
+avoiding that parent read. Concurrent checklist insertions/deletions can shift
+positions between calls, just as concurrent writes can shift offset pages.
+
+**Pending CW-20261001-0565 integration:** Sessions/session checkpoints,
+Artifacts, Collections/collection tasks/inbox, Plan children, Checkpoints/pending
+checkpoints, Templates, Models, and message read lists. Their older byte-only
+adapters do not yet satisfy the cursor contract. The MCP contract test table
+names those families as pending instead of claiming they are converted. Broker
+inbox/poll drain operations remain actions, with delivery semantics.
+
+The ~100KB response cap is orthogonal to the row limit. `truncated=true` means
+the cap trimmed the page itself, and also sets `has_more=true`. The cursor is
+built from the **last emitted row**, so trimmed rows remain reachable. Cursor
+pages include a concrete next-call hint preserving filters, sort and projection;
+that hint is included in the byte budget. If even one record cannot fit, the
+server returns `arg_invalid` with brief/single-record guidance rather than an
+empty page that cannot advance.
+
+### Torque server pages and downstream host previews
+
+A host may show only a preview of a tool result and offer a cache pointer or a
+`fetch_tool_result` continuation. That continuation recovers the bytes of the
+**same Torque response**. It does not fetch remaining matching Torque records.
+Read the page's `meta`, then make another call to the **Torque list tool** with
+`meta.next_cursor` as `cursor`. Continue until `has_more=false`.
+
+For example, start with:
+
+```json
+{"status":"doing","search":"pagination","tags":"[\"api\"]","sort_by":"updated_at","sort_dir":"desc","limit":"50"}
+```
+
+If `torque_task_list` returns `meta.next_cursor`, the next server call is:
+
+```json
+{"status":"doing","search":"pagination","tags":"[\"api\"]","sort_by":"updated_at","sort_dir":"desc","limit":"50","cursor":"<meta.next_cursor from the preceding Torque page>"}
+```
+
+The response's `meta.hint` supplies that call with the real token. Do not replace
+it with a host cache cursor or drop filters/sort. For an activity summary, call
+`torque_task_facets` with the same cohort filters and
+`dimensions="status,project_id"` instead of downloading every task to count
+statuses; list cursors and limits do not apply to facets. `torque_task_query`
+keeps its existing semantics.
 
 ### Sort
 
@@ -234,8 +273,8 @@ that defaults to `2`. A rejected write modifies nothing.
 `include_total` is optional on MCP and defaults to false to preserve cheap
 legacy list calls. When `include_total=true`, `meta.total` is the full matching
 cohort count excluding cursor/offset/limit, and it is part of the normal
-100KB-capped response sizing. HTTP always includes `total` in its existing
-task-list envelope. HTTP keeps its GUI compatibility alias `priority=1,2` as a
+100KB-capped response sizing. HTTP includes `meta.total` only with `include_total=true` in its
+`{items,meta}` task-list envelope. HTTP keeps its GUI compatibility alias `priority=1,2` as a
 comma-separated exact-integer OR-list, including `0`; repeated HTTP query keys,
 malformed raw query strings, malformed/overflow/blank CSV members, unknown
 keys, and invalid shared-query fields return `400` with `error` and `field`.

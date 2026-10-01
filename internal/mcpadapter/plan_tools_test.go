@@ -353,14 +353,14 @@ func TestFullStack_PlanListChildren_LimitAdjustable(t *testing.T) {
 	assert.Equal(t, 2, env.Meta.Limit, "meta.limit should reflect the caller-supplied limit")
 	assert.Len(t, env.Items, 2, "items must actually be truncated to limit, not just mislabeled")
 
-	// Default limit (no limit param) is the sane generic default (100), not
+	// Default limit (no limit param) is the shared public default (50), not
 	// the system's 200 maximum.
 	text, isErr = callTool(t, a, "torque_plan_list_children", map[string]interface{}{
 		"plan_id": planID,
 	})
 	require.False(t, isErr, "list_children should not error: %s", text)
 	parseData(t, text, &env)
-	assert.Equal(t, 100, env.Meta.Limit, "default limit should be the generic list default (100), not the 200 system maximum")
+	assert.Equal(t, 50, env.Meta.Limit, "default limit should be the shared policy (50), not the 200 system maximum")
 	assert.Len(t, env.Items, total, "all 5 children fit comfortably under the default limit")
 }
 

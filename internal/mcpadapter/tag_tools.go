@@ -9,11 +9,12 @@ import (
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 )
 
 const (
-	defaultTagListLimit = service.DefaultTagListLimit
-	maxTagListLimit     = service.MaxTagListLimit
+	defaultTagListLimit = pagination.DefaultLimit
+	maxTagListLimit     = pagination.MaxLimit
 )
 
 type tagRecord struct {

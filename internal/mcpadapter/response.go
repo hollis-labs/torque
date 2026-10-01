@@ -3,6 +3,8 @@ package mcpadapter
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -19,17 +21,16 @@ import (
 // CW-20260418-0012.
 const maxMCPResponseBytes = 100 * 1024 // 100KB
 
-// Default and maximum limits for list/search tools. Kept here instead of
-// scattered through per-tool handlers so the shape contract is discoverable
-// in one place.
+// Transitional names keep CW-0565's family adapters compiling during their
+// rewrite. Values come from the shared policy; remove aliases after integration.
 const (
-	maxTaskListLimit         = 200
-	defaultGenericListLimit  = 100
-	maxGenericListLimit      = 500
-	defaultTemplateListLimit = 100
-	maxTemplateListLimit     = 500
-	defaultCommentListLimit  = 50
-	maxCommentListLimit      = 200
+	maxTaskListLimit         = pagination.MaxLimit
+	defaultGenericListLimit  = pagination.DefaultLimit
+	maxGenericListLimit      = pagination.MaxLimit
+	defaultTemplateListLimit = pagination.DefaultLimit
+	maxTemplateListLimit     = pagination.MaxLimit
+	defaultCommentListLimit  = pagination.DefaultLimit
+	maxCommentListLimit      = pagination.MaxLimit
 )
 
 // listMeta is the companion to items[] in the list/search response envelope.
@@ -479,6 +480,9 @@ type listMetaCursor struct {
 type listEnvelopeCursor struct {
 	Items []any          `json:"items"`
 	Meta  listMetaCursor `json:"meta"`
+	// Rebuild preserves the original row keys when a concrete continuation hint
+	// consumes part of the byte budget. It is never serialized.
+	rebuild func(int) listEnvelopeCursor
 }
 
 func cappedTaskFacetResult(result service.TaskFacetQueryResult) (any, error) {
@@ -599,52 +603,91 @@ func cappedCursorJSONResultWithTotal(items []any, limit int, total *int, sortBy,
 		}
 		return listEnvelopeCursor{Items: trimmed, Meta: meta}
 	}
-	build := func(n int) ([]byte, error) {
-		return json.Marshal(Response{OK: true, Data: envelopeFor(n)})
-	}
+	return fitCursorEnvelope(len(items), envelopeFor, nil)
+}
 
-	n := len(items)
-	b, err := build(n)
-	if err != nil {
+// fitCursorEnvelope budgets the actual envelope, including continuation text.
+// Every successful nonempty page advances; an oversized first row is an error.
+func fitCursorEnvelope(count int, build func(int) listEnvelopeCursor, hint func(listEnvelopeCursor) string) (any, error) {
+	envelopeFor := func(n int) listEnvelopeCursor {
+		env := build(n)
+		if hint != nil && env.Meta.HasMore {
+			env.Meta.Hint = hint(env)
+		}
+		return env
+	}
+	fits := func(n int) (bool, error) {
+		b, err := json.Marshal(Response{OK: true, Data: envelopeFor(n)})
+		return len(b) <= maxMCPResponseBytes, err
+	}
+	if ok, err := fits(count); err != nil {
 		return errResult(ErrCodeInternal, "response serialization failed", "")
+	} else if ok {
+		env := envelopeFor(count)
+		if env.Meta.HasMore && (count == 0 || env.Meta.NextCursor == nil) {
+			return errResult(ErrCodeArgInvalid, "list page cannot advance; use brief records or narrow filters", "")
+		}
+		env.rebuild = build
+		return Response{OK: true, Data: env}, nil
 	}
-
-	// Fast path: fits in cap.
-	if len(b) <= maxMCPResponseBytes {
-		return Response{OK: true, Data: envelopeFor(n)}, nil
-	}
-
-	// Slow path: same halve-then-grow shrink as cappedJSONResult.
-	trimN := n / 2
-	for trimN > 0 {
-		b, err = build(trimN)
+	lo, hi := 0, count
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		ok, err := fits(mid)
 		if err != nil {
 			return errResult(ErrCodeInternal, "response serialization failed", "")
 		}
-		if len(b) <= maxMCPResponseBytes {
-			break
-		}
-		trimN /= 2
-	}
-
-	lo, hi := trimN, n
-	for lo < hi {
-		mid := (lo + hi + 1) / 2
-		b2, err2 := build(mid)
-		if err2 != nil {
-			return errResult(ErrCodeInternal, "response serialization failed", "")
-		}
-		if len(b2) <= maxMCPResponseBytes {
+		if ok {
 			lo = mid
 		} else {
 			hi = mid - 1
 		}
 	}
-
-	if _, err = build(lo); err != nil {
-		return errResult(ErrCodeInternal, "response serialization failed", "")
+	if count > 0 && lo == 0 {
+		return errResult(ErrCodeArgInvalid, "one list record exceeds the MCP response budget; use verbose=false, narrow filters, or fetch the record individually", "verbose")
 	}
-	return Response{OK: true, Data: envelopeFor(lo)}, nil
+	env := envelopeFor(lo)
+	ok, err := fits(lo)
+	if err != nil || !ok {
+		return errResult(ErrCodeArgInvalid, "list continuation metadata exceeds the MCP response budget; narrow filters", "")
+	}
+	env.rebuild = build
+	return Response{OK: true, Data: env}, nil
+}
+
+// finishListContinuation adds a concrete server-page call, retaining filters,
+// sort and projection. Host preview/cache fetches only recover this page's bytes.
+func finishListContinuation(result any, tool string, req map[string]any) (any, error) {
+	response, ok := result.(Response)
+	if !ok || !response.OK {
+		return result, nil
+	}
+	env, ok := response.Data.(listEnvelopeCursor)
+	if !ok || !env.Meta.HasMore {
+		return result, nil
+	}
+	if env.rebuild == nil {
+		return errResult(ErrCodeInternal, "list page lacks a continuation builder", "")
+	}
+	return fitCursorEnvelope(len(env.Items), env.rebuild, func(page listEnvelopeCursor) string {
+		args := make(map[string]any, len(req)+1)
+		for key, value := range req {
+			if !strings.HasPrefix(key, argsMetaPrefix) && key != "offset" && key != "cursor" {
+				args[key] = value
+			}
+		}
+		args["limit"] = strconv.Itoa(page.Meta.Limit)
+		args["cursor"] = page.Meta.NextCursor
+		encoded, err := json.Marshal(args)
+		if err != nil {
+			return "next call: " + tool + " with meta.next_cursor and unchanged filters/sort"
+		}
+		prefix := ""
+		if page.Meta.Truncated {
+			prefix = "response too large; "
+		}
+		return prefix + "Torque server page: call " + tool + " " + string(encoded) + ". Host preview/cache paging only retrieves bytes of this page; it does not fetch remaining Torque records."
+	})
 }
 
 // ---- sort/cursor helper -----------------------------------------------------
