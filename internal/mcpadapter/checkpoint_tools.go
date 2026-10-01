@@ -3,6 +3,7 @@ package mcpadapter
 import (
 	"context"
 	"fmt"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 	"time"
 
 	"github.com/hollis-labs/torque/internal/hitl"
@@ -133,7 +134,7 @@ func (a *Adapter) handleCheckpointList(ctx context.Context, req map[string]any) 
 	if err != nil {
 		return errFromService(err)
 	}
-	limit := defaultGenericListLimit
+	limit := pagination.DefaultLimit
 	items := make([]any, 0, len(list))
 	for _, c := range list {
 		if verbose {
@@ -155,7 +156,7 @@ func (a *Adapter) handleCheckpointPending(ctx context.Context, req map[string]an
 	if err != nil {
 		return errFromService(err)
 	}
-	limit := defaultGenericListLimit
+	limit := pagination.DefaultLimit
 	items := make([]any, 0, len(pending))
 	for _, c := range pending {
 		if verbose {

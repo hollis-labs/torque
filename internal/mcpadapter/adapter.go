@@ -223,7 +223,11 @@ func (a *Adapter) addTool(spec toolSpec, h gomcp.ToolHandler) {
 				return nil, rejectErr
 			}
 		}
-		return h(ctx, req)
+		result, err = h(ctx, req)
+		if err != nil {
+			return result, err
+		}
+		return finishListContinuation(result, toolName, req)
 	}
 	a.server.RegisterTool(gomcp.Tool{
 		Name:            toolName,

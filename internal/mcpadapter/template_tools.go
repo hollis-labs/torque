@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 
 	"github.com/hollis-labs/torque/internal/service"
 )
@@ -353,7 +354,7 @@ func (a *Adapter) handleTemplateList(ctx context.Context, req map[string]any) (a
 	if err != nil {
 		return errFromService(err)
 	}
-	limit := clampLimit(0, defaultTemplateListLimit, maxTemplateListLimit)
+	limit := clampLimit(0, pagination.DefaultLimit, pagination.MaxLimit)
 	items := make([]any, 0, len(list))
 	for _, tpl := range list {
 		if verbose {

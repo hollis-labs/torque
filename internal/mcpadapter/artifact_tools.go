@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 	"io"
 	"math"
 	"strings"
@@ -119,7 +120,7 @@ func (a *Adapter) handleArtifactList(ctx context.Context, req map[string]any) (a
 	if err != nil {
 		return errFromService(err)
 	}
-	limit := defaultGenericListLimit
+	limit := pagination.DefaultLimit
 	items := make([]any, 0, len(artifacts))
 	for _, a := range artifacts {
 		if verbose {
