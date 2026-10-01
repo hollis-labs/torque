@@ -33,7 +33,7 @@ func TestCodexApprovalMode_MapsEveryPermissionMode(t *testing.T) {
 		t.Run("permission_mode="+tc.permissionMode, func(t *testing.T) {
 			got := codexApprovalMode(config.AgentProfile{Provider: "codex", PermissionMode: tc.permissionMode})
 			assert.Equal(t, tc.want, got)
-			assert.NoError(t, turn.CodexApprovalResponder{Mode: got}.Validate())
+			assert.NoError(t, turn.CodexApprovalResponder{Mode: got, MCPAllow: codexMCPAllow}.Validate())
 		})
 	}
 }
