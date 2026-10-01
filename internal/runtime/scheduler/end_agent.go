@@ -15,7 +15,7 @@ import (
 	"github.com/hollis-labs/torque/internal/service"
 )
 
-// CW-20260503-0019 (S2.3) — Reviewer end-agent V1.
+// CW-20260503-0019 (S2.3) — Reviewer end-agent.
 //
 // When a kind=agent executor task transitions to `review`, the lifecycle
 // manager enqueues a kind=internal end-agent task that audits the
@@ -152,7 +152,7 @@ func (lm *LifecycleManager) enqueueEndAgent(target *sqlstore.TaskRecord) {
 
 	rec := &sqlstore.TaskRecord{
 		Title:                "end-agent: " + target.ID,
-		Description:          "Disposition audit for " + target.ID + ". V1 reviewer (CW-20260503-0019).",
+		Description:          endAgentDescription(target.ID),
 		Status:               "todo",
 		Priority:             2,
 		Manual:               false,
@@ -259,7 +259,17 @@ func (lm *LifecycleManager) failEndAgentEnqueue(target *sqlstore.TaskRecord, rea
 	})
 }
 
-// loadEndAgentTemplate resolves the V1 reviewer template content. Lookup
+// endAgentDescription is an end-agent task's description. It names no
+// reviewer version: the template stamped as the task's system prompt
+// carries the protocol (V2 today, and an operator's own template can
+// differ), and a description that said "V1 reviewer" while the template
+// said V2 had a reviewer stop to ask which one to follow instead of
+// auditing (CW-20261001-0187).
+func endAgentDescription(targetID string) string {
+	return "Disposition audit for " + targetID + " (reviewer end-agent)."
+}
+
+// loadEndAgentTemplate resolves the reviewer template content. Lookup
 // order: $TORQUE_END_AGENT_TEMPLATE_DIR/<DefaultEndAgentTemplate>,
 // then $HOME/.torque/end-agent-templates/<DefaultEndAgentTemplate>,
 // then the embedded fallback. Returns the content + the resolved path
