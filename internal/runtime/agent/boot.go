@@ -230,6 +230,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	// prepared.Env (providerplant.Plant resolves the BootDirSpec env
 	// amendments against the planted bootdir).
 	env := composeEnv(profile, opts, agentFile)
+	env = opencodeServeEnv(env, runtimeKind, selected.cli)
 
 	// An ACP session plants nothing: its MCP servers go in session/new and
 	// its task bundle and kickoff ride the first turn (acp_boot.go).
@@ -1423,6 +1424,9 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		onReady: func() { readyOnce.Do(func() { close(readyCh) }) },
 		onDone:  oneshotOnDone,
 	}
+	if usesOpencodePermissionReplies(profile, runtimeKind) {
+		sink.opencodePerms = newOpencodePermissionResponder(permissionPosture(profile), spawnWorkdir, stderrWriter)
+	}
 
 	wr, err := wrapper.New(wrapper.Config{
 		App:               "torque",
@@ -1433,7 +1437,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		PreparedExecution: &execution,
 		SandboxProfile:    sandboxProfile,
 		WorkspaceDir:      ws.WorkspaceDir,
-		LogPath:           ws.LogPath,
+		LogPath:           runtimeLogPath(ws, runtimeKind),
 		SessionIDPreset:   sessionIDPreset,
 		OnSessionID:       onSessionID,
 		AutoFireFirstTurn: autoFire,

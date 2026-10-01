@@ -181,6 +181,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- OpenCode `serve-http` sessions no longer hang on a permission prompt.
+  Torque answers each `permission.asked` through serve's
+  `/permission/{id}/reply`, by the profile's `permission_mode`:
+  - `bypassPermissions`: once.
+  - `default` and `acceptEdits`: read-only tools, and `external_directory`
+    asked by one of them; `acceptEdits` also grants `edit`. Commands,
+    fetches and writes outside the worktree are declined, with a message
+    the model sees.
+  - `plan`: nothing.
+
+  Each decision is logged to `session.log`. The sessions also run the
+  profile's model and Torque's planted agent: `OPENCODE_CONFIG_CONTENT`
+  carries `model` and `default_agent`, which serve never got as flags.
+  Before, they ran opencode's default model as its `build` agent.
+
+  serve's raw output (its stdout and every SSE frame) now goes to
+  `logs/serve-http.log`: agentkit opens its runtime log without O_APPEND,
+  and its writes overwrote what Torque appended to `session.log`
+  (CW-20261001-0148).
 - Thinking from Claude, Codex, OpenCode and Pi over ACP is recorded as
   thinking, not as the agent's output. Their ACP thought chunks are marked
   only `phase: "thought"`, which Torque's event sink did not read

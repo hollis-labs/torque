@@ -49,6 +49,11 @@ type torqueRuntimeEventSink struct {
 	// (flushBootFailure, CW-20261001-0105). Nil disables it.
 	capture *bootCapture
 
+	// opencodePerms answers an opencode serve session's permission prompts
+	// from the stdout lines carrying its SSE frames (CW-20261001-0148).
+	// Nil for every other session.
+	opencodePerms *opencodePermissionResponder
+
 	onReady func()
 	onDone  func()
 }
@@ -103,9 +108,16 @@ func (s *torqueRuntimeEventSink) Write(ctx context.Context, ev runtimeevents.Eve
 			s.capture.addStderr(line)
 		}
 	case runtimeevents.KindStdoutLine:
+		line, ok := decodeStreamLine(ev.Payload)
+		if !ok {
+			break
+		}
+		if s.opencodePerms != nil {
+			s.opencodePerms.observe(line)
+		}
 		// Only kept before session.ready: afterwards every parsed event
 		// reaches the sink through the wrapper's translator.
-		if line, ok := decodeStreamLine(ev.Payload); ok && s.capture != nil {
+		if s.capture != nil {
 			s.capture.addStdout(line)
 		}
 	default:

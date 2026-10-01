@@ -25,6 +25,7 @@ WorkspaceDir – ~/.torque/workspaces/<projectKey>/<sessID>
   StateDir   – <WorkspaceDir>/state     (reserved)
   LogDir     – <WorkspaceDir>/logs
   LogPath    – <WorkspaceDir>/logs/session.log
+               (a serve-http session's raw serve output: logs/serve-http.log)
 BuildDirRoot – $TMPDIR/torque-boot      (named, not an inline literal)
 BuildDir     – the concrete planted boot dir (filled post-Start)
 ```
