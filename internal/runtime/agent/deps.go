@@ -153,4 +153,11 @@ type Dependencies struct {
 	// tolerated — the runtime then skips the reminder pass, degrading to
 	// the prior fire-and-forget delivery behavior.
 	Reminder *steering.ReminderRegistry
+
+	// Polls is the shared inbox-poll opt-in registry the torque_inbox_poll
+	// tool writes and the steering bridge reads. The long-lived runtime
+	// reads it too: a worker polling its inbox is waiting by design, so the
+	// idle reminder leaves it alone (CW-20261001-0117). nil reads as nobody
+	// polling.
+	Polls *steering.PollRegistry
 }

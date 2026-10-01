@@ -59,3 +59,27 @@ func argAfter(args []string, flag string) string {
 	}
 	return ""
 }
+
+// A denied-tool turn completes the one-shot run: agy's replayed turn, whose
+// tool call was denied, still ends the run as done. Since agentkit v0.14.0
+// the denial also writes a `[permission_denied:…]` marker to the byte
+// Fanout and go-agent-wrapper v0.17.0 emits agent.permission_denied;
+// TestWrapperSink_IgnoresUntranslatedKinds pins that the sink tolerates the
+// kind (CW-20261001-0094).
+func TestBootAntigravityToolDeniedTurnCompletes(t *testing.T) {
+	fake := providertest.New(t, runtimes.Antigravity, providertest.Replay("antigravity/print_tool_denied"))
+	fake.Install()
+
+	cd := composeDeps(t, fakeRuntimeConfig{}, "agy")
+	cd.Deps.RuntimeFactory = nil
+	cd.Deps.Profiles = config.ProfileMap{"worker": {Executor: "cli", Provider: "agy", Model: "probe-model", PermissionMode: "plan"}}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	sess, err := cd.Manager.Boot(ctx, agent.Options{
+		TaskID: "CW-AGY-DENIED", AgentProfile: "worker", Workdir: t.TempDir(),
+		Mode: agent.ModeOneShot, Description: "write a file",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, agent.StatusDone, sess.Status, "a turn with a denied tool must still complete the run")
+	require.Len(t, fake.Calls(), 1)
+}

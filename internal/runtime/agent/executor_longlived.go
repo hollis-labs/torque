@@ -63,6 +63,12 @@ const (
 //     review/done → ExecutionResult.Status=done; blocked → blocked; other
 //     terminal → failed.
 //
+//     A worker that ends a turn without signalling and stays idle, task
+//     still doing, gets one reminder turn after idle_nudge_seconds (default
+//     90s). Still idle a window later, the run is routed by engine-side
+//     verification: review if commits or task output landed, blocked
+//     otherwise (idleNudger, CW-20261001-0117).
+//
 //  2. No executor event arrives within the inactivity threshold (default
 //     30m, override via task metadata inactivity_threshold_seconds). The
 //     run completes as blocked with a "worker idle past <threshold>" reason
@@ -208,7 +214,13 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 	reminderWG.Add(1)
 	go runReminderPump(ctx, managerTurnSender{mgr: e.deps.Sessions}, e.deps.Reminder, opts.TaskID, sess, turnDoneCh, &reminderWG)
 
-	outcome := awaitLongLivedCompletion(ctx, e.deps, opts.TaskID, sess.ID, activityCh, terminalFailureCh, inactivityThreshold, hardCeiling, taskDeadlineCeiling)
+	nudge := &idleNudger{
+		window:  resolveIdleNudgeWindow(opts),
+		turn:    &turn,
+		nudge:   func() error { return sendIdleNudge(ctx, managerTurnSender{mgr: e.deps.Sessions}, sess) },
+		waiting: func() bool { return workerWaitsByDesign(e.deps, opts.TaskID, sess.ID) },
+	}
+	outcome := awaitLongLivedCompletion(ctx, e.deps, opts.TaskID, sess.ID, activityCh, terminalFailureCh, inactivityThreshold, hardCeiling, taskDeadlineCeiling, nudge)
 	if outcome.Kind == outcomeHardCeiling && taskDeadlineCeiling {
 		outcome.TaskDeadline = true
 	}
@@ -281,7 +293,9 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 	// (review/done/blocked/...) so the histogram lands on the run_completed
 	// event uniformly — but ApplyTo only overrides on the failure verdicts,
 	// so a worker who self-transitioned straight to blocked stays blocked.
-	if outcome.Kind == outcomeTransition {
+	// A worker that never signalled (outcomeUnsignalled) is routed by the
+	// verdict instead (routeUnsignalled).
+	if outcome.Kind == outcomeTransition || outcome.Kind == outcomeUnsignalled {
 		// Bound the git invocation so a stuck repo (lock, NFS hang)
 		// cannot wedge verification forever. workerVerifyTimeout is
 		// generous — `git rev-list --count` is sub-second on a healthy
@@ -308,17 +322,24 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 		// Only override the success path. A worker that self-transitioned
 		// to blocked/failed has already explained why; the engine's view
 		// is supplemental, not authoritative.
-		if outcome.TaskStatus == "review" || outcome.TaskStatus == "done" {
+		unsignalled := outcome.Kind == outcomeUnsignalled
+		if unsignalled {
+			res.Status, res.Reason = routeUnsignalled(verdict, taskOutput)
+		} else if outcome.TaskStatus == "review" || outcome.TaskStatus == "done" {
 			res.Status, res.Reason = verdict.ApplyTo(res.Status, res.Reason)
-			// A remote added or repointed, or history swapped for unrelated
-			// history, outranks the commit verdict: the run may have pushed
-			// somewhere it should not have.
-			if gitSafety != "" {
-				if res.Status == "blocked" && res.Reason != "" {
-					gitSafety += "; also: " + res.Reason
-				}
-				res.Status, res.Reason = "blocked", gitSafety
+		}
+		// A remote added or repointed, or history swapped for unrelated
+		// history, outranks the commit verdict: the run may have pushed
+		// somewhere it should not have.
+		if gitSafety != "" && (unsignalled || outcome.TaskStatus == "review" || outcome.TaskStatus == "done") {
+			if res.Status == "blocked" && res.Reason != "" {
+				gitSafety += "; also: " + res.Reason
 			}
+			res.Status, res.Reason = "blocked", gitSafety
+		}
+		if unsignalled {
+			log.Printf("agent: runLongLived task %s session %s: %s (%s)", opts.TaskID, sess.ID, res.Status, res.Reason)
+			commentAutoRoute(e.deps.Store, opts.TaskID, res.Status, res.Reason)
 		}
 	}
 
@@ -333,6 +354,8 @@ type turnTracker struct {
 	mu       sync.Mutex
 	inFlight bool
 	ended    chan struct{}
+	// lastEnd is when the last turn closed; zero until one has.
+	lastEnd time.Time
 }
 
 func (t *turnTracker) observe(ev llmtypes.StreamEvent) {
@@ -342,6 +365,7 @@ func (t *turnTracker) observe(ev llmtypes.StreamEvent) {
 	case llmtypes.EventDone, llmtypes.EventError:
 		if t.inFlight {
 			t.inFlight = false
+			t.lastEnd = time.Now()
 			close(t.ended)
 		}
 	default:
@@ -371,6 +395,17 @@ func (t *turnTracker) waitEnd(grace time.Duration) bool {
 	case <-timer.C:
 		return false
 	}
+}
+
+// idleSince reports when the last turn ended, and false while a turn is in
+// flight or before any turn has ended.
+func (t *turnTracker) idleSince() (time.Time, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.inFlight || t.lastEnd.IsZero() {
+		return time.Time{}, false
+	}
+	return t.lastEnd, true
 }
 
 // taskOutputCount returns how many comments and artifacts the task carries.
@@ -478,13 +513,20 @@ const (
 	outcomeHardCeiling
 	outcomeCtxCanceled
 	outcomeTerminalFailure
+	// outcomeUnsignalled: the worker ended its turn, got the idle reminder
+	// and stayed idle with the task still doing (idleNudger).
+	outcomeUnsignalled
 )
 
 // awaitLongLivedCompletion polls the worker's task.Status and watches the
 // activity channel + hard ceiling + ctx. Returns when any of the four
 // completion signals fires. Polling cadence is statusPollInterval (5s by
 // default); the inactivity timer is in-memory and reset on every event.
-func awaitLongLivedCompletion(ctx context.Context, deps *Dependencies, taskID, sessID string, activityCh <-chan struct{}, terminalFailureCh <-chan string, inactivityThreshold, hardCeiling time.Duration, taskDeadlineCeiling bool) longLivedOutcome {
+//
+// nudge, when non-nil, runs on each poll that finds the task still doing; it
+// ends the wait with outcomeUnsignalled once a worker has stayed idle past
+// its reminder.
+func awaitLongLivedCompletion(ctx context.Context, deps *Dependencies, taskID, sessID string, activityCh <-chan struct{}, terminalFailureCh <-chan string, inactivityThreshold, hardCeiling time.Duration, taskDeadlineCeiling bool, nudge *idleNudger) longLivedOutcome {
 	statusTicker := time.NewTicker(statusPollInterval)
 	defer statusTicker.Stop()
 
@@ -563,6 +605,9 @@ func awaitLongLivedCompletion(ctx context.Context, deps *Dependencies, taskID, s
 				return longLivedOutcome{Kind: outcomeTransition, TaskStatus: "failed", BlockedReason: "task record disappeared mid-dispatch"}
 			}
 			if rec.Status == "doing" {
+				if nudge.step(time.Now()) {
+					return longLivedOutcome{Kind: outcomeUnsignalled, IdleFor: nudge.window}
+				}
 				continue
 			}
 			return longLivedOutcome{
@@ -643,6 +688,11 @@ func (o longLivedOutcome) toExecutionResult(result *executor.ExecutionResult, st
 			result.Status = "failed"
 			result.Reason = fmt.Sprintf("worker transitioned to unexpected status %q", o.TaskStatus)
 		}
+	case outcomeUnsignalled:
+		// Tentative: runLongLived's verification routes it (routeUnsignalled).
+		result.Status = "review"
+		zero := 0
+		result.ExitCode = &zero
 	case outcomeIdle:
 		result.Status = "blocked"
 		result.Reason = fmt.Sprintf("worker idle past %s — no executor events received within the inactivity threshold", o.IdleFor)

@@ -69,3 +69,36 @@ func TestWrapperSink_TurnFailedWithUsage_EmitsUsageThenError(t *testing.T) {
 	assert.Equal(t, "wrapper: process exited before the turn completed", got[1].Error)
 	assert.Zero(t, done)
 }
+
+// Each agent.delta shape the wrapper sends maps to one stream event. ACP
+// thought chunks from Claude, Codex, OpenCode and Pi carry only
+// `phase: "thought"`; they are thinking, not agent output.
+func TestWrapperSink_DeltaShapes(t *testing.T) {
+	cases := []struct {
+		name     string
+		payload  map[string]any
+		thinking string
+		content  string
+	}{
+		{"native text", map[string]any{"content": "hi", "phase": "final"}, "", "hi"},
+		{"ACP message", map[string]any{"content": "hi", "phase": "message", "block_id": "m1"}, "", "hi"},
+		{"native thinking", map[string]any{"thinking": map[string]any{"Thinking": "hmm", "Signature": "s"}, "phase": "thought"}, "hmm", ""},
+		{"copilot ACP thought", map[string]any{"content": "hmm", "thinking": true, "phase": "thought"}, "hmm", ""},
+		{"ACP thought with phase only", map[string]any{"content": "hmm", "phase": "thought", "block_id": "t1"}, "hmm", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := sinkEvents(t, runtimeevents.KindAgentDelta, tc.payload)
+			require.Len(t, got, 1)
+			if tc.thinking != "" {
+				assert.Equal(t, llmtypes.EventThinking, got[0].Type)
+				require.NotNil(t, got[0].ThinkingBlock)
+				assert.Equal(t, tc.thinking, got[0].ThinkingBlock.Thinking)
+				assert.Empty(t, got[0].Content, "thinking must not be recorded as agent output")
+				return
+			}
+			assert.Equal(t, llmtypes.EventDelta, got[0].Type)
+			assert.Equal(t, tc.content, got[0].Content)
+		})
+	}
+}

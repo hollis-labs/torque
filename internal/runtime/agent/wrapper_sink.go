@@ -144,10 +144,15 @@ func (s *torqueRuntimeEventSink) emit(ev llmtypes.StreamEvent) {
 
 // deltaPayload mirrors translateStreamEvent's two llmtypes.StreamEvent ->
 // KindAgentDelta shapes: {"content": ev.Content} for EventDelta and
-// {"thinking": ev.ThinkingBlock} for EventThinking.
+// {"thinking": ev.ThinkingBlock} for EventThinking. Since go-agent-wrapper
+// v0.17.0 both also carry `phase`, and `phase: "thought"` is the one marker
+// every runtime sets on thinking: the ACP translators for Claude, Codex,
+// OpenCode and Pi send thought chunks as {"content", "phase": "thought"}
+// with no `thinking` field.
 type deltaPayload struct {
 	Content  string          `json:"content"`
 	Thinking json.RawMessage `json:"thinking"`
+	Phase    string          `json:"phase"`
 }
 
 type thinkingPayload struct {
@@ -160,9 +165,10 @@ func (s *torqueRuntimeEventSink) handleDelta(_ context.Context, raw json.RawMess
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &p)
 	}
-	if len(p.Thinking) > 0 && string(p.Thinking) != "false" && string(p.Thinking) != "null" {
+	thinkingField := len(p.Thinking) > 0 && string(p.Thinking) != "false" && string(p.Thinking) != "null"
+	if thinkingField || p.Phase == llmtypes.PhaseThinking {
 		var thinking thinkingPayload
-		if p.Thinking[0] == '{' {
+		if thinkingField && p.Thinking[0] == '{' {
 			_ = json.Unmarshal(p.Thinking, &thinking)
 		}
 		if thinking.Thinking == "" {

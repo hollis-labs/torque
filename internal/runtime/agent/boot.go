@@ -342,7 +342,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	// (deps.MuxCommand/MuxArgs/MuxEnv). These are runtime values, kept
 	// off the persisted-at-rest LaunchPlan deliberately.
 	prepared.PlantContext.MCPLoopbackURL = loopbackURL
-	if plantsMux(profile) {
+	if plantsMux(profile, runtimeKind) {
 		prepared.PlantContext.SelfMCPCommand = deps.MuxCommand
 		prepared.PlantContext.SelfMCPArgs = append([]string(nil), deps.MuxArgs...)
 		prepared.PlantContext.SelfMCPEnv = muxEnvSliceToMap(deps.MuxEnv)
@@ -1392,7 +1392,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		}
 		if err := sessionkit.ApplyFirstTurnPolicy(&firstTurnOpts, sessionkit.FirstTurnPolicy{
 			Mode:   sessionkit.AutoFireFirstTurn,
-			Prompt: firstTurnKickoff(capturedBootDir, spawnWorkdir, pb.kickoffMD),
+			Prompt: argvSafeTurn(sessID, firstTurnKickoff(capturedBootDir, spawnWorkdir, pb.kickoffMD), capturedBootDir, pb.kickoffMD, runtimeKind),
 			Turn: turn.Options{
 				Provider: profile.Provider,
 				Runtime:  turnRuntime,
@@ -1564,7 +1564,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 			defer func() { _ = os.RemoveAll(capturedBootDir) }()
 		}
 
-		prompt := oneShotTurn(composeUserPrompt(opts), capturedBootDir, spawnWorkdir, pb.kickoffMD)
+		prompt := argvSafeTurn(sessID, oneShotTurn(composeUserPrompt(opts), capturedBootDir, spawnWorkdir, pb.kickoffMD), capturedBootDir, pb.kickoffMD, runtimeKind)
 		// SendTurn (not raw SendInput) so streaming-stdio's turn.Frame NDJSON
 		// encoding is applied -- claude rejects unframed plaintext on stdin
 		// when running --input-format stream-json.
