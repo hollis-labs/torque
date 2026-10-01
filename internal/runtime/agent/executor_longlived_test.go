@@ -494,31 +494,64 @@ func TestRunLongLived_UpstreamDeadlineIsNotTaskDeadline(t *testing.T) {
 	assert.Contains(t, result.Reason, "context deadline")
 }
 
+// When the task deadline fires after the worker has already moved its task
+// out of doing, the transition wins: both deadline branches re-read the task
+// before reporting a ceiling. The task moves before the wait starts and the
+// status poll is an hour away, so only a deadline branch can see it; the old
+// version raced a 50ms transition against a 100ms deadline and lost under
+// load (CW-20261001-0126). The still-doing cases show the same deadline does
+// report a ceiling, so the precedence check means something.
 func TestAwaitLongLivedCompletion_TaskDeadlinePreservesTransitionPrecedence(t *testing.T) {
-	store := newTestStoreForLongLived(t)
+	prevInterval := statusPollInterval
+	statusPollInterval = time.Hour
+	t.Cleanup(func() { statusPollInterval = prevInterval })
 
-	const taskID = "CW-TEST-LL-DEADLINE-RACE"
-	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
-		ID:           taskID,
-		Title:        "deadline race test",
-		Status:       "doing",
-		Executor:     "cli",
-		Kind:         "agent",
-		AgentProfile: "test",
-	}))
+	const deadline = 20 * time.Millisecond
+	cases := []struct {
+		name string
+		// ctxDeadline ends the wait through ctx (the dispatch's task
+		// deadline); otherwise the hard-ceiling timer does.
+		ctxDeadline bool
+		transition  bool
+		want        longLivedOutcomeKind
+	}{
+		{name: "hard ceiling after a transition", transition: true, want: outcomeTransition},
+		{name: "task deadline ctx after a transition", ctxDeadline: true, transition: true, want: outcomeTransition},
+		{name: "hard ceiling while doing", want: outcomeHardCeiling},
+		{name: "task deadline ctx while doing", ctxDeadline: true, want: outcomeHardCeiling},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newTestStoreForLongLived(t)
+			const taskID = "CW-TEST-LL-DEADLINE-RACE"
+			require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+				ID:           taskID,
+				Title:        "deadline race test",
+				Status:       "doing",
+				Executor:     "cli",
+				Kind:         "agent",
+				AgentProfile: "test",
+			}))
+			if tc.transition {
+				require.NoError(t, store.TransitionTask(taskID, "review"))
+			}
+			deps := &Dependencies{Store: store}
 
-	deps := &Dependencies{Store: store}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-		require.NoError(t, store.TransitionTask(taskID, "review"))
-	}()
-	activityCh := make(chan struct{}, 1)
-	out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", activityCh, nil, time.Hour, 100*time.Millisecond, true, nil)
-	assert.Equal(t, outcomeTransition, out.Kind)
-	assert.Equal(t, "review", out.TaskStatus)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			hardCeiling := deadline
+			if tc.ctxDeadline {
+				ctx, cancel = context.WithTimeoutCause(ctx, deadline, errTaskMaxDurationExceeded)
+				defer cancel()
+				hardCeiling = time.Hour
+			}
+			out := awaitLongLivedCompletion(ctx, deps, taskID, "SES-TEST", make(chan struct{}, 1), nil, time.Hour, hardCeiling, true, nil)
+			assert.Equal(t, tc.want, out.Kind)
+			if tc.transition {
+				assert.Equal(t, "review", out.TaskStatus)
+			}
+		})
+	}
 }
 
 // TestAwaitLongLivedCompletion_CtxCancelWhileDoing covers the genuine

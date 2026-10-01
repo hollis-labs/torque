@@ -345,8 +345,35 @@ type wrapperHandle struct {
 	// finished is set, under Manager.mu, once wr.Run has returned and the
 	// session's terminal state is written. The run goroutine owns removing
 	// the handle from wrapperSessions (finishWrapperSession); a handle that
-	// finished before Boot registered it is never registered.
+	// finished before Boot registered it is never registered, and resources
+	// Boot hands over after that are released at once
+	// (adoptWrapperResources).
 	finished bool
+}
+
+// wrapperResources are the per-session resources a long-lived wrapper
+// session holds until it ends: the loopback MCP listener, the stderr and
+// stream sidecars, and the planted boot dir. Each may be empty.
+type wrapperResources struct {
+	loopback    LoopbackHandle
+	closeStderr func()
+	closeStream func()
+	bootDir     string
+}
+
+// release frees the resources directly, for a session that ended before
+// they could be registered.
+func (r wrapperResources) release() {
+	shutdownLoopbackHandle(r.loopback)
+	if r.closeStderr != nil {
+		r.closeStderr()
+	}
+	if r.closeStream != nil {
+		r.closeStream()
+	}
+	if r.bootDir != "" {
+		_ = os.RemoveAll(r.bootDir)
+	}
 }
 
 // wait blocks until wr.Run returns (or ctx ends) and reports its outcome in
@@ -393,18 +420,53 @@ func (m *Manager) registerWrapperSession(sessID string, h *wrapperHandle) {
 	m.wrapperSessions[sessID] = h
 }
 
-// finishWrapperSession marks h finished and drops it from wrapperSessions.
-// Called by the run goroutine once wr.Run has returned and the terminal
-// state is written -- not by teardownSession, because Stop tears down
-// before the process has exited and a Wait after Stop must still find the
-// handle to block on (CW-20261001-0041).
+// adoptWrapperResources registers res for teardown with sessID's session,
+// as registerLoopback, registerStderrCloser, registerStreamCloser and
+// registerBootDir do one by one. If the session has already ended (its run
+// goroutine called finishWrapperSession, which tore down whatever was
+// registered then), nothing would release res later, so it is released at
+// once instead. Both sides hold m.mu, so a session ending while Boot hands
+// its resources over cannot leak them.
+func (m *Manager) adoptWrapperResources(sessID string, h *wrapperHandle, res wrapperResources) {
+	m.mu.Lock()
+	if h == nil || h.finished {
+		m.mu.Unlock()
+		res.release()
+		return
+	}
+	if res.loopback != nil {
+		m.loopbacks[sessID] = res.loopback
+	}
+	if res.closeStderr != nil {
+		m.stderrs[sessID] = res.closeStderr
+	}
+	if res.closeStream != nil {
+		m.streams[sessID] = res.closeStream
+	}
+	if res.bootDir != "" {
+		m.bootDirs[sessID] = res.bootDir
+	}
+	m.mu.Unlock()
+}
+
+// finishWrapperSession marks h finished, drops it from wrapperSessions and
+// tears the session down (CW-20261001-0161). Called by the run goroutine
+// once wr.Run has returned and the terminal state is written, whether or
+// not anyone called Stop: a session whose agent exits or crashes on its
+// own gets the same teardown the legacy path gets on terminal state
+// (busEventSink.onTerminal) -- loopback listener, sidecars, boot dir.
+// teardownSession is idempotent, so a Stop that already tore down makes
+// this a no-op. Stop itself does not drop the handle, because it tears
+// down before the process has exited and a Wait after Stop must still find
+// the handle to block on (CW-20261001-0041).
 func (m *Manager) finishWrapperSession(sessID string, h *wrapperHandle) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	h.finished = true
 	if m.wrapperSessions[sessID] == h {
 		delete(m.wrapperSessions, sessID)
 	}
+	m.mu.Unlock()
+	m.teardownSession(sessID)
 }
 
 // wrapperHandleFor returns the registered wrapperHandle for sessID, if any.
@@ -911,8 +973,30 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	m.stopped = true
+	wrapped := make(map[string]*wrapperHandle, len(m.wrapperSessions))
+	for id, h := range m.wrapperSessions {
+		wrapped[id] = h
+	}
 	m.mu.Unlock()
-	return m.inner.Shutdown(ctx)
+	// Wrapper-routed sessions are not in m.inner, so its Shutdown does not
+	// reach them (CW-20261001-0161). Stop them all, wait for each run to
+	// end within ctx, and tear each down: its run goroutine also does once
+	// it returns, and teardown is idempotent.
+	for _, h := range wrapped {
+		_ = h.wr.Stop(ctx)
+	}
+	var err error
+	for id, h := range wrapped {
+		select {
+		case <-h.runDone:
+		case <-ctx.Done():
+			if err == nil {
+				err = fmt.Errorf("agent.Manager.Shutdown: wrapper session %s still running: %w", id, ctx.Err())
+			}
+		}
+		m.teardownSession(id)
+	}
+	return errors.Join(err, m.inner.Shutdown(ctx))
 }
 
 func (m *Manager) checkStopped() error {
