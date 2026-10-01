@@ -432,10 +432,10 @@ func guiInbox(t *testing.T, base string, to gomsg.Address) []gomsg.Envelope {
 	respBody := guiDo(t, http.MethodGet, base+"/api/v1/messages/inbox?"+q, nil, http.StatusOK)
 
 	var out struct {
-		Messages []gomsg.Envelope `json:"messages"`
+		Items []gomsg.Envelope `json:"items"`
 	}
 	require.NoError(t, json.Unmarshal(respBody, &out))
-	return out.Messages
+	return out.Items
 }
 
 // guiDo performs one /api/v1/* request, asserts the status, and returns the

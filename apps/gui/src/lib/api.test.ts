@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { TorqueApiClient, normalizeArtifactList } from './api'
+import { TorqueApiClient } from './api'
 
 function jsonResponse(body: unknown, init: Partial<ResponseInit> = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -27,111 +27,26 @@ const ENVELOPE_RECORD = {
   CreatedAt: '2026-04-17T00:00:00Z',
 }
 
-describe('normalizeArtifactList', () => {
-  it('unwraps the {artifacts: [...]} envelope', () => {
-    const out = normalizeArtifactList({ artifacts: [ENVELOPE_RECORD] })
-    expect(Array.isArray(out)).toBe(true)
-    expect(out).toHaveLength(1)
-    expect(out[0].id).toBe(1)
-    expect(out[0].task_id).toBe('TASK-1')
-  })
-
-  it('accepts a bare array body', () => {
-    const out = normalizeArtifactList([ENVELOPE_RECORD])
-    expect(out).toHaveLength(1)
-  })
-
-  it('returns [] for null', () => {
-    expect(normalizeArtifactList(null)).toEqual([])
-  })
-
-  it('returns [] for undefined', () => {
-    expect(normalizeArtifactList(undefined)).toEqual([])
-  })
-
-  it('returns [] for empty object', () => {
-    expect(normalizeArtifactList({})).toEqual([])
-  })
-
-  it('returns [] when artifacts key is not an array', () => {
-    expect(normalizeArtifactList({ artifacts: null })).toEqual([])
-    expect(normalizeArtifactList({ artifacts: 'nope' })).toEqual([])
-    expect(normalizeArtifactList({ artifacts: { 0: ENVELOPE_RECORD } })).toEqual([])
-  })
-
-  it('returns [] for a string body', () => {
-    expect(normalizeArtifactList('oops')).toEqual([])
-  })
-})
-
 describe('TorqueApiClient.listArtifacts', () => {
   const client = new TorqueApiClient('/api/v1')
-  let fetchMock: ReturnType<typeof vi.fn>
-
-  beforeEach(() => {
-    fetchMock = vi.fn()
+  afterEach(() => vi.restoreAllMocks())
+  it('normalizes one envelope page and preserves continuation metadata', async () => {
+    const meta = { returned: 1, limit: 50, has_more: true, next_cursor: 'next', total: 205 }
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ items: [ENVELOPE_RECORD], meta }))
     globalThis.fetch = fetchMock as unknown as typeof fetch
-  })
-
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
-  function calledUrls(): string[] {
-    return fetchMock.mock.calls.map((c) => String(c[0]))
-  }
-
-  it('returns [] and hits nested route first when envelope is empty', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ artifacts: [] }))
     const out = await client.listArtifacts('TASK-1')
-    expect(out).toEqual([])
-    expect(calledUrls()).toEqual(['/api/v1/tasks/TASK-1/artifacts'])
-  })
-
-  it('normalizes a populated envelope on the nested route', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ artifacts: [ENVELOPE_RECORD] }))
-    const out = await client.listArtifacts('TASK-1')
-    expect(out).toHaveLength(1)
-    expect(out[0].id).toBe(1)
-  })
-
-  it('falls back to the legacy query-string route when nested returns SPA HTML', async () => {
-    fetchMock
-      .mockResolvedValueOnce(htmlResponse())
-      .mockResolvedValueOnce(jsonResponse({ artifacts: [ENVELOPE_RECORD] }))
-    const out = await client.listArtifacts('TASK-1')
-    expect(out).toHaveLength(1)
-    const urls = calledUrls()
-    expect(urls[0]).toBe('/api/v1/tasks/TASK-1/artifacts')
-    expect(urls[1]).toBe('/api/v1/artifacts?task_id=TASK-1')
-  })
-
-  it('returns [] on 404 without falling back', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'not found' }, { status: 404 }))
-    const out = await client.listArtifacts('GONE')
-    expect(out).toEqual([])
+    expect(out.items).toHaveLength(1)
+    expect(out.items[0].id).toBe(1)
+    expect(out.items[0].task_id).toBe('TASK-1')
+    expect(out.meta).toEqual(meta)
     expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/tasks/TASK-1/artifacts')
   })
-
-  it('returns [] on network error from both attempts', async () => {
-    fetchMock.mockRejectedValue(new TypeError('NetworkError'))
-    const out = await client.listArtifacts('TASK-1')
-    expect(out).toEqual([])
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-  })
-
-  it('returns [] when both responses are non-JSON garbage', async () => {
-    fetchMock
-      .mockResolvedValueOnce(htmlResponse())
-      .mockResolvedValueOnce(htmlResponse())
-    const out = await client.listArtifacts('TASK-1')
-    expect(out).toEqual([])
-  })
-
-  it('handles a bare-array body on the nested route', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse([ENVELOPE_RECORD]))
-    const out = await client.listArtifacts('TASK-1')
-    expect(out).toHaveLength(1)
+  it('surfaces errors after one request without retrying legacy shapes', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError('NetworkError'))
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    await expect(client.listArtifacts('TASK-1')).rejects.toThrow('NetworkError')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -498,23 +413,23 @@ describe('TorqueApiClient messaging client', () => {
     vi.restoreAllMocks()
   })
 
-  it('getInbox drains GET /messages/inbox and unwraps {messages}', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ messages: [ENVELOPE] }))
+  it('getInbox drains exactly one items/meta page', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ items: [ENVELOPE], meta: { returned: 1, limit: 50, has_more: false, next_cursor: null } }))
     const out = await client.getInbox('msg://user/local/operator')
-    expect(out).toHaveLength(1)
-    expect(out[0].id).toBe('msg-1')
+    expect(out.items).toHaveLength(1)
+    expect(out.items[0].id).toBe('msg-1')
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
       '/api/v1/messages/inbox?to=msg%3A%2F%2Fuser%2Flocal%2Foperator',
     )
   })
 
-  it('getInbox returns [] when the envelope key is null', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ messages: null }))
-    await expect(client.getInbox('msg://user/local/operator')).resolves.toEqual([])
+  it('getInbox preserves the empty page metadata', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ items: [], meta: { returned: 0, limit: 50, has_more: false, next_cursor: null } }))
+    expect((await client.getInbox('msg://user/local/operator')).items).toEqual([])
   })
 
   it('getThread passes filter params to GET /messages/thread/{id}', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ messages: [ENVELOPE] }))
+    fetchMock.mockResolvedValueOnce(jsonResponse({ items: [ENVELOPE], meta: { returned: 1, limit: 50, has_more: false, next_cursor: null } }))
     await client.getThread('thread-1', { kind: 'response', limit: 10 })
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
       '/api/v1/messages/thread/thread-1?kind=response&limit=10',
@@ -715,5 +630,31 @@ describe('single-page task adapters', () => {
       client.listComments('task', 'T-1', {}, signal), client.listComments('project', 'PRJ-1', {}, signal),
     ])
     expect(fetchMock.mock.calls.every(([, init]) => init.signal === signal)).toBe(true)
+  })
+})
+
+describe('remaining list pages', () => {
+  const client = new TorqueApiClient('/api/v1')
+  afterEach(() => vi.restoreAllMocks())
+  it.each([
+    ['models', () => client.listModels('peer', { cursor: 'next', include_total: true })],
+    ['templates', () => client.listTemplates({ search: 'needle', cursor: 'next', include_total: true })],
+    ['plans', () => client.listPlans({ cursor: 'next', include_total: true })],
+    ['plan children', () => client.listPlanChildren('ROOT', 'phase', { cursor: 'next', include_total: true })],
+    ['collections', () => client.listCollections('active', { cursor: 'next', include_total: true })],
+    ['collection tasks', () => client.listCollectionTasks('COL', { cursor: 'next', include_total: true })],
+    ['collection inbox', () => client.listInboxTasks({ cursor: 'next', include_total: true })],
+    ['pending checkpoints', () => client.listPendingCheckpoints({ cursor: 'next', include_total: true })],
+    ['task checkpoints', () => client.listTaskCheckpoints('ROOT', { cursor: 'next', include_total: true })],
+    ['thread', () => client.getThread('thread', { cursor: 'next', include_total: true })],
+  ] as const)('preserves one %s page without exhausting continuation', async (_name, list) => {
+    const page = { items: [{ id: 'row' }], meta: { returned: 1, limit: 50, has_more: true, next_cursor: 'more', total: 205 } }
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(page))
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    expect(await list()).toEqual(page)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const url = new URL(fetchMock.mock.calls[0][0] as string, 'http://localhost')
+    expect(url.searchParams.get('cursor')).toBe('next')
+    expect(url.searchParams.get('include_total')).toBe('true')
   })
 })
