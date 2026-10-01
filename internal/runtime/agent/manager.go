@@ -1183,12 +1183,23 @@ func (m *Manager) Resume(ctx context.Context, req ResumeRequest) (string, error)
 		}
 	}
 
-	fresh := sourceBootOptions(src)
+	fresh := m.sourceBootOptions(src)
 	fresh.LaunchProfile = launchProfile
 	fresh.AgentProfile = profile
 	fresh.Workdir = workdir
-	fresh.SystemPrompt = req.SystemPrompt
-	fresh.Env = envMap
+	// The request's system prompt goes ahead of the task's, and its env wins
+	// over the task's.
+	fresh.SystemPrompt = prependSystemPrompt(req.SystemPrompt, fresh.SystemPrompt)
+	if len(envMap) > 0 {
+		merged := make(map[string]string, len(fresh.Env)+len(envMap))
+		for k, v := range fresh.Env {
+			merged[k] = v
+		}
+		for k, v := range envMap {
+			merged[k] = v
+		}
+		fresh.Env = merged
+	}
 
 	// The checkpoint's id; a checkpoint written before checkpoints carried
 	// one falls back to the source session's own, which names the same

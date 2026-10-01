@@ -240,6 +240,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- A session re-launched for a task (`ResumeSession`, which the HITL response
+  and stuck-task recovery use, and the HTTP/MCP session resume,
+  `Manager.Resume`) is handed the task the way a dispatch hands it
+  (CW-20261001-0249). It carried only the task id, so a fresh boot (codex
+  app-server, a checkpoint with no recorded id, another runtime's id, a lost
+  provider session) planted a blank `task.md` and `task.json`, and its kind was
+  empty, which left the kind=agent idle-after-done nudge off. It now loads the
+  task row and builds the boot options with the scheduler's own mapping
+  (`scheduler.BuildJob`, shared with dispatch): title, description, kind,
+  status, priority, parent, sprint, epic, dependencies, the task's system
+  prompt (a resume's diagnostic note goes ahead of it), agent file and
+  environment (a request's env wins), and the task's running run, if it has one.
+  The session keeps its own agent profile, workdir and role. A task that cannot
+  be read leaves the bare task id, as before.
 - The HTTP and MCP session resume (`POST /api/v1/sessions/{id}/resume`,
   `torque_session_resume`, `Manager.Resume`) makes the same decision as
   `ResumeSession` (CW-20261001-0203). It continues the checkpoint's provider

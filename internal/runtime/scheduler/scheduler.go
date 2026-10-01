@@ -1711,6 +1711,17 @@ func (s *Scheduler) publishProgress(taskID string, runID int64, event executor.E
 }
 
 func (s *Scheduler) buildJob(task sqlstore.TaskRecord, runID int64) *executor.ExecutionJob {
+	return BuildJob(s.store, task, runID)
+}
+
+// BuildJob is the one mapping from a task row to the ExecutionJob a dispatch
+// runs: the task's own fields, its JSON columns, its dependency ids and its
+// project's context (working dir and agent file fallbacks, files, permissions,
+// artifacts). The scheduler builds every job with it, and so does a resume of
+// a task-linked session (agent.Manager.sourceBootOptions), so a re-launched
+// session is handed the task the same way a dispatched one is
+// (CW-20261001-0249). runID is the dispatching run, 0 for none.
+func BuildJob(store *sqlstore.Store, task sqlstore.TaskRecord, runID int64) *executor.ExecutionJob {
 	job := &executor.ExecutionJob{
 		TaskID:        task.ID,
 		TaskTitle:     task.Title,
@@ -1755,7 +1766,7 @@ func (s *Scheduler) buildJob(task sqlstore.TaskRecord, runID int64) *executor.Ex
 	// happened in Picker.Pick before this task was selected for dispatch, so
 	// a lookup failure here is best-effort (leave job.DependsOn empty) rather
 	// than blocking dispatch.
-	if deps, err := s.store.ListTaskDependencyIDs(task.ID); err == nil {
+	if deps, err := store.ListTaskDependencyIDs(task.ID); err == nil {
 		job.DependsOn = deps
 	}
 	if task.Metadata.Valid && task.Metadata.String != "" {
@@ -1764,7 +1775,7 @@ func (s *Scheduler) buildJob(task sqlstore.TaskRecord, runID int64) *executor.Ex
 			job.Metadata = md
 		}
 	}
-	s.applyProjectContext(&task, job)
+	applyProjectContext(store, &task, job)
 
 	// Parse limits
 	if task.CostBudget.Valid {
@@ -1783,15 +1794,15 @@ func (s *Scheduler) buildJob(task sqlstore.TaskRecord, runID int64) *executor.Ex
 	return job
 }
 
-func (s *Scheduler) applyProjectContext(task *sqlstore.TaskRecord, job *executor.ExecutionJob) {
+func applyProjectContext(store *sqlstore.Store, task *sqlstore.TaskRecord, job *executor.ExecutionJob) {
 	if !task.ProjectID.Valid || task.ProjectID.String == "" {
 		return
 	}
-	project, err := s.store.GetProject(task.ProjectID.String)
+	project, err := store.GetProject(task.ProjectID.String)
 	if err != nil {
 		return
 	}
-	artifacts, err := s.store.ListProjectArtifacts(project.ID)
+	artifacts, err := store.ListProjectArtifacts(project.ID)
 	if err != nil {
 		artifacts = nil
 	}

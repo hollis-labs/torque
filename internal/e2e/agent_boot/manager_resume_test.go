@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,8 +28,40 @@ import (
 // Otherwise it boots fresh, long-lived, with the kickoff. The new session's
 // Resumed, as Get returns it, says which.
 
-// resumeSourceTask is the task the planted source sessions are bound to.
-const resumeSourceTask = "CW-MGR-RESUME-SRC"
+// resumeSourceTask is the task the planted source sessions are bound to, with
+// the title and body its planted task bundle must carry on a re-launch.
+const (
+	resumeSourceTask  = "CW-MGR-RESUME-SRC"
+	resumeSourceTitle = "Summarize the README"
+	resumeSourceBody  = "Read README.md and comment a three line summary on this task."
+)
+
+// assertPlantedTaskBundle checks a re-launched session's planted bundle holds
+// the task itself (CW-20261001-0249): task.md carries its title and body, and
+// task.json its kind and status, as a normal dispatch plants them.
+func assertPlantedTaskBundle(t *testing.T, bootDir string) {
+	t.Helper()
+	dir := filepath.Join(bootDir, "tasks", resumeSourceTask)
+	md, err := os.ReadFile(filepath.Join(dir, "task.md"))
+	require.NoError(t, err, "the task bundle is planted in %s", bootDir)
+	assert.Contains(t, string(md), resumeSourceTitle, "task.md carries the title")
+	assert.Contains(t, string(md), resumeSourceBody, "task.md carries the body")
+	raw, err := os.ReadFile(filepath.Join(dir, "task.json"))
+	require.NoError(t, err)
+	var ctx struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Kind        string `json:"kind"`
+		Status      string `json:"status"`
+		Priority    int    `json:"priority"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &ctx), string(raw))
+	assert.Equal(t, resumeSourceTitle, ctx.Title)
+	assert.Equal(t, resumeSourceBody, ctx.Description)
+	assert.Equal(t, "agent", ctx.Kind, "kind=agent, so the idle-after-done nudge applies")
+	assert.Equal(t, "doing", ctx.Status)
+	assert.Equal(t, 3, ctx.Priority)
+}
 
 // plantResumeCheckpoint stores a session row booted by provider under
 // agentProfile, bound to resumeSourceTask with the "implementer" role, and a
@@ -36,7 +69,10 @@ const resumeSourceTask = "CW-MGR-RESUME-SRC"
 func plantResumeCheckpoint(t *testing.T, store *sqlstore.Store, sessID, provider, agentProfile, hint string) {
 	t.Helper()
 	if _, err := store.GetTask(resumeSourceTask); err != nil {
-		require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: resumeSourceTask, Title: "resume source", Priority: 2}))
+		require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+			ID: resumeSourceTask, Title: resumeSourceTitle, Description: resumeSourceBody,
+			Kind: "agent", Status: "doing", Priority: 3,
+		}))
 	}
 	require.NoError(t, store.CreateSession(&sqlstore.SessionRecord{
 		ID: sessID, AgentProfile: agentProfile, Provider: provider,
@@ -82,6 +118,7 @@ func TestManagerResume_Codex_FreshBootWithKickoff(t *testing.T) {
 	assert.False(t, sess.Resumed)
 	assert.Equal(t, agent.ModeLongLived, sess.Mode)
 	assert.Equal(t, resumeSourceTask, sess.TaskID, "the fresh session is the source task's, not an unlinked one")
+	assertPlantedTaskBundle(t, sess.BootDir)
 }
 
 // claude-code resumes: the checkpoint's id reaches the CLI as --resume, and
@@ -153,9 +190,9 @@ func TestManagerResume_NoIDOrOtherRuntime_FreshBootWithKickoff(t *testing.T) {
 				assert.Equal(t, resumeSourceTask, sess.TaskID, "the fresh session is the source task's")
 				// The task bundle planted for the session names the task and the
 				// source session's role; an unlinked session planted none.
+				assertPlantedTaskBundle(t, sess.BootDir)
 				bundle, err := os.ReadFile(filepath.Join(sess.BootDir, "tasks", resumeSourceTask, "task.md"))
-				require.NoError(t, err, "the source task's bundle is planted in %s", sess.BootDir)
-				assert.Contains(t, string(bundle), resumeSourceTask)
+				require.NoError(t, err)
 				assert.Contains(t, string(bundle), "implementer", "the source session's role")
 			})
 		}
@@ -295,3 +332,35 @@ func TestBootPiACP_ResumedMetaFollowsTheSessionIDPreset(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, got.Resumed, "and it reads back from the row")
 }
+
+// ResumeSession's fresh boot (the HITL and stuck-task path) is handed its
+// task the same way: the planted bundle is not blank. A diagnostic note goes
+// ahead of the task's own system prompt in the planted CLAUDE.md.
+func TestResumeSession_FreshBoot_PlantsTheTask(t *testing.T) {
+	fake := providertest.New(t, runtimes.Claude, claudeFreshRun(""))
+	fake.Install()
+	cd := composeDeps(t, fakeRuntimeConfig{}, "claude-code")
+	cd.Deps.RuntimeFactory = nil
+	cd.Deps.Profiles = config.ProfileMap{"worker": {Executor: "cli", Provider: "claude-code", PermissionMode: "acceptEdits"}}
+	plantResumeCheckpoint(t, cd.Store, "SES-RESUME-TASKCTX", "claude-code", "worker", "")
+	task, err := cd.Store.GetTask(resumeSourceTask)
+	require.NoError(t, err)
+	require.NoError(t, cd.Store.UpdateTask(task.ID, sqlstore.TaskUpdate{SystemPrompt: ptr("Be brief.")}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	sess, err := cd.Manager.ResumeSession(ctx, "SES-RESUME-TASKCTX", agent.ResumeOptions{DiagnosticNote: "NOTE: the previous turn went silent."})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), sess.ID) })
+
+	assert.False(t, sess.Resumed)
+	assertPlantedTaskBundle(t, sess.BootDir)
+	claudeMD, err := os.ReadFile(filepath.Join(sess.BootDir, "CLAUDE.md"))
+	require.NoError(t, err)
+	note, brief := strings.Index(string(claudeMD), "NOTE: the previous turn went silent."), strings.Index(string(claudeMD), "Be brief.")
+	require.NotEqual(t, -1, note, "the diagnostic note is planted")
+	require.NotEqual(t, -1, brief, "so is the task's own system prompt")
+	assert.Less(t, note, brief, "the note comes first")
+}
+
+func ptr[T any](v T) *T { return &v }
