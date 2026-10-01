@@ -256,7 +256,10 @@ func hasTokens(t executor.TokenUsage) bool {
 
 // unresolvedProfileTTL is how long a task profile that resolved to no provider
 // is remembered as unresolved before it is resolved again (and a profile added
-// to the registry since is picked up).
+// to the registry since is picked up). The cost of the cache: a profile added
+// to profiles.yaml is not seen for pricing until the entry expires, so a run of
+// that profile completing inside the window is recorded as `none`, not priced;
+// the executor, which resolves on its own, is not affected.
 const unresolvedProfileTTL = 5 * time.Minute
 
 // resolveCost adapts the Scheduler's instance fields into ResolveCost's
