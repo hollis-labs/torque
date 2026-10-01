@@ -262,6 +262,7 @@ type ReloadableProfiles struct {
 	mu       sync.RWMutex
 	path     string
 	profiles ProfileMap
+	guard    func() error
 }
 
 // NewReloadableProfiles constructs a live source with the provided initial
@@ -303,10 +304,41 @@ func (r *ReloadableProfiles) Store(profiles ProfileMap) {
 	r.profiles = cloneProfileMap(profiles)
 }
 
-// Reload reads the configured path and swaps the snapshot on success.
+// SetReloadGuard installs a check every reload must pass first; on an error
+// the reload is refused and the current snapshot kept. Torque guards the
+// reload with the identity of the profiles file's directory while it
+// write-protects that directory from agents (CW-20261001-0141).
+func (r *ReloadableProfiles) SetReloadGuard(guard func() error) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.guard = guard
+}
+
+// ReloadAllowed runs the reload guard, if any.
+func (r *ReloadableProfiles) ReloadAllowed() error {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	guard := r.guard
+	r.mu.RUnlock()
+	if guard == nil {
+		return nil
+	}
+	return guard()
+}
+
+// Reload reads the configured path and swaps the snapshot on success. The
+// reload guard runs first.
 func (r *ReloadableProfiles) Reload() error {
 	if r == nil {
 		return fmt.Errorf("reload profiles: source is nil")
+	}
+	if err := r.ReloadAllowed(); err != nil {
+		return fmt.Errorf("reload profiles refused: %w", err)
 	}
 	path := r.Path()
 	profiles, err := LoadProfiles(path)

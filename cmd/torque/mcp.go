@@ -80,6 +80,13 @@ func mcpCmd() *cobra.Command {
 			// can SendInput to it directly because that requires the
 			// in-memory inner runtime registration this process is dropping.
 			//
+			// This process does not run that sweep itself: `torque serve`
+			// owns the sessions and sweeps at its startup. A `torque mcp`
+			// sweeping a daemon's sessions would race it, and one that mux
+			// spawned inside an agent's sandbox sees no other process (its
+			// own PID namespace) and would mark every live session crashed
+			// (CW-20261001-0141).
+			//
 			// Bus is nil — the stdio mcp host has no SSE consumer, so
 			// emitting session.state_changed events would just discard them.
 			// The agent.Manager honors nil bus per its NewManager contract.
@@ -106,6 +113,7 @@ func mcpCmd() *cobra.Command {
 				return fmt.Errorf("bootstrap agent deps: %w", err)
 			}
 			defer agentDepsClose()
+			bootstrap.ProtectControlPlane(agentDeps, cfg)
 
 			// No scheduler runs here, but agents create and update most
 			// tasks through this process, so task writes validate against
