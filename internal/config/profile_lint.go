@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/hollis-labs/go-providers/registry"
 	"gopkg.in/yaml.v3"
 )
 
@@ -30,56 +31,71 @@ type profileProviderSpec struct {
 	Executors  map[string]string
 }
 
-var profileProviderCatalog = map[string]profileProviderSpec{
+// apiProviderCatalog lists the executor-api vendors. They are API clients,
+// not agent CLI runtimes, so they stay Torque's own list.
+var apiProviderCatalog = map[string]profileProviderSpec{
 	"anthropic": {
 		NameTokens: []string{"anthropic"},
-		Executors: map[string]string{
-			"api": "",
-		},
-	},
-	"claude": {
-		NameTokens: []string{"claude"},
-		Executors: map[string]string{
-			"cli": "bare claude provider retired 2026-05-16; use provider=claude-code",
-		},
-	},
-	"claude-code": {
-		NameTokens: []string{"claude-code"},
-		Executors: map[string]string{
-			"cli": "",
-		},
-	},
-	"codex": {
-		NameTokens: []string{"codex"},
-		Executors: map[string]string{
-			"cli": "",
-		},
-	},
-	"copilot": {
-		NameTokens: []string{"copilot"},
-		Executors: map[string]string{
-			"cli": "copilot provider not supported (PTY adapter removed in go-providers v0.12.0)",
-		},
+		Executors:  map[string]string{"api": ""},
 	},
 	"gemini": {
 		NameTokens: []string{"gemini"},
-		Executors: map[string]string{
-			"api": "executor-api: gemini support deferred until a consumer profile lands",
-			"cli": "gemini provider not supported (PTY adapter removed in go-providers v0.12.0)",
-		},
+		Executors:  map[string]string{"api": "executor-api: gemini support deferred until a consumer profile lands"},
 	},
 	"openai": {
 		NameTokens: []string{"openai"},
-		Executors: map[string]string{
-			"api": "",
-		},
+		Executors:  map[string]string{"api": ""},
 	},
-	"opencode": {
-		NameTokens: []string{"opencode"},
-		Executors: map[string]string{
-			"cli": "",
-		},
-	},
+}
+
+// cliLaunchableProviders are the provider names agent.adapterFor builds an
+// adapter for. Every other runtime in the go-providers registry, and every
+// other alias, lints with the reason Torque cannot launch it yet. The
+// registry-driven wrapper Select (CW-20260930-0134) removes this list.
+var cliLaunchableProviders = map[string]bool{
+	"claude-code": true,
+	"codex":       true,
+	"opencode":    true,
+}
+
+// profileProviderCatalog is the executor-api vendors plus, for executor
+// cli, every id and alias in the go-providers runtime registry
+// (CW-20261001-0064), so a cli provider the registry does not know is an
+// unknown provider rather than an entry in a Torque list.
+var profileProviderCatalog = buildProfileProviderCatalog()
+
+func buildProfileProviderCatalog() map[string]profileProviderSpec {
+	out := make(map[string]profileProviderSpec, len(apiProviderCatalog))
+	for name, spec := range apiProviderCatalog {
+		out[name] = spec
+	}
+	for _, desc := range registry.All() {
+		for _, name := range append([]string{string(desc.ID)}, desc.Aliases...) {
+			spec := out[name]
+			spec.NameTokens = []string{name}
+			executors := map[string]string{"cli": cliLaunchReason(name, desc)}
+			for executor, reason := range spec.Executors {
+				executors[executor] = reason
+			}
+			spec.Executors = executors
+			out[name] = spec
+		}
+	}
+	return out
+}
+
+// cliLaunchReason is "" when Torque launches the named runtime, else why not.
+func cliLaunchReason(name string, desc registry.Descriptor) string {
+	switch {
+	case cliLaunchableProviders[name]:
+		return ""
+	case name == "claude":
+		return "bare claude provider retired 2026-05-16; use provider=claude-code"
+	case len(desc.NativeModes()) == 0:
+		return fmt.Sprintf("%s is ACP-only; Torque launches ACP runtimes once the registry-driven wrapper Select lands (CW-20260930-0134)", desc.ID)
+	default:
+		return fmt.Sprintf("Torque builds %s adapters only under the names claude-code, codex and opencode until CW-20260930-0134", desc.ID)
+	}
 }
 
 var profileNameRoleExemptions = map[string]struct{}{

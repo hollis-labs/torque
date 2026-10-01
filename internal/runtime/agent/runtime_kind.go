@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hollis-labs/agentkit/agentruntime/runtimekind"
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/hollis-labs/agentkit/agentsessions"
+	"github.com/hollis-labs/go-providers/registry"
 	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/runtimetoken"
 )
 
 // RuntimeKind identifies the go-agent-sessions Runtime shape a session
@@ -38,17 +40,28 @@ import (
 //     go-providers v0.23.0 (NewOpencodeAdapterServeHTTP) +
 //     go-agent-sessions v0.10.0 (serve_http_session.go).
 //
-// The substrate's per-provider matrix lives in selectRuntimeKind below;
-// operators override per-profile via `profile.RuntimeKind: <kind>`.
+// The per-runtime default comes from the go-providers registry (see
+// selectRuntimeKind); operators override per-profile via
+// `profile.RuntimeKind: <kind>`.
+//
+// The values are agent-contracts-leaf runtimes.Mode spellings, the
+// vocabulary agentkit v0.12.0 takes everywhere (D-73). Two differ from the
+// tokens Torque used before: Subprocess is `subprocess-per-turn` (was
+// `subprocess`) and ServeHTTP is `http-sse` (was `serve-http`).
+// ParseRuntimeKind still accepts the old tokens, which live profiles and
+// stored session rows carry (CW-20261001-0064).
 type RuntimeKind string
 
 const (
-	RuntimeKindSubprocess     RuntimeKind = RuntimeKind(runtimekind.Subprocess)
-	RuntimeKindPTY            RuntimeKind = RuntimeKind(runtimekind.PTY)
-	RuntimeKindStreamingStdio RuntimeKind = RuntimeKind(runtimekind.StreamingStdio)
-	RuntimeKindJsonRpcStdio   RuntimeKind = RuntimeKind(runtimekind.JSONRPCStdio)
-	RuntimeKindServeHTTP      RuntimeKind = RuntimeKind(runtimekind.ServeHTTP)
+	RuntimeKindSubprocess     RuntimeKind = RuntimeKind(runtimes.ModeSubprocessPerTurn)
+	RuntimeKindPTY            RuntimeKind = RuntimeKind(runtimes.ModePTY)
+	RuntimeKindStreamingStdio RuntimeKind = RuntimeKind(runtimes.ModeStreamingStdio)
+	RuntimeKindJsonRpcStdio   RuntimeKind = RuntimeKind(runtimes.ModeJSONRPCStdio)
+	RuntimeKindServeHTTP      RuntimeKind = RuntimeKind(runtimes.ModeHTTPSSE)
 )
+
+// Mode returns the kind as the runtimes.Mode the libraries take.
+func (rk RuntimeKind) Mode() runtimes.Mode { return runtimes.Mode(rk) }
 
 // validate reports whether the value is a known kind. Empty is the
 // substrate-default sentinel ("ask selectRuntimeKind") and is not
@@ -59,7 +72,7 @@ func (rk RuntimeKind) validate() error {
 	case "", RuntimeKindSubprocess, RuntimeKindPTY, RuntimeKindStreamingStdio, RuntimeKindJsonRpcStdio, RuntimeKindServeHTTP:
 		return nil
 	default:
-		return fmt.Errorf("unknown runtime kind %q (expected: subprocess|pty|streaming-stdio|jsonrpc-stdio|serve-http or empty for per-provider default)", string(rk))
+		return fmt.Errorf("unknown runtime kind %q (expected: subprocess-per-turn|pty|streaming-stdio|jsonrpc-stdio|http-sse, the older subprocess|serve-http, or empty for the runtime's default)", string(rk))
 	}
 }
 
@@ -96,45 +109,45 @@ func (rk RuntimeKind) validate() error {
 //     feedback_no_compat_shims — pre-launch, no operator config relied
 //     on the old field name.
 func selectRuntimeKind(provider string, profileKind string) (RuntimeKind, error) {
-	kind := runtimeKindFromConfigValue(profileKind)
-	if err := RuntimeKind(kind).validate(); err != nil {
+	// A profile accepts the older subprocess and serve-http spellings but
+	// not cli, app-server or pty-debug, which were never valid there
+	// (runtimetoken.NormalizeProfile).
+	tok, err := runtimetoken.NormalizeProfile(profileKind)
+	if err != nil {
+		return "", fmt.Errorf("profile runtime_kind: %w", err)
+	}
+	kind := RuntimeKind(tok.Mode)
+	if err := kind.validate(); err != nil {
 		return "", err
 	}
 	if kind != "" {
 		return RuntimeKind(kind), nil
 	}
-	switch provider {
-	case "codex":
-		return RuntimeKindJsonRpcStdio, nil
-	case "claude-code":
-		return RuntimeKindStreamingStdio, nil
-	case "opencode":
-		return RuntimeKindSubprocess, nil
-	case "":
-		// Empty provider falls through to adapterFor's nominative-error
-		// path; the runtime kind is meaningless without a known
-		// provider.
-		return RuntimeKindSubprocess, nil
-	default:
-		// Unknown provider — same rationale as the empty case. The
-		// adapterFor path emits the actionable error; we pick a
-		// conservative default here so the caller doesn't have to
-		// wrap the error.
-		return RuntimeKindSubprocess, nil
+	// The runtime's own default: codex jsonrpc-stdio (app-server),
+	// claude streaming-stdio, opencode subprocess-per-turn.
+	if desc, ok := registry.Lookup(provider); ok {
+		return RuntimeKind(desc.DefaultMode), nil
 	}
+	// An empty or unknown provider gets adapterFor's actionable error;
+	// a conservative default here spares the caller wrapping one.
+	return RuntimeKindSubprocess, nil
 }
 
-func runtimeKindFromConfigValue(raw string) RuntimeKind {
-	normalized := strings.ToLower(strings.TrimSpace(raw))
-	normalized = strings.ReplaceAll(normalized, "_", "-")
-	if normalized == "" {
-		return ""
+// ParseRuntimeKind normalizes a runtime-kind token read from a stored
+// session row through runtimetoken.Normalize, which accepts every
+// pre-v0.12.0 spelling (subprocess, cli, serve-http, app-server, pty-debug).
+// agentkit fails an old token with ErrUnknownRuntime, so this translation
+// happens at Torque's boundary. An unknown token is returned as given for
+// validate to reject. Profile values go through selectRuntimeKind instead,
+// which is stricter.
+func ParseRuntimeKind(raw string) RuntimeKind {
+	tok, err := runtimetoken.Normalize(raw)
+	if err != nil {
+		return RuntimeKind(strings.TrimSpace(raw))
 	}
-	parsed := runtimekind.Parse(normalized)
-	if parsed == runtimekind.Unknown || string(parsed) != normalized {
-		return RuntimeKind(normalized)
-	}
-	return RuntimeKind(parsed)
+	// tok.Debug (pty-debug) has no Torque posture to carry it; the kind
+	// is pty.
+	return RuntimeKind(tok.Mode)
 }
 
 // resolveRuntimeKind composes the runtime-kind resolution chain: the

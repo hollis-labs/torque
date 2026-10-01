@@ -26,6 +26,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- agentkit v0.12.2, go-providers v0.34.1, go-sandbox v0.4.1 and
+  agent-contracts-leaf v0.3.0 (Sprint 4 PR1). go-providers v0.34.1 and
+  go-sandbox v0.4.1 are security fixes; with v0.34.1 a launch that carries
+  the turn's prompt in argv ends `-- <prompt>`, so untrusted turn text is
+  never parsed as a flag, and Torque's own argv splices (`--model`,
+  `--settings`, codex `-c model=`) now go before that `--`. Runtime kinds
+  use the shared vocabulary: `subprocess` is now `subprocess-per-turn` and
+  `serve-http` is `http-sse`. A profile still accepts the older
+  `subprocess` and `serve-http`; stored session rows are read with every
+  older spelling (`subprocess`, `cli`, `serve-http`, `app-server`,
+  `pty-debug`) through the new `internal/runtimetoken`. Runtime defaults,
+  provider ids and profile lint's cli providers come from the go-providers
+  runtime registry; a cli provider the registry does not know (`gemini`) is
+  no longer listed, and registered runtimes Torque cannot launch yet
+  (Antigravity, Copilot, Pi) lint with the reason.
 - The reviewer end-agent no longer emits `message` checkpoints. Advisory
   findings, including a deliverable left unregistered as an artifact (now
   check 7, `Audit advisory (check 7 — artifact_registration)`), are
@@ -61,6 +76,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- OpenCode `serve-http` profiles launch `opencode serve --port 0 --hostname
+  127.0.0.1` again. The wrapper launch path trimmed the prepared command to
+  the bare executable, so the child started as plain `opencode`.
 - A task can no longer be created or updated with an executor this Torque
   process has not registered: HTTP answers 422 and MCP `arg_invalid`,
   naming the registered executors (`api`, `cli`, `mock`). An empty executor

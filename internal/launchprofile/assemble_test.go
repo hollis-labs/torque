@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/hollis-labs/agentkit/agentlaunch"
 	"github.com/hollis-labs/torque/internal/config"
 )
@@ -28,7 +29,7 @@ func TestBuildLaunchPlan_StampsAnnotationsAndIdentity(t *testing.T) {
 		SessionID:      "sess-1",
 		Role:           "orchestrator",
 		AgentFilePath:  "agents/orchestrator.md",
-		RuntimeKind:    agentlaunch.RuntimeSubprocess,
+		RuntimeKind:    runtimes.ModeSubprocessPerTurn,
 		ProviderID:     "opencode",
 		ProjectID:      "p-1",
 		Workdir:        "/repo",
@@ -55,7 +56,7 @@ func TestBuildLaunchPlan_StampsAnnotationsAndIdentity(t *testing.T) {
 		"LaunchProfile.Annotations must not leak into AgentSpec.Labels")
 	assert.Equal(t, "opencode", plan.Provider.ID)
 	assert.Equal(t, "opencode/big-pickle", plan.Provider.ModelOverride)
-	assert.Equal(t, agentlaunch.RuntimeSubprocess, plan.Runtime)
+	assert.Equal(t, runtimes.ModeSubprocessPerTurn, plan.Runtime)
 	assert.Equal(t, agentlaunch.WorkspacePersistent, plan.Workspace.Mode)
 	assert.Equal(t, "/repo", plan.Workspace.Workdir)
 	assert.Equal(t, "/ws/sess-1", plan.Workspace.WorkspaceDir)

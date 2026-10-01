@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -262,7 +263,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		LoopbackURL:      loopbackURL,
 	})
 	injection, _, err := runtimebootdir.BuildInjection(runtimebootdir.Request{
-		Provider:    mapProviderID(profile.Provider),
+		Provider:    runtimeIDFor(profile.Provider),
 		Runtime:     rtKind,
 		NativeFiles: nativeFiles,
 	})
@@ -276,7 +277,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		Role:           role,
 		AgentFilePath:  opts.AgentFile,
 		RuntimeKind:    rtKind,
-		ProviderID:     mapProviderID(profile.Provider),
+		ProviderID:     runtimeIDFor(profile.Provider),
 		ProjectID:      opts.ProjectID,
 		Workdir:        opts.Workdir,
 		WorkspaceDir:   ws.WorkspaceDir,
@@ -356,7 +357,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		// Load the operator-selected settings explicitly so headless launches
 		// honor the planted permission mode and auth helper from the outset.
 		if profile.Provider == "claude-code" {
-			preparedExecution.Bindings.Argv = append(preparedExecution.Bindings.Argv,
+			preparedExecution.Bindings.Argv = insertBeforeEndOfOptions(preparedExecution.Bindings.Argv,
 				"--settings", filepath.Join(prepared.PlantedBootDir, ".claude", "settings.json"))
 		}
 		prepared.Argv = append([]string(nil), preparedExecution.Bindings.Argv...)
@@ -522,26 +523,8 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 	var bootDirExtraArgs []string
 	bootDirExtraArgs = append([]string(nil), sessionLaunch.Options.ExtraArgs...)
 
-	// opencode serve-http hot-fix: `opencode serve` does NOT accept
-	// `--dir <path>` (that's an `opencode run` flag) and exits printing
-	// help-to-stderr when an unknown flag arrives, producing the
-	// "process exited before printing listen URL" failure mode at the
-	// go-agent-sessions serve-http startup gate. The providerplant
-	// resolver currently emits OpencodeBootDirSpec.ProjectDirArg
-	// ("--dir {{.ProjectDir}}") unconditionally regardless of runtime;
-	// for serve-http mode the projectDir is already conveyed via
-	// spawnWorkdir (cwd) + OPENCODE_CONFIG_DIR env, so dropping the
-	// bootdir-derived argv splice is safe.
-	//
-	// Discovered 2026-05-21 during the PR #92 smoke test of profile
-	// opencode-claude-long against opencode 1.15.6 (4 consecutive
-	// runs failed ~300ms each before this fix).
-	//
-	// Substrate-side follow-up: providerplant.DefaultResolver should
-	// suppress ProjectDirArg when plan.Runtime == RuntimeServeHTTP
-	// (a go-agent-launch matrix or providerplant patch). When that
-	// lands, this Torque-side branch becomes redundant and can be
-	// removed.
+	// opencode serve-http builds its own serve argv; the prepared copy
+	// must not be spliced after it. See shouldDropBootDirExtraArgs.
 	if shouldDropBootDirExtraArgs(profile.Provider, runtimeKind) {
 		bootDirExtraArgs = nil
 	}
@@ -556,7 +539,7 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 		// app-server accepts model configuration via -c, not --model.
 		bootDirExtraArgs = append(append([]string(nil), profile.Args...), bootDirExtraArgs...)
 		if profile.Model != "" {
-			bootDirExtraArgs = append(bootDirExtraArgs, "-c", fmt.Sprintf("model=%q", profile.Model))
+			bootDirExtraArgs = insertBeforeEndOfOptions(bootDirExtraArgs, "-c", fmt.Sprintf("model=%q", profile.Model))
 		}
 	}
 
@@ -1258,27 +1241,15 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 	execution := *preparedExecution
 	execution.Access.Mode = agentlaunch.AccessOptional
 
-	// opencode serve-http hot-fix (factory.go's shouldDropBootDirExtraArgs,
-	// ported from the legacy path): `opencode serve` rejects `--dir <path>`
-	// (an `opencode run`-only flag); providerplant's OpencodeBootDirSpec
-	// emits it unconditionally. agentsessions.applyStartOptions derives
-	// StartOptions.ExtraArgs from Bindings.Argv[1:] unconditionally once
-	// PreparedExecution is set, so the trim has to happen on the bindings
-	// themselves rather than on a separate ExtraArgs override.
-	if shouldDropBootDirExtraArgs(profile.Provider, runtimeKind) && len(execution.Bindings.Argv) > 0 {
-		execution.Bindings.Argv = execution.Bindings.Argv[:1]
-	}
+	// No serve-http trim here, unlike bootLegacy: on this path the prepared
+	// argv is the whole command (the wrapper adapter contributes no args),
+	// so `opencode serve --port 0 --hostname 127.0.0.1` must reach the
+	// child as planted. Trimming it launched a bare `opencode`.
 	// PreparedExecution is the wrapper's complete spawn command; it suppresses
 	// CLIAdapter.BuildArgs. Carry Claude's profile options on that command,
 	// rather than an adapter callback that the prepared path never invokes.
 	if profile.Provider == "claude-code" && len(execution.Bindings.Argv) > 0 {
-		argv := []string{execution.Bindings.Argv[0]}
-		argv = append(argv, profileArgsExcludingDevFlag(profile)...)
-		argv = append(argv, execution.Bindings.Argv[1:]...)
-		if profile.Model != "" {
-			argv = append(argv, "--model", profile.Model)
-		}
-		execution.Bindings.Argv = argv
+		execution.Bindings.Argv = claudeProfileArgv(execution.Bindings.Argv, profile)
 	}
 
 	// Merge Torque's own composeEnv output (TORQUE_TASK_ID/RUN_ID, filtered
@@ -1306,7 +1277,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 	// is still authoritative for all of it) into the shape wrapper.Config.
 	// Adapter needs, without reimplementing per-provider adapter construction.
 	wrapperAdapter, err := adapters.Select(adapters.Selection{
-		Provider:   adaptersProviderFor(profile.Provider),
+		Provider:   adapters.Provider(runtimeIDFor(profile.Provider)),
 		LaunchMode: launchMode,
 		CLIAdapter: cliAdapter,
 	})
@@ -1628,24 +1599,6 @@ func mergeCallerEnvIntoPrepared(callerEnv []string, existing map[string]agentlau
 	return out
 }
 
-// adaptersProviderFor maps Torque's config.AgentProfile.Provider string onto
-// go-agent-wrapper's adapters.Provider vocabulary. "claude-code" (Torque's
-// public profile provider name) maps to go-providers' ClaudeAdapter.Name()
-// == "claude", which is also adapters.ProviderClaude's wire value --
-// adapters.Select validates the two agree.
-func adaptersProviderFor(providerName string) adapters.Provider {
-	switch providerName {
-	case "claude-code":
-		return adapters.ProviderClaude
-	case "codex":
-		return adapters.ProviderCodex
-	case "opencode":
-		return adapters.ProviderOpenCode
-	default:
-		return adapters.Provider(providerName)
-	}
-}
-
 // adaptersLaunchModeFor maps a bootWrapper-reachable RuntimeKind onto
 // go-agent-wrapper's adapters.LaunchMode. JsonRpcStdio and PTY never reach
 // this function (Boot's dispatch routes them to bootLegacy).
@@ -1740,12 +1693,43 @@ type buildArgsParams struct {
 func composeBuildArgs(p buildArgsParams) []string {
 	args := p.Adapter.BuildArgs(p.TurnPrompt, p.SystemPrompt, p.SessionID)
 	if !p.SkipModelSuffix && p.Profile.Model != "" {
-		args = append(args, "--model", p.Profile.Model)
+		args = insertBeforeEndOfOptions(args, "--model", p.Profile.Model)
 	}
 	if filtered := profileArgsExcludingDevFlag(p.Profile); len(filtered) > 0 {
 		args = append(filtered, args...)
 	}
 	return args
+}
+
+// claudeProfileArgv carries a claude-code profile's options on the prepared
+// spawn command the wrapper path runs: the profile's args right after the
+// executable, and --model before any end-of-options marker.
+func claudeProfileArgv(prepared []string, profile config.AgentProfile) []string {
+	argv := []string{prepared[0]}
+	argv = append(argv, profileArgsExcludingDevFlag(profile)...)
+	argv = append(argv, prepared[1:]...)
+	if profile.Model != "" {
+		argv = insertBeforeEndOfOptions(argv, "--model", profile.Model)
+	}
+	return argv
+}
+
+// insertBeforeEndOfOptions returns argv with extra placed before its first
+// "--", or appended when argv has none. Since go-providers v0.34.1 a
+// convention that passes the turn's prompt in argv ends `-- <prompt>`, so
+// untrusted turn text is never parsed as a flag (CW-20261001-0069); a flag
+// Torque appended after the `--` would become part of the prompt instead of
+// an option. Every Torque-side argv splice goes through here
+// (CW-20261001-0064). argv is not modified.
+func insertBeforeEndOfOptions(argv []string, extra ...string) []string {
+	i := slices.Index(argv, "--")
+	if i < 0 {
+		return append(slices.Clone(argv), extra...)
+	}
+	out := make([]string, 0, len(argv)+len(extra))
+	out = append(out, argv[:i]...)
+	out = append(out, extra...)
+	return append(out, argv[i:]...)
 }
 
 // skipModelSuffixForProvider reports whether the generic --model

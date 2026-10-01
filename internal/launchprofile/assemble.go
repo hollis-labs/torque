@@ -3,6 +3,7 @@ package launchprofile
 import (
 	"maps"
 
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/hollis-labs/agentkit/agentlaunch"
 	"github.com/hollis-labs/torque/internal/config"
 )
@@ -40,11 +41,11 @@ type TaskLaunchOverlay struct {
 	// RuntimeKind is the already-mapped agentlaunch runtime kind. The
 	// caller in the agent package owns the Torque→agentlaunch RuntimeKind
 	// translation (mapRuntimeKind).
-	RuntimeKind agentlaunch.RuntimeKind
+	RuntimeKind runtimes.Mode
 
 	// ProviderID is the already-mapped agentlaunch provider id (e.g.
 	// "claude" for Torque's "claude-code"). The caller owns the
-	// torque-provider→agentlaunch-provider translation (mapProviderID).
+	// torque-provider→registry runtime id translation (runtimeIDFor).
 	ProviderID string
 
 	// ProjectID / Workdir / WorkspaceDir / BuildDirRoot come from

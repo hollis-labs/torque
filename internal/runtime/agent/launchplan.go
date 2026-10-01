@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hollis-labs/agentkit/agentlaunch"
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
+	"github.com/hollis-labs/go-providers/registry"
+
 	"github.com/hollis-labs/torque/internal/config"
 )
 
@@ -14,41 +16,31 @@ import (
 // translation helpers boot.go still needs to bridge Torque's enums into
 // the shared agentlaunch contract.
 
-// mapProviderID normalizes a Torque provider name to the provider id the
-// agentlaunch matrix recognizes. Torque models the claude streaming-stdio
-// runtime as a distinct provider name ("claude-code") for adapter-factory
-// purposes; the matrix models it as the streaming-stdio runtime of
-// provider "claude". Every other name passes through verbatim.
-func mapProviderID(torqueProvider string) string {
-	if torqueProvider == "claude-code" {
-		return "claude"
+// runtimeIDFor resolves a profile's provider name to the go-providers
+// registry's canonical runtime id, which the launch plan, the matrix and
+// go-agent-wrapper all key on: "claude-code" is an alias of "claude". A name
+// the registry does not know passes through unchanged so the caller's own
+// validation names it. Replaces mapProviderID and adaptersProviderFor, which
+// each kept a copy of the claude-code mapping (CW-20261001-0064).
+func runtimeIDFor(provider string) string {
+	if desc, ok := registry.Lookup(provider); ok {
+		return string(desc.ID)
 	}
-	return torqueProvider
+	return provider
 }
 
-// mapRuntimeKind maps Torque's RuntimeKind onto the agentlaunch RuntimeKind
-// taxonomy. The two enums are intentionally distinct types (Torque's
-// predates the shared one); this is the single conversion point. An
-// unrecognized kind is a hard error — Boot must not silently downgrade to
-// subprocess.
-//
-// agentlaunch.RuntimeServeHTTP added in v0.4.0 alongside agentkit
-// agentsessions (serve_http_session.go) + go-providers v0.23.0
-// (NewOpencodeAdapterServeHTTP). Without this case, profiles opting into
-// serve-http would fail Boot here with "unmappable runtime kind" before
-// the session is started.
-func mapRuntimeKind(k RuntimeKind) (agentlaunch.RuntimeKind, error) {
+// mapRuntimeKind maps Torque's RuntimeKind onto the runtimes.Mode the
+// launch plan carries (agentkit v0.12.0 replaced agentlaunch.RuntimeKind
+// with the leaf vocabulary). RuntimeKind's values already are leaf
+// spellings, so this is the place a kind is checked before it reaches the
+// libraries. An unrecognized kind is a hard error — Boot must not silently
+// downgrade to subprocess-per-turn.
+func mapRuntimeKind(k RuntimeKind) (runtimes.Mode, error) {
 	switch k {
-	case RuntimeKindSubprocess, "":
-		return agentlaunch.RuntimeSubprocess, nil
-	case RuntimeKindPTY:
-		return agentlaunch.RuntimePTY, nil
-	case RuntimeKindStreamingStdio:
-		return agentlaunch.RuntimeStreamingStdio, nil
-	case RuntimeKindJsonRpcStdio:
-		return agentlaunch.RuntimeJsonRpcStdio, nil
-	case RuntimeKindServeHTTP:
-		return agentlaunch.RuntimeServeHTTP, nil
+	case "":
+		return runtimes.ModeSubprocessPerTurn, nil
+	case RuntimeKindSubprocess, RuntimeKindPTY, RuntimeKindStreamingStdio, RuntimeKindJsonRpcStdio, RuntimeKindServeHTTP:
+		return k.Mode(), nil
 	default:
 		return "", fmt.Errorf("unmappable runtime kind %q", string(k))
 	}
