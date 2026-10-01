@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,7 +45,7 @@ func prepareCodexAuth(ctx context.Context, env []string, execution *agentlaunch.
 	if json.Unmarshal(data, &object) != nil || len(object) == 0 {
 		return fmt.Errorf("Codex login cache at %s is empty or invalid; refresh the daemon's file-backed Codex login", authPath)
 	}
-	projection := provider.ProviderProjection{Provider: provider.ProviderCodex}
+	projection := provider.ProviderProjection{Provider: runtimes.Codex}
 	for _, effect := range execution.Effects {
 		if effect.ProviderEffect == string(provider.EffectCodexAuthJSON) {
 			projection.Effects = append(projection.Effects, provider.ProviderEffect{

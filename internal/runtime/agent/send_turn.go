@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	agentlaunch "github.com/hollis-labs/agentkit/agentlaunch"
 	"github.com/hollis-labs/agentkit/agentruntime/turn"
 	feotel "github.com/hollis-labs/go-otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -71,7 +70,7 @@ func (m *Manager) SendTurn(ctx context.Context, sess *Session, text string) (err
 		span.End()
 	}()
 
-	switch RuntimeKind(sess.RuntimeKind) {
+	switch ParseRuntimeKind(sess.RuntimeKind) {
 	case RuntimeKindJsonRpcStdio:
 		return m.codexTurns.SendTurn(ctx, sess.ID, codexRPCSender{mgr: m, sessID: sess.ID}, text, turn.CodexAppServerOptions{
 			ClientName:    "torque",
@@ -85,7 +84,7 @@ func (m *Manager) SendTurn(ctx context.Context, sess *Session, text string) (err
 		// claude's parser. The runtime appends the framing newline.
 		encoded, err := turn.Frame(text, turn.Options{
 			Provider: "claude",
-			Runtime:  agentlaunch.RuntimeKind(sess.RuntimeKind),
+			Runtime:  RuntimeKindStreamingStdio.Mode(),
 		})
 		if err != nil {
 			return fmt.Errorf("encode streaming-stdio turn: %w", err)

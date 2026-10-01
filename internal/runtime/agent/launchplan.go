@@ -2,9 +2,9 @@ package agent
 
 import (
 	"fmt"
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"strings"
 
-	"github.com/hollis-labs/agentkit/agentlaunch"
 	"github.com/hollis-labs/torque/internal/config"
 )
 
@@ -26,29 +26,18 @@ func mapProviderID(torqueProvider string) string {
 	return torqueProvider
 }
 
-// mapRuntimeKind maps Torque's RuntimeKind onto the agentlaunch RuntimeKind
-// taxonomy. The two enums are intentionally distinct types (Torque's
-// predates the shared one); this is the single conversion point. An
-// unrecognized kind is a hard error — Boot must not silently downgrade to
-// subprocess.
-//
-// agentlaunch.RuntimeServeHTTP added in v0.4.0 alongside agentkit
-// agentsessions (serve_http_session.go) + go-providers v0.23.0
-// (NewOpencodeAdapterServeHTTP). Without this case, profiles opting into
-// serve-http would fail Boot here with "unmappable runtime kind" before
-// the session is started.
-func mapRuntimeKind(k RuntimeKind) (agentlaunch.RuntimeKind, error) {
+// mapRuntimeKind maps Torque's RuntimeKind onto the runtimes.Mode the
+// launch plan carries (agentkit v0.12.0 replaced agentlaunch.RuntimeKind
+// with the leaf vocabulary). RuntimeKind's values already are leaf
+// spellings, so this is the place a kind is checked before it reaches the
+// libraries. An unrecognized kind is a hard error — Boot must not silently
+// downgrade to subprocess-per-turn.
+func mapRuntimeKind(k RuntimeKind) (runtimes.Mode, error) {
 	switch k {
-	case RuntimeKindSubprocess, "":
-		return agentlaunch.RuntimeSubprocess, nil
-	case RuntimeKindPTY:
-		return agentlaunch.RuntimePTY, nil
-	case RuntimeKindStreamingStdio:
-		return agentlaunch.RuntimeStreamingStdio, nil
-	case RuntimeKindJsonRpcStdio:
-		return agentlaunch.RuntimeJsonRpcStdio, nil
-	case RuntimeKindServeHTTP:
-		return agentlaunch.RuntimeServeHTTP, nil
+	case "":
+		return runtimes.ModeSubprocessPerTurn, nil
+	case RuntimeKindSubprocess, RuntimeKindPTY, RuntimeKindStreamingStdio, RuntimeKindJsonRpcStdio, RuntimeKindServeHTTP:
+		return k.Mode(), nil
 	default:
 		return "", fmt.Errorf("unmappable runtime kind %q", string(k))
 	}

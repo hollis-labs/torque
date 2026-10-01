@@ -2,9 +2,9 @@ package agent
 
 import (
 	"fmt"
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 
 	"github.com/hollis-labs/agentkit/agentruntime/runtimebind"
-	"github.com/hollis-labs/agentkit/agentruntime/runtimekind"
 	"github.com/hollis-labs/agentkit/agentsessions"
 	"github.com/hollis-labs/go-providers/provider"
 	"github.com/hollis-labs/torque/internal/config"
@@ -113,10 +113,13 @@ func adapterFor(profile config.AgentProfile, profileName string, kind RuntimeKin
 		switch kind {
 		case RuntimeKindJsonRpcStdio:
 			appServer := provider.NewCodexAdapterAppServer()
-			policy := runtimebind.ResolveCodexPolicy(runtimebind.CodexPolicyRequest{
-				Runtime: runtimekind.JSONRPCStdio,
+			policy, err := runtimebind.ResolveCodexPolicy(runtimebind.CodexPolicyRequest{
+				Runtime: runtimes.ModeJSONRPCStdio,
 				Bypass:  profile.ResolvedPermissionMode() == config.PermissionModeBypass,
 			})
+			if err != nil {
+				return nil, agentsessions.Capabilities{}, fmt.Errorf("resolve codex policy: %w", err)
+			}
 			if profile.ResolvedPermissionMode() == config.PermissionModeBypass {
 				appServer.SandboxMode = policy.SandboxMode
 			}
