@@ -453,6 +453,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Security
 
+- A Claude agent Torque launches loads only the MCP servers Torque plants,
+  through `--mcp-config <boot dir>/.mcp.json`. Torque now adds
+  `--strict-mcp-config`, which stops Claude also loading the operator's
+  user-level `~/.claude.json` `mcpServers`. Before, every launched Claude
+  worker also got whatever was configured there: on an operator's machine
+  the interactive `mux` aggregator with all its servers (cerberus deploy and
+  ssh among them) and any other server, outside the per-server allow-list and
+  the planted-only intent of the sandbox work. It applies to every Claude
+  runtime kind and role, workers, planners and reviewers alike; the planted
+  loopback is unchanged. Interim: go-providers' Claude launch is to carry the
+  flag itself. `TORQUE_CLAUDE_STRICT_MCP=0` (or `false`, `off`, `no`) turns it
+  off, with a WARN naming the value logged at each launch; any other value,
+  a typo included, keeps it on (CW-20261001-0226).
 - A planted OpenCode boot dir's `opencode.json`, which carries the MCP
   servers' environment (the `mux` entry's env included), is written owner-only
   (0600, go-providers v0.36.0). It was 0644. The boot dir itself was already
