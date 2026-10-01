@@ -1444,7 +1444,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		PreparedExecution: &execution,
 		SandboxProfile:    sandboxProfile,
 		WorkspaceDir:      ws.WorkspaceDir,
-		LogPath:           runtimeLogPath(ws, runtimeKind),
+		LogPath:           ws.LogPath,
 		SessionIDPreset:   sessionIDPreset,
 		OnSessionID:       onSessionID,
 		AutoFireFirstTurn: autoFire,

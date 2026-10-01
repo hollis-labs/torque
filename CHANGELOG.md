@@ -82,8 +82,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
-- go-agent-wrapper v0.21.1, agentkit v0.17.0 and go-providers v0.37.0
-  (CW-20261001-0157). A claude-code launch now carries
+- go-agent-wrapper v0.21.1, agentkit v0.19.1, go-providers v0.39.0 and
+  go-sandbox v0.5.0 (CW-20261001-0157). A claude-code launch now carries
   `--permission-mode <mode>` (`acceptEdits` when the profile sets none,
   `bypassPermissions` in developer mode), the same posture its planted
   `settings.json` already set: agentkit maps the launch plan's permission,
@@ -91,7 +91,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   flag. Codex, OpenCode and agy launches carry no posture flags or
   environment, as before; Codex keeps its `never` / `workspace-write`
   default. Planted MCP config (loopback and mux) is unchanged for every
-  runtime.
+  runtime. A session's `session.log` is appended to, never truncated, so
+  a log path reused by a later session accumulates. A Claude resume whose
+  session id Claude no longer has is reported as a lost session.
 - go-agent-wrapper v0.19.0, for ACP sessions' MCP servers (above). Its
   v0.18.0 change to the wrapper's own `plant` package does not reach Torque,
   which plants through agentkit.
@@ -214,10 +216,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   carries `model` and `default_agent`, which serve never got as flags.
   Before, they ran opencode's default model as its `build` agent.
 
-  serve's raw output (its stdout and every SSE frame) now goes to
-  `logs/serve-http.log`: agentkit opens its runtime log without O_APPEND,
-  and its writes overwrote what Torque appended to `session.log`
-  (CW-20261001-0148).
+  serve's raw output (its stdout and every SSE frame) stays in
+  `session.log` with those decisions (CW-20261001-0148).
+- Lines Torque appends to a session's `session.log` (redacted stderr, a
+  failed first turn's capture, OpenCode permission decisions) are no longer
+  overwritten by the agent's later output. agentkit v0.19.1 opens the log
+  for append (CW-20261001-0158).
 - Thinking from Claude, Codex, OpenCode and Pi over ACP is recorded as
   thinking, not as the agent's output. Their ACP thought chunks are marked
   only `phase: "thought"`, which Torque's event sink did not read

@@ -145,12 +145,3 @@ func TestOpencodeListenURL(t *testing.T) {
 	assert.Equal(t, "http://127.0.0.1:4096", opencodeListenURL("listening on http://127.0.0.1:4096."))
 	assert.Empty(t, opencodeListenURL("starting server"))
 }
-
-// agentkit's runtime log for serve-http moves out of session.log, which
-// it would overwrite; every other runtime keeps session.log.
-func TestRuntimeLogPath(t *testing.T) {
-	ws := &WorkspaceLayout{LogDir: "/ws/logs", LogPath: "/ws/logs/session.log"}
-	assert.Equal(t, "/ws/logs/serve-http.log", runtimeLogPath(ws, RuntimeKindServeHTTP))
-	assert.Equal(t, "/ws/logs/session.log", runtimeLogPath(ws, RuntimeKindStreamingStdio))
-	assert.Equal(t, "/ws/logs/session.log", runtimeLogPath(ws, RuntimeKindSubprocess))
-}
