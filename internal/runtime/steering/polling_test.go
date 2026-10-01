@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	gomsg "github.com/hollis-labs/go-messaging"
+
 	"github.com/stretchr/testify/assert"
 )
 
@@ -109,4 +111,19 @@ func TestPollRegistry_EmptyURNIgnored(t *testing.T) {
 	r.MarkPolling("")
 	assert.False(t, r.IsPolling(""), "an empty urn is never tracked")
 	assert.Equal(t, 0, r.Active())
+}
+
+// IsPollingAddress matches an opt-in by address kind and id, whatever
+// authority the caller's URN carried, and respects the TTL.
+func TestPollRegistry_IsPollingAddress(t *testing.T) {
+	r, advance := newTestRegistry(time.Minute)
+	assert.False(t, r.IsPollingAddress(gomsg.KindSession, "SES-1"))
+	r.MarkPolling(gomsg.Address{Kind: gomsg.KindSession, Authority: "torque", ID: "SES-1"}.URN())
+	assert.True(t, r.IsPollingAddress(gomsg.KindSession, "SES-1"))
+	assert.False(t, r.IsPollingAddress(gomsg.KindAgent, "SES-1"), "kind must match")
+	assert.False(t, r.IsPollingAddress(gomsg.KindSession, "SES-2"), "id must match")
+	advance(2 * time.Minute)
+	assert.False(t, r.IsPollingAddress(gomsg.KindSession, "SES-1"), "an expired opt-in does not count")
+	var none *PollRegistry
+	assert.False(t, none.IsPollingAddress(gomsg.KindSession, "SES-1"))
 }

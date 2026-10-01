@@ -8,6 +8,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- A long-lived worker that ends its turn without moving its task out of
+  `doing` is reminded once, then routed, instead of holding its project's
+  slot until the 30-minute inactivity threshold. After 90 seconds idle
+  following a completed turn it gets one reminder turn to call
+  `torque_task_review` or `torque_task_blocked`. Still idle 90 seconds later,
+  engine-side verification routes the run: to review if it left commits on
+  its branch or comments or artifacts on the task, to blocked otherwise, with
+  a `[system/auto-route]` comment on the task saying so. The window is task
+  metadata `idle_nudge_seconds` (0 to 3600; 0 turns it off). It applies to
+  `kind=agent` worker tasks only, never mid-turn, and never while the worker
+  waits by design: on a pending checkpoint, on a child task still open, on
+  steering messages it has not dismissed, or with its inbox polling active.
 - Pending HITL checkpoints are escalated once when nobody answers them: after
   24h (72h for `message`), the scheduler posts a `[system/checkpoint]`
   comment on the task and publishes `checkpoint.escalated`, and the
