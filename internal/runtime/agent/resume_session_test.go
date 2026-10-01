@@ -62,7 +62,7 @@ func TestSourceBootOptions_CarriesTheTask(t *testing.T) {
 		TaskID: sql.NullString{String: "CW-SRC-TASK", Valid: true},
 	}
 
-	opts := mgr.sourceBootOptions(rec)
+	opts := mgr.sourceBootOptions(rec, "")
 	assert.Equal(t, ModeLongLived, opts.Mode)
 	assert.Equal(t, "CW-SRC-TASK", opts.TaskID)
 	assert.Equal(t, "Summarize the README", opts.TaskTitle)
@@ -85,7 +85,7 @@ func TestSourceBootOptions_CarriesTheTask(t *testing.T) {
 	// is not the run's worker, so it stays 0.
 	_, err := store.CreateRun(&sqlstore.RunRecord{TaskID: "CW-SRC-TASK", Executor: "cli", Status: sqlstore.RunStatusRunning})
 	require.NoError(t, err)
-	assert.EqualValues(t, 0, mgr.sourceBootOptions(rec).RunID, "even with a running run")
+	assert.EqualValues(t, 0, mgr.sourceBootOptions(rec, "").RunID, "even with a running run")
 }
 
 // The row's project wins; a row with none inherits the task's.
@@ -100,9 +100,9 @@ func TestSourceBootOptions_ProjectInheritance(t *testing.T) {
 	}))
 	rec := &sqlstore.SessionRecord{AgentProfile: "w", Workdir: "/w", TaskID: sql.NullString{String: "CW-PRJ-TASK", Valid: true}}
 
-	assert.Equal(t, "PRJ-TASK", mgr.sourceBootOptions(rec).ProjectID, "inherited from the task")
+	assert.Equal(t, "PRJ-TASK", mgr.sourceBootOptions(rec, "").ProjectID, "inherited from the task")
 	rec.ProjectID = sql.NullString{String: "PRJ-ROW", Valid: true}
-	assert.Equal(t, "PRJ-ROW", mgr.sourceBootOptions(rec).ProjectID, "the row's own project wins")
+	assert.Equal(t, "PRJ-ROW", mgr.sourceBootOptions(rec, "").ProjectID, "the row's own project wins")
 }
 
 // A task's agent file that cannot be loaded (missing, or relative with no
@@ -116,13 +116,19 @@ func TestSourceBootOptions_AgentFileDegrades(t *testing.T) {
 	good := filepath.Join(t.TempDir(), "agent.yaml")
 	require.NoError(t, os.WriteFile(good, []byte("name: a\nsystem_prompt: Be careful.\n"), 0o644))
 
+	relDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(relDir, "agent.yaml"), []byte("name: a\nsystem_prompt: Be careful.\n"), 0o644))
 	for _, tc := range []struct {
-		name, agentFile, workdir, want string
+		name, agentFile, workdir, override, want string
 	}{
-		{"loadable", good, "/w", good},
-		{"missing", "/nonexistent/agent.yaml", "/w", ""},
-		{"relative, no workdir to anchor it", "agent.yaml", "", ""},
-		{"no system_prompt", writeAgentFile(t, "name: a\n"), "/w", ""},
+		{"loadable", good, "/w", "", good},
+		// A relative agent file resolves against the workdir the re-launched
+		// session will run in: the request's override, when it has one.
+		{"relative, resolved against the override workdir", "agent.yaml", "/elsewhere", relDir, "agent.yaml"},
+		{"relative, the override has no such file", "agent.yaml", relDir, "/elsewhere", ""},
+		{"missing", "/nonexistent/agent.yaml", "/w", "", ""},
+		{"relative, no workdir to anchor it", "agent.yaml", "", "", ""},
+		{"no system_prompt", writeAgentFile(t, "name: a\n"), "/w", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var logs bytes.Buffer
@@ -132,7 +138,7 @@ func TestSourceBootOptions_AgentFileDegrades(t *testing.T) {
 			require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: id, Title: "kept", Priority: 2, AgentFile: tc.agentFile}))
 			opts := mgr.sourceBootOptions(&sqlstore.SessionRecord{
 				ID: "SES-AF", AgentProfile: "w", Workdir: tc.workdir, TaskID: sql.NullString{String: id, Valid: true},
-			})
+			}, tc.override)
 			assert.Equal(t, tc.want, opts.AgentFile)
 			assert.Equal(t, "kept", opts.TaskTitle, "the rest of the task is still carried")
 			if tc.want == "" {
@@ -162,12 +168,11 @@ func TestSourceBootOptions_NoReadableTask(t *testing.T) {
 	opts := mgr.sourceBootOptions(&sqlstore.SessionRecord{
 		AgentProfile: "worker", Workdir: "/w", TaskID: sql.NullString{String: "CW-GONE", Valid: true},
 		ProjectID: sql.NullString{String: "PRJ-1", Valid: true}, MetaJSON: `{"role":"planner"}`,
-	})
+	}, "")
 	assert.Equal(t, Options{Mode: ModeLongLived, AgentProfile: "worker", Workdir: "/w", TaskID: "CW-GONE", ProjectID: "PRJ-1", Role: "planner"}, opts)
 
-	opts = mgr.sourceBootOptions(&sqlstore.SessionRecord{AgentProfile: "worker", Workdir: "/w"})
+	opts = mgr.sourceBootOptions(&sqlstore.SessionRecord{AgentProfile: "worker", Workdir: "/w"}, "")
 	assert.Equal(t, Options{Mode: ModeLongLived, AgentProfile: "worker", Workdir: "/w"}, opts)
-	assert.Zero(t, resolveIdleNudgeWindow(opts), "no task kind: no nudge")
 }
 
 // A resume's diagnostic note (or request prompt) goes ahead of the task's

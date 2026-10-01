@@ -1183,10 +1183,9 @@ func (m *Manager) Resume(ctx context.Context, req ResumeRequest) (string, error)
 		}
 	}
 
-	fresh := m.sourceBootOptions(src)
+	fresh := m.sourceBootOptions(src, workdir)
 	fresh.LaunchProfile = launchProfile
 	fresh.AgentProfile = profile
-	fresh.Workdir = workdir
 	// The request's system prompt goes ahead of the task's, and its env wins
 	// over the task's. A request that moves the session to another runtime
 	// than the one that recorded it does not carry the task's environment: it

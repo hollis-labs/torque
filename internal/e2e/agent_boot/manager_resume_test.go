@@ -255,6 +255,11 @@ func TestManagerResume_LostProviderSession_BootsFreshOnce(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, sess.Resumed)
 	assert.Equal(t, resumeSourceTask, sess.TaskID)
+	// The fresh boot is given the task as its first turn: it has no conversation
+	// that holds it, so the description is not omitted as it is on a resume.
+	boot, err := os.ReadFile(filepath.Join(sess.BootDir, "boot.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(boot), "## First turn\n\n"+resumeSourceBody)
 }
 
 // The real flow, with nothing planted by hand: a session boots and reports

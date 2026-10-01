@@ -280,7 +280,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   resumed, since an ACP agent without `loadSession` starts a new session without
   saying so (CW-20261001-0202). Note that `kind` here only fills the planted `task.json`: the
   idle-after-done nudge runs in the scheduler's long-lived dispatch, which a
-  re-launched session does not go through.
+  re-launched session does not go through. A re-launched worker session, being
+  a long-lived boot, gets the "Worker — long-lived dispatch contract" template
+  in its planted system prompt, as a dispatched worker does (a resume of an
+  orchestrator-class role does not).
 - A run's cost is one figure, priced once (CW-20260912-0003). The cost a
   runtime reports (Claude's `total_cost_usd`) is taken as given; the tokens
   of turns that reported none are estimated from models.dev with cache

@@ -31,11 +31,14 @@ import (
 // A task that cannot be read leaves the bare task id, and an agent file that
 // cannot be loaded is dropped, each with a log line: a re-launch exists so
 // the task is not stranded, so it must not fail on context it can do without.
-func (m *Manager) sourceBootOptions(rec *sqlstore.SessionRecord) Options {
+func (m *Manager) sourceBootOptions(rec *sqlstore.SessionRecord, workdir string) Options {
+	if workdir == "" {
+		workdir = rec.Workdir
+	}
 	base := Options{
 		Mode:         ModeLongLived,
 		AgentProfile: rec.AgentProfile,
-		Workdir:      rec.Workdir,
+		Workdir:      workdir,
 	}
 	if rec.ProjectID.Valid {
 		base.ProjectID = rec.ProjectID.String
@@ -183,7 +186,7 @@ func (m *Manager) ResumeSession(ctx context.Context, sessionID string, opts Resu
 		return nil, fmt.Errorf("agent.Manager.ResumeSession: get session: %w", err)
 	}
 
-	bootOpts := m.sourceBootOptions(rec)
+	bootOpts := m.sourceBootOptions(rec, "")
 	// The DiagnosticNote (set by α.5 stuck-task recovery) goes ahead of the
 	// task's own system prompt in Options.SystemPrompt. composeSystemPrompt
 	// puts the agent-file persona and the worker template before that, so the

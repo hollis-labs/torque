@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -137,7 +139,9 @@ func TestResumeSession_LostProviderSession_BootsFreshOnce(t *testing.T) {
 	cd.Deps.Profiles = config.ProfileMap{"worker": {
 		Executor: "cli", Provider: "claude-code", RuntimeKind: "subprocess", PermissionMode: "acceptEdits",
 	}}
-	plantSessionForResume(t, cd.Store, "SES-RESUME-LOST", "claude-code", lostID, t.TempDir(), "worker")
+	// A task-linked session: ResumeSession reads the id off the session row.
+	plantResumeCheckpoint(t, cd.Store, "SES-RESUME-LOST", "claude-code", "worker", lostID)
+	require.NoError(t, cd.Store.UpdateSessionResumeHint("SES-RESUME-LOST", []byte(lostID)))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -145,6 +149,11 @@ func TestResumeSession_LostProviderSession_BootsFreshOnce(t *testing.T) {
 	require.NoError(t, err, "a lost provider session boots fresh rather than failing the resume")
 	t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), sess.ID) })
 	assert.False(t, sess.Resumed)
+	// The fresh boot is given the task as its first turn: it has no conversation
+	// that holds it, so the description is not omitted as it is on a resume.
+	boot, err := os.ReadFile(filepath.Join(sess.BootDir, "boot.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(boot), "## First turn\n\n"+resumeSourceBody)
 
 	require.Eventually(t, func() bool { return len(fake.Calls()) > 1 }, 5*time.Second, 20*time.Millisecond)
 	got, ok := fake.Call(0).ArgAfter("--resume")
