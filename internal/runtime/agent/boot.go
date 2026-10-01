@@ -353,16 +353,14 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	// (deps.MuxCommand/MuxArgs/MuxEnv). These are runtime values, kept
 	// off the persisted-at-rest LaunchPlan deliberately.
 	prepared.PlantContext.MCPLoopbackURL = loopbackURL
-	if plantsMux(profile, runtimeKind) {
+	mux := planMux(deps, profile, runtimeKind)
+	if mux.Plant {
 		prepared.PlantContext.SelfMCPCommand = deps.MuxCommand
-		prepared.PlantContext.SelfMCPArgs = muxArgsFor(deps.MuxArgs, profile)
+		prepared.PlantContext.SelfMCPArgs = mux.Args
 		prepared.PlantContext.SelfMCPEnv = muxEnvSliceToMap(deps.MuxEnv)
-		if deps.MuxCommand != "" {
-			log.Printf("agent.Boot: session=%s: mux MCP planted with %s", sessID, muxServersLogValue(prepared.PlantContext.SelfMCPArgs))
-		}
-	} else if deps.MuxCommand != "" {
-		log.Printf("agent.Boot: session=%s: mux MCP not planted: %s", sessID, muxNotPlantedReason(profile))
+		log.Printf("agent.Boot: session=%s: mux MCP planted with %s", sessID, muxServersLogValue(mux.Args))
 	}
+	logMuxPlan(sessID, deps, mux)
 	// Plant the provider boot dir. WithAdapter pins the exact adapter
 	// Torque resolved (adapterFor) — critically the BARE-mode claude
 	// adapter, which providerplant's DefaultResolver would not select
@@ -1828,6 +1826,11 @@ func claudeStrictMCP(profile config.AgentProfile) bool {
 	}
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "0", "false", "off", "no":
+		if slices.Contains(profile.Args, claudeStrictMCPFlag) {
+			// The profile's own args carry it, so it stays on.
+			log.Printf("agent.Boot: WARN %s=%q: Torque does not add --strict-mcp-config, but the profile's own args carry it, so Claude loads only the MCP servers Torque plants", claudeStrictMCPEnv, raw)
+			return true
+		}
 		log.Printf("agent.Boot: WARN %s=%q: Claude is launched WITHOUT --strict-mcp-config, so it also loads the operator's user-level MCP servers (~/.claude.json), beyond what Torque plants", claudeStrictMCPEnv, raw)
 		return false
 	case "", "1", "true", "on", "yes":

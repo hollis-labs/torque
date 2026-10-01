@@ -45,6 +45,7 @@ func TestResumeSession_ClaudeCode_LaunchesWithResumeArg(t *testing.T) {
 	got, ok := fake.Call(0).ArgAfter("--resume")
 	require.True(t, ok, "claude must be launched with --resume: %v", fake.Call(0).Args)
 	assert.Equal(t, providerSessionID, got)
+	assertStrictOnce(t, fake.Call(0).Args)
 }
 
 // opencode run (subprocess-per-turn) is spawned with --session <id>.

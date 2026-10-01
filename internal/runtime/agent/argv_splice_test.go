@@ -176,3 +176,18 @@ func countArgs(args []string, want string) int {
 	}
 	return n
 }
+
+// With the kill switch off, a profile whose own args carry --strict-mcp-config
+// keeps the flag, and the WARN says so rather than claiming it launches
+// without it.
+func TestClaudeStrictMCP_KillSwitchWithTheFlagInProfileArgs(t *testing.T) {
+	t.Setenv("TORQUE_CLAUDE_STRICT_MCP", "0")
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	args := torqueLaunchArgs(config.AgentProfile{Provider: "claude-code", Args: []string{"--strict-mcp-config"}}, "/boot")
+	assert.Equal(t, 1, countArgs(args, "--strict-mcp-config"), "the profile's own flag stays: %q", args)
+	assert.Contains(t, logs.String(), "the profile's own args carry it")
+	assert.NotContains(t, logs.String(), "WITHOUT")
+}

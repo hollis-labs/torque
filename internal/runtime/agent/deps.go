@@ -137,9 +137,9 @@ type Dependencies struct {
 	// token for some workers) is filed as a follow-up.
 	//
 	// Not every session gets a mux entry (plantsMux), and a profile's
-	// mux_servers replaces the `--servers` value here for its sessions
-	// (muxArgsFor): a Claude worker gets none unless its profile names
-	// servers (CW-20261001-0226).
+	// mux_servers replaces this argv's server selection for its sessions
+	// with `--only <those>` (muxArgsFor): a Claude worker gets none unless its
+	// profile names servers (CW-20261001-0226).
 	MuxArgs []string
 
 	// MuxEnv carries optional KEY=VALUE pairs the planted Mux entry
@@ -165,4 +165,13 @@ type Dependencies struct {
 	// idle reminder leaves it alone (CW-20261001-0117). nil reads as nobody
 	// polling.
 	Polls *steering.PollRegistry
+
+	// MuxOmitsTorque reports that the planted mux server carries no torque
+	// server: while Torque write-protects its state, a `torque mcp` that
+	// mux would spawn inside the agent's sandbox could not write its
+	// database. The session's loopback is then its only Torque surface, and
+	// the kickoff says so. planMux drops `torque` from a profile's
+	// mux_servers while it is set (CW-20261001-0226; the protection that
+	// sets it is CW-20261001-0141).
+	MuxOmitsTorque bool
 }

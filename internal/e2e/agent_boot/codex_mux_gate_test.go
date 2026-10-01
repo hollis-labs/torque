@@ -42,7 +42,7 @@ func TestBootCodexPlantsMuxOnlyUnderBypass(t *testing.T) {
 		{permissionMode: "plan", wantMux: false},
 		{permissionMode: "bypassPermissions", wantMux: true, wantArgs: `"--servers"`},
 		{permissionMode: "acceptEdits", wantMux: false, muxServers: []string{"tesseract"}},
-		{permissionMode: "bypassPermissions", wantMux: true, muxServers: []string{"tesseract"}, wantArgs: `"--servers", "tesseract"`},
+		{permissionMode: "bypassPermissions", wantMux: true, muxServers: []string{"tesseract"}, wantArgs: `"--only", "tesseract"`},
 	}
 	for _, tc := range cases {
 		name := tc.permissionMode

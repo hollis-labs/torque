@@ -120,9 +120,12 @@ type AgentProfile struct {
 	// profile that sets mux_servers still gets mux only under
 	// bypassPermissions, with these servers.
 	//
-	// `cerberus`, which can deploy to and ssh into hosts, is never in a
-	// default; naming it here is deliberate, and both the load and
-	// `torque profiles lint` warn that it is granted. (CW-20261001-0226)
+	// `cerberus` (deploy and ssh) and `nanite` (its dev_bash runs shell
+	// commands) are never in a default; naming one here is deliberate, and
+	// both the load and `torque profiles lint` warn what it grants. The
+	// servers are curated with mux's `--only`, so a session reaches exactly
+	// these servers' tools: not mux_call or discovery into the others, and not
+	// mux's own Tether tools. (CW-20261001-0226)
 	MuxServers []string `yaml:"mux_servers,omitempty"`
 
 	// API-specific fields
@@ -375,9 +378,9 @@ func LoadProfilesFile(path string) (Profiles, error) {
 		if problems := validateMuxServers(prof.MuxServers); len(problems) > 0 {
 			return Profiles{}, fmt.Errorf("parse profiles %s: agent_profiles[%q]: %s", path, name, strings.Join(problems, "; "))
 		}
-		if prof.GrantsCerberus() {
-			log.Printf("[config] WARNING: %s: agent_profiles[%q] mux_servers names %s: its sessions can deploy to and ssh into hosts through mux",
-				path, name, MuxServerCerberus)
+		for _, g := range prof.DangerousMuxGrants() {
+			log.Printf("[config] WARNING: %s: agent_profiles[%q] mux_servers names %s, which grants %s",
+				path, name, g.Server, g.Grants)
 		}
 	}
 

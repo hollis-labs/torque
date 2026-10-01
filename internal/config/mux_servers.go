@@ -33,10 +33,15 @@ var KnownMuxServers = []string{
 	"vanta",
 }
 
-// MuxServerCerberus is the mux server that can deploy to and ssh into hosts.
-// It is never part of what a Claude worker gets by default, and a profile
-// that names it is warned (load log, lint) that it grants that.
-const MuxServerCerberus = "cerberus"
+// DangerousMuxServers are the mux servers that grant host command execution,
+// and why. None is ever part of a Claude worker's defaults; a profile that
+// names one gets a warning (the load log, the lint) saying what it grants.
+//   - cerberus can deploy to hosts and ssh into them.
+//   - nanite serves dev_bash, which runs shell commands on the host.
+var DangerousMuxServers = map[string]string{
+	"cerberus": "deploy and ssh: its sessions can deploy to and run commands on hosts",
+	"nanite":   "shell execution: its dev_bash tool runs shell commands on the host",
+}
 
 // validateMuxServers checks a profile's mux_servers: every entry names a
 // known mux server, none is empty, and none repeats. It returns the problems
@@ -58,7 +63,21 @@ func validateMuxServers(servers []string) []string {
 	return problems
 }
 
-// GrantsCerberus reports whether the profile's mux_servers names cerberus.
-func (p AgentProfile) GrantsCerberus() bool {
-	return slices.Contains(p.MuxServers, MuxServerCerberus)
+// DangerousMuxGrants lists the dangerous mux servers (DangerousMuxServers) the
+// profile's mux_servers names, in the order it names them, each with what it
+// grants.
+func (p AgentProfile) DangerousMuxGrants() []DangerousMuxGrant {
+	var out []DangerousMuxGrant
+	for _, name := range p.MuxServers {
+		if why, ok := DangerousMuxServers[name]; ok {
+			out = append(out, DangerousMuxGrant{Server: name, Grants: why})
+		}
+	}
+	return out
+}
+
+// DangerousMuxGrant is one dangerous mux server a profile names.
+type DangerousMuxGrant struct {
+	Server string
+	Grants string
 }

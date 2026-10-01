@@ -19,7 +19,7 @@ import (
 // boot dir plants, under the same names.
 func TestACPMCPServers(t *testing.T) {
 	deps := &Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), MuxCommand: "/usr/bin/mux", MuxArgs: []string{"mcp"}, MuxEnv: []string{"MUX_TOKEN=x"}}
-	got := acpMCPServers("http://127.0.0.1:4321/mcp", deps, true, config.AgentProfile{})
+	got := acpMCPServers("http://127.0.0.1:4321/mcp", deps, muxPlan{Plant: true, Args: deps.MuxArgs})
 	assert.Equal(t, []acp.MCPServer{
 		{Name: "loopback", URL: "http://127.0.0.1:4321/mcp"},
 		{Name: "mux", Command: "/usr/bin/mux", Args: []string{"mcp"}, Env: map[string]string{"MUX_TOKEN": "x"}},
@@ -28,9 +28,9 @@ func TestACPMCPServers(t *testing.T) {
 	require.NoError(t, err, "the wrapper accepts the set as built")
 
 	assert.Equal(t, []acp.MCPServer{{Name: "loopback", URL: "http://127.0.0.1:4321/mcp"}},
-		acpMCPServers("http://127.0.0.1:4321/mcp", deps, false, config.AgentProfile{}), "outside bypassPermissions only the loopback is offered")
-	assert.Empty(t, acpMCPServers("", &Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t)}, true, config.AgentProfile{}), "no loopback and no mux: nothing to send")
-	assert.Equal(t, []acp.MCPServer{{Name: "loopback", URL: "http://l/mcp"}}, acpMCPServers("http://l/mcp", nil, true, config.AgentProfile{}))
+		acpMCPServers("http://127.0.0.1:4321/mcp", deps, muxPlan{}), "outside bypassPermissions only the loopback is offered")
+	assert.Empty(t, acpMCPServers("", &Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t)}, muxPlan{Plant: true}), "no loopback and no mux: nothing to send")
+	assert.Equal(t, []acp.MCPServer{{Name: "loopback", URL: "http://l/mcp"}}, acpMCPServers("http://l/mcp", nil, muxPlan{Plant: true}))
 }
 
 // The loopback-dropped signal comes from go-agent-wrapper's own diagnostic

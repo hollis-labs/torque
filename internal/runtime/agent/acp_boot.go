@@ -91,22 +91,22 @@ func selectACPRuntime(profile config.AgentProfile, desc registry.Descriptor, mod
 
 // acpMCPServers is the MCP server set an ACP session receives in session/new
 // (and session/load): the per-task loopback over streamable HTTP and, when
-// withMux is set and the daemon has one, the mux aggregator over stdio.
-// withMux is plantsMux's answer, which for ACP is bypassPermissions only. The
+// the session's mux plan plants one, the mux aggregator over stdio. For ACP
+// planMux plants it under bypassPermissions only. The
 // values are the ones Boot hands go-providers for a native boot dir
 // (PlantContext.MCPLoopbackURL and SelfMCPCommand/Args/Env). go-agent-wrapper
 // sends the HTTP one only to an agent that advertises mcpCapabilities.http
 // and reports the rest through OnACPDiagnostic (acpSkippedMCPServers).
-func acpMCPServers(loopbackURL string, deps *Dependencies, withMux bool, profile config.AgentProfile) []acp.MCPServer {
+func acpMCPServers(loopbackURL string, deps *Dependencies, mux muxPlan) []acp.MCPServer {
 	var servers []acp.MCPServer
 	if loopbackURL != "" {
 		servers = append(servers, acp.MCPServer{Name: acpLoopbackMCPServer, URL: loopbackURL})
 	}
-	if withMux && deps != nil && deps.MuxCommand != "" {
+	if mux.Plant && deps != nil && deps.MuxCommand != "" {
 		servers = append(servers, acp.MCPServer{
 			Name:    acpMuxMCPServer,
 			Command: deps.MuxCommand,
-			Args:    muxArgsFor(deps.MuxArgs, profile),
+			Args:    slices.Clone(mux.Args),
 			Env:     muxEnvSliceToMap(deps.MuxEnv),
 		})
 	}
@@ -208,9 +208,13 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 		return nil, fmt.Errorf("%w: %s sessions take no go-sandbox profile (go-agent-wrapper refuses one for ACP agents)", ErrBootFailed, runtimeKind)
 	}
 
-	withMux := plantsMux(profile, runtimeKind)
-	if !withMux && deps.MuxCommand != "" {
-		log.Printf("agent.Boot: session=%s: mux MCP not offered to the ACP session: %s", sessID, muxNotPlantedReason(profile))
+	mux := planMux(deps, profile, runtimeKind)
+	logMuxPlan(sessID, deps, mux)
+	if runtimeIDFor(profile.Provider) == string(runtimes.Claude) {
+		// Over ACP Claude runs behind a third-party bridge that takes no
+		// --strict-mcp-config, so what else it loads beyond the servers sent
+		// in session/new is not Torque's to restrict (CW-20261001-0226).
+		log.Printf("agent.Boot: session=%s: WARN a Claude session over ACP cannot be launched with --strict-mcp-config (the bridge takes no such flag), so Torque cannot confirm it loads only the MCP servers it sends in session/new", sessID)
 	}
 	rawStderr, _, closeRawStderr := openStderrSidecar(opts.RunID, ws.LogPath)
 	stderrWriter, closeStderr := redactStderr(rawStderr, closeRawStderr, pb.redact)
@@ -227,7 +231,7 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 		WorkspaceDir:      ws.WorkspaceDir,
 		LogPath:           ws.LogPath,
 		HeartbeatInterval: mgr.pidPollInterval,
-		ACPMCPServers:     acpMCPServers(pb.loopbackURL, deps, withMux, profile),
+		ACPMCPServers:     acpMCPServers(pb.loopbackURL, deps, mux),
 		OnACPDiagnostic:   diagnostics.observe,
 		// The agent's permission requests are answered from the profile's
 		// posture, each decision written to the session log

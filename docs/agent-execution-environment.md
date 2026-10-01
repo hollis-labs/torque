@@ -99,13 +99,13 @@ blocked transitions.
 A launched agent reaches the MCP servers **Torque plants for it, and no
 others**. Every session gets the run's own task-scoped **`loopback`** server,
 which carries its torque tools (`torque_comment_add`, `torque_task_review`, …).
-Whether it also gets the daemon's **`mux`** aggregator (`mux mcp --proxy
---servers <names>`, which proxies servers such as `vanta`, `torque`,
-`tesseract` and `cerberus`) depends on the runtime:
+Whether it also gets the daemon's **`mux`** aggregator (`mux mcp --proxy …`,
+which proxies servers such as `vanta`, `torque`, `tesseract` and `cerberus`)
+depends on the runtime:
 
 | Runtime | Planted by default |
 |---|---|
-| `claude-code` (every runtime kind and role) | `loopback` only. **No `mux`.** |
+| `claude-code`, any runtime kind | `loopback` only. **No `mux`.** |
 | `opencode` (native) | `loopback` and `mux` with the daemon's default servers. |
 | `codex`, and every ACP runtime (`copilot`, `pi`, …) | `loopback` only; `mux` under `permission_mode: bypassPermissions`, with the daemon's default servers. |
 
@@ -125,10 +125,16 @@ agent_profiles:
     mux_servers: [vanta, tesseract]
 ```
 
-Torque then plants `mux mcp --proxy --servers vanta,tesseract …` for that
-profile's sessions, **exactly those servers**, with the daemon's other mux
-arguments (token, scopes) kept, beside the `loopback`. It is the whole of the
-mux surface those sessions can reach.
+Torque then plants `mux mcp --proxy … --only vanta,tesseract` for that
+profile's sessions, beside the `loopback`. **`--only` is what restricts mux**:
+it is mux's curated mode, where a session gets exactly those servers' tools
+and none of mux's own. `--servers`, which Torque does not use for a grant,
+only chooses which upstream tools mux lists as native tools: under it
+`mux_call` still reaches every server in mux's catalog, and mux's own Tether
+tools (session launch, send input, message send) stay on the planted token and
+scopes. The daemon's other mux arguments (token, scopes) are kept; its own
+`--servers`, `--only` and `--broker` are replaced, since mux refuses `--only`
+beside the others.
 
 - Names come from a known set (`cerberus`, `fragments-engine`, `hadron`,
   `loom`, `nanite`, `sigil`, `tangent`, `tangent-dev`, `tesseract`, `tether`,
@@ -136,22 +142,38 @@ mux surface those sessions can reach.
   `mcp-servers/`, plus the two the daemon's default set and the interactive
   config name. An unknown, empty or repeated name is a **load-time error**
   naming the profile, and `torque profiles lint` reports it.
-- `cerberus` is **never granted by default**. A profile that names it gets a
-  warning when profiles load and from `torque profiles lint` (a warning, which
-  does not fail the lint), because it grants deploy and ssh.
+- **`cerberus` and `nanite` are never granted by default.** `cerberus` can
+  deploy to and ssh into hosts; `nanite` serves `dev_bash`, which runs shell
+  commands on the host. A profile that names either gets a warning when
+  profiles load and from `torque profiles lint` (a warning, which does not fail
+  the lint), saying what it grants.
 - For `opencode`, `mux_servers` narrows the daemon's default set. For `codex`
   and ACP runtimes it narrows the set too, but mux is still planted only under
   `bypassPermissions` (the lint warns when a profile sets it otherwise).
+- While Torque write-protects its state, `torque` is dropped from a profile's
+  `mux_servers`, since a `torque mcp` that mux spawns in the agent's sandbox
+  cannot write its database; the session's `loopback` serves its Torque tools.
+  A grant of `torque` alone then plants no mux.
+- If the daemon has no mux server to plant (mux is not installed, or it is
+  withheld under that protection), a profile that names `mux_servers` is told
+  so in the boot log.
 
 ### Claude loads only what Torque plants
 
-Torque launches Claude with `--strict-mcp-config`, so Claude loads only the
-servers in the planted `<boot dir>/.mcp.json` and **not** the operator's
-user-level `~/.claude.json` `mcpServers` (an interactive `mux` with every
-server, and anything else configured there). This is an interim Torque-side
-flag, until go-providers' Claude launch carries it. Setting
+Torque launches **native** Claude with `--strict-mcp-config`, so Claude loads
+only the servers in the planted `<boot dir>/.mcp.json` and **not** the
+operator's user-level `~/.claude.json` `mcpServers` (an interactive `mux`
+with every server, and anything else configured there). This is an interim
+Torque-side flag, until go-providers' Claude launch carries it. Setting
 `TORQUE_CLAUDE_STRICT_MCP` to `0`, `false`, `off` or `no` turns it off (a WARN
 is logged at each launch naming the value); any other value keeps it on.
+
+**Claude over ACP** (`runtime_kind: acp-stdio` on a Claude profile) is not
+covered: it runs behind a third-party bridge that takes no such flag, so
+Torque cannot confirm it loads only the servers it sends in `session/new`.
+Torque still withholds the default mux from it (a Claude session gets mux only
+under `mux_servers`, and over ACP only with `bypassPermissions` too), and warns
+at launch and in `torque profiles lint`.
 
 ## Per-run worktree contract
 

@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,7 +28,7 @@ func TestLoadProfiles_MuxServers(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"vanta", "tesseract"}, profiles["worker"].MuxServers)
 	assert.Empty(t, profiles["plain"].MuxServers, "unset grants none")
-	assert.False(t, profiles["worker"].GrantsCerberus())
+	assert.Empty(t, profiles["worker"].DangerousMuxGrants())
 }
 
 // An unknown, empty or repeated name is a load-time error naming the profile
@@ -50,20 +51,26 @@ func TestLoadProfiles_MuxServersValidation(t *testing.T) {
 	}
 }
 
-// Naming cerberus, which can deploy to and ssh into hosts, loads but warns.
-func TestLoadProfiles_MuxServersCerberusWarns(t *testing.T) {
+// Naming a server that grants host command execution (cerberus: deploy and
+// ssh; nanite: its dev_bash runs shell commands) loads but warns, saying why.
+func TestLoadProfiles_MuxServersDangerousWarns(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "profiles.yaml")
-	require.NoError(t, os.WriteFile(path, []byte("agent_profiles:\n  deployer:\n    executor: cli\n    provider: claude-code\n    mux_servers: [vanta, cerberus]\n"), 0o644))
+	require.NoError(t, os.WriteFile(path, []byte("agent_profiles:\n  deployer:\n    executor: cli\n    provider: claude-code\n    mux_servers: [vanta, cerberus, nanite]\n  tidy:\n    executor: cli\n    provider: claude-code\n    mux_servers: [tesseract]\n"), 0o644))
 	var logs bytes.Buffer
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 
 	profiles, err := LoadProfiles(path)
 	require.NoError(t, err)
-	assert.True(t, profiles["deployer"].GrantsCerberus())
+	assert.Equal(t, []DangerousMuxGrant{
+		{Server: "cerberus", Grants: DangerousMuxServers["cerberus"]},
+		{Server: "nanite", Grants: DangerousMuxServers["nanite"]},
+	}, profiles["deployer"].DangerousMuxGrants())
+	assert.Empty(t, profiles["tidy"].DangerousMuxGrants())
 	assert.Contains(t, logs.String(), "WARNING")
-	assert.Contains(t, logs.String(), `agent_profiles["deployer"] mux_servers names cerberus`)
-	assert.Contains(t, logs.String(), "deploy to and ssh into hosts")
+	assert.Contains(t, logs.String(), `agent_profiles["deployer"] mux_servers names cerberus, which grants deploy and ssh`)
+	assert.Contains(t, logs.String(), `agent_profiles["deployer"] mux_servers names nanite, which grants shell execution: its dev_bash tool`)
+	assert.NotContains(t, logs.String(), `"tidy"`)
 }
 
 // The lint reports an unknown name as an error and cerberus as a warning,
@@ -77,7 +84,7 @@ func TestLintProfilesYAML_MuxServers(t *testing.T) {
   deployer:
     executor: cli
     provider: claude-code
-    mux_servers: [torque, cerberus]
+    mux_servers: [torque, cerberus, nanite]
   worker-codex:
     executor: cli
     provider: codex
@@ -105,9 +112,12 @@ func TestLintProfilesYAML_MuxServers(t *testing.T) {
 	assert.False(t, byPath["agent_profiles.worker.mux_servers"][0].Warning, "an unknown name is an error")
 	assert.Contains(t, byPath["agent_profiles.worker.mux_servers"][0].Message, `unknown mux server "vantaa"`)
 
-	require.Len(t, byPath["agent_profiles.deployer.mux_servers"], 1)
-	assert.True(t, byPath["agent_profiles.deployer.mux_servers"][0].Warning, "cerberus is a warning")
+	require.Len(t, byPath["agent_profiles.deployer.mux_servers"], 2)
+	for _, p := range byPath["agent_profiles.deployer.mux_servers"] {
+		assert.True(t, p.Warning, "cerberus and nanite are warnings")
+	}
 	assert.Contains(t, byPath["agent_profiles.deployer.mux_servers"][0].Message, "cerberus grants deploy and ssh")
+	assert.Contains(t, byPath["agent_profiles.deployer.mux_servers"][1].Message, "nanite grants shell execution: its dev_bash tool")
 
 	for _, name := range []string{"worker-codex", "worker-copilot"} {
 		got := byPath["agent_profiles."+name+".mux_servers"]
@@ -122,4 +132,31 @@ func TestLintProfilesYAML_MuxServers(t *testing.T) {
 func TestLintProblem_StringMarksWarnings(t *testing.T) {
 	assert.Equal(t, "line 4: p: warning: m", ProfileLintProblem{Line: 4, Path: "p", Message: "m", Warning: true}.String())
 	assert.Equal(t, "line 4: p: m", ProfileLintProblem{Line: 4, Path: "p", Message: "m"}.String())
+}
+
+// A Claude profile on an ACP runtime kind is warned: native Claude is
+// launched with --strict-mcp-config, but the ACP bridge takes no such flag,
+// so Torque cannot confirm it loads only the servers it plants.
+func TestLintProfilesYAML_ClaudeOverACPWarns(t *testing.T) {
+	problems, err := LintProfilesYAML([]byte(`agent_profiles:
+  worker-claude-code:
+    executor: cli
+    provider: claude-code
+    runtime_kind: acp-stdio
+  tidy-claude-code:
+    executor: cli
+    provider: claude-code
+  worker-copilot:
+    executor: cli
+    provider: copilot
+`))
+	require.NoError(t, err)
+	var warned []string
+	for _, p := range problems {
+		if strings.Contains(p.Message, "--strict-mcp-config") {
+			assert.True(t, p.Warning)
+			warned = append(warned, p.Path)
+		}
+	}
+	assert.Equal(t, []string{"agent_profiles.worker-claude-code.runtime_kind"}, warned, "%v", problems)
 }

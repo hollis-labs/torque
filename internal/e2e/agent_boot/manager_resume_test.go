@@ -105,6 +105,7 @@ func TestManagerResume_ClaudeCode_ResumesTheCheckpointsSession(t *testing.T) {
 	got, ok := fake.Call(0).ArgAfter("--resume")
 	require.True(t, ok, "claude must be launched with --resume: %v", fake.Call(0).Args)
 	assert.Equal(t, hint, got)
+	assertStrictOnce(t, fake.Call(0).Args)
 
 	sess, err := cd.Manager.Get(newID)
 	require.NoError(t, err)

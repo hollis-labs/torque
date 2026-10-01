@@ -341,6 +341,7 @@ func lintProfileDefinition(line int, name string, profile AgentProfile) []Profil
 	}
 
 	problems = append(problems, lintMuxServers(line, basePath, profile)...)
+	problems = append(problems, lintClaudeACP(line, basePath, profile)...)
 
 	if prob, ok := dishonestProfileNameProblem(line, name, provider); ok {
 		problems = append(problems, prob)
@@ -472,10 +473,10 @@ func lintMuxServers(line int, basePath string, profile AgentProfile) []ProfileLi
 	for _, msg := range validateMuxServers(profile.MuxServers) {
 		problems = append(problems, ProfileLintProblem{Line: line, Path: path, Message: msg})
 	}
-	if profile.GrantsCerberus() {
+	for _, g := range profile.DangerousMuxGrants() {
 		problems = append(problems, ProfileLintProblem{
 			Line: line, Path: path, Warning: true,
-			Message: fmt.Sprintf("%s grants deploy and ssh: the sessions of this profile can deploy to and run commands on hosts through mux", MuxServerCerberus),
+			Message: fmt.Sprintf("%s grants %s", g.Server, g.Grants),
 		})
 	}
 	if muxNeedsBypass(profile) && PermissionMode(profile.PermissionMode) != PermissionModeBypass {
@@ -503,4 +504,24 @@ func muxNeedsBypass(profile AgentProfile) bool {
 		mode = tok.Mode
 	}
 	return mode.ACP()
+}
+
+// lintClaudeACP warns about a Claude profile on an ACP runtime kind
+// (CW-20261001-0226). Native Claude is launched with --strict-mcp-config, so
+// it loads only the MCP servers Torque plants; over ACP Claude runs behind a
+// third-party bridge that takes no such flag, so Torque cannot confirm that
+// it loads only the servers it sends in session/new.
+func lintClaudeACP(line int, basePath string, profile AgentProfile) []ProfileLintProblem {
+	desc, ok := registry.Lookup(profile.Provider)
+	if !ok || desc.ID != runtimes.Claude {
+		return nil
+	}
+	tok, err := runtimetoken.NormalizeProfile(profile.RuntimeKind)
+	if err != nil || tok.Mode == "" || !tok.Mode.ACP() {
+		return nil
+	}
+	return []ProfileLintProblem{{
+		Line: line, Path: basePath + ".runtime_kind", Warning: true,
+		Message: fmt.Sprintf("%s over %s cannot be launched with --strict-mcp-config (the ACP bridge takes no such flag), so Torque cannot confirm it loads only the MCP servers it plants; native claude-code (streaming-stdio) does", profile.Provider, tok.Mode),
+	}}
 }

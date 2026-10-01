@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -73,6 +74,17 @@ func bootClaude(t *testing.T, runtimeKind, profileName string, opts agent.Option
 	return args, cfg.MCPServers
 }
 
+// assertStrictOnce checks a Claude launch's argv carries --strict-mcp-config
+// exactly once, among the options: before the "--" that ends them, so it is
+// never read as prompt text.
+func assertStrictOnce(t *testing.T, args []string) {
+	t.Helper()
+	assert.Equal(t, 1, countArg(args, "--strict-mcp-config"), "argv: %q", args)
+	if end := slices.Index(args, "--"); end >= 0 {
+		assert.Less(t, slices.Index(args, "--strict-mcp-config"), end, "the flag must come before --: %q", args)
+	}
+}
+
 // Both claude runtime kinds Torque launches (streaming-stdio, the default,
 // and subprocess-per-turn), under the worker role and the orchestrator-class
 // roles, carry --strict-mcp-config, and the planted file still has the
@@ -86,7 +98,7 @@ func TestClaudeLaunch_StrictMCPConfig_EveryKindAndRole(t *testing.T) {
 			}
 			t.Run(name+"/"+role, func(t *testing.T) {
 				args, servers := bootClaude(t, kind, role, agent.Options{Role: role}, nil)
-				assert.Equal(t, 1, countArg(args, "--strict-mcp-config"), "argv: %q", args)
+				assertStrictOnce(t, args)
 				assert.Contains(t, servers, "loopback", "the planted loopback is untouched")
 			})
 		}
@@ -180,9 +192,15 @@ func TestClaudeLaunch_MuxServersPlantsExactlyThoseNamed(t *testing.T) {
 					cd.Deps.Profiles = config.ProfileMap{"worker": prof}
 				})
 				assert.Contains(t, servers, "loopback")
+				args := muxArgs(t, servers)
 				assert.Equal(t,
-					[]string{"mcp", "--proxy", "--servers", tc.want, "--token", "local-dev", "--scopes", "session.write,message.write"},
-					muxArgs(t, servers))
+					[]string{"mcp", "--proxy", "--token", "local-dev", "--scopes", "session.write,message.write", "--only", tc.want},
+					args)
+				// --only is mux's curated mode: exactly these servers' tools, and no
+				// mux_discover/mux_call into the others or mux's own Tether tools,
+				// which --servers would leave on the planted token and scopes.
+				assert.NotContains(t, args, "--servers", "--servers leaves mux_call open to every server")
+				assert.NotContains(t, args, "--broker")
 			})
 		}
 	}
@@ -236,5 +254,56 @@ func TestOpencodeLaunch_MuxDefaultsUnchanged(t *testing.T) {
 	servers = bootOpencodeConfig(t, true, []string{"vanta"})
 	require.Contains(t, servers, "mux")
 	require.NoError(t, json.Unmarshal(servers["mux"], &entry))
-	assert.Equal(t, []string{"/usr/local/bin/mux", "mcp", "--proxy", "--servers", "vanta", "--token", "local-dev", "--scopes", "session.write,message.write"}, entry.Command)
+	assert.Equal(t, []string{"/usr/local/bin/mux", "mcp", "--proxy", "--token", "local-dev", "--scopes", "session.write,message.write", "--only", "vanta"}, entry.Command)
+}
+
+// --strict-mcp-config is on every turn of a long-lived claude session, not
+// only the first: a subprocess-per-turn session launches the CLI again for
+// each turn, and turn 2 resumes the conversation with --resume.
+func TestClaudeLaunch_StrictMCPConfig_OnTurnTwo(t *testing.T) {
+	fake := providertest.New(t, runtimes.Claude,
+		providertest.Replay("claude/print_turn1"),
+		providertest.Replay("claude/print_turn2_resume").When("--resume"),
+	)
+	fake.Install()
+	cd := composeDeps(t, fakeRuntimeConfig{}, "claude-code")
+	cd.Deps.RuntimeFactory = nil
+	cd.Deps.Profiles = config.ProfileMap{"worker": {Executor: "cli", Provider: "claude-code", RuntimeKind: "subprocess", PermissionMode: "acceptEdits"}}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	sess, err := cd.Manager.Boot(ctx, agent.Options{TaskID: "CW-STRICT-T2", AgentProfile: "worker", Workdir: t.TempDir(), Mode: agent.ModeLongLived})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), sess.ID) })
+	require.Eventually(t, func() bool { return len(fake.Calls()) >= 1 && fake.Call(0).Exited }, 5*time.Second, 20*time.Millisecond)
+	require.NoError(t, cd.Manager.SendTurn(ctx, sess, "turn two"))
+	require.Eventually(t, func() bool { return len(fake.Calls()) >= 2 }, 5*time.Second, 20*time.Millisecond)
+
+	assertStrictOnce(t, fake.Call(0).Args)
+	assertStrictOnce(t, fake.Call(1).Args)
+	assert.True(t, fake.Call(1).HasArg("--resume"), "turn two is the resume: %q", fake.Call(1).Args)
+}
+
+// While Torque's state is write-protected (deps.MuxOmitsTorque, set by the
+// protection of CW-20261001-0141), a profile's mux_servers lose `torque`: a
+// `torque mcp` that mux spawns in the agent's sandbox cannot write its
+// database. The other servers stay, and a grant of torque alone plants no mux
+// at all, never the daemon's wider default.
+func TestClaudeLaunch_MuxServersDropTorqueUnderProtection(t *testing.T) {
+	grant := func(servers ...string) func(*composedDeps) {
+		return func(cd *composedDeps) {
+			withDaemonMux(cd)
+			cd.Deps.MuxOmitsTorque = true
+			prof := cd.Deps.Profiles.(config.ProfileMap)["worker"]
+			prof.MuxServers = servers
+			cd.Deps.Profiles = config.ProfileMap{"worker": prof}
+		}
+	}
+	_, servers := bootClaude(t, "", "worker", agent.Options{}, grant("vanta", "torque"))
+	assert.Equal(t,
+		[]string{"mcp", "--proxy", "--token", "local-dev", "--scopes", "session.write,message.write", "--only", "vanta"},
+		muxArgs(t, servers))
+
+	_, servers = bootClaude(t, "", "worker", agent.Options{}, grant("torque"))
+	assert.Contains(t, servers, "loopback", "the loopback still serves the task's Torque tools")
+	assert.NotContains(t, servers, "mux", "nothing is left to plant, and the daemon's default is not substituted")
 }

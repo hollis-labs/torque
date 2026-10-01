@@ -179,7 +179,7 @@ func TestBootCopilotACP_MuxServersNarrowUnderBypass(t *testing.T) {
 		permissionMode string
 		wantMuxArgs    []string // nil: no mux
 	}{
-		{"bypassPermissions", []string{"mcp", "--proxy", "--servers", "tesseract", "--token", "local-dev"}},
+		{"bypassPermissions", []string{"mcp", "--proxy", "--token", "local-dev", "--only", "tesseract"}},
 		{"acceptEdits", nil},
 	} {
 		t.Run("mode="+tc.permissionMode, func(t *testing.T) {

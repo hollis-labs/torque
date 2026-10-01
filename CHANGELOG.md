@@ -489,16 +489,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   on hosts) being the riskiest of those, and recent worker sessions never
   called mux, only their loopback. Claude sessions now get the run's loopback
   alone, on every runtime kind and role. A profile grants mux servers
-  deliberately with the new optional `mux_servers` field, which plants
-  `mux mcp --proxy --servers <exactly those>` with the daemon's other mux
-  arguments: `mux_servers: [vanta, tesseract]`. Names are checked against the
-  known mux servers at profile load (an unknown, empty or repeated name is an
-  error), and `torque profiles lint` reports the same. `cerberus` is only ever
-  planted when a profile names it, and naming it warns at load and in the lint
-  (a warning, which does not fail it). What each runtime plants by default
-  is unchanged for the others: OpenCode gets mux with the daemon's default
-  servers, and Codex and every ACP runtime get it only under
-  `permission_mode: bypassPermissions`; `mux_servers` narrows their set. See
+  deliberately with the new optional `mux_servers` field, which plants `mux
+  mcp --proxy … --only <exactly those>` with the daemon's other mux arguments:
+  `mux_servers: [vanta, tesseract]`. `--only` is what restricts mux: it is
+  mux's curated mode, with those servers' tools and none of mux's own, where
+  `--servers` would still leave `mux_call` open to every server in mux's
+  catalog and mux's Tether tools (session launch, send input, message send) on
+  the planted token and scopes. Names are checked against the known mux servers
+  at profile load (an unknown, empty or repeated name is an error), and `torque
+  profiles lint` reports the same. `cerberus` (deploy, ssh) and `nanite` (its
+  `dev_bash` runs shell commands) are only ever planted when a profile names
+  them, and naming either warns at load and in the lint, saying what it grants
+  (a warning, which does not fail the lint). While Torque's state is
+  write-protected a profile's `mux_servers` lose `torque`, and a profile that
+  names servers on a daemon with no mux is told so in the boot log. Codex and
+  every ACP runtime still get mux only under `permission_mode:
+  bypassPermissions`; OpenCode still gets it by default; `mux_servers` narrows
+  their sets. A Claude session over ACP (`runtime_kind: acp-stdio`) is not
+  covered by `--strict-mcp-config`, whose bridge takes no such flag: it gets no
+  default mux, and is warned about at launch and in the lint. See
   docs/agent-execution-environment.md.
 - A Claude agent Torque launches loads only the MCP servers Torque plants,
   through `--mcp-config <boot dir>/.mcp.json`. Torque now adds
@@ -507,9 +516,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   worker also got whatever was configured there: on an operator's machine
   the interactive `mux` aggregator with all its servers (cerberus deploy and
   ssh among them) and any other server, outside the per-server allow-list and
-  the planted-only intent of the sandbox work. It applies to every Claude
-  runtime kind and role, workers, planners and reviewers alike; the planted
-  loopback is unchanged. Interim: go-providers' Claude launch is to carry the
+  the planted-only intent of the sandbox work. It applies to every native Claude
+  runtime kind (streaming-stdio and subprocess-per-turn) and role, workers,
+  planners and reviewers alike, on every turn and on a resume; the planted
+  loopback is unchanged. Claude over ACP is not covered (see below). Interim: go-providers' Claude launch is to carry the
   flag itself. `TORQUE_CLAUDE_STRICT_MCP=0` (or `false`, `off`, `no`) turns it
   off, with a WARN naming the value logged at each launch; any other value,
   a typo included, keeps it on (CW-20261001-0226).
