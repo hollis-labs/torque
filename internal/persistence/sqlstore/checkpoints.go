@@ -32,12 +32,15 @@ type CheckpointRecord struct {
 	RespondedAt         sql.NullTime
 	TimeoutAt           sql.NullTime
 	Status              string
+	// EscalatedAt is when a pending checkpoint was escalated for going
+	// unanswered past its TTL; NULL until then (CW-20260520-0007).
+	EscalatedAt sql.NullTime
 }
 
 const checkpointSelectCols = `id, task_id, run_id, correlation_id, type,
 	payload_json, response_json, emitter_source_type, emitter_source_ref,
 	responder_source_type, responder_source_ref, emitted_at, responded_at,
-	timeout_at, status`
+	timeout_at, status, escalated_at`
 
 func scanCheckpoint(row interface {
 	Scan(...any) error
@@ -47,7 +50,7 @@ func scanCheckpoint(row interface {
 		&cp.ID, &cp.TaskID, &cp.RunID, &cp.CorrelationID, &cp.Type,
 		&cp.PayloadJSON, &cp.ResponseJSON, &cp.EmitterSourceType, &cp.EmitterSourceRef,
 		&cp.ResponderSourceType, &cp.ResponderSourceRef, &cp.EmittedAt, &cp.RespondedAt,
-		&cp.TimeoutAt, &cp.Status,
+		&cp.TimeoutAt, &cp.Status, &cp.EscalatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -198,6 +201,24 @@ func (s *Store) SweepTimedOutCheckpoints(now time.Time) (int, error) {
 	}
 	n, _ := res.RowsAffected()
 	return int(n), nil
+}
+
+// MarkCheckpointEscalated records that the pending checkpoint id was
+// escalated at `at`. It updates only a row that is still pending and not yet
+// escalated, so it reports true for exactly one caller: the one that should
+// send the escalation.
+func (s *Store) MarkCheckpointEscalated(id int64, at time.Time) (bool, error) {
+	res, err := s.db.Exec(`
+		UPDATE checkpoints SET escalated_at = ?
+		WHERE id = ? AND status = 'pending' AND escalated_at IS NULL`, at, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
 }
 
 func nullableString(s string) sql.NullString {

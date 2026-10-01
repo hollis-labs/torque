@@ -8,6 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Pending HITL checkpoints are escalated once when nobody answers them: after
+  24h (72h for `message`), the scheduler posts a `[system/checkpoint]`
+  comment on the task and publishes `checkpoint.escalated`, and the
+  checkpoint stays pending. A payload `escalation` object tunes it
+  (`{"after_seconds": N}`) or opts out (`{"disabled": true}`). The existing
+  `timeout_at` still resolves the checkpoint and blocks its task later.
 - GitHub Actions CI (`.github/workflows/ci.yml`) on pull requests and pushes
   to `main`: `make lint` and `make test` with Go from `go.mod`, and the GUI's
   `npm ci`, build and vitest, with Go and npm caches. The private
@@ -26,6 +32,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Runtimes are selected through the go-providers registry and
+  go-agent-wrapper v0.15.0's `launch.Select` (agentkit v0.12.2, go-providers
+  v0.34.1, go-sandbox v0.4.1), with the profile's runtime kind passed as the
+  mode explicitly. Torque builds the adapter from go-providers' shared
+  constructor table and sets the profile's options on it, so the launch argv
+  of existing claude-code, codex and opencode profiles is unchanged.
+  Antigravity (`antigravity` or `agy`) can now be launched: one `agy` per
+  turn, with the profile's model and permission mode. Copilot and Pi run only
+  over ACP, which Torque does not launch yet; their profiles are refused with
+  that reason, and so is a mode the wrapper does not drive (Claude's PTY),
+  before anything is planted. Profile lint accepts every registry name Torque
+  launches, aliases included (`agy`, `open-code`).
 - Codex app-server approval requests are answered from the profile's
   `permission_mode` instead of refused with -32601. Under `default`,
   `acceptEdits` and an unset mode, MCP tool calls are approved only on the

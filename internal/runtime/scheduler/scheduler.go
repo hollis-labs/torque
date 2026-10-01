@@ -329,6 +329,11 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 	if _, err := SweepCheckpointTimeouts(s.store, s.bus, time.Now().UTC()); err != nil {
 		log.Printf("[scheduler] checkpoint timeout sweep error: %v", err)
 	}
+	// Then escalate, once each, the pending checkpoints that have waited
+	// past their escalation TTL (CW-20260520-0007).
+	if _, err := EscalateStaleCheckpoints(s.store, s.bus, time.Now().UTC()); err != nil {
+		log.Printf("[scheduler] checkpoint escalation sweep error: %v", err)
+	}
 
 	// Roll up parent-kind task statuses from their children. Runs before
 	// the pick so a parent transitioned by the rollup isn't picked up

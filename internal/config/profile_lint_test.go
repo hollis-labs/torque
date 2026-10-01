@@ -147,9 +147,22 @@ agent_profiles:
 		joined = append(joined, p.String())
 	}
 	all := strings.Join(joined, "\n")
+	// Every registry name with a native mode launch.Select drives is
+	// launchable, aliases included (CW-20260930-0134): claude-code, agy
+	// (Antigravity) and open-code (OpenCode).
 	assert.NotContains(t, all, "worker-claude-code")
-	assert.Contains(t, all, `agent_profiles.worker-agy.provider: provider "agy" is not executable for executor "cli": Torque builds antigravity adapters only under the names claude-code, codex and opencode`)
-	assert.Contains(t, all, `agent_profiles.worker-pi.provider: provider "pi" is not executable for executor "cli": pi is ACP-only`)
-	assert.Contains(t, all, `agent_profiles.worker-open-code.provider: provider "open-code" is not executable for executor "cli"`)
+	assert.NotContains(t, all, "worker-agy")
+	assert.NotContains(t, all, "worker-open-code")
+	assert.Contains(t, all, `agent_profiles.worker-pi.provider: provider "pi" is not executable for executor "cli": pi is ACP-only and Torque does not launch ACP sessions yet`)
 	assert.Contains(t, all, `agent_profiles.worker-gemini.provider: provider "gemini" is not available for executor "cli"`)
+}
+
+func TestLaunchableProvidersFollowLaunchSelect(t *testing.T) {
+	got := config.LaunchableProviders()
+	for _, name := range []string{"claude-code", "codex", "opencode", "antigravity", "agy"} {
+		assert.Contains(t, got, name)
+	}
+	for _, name := range []string{"claude", "copilot", "pi", "gemini"} {
+		assert.NotContains(t, got, name)
+	}
 }

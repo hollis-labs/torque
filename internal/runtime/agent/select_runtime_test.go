@@ -1,0 +1,142 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"testing"
+
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
+	"github.com/hollis-labs/go-agent-wrapper/adapters"
+	"github.com/hollis-labs/go-agent-wrapper/launch"
+	llmtypes "github.com/hollis-labs/go-llm-types"
+	"github.com/hollis-labs/go-providers/provider"
+	runtimeevents "github.com/hollis-labs/go-runtime-events/runtimeevents"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/hollis-labs/torque/internal/config"
+)
+
+// TestSelectRuntime_NativeRuntimes pins CW-20260930-0134: every runtime the
+// registry has a native launch factory for is selected through
+// launch.Select in the mode Torque resolved, with Torque's adapter (and its
+// profile options) inside the wrapper adapter.
+func TestSelectRuntime_NativeRuntimes(t *testing.T) {
+	cases := []struct {
+		provider string
+		kind     RuntimeKind
+		runtime  runtimes.ID
+		check    func(t *testing.T, cli provider.CLIAdapter)
+	}{
+		{"claude-code", RuntimeKindStreamingStdio, runtimes.Claude, func(t *testing.T, cli provider.CLIAdapter) {
+			a := cli.(*provider.ClaudeAdapter)
+			assert.Equal(t, "stream-json", a.InputMode)
+			assert.Equal(t, string(config.PermissionModePlan), a.PermissionMode)
+		}},
+		{"claude-code", RuntimeKindSubprocess, runtimes.Claude, func(t *testing.T, cli provider.CLIAdapter) {
+			assert.Empty(t, cli.(*provider.ClaudeAdapter).InputMode, "subprocess-per-turn is claude print mode")
+		}},
+		{"codex", RuntimeKindJsonRpcStdio, runtimes.Codex, func(t *testing.T, cli provider.CLIAdapter) {
+			assert.Equal(t, "app-server", cli.(*provider.CodexAdapter).Mode)
+		}},
+		{"codex", RuntimeKindSubprocess, runtimes.Codex, func(t *testing.T, cli provider.CLIAdapter) {
+			assert.NotEqual(t, "app-server", cli.(*provider.CodexAdapter).Mode, "an explicit subprocess kind must not get the registry's jsonrpc-stdio default")
+		}},
+		{"opencode", RuntimeKindSubprocess, runtimes.OpenCode, func(t *testing.T, cli provider.CLIAdapter) {
+			a := cli.(*provider.OpencodeAdapter)
+			assert.Equal(t, "worker", a.Agent)
+			assert.Equal(t, "m/x", a.Model)
+		}},
+		{"opencode", RuntimeKindServeHTTP, runtimes.OpenCode, func(t *testing.T, cli provider.CLIAdapter) {
+			assert.Equal(t, "serve-http", cli.(*provider.OpencodeAdapter).Mode)
+		}},
+		{"agy", RuntimeKindSubprocess, runtimes.Antigravity, func(t *testing.T, cli provider.CLIAdapter) {
+			a := cli.(*provider.AntigravityAdapter)
+			assert.Equal(t, "m/x", a.Model)
+			assert.Equal(t, "plan", a.Permission)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.provider+"/"+string(tc.kind), func(t *testing.T) {
+			profile := config.AgentProfile{Provider: tc.provider, Model: "m/x", PermissionMode: string(config.PermissionModePlan)}
+			sel, err := selectRuntime(profile, "worker", tc.kind)
+			require.NoError(t, err)
+			tc.check(t, sel.cli)
+			require.NotNil(t, sel.wrapper)
+			assert.Equal(t, string(tc.runtime), sel.wrapper.Name())
+			ra, ok := sel.wrapper.(adapters.RuntimeAdapter)
+			require.True(t, ok, "a native selection is a RuntimeAdapter")
+			assert.Same(t, sel.cli, ra.CLIAdapter(), "the wrapper drives Torque's configured adapter, unwrapped")
+		})
+	}
+}
+
+func TestSelectRuntime_Refusals(t *testing.T) {
+	cases := []struct {
+		name     string
+		provider string
+		kind     RuntimeKind
+		want     string
+	}{
+		{"bare claude stays retired", "claude", RuntimeKindStreamingStdio, "bare claude provider retired"},
+		{"empty provider", "", RuntimeKindSubprocess, "profile has empty provider"},
+		{"unknown provider", "gemini", RuntimeKindSubprocess, `unknown provider "gemini"`},
+		{"ACP-only copilot", "copilot", "", "copilot runs over ACP"},
+		{"ACP-only pi", "pi", "", "pi runs over ACP"},
+		{"mode the registry lacks", "opencode", RuntimeKindJsonRpcStdio, `does not support runtime kind "jsonrpc-stdio"`},
+		{"claude PTY has no launch factory", "claude-code", RuntimeKindPTY, "unsupported selection"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := selectRuntime(config.AgentProfile{Provider: tc.provider}, "worker", tc.kind)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+	_, err := selectRuntime(config.AgentProfile{Provider: "claude-code"}, "worker", RuntimeKindPTY)
+	assert.True(t, errors.Is(err, launch.ErrUnsupportedSelection))
+}
+
+func TestSelectRuntime_ClaudeDevModeAndAntigravityPosture(t *testing.T) {
+	sel, err := selectRuntime(config.AgentProfile{Provider: "claude-code", Args: []string{"--dangerously-skip-permissions"}}, "w", RuntimeKindStreamingStdio)
+	require.NoError(t, err)
+	a := sel.cli.(*provider.ClaudeAdapter)
+	assert.True(t, a.SkipPermissions)
+	assert.Empty(t, a.PermissionMode, "dev mode leaves PermissionMode to the SkipPermissions plant")
+
+	for mode, want := range map[string]string{
+		"":                  "accept-edits", // unset resolves to Torque's acceptEdits default
+		"acceptEdits":       "accept-edits",
+		"bypassPermissions": "bypass",
+		"plan":              "plan",
+		"default":           "",
+	} {
+		sel, err := selectRuntime(config.AgentProfile{Provider: "antigravity", PermissionMode: mode}, "w", RuntimeKindSubprocess)
+		require.NoError(t, err)
+		assert.Equal(t, want, sel.cli.(*provider.AntigravityAdapter).Permission, "permission_mode %q", mode)
+	}
+}
+
+// go-agent-wrapper v0.15.0 sessions emit kinds the sink has no translation
+// for (agent.tool_result, agent.subagent_spawn, permission and policy
+// events). They must be ignored, not fail the session or reach the stream.
+func TestWrapperSink_IgnoresUntranslatedKinds(t *testing.T) {
+	fanout := make(chan llmtypes.StreamEvent, 8)
+	s := &torqueRuntimeEventSink{fanout: fanout}
+	for _, kind := range []runtimeevents.EventKind{
+		runtimeevents.KindAgentToolResult,
+		runtimeevents.KindAgentSubagentSpawn,
+		runtimeevents.KindAgentPermissionRequested,
+		runtimeevents.KindAgentPermissionResolved,
+		runtimeevents.KindPolicyBlock,
+		runtimeevents.KindSessionIdle,
+		runtimeevents.EventKind("agent.something_new"),
+	} {
+		require.NoError(t, s.Write(context.Background(), runtimeevents.Event{Kind: kind, Payload: json.RawMessage(`{"x":1}`)}), "kind %s", kind)
+	}
+	close(fanout)
+	for ev := range fanout {
+		t.Fatalf("untranslated kind produced a stream event: %+v", ev)
+	}
+}
