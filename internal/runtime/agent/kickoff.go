@@ -43,6 +43,20 @@ func kickoffPayloadForBootDir(bootDir string) string {
 // already loaded via CLAUDE.md / AGENTS.md / agents/<name>.md carries the
 // persona; this file is task-specific.
 func kickoffMarkdown(opts Options, role string) string {
+	body := kickoffHeader(opts, role)
+	body += kickoffLoopbackTools
+	if opts.TaskID != "" {
+		body += "Your assigned task bundle is already planted under the boot dir's `tasks/` directory. Start with `tasks/README.md` and the task's `task.md`, `task.json`, and `process.md` files instead of calling MCP just to look up task, run, project, or session IDs. For opencode, resolve this under `$OPENCODE_CONFIG_DIR/tasks/` because the process cwd is the project dir.\n\n"
+	}
+	return body + kickoffFirstTurn(opts)
+}
+
+// kickoffLoopbackTools points the agent at the per-task loopback's tools.
+const kickoffLoopbackTools = "Use the `loopback` MCP server's task-scoped tools (no `task_id` parameter required) for self-task operations. Prefer them over `mcp__mux__torque_*` for the booted task.\n\n"
+
+// kickoffHeader is the kickoff's opening: who the agent is, the task and
+// plan it serves, and the workspace it writes in.
+func kickoffHeader(opts Options, role string) string {
 	if role == "" {
 		role = opts.AgentProfile
 	}
@@ -73,10 +87,13 @@ func kickoffMarkdown(opts Options, role string) string {
 	if opts.Workdir != "" {
 		body += "Workspace rule: run all shell commands and file edits from the work root above, or use `$TORQUE_WORK_ROOT`. If task metadata or MCP reports a different `working_dir`/`repo_root`, treat that as the source checkout pointer, not the writable workspace. Do not edit the source checkout when it differs from the work root.\n\n"
 	}
-	body += "Use the `loopback` MCP server's task-scoped tools (no `task_id` parameter required) for self-task operations. Prefer them over `mcp__mux__torque_*` for the booted task.\n\n"
-	if opts.TaskID != "" {
-		body += "Your assigned task bundle is already planted under the boot dir's `tasks/` directory. Start with `tasks/README.md` and the task's `task.md`, `task.json`, and `process.md` files instead of calling MCP just to look up task, run, project, or session IDs. For opencode, resolve this under `$OPENCODE_CONFIG_DIR/tasks/` because the process cwd is the project dir.\n\n"
-	}
+	return body
+}
+
+// kickoffFirstTurn is the kickoff's close: the first turn's instruction and
+// any task framing the caller added.
+func kickoffFirstTurn(opts Options) string {
+	body := ""
 	if opts.OneShotPrompt != "" {
 		body += "## First turn\n\n"
 		body += opts.OneShotPrompt + "\n"

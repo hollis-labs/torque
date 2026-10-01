@@ -30,6 +30,7 @@ func TestProviderCapabilities_Resume(t *testing.T) {
 		{"gemini", false, "no native --resume; PTY adapter dropped in go-providers v0.12.0"},
 		{"copilot", false, "no native --resume; PTY adapter dropped in go-providers v0.12.0"},
 		{"opencode", false, "opencode CLI has no native session-resume primitive"},
+		{"pi", false, "Torque wires no ACP session/load resume yet"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.provider, func(t *testing.T) {
