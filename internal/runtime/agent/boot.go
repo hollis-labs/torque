@@ -319,9 +319,13 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	// (deps.MuxCommand/MuxArgs/MuxEnv). These are runtime values, kept
 	// off the persisted-at-rest LaunchPlan deliberately.
 	prepared.PlantContext.MCPLoopbackURL = loopbackURL
-	prepared.PlantContext.SelfMCPCommand = deps.MuxCommand
-	prepared.PlantContext.SelfMCPArgs = append([]string(nil), deps.MuxArgs...)
-	prepared.PlantContext.SelfMCPEnv = muxEnvSliceToMap(deps.MuxEnv)
+	if plantsMux(profile) {
+		prepared.PlantContext.SelfMCPCommand = deps.MuxCommand
+		prepared.PlantContext.SelfMCPArgs = append([]string(nil), deps.MuxArgs...)
+		prepared.PlantContext.SelfMCPEnv = muxEnvSliceToMap(deps.MuxEnv)
+	} else if deps.MuxCommand != "" {
+		log.Printf("agent.Boot: session=%s: mux MCP not planted for codex permission_mode %q; only bypassPermissions gets it (CW-20261001-0110)", sessID, profile.PermissionMode)
+	}
 	// Plant the provider boot dir. WithAdapter pins the exact adapter
 	// Torque resolved (adapterFor) — critically the BARE-mode claude
 	// adapter, which providerplant's DefaultResolver would not select
