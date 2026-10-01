@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
+	"github.com/hollis-labs/go-providers/registry"
 	"gopkg.in/yaml.v3"
 
 	"github.com/hollis-labs/torque/internal/runtimetoken"
@@ -19,25 +21,30 @@ import (
 // callers that hand the profile's Provider straight to a catalog lookup
 // silently miss every time.
 //
-// Currently used by the scheduler's cost resolver (see
-// internal/runtime/scheduler/cost.go). The capability/precheck path
-// today passes the raw `Provider` field through without normalization;
-// when that gate is wired to use this helper, update this comment.
+// The name is first resolved to its go-providers runtime id, so every alias
+// the registry accepts prices like its runtime: "claude-code", the spelling
+// Claude profiles use, is "claude" and so "anthropic". Without that no Claude
+// run was ever priced (CW-20261001-0182). The runtime id then maps to its
+// catalog vendor; opencode's own models are the catalog's "opencode".
 //
-// Returns the input unchanged when no alias is known — callers that want
-// strict matching can compare result == input to detect aliasing.
+// Used by the scheduler's cost resolver (internal/runtime/scheduler/cost.go)
+// and `torque cost-backfill`. The capability/precheck path today passes the
+// raw `Provider` field through without normalization; when that gate is
+// wired to use this helper, update this comment.
+//
+// Returns the input unchanged when it is no known runtime and no alias is
+// known: callers that want strict matching can compare result == input to
+// detect aliasing.
 //
 // Verified against https://models.dev/api.json on 2026-05-10. Extend
-// this map when adding new CLI providers.
+// this map when a runtime's catalog vendor becomes known.
 func CatalogProviderID(provider string) string {
-	switch provider {
-	case "claude", "claude-code", "claudecode":
-		// claude-code is the spelling every Claude profile uses; without it
-		// no Claude run was ever priced (CW-20261001-0182).
+	switch runtimeID(provider) {
+	case runtimes.Claude:
 		return "anthropic"
-	case "codex":
+	case runtimes.Codex:
 		return "openai"
-	case "open-code":
+	case runtimes.OpenCode:
 		return "opencode"
 	default:
 		return provider
@@ -51,7 +58,17 @@ func CatalogProviderID(provider string) string {
 // model: an opencode profile running an OpenAI model still reports
 // opencode's way.
 func UsageInputIncludesCacheRead(provider string) bool {
-	return provider == "codex"
+	return runtimeID(provider) == runtimes.Codex
+}
+
+// runtimeID resolves a profile provider name, id or alias, to its
+// go-providers runtime id; a name the registry does not know is returned
+// as given.
+func runtimeID(provider string) runtimes.ID {
+	if d, ok := registry.Lookup(provider); ok {
+		return d.ID
+	}
+	return runtimes.ID(provider)
 }
 
 // AgentProfile defines the configuration for an executor agent.
