@@ -385,6 +385,9 @@ export interface TaskFilter {
    * An explicit `kind=internal` filter takes precedence at the SQL layer.
    */
   include_internal?: boolean
+  /** Server-side order; the server default is priority asc. */
+  sort_by?: 'priority' | 'status' | 'updated_at' | 'created_at'
+  sort_dir?: 'asc' | 'desc'
 }
 
 /**

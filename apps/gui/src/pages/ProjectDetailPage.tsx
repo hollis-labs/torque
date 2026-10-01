@@ -8,10 +8,13 @@ import { ScopeMetaCard } from '@/components/domain/scope-meta-card'
 import { ScopeCollectionPanel } from '@/components/domain/scope-collection-panel'
 import { ScopeTaskPanel } from '@/components/domain/scope-task-panel'
 import { useApi } from '@/hooks/use-api'
+import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
+import { usePagedTaskSummaries } from '@/hooks/use-paged-task-summaries'
 import { useSSE } from '@/hooks/use-sse'
+import { EVENT_REFETCH_DEBOUNCE_MS } from '@/lib/debounce'
 import { isHtmlApiFallbackError } from '@/lib/api'
-import { buildTaskRollup, groupTasksByScope } from '@/lib/scope-metrics'
-import type { Epic, Project, ProjectArtifact, Sprint, TaskSummary } from '@/lib/types'
+import { rollupFromStatusCounts, rollupsByScope } from '@/lib/scope-metrics'
+import type { Epic, Project, ProjectArtifact, Sprint, TaskScopeRollupResponse } from '@/lib/types'
 
 const SSE_EVENTS = ['project.updated', 'project.created', 'project.deleted', 'task.updated', 'task.created', 'task.transitioned']
 
@@ -30,7 +33,11 @@ export default function ProjectDetailPage() {
   const navigate = useNavigate()
   const { lastEvent } = useSSE(SSE_EVENTS)
   const [project, setProject] = useState<Project | null>(null)
-  const [tasks, setTasks] = useState<TaskSummary[]>([])
+  const [taskRollup, setTaskRollup] = useState<TaskScopeRollupResponse | null>(null)
+  const [sprintRollup, setSprintRollup] = useState<TaskScopeRollupResponse | null>(null)
+  const [epicRollup, setEpicRollup] = useState<TaskScopeRollupResponse | null>(null)
+  const taskPage = usePagedTaskSummaries({ project_id: id })
+  const reloadTasks = taskPage.reload
   const [sprints, setSprints] = useState<Sprint[]>([])
   const [epics, setEpics] = useState<Epic[]>([])
   const [artifacts, setArtifacts] = useState<ProjectArtifact[]>([])
@@ -39,21 +46,32 @@ export default function ProjectDetailPage() {
   const [error, setError] = useState<string | null>(null)
   const loadGeneration = useRef(0)
 
-  const load = useCallback(async () => {
+  // background: an event-driven refresh, which keeps the page on screen
+  // instead of swapping in the skeleton.
+  const load = useCallback(async ({ background = false } = {}) => {
     if (!id) return
     const myGen = ++loadGeneration.current
-    setLoading(true)
-    setError(null)
+    if (!background) {
+      setLoading(true)
+      setError(null)
+    }
     try {
-      const [nextProject, taskRes, sprintRes, epicRes] = await Promise.all([
+      // Per-sprint and per-epic counts stay within this project, as the
+      // client-side grouping of the project's tasks did.
+      const [nextProject, rollupRes, sprintRollupRes, epicRollupRes, sprintRes, epicRes] = await Promise.all([
         api.getProject(id),
-        api.listTaskSummaries({ project_id: id }),
+        api.taskRollup('project_id', { project_id: id }),
+        api.taskRollup('sprint_id', { project_id: id }),
+        api.taskRollup('epic_id', { project_id: id }),
         api.listSprints({ project_id: id }),
         api.listEpics({ project_id: id }),
+        reloadTasks(),
       ])
       if (myGen !== loadGeneration.current) return
       setProject(nextProject)
-      setTasks(taskRes.tasks)
+      setTaskRollup(rollupRes)
+      setSprintRollup(sprintRollupRes)
+      setEpicRollup(epicRollupRes)
       setSprints(sprintRes.sprints)
       setEpics(epicRes.epics)
 
@@ -72,25 +90,27 @@ export default function ProjectDetailPage() {
         }
       }
     } catch (err) {
-      if (myGen !== loadGeneration.current) return
+      // A failed background refresh leaves the loaded page in place.
+      if (myGen !== loadGeneration.current || background) return
       setError(err instanceof Error ? err.message : 'Failed to load project')
     } finally {
       if (myGen === loadGeneration.current) setLoading(false)
     }
-  }, [api, id])
+  }, [api, id, reloadTasks])
 
   useEffect(() => {
     void load()
   }, [load])
 
+  const scheduleReload = useDebouncedCallback(() => void load({ background: true }), EVENT_REFETCH_DEBOUNCE_MS)
   useEffect(() => {
     if (!lastEvent) return
-    void load()
-  }, [lastEvent, load])
+    scheduleReload()
+  }, [lastEvent, scheduleReload])
 
-  const tasksBySprint = useMemo(() => groupTasksByScope(tasks, 'sprint_id'), [tasks])
-  const tasksByEpic = useMemo(() => groupTasksByScope(tasks, 'epic_id'), [tasks])
-  const rollup = useMemo(() => buildTaskRollup(tasks), [tasks])
+  const rollup = useMemo(() => rollupFromStatusCounts(taskRollup?.scopes[0]?.counts ?? {}), [taskRollup])
+  const sprintRollups = useMemo(() => rollupsByScope(sprintRollup), [sprintRollup])
+  const epicRollups = useMemo(() => rollupsByScope(epicRollup), [epicRollup])
 
   if (loading) {
     return (
@@ -157,7 +177,7 @@ export default function ProjectDetailPage() {
                 to: `/sprints/${sprint.id}`,
                 status: sprint.status,
                 subtitle: sprint.goal || 'No goal set.',
-                progress: buildTaskRollup(tasksBySprint.get(sprint.id) ?? []),
+                progress: sprintRollups.get(sprint.id) ?? rollupFromStatusCounts({}),
               }))}
               emptyMessage="No sprints are attached to this project yet."
             />
@@ -169,7 +189,7 @@ export default function ProjectDetailPage() {
                 to: `/epics/${epic.id}`,
                 status: epic.status,
                 subtitle: epic.description || 'No description set.',
-                progress: buildTaskRollup(tasksByEpic.get(epic.id) ?? []),
+                progress: epicRollups.get(epic.id) ?? rollupFromStatusCounts({}),
               }))}
               emptyMessage="No epics are attached to this project yet."
             />
@@ -221,7 +241,12 @@ export default function ProjectDetailPage() {
             )}
           </section>
 
-          <ScopeTaskPanel tasks={tasks} />
+          <ScopeTaskPanel
+            tasks={taskPage.tasks}
+            total={taskPage.total}
+            onLoadMore={() => void taskPage.loadMore()}
+            loadingMore={taskPage.loadingMore}
+          />
         </div>
       </div>
     </div>

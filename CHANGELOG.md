@@ -19,6 +19,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- `go-agent-wrapper` v0.14.0 and `agentkit` v0.11.0 (adds `go-permission`
+  v0.1.0; `go-providers` stays v0.30.0). No behaviour change in Torque: the
+  wrapper's new `PermissionPosture` answers Codex app-server approvals, but
+  Torque runs codex on its own agentsessions path, not through the wrapper.
+- GUI pages refresh on task events at most once per 1.5 s burst instead of
+  on every event. The Ops Dashboard patches task status in place from
+  transition events and refetches only the tasks named by other events. Scope
+  detail pages show their tasks a page at a time, most recently updated
+  first, with counts from the rollup. Task lists ask for 200-row pages instead
+  of the server's default 50.
 - The MCP server adopted `go-mcp` (official SDK), dropping `mark3labs/mcp-go`.
 - Completed task tracking and design history archived out of the repository;
   README rewritten as a pre-release identity and stack-fit document.
@@ -29,9 +39,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   per-step token usage and a done event per turn instead of plain-text lines.
   The OpenCode boot dir defines the agent in `agents/<name>.md` frontmatter
   and no longer plants `agents.json` or an `opencode.json` agent block.
+- go-agent-wrapper v0.13.1: a turn's usage now arrives on its single terminal
+  event instead of a second `turn.completed`. The wrapper event sink reads
+  usage from `turn.completed` and `turn.failed` and still emits the turn's
+  done event; without that, a wrapper-path ModeOneShot run timed out waiting
+  for its turn to finish.
 
 ### Fixed
 
+- Dispatched workers are told the repository's configured remote is the
+  only push target: never add, guess or repoint a remote, and stop with
+  `torque_task_blocked` and the evidence on unrelated history or someone
+  else's commits instead of resetting or force-pushing. The engine now
+  snapshots the run's remotes and HEAD before the worker boots and parks a
+  run in `blocked` when a remote was added, removed or repointed, or HEAD
+  shares no history with where it started. A worker had inferred a remote
+  from the project name and opened a PR that would have wiped an unrelated
+  app.
+- A manual task in `doing` no longer holds its project's scheduler slot. The
+  picker never dispatches manual tasks, so one being worked outside the
+  scheduler kept every dispatchable task in its project at `project_busy`.
 - Stuck-task recovery no longer resets manual tasks. A manual task is never
   dispatched, so at `doing` it has no worker heartbeat; the health scan
   reported it as `task_doing_no_worker` every tick and re-queued it to `todo`
@@ -46,6 +73,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   `/messages/{id}/consume`, accept the `msg://<kind>/<authority>/<id>` string
   or a `{"kind","authority","id"}` object. Any other shape is a 400 that names
   the field and both forms; an absent or null address is a 422.
+- `go test` no longer depends on TORQUE_* in the shell it runs in: the
+  config, agent and `cmd/torque` tests clear them first, so a dispatched
+  worker or a dev shell with Torque settings exported gets the same results.
 - MCP write paths reject a non-integer priority.
 - Operator pause is recorded as cancellation; task deadlines are enforced for
   long-lived runs; parent-owned task review is allowed.
@@ -58,6 +88,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   worktree passes when the worker made tool calls or left comments or
   artifacts on its task. Read-only claude-code runs are no longer graded
   blocked or failed.
+- Long-lived claude-code runs record token usage. claude reports usage only
+  in a turn's final `result` event, and a worker ends its run with a tool
+  call that moves its task to review, so the session was stopped before that
+  event and the run recorded 0/0. A streaming-stdio session now gets up to
+  30s to finish the open turn before it is stopped. Cost stays 0: no pricing
+  is applied to these runs, as for codex.
 - A long-lived run graded "edits but no commits" now parks its task in
   `blocked` instead of retrying under `on_fail`. The reason names the
   preserved worktree, how many paths are uncommitted, and the remedy: commit

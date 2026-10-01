@@ -180,7 +180,7 @@ describe('TorqueApiClient.listTasks', () => {
     expect(out.tasks.map((t) => t.id)).toEqual(['TASK-1', 'TASK-2', 'TASK-3'])
     expect(out.total).toBe(3)
     expect(calledUrls()).toEqual([
-      '/api/v1/tasks?status=todo&tags=torque%2Capi&offset=0',
+      '/api/v1/tasks?status=todo&tags=torque%2Capi&limit=200&offset=0',
       '/api/v1/tasks?status=todo&tags=torque%2Capi&limit=2&offset=2',
     ])
   })
@@ -240,8 +240,8 @@ describe('TorqueApiClient.listTasks', () => {
     await expect(client.listTasks({ limit: 0 })).resolves.toMatchObject({ total: 1 })
     await expect(client.listTasks({ limit: -1 })).resolves.toMatchObject({ total: 1 })
     expect(calledUrls()).toEqual([
-      '/api/v1/tasks?offset=0',
-      '/api/v1/tasks?offset=0',
+      '/api/v1/tasks?limit=200&offset=0',
+      '/api/v1/tasks?limit=200&offset=0',
     ])
   })
 
@@ -296,7 +296,7 @@ describe('TorqueApiClient.listTasks', () => {
 
     expect(out.tasks.map((t) => t.id)).toEqual(['TASK-1', 'TASK-2'])
     expect(calledUrls()).toEqual([
-      '/api/v1/tasks?project_id=PRJ-1&offset=0&fields=summary',
+      '/api/v1/tasks?project_id=PRJ-1&limit=200&offset=0&fields=summary',
       '/api/v1/tasks?project_id=PRJ-1&limit=1&offset=1&fields=summary',
     ])
   })

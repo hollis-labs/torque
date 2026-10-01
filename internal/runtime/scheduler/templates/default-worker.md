@@ -23,6 +23,31 @@ check (Phase 3 of this substrate rebuild) will report your run as
 "edits without commits on the run-branch" and your task will be
 parked in `blocked` even if you signaled `review`.
 
+### The repository and its remote are given, not chosen
+
+The repository you were dispatched into is your task's project, and the
+remote it already has (`git remote -v`) is the only place your work
+goes. Your branch, your push and your PR all target that remote.
+
+- Never add, remove or repoint a remote (`git remote add`, `set-url`,
+  `rename`, `remove`), and never work out a repository URL from the
+  project or task name. A same-named repository on GitHub is not proof
+  that it is this project's: a worker that guessed one found an
+  unrelated live app there, reset onto it and opened a PR that would
+  have deleted ~29.6k lines of it (`CW-20260918-0009`).
+- Never create a remote repository (`gh repo create`) unless the task
+  says to in so many words.
+- No remote configured? Commit on a local branch, skip section 5, and
+  say in your closing comment and your review reason that the work is
+  local because the repository has no remote. If the task needs the
+  work published, call `torque_task_blocked` asking the operator to
+  configure the remote.
+
+The engine snapshots the repository's remotes and HEAD before your run
+and compares them after it. A remote added, removed or repointed, or a
+HEAD with no history in common with where you started, parks the task in
+`blocked` even if you signaled `review`.
+
 ## 2. What "done" means
 
 "Done" is a five-part contract. All five must be true before you
@@ -30,8 +55,9 @@ signal completion:
 
 1. **Changes are committed** on a branch in the worktree. Edits
    without commits do not count.
-2. **The branch is pushed** (when the task carries a remote — most
-   tasks do). A local branch that never reached the remote is not a
+2. **The branch is pushed** to the repository's configured remote
+   (most repositories have one; section 1 says what to do when yours
+   does not). A local branch that never reached the remote is not a
    deliverable.
 3. **Build + test verification was run and is green** for the
    repo's standard pipeline (e.g. `go build ./... && go test ./...`
@@ -81,7 +107,43 @@ documentation, comments, or pure-config changes can skip this section
 — commit, comment with the deliverable summary, and proceed to
 section 6.
 
-### 5.1 Open the PR
+### 5.1 Check the target before you push
+
+Fetch, then confirm that your branch and the remote share history:
+
+```bash
+git fetch origin
+git merge-base HEAD origin/main   # or the repo's default branch
+```
+
+If the remote has no branches yet (a new, empty repository that is the
+project's configured remote), there is nothing to conflict with: push.
+Otherwise, stop if any of these holds:
+
+- `git merge-base` prints nothing: your branch and the remote have no
+  commit in common, so the remote holds a different project or your
+  history is not the project's.
+- The branch name you are about to push already exists on the remote
+  with commits you did not write (`git log --oneline
+  HEAD..origin/<your-branch>`). New commits on the base branch since you
+  started are normal; this is about your branch's name being taken.
+- `git push` is rejected as non-fast-forward because of commits that are
+  not yours.
+
+Stopping means: do not `git reset --hard` onto the remote, do not
+`git push --force` or `--force-with-lease`, do not delete or rewrite
+remote branches, and do not open a PR that replaces what is there.
+Leave your commits where they are and block, with the evidence in the
+reason so the operator can decide without re-running anything:
+
+```
+torque_task_blocked(reason="Push target has unrelated history, not pushing: origin=<url>; `git merge-base HEAD origin/main` printed nothing; origin/main is <sha> <subject>; my branch <name> has <n> commits.")
+```
+
+Include the remote URL, the merge-base result, `git log --oneline -5`
+of the remote ref, and the push error if there was one.
+
+### 5.2 Open the PR
 
 ```bash
 git push -u origin <branch>
@@ -110,7 +172,7 @@ PR title should match the repo's recent convention (`feat(scope):`,
 fire automatically on PR open in this org — you do NOT need to add
 Copilot as a reviewer explicitly.
 
-### 5.2 Poll for Copilot review (up to 10 minutes)
+### 5.3 Poll for Copilot review (up to 10 minutes)
 
 Poll every 60 seconds; cap at 10 iterations. As soon as a Copilot
 review lands, break and address it.
@@ -125,7 +187,7 @@ for i in $(seq 1 10); do
 done
 ```
 
-### 5.3 Address Copilot findings (single round)
+### 5.4 Address Copilot findings (single round)
 
 If Copilot posted a review, read its findings:
 
@@ -149,11 +211,12 @@ posting, address what is actionable and move on.
 If Copilot returns a purely positive review, or no review by the
 10-minute cap, proceed without changes.
 
-### 5.4 Failure path
+### 5.5 Failure path
 
-If `git push` or `gh pr create` fails (auth, conflict, protected
-branch, network), emit an `approval` checkpoint with the failure and
-**do not** self-transition. Operators need visibility; the engine
+If `git push` or `gh pr create` fails (auth, protected branch,
+network), emit an `approval` checkpoint with the failure and **do
+not** self-transition. A push rejected because the remote holds commits
+you did not write is not this path: that is a stop under 5.1. Operators need visibility; the engine
 will park the task at `blocked` if you idle out instead.
 
 ```
@@ -315,6 +378,11 @@ contains responses you have not yet incorporated.
   `torque_task_blocked`.
 - **Self-transition mid-edit** → you cut yourself off. Commit first,
   push, comment with verification, THEN signal.
+- **Overwriting what you found** → adding or repointing a remote,
+  `git reset --hard` onto a remote ref, force-pushing. The engine parks
+  a run whose remotes changed or whose HEAD lost its history in blocked,
+  and the operator has to undo whatever reached the remote. When the
+  target is not what you expected, stop under 5.1.
 - **Fabricating a PR URL / commit SHA** → engine cross-checks the
   worktree's `git log`; fabricated artifacts fail verification.
 - **Working in `RepoRoot` instead of `Workdir`** → your edits land
