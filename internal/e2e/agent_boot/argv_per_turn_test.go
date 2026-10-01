@@ -57,7 +57,7 @@ func TestBoot_LaterTurnsCarryTheirOwnPrompt(t *testing.T) {
 			profile: config.AgentProfile{Executor: "cli", Provider: "opencode", Model: "opencode/test-model", Args: []string{"--log-level", "WARN"}},
 			command: "run",
 			flags:   []string{"--agent", "--model", "opencode/test-model", "--log-level", "WARN"},
-			resume:  "ses_f0d6f8b4bffeveyfKIA5MI2bYi",
+			resume:  fixtureSessionID(t, "opencode/run_turn1"),
 			kickoff: "**Task ID:** `CW-TEST-TURNS`",
 		},
 	}
