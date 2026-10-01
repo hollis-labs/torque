@@ -35,24 +35,40 @@ func TestIdleNudger(t *testing.T) {
 		return &idleNudger{window: window, turn: turn, nudge: func() error { sends++; return nil }}, &sends
 	}
 
-	t.Run("reminds once after the window, then routes a window later", func(t *testing.T) {
-		n, sends := newNudger(endedTurn(t0))
+	// replyEnds closes the reminder's turn at end, as the reply's done does.
+	replyEnds := func(turn *turnTracker, end time.Time) {
+		turn.inFlight = false
+		turn.lastEnd = end
+	}
+
+	t.Run("reminds once, then routes a window after the reply's turn ends", func(t *testing.T) {
+		turn := endedTurn(t0)
+		n, sends := newNudger(turn)
 		assert.False(t, n.step(t0.Add(window-time.Second)), "inside the window")
 		assert.Equal(t, 0, *sends)
 		assert.False(t, n.step(t0.Add(window)), "the reminder goes out; no route yet")
 		assert.Equal(t, 1, *sends)
-		assert.False(t, n.step(t0.Add(2*window-time.Second)), "inside the window after the reminder")
-		assert.True(t, n.step(t0.Add(2*window)), "still idle a window after the reminder")
+		assert.True(t, turn.inFlight, "the reminder's turn is in flight from the send")
+		replyEnds(turn, t0.Add(window+30*time.Second))
+		assert.False(t, n.step(t0.Add(2*window+29*time.Second)), "inside the window after the reply")
+		assert.True(t, n.step(t0.Add(2*window+30*time.Second)), "idle a window after the reply")
 		assert.Equal(t, 1, *sends, "one reminder per run")
 	})
 
-	t.Run("a reply to the reminder restarts the second window", func(t *testing.T) {
+	// A reply can think, back off or retry for minutes before its first
+	// event; until its turn ends the worker is answering, not idle.
+	t.Run("never routes while the reply is pending", func(t *testing.T) {
+		n, _ := newNudger(endedTurn(t0))
+		require.False(t, n.step(t0.Add(window)))
+		assert.False(t, n.step(t0.Add(20*window)), "no turn has ended since the reminder")
+	})
+
+	t.Run("a turn that ended before the reminder does not count", func(t *testing.T) {
 		turn := endedTurn(t0)
 		n, _ := newNudger(turn)
 		require.False(t, n.step(t0.Add(window)))
-		turn.lastEnd = t0.Add(window + 30*time.Second) // the worker answered and ended that turn
-		assert.False(t, n.step(t0.Add(2*window)))
-		assert.True(t, n.step(t0.Add(2*window+30*time.Second)))
+		replyEnds(turn, t0) // the reminder's turn closed with no new end time
+		assert.False(t, n.step(t0.Add(20*window)))
 	})
 
 	t.Run("never while a turn is in flight", func(t *testing.T) {
@@ -89,11 +105,14 @@ func TestIdleNudger(t *testing.T) {
 			sends++
 			return nil
 		}}
+		turn := n.turn
 		assert.False(t, n.step(t0.Add(window)))
 		assert.True(t, n.sentAt.IsZero(), "a failed send is not a reminder")
+		assert.False(t, turn.inFlight, "a failed send leaves no turn open")
 		assert.False(t, n.step(t0.Add(window+5*time.Second)))
 		assert.Equal(t, 1, sends)
-		assert.True(t, n.step(t0.Add(2*window+5*time.Second)))
+		replyEnds(turn, t0.Add(window+10*time.Second))
+		assert.True(t, n.step(t0.Add(2*window+10*time.Second)))
 	})
 
 	t.Run("a zero window or nil nudger never acts", func(t *testing.T) {
@@ -284,22 +303,17 @@ func TestRunLongLived_UnsignalledWorker(t *testing.T) {
 				assert.Equal(t, 1, reminders, "exactly one reminder: %q", inputs)
 			}
 
-			comments, err := store.ListCommentsForEntity(sqlstore.EntityTypeTask, taskID)
-			require.NoError(t, err)
-			var routed []string
-			for _, c := range comments {
-				if c.Author == autoRouteCommentAuthor {
-					routed = append(routed, c.Content)
-				}
-			}
+			// The executor hands the route's comment to the lifecycle, which
+			// posts it once it has moved the task.
 			if tc.review || tc.openChild {
 				assert.Empty(t, res.Reason)
-				assert.Empty(t, routed, "a worker that signalled was not auto-routed")
+				assert.Nil(t, res.TaskComment, "a worker that signalled was not auto-routed")
 				return
 			}
 			assert.Contains(t, res.Reason, "auto-routed")
-			require.Len(t, routed, 1, "the route is recorded on the task")
-			assert.Contains(t, routed[0], "Moved to "+tc.wantStatus+" by Torque")
+			require.NotNil(t, res.TaskComment, "the route is recorded on the task")
+			assert.Equal(t, autoRouteCommentAuthor, res.TaskComment.Author)
+			assert.Contains(t, res.TaskComment.Content, "Moved to "+tc.wantStatus+" by Torque")
 		})
 	}
 }
@@ -309,8 +323,12 @@ func TestRunLongLived_UnsignalledWorker(t *testing.T) {
 type nudgeRuntime struct {
 	firstTurn func()
 	onInput   func(*nudgeSession)
-	mu        sync.Mutex
-	sess      *nudgeSession
+	// onText, when set, replaces onInput and gets the input's text.
+	onText func(s *nudgeSession, in string)
+	// onStop runs when the session is stopped.
+	onStop func()
+	mu     sync.Mutex
+	sess   *nudgeSession
 }
 
 func (r *nudgeRuntime) ID() string                       { return "nudge-fake" }
@@ -318,7 +336,7 @@ func (r *nudgeRuntime) Kind() string                     { return string(Runtime
 func (r *nudgeRuntime) Caps() agentsessions.Capabilities { return agentsessions.Capabilities{} }
 func (r *nudgeRuntime) Prepare(context.Context) error    { return nil }
 func (r *nudgeRuntime) Start(_ context.Context, opts agentsessions.StartOptions) (agentsessions.Session, error) {
-	s := &nudgeSession{done: make(chan struct{}), events: opts.EventFanout, onInput: r.onInput}
+	s := &nudgeSession{done: make(chan struct{}), events: opts.EventFanout, onInput: r.onInput, onText: r.onText, onStop: r.onStop}
 	r.mu.Lock()
 	r.sess = s
 	r.mu.Unlock()
@@ -349,7 +367,10 @@ type nudgeSession struct {
 	done    chan struct{}
 	events  chan<- llmtypes.StreamEvent
 	inputs  []string
+	inputAt []time.Time
 	onInput func(*nudgeSession)
+	onText  func(*nudgeSession, string)
+	onStop  func()
 }
 
 // playTurn emits one turn: text, then done.
@@ -371,8 +392,12 @@ func (s *nudgeSession) playTurn(text string) {
 func (s *nudgeSession) SendInput(_ context.Context, data []byte) error {
 	s.mu.Lock()
 	s.inputs = append(s.inputs, string(data))
+	s.inputAt = append(s.inputAt, time.Now())
 	s.mu.Unlock()
-	if s.onInput != nil {
+	switch {
+	case s.onText != nil:
+		go s.onText(s, string(data))
+	case s.onInput != nil:
 		go s.onInput(s)
 	}
 	return nil
@@ -384,6 +409,9 @@ func (s *nudgeSession) Wait() (int, error) {
 }
 
 func (s *nudgeSession) Stop(context.Context) error {
+	if s.onStop != nil {
+		s.onStop()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.stopped {
@@ -399,4 +427,115 @@ func (s *nudgeSession) Health() agentsessions.HealthStatus {
 }
 func (s *nudgeSession) CheckpointHints() (agentsessions.CheckpointHint, bool) {
 	return agentsessions.CheckpointHint{}, false
+}
+
+// startNudgeRun runs a long-lived dispatch of taskID against fr in the
+// background, with a 150ms idle window, and returns its deps and result.
+func startNudgeRun(t *testing.T, store *sqlstore.Store, taskID string, fr *nudgeRuntime) (*Dependencies, <-chan *executor.ExecutionResult) {
+	t.Helper()
+	prevPoll, prevWindow := statusPollInterval, defaultIdleNudgeWindow
+	statusPollInterval, defaultIdleNudgeWindow = 20*time.Millisecond, 150*time.Millisecond
+	t.Cleanup(func() { statusPollInterval, defaultIdleNudgeWindow = prevPoll, prevWindow })
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: taskID, Title: "unsignalled worker", Status: "doing",
+		Executor: "cli", Kind: "agent", AgentProfile: "test",
+	}))
+	deps := &Dependencies{
+		Store:       store,
+		StateWriter: writeq.NewDirect(store),
+		Profiles: config.ProfileMap{
+			"test": {Executor: "cli", Provider: "claude-code", RuntimeKind: "streaming-stdio"},
+		},
+		RuntimeFactory: func(agentsessions.AdapterRuntimeConfig) (agentsessions.Runtime, error) { return fr, nil },
+		Reminder:       steering.NewReminderRegistry(),
+	}
+	deps.Sessions = NewManager(deps).WithIDFunc(func() string { return "SES-NUDGE" })
+	done := make(chan *executor.ExecutionResult, 1)
+	go func() {
+		res, err := NewExecutor(deps).Run(context.Background(), &executor.ExecutionJob{
+			TaskID: taskID, Kind: "agent", AgentProfile: "test", WorkingDir: t.TempDir(), RunID: 1,
+		}, nil)
+		assert.NoError(t, err)
+		done <- res
+	}()
+	return deps, done
+}
+
+func awaitNudgeRun(t *testing.T, done <-chan *executor.ExecutionResult) *executor.ExecutionResult {
+	t.Helper()
+	select {
+	case res := <-done:
+		require.NotNil(t, res)
+		return res
+	case <-time.After(15 * time.Second):
+		t.Fatal("the run did not end")
+		return nil
+	}
+}
+
+// A turn Torque sends the session (here a steering message) is in flight
+// from the send, so a reply that stays silent for a while (thinking,
+// backoff, retries) never reads as idle: the reminder comes only a window
+// after that reply's turn ends, not a window after the turn before it
+// (CW-20261001-0117 review).
+func TestRunLongLived_TorqueSentTurnKeepsTheWorkerBusy(t *testing.T) {
+	store := newTestStoreForLongLived(t)
+	const taskID = "CW-TEST-LL-NUDGE-SEND"
+	const silent = 4 * 150 * time.Millisecond
+	fr := &nudgeRuntime{onText: func(s *nudgeSession, in string) {
+		if strings.Contains(in, "steer: check the build") {
+			time.Sleep(silent)
+			s.playTurn("build is green")
+			return
+		}
+		_ = store.TransitionTask(taskID, "review") // the reminder's answer
+		s.playTurn("ok")
+	}}
+	deps, done := startNudgeRun(t, store, taskID, fr)
+
+	var sess *Session
+	require.Eventually(t, func() bool {
+		got, err := deps.Sessions.Get("SES-NUDGE")
+		sess = got
+		return err == nil && got != nil
+	}, 5*time.Second, 5*time.Millisecond)
+	time.Sleep(50 * time.Millisecond) // after the first turn, inside the window
+	steerAt := time.Now()
+	require.NoError(t, deps.Sessions.SendTurn(context.Background(), sess, "steer: check the build"))
+
+	res := awaitNudgeRun(t, done)
+	assert.Equal(t, "review", res.Status)
+	fr.mu.Lock()
+	s := fr.sess
+	fr.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	reminderAt := time.Time{}
+	for i, in := range s.inputs {
+		if strings.Contains(in, "You ended your turn without signalling") {
+			reminderAt = s.inputAt[i]
+		}
+	}
+	require.False(t, reminderAt.IsZero(), "the worker is reminded once the steered turn ends: %q", s.inputs)
+	assert.GreaterOrEqual(t, reminderAt.Sub(steerAt), silent, "no reminder while the steered turn was in flight")
+}
+
+// An operator who moves the task while the run is stopping is not
+// overridden: the re-read before routing turns the run into the operator's
+// transition, with no route and no auto-route comment.
+func TestRunLongLived_OperatorChangeBeforeRoutingWins(t *testing.T) {
+	store := newTestStoreForLongLived(t)
+	const taskID = "CW-TEST-LL-NUDGE-OPERATOR"
+	fr := &nudgeRuntime{
+		onInput: func(s *nudgeSession) { s.playTurn("ok") }, // answers the reminder, never signals
+		onStop:  func() { _ = store.TransitionTask(taskID, "paused") },
+	}
+	_, done := startNudgeRun(t, store, taskID, fr)
+	res := awaitNudgeRun(t, done)
+	assert.Equal(t, "canceled", res.Status, "reason: %s", res.Reason)
+	assert.Equal(t, operatorPauseReason, res.Reason)
+	assert.Nil(t, res.TaskComment)
+	rec, err := store.GetTask(taskID)
+	require.NoError(t, err)
+	assert.Equal(t, "paused", rec.Status)
 }

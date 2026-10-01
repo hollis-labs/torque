@@ -8,6 +8,8 @@ import (
 	"github.com/hollis-labs/agentkit/agentsessions"
 	llmtypes "github.com/hollis-labs/go-llm-types"
 	runtimeevents "github.com/hollis-labs/go-runtime-events/runtimeevents"
+
+	"github.com/hollis-labs/torque/internal/redact"
 )
 
 // torqueRuntimeEventSink implements runtimeevents.Sink -- the seam
@@ -43,6 +45,12 @@ type torqueRuntimeEventSink struct {
 	// io.Writer (see go-agent-wrapper's io_streams.go), so the sink is the
 	// only place left to preserve that forensic surface.
 	stderr io.Writer
+
+	// redact scrubs the launch's secrets from every event before it is
+	// persisted or fanned out, and from captured lines before they are
+	// truncated (CW-20261001-0123). Stderr lines reach stderr already
+	// redacted (redactStderr). Nil redacts nothing.
+	redact *redact.Redactor
 
 	// capture keeps stdout/stderr from before session.ready, so Boot can
 	// report a first turn that fails inside runtime.Start
@@ -100,13 +108,13 @@ func (s *torqueRuntimeEventSink) Write(ctx context.Context, ev runtimeevents.Eve
 	case runtimeevents.KindStderrLine:
 		s.handleStderrLine(ev.Payload)
 		if line, ok := decodeStreamLine(ev.Payload); ok && s.capture != nil {
-			s.capture.addStderr(line)
+			s.capture.addStderr(s.redact.Text(line))
 		}
 	case runtimeevents.KindStdoutLine:
 		// Only kept before session.ready: afterwards every parsed event
 		// reaches the sink through the wrapper's translator.
 		if line, ok := decodeStreamLine(ev.Payload); ok && s.capture != nil {
-			s.capture.addStdout(line)
+			s.capture.addStdout(s.redact.Text(line))
 		}
 	default:
 		// process.exited / plant.* / sandbox.* / interrupt.* / raw stdio --
@@ -123,6 +131,7 @@ func (s *torqueRuntimeEventSink) Write(ctx context.Context, ev runtimeevents.Eve
 // executor's fanout channel (translateStreamEvent's cost/plan-phase-emitter
 // consumer), and fire onDone for ModeOneShot's turn-complete wait.
 func (s *torqueRuntimeEventSink) emit(ev llmtypes.StreamEvent) {
+	ev = redactEvent(s.redact, ev)
 	s.sidecar.Write(ev)
 	s.mgr.observeStreamEvent(s.sessID, ev)
 	if s.fanout != nil {
@@ -135,10 +144,15 @@ func (s *torqueRuntimeEventSink) emit(ev llmtypes.StreamEvent) {
 
 // deltaPayload mirrors translateStreamEvent's two llmtypes.StreamEvent ->
 // KindAgentDelta shapes: {"content": ev.Content} for EventDelta and
-// {"thinking": ev.ThinkingBlock} for EventThinking.
+// {"thinking": ev.ThinkingBlock} for EventThinking. Since go-agent-wrapper
+// v0.17.0 both also carry `phase`, and `phase: "thought"` is the one marker
+// every runtime sets on thinking: the ACP translators for Claude, Codex,
+// OpenCode and Pi send thought chunks as {"content", "phase": "thought"}
+// with no `thinking` field.
 type deltaPayload struct {
 	Content  string          `json:"content"`
 	Thinking json.RawMessage `json:"thinking"`
+	Phase    string          `json:"phase"`
 }
 
 type thinkingPayload struct {
@@ -151,9 +165,10 @@ func (s *torqueRuntimeEventSink) handleDelta(_ context.Context, raw json.RawMess
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &p)
 	}
-	if len(p.Thinking) > 0 && string(p.Thinking) != "false" && string(p.Thinking) != "null" {
+	thinkingField := len(p.Thinking) > 0 && string(p.Thinking) != "false" && string(p.Thinking) != "null"
+	if thinkingField || p.Phase == llmtypes.PhaseThinking {
 		var thinking thinkingPayload
-		if p.Thinking[0] == '{' {
+		if thinkingField && p.Thinking[0] == '{' {
 			_ = json.Unmarshal(p.Thinking, &thinking)
 		}
 		if thinking.Thinking == "" {

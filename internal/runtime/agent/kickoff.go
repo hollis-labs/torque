@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"log"
 	"path/filepath"
 
 	"github.com/hollis-labs/agentkit/agentruntime/turn"
@@ -50,6 +51,27 @@ func firstTurnKickoff(bootDir, workdir, kickoffMD string) string {
 		return kickoffPayload("")
 	}
 	return kickoffMD
+}
+
+// maxArgvKickoff bounds the boot.md content a turn carries as one
+// command-line argument. Linux refuses an execve argument longer than
+// MAX_ARG_STRLEN (128 KiB) with E2BIG, so the turn would never launch; the
+// bound leaves room below that.
+const maxArgvKickoff = 100 << 10
+
+// argvSafeTurn returns turn, unless it is boot.md's content (kickoffMD) for
+// a runtime that passes each turn's prompt as an argument (subprocess-per-
+// turn: opencode run) and is longer than maxArgvKickoff. Such a turn points
+// at the planted boot.md instead, by absolute path because the runtime runs
+// in the project dir, where `@./boot.md` names nothing (CW-20261001-0121).
+// A runtime that takes the turn over stdin or HTTP keeps the content.
+func argvSafeTurn(sessID, turn, bootDir, kickoffMD string, kind RuntimeKind) string {
+	if kind != RuntimeKindSubprocess || bootDir == "" || kickoffMD == "" || turn != kickoffMD || len(turn) <= maxArgvKickoff {
+		return turn
+	}
+	pointer := kickoffPayloadForBootDir(bootDir)
+	log.Printf("agent.Boot: session=%s boot.md is %d bytes, over the %d-byte bound for a command-line argument; the first turn is %q instead of its content", sessID, len(turn), maxArgvKickoff, pointer)
+	return pointer
 }
 
 // oneShotTurn is the wrapper path's one-shot turn: the caller's prompt (the

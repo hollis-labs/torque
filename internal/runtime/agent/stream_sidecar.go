@@ -9,6 +9,8 @@ import (
 	"time"
 
 	llmtypes "github.com/hollis-labs/go-llm-types"
+
+	"github.com/hollis-labs/torque/internal/redact"
 )
 
 // streamEventLine is the JSONL shape torque persists to
@@ -134,6 +136,9 @@ func (s *streamSidecar) Close() {
 // and the wrapper process keeps heartbeating with no real activity behind
 // it. Best-effort — onEvent must not block; the drain calls it inline.
 //
+// `r`, when non-nil, scrubs the launch's secrets from each event before
+// any of that sees it (CW-20261001-0123).
+//
 // `closer` shuts down the drain by closing `in` and waiting for the goroutine
 // to flush + close the sidecar file. Idempotent (sync.Once). Closing
 // downstream is the caller's concern — the drain never closes it.
@@ -143,7 +148,7 @@ func (s *streamSidecar) Close() {
 // closed by its owner (executor.Run's `close(fanout)` after Boot returns) —
 // dropped events are still recorded in the sidecar, so forensic visibility
 // is preserved.
-func startStreamFanout(workspaceLogDir string, depth int, downstream chan<- llmtypes.StreamEvent, onDone func(), onEvent func(llmtypes.StreamEvent)) (in chan llmtypes.StreamEvent, closer func()) {
+func startStreamFanout(workspaceLogDir string, depth int, downstream chan<- llmtypes.StreamEvent, onDone func(), onEvent func(llmtypes.StreamEvent), r *redact.Redactor) (in chan llmtypes.StreamEvent, closer func()) {
 	sidecar := openStreamSidecar(workspaceLogDir)
 	in = make(chan llmtypes.StreamEvent, depth)
 
@@ -161,6 +166,7 @@ func startStreamFanout(workspaceLogDir string, depth int, downstream chan<- llmt
 		defer wg.Done()
 		defer sidecar.Close()
 		for ev := range in {
+			ev = redactEvent(r, ev)
 			if onEvent != nil {
 				onEvent(ev)
 			}

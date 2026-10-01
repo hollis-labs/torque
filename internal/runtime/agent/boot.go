@@ -32,6 +32,7 @@ import (
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/launchprofile"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/redact"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -248,6 +249,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 			loopbackURL:      loopbackURL,
 			ws:               ws,
 			env:              env,
+			redact:           launchRedactor(nil, env, os.Environ(), deps.MuxEnv),
 		})
 	}
 
@@ -340,7 +342,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	// (deps.MuxCommand/MuxArgs/MuxEnv). These are runtime values, kept
 	// off the persisted-at-rest LaunchPlan deliberately.
 	prepared.PlantContext.MCPLoopbackURL = loopbackURL
-	if plantsMux(profile) {
+	if plantsMux(profile, runtimeKind) {
 		prepared.PlantContext.SelfMCPCommand = deps.MuxCommand
 		prepared.PlantContext.SelfMCPArgs = append([]string(nil), deps.MuxArgs...)
 		prepared.PlantContext.SelfMCPEnv = muxEnvSliceToMap(deps.MuxEnv)
@@ -431,6 +433,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		preparedExecution: preparedExecution,
 		capturedBootDir:   capturedBootDir,
 		sessionLaunch:     sessionLaunch,
+		redact:            launchRedactor(prepared.Env, env, os.Environ(), deps.MuxEnv),
 	}
 
 	// CW-20260904-0098: claude/opencode's runtime kinds (streaming-stdio,
@@ -483,6 +486,9 @@ type plantedBoot struct {
 	preparedExecution *agentlaunch.PreparedExecution
 	capturedBootDir   string
 	sessionLaunch     sessionshim.SessionLaunch
+	// redact scrubs the launch's secrets from what the session persists
+	// (launchRedactor, CW-20261001-0123).
+	redact *redact.Redactor
 }
 
 // bootLegacy drives the pre-CW-20260904-0098 spawn/lifecycle path: direct
@@ -781,8 +787,7 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 	closeStderr := func() {}
 	if !caps.PTY {
 		w, _, closer := openStderrSidecar(opts.RunID, ws.LogPath)
-		stderrWriter = w
-		closeStderr = closer
+		stderrWriter, closeStderr = redactStderr(w, closer, pb.redact)
 	}
 
 	// Stream sidecar (CW-20260509-0001): persist llmtypes.StreamEvent values
@@ -846,7 +851,7 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 		onActivityEvent := func(ev llmtypes.StreamEvent) {
 			mgr.observeStreamEvent(sessID, ev)
 		}
-		streamFanout, closeStreamFanout = startStreamFanout(ws.LogDir, streamFanoutDepth, opts.eventFanout, oneshotOnDone, onActivityEvent)
+		streamFanout, closeStreamFanout = startStreamFanout(ws.LogDir, streamFanoutDepth, opts.eventFanout, oneshotOnDone, onActivityEvent, pb.redact)
 	}
 
 	// JSON-RPC notification hook. For codex JsonRpcStdio sessions, the
@@ -1387,7 +1392,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		}
 		if err := sessionkit.ApplyFirstTurnPolicy(&firstTurnOpts, sessionkit.FirstTurnPolicy{
 			Mode:   sessionkit.AutoFireFirstTurn,
-			Prompt: firstTurnKickoff(capturedBootDir, spawnWorkdir, pb.kickoffMD),
+			Prompt: argvSafeTurn(sessID, firstTurnKickoff(capturedBootDir, spawnWorkdir, pb.kickoffMD), capturedBootDir, pb.kickoffMD, runtimeKind),
 			Turn: turn.Options{
 				Provider: profile.Provider,
 				Runtime:  turnRuntime,
@@ -1399,7 +1404,8 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		firstTurnPayload = firstTurnOpts.FirstTurnPayload
 	}
 
-	stderrWriter, _, closeStderr := openStderrSidecar(opts.RunID, ws.LogPath)
+	rawStderr, _, closeRawStderr := openStderrSidecar(opts.RunID, ws.LogPath)
+	stderrWriter, closeStderr := redactStderr(rawStderr, closeRawStderr, pb.redact)
 	sidecar := openStreamSidecar(ws.LogDir)
 
 	var oneshotDone chan struct{}
@@ -1419,6 +1425,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		sidecar: sidecar,
 		fanout:  opts.eventFanout,
 		stderr:  stderrWriter,
+		redact:  pb.redact,
 		capture: &bootCapture{},
 		onReady: func() { readyOnce.Do(func() { close(readyCh) }) },
 		onDone:  oneshotOnDone,
@@ -1493,7 +1500,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		bootDirPlanted = false
 		_ = os.RemoveAll(capturedBootDir)
 		_ = deps.UpdateSessionState(context.Background(), sessID, string(StatusFailed), 0, nil)
-		return nil, fmt.Errorf("%w: %v%s", ErrBootFailed, failErr, detail)
+		return nil, fmt.Errorf("%w: %s", ErrBootFailed, pb.redact.Text(failErr.Error()+detail))
 	case <-ctx.Done():
 		runCancel()
 		<-h.runDone
@@ -1557,7 +1564,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 			defer func() { _ = os.RemoveAll(capturedBootDir) }()
 		}
 
-		prompt := oneShotTurn(composeUserPrompt(opts), capturedBootDir, spawnWorkdir, pb.kickoffMD)
+		prompt := argvSafeTurn(sessID, oneShotTurn(composeUserPrompt(opts), capturedBootDir, spawnWorkdir, pb.kickoffMD), capturedBootDir, pb.kickoffMD, runtimeKind)
 		// SendTurn (not raw SendInput) so streaming-stdio's turn.Frame NDJSON
 		// encoding is applied -- claude rejects unframed plaintext on stdin
 		// when running --input-format stream-json.

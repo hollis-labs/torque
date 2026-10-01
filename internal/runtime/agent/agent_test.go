@@ -278,6 +278,22 @@ func TestOneShotTurn(t *testing.T) {
 	assert.Equal(t, "write the report", oneShotTurn("write the report", "", "/work/project", ""), "nothing planted")
 }
 
+// boot.md's content past maxArgvKickoff cannot ride a subprocess-per-turn
+// runtime's argv (MAX_ARG_STRLEN), so that turn points at the planted file by
+// absolute path; a runtime that takes the turn over stdin or HTTP, a shorter
+// briefing, and a turn that is not the briefing all pass through
+// (CW-20261001-0121).
+func TestArgvSafeTurn(t *testing.T) {
+	const boot = "/tmp/torque-boot/b1"
+	fits, over := strings.Repeat("x", maxArgvKickoff), strings.Repeat("x", maxArgvKickoff+1)
+	assert.Equal(t, "Boot @/tmp/torque-boot/b1/boot.md", argvSafeTurn("SES-1", over, boot, over, RuntimeKindSubprocess))
+	assert.Equal(t, fits, argvSafeTurn("SES-1", fits, boot, fits, RuntimeKindSubprocess), "at the bound")
+	assert.Equal(t, over, argvSafeTurn("SES-1", over, boot, over, RuntimeKindServeHTTP), "opencode serve takes the turn over HTTP")
+	assert.Equal(t, over, argvSafeTurn("SES-1", over, boot, over, RuntimeKindStreamingStdio), "claude takes the turn on stdin")
+	assert.Equal(t, over, argvSafeTurn("SES-1", over, boot, "# Boot", RuntimeKindSubprocess), "a prompt that is not the briefing")
+	assert.Equal(t, over, argvSafeTurn("SES-1", over, "", over, RuntimeKindSubprocess), "nothing planted to point at")
+}
+
 // TestKickoffMarkdown verifies the planted boot.md content carries the
 // task framing the LLM needs on its first turn (and after compaction
 // when re-reading the file).
