@@ -218,7 +218,7 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 		window:  resolveIdleNudgeWindow(opts),
 		turn:    &turn,
 		nudge:   func() error { return sendIdleNudge(ctx, managerTurnSender{mgr: e.deps.Sessions}, sess) },
-		waiting: func() bool { return taskHasPendingCheckpoint(e.deps.Store, opts.TaskID) },
+		waiting: func() bool { return workerWaitsByDesign(e.deps, opts.TaskID, sess.ID) },
 	}
 	outcome := awaitLongLivedCompletion(ctx, e.deps, opts.TaskID, sess.ID, activityCh, terminalFailureCh, inactivityThreshold, hardCeiling, taskDeadlineCeiling, nudge)
 	if outcome.Kind == outcomeHardCeiling && taskDeadlineCeiling {

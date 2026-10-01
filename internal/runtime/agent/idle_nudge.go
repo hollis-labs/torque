@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	gomsg "github.com/hollis-labs/go-messaging"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/runtime/scheduler"
 )
@@ -33,8 +34,12 @@ const autoRouteCommentAuthor = "[system/auto-route]"
 
 // resolveIdleNudgeWindow picks the window from metadata.idle_nudge_seconds
 // (0 to 3600; 0 turns the nudge and the auto-route off for the task), else
-// defaultIdleNudgeWindow.
+// defaultIdleNudgeWindow. It is 0 for anything but a kind=agent worker task:
+// a plan, parent or internal task's session waits between turns by design.
 func resolveIdleNudgeWindow(opts Options) time.Duration {
+	if opts.TaskKind != "agent" {
+		return 0
+	}
 	if secs, ok := clampedSecondsFromMetadata(opts.Metadata, "idle_nudge_seconds", 0, idleNudgeMaxSeconds); ok {
 		return time.Duration(secs) * time.Second
 	}
@@ -51,8 +56,9 @@ func resolveIdleNudgeWindow(opts Options) time.Duration {
 //
 // runLongLived's status poll drives it, so it needs no loop of its own:
 // step runs only on polls that find the task still doing. It never acts
-// while a turn is in flight or before any turn has ended, nor while the task
-// has a pending checkpoint, since the worker is then waiting by design.
+// while a turn is in flight or before any turn has ended, nor while the
+// worker waits by design (workerWaitsByDesign). It runs only for kind=agent
+// worker tasks (resolveIdleNudgeWindow).
 // The reminder is sent at most once per run; a failed send is retried on the
 // next poll.
 type idleNudger struct {
@@ -95,14 +101,32 @@ func (n *idleNudger) isWaiting() bool {
 	return n.waiting != nil && n.waiting()
 }
 
-// taskHasPendingCheckpoint reports whether the task has a checkpoint still
-// awaiting a response. A store error counts as waiting, so an unreadable
-// table never routes a task.
-func taskHasPendingCheckpoint(store *sqlstore.Store, taskID string) bool {
-	if store == nil || taskID == "" {
+// workerWaitsByDesign reports whether an idle worker is waiting on purpose,
+// so it is neither reminded nor routed. That is when its task has:
+//   - a checkpoint awaiting a response;
+//   - a child task still open, which an orchestrating worker waits on;
+//   - steering envelopes injected into the session that it has not
+//     dismissed;
+//   - or its session or task address polling its inbox.
+//
+// A store error counts as waiting, so an unreadable table never routes a
+// task.
+func workerWaitsByDesign(deps *Dependencies, taskID, sessID string) bool {
+	if deps == nil || taskID == "" {
 		return false
 	}
-	cps, err := store.ListCheckpointsForTask(taskID)
+	if deps.Polls.IsPollingAddress(gomsg.KindSession, sessID) || deps.Polls.IsPollingAddress(gomsg.KindAgent, taskID) {
+		return true
+	}
+	for _, pe := range deps.Reminder.Snapshot(taskID) {
+		if !pe.Dismissed {
+			return true
+		}
+	}
+	if deps.Store == nil {
+		return false
+	}
+	cps, err := deps.Store.ListCheckpointsForTask(taskID)
 	if err != nil {
 		log.Printf("agent: list checkpoints for %s failed: %v; not routing an idle worker", taskID, err)
 		return true
@@ -111,6 +135,27 @@ func taskHasPendingCheckpoint(store *sqlstore.Store, taskID string) bool {
 		if cp.Status == "pending" {
 			return true
 		}
+	}
+	children, err := deps.Store.ListTasks(sqlstore.TaskFilter{ParentID: taskID})
+	if err != nil {
+		log.Printf("agent: list child tasks of %s failed: %v; not routing an idle worker", taskID, err)
+		return true
+	}
+	for _, c := range children {
+		if !closedTaskStatus(c.Status) {
+			return true
+		}
+	}
+	return false
+}
+
+// closedTaskStatus reports whether a child task is finished as far as a
+// waiting parent is concerned. Anything else, review and blocked included,
+// may still be what the parent waits on.
+func closedTaskStatus(status string) bool {
+	switch status {
+	case "done", "archived", "abandoned", "cancelled", "canceled", "failed":
+		return true
 	}
 	return false
 }

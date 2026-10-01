@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"sync"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/hollis-labs/agentkit/agentsessions"
 	llmtypes "github.com/hollis-labs/go-llm-types"
+	gomsg "github.com/hollis-labs/go-messaging"
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/runtime/executor"
@@ -105,10 +107,62 @@ func TestIdleNudger(t *testing.T) {
 }
 
 func TestResolveIdleNudgeWindow(t *testing.T) {
-	assert.Equal(t, defaultIdleNudgeWindow, resolveIdleNudgeWindow(Options{}))
-	assert.Equal(t, 45*time.Second, resolveIdleNudgeWindow(Options{Metadata: map[string]any{"idle_nudge_seconds": 45}}))
-	assert.Equal(t, time.Duration(0), resolveIdleNudgeWindow(Options{Metadata: map[string]any{"idle_nudge_seconds": 0}}), "0 turns it off")
-	assert.Equal(t, defaultIdleNudgeWindow, resolveIdleNudgeWindow(Options{Metadata: map[string]any{"idle_nudge_seconds": idleNudgeMaxSeconds + 1}}), "out of range falls back")
+	agentTask := func(md map[string]any) Options { return Options{TaskKind: "agent", Metadata: md} }
+	assert.Equal(t, defaultIdleNudgeWindow, resolveIdleNudgeWindow(agentTask(nil)))
+	assert.Equal(t, 45*time.Second, resolveIdleNudgeWindow(agentTask(map[string]any{"idle_nudge_seconds": 45})))
+	assert.Equal(t, time.Duration(0), resolveIdleNudgeWindow(agentTask(map[string]any{"idle_nudge_seconds": 0})), "0 turns it off")
+	assert.Equal(t, defaultIdleNudgeWindow, resolveIdleNudgeWindow(agentTask(map[string]any{"idle_nudge_seconds": idleNudgeMaxSeconds + 1})), "out of range falls back")
+	// Only kind=agent worker tasks: a plan, parent or internal task's
+	// session waits between turns by design.
+	for _, kind := range []string{"plan", "parent", "internal", ""} {
+		assert.Equal(t, time.Duration(0), resolveIdleNudgeWindow(Options{TaskKind: kind}), "kind %q", kind)
+	}
+}
+
+// An idle worker that is waiting on purpose is neither reminded nor routed.
+func TestWorkerWaitsByDesign(t *testing.T) {
+	const taskID, sessID = "CW-TEST-WAITS", "SES-WAITS"
+	setup := func(t *testing.T) (*Dependencies, *sqlstore.Store) {
+		store := newTestStoreForLongLived(t)
+		require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: taskID, Title: "parent", Status: "doing", Executor: "cli", Kind: "agent", AgentProfile: "test"}))
+		return &Dependencies{Store: store, Reminder: steering.NewReminderRegistry(), Polls: steering.NewPollRegistry(time.Minute)}, store
+	}
+
+	t.Run("nothing to wait on", func(t *testing.T) {
+		deps, _ := setup(t)
+		assert.False(t, workerWaitsByDesign(deps, taskID, sessID))
+	})
+	t.Run("an open child task", func(t *testing.T) {
+		deps, store := setup(t)
+		require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: "CW-TEST-WAITS-C1", Title: "child", Status: "doing", Executor: "cli", Kind: "agent", AgentProfile: "test",
+			ParentID: sql.NullString{String: taskID, Valid: true}}))
+		assert.True(t, workerWaitsByDesign(deps, taskID, sessID))
+		require.NoError(t, store.TransitionTask("CW-TEST-WAITS-C1", "done"))
+		assert.False(t, workerWaitsByDesign(deps, taskID, sessID), "a finished child is not waited on")
+	})
+	t.Run("a child in review is still open", func(t *testing.T) {
+		deps, store := setup(t)
+		require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: "CW-TEST-WAITS-C2", Title: "child", Status: "review", Executor: "cli", Kind: "agent", AgentProfile: "test",
+			ParentID: sql.NullString{String: taskID, Valid: true}}))
+		assert.True(t, workerWaitsByDesign(deps, taskID, sessID))
+	})
+	t.Run("an undismissed steering envelope", func(t *testing.T) {
+		deps, _ := setup(t)
+		deps.Reminder.RecordDelivery(taskID, reminderTestEnvelope("ENV-1", `{"text":"wait for me"}`))
+		assert.True(t, workerWaitsByDesign(deps, taskID, sessID))
+		deps.Reminder.Dismiss(taskID, "ENV-1")
+		assert.False(t, workerWaitsByDesign(deps, taskID, sessID), "a dismissed envelope is not waited on")
+	})
+	t.Run("the session polls its inbox", func(t *testing.T) {
+		deps, _ := setup(t)
+		deps.Polls.MarkPolling(gomsg.Address{Kind: gomsg.KindSession, Authority: "local", ID: sessID}.URN())
+		assert.True(t, workerWaitsByDesign(deps, taskID, sessID))
+	})
+	t.Run("the task's agent address polls its inbox", func(t *testing.T) {
+		deps, _ := setup(t)
+		deps.Polls.MarkPolling(gomsg.Address{Kind: gomsg.KindAgent, Authority: "torque", ID: taskID}.URN())
+		assert.True(t, workerWaitsByDesign(deps, taskID, sessID))
+	})
 }
 
 func TestRouteUnsignalled(t *testing.T) {
@@ -139,12 +193,18 @@ func TestRunLongLived_UnsignalledWorker(t *testing.T) {
 		// comment posts a task comment during the first turn.
 		comment bool
 		// review moves the task to review in answer to the reminder.
-		review     bool
+		review bool
+		// openChild gives the task a child still in doing; the worker
+		// moves the task to review itself after a few idle windows.
+		openChild  bool
 		wantStatus string
 	}{
 		{name: "answers the reminder by signalling", review: true, wantStatus: "review"},
 		{name: "stays idle with output on the task", comment: true, wantStatus: "review"},
 		{name: "stays idle with nothing to show", wantStatus: "blocked"},
+		// An orchestrating worker waiting on a child it promoted is left
+		// alone; the run ends only when the worker signals.
+		{name: "waits on an open child task", openChild: true, wantStatus: "review"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -159,6 +219,17 @@ func TestRunLongLived_UnsignalledWorker(t *testing.T) {
 				Executor: "cli", Kind: "agent", AgentProfile: "test",
 			}))
 
+			if tc.openChild {
+				require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+					ID: taskID + "-CHILD", Title: "promoted child", Status: "doing",
+					Executor: "cli", Kind: "agent", AgentProfile: "test",
+					ParentID: sql.NullString{String: taskID, Valid: true},
+				}))
+				go func() {
+					time.Sleep(5 * defaultIdleNudgeWindow)
+					_ = store.TransitionTask(taskID, "review")
+				}()
+			}
 			fr := &nudgeRuntime{
 				firstTurn: func() {
 					if tc.comment {
@@ -207,7 +278,11 @@ func TestRunLongLived_UnsignalledWorker(t *testing.T) {
 					reminders++
 				}
 			}
-			assert.Equal(t, 1, reminders, "exactly one reminder: %q", inputs)
+			if tc.openChild {
+				assert.Zero(t, reminders, "a worker waiting on its child is not reminded: %q", inputs)
+			} else {
+				assert.Equal(t, 1, reminders, "exactly one reminder: %q", inputs)
+			}
 
 			comments, err := store.ListCommentsForEntity(sqlstore.EntityTypeTask, taskID)
 			require.NoError(t, err)
@@ -217,7 +292,7 @@ func TestRunLongLived_UnsignalledWorker(t *testing.T) {
 					routed = append(routed, c.Content)
 				}
 			}
-			if tc.review {
+			if tc.review || tc.openChild {
 				assert.Empty(t, res.Reason)
 				assert.Empty(t, routed, "a worker that signalled was not auto-routed")
 				return
