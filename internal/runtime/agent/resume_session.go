@@ -120,9 +120,11 @@ func (m *Manager) ResumesSession(rec *sqlstore.SessionRecord) bool {
 // to fresh-boot unless ResumesSession says the profile's runtime genuinely
 // resumes — the single decision point per sprint-α D4 (no per-call probes).
 // The one fallback after the decision: a resume whose provider no longer
-// has the session (Boot fails with provider.ErrProviderSessionLost) boots
-// fresh once, with the kickoff. The returned Session's Resumed says which
-// it did.
+// has the session boots fresh once, with the kickoff. Boot fails with
+// provider.ErrProviderSessionLost on a subprocess runtime; a streaming-stdio
+// resume is watched after Boot until its init, the loss, the session's end
+// or resumeLossGrace (Manager.bootWithFreshFallback). The returned Session's
+// Resumed says which it did.
 //
 // Lifecycle: returns a freshly-booted (or freshly-resumed) *Session in the
 // long-lived mode. Callers can then SendInput / Attach / Stop / Wait

@@ -199,9 +199,10 @@ type Options struct {
 	// turns run after Boot returns (streaming-stdio, CW-20261001-0202).
 	// sessionLost receives when the provider reports the session it was asked
 	// to resume is gone (go-agent-wrapper's session.lost, from agentkit
-	// v0.21.1); resumeProgress when the turn shows content (a delta, a tool
-	// use, its completion), which means the resume holds. Both are private
-	// for the same reason as eventFanout.
+	// v0.21.1); resumeProgress when the CLI reports its session id (the init,
+	// before any content) or the turn shows content (a delta, a tool use, its
+	// completion), which means the resume holds. Both are private for the
+	// same reason as eventFanout.
 	sessionLost    chan<- struct{}
 	resumeProgress chan<- struct{}
 }

@@ -1390,6 +1390,20 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 			_ = deps.UpdateSessionResumeHint(context.Background(), sessID, []byte(id))
 		}
 	}
+	// A watched resume (Manager.bootWithFreshFallback) holds once the CLI
+	// reports a session id: its init, which comes before any content. agentkit
+	// never reports a session lost once its attempt has produced one (a resume
+	// the provider lost writes no init), so the init and session.lost exclude
+	// each other and the watch can end on it.
+	if progress := opts.resumeProgress; progress != nil {
+		persist := onSessionID
+		onSessionID = func(id string) {
+			if persist != nil {
+				persist(id)
+			}
+			signal(progress)
+		}
+	}
 
 	persistedMeta := callerSessionMeta(opts.SessionMeta)
 	persistedMeta[metaKeyMode] = opts.Mode.String()

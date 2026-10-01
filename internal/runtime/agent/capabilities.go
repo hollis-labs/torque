@@ -23,8 +23,12 @@ type ResumeSupport struct {
 	// or an ACP session sends it in session/load. Only a Wired resume is
 	// ever attempted. What happens when the id is lost varies:
 	//   - a subprocess launch fails its first turn with a SessionLostError,
-	//     and ResumeSession and planstart boot fresh once instead;
-	//   - a streaming-stdio launch fails the turn after Boot;
+	//     and ResumeSession, Manager.Resume and planstart boot fresh once
+	//     instead;
+	//   - a streaming-stdio launch reports the loss after Boot (go-agent-
+	//     wrapper's session.lost, agentkit v0.21.1): ResumeSession and
+	//     Manager.Resume watch for it and boot fresh once; planstart's
+	//     redispatch does not yet (CW-20261001-0202);
 	//   - an ACP agent that does not advertise loadSession opens a new
 	//     session without saying so, which Torque does not detect yet
 	//     (CW-20261001-0202).
