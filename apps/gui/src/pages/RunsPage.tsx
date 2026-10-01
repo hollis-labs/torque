@@ -17,7 +17,7 @@ export default function RunsPage() {
   const [cursor, setCursor] = useState<string | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
   const [sortBy, setSortBy] = useState<'started_at' | 'duration' | 'cost'>('started_at')
-  const generation = useRef(0)
+  const generation = useRef({ value: 0 })
   const sentinel = useRef<HTMLDivElement>(null)
   const scrollRoot = useRef<HTMLDivElement>(null)
   const runsRef = useRef(runs)
@@ -26,39 +26,43 @@ export default function RunsPage() {
   const serverStatus = statusFilter === 'completed' ? 'done' : statusFilter === 'all' ? undefined : statusFilter
 
   const load = useCallback(async () => {
-    const current = ++generation.current
+    const current = ++generation.current.value
     setLoading(true)
     setLoadingMore(false)
     setCursor(null)
     try {
       const page = await api.pageRuns({ status: serverStatus, sort_by: sortBy })
-      if (current !== generation.current) return
+      if (current !== generation.current.value) return
       setRuns(page.items)
       setCursor(page.meta.next_cursor)
       setError(null)
     } catch (err) {
-      if (current === generation.current) setError(err instanceof Error ? err.message : 'Failed to load runs')
+      if (current === generation.current.value) setError(err instanceof Error ? err.message : 'Failed to load runs')
     } finally {
-      if (current === generation.current) setLoading(false)
+      if (current === generation.current.value) setLoading(false)
     }
   }, [api, serverStatus, sortBy])
 
-  useEffect(() => { void load(); return () => { generation.current++ } }, [load])
+  useEffect(() => {
+    const activeGeneration = generation.current
+    void load()
+    return () => { activeGeneration.value++ }
+  }, [load])
 
   const loadMore = useCallback(async () => {
     if (!cursor || loadingMore || loading) return
-    const current = generation.current
+    const current = generation.current.value
     setLoadingMore(true)
     try {
       const page = await api.pageRuns({ status: serverStatus, sort_by: sortBy, cursor })
-      if (current !== generation.current) return
+      if (current !== generation.current.value) return
       setRuns((prev) => [...prev, ...page.items.filter((row) => !prev.some((shown) => shown.id === row.id))])
       setCursor(page.meta.next_cursor)
       setError(null)
     } catch (err) {
-      if (current === generation.current) setError(err instanceof Error ? err.message : 'Failed to load older runs')
+      if (current === generation.current.value) setError(err instanceof Error ? err.message : 'Failed to load older runs')
     } finally {
-      if (current === generation.current) setLoadingMore(false)
+      if (current === generation.current.value) setLoadingMore(false)
     }
   }, [api, cursor, loadingMore, loading, serverStatus, sortBy])
 
@@ -76,9 +80,9 @@ export default function RunsPage() {
   useEffect(() => {
     const runId = lastEvent?.data.run_id
     if (typeof runId !== 'number' || !runsRef.current.some((row) => row.id === runId)) return
-    const current = generation.current
+    const current = generation.current.value
     void api.getRun(runId).then((updated) => {
-      if (current !== generation.current) return
+      if (current !== generation.current.value) return
       setRuns((prev) => prev.flatMap((row) => row.id !== runId ? [row] :
         serverStatus && updated.status !== serverStatus ? [] : [updated]))
     }).catch(() => {})
