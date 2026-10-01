@@ -41,8 +41,8 @@ github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 h1:/Tnpcb2E0Pz/tN9s3bfEY2Q8ePC
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0/go.mod h1:zOBXOsUaBSjKgmH4OGzV1esUpR3oUSCPYVd2cUBjKYY=
 github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs4luLUK2k=
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
-github.com/hollis-labs/agentkit v0.11.0 h1:ydvpcWgB78WVaqNKYvPWKUKLXWxDALKLk7Qjjh4+w90=
-github.com/hollis-labs/agentkit v0.11.0/go.mod h1:kF7XaAFStYmH4MjiNqULpaXsovD4vxR0g/hQ8UTUE3s=
+github.com/hollis-labs/agentkit v0.11.1 h1:/7AoecMZMDe5NIlTJoxYsWGKTnBhGPMjOw9jBzuIOD4=
+github.com/hollis-labs/agentkit v0.11.1/go.mod h1:kF7XaAFStYmH4MjiNqULpaXsovD4vxR0g/hQ8UTUE3s=
 github.com/hollis-labs/go-agent-wrapper v0.14.0 h1:wlH6Jsv4TZRG1yN6BSWT62cvzp1kAGekzlsrRv4oy2g=
 github.com/hollis-labs/go-agent-wrapper v0.14.0/go.mod h1:22itKHmoTCOjseR6S807sWFZ+6etwd54gpPInpRNNlc=
 github.com/hollis-labs/go-apppaths v0.1.0 h1:LJQv483BhOoizLL4qKwsLcCbM0lQoVrNvksJ1thycd4=
