@@ -603,9 +603,12 @@ func (s *Scheduler) stuckGrace() time.Duration {
 // HeartbeatMonitor.Register cannot trigger spurious recovery. The
 // scanner reports tasks.updated_at via Anomaly.ObservedAt.
 //
+// Manual tasks are out of scope: the picker never dispatches them, so
+// they never register a heartbeat, and the scanner does not report them.
+//
 // Recovery steps (each best-effort; partial recovery beats none):
-//  1. Re-read the task and verify it's still `doing` (idempotent
-//     against a concurrent operator transition).
+//  1. Re-read the task and verify it's still `doing` and not manual
+//     (idempotent against a concurrent operator transition).
 //  2. Fail any running run row for the task with a structured
 //     "orphaned: no worker heartbeat" message so log search can group
 //     the recovery.
@@ -630,6 +633,15 @@ func (s *Scheduler) recoverStuckTask(ctx context.Context, mode healthscan.Mode, 
 	if task.Status != "doing" {
 		log.Printf("[healthscan] %s recovery: %s already in status %s, skipping",
 			mode, a.TaskID, task.Status)
+		return
+	}
+	// The scanner already leaves manual tasks out; this re-check covers a
+	// task flipped to manual between scan and recover. A manual task is
+	// worked outside the scheduler, so `doing` without a heartbeat is its
+	// normal state, not a lost transition (CW-20261001-0024).
+	if task.Manual {
+		log.Printf("[healthscan] %s recovery: %s is manual, not scheduler-dispatched, skipping",
+			mode, a.TaskID)
 		return
 	}
 

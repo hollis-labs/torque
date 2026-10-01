@@ -20,6 +20,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- Stuck-task recovery no longer resets manual tasks. A manual task is never
+  dispatched, so at `doing` it has no worker heartbeat; the health scan
+  reported it as `task_doing_no_worker` every tick and re-queued it to `todo`
+  once it aged past `TORQUE_SCHED_STUCK_GRACE`. Manual tasks are now neither
+  reported nor recovered.
 - `make build-prod` embeds the GUI on Linux: it copied `apps/gui/dist/`, which
   GNU cp nests as `dist/dist`, so the binary 404'd on `/`. `make install` now
   installs that GUI-embedded build, to an overridable `BINDIR`, and `make gui`

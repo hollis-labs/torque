@@ -226,6 +226,36 @@ func TestScan_TaskDoingWithoutHeartbeat(t *testing.T) {
 	}
 }
 
+// TestScan_ManualTaskDoingWithoutHeartbeat_NotReported locks in
+// CW-20261001-0024. A manual task is never dispatched, so it never has a
+// heartbeat row; at `doing` it is being worked outside the scheduler. The
+// scanner must not report it in either mode, while a non-manual task in
+// the same shape beside it still is.
+func TestScan_ManualTaskDoingWithoutHeartbeat_NotReported(t *testing.T) {
+	store := newStore(t)
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID:       "CW-MANUAL-DOING",
+		Title:    "CW-MANUAL-DOING",
+		Status:   "doing",
+		Manual:   true,
+		Executor: "cli",
+	}))
+	mustCreateTask(t, store, "CW-DISPATCHED-NOHB", "doing")
+
+	for _, mode := range []healthscan.Mode{healthscan.ModeBoot, healthscan.ModeTick} {
+		t.Run(string(mode), func(t *testing.T) {
+			s := healthscan.New(store, newFakeLiveness(), healthscan.Config{StaleHeartbeat: 900 * time.Second})
+			res, err := s.Scan(context.Background(), mode)
+			require.NoError(t, err)
+
+			dnw := filterByKind(res.Anomalies, healthscan.AnomalyTaskDoingNoWorker)
+			require.Len(t, dnw, 1)
+			assert.Equal(t, "CW-DISPATCHED-NOHB", dnw[0].TaskID,
+				"a manual task at `doing` with no heartbeat is normal, not an anomaly; only the non-manual one may be reported")
+		})
+	}
+}
+
 // TestScan_RunRunningWithoutHeartbeat covers the runs-table version of
 // the previous case. A run can be abandoned while its task moves on
 // (e.g. a manual transition cleared the task but never failed the
