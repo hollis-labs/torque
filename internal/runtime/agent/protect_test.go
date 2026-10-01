@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -94,7 +95,38 @@ func TestCodexOwnSandbox(t *testing.T) {
 		{"an unknown permission flag", config.AgentProfile{Provider: "codex", Args: []string{"--permission-profile=wide"}}, "subprocess-per-turn", "", false},
 		{"an unknown bypass flag", config.AgentProfile{Provider: "codex", Args: []string{"--bypass-everything"}}, "jsonrpc-stdio", "", false},
 
+		// CW-20261001-0256. Attached short options: clap accepts -s=<mode> and
+		// -s<mode>, and Torque reads neither, so the launch is wrapped.
+		{"-s=danger-full-access", config.AgentProfile{Provider: "codex", Args: []string{"-s=danger-full-access"}}, "subprocess-per-turn", "", false},
+		{"-sdanger-full-access", config.AgentProfile{Provider: "codex", Args: []string{"-sdanger-full-access"}}, "subprocess-per-turn", "", false},
+		{"-s=read-only is attached too", config.AgentProfile{Provider: "codex", Args: []string{"-s=read-only"}}, "subprocess-per-turn", "", false},
+		{"an attached -c", config.AgentProfile{Provider: "codex", Args: []string{`-csandbox_mode="danger-full-access"`}}, "subprocess-per-turn", "", false},
+		// A bypass flag is sticky: codex ranks it above every other selector,
+		// wherever it appears and whatever else is selected.
+		{"--yolo before --sandbox read-only", config.AgentProfile{Provider: "codex", Args: []string{"--yolo", "--sandbox", "read-only"}}, "subprocess-per-turn", "danger-full-access", false},
+		{"--sandbox read-only before --yolo", config.AgentProfile{Provider: "codex", Args: []string{"--sandbox", "read-only", "--yolo"}}, "subprocess-per-turn", "danger-full-access", false},
+		{"--yolo before -c sandbox_mode read-only", config.AgentProfile{Provider: "codex", Args: []string{"--yolo", "-c", `sandbox_mode="read-only"`}}, "subprocess-per-turn", "danger-full-access", false},
+		{"-c sandbox_mode read-only before --yolo", config.AgentProfile{Provider: "codex", Args: []string{"-c", `sandbox_mode="read-only"`, "--yolo"}}, "jsonrpc-stdio", "danger-full-access", false},
+		{"bypass flag after a confining -c", config.AgentProfile{Provider: "codex", Args: []string{"-c", `sandbox_mode="read-only"`, "--dangerously-bypass-approvals-and-sandbox"}}, "subprocess-per-turn", "danger-full-access", false},
+		// Selectors that disagree wrap, in either order: codex ranks --sandbox
+		// above -c, but Torque does not rely on that.
+		{"--sandbox danger-full-access, then -c read-only", config.AgentProfile{Provider: "codex", Args: []string{"--sandbox", "danger-full-access", "-c", `sandbox_mode="read-only"`}}, "subprocess-per-turn", "", false},
+		{"-c read-only, then --sandbox danger-full-access", config.AgentProfile{Provider: "codex", Args: []string{"-c", `sandbox_mode="read-only"`, "--sandbox", "danger-full-access"}}, "subprocess-per-turn", "", false},
+		{"--sandbox read-only, then -c danger-full-access", config.AgentProfile{Provider: "codex", Args: []string{"--sandbox", "read-only", "-c", `sandbox_mode="danger-full-access"`}}, "subprocess-per-turn", "", false},
+		{"--sandbox read-only with --sandbox workspace-write (codex refuses the repeat)", config.AgentProfile{Provider: "codex", Args: []string{"--sandbox", "read-only", "--sandbox", "workspace-write"}}, "subprocess-per-turn", "", false},
+		{"--full-auto with --sandbox read-only", config.AgentProfile{Provider: "codex", Args: []string{"--full-auto", "--sandbox", "read-only"}}, "subprocess-per-turn", "", false},
+		{"--full-auto with -c danger-full-access", config.AgentProfile{Provider: "codex", Args: []string{"--full-auto", "-c", `sandbox_mode="danger-full-access"`}}, "subprocess-per-turn", "", false},
+		// A selector with no value is not understood.
+		{"--sandbox as the last argument", config.AgentProfile{Provider: "codex", Args: []string{"--enable", "x", "--sandbox"}}, "subprocess-per-turn", "", false},
+		{"-s as the last argument", config.AgentProfile{Provider: "codex", Args: []string{"-s"}}, "subprocess-per-turn", "", false},
+		{"-c as the last argument", config.AgentProfile{Provider: "codex", Args: []string{"-c"}}, "jsonrpc-stdio", "", false},
+
 		// What is positively understood still skips.
+		{"--sandbox and -c agree", config.AgentProfile{Provider: "codex", Args: []string{"--sandbox", "read-only", "-c", `sandbox_mode="read-only"`}}, "subprocess-per-turn", "read-only", true},
+		{"--sandbox and --full-auto agree", config.AgentProfile{Provider: "codex", Args: []string{"--sandbox", "workspace-write", "--full-auto"}}, "subprocess-per-turn", "workspace-write", true},
+		{"within -c the last override wins (read-only last)", config.AgentProfile{Provider: "codex", Args: []string{"-c", `sandbox_mode="danger-full-access"`, "-c", `sandbox_mode="read-only"`}}, "subprocess-per-turn", "read-only", true},
+		{"within -c the last override wins (danger-full-access last)", config.AgentProfile{Provider: "codex", Args: []string{"-c", `sandbox_mode="read-only"`, "-c", `sandbox_mode="danger-full-access"`}}, "subprocess-per-turn", "danger-full-access", false},
+		{"--approve-for-me is workspace-write, as codex reports", config.AgentProfile{Provider: "codex", Args: []string{"--approve-for-me"}}, "subprocess-per-turn", "workspace-write", true},
 		{"--sandbox read-only", config.AgentProfile{Provider: "codex", Args: []string{"--sandbox", "read-only"}}, "subprocess-per-turn", "read-only", true},
 		{"-s workspace-write", config.AgentProfile{Provider: "codex", Args: []string{"-s", "workspace-write"}}, "jsonrpc-stdio", "workspace-write", true},
 		{"--sandbox=workspace-write", config.AgentProfile{Provider: "codex", PermissionMode: "bypassPermissions", Args: []string{"--sandbox=workspace-write"}}, "jsonrpc-stdio", "workspace-write", true},
@@ -110,6 +142,25 @@ func TestCodexOwnSandbox(t *testing.T) {
 			assert.Equal(t, tc.own, own)
 		})
 	}
+}
+
+// The app-server bypass mode comes from the function factory.go plants it
+// with, not a literal, so the two cannot drift.
+func TestCodexOwnSandbox_BypassModeIsThePlantedOne(t *testing.T) {
+	planted, err := codexBypassSandboxMode(runtimes.ModeJSONRPCStdio)
+	require.NoError(t, err)
+	assert.Equal(t, "danger-full-access", planted)
+
+	profile := config.AgentProfile{Provider: "codex", PermissionMode: "bypassPermissions"}
+	mode, own := codexOwnSandbox(profile, "jsonrpc-stdio")
+	assert.Equal(t, planted, mode, "an app-server launch under bypassPermissions runs as the adapter was told to plant")
+	assert.False(t, own)
+
+	// An explicit confining -c still overrides what was planted.
+	profile.Args = []string{"-c", `sandbox_mode="read-only"`}
+	mode, own = codexOwnSandbox(profile, "jsonrpc-stdio")
+	assert.Equal(t, "read-only", mode)
+	assert.True(t, own)
 }
 
 // A launch whose args the skip does not positively understand is wrapped in
