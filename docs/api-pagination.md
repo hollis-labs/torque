@@ -205,6 +205,21 @@ all list pages to count them in the browser. Available aggregates are:
   Parent groups sort by task total descending then parent ID ascending;
   `bucket_limit` bounds parent groups independently of each dimension's buckets.
   All statuses for a returned parent are complete.
+  Optional `rollup_ids` CSV addresses the parents on the displayed row page:
+  trim/deduplicate nonempty IDs, at most 200 distinct IDs (more rejects on
+  `rollup_ids`). It selects **only rollups**, not the facet cohort. Cohort IDs
+  with zero tasks receive `{total:0,counts:{}}`; non-cohort IDs are omitted.
+  Explicit blank CSV selects no rollups. In explicit-ID mode, `bucket_limit`
+  does not cap the requested groups; rollup `total_distinct` counts requested
+  IDs inside the cohort and `truncated` is false before MCP byte-budget trimming.
+  Without the parameter, the existing top-`bucket_limit` selection is retained.
+  `task_totals:{total,counts}` always sums every non-internal task under the
+  full parent cohort, independently of `rollup_ids` and `bucket_limit`.
+  Projects additionally return `children:{sprints,epics}` within each selected
+  rollup and `child_totals:{sprints,epics}` over the full project cohort.
+  `include_archived=false` excludes archived child sprints/epics as on their
+  lists; `true` includes them. Other parent filters select projects, without
+  applying project search/status to child records. Zero child counts are explicit.
 - HTTP `GET /api/v1/runs/facets`, MCP `torque_run_facets`: the exact `/runs`
   cohort filters (`task_id`, `project_id`, `sprint_id`, `epic_id`, CSV `status`, `executor`, `profile`,
   inclusive `since`/`until` as RFC3339 or Unix milliseconds). Dimensions are
@@ -299,9 +314,9 @@ source and MCP `tools/list`.
 | Endpoint family | Cursor | Sort | Filters/query | Total | Facets/counts | MCP parity |
 |---|---|---|---|---|---|---|
 | Tasks `/tasks`, `/tasks/search` | CW-20261001-0626: 50/200 pages; explicit offset incl. 0 without cursor emits offset/next_offset, otherwise cursor mode | `priority`, `status`, `updated_at`, `created_at`; default `priority asc`, `id asc` | Shared scopes/status/priority/tags/text/dates/budgets/presence/internal filters; search requires `q` | Opt-in `include_total` on HTTP/MCP, exact filtered cohort before paging | Task facets + HTTP scope rollup | `torque_task_list` shares filters/query/meta; brief/verbose/typed projection differences retained |
-| Epics `/epics` | C (CW-0563): paged by default; T: met | C: named entity allow-list; T: retain | C: project, status, archive, search; T: retain | C (CW-0563): opt-in total; T: met | C: `/epics/facets`, `torque_epic_facets` + bounded parent task rollups; T: retain | C (CW-0563): `torque_epic_list`, common query/count envelope; T: met |
-| Sprints `/sprints` | C (CW-0563): paged by default; T: met | C: named entity allow-list; T: retain | C (CW-0563): project, status, archive, search, over-budget/budget bounds; T: retain | C (CW-0563): opt-in total; T: met | C: `/sprints/facets`, `torque_sprint_facets` + bounded parent task rollups; T: retain | C (CW-0563): `torque_sprint_list`, common query/count envelope; T: met |
-| Projects `/projects` | C (CW-0563): paged by default; T: met | C: named entity allow-list; T: retain | C (CW-0563): status, archive, search; T: met | C (CW-0563): opt-in total; T: met | C: `/projects/facets`, `torque_project_facets` + bounded parent task rollups; T: retain | C (CW-0563): `torque_project_list`, common query/count envelope; T: met |
+| Epics `/epics` | C (CW-0563): paged by default; T: met | C: named entity allow-list; T: retain | C: project, status, archive, search; T: retain | C (CW-0563): opt-in total; T: met | C: `/epics/facets`, `torque_epic_facets` + requested-ID rollups and exact task_totals (CW-0678); T: met | C (CW-0563): `torque_epic_list`, common query/count envelope; T: met |
+| Sprints `/sprints` | C (CW-0563): paged by default; T: met | C: named entity allow-list; T: retain | C (CW-0563): project, status, archive, search, over-budget/budget bounds; T: retain | C (CW-0563): opt-in total; T: met | C: `/sprints/facets`, `torque_sprint_facets` + requested-ID rollups and exact task_totals (CW-0678); T: met | C (CW-0563): `torque_sprint_list`, common query/count envelope; T: met |
+| Projects `/projects` | C (CW-0563): paged by default; T: met | C: named entity allow-list; T: retain | C (CW-0563): status, archive, search; T: met | C (CW-0563): opt-in total; T: met | C: `/projects/facets`, `torque_project_facets` + requested-ID rollups, task_totals, children/child_totals (CW-0678); T: met | C (CW-0563): `torque_project_list`, common query/count envelope; T: met |
 | Issues `/issues`, `/issues/search` | C (CW-0563): paged list/search by default; T: met | C: task allow-list; T: retain | C: project, status, query, fixed issue kind; T: retain | C (CW-0563): opt-in cohort total; T: met | C: no dedicated issue facets; T: task facets with issue kind | C (CW-0563): `torque_issue_list`, common envelope/count semantics; T: met |
 | Comments `/comments`, `/comments/search`, `/tasks/{id}/comments` | C (CW-0563): paged list/search/nested task list; T: met | C: `created_at`; T: retain | C: entity scope(s), author, dates, search; T: retain nested task restrictions | C (CW-0563): opt-in total; T: met | C: none; T: count through include_total, facets pending | C (CW-0563): `torque_comment_list`, `torque_comment_search`, shared 50/200/count policy; T: met |
 | Runs `/runs` | Implemented in CW-20261001-0562: cursor default, 50/200 policy; explicit offset incl. 0 without cursor emits offset/next_offset (CW-0626) | `started_at`, `status`, `duration`, `cost`; default `started_at desc`, numeric `id asc` | Shared task/project/sprint/epic scopes, CSV status/executor/current task profile (CW-0663), inclusive since/until (RFC3339 or Unix millis) | Opt-in `include_total`, cohort before cursor/offset/limit | `/runs/facets`, `torque_run_facets`: status/executor/current task profile + ledger cost/run tokens | `torque_run_list` shares service query and items/meta; MCP byte trims preserve continuation |
