@@ -1,10 +1,10 @@
 import { createScopedStorage } from '@hollis-labs/sysop-ui/api'
-import type { TaskStatus } from './types'
+import type { TaskFilter, TaskStatus } from './types'
 
 /**
  * Manual-flag filter tri-state.
  * - `both`   = no filter (default)
- * - `auto`   = manual=false (scheduler-eligible tasks)
+ * - `auto`   = manual=false (automatic tasks)
  * - `manual` = manual=true (held for review before dispatch)
  */
 export type ManualFilter = 'both' | 'auto' | 'manual'
@@ -34,10 +34,13 @@ export interface OpsFilters {
    * System toggle (CW-20260503-0011).
    */
   includeInternal: boolean
+  eligibleOnly?: boolean
+  sortBy?: TaskFilter['sort_by']
+  sortDir?: 'asc' | 'desc'
 }
 
 /** Validates / sanitizes a raw stored blob into a well-formed `OpsFilters`. */
-function parseOpsFilters(raw: unknown): OpsFilters | null {
+export function parseOpsFilters(raw: unknown): OpsFilters | null {
   if (!raw || typeof raw !== 'object') return null
   const f = raw as Record<string, unknown>
   const statuses = Array.isArray(f.statuses)
@@ -58,6 +61,9 @@ function parseOpsFilters(raw: unknown): OpsFilters | null {
     // Default false on parse so legacy blobs (pre-CW-20260503-0011)
     // surface internal=hidden, matching the backend default.
     includeInternal: f.includeInternal === true,
+    ...(f.eligibleOnly === true ? { eligibleOnly: true } : {}),
+    ...(['priority', 'status', 'updated_at', 'created_at'].includes(String(f.sortBy)) ? { sortBy: f.sortBy as OpsFilters['sortBy'] } : {}),
+    ...(f.sortDir === 'asc' || f.sortDir === 'desc' ? { sortDir: f.sortDir } : {}),
   }
 }
 

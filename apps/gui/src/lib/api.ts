@@ -155,6 +155,7 @@ interface ApiArtifactRecord {
 
 function taskFilterParams(filter?: TaskFilter): Record<string, string | number | boolean | undefined> {
   const params: Record<string, string | number | boolean | undefined> = {}
+  if (filter?.eligible !== undefined) params['eligible'] = filter.eligible
   if (filter?.status?.length) params['status'] = filter.status.join(',')
   if (filter?.priority?.length) params['priority'] = filter.priority.join(',')
   if (filter?.tags?.length) params['tags'] = filter.tags.join(',')
@@ -347,8 +348,8 @@ export class TorqueApiClient {
     return this.get<TaskScopeRollupResponse>('/tasks/rollup', { group_by: groupBy, ...taskFilterParams(filter) })
   }
 
-  async taskFacets(filter?: Omit<TaskFilter, 'limit' | 'offset' | 'sort_by' | 'sort_dir'>, dimensions = 'status'): Promise<TaskFacetResult> {
-    return this.get<TaskFacetResult>('/tasks/facets', { ...taskFilterParams(filter), dimensions })
+  async taskFacets(filter?: Omit<TaskFilter, 'limit' | 'offset' | 'cursor' | 'include_total' | 'sort_by' | 'sort_dir'>, dimensions = 'status', signal?: AbortSignal): Promise<TaskFacetResult> {
+    return this.get<TaskFacetResult>('/tasks/facets', { ...taskFilterParams(filter), dimensions }, signal)
   }
 
 
