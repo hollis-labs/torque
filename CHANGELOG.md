@@ -127,6 +127,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- A session whose first turn fails during start-up (an opencode, codex exec
+  or agy run on the go-agent-wrapper path) reports why. The run's error now
+  carries the provider's error line and the stderr tail (at most 2 KiB) after
+  "process exited 1", and the turn's output reaches `session.log` and
+  `stream.jsonl`, which stayed empty before (CW-20261001-0105).
 - The boot kickoff, the planted `process.md` and the agent execution docs
   name the per-task MCP server `loopback`, the name go-providers plants it
   under (codex's `[mcp_servers.loopback]`, the `loopback` entry in Claude's
