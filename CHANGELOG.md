@@ -217,6 +217,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   still means the default, and rows already carrying an unregistered
   executor stay editable. `torque mcp` validates against the same names as
   `torque serve`; a process with no executor registry does not validate.
+- Tests no longer fill the shared `$TMPDIR`. Each package's test binary
+  runs in a temp root of its own (`testenv.RunWithAgentShims`, through
+  `$TMPDIR`), which holds its boot dirs (`torque-boot`), run stderr
+  sidecars (`torque/runs`), `t.TempDir()`s and agent CLI shims, and is
+  removed when the binary exits. Before, test boot dirs stayed in the host's
+  `/tmp/torque-boot` (1.6G on the overnight host's 16G tmpfs), and every
+  helper process a test re-executes left a `torque-agent-shims-*` dir behind
+  (456 of them). A package whose tests leave a boot dir in their root now
+  fails, naming the dir and what was planted in it (CW-20261001-0144).
 - Tests can no longer run a real agent CLI. The wrapper-boot e2e fixture was
   found only through `CLAUDE_CLI_PATH`, while the wrapper path resolves a bare
   `claude` through PATH, so `make test` ran the developer's real Claude Code
