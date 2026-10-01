@@ -99,6 +99,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   runtime. A session's `session.log` is appended to, never truncated, so
   a log path reused by a later session accumulates. A Claude resume whose
   session id Claude no longer has is reported as a lost session.
+- Torque's pre-wrapper launch path (bootLegacy) now runs only codex
+  app-server. Another runtime kind reaching it fails to boot with a reason
+  instead of spawning its command twice, the copy after the turn's
+  `-- <prompt>`. Nothing in production routes another kind there: claude,
+  opencode and agy launch through go-agent-wrapper, and PTY has no launch.
+  The fake-runtime test seam still runs every kind (CW-20261001-0080).
 - go-agent-wrapper v0.19.0, for ACP sessions' MCP servers (above). Its
   v0.18.0 change to the wrapper's own `plant` package does not reach Torque,
   which plants through agentkit.
@@ -206,6 +212,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - An ACP agent that exits during launch no longer crashes the Torque daemon
   with "send on closed channel" (go-agent-wrapper v0.21.1,
   CW-20261001-0129).
+- A session on the go-agent-wrapper path (claude-code, opencode, agy, ACP)
+  is torn down however it ends: its boot dir is removed and its loopback MCP
+  listener, stderr and stream sidecars closed when the agent exits on its
+  own, as the legacy path does on terminal state. Before, only an explicit
+  Stop did it, so a manual session or orchestrator whose agent exited kept
+  them until the daemon stopped. Manager.Shutdown now stops and tears down
+  these sessions too; it reached only the legacy sessions. A boot that fails
+  after its boot dir is allocated (planting, Codex authentication, launch
+  conversion) removes the dir instead of leaving it in `$TMPDIR/torque-boot`
+  with no session row to name it (CW-20261001-0161). A codex app-server
+  session (the legacy path) that ends before Boot has registered its
+  resources has them released on arrival rather than kept until the daemon
+  stops (CW-20261001-0166).
 - OpenCode `serve-http` sessions no longer hang on a permission prompt.
   Torque answers each `permission.asked` through serve's
   `/permission/{id}/reply`, by the profile's `permission_mode`:

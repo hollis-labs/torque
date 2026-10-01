@@ -337,6 +337,15 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: prepare launch: %v", ErrBootFailed, err)
 	}
+	// Prepare allocated the boot dir, and it is Torque's to remove
+	// (DefaultBuildDirRoot): every return before bootLegacy or bootWrapper
+	// takes it over drops it, as does a launch that plants nothing into it
+	// (CW-20261001-0161).
+	dropPreparedBootDir := func() {
+		if prepared.PlantedBootDir != "" {
+			_ = os.RemoveAll(prepared.PlantedBootDir)
+		}
+	}
 	// Task-scoped + daemon-scoped PlantContext fields the shared plan
 	// does not carry: the MCP loopback URL (Torque still CONSTRUCTS the
 	// loopback itself — only the URL flows here) and the mux MCP entry
@@ -370,15 +379,16 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	bootDirProvider, hasBootDir := cliAdapter.(provider.BootDirProvider)
 	var preparedExecution *agentlaunch.PreparedExecution
 	if hasBootDir {
-		preparedExecution, err = providerplant.PrepareExecution(ctx, prepared, providerplant.WithAdapter(bootDirProvider))
+		preparedExecution, err = plantBootDir(ctx, prepared, providerplant.WithAdapter(bootDirProvider))
 		if err != nil {
 			shutdownLoopbackHandle(loopback)
+			dropPreparedBootDir()
 			return nil, fmt.Errorf("%w: plant boot dir: %v", ErrBootFailed, err)
 		}
 		if profile.Provider == "codex" {
 			if err := prepareCodexAuth(ctx, env, preparedExecution); err != nil {
 				shutdownLoopbackHandle(loopback)
-				_ = os.RemoveAll(prepared.PlantedBootDir)
+				dropPreparedBootDir()
 				return nil, fmt.Errorf("%w: prepare Codex authentication: %v", ErrBootFailed, err)
 			}
 		}
@@ -400,10 +410,14 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		prepared.Env = envVarValues(preparedExecution.Bindings.Env)
 		prepared.Workdir = preparedExecution.Bindings.CWD
 		logPlantResult(sessID, preparedExecution)
+	} else {
+		// Nothing is planted, so no session owns the dir.
+		dropPreparedBootDir()
 	}
 	sessionLaunch, err := sessionshim.ToSessionLaunch(prepared)
 	if err != nil {
 		shutdownLoopbackHandle(loopback)
+		dropPreparedBootDir()
 		return nil, fmt.Errorf("%w: convert prepared launch: %v", ErrBootFailed, err)
 	}
 	// capturedBootDir is the planted dir; "" for adapters with no
@@ -464,6 +478,14 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	return bootLegacy(ctx, deps, mgr, opts, pb)
 }
 
+// legacyAdoptHook runs just before bootLegacy hands a long-lived session's
+// resources over; a test uses it to end the session first.
+var legacyAdoptHook = func(string) {}
+
+// plantBootDir plants a prepared launch's boot dir (providerplant's
+// PrepareExecution); a var so a test can make planting fail.
+var plantBootDir = providerplant.PrepareExecution
+
 // plantedBoot bundles everything Boot's shared prefix (profile resolution
 // through boot-dir planting) computes, so bootLegacy and bootWrapper can
 // consume it without re-deriving or re-planting. bootACP takes the fields
@@ -498,6 +520,9 @@ type plantedBoot struct {
 // go-agent-wrapper has no equivalent for. Used for codex's runtime kind
 // always, and for every runtime kind when deps.RuntimeFactory is set
 // (Torque's fake-runtime test seam, which only this path can honor).
+//
+// In production it runs codex app-server (jsonrpc-stdio) alone; any other
+// kind is refused (legacyRuntimeKindAllowed, CW-20261001-0080).
 func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options, pb *plantedBoot) (sess *Session, err error) {
 	resolved := pb.resolved
 	profile := pb.profile
@@ -531,7 +556,7 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 	// Single deferred cleanup guarded by bootDirPlanted: it fires for
 	// every intermediate pre-Start failure and is a no-op once cleared.
 	// The flag is cleared the instant mgr.inner.Start() returns nil, so
-	// the success path keeps the dir (registerBootDir / OneShot inline
+	// the success path keeps the dir (adoptLegacyResources / OneShot inline
 	// cleanup take over) and the Start-error path — which clears the flag
 	// too — does its own os.RemoveAll without this defer double-removing.
 	bootDirPlanted := capturedBootDir != ""
@@ -541,28 +566,23 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 		}
 	}()
 
-	// Thread the planted boot dir into the adapter / session argv.
-	//
-	// Two distinct mechanisms, by adapter shape:
-	//
-	//   - Bare-mode claude: the boot dir is referenced via four explicit
-	//     CLI flags (--mcp-config / --append-system-prompt-file /
-	//     --settings / --add-dir) that ClaudeAdapter.BuildArgs emits from
-	//     the adapter's own MCPConfigPath/AppendSystemPromptFile/
-	//     SettingsPath/ProjectDir fields. We populate them here from
-	//     BareInjectionPaths(plantedBootDir, projectDir). Because BuildArgs
-	//     already emits --add-dir for the bare adapter, the ExtraArgs
-	//     splice below is suppressed for bare claude to avoid a double
-	//     --add-dir.
-	//
-	//   - Non-bare adapters (claude PTY/streaming, codex subprocess,
-	//     opencode): the boot dir is referenced via the BootDirSpec's
-	//     ProjectDirArg (--add-dir / --cd / --dir) plus EnvAmendments
-	//     (CODEX_HOME / OPENCODE_CONFIG_DIR). providerplant.Plant resolved
-	//     both into prepared.Argv[1:] and prepared.Env; we thread Argv[1:]
-	//     into StartOptions.ExtraArgs (a public field consumers may set
-	//     directly — the runtime splices it after adapter.BuildArgs) and
-	//     merge prepared.Env into the spawn env.
+	if !legacyRuntimeKindAllowed(runtimeKind, deps.RuntimeFactory != nil) {
+		shutdownLoopbackHandle(loopback)
+		return nil, fmt.Errorf("%w: runtime kind %q has no launch on this path: outside the test runtime seam it runs only codex app-server (%s); other kinds launch through go-agent-wrapper", ErrBootFailed, runtimeKind, RuntimeKindJsonRpcStdio)
+	}
+
+	// StartOptions.ExtraArgs is spliced after the adapter's BuildArgs, and
+	// it starts as the prepared launch's argv past the executable. Since
+	// go-providers v0.33 that is the provider's whole projected command,
+	// planted flags included (--settings, --mcp-config, --add-dir, --cd,
+	// --dir, the profile's args). Only codex app-server's splice below is
+	// right to spawn: the options past the adapter's own `app-server -c
+	// model=…`. Every other kind reaches here only through the
+	// RuntimeFactory test seam (legacyRuntimeKindAllowed), whose runtimes
+	// spawn nothing; there ExtraArgs keeps the prepared argv whole for tests
+	// to inspect, and spawned it would repeat the command after the turn's
+	// `-- <prompt>` (CW-20261001-0080). The env amendments (CODEX_HOME,
+	// OPENCODE_CONFIG_DIR) are merged into the spawn env below.
 	var bootDirExtraArgs []string
 	bootDirExtraArgs = append([]string(nil), sessionLaunch.Options.ExtraArgs...)
 
@@ -688,7 +708,7 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 	// child spawn, so the captured path is available immediately after
 	// Start returns nil). Workdir on the row stays at opts.Workdir — the
 	// project root, which is the most useful forensic value; the planted
-	// bootDir lives in metaKeyBootDir and registerBootDir.
+	// bootDir lives in metaKeyBootDir and the adopted session resources.
 	persistedMeta := callerSessionMeta(opts.SessionMeta)
 	persistedMeta[metaKeyMode] = opts.Mode.String()
 	persistedMeta[metaKeyWorkspaceDir] = ws.WorkspaceDir
@@ -1017,7 +1037,11 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 	if opts.Mode != ModeOneShot && !opts.RetainContextOnLongLivedStart {
 		startCtx = context.WithoutCancel(ctx)
 	}
+	if opts.Mode != ModeOneShot {
+		mgr.beginLegacyAdoption(sessID)
+	}
 	if err := mgr.inner.Start(startCtx, startReq); err != nil {
+		mgr.abandonLegacyAdoption(sessID)
 		closeStderr()
 		closeStreamFanout()
 		shutdownLoopbackHandle(loopback)
@@ -1033,7 +1057,7 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 		return nil, fmt.Errorf("%w: %v", ErrBootFailed, err)
 	}
 	// Start succeeded — the planted boot dir is now owned by the running
-	// session (registerBootDir below for long-lived modes, the OneShot
+	// session (adoptLegacyResources below for long-lived modes, the OneShot
 	// inline defer for ModeOneShot). Clear the leak guard so the deferred
 	// cleanup is a no-op on every success path.
 	bootDirPlanted = false
@@ -1056,22 +1080,28 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 	// runs synchronously below and drives its own teardown via Stop.
 	// Boot dir cleanup is consumer-owned post Stage-2 (the session lib's
 	// AutoPlantBootDir terminal-state cleanup is no longer in play):
-	// registerBootDir hands the planted dir to Manager.teardownSession,
+	// adoptLegacyResources hands the planted dir to Manager.teardownSession,
 	// which os.RemoveAll's it on Stop / terminal-state observation.
 	if opts.Mode != ModeOneShot {
-		mgr.registerLoopback(sessID, loopback)
-		mgr.registerStderrCloser(sessID, closeStderr)
-		mgr.registerStreamCloser(sessID, closeStreamFanout)
-		if capturedBootDir != "" {
-			mgr.registerBootDir(sessID, capturedBootDir)
-		}
+		legacyAdoptHook(sessID)
 		// Per-session PID poller (CW-20260509-0008): the lib records pid only
 		// at launch (always 0 for adapter-mode) and never refreshes the row's
 		// last_activity between turns. The poller bridges that gap and drives
 		// a clean Stop the moment Health.Alive flips false so orchestrators
 		// finish in state=done instead of waiting for the next daemon-restart
 		// sweep to mark the row crashed.
-		mgr.registerPidPoller(sessID, startPidPoller(mgr, sessID, mgr.pidPollInterval))
+		//
+		// All of it is handed over at once: a session that already ended
+		// (its terminal event ran teardownSession before this point) gets
+		// it released here instead of registered with nothing left to
+		// release it (CW-20261001-0166).
+		mgr.adoptLegacyResources(sessID, sessionResources{
+			loopback:    loopback,
+			closeStderr: closeStderr,
+			closeStream: closeStreamFanout,
+			bootDir:     capturedBootDir,
+			closePoller: startPidPoller(mgr, sessID, mgr.pidPollInterval),
+		})
 	}
 
 	sess = &Session{
@@ -1530,13 +1560,16 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 
 	mgr.registerWrapperSession(sessID, h)
 	if opts.Mode != ModeOneShot {
-		mgr.registerLoopback(sessID, loopback)
-		mgr.registerStderrCloser(sessID, closeStderr)
-		mgr.registerStreamCloser(sessID, sidecar.Close)
-		if capturedBootDir != "" {
-			mgr.registerBootDir(sessID, capturedBootDir)
-		}
-		// No registerPidPoller here: KindSessionHeartbeat/KindProcessStarted
+		// Torn down by Stop, Shutdown, or the run goroutine when the
+		// session ends on its own (finishWrapperSession); released at once
+		// if it already has.
+		mgr.adoptWrapperResources(sessID, h, sessionResources{
+			loopback:    loopback,
+			closeStderr: closeStderr,
+			closeStream: sidecar.Close,
+			bootDir:     capturedBootDir,
+		})
+		// No PID poller here: KindSessionHeartbeat/KindProcessStarted
 		// from the sink replace pid_poller.go's job for wrapper-routed
 		// sessions (see wrapper_sink.go's Write doc comments).
 	}
