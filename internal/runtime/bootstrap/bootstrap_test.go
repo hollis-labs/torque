@@ -7,6 +7,7 @@ import (
 	"github.com/hollis-labs/torque/internal/runtime/agent"
 	"github.com/hollis-labs/torque/internal/runtime/bootstrap"
 	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/testutil/testenv"
 	"github.com/hollis-labs/torque/internal/toolbroker"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,8 +35,9 @@ func TestBootstrapExecutors(t *testing.T) {
 
 	reg := executor.NewRegistry()
 	deps := &agent.Dependencies{
-		Profiles: profiles,
-		Tools:    toolbroker.NewDefault(),
+		WorkspacesRoot: testenv.WorkspacesRoot(t),
+		Profiles:       profiles,
+		Tools:          toolbroker.NewDefault(),
 	}
 	deps.Sessions = agent.NewManager(deps)
 
@@ -64,8 +66,9 @@ func TestBootstrapExecutorsListAll(t *testing.T) {
 
 	reg := executor.NewRegistry()
 	deps := &agent.Dependencies{
-		Profiles: profiles,
-		Tools:    toolbroker.NewDefault(),
+		WorkspacesRoot: testenv.WorkspacesRoot(t),
+		Profiles:       profiles,
+		Tools:          toolbroker.NewDefault(),
 	}
 	deps.Sessions = agent.NewManager(deps)
 
@@ -81,8 +84,9 @@ func TestBootstrapExecutorsListAll(t *testing.T) {
 // (CW-20260910-0087); both processes must see the same names.
 func TestNewExecutorRegistryNames(t *testing.T) {
 	deps := &agent.Dependencies{
-		Profiles: config.ProfileMap{"default": {Executor: "cli", Provider: "claude-code"}},
-		Tools:    toolbroker.NewDefault(),
+		WorkspacesRoot: testenv.WorkspacesRoot(t),
+		Profiles:       config.ProfileMap{"default": {Executor: "cli", Provider: "claude-code"}},
+		Tools:          toolbroker.NewDefault(),
 	}
 	deps.Sessions = agent.NewManager(deps)
 

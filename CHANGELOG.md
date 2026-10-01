@@ -8,6 +8,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- `torque serve` serves the MCP tool surface at `/mcp` (Streamable HTTP,
+  stateless) behind the same auth as `/api/v1`. `torque mcp --remote[=URL]`
+  (or `TORQUE_MCP_REMOTE`) relays stdio to it without opening the database,
+  creating any directory or running the orphan sweep, for agents whose
+  sandbox write-protects Torque's state (CW-20261001-0199).
 - A long-lived worker that ends its turn without moving its task out of
   `doing` is reminded once, then routed, instead of holding its project's
   slot until the 30-minute inactivity threshold. After 90 seconds idle
@@ -89,6 +94,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   a failure followed by a completion. OpenCode errors carry the error's name,
   model and reference after the message. Launch argv, environment and
   planted config are unchanged for every runtime.
+- Codex app-server's MCP tool-call approvals keep the run's loopback as the
+  only server approved outside `bypassPermissions`, now through agentkit's
+  `CodexApprovalResponder.MCPAllow` instead of Torque's own override.
+  Decisions are unchanged; the log reason names the allow-list
+  (CW-20261001-0124).
 - go-agent-wrapper v0.21.1, agentkit v0.19.1, go-providers v0.39.0 and
   go-sandbox v0.5.1 (CW-20261001-0157). A claude-code launch now carries
   `--permission-mode <mode>` (`acceptEdits` when the profile sets none,
@@ -211,6 +221,37 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- A long-lived run on the go-agent-wrapper path (opencode serve, claude-code,
+  agy, ACP) ends as soon as a turn fails, blocked with the provider's
+  message, as a Codex app-server run already did. An opencode serve worker
+  whose model opencode did not know (`session.error`: "Model not found: …")
+  left its task in `doing` and its run running with no tokens until the
+  30-minute inactivity threshold. The policy is that any genuine failed turn
+  blocks the run. That includes the turn the reminder pump sends a worker
+  that stopped without moving its task (#166): when that turn fails, the
+  run is now blocked rather than taking the unsignalled route. opencode
+  serve errors that do not end its turn stay in the session's stream and
+  leave the run going: one naming no session (a plugin that fails to load,
+  a skill opencode cannot parse), a context overflow (opencode compacts the
+  session and continues), and an abort (Torque's own Stop). The reason, and
+  the error in the stream, is the provider's message: its first line, at
+  most 500 bytes, redacted before it is cut. opencode's raw event and stack
+  trace stay in `serve-http.log`. The session stays `failed` when the agent
+  exits cleanly once stopped (CW-20261001-0169).
+- A Codex app-server turn failure that echoed a launch secret put the
+  secret in the run's reason: the stream's copy of the message was
+  redacted, the copy that ended the run was not. Both are redacted now,
+  before the message is cut to its bound (CW-20261001-0169).
+- Torque's tests no longer write session workspaces into the operator's
+  `~/.torque/workspaces`. Every test's agent dependencies get a temp root
+  (`testenv.WorkspacesRoot(t)`), and under `go test` a workspaces root inside
+  the real `~/.torque` is refused with an error naming that helper
+  (CW-20261001-0175).
+- The reviewer end-agent's task description no longer names a reviewer
+  version. It said "V1 reviewer" while the stamped template is V2, and one
+  reviewer stopped to ask which protocol to follow instead of auditing. It
+  now reads "Disposition audit for <id> (reviewer end-agent)."
+  (CW-20261001-0187).
 - An ACP agent that exits during launch no longer crashes the Torque daemon
   with "send on closed channel" (go-agent-wrapper v0.21.1,
   CW-20261001-0129).

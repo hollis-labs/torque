@@ -105,6 +105,8 @@ to the dev API on 8992; a direct Vite launch defaults to the API on 8990 unless
 `TORQUE_GUI_API_ORIGIN` is set.
 
 `torque mcp` starts the MCP server over stdio. In that mode there is no in-process scheduler instance, so scheduler MCP tools report that the scheduler is not running in that process.
+
+`torque serve` also serves the same MCP tools at `/mcp` (Streamable HTTP, stateless) on its HTTP listener, behind the same auth as `/api/v1`: loopback hosts only without `TORQUE_API_TOKEN`, the bearer token with it. `torque mcp --remote` relays stdio to that endpoint instead of opening the database, so a client that must not touch Torque's state (an agent under write protection) still gets the full tool surface. `--remote` alone, or `TORQUE_MCP_REMOTE=1`, uses `http://127.0.0.1:$TORQUE_HTTP_PORT/mcp`; a URL selects another daemon.
 Opt-in MCP tool groups are registered when the MCP process starts, based on persisted `features.*` settings in the backing DB. If you enable a new feature such as `features.collections`, restart the MCP process so `tools/list` picks up the new `torque_collection_*` tools.
 
 `torque profiles lint` validates `profiles.yaml` as an execution-template registry against Torque's current executor/provider catalog. It fails on unknown fields, missing or unsupported providers, and dishonest profile names that omit or misstate the provider binding. Use `make profiles-lint` in CI or pre-commit.
