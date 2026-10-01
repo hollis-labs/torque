@@ -87,6 +87,7 @@ var toolAnnotations = map[string]toolHints{
 	"torque_scheduler_status":          {true, false, true},
 	"torque_scheduler_toggle":          {false, false, false},
 	"torque_session_attach":            {false, false, false},
+	"torque_session_checkpoint_list":   {true, false, true},
 	"torque_session_checkpoint":        {false, false, false},
 	"torque_session_create":            {false, false, false},
 	"torque_session_get":               {true, false, true},

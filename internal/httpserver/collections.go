@@ -58,19 +58,7 @@ func writeCollectionError(w http.ResponseWriter, err error) {
 // ---- collection CRUD --------------------------------------------------------
 
 func (s *Server) listCollections(w http.ResponseWriter, r *http.Request) {
-	status := r.URL.Query().Get("status")
-	if status == "" {
-		status = "active"
-	}
-	collections, err := s.svc.Collection.List(status)
-	if err != nil {
-		writeCollectionError(w, err)
-		return
-	}
-	if collections == nil {
-		collections = []sqlstore.CollectionRecord{}
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"collections": collectionsJSON(collections)})
+	s.serveResourceList(w, r, "collections", sqlstore.ResourcePageFilter{})
 }
 
 func (s *Server) getCollection(w http.ResponseWriter, r *http.Request) {
@@ -173,21 +161,7 @@ func (s *Server) unarchiveCollection(w http.ResponseWriter, r *http.Request) {
 // ---- collection ↔ task wiring ----------------------------------------------
 
 func (s *Server) listCollectionTasks(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	tasks, err := s.svc.Collection.ListCollectionTasks(id)
-	if err != nil {
-		writeCollectionError(w, err)
-		return
-	}
-	if tasks == nil {
-		tasks = []sqlstore.TaskRecord{}
-	}
-	out, err := s.tasksJSON(tasks)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"tasks": out})
+	s.serveResourceList(w, r, "collection_tasks", sqlstore.ResourcePageFilter{CollectionID: chi.URLParam(r, "id")})
 }
 
 func (s *Server) addTaskToCollection(w http.ResponseWriter, r *http.Request) {
@@ -280,20 +254,7 @@ func (s *Server) moveTaskToCollection(w http.ResponseWriter, r *http.Request) {
 // ---- inbox ------------------------------------------------------------------
 
 func (s *Server) listInboxTasks(w http.ResponseWriter, r *http.Request) {
-	tasks, err := s.svc.Collection.ListInboxTasks()
-	if err != nil {
-		writeCollectionError(w, err)
-		return
-	}
-	if tasks == nil {
-		tasks = []sqlstore.TaskRecord{}
-	}
-	out, err := s.tasksJSON(tasks)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"tasks": out})
+	s.serveResourceList(w, r, "collection_inbox", sqlstore.ResourcePageFilter{})
 }
 
 func (s *Server) addTaskToInbox(w http.ResponseWriter, r *http.Request) {

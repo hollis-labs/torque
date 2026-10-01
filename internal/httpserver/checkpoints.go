@@ -169,32 +169,11 @@ func (s *Server) getCheckpoint(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listTaskCheckpoints(w http.ResponseWriter, r *http.Request) {
-	taskID := chi.URLParam(r, "id")
-	list, err := s.svc.Checkpoint.ListForTask(taskID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	out := make([]map[string]interface{}, len(list))
-	policy := s.requiredWorkflowPolicyForTask(taskID)
-	for i := range list {
-		out[i] = checkpointJSON(&list[i], policy)
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"checkpoints": out})
+	s.serveResourceList(w, r, "checkpoints", sqlstore.ResourcePageFilter{TaskID: chi.URLParam(r, "id")})
 }
 
 func (s *Server) listPendingCheckpoints(w http.ResponseWriter, r *http.Request) {
-	list, err := s.svc.Checkpoint.ListPending()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	out := make([]map[string]interface{}, len(list))
-	policies := s.requiredWorkflowPoliciesForCheckpoints(list)
-	for i := range list {
-		out[i] = checkpointJSON(&list[i], policies[list[i].TaskID])
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"checkpoints": out})
+	s.serveResourceList(w, r, "pending_checkpoints", sqlstore.ResourcePageFilter{})
 }
 
 func (s *Server) requiredWorkflowPolicyForTask(taskID string) *hitl.RequiredWorkflowPolicy {

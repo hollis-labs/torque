@@ -64,7 +64,7 @@ func TestHTTP_TaskArtifactsAlias(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var legacy map[string]interface{}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&legacy))
-	legacyList := legacy["artifacts"].([]interface{})
+	legacyList := legacy["items"].([]interface{})
 	require.Len(t, legacyList, 2)
 
 	// Alias form — same shape.
@@ -74,7 +74,7 @@ func TestHTTP_TaskArtifactsAlias(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp2.StatusCode)
 	var alias map[string]interface{}
 	require.NoError(t, json.NewDecoder(resp2.Body).Decode(&alias))
-	aliasList := alias["artifacts"].([]interface{})
+	aliasList := alias["items"].([]interface{})
 	require.Len(t, aliasList, 2)
 	assert.Equal(t, legacyList[0], aliasList[0])
 	assert.Equal(t, legacyList[1], aliasList[1])

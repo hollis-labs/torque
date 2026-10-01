@@ -246,11 +246,11 @@ export default function TaskDetailPage() {
         api.listComments('task', id).then((page) => setComments(page.items)).catch(() => setComments([]))
       }
       if (artifacts === null) {
-        api.listArtifacts(id).then(setArtifacts).catch(() => setArtifacts([]))
+        api.listArtifacts(id).then((page) => setArtifacts(page.items)).catch(() => setArtifacts([]))
       }
     }
     if (activeTab === 'artifacts' && artifacts === null) {
-      api.listArtifacts(id).then(setArtifacts).catch(() => setArtifacts([]))
+      api.listArtifacts(id).then((page) => setArtifacts(page.items)).catch(() => setArtifacts([]))
     }
   }, [activeTab, id, taskLoaded, editing, comments, runs, artifacts, api])
 
@@ -284,7 +284,7 @@ export default function TaskDetailPage() {
     // Refetch the list so the new row picks up server-generated fields
     // (id, created_at, normalized metadata envelope).
     const fresh = await api.listArtifacts(id)
-    setArtifacts(fresh)
+    setArtifacts(fresh.items)
     notifySuccess('Artifact attached')
   }
 
@@ -297,7 +297,7 @@ export default function TaskDetailPage() {
 
     setHitlRequestBusy(true)
     try {
-      setArtifacts(await api.listArtifacts(id))
+      setArtifacts((await api.listArtifacts(id)).items)
     } catch (err) {
       notifyError(err, 'Failed to load artifacts for checkpoint prefill')
     } finally {

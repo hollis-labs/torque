@@ -16,25 +16,7 @@ import (
 )
 
 func (s *Server) listArtifacts(w http.ResponseWriter, r *http.Request) {
-	// Accept task_id either from the URL (alias route /tasks/{id}/artifacts)
-	// or from the query string (/artifacts?task_id=...). URL wins.
-	taskID := chi.URLParam(r, "id")
-	if taskID == "" {
-		taskID = r.URL.Query().Get("task_id")
-	}
-	if taskID == "" {
-		writeError(w, http.StatusBadRequest, "task_id is required")
-		return
-	}
-	artifacts, err := s.svc.Artifact.List(taskID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if artifacts == nil {
-		artifacts = []sqlstore.ArtifactRecord{}
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"artifacts": artifacts})
+	s.serveResourceList(w, r, "artifacts", sqlstore.ResourcePageFilter{TaskID: chi.URLParam(r, "id")})
 }
 
 func (s *Server) getArtifact(w http.ResponseWriter, r *http.Request) {

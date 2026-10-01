@@ -61,8 +61,8 @@ export default function TemplateDetailPage() {
   const fetchVersions = useCallback(async () => {
     if (!id) return
     try {
-      const res = await api.listTemplates({ include_archived: true })
-      const vs = res.templates.filter((t) => t.id === id).map((t) => t.version)
+      const res = await api.listTemplates({ include_archived: true, search: id })
+      const vs = res.items.filter((t) => t.id === id).map((t) => t.version)
       vs.sort((a, b) => b - a)
       setVersions(vs)
     } catch {

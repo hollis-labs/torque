@@ -82,12 +82,12 @@ export function QuickAddDialog({
       .listCollections('active')
       .then((list) => {
         if (loadTokenRef.current !== token) return
-        setCollections(list)
+        setCollections(list.items)
         if (task.collection_id) {
           // Prefer the cached list — avoids an extra round-trip in the
           // common case. Falls back to a direct fetch if (somehow) the
           // task's collection isn't active anymore.
-          const hit = list.find((c) => c.id === task.collection_id)
+          const hit = list.items.find((c) => c.id === task.collection_id)
           if (hit) {
             setCurrentName(hit.name)
           } else {

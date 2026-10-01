@@ -180,7 +180,7 @@ export default function MessagingPage() {
       setError(null)
       try {
         const envs = await api.getInbox(addr.trim())
-        mergeIntoScope(target, envs)
+        mergeIntoScope(target, envs.items)
         setLoaded((prev) => ({ ...prev, [target]: true }))
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load inbox')
@@ -509,7 +509,7 @@ function ConversationPanel({
       try {
         const results = await Promise.all(tids.map((tid) => api.getThread(tid)))
         if (cancelled) return
-        const union = results.flat()
+        const union = results.flatMap((page) => page.items)
         if (union.length > 0) onChanged(union)
       } catch (err) {
         if (!cancelled) {

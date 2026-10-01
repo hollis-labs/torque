@@ -11,15 +11,25 @@ import (
 
 	gomsg "github.com/hollis-labs/go-messaging"
 	"github.com/hollis-labs/go-messaging/memstore"
+	"github.com/hollis-labs/go-sqlite/sqlitekit"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
 
 	tqmsg "github.com/hollis-labs/torque/internal/messaging"
 )
 
 // startServer brings up the federation mTLS surface over a fresh in-memory
 // Store, behind an httptest TLS listener configured with ServerTLSConfig.
-func startServer(t *testing.T, serverID tls.Certificate, peers *PeerRegistry, localAuths []string) (*httptest.Server, *memstore.Store) {
+func startServer(t *testing.T, serverID tls.Certificate, peers *PeerRegistry, localAuths []string) (*httptest.Server, *tqmsg.Store) {
 	t.Helper()
-	store := memstore.New()
+	db, err := sqlitekit.OpenWriter(context.Background(), filepath.Join(t.TempDir(), "messages.db"), sqlitekit.OpenOptions{Options: sqlitekit.WriterOptions()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := migrations.Run(db); err != nil {
+		t.Fatal(err)
+	}
+	store := tqmsg.NewStore(db)
 	srv := NewServer(store, peers, localAuths)
 	ts := httptest.NewUnstartedServer(srv.Handler())
 	ts.TLS = ServerTLSConfig(serverID, peers)

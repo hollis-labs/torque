@@ -28,7 +28,7 @@ export default function ModelsPage() {
       try {
         const result = await api.listModels()
         if (!cancelled) {
-          setModels(result)
+          setModels(result.items)
           setError(null)
         }
       } catch (err) {

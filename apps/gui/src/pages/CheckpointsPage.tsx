@@ -52,7 +52,7 @@ export default function CheckpointsPage() {
   const fetchPending = useCallback(async () => {
     try {
       const result = await api.listPendingCheckpoints()
-      setCheckpoints(result.checkpoints ?? [])
+      setCheckpoints(result.items ?? [])
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load checkpoints')

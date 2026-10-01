@@ -70,7 +70,7 @@ func TestHTTP_InboxRoute_NotShadowedByCollectionID(t *testing.T) {
 
 	// Empty inbox is OK; we just need the shape to match the list response,
 	// not the SPA HTML.
-	tasks, ok := got["tasks"].([]interface{})
+	tasks, ok := got["items"].([]interface{})
 	require.True(t, ok, "expected tasks array, got: %v", got)
 	assert.Empty(t, tasks)
 }
@@ -166,7 +166,7 @@ func TestHTTP_CollectionByID_StillWorksAfterLiteralRoutes(t *testing.T) {
 	resp2, err := http.Get(ts.URL + "/api/v1/collections/" + colID + "/tasks")
 	require.NoError(t, err)
 	got2 := assertJSONResponse(t, resp2, http.StatusOK)
-	tasks, ok := got2["tasks"].([]interface{})
+	tasks, ok := got2["items"].([]interface{})
 	require.True(t, ok)
 	assert.Empty(t, tasks)
 }
@@ -203,7 +203,7 @@ func TestHTTP_DeleteTaskFromCollection_ScopeMismatchReturns409(t *testing.T) {
 	listResp, err := http.Get(ts.URL + "/api/v1/collections/" + colA + "/tasks")
 	require.NoError(t, err)
 	listBody := assertJSONResponse(t, listResp, http.StatusOK)
-	tasks2, ok := listBody["tasks"].([]interface{})
+	tasks2, ok := listBody["items"].([]interface{})
 	require.True(t, ok)
 	require.Len(t, tasks2, 1, "task must still be in colA after the rejected scope-mismatch DELETE")
 

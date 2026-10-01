@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 	"io"
 	"net/http"
 	"net/url"
@@ -163,18 +164,16 @@ func (s *HTTPStore) Get(ctx context.Context, id string) (messaging.Envelope, err
 
 // Thread returns the envelopes sharing threadID, chronologically
 // (GET <base>/thread/{thread_id}). Read-only; no delivery side effects.
-func (s *HTTPStore) Thread(ctx context.Context, threadID string, f messaging.Filter) ([]messaging.Envelope, error) {
-	path := "thread/" + url.PathEscape(threadID)
-	if q := encodeFilter(f); q != "" {
-		path += "?" + q
+func (s *HTTPStore) Thread(ctx context.Context, thread string, f messaging.Filter) ([]messaging.Envelope, error) {
+	limit := f.Limit
+	if limit <= 0 {
+		limit = pagination.DefaultLimit
 	}
-	var out struct {
-		Messages []messaging.Envelope `json:"messages"`
+	if limit > pagination.MaxLimit {
+		limit = pagination.MaxLimit
 	}
-	if err := s.do(ctx, http.MethodGet, path, nil, http.StatusOK, &out); err != nil {
-		return nil, err
-	}
-	return out.Messages, nil
+	page, err := s.ThreadPage(ctx, thread, f, PageQuery{Limit: limit, SortDir: "asc"})
+	return page.Items, err
 }
 
 // Consume advances ConsumedAt for (envelope, recipient) on the peer
@@ -328,4 +327,36 @@ func encodeFilter(f messaging.Filter) string {
 		q.Set("limit", strconv.Itoa(f.Limit))
 	}
 	return q.Encode()
+}
+
+// ThreadPage uses the peer's bounded paging extension. An old peer response
+// fails clearly instead of being treated as a complete history.
+func (s *HTTPStore) ThreadPage(ctx context.Context, thread string, f messaging.Filter, q PageQuery) (MessagePage, error) {
+	values, _ := url.ParseQuery(encodeFilter(f))
+	values.Set("limit", strconv.Itoa(q.Limit))
+	values.Set("sort_by", "created_at")
+	values.Set("sort_dir", q.SortDir)
+	if q.AfterID != "" {
+		values.Set("cursor", pagination.Encode("created_at", q.SortDir, q.AfterTime.UTC().Format(time.RFC3339Nano), q.AfterID))
+	}
+	if q.Offset != nil {
+		values.Set("offset", strconv.Itoa(*q.Offset))
+	}
+	if q.IncludeTotal {
+		values.Set("include_total", "true")
+	}
+	var out struct {
+		Items []messaging.Envelope `json:"items"`
+		Meta  *MessagePageMeta     `json:"meta"`
+	}
+	if err := s.do(ctx, http.MethodGet, "thread/"+url.PathEscape(thread)+"?"+values.Encode(), nil, http.StatusOK, &out); err != nil {
+		return MessagePage{}, err
+	}
+	if out.Meta == nil {
+		return MessagePage{}, fmt.Errorf("thread peer does not support bounded cursor pages")
+	}
+	if len(out.Items) > q.Limit {
+		return MessagePage{}, fmt.Errorf("thread peer exceeded requested bound")
+	}
+	return MessagePage{Items: out.Items, Total: out.Meta.Total, HasMore: out.Meta.HasMore, TotalUnavailable: out.Meta.TotalUnavailable}, nil
 }

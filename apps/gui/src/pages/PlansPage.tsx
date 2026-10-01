@@ -33,7 +33,7 @@ export default function PlansPage() {
 
   const fetchPlans = useCallback(async () => {
     try {
-      const { plans } = await api.listPlans()
+      const { items: plans } = await api.listPlans()
       // Hydrate each row with phase count + progress. Small N — the listing
       // view never shows enough plans to make this expensive.
       const details = await Promise.all(

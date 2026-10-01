@@ -710,6 +710,9 @@ export interface ListPage<T> {
     limit: number
     has_more: boolean
     next_cursor: string | null
+    offset?: number
+    next_offset?: number | null
+    total_unavailable?: string
     total?: number
     sort_by?: string
     sort_dir?: 'asc' | 'desc'
@@ -718,6 +721,7 @@ export interface ListPage<T> {
 
 export interface ListQuery {
   limit?: number
+  offset?: number
   cursor?: string
   sort_by?: string
   sort_dir?: 'asc' | 'desc'

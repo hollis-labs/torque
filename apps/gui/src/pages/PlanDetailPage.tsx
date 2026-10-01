@@ -49,7 +49,7 @@ export default function PlanDetailPage() {
     try {
       const [detail, kids] = await Promise.all([api.getPlan(id), api.listPlanChildren(id)])
       setPlan(detail)
-      setChildren(kids.tasks ?? [])
+      setChildren(kids.items ?? [])
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load plan')

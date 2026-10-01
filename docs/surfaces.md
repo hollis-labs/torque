@@ -326,3 +326,22 @@ The frontend currently includes pages for:
 - Epic detail
 
 The GUI is served by the same `torque serve` process.
+
+### Remaining list envelopes (CW-20261001-0565)
+
+HTTP session, artifact, collection/task/inbox, plan/children, checkpoint,
+template and model list routes always return `{items,meta}`. Default limit is
+50, maximum 200; cursor paging is the default, an explicit offset enables
+`offset`/`next_offset`, and `include_total=true` requests a filtered whole-cohort
+count. Nested task projections remain task rows. Legacy named arrays are
+removed; a GUI request reads one page. See the implemented filter and sort
+[contract matrix](api-pagination.md#endpoint-capability-matrix).
+
+Message inbox retains drain semantics: each call delivers exactly its emitted
+page, has_more comes from a non-mutating peek, and next_cursor is null. Its
+opt-in count is the undelivered cohort before that drain. Thread requests are
+pure reads with cursor continuation and bounded federation merge/deduplication.
+Multiple stores omit total and report total_unavailable=federated; positive
+federated offsets reject with use-cursor guidance. Broker inbox and poll action
+behavior remains unchanged. See [message traversal](api-pagination.md#endpoint-capability-matrix)
+and the separate CW-20260912-0114 inbox-mutation question.

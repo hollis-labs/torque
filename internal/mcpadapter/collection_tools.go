@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 
 	"github.com/hollis-labs/torque/internal/service"
 )
@@ -21,9 +22,10 @@ Example: {"name":"Roadmap","description":"Quarterly themes"}`),
 	a.addTool(newTool("torque_collection_list",
 		withDescription(`List collections, optionally filtered by archive status; ordered created_at DESC.
 Default status="active". Use status="archived" for the trash bin, "all" for both.
-Response shape: data = {items: [<CollectionRecord>...], meta: {truncated, returned, limit, hint?}}.
+Response shape: data = {items: [<CollectionRecord>...], meta: {truncated, returned, limit, has_more, next_cursor, total?, offset?, next_offset?, hint?}}.
 Example: {"status":"active"}`),
 		withString("status", desc("Filter: active|archived|all (default active)")),
+		withResourcePageParams("collections"),
 	), a.handleCollectionList)
 
 	a.addTool(newTool("torque_collection_get",
@@ -100,15 +102,17 @@ Example: {"task_id":"T-1"}`),
 
 	a.addTool(newTool("torque_collection_inbox_list",
 		withDescription(`List inbox tasks (added_to_collections_at NOT NULL AND collection_id IS NULL). Ordered by added_to_collections_at DESC.
-Response shape: data = {items: [<briefTask>...], meta: {truncated, returned, limit, hint?}}.
+Response shape: data = {items: [<briefTask>...], meta: {truncated, returned, limit, has_more, next_cursor, total?, offset?, next_offset?, hint?}}.
 Example: {}`),
+		withResourcePageParams("collection_inbox"),
 	), a.handleCollectionInboxList)
 
 	a.addTool(newTool("torque_collection_tasks_list",
 		withDescription(`List the tasks in a collection, ordered by collection_position.
-Response shape: data = {items: [<briefTask>...], meta: {truncated, returned, limit, hint?}}.
+Response shape: data = {items: [<briefTask>...], meta: {truncated, returned, limit, has_more, next_cursor, total?, offset?, next_offset?, hint?}}.
 Example: {"collection_id":"COL-20260503-0001"}`),
 		withString("collection_id", required(), desc("Collection ID")),
+		withResourcePageParams("collection_tasks"),
 	), a.handleCollectionTasksList)
 }
 
@@ -124,20 +128,7 @@ func (a *Adapter) handleCollectionCreate(ctx context.Context, req map[string]any
 }
 
 func (a *Adapter) handleCollectionList(ctx context.Context, req map[string]any) (any, error) {
-	status := reqStr(req, "status")
-	if status == "" {
-		status = "active"
-	}
-	collections, err := a.svc.Collection.List(status)
-	if err != nil {
-		return errFromService(err)
-	}
-	limit := defaultGenericListLimit
-	items := make([]any, 0, len(collections))
-	for _, c := range collections {
-		items = append(items, c)
-	}
-	return cappedJSONResult(items, limit)
+	return a.handleResourceList(ctx, req, "collections", sqlstore.ResourcePageFilter{})
 }
 
 func (a *Adapter) handleCollectionGet(ctx context.Context, req map[string]any) (any, error) {
@@ -282,28 +273,9 @@ func (a *Adapter) handleCollectionInboxAdd(ctx context.Context, req map[string]a
 }
 
 func (a *Adapter) handleCollectionInboxList(ctx context.Context, req map[string]any) (any, error) {
-	tasks, err := a.svc.Collection.ListInboxTasks()
-	if err != nil {
-		return errFromService(err)
-	}
-	limit := defaultGenericListLimit
-	items := make([]any, 0, len(tasks))
-	for _, t := range tasks {
-		items = append(items, toBriefTask(t, briefTagSlugs(a.svc, t.ID)))
-	}
-	return cappedJSONResult(items, limit)
+	return a.handleResourceList(ctx, req, "collection_inbox", sqlstore.ResourcePageFilter{})
 }
 
 func (a *Adapter) handleCollectionTasksList(ctx context.Context, req map[string]any) (any, error) {
-	collectionID := reqStr(req, "collection_id")
-	tasks, err := a.svc.Collection.ListCollectionTasks(collectionID)
-	if err != nil {
-		return errFromService(err)
-	}
-	limit := defaultGenericListLimit
-	items := make([]any, 0, len(tasks))
-	for _, t := range tasks {
-		items = append(items, toBriefTask(t, briefTagSlugs(a.svc, t.ID)))
-	}
-	return cappedJSONResult(items, limit)
+	return a.handleResourceList(ctx, req, "collection_tasks", sqlstore.ResourcePageFilter{CollectionID: reqStr(req, "collection_id")})
 }

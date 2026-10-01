@@ -288,7 +288,7 @@ export default function CollectionsPage() {
     setLoading(true)
     setError(null)
     try {
-      const [active, inbox] = await Promise.all([
+      const [activePage, inboxPage] = await Promise.all([
         api.listCollections('active'),
         api.listInboxTasks(),
       ])
@@ -298,14 +298,14 @@ export default function CollectionsPage() {
       // cheaper than a single mega-endpoint and matches the backend
       // shape (collection list and task list are separate resources).
       const taskResults = await Promise.all(
-        active.map((c) => api.listCollectionTasks(c.id).then((t) => [c.id, t] as const)),
+        activePage.items.map((c) => api.listCollectionTasks(c.id).then((t) => [c.id, t.items] as const)),
       )
       if (myGen !== loadGeneration.current) return
       for (const [id, t] of taskResults) {
         taskMap[id] = t
       }
-      setCollections(active)
-      setInboxTasks(inbox)
+      setCollections(activePage.items)
+      setInboxTasks(inboxPage.items)
       setTasksByCollection(taskMap)
     } catch (err) {
       if (myGen !== loadGeneration.current) return

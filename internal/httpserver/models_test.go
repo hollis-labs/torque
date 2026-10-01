@@ -78,7 +78,7 @@ func TestHTTP_ListModels(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var body struct {
-		Models []map[string]interface{} `json:"models"`
+		Models []map[string]interface{} `json:"items"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	assert.Len(t, body.Models, 2)
@@ -92,7 +92,7 @@ func TestHTTP_ListModels_FilterByProvider(t *testing.T) {
 	defer resp.Body.Close()
 
 	var body struct {
-		Models []map[string]interface{} `json:"models"`
+		Models []map[string]interface{} `json:"items"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	require.Len(t, body.Models, 1)
@@ -134,7 +134,7 @@ func TestHTTP_ListModels_ColdCache(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var body struct {
-		Models []map[string]interface{} `json:"models"`
+		Models []map[string]interface{} `json:"items"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	assert.Empty(t, body.Models)

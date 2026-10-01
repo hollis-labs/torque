@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 
 	"github.com/hollis-labs/torque/internal/service"
 )
@@ -110,11 +111,12 @@ Example: {"id":"backend-fix"}`),
 	a.addTool(newTool("torque_template_list",
 		withDescription(`List templates, optionally filtered by kind; include_archived=true surfaces retired rows.
 Use for template discovery; torque_template_get when you know the id. Default brief shape excludes the description body; pass verbose="true" for full records (description MAY include {{var}} placeholders).
-Response shape: data = {items: [<briefTemplate or TemplateRecord>...], meta: {truncated, returned, limit, hint?}}.
+Response shape: data = {items: [<briefTemplate or TemplateRecord>...], meta: {truncated, returned, limit, has_more, next_cursor, total?, offset?, next_offset?, hint?}}.
 Example: {"kind":"agent"}`),
 		withBoolean("include_archived", desc("Surface retired rows (default false)")),
 		withString("kind", desc("Filter: agent|external|wait|decision|parent")),
 		withString("verbose", desc("Return full records (incl. description body) instead of brief (string 'true'/'false', default false)")),
+		withResourcePageParams("templates"),
 	), a.handleTemplateList)
 
 	a.addTool(newTool("torque_task_create_from_template",
@@ -345,27 +347,7 @@ func (a *Adapter) handleTemplateDelete(ctx context.Context, req map[string]any) 
 }
 
 func (a *Adapter) handleTemplateList(ctx context.Context, req map[string]any) (any, error) {
-	verbose := reqStrBool(req, "verbose")
-	list, err := a.svc.Template.List(service.TemplateListOpts{
-		IncludeArchived: reqBool(req, "include_archived"),
-		Kind:            reqStr(req, "kind"),
-	})
-	if err != nil {
-		return errFromService(err)
-	}
-	limit := clampLimit(0, defaultTemplateListLimit, maxTemplateListLimit)
-	items := make([]any, 0, len(list))
-	for _, tpl := range list {
-		if verbose {
-			// Verbose includes full record with description body; template
-			// description can hold prose + {{var}} placeholders, which is
-			// the point — callers asking for verbose want it.
-			items = append(items, tpl)
-		} else {
-			items = append(items, toBriefTemplate(tpl))
-		}
-	}
-	return cappedJSONResult(items, limit)
+	return a.handleResourceList(ctx, req, "templates", sqlstore.ResourcePageFilter{})
 }
 
 func (a *Adapter) handleTaskCreateFromTemplate(ctx context.Context, req map[string]any) (any, error) {

@@ -258,7 +258,7 @@ func TestHTTP_Template_List(t *testing.T) {
 	var result map[string]interface{}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
 	resp.Body.Close()
-	list := result["templates"].([]interface{})
+	list := result["items"].([]interface{})
 	assert.Len(t, list, 2)
 }
 

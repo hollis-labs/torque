@@ -23,7 +23,7 @@ export function TaskCheckpointsBanner({ taskId }: TaskCheckpointsBannerProps) {
 
   const fetchCheckpoints = useCallback(async () => {
     try {
-      const { checkpoints } = await api.listTaskCheckpoints(taskId)
+      const { items: checkpoints } = await api.listTaskCheckpoints(taskId)
       setPending(checkpoints.filter((c) => c.status === 'pending'))
     } catch {
       setPending([])

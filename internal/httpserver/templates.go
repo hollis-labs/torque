@@ -272,22 +272,7 @@ func (s *Server) deleteTemplate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listTemplates(w http.ResponseWriter, r *http.Request) {
-	opts := service.TemplateListOpts{
-		Kind: r.URL.Query().Get("kind"),
-	}
-	if r.URL.Query().Get("include_archived") == "true" {
-		opts.IncludeArchived = true
-	}
-	list, err := s.svc.Template.List(opts)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	out := make([]map[string]interface{}, len(list))
-	for i := range list {
-		out[i] = templateJSON(&list[i])
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"templates": out})
+	s.serveResourceList(w, r, "templates", sqlstore.ResourcePageFilter{})
 }
 
 func (s *Server) instantiateTemplate(w http.ResponseWriter, r *http.Request) {
