@@ -390,8 +390,8 @@ func TestAdapterFor_OpencodeWiring(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.True(t, caps.BinaryRequired)
-			assert.False(t, caps.ProviderSessionID, "opencode lacks --resume")
-			assert.False(t, caps.CheckpointResume, "opencode lacks --resume")
+			assert.True(t, caps.ProviderSessionID, "opencode run reports its session id, which a resume passes back as --session <id>")
+			assert.False(t, caps.CheckpointResume)
 
 			oa, ok := adapter.(*provider.OpencodeAdapter)
 			require.True(t, ok, "adapter should be *provider.OpencodeAdapter, got %T", adapter)

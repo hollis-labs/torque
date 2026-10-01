@@ -82,6 +82,37 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Resume capabilities come from the go-providers registry, per runtime and
+  mode, instead of provider-name switches (CW-20261001-0174).
+  `agent.Resume(provider, kind)` reports what the registry declares and
+  whether Torque wires it. Wired is an allow-list of the (runtime, mode)
+  pairs whose launch takes the stored session id, so a resume a library
+  bump declares for a new mode stays off until Torque wires it.
+  - **Resumes:** claude-code (streaming-stdio, subprocess) via
+    `--resume <id>`; opencode `run` via `--session <id>`; Pi and opencode
+    over ACP via `session/load`. opencode `run` booted fresh before.
+  - **The session id is stored for subprocess runtimes too.** A
+    subprocess-per-turn session (claude-code subprocess, opencode `run`)
+    now stores the provider session id its first turn reports, as
+    streaming-stdio and ACP sessions already did. Without it, there was
+    nothing to resume.
+  - **A lost provider session boots fresh once.** If a subprocess resume's
+    first turn finds the provider no longer has the session (claude: "No
+    conversation found", a `SessionLostError`), `ResumeSession` and
+    planstart's redispatch boot fresh once, with the kickoff, rather than
+    fail. Not covered yet (CW-20261001-0202): a streaming-stdio resume
+    whose id is lost fails its first turn after Boot, and an ACP agent
+    without `loadSession` opens a new session without saying so.
+  - **Declared but not wired yet:** codex app-server (CW-20261001-0180)
+    and agy (CW-20261001-0181). A Codex `ResumeSession` now boots fresh
+    instead of passing an id the app-server ignored.
+  - **Same runtime required:** `ResumeSession` and planstart's redispatch
+    resume only when the session's profile still boots the runtime that
+    recorded the id (registry runtime, any case).
+  - **Breadcrumb:** the HITL response breadcrumb's `used_resume` is the
+    resumed session's `Resumed`, false when no stored id existed or the
+    provider had lost the session. It used to claim a resume for a row with
+    no stored session id.
 - Codex app-server's MCP tool-call approvals keep the run's loopback as the
   only server approved outside `bypassPermissions`, now through agentkit's
   `CodexApprovalResponder.MCPAllow` instead of Torque's own override.
@@ -231,11 +262,37 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   which is one reason its own figure comes first. Costs are reported, not
   enforced: `CostBudget` still stops nothing. Existing rows are not
   repriced. Migration 034.
+- A long-lived run on the go-agent-wrapper path (opencode serve, claude-code,
+  agy, ACP) ends as soon as a turn fails, blocked with the provider's
+  message, as a Codex app-server run already did. An opencode serve worker
+  whose model opencode did not know (`session.error`: "Model not found: …")
+  left its task in `doing` and its run running with no tokens until the
+  30-minute inactivity threshold. The policy is that any genuine failed turn
+  blocks the run. That includes the turn the reminder pump sends a worker
+  that stopped without moving its task (#166): when that turn fails, the
+  run is now blocked rather than taking the unsignalled route. opencode
+  serve errors that do not end its turn stay in the session's stream and
+  leave the run going: one naming no session (a plugin that fails to load,
+  a skill opencode cannot parse), a context overflow (opencode compacts the
+  session and continues), and an abort (Torque's own Stop). The reason, and
+  the error in the stream, is the provider's message: its first line, at
+  most 500 bytes, redacted before it is cut. opencode's raw event and stack
+  trace stay in `serve-http.log`. The session stays `failed` when the agent
+  exits cleanly once stopped (CW-20261001-0169).
+- A Codex app-server turn failure that echoed a launch secret put the
+  secret in the run's reason: the stream's copy of the message was
+  redacted, the copy that ended the run was not. Both are redacted now,
+  before the message is cut to its bound (CW-20261001-0169).
 - Torque's tests no longer write session workspaces into the operator's
   `~/.torque/workspaces`. Every test's agent dependencies get a temp root
   (`testenv.WorkspacesRoot(t)`), and under `go test` a workspaces root inside
   the real `~/.torque` is refused with an error naming that helper
   (CW-20261001-0175).
+- The reviewer end-agent's task description no longer names a reviewer
+  version. It said "V1 reviewer" while the stamped template is V2, and one
+  reviewer stopped to ask which protocol to follow instead of auditing. It
+  now reads "Disposition audit for <id> (reviewer end-agent)."
+  (CW-20261001-0187).
 - An ACP agent that exits during launch no longer crashes the Torque daemon
   with "send on closed channel" (go-agent-wrapper v0.21.1,
   CW-20261001-0129).

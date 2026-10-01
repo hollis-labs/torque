@@ -211,8 +211,8 @@ type ExecutionResult struct {
 //
 // For multi-provider executors the executor-level Capabilities() reports
 // SupportsResume=true when ANY supported provider supports resume; per-task
-// dispatch uses agent.ProviderCapabilities(provider) for the per-adapter
-// answer.
+// dispatch uses agent.ProviderCapabilities(provider, kind) for the
+// per-adapter answer.
 type ExecutorCapabilities struct {
 	SupportsStreaming   bool
 	SupportsTools       bool
