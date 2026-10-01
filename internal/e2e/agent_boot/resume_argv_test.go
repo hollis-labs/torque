@@ -78,10 +78,8 @@ func TestResumeSession_FreshBootThenResume_ThreadsTheCapturedID(t *testing.T) {
 		name, provider, turn1, turn2, resumeFlag, capturedID string
 		runtime                                              runtimes.ID
 	}{
-		{"claude-code", "claude-code", "claude/print_turn1", "claude/print_turn2_resume", "--resume", "00000000-0000-4000-8000-000000000001", runtimes.Claude},
-		// opencode's id is read from the fixture: go-providers re-scrubs the
-		// ids when it re-captures.
-		{"opencode run", "opencode", "opencode/run_turn1", "opencode/run_turn2_resume", "--session", fixtureSessionID(t, "opencode/run_turn1.jsonl"), runtimes.OpenCode},
+		{"claude-code", "claude-code", "claude/print_turn1", "claude/print_turn2_resume", "--resume", fixtureSessionID(t, "claude/print_turn1"), runtimes.Claude},
+		{"opencode run", "opencode", "opencode/run_turn1", "opencode/run_turn2_resume", "--session", fixtureSessionID(t, "opencode/run_turn1"), runtimes.OpenCode},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := providertest.New(t, tc.runtime,
