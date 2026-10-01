@@ -31,10 +31,22 @@ With --remote (or TORQUE_MCP_REMOTE), relay to the running daemon's /mcp
 endpoint instead of opening the database: the same tool surface, for
 clients that must not open main.db, such as an agent under ProtectedPaths.
 --remote alone, or TORQUE_MCP_REMOTE=1, uses
-http://127.0.0.1:$TORQUE_HTTP_PORT/mcp; a URL selects another endpoint.`,
+http://127.0.0.1:$TORQUE_HTTP_PORT/mcp; --remote=URL (with the equals sign) or
+TORQUE_MCP_REMOTE=URL selects another endpoint. The tools are those the daemon
+registered when it started, so enabling a feature takes a daemon restart, not a
+new torque mcp process.`,
 		// stdout carries the MCP protocol: an error must not print usage
 		// onto it.
 		SilenceUsage: true,
+		// --remote's value is optional, so cobra reads `--remote URL` as
+		// --remote plus a positional URL and the URL would be ignored: the
+		// bridge would dial the default daemon, possibly the wrong one.
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return fmt.Errorf("unexpected argument %q: give --remote's URL as --remote=URL (a separate argument is not read as its value)", scrubURLCredentials(args[0]))
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Before config.Load: resolving app paths materializes the data
 			// dir, which --remote must never create or touch.
@@ -154,6 +166,15 @@ http://127.0.0.1:$TORQUE_HTTP_PORT/mcp; a URL selects another endpoint.`,
 	return cmd
 }
 
+// scrubURLCredentials drops user:password@ from a URL string for messages.
+func scrubURLCredentials(s string) string {
+	if u, err := url.Parse(s); err == nil && u.User != nil {
+		u.User = nil
+		return u.String()
+	}
+	return s
+}
+
 // remoteDefault is --remote given without a URL.
 const remoteDefault = "default"
 
@@ -181,7 +202,7 @@ func remoteMCPEndpoint(flag, env string, port int) string {
 func runRemoteMCP(cmd *cobra.Command, endpoint, token string) error {
 	u, err := url.Parse(endpoint)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return fmt.Errorf("torque mcp --remote: %q is not an http(s) URL", endpoint)
+		return fmt.Errorf("torque mcp --remote: %q is not an http(s) URL", scrubURLCredentials(endpoint))
 	}
 	local := &mcp.IOTransport{Reader: io.NopCloser(cmd.InOrStdin()), Writer: nopWriteCloser{cmd.OutOrStdout()}}
 	return mcpbridge.Run(cmd.Context(), local, mcpbridge.Options{

@@ -13,7 +13,7 @@ import (
 // loopback-only default: no token, and only loopback browser origins.
 type Security struct {
 	// Token, when set, is required as "Authorization: Bearer <token>" on
-	// every /api request, loopback callers included. It is mandatory when
+	// every /api/v1 and /mcp request, loopback callers included. It is mandatory when
 	// serve binds a non-loopback address (see ValidateBind).
 	Token string
 	// CORSOrigins are extra browser origins (scheme://host[:port]) allowed
@@ -89,7 +89,7 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 			}
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Token")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Token, Accept, Mcp-Session-Id, Mcp-Protocol-Version, Last-Event-ID")
 		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)
@@ -99,7 +99,7 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// requireToken rejects /api requests that do not carry the bearer token.
+// requireToken rejects /api/v1 and /mcp requests that do not carry the bearer token.
 // Preflight requests pass through so CORS can answer them.
 //
 // With no token configured the API is loopback-only, and requests must

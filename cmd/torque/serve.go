@@ -91,7 +91,7 @@ refused. Browser origins other than loopback ones must be allowed with
 	}
 
 	cmd.Flags().StringVar(&addr, "addr", "", "Listen address (default 127.0.0.1:<TORQUE_HTTP_PORT>; non-loopback requires a token)")
-	cmd.Flags().StringVar(&token, "token", "", "Bearer token required on /api requests (default $TORQUE_API_TOKEN)")
+	cmd.Flags().StringVar(&token, "token", "", "Bearer token required on /api/v1 and /mcp requests (default $TORQUE_API_TOKEN)")
 	cmd.Flags().StringSliceVar(&corsOrigins, "cors-origin", nil, "Browser origins allowed besides loopback ones (default $TORQUE_CORS_ORIGINS)")
 	return cmd
 }
@@ -286,7 +286,7 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	handler.WithSecurity(sec)
 	// /mcp: the `torque mcp` tool surface for clients that must not open
 	// the database (`torque mcp --remote`; CW-20261001-0199).
-	handler.WithMCP(bootstrap.DaemonMCPHandler(svc, sched, agentDeps.Sessions, pollRegistry, reminderRegistry, slog.Default()))
+	handler.WithMCP(bootstrap.DaemonMCPHandler(svc, sched, agentDeps.Sessions, slog.Default()))
 
 	// Durable messaging substrate (CW-20260503-0012, S1.2). Same SQLite DB
 	// the rest of the runtime uses; migration 022_messages.sql created the
@@ -509,6 +509,7 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	}()
 
 	log.Printf("Torque HTTP server listening on %s", ln.Addr().String())
+	log.Printf("[serve] MCP endpoint at http://%s/mcp (same auth as /api/v1; `torque mcp --remote` relays to it)", ln.Addr().String())
 	log.Printf("GUI available at http://%s", ln.Addr().String())
 	log.Printf("API available at http://%s/api/v1", ln.Addr().String())
 	if sec.Token != "" {

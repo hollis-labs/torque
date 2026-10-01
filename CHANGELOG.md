@@ -12,7 +12,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   stateless) behind the same auth as `/api/v1`. `torque mcp --remote[=URL]`
   (or `TORQUE_MCP_REMOTE`) relays stdio to it without opening the database,
   creating any directory or running the orphan sweep, for agents whose
-  sandbox write-protects Torque's state (CW-20261001-0199).
+  sandbox write-protects Torque's state. `/mcp` has no inbox-poll registry,
+  as stdio has none; the relay forwards requests concurrently, never
+  follows a redirect with the bearer, answers requests outstanding when the
+  daemon's connection dies, and reads `--remote URL` (without `=`) as an
+  error (CW-20261001-0199).
 - A long-lived worker that ends its turn without moving its task out of
   `doing` is reminded once, then routed, instead of holding its project's
   slot until the 30-minute inactivity threshold. After 90 seconds idle

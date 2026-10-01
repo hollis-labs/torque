@@ -106,7 +106,14 @@ to the dev API on 8992; a direct Vite launch defaults to the API on 8990 unless
 
 `torque mcp` starts the MCP server over stdio. In that mode there is no in-process scheduler instance, so scheduler MCP tools report that the scheduler is not running in that process.
 
-`torque serve` also serves the same MCP tools at `/mcp` (Streamable HTTP, stateless) on its HTTP listener, behind the same auth as `/api/v1`: loopback hosts only without `TORQUE_API_TOKEN`, the bearer token with it. `torque mcp --remote` relays stdio to that endpoint instead of opening the database, so a client that must not touch Torque's state (an agent under write protection) still gets the full tool surface. `--remote` alone, or `TORQUE_MCP_REMOTE=1`, uses `http://127.0.0.1:$TORQUE_HTTP_PORT/mcp`; a URL selects another daemon.
+`torque serve` also serves the same MCP tools at `/mcp` (Streamable HTTP, stateless) on its HTTP listener, behind the same auth as `/api/v1`: loopback hosts only without `TORQUE_API_TOKEN`, the bearer token with it. It is wired as stdio `torque mcp` is, with the daemon's own scheduler and session manager, and with no inbox-poll registry: `torque_inbox_poll` answers that polling is not available, as it does over stdio.
+
+`torque mcp --remote` relays stdio to that endpoint instead of opening the database, so a client that must not touch Torque's state (an agent under write protection) still gets the full tool surface. `--remote` alone, or `TORQUE_MCP_REMOTE=1`, uses `http://127.0.0.1:$TORQUE_HTTP_PORT/mcp`; `--remote=URL` (with the equals sign: a separate argument is refused) or `TORQUE_MCP_REMOTE=URL` selects another daemon. Notes:
+
+- The tool list is the daemon's, registered when it started, so enabling a feature (`features.collections`, below) takes a daemon restart, not a restart of the relay.
+- The relay forwards requests concurrently, but a client's cancellation of a request is not propagated: the daemon finishes the call and the reply is dropped.
+- It sends `TORQUE_API_TOKEN` as the bearer, never follows a redirect (so the token cannot reach another host), and warns when it would send the token over plain http to a non-loopback host.
+- The MCP handler's own localhost check ignores the token: a same-host reverse proxy that keeps the original `Host` header is refused by `/mcp` even with a valid bearer. Have the proxy rewrite `Host` to a loopback name, or point `--remote` at the daemon directly.
 Opt-in MCP tool groups are registered when the MCP process starts, based on persisted `features.*` settings in the backing DB. If you enable a new feature such as `features.collections`, restart the MCP process so `tools/list` picks up the new `torque_collection_*` tools.
 
 `torque profiles lint` validates `profiles.yaml` as an execution-template registry against Torque's current executor/provider catalog. It fails on unknown fields, missing or unsupported providers, and dishonest profile names that omit or misstate the provider binding. Use `make profiles-lint` in CI or pre-commit.
@@ -119,7 +126,7 @@ Common environment variables:
 - `TORQUE_POSTGRES_DSN` — if set, use Postgres instead of SQLite
 - `TORQUE_HTTP_PORT` — HTTP port for `serve`, default `8990` (bound on
   `127.0.0.1` unless `--addr` says otherwise)
-- `TORQUE_API_TOKEN` — bearer token required on `/api` requests; required to
+- `TORQUE_API_TOKEN` — bearer token required on `/api/v1` and `/mcp` requests; required to
   bind beyond loopback
 - `TORQUE_CORS_ORIGINS` — comma-separated browser origins allowed besides
   loopback ones

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -48,7 +49,7 @@ func TestMCPRemoteNeverTouchesTheDatabase(t *testing.T) {
 	store := sqlitetest.OpenStore(t)
 	svc := service.New(store)
 	sessions := agent.NewManager(&agent.Dependencies{Store: store, WorkspacesRoot: testenv.WorkspacesRoot(t)})
-	daemon := httptest.NewServer(httpserver.New(svc, nil).WithMCP(bootstrap.DaemonMCPHandler(svc, nil, sessions, nil, nil, nil)))
+	daemon := httptest.NewServer(httpserver.New(svc, nil).WithMCP(bootstrap.DaemonMCPHandler(svc, nil, sessions, nil)))
 	t.Cleanup(daemon.Close)
 
 	locked := filepath.Join(t.TempDir(), "locked")
@@ -100,4 +101,25 @@ func TestMCPRemoteNeverTouchesTheDatabase(t *testing.T) {
 	entries, err := os.ReadDir(locked)
 	require.NoError(t, err)
 	assert.Empty(t, entries, "--remote must create nothing where Torque keeps its state")
+}
+
+// --remote's value is optional, so `--remote URL` is --remote plus a
+// positional URL. That used to be ignored: the bridge dialed the default
+// daemon, possibly the wrong one. It is refused now, naming the right form,
+// and prints nothing on stdout (the protocol stream) or the URL's
+// credentials anywhere.
+func TestMCPRemoteURLNeedsAnEqualsSign(t *testing.T) {
+	cmd := mcpCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"--remote", "http://alice:hunter2@127.0.0.1:9/mcp"})
+	err := cmd.ExecuteContext(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--remote=URL")
+	assert.Empty(t, out.String(), "stdout carries the MCP protocol")
+	for _, text := range []string{err.Error(), errOut.String()} {
+		assert.NotContains(t, text, "hunter2")
+		assert.NotContains(t, text, "alice")
+	}
 }
