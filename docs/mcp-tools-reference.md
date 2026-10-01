@@ -41,6 +41,14 @@ free-text messages; `field` is set when a single input field is at fault
 
 ### List envelope and pagination
 
+The shared [API pagination contract](api-pagination.md) defines the S1 target
+for HTTP and MCP: cursor defaults, universal 50/200 page sizes, opt-in totals,
+clean-break envelopes, and the [current/target endpoint matrix](api-pagination.md#endpoint-capability-matrix).
+The descriptions below record pre-S1 behavior and must be reconciled when S1
+lands; they do not override the target. See also the
+[sort allow-lists](api-pagination.md#sort-allow-lists-and-defaults) and
+[counts, facets, and exports](api-pagination.md#counts-facets-and-exports).
+
 List/search tools return `data = {items: [...], meta: {...}}`. Two envelope
 shapes exist:
 
