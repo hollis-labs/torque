@@ -1,6 +1,7 @@
 package sqlstore_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -161,16 +162,36 @@ func TestSessions_RuntimeKindReadsAsCurrentMode(t *testing.T) {
 		assert.Equal(t, want[rec.ID], rec.RuntimeKind, "ListSessions %s", rec.ID)
 	}
 
+	// The live-session scan (startup sweep) reads through the same path; a
+	// spare-everything callback sees each row without changing any.
+	live := map[string]string{}
+	swept, err := store.SweepStaleSessions(func(rec *sqlstore.SessionRecord) bool {
+		live[rec.ID] = rec.RuntimeKind
+		return true
+	})
+	require.NoError(t, err)
+	assert.Zero(t, swept)
+	assert.Equal(t, want, live, "SweepStaleSessions sees current modes")
+
 	var raw string
 	require.NoError(t, store.DB().QueryRow(`SELECT runtime_kind FROM sessions WHERE id = 'S-CLI'`).Scan(&raw))
 	assert.Equal(t, "cli", raw, "stored rows are not rewritten")
 }
 
-// New rows store only current tokens, even when handed a retired one.
+// New rows store only current tokens, even when handed a retired one, on
+// both write paths. Production writes go through WriteTx.CreateSession.
 func TestSessions_CreateStoresCurrentRuntimeKind(t *testing.T) {
 	store := setupTestStore(t)
 	require.NoError(t, store.CreateSession(&sqlstore.SessionRecord{ID: "S-NEW", RuntimeKind: "serve-http"}))
-	var raw string
-	require.NoError(t, store.DB().QueryRow(`SELECT runtime_kind FROM sessions WHERE id = 'S-NEW'`).Scan(&raw))
-	assert.Equal(t, "http-sse", raw)
+
+	tx, err := store.BeginWriteTx(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, tx.CreateSession(&sqlstore.SessionRecord{ID: "S-TX", RuntimeKind: "cli"}))
+	require.NoError(t, tx.Commit())
+
+	for id, want := range map[string]string{"S-NEW": "http-sse", "S-TX": "subprocess-per-turn"} {
+		var raw string
+		require.NoError(t, store.DB().QueryRow(`SELECT runtime_kind FROM sessions WHERE id = ?`, id).Scan(&raw))
+		assert.Equal(t, want, raw, id)
+	}
 }
