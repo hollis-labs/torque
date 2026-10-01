@@ -53,7 +53,7 @@ unchanged.
 values on 64-bit builds; there are no urgency labels or 1-5 list-query
 restrictions. Repeated query keys, malformed query strings, blank/overflow/
 non-integer priority members, malformed `limit`/`offset`, invalid
-`manual`/`include_internal` aliases, unknown keys, invalid sort/date/cursor
+`manual`/`include_internal`/`eligible` aliases, unknown keys, invalid sort/date/cursor
 values, non-finite cost bounds, negative offsets, and positive
 `offset`+`cursor` combinations all return `400` rather than being ignored.
 
@@ -102,6 +102,13 @@ unchanged. Omitting `fields` returns the full task, and any other value is a
 `400`. List views use it because the description alone was most of a page's
 bytes.
 
+`eligible=true` selects static scheduler eligibility on task lists/search,
+facets, and scope rollup: todo, automatic, allowed kind, a nonempty profile
+selector for agent/internal kinds, and all dependencies done. False/omitted
+adds no restriction; all other filters intersect and internal visibility still
+applies. Runtime capacity, project contention/allowlist, budget and launch
+readiness are not evaluated. See [the exact predicate](api-pagination.md#static-task-eligibility).
+
 Task scope rollup (`GET /api/v1/tasks/rollup?group_by=project_id|epic_id|sprint_id`)
 counts tasks per scope and status in one grouped query, so a scope overview
 needs no task pages. It takes the task-list filters above (including the
@@ -144,7 +151,7 @@ is the exact filtered cohort size before cursor/limit, computed from the same
 filter predicates as the page. Otherwise total is omitted. `returned` is page
 length, never a cohort count. `next_cursor` is null on the final/empty page.
 See [the shared pagination contract](api-pagination.md) for count cost and the
-current/target matrix for the other resource families.
+implemented capability matrix for the other resource families.
 
 | Route | Filters/search | Default/max/order |
 |---|---|---|

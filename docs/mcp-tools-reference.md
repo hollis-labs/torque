@@ -69,12 +69,14 @@ stores the whole checklist as JSON, so paging bounds responses rather than
 avoiding that parent read. Concurrent checklist insertions/deletions can shift
 positions between calls, just as concurrent writes can shift offset pages.
 
-**Pending CW-20261001-0565 integration:** Sessions/session checkpoints,
-Artifacts, Collections/collection tasks/inbox, Plan children, Checkpoints/pending
-checkpoints, Templates, Models, and message read lists. Their older byte-only
-adapters do not yet satisfy the cursor contract. The MCP contract test table
-names those families as pending instead of claiming they are converted. Broker
-inbox/poll drain operations remain actions, with delivery semantics.
+Sessions/session checkpoints, artifacts, collections and scoped tasks/inbox,
+plan children, task/pending checkpoints, templates, and models also return
+cursor pages under the same 50/200 policy. Their nested scopes and original
+record projections are retained. The integrated behavioral table checks their
+cursor metadata, clamp, and emitted count. No pure-read MCP message thread tool
+is registered; broker inbox/poll operations remain actions with delivery
+semantics. HTTP message threads and inbox drains have distinct traversal rules
+[documented in the API contract](api-pagination.md#endpoint-capability-matrix).
 
 The ~100KB response cap is orthogonal to the row limit. `truncated=true` means
 the cap trimmed the page itself, and also sets `has_more=true`. The cursor is
