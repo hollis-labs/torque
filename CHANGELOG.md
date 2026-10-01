@@ -592,6 +592,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Security
 
+- An ACP launch (Copilot, Pi, an `acp-*` runtime kind) is write-protected like
+  any other (CW-20261001-0162). Since #176 an ACP boot was refused while
+  protection was on, because go-agent-wrapper had no protect-only sandbox for
+  ACP. With wrapper v0.25.0 and later Torque passes its protected paths as the
+  wrapper's `Config.ProtectedPaths`, and the ACP agent runs under its
+  protect-only profile (the host filesystem, writable, with those directories
+  read-only); a platform that cannot write-protect refuses the launch.
+  `TORQUE_SANDBOX_PROTECT=0` still turns protection off for every launch,
+  ACP included. Tested against an ACP agent helper (a write into the protected
+  directory fails, a write in the working directory lands); **not live-tested**
+  against a real Copilot or Pi binary, which the development host lacks.
 - The codex launches Torque leaves to codex's own sandbox are fewer
   (CW-20261001-0256). Three families of codex profile args still skipped
   Torque's write protection while codex ran unsandboxed: an attached short

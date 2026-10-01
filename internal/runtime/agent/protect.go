@@ -20,10 +20,6 @@ import (
 // disable it without a rollback if the sandbox backend misbehaves on a host.
 const ProtectEnv = "TORQUE_SANDBOX_PROTECT"
 
-// errACPProtectUnsupported is the refusal an ACP boot gets while protection
-// is on: go-agent-wrapper has no protect-only sandbox for ACP launches yet.
-const errACPProtectUnsupported = "ACP sandbox protect not yet supported (CW-20261001-0162); set " + ProtectEnv + "=0 to launch ACP unprotected"
-
 // ProtectionEnabled reports whether ProtectEnv leaves write protection on.
 func ProtectionEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(ProtectEnv))) {

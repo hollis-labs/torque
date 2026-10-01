@@ -262,21 +262,72 @@ func TestBoot_ProtectRefusalRefusesLaunch(t *testing.T) {
 	assert.Empty(t, fake.Calls(), "nothing is launched")
 }
 
-// An ACP launch is refused while protection is on: go-agent-wrapper cannot
-// write-protect it yet (CW-20261001-0162). Nothing is launched.
-func TestBoot_ProtectedPathsRefuseACP(t *testing.T) {
-	fake := providertest.New(t, runtimes.Copilot, providertest.Replay("copilot/acp_turn"))
-	fake.ExpectErrors()
-	fake.Install()
+// An ACP launch is write-protected like any other (CW-20261001-0162,
+// go-agent-wrapper v0.25.0+): with no sandbox policy resolved, the agent runs
+// under the wrapper's protect-only profile, so its write into the protected
+// directory fails, its write in its working directory lands, the session comes
+// up, and the host can still write the directory itself. Tested against an ACP
+// agent helper (go-providers' copilot fixtures cannot try a write); not
+// live-tested against a real Copilot or pi binary, which this host lacks.
+func TestBoot_ProtectedPathsDenyAgentWrites_ACP(t *testing.T) {
+	requireWriteProtect(t)
+	installHelper(t, "copilot", "COPILOT_CLI_PATH", "TestACPAgentHelper")
+	protect := protectedDir(t)
+	dir := t.TempDir()
+	record := filepath.Join(dir, "probe.json")
+
 	cd := composeACPDeps(t, "copilot")
-	cd.Deps.ProtectedPaths = []string{protectedDir(t)}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	cd.Deps.ProtectedPaths = []string{protect}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	_, err := cd.Manager.Boot(ctx, agent.Options{
+	sess, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID: "CW-ACP-PROTECT", AgentProfile: "worker", Workdir: t.TempDir(),
 		Mode: agent.ModeOneShot, Description: "say hello",
+		Env: map[string]string{
+			"TORQUE_TEST_ACP_AGENT": "1", "TORQUE_TEST_ACP_RECORD": filepath.Join(dir, "mcp-servers.json"),
+			"TORQUE_TEST_PROTECT_PROBE": "1", "TORQUE_TEST_PROTECT_DIR": protect, "TORQUE_TEST_PROTECT_RECORD": record,
+		},
 	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ACP sandbox protect not yet supported (CW-20261001-0162); set TORQUE_SANDBOX_PROTECT=0 to launch ACP unprotected")
-	assert.Empty(t, fake.Calls(), "nothing is launched")
+	require.NoError(t, err, "a protected ACP launch runs")
+	assert.Equal(t, agent.StatusDone, sess.Status)
+
+	var rec protectProbeRecord
+	require.Eventually(t, func() bool {
+		raw, err := os.ReadFile(record)
+		return err == nil && json.Unmarshal(raw, &rec) == nil
+	}, 10*time.Second, 20*time.Millisecond, "the helper never ran")
+	requireDenied(t, rec.ProtectWrite)
+	assert.NoFileExists(t, filepath.Join(protect, "agent-wrote"))
+	assert.Equal(t, "wrote", rec.CwdWrite, "the agent still writes its working directory")
+	require.NoError(t, os.WriteFile(filepath.Join(protect, "host-wrote"), []byte("x"), 0o600), "the host still writes its own state")
+}
+
+// With protection off (TORQUE_SANDBOX_PROTECT=0 leaves no protected paths) an
+// ACP launch is not wrapped, and its write into a directory lands: the kill
+// switch still turns the new protection off.
+func TestBoot_ACPUnprotectedWithoutProtectedPaths(t *testing.T) {
+	installHelper(t, "copilot", "COPILOT_CLI_PATH", "TestACPAgentHelper")
+	target := protectedDir(t)
+	dir := t.TempDir()
+	record := filepath.Join(dir, "probe.json")
+
+	cd := composeACPDeps(t, "copilot")
+	cd.Deps.ProtectedPaths = nil
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, err := cd.Manager.Boot(ctx, agent.Options{
+		TaskID: "CW-ACP-NOPROTECT", AgentProfile: "worker", Workdir: t.TempDir(),
+		Mode: agent.ModeOneShot, Description: "say hello",
+		Env: map[string]string{
+			"TORQUE_TEST_ACP_AGENT": "1", "TORQUE_TEST_ACP_RECORD": filepath.Join(dir, "mcp-servers.json"),
+			"TORQUE_TEST_PROTECT_PROBE": "1", "TORQUE_TEST_PROTECT_DIR": target, "TORQUE_TEST_PROTECT_RECORD": record,
+		},
+	})
+	require.NoError(t, err)
+	var rec protectProbeRecord
+	require.Eventually(t, func() bool {
+		raw, err := os.ReadFile(record)
+		return err == nil && json.Unmarshal(raw, &rec) == nil
+	}, 10*time.Second, 20*time.Millisecond)
+	assert.Equal(t, "wrote", rec.ProtectWrite, "no protected paths: nothing is write-protected")
 }

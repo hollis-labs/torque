@@ -207,13 +207,6 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: %s sessions take no go-sandbox profile (go-agent-wrapper refuses one for ACP agents)", ErrBootFailed, runtimeKind)
 	}
-	// Fail closed: go-agent-wrapper cannot write-protect an ACP launch
-	// without a resolved policy, which Torque's ACP launches do not have.
-	if len(pb.protectedPaths) > 0 {
-		shutdownLoopbackHandle(loopback)
-		return nil, fmt.Errorf("%w: %s", ErrBootFailed, errACPProtectUnsupported)
-	}
-
 	withMux := plantsMux(profile, runtimeKind)
 	if !withMux && deps.MuxCommand != "" {
 		log.Printf("agent.Boot: session=%s: mux MCP not offered to the ACP session for permission_mode %q; only bypassPermissions gets it (CW-20261001-0120)", sessID, profile.PermissionMode)
@@ -233,8 +226,17 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 		WorkspaceDir:      ws.WorkspaceDir,
 		LogPath:           ws.LogPath,
 		HeartbeatInterval: mgr.pidPollInterval,
-		ACPMCPServers:     acpMCPServers(pb.loopbackURL, deps, withMux),
-		OnACPDiagnostic:   diagnostics.observe,
+		// The control-plane directories the agent must not write
+		// (CW-20261001-0141). go-agent-wrapper v0.25.0+ applies them to an ACP
+		// launch with no resolved sandbox policy by running the child under
+		// its protect-only profile (the host filesystem, writable, with these
+		// directories read-only), and refuses the launch where the platform
+		// cannot write-protect, so an ACP agent is protected like any other
+		// (CW-20261001-0162). TORQUE_SANDBOX_PROTECT=0 leaves pb.protectedPaths
+		// empty.
+		ProtectedPaths:  pb.protectedPaths,
+		ACPMCPServers:   acpMCPServers(pb.loopbackURL, deps, withMux),
+		OnACPDiagnostic: diagnostics.observe,
 		// The agent's permission requests are answered from the profile's
 		// posture, each decision written to the session log
 		// (acp_permissions.go).

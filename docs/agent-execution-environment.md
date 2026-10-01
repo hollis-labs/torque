@@ -295,8 +295,13 @@ startup that names `TORQUE_SANDBOX_PROTECT=0`:
   would produce, and protecting it would make that directory read-only for
   every agent. Move the file into a directory of its own.
 
-An ACP launch (Copilot, Pi, or an `acp-*` runtime kind) is refused too: the
-wrapper has no protect-only sandbox for ACP yet (CW-20261001-0162).
+An ACP launch (Copilot, Pi, or an `acp-*` runtime kind) is protected too
+(CW-20261001-0162, go-agent-wrapper v0.25.0 and later): with no sandbox policy
+resolved, the agent runs under the wrapper's protect-only profile, the host
+filesystem writable with these directories read-only, and a platform that
+cannot write-protect refuses the launch. This is tested against an ACP agent
+helper, not live against a Copilot or Pi binary. The same kill switch below
+turns it off.
 
 `TORQUE_SANDBOX_PROTECT=0` (or `false`, `off`, `no`) turns protection off for
 the whole daemon, without a rollback; startup logs a warning with the value.
