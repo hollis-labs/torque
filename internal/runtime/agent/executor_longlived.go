@@ -33,6 +33,15 @@ var statusPollInterval = 5 * time.Second
 // punishing every healthy run with a tighter bound.
 const workerVerifyTimeout = 30 * time.Second
 
+// turnDrainGrace bounds how long runLongLived lets a streaming-stdio worker
+// finish its in-flight turn after self-transitioning to review/done, before
+// it stops the session. The worker signals completion with a tool call, so
+// its turn is still open: claude-code writes the turn's `result` event, the
+// only stream-json event its usage is parsed from, one model call later.
+// Stopping at the transition dropped it, and every long-lived claude run
+// recorded 0 tokens (CW-20261001-0042). A var so tests can shrink it.
+var turnDrainGrace = 30 * time.Second
+
 const (
 	operatorPauseReason   = "operator_pause: task transitioned to paused"
 	metaStopCauseOperator = "operator_pause"
@@ -69,7 +78,10 @@ const (
 //     the run completes as failed with reason="execution canceled".
 //
 // In all four cases the live session is stopped via Manager.Stop before
-// runLongLived returns, so the next dispatch sees a clean slot.
+// runLongLived returns, so the next dispatch sees a clean slot. In case 1, a
+// streaming-stdio worker that moved its task to review/done mid-turn first
+// gets up to turnDrainGrace to finish that turn, so the turn's usage is
+// recorded (CW-20261001-0042).
 func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile, opts Options, cb executor.EventCallback) (*executor.ExecutionResult, error) {
 	if opts.TaskID == "" {
 		return &executor.ExecutionResult{Status: "failed", Reason: "long-lived dispatch requires opts.TaskID"}, nil
@@ -116,6 +128,7 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 		streamErr     error
 		streamErrOnce sync.Once
 		fanoutWG      sync.WaitGroup
+		turn          turnTracker
 	)
 	fanoutWG.Add(1)
 	go func() {
@@ -142,6 +155,9 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 				default:
 				}
 			}
+			// After translateStreamEvent, so a turn's usage is already on
+			// result by the time the turn reads as ended.
+			turn.observe(ev)
 		}
 	}()
 
@@ -190,6 +206,17 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 	outcome := awaitLongLivedCompletion(ctx, e.deps, opts.TaskID, sess.ID, activityCh, terminalFailureCh, inactivityThreshold, hardCeiling, taskDeadlineCeiling)
 	if outcome.Kind == outcomeHardCeiling && taskDeadlineCeiling {
 		outcome.TaskDeadline = true
+	}
+	// A worker that signals review/done mid-turn gets turnDrainGrace to close
+	// that turn, so its usage reaches result before Stop (CW-20261001-0042).
+	// Only streaming-stdio: its turns end in EventDone/EventError, while a
+	// long-lived codex turn emits no EventDone and already reports usage as
+	// it goes. Operator transitions (pause, cancel) still stop at once.
+	if outcome.Kind == outcomeTransition && (outcome.TaskStatus == "review" || outcome.TaskStatus == "done") &&
+		sess.RuntimeKind == string(RuntimeKindStreamingStdio) {
+		if !turn.waitEnd(turnDrainGrace) {
+			log.Printf("agent: runLongLived session %s still mid-turn %s after the task left doing; stopping, so this run's last turn reports no usage", sess.ID, turnDrainGrace)
+		}
 	}
 	if outcome.operatorPause() {
 		if err := e.deps.Sessions.markOperatorPaused(context.Background(), sess.ID, operatorPauseReason); err != nil {
@@ -281,6 +308,54 @@ func (e *Executor) runLongLived(ctx context.Context, profile config.AgentProfile
 	}
 
 	return res, nil
+}
+
+// turnTracker follows whether a session is mid-turn, from the stream events
+// runLongLived's fanout drain sees: any event opens a turn, and EventDone or
+// EventError closes it. waitEnd lets runLongLived hold Stop until the open
+// turn closes (CW-20261001-0042).
+type turnTracker struct {
+	mu       sync.Mutex
+	inFlight bool
+	ended    chan struct{}
+}
+
+func (t *turnTracker) observe(ev llmtypes.StreamEvent) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	switch ev.Type {
+	case llmtypes.EventDone, llmtypes.EventError:
+		if t.inFlight {
+			t.inFlight = false
+			close(t.ended)
+		}
+	default:
+		if !t.inFlight {
+			t.inFlight = true
+			t.ended = make(chan struct{})
+		}
+	}
+}
+
+// waitEnd blocks until the open turn closes or grace elapses, and reports
+// whether no turn is open on return. It returns true at once when no turn
+// is open.
+func (t *turnTracker) waitEnd(grace time.Duration) bool {
+	t.mu.Lock()
+	if !t.inFlight {
+		t.mu.Unlock()
+		return true
+	}
+	ended := t.ended
+	t.mu.Unlock()
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case <-ended:
+		return true
+	case <-timer.C:
+		return false
+	}
 }
 
 // taskOutputCount returns how many comments and artifacts the task carries.
