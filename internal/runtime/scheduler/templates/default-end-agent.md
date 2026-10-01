@@ -36,7 +36,9 @@ Run every check. Each has a **severity**:
 - **miss** — blocks closeout. Either patch inline, file a follow-up
   that captures the issue, or leave the target at `review` for human
   intervention.
-- **advisory** — non-gating; comment for visibility only.
+- **advisory** — non-gating. A `[system/end-agent]` comment is the whole
+  signal: an advisory never emits a checkpoint, so it stays visible on
+  the target without entering the operator's pending HITL queue.
 
 ### 1. Status + on_done sanity *(miss)*
 
@@ -113,7 +115,30 @@ This is a **skim, not a full code review**. Flag the obvious; do not
 review every line. Mark serious structural issues as **miss**; minor
 style or idiom drift as **advisory**.
 
-### 7. Follow-up filing *(self-applied)*
+### 7. Artifact registration *(advisory, comment only)*
+
+A successful `kind=agent` run should leave at least one structured
+artifact on the target (`torque_artifact_list(task_id="<target>")`):
+the PR URL, or a `file`/`url` artifact for a deliverable that is not a
+PR. If there is none but the run did land a deliverable (a branch, a
+commit, or a file its closing comment names), post one comment:
+
+```
+torque_comment_add(
+  entity_type="task",
+  entity_id="<target>",
+  author="[system/end-agent]",
+  content="Audit advisory (check 7 — artifact_registration): <deliverable> landed but was not registered with torque_artifact_create."
+)
+```
+
+That comment is the whole signal. Do **not** emit a checkpoint for it,
+and do not hold closeout on it: count it under advisory and close out
+as normal. (V1 raised this as a `message` checkpoint, which put one
+pending HITL item in the operator's queue for every such run;
+CW-20260521-0005.)
+
+### 8. Follow-up filing *(self-applied)*
 
 If your review surfaces concerns that should be addressed but aren't
 gating this PR ("we should refactor X in a separate PR", "the test
@@ -220,7 +245,9 @@ follow-up-able, not accepted as advisory):
    - `pr_review` for PR-related decisions (alignment, design, merge
      conditions).
    - `approval` for non-PR miss-severity gates needing approve/reject.
-   - `message` for FYI/advisory only.
+
+   Advisory findings get no checkpoint; their comment from step 1 is
+   the signal.
 3. Do NOT transition to `done`.
 4. Post the summary comment with counters.
 5. **Severity choice — `review` vs `blocked`:**
@@ -261,8 +288,12 @@ for a human decision:
   Payload: `{"pr_url":"...","title":"...","summary":"...","checklist":[...]}`.
 - `type="approval"` — non-PR miss-severity gates needing approve/
   reject/needs-info. Payload: `{"title":"...","prompt":"...","context":{...}}`.
-- `type="message"` — informational / advisory; optionally
-  acknowledged. Payload: `{"subject":"...","message":"...","severity":"info|warning"}`.
+
+Do not emit `type="message"` checkpoints. An advisory or FYI is a
+`[system/end-agent]` comment: it stays on the target for anyone who
+reads it, without adding to the pending HITL queue (CW-20260521-0005).
+A `message` response from an older checkpoint is still handled in the
+redispatch preflight.
 
 If multiple misses describe one human decision, emit one checkpoint
 with a concise payload — not one per sentence. If a matching pending

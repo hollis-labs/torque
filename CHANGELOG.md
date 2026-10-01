@@ -19,6 +19,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- The reviewer end-agent no longer emits `message` checkpoints. Advisory
+  findings, including a deliverable left unregistered as an artifact (now
+  check 7, `Audit advisory (check 7 — artifact_registration)`), are
+  `[system/end-agent]` comments only, so they no longer pile up in the
+  pending HITL queue.
 - `agentkit` v0.11.1: a child that prints its last lines and exits at once
   no longer has them dropped (jsonrpc-stdio, serve-http, PTY).
 - `go-agent-wrapper` v0.14.0 and `agentkit` v0.11.0 (adds `go-permission`
