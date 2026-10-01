@@ -21,9 +21,8 @@ func fakeHome(t *testing.T) string {
 	return home
 }
 
-// A candidate that is unset is skipped; one that is /, the home directory or
-// an ancestor of it is never protected, since that would leave the agent
-// nothing writable; a missing one is created 0700; a file is skipped.
+// A candidate that is unset is skipped, a file is skipped, and a missing one
+// is created 0700.
 func TestResolveControlPlane(t *testing.T) {
 	home := fakeHome(t)
 	existing := filepath.Join(home, ".local", "share", "torque")
@@ -33,7 +32,6 @@ func TestResolveControlPlane(t *testing.T) {
 	require.NoError(t, os.WriteFile(file, nil, 0o600))
 
 	got, refusal := resolveControlPlane([]controlPlaneDir{
-		{"root", "/"}, {"home", home}, {"home's parent", filepath.Dir(home)},
 		{"unset", ""}, {"data", existing}, {"dot-torque", missing}, {"file", file},
 	})
 	require.Empty(t, refusal)
@@ -41,6 +39,37 @@ func TestResolveControlPlane(t *testing.T) {
 	st, err := os.Stat(missing)
 	require.NoError(t, err, "a missing control-plane directory is created before an agent can plant into it")
 	assert.Equal(t, os.FileMode(0o700), st.Mode().Perm())
+}
+
+// A candidate that is a shared directory, or contains one, refuses protection
+// rather than being skipped: protecting it would make it read-only for every
+// agent, and skipping it would leave the state in it unprotected.
+func TestResolveControlPlane_SharedDirectoryRefuses(t *testing.T) {
+	home := fakeHome(t)
+	for _, tc := range []struct{ name, dir string }{
+		{"the root", "/"},
+		{"the home directory", home},
+		{"an ancestor of the home directory", filepath.Dir(home)},
+		{"/tmp", "/tmp"},
+		{"/var/tmp", "/var/tmp"},
+		{"/var, which contains /var/tmp", "/var"},
+		{"the temp dir", os.TempDir()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, refusal := resolveControlPlane([]controlPlaneDir{{"main database dir", tc.dir}})
+			assert.Empty(t, got)
+			assert.Contains(t, refusal, "main database dir")
+			assert.Contains(t, refusal, "shared directory")
+		})
+	}
+
+	t.Run("a directory inside the temp dir is fine", func(t *testing.T) {
+		inside := filepath.Join(os.TempDir(), "torque-protect-test-"+filepath.Base(home))
+		t.Cleanup(func() { _ = os.RemoveAll(inside) })
+		got, refusal := resolveControlPlane([]controlPlaneDir{{"data dir", inside}})
+		require.Empty(t, refusal)
+		assert.Len(t, got, 1)
+	})
 }
 
 // A control-plane directory reached through a symlink in a directory the
@@ -85,12 +114,33 @@ func TestProtectControlPlane(t *testing.T) {
 		assert.Empty(t, deps.ProtectRefusal)
 		assert.DirExists(t, dotTorque)
 	})
+	t.Run("mux loses its torque server", func(t *testing.T) {
+		t.Setenv(agent.ProtectEnv, "")
+		deps := &agent.Dependencies{MuxCommand: "/bin/mux", MuxArgs: append([]string(nil), defaultMuxArgs...)}
+		ProtectControlPlane(deps, cfg)
+		assert.True(t, deps.MuxOmitsTorque, "the kickoff is told mux serves no torque tools")
+		assert.Equal(t, "/bin/mux", deps.MuxCommand)
+		assert.Equal(t, []string{"mcp", "--proxy", "--servers", "vanta,cerberus", "--token", "local-dev", "--scopes", "session.write,message.write"}, deps.MuxArgs)
+		assert.Equal(t, "vanta,torque,cerberus", defaultMuxArgs[3], "the package default is untouched")
+	})
+	t.Run("a refused protection leaves mux alone", func(t *testing.T) {
+		t.Setenv(agent.ProtectEnv, "")
+		bad := *cfg
+		bad.DBPath = "/tmp/x.db"
+		deps := &agent.Dependencies{MuxCommand: "/bin/mux", MuxArgs: append([]string(nil), defaultMuxArgs...)}
+		ProtectControlPlane(deps, &bad)
+		require.NotEmpty(t, deps.ProtectRefusal)
+		assert.False(t, deps.MuxOmitsTorque)
+		assert.Equal(t, defaultMuxArgs, deps.MuxArgs)
+	})
 	t.Run("kill switch", func(t *testing.T) {
 		t.Setenv(agent.ProtectEnv, "0")
-		deps := &agent.Dependencies{ProtectedPaths: []string{data}, ProtectRefusal: "stale"}
+		deps := &agent.Dependencies{ProtectedPaths: []string{data}, ProtectRefusal: "stale", MuxCommand: "/bin/mux", MuxArgs: append([]string(nil), defaultMuxArgs...)}
 		ProtectControlPlane(deps, cfg)
 		assert.Empty(t, deps.ProtectedPaths)
 		assert.Empty(t, deps.ProtectRefusal)
+		assert.False(t, deps.MuxOmitsTorque, "unprotected agents keep mux's torque server")
+		assert.Equal(t, defaultMuxArgs, deps.MuxArgs)
 	})
 	t.Run("the overridden profiles file and template dirs are protected", func(t *testing.T) {
 		t.Setenv(agent.ProtectEnv, "")
@@ -127,13 +177,44 @@ func TestProtectControlPlane(t *testing.T) {
 func TestProtectControlPlane_NothingToProtectRefuses(t *testing.T) {
 	home := fakeHome(t)
 	t.Setenv(agent.ProtectEnv, "")
-	// ~/.torque is a file, so it cannot be protected; every other path is
-	// the home directory, an ancestor of it, or unset.
+	// ~/.torque is a file, so it cannot be protected, and every other
+	// candidate is unset.
 	require.NoError(t, os.WriteFile(filepath.Join(home, ".torque"), nil, 0o600))
 	deps := &agent.Dependencies{}
-	ProtectControlPlane(deps, &config.Config{DataDir: home, ConfigDir: "/", StateDir: filepath.Dir(home)})
+	ProtectControlPlane(deps, &config.Config{})
 	assert.Empty(t, deps.ProtectedPaths)
 	assert.Contains(t, deps.ProtectRefusal, "no Torque control-plane directory could be write-protected")
+	assert.Contains(t, deps.ProtectRefusal, agent.ProtectEnv+"=0")
+}
+
+// TORQUE_DB_PATH=/tmp/x.db would make /tmp read-only to every agent: protection
+// refuses every launch and says so, naming the kill switch, for a DB, queue
+// or override directory alike.
+func TestProtectControlPlane_SharedDatabaseDirectoryRefuses(t *testing.T) {
+	home := fakeHome(t)
+	t.Setenv(agent.ProtectEnv, "")
+	conf := filepath.Join(home, ".config", "torque")
+	require.NoError(t, os.MkdirAll(conf, 0o700))
+	for _, tc := range []struct {
+		name string
+		cfg  config.Config
+		want string
+	}{
+		{"main DB in /tmp", config.Config{ConfigDir: conf, DBPath: "/tmp/x.db"}, "main database dir"},
+		{"main DB directly in $HOME", config.Config{ConfigDir: conf, DBPath: filepath.Join(home, "main.db")}, "main database dir"},
+		{"queue DB in /var/tmp", config.Config{ConfigDir: conf, Concurrency: config.ConcurrencyConfig{QueueDBPath: "/var/tmp/queue.db"}}, "queue database dir"},
+		{"data dir is $HOME", config.Config{ConfigDir: conf, DataDir: home}, "data dir"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := tc.cfg
+			deps := &agent.Dependencies{}
+			ProtectControlPlane(deps, &cfg)
+			assert.Empty(t, deps.ProtectedPaths)
+			assert.Contains(t, deps.ProtectRefusal, tc.want)
+			assert.Contains(t, deps.ProtectRefusal, "shared directory")
+			assert.Contains(t, deps.ProtectRefusal, agent.ProtectEnv+"=0")
+		})
+	}
 }
 
 // While protection is on, the planted mux proxies no torque server: the

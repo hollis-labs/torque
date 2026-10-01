@@ -516,24 +516,37 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
     startup:
     - a sandbox backend that cannot write-protect;
     - nothing left to protect;
-    - a directory reached through a symlink the agent could re-point.
+    - a directory reached through a symlink the agent could re-point;
+    - a directory that is, or contains, a shared one (`/`, the home
+      directory or an ancestor, `/tmp`, `/var/tmp`, the temp dir), such as
+      `TORQUE_DB_PATH=/tmp/x.db`, which would make it read-only to every
+      agent.
 
     An ACP launch is refused ("ACP sandbox protect not yet supported
     (CW-20261001-0162)").
   - While it is on, the planted `mux` server proxies no `torque` server.
     Inside the sandbox `torque mcp` cannot write its database. The
     session's loopback carries the task's Torque tools, and the kickoff says
-    so. Orchestrator-class roles keep the full surface on their loopback.
-    Workers lose cross-task reads until CW-20261001-0199.
-  - A codex launch that runs in codex's own sandbox (every posture but
-    app-server under `bypassPermissions`) is not wrapped: codex's sandbox
-    cannot start inside Torque's, and it already confines writes.
+    so. Orchestrator-class roles keep the full surface on their loopback,
+    where the tools are `mcp__loopback__torque_*` instead of
+    `mcp__mux__torque_*` and take an explicit `task_id`; their kickoff says
+    so. Workers lose cross-task reads until CW-20261001-0199.
+  - A codex launch that positively selects codex's own sandbox (`read-only`
+    or `workspace-write`: the planted default or `--sandbox`, `-c
+    sandbox_mode=`, `--full-auto`) is not wrapped: codex's sandbox cannot
+    start inside Torque's, and it already confines writes. The skip fails
+    closed: `--yolo`, `--dangerously-bypass-approvals-and-sandbox`, any other
+    sandbox mode, and any argument bearing on the sandbox or permissions
+    that Torque does not read (`default_permissions`,
+    `sandbox_workspace_write.*`, `--add-dir`, `--profile`) leave the launch
+    wrapped.
   - Under the protection, nested sandboxes (bubblewrap- or `unshare`-based
     tests, Chromium's sandbox) cannot start.
   - The profiles watcher reloads only while the profiles directory is still
     the one protected at startup, by device and inode.
   - `TORQUE_SANDBOX_PROTECT=0` turns it off, with a startup warning that
-    shows the value.
+    shows the value. An unrecognised value (`disable`) leaves it on and
+    warns.
 - `torque mcp` no longer sweeps orphaned sessions at startup; only
   `torque serve`, which owns them, does. A `torque mcp` in another PID
   namespace saw every live session as dead (CW-20261001-0141).

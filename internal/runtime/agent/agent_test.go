@@ -325,6 +325,20 @@ func TestKickoffMarkdown(t *testing.T) {
 	assert.Contains(t, protected, "only Torque tools")
 	assert.NotContains(t, protected, "mcp__mux__torque_")
 
+	// A worker's loopback is bound to its task; an orchestrator-class role's is
+	// the full surface and takes explicit task ids, so the kickoff must not
+	// tell it no task_id is needed.
+	assert.Contains(t, kickoffMarkdown(Options{TaskID: "CW-1"}, "worker", false), "no `task_id` parameter required")
+	for _, role := range []string{"orchestrator", "planner", "reviewer-end-agent"} {
+		for _, omits := range []bool{false, true} {
+			got := kickoffMarkdown(Options{TaskID: "CW-1"}, role, omits)
+			assert.Contains(t, got, "the full surface: pass the `task_id`", "%s omits=%v", role, omits)
+			assert.NotContains(t, got, "no `task_id` parameter required", "%s omits=%v", role, omits)
+		}
+		assert.Contains(t, kickoffMarkdown(Options{TaskID: "CW-1"}, role, true), "only Torque tools")
+		assert.NotContains(t, kickoffMarkdown(Options{TaskID: "CW-1"}, role, true), "mcp__mux__torque_")
+	}
+
 	// Empty role falls back to AgentProfile.
 	body = kickoffMarkdown(Options{AgentProfile: "planner"}, "", false)
 	assert.Contains(t, body, "`planner`")

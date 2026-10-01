@@ -73,8 +73,12 @@ func watchProfiles(ctx context.Context, profiles *config.ReloadableProfiles, int
 		// the one Torque write-protected at startup: whatever now sits at
 		// that path is not Torque's (CW-20261001-0141).
 		guardErr := profiles.ReloadAllowed()
-		if guardErr != nil && !refused {
-			log.Printf("[profiles] ERROR: not reloading %s: %v; keeping the last good profiles", path, guardErr)
+		switch {
+		case guardErr != nil && !refused:
+			log.Printf("[profiles] ERROR: not reloading %s: %v; keeping the last good profiles. Restart torque to adopt the new directory", path, guardErr)
+		case guardErr == nil && refused:
+			log.Printf("[profiles] reloading %s resumed: it is the protected directory again", path)
+			lastSeen = nil // re-read the file: it may have changed while reloads were refused
 		}
 		refused = guardErr != nil
 		if !refused {

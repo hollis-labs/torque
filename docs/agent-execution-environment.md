@@ -288,13 +288,20 @@ startup that names `TORQUE_SANDBOX_PROTECT=0`:
 - a directory reached through a symlink the agent could re-point, that is
   one in a directory the operator's uid can write. The sandbox protects the
   real path it resolves at launch, so a re-pointed link would send Torque to
-  a directory of the agent's.
+  a directory of the agent's;
+- a candidate that is, or contains, a shared directory: `/`, the home
+  directory or an ancestor of it, `/tmp`, `/var/tmp` or the temp dir. This
+  is what `TORQUE_DB_PATH=/tmp/x.db` or a queue database directly in `$HOME`
+  would produce, and protecting it would make that directory read-only for
+  every agent. Move the file into a directory of its own.
 
 An ACP launch (Copilot, Pi, or an `acp-*` runtime kind) is refused too: the
 wrapper has no protect-only sandbox for ACP yet (CW-20261001-0162).
 
 `TORQUE_SANDBOX_PROTECT=0` (or `false`, `off`, `no`) turns protection off for
 the whole daemon, without a rollback; startup logs a warning with the value.
+Any other value, `disable` for one, is not recognised: protection stays on,
+and startup warns so.
 
 ### What changes for agents
 
@@ -304,16 +311,29 @@ the whole daemon, without a rollback; startup logs a warning with the value.
   loopback serves the task's Torque tools, and the kickoff says it is the
   only Torque surface. Orchestrator-class roles (orchestrator, planner,
   reviewer end-agent) get the full Torque surface on their loopback and lose
-  nothing. Workers lose cross-task reads (`torque_task_list`, search) until
-  `torque mcp` can proxy the daemon (CW-20261001-0199). When the mux args
-  cannot be narrowed (`--proxy` with no `--servers`), mux is not planted.
-- **Codex keeps its own sandbox.** A codex launch whose commands run in
-  codex's own OS sandbox (any `sandbox_mode` but `danger-full-access`: every
-  posture except an app-server launch under `bypassPermissions`) is not
-  wrapped in Torque's. Codex's sandbox could not start inside it, and it
-  already confines writes to the working directory, temp and its
-  `writable_roots`, where Torque adds no protected directory. The launch logs
-  that it was left to codex.
+  no capability, but **their tool names change**: what they called as
+  `mcp__mux__torque_*` is `mcp__loopback__torque_*` (the spelling in Claude;
+  the loopback server and the `torque_*` tool names in other runtimes), and
+  it takes an explicit `task_id` on every call. Their kickoff says so. Workers
+  lose cross-task reads (`torque_task_list`, search) until `torque mcp` can
+  proxy the daemon (CW-20261001-0199). When the mux args cannot be narrowed
+  (`--proxy` with no `--servers`), mux is not planted.
+- **Codex keeps its own sandbox, when the profile positively selects one.** A
+  codex launch whose commands run in codex's own OS sandbox is not wrapped in
+  Torque's: codex's sandbox could not start inside it, and it already
+  confines writes to the working directory, temp and its `writable_roots`,
+  where Torque adds no protected directory. The skip fails closed. It
+  applies only when the launch's `sandbox_mode` is positively `read-only` or
+  `workspace-write`: the planted default (every posture except an app-server
+  launch under `bypassPermissions`, which plants `danger-full-access`), or a
+  profile arg Torque reads (`--sandbox`/`-s`, `-c sandbox_mode=`,
+  `--full-auto`). The no-sandbox flags (`--dangerously-bypass-approvals-and-sandbox`,
+  `--yolo`), any other sandbox mode, and any arg that bears on the sandbox
+  in a way Torque does not read (another `-c` key naming a sandbox or
+  permission, such as `sandbox_workspace_write.writable_roots` or
+  `default_permissions`; `--add-dir`; `--profile`/`-p`; any argument naming a
+  sandbox, permission, bypass or yolo) leave the launch wrapped. A skipped
+  launch logs that it was left to codex.
 - **No nested sandboxes.** Inside the protection a process cannot create its
   own user namespace (on Ubuntu, AppArmor denies it), so anything that
   sandboxes itself with bubblewrap or `unshare` fails there: tests that use
@@ -336,6 +356,18 @@ profiles file's directory is still the one Torque protected at startup
   `~/.bashrc`, `~/.config/systemd/user`, a repository's git hooks.
 - **Same-uid services.** The agent can ask one to write for it:
   `systemd-run --user` over the user bus.
+- **What mux proxies, when mux is planted.** mux runs inside the sandbox, but
+  the services behind its tools do not, so they act with their own authority
+  (Claude workers' planted mux is becoming opt-in, CW-20261001-0226). The
+  planted `--servers vanta,cerberus` surfaces 137 tools (listed from `mux mcp`
+  on 2026-10-01): 31 `cerberus_*`, 66 `mux_*` and 40 `tether_*`, and no
+  `dev_bash`- or `dev_write`-style tool. The cerberus ones include
+  `cerberus_ssh_exec`, `cerberus_ssh_put` and `_put_dir`,
+  `cerberus_docker_up`/`_down`/`_destroy`, `cerberus_resource_deploy`,
+  `cerberus_pipeline_run` and `cerberus_lockdown`. A call that leaves the
+  sandbox (ssh to a host, the docker daemon, the cerberus daemon) runs with
+  that service's authority, so an ssh to this host as the operator's uid is
+  a same-uid route to the protected directories.
 
 Closing those is go-sandbox's follow-up (CW-0128).
 

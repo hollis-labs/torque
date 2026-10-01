@@ -257,9 +257,11 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	reminderRegistry := steering.NewReminderRegistry()
 
 	// Unified agent substrate (CW-20260508-0001 — replaces cliexec + sessionmgr).
-	// Constructs Dependencies + Manager, runs the orphan sweep, and is the
-	// single root every Boot caller (planstart, scheduler dispatch, end-agent,
-	// HTTP/MCP) reaches into.
+	// Constructs Dependencies + Manager, and is the single root every Boot
+	// caller (planstart, scheduler dispatch, end-agent, HTTP/MCP) reaches
+	// into. AgentDeps does not sweep: this daemon owns the sessions, so it
+	// sweeps orphaned ones itself below (CW-20261001-0141), and
+	// TestServeSweepsOrphanSessionsAtStartup holds it to that.
 	agentDeps, agentDepsClose, err := bootstrap.AgentDeps(store, profiles, svc, tools, sched.EventBus(), stateWriter, pollRegistry, reminderRegistry)
 	if err != nil {
 		return fmt.Errorf("bootstrap agent deps: %w", err)

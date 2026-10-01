@@ -98,8 +98,15 @@ make network calls; review them before enabling.
 - under that protection, nested sandboxes do not work: a process inside it
   cannot create its own user namespace, so a worker running bubblewrap- or
   `unshare`-based tests, or Chromium with its sandbox, fails there.
-  `TORQUE_SANDBOX_PROTECT=0` is the escape hatch. Codex launches that use
-  codex's own sandbox are left to it, unwrapped.
+  `TORQUE_SANDBOX_PROTECT=0` is the escape hatch. A codex launch whose
+  profile positively selects codex's own sandbox (`read-only` or
+  `workspace-write`) is left to it, unwrapped; any other codex launch,
+  `--yolo` and unrecognised sandbox or permission arguments included, is
+  wrapped.
+- the services behind a planted mux's tools (`cerberus_ssh_exec`, the docker
+  daemon, the cerberus daemon) run outside the sandbox, with their own
+  authority; an ssh to this host as the operator's uid is a same-uid route to
+  the protected directories.
 - Torque's own git runs unsandboxed in repositories agents can write. It
   neutralizes fsmonitor, hooks, the repository's filter drivers and `ext::`
   transports, and skips its best-effort fetch when the repository's config

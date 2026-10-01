@@ -38,6 +38,9 @@ func ProtectControlPlane(deps *agent.Dependencies, cfg *config.Config) {
 		return
 	}
 	deps.ProtectedPaths, deps.ProtectRefusal = nil, ""
+	if !agent.ProtectEnvRecognized() {
+		log.Printf("[sandbox] WARN: %s=%q is not a recognised value, so protection stays ON; use 0, false, off or no to turn it off", agent.ProtectEnv, os.Getenv(agent.ProtectEnv))
+	}
 	if !agent.ProtectionEnabled() {
 		log.Printf("[sandbox] WARN: %s=%q: agent launches do not write-protect Torque's state", agent.ProtectEnv, os.Getenv(agent.ProtectEnv))
 		return
@@ -112,18 +115,17 @@ func effectiveProfilesPath(cfg *config.Config, deps *agent.Dependencies) string 
 }
 
 // resolveControlPlane turns the candidates into the directories to protect.
-// A candidate that is unset is skipped; one that is /, the home directory or
-// an ancestor of it is skipped, since protecting it would leave the agent
-// nothing to write. A missing one is created 0700, so a fresh host protects
-// it before an agent can plant into it. Reaching one through a symlink an
-// agent could re-point refuses protection outright: the sandbox protects the
-// real path it resolves at launch, and an agent that re-points the link
-// redirects Torque to a directory of its own. Each decision is logged.
+// A candidate that is unset is skipped. A missing one is created 0700, so a
+// fresh host protects it before an agent can plant into it. Two things refuse
+// protection outright, since each would leave Torque's state exposed or the
+// agents without a place to write: a candidate reached through a symlink an
+// agent could re-point (the sandbox protects the real path it resolves at
+// launch, and an agent that re-points the link redirects Torque to a
+// directory of its own), and one that is a shared directory, such as
+// TORQUE_DB_PATH=/tmp/x.db, whose parent /tmp would be read-only to every
+// agent (sharedControlPlaneDir). Each decision is logged.
 func resolveControlPlane(candidates []controlPlaneDir) ([]string, string) {
-	home, _ := os.UserHomeDir()
-	if real, err := filepath.EvalSymlinks(home); err == nil {
-		home = real
-	}
+	shared := sharedDirs()
 	var kept []string
 	for _, c := range candidates {
 		if c.path == "" {
@@ -141,9 +143,8 @@ func resolveControlPlane(candidates []controlPlaneDir) ([]string, string) {
 		if r, err := filepath.EvalSymlinks(path); err == nil {
 			real = r
 		}
-		if real == string(filepath.Separator) || (home != "" && isAncestorOrSelf(real, home)) {
-			log.Printf("[sandbox] not write-protecting %s %s: it is / or contains the home directory", c.what, path)
-			continue
+		if dir := sharedControlPlaneDir(real, shared); dir != "" {
+			return nil, fmt.Sprintf("the %s %s is or contains the shared directory %s, and protecting it would make %s read-only for every agent", c.what, path, dir, dir)
 		}
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			log.Printf("[sandbox] not write-protecting %s %s: create it: %v", c.what, path, err)
@@ -197,6 +198,41 @@ func repointableSymlink(path string) string {
 
 // accessWrite is access(2)'s W_OK.
 const accessWrite = 0x2
+
+// sharedDirs are the directories agents must keep writing to and that are
+// not Torque's: the home directory, /tmp, /var/tmp and the temp dir, each as
+// given and with symlinks resolved.
+func sharedDirs() []string {
+	var out []string
+	add := func(dir string) {
+		if dir == "" {
+			return
+		}
+		out = append(out, filepath.Clean(dir))
+		if real, err := filepath.EvalSymlinks(dir); err == nil && real != dir {
+			out = append(out, filepath.Clean(real))
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		add(home)
+	}
+	add("/tmp")
+	add("/var/tmp")
+	add(os.TempDir())
+	return out
+}
+
+// sharedControlPlaneDir returns the shared directory dir is or contains
+// (the root, the home directory and its ancestors, /tmp, /var/tmp, the temp
+// dir), or "". A directory inside one of them is fine.
+func sharedControlPlaneDir(dir string, shared []string) string {
+	for _, s := range shared {
+		if isAncestorOrSelf(dir, s) {
+			return s
+		}
+	}
+	return ""
+}
 
 // isAncestorOrSelf reports whether dir is path or one of its ancestors.
 func isAncestorOrSelf(dir, path string) bool {

@@ -101,4 +101,11 @@ func TestWatchProfilesRefusesReplacedDirectory(t *testing.T) {
 	assert.Equal(t, "codex", config.GetProfileOrDefault(profiles, "default").Provider, "a replaced profiles directory is not reloaded")
 	assert.Error(t, profiles.Reload(), "an explicit reload is refused too")
 	assert.Equal(t, "codex", config.GetProfileOrDefault(profiles, "default").Provider)
+
+	// With the protected directory back in place the watcher resumes, and picks
+	// up what changed in the meantime.
+	require.NoError(t, os.RemoveAll(dir))
+	require.NoError(t, os.Rename(dir+".moved", dir))
+	write("agy")
+	require.Eventually(t, func() bool { return config.GetProfileOrDefault(profiles, "default").Provider == "agy" }, 2*time.Second, 10*time.Millisecond, "reloading resumes once the protected directory is back")
 }
