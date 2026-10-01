@@ -55,7 +55,7 @@ var apiProviderCatalog = map[string]profileProviderSpec{
 // every go-providers registry id and alias whose runtime has a native mode
 // go-agent-wrapper's launch.Select drives (CW-20260930-0134), except the
 // retired bare `claude`. ACP-only runtimes (Copilot, Pi) are left out until
-// Torque launches ACP sessions (CW-20261001-0084).
+// Torque launches ACP sessions (CW-20261001-0097).
 func LaunchableProviders() []string {
 	native := map[runtimes.ID]bool{}
 	for _, k := range launch.Supported() {
@@ -111,7 +111,7 @@ func cliLaunchReason(name string, desc registry.Descriptor) string {
 	case name == "claude":
 		return "bare claude provider retired 2026-05-16; use provider=claude-code"
 	case len(desc.NativeModes()) == 0:
-		return fmt.Sprintf("%s is ACP-only and Torque does not launch ACP sessions yet (CW-20261001-0084)", desc.ID)
+		return fmt.Sprintf("%s is ACP-only and Torque does not launch ACP sessions yet (CW-20261001-0097)", desc.ID)
 	default:
 		return fmt.Sprintf("Torque has no launch path for %s's native modes", desc.ID)
 	}

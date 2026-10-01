@@ -51,7 +51,7 @@ type selectedRuntime struct {
 // ACP modes (Copilot and Pi have no other) are refused with a reason:
 // Torque's boot plants a boot dir (task bundle, loopback MCP) that ACP
 // sessions have no slot for yet, and SendTurn has no ACP delivery
-// (CW-20261001-0084).
+// (CW-20261001-0097).
 //
 // profileName is the torque agent-profile lookup key. OpenCode needs it:
 // `opencode run` dispatches via `--agent <name>`, and by convention the
@@ -80,7 +80,7 @@ func selectRuntime(profile config.AgentProfile, profileName string, kind Runtime
 	}
 	if mode.ACP() {
 		return selectedRuntime{}, fmt.Errorf(
-			"%s runs over ACP (%s) and Torque does not launch ACP sessions yet (CW-20261001-0084); its native modes: %s",
+			"%s runs over ACP (%s) and Torque does not launch ACP sessions yet (CW-20261001-0097); its native modes: %s",
 			desc.ID, mode, modeList(desc.NativeModes()))
 	}
 	if !desc.Supports(mode) {
