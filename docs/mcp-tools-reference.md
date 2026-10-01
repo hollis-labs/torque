@@ -793,6 +793,24 @@ task statuses to counts; all statuses for each returned parent are complete.
 Parents order by task total descending, then ID ascending. `bucket_limit`
 bounds the number of parent groups independently of each facet dimension.
 
+Parent tools and their HTTP routes also accept `rollup_ids` CSV. IDs are trimmed,
+blank values ignored, and duplicates removed; more than 200 distinct IDs rejects
+with field `rollup_ids`. When provided, it selects only the returned rollup groups,
+independently of `bucket_limit`; `matching_count` and all facet buckets still
+count the full filtered cohort. Non-cohort IDs are omitted, zero-task cohort IDs
+get explicit `{total:0,counts:{}}`, and blank CSV returns no groups. In this mode,
+rollup `total_distinct` counts the requested IDs inside the cohort, with
+`truncated:false` before byte-budget trimming. Without `rollup_ids`, top-N
+selection and its metadata are unchanged.
+
+`task_totals:{total,counts}` sums tasks across **all** cohort parents, excluding
+internal tasks, independently of bucket limits and rollup IDs. Project responses
+also add `children:{sprints,epics}` to each returned scope and whole-cohort
+`child_totals:{sprints,epics}`. Child counts use the lists' archive rule:
+`include_archived=false` excludes archived children and `true` includes them.
+Project status/search filters select the parent cohort, without filtering child
+status/names. Zero counts are explicit; epics/sprints omit project-only fields.
+
 Run responses add `totals:{cost,prompt_tokens,completion_tokens}`. Cost sums
 canonical `cost_ledger` entries joined by run ID to the exact matching runs;
 run records supply tokens. `since`/`until` filter run start times, not ledger
@@ -803,7 +821,7 @@ fallback `agent_profile`. No historical profile snapshot is stored on runs.
 
 MCP's byte budget can further trim value buckets or whole parent groups;
 `returned` and `truncated` describe that reduction. Exact `matching_count`,
-`total_distinct`, and run totals are retained. HTTP routes are `/api/v1/projects/facets`,
+`total_distinct`, whole-cohort task/child totals, and run totals are retained. HTTP routes are `/api/v1/projects/facets`,
 `/epics/facets`, `/sprints/facets`, and `/runs/facets` under the same `/api/v1`
 prefix. GUI consumption is S3 work.
 

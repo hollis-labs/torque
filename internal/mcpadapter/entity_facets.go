@@ -12,9 +12,10 @@ import (
 func (a *Adapter) registerEntityFacetTool(entity string) {
 	options := []toolOpt{withDescription(`Count the whole filtered list cohort without loading list rows. Use for parent stat cards and filter choices; the corresponding list tool supplies paged records.
 Response shape: data = {matching_count,bucket_limit,dimensions,facets:[{dimension,buckets:[{value,count}],total_distinct,returned,truncated}],task_rollups:{scopes:[{scope_id,total,counts}],total_distinct,returned,truncated}}.
+Parent responses also include exact task_totals:{total,counts}; projects add children:{sprints,epics} per scope and child_totals:{sprints,epics}. rollup_ids selects only rollup groups (max 200 distinct IDs), not the cohort; requested zero-task cohort IDs are explicit and non-cohort IDs omitted. include_archived also controls project child counts.
 Internal tasks are excluded from rollups; zero-task parents are included. bucket_limit defaults to 50/max 200 and bounds each dimension and parent groups independently. Every returned parent's status counts are complete.
 Buckets sort count descending, value ascending (null last among ties); parents sort task count descending, ID ascending. Row limit/offset/cursor/sort parameters are rejected.
-Example: {"status":"active","dimensions":"status","bucket_limit":"20"}`), withString("status", desc("Same status filter as the list.")), withString("include_archived", desc("Include archived parents; default false.")), withString("dimensions", desc("Comma-separated dimensions: project status; epic status,project_id,priority; sprint status,project_id,approval_mode. Defaults to all supported dimensions.")), withString("bucket_limit", desc("Bucket bound, default 50, max 200."))}
+Example: {"status":"active","dimensions":"status","bucket_limit":"20"}`), withString("status", desc("Same status filter as the list.")), withString("include_archived", desc("Include archived parents; default false.")), withString("dimensions", desc("Comma-separated dimensions: project status; epic status,project_id,priority; sprint status,project_id,approval_mode. Defaults to all supported dimensions.")), withString("bucket_limit", desc("Bucket bound, default 50, max 200.")), withString("rollup_ids", desc("CSV parent IDs for complete rollups, maximum 200 distinct IDs. Does not restrict cohort totals or facets."))}
 	if entity != "project" {
 		options = append(options, withString("project_id", desc("Filter by project ID.")))
 	}
@@ -50,6 +51,13 @@ func (a *Adapter) handleEntityFacets(entity string, req map[string]any) (any, er
 			return nil, e
 		}
 		opts.Dimensions = strings.Split(raw, ",")
+	}
+	if reqHasArg(req, "rollup_ids") {
+		raw, e := reqQueryString(req, "rollup_ids")
+		if e != nil {
+			return nil, e
+		}
+		opts.RollupIDs = strings.Split(raw, ",")
 	}
 	project, e := reqQueryString(req, "project_id")
 	if e != nil {
