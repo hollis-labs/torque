@@ -152,6 +152,15 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, PickDecisions, error) {
 	//     deadlock above.
 	//   - kind=issue: backlog capture rows, never dispatched and never counted
 	//     as project work in flight.
+	//
+	// manual=1 tasks are skipped for the same reason, whatever their kind.
+	// The picker never dispatches them (SkipReasonManual below): a manual
+	// task at `doing` is being worked outside the scheduler, by a person or
+	// an agent session that tracks its work in Torque, and that is its
+	// normal state, not work the scheduler has in flight. Counting it would
+	// park every dispatchable task in its project at project_busy for as
+	// long as the outside work runs (CW-20261001-0035; healthscan excludes
+	// manual tasks for the same reason, CW-20261001-0024).
 	busy, err := p.store.ListTasks(sqlstore.TaskFilter{Status: "doing"})
 	if err != nil {
 		return nil, decisions, err
@@ -188,6 +197,9 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, PickDecisions, error) {
 	busyProjects := make(map[string]struct{}, len(busy))
 	for _, t := range busy {
 		if t.Kind == "internal" || t.Kind == "plan" || t.Kind == "parent" || t.Kind == "issue" {
+			continue
+		}
+		if t.Manual {
 			continue
 		}
 		if pk := projectKey(t); pk != "" {

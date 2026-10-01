@@ -20,6 +20,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- A manual task in `doing` no longer holds its project's scheduler slot. The
+  picker never dispatches manual tasks, so one being worked outside the
+  scheduler kept every dispatchable task in its project at `project_busy`.
 - Stuck-task recovery no longer resets manual tasks. A manual task is never
   dispatched, so at `doing` it has no worker heartbeat; the health scan
   reported it as `task_doing_no_worker` every tick and re-queued it to `todo`

@@ -267,3 +267,51 @@ func TestPickerKindParentDoesNotBlockSameProjectChildren(t *testing.T) {
 	assert.Equal(t, 0, decisions.Counts[scheduler.SkipReasonProjectBusy],
 		"no candidate should be skipped with project_busy when only a kind=parent task is in flight")
 }
+
+// TestPickerManualDoingDoesNotBlockProject locks in CW-20261001-0035. A
+// manual task is never dispatched by the picker, so at `doing` it is being
+// worked outside the scheduler (a person, or an agent session tracking its
+// work in Torque). It must not hold its project's slot, while a dispatched
+// (manual=false) `doing` task in another project still does.
+func TestPickerManualDoingDoesNotBlockProject(t *testing.T) {
+	store := setupPickerStore(t)
+	picker := scheduler.NewPicker(store)
+
+	// Project P: a manual agent task in `doing` and a dispatchable todo.
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-P-MANUAL-DOING", Title: "worked by an agent session", Status: "doing",
+		Kind: "agent", Manual: true, Priority: 1,
+		Executor: "cli", AgentProfile: "cli-profile",
+		ProjectID: sql.NullString{String: "PRJ-P", Valid: true},
+	}))
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-P-TODO", Title: "P waiting", Status: "todo",
+		Kind: "agent", Priority: 1,
+		Executor: "cli", AgentProfile: "cli-profile",
+		ProjectID: sql.NullString{String: "PRJ-P", Valid: true},
+	}))
+	// Project Q: a dispatched task in `doing` and a todo behind it.
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-Q-DOING", Title: "Q running", Status: "doing",
+		Kind: "agent", Priority: 1,
+		Executor: "cli", AgentProfile: "cli-profile",
+		ProjectID: sql.NullString{String: "PRJ-Q", Valid: true},
+	}))
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-Q-TODO", Title: "Q waiting", Status: "todo",
+		Kind: "agent", Priority: 1,
+		Executor: "cli", AgentProfile: "cli-profile",
+		ProjectID: sql.NullString{String: "PRJ-Q", Valid: true},
+	}))
+
+	picked, decisions, err := picker.Pick(10)
+	require.NoError(t, err)
+	require.Len(t, picked, 1, "P's manual `doing` task must not hold P's slot; Q's dispatched one still holds Q's")
+	assert.Equal(t, "CW-P-TODO", picked[0].ID)
+	assert.Equal(t, 1, decisions.Counts[scheduler.SkipReasonProjectBusy])
+	for _, d := range decisions.Skipped {
+		if d.Reason == scheduler.SkipReasonProjectBusy {
+			assert.Equal(t, "CW-Q-TODO", d.TaskID)
+		}
+	}
+}
