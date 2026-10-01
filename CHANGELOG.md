@@ -16,7 +16,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   as stdio has none; the relay forwards requests concurrently, never
   follows a redirect with the bearer, answers requests outstanding when the
   daemon's connection dies, and reads `--remote URL` (without `=`) as an
-  error (CW-20261001-0199).
+  error. A request that fails fails only itself (each forwarded request has
+  its own connection), an empty `--remote=` or `TORQUE_MCP_REMOTE` is an
+  error rather than the local database, and a URL value that cannot be
+  validated is never echoed in an error (CW-20261001-0199).
 - A long-lived worker that ends its turn without moving its task out of
   `doing` is reminded once, then routed, instead of holding its project's
   slot until the 30-minute inactivity threshold. After 90 seconds idle

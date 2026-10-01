@@ -1,11 +1,13 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/hollis-labs/torque/internal/config"
@@ -43,14 +45,23 @@ new torque mcp process.`,
 		// bridge would dial the default daemon, possibly the wrong one.
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) > 0 {
-				return fmt.Errorf("unexpected argument %q: give --remote's URL as --remote=URL (a separate argument is not read as its value)", scrubURLCredentials(args[0]))
+				return fmt.Errorf("unexpected argument %s: give --remote's URL as --remote=URL (a separate argument is not read as its value)", shownValue(args[0]))
 			}
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Before config.Load: resolving app paths materializes the data
-			// dir, which --remote must never create or touch.
-			if endpoint := remoteMCPEndpoint(remote, os.Getenv("TORQUE_MCP_REMOTE"), config.HTTPPortFromEnv()); endpoint != "" {
+			// dir, which --remote must never create or touch. And an
+			// explicit but empty selection (--remote=, TORQUE_MCP_REMOTE=)
+			// is an error, never the local database: a launcher passing
+			// --remote=$UNSET would otherwise create main.db and the data
+			// dirs, which is what --remote exists to avoid.
+			env, envSet := os.LookupEnv(mcpbridge.RemoteEnv)
+			endpoint, err := remoteMCPEndpoint(cmd.Flags().Changed("remote"), remote, envSet, env, config.HTTPPortFromEnv())
+			if err != nil {
+				return err
+			}
+			if endpoint != "" {
 				return runRemoteMCP(cmd, endpoint, config.APITokenFromEnv())
 			}
 			cfg, err := config.Load()
@@ -174,34 +185,48 @@ new torque mcp process.`,
 	return cmd
 }
 
-// scrubURLCredentials drops user:password@ from a URL string for messages.
-func scrubURLCredentials(s string) string {
-	if u, err := url.Parse(s); err == nil && u.User != nil {
-		u.User = nil
-		return u.String()
+// shownValue is v as it may appear in an error. A value that cannot be
+// validated is not echoed when it could carry credentials: a URL with the
+// scheme forgotten, a bad port or a stray bracket fails to parse, and what
+// url.Parse cannot split, a scrubber cannot either. Anything containing '@'
+// is hidden whole.
+func shownValue(v string) string {
+	if strings.Contains(v, "@") {
+		return "the value (hidden: it contains '@', so it may carry credentials)"
 	}
-	return s
+	return strconv.Quote(v)
 }
 
 // remoteDefault is --remote given without a URL.
 const remoteDefault = "default"
 
 // remoteMCPEndpoint returns the daemon MCP URL `torque mcp` relays to, or
-// "" to serve from the local database. The flag wins over
-// TORQUE_MCP_REMOTE; "default", "1" and "true" mean the daemon on this
-// host's TORQUE_HTTP_PORT.
-func remoteMCPEndpoint(flag, env string, port int) string {
-	v := strings.TrimSpace(flag)
-	if v == "" {
-		v = strings.TrimSpace(env)
+// "" to serve from the local database. The flag wins over TORQUE_MCP_REMOTE;
+// "default", "1" and "true" mean the daemon on this host's TORQUE_HTTP_PORT,
+// and "0" and "false" ask for the local database explicitly. Only an absent
+// flag and variable mean local by default: one that was given with an empty
+// value is an error, so it can never fall into local mode unnoticed.
+func remoteMCPEndpoint(flagSet bool, flag string, envSet bool, env string, port int) (string, error) {
+	var v string
+	switch {
+	case flagSet:
+		if v = strings.TrimSpace(flag); v == "" {
+			return "", errors.New("torque mcp: --remote was given an empty value: use --remote for the daemon on this host, --remote=URL for another, or leave it out to serve from the local database")
+		}
+	case envSet:
+		if v = strings.TrimSpace(env); v == "" {
+			return "", fmt.Errorf("torque mcp: %s is set but empty: unset it to serve from the local database, or set it to 1 (the daemon on this host) or a URL", mcpbridge.RemoteEnv)
+		}
+	default:
+		return "", nil
 	}
 	switch strings.ToLower(v) {
-	case "", "0", "false":
-		return ""
+	case "0", "false":
+		return "", nil
 	case remoteDefault, "1", "true":
-		return fmt.Sprintf("http://127.0.0.1:%d/mcp", port)
+		return fmt.Sprintf("http://127.0.0.1:%d/mcp", port), nil
 	}
-	return v
+	return v, nil
 }
 
 // runRemoteMCP relays stdio to the daemon (mcpbridge). It loads no config
@@ -210,7 +235,7 @@ func remoteMCPEndpoint(flag, env string, port int) string {
 func runRemoteMCP(cmd *cobra.Command, endpoint, token string) error {
 	u, err := url.Parse(endpoint)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return fmt.Errorf("torque mcp --remote: %q is not an http(s) URL", scrubURLCredentials(endpoint))
+		return fmt.Errorf("torque mcp --remote: %s is not an http(s) URL (want http://host:port/mcp)", shownValue(endpoint))
 	}
 	local := &mcp.IOTransport{Reader: io.NopCloser(cmd.InOrStdin()), Writer: nopWriteCloser{cmd.OutOrStdout()}}
 	return mcpbridge.Run(cmd.Context(), local, mcpbridge.Options{

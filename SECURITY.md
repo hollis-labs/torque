@@ -63,7 +63,10 @@ Torque is designed as a local-first tool for one operator on one machine.
   `/api/v1` and is gated exactly as it is: the same origin policy and bearer
   token on the same listener, so it is reachable no more widely than the API.
   `torque mcp --remote` is its stdio client. Treat anyone who can call `/mcp`
-  as able to do whatever the tools allow.
+  as able to do whatever the tools allow. Unlike stdio `torque mcp`, `/mcp`
+  is wired to the daemon's live scheduler, so `torque_scheduler_toggle` works
+  through it: an agent whose `torque mcp` runs `--remote` can pause and resume
+  dispatch, with the authority of the `/api/v1` scheduler toggle.
 - New tasks created through MCP start as `manual`, so they do not dispatch until
   someone promotes them; treat that as a safeguard, not an access control.
 - Tasks run with whatever tools, permissions and environment the task or launch

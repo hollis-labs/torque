@@ -520,3 +520,90 @@ func connectClient(t *testing.T, opts mcpbridge.Options) (*mcp.ClientSession, er
 	})
 	return cs, err
 }
+
+// A request the daemon refuses fails only itself. The calls in flight beside
+// it complete and are answered with their real results. When one failed
+// send took down the bridge's shared connection, every other in-flight call
+// was answered "connection ended" while the daemon still ran it, so a client
+// retrying a call such as torque_task_create made a duplicate. Here a slow
+// torque_task_create is in flight when a 400 and a 500 (what chi's Recoverer
+// answers a tool that panicked) arrive on other calls.
+func TestBridgeAFailedRequestDoesNotFailItsNeighbours(t *testing.T) {
+	release := make(chan struct{})
+	started := make(chan struct{}, 1)
+	var releaseOnce sync.Once
+	releaseSlow := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(releaseSlow)
+	d := newDaemon(t, httpserver.Security{}, func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			switch {
+			case bytes.Contains(body, []byte("BAD-REQUEST")):
+				http.Error(w, "that is not a request", http.StatusBadRequest)
+				return
+			case bytes.Contains(body, []byte("PANICKED-TOOL")):
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			case bytes.Contains(body, []byte("SLOW-CREATE")):
+				select {
+				case started <- struct{}{}:
+				default:
+				}
+				select {
+				case <-release:
+				case <-r.Context().Done():
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+	cs := bridgeClient(t, mcpbridge.Options{Endpoint: d.srv.URL + "/mcp"})
+
+	type result struct {
+		text  string
+		isErr bool
+		err   error
+	}
+	slow := make(chan result, 1)
+	go func() {
+		res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "torque_task_create", Arguments: map[string]any{"title": "SLOW-CREATE"}})
+		r := result{err: err}
+		if err == nil && len(res.Content) > 0 {
+			r.text, r.isErr = res.Content[0].(*mcp.TextContent).Text, res.IsError
+		}
+		slow <- r
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the slow call never reached the daemon")
+	}
+
+	for marker, want := range map[string]string{"BAD-REQUEST": "answered 400", "PANICKED-TOOL": "answered 500"} {
+		_, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "torque_task_get", Arguments: map[string]any{"id": marker}})
+		require.Error(t, err, marker)
+		assert.Contains(t, err.Error(), want, marker)
+	}
+	select {
+	case r := <-slow:
+		t.Fatalf("the slow call ended before it was released, which is what a shared connection does when another call fails: %+v", r)
+	default:
+	}
+
+	releaseSlow()
+	select {
+	case r := <-slow:
+		require.NoError(t, r.err, "the slow call completes normally")
+		assert.False(t, r.isErr, r.text)
+		var created struct {
+			Data struct{ ID string } `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(r.text), &created), r.text)
+		rec, err := d.svc.Store().GetTask(created.Data.ID)
+		require.NoError(t, err, "the daemon ran it, and the client was told so")
+		assert.Equal(t, "SLOW-CREATE", rec.Title)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the slow call never completed")
+	}
+}

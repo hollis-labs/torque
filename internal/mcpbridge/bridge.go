@@ -4,13 +4,24 @@
 // An agent under ProtectedPaths cannot open main.db, so the stdio
 // `torque mcp` that mux starts for it cannot serve. The bridge serves the
 // same tool surface by forwarding each JSON-RPC message, unchanged, to the
-// daemon over MCP Streamable HTTP and relaying the replies. It opens no
+// daemon over MCP Streamable HTTP and relaying the reply. It opens no
 // database and writes nothing.
 //
-// The daemon's endpoint is stateless, so a client's cancellation of a
-// request is not propagated: the daemon finishes the call and its reply is
-// dropped. Requests are forwarded concurrently (at most maxInFlight at a
-// time), so a slow tool does not hold up health checks or other calls.
+// The daemon's endpoint is stateless, so the bridge keeps no connection
+// between messages: each forwarded message gets a connection of its own,
+// which is closed once its reply has been relayed. A request that fails
+// (a 400, a 500 from a tool that panicked, a refused token) therefore fails
+// only itself; the calls in flight beside it complete and are answered
+// normally. Requests are forwarded concurrently, at most maxInFlight at a
+// time, so a slow tool does not hold up health checks or other calls.
+//
+// What the bridge does not preserve, because nothing here is stateful:
+//   - the order in which concurrent messages reach the daemon, notifications
+//     included (a notification may overtake the request sent before it);
+//   - a client's cancellation of a request: the daemon finishes the call and
+//     its reply is dropped.
+//
+// Either would matter if the daemon's MCP handler became stateful.
 package mcpbridge
 
 import (
@@ -31,9 +42,10 @@ import (
 )
 
 // RemoteEnv selects `torque mcp --remote` without the flag: "1" (or
-// "true") for the daemon on this host, or a URL. Torque sets it in the
-// planted mux entry's env for agents under ProtectedPaths; mux passes its
-// env to the `torque mcp` it starts.
+// "true") for the daemon on this host, or a URL. `torque mcp` reads it, so a
+// launcher can set it in the environment of the `torque mcp` it starts; the
+// automatic setting of it in the planted mux entry's env for agents under
+// ProtectedPaths is CW-20261001-0320.
 const RemoteEnv = "TORQUE_MCP_REMOTE"
 
 // maxInFlight bounds the requests forwarded at once. When it is reached the
@@ -92,24 +104,11 @@ type bridge struct {
 	opts     Options
 	endpoint string // Options.Endpoint without credentials, for messages
 	scrubs   []string
+	client   *http.Client
 	local    mcp.Connection
 	localMu  sync.Mutex // one message at a time to the client
 	sem      chan struct{}
 	wg       sync.WaitGroup
-
-	mu      sync.Mutex
-	remote  mcp.Connection
-	pending map[jsonrpc.ID]*pendingCall // requests forwarded, not yet answered
-	dead    map[mcp.Connection]error    // connections that ended, and why
-}
-
-// pendingCall is a request owed an answer.
-type pendingCall struct {
-	conn mcp.Connection // the connection it went on
-	// sent is set once the daemon has accepted the request. Until then
-	// forward is still sending it and answers it itself, with what the
-	// daemon said; the relay answers only the requests that were accepted.
-	sent bool
 }
 
 func newBridge(opts Options, local mcp.Connection) *bridge {
@@ -118,13 +117,12 @@ func newBridge(opts Options, local mcp.Connection) *bridge {
 		endpoint: opts.Endpoint,
 		local:    local,
 		sem:      make(chan struct{}, maxInFlight),
-		pending:  map[jsonrpc.ID]*pendingCall{},
-		dead:     map[mcp.Connection]error{},
 	}
+	b.client = b.httpClient()
 	if u, err := url.Parse(opts.Endpoint); err == nil && u.User != nil {
 		// Credentials in the URL never reach a log line or an error.
-		user, pass := u.User.Username(), ""
-		pass, _ = u.User.Password()
+		user := u.User.Username()
+		pass, _ := u.User.Password()
 		b.scrubs = []string{u.User.String() + "@", user + ":***@", user + "@"}
 		if pass != "" {
 			b.scrubs = append(b.scrubs, pass)
@@ -182,9 +180,10 @@ func (b *bridge) dispatch(ctx context.Context, msg jsonrpc.Message) {
 	}()
 }
 
-// forward sends one client message to the daemon. A failed send drops the
-// remote connection, so the next message reconnects, and answers the
-// message if it expected a reply.
+// forward sends one client message to the daemon on a connection of its
+// own and, for a request, relays the reply. Whatever goes wrong here is this
+// message's alone: a request the daemon cannot answer is answered here with
+// a JSON-RPC error, exactly once.
 func (b *bridge) forward(ctx context.Context, msg jsonrpc.Message) {
 	var callID jsonrpc.ID
 	isCall := false
@@ -192,199 +191,93 @@ func (b *bridge) forward(ctx context.Context, msg jsonrpc.Message) {
 		callID, isCall = req.ID, true
 	}
 	note := &respNote{}
-	remote, err := b.remoteConn(ctx)
-	if err == nil {
-		if isCall {
-			b.track(callID, remote)
-		}
-		if err = remote.Write(context.WithValue(ctx, noteKey{}, note), msg); err == nil {
-			if isCall {
-				if ended := b.markSent(callID); ended != nil {
-					b.answer(ctx, callID, b.connEnded(ended))
-				}
-			}
-			return
-		}
-		b.dropRemote(remote)
-	}
-	text := b.describe(err, note)
-	b.logf("%s", text)
-	if isCall {
-		b.answer(ctx, callID, text)
-	}
-}
-
-// describe explains a failed send: what the daemon answered when it did
-// (with its own message, which carries hints such as the token variable to
-// set), and otherwise that it could not be reached.
-func (b *bridge) describe(err error, note *respNote) string {
-	status, body := note.get()
-	if status == 0 {
-		return b.scrub(fmt.Sprintf("torque daemon unreachable at %s: %v", b.endpoint, err))
-	}
-	text := fmt.Sprintf("torque daemon at %s answered %d %s", b.endpoint, status, http.StatusText(status))
-	var env struct {
-		Error string `json:"error"`
-	}
-	if json.Unmarshal([]byte(body), &env) == nil && env.Error != "" {
-		text += ": " + env.Error
-	} else if s := strings.TrimSpace(body); s != "" {
-		text += ": " + s
-	}
-	if status >= 300 && status < 400 {
-		text += " (the bridge does not follow redirects; point --remote at the daemon's own /mcp URL)"
-	}
-	return b.scrub(text)
-}
-
-// remoteConn returns the daemon connection, connecting when there is none,
-// and starts relaying its messages to the client.
-func (b *bridge) remoteConn(ctx context.Context) (mcp.Connection, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.remote != nil {
-		return b.remote, nil
-	}
 	t := &mcp.StreamableClientTransport{
 		Endpoint:             b.opts.Endpoint,
-		HTTPClient:           b.httpClient(),
+		HTTPClient:           b.client,
 		MaxRetries:           -1,
 		DisableStandaloneSSE: true, // the daemon's endpoint is stateless
 	}
+	accepted := false
 	conn, err := t.Connect(ctx)
-	if err != nil {
-		return nil, err
+	if err == nil {
+		defer conn.Close()
+		if err = conn.Write(context.WithValue(ctx, noteKey{}, note), msg); err == nil {
+			if !isCall {
+				return
+			}
+			accepted = true
+			err = b.await(ctx, conn, callID)
+		}
 	}
-	b.remote = conn
-	b.wg.Add(1)
-	go func() {
-		defer b.wg.Done()
-		b.relay(ctx, conn)
-	}()
-	return conn, nil
-}
-
-// track records a request about to be sent on conn, so its answer is owed.
-func (b *bridge) track(id jsonrpc.ID, conn mcp.Connection) {
-	b.mu.Lock()
-	b.pending[id] = &pendingCall{conn: conn}
-	b.mu.Unlock()
-}
-
-// markSent records that the daemon accepted request id. It returns why the
-// connection ended when it ended before this was recorded: the relay, which
-// answers accepted requests when a connection ends, did not see this one.
-func (b *bridge) markSent(id jsonrpc.ID) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	p, ok := b.pending[id]
-	if !ok {
-		return nil // answered already
-	}
-	if err, ended := b.dead[p.conn]; ended {
-		return err
-	}
-	p.sent = true
-	return nil
-}
-
-// connEnded is the text of the error for a request whose connection ended
-// after the daemon accepted it.
-func (b *bridge) connEnded(cause error) string {
-	return b.scrub(fmt.Sprintf("torque daemon connection to %s ended before the reply: %v", b.endpoint, cause))
-}
-
-// takePending reports whether id was still owed an answer, and settles it.
-func (b *bridge) takePending(id jsonrpc.ID) bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if _, ok := b.pending[id]; !ok {
-		return false
-	}
-	delete(b.pending, id)
-	return true
-}
-
-// answer replies to request id with a JSON-RPC internal error, unless it was
-// answered already.
-func (b *bridge) answer(ctx context.Context, id jsonrpc.ID, message string) {
-	if !b.takePending(id) {
+	if err == nil || ctx.Err() != nil {
 		return
 	}
-	_ = b.writeLocal(ctx, &jsonrpc.Response{ID: id, Error: &jsonrpc.Error{Code: jsonrpc.CodeInternalError, Message: message}})
+	text := b.describe(err, note, accepted)
+	b.logf("%s", text)
+	if isCall {
+		_ = b.writeLocal(ctx, &jsonrpc.Response{ID: callID, Error: &jsonrpc.Error{Code: jsonrpc.CodeInternalError, Message: text}})
+	}
+}
+
+// await relays what the daemon sends on conn (notifications that belong to
+// the call, then its reply) to the client, and returns nil once the reply
+// for id has been relayed, or the error that ended the connection first.
+func (b *bridge) await(ctx context.Context, conn mcp.Connection, id jsonrpc.ID) error {
+	for {
+		msg, err := conn.Read(ctx)
+		if err != nil {
+			return err
+		}
+		if resp, ok := msg.(*jsonrpc.Response); ok && resp.ID != id {
+			continue // not this call's reply
+		}
+		if err := b.writeLocal(ctx, msg); err != nil {
+			return err
+		}
+		if _, ok := msg.(*jsonrpc.Response); ok {
+			return nil
+		}
+	}
+}
+
+// describe explains a failed send or reply: what the daemon answered when it
+// did (with its own message, which carries hints such as the token variable
+// to set), that the connection ended after the daemon accepted the request,
+// or that the daemon could not be reached.
+func (b *bridge) describe(err error, note *respNote, accepted bool) string {
+	status, body := note.get()
+	switch {
+	case status != 0:
+		text := fmt.Sprintf("torque daemon at %s answered %d %s", b.endpoint, status, http.StatusText(status))
+		var env struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal([]byte(body), &env) == nil && env.Error != "" {
+			text += ": " + env.Error
+		} else if s := strings.TrimSpace(body); s != "" {
+			text += ": " + s
+		}
+		if status >= 300 && status < 400 {
+			text += " (the bridge does not follow redirects; point --remote at the daemon's own /mcp URL)"
+		}
+		return b.scrub(text)
+	case accepted:
+		return b.scrub(fmt.Sprintf("torque daemon connection to %s ended before the reply: %v", b.endpoint, err))
+	}
+	return b.scrub(fmt.Sprintf("torque daemon unreachable at %s: %v", b.endpoint, err))
 }
 
 // writeLocal sends one message to the client; writes from the goroutines
-// forwarding and relaying never interleave.
+// forwarding never interleave.
 func (b *bridge) writeLocal(ctx context.Context, msg jsonrpc.Message) error {
 	b.localMu.Lock()
 	defer b.localMu.Unlock()
 	return b.local.Write(ctx, msg)
 }
 
-// relay copies the daemon's messages (replies and their notifications) to
-// the client until the connection ends. When it ends, every request sent on
-// it and not yet answered is answered with an error now, rather than left
-// for the client to time out.
-func (b *bridge) relay(ctx context.Context, conn mcp.Connection) {
-	for {
-		msg, err := conn.Read(ctx)
-		if err != nil {
-			b.dropRemote(conn)
-			b.failPending(ctx, conn, err)
-			return
-		}
-		if resp, ok := msg.(*jsonrpc.Response); ok && !b.takePending(resp.ID) {
-			continue // answered already, or not ours
-		}
-		_ = b.writeLocal(ctx, msg)
-	}
-}
-
-// failPending records that conn ended and answers the requests the daemon
-// had accepted on it. A request still being sent is not answered here:
-// forward answers it, naming what the daemon said (a refused send is what
-// ends the connection in the first place).
-func (b *bridge) failPending(ctx context.Context, conn mcp.Connection, cause error) {
-	b.mu.Lock()
-	b.dead[conn] = cause
-	var ids []jsonrpc.ID
-	for id, p := range b.pending {
-		if p.conn == conn && p.sent {
-			ids = append(ids, id)
-		}
-	}
-	b.mu.Unlock()
-	if len(ids) == 0 {
-		return
-	}
-	text := b.connEnded(cause)
-	b.logf("%s", text)
-	for _, id := range ids {
-		b.answer(ctx, id, text)
-	}
-}
-
-func (b *bridge) dropRemote(conn mcp.Connection) {
-	b.mu.Lock()
-	if b.remote == conn {
-		b.remote = nil
-	}
-	b.mu.Unlock()
-	_ = conn.Close()
-}
-
-// shutdown stops the forwarding and relaying goroutines and closes the
-// daemon connection.
+// shutdown cancels the forwarding goroutines and waits for them.
 func (b *bridge) shutdown(cancel context.CancelFunc) {
 	cancel()
-	b.mu.Lock()
-	conn := b.remote
-	b.remote = nil
-	b.mu.Unlock()
-	if conn != nil {
-		_ = conn.Close()
-	}
 	b.wg.Wait()
 }
 
