@@ -73,6 +73,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   `/messages/{id}/consume`, accept the `msg://<kind>/<authority>/<id>` string
   or a `{"kind","authority","id"}` object. Any other shape is a 400 that names
   the field and both forms; an absent or null address is a 422.
+- `go test` no longer depends on TORQUE_* in the shell it runs in: the
+  config, agent and `cmd/torque` tests clear them first, so a dispatched
+  worker or a dev shell with Torque settings exported gets the same results.
 - MCP write paths reject a non-integer priority.
 - Operator pause is recorded as cancellation; task deadlines are enforced for
   long-lived runs; parent-owned task review is allowed.
