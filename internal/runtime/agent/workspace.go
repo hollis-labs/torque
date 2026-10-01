@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"testing"
 )
 
 // BuildDirRootName is the basename of the parent directory under $TMPDIR that
@@ -127,6 +129,9 @@ func WorkspaceCreate(workspacesRoot, projectID, sessID, repoRoot, workRoot strin
 		}
 		workspacesRoot = filepath.Join(home, ".torque", "workspaces")
 	}
+	if err := refuseRealHomeInTests(workspacesRoot); err != nil {
+		return nil, err
+	}
 	projectKey := projectID
 	if projectKey == "" {
 		projectKey = "unscoped"
@@ -158,4 +163,26 @@ func WorkspaceCreate(workspacesRoot, projectID, sessID, repoRoot, workRoot strin
 		LogPath:      filepath.Join(root, "logs", "session.log"),
 		BuildDirRoot: DefaultBuildDirRoot(),
 	}, nil
+}
+
+// startHome is $HOME as the process started, before any test redirects it.
+var startHome, _ = os.UserHomeDir()
+
+// refuseRealHomeInTests fails a test binary's workspace inside the real
+// ~/.torque, which holds the operator's session logs: a test's Dependencies
+// left WorkspacesRoot empty and its sessions landed in ~/.torque/workspaces,
+// 214 session dirs in one overnight run (CW-20261001-0175). Only that tree
+// is refused; elsewhere under $HOME is fine, so a $TMPDIR under $HOME keeps
+// working for t.TempDir(). Production is unaffected (testing.Testing
+// reports false outside `go test`).
+func refuseRealHomeInTests(root string) error {
+	if !testing.Testing() || startHome == "" {
+		return nil
+	}
+	protected := filepath.Join(startHome, ".torque")
+	rel, err := filepath.Rel(protected, root)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil
+	}
+	return fmt.Errorf("agent: workspaces root %s is inside the real %s in a test: give the test's Dependencies WorkspacesRoot: testenv.WorkspacesRoot(t) (internal/testutil/testenv)", root, protected)
 }

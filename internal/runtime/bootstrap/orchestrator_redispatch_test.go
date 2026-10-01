@@ -14,6 +14,7 @@ import (
 	"github.com/hollis-labs/torque/internal/runtime/bootstrap"
 	"github.com/hollis-labs/torque/internal/service"
 	"github.com/hollis-labs/torque/internal/testutil/sqlitetest"
+	"github.com/hollis-labs/torque/internal/testutil/testenv"
 )
 
 // planMetadata builds a metadata blob with the plan namespace + an
@@ -46,7 +47,7 @@ func readCheckpointResponses(t *testing.T, store *sqlstore.Store, taskID string)
 // touch anything.
 func TestOrchestratorRedispatcher_NoPlanAncestor(t *testing.T) {
 	store := sqlitetest.OpenStore(t)
-	deps := &agent.Dependencies{Store: store}
+	deps := &agent.Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store}
 	deps.Sessions = agent.NewManager(deps)
 	d := bootstrap.NewOrchestratorRedispatcher(store, deps.Sessions)
 
@@ -73,7 +74,7 @@ func TestOrchestratorRedispatcher_NoPlanAncestor(t *testing.T) {
 // (no metadata.plan.orchestrator_session_id). No-op, no error.
 func TestOrchestratorRedispatcher_PlanWithoutOrchestratorSession(t *testing.T) {
 	store := sqlitetest.OpenStore(t)
-	deps := &agent.Dependencies{Store: store}
+	deps := &agent.Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store}
 	deps.Sessions = agent.NewManager(deps)
 	d := bootstrap.NewOrchestratorRedispatcher(store, deps.Sessions)
 
@@ -109,7 +110,7 @@ func TestOrchestratorRedispatcher_PlanWithoutOrchestratorSession(t *testing.T) {
 // redispatch the orchestrator — the plan stalled forever.
 func TestOrchestratorRedispatcher_ChildCheckpoint_PropagatesAndRedispatches(t *testing.T) {
 	store := sqlitetest.OpenStore(t)
-	deps := &agent.Dependencies{Store: store}
+	deps := &agent.Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store}
 	deps.Sessions = agent.NewManager(deps)
 	d := bootstrap.NewOrchestratorRedispatcher(store, deps.Sessions)
 
@@ -223,7 +224,7 @@ func TestOrchestratorRedispatcher_ChildCheckpoint_PropagatesAndRedispatches(t *t
 // NewSessionID or Error must be populated.
 func TestOrchestratorRedispatcher_StaleRunningRow_AttemptsRedispatch(t *testing.T) {
 	store := sqlitetest.OpenStore(t)
-	deps := &agent.Dependencies{Store: store}
+	deps := &agent.Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store}
 	deps.Sessions = agent.NewManager(deps)
 	d := bootstrap.NewOrchestratorRedispatcher(store, deps.Sessions)
 
