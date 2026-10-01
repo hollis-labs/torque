@@ -192,25 +192,25 @@ func modeList(modes []runtimes.Mode) string {
 	return strings.Join(out, ", ")
 }
 
-// shouldDropBootDirExtraArgs reports whether the bootdir-derived ExtraArgs
-// (the prepared launch's Argv[1:]) must be suppressed for the given provider
-// + runtime kind before they are spliced onto StartOptions.ExtraArgs.
+// shouldDropBootDirExtraArgs reports whether bootLegacy must drop the
+// prepared launch's Argv[1:] instead of splicing it onto
+// StartOptions.ExtraArgs for the given provider + runtime kind.
 //
-// opencode serve-http is the only case. The serve-http runtime builds its
-// own `serve --port 0 --hostname 127.0.0.1` argv from the adapter, so the
-// prepared copy must not follow it:
+// opencode serve-http is the only case. On the legacy path the serve-http
+// runtime builds its own `serve --port 0 --hostname 127.0.0.1` argv from the
+// adapter and appends ExtraArgs after it, so the prepared copy must not
+// follow:
 //
 //   - Before agentkit v0.12.0 the prepared argv carried `--dir <project>`,
 //     which `opencode serve` rejects (exit before printing the listen URL;
 //     CW-20260521-0022).
 //   - Since v0.12.0 the projection carries no `--dir` for http-sse but the
-//     whole serve command, so splicing it would repeat
-//     `serve --port 0 --hostname 127.0.0.1` (measured at CW-20261001-0064).
+//     whole serve command, which would repeat it (CW-20261001-0064).
 //
-// Every other provider/runtime keeps its ExtraArgs. The project still
-// reaches opencode through the spawn cwd and OPENCODE_CONFIG_DIR. The
-// argv-owner work (CW-20260930-0135) makes the prepared argv the only one,
-// and with it this predicate goes.
+// It does not apply on the wrapper path, where the prepared argv is the
+// whole command and the wrapper adapter adds nothing; trimming there
+// launched a bare `opencode`. Every other provider/runtime keeps its
+// ExtraArgs. The argv-owner work (CW-20260930-0135) retires this.
 func shouldDropBootDirExtraArgs(provider string, kind RuntimeKind) bool {
 	return provider == "opencode" && kind == RuntimeKindServeHTTP
 }

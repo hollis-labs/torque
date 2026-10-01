@@ -28,6 +28,9 @@ func TestNormalize(t *testing.T) {
 		{"pty-debug", Token{Mode: runtimes.ModePTY, Legacy: true, Debug: true}},
 		{"  Serve_HTTP ", Token{Mode: runtimes.ModeHTTPSSE, Legacy: true}},
 		{"JSONRPC_STDIO", Token{Mode: runtimes.ModeJSONRPCStdio}},
+		{"pty_debug", Token{Mode: runtimes.ModePTY, Legacy: true, Debug: true}},
+		{"acp-tcp", Token{Mode: runtimes.ModeACPTCP}},
+		{"ACP_STDIO", Token{Mode: runtimes.ModeACPStdio}},
 	}
 	for _, tc := range cases {
 		got, err := Normalize(tc.raw)
@@ -37,10 +40,35 @@ func TestNormalize(t *testing.T) {
 }
 
 func TestNormalize_UnknownFailsLoudly(t *testing.T) {
-	for _, raw := range []string{"exec", "tui", "streaming", "serve"} {
+	// Internal whitespace is not normalized away.
+	for _, raw := range []string{"exec", "tui", "streaming", "serve", "serve http", "subprocess per turn", "acp"} {
 		_, err := Normalize(raw)
 		require.Error(t, err, raw)
 		assert.True(t, errors.Is(err, ErrUnknown), raw)
 		assert.Contains(t, err.Error(), "subprocess-per-turn", "the error lists what is accepted")
 	}
+}
+
+func TestNormalizeProfile(t *testing.T) {
+	for raw, want := range map[string]Token{
+		"":                    {},
+		"subprocess-per-turn": {Mode: runtimes.ModeSubprocessPerTurn},
+		"http-sse":            {Mode: runtimes.ModeHTTPSSE},
+		"subprocess":          {Mode: runtimes.ModeSubprocessPerTurn, Legacy: true},
+		"Serve_HTTP":          {Mode: runtimes.ModeHTTPSSE, Legacy: true},
+	} {
+		got, err := NormalizeProfile(raw)
+		require.NoError(t, err, raw)
+		assert.Equal(t, want, got, raw)
+	}
+	// Older spellings that only stored session rows carry stay errors in a
+	// profile, naming the spelling to use instead.
+	for raw, use := range map[string]string{"cli": "subprocess-per-turn", "app-server": "jsonrpc-stdio", "pty-debug": "pty", "PTY_DEBUG": "pty"} {
+		_, err := NormalizeProfile(raw)
+		require.Error(t, err, raw)
+		assert.True(t, errors.Is(err, ErrNotAProfileKind), raw)
+		assert.Contains(t, err.Error(), `use "`+use+`"`, raw)
+	}
+	_, err := NormalizeProfile("tui")
+	assert.True(t, errors.Is(err, ErrUnknown))
 }

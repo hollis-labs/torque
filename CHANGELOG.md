@@ -8,6 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- GitHub Actions CI (`.github/workflows/ci.yml`) on pull requests and pushes
+  to `main`: `make lint` and `make test` with Go from `go.mod`, and the GUI's
+  `npm ci`, build and vitest, with Go and npm caches. The private
+  `github.com/hollis-labs/plugin` module is not reachable from CI yet, so
+  until access is granted the Go job vets and tests every package except the
+  three that need it (`cmd/torque`, `internal/plugin`, `plugins/core`) and
+  says so in the run summary.
 - `GET /api/v1/tasks/rollup?group_by=project_id|epic_id|sprint_id` counts
   tasks per scope and status in one query, and `GET /api/v1/tasks?fields=summary`
   leaves out each task's `description` and `system_prompt`. The GUI's
@@ -19,16 +26,36 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
-- agentkit v0.12.0, go-providers v0.33.0, go-sandbox v0.4.1 (security fix)
-  and agent-contracts-leaf v0.3.0 (Sprint 4 PR1). Runtime kinds use the
-  shared vocabulary: `subprocess` is now `subprocess-per-turn` and
-  `serve-http` is `http-sse`. Profiles and stored session rows that carry
-  the older spellings (`subprocess`, `cli`, `serve-http`, `app-server`,
-  `pty-debug`) are still read, through the new `internal/runtimetoken`.
-  Runtime defaults, provider ids and profile lint's cli providers come from
-  the go-providers runtime registry; a cli provider the registry does not
-  know (`gemini`) is no longer listed, and registered runtimes Torque cannot
-  launch yet (Antigravity, Copilot, Pi) lint with the reason.
+- Codex app-server approval requests are answered from the profile's
+  `permission_mode` instead of refused with -32601. Under `default`,
+  `acceptEdits` and an unset mode, MCP tool calls are approved only on the
+  run's own loopback server; every other server (including the planted
+  `mux`, which reaches cerberus) is declined, as are sandbox escalations
+  (`acceptEdits` also approves file changes). `plan` declines everything.
+  `bypassPermissions` maps to yolo and approves everything: the
+  `orchestrator` and `codex-implementer` profiles, which already run in a
+  danger-full-access sandbox, now get unattended mux/cerberus MCP approval
+  (flagged to revisit).
+- agentkit v0.12.2, go-providers v0.34.1, go-sandbox v0.4.1 and
+  agent-contracts-leaf v0.3.0 (Sprint 4 PR1). go-providers v0.34.1 and
+  go-sandbox v0.4.1 are security fixes; with v0.34.1 a launch that carries
+  the turn's prompt in argv ends `-- <prompt>`, so untrusted turn text is
+  never parsed as a flag, and Torque's own argv splices (`--model`,
+  `--settings`, codex `-c model=`) now go before that `--`. Runtime kinds
+  use the shared vocabulary: `subprocess` is now `subprocess-per-turn` and
+  `serve-http` is `http-sse`. A profile still accepts the older
+  `subprocess` and `serve-http`; stored session rows are read with every
+  older spelling (`subprocess`, `cli`, `serve-http`, `app-server`,
+  `pty-debug`) through the new `internal/runtimetoken`. Runtime defaults,
+  provider ids and profile lint's cli providers come from the go-providers
+  runtime registry; a cli provider the registry does not know (`gemini`) is
+  no longer listed, and registered runtimes Torque cannot launch yet
+  (Antigravity, Copilot, Pi) lint with the reason.
+- The reviewer end-agent no longer emits `message` checkpoints. Advisory
+  findings, including a deliverable left unregistered as an artifact (now
+  check 7, `Audit advisory (check 7 — artifact_registration)`), are
+  `[system/end-agent]` comments only, so they no longer pile up in the
+  pending HITL queue.
 - `agentkit` v0.11.1: a child that prints its last lines and exits at once
   no longer has them dropped (jsonrpc-stdio, serve-http, PTY).
 - `go-agent-wrapper` v0.14.0 and `agentkit` v0.11.0 (adds `go-permission`
@@ -56,15 +83,37 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   usage from `turn.completed` and `turn.failed` and still emits the turn's
   done event; without that, a wrapper-path ModeOneShot run timed out waiting
   for its turn to finish.
+- Retired runtime-kind spellings keep working where they are stored. A
+  profiles.yaml `runtime_kind` of `subprocess` or `serve-http` loads as
+  `subprocess-per-turn` or `http-sse` with one deprecation warning per
+  profile; `cli`, `app-server` and `pty-debug` stay boot-time errors in a
+  profile, as before. Session rows that hold any older token read back as
+  the current mode and are not rewritten; new rows store only current
+  tokens.
 
 ### Fixed
 
+- OpenCode `serve-http` profiles launch `opencode serve --port 0 --hostname
+  127.0.0.1` again. The wrapper launch path trimmed the prepared command to
+  the bare executable, so the child started as plain `opencode`.
+- A task can no longer be created or updated with an executor this Torque
+  process has not registered: HTTP answers 422 and MCP `arg_invalid`,
+  naming the registered executors (`api`, `cli`, `mock`). An empty executor
+  still means the default, and rows already carrying an unregistered
+  executor stay editable. `torque mcp` validates against the same names as
+  `torque serve`; a process with no executor registry does not validate.
 - Tests can no longer run a real agent CLI. The wrapper-boot e2e fixture was
   found only through `CLAUDE_CLI_PATH`, while the wrapper path resolves a bare
   `claude` through PATH, so `make test` ran the developer's real Claude Code
   (a paid model call per run) and a bootstrap test reached the real
   `opencode`. Every package that can reach a launcher now installs refusing
   shims for the agent CLIs first on PATH (`testenv.RunWithAgentShims`).
+- `make test` passes on Linux. The `torque-apikey-helper` resolver tests ran
+  against a fake keychain but were refused off macOS before reaching it; the
+  macOS-only gate now sits on the real keychain accessor. Tests that slept a
+  fixed time and then asserted on asynchronous work (per-run worktree
+  dispatch, serve shutdown under `-race`, long-lived task deadlines) wait on
+  the condition or allow Boot real headroom instead.
 - On the go-agent-wrapper path, `Manager.Wait` after `Manager.Stop` waits for
   the run to end. Stop dropped the session's wrapper handle, so Wait returned
   at once and the session row could still read `running`.

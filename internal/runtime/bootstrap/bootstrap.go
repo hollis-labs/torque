@@ -6,6 +6,17 @@ import (
 	executorapi "github.com/hollis-labs/torque/plugins/executor-api"
 )
 
+// NewExecutorRegistry returns the executor registry a Torque process starts
+// from: the mock executor, which torque serve has always registered, with
+// Executors adding the built-ins once their dependencies exist. torque serve
+// dispatches through it; torque mcp builds it only so task writes validate
+// against the same names (CW-20260910-0087).
+func NewExecutorRegistry() *executor.Registry {
+	reg := executor.NewRegistry()
+	reg.Register(executor.NewMockExecutor())
+	return reg
+}
+
 // Executors registers the built-in executor plugins with the registry.
 // deps is the unified agent.Dependencies (constructed by AgentDeps); the
 // agent.Executor satisfies executor.Executor and is registered as the "cli"

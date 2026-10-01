@@ -9,6 +9,8 @@ import (
 	"sync"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/hollis-labs/torque/internal/runtimetoken"
 )
 
 // CatalogProviderID returns the models.dev catalog provider id for a
@@ -321,6 +323,25 @@ func LoadProfilesFile(path string) (Profiles, error) {
 		if err := validatePermissionMode(name, prof.PermissionMode); err != nil {
 			return Profiles{}, fmt.Errorf("parse profiles %s: %w", path, err)
 		}
+	}
+
+	// The two retired runtime_kind spellings a profile may still use,
+	// `subprocess` and `serve-http`, load as their current modes with one
+	// warning per profile, so an operator's existing profiles.yaml keeps
+	// working (CW-20261001-0063). Every other value is left as written:
+	// `cli`, `app-server` and `pty-debug` were never profile kinds, and
+	// boot-time validation reports them and any unknown value, as before.
+	for name, prof := range out.Profiles {
+		tok, err := runtimetoken.NormalizeProfile(prof.RuntimeKind)
+		if err != nil || tok.Mode == "" {
+			continue
+		}
+		if tok.Legacy {
+			log.Printf("[config] WARNING: %s: agent_profiles[%q] runtime_kind %q is deprecated; using %q (set runtime_kind: %s to silence this)",
+				path, name, prof.RuntimeKind, tok.Mode, tok.Mode)
+		}
+		prof.RuntimeKind = string(tok.Mode)
+		out.Profiles[name] = prof
 	}
 
 	// An alias pointing at a missing canonical profile is an operator

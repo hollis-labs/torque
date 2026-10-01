@@ -179,8 +179,12 @@ func TestSelectRuntimeKind(t *testing.T) {
 		// Current spellings, and the older ones runtimetoken maps.
 		{"profile kind subprocess-per-turn", "codex", "subprocess-per-turn", RuntimeKindSubprocess, false},
 		{"profile kind http-sse", "opencode", "http-sse", RuntimeKindServeHTTP, false},
-		{"profile kind cli (older) → subprocess-per-turn", "opencode", "cli", RuntimeKindSubprocess, false},
-		{"profile kind app-server (older) → jsonrpc-stdio", "codex", "app-server", RuntimeKindJsonRpcStdio, false},
+		// Older spellings that were never valid in a profile stay errors
+		// there (stored session rows still read them; see
+		// TestParseRuntimeKind_SessionRowsAcceptEveryOlderToken).
+		{"profile kind cli → error", "opencode", "cli", "", true},
+		{"profile kind app-server → error", "codex", "app-server", "", true},
+		{"profile kind pty-debug → error", "claude-code", "pty-debug", "", true},
 		{"profile kind Serve_HTTP normalizes", "opencode", " Serve_HTTP ", RuntimeKindServeHTTP, false},
 
 		// Invalid profile kind.
