@@ -133,6 +133,13 @@ func TestRunTimeSeriesHTTPMCPParityAndTotals(t *testing.T) {
 	require.Equal(t, 2, series.Buckets[0].Count)
 	require.Equal(t, 1, series.Buckets[1].Count)
 	require.Zero(t, series.Buckets[4].Count)
+	millisArgs := map[string]any{}
+	for k, v := range args {
+		millisArgs[k] = v
+	}
+	millisArgs["since"] = fmt.Sprint(time.Date(2026, 10, 1, 23, 30, 0, 0, time.UTC).UnixMilli())
+	millisArgs["until"] = fmt.Sprint(time.Date(2026, 10, 2, 3, 0, 0, 0, time.UTC).UnixMilli())
+	require.Equal(t, series, get(millisArgs))
 	args["tz_offset_minutes"] = 30
 	shifted := get(args)
 	require.Equal(t, "2026-10-01T23:30:00Z", shifted.Buckets[0].Start.Format(time.RFC3339))
@@ -147,6 +154,8 @@ func TestRunTimeSeriesHTTPMCPParityAndTotals(t *testing.T) {
 	}
 	args = map[string]any{"since": "2026-01-01T00:00:00Z", "until": "2026-07-19T00:00:00Z"}
 	require.Len(t, get(args).Buckets, 200)
+	_, isErr := callTool(t, a, "torque_run_timeseries", map[string]any{"since": "2026-01-01T00:00:00Z", "until": "2026-07-20T00:00:00Z"})
+	require.True(t, isErr)
 	for _, bad := range []map[string]any{
 		{}, {"since": "bad", "until": "2026-01-01T00:00:00Z"}, {"since": "2026-01-01T00:00:00Z"},
 		{"since": "2026-01-02T00:00:00Z", "until": "2026-01-01T00:00:00Z"},

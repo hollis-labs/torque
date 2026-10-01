@@ -73,6 +73,14 @@ func (s *RunService) TimeSeries(q RunTimeSeriesQuery) (RunTimeSeriesResult, erro
 		}
 	}
 	zone := time.FixedZone("", q.TZOffsetMinutes*60)
+	for _, bound := range []struct {
+		field string
+		value time.Time
+	}{{"since", f.Since}, {"until", f.Until}} {
+		if year := bound.value.In(zone).Year(); year < 1 || year > 9999 {
+			return invalid(bound.field, bound.field+" with tz_offset_minutes must be in years 1 through 9999")
+		}
+	}
 	floor := func(t time.Time) time.Time {
 		t = t.In(zone)
 		hour := 0
