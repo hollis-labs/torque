@@ -175,3 +175,30 @@ func fixtureSessionID(t *testing.T, fixture string) string {
 	require.NotNil(t, m, "fixture %s reports no session id", fixture)
 	return string(m[1])
 }
+
+// waitCalls waits until a providertest fake has recorded n launches, each with
+// its argv. fake.Calls can list a launch before its argv is in it, so a test
+// that reads a call right after seeing one races the recorder.
+func waitCalls(t *testing.T, fake *providertest.Fake, n int) []providertest.Call {
+	t.Helper()
+	var calls []providertest.Call
+	require.Eventually(t, func() bool {
+		calls = fake.Calls()
+		if len(calls) < n {
+			return false
+		}
+		for _, c := range calls[:n] {
+			if len(c.Args) == 0 {
+				return false
+			}
+		}
+		return true
+	}, 5*time.Second, 20*time.Millisecond, "the fake CLI is launched %d time(s) and records its argv", n)
+	return calls
+}
+
+// firstCall is the fake's first launch, once its argv is recorded.
+func firstCall(t *testing.T, fake *providertest.Fake) providertest.Call {
+	t.Helper()
+	return waitCalls(t, fake, 1)[0]
+}

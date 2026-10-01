@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/hollis-labs/agentkit/agentlaunch"
 	"github.com/hollis-labs/agentkit/agentlaunch/launcher"
 	"github.com/hollis-labs/agentkit/agentlaunch/providerplant"
@@ -360,13 +361,14 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	// (deps.MuxCommand/MuxArgs/MuxEnv). These are runtime values, kept
 	// off the persisted-at-rest LaunchPlan deliberately.
 	prepared.PlantContext.MCPLoopbackURL = loopbackURL
-	if plantsMux(profile, runtimeKind) {
+	mux := planMux(deps, profile, runtimeKind)
+	if mux.Plant {
 		prepared.PlantContext.SelfMCPCommand = deps.MuxCommand
-		prepared.PlantContext.SelfMCPArgs = append([]string(nil), deps.MuxArgs...)
+		prepared.PlantContext.SelfMCPArgs = mux.Args
 		prepared.PlantContext.SelfMCPEnv = muxEnvSliceToMap(deps.MuxEnv)
-	} else if deps.MuxCommand != "" {
-		log.Printf("agent.Boot: session=%s: mux MCP not planted for codex permission_mode %q; only bypassPermissions gets it (CW-20261001-0110)", sessID, profile.PermissionMode)
+		log.Printf("agent.Boot: session=%s: mux MCP planted with %s", sessID, muxServersLogValue(mux.Args))
 	}
+	logMuxPlan(sessID, deps, mux)
 	// Plant the provider boot dir. WithAdapter pins the exact adapter
 	// Torque resolved (adapterFor) — critically the BARE-mode claude
 	// adapter, which providerplant's DefaultResolver would not select
@@ -1802,7 +1804,56 @@ func torqueLaunchArgs(profile config.AgentProfile, plantedBootDir string) []stri
 	if profile.Provider == "claude-code" {
 		args = append(args, "--settings", filepath.Join(plantedBootDir, ".claude", "settings.json"))
 	}
+	if claudeStrictMCP(profile) && !slices.Contains(args, claudeStrictMCPFlag) {
+		args = append(args, claudeStrictMCPFlag)
+	}
 	return args
+}
+
+// claudeStrictMCPFlag makes Claude load only the MCP servers named by
+// --mcp-config, which is the planted <boot dir>/.mcp.json. Without it Claude
+// also loads the operator's user-level ~/.claude.json mcpServers, so every
+// launched worker got the interactive `mux` aggregator (cerberus deploy and
+// ssh among its servers) and anything else the operator configured there,
+// outside what Torque plants and gates (CW-20261001-0226).
+//
+// INTERIM: Torque appends it itself at the launch template's extra slot,
+// until go-providers' Claude launch carries it as a typed option, which
+// replaces this (and claudeStrictMCPEnv).
+const claudeStrictMCPFlag = "--strict-mcp-config"
+
+// claudeStrictMCPEnv is the interim kill switch: set to 0, false, off or no
+// it stops Torque adding claudeStrictMCPFlag, for an operator whose workers
+// rely on user-level MCP servers. Any other value, including a typo, leaves
+// strict mode on.
+const claudeStrictMCPEnv = "TORQUE_CLAUDE_STRICT_MCP"
+
+// claudeStrictMCP reports whether a launch of profile's runtime gets
+// claudeStrictMCPFlag: every Claude launch does, whatever its role, runtime
+// kind or the name the provider is given, unless claudeStrictMCPEnv turns it
+// off, which is logged as a WARN naming the value.
+func claudeStrictMCP(profile config.AgentProfile) bool {
+	if runtimeIDFor(profile.Provider) != string(runtimes.Claude) {
+		return false
+	}
+	raw, set := os.LookupEnv(claudeStrictMCPEnv)
+	if !set {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "0", "false", "off", "no":
+		if slices.Contains(profile.Args, claudeStrictMCPFlag) {
+			// The profile's own args carry it, so it stays on.
+			log.Printf("agent.Boot: WARN %s=%q: Torque does not add --strict-mcp-config, but the profile's own args carry it, so Claude loads only the MCP servers Torque plants", claudeStrictMCPEnv, raw)
+			return true
+		}
+		log.Printf("agent.Boot: WARN %s=%q: Claude is launched WITHOUT --strict-mcp-config, so it also loads the operator's user-level MCP servers (~/.claude.json), beyond what Torque plants", claudeStrictMCPEnv, raw)
+		return false
+	case "", "1", "true", "on", "yes":
+	default:
+		log.Printf("agent.Boot: WARN %s=%q is not recognized (only 0, false, off or no turn strict MCP off); --strict-mcp-config stays on", claudeStrictMCPEnv, raw)
+	}
+	return true
 }
 
 // insertBeforeEndOfOptions returns argv with extra placed before its first

@@ -115,40 +115,6 @@ func TestCodexApprovalHook_MCPToolCallsOnlyOnLoopback(t *testing.T) {
 	}
 }
 
-// plantsMux withholds mux short of an explicit bypassPermissions from codex
-// sessions (CW-20261001-0110) and from every ACP session (CW-20261001-0120);
-// Claude and OpenCode on their native runtimes are unchanged.
-func TestPlantsMux(t *testing.T) {
-	for _, tc := range []struct {
-		provider string
-		kind     RuntimeKind
-		mode     string
-		want     bool
-	}{
-		{"codex", RuntimeKindJsonRpcStdio, "", false},
-		{"codex", RuntimeKindJsonRpcStdio, "default", false},
-		{"codex", RuntimeKindJsonRpcStdio, "acceptEdits", false},
-		{"codex", RuntimeKindJsonRpcStdio, "plan", false},
-		{"codex", RuntimeKindJsonRpcStdio, "dontAsk", false},
-		{"codex", RuntimeKindJsonRpcStdio, "bypassPermissions", true},
-		{"claude-code", RuntimeKindStreamingStdio, "", true},
-		{"claude-code", RuntimeKindStreamingStdio, "plan", true},
-		{"opencode", RuntimeKindSubprocess, "", true},
-		{"copilot", RuntimeKindACPStdio, "", false},
-		{"copilot", RuntimeKindACPStdio, "default", false},
-		{"copilot", RuntimeKindACPStdio, "acceptEdits", false},
-		{"copilot", RuntimeKindACPStdio, "plan", false},
-		{"copilot", RuntimeKindACPTCP, "bypassPermissions", true},
-		{"copilot", RuntimeKindACPStdio, "bypassPermissions", true},
-		{"claude-code", RuntimeKindACPStdio, "acceptEdits", false},
-		{"opencode", RuntimeKindACPStdio, "", false},
-		{"pi", RuntimeKindACPStdio, "bypassPermissions", true},
-	} {
-		got := plantsMux(config.AgentProfile{Provider: tc.provider, PermissionMode: tc.mode}, tc.kind)
-		assert.Equal(t, tc.want, got, "%s/%s/%q", tc.provider, tc.kind, tc.mode)
-	}
-}
-
 // The launch plan's Provider.Permission is a go-permission Mode since
 // agentkit v0.17.0, which refuses Claude's own spellings; Torque sets it for
 // claude-code only (CW-20261001-0157).
