@@ -136,7 +136,7 @@ source and MCP `tools/list`.
 | Projects `/projects` | C: HTTP advanced opt-in, MCP yes, 100/500; T: paged | C: named entity allow-list; T: retain | C: status, archive; T: retain, server text query pending | C: none in cursor envelope; T: opt-in total | C: none; T: task rollup supplies progress, entity facets pending | C: `torque_project_list`, cursor filters shared; T: remove HTTP legacy mode |
 | Issues `/issues`, `/issues/search` | C: HTTP advanced opt-in, MCP yes, 50/200; T: paged | C: task allow-list; T: retain | C: project, status, query, fixed issue kind; T: retain | C: legacy HTTP total can be page length; cursor none; T: opt-in cohort total | C: no dedicated issue facets; T: task facets with issue kind | C: `torque_issue_list`; T: common envelope/count semantics |
 | Comments `/comments`, `/comments/search`, `/tasks/{id}/comments` | C: HTTP list advanced opt-in/MCP cursor; search 25/100, list 50/200; T: paged for both | C: `created_at`; T: retain | C: entity scope(s), author, dates, search; T: retain nested task restrictions | C: none; T: opt-in total | C: none; T: count through include_total, facets pending | C: `torque_comment_list`, `torque_comment_search`; T: common policy for search too |
-| Runs `/runs` | C: none, HTTP 200/1000; T: paged | C: fixed order; T: runs allow-list below | C: HTTP task/project/status/since, MCP task only; T: shared filters + server query pending | C: none; T: opt-in total | C: no list facets; T: aggregate/facet schema pending | C: `torque_run_list` task-only, byte capped; T: HTTP/MCP query parity |
+| Runs `/runs` | Implemented in CW-20261001-0562: cursor default, optional offset, 50/200 policy | `started_at`, `status`, `duration`, `cost`; default `started_at desc`, numeric `id asc` | Shared task/project/sprint/epic scopes, CSV status, inclusive since/until (RFC3339 or Unix millis) | Opt-in `include_total`, cohort before cursor/offset/limit | Facets pending CW-20261001-0564 | `torque_run_list` shares service query and items/meta; MCP byte trims preserve continuation |
 | Sessions `/sessions` | C: limit only; T: paged | C: fixed newest-first; T: proposed session fields below | C: state, task, project; T: retain + server query pending | C: none; T: opt-in total | C: none; T: count through include_total, facets pending | C: `torque_session_list` without continuation; T: paged parity |
 | Artifacts `/artifacts`, `/tasks/{id}/artifacts` | C: none; T: paged | C: fixed newest-first; T: proposed artifact fields below | C: required task; T: retain + type/run/query pending | C: none; T: opt-in total | C: none; T: count through include_total, facets pending | C: `torque_artifact_list`, brief/verbose byte cap; T: paged parity |
 | Collections `/collections` | C: none; T: paged | C: no public sort; T: proposed collection fields below | C: status; T: retain + server query pending | C: none; T: opt-in total | C: none; T: count through include_total, facets pending | C: `torque_collection_list` byte cap; T: paged parity |
@@ -170,7 +170,7 @@ ordering.
 | Projects | `name`, `status`, `updated_at`, `created_at` | `name asc`, `id asc` | Current and target |
 | Epics, sprints | `name`, `status`, `updated_at`, `created_at` | `updated_at desc`, `id asc` | Current and target |
 | Comments | `created_at` | List `asc`, search `desc`; numeric `id asc` | Current and target |
-| Runs | `started_at`, `status`, `duration`, `cost` | `started_at desc`, numeric `id asc` | Confirmed S1 target; duration is completed elapsed milliseconds, unfinished sentinel -1 |
+| Runs | `started_at`, `status`, `duration`, `cost` | `started_at desc`, numeric `id asc` | Implemented CW-20261001-0562; duration is rounded completed elapsed milliseconds, unfinished sentinel -1 |
 | Sessions | `created_at`, `state` | `created_at desc`, `id asc` | Proposed target |
 | Artifacts | `created_at`, `type` | `created_at desc`, numeric `id asc` | Proposed target |
 | Collections | `name`, `status`, `created_at`, `updated_at` | `name asc`, `id asc` | Proposed target |
@@ -215,3 +215,31 @@ COUNT semantics/cost, byte-trim continuation, legacy-shape removal, and export
 availability. Any target not landed remains explicitly pending. This draft does
 not fulfill the task's final implemented-behavior reconciliation or merge
 acceptance by itself.
+
+### Runs implementation reconciliation (CW-20261001-0562)
+
+HTTP `/runs` and MCP `torque_run_list` now use the same service query, bounded
+by `pagination.DefaultLimit`/`MaxLimit`. Omitting filters queries across tasks;
+`task_id` is optional on both transports. HTTP record projection remains the
+decorated RunRecord, and MCP retains brief/verbose projections. The legacy
+HTTP `{runs:[...]}` shape and MCP fetch-all-then-cap path are removed.
+
+SQLite normalizes legacy/canonical UTC timestamp spellings without losing
+nanosecond precision for start-time ordering and inclusive bounds. Duration
+uses the SQL-computed rounded elapsed milliseconds, with unfinished rows at
+-1. A total and its page share one read snapshot; no count runs otherwise.
+MCP byte trimming emits a cursor for the last row actually sent. An individual
+verbose record exceeding the byte budget returns `arg_invalid` with guidance
+to request brief rows or retrieve that run separately.
+
+Runs browsing lazily appends pages and sends its status filter to the server.
+Task Logs expose older runs via cursor continuation. Ops/preview widgets
+consume the first recent page; usage charts explicitly describe that sample.
+SSE patches loaded runs; Refresh restarts Runs browsing for new rows.
+No list client preloads the whole run cohort. Index and PostgreSQL COUNT
+measurements remain CW-20261001-0570; facets remain CW-20261001-0564.
+
+Verification: `TestRunQueryCursorAndTotals`, `TestRunQuerySortsAndCohort`,
+and `TestRunListHTTPMCPParity` cover inserts between pages, tied sort keys,
+legacy timestamp formats, all four sorts in both directions, totals, limits,
+scopes and validation on temporary databases.

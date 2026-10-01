@@ -39,7 +39,6 @@ const LIVE_EVENT_TYPES = [
 const LIVE_EVENT_SET = new Set<string>(LIVE_EVENT_TYPES)
 
 const EVENT_BUFFER_CAP = 500
-const RUNS_LIMIT = 500
 const TASKS_LIMIT = 500
 // A burst naming more tasks than this refetches the sample once instead of
 // each task.
@@ -99,9 +98,7 @@ function applyRunEvent(runs: Run[], ev: SSEEvent): Run[] {
   if (!runId) return runs
   if (ev.type === 'run.started') {
     if (runs.some((r) => r.id === runId)) return runs
-    const synth = synthRunFromStartEvent(ev)
-    if (!synth) return runs
-    return [synth, ...runs].slice(0, RUNS_LIMIT)
+    return runs
   }
   if (ev.type === 'run.completed') {
     const payload =
@@ -145,11 +142,11 @@ export default function DashboardPage() {
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([api.listTaskSummaries({ limit: TASKS_LIMIT }), api.listAllRuns({ limit: RUNS_LIMIT })])
+    Promise.all([api.listTaskSummaries({ limit: TASKS_LIMIT }), api.pageRuns()])
       .then(([tasksRes, runsRes]) => {
         if (cancelled) return
         setTasks(tasksRes.tasks)
-        setRuns(runsRes)
+        setRuns(runsRes.items)
         lastFetchedRef.current = Date.now()
       })
       .catch((err: Error) => {
@@ -232,11 +229,11 @@ export default function DashboardPage() {
     if (loading) return
     if (Date.now() - lastFetchedRef.current < STALE_MS) return
     let cancelled = false
-    Promise.all([api.listTaskSummaries({ limit: TASKS_LIMIT }), api.listAllRuns({ limit: RUNS_LIMIT })])
+    Promise.all([api.listTaskSummaries({ limit: TASKS_LIMIT }), api.pageRuns()])
       .then(([tasksRes, runsRes]) => {
         if (cancelled) return
         setTasks(tasksRes.tasks)
-        setRuns(runsRes)
+        setRuns(runsRes.items)
         lastFetchedRef.current = Date.now()
       })
       .catch(() => {
@@ -312,6 +309,7 @@ export default function DashboardPage() {
               <MissionControlTabLayout tasks={tasks} runs={runs} />
             </TabsContent>
             <TabsContent value="usage" keepMounted className="px-4 py-4">
+              <p className="px-4 text-xs text-muted-foreground">Charts summarize the recent runs shown. Browse Runs for older history.</p>
               <UsageTabLayout runs={runs} />
             </TabsContent>
           </Tabs>
