@@ -131,8 +131,15 @@ type ExecutionResult struct {
 	Reason    string
 	Artifacts []Artifact
 	Tokens    TokenUsage
-	Cost      float64
-	Duration  time.Duration
+	// UnpricedTokens is the part of Tokens that arrived with no
+	// provider-reported cost: the scheduler prices it from the model catalog
+	// (CW-20260912-0003). Cost holds the provider-reported part. Each usage
+	// event lands in exactly one of the two, so nothing is priced twice.
+	// Executors that do not split leave it zero; the scheduler then prices
+	// all of Tokens when Cost is zero.
+	UnpricedTokens TokenUsage
+	Cost           float64
+	Duration       time.Duration
 
 	// ExitCode is the agent subprocess exit code, when the executor can
 	// resolve one. nil means "no exit code available" (e.g. a setup failure

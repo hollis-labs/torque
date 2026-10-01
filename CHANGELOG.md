@@ -279,6 +279,63 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   given it. Note that `kind` here only fills the planted `task.json`: the
   idle-after-done nudge runs in the scheduler's long-lived dispatch, which a
   re-launched session does not go through.
+- A run's cost is one figure, priced once (CW-20260912-0003). The cost a
+  runtime reports (Claude's `total_cost_usd`) is taken as given; the tokens
+  of turns that reported none are estimated from models.dev with cache
+  pricing: cache reads at the cache-read price and cache writes at the
+  cache-write price, and for codex, whose input counts its cached tokens,
+  only the uncached remainder at the input price. Before, Claude's reported
+  cost was discarded and every cache read was priced as input, so a codex
+  run like 1079 was recorded at $110.96 where this prices it at $15.38.
+  - **One write.** `runs.cost` and the run's `cost_ledger` row are written
+    in the same transaction as the run's completion (they were separate
+    writes through the telemetry queue), so for a run completed after this
+    migration the run, its task's cost and the scheduler's `total_cost`
+    agree. A ledger insert that fails is rolled back and logged and no
+    longer fails the completion: the run is completed with its cost and only
+    its ledger row is missing.
+  - **Provenance.** Runs and ledger rows record cache read and write tokens
+    and a `cost_source`: `provider`, `estimate`, `mixed` (some turns reported
+    a cost, some were estimated) or `none`; ledger rows also keep the
+    provider and estimated parts. `torque_scheduler_status` adds
+    `total_cost_by_source`. Migration 034.
+  - **The profile priced is the one that ran.** A task's profile resolves as
+    the executor resolves it, launch_profile first; a task with only a
+    launch_profile used to look up no profile and cost 0.
+  - **Every way a run ends keeps its usage.** A run killed by daemon
+    shutdown, or failed or cancelled after the executor had accumulated
+    usage, records that usage and its cost; one that ended without usage
+    has the source `none`. The orphan reapers only reclaim a run that is
+    still running, so a run that finished a moment earlier is not reset to
+    failed at cost 0, and for it they record no orphan event, do not requeue
+    its task and leave its worktree alone.
+  - **Catalog lookups.** The `claude-code` provider now finds Anthropic's
+    prices (CW-20261001-0182), and an opencode model id `<provider>/<model>`
+    finds that provider's.
+  - **What it does not do.** Estimates use the catalog's cache-write price,
+    which for Anthropic is the 5-minute tier; Claude's 1-hour cache writes
+    cost more, which is one reason its own figure comes first. A run whose
+    model the catalog lacks keeps the provider's figure and is labelled
+    `provider` even if some tokens could not be priced. Costs are reported,
+    not enforced: `CostBudget` still stops nothing.
+  - **A run an operator already cancelled, superseded or killed gets no
+    write and no ledger row.** It keeps its row as stamped, so a result that
+    arrives late and the usage in it are dropped, where before this the
+    ledger took a row for a run whatever its status. That spend is therefore
+    absent from `total_cost` and from the global cost ceiling check, which
+    read the ledger. It is deliberate: the run row and the ledger never
+    disagree. Whether such a run should still be costed is a separate
+    decision (a follow-up task).
+  - **History is not repriced.** Existing rows keep their figures, and
+    `runs.cost` and the ledger were not written together before, so for
+    older runs they do not all agree; the all-time `total_cost` still
+    includes the old cache-unaware estimates (`models_dev`), which
+    `total_cost_by_source` shows apart. Sprint cost and the over-budget
+    filter still read `runs.cost` while `total_cost` reads the ledger.
+  - **`torque cost-backfill`** prices a legacy row from input and output
+    tokens alone, so it now skips Claude runs, which are mostly cache and
+    would come out several times too low; only `unknown` rows are
+    candidates, so a `none` row is not backfilled.
 - A reviewer end-agent that ends `done` without auditing its target no
   longer passes silently (CW-20261001-0195). When its target is still in
   `review`, is not tagged `agent-closed` and has no comment by the end-agent

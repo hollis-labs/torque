@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"time"
 
@@ -126,40 +127,87 @@ func (w *WriteTx) CreateRun(r *RunRecord) (int64, error) {
 
 // CompleteRun stamps terminal run fields inside the transaction.
 func (w *WriteTx) CompleteRun(id int64, c RunCompletion) error {
+	_, err := w.completeRun(id, c)
+	return err
+}
+
+// CompleteRunWithCost stamps terminal run fields and, when the run row took
+// them, inserts the run's cost_ledger row in the same transaction, so
+// runs.cost and the ledger hold the same figure (CW-20260912-0003). It reports
+// whether the run row was updated. A run an operator already cancelled,
+// superseded or killed keeps its row as stamped and gets no ledger row: the
+// two never disagree.
+//
+// The ledger row is observability, so a failure to write it never fails the
+// completion: the insert runs in a savepoint, which is rolled back, and the
+// error is logged. The run is completed with its cost, and only that run's
+// ledger row is missing (runs.cost then exceeds the run's ledger sum). Failing
+// the whole transaction instead would strand the run in `running` while its
+// task carried on.
+func (w *WriteTx) CompleteRunWithCost(id int64, c RunCompletion, ledger *CostLedgerRecord) (bool, error) {
+	updated, err := w.completeRun(id, c)
+	if err != nil || !updated || ledger == nil {
+		return updated, err
+	}
+	ledger.RunID = id
+	ledger.Cost = c.Cost
+	ledger.CostSource = c.CostSource
+	if _, err := w.tx.Exec(`SAVEPOINT cost_ledger_row`); err != nil {
+		return updated, err
+	}
+	if _, lerr := appendCostLedger(w.tx, ledger); lerr != nil {
+		log.Printf("[sqlstore] ERROR: cost ledger row for run %d (task %s) not written, the run is completed without it: %v", id, ledger.TaskID, lerr)
+		_, err := w.tx.Exec(`ROLLBACK TO SAVEPOINT cost_ledger_row`)
+		return updated, err
+	}
+	_, err = w.tx.Exec(`RELEASE SAVEPOINT cost_ledger_row`)
+	return updated, err
+}
+
+// completeRun reports whether the run row was updated.
+func (w *WriteTx) completeRun(id int64, c RunCompletion) (bool, error) {
 	var exitCode sql.NullInt64
 	if c.ExitCode != nil {
 		exitCode = sql.NullInt64{Int64: int64(*c.ExitCode), Valid: true}
 	}
 
-	const q = `UPDATE runs SET status = ?, ended_at = ?, prompt_tokens = ?,
-		completion_tokens = ?, cost = ?, exit_code = ?, error_message = ?
+	q := `UPDATE runs SET status = ?, ended_at = ?, prompt_tokens = ?,
+		completion_tokens = ?, cost = ?, exit_code = ?, error_message = ?,
+		cache_read_tokens = ?, cache_write_tokens = ?, cost_source = ?
 		WHERE id = ? AND status NOT IN ('cancelled','superseded','killed')`
+	if c.OnlyIfRunning {
+		q = `UPDATE runs SET status = ?, ended_at = ?, prompt_tokens = ?,
+		completion_tokens = ?, cost = ?, exit_code = ?, error_message = ?,
+		cache_read_tokens = ?, cache_write_tokens = ?, cost_source = ?
+		WHERE id = ? AND status = 'running'`
+	}
 
 	res, err := w.tx.Exec(q,
 		c.Status, time.Now().UTC(),
 		c.PromptTokens, c.CompletionTokens, c.Cost,
 		exitCode, c.ErrorMessage,
+		c.CacheReadTokens, c.CacheWriteTokens, c.CostSource,
 		id,
 	)
 	if err != nil {
-		return err
+		return false, err
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return err
+		return false, err
 	}
 	if n > 0 {
-		return nil
+		return true, nil
 	}
 
 	var status string
 	if err := w.tx.QueryRow(`SELECT status FROM runs WHERE id = ?`, id).Scan(&status); err != nil {
 		if err == sql.ErrNoRows {
-			return fmt.Errorf("run %d not found", id)
+			return false, fmt.Errorf("run %d not found", id)
 		}
-		return err
+		return false, err
 	}
-	return nil
+	return false, nil
 }
 
 // AppendRunEvent inserts a run_events row inside the transaction.
