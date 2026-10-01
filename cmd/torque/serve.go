@@ -29,7 +29,6 @@ import (
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/torque/internal/persistence/writequeue"
 	"github.com/hollis-labs/torque/internal/runtime/bootstrap"
-	"github.com/hollis-labs/torque/internal/runtime/executor"
 	"github.com/hollis-labs/torque/internal/runtime/queue"
 	"github.com/hollis-labs/torque/internal/runtime/scheduler"
 	"github.com/hollis-labs/torque/internal/runtime/steering"
@@ -172,9 +171,9 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	}
 	defer telemetryDB.Close()
 
-	// Executor registry
-	registry := executor.NewRegistry()
-	registry.Register(executor.NewMockExecutor())
+	// Executor registry. Executors adds the built-ins below, once
+	// agentDeps exists.
+	registry := bootstrap.NewExecutorRegistry()
 
 	// Load profiles from the canonical path and keep a live source object so
 	// scheduler dispatch and session boots can observe reloads after startup.
@@ -187,6 +186,8 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	// claim it for per-task MCP loopback wiring (CW-20260427-0059). Same
 	// handle reused by httpserver below.
 	svc := service.New(store)
+	// Task writes name only an executor this registry has (CW-20260910-0087).
+	svc.Task.SetRegisteredExecutors(registry.List)
 	telemetryWriter, err := writequeue.New(store, telemetryDB, writequeue.DefaultConfig())
 	if err != nil {
 		return fmt.Errorf("create telemetry queue writer: %w", err)
