@@ -53,6 +53,37 @@ export interface RunQuery {
 
 export type RunPage = ListPage<Run>
 
+export interface AggregateFacet {
+  dimension: string
+  buckets: { value: string | number | boolean | null; count: number }[]
+  total_distinct: number
+  returned: number
+  truncated: boolean
+}
+export interface TaskFacetResult {
+  matching_count: number
+  facets: AggregateFacet[]
+}
+export interface RunFacetResult extends TaskFacetResult {
+  totals: { cost: number; prompt_tokens: number; completion_tokens: number }
+}
+export interface RunTimeBucket {
+  start: string
+  count: number
+  prompt_tokens: number
+  completion_tokens: number
+  cost: number
+  status_counts: Record<string, number>
+}
+export interface RunTimeSeries {
+  bucket: 'hour' | 'day'
+  tz_offset_minutes: number
+  since: string
+  until: string
+  buckets: RunTimeBucket[]
+  totals: Omit<RunTimeBucket, 'start' | 'status_counts'>
+}
+
 export class ApiError extends Error {
   status: number
   url?: string
@@ -409,6 +440,10 @@ export class TorqueApiClient {
     return { tasks: page.items, ...page.meta }
   }
 
+  async taskFacets(filter?: Omit<TaskFilter, 'limit' | 'offset' | 'sort_by' | 'sort_dir'>, dimensions = 'status'): Promise<TaskFacetResult> {
+    return this.get<TaskFacetResult>('/tasks/facets', { ...taskFilterParams(filter), dimensions })
+  }
+
   async getTask(id: string, signal?: AbortSignal): Promise<Task> {
     return this.get<Task>(`/tasks/${id}`, undefined, signal)
   }
@@ -468,6 +503,14 @@ export class TorqueApiClient {
   async pageRuns(params: RunQuery = {}, signal?: AbortSignal): Promise<RunPage> {
     const res = await this.get<{ items: ApiRunRecord[]; meta: RunPage['meta'] }>('/runs', { ...params }, signal)
     return { items: res.items.map(normalizeRun), meta: res.meta }
+  }
+
+  async runFacets(params: Pick<RunQuery, 'task_id' | 'project_id' | 'sprint_id' | 'epic_id' | 'status' | 'since' | 'until'> = {}, dimensions = 'status,executor,profile'): Promise<RunFacetResult> {
+    return this.get<RunFacetResult>('/runs/facets', { ...params, dimensions })
+  }
+
+  async runTimeSeries(params: { since: string; until: string; bucket: 'hour' | 'day'; tz_offset_minutes?: number }): Promise<RunTimeSeries> {
+    return this.get<RunTimeSeries>('/runs/timeseries', { ...params })
   }
 
   async getRun(id: number): Promise<Run> {
