@@ -279,6 +279,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		AgentFilePath:  opts.AgentFile,
 		RuntimeKind:    rtKind,
 		ProviderID:     runtimeIDFor(profile.Provider),
+		ProviderBinary: detectedBinary(cliAdapter),
 		ProjectID:      opts.ProjectID,
 		Workdir:        opts.Workdir,
 		WorkspaceDir:   ws.WorkspaceDir,
@@ -1570,6 +1571,25 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 	}
 
 	return sess, nil
+}
+
+// detectedBinary returns the absolute path the adapter's Detect resolves
+// for its CLI, or "" when it finds none or returns a bare name. Boot pins it
+// as the launch plan's provider binary so the planted launch execs that
+// path instead of a bare name looked up in the daemon's PATH: an install
+// only in a registry lookup dir (~/.opencode/bin, ~/.local/bin) then works
+// without host changes (CW-20261001-0098). bootLegacy already spawns the
+// adapter's Detect result; this brings the go-agent-wrapper path, whose
+// spawn binary is the planted argv[0], to the same place.
+func detectedBinary(cli provider.CLIAdapter) string {
+	if cli == nil {
+		return ""
+	}
+	bin, ok := cli.Detect()
+	if !ok || !filepath.IsAbs(bin) {
+		return ""
+	}
+	return bin
 }
 
 // mergeCallerEnvIntoPrepared merges Torque's caller-side "K=V" env slice
