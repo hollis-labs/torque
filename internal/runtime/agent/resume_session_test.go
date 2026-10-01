@@ -186,19 +186,28 @@ func TestPrependSystemPrompt(t *testing.T) {
 func TestKickoffFirstTurn_ContinuationOmitsTheDescription(t *testing.T) {
 	task := Options{TaskID: "CW-T", Description: "Summarize the README."}
 
-	assert.Contains(t, kickoffFirstTurn(task), "## First turn\n\nSummarize the README.")
+	assert.Contains(t, kickoffFirstTurn(task, continuesConversation(task)), "## First turn\n\nSummarize the README.")
 
 	resumed := task
 	resumed.ProviderSessionIDOverride = "ses_prior"
-	assert.NotContains(t, kickoffFirstTurn(resumed), "Summarize the README.")
-	assert.NotContains(t, kickoffFirstTurn(resumed), "## First turn")
+	assert.NotContains(t, kickoffFirstTurn(resumed, continuesConversation(resumed)), "Summarize the README.")
+	assert.NotContains(t, kickoffFirstTurn(resumed, continuesConversation(resumed)), "## First turn")
 
 	checkpoint := task
 	checkpoint.Mode = ModeResume
-	assert.NotContains(t, kickoffFirstTurn(checkpoint), "Summarize the README.")
+	assert.NotContains(t, kickoffFirstTurn(checkpoint, continuesConversation(checkpoint)), "Summarize the README.")
 
 	resumed.OneShotPrompt = "Answer the operator."
-	assert.Contains(t, kickoffFirstTurn(resumed), "## First turn\n\nAnswer the operator.")
+	assert.Contains(t, kickoffFirstTurn(resumed, continuesConversation(resumed)), "## First turn\n\nAnswer the operator.")
 	resumed.SystemPrompt = "NOTE: be careful."
-	assert.Contains(t, kickoffFirstTurn(resumed), "## Task framing\n\nNOTE: be careful.", "the framing stays")
+	assert.Contains(t, kickoffFirstTurn(resumed, continuesConversation(resumed)), "## Task framing\n\nNOTE: be careful.", "the framing stays")
+}
+
+// An ACP session keeps the description as its first turn even when it is
+// resumed: an agent that does not advertise loadSession starts a new session
+// without saying so, and would otherwise boot with no task description.
+func TestACPKickoff_ResumedKeepsTheDescription(t *testing.T) {
+	resumed := Options{TaskID: "CW-T", Description: "Summarize the README.", ProviderSessionIDOverride: "ses_prior"}
+	assert.Contains(t, acpKickoff(resumed, "worker", nil, true), "## First turn\n\nSummarize the README.")
+	assert.NotContains(t, kickoffMarkdown(resumed, "worker", false), "Summarize the README.", "a native resume does not repeat it")
 }

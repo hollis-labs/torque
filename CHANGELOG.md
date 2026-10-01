@@ -276,7 +276,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   (a genuine resume), the kickoff does not repeat the task's description as a
   first turn, which a continuation could read as "restart the task"; the
   planted `task.md` and `task.json` keep it either way, and a fresh boot is
-  given it. Note that `kind` here only fills the planted `task.json`: the
+  given it. An ACP session keeps the description as its first turn even when
+  resumed, since an ACP agent without `loadSession` starts a new session without
+  saying so (CW-20261001-0202). Note that `kind` here only fills the planted `task.json`: the
   idle-after-done nudge runs in the scheduler's long-lived dispatch, which a
   re-launched session does not go through.
 - A run's cost is one figure, priced once (CW-20260912-0003). The cost a
