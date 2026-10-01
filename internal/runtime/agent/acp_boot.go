@@ -262,6 +262,11 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 
 	persistedMeta := callerSessionMeta(opts.SessionMeta)
 	persistedMeta[metaKeyMode] = opts.Mode.String()
+	if cfg.SessionIDPreset != "" {
+		// The launch continues a stored provider conversation
+		// (Session.Resumed, CW-20261001-0203).
+		persistedMeta[metaKeyResumed] = "true"
+	}
 	persistedMeta[metaKeyWorkspaceDir] = ws.WorkspaceDir
 	if opts.RunID > 0 {
 		persistedMeta[metaKeyRunID] = strconv.FormatInt(opts.RunID, 10)
@@ -405,6 +410,7 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 		TaskID:          opts.TaskID,
 		ParentSessionID: opts.ParentSessionID,
 		Status:          StatusRunning,
+		Resumed:         cfg.SessionIDPreset != "",
 		Meta:            persistedMeta,
 		CreatedAt:       time.Now().UTC(),
 	}

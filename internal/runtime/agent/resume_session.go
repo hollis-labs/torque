@@ -4,9 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
-
-	"github.com/hollis-labs/go-providers/provider"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
@@ -19,11 +16,10 @@ import (
 // (GenuinelyResumable, from the go-providers registry, CW-20261001-0174).
 // Whether the resume held is the returned Session's Resumed.
 func (m *Manager) ResumesSession(rec *sqlstore.SessionRecord) bool {
-	if rec == nil || len(rec.ResumeHint) == 0 {
+	if rec == nil {
 		return false
 	}
-	bootProvider, kind := m.RuntimeForProfile(rec.AgentProfile)
-	return SameRuntime(rec.Provider, bootProvider) && GenuinelyResumable(bootProvider, kind)
+	return m.resumes(rec.Provider, rec.ResumeHint, "", rec.AgentProfile)
 }
 
 // ResumeSession resumes a previously booted session by sessionID using the
@@ -132,31 +128,23 @@ func (m *Manager) ResumeSession(ctx context.Context, sessionID string, opts Resu
 		}
 	}
 
-	resumed := m.ResumesSession(rec)
-	if resumed {
+	var sess *Session
+	if m.ResumesSession(rec) {
 		// State-based resume: thread the persisted provider session-id
 		// through Options.ProviderSessionIDOverride. Boot stamps
 		// StartOptions.SessionIDPreset; the launch renders it into the
 		// CLI's resume argument (claude --resume, opencode --session), or
-		// an ACP session sends it in session/load.
-		bootOpts.ProviderSessionIDOverride = string(rec.ResumeHint)
-	}
-	// Otherwise fresh-boot: no resume argument; the new session gets a
-	// new provider session-id on first turn.
-
-	sess, err := Boot(ctx, m.deps, bootOpts)
-	if err != nil && resumed && errors.Is(err, provider.ErrProviderSessionLost) {
-		// The provider no longer has the conversation (an expired or
-		// pruned session, or an id from another machine). Boot fresh, with
-		// the kickoff, rather than fail the resume outright.
-		log.Printf("agent.ResumeSession: provider session for %s is gone; booting fresh: %v", sessionID, err)
-		bootOpts.ProviderSessionIDOverride = ""
-		resumed = false
+		// an ACP session sends it in session/load. A lost one boots fresh.
+		resume := bootOpts
+		resume.ProviderSessionIDOverride = string(rec.ResumeHint)
+		sess, err = bootWithFreshFallback(ctx, m.deps, resume, bootOpts, "ResumeSession "+sessionID)
+	} else {
+		// Fresh-boot: no resume argument; the new session gets a new
+		// provider session-id on first turn.
 		sess, err = Boot(ctx, m.deps, bootOpts)
 	}
 	if err != nil {
 		return nil, err
 	}
-	sess.Resumed = resumed
 	return sess, nil
 }

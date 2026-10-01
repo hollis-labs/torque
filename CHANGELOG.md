@@ -240,6 +240,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- The HTTP and MCP session resume (`POST /api/v1/sessions/{id}/resume`,
+  `torque_session_resume`, `Manager.Resume`) makes the same decision as
+  `ResumeSession` (CW-20261001-0203). It continues the checkpoint's
+  provider conversation only when there is a stored id, the profile still
+  boots the runtime that stored it, and Torque wires that runtime's resume.
+  Otherwise it boots fresh, long-lived, with the kickoff. A codex
+  app-server resume used to pass the thread id, which the app-server
+  ignores, and skip the kickoff, so the new session sat silent. A resume
+  whose provider has lost the session boots fresh once. The session's
+  `Resumed` field (meta `torque.resumed`, set when the launch carries a
+  provider session id) reports which happened, on every session read.
 - Torque's tests no longer write session workspaces into the operator's
   `~/.torque/workspaces`. Every test's agent dependencies get a temp root
   (`testenv.WorkspacesRoot(t)`), and under `go test` a workspaces root inside

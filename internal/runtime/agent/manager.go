@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 	runtimeturn "github.com/hollis-labs/agentkit/agentruntime/turn"
 	"github.com/hollis-labs/agentkit/agentsessions"
 	"github.com/hollis-labs/go-agent-wrapper/wrapper"
+	"github.com/hollis-labs/go-providers/provider"
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/launchprofile"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -267,11 +269,18 @@ func (m *Manager) KnownProfiles() config.ProfileMap {
 // an invalid kind resolves to "" (the registry default), and Boot then
 // refuses the profile.
 func (m *Manager) RuntimeForProfile(name string) (string, RuntimeKind) {
+	return m.runtimeFor("", name)
+}
+
+// runtimeFor is RuntimeForProfile for a launch profile and/or a legacy
+// agent profile, as Options carries them.
+func (m *Manager) runtimeFor(launchProfile, agentProfile string) (string, RuntimeKind) {
 	if m == nil || m.deps == nil {
 		return "", ""
 	}
 	profile := launchprofile.Resolve(launchprofile.ResolveRequest{
-		LegacyAgentProfile: name,
+		LaunchProfile:      launchProfile,
+		LegacyAgentProfile: agentProfile,
 		Source:             m.deps.Profiles,
 	}).AgentProfile
 	kind, err := selectRuntimeKind(profile.Provider, profile.RuntimeKind)
@@ -1068,9 +1077,14 @@ func (m *Manager) Boot(ctx context.Context, opts Options) (*Session, error) {
 	return Boot(ctx, m.deps, opts)
 }
 
-// Resume re-launches a session against a previous checkpoint. Wraps Boot
-// with Mode=ModeResume; the SessionID/CheckpointID lookup happens inside
-// findCheckpoint. Replaces sessionmgr.Manager.Resume.
+// Resume re-launches a session against a previous checkpoint (the HTTP and
+// MCP session resume). It continues the provider conversation the
+// checkpoint stored only where ResumeSession would (resumes: a stored id,
+// the same registry runtime, and a resume Torque wires), booting with
+// Mode=ModeResume. Otherwise it boots fresh, long-lived, with the kickoff:
+// a codex app-server boot handed an id it ignores would skip its kickoff
+// and sit silent (CW-20261001-0203). A resume whose provider has lost the
+// session boots fresh once. The new session's Resumed says which it did.
 func (m *Manager) Resume(ctx context.Context, req ResumeRequest) (string, error) {
 	if req.SessionID == "" {
 		return "", fmt.Errorf("agent.Manager.Resume: SessionID required")
@@ -1137,19 +1151,57 @@ func (m *Manager) Resume(ctx context.Context, req ResumeRequest) (string, error)
 		}
 	}
 
-	sess, err := Boot(ctx, m.deps, Options{
-		Mode:                 ModeResume,
-		LaunchProfile:        launchProfile,
-		AgentProfile:         profile,
-		Workdir:              workdir,
-		ResumeFromCheckpoint: cp.ID,
-		SystemPrompt:         req.SystemPrompt,
-		Env:                  envMap,
-	})
+	fresh := Options{
+		Mode:          ModeLongLived,
+		LaunchProfile: launchProfile,
+		AgentProfile:  profile,
+		Workdir:       workdir,
+		SystemPrompt:  req.SystemPrompt,
+		Env:           envMap,
+	}
+	var sess *Session
+	if m.resumes(src.Provider, cp.ResumeHint, launchProfile, profile) {
+		resume := fresh
+		resume.Mode = ModeResume
+		resume.ResumeFromCheckpoint = cp.ID
+		sess, err = bootWithFreshFallback(ctx, m.deps, resume, fresh, "Resume "+req.SessionID)
+	} else {
+		sess, err = Boot(ctx, m.deps, fresh)
+	}
 	if err != nil {
 		return "", err
 	}
 	return sess.ID, nil
+}
+
+// resumes reports whether booting launchProfile/agentProfile continues the
+// provider conversation hint names, which a session of provider recordedBy
+// stored: there is an id, the profile still boots that registry runtime,
+// and Torque genuinely resumes it in the profile's kind (GenuinelyResumable,
+// CW-20261001-0174). The single decision point for every resume (D4).
+func (m *Manager) resumes(recordedBy string, hint []byte, launchProfile, agentProfile string) bool {
+	if len(hint) == 0 {
+		return false
+	}
+	bootProvider, kind := m.runtimeFor(launchProfile, agentProfile)
+	return SameRuntime(recordedBy, bootProvider) && GenuinelyResumable(bootProvider, kind)
+}
+
+// bootWithFreshFallback boots resume, a launch that continues a stored
+// provider conversation. When the provider no longer has it (an expired or
+// pruned session, an id from another machine), Boot fails with
+// provider.ErrProviderSessionLost and fresh boots once instead, with the
+// kickoff, rather than the resume failing outright. Boot only sees the
+// loss when the launch runs a turn before it returns (a subprocess
+// session's kickoff); otherwise it surfaces on the first turn
+// (CW-20261001-0202).
+func bootWithFreshFallback(ctx context.Context, deps *Dependencies, resume, fresh Options, what string) (*Session, error) {
+	sess, err := Boot(ctx, deps, resume)
+	if err != nil && errors.Is(err, provider.ErrProviderSessionLost) {
+		log.Printf("agent: %s: the provider no longer has the session; booting fresh: %v", what, err)
+		return Boot(ctx, deps, fresh)
+	}
+	return sess, err
 }
 
 // providerFromRuntime extracts a stable provider token from a Runtime ID
@@ -1204,6 +1256,7 @@ const (
 	metaKeyRunID           = "torque.run_id"
 	metaKeyStopCause       = "torque.stop_cause"
 	metaKeyStopReason      = "torque.stop_reason"
+	metaKeyResumed         = "torque.resumed"
 )
 
 func callerSessionMeta(in map[string]string) map[string]string {
@@ -1218,6 +1271,7 @@ func callerSessionMeta(in map[string]string) map[string]string {
 	delete(out, metaKeyRunID)
 	delete(out, metaKeyStopCause)
 	delete(out, metaKeyStopReason)
+	delete(out, metaKeyResumed)
 	return out
 }
 
@@ -1249,6 +1303,7 @@ func sessionFromRecord(rec *sqlstore.SessionRecord) *Session {
 		s.BootDir = meta[metaKeyBootDir]
 		s.WorkspaceDir = meta[metaKeyWorkspaceDir]
 		s.ParentSessionID = meta[metaKeyParentSessionID]
+		s.Resumed = meta[metaKeyResumed] == "true"
 	}
 	if rec.ProjectID.Valid {
 		s.ProjectID = rec.ProjectID.String

@@ -157,7 +157,7 @@ type Session struct {
 	PID             int               `json:"PID"`
 	ExitCode        *int              `json:"ExitCode,omitempty"`
 	ResumeHint      []byte            `json:"ResumeHint,omitempty"`
-	Resumed         bool              `json:"Resumed,omitempty"` // ResumeSession continued the stored provider conversation (CW-20261001-0174)
+	Resumed         bool              `json:"Resumed,omitempty"` // launched continuing a stored provider conversation (meta torque.resumed; CW-20261001-0174, -0203)
 	Meta            map[string]string `json:"Meta,omitempty"`
 	CreatedAt       time.Time         `json:"CreatedAt"`
 	UpdatedAt       time.Time         `json:"UpdatedAt"`
