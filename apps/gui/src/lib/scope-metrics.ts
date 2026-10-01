@@ -1,4 +1,4 @@
-import type { Task } from '@/lib/types'
+import type { Task, TaskScopeKey, TaskScopeRollupResponse, TaskStatus } from '@/lib/types'
 
 export interface ScopeTaskRollup {
   total: number
@@ -11,13 +11,18 @@ export interface ScopeTaskRollup {
   completion: number
 }
 
-export function buildTaskRollup(tasks: Task[]): ScopeTaskRollup {
-  const done = tasks.filter((task) => task.status === 'done').length
-  const open = tasks.filter((task) => ['backlog', 'todo', 'queued'].includes(task.status)).length
-  const doing = tasks.filter((task) => task.status === 'doing').length
-  const review = tasks.filter((task) => task.status === 'review').length
-  const blocked = tasks.filter((task) => task.status === 'blocked').length
-  const paused = tasks.filter((task) => task.status === 'paused').length
+/**
+ * Buckets a scope's per-status counts. Archived, abandoned and cancelled
+ * tasks are left out of every bucket and of total.
+ */
+export function rollupFromStatusCounts(counts: Readonly<Record<string, number>>): ScopeTaskRollup {
+  const n = (status: TaskStatus) => counts[status] ?? 0
+  const done = n('done')
+  const open = n('backlog') + n('todo') + n('queued')
+  const doing = n('doing')
+  const review = n('review')
+  const blocked = n('blocked')
+  const paused = n('paused')
   const total = open + doing + review + blocked + paused + done
 
   return {
@@ -32,8 +37,19 @@ export function buildTaskRollup(tasks: Task[]): ScopeTaskRollup {
   }
 }
 
-export function groupTasksByScope(tasks: Task[], key: 'project_id' | 'sprint_id' | 'epic_id'): Map<string, Task[]> {
-  const groups = new Map<string, Task[]>()
+export function buildTaskRollup(tasks: ReadonlyArray<Pick<Task, 'status'>>): ScopeTaskRollup {
+  const counts: Record<string, number> = {}
+  for (const task of tasks) counts[task.status] = (counts[task.status] ?? 0) + 1
+  return rollupFromStatusCounts(counts)
+}
+
+/** Rollups from GET /tasks/rollup, keyed by scope id. */
+export function rollupsByScope(res: TaskScopeRollupResponse | null): Map<string, ScopeTaskRollup> {
+  return new Map((res?.scopes ?? []).map((scope) => [scope.scope_id, rollupFromStatusCounts(scope.counts)]))
+}
+
+export function groupTasksByScope<T extends Pick<Task, TaskScopeKey>>(tasks: T[], key: TaskScopeKey): Map<string, T[]> {
+  const groups = new Map<string, T[]>()
   for (const task of tasks) {
     const id = task[key]
     if (!id) continue

@@ -6,8 +6,8 @@ import { SprintCreateDialog } from '@/components/domain/sprint-create-dialog'
 import { ScopeOverviewCard } from '@/components/domain/scope-overview-card'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
-import { buildTaskRollup, groupTasksByScope } from '@/lib/scope-metrics'
-import type { Project, Sprint, Task } from '@/lib/types'
+import { rollupFromStatusCounts, rollupsByScope } from '@/lib/scope-metrics'
+import type { Project, Sprint, TaskScopeRollupResponse } from '@/lib/types'
 
 const SSE_EVENTS = ['sprint.updated', 'sprint.created', 'sprint.deleted', 'task.updated', 'task.created', 'task.transitioned']
 
@@ -26,7 +26,7 @@ export default function SprintsPage() {
   const { lastEvent } = useSSE(SSE_EVENTS)
   const [sprints, setSprints] = useState<Sprint[]>([])
   const [projects, setProjects] = useState<Project[]>([])
-  const [tasks, setTasks] = useState<Task[]>([])
+  const [taskRollup, setTaskRollup] = useState<TaskScopeRollupResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
@@ -37,15 +37,15 @@ export default function SprintsPage() {
     setLoading(true)
     setError(null)
     try {
-      const [sprintRes, projectRes, taskRes] = await Promise.all([
+      const [sprintRes, projectRes, rollupRes] = await Promise.all([
         api.listSprints(),
         api.listProjects(),
-        api.listTasks(),
+        api.taskRollup('sprint_id'),
       ])
       if (myGen !== loadGeneration.current) return
       setSprints(sprintRes.sprints)
       setProjects(projectRes.projects)
-      setTasks(taskRes.tasks)
+      setTaskRollup(rollupRes)
     } catch (err) {
       if (myGen !== loadGeneration.current) return
       setError(err instanceof Error ? err.message : 'Failed to load sprints')
@@ -63,7 +63,7 @@ export default function SprintsPage() {
     void load()
   }, [lastEvent, load])
 
-  const sprintTasks = useMemo(() => groupTasksByScope(tasks, 'sprint_id'), [tasks])
+  const sprintRollups = useMemo(() => rollupsByScope(taskRollup), [taskRollup])
   const projectNames = useMemo(
     () => new Map(projects.map((project) => [project.id, project.name])),
     [projects]
@@ -73,14 +73,14 @@ export default function SprintsPage() {
     { label: 'Sprints', value: sprints.length },
     { label: 'Active', value: sprints.filter((sprint) => sprint.status === 'active').length, accentColor: '#34d399' },
     { label: 'Completed', value: sprints.filter((sprint) => sprint.status === 'completed').length, accentColor: '#60a5fa' },
-    { label: 'Scoped Tasks', value: tasks.filter((task) => task.sprint_id).length, accentColor: '#fbbf24' },
+    { label: 'Scoped Tasks', value: taskRollup?.total ?? 0, accentColor: '#fbbf24' },
   ]
 
   const sprintCards = useMemo(() => {
     return sprints.map((sprint) => {
-      return { sprint, rollup: buildTaskRollup(sprintTasks.get(sprint.id) ?? []) }
+      return { sprint, rollup: sprintRollups.get(sprint.id) ?? rollupFromStatusCounts({}) }
     })
-  }, [sprints, sprintTasks])
+  }, [sprints, sprintRollups])
 
   return (
     <div className="flex h-full flex-col">

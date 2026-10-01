@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { EmptyState } from '@hollis-labs/sysop-ui'
 import { TaskRow } from './task-row'
-import type { Task, TaskStatus } from '@/lib/types'
+import type { Task, TaskStatus, TaskSummary } from '@/lib/types'
 
 const EMPTY_COPY = {
   'no-tasks': {
@@ -22,7 +22,7 @@ type SortDir = 'asc' | 'desc'
 const PAGE_SIZE = 50
 
 interface TaskTableProps {
-  tasks: Task[]
+  tasks: TaskSummary[]
   loading?: boolean
   onTransition?: (id: string, status: TaskStatus) => void
   onTaskChange?: (task: Task) => void
@@ -34,7 +34,7 @@ interface TaskTableProps {
   scrollRootRef?: RefObject<HTMLElement | null>
 }
 
-function sortTasks(tasks: Task[], key: SortKey, dir: SortDir): Task[] {
+function sortTasks(tasks: TaskSummary[], key: SortKey, dir: SortDir): TaskSummary[] {
   return [...tasks].sort((a, b) => {
     let av: string | number = a[key] ?? ''
     let bv: string | number = b[key] ?? ''

@@ -8,6 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- `GET /api/v1/tasks/rollup?group_by=project_id|epic_id|sprint_id` counts
+  tasks per scope and status in one query, and `GET /api/v1/tasks?fields=summary`
+  leaves out each task's `description` and `system_prompt`. The GUI's
+  Projects, Epics and Sprints pages use the rollup instead of paging every
+  task (17 MB in 78 requests on a 4,097-task store, now one 3 KB request), and
+  the scope detail pages use the summary list.
 - Open-source project documents: `CHANGELOG.md`, `CONTRIBUTING.md`,
   `SECURITY.md`, `TRADEMARK.md`; MIT `LICENSE`.
 

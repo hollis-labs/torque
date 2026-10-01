@@ -9,7 +9,7 @@ import { ScopeTaskPanel } from '@/components/domain/scope-task-panel'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
 import { buildTaskRollup } from '@/lib/scope-metrics'
-import type { Epic, Project, Task } from '@/lib/types'
+import type { Epic, Project, TaskSummary } from '@/lib/types'
 
 const SSE_EVENTS = ['epic.updated', 'epic.created', 'epic.deleted', 'task.updated', 'task.created', 'task.transitioned']
 
@@ -20,7 +20,7 @@ export default function EpicDetailPage() {
   const { lastEvent } = useSSE(SSE_EVENTS)
   const [epic, setEpic] = useState<Epic | null>(null)
   const [project, setProject] = useState<Project | null>(null)
-  const [tasks, setTasks] = useState<Task[]>([])
+  const [tasks, setTasks] = useState<TaskSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const loadGeneration = useRef(0)
@@ -33,7 +33,7 @@ export default function EpicDetailPage() {
     try {
       const [nextEpic, taskRes] = await Promise.all([
         api.getEpic(id),
-        api.listTasks({ epic_id: id }),
+        api.listTaskSummaries({ epic_id: id }),
       ])
       if (myGen !== loadGeneration.current) return
       const nextProject = nextEpic.project_id

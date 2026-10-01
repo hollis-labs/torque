@@ -280,6 +280,50 @@ describe('TorqueApiClient.listTasks', () => {
 
     await expect(client.listTasks()).rejects.toThrow(/usable forward continuation/i)
   })
+
+  it('listTaskSummaries pages with fields=summary', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({
+        tasks: [{ id: 'TASK-1' }],
+        total: 2,
+        has_more: true,
+        next_offset: 1,
+        continuation: { limit: 1, offset: 1 },
+      }))
+      .mockResolvedValueOnce(jsonResponse({ tasks: [{ id: 'TASK-2' }], total: 2, has_more: false }))
+
+    const out = await client.listTaskSummaries({ project_id: 'PRJ-1' })
+
+    expect(out.tasks.map((t) => t.id)).toEqual(['TASK-1', 'TASK-2'])
+    expect(calledUrls()).toEqual([
+      '/api/v1/tasks?project_id=PRJ-1&offset=0&fields=summary',
+      '/api/v1/tasks?project_id=PRJ-1&limit=1&offset=1&fields=summary',
+    ])
+  })
+})
+
+describe('TorqueApiClient.taskRollup', () => {
+  const client = new TorqueApiClient('/api/v1')
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('makes one GET to /tasks/rollup with group_by and the filter', async () => {
+    const body = { group_by: 'epic_id', total: 3, scopes: [{ scope_id: 'EP-1', total: 3, counts: { todo: 2, done: 1 } }] }
+    fetchMock.mockResolvedValueOnce(jsonResponse(body))
+
+    await expect(client.taskRollup('epic_id', { project_id: 'PRJ-1' })).resolves.toEqual(body)
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual([
+      '/api/v1/tasks/rollup?group_by=epic_id&project_id=PRJ-1',
+    ])
+  })
 })
 
 describe('TorqueApiClient.setSetting', () => {
