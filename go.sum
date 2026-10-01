@@ -41,10 +41,10 @@ github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 h1:/Tnpcb2E0Pz/tN9s3bfEY2Q8ePC
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0/go.mod h1:zOBXOsUaBSjKgmH4OGzV1esUpR3oUSCPYVd2cUBjKYY=
 github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs4luLUK2k=
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
-github.com/hollis-labs/agentkit v0.10.0 h1:7L81MTYSfqZZOQTrhe26dO74YT0cYVtvNPpbOA3Kklo=
-github.com/hollis-labs/agentkit v0.10.0/go.mod h1:IMsp3Pc0VH2PvYEuT5WeFXxj/SAX8YMgSXXgLEwaXDc=
-github.com/hollis-labs/go-agent-wrapper v0.13.1 h1:zm8Y4vOVbcGcP8lJecMD/hl+siDQ+WJmW9bX5ElA9yc=
-github.com/hollis-labs/go-agent-wrapper v0.13.1/go.mod h1:EpN3WPjzWBVfxF4TzQWswUPL2K5TUWoKWrLPnGyymLQ=
+github.com/hollis-labs/agentkit v0.11.0 h1:ydvpcWgB78WVaqNKYvPWKUKLXWxDALKLk7Qjjh4+w90=
+github.com/hollis-labs/agentkit v0.11.0/go.mod h1:kF7XaAFStYmH4MjiNqULpaXsovD4vxR0g/hQ8UTUE3s=
+github.com/hollis-labs/go-agent-wrapper v0.14.0 h1:wlH6Jsv4TZRG1yN6BSWT62cvzp1kAGekzlsrRv4oy2g=
+github.com/hollis-labs/go-agent-wrapper v0.14.0/go.mod h1:22itKHmoTCOjseR6S807sWFZ+6etwd54gpPInpRNNlc=
 github.com/hollis-labs/go-apppaths v0.1.0 h1:LJQv483BhOoizLL4qKwsLcCbM0lQoVrNvksJ1thycd4=
 github.com/hollis-labs/go-apppaths v0.1.0/go.mod h1:b3gOdAFgSYY9ZT7VUooAczFdb6o0C2xSGQa7ktcyw30=
 github.com/hollis-labs/go-harness-filters v0.1.1 h1:uTAF+ejKhje+rXMEOwTHsO7ig2fCAQnkANXgZBAyYZA=
@@ -63,6 +63,8 @@ github.com/hollis-labs/go-modelsdev v0.2.0 h1:g3SLpD4l43U1DyXcNaVePJS07yBr07mrjM
 github.com/hollis-labs/go-modelsdev v0.2.0/go.mod h1:xmyf7/gXcPVI/0htQZCbUhlkRT798zhjZZ4dYZqsEb4=
 github.com/hollis-labs/go-otel v0.6.1 h1:bPqO0xFkTNIrcgW7J4YM/yt3yn1/2Hy9dKxX6/Etna0=
 github.com/hollis-labs/go-otel v0.6.1/go.mod h1:aju/sgq+E9fdnsxzvCMdcOxcFOryEPHEFHxQEEhRbjU=
+github.com/hollis-labs/go-permission v0.1.0 h1:eOlb2pPmEkh9D5zlVgWwOd4ryycEQYiLT1cLMEG6y2c=
+github.com/hollis-labs/go-permission v0.1.0/go.mod h1:OXz5GXvR7vFAb6TVoGDOESIEecC0V40524NdN0jiOrs=
 github.com/hollis-labs/go-providers v0.30.0 h1:ClqU2WG3cJr9uhygUGftDNkS+T83J6kwvJcnOioVWYI=
 github.com/hollis-labs/go-providers v0.30.0/go.mod h1:5R5edyANZAxU2f+y+vpjwQJuN6KM0nNwbRUDmH2yQJ8=
 github.com/hollis-labs/go-queue v0.2.0 h1:hQ6dKEJVdHrH+j/cqLr+ywu0eD/SD7Hspnn5sUV+JsE=

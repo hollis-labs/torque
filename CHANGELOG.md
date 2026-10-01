@@ -19,6 +19,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- `go-agent-wrapper` v0.14.0 and `agentkit` v0.11.0 (adds `go-permission`
+  v0.1.0; `go-providers` stays v0.30.0). No behaviour change in Torque: the
+  wrapper's new `PermissionPosture` answers Codex app-server approvals, but
+  Torque runs codex on its own agentsessions path, not through the wrapper.
 - GUI pages refresh on task events at most once per 1.5 s burst instead of
   on every event. The Ops Dashboard patches task status in place from
   transition events and refetches only the tasks named by other events. Scope
