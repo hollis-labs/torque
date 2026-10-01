@@ -143,6 +143,13 @@ scopes. The daemon's other mux arguments (token, scopes) are kept; its own
 `--servers`, `--only` and `--broker` are replaced, since mux refuses `--only`
 beside the others.
 
+`--only` limits what a session can *reach*, not what mux *starts*: mux still
+spawns every enabled upstream server in its catalog inside its child process,
+and `--only` only leaves their tools unreachable (`mux_call` and discovery are
+suppressed). Only mux's `--confine` (Tether #88), which spawns just the allowed
+upstreams, would stop the spawn; it is tracked as CW-20261001-0259. A server id
+mux does not know is ignored, not an error.
+
 - Names come from a known set (`cerberus`, `fragments-engine`, `hadron`,
   `loom`, `nanite`, `sigil`, `tangent`, `tangent-dev`, `tesseract`, `tether`,
   `torque`, `vanta`): the server ids mux proxies, from its catalog's
