@@ -1,0 +1,297 @@
+package agent_boot
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
+	"github.com/hollis-labs/go-providers/providertest"
+	"github.com/oklog/ulid/v2"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
+)
+
+// Manager.Resume, the HTTP and MCP session resume, makes the same decision
+// as ResumeSession (CW-20261001-0203): it continues the checkpoint's
+// provider conversation only when there is an id, the profile still boots
+// the runtime that stored it, and Torque wires that runtime's resume.
+// Otherwise it boots fresh, long-lived, with the kickoff. The new session's
+// Resumed, as Get returns it, says which.
+
+// resumeSourceTask is the task the planted source sessions are bound to.
+const resumeSourceTask = "CW-MGR-RESUME-SRC"
+
+// plantResumeCheckpoint stores a session row booted by provider under
+// agentProfile, bound to resumeSourceTask with the "implementer" role, and a
+// checkpoint of it holding hint ("" for none).
+func plantResumeCheckpoint(t *testing.T, store *sqlstore.Store, sessID, provider, agentProfile, hint string) {
+	t.Helper()
+	if _, err := store.GetTask(resumeSourceTask); err != nil {
+		require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: resumeSourceTask, Title: "resume source", Priority: 2}))
+	}
+	require.NoError(t, store.CreateSession(&sqlstore.SessionRecord{
+		ID: sessID, AgentProfile: agentProfile, Provider: provider,
+		RuntimeID: "torque-cli/" + provider, RuntimeKind: "cli",
+		Workdir: t.TempDir(), State: "done", MetaJSON: `{"role":"implementer"}`,
+		TaskID: sql.NullString{String: resumeSourceTask, Valid: true},
+	}))
+	require.NoError(t, store.CreateSessionCheckpoint(&sqlstore.SessionCheckpointRecord{
+		ID: "SCP-" + ulid.Make().String(), SessionID: sessID,
+		Payload: `{}`, ResumeHint: []byte(hint), Note: "manager resume test",
+	}))
+}
+
+// codex app-server's resume is not wired (CW-20261001-0180): a checkpoint
+// with a thread id boots fresh, and the kickoff fires on a new thread. It
+// used to boot with the id the app-server ignores and skip the kickoff, so
+// the resumed session sat silent.
+func TestManagerResume_Codex_FreshBootWithKickoff(t *testing.T) {
+	cd := composeDeps(t, fakeRuntimeConfig{
+		JsonRpcResponses: map[string]json.RawMessage{
+			"thread/start": json.RawMessage(`{"thread": {"id": "thread-fresh-2"}}`),
+		},
+	}, "codex")
+	plantResumeCheckpoint(t, cd.Store, "SES-MGR-RESUME-CODEX", "codex", "torque-backend", "codex-thread-old")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	newID, err := cd.Manager.Resume(ctx, agent.ResumeRequest{SessionID: "SES-MGR-RESUME-CODEX"})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), newID) })
+
+	assert.Nil(t, cd.Runtime.sessionIDPreset.Load(), "no provider id is passed to a runtime that ignores it")
+	var methods []string
+	for _, c := range cd.Runtime.lastSession().recordedJsonRpcCalls() {
+		methods = append(methods, c.Method)
+	}
+	assert.Contains(t, methods, "thread/start")
+	assert.Contains(t, methods, "turn/start", "the kickoff fires")
+	assert.NotContains(t, methods, "thread/resume")
+
+	sess, err := cd.Manager.Get(newID)
+	require.NoError(t, err)
+	assert.False(t, sess.Resumed)
+	assert.Equal(t, agent.ModeLongLived, sess.Mode)
+	assert.Equal(t, resumeSourceTask, sess.TaskID, "the fresh session is the source task's, not an unlinked one")
+}
+
+// claude-code resumes: the checkpoint's id reaches the CLI as --resume, and
+// the session reports Resumed.
+func TestManagerResume_ClaudeCode_ResumesTheCheckpointsSession(t *testing.T) {
+	const hint = "00000000-0000-4000-8000-000000000039"
+	fake := providertest.New(t, runtimes.Claude, providertest.Replay("claude/stream_resume"))
+	fake.Install()
+	cd := composeDeps(t, fakeRuntimeConfig{}, "claude-code")
+	cd.Deps.RuntimeFactory = nil
+	cd.Deps.Profiles = config.ProfileMap{"worker": {Executor: "cli", Provider: "claude-code", PermissionMode: "acceptEdits"}}
+	plantResumeCheckpoint(t, cd.Store, "SES-MGR-RESUME-CLAUDE", "claude-code", "worker", hint)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	newID, err := cd.Manager.Resume(ctx, agent.ResumeRequest{SessionID: "SES-MGR-RESUME-CLAUDE"})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), newID) })
+
+	require.Eventually(t, func() bool { return len(fake.Calls()) > 0 }, 5*time.Second, 20*time.Millisecond)
+	got, ok := fake.Call(0).ArgAfter("--resume")
+	require.True(t, ok, "claude must be launched with --resume: %v", fake.Call(0).Args)
+	assert.Equal(t, hint, got)
+
+	sess, err := cd.Manager.Get(newID)
+	require.NoError(t, err)
+	assert.True(t, sess.Resumed)
+	assert.Equal(t, agent.ModeLongLived, sess.Mode, "a resume is a long-lived boot, as ResumeSession's is")
+	assert.Equal(t, resumeSourceTask, sess.TaskID)
+}
+
+// Without a stored id, or when the profile now boots another runtime than
+// the one that stored it, the resume boots fresh with the kickoff, as the
+// source session's task, project and role: on both claude runtime kinds.
+func TestManagerResume_NoIDOrOtherRuntime_FreshBootWithKickoff(t *testing.T) {
+	for _, kind := range []string{"", "subprocess"} {
+		for _, tc := range []struct{ name, recordedBy, hint string }{
+			{"no stored id", "claude-code", ""},
+			{"the profile now boots claude-code; opencode stored the id", "opencode", "ses_from_opencode"},
+		} {
+			name := kind
+			if name == "" {
+				name = "streaming-stdio"
+			}
+			t.Run(name+"/"+tc.name, func(t *testing.T) {
+				fake := providertest.New(t, runtimes.Claude, claudeFreshRun(kind))
+				fake.Install()
+				cd := composeDeps(t, fakeRuntimeConfig{}, "claude-code")
+				cd.Deps.RuntimeFactory = nil
+				cd.Deps.Profiles = config.ProfileMap{"worker": {
+					Executor: "cli", Provider: "claude-code", RuntimeKind: kind, PermissionMode: "acceptEdits",
+				}}
+				plantResumeCheckpoint(t, cd.Store, "SES-MGR-RESUME-FRESH", tc.recordedBy, "worker", tc.hint)
+
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				newID, err := cd.Manager.Resume(ctx, agent.ResumeRequest{SessionID: "SES-MGR-RESUME-FRESH"})
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), newID) })
+
+				require.Eventually(t, func() bool { return len(fake.Calls()) > 0 }, 5*time.Second, 20*time.Millisecond,
+					"the kickoff runs a first turn")
+				assert.False(t, fake.Call(0).HasArg("--resume"), "a fresh boot: %v", fake.Call(0).Args)
+
+				sess, err := cd.Manager.Get(newID)
+				require.NoError(t, err)
+				assert.False(t, sess.Resumed)
+				assert.Equal(t, agent.ModeLongLived, sess.Mode)
+				assert.Equal(t, resumeSourceTask, sess.TaskID, "the fresh session is the source task's")
+				// The task bundle planted for the session names the task and the
+				// source session's role; an unlinked session planted none.
+				bundle, err := os.ReadFile(filepath.Join(sess.BootDir, "tasks", resumeSourceTask, "task.md"))
+				require.NoError(t, err, "the source task's bundle is planted in %s", sess.BootDir)
+				assert.Contains(t, string(bundle), resumeSourceTask)
+				assert.Contains(t, string(bundle), "implementer", "the source session's role")
+			})
+		}
+	}
+}
+
+// claudeFreshRun is the fake claude run for a fresh boot of the given kind.
+func claudeFreshRun(kind string) providertest.Run {
+	if kind == "subprocess" {
+		return providertest.Replay("claude/print_turn1")
+	}
+	return providertest.Script(providertest.AwaitEOF())
+}
+
+// A checkpoint whose provider session is gone: the resume's first turn fails
+// with a lost session (claude: "No conversation found"), and Resume boots
+// fresh once, with the kickoff, rather than failing. A subprocess-per-turn
+// Boot runs the kickoff turn, so the loss is seen before it returns.
+func TestManagerResume_LostProviderSession_BootsFreshOnce(t *testing.T) {
+	const lostID = "00000000-0000-4000-8000-0000000000ff"
+	fake := providertest.New(t, runtimes.Claude,
+		providertest.Replay("claude/print_resume_unknown_id").When("--resume"),
+		providertest.Replay("claude/print_turn1"),
+	)
+	fake.Install()
+	cd := composeDeps(t, fakeRuntimeConfig{}, "claude-code")
+	cd.Deps.RuntimeFactory = nil
+	cd.Deps.Profiles = config.ProfileMap{"worker": {
+		Executor: "cli", Provider: "claude-code", RuntimeKind: "subprocess", PermissionMode: "acceptEdits",
+	}}
+	plantResumeCheckpoint(t, cd.Store, "SES-MGR-RESUME-LOST", "claude-code", "worker", lostID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	newID, err := cd.Manager.Resume(ctx, agent.ResumeRequest{SessionID: "SES-MGR-RESUME-LOST"})
+	require.NoError(t, err, "a lost provider session boots fresh rather than failing the resume")
+	t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), newID) })
+
+	require.Eventually(t, func() bool { return len(fake.Calls()) > 1 }, 5*time.Second, 20*time.Millisecond)
+	got, ok := fake.Call(0).ArgAfter("--resume")
+	require.True(t, ok)
+	assert.Equal(t, lostID, got, "the resume was tried first")
+	assert.False(t, fake.Call(1).HasArg("--resume"), "then a fresh boot: %v", fake.Call(1).Args)
+	assert.Len(t, fake.Calls(), 2, "once")
+
+	sess, err := cd.Manager.Get(newID)
+	require.NoError(t, err)
+	assert.False(t, sess.Resumed)
+	assert.Equal(t, resumeSourceTask, sess.TaskID)
+}
+
+// The real flow, with nothing planted by hand: a session boots and reports
+// its provider session id, Checkpoint records it, and Resume launches the
+// CLI with it (claude --resume <id>). A checkpoint written before checkpoints
+// carried the id falls back to the source session's own.
+func TestManagerResume_RealCheckpointThenResume_ThreadsTheID(t *testing.T) {
+	const capturedID = "00000000-0000-4000-8000-000000000001" // go-providers' claude print_turn1
+	for _, legacyCheckpoint := range []bool{false, true} {
+		name := "checkpoint records the id"
+		if legacyCheckpoint {
+			name = "legacy checkpoint without one"
+		}
+		t.Run(name, func(t *testing.T) {
+			fake := providertest.New(t, runtimes.Claude,
+				providertest.Replay("claude/print_turn1"),
+				providertest.Replay("claude/print_turn2_resume").When("--resume"),
+			)
+			fake.Install()
+			cd := composeDeps(t, fakeRuntimeConfig{}, "claude-code")
+			cd.Deps.RuntimeFactory = nil
+			cd.Deps.Profiles = config.ProfileMap{"worker": {
+				Executor: "cli", Provider: "claude-code", RuntimeKind: "subprocess", PermissionMode: "acceptEdits",
+			}}
+			require.NoError(t, cd.Store.CreateTask(&sqlstore.TaskRecord{ID: "CW-MGR-REAL", Title: "real checkpoint", Priority: 2}))
+
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			const firstID = "SES-MGR-REAL"
+			first, err := cd.Manager.Boot(ctx, agent.Options{
+				TaskID: "CW-MGR-REAL", AgentProfile: "worker", Workdir: t.TempDir(),
+				Mode: agent.ModeLongLived, IDFn: func() string { return firstID },
+			})
+			require.NoError(t, err)
+			require.Eventually(t, func() bool {
+				rec, err := cd.Store.GetSession(firstID)
+				return err == nil && string(rec.ResumeHint) == capturedID
+			}, 5*time.Second, 20*time.Millisecond, "the first turn's provider session id is stored")
+
+			if legacyCheckpoint {
+				require.NoError(t, cd.Store.CreateSessionCheckpoint(&sqlstore.SessionCheckpointRecord{
+					ID: "SCP-" + ulid.Make().String(), SessionID: first.ID, Payload: `{}`, Note: "written before checkpoints carried an id",
+				}))
+			} else {
+				cp, err := cd.Manager.Checkpoint(agent.CheckpointRequest{SessionID: first.ID, Payload: `{}`, Note: "real"})
+				require.NoError(t, err)
+				assert.Equal(t, capturedID, string(cp.ResumeHint), "the checkpoint records the provider conversation")
+				rec, err := cd.Store.GetSessionCheckpoint(cp.ID)
+				require.NoError(t, err)
+				assert.Equal(t, capturedID, string(rec.ResumeHint), "and persists it")
+			}
+			require.NoError(t, cd.Manager.Stop(context.Background(), first.ID))
+
+			newID, err := cd.Manager.Resume(ctx, agent.ResumeRequest{SessionID: first.ID})
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), newID) })
+
+			require.Eventually(t, func() bool { return len(fake.Calls()) > 1 }, 5*time.Second, 20*time.Millisecond)
+			got, ok := fake.Call(1).ArgAfter("--resume")
+			require.True(t, ok, "the resumed launch carries --resume: %v", fake.Call(1).Args)
+			assert.Equal(t, capturedID, got)
+			sess, err := cd.Manager.Get(newID)
+			require.NoError(t, err)
+			assert.True(t, sess.Resumed)
+			assert.Equal(t, "CW-MGR-REAL", sess.TaskID)
+		})
+	}
+}
+
+// A pi ACP boot handed a provider session id loads it (session/load) and the
+// session is marked resumed; one without is not. The ACP boot path stamps
+// the same torque.resumed meta the other paths do.
+func TestBootPiACP_ResumedMetaFollowsTheSessionIDPreset(t *testing.T) {
+	fake := providertest.New(t, runtimes.Pi, providertest.Replay("pi/acp_resume"))
+	fake.Install()
+	cd := composeACPDeps(t, "pi")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	sess, err := cd.Manager.Boot(ctx, agent.Options{
+		AgentProfile: "worker", Workdir: t.TempDir(), Mode: agent.ModeOneShot, Description: "carry on",
+		ProviderSessionIDOverride: "00000000-0000-4000-8000-000000000001",
+	})
+	require.NoError(t, err)
+	assert.True(t, sess.Resumed)
+	assert.Equal(t, "true", sess.Meta["torque.resumed"])
+	got, err := cd.Manager.Get(sess.ID)
+	require.NoError(t, err)
+	assert.True(t, got.Resumed, "and it reads back from the row")
+}

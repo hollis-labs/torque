@@ -93,6 +93,29 @@ make network calls; review them before enabling.
   it
 - no built-in TLS
 - no at-rest encryption
-- executors run with the operator's permissions; there is no sandbox beyond what
-  the launched tool provides
+- executors run with the operator's uid. Torque write-protects its own state
+  directories from the agents it launches (databases, config, session
+  workspaces; see
+  [docs/agent-execution-environment.md](docs/agent-execution-environment.md#control-plane-write-protection)),
+  but that sandbox stops direct writes only: a same-uid agent can still plant
+  code that runs outside it later (`~/.bashrc`, systemd user units, git hooks)
+  or ask a same-uid service to write for it (`systemd-run --user`). Beyond
+  that there is no sandbox other than what the launched tool provides.
+- under that protection, nested sandboxes do not work: a process inside it
+  cannot create its own user namespace, so a worker running bubblewrap- or
+  `unshare`-based tests, or Chromium with its sandbox, fails there.
+  `TORQUE_SANDBOX_PROTECT=0` is the escape hatch. A codex launch whose
+  profile positively selects codex's own sandbox (`read-only` or
+  `workspace-write`) is left to it, unwrapped; any other codex launch,
+  `--yolo` and unrecognised sandbox or permission arguments included, is
+  wrapped.
+- the services behind a planted mux's tools (`cerberus_ssh_exec`, the docker
+  daemon, the cerberus daemon) run outside the sandbox, with their own
+  authority; an ssh to this host as the operator's uid is a same-uid route to
+  the protected directories.
+- Torque's own git runs unsandboxed in repositories agents can write. It
+  neutralizes fsmonitor, hooks, the repository's filter drivers and `ext::`
+  transports, and skips its best-effort fetch when the repository's config
+  sets remote commands; config inside a submodule's own git dir is not
+  covered.
 - pre-1.0 contracts and schema

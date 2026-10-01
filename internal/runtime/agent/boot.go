@@ -108,6 +108,13 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		role = agentProfileName
 	}
 
+	// The directories this launch write-protects, or a refusal when Torque
+	// cannot protect them (CW-20261001-0141).
+	protectedPaths, err := launchProtectedPaths(deps, profile, runtimeKind, sessID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrBootFailed, err)
+	}
+
 	// Trace the boot. Spans start AFTER the cheap preflight (validate / deps
 	// guard / profile / runtime / adapter / sessID) so failed early returns
 	// don't generate empty boot spans for misconfiguration churn; the deferred
@@ -194,7 +201,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		}
 	}
 
-	kickoffMD := kickoffMarkdown(opts, role)
+	kickoffMD := kickoffMarkdown(opts, role, deps.MuxOmitsTorque)
 	loopbackURL := ""
 	if loopback != nil {
 		loopbackURL = loopback.URL()
@@ -251,6 +258,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 			ws:               ws,
 			env:              env,
 			redact:           launchRedactor(nil, env, os.Environ(), deps.MuxEnv),
+			protectedPaths:   protectedPaths,
 		})
 	}
 
@@ -449,6 +457,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		capturedBootDir:   capturedBootDir,
 		sessionLaunch:     sessionLaunch,
 		redact:            launchRedactor(prepared.Env, env, os.Environ(), deps.MuxEnv),
+		protectedPaths:    protectedPaths,
 	}
 
 	// CW-20260904-0098: claude/opencode's runtime kinds (streaming-stdio,
@@ -512,6 +521,9 @@ type plantedBoot struct {
 	// redact scrubs the launch's secrets from what the session persists
 	// (launchRedactor, CW-20261001-0123).
 	redact *redact.Redactor
+	// protectedPaths are the directories this launch write-protects
+	// (launchProtectedPaths).
+	protectedPaths []string
 }
 
 // bootLegacy drives the pre-CW-20260904-0098 spawn/lifecycle path: direct
@@ -711,6 +723,11 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 	// bootDir lives in metaKeyBootDir and the adopted session resources.
 	persistedMeta := callerSessionMeta(opts.SessionMeta)
 	persistedMeta[metaKeyMode] = opts.Mode.String()
+	if sessionIDPreset != "" {
+		// The launch continues a stored provider conversation
+		// (Session.Resumed, CW-20261001-0203).
+		persistedMeta[metaKeyResumed] = "true"
+	}
 	persistedMeta[metaKeyWorkspaceDir] = ws.WorkspaceDir
 	if opts.RunID > 0 {
 		persistedMeta[metaKeyRunID] = strconv.FormatInt(opts.RunID, 10)
@@ -998,6 +1015,7 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 			Workdir:                 spawnWorkdir,
 			WorkspaceDir:            ws.WorkspaceDir,
 			LogPath:                 ws.LogPath,
+			ProtectedPaths:          pb.protectedPaths,
 			BootPrompt:              systemPrompt,
 			BootContent:             kickoffMD,
 			Env:                     env,
@@ -1119,6 +1137,7 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 		TaskID:          opts.TaskID,
 		ParentSessionID: opts.ParentSessionID,
 		Status:          StatusLaunching, // updated on terminal observe
+		Resumed:         sessionIDPreset != "",
 		Meta:            persistedMeta,
 		CreatedAt:       time.Now().UTC(),
 	}
@@ -1372,6 +1391,11 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 
 	persistedMeta := callerSessionMeta(opts.SessionMeta)
 	persistedMeta[metaKeyMode] = opts.Mode.String()
+	if sessionIDPreset != "" {
+		// The launch continues a stored provider conversation
+		// (Session.Resumed, CW-20261001-0203).
+		persistedMeta[metaKeyResumed] = "true"
+	}
 	persistedMeta[metaKeyWorkspaceDir] = ws.WorkspaceDir
 	if opts.RunID > 0 {
 		persistedMeta[metaKeyRunID] = strconv.FormatInt(opts.RunID, 10)
@@ -1475,6 +1499,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		SessionID:         sessID,
 		PreparedExecution: &execution,
 		SandboxProfile:    sandboxProfile,
+		ProtectedPaths:    pb.protectedPaths,
 		WorkspaceDir:      ws.WorkspaceDir,
 		LogPath:           ws.LogPath,
 		SessionIDPreset:   sessionIDPreset,
@@ -1591,6 +1616,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		TaskID:          opts.TaskID,
 		ParentSessionID: opts.ParentSessionID,
 		Status:          StatusRunning,
+		Resumed:         sessionIDPreset != "",
 		Meta:            persistedMeta,
 		CreatedAt:       time.Now().UTC(),
 	}

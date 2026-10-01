@@ -8,12 +8,17 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hollis-labs/torque/internal/httpserver"
+	"github.com/hollis-labs/torque/internal/persistence/appdb"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -223,6 +228,64 @@ func waitForListen(t *testing.T, url string, timeout time.Duration) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("server at %s did not come up within %s", url, timeout)
+}
+
+// `torque serve`, which owns the agent sessions, sweeps the orphaned ones at
+// startup: a session whose process is gone is marked crashed, and one whose
+// process is alive is spared. `torque mcp` does not sweep (CW-20261001-0141):
+// a mux-spawned one inside an agent's sandbox sees no other process and
+// would mark every live session crashed. This holds serve to its half.
+func TestServeSweepsOrphanSessionsAtStartup(t *testing.T) {
+	dir := t.TempDir()
+	isolateTorquePaths(t, dir)
+	dbPath := filepath.Join(dir, "test.db")
+	t.Setenv("TORQUE_DB_PATH", dbPath)
+	t.Setenv("TORQUE_DATA_DIR", dir)
+	t.Setenv("TORQUE_POSTGRES_DSN", "")
+	t.Setenv("TORQUE_PROFILES_PATH", filepath.Join(dir, "no-such-profiles.yaml"))
+	t.Setenv("TORQUE_SCHED_ENABLED", "false")
+
+	exited := exec.Command("true")
+	require.NoError(t, exited.Run())
+	func() {
+		ctx := context.Background()
+		db, driver, err := appdb.Open(ctx, dbPath)
+		require.NoError(t, err)
+		require.NoError(t, migrations.Run(db))
+		store, err := sqlstore.New(db, driver)
+		require.NoError(t, err)
+		defer store.Close()
+		require.NoError(t, store.CreateSession(&sqlstore.SessionRecord{ID: "SES-ORPHAN", State: "running", PID: exited.Process.Pid}))
+		require.NoError(t, store.CreateSession(&sqlstore.SessionRecord{ID: "SES-ALIVE", State: "running", PID: os.Getpid()}))
+	}()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	base := "http://" + ln.Addr().String()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runServe(ctx, ln, httpserver.Security{}) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+		}
+	})
+	waitForListen(t, base+"/api/v1/scheduler/status", 5*time.Second)
+
+	state := func(id string) string {
+		resp, err := http.Get(base + "/api/v1/sessions/" + id)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		var sess struct {
+			Status string `json:"Status"`
+		}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&sess))
+		return sess.Status
+	}
+	assert.Equal(t, "crashed", state("SES-ORPHAN"), "serve sweeps a session whose process is gone")
+	assert.Equal(t, "running", state("SES-ALIVE"), "and spares one whose process is alive")
 }
 
 // runServe mounts the MCP endpoint, wired as production wires it

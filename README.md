@@ -132,5 +132,10 @@ Common environment variables:
   loopback ones
 - `TORQUE_DATA_DIR` — runtime data dir, default `.torque`
 - `TORQUE_PROFILES_PATH` — optional agent profile YAML path
+- `TORQUE_SANDBOX_PROTECT` — `0` (or `false`, `off`, `no`) launches agents
+  without write-protecting Torque's state directories; on by default. Under
+  the protection nested sandboxes cannot start (bubblewrap- or
+  `unshare`-based tests, Chromium's sandbox); this is the escape hatch. See
+  [docs/agent-execution-environment.md](docs/agent-execution-environment.md#control-plane-write-protection).
 
 Scheduler-related settings are documented in [docs/runtime.md](docs/runtime.md).

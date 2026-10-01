@@ -66,26 +66,23 @@ func watchProfiles(ctx context.Context, profiles *config.ReloadableProfiles, int
 	defer ticker.Stop()
 
 	var lastSeen []byte
+	refused := false
 	path := profiles.Path()
 	for {
-		current, exists, err := readProfileFile(path)
-		if err != nil {
-			log.Printf("[profiles] watch read %s: %v", path, err)
-		} else if !bytes.Equal(current, lastSeen) {
-			switch {
-			case !exists:
-				profiles.Store(config.ProfileMap{})
-				log.Printf("[profiles] reloaded %s: file removed, using empty profile map", path)
-			default:
-				loaded, loadErr := config.LoadProfiles(path)
-				if loadErr != nil {
-					log.Printf("[profiles] reload failed for %s: %v (keeping prior snapshot)", path, loadErr)
-				} else {
-					profiles.Store(loaded)
-					log.Printf("[profiles] reloaded %d profile(s) from %s", len(loaded), path)
-				}
-			}
-			lastSeen = current
+		// The reload guard refuses a profiles directory that is no longer
+		// the one Torque write-protected at startup: whatever now sits at
+		// that path is not Torque's (CW-20261001-0141).
+		guardErr := profiles.ReloadAllowed()
+		switch {
+		case guardErr != nil && !refused:
+			log.Printf("[profiles] ERROR: not reloading %s: %v; keeping the last good profiles. Restart torque to adopt the new directory", path, guardErr)
+		case guardErr == nil && refused:
+			log.Printf("[profiles] reloading %s resumed: it is the protected directory again", path)
+			lastSeen = nil // re-read the file: it may have changed while reloads were refused
+		}
+		refused = guardErr != nil
+		if !refused {
+			lastSeen = reloadIfChanged(profiles, path, lastSeen)
 		}
 
 		select {
@@ -94,6 +91,33 @@ func watchProfiles(ctx context.Context, profiles *config.ReloadableProfiles, int
 		case <-ticker.C:
 		}
 	}
+}
+
+// reloadIfChanged reloads profiles from path when the file differs from
+// lastSeen, and returns what it saw.
+func reloadIfChanged(profiles *config.ReloadableProfiles, path string, lastSeen []byte) []byte {
+	current, exists, err := readProfileFile(path)
+	if err != nil {
+		log.Printf("[profiles] watch read %s: %v", path, err)
+		return lastSeen
+	}
+	if bytes.Equal(current, lastSeen) {
+		return lastSeen
+	}
+	switch {
+	case !exists:
+		profiles.Store(config.ProfileMap{})
+		log.Printf("[profiles] reloaded %s: file removed, using empty profile map", path)
+	default:
+		loaded, loadErr := config.LoadProfiles(path)
+		if loadErr != nil {
+			log.Printf("[profiles] reload failed for %s: %v (keeping prior snapshot)", path, loadErr)
+		} else {
+			profiles.Store(loaded)
+			log.Printf("[profiles] reloaded %d profile(s) from %s", len(loaded), path)
+		}
+	}
+	return current
 }
 
 func readProfileFile(path string) ([]byte, bool, error) {

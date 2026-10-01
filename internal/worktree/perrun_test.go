@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hollis-labs/torque/internal/worktree"
@@ -282,4 +283,31 @@ func TestCleanupPerRunIdempotentWhenMissing(t *testing.T) {
 	removed, err := worktree.CleanupPerRun(repoRoot, missing)
 	require.NoError(t, err)
 	assert.False(t, removed, "missing worktree should not be reported as removed")
+}
+
+// SetupPerRun's best-effort fetch is skipped when the repository's own
+// config would make it run a command (an agent can edit that config, and the
+// daemon runs git unsandboxed): the worktree branches from the local
+// origin/main instead. Without such config the fetch runs.
+func TestSetupPerRunSkipsFetchUnderPlantedRemoteConfig(t *testing.T) {
+	repoRoot := setupOriginAndClone(t)
+	before := gitInWt(t, repoRoot, "rev-parse", "origin/main")
+	origin := filepath.Clean(strings.TrimSpace(gitInWt(t, repoRoot, "remote", "get-url", "origin")))
+	pusher := t.TempDir()
+	gitInWt(t, pusher, "clone", origin, ".")
+	require.NoError(t, os.WriteFile(filepath.Join(pusher, "NEW.md"), []byte("new"), 0o644))
+	gitInWt(t, pusher, "add", ".")
+	gitInWt(t, pusher, "commit", "-m", "published after the clone")
+	gitInWt(t, pusher, "push", "origin", "HEAD:main")
+	after := gitInWt(t, pusher, "rev-parse", "HEAD")
+
+	gitInWt(t, repoRoot, "config", "core.sshCommand", "touch "+filepath.Join(t.TempDir(), "ran"))
+	wt, err := worktree.SetupPerRun(worktree.PerRunOptions{Root: filepath.Join(t.TempDir(), "wt")}, repoRoot, 1)
+	require.NoError(t, err)
+	assert.Equal(t, before, gitInWt(t, wt, "rev-parse", "HEAD"), "no fetch: the worktree is at the local origin/main")
+
+	gitInWt(t, repoRoot, "config", "--unset", "core.sshCommand")
+	wt, err = worktree.SetupPerRun(worktree.PerRunOptions{Root: filepath.Join(t.TempDir(), "wt")}, repoRoot, 2)
+	require.NoError(t, err)
+	assert.Equal(t, after, gitInWt(t, wt, "rev-parse", "HEAD"), "control: the fetch runs and the worktree is at the published commit")
 }
