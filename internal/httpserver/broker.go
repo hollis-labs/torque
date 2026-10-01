@@ -34,7 +34,7 @@ func (s *Server) SetBroker(b *broker.Broker) {
 type brokerSendRequest struct {
 	Kind        gomsg.Kind        `json:"kind"`
 	Channel     gomsg.Channel     `json:"channel,omitempty"`
-	From        json.RawMessage   `json:"from"` // see parseBrokerAddress
+	From        json.RawMessage   `json:"from"` // see parseMessagingAddress
 	To          json.RawMessage   `json:"to"`
 	ThreadID    string            `json:"thread_id,omitempty"`
 	InReplyTo   string            `json:"in_reply_to,omitempty"`
@@ -53,7 +53,7 @@ func (s *Server) brokerSend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return
 	}
-	from, to, err := parseBrokerFromTo(req.From, req.To)
+	from, to, err := parseMessagingFromTo(req.From, req.To)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -79,7 +79,7 @@ func (s *Server) brokerSend(w http.ResponseWriter, r *http.Request) {
 
 type brokerRequestPayload struct {
 	Channel        gomsg.Channel     `json:"channel,omitempty"`
-	From           json.RawMessage   `json:"from"` // see parseBrokerAddress
+	From           json.RawMessage   `json:"from"` // see parseMessagingAddress
 	To             json.RawMessage   `json:"to"`
 	ThreadID       string            `json:"thread_id,omitempty"`
 	Payload        json.RawMessage   `json:"payload,omitempty"`
@@ -98,7 +98,7 @@ func (s *Server) brokerRequest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return
 	}
-	from, to, err := parseBrokerFromTo(req.From, req.To)
+	from, to, err := parseMessagingFromTo(req.From, req.To)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

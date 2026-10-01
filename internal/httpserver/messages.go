@@ -22,9 +22,11 @@ func (s *Server) SetMessaging(store gomsg.Store) {
 
 // /api/v1/messages
 //   POST  /                       — Send (201 Created / 400 / 422 / 503)
+//                                   from/to: msg://<kind>/<authority>/<id> or
+//                                   {"kind","authority","id"}; also recipient on /consume
 //   GET   /{id}                   — Get (200 / 404 / 503)
 //   POST  /{id}/cancel            — Cancel (204 No Content / 404 / 503)
-//   POST  /{id}/consume           — Consume (204 No Content / 404 / 422 / 503; body: {recipient: <urn>})
+//   POST  /{id}/consume           — Consume (204 No Content / 400 / 404 / 422 / 503; body: {recipient: <address>})
 //   GET   /inbox?to=<urn>...      — Inbox; drains, marks delivered (200 / 422 / 503)
 //   GET   /thread/{thread_id}     — Thread; read-only (200 / 422 / 503)
 //   GET   /subscribe?to=<urn>...  — SSE live stream (200 / 422 / 503)
@@ -32,8 +34,8 @@ func (s *Server) SetMessaging(store gomsg.Store) {
 type sendMessageRequest struct {
 	Kind        gomsg.Kind        `json:"kind"`
 	Channel     gomsg.Channel     `json:"channel,omitempty"`
-	From        gomsg.Address     `json:"from"`
-	To          gomsg.Address     `json:"to"`
+	From        json.RawMessage   `json:"from"` // see parseMessagingAddress
+	To          json.RawMessage   `json:"to"`
 	ThreadID    string            `json:"thread_id,omitempty"`
 	InReplyTo   string            `json:"in_reply_to,omitempty"`
 	Payload     json.RawMessage   `json:"payload,omitempty"`
@@ -51,23 +53,28 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return
 	}
+	from, to, err := parseMessagingFromTo(req.From, req.To)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if req.Kind == "" {
 		writeError(w, http.StatusUnprocessableEntity, "kind is required")
 		return
 	}
-	if req.From.IsZero() {
+	if from.IsZero() {
 		writeError(w, http.StatusUnprocessableEntity, "from is required")
 		return
 	}
-	if req.To.IsZero() {
+	if to.IsZero() {
 		writeError(w, http.StatusUnprocessableEntity, "to is required")
 		return
 	}
 	env := gomsg.Envelope{
 		Kind:        req.Kind,
 		Channel:     req.Channel,
-		From:        req.From,
-		To:          req.To,
+		From:        from,
+		To:          to,
 		ThreadID:    req.ThreadID,
 		InReplyTo:   req.InReplyTo,
 		Payload:     req.Payload,
@@ -126,7 +133,7 @@ func (s *Server) cancelMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 type consumeMessageRequest struct {
-	Recipient string `json:"recipient"`
+	Recipient json.RawMessage `json:"recipient"` // see parseMessagingAddress
 }
 
 func (s *Server) consumeMessage(w http.ResponseWriter, r *http.Request) {
@@ -140,13 +147,13 @@ func (s *Server) consumeMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return
 	}
-	if req.Recipient == "" {
-		writeError(w, http.StatusUnprocessableEntity, "recipient is required")
+	addr, err := parseMessagingAddress("recipient", req.Recipient)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	addr, err := gomsg.ParseURN(req.Recipient)
-	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "recipient: "+err.Error())
+	if addr.IsZero() {
+		writeError(w, http.StatusUnprocessableEntity, "recipient is required")
 		return
 	}
 	if err := s.msg.Consume(r.Context(), id, addr); err != nil {

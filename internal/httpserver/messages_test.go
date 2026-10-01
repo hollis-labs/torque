@@ -209,6 +209,116 @@ func TestHTTP_Messages_ConsumeRoundTrip(t *testing.T) {
 	require.NotNil(t, got.ConsumedAt, "consumed_at must be set after Consume")
 }
 
+// CW-20261001-0025: /messages takes the same address forms as /broker
+// (CW-20261001-0014). from/to accept the URN string or the
+// {kind, authority, id} object, and both decode to the same address.
+func TestHTTP_Messages_SendObjectAddress(t *testing.T) {
+	ts := setupMessagingServer(t)
+	body := `{
+        "kind": "notice",
+        "from": {"kind":"agent","authority":"test","id":"alice"},
+        "to":   {"kind":"agent","scope":"test","id":"bob","sub_id":"inbox"}
+    }`
+	resp, err := http.Post(ts.URL+"/api/v1/messages", "application/json", strings.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	var env gomsg.Envelope
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&env))
+	assert.Equal(t, "msg://agent/test/alice", env.From.URN())
+	assert.Equal(t, "msg://agent/test/bob/inbox", env.To.URN())
+}
+
+func TestHTTP_Messages_ConsumeObjectRecipient(t *testing.T) {
+	ts := setupMessagingServer(t)
+	body := `{"kind":"notice","from":"msg://agent/test/src","to":"msg://agent/test/consume-obj"}`
+	resp, err := http.Post(ts.URL+"/api/v1/messages", "application/json", strings.NewReader(body))
+	require.NoError(t, err)
+	var sent gomsg.Envelope
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&sent))
+	resp.Body.Close()
+
+	consumeBody := `{"recipient":{"kind":"agent","authority":"test","id":"consume-obj"}}`
+	resp2, err := http.Post(ts.URL+"/api/v1/messages/"+sent.ID+"/consume", "application/json",
+		strings.NewReader(consumeBody))
+	require.NoError(t, err)
+	resp2.Body.Close()
+	require.Equal(t, http.StatusNoContent, resp2.StatusCode)
+
+	resp3, err := http.Get(ts.URL + "/api/v1/messages/" + sent.ID)
+	require.NoError(t, err)
+	var got gomsg.Envelope
+	require.NoError(t, json.NewDecoder(resp3.Body).Decode(&got))
+	resp3.Body.Close()
+	require.NotNil(t, got.ConsumedAt, "consumed_at must be set after Consume")
+}
+
+// A malformed address on any /messages body field is a 400 that names the
+// field and both accepted shapes, rather than a decoder error about Go types.
+func TestHTTP_Messages_MalformedAddress400(t *testing.T) {
+	ts := setupMessagingServer(t)
+	const shape = `must be a msg://<kind>/<authority>/<id> string or {"kind","authority","id"} object`
+	const good = `"msg://agent/test/bob"`
+	send := func(from, to string) string { return `{"kind":"notice","from":` + from + `,"to":` + to + `}` }
+	consume := func(recipient string) string { return `{"recipient":` + recipient + `}` }
+	// Consume parses the recipient before it looks the message up, so the
+	// id need not exist.
+	const sendPath, consumePath = "/api/v1/messages", "/api/v1/messages/any-id/consume"
+	cases := []struct {
+		name, path, body, field string
+	}{
+		{"send object missing id", sendPath, send(`{"kind":"agent","authority":"test"}`, good), "from"},
+		{"send object unknown key", sendPath, send(`{"kind":"agent","authorty":"test","id":"alice"}`, good), "from"},
+		{"send bad URN string", sendPath, send(`"agent/test/alice"`, good), "from"},
+		{"send array", sendPath, send(`["msg://agent/test/alice"]`, good), "from"},
+		{"send bad to names to", sendPath, send(good, `42`), "to"},
+		{"consume object missing authority", consumePath, consume(`{"kind":"agent","id":"bob"}`), "recipient"},
+		{"consume object unknown kind", consumePath, consume(`{"kind":"robot","authority":"test","id":"bob"}`), "recipient"},
+		{"consume bad URN string", consumePath, consume(`"agent/test/bob"`), "recipient"},
+		{"consume empty string", consumePath, consume(`""`), "recipient"},
+		{"consume number", consumePath, consume(`7`), "recipient"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := http.Post(ts.URL+tc.path, "application/json", strings.NewReader(tc.body))
+			require.NoError(t, err)
+			defer resp.Body.Close()
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			var out struct {
+				Error string `json:"error"`
+			}
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
+			assert.Contains(t, out.Error, `"`+tc.field+`" `+shape)
+		})
+	}
+}
+
+// An absent or null address is missing (422), not a shape error.
+func TestHTTP_Messages_NullOrAbsentAddressIsMissing(t *testing.T) {
+	ts := setupMessagingServer(t)
+	cases := []struct {
+		name, path, body, want string
+	}{
+		{"send null from", "/api/v1/messages", `{"kind":"notice","from":null,"to":"msg://agent/test/bob"}`, "from is required"},
+		{"send absent to", "/api/v1/messages", `{"kind":"notice","from":"msg://agent/test/alice"}`, "to is required"},
+		{"consume absent recipient", "/api/v1/messages/any-id/consume", `{}`, "recipient is required"},
+		{"consume null recipient", "/api/v1/messages/any-id/consume", `{"recipient":null}`, "recipient is required"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := http.Post(ts.URL+tc.path, "application/json", strings.NewReader(tc.body))
+			require.NoError(t, err)
+			defer resp.Body.Close()
+			assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+			var out struct {
+				Error string `json:"error"`
+			}
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
+			assert.Equal(t, tc.want, out.Error)
+		})
+	}
+}
+
 func TestHTTP_Messages_RoutesReturn503WhenStoreNotWired(t *testing.T) {
 	ts := noMessagingServer(t)
 

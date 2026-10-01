@@ -24,6 +24,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   GNU cp nests as `dist/dist`, so the binary 404'd on `/`. `make install` now
   installs that GUI-embedded build, to an overridable `BINDIR`, and `make gui`
   installs with `npm ci` so a build no longer dirties the lockfile.
+- Every HTTP messaging body takes an address the same way: `from`/`to` on
+  `/broker/send`, `/broker/request` and `/messages`, and `recipient` on
+  `/messages/{id}/consume`, accept the `msg://<kind>/<authority>/<id>` string
+  or a `{"kind","authority","id"}` object. Any other shape is a 400 that names
+  the field and both forms; an absent or null address is a 422.
 - MCP write paths reject a non-integer priority.
 - Operator pause is recorded as cancellation; task deadlines are enforced for
   long-lived runs; parent-owned task review is allowed.

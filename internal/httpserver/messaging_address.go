@@ -11,15 +11,15 @@ import (
 	gomsg "github.com/hollis-labs/go-messaging"
 )
 
-// brokerAddressShape names both accepted forms of a broker from/to, so a
-// caller that sent the wrong one learns the right one from the 400
-// (CW-20261001-0014).
-const brokerAddressShape = `msg://<kind>/<authority>/<id> string or {"kind","authority","id"} object`
+// messagingAddressShape names both accepted forms of a messaging address, so
+// a caller that sent the wrong one learns the right one from the 400
+// (CW-20261001-0014, CW-20261001-0025).
+const messagingAddressShape = `msg://<kind>/<authority>/<id> string or {"kind","authority","id"} object`
 
-// brokerAddressObject is the structured form of a messaging address. The
+// messagingAddressObject is the structured form of a messaging address. The
 // URN's middle segment is the library's Address.Authority; "scope" is
 // accepted as a synonym because it is the name callers reached for first.
-type brokerAddressObject struct {
+type messagingAddressObject struct {
 	Kind      string `json:"kind"`
 	Authority string `json:"authority"`
 	Scope     string `json:"scope"`
@@ -27,21 +27,23 @@ type brokerAddressObject struct {
 	SubID     string `json:"sub_id"`
 }
 
-// parseBrokerAddress decodes one from/to value of a broker request body,
-// either the canonical URN string or the object form, into the same
-// gomsg.Address. The request structs hold the raw value rather than a type
-// with its own UnmarshalJSON because only the caller knows which field it is
-// parsing, and the 400 has to name it.
+// parseMessagingAddress decodes one address field of a messaging request
+// body, either the canonical URN string or the object form, into the same
+// gomsg.Address. Every HTTP surface that takes an address in a body uses it:
+// from/to on /broker/send, /broker/request and /messages, and recipient on
+// /messages/{id}/consume. The request structs hold the raw value rather than
+// a type with its own UnmarshalJSON because only the caller knows which field
+// it is parsing, and the 400 has to name it.
 //
-// An absent or null value is the zero Address, which broker validation
-// reports as missing (422).
-func parseBrokerAddress(field string, raw json.RawMessage) (gomsg.Address, error) {
+// An absent or null value is the zero Address, which each handler reports
+// as missing (422).
+func parseMessagingAddress(field string, raw json.RawMessage) (gomsg.Address, error) {
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 || string(raw) == "null" {
 		return gomsg.Address{}, nil
 	}
 	reject := func(got string) (gomsg.Address, error) {
-		return gomsg.Address{}, fmt.Errorf("%q must be a %s; got %s", field, brokerAddressShape, got)
+		return gomsg.Address{}, fmt.Errorf("%q must be a %s; got %s", field, messagingAddressShape, got)
 	}
 	switch raw[0] {
 	case '"':
@@ -55,7 +57,7 @@ func parseBrokerAddress(field string, raw json.RawMessage) (gomsg.Address, error
 		}
 		return addr, nil
 	case '{':
-		var obj brokerAddressObject
+		var obj messagingAddressObject
 		dec := json.NewDecoder(bytes.NewReader(raw))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&obj); err != nil {
@@ -109,13 +111,13 @@ func parseBrokerAddress(field string, raw json.RawMessage) (gomsg.Address, error
 	}
 }
 
-// parseBrokerFromTo parses the from/to pair every broker send shares.
-func parseBrokerFromTo(from, to json.RawMessage) (gomsg.Address, gomsg.Address, error) {
-	f, err := parseBrokerAddress("from", from)
+// parseMessagingFromTo parses the from/to pair every send shares.
+func parseMessagingFromTo(from, to json.RawMessage) (gomsg.Address, gomsg.Address, error) {
+	f, err := parseMessagingAddress("from", from)
 	if err != nil {
 		return gomsg.Address{}, gomsg.Address{}, err
 	}
-	t, err := parseBrokerAddress("to", to)
+	t, err := parseMessagingAddress("to", to)
 	if err != nil {
 		return gomsg.Address{}, gomsg.Address{}, err
 	}
