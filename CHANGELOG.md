@@ -55,6 +55,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   (a paid model call per run) and a bootstrap test reached the real
   `opencode`. Every package that can reach a launcher now installs refusing
   shims for the agent CLIs first on PATH (`testenv.RunWithAgentShims`).
+- `make test` passes on Linux. The `torque-apikey-helper` resolver tests ran
+  against a fake keychain but were refused off macOS before reaching it; the
+  macOS-only gate now sits on the real keychain accessor. Tests that slept a
+  fixed time and then asserted on asynchronous work (per-run worktree
+  dispatch, serve shutdown under `-race`, long-lived task deadlines) wait on
+  the condition or allow Boot real headroom instead.
 - On the go-agent-wrapper path, `Manager.Wait` after `Manager.Stop` waits for
   the run to end. Stop dropped the session's wrapper handle, so Wait returned
   at once and the session row could still read `running`.
