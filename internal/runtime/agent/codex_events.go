@@ -3,9 +3,12 @@ package agent
 import (
 	"encoding/json"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/hollis-labs/agentkit/agentruntime/turn"
 	llmtypes "github.com/hollis-labs/go-llm-types"
+
+	"github.com/hollis-labs/torque/internal/redact"
 )
 
 // codex_events.go projects codex app-server JSON-RPC notifications into
@@ -79,7 +82,11 @@ func codexItemCompletedEvent(params json.RawMessage) (llmtypes.StreamEvent, bool
 	}
 }
 
-func codexTurnCompletedFailure(params json.RawMessage) (string, bool) {
+// codexTurnCompletedFailure reads a failed turn/completed's reason,
+// redacted with r before it is bounded: the redactor matches whole secrets,
+// so one cut at the bound would keep its prefix. The stream's error and the
+// run's reason both carry it (CW-20261001-0169).
+func codexTurnCompletedFailure(params json.RawMessage, r *redact.Redactor) (string, bool) {
 	var payload struct {
 		Turn struct {
 			Status string `json:"status"`
@@ -94,13 +101,24 @@ func codexTurnCompletedFailure(params json.RawMessage) (string, bool) {
 	if !strings.EqualFold(payload.Turn.Status, "failed") {
 		return "", false
 	}
-	reason := strings.TrimSpace(payload.Turn.Error.Message)
+	reason := strings.TrimSpace(r.Text(payload.Turn.Error.Message))
 	if reason == "" {
 		reason = "status=failed"
 	}
 	const maxReason = 240
-	if len(reason) > maxReason {
-		reason = reason[:maxReason] + "..."
+	if cut := truncateBytes(reason, maxReason); cut != reason {
+		reason = cut + "..."
 	}
 	return codexTerminalFailurePrefix + ": " + reason, true
+}
+
+// truncateBytes returns s cut to at most n bytes, on a rune boundary.
+func truncateBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }

@@ -101,6 +101,11 @@ func TestEndAgent_EnqueuesOnAgentReview(t *testing.T) {
 	assert.Greater(t, end.CostBudget.Float64, 0.0)
 	assert.Contains(t, end.Title, target.ID)
 	assert.NotEmpty(t, end.SystemPrompt, "template content should be stamped")
+	// The description names the target and no reviewer version: the
+	// stamped template carries the protocol, and a description saying "V1"
+	// beside a V2 template had a reviewer stop to ask (CW-20261001-0187).
+	assert.Contains(t, end.Description, target.ID)
+	assert.NotRegexp(t, `\bV\d+\b`, end.Description, "the description must not name a reviewer version")
 
 	// metadata.end_agent records the target + template path.
 	require.True(t, end.Metadata.Valid)
