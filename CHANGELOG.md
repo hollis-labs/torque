@@ -23,13 +23,37 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Completed task tracking and design history archived out of the repository;
   README rewritten as a pre-release identity and stack-fit document.
 - `go-queue` dependency moved off its retired `v0.1.1` tag.
+- agentkit v0.10.0, go-providers v0.30.0 and go-agent-wrapper v0.13.0 (were
+  v0.6.1, v0.26.0, v0.10.1); go-sandbox follows to v0.4.0. OpenCode runs now
+  use `opencode run --format json`, so Torque receives its tool calls,
+  per-step token usage and a done event per turn instead of plain-text lines.
+  The OpenCode boot dir defines the agent in `agents/<name>.md` frontmatter
+  and no longer plants `agents.json` or an `opencode.json` agent block.
+- go-agent-wrapper v0.13.1: a turn's usage now arrives on its single terminal
+  event instead of a second `turn.completed`. The wrapper event sink reads
+  usage from `turn.completed` and `turn.failed` and still emits the turn's
+  done event; without that, a wrapper-path ModeOneShot run timed out waiting
+  for its turn to finish.
 
 ### Fixed
 
+- A manual task in `doing` no longer holds its project's scheduler slot. The
+  picker never dispatches manual tasks, so one being worked outside the
+  scheduler kept every dispatchable task in its project at `project_busy`.
+- Stuck-task recovery no longer resets manual tasks. A manual task is never
+  dispatched, so at `doing` it has no worker heartbeat; the health scan
+  reported it as `task_doing_no_worker` every tick and re-queued it to `todo`
+  once it aged past `TORQUE_SCHED_STUCK_GRACE`. Manual tasks are now neither
+  reported nor recovered.
 - `make build-prod` embeds the GUI on Linux: it copied `apps/gui/dist/`, which
   GNU cp nests as `dist/dist`, so the binary 404'd on `/`. `make install` now
   installs that GUI-embedded build, to an overridable `BINDIR`, and `make gui`
   installs with `npm ci` so a build no longer dirties the lockfile.
+- Every HTTP messaging body takes an address the same way: `from`/`to` on
+  `/broker/send`, `/broker/request` and `/messages`, and `recipient` on
+  `/messages/{id}/consume`, accept the `msg://<kind>/<authority>/<id>` string
+  or a `{"kind","authority","id"}` object. Any other shape is a 400 that names
+  the field and both forms; an absent or null address is a 422.
 - MCP write paths reject a non-integer priority.
 - Operator pause is recorded as cancellation; task deadlines are enforced for
   long-lived runs; parent-owned task review is allowed.
@@ -42,6 +66,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   worktree passes when the worker made tool calls or left comments or
   artifacts on its task. Read-only claude-code runs are no longer graded
   blocked or failed.
+- A long-lived run graded "edits but no commits" now parks its task in
+  `blocked` instead of retrying under `on_fail`. The reason names the
+  preserved worktree, how many paths are uncommitted, and the remedy: commit
+  or discard them there, then re-queue. A retry used to re-dispatch at once
+  into a fresh worktree off `origin/main`, stranding the diff and holding the
+  project's slot.
 
 ## [0.3.0] - 2026-05-17
 

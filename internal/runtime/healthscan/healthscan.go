@@ -95,13 +95,15 @@ const (
 	// these into recoverOrphanedWorker.
 	AnomalyOrphanWorker AnomalyKind = "orphan_worker"
 
-	// AnomalyTaskDoingNoWorker — a tasks row at status='doing' with NO
-	// matching worker_heartbeats row. The heartbeat lifecycle has
-	// already deregistered, but the task never transitioned out of
-	// `doing`. Invisible to the staleness sweep (nothing to find
-	// stale). The scheduler's RECOVER primitive re-queues these once
-	// tasks.updated_at has aged past StuckGraceSeconds (Nanite-pattern
-	// port, CW-20260519-0084).
+	// AnomalyTaskDoingNoWorker — a non-manual tasks row at
+	// status='doing' with NO matching worker_heartbeats row. The
+	// heartbeat lifecycle has already deregistered, but the task never
+	// transitioned out of `doing`. Invisible to the staleness sweep
+	// (nothing to find stale). The scheduler's RECOVER primitive
+	// re-queues these once tasks.updated_at has aged past
+	// StuckGraceSeconds (Nanite-pattern port, CW-20260519-0084). Manual
+	// tasks are never dispatched, so they never have a heartbeat row and
+	// are not reported (see scanTasksDoingNoWorker).
 	AnomalyTaskDoingNoWorker AnomalyKind = "task_doing_no_worker"
 
 	// AnomalyRunRunningNoWorker — a runs row at status='running' with
@@ -295,12 +297,20 @@ func (s *Scanner) scanHeartbeats(ctx context.Context, mode Mode, now time.Time) 
 // matching worker_heartbeats row. The matching key is task_id (each
 // dispatch registers exactly one heartbeat row keyed by worker_id but
 // indexed on task_id by the scheduler's lookup path).
+//
+// manual=1 tasks are excluded. The picker never dispatches them, so no
+// heartbeat row is ever registered for one: a manual task at `doing` is
+// being worked outside the scheduler (a person, or an agent session
+// tracking its work in Torque), and that is its normal state, not an
+// anomaly. Reporting it would re-log every manual task every tick, and
+// RECOVER would reset each one to `todo` once it aged past the grace
+// (CW-20261001-0024).
 func (s *Scanner) scanTasksDoingNoWorker(ctx context.Context) ([]Anomaly, error) {
 	rows, err := s.store.DB().QueryContext(ctx,
 		`SELECT t.id, t.executor, t.updated_at
 		 FROM tasks t
 		 LEFT JOIN worker_heartbeats h ON h.task_id = t.id
-		 WHERE t.status = 'doing' AND h.task_id IS NULL`)
+		 WHERE t.status = 'doing' AND t.manual = 0 AND h.task_id IS NULL`)
 	if err != nil {
 		return nil, err
 	}

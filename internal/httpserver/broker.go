@@ -24,6 +24,8 @@ func (s *Server) SetBroker(b *broker.Broker) {
 
 // /api/v1/broker
 //   POST  /send                 — Send a typed envelope (201 Created / 400 / 413 / 422 / 503)
+//                                 from/to: msg://<kind>/<authority>/<id> or
+//                                 {"kind","authority","id"}; also on /request
 //   POST  /request              — Send kind=request, block until response
 //                                 (200 / 400 / 413 / 422 / 503 / 504 on timeout)
 //   GET   /inbox?to=<urn>...    — Drain inbox; publishes envelope.delivered
@@ -32,8 +34,8 @@ func (s *Server) SetBroker(b *broker.Broker) {
 type brokerSendRequest struct {
 	Kind        gomsg.Kind        `json:"kind"`
 	Channel     gomsg.Channel     `json:"channel,omitempty"`
-	From        gomsg.Address     `json:"from"`
-	To          gomsg.Address     `json:"to"`
+	From        json.RawMessage   `json:"from"` // see parseMessagingAddress
+	To          json.RawMessage   `json:"to"`
 	ThreadID    string            `json:"thread_id,omitempty"`
 	InReplyTo   string            `json:"in_reply_to,omitempty"`
 	Payload     json.RawMessage   `json:"payload,omitempty"`
@@ -51,11 +53,16 @@ func (s *Server) brokerSend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return
 	}
+	from, to, err := parseMessagingFromTo(req.From, req.To)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	env := gomsg.Envelope{
 		Kind:        req.Kind,
 		Channel:     req.Channel,
-		From:        req.From,
-		To:          req.To,
+		From:        from,
+		To:          to,
 		ThreadID:    req.ThreadID,
 		InReplyTo:   req.InReplyTo,
 		Payload:     req.Payload,
@@ -72,8 +79,8 @@ func (s *Server) brokerSend(w http.ResponseWriter, r *http.Request) {
 
 type brokerRequestPayload struct {
 	Channel        gomsg.Channel     `json:"channel,omitempty"`
-	From           gomsg.Address     `json:"from"`
-	To             gomsg.Address     `json:"to"`
+	From           json.RawMessage   `json:"from"` // see parseMessagingAddress
+	To             json.RawMessage   `json:"to"`
 	ThreadID       string            `json:"thread_id,omitempty"`
 	Payload        json.RawMessage   `json:"payload,omitempty"`
 	ContentType    string            `json:"content_type,omitempty"`
@@ -91,6 +98,11 @@ func (s *Server) brokerRequest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return
 	}
+	from, to, err := parseMessagingFromTo(req.From, req.To)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	timeout := req.TimeoutSeconds
 	if timeout == 0 {
 		timeout = broker.DefaultRequestTimeout
@@ -103,8 +115,8 @@ func (s *Server) brokerRequest(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	env := gomsg.Envelope{
 		Channel:     req.Channel,
-		From:        req.From,
-		To:          req.To,
+		From:        from,
+		To:          to,
 		ThreadID:    req.ThreadID,
 		Payload:     req.Payload,
 		ContentType: req.ContentType,

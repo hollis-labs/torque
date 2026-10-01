@@ -106,6 +106,73 @@ func TestRecoverStuckTask_GraceWindow_ProtectsFreshTasks(t *testing.T) {
 		"task within the grace window must be left alone — dispatch-vs-register race is the dominant false-positive source")
 }
 
+// TestRecoverStuckTask_ManualTaskLeftAlone is CW-20261001-0024. A manual
+// task is worked outside the scheduler (a person, or an agent session
+// tracking its work in Torque), so it sits at `doing` with no heartbeat
+// row for as long as the work takes. Past the grace window, neither scan
+// mode may re-queue it. A dispatched task in the same shape beside it
+// still must be: its run finished and its heartbeat deregistered, but its
+// transition out of `doing` was lost. The run is terminal, so only the
+// stuck-task arm, not the orphan-run arm, can reclaim it.
+func TestRecoverStuckTask_ManualTaskLeftAlone(t *testing.T) {
+	for _, mode := range []healthscan.Mode{healthscan.ModeTick, healthscan.ModeBoot} {
+		t.Run(string(mode), func(t *testing.T) {
+			sched, store := setupRecoverySchedulerWithGrace(t, 1)
+
+			require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+				ID: "CW-MANUAL-DOING", Title: "agent-worked, never dispatched", Status: "doing",
+				Manual: true, Executor: "cli",
+			}))
+			require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+				ID: "CW-DISPATCHED-DOING", Title: "dispatched, transition lost", Status: "doing",
+				Executor: "mock", AgentProfile: "mock",
+			}))
+			finished, err := store.CreateRun(&sqlstore.RunRecord{
+				TaskID: "CW-DISPATCHED-DOING", Executor: "mock", Status: sqlstore.RunStatusDone,
+			})
+			require.NoError(t, err)
+			backdateTaskUpdatedAt(t, store, "CW-MANUAL-DOING", 10*time.Minute)
+			backdateTaskUpdatedAt(t, store, "CW-DISPATCHED-DOING", 10*time.Second)
+			backdateRunStartedAt(t, store, finished, 10*time.Second)
+
+			sched.runHealthScan(context.Background(), mode)
+
+			manual, err := store.GetTask("CW-MANUAL-DOING")
+			require.NoError(t, err)
+			assert.Equal(t, "doing", manual.Status,
+				"a manual task is never dispatched, so `doing` with no heartbeat is its normal state and must not be reset")
+
+			dispatched, err := store.GetTask("CW-DISPATCHED-DOING")
+			require.NoError(t, err)
+			assert.Equal(t, "todo", dispatched.Status,
+				"a non-manual task stuck in `doing` with no heartbeat must still be re-queued")
+		})
+	}
+}
+
+// TestRecoverStuckTask_ManualRecheck covers the race the scanner's filter
+// cannot: the task was flipped to manual after the scan reported it.
+// recoverStuckTask re-reads the task and must leave it alone.
+func TestRecoverStuckTask_ManualRecheck(t *testing.T) {
+	sched, store := setupRecoverySchedulerWithGrace(t, 1)
+
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-TURNED-MANUAL", Title: "flipped to manual after the scan", Status: "doing",
+		Manual: true, Executor: "cli",
+	}))
+
+	sched.recoverStuckTask(context.Background(), healthscan.ModeTick, healthscan.Anomaly{
+		Kind:       healthscan.AnomalyTaskDoingNoWorker,
+		TaskID:     "CW-TURNED-MANUAL",
+		ObservedAt: time.Now().UTC().Add(-10 * time.Minute),
+	})
+
+	task, err := store.GetTask("CW-TURNED-MANUAL")
+	require.NoError(t, err)
+	assert.Equal(t, "doing", task.Status,
+		"recovery must re-check manual on the row it re-reads, not trust the scan")
+}
+
 // TestRecoverStuckTask_AlsoFailsRunningRuns covers the cross-table
 // invariant: a stuck task may have a `running` run row lingering from
 // the lost dispatch (its heartbeat row deregistered but the run never
