@@ -39,7 +39,7 @@ const LIVE_EVENT_TYPES = [
 const LIVE_EVENT_SET = new Set<string>(LIVE_EVENT_TYPES)
 
 const EVENT_BUFFER_CAP = 500
-const TASKS_LIMIT = 500
+const TASKS_LIMIT = 50
 // A burst naming more tasks than this refetches the sample once instead of
 // each task.
 const TASK_REFETCH_BATCH_MAX = 20
@@ -145,7 +145,7 @@ export default function DashboardPage() {
     Promise.all([api.listTaskSummaries({ limit: TASKS_LIMIT }), api.pageRuns()])
       .then(([tasksRes, runsRes]) => {
         if (cancelled) return
-        setTasks(tasksRes.tasks)
+        setTasks(tasksRes.items)
         setRuns(runsRes.items)
         lastFetchedRef.current = Date.now()
       })
@@ -179,7 +179,7 @@ export default function DashboardPage() {
     try {
       if (ids.length > TASK_REFETCH_BATCH_MAX) {
         const res = await api.listTaskSummaries({ limit: TASKS_LIMIT })
-        setTasks(res.tasks)
+        setTasks(res.items)
         return
       }
       const settled = await Promise.allSettled(ids.map((id) => api.getTask(id)))
@@ -232,7 +232,7 @@ export default function DashboardPage() {
     Promise.all([api.listTaskSummaries({ limit: TASKS_LIMIT }), api.pageRuns()])
       .then(([tasksRes, runsRes]) => {
         if (cancelled) return
-        setTasks(tasksRes.tasks)
+        setTasks(tasksRes.items)
         setRuns(runsRes.items)
         lastFetchedRef.current = Date.now()
       })

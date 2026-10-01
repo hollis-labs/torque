@@ -45,7 +45,7 @@ function installStubFetch() {
   const stub = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url)
     let body: unknown = {}
-    if (url.includes('/tasks')) body = { tasks: [] }
+    if (url.includes('/tasks')) body = { items: [], meta: { returned: 0, limit: 50, has_more: false, next_cursor: null, total: 0 } }
     else if (url.includes('/projects')) body = { items: [], meta: { returned: 0, limit: 50, has_more: false, next_cursor: null } }
     else if (url.includes('/sprints')) body = { items: [], meta: { returned: 0, limit: 50, has_more: false, next_cursor: null } }
     else if (url.includes('/epics')) body = { items: [], meta: { returned: 0, limit: 50, has_more: false, next_cursor: null } }

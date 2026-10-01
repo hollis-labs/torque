@@ -122,18 +122,6 @@ interface ApiArtifactRecord {
   CreatedAt: string
 }
 
-interface TaskListResponse<T = Task> {
-  tasks: T[]
-  total: number
-  returned?: number
-  limit?: number
-  offset?: number
-  has_more?: boolean
-  next_offset?: number | null
-}
-
-const TASK_LIST_PAGE_SIZE = 200
-
 function taskFilterParams(filter?: TaskFilter): Record<string, string | number | boolean | undefined> {
   const params: Record<string, string | number | boolean | undefined> = {}
   if (filter?.status?.length) params['status'] = filter.status.join(',')
@@ -317,8 +305,8 @@ export class TorqueApiClient {
   // Tasks
   // -------------------------
 
-  async listTasks(filter?: TaskFilter): Promise<{ tasks: Task[]; total: number }> {
-    return this.pageTasks<Task>(filter)
+  async listTasks(filter?: TaskFilter, signal?: AbortSignal): Promise<ListPage<Task>> {
+    return this.listTaskPage(filter, signal)
   }
 
   /** One bounded task page; cursor mode by default, totals opt in. */
@@ -336,8 +324,8 @@ export class TorqueApiClient {
    * (`fields=summary`), for list views that render neither. The bodies were
    * most of a task list's bytes (CW-20261001-0005).
    */
-  async listTaskSummaries(filter?: TaskFilter): Promise<{ tasks: TaskSummary[]; total: number }> {
-    return this.pageTasks<TaskSummary>(filter, 'summary')
+  async listTaskSummaries(filter?: TaskFilter, signal?: AbortSignal): Promise<ListPage<TaskSummary>> {
+    return this.listTaskSummaryPage(filter, signal)
   }
 
   /**
@@ -345,68 +333,8 @@ export class TorqueApiClient {
    * instead of paging every task to count it. `filter` narrows the cohort
    * the same way it narrows listTasks; paging fields are not accepted.
    */
-  async taskRollup(groupBy: TaskScopeKey, filter?: Omit<TaskFilter, 'limit' | 'offset' | 'sort_by' | 'sort_dir'>): Promise<TaskScopeRollupResponse> {
+  async taskRollup(groupBy: TaskScopeKey, filter?: Omit<TaskFilter, 'limit' | 'offset' | 'cursor' | 'include_total' | 'sort_by' | 'sort_dir'>): Promise<TaskScopeRollupResponse> {
     return this.get<TaskScopeRollupResponse>('/tasks/rollup', { group_by: groupBy, ...taskFilterParams(filter) })
-  }
-
-  private async pageTasks<T extends TaskSummary>(filter: TaskFilter | undefined, fields?: 'summary'): Promise<{ tasks: T[]; total: number }> {
-    const explicitLimit = filter?.limit
-    const startOffset = filter?.offset ?? 0
-    if (explicitLimit !== undefined && (!Number.isSafeInteger(explicitLimit) || !Number.isFinite(explicitLimit))) {
-      throw new ApiError(0, 'Task list limit must be a finite safe integer.')
-    }
-    if (!Number.isSafeInteger(startOffset) || !Number.isFinite(startOffset) || startOffset < 0) {
-      throw new ApiError(0, 'Task list offset must be a non-negative safe integer.')
-    }
-    const target = explicitLimit !== undefined && explicitLimit > 0 ? explicitLimit : undefined
-    const tasks: T[] = []
-    let total = 0
-    let offset = startOffset
-    // Ask for the server's maximum page from the start. Without a limit the
-    // server answers with its default of 50 and continuation keeps that size,
-    // which quadrupled the request count (CW-20261001-0023).
-    let nextLimit = target === undefined ? TASK_LIST_PAGE_SIZE : Math.min(target, TASK_LIST_PAGE_SIZE)
-
-    for (;;) {
-      if (target !== undefined && target - tasks.length <= 0) {
-        return { tasks, total }
-      }
-      const page = await this.fetchTaskPage<T>({ ...filter, limit: nextLimit, offset }, fields)
-      total = page.total
-      tasks.push(...page.tasks)
-
-      if (target !== undefined && tasks.length >= target) {
-        return { tasks, total }
-      }
-      if (!page.has_more) {
-        return { tasks, total }
-      }
-      const nextOffset = page.next_offset
-      if (typeof nextOffset !== 'number' || !Number.isSafeInteger(nextOffset) || nextOffset <= offset) {
-        throw new ApiError(200, 'Task list response did not provide a usable forward continuation.')
-      }
-      if (page.tasks.length === 0) {
-        throw new ApiError(200, 'Task list response reported more pages without returning progress.')
-      }
-      offset = nextOffset
-      const continuationLimit = page.limit
-      const remaining = target === undefined ? TASK_LIST_PAGE_SIZE : target - tasks.length
-      if (typeof continuationLimit === 'number' && Number.isSafeInteger(continuationLimit) && continuationLimit > 0) {
-        nextLimit = Math.min(continuationLimit, TASK_LIST_PAGE_SIZE, remaining)
-      } else if (target === undefined) {
-        nextLimit = TASK_LIST_PAGE_SIZE
-      } else {
-        nextLimit = Math.min(remaining, TASK_LIST_PAGE_SIZE)
-      }
-    }
-  }
-
-  private async fetchTaskPage<T>(filter: TaskFilter, fields?: 'summary'): Promise<TaskListResponse<T>> {
-    const params = taskFilterParams(filter)
-    if (fields) params['fields'] = fields
-    params['include_total'] = true
-    const page = await this.get<{ items: T[]; meta: { total: number; returned: number; limit: number; offset?: number; has_more: boolean; next_offset?: number | null } }>('/tasks', params)
-    return { tasks: page.items, ...page.meta }
   }
 
   async getTask(id: string, signal?: AbortSignal): Promise<Task> {
