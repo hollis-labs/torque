@@ -39,7 +39,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   output, and the wrapper's `agent.permission_denied`, `session.auth_failed`
   and `session.lost` events are accepted and not yet acted on. Without a
   launch template, a session's extra arguments go before a prompt's `--`
-  again, as with agentkit v0.12.3.
+  again, as with agentkit v0.12.3. Torque's ACP launches pick up the
+  wrapper's ACP fixes: a child's last frame at exit, such as a
+  `session/close` reply, is no longer lost (v0.17.1), and ACP deltas carry
+  `block_id`, with `phase` on Copilot's as on the other runtimes (v0.17.0).
 - Every turn of a launch runs its own argv, resolved from the prepared launch
   template (agentkit v0.13.0, go-agent-wrapper v0.16.0): the turn's prompt,
   last after `--`, and the session the previous turn reported. The profile's
@@ -126,6 +129,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- A Codex app-server session whose output reader fails on a read error now
+  reads as not alive (agentkit v0.14.1), so Torque's session poller stops it
+  and its session row goes terminal. Before, the reader stopped silently and
+  the row stayed running.
 - Steering a Codex app-server session keeps working after a command prints
   more than 1 MiB on one line. The session reader stopped at that line, so
   later turns timed out while the session still looked alive (#149); lines up

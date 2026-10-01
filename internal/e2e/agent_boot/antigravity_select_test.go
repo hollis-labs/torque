@@ -60,11 +60,12 @@ func argAfter(args []string, flag string) string {
 	return ""
 }
 
-// Since agentkit v0.14.0 a per-turn runtime always taps its adapter's typed
-// events: a denied tool writes a `[permission_denied:…]` marker to the byte
-// Fanout and go-agent-wrapper v0.17.0 emits agent.permission_denied. Torque
-// has no handler for that kind and must carry on: the replayed turn, whose
-// tool call agy denied, still completes the one-shot run (CW-20261001-0094).
+// A denied-tool turn completes the one-shot run: agy's replayed turn, whose
+// tool call was denied, still ends the run as done. Since agentkit v0.14.0
+// the denial also writes a `[permission_denied:…]` marker to the byte
+// Fanout and go-agent-wrapper v0.17.0 emits agent.permission_denied;
+// TestWrapperSink_IgnoresUntranslatedKinds pins that the sink tolerates the
+// kind (CW-20261001-0094).
 func TestBootAntigravityToolDeniedTurnCompletes(t *testing.T) {
 	fake := providertest.New(t, runtimes.Antigravity, providertest.Replay("antigravity/print_tool_denied"))
 	fake.Install()

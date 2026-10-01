@@ -131,6 +131,11 @@ func TestWrapperSink_IgnoresUntranslatedKinds(t *testing.T) {
 		runtimeevents.KindAgentPermissionResolved,
 		runtimeevents.KindPolicyBlock,
 		runtimeevents.KindSessionIdle,
+		// go-agent-wrapper v0.17.0's kinds, from agentkit v0.14's typed
+		// events on every per-turn turn: Torque has no handler for them yet.
+		runtimeevents.KindAgentPermissionDenied,
+		runtimeevents.KindSessionAuthFailed,
+		runtimeevents.KindSessionLost,
 		runtimeevents.EventKind("agent.something_new"),
 	} {
 		require.NoError(t, s.Write(context.Background(), runtimeevents.Event{Kind: kind, Payload: json.RawMessage(`{"x":1}`)}), "kind %s", kind)
