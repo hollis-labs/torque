@@ -2,6 +2,7 @@ package agent_boot
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 	"testing"
 	"time"
@@ -57,7 +58,7 @@ func TestBoot_LaterTurnsCarryTheirOwnPrompt(t *testing.T) {
 			profile: config.AgentProfile{Executor: "cli", Provider: "opencode", Model: "opencode/test-model", Args: []string{"--log-level", "WARN"}},
 			command: "run",
 			flags:   []string{"--agent", "--model", "opencode/test-model", "--log-level", "WARN"},
-			resume:  "ses_f0d6f8b4bffeveyfKIA5MI2bYi",
+			resume:  fixtureSessionID(t, "opencode/run_turn1.jsonl"),
 			kickoff: "**Task ID:** `CW-TEST-TURNS`",
 		},
 	}
@@ -212,4 +213,21 @@ func TestBoot_OpencodeOneShotCarriesItsBriefing(t *testing.T) {
 	} {
 		require.Contains(t, prompt, want, "the one-shot prompt must carry the briefing")
 	}
+}
+
+// fixtureSessionID is the sessionID a captured opencode run reports, which
+// the next turn must resume. Read from the fixture rather than spelled out,
+// since go-providers re-scrubs the ids when it re-captures.
+func fixtureSessionID(t *testing.T, fixture string) string {
+	t.Helper()
+	for _, line := range providertest.FixtureLines(t, fixture) {
+		var ev struct {
+			SessionID string `json:"sessionID"`
+		}
+		if json.Unmarshal(line, &ev) == nil && ev.SessionID != "" {
+			return ev.SessionID
+		}
+	}
+	t.Fatalf("no sessionID in %s", fixture)
+	return ""
 }
