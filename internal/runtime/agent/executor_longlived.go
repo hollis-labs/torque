@@ -759,6 +759,11 @@ func (o longLivedOutcome) toExecutionResult(result *executor.ExecutionResult, st
 		if result.Reason == "" {
 			result.Reason = "terminal provider turn failed"
 		}
+		// The failed turn's message is the reason. The stream's first
+		// error is that same message, or an earlier one that did not end
+		// the run (an opencode skill that failed to parse, a context
+		// overflow opencode compacted), which must not lead the reason.
+		return result
 	default:
 		result.Status = "failed"
 		result.Reason = "unknown long-lived outcome"

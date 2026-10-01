@@ -930,7 +930,7 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 				// wire string. A mismatch never fires turn-complete, so
 				// ModeOneShot burns its full timeout budget then SIGTERMs a
 				// turn that already succeeded.
-				if msg, failed := codexTurnCompletedFailure(params); failed {
+				if msg, failed := codexTurnCompletedFailure(params, pb.redact); failed {
 					emit(llmtypes.StreamEvent{Type: llmtypes.EventError, Error: msg})
 					if opts.terminalFailure != nil {
 						select {
@@ -1471,6 +1471,8 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		capture: &bootCapture{},
 		onReady: func() { readyOnce.Do(func() { close(readyCh) }) },
 		onDone:  oneshotOnDone,
+
+		terminalFailure: opts.terminalFailure,
 	}
 	if usesOpencodePermissionReplies(profile, runtimeKind) {
 		sink.opencodePerms = newOpencodePermissionResponder(permissionPosture(profile), spawnWorkdir, stderrWriter)
@@ -1519,7 +1521,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		if h.runErr != nil {
 			state = string(StatusFailed)
 		}
-		_ = deps.UpdateSessionState(context.Background(), sessID, state, 0, nil)
+		mgr.endWrapperState(context.Background(), deps, sessID, state)
 		mgr.finishWrapperSession(sessID, h)
 	}()
 

@@ -117,20 +117,37 @@ func TestBoot_ModeOneShot_SyncTurn(t *testing.T) {
 // turn-complete signal (long-lived adapter hung, binary failed to flush its
 // final stream-json `done` event, etc), the select must surface a timeout
 // instead of waiting indefinitely. The executor wraps ctx in
-// context.WithTimeout(profile.TimeoutSeconds) at its callsite — here we
-// shortcut by handing Boot a pre-cancelled ctx, which is the limit case.
-// Status must be Failed so the executor records the turn as not-done.
+// context.WithTimeout(profile.TimeoutSeconds) at its callsite; here the
+// test ends ctx itself once the turn has been sent, so it ends inside the
+// turn-complete wait. Status must be Failed so the executor records the
+// turn as not-done.
 func TestBoot_ModeOneShot_TimeoutFallsThrough(t *testing.T) {
 	cd := composeDeps(t,
 		fakeRuntimeConfig{PTY: false, SuppressTurnDoneOnSendInput: true},
 		"claude-code")
 
-	// 250ms ctx — enough for Boot's setup (workspace + plant + Start +
-	// SendInput) to complete, then ctx.Done() fires inside the
-	// turn-complete select. No hardcoded 5s grace anymore; the fall-through
-	// path is bounded by ctx, not a per-Boot constant.
-	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	// ctx ends as soon as the fake has received the turn (SendInput), so it
+	// fires in the turn-complete select and nowhere earlier. A fixed 250ms
+	// deadline used to expire during boot-dir planting under load, failing
+	// Boot itself (CW-20261001-0191). The 10s deadline only bounds a hung
+	// Boot.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	go func() {
+		tick := time.NewTicker(5 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				if s := cd.Runtime.lastSession(); s != nil && s.recordedSendInputCount() > 0 {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
 
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID:        "CW-TEST-OS-TIMEOUT",
