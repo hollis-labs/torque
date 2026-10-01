@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/go-providers/provider"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/planstart"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
@@ -90,9 +92,13 @@ func (s *stubStore) AppendRunEvent(evt *sqlstore.RunEventRecord) (int64, error) 
 type stubMgr struct {
 	bootSession    *agent.Session
 	bootErr        error
+	resumeErr      error // returned by a Boot that carries a provider session id
 	lastOpts       agent.Options
 	bootCalls      int
-	bootedProvider string // returned from ProviderForProfile; default "" disables resume
+	bootedProvider string // returned from RuntimeForProfile; default "" disables resume
+	// bootedKind is the kind RuntimeForProfile returns; "" is the
+	// provider's registry default mode.
+	bootedKind agent.RuntimeKind
 	// aliveIDs is the set of session ids the stub manager considers live
 	// (in-registry). Empty = nothing is live. Tests that exercise
 	// Redispatch's stale-running guard (CW-20260519-0082) populate this
@@ -106,14 +112,19 @@ func (s *stubMgr) Boot(_ context.Context, opts agent.Options) (*agent.Session, e
 	if s.bootErr != nil {
 		return nil, s.bootErr
 	}
+	if s.resumeErr != nil && opts.ProviderSessionIDOverride != "" {
+		return nil, s.resumeErr
+	}
 	return s.bootSession, nil
 }
 
-// ProviderForProfile lets tests dictate what provider the booted profile would
+// RuntimeForProfile lets tests dictate what provider the booted profile would
 // resolve to (planstart.Redispatch gates resume on the booted provider matching
 // the prior session's, not just on the prior provider). Default "" leaves the
 // stub provider-less; tests that exercise resume wire it explicitly.
-func (s *stubMgr) ProviderForProfile(_ string) string { return s.bootedProvider }
+func (s *stubMgr) RuntimeForProfile(_ string) (string, agent.RuntimeKind) {
+	return s.bootedProvider, s.bootedKind
+}
 
 // IsAlive implements planstart.SessionManager. Used by Redispatch's
 // liveness check to disambiguate stale-running rows from real live
@@ -454,7 +465,7 @@ func writePriorSessionWithStream(t *testing.T, store *stubStore, planID, priorID
 // planted as the floor, and the breadcrumb records used_resume=true.
 func TestPlanstart_RedispatchResumesGenuineProvider(t *testing.T) {
 	store := newStubStore()
-	mgr := writePriorSessionWithStream(t, store, "CW-PLAN-RES", "SES-CLAUDE", "claude", "claude-sess-xyz")
+	mgr := writePriorSessionWithStream(t, store, "CW-PLAN-RES", "SES-CLAUDE", "claude-code", "claude-sess-xyz")
 
 	res, err := planstart.Redispatch(context.Background(), store, mgr, "CW-PLAN-RES", planstart.Options{})
 	require.NoError(t, err)
@@ -477,9 +488,34 @@ func TestPlanstart_RedispatchResumesGenuineProvider(t *testing.T) {
 	assert.Contains(t, found.Payload, `"used_resume":true`)
 }
 
+// A resume whose provider no longer has the session fails Boot with
+// provider.ErrProviderSessionLost; Redispatch boots fresh once, with the
+// recovery pack, and the breadcrumb records used_resume=false.
+func TestPlanstart_RedispatchBootsFreshWhenTheProviderSessionIsLost(t *testing.T) {
+	store := newStubStore()
+	mgr := writePriorSessionWithStream(t, store, "CW-PLAN-LOST", "SES-CLAUDE-LOST", "claude-code", "claude-sess-gone")
+	mgr.resumeErr = fmt.Errorf("%w: wrapper: %w", agent.ErrBootFailed, provider.ErrProviderSessionLost)
+
+	res, err := planstart.Redispatch(context.Background(), store, mgr, "CW-PLAN-LOST", planstart.Options{})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, 2, mgr.bootCalls, "the resume, then one fresh boot")
+	assert.Empty(t, mgr.lastOpts.ProviderSessionIDOverride, "the second boot is fresh")
+	assert.Contains(t, mgr.lastOpts.SystemPrompt, "<recovered-session-context>")
+
+	var found *sqlstore.RunEventRecord
+	for _, e := range store.runEvents {
+		if e.Type == "recovery.pack_planted" {
+			found = e
+		}
+	}
+	require.NotNil(t, found)
+	assert.Contains(t, found.Payload, `"used_resume":false`)
+}
+
 // Redispatch does NOT thread a provider resume for codex even though it has a
 // persisted hint — codex's app-server runtime silently no-ops a session-id
-// preset (see agent.GenuinelyResumableProvider). The recovery pack still planted
+// preset (see agent.GenuinelyResumable). The recovery pack still planted
 // as the provider-agnostic floor; the breadcrumb records used_resume=false.
 func TestPlanstart_RedispatchSkipsResumeForCodex(t *testing.T) {
 	store := newStubStore()

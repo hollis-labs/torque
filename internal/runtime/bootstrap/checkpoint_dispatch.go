@@ -125,8 +125,9 @@ func (d *CheckpointResponseDispatcher) latestSessionForTask(taskID string) (*sql
 // breadcrumbPayload is the JSON shape AppendRunEvent stores for sprint-α.4
 // dispatches. Postmortem queries grep by type="checkpoint.response_dispatched"
 // + payload.path="alpha4" to find the chain after the rewire. usedResume is
-// derived from the provider capability (not a runtime probe) so the meta
-// reflects the declared D4 decision, not after-the-fact behavior.
+// whether ResumeSession continued the stored conversation (Session.Resumed):
+// the declared D4 decision, false when the provider had lost the session
+// and ResumeSession booted fresh, and false when no session came up.
 type breadcrumbPayload struct {
 	Path                string `json:"path"`
 	CorrelationID       string `json:"correlation_id"`
@@ -159,10 +160,10 @@ func (d *CheckpointResponseDispatcher) recordBreadcrumb(
 	if prev != nil {
 		payload.OriginalSessionID = prev.ID
 		payload.Provider = prev.Provider
-		payload.UsedResume = agent.ProviderCapabilities(prev.Provider).SupportsResume
 	}
 	if newSess != nil {
 		payload.NewSessionID = newSess.ID
+		payload.UsedResume = newSess.Resumed
 	}
 	if dispatchErr != nil {
 		payload.Error = dispatchErr.Error()
