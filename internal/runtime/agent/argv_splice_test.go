@@ -1,6 +1,9 @@
 package agent
 
 import (
+	"bytes"
+	"log"
+	"os"
 	"slices"
 	"testing"
 
@@ -59,7 +62,7 @@ func TestComposeBuildArgs_FlagsStayBeforeEndOfOptions(t *testing.T) {
 func TestTorqueLaunchArgs(t *testing.T) {
 	claude := config.AgentProfile{Provider: "claude-code", Model: "m", Args: []string{"--max-turns", "3", "--dangerously-skip-permissions"}}
 	assert.Equal(t,
-		[]string{"--max-turns", "3", "--settings", "/boot/.claude/settings.json"},
+		[]string{"--max-turns", "3", "--settings", "/boot/.claude/settings.json", "--strict-mcp-config"},
 		torqueLaunchArgs(claude, "/boot"))
 
 	codex := config.AgentProfile{Provider: "codex", Model: "m", Args: []string{"--enable", "f"}}
@@ -96,4 +99,95 @@ func TestCodexAppServerArgs(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `["app-server" "--enable" "f"]`)
 	assert.Contains(t, err.Error(), `model=\"m\"`)
+}
+
+// Claude loads only the MCP servers Torque plants (CW-20261001-0226): every
+// Claude launch gets --strict-mcp-config, whatever the provider's spelling,
+// and no other runtime does. A profile that already passes the flag is not
+// given it twice.
+func TestTorqueLaunchArgs_StrictMCPConfig(t *testing.T) {
+	for _, provider := range []string{"claude-code", "Claude-Code", "claude"} {
+		assert.Contains(t, torqueLaunchArgs(config.AgentProfile{Provider: provider}, "/boot"), "--strict-mcp-config", provider)
+	}
+	for _, provider := range []string{"codex", "opencode", "copilot", "pi", "agy", ""} {
+		assert.NotContains(t, torqueLaunchArgs(config.AgentProfile{Provider: provider}, "/boot"), "--strict-mcp-config", provider)
+	}
+	args := torqueLaunchArgs(config.AgentProfile{Provider: "claude-code", Args: []string{"--strict-mcp-config", "--effort", "high"}}, "/boot")
+	assert.Equal(t, 1, countArgs(args, "--strict-mcp-config"), "argv: %q", args)
+}
+
+// TORQUE_CLAUDE_STRICT_MCP is the interim kill switch: only 0, false, off
+// and no (any case, padded) turn strict mode off, a typo keeps it on, and
+// turning it off is logged as a WARN naming the value.
+func TestClaudeStrictMCP_KillSwitch(t *testing.T) {
+	claude := config.AgentProfile{Provider: "claude-code"}
+	for _, tc := range []struct {
+		value  string
+		set    bool
+		strict bool
+		warn   string
+	}{
+		{set: false, strict: true},
+		{value: "", set: true, strict: true},
+		{value: "1", set: true, strict: true},
+		{value: "true", set: true, strict: true},
+		{value: "0", set: true, strict: false, warn: `TORQUE_CLAUDE_STRICT_MCP="0"`},
+		{value: "false", set: true, strict: false, warn: `"false"`},
+		{value: " OFF ", set: true, strict: false, warn: `" OFF "`},
+		{value: "No", set: true, strict: false, warn: `"No"`},
+		{value: "disabled", set: true, strict: true, warn: `"disabled" is not recognized`},
+		{value: "o", set: true, strict: true, warn: `"o" is not recognized`},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			if tc.set {
+				t.Setenv("TORQUE_CLAUDE_STRICT_MCP", tc.value)
+			} else {
+				require.NoError(t, os.Unsetenv("TORQUE_CLAUDE_STRICT_MCP"))
+			}
+			var logs bytes.Buffer
+			log.SetOutput(&logs)
+			t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+			args := torqueLaunchArgs(claude, "/boot")
+			assert.Equal(t, tc.strict, slices.Contains(args, "--strict-mcp-config"), "argv: %q", args)
+			if tc.warn == "" {
+				assert.NotContains(t, logs.String(), "WARN")
+			} else {
+				assert.Contains(t, logs.String(), "WARN")
+				assert.Contains(t, logs.String(), tc.warn)
+			}
+		})
+	}
+	// The switch is about Claude only: other runtimes log nothing.
+	t.Setenv("TORQUE_CLAUDE_STRICT_MCP", "0")
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	assert.Empty(t, torqueLaunchArgs(config.AgentProfile{Provider: "opencode"}, "/boot"))
+	assert.Empty(t, logs.String())
+}
+
+func countArgs(args []string, want string) int {
+	n := 0
+	for _, a := range args {
+		if a == want {
+			n++
+		}
+	}
+	return n
+}
+
+// With the kill switch off, a profile whose own args carry --strict-mcp-config
+// keeps the flag, and the WARN says so rather than claiming it launches
+// without it.
+func TestClaudeStrictMCP_KillSwitchWithTheFlagInProfileArgs(t *testing.T) {
+	t.Setenv("TORQUE_CLAUDE_STRICT_MCP", "0")
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	args := torqueLaunchArgs(config.AgentProfile{Provider: "claude-code", Args: []string{"--strict-mcp-config"}}, "/boot")
+	assert.Equal(t, 1, countArgs(args, "--strict-mcp-config"), "the profile's own flag stays: %q", args)
+	assert.Contains(t, logs.String(), "the profile's own args carry it")
+	assert.NotContains(t, logs.String(), "WITHOUT")
 }

@@ -126,15 +126,26 @@ type Dependencies struct {
 	// CW-20260510-0110.
 	MuxCommand string
 
-	// MuxArgs is the argv passed to MuxCommand by the planted MCP
-	// stdio entry. Default mirrors the user's interactive
-	// ~/.claude.json `mcpServers.mux` shape:
+	// MuxArgs is the daemon's argv for MuxCommand: by default the
+	// user's interactive ~/.claude.json `mcpServers.mux` shape:
 	// `["mcp", "--proxy", "--servers", "vanta,torque,cerberus",
 	//  "--token", "local-dev", "--scopes", "session.write,message.write"]`.
+	// It is the base, not what a session runs: muxArgsFor rewrites its server
+	// selection per session. A profile's mux_servers become `--only <those>`,
+	// and the daemon's own `--servers` list, for a session that names none
+	// (OpenCode, and Codex and ACP under bypassPermissions), becomes the same
+	// servers with `--only`. `--only` is mux's curated mode: those servers'
+	// tools and none of mux_discover, mux_call or mux's own Tether tools, so
+	// the token and scopes, which authorize those native tools, are inert
+	// there though they still ride in the argv. `--only` needs mux v0.6.0 or
+	// later.
 	//
 	// Daemon-scoped today; TORQUE_MUX_ARGS env var override is
 	// supported at startup. Per-Boot per-task scoping (e.g. read-only
 	// token for some workers) is filed as a follow-up.
+	//
+	// Not every session gets a mux entry (plantsMux): a Claude worker gets
+	// none unless its profile names servers (CW-20261001-0226).
 	MuxArgs []string
 
 	// MuxEnv carries optional KEY=VALUE pairs the planted Mux entry
@@ -183,6 +194,8 @@ type Dependencies struct {
 	// server: while Torque write-protects its state, a `torque mcp` that
 	// mux would spawn inside the agent's sandbox could not write its
 	// database. The session's loopback is then its only Torque surface, and
-	// the kickoff says so.
+	// the kickoff says so. planMux drops `torque` from a profile's
+	// mux_servers while it is set (CW-20261001-0226; the protection that
+	// sets it is CW-20261001-0141).
 	MuxOmitsTorque bool
 }

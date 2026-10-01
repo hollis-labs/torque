@@ -266,6 +266,63 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- A run's cost is one figure, priced once (CW-20260912-0003). The cost a
+  runtime reports (Claude's `total_cost_usd`) is taken as given; the tokens
+  of turns that reported none are estimated from models.dev with cache
+  pricing: cache reads at the cache-read price and cache writes at the
+  cache-write price, and for codex, whose input counts its cached tokens,
+  only the uncached remainder at the input price. Before, Claude's reported
+  cost was discarded and every cache read was priced as input, so a codex
+  run like 1079 was recorded at $110.96 where this prices it at $15.38.
+  - **One write.** `runs.cost` and the run's `cost_ledger` row are written
+    in the same transaction as the run's completion (they were separate
+    writes through the telemetry queue), so for a run completed after this
+    migration the run, its task's cost and the scheduler's `total_cost`
+    agree. A ledger insert that fails is rolled back and logged and no
+    longer fails the completion: the run is completed with its cost and only
+    its ledger row is missing.
+  - **Provenance.** Runs and ledger rows record cache read and write tokens
+    and a `cost_source`: `provider`, `estimate`, `mixed` (some turns reported
+    a cost, some were estimated) or `none`; ledger rows also keep the
+    provider and estimated parts. `torque_scheduler_status` adds
+    `total_cost_by_source`. Migration 034.
+  - **The profile priced is the one that ran.** A task's profile resolves as
+    the executor resolves it, launch_profile first; a task with only a
+    launch_profile used to look up no profile and cost 0.
+  - **Every way a run ends keeps its usage.** A run killed by daemon
+    shutdown, or failed or cancelled after the executor had accumulated
+    usage, records that usage and its cost; one that ended without usage
+    has the source `none`. The orphan reapers only reclaim a run that is
+    still running, so a run that finished a moment earlier is not reset to
+    failed at cost 0, and for it they record no orphan event, do not requeue
+    its task and leave its worktree alone.
+  - **Catalog lookups.** The `claude-code` provider now finds Anthropic's
+    prices (CW-20261001-0182), and an opencode model id `<provider>/<model>`
+    finds that provider's.
+  - **What it does not do.** Estimates use the catalog's cache-write price,
+    which for Anthropic is the 5-minute tier; Claude's 1-hour cache writes
+    cost more, which is one reason its own figure comes first. A run whose
+    model the catalog lacks keeps the provider's figure and is labelled
+    `provider` even if some tokens could not be priced. Costs are reported,
+    not enforced: `CostBudget` still stops nothing.
+  - **A run an operator already cancelled, superseded or killed gets no
+    write and no ledger row.** It keeps its row as stamped, so a result that
+    arrives late and the usage in it are dropped, where before this the
+    ledger took a row for a run whatever its status. That spend is therefore
+    absent from `total_cost` and from the global cost ceiling check, which
+    read the ledger. It is deliberate: the run row and the ledger never
+    disagree. Whether such a run should still be costed is a separate
+    decision (a follow-up task).
+  - **History is not repriced.** Existing rows keep their figures, and
+    `runs.cost` and the ledger were not written together before, so for
+    older runs they do not all agree; the all-time `total_cost` still
+    includes the old cache-unaware estimates (`models_dev`), which
+    `total_cost_by_source` shows apart. Sprint cost and the over-budget
+    filter still read `runs.cost` while `total_cost` reads the ledger.
+  - **`torque cost-backfill`** prices a legacy row from input and output
+    tokens alone, so it now skips Claude runs, which are mostly cache and
+    would come out several times too low; only `unknown` rows are
+    candidates, so a `none` row is not backfilled.
 - A reviewer end-agent that ends `done` without auditing its target no
   longer passes silently (CW-20261001-0195). When its target is still in
   `review`, is not tagged `agent-closed` and has no comment by the end-agent
@@ -519,6 +576,53 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Security
 
+- A Claude worker no longer gets the `mux` MCP aggregator by default
+  (CW-20261001-0226). The daemon planted `mux mcp --proxy --servers
+  vanta,torque,cerberus` for every Claude session, `cerberus` (deploy and ssh
+  on hosts) being the riskiest of those, and recent worker sessions never
+  called mux, only their loopback. Claude sessions now get the run's loopback
+  alone, on every runtime kind and role. A profile grants mux servers
+  deliberately with the new optional `mux_servers` field, which plants `mux
+  mcp --proxy … --only <exactly those>` with the daemon's other mux arguments:
+  `mux_servers: [vanta, tesseract]`. `--only` is what restricts mux: it is
+  mux's curated mode, with those servers' tools and none of mux's own, where
+  `--servers` would still leave `mux_call` open to every server in mux's
+  catalog and mux's Tether tools (session launch, send input, message send) on
+  the planted token and scopes. Names are checked against the known mux servers
+  at profile load (an unknown, empty or repeated name is an error), and `torque
+  profiles lint` reports the same. `cerberus` (deploy, ssh) and `nanite` (its
+  `dev_bash`, `python_run` and `dev_write` run commands and write files on the
+  host) are only ever planted when a profile names
+  them, and naming either warns at load and in the lint, saying what it grants
+  (a warning, which does not fail the lint). While Torque's state is
+  write-protected a profile's `mux_servers` lose `torque`, and a profile that
+  names servers on a daemon with no mux is told so in the boot log. Codex and
+  every ACP runtime still get mux only under `permission_mode:
+  bypassPermissions`; OpenCode still gets it by default; `mux_servers` narrows
+  their sets. Where a session gets the daemon's default set (OpenCode, Codex and
+  ACP under bypass), the same servers are planted with `--only`, so those
+  sessions lose `mux_discover`, `mux_call` into the rest of mux's catalog and
+  mux's own Tether tools. A Claude session over ACP (`runtime_kind: acp-stdio`) is not
+  covered by `--strict-mcp-config`, whose bridge takes no such flag: it gets no
+  default mux, and is warned about at launch and in the lint. Planting `--only`
+  needs mux v0.6.0 or later. The planted
+  kickoff no longer tells a session to prefer its loopback "over
+  `mcp__mux__torque_*`" as though it had a mux server: it says so only if the
+  session also has one. See docs/agent-execution-environment.md.
+- A Claude agent Torque launches loads only the MCP servers Torque plants,
+  through `--mcp-config <boot dir>/.mcp.json`. Torque now adds
+  `--strict-mcp-config`, which stops Claude also loading the operator's
+  user-level `~/.claude.json` `mcpServers`. Before, every launched Claude
+  worker also got whatever was configured there: on an operator's machine
+  the interactive `mux` aggregator with all its servers (cerberus deploy and
+  ssh among them) and any other server, outside the per-server allow-list and
+  the planted-only intent of the sandbox work. It applies to every native Claude
+  runtime kind (streaming-stdio and subprocess-per-turn) and role, workers,
+  planners and reviewers alike, on every turn and on a resume; the planted
+  loopback is unchanged. Claude over ACP is not covered (see below). Interim: go-providers' Claude launch is to carry the
+  flag itself. `TORQUE_CLAUDE_STRICT_MCP=0` (or `false`, `off`, `no`) turns it
+  off, with a WARN naming the value logged at each launch; any other value,
+  a typo included, keeps it on (CW-20261001-0226).
 - The codex launches Torque leaves to codex's own sandbox are fewer
   (CW-20261001-0256). Three families of codex profile args still skipped
   Torque's write protection while codex ran unsandboxed: an attached short

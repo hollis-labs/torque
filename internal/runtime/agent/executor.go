@@ -313,8 +313,9 @@ func optsFromJob(job *executor.ExecutionJob, resolvedWD string) Options {
 
 // translateStreamEvent maps a single llmtypes.StreamEvent onto:
 //   - the ExecutionEvent callback (delta → log, tool_use, usage → token-event)
-//   - the result accumulator (tokens, cost — torque-side cost computation
-//     happens in the scheduler from these tokens; the executor just reports raw)
+//   - the result accumulator: tokens and cache tokens; the provider-reported
+//     cost of the events that carry one; the tokens of those that don't,
+//     which the scheduler prices (CW-20260912-0003)
 //   - the streamErr sink (turn-terminal EventError)
 //
 // Forked verbatim from cliexec/cliexec.go's translateStreamEvent.
@@ -337,12 +338,27 @@ func translateStreamEvent(
 		if ev.Usage == nil {
 			return
 		}
-		result.Tokens.PromptTokens += ev.Usage.InputTokens
-		result.Tokens.CompletionTokens += ev.Usage.OutputTokens
+		u := ev.Usage
+		result.Tokens.PromptTokens += u.InputTokens
+		result.Tokens.CompletionTokens += u.OutputTokens
+		result.Tokens.CacheReadTokens += u.CacheReadTokens
+		result.Tokens.CacheWriteTokens += u.CacheCreationTokens
+		// Provider-reported cost first (CW-20260912-0003). Usage.CostUSD is
+		// a per-event delta: Claude's total_cost_usd, per turn; opencode's
+		// step cost. An event without one leaves its tokens for the
+		// scheduler to price; an event with one is never priced again.
+		if u.CostUSD > 0 {
+			result.Cost += u.CostUSD
+		} else {
+			result.UnpricedTokens.PromptTokens += u.InputTokens
+			result.UnpricedTokens.CompletionTokens += u.OutputTokens
+			result.UnpricedTokens.CacheReadTokens += u.CacheReadTokens
+			result.UnpricedTokens.CacheWriteTokens += u.CacheCreationTokens
+		}
 		if cb != nil {
-			tok := executor.TokenEvent(ev.Usage.InputTokens, ev.Usage.OutputTokens, 0)
-			tok.Tokens.CacheReadTokens = ev.Usage.CacheReadTokens
-			tok.Tokens.CacheWriteTokens = ev.Usage.CacheCreationTokens
+			tok := executor.TokenEvent(u.InputTokens, u.OutputTokens, u.CostUSD)
+			tok.Tokens.CacheReadTokens = u.CacheReadTokens
+			tok.Tokens.CacheWriteTokens = u.CacheCreationTokens
 			cb(tok)
 		}
 	case llmtypes.EventError:

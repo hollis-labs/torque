@@ -210,14 +210,22 @@ func TestCatalogProviderID(t *testing.T) {
 	}{
 		{"claude", "anthropic"},
 		{"codex", "openai"},
+		{"opencode", "opencode"},
+		// Registry aliases price like their runtime (CW-20261001-0182):
+		// claude-code is the spelling every Claude profile uses.
+		{"claude-code", "anthropic"},
+		{"claudecode", "anthropic"},
+		{"Claude-Code", "anthropic"},
+		{"open-code", "opencode"},
 		// Already-canonical provider ids pass through.
 		{"anthropic", "anthropic"},
 		{"openai", "openai"},
 		{"google", "google"},
-		// Unknown providers pass through (callers can detect aliasing
-		// by checking input == output).
-		{"opencode", "opencode"},
+		// Runtimes with no known catalog vendor, and unknown providers,
+		// pass through (callers can detect aliasing by checking
+		// input == output).
 		{"copilot", "copilot"},
+		{"agy", "agy"},
 		{"", ""},
 	}
 	for _, tc := range tests {
