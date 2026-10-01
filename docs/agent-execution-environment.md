@@ -90,7 +90,7 @@ Provider cwd matters:
   shell commands.
 
 Fresh task state and mutations still go through the task-scoped
-`torque_loopback` MCP server. The planted bundle is the boot-time assignment,
+`loopback` MCP server. The planted bundle is the boot-time assignment,
 not a replacement for updates, checkpoints, summaries, review transitions, or
 blocked transitions.
 

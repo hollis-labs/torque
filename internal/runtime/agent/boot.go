@@ -340,9 +340,13 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	// (deps.MuxCommand/MuxArgs/MuxEnv). These are runtime values, kept
 	// off the persisted-at-rest LaunchPlan deliberately.
 	prepared.PlantContext.MCPLoopbackURL = loopbackURL
-	prepared.PlantContext.SelfMCPCommand = deps.MuxCommand
-	prepared.PlantContext.SelfMCPArgs = append([]string(nil), deps.MuxArgs...)
-	prepared.PlantContext.SelfMCPEnv = muxEnvSliceToMap(deps.MuxEnv)
+	if plantsMux(profile) {
+		prepared.PlantContext.SelfMCPCommand = deps.MuxCommand
+		prepared.PlantContext.SelfMCPArgs = append([]string(nil), deps.MuxArgs...)
+		prepared.PlantContext.SelfMCPEnv = muxEnvSliceToMap(deps.MuxEnv)
+	} else if deps.MuxCommand != "" {
+		log.Printf("agent.Boot: session=%s: mux MCP not planted for codex permission_mode %q; only bypassPermissions gets it (CW-20261001-0110)", sessID, profile.PermissionMode)
+	}
 	// Plant the provider boot dir. WithAdapter pins the exact adapter
 	// Torque resolved (adapterFor) — critically the BARE-mode claude
 	// adapter, which providerplant's DefaultResolver would not select
@@ -375,12 +379,19 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 				return nil, fmt.Errorf("%w: prepare Codex authentication: %v", ErrBootFailed, err)
 			}
 		}
-		// A newly planted directory has no interactive Claude trust grant.
-		// Load the operator-selected settings explicitly so headless launches
-		// honor the planted permission mode and auth helper from the outset.
-		if profile.Provider == "claude-code" {
-			preparedExecution.Bindings.Argv = insertBeforeEndOfOptions(preparedExecution.Bindings.Argv,
-				"--settings", filepath.Join(prepared.PlantedBootDir, ".claude", "settings.json"))
+		// Torque's own flags go at the launch template's extra-argument
+		// slot, which every turn resolves. Since agentkit v0.13.0 a launch
+		// with a template runs each turn from it, and Bindings.Argv is only
+		// the first turn's copy: editing Argv alone no longer changes what
+		// runs (CW-20261001-0094). Argv gets them too, before any `--`,
+		// because the PrepareExecution→ToSessionLaunch copy below still
+		// composes from it.
+		if args := torqueLaunchArgs(profile, prepared.PlantedBootDir); len(args) > 0 {
+			if launch := preparedExecution.Bindings.Launch.Clone(); launch != nil {
+				launch.ExtraArgs = append(launch.ExtraArgs, args...)
+				preparedExecution.Bindings.Launch = launch
+			}
+			preparedExecution.Bindings.Argv = insertBeforeEndOfOptions(preparedExecution.Bindings.Argv, args...)
 		}
 		prepared.Argv = append([]string(nil), preparedExecution.Bindings.Argv...)
 		prepared.Env = envVarValues(preparedExecution.Bindings.Env)
@@ -554,18 +565,19 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 		bootDirExtraArgs = nil
 	}
 	if profile.Provider == "codex" && runtimeKind == RuntimeKindJsonRpcStdio {
-		// The JSON-RPC runtime already calls the adapter's BuildArgs, which
-		// emits app-server. PreparedExecution contains that same command;
-		// only its remaining options belong in the ExtraArgs splice.
-		if len(bootDirExtraArgs) > 0 && bootDirExtraArgs[0] == "app-server" {
-			bootDirExtraArgs = bootDirExtraArgs[1:]
+		// The JSON-RPC runtime spawns the adapter's BuildArgs (app-server,
+		// and -c model=… from CodexAdapter.Model) followed by ExtraArgs.
+		// The prepared argv opens with that same command; only what follows
+		// it, the launch's own flags and torqueLaunchArgs, belongs in the
+		// splice. If it does not open with it, splicing it whole would run
+		// the command twice (`app-server -c model=… app-server -c model=…`),
+		// so the boot fails and names both instead.
+		rest, err := codexAppServerArgs(bootDirExtraArgs, cliAdapter.BuildArgs("", "", ""))
+		if err != nil {
+			shutdownLoopbackHandle(loopback)
+			return nil, fmt.Errorf("%w: %v", ErrBootFailed, err)
 		}
-		// This runtime bypasses the per-turn buildArgs callback below.
-		// app-server accepts model configuration via -c, not --model.
-		bootDirExtraArgs = append(append([]string(nil), profile.Args...), bootDirExtraArgs...)
-		if profile.Model != "" {
-			bootDirExtraArgs = insertBeforeEndOfOptions(bootDirExtraArgs, "-c", fmt.Sprintf("model=%q", profile.Model))
-		}
+		bootDirExtraArgs = rest
 	}
 
 	// Merge the bootdir-derived env amendments (CODEX_HOME /
@@ -582,25 +594,13 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 		spawnWorkdir = sessionLaunch.Options.Workdir
 	}
 
-	// opencode's argv shape requires `--model <X>` BEFORE the positional
-	// prompt arg (`opencode run --agent <A> --model <M> "<prompt>"`).
-	// OpencodeAdapter.BuildArgs already emits the flag in that position
-	// when adapter.Model is populated (factory.go threads profile.Model
-	// onto the adapter). Appending the generic `--model` suffix here
-	// would either land it AFTER the positional prompt (corrupt argv,
-	// since opencode parses anything past the prompt as additional
-	// message args) or duplicate the flag. Per-provider opt-out keeps
-	// claude's existing trailing `--model` tolerant behavior intact.
-	skipModelSuffix := skipModelSuffixForProvider(profile.Provider)
-
 	buildArgs := func(turnPrompt, sessionID string) []string {
 		return composeBuildArgs(buildArgsParams{
-			Adapter:         cliAdapter,
-			Profile:         profile,
-			SystemPrompt:    systemPrompt,
-			TurnPrompt:      turnPrompt,
-			SessionID:       sessionID,
-			SkipModelSuffix: skipModelSuffix,
+			Adapter:      cliAdapter,
+			Profile:      profile,
+			SystemPrompt: systemPrompt,
+			TurnPrompt:   turnPrompt,
+			SessionID:    sessionID,
 		})
 	}
 
@@ -1273,15 +1273,18 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 	execution.Access.Mode = agentlaunch.AccessOptional
 
 	// No serve-http trim here, unlike bootLegacy: on this path the prepared
-	// argv is the whole command (the wrapper adapter contributes no args),
+	// launch is the whole command (the wrapper adapter contributes no args),
 	// so `opencode serve --port 0 --hostname 127.0.0.1` must reach the
-	// child as planted. Trimming it launched a bare `opencode`.
-	// PreparedExecution is the wrapper's complete spawn command; it suppresses
-	// CLIAdapter.BuildArgs. Carry Claude's profile options on that command,
-	// rather than an adapter callback that the prepared path never invokes.
-	if profile.Provider == "claude-code" && len(execution.Bindings.Argv) > 0 {
-		execution.Bindings.Argv = claudeProfileArgv(execution.Bindings.Argv, profile)
-	}
+	// child as planted. Trimming it launched a bare `opencode`. Every turn's
+	// argv comes from the prepared launch template, which already carries
+	// the profile's model (adapter fields) and torqueLaunchArgs.
+
+	// Torque delivers every kickoff itself: AutoFireFirstTurn below for the
+	// long-lived modes, SendTurn after ready for one-shot. Left on the
+	// prepared execution, the boot delivery would have agentkit (v0.13.0+)
+	// send the kickoff as a streaming-stdio launch's first stdin turn as
+	// well, so a one-shot claude session would get it twice.
+	execution.Boot = agentlaunch.BootDelivery{Mode: agentlaunch.BootModeNone}
 
 	// Merge Torque's own composeEnv output (TORQUE_TASK_ID/RUN_ID, filtered
 	// OS env, agent-file env, opts.Env) into the bindings env --
@@ -1384,7 +1387,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		}
 		if err := sessionkit.ApplyFirstTurnPolicy(&firstTurnOpts, sessionkit.FirstTurnPolicy{
 			Mode:   sessionkit.AutoFireFirstTurn,
-			Prompt: kickoffPayload(""),
+			Prompt: firstTurnKickoff(capturedBootDir, spawnWorkdir, pb.kickoffMD),
 			Turn: turn.Options{
 				Provider: profile.Provider,
 				Runtime:  turnRuntime,
@@ -1416,6 +1419,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		sidecar: sidecar,
 		fanout:  opts.eventFanout,
 		stderr:  stderrWriter,
+		capture: &bootCapture{},
 		onReady: func() { readyOnce.Do(func() { close(readyCh) }) },
 		onDone:  oneshotOnDone,
 	}
@@ -1475,27 +1479,32 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		_ = deps.UpdateSessionState(context.Background(), sessID, string(StatusRunning), 0, nil)
 	case <-h.runDone:
 		runCancel()
-		closeStderr()
-		sidecar.Close()
-		shutdownLoopbackHandle(loopback)
-		bootDirPlanted = false
-		_ = os.RemoveAll(capturedBootDir)
 		failErr := h.runErr
 		if failErr == nil {
 			failErr = fmt.Errorf("wrapper.Run exited before session became ready")
 		}
-		_ = deps.UpdateSessionState(context.Background(), sessID, string(StatusFailed), 0, nil)
-		return nil, fmt.Errorf("%w: %v", ErrBootFailed, failErr)
-	case <-ctx.Done():
-		runCancel()
-		<-h.runDone
+		// A first turn that failed inside runtime.Start left its output
+		// only in the sink's capture; write it out and carry the gist into
+		// the error before the sidecars close (CW-20261001-0105).
+		detail := sink.flushBootFailure(failErr)
 		closeStderr()
 		sidecar.Close()
 		shutdownLoopbackHandle(loopback)
 		bootDirPlanted = false
 		_ = os.RemoveAll(capturedBootDir)
 		_ = deps.UpdateSessionState(context.Background(), sessID, string(StatusFailed), 0, nil)
-		return nil, fmt.Errorf("%w: %v", ErrBootFailed, ctx.Err())
+		return nil, fmt.Errorf("%w: %v%s", ErrBootFailed, failErr, detail)
+	case <-ctx.Done():
+		runCancel()
+		<-h.runDone
+		detail := sink.flushBootFailure(ctx.Err())
+		closeStderr()
+		sidecar.Close()
+		shutdownLoopbackHandle(loopback)
+		bootDirPlanted = false
+		_ = os.RemoveAll(capturedBootDir)
+		_ = deps.UpdateSessionState(context.Background(), sessID, string(StatusFailed), 0, nil)
+		return nil, fmt.Errorf("%w: %v%s", ErrBootFailed, ctx.Err(), detail)
 	}
 	bootDirPlanted = false
 
@@ -1548,10 +1557,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 			defer func() { _ = os.RemoveAll(capturedBootDir) }()
 		}
 
-		prompt := composeUserPrompt(opts)
-		if prompt == "" {
-			prompt = kickoffPayload("")
-		}
+		prompt := oneShotTurn(composeUserPrompt(opts), capturedBootDir, spawnWorkdir, pb.kickoffMD)
 		// SendTurn (not raw SendInput) so streaming-stdio's turn.Frame NDJSON
 		// encoding is applied -- claude rejects unframed plaintext on stdin
 		// when running --input-format stream-json.
@@ -1680,21 +1686,20 @@ func profileSupervision(profile config.AgentProfile, opts Options, ptyEnabled bo
 
 // buildArgsParams captures every input composeBuildArgs needs to
 // assemble the per-turn argv for the lib's adapter Runtime. Extracted
-// out of the buildArgs closure in Boot so the per-provider --model
-// placement switch (SkipModelSuffix) can be unit-tested directly.
+// out of the buildArgs closure in Boot so it can be unit-tested directly.
 type buildArgsParams struct {
-	Adapter         provider.CLIAdapter
-	Profile         config.AgentProfile
-	SystemPrompt    string
-	TurnPrompt      string
-	SessionID       string
-	SkipModelSuffix bool
+	Adapter      provider.CLIAdapter
+	Profile      config.AgentProfile
+	SystemPrompt string
+	TurnPrompt   string
+	SessionID    string
 }
 
 // composeBuildArgs assembles the per-turn argv. It calls the adapter's
-// BuildArgs for the provider-shape baseline, optionally appends the
-// generic --model suffix, and prepends profile.Args (minus the dev-mode
-// flag, which is consumed by adapterFor → NewClaudeAdapterDev*).
+// BuildArgs for the provider-shape baseline, which carries the profile's
+// model from the adapter's Model field (applyProfileOptions), and prepends
+// profile.Args (minus the dev-mode flag, which is consumed by adapterFor →
+// NewClaudeAdapterDev*).
 //
 // Project-directory args (--add-dir for claude, --cd for codex, --dir
 // for opencode) are owned by go-agent-sessions v0.9.4's AutoPlantBootDir:
@@ -1703,36 +1708,27 @@ type buildArgsParams struct {
 // adapters get the path threaded through a per-session adapter clone
 // via applyBareInjection (lib drops the ExtraArgs splice in that
 // branch to prevent double-emit).
-//
-// Per-provider exception:
-//
-//   - skipModelSuffix=true: opencode's argv requires --model BEFORE
-//     the positional prompt, which OpencodeAdapter.BuildArgs already
-//     emits when adapter.Model is set (factory.go threads it). The
-//     trailing-suffix path would either land --model AFTER the
-//     prompt (argv corruption) or duplicate the flag.
 func composeBuildArgs(p buildArgsParams) []string {
 	args := p.Adapter.BuildArgs(p.TurnPrompt, p.SystemPrompt, p.SessionID)
-	if !p.SkipModelSuffix && p.Profile.Model != "" {
-		args = insertBeforeEndOfOptions(args, "--model", p.Profile.Model)
-	}
 	if filtered := profileArgsExcludingDevFlag(p.Profile); len(filtered) > 0 {
 		args = append(filtered, args...)
 	}
 	return args
 }
 
-// claudeProfileArgv carries a claude-code profile's options on the prepared
-// spawn command the wrapper path runs: the profile's args right after the
-// executable, and --model before any end-of-options marker.
-func claudeProfileArgv(prepared []string, profile config.AgentProfile) []string {
-	argv := []string{prepared[0]}
-	argv = append(argv, profileArgsExcludingDevFlag(profile)...)
-	argv = append(argv, prepared[1:]...)
-	if profile.Model != "" {
-		argv = insertBeforeEndOfOptions(argv, "--model", profile.Model)
+// torqueLaunchArgs are the flags Torque adds to a provider's projected
+// launch: the profile's own args, less the developer-mode flag the Claude
+// adapter emits itself, and for claude-code the planted settings file. A
+// newly planted directory has no interactive Claude trust grant, so the
+// settings are loaded explicitly and headless launches honor the planted
+// permission mode and auth helper from the outset. The model is not here:
+// it is an adapter field (applyProfileOptions).
+func torqueLaunchArgs(profile config.AgentProfile, plantedBootDir string) []string {
+	args := profileArgsExcludingDevFlag(profile)
+	if profile.Provider == "claude-code" {
+		args = append(args, "--settings", filepath.Join(plantedBootDir, ".claude", "settings.json"))
 	}
-	return argv
+	return args
 }
 
 // insertBeforeEndOfOptions returns argv with extra placed before its first
@@ -1753,20 +1749,26 @@ func insertBeforeEndOfOptions(argv []string, extra ...string) []string {
 	return append(out, argv[i:]...)
 }
 
-// skipModelSuffixForProvider reports whether the generic --model
-// suffix in composeBuildArgs should be suppressed for this provider.
-//
-// opencode is the lone case today: its argv requires --model BEFORE
-// the positional prompt, and OpencodeAdapter.BuildArgs already emits
-// the flag in the correct position when adapter.Model is populated
-// (factory.go threads profile.Model onto the adapter). Claude / codex
-// tolerate the trailing --model so they leave the suffix on.
-//
-// Adding a new provider here is a deliberate compatibility decision —
-// most providers tolerate trailing --model and don't need the
-// exception.
-func skipModelSuffixForProvider(providerName string) bool {
-	return providerName == "opencode"
+// codexAppServerArgs returns the codex app-server options the JSON-RPC
+// runtime splices after the adapter's own command: the prepared argv past
+// that command. A prepared argv that does not open with it is an error
+// rather than a splice of the whole argv, which would run
+// `app-server -c model=… app-server -c model=…`.
+func codexAppServerArgs(prepared, command []string) ([]string, error) {
+	rest, ok := trimArgvPrefix(prepared, command)
+	if !ok {
+		return nil, fmt.Errorf("codex app-server: the prepared argv %q does not open with the adapter's command %q", prepared, command)
+	}
+	return rest, nil
+}
+
+// trimArgvPrefix returns argv without its leading prefix, and false when
+// argv does not start with prefix.
+func trimArgvPrefix(argv, prefix []string) ([]string, bool) {
+	if len(argv) < len(prefix) || !slices.Equal(argv[:len(prefix)], prefix) {
+		return argv, false
+	}
+	return argv[len(prefix):], true
 }
 
 // resolveRepoRoot returns the canonical project checkout (repo_root) for a

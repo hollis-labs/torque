@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -253,6 +254,30 @@ func TestKickoffPayloadForBootDir(t *testing.T) {
 		kickoffPayloadForBootDir("/tmp/torque-boot/agentlaunch-bootdir-123"))
 }
 
+// A runtime that runs in its boot dir follows the `@./boot.md` pointer; one
+// that runs elsewhere (opencode, in the project dir) gets boot.md's content,
+// since the pointer would resolve against the wrong directory
+// (CW-20261001-0104).
+func TestFirstTurnKickoff(t *testing.T) {
+	const boot, md = "/tmp/torque-boot/b1", "# Boot\n\nbriefing"
+	assert.Equal(t, "Boot @./boot.md", firstTurnKickoff(boot, boot, md), "cwd is the boot dir")
+	assert.Equal(t, "Boot @./boot.md", firstTurnKickoff(boot, boot+"/", md), "paths compare cleaned")
+	assert.Equal(t, md, firstTurnKickoff(boot, "/work/project", md), "cwd is the project dir")
+	assert.Equal(t, "Boot @./boot.md", firstTurnKickoff("", "/work/project", md), "nothing planted")
+	assert.Equal(t, "Boot @./boot.md", firstTurnKickoff(boot, "/work/project", ""), "no content to inline")
+}
+
+// One-shot: the prompt alone where the runtime runs in its boot dir, as
+// before; boot.md's content, which carries the prompt, where it does not.
+func TestOneShotTurn(t *testing.T) {
+	const boot, md = "/tmp/torque-boot/b1", "# Boot\n\n## First turn\n\nwrite the report\n"
+	assert.Equal(t, "write the report", oneShotTurn("write the report", boot, boot, md), "claude: the prompt alone")
+	assert.Equal(t, md, oneShotTurn("write the report", boot, "/work/project", md), "opencode: the briefing, prompt included")
+	assert.Equal(t, "Boot @./boot.md", oneShotTurn("", boot, boot, md), "no prompt: the kickoff pointer")
+	assert.Equal(t, md, oneShotTurn("", boot, "/work/project", md))
+	assert.Equal(t, "write the report", oneShotTurn("write the report", "", "/work/project", ""), "nothing planted")
+}
+
 // TestKickoffMarkdown verifies the planted boot.md content carries the
 // task framing the LLM needs on its first turn (and after compaction
 // when re-reading the file).
@@ -273,7 +298,7 @@ func TestKickoffMarkdown(t *testing.T) {
 	assert.Contains(t, body, "/repo/source")
 	assert.Contains(t, body, "$TORQUE_WORK_ROOT")
 	assert.Contains(t, body, "Walk the plan.")
-	assert.Contains(t, body, "torque_loopback")
+	assert.Contains(t, body, "`loopback` MCP server", "the name go-providers plants the per-task server under")
 
 	// Empty role falls back to AgentProfile.
 	body = kickoffMarkdown(Options{AgentProfile: "planner"}, "")
@@ -481,120 +506,50 @@ func TestAdapterFor_CodexSandboxMode(t *testing.T) {
 	})
 }
 
-// TestComposeBuildArgs_OpencodeModelOrder pins the per-provider
-// --model placement contract.
-//
-// opencode requires `--model <X>` BEFORE the positional prompt, so:
-//  1. OpencodeAdapter.BuildArgs emits `--model` in the correct
-//     position when adapter.Model is set (factory.go threads
-//     profile.Model onto adapter.Model — covered by
-//     TestAdapterFor_OpencodeWiring above).
-//  2. composeBuildArgs MUST NOT append the generic trailing
-//     `--model` — that would either land it after the positional
-//     prompt (argv corruption) or duplicate the flag.
-//
-// Claude tolerates the trailing --model and is the baseline.
-func TestComposeBuildArgs_OpencodeModelOrder(t *testing.T) {
-	t.Run("opencode: --model is BEFORE prompt, no trailing duplicate", func(t *testing.T) {
-		oa := provider.NewOpencodeAdapter()
-		oa.Agent = "executor"
-		oa.Model = "opencode/big-pickle"
-
-		profile := config.AgentProfile{Provider: "opencode", Model: "opencode/big-pickle"}
-		args := composeBuildArgs(buildArgsParams{
-			Adapter:         oa,
-			Profile:         profile,
-			TurnPrompt:      "do the thing",
-			SkipModelSuffix: skipModelSuffixForProvider(profile.Provider),
-		})
-
-		// Exactly one --model flag.
-		modelCount := 0
-		for _, a := range args {
-			if a == "--model" {
-				modelCount++
-			}
-		}
-		assert.Equal(t, 1, modelCount, "opencode argv should carry --model exactly once; argv=%v", args)
-
-		// --model must precede the positional prompt.
-		var modelIdx, promptIdx int = -1, -1
-		for i, a := range args {
-			if a == "--model" && modelIdx == -1 {
-				modelIdx = i
-			}
-			if a == "do the thing" {
-				promptIdx = i
-			}
-		}
-		require.NotEqual(t, -1, modelIdx, "argv missing --model: %v", args)
-		require.NotEqual(t, -1, promptIdx, "argv missing prompt: %v", args)
-		assert.Less(t, modelIdx, promptIdx,
-			"opencode argv: --model must precede positional prompt; argv=%v", args)
-	})
-
-	t.Run("opencode with empty Model: no --model flag at all", func(t *testing.T) {
-		oa := provider.NewOpencodeAdapter()
-		oa.Agent = "executor"
-		// adapter.Model intentionally left empty (profile.Model="")
-
-		profile := config.AgentProfile{Provider: "opencode", Model: ""}
-		args := composeBuildArgs(buildArgsParams{
-			Adapter:         oa,
-			Profile:         profile,
-			TurnPrompt:      "hello",
-			SkipModelSuffix: skipModelSuffixForProvider(profile.Provider),
-		})
-
-		for _, a := range args {
-			assert.NotEqual(t, "--model", a,
-				"opencode argv should NOT carry --model when profile.Model is empty; argv=%v", args)
-		}
-	})
-
-	t.Run("claude: trailing --model still emitted (baseline)", func(t *testing.T) {
-		ca := provider.NewClaudeAdapterPTY()
-		profile := config.AgentProfile{Provider: "claude", Model: "claude-sonnet-4-5"}
-		args := composeBuildArgs(buildArgsParams{
-			Adapter:         ca,
-			Profile:         profile,
-			TurnPrompt:      "hello",
-			SkipModelSuffix: skipModelSuffixForProvider(profile.Provider),
-		})
-
-		// claude path: --model is appended as the trailing suffix
-		// (skipModelSuffix=false for claude).
-		modelIdx := -1
-		for i, a := range args {
-			if a == "--model" {
-				modelIdx = i
-			}
-		}
-		require.NotEqual(t, -1, modelIdx, "claude argv should carry --model; argv=%v", args)
-		assert.Equal(t, "claude-sonnet-4-5", args[modelIdx+1])
-	})
-}
-
-// TestSkipModelSuffixForProvider locks the provider→skip-model-suffix
-// table. Adding new providers is a deliberate compatibility decision
-// since most providers tolerate trailing --model.
-func TestSkipModelSuffixForProvider(t *testing.T) {
+// TestComposeBuildArgs_ModelComesFromTheAdapter pins where the profile's
+// model reaches the per-turn argv: applyProfileOptions sets it on every
+// adapter, whose convention places it before the prompt in the provider's
+// own spelling, and composeBuildArgs adds no model flag of its own. A
+// trailing generic --model would land after the positional prompt or after
+// `-- <prompt>` (argv corruption) or duplicate the flag (CW-20261001-0094).
+func TestComposeBuildArgs_ModelComesFromTheAdapter(t *testing.T) {
 	cases := []struct {
-		provider string
-		want     bool
+		name    string
+		profile config.AgentProfile
+		kind    RuntimeKind
+		flag    string
+		value   string
 	}{
-		{"claude", false},
-		{"codex", false},
-		{"opencode", true},
-		{"gemini", false},
-		{"copilot", false},
-		{"", false},
+		{"opencode run", config.AgentProfile{Provider: "opencode", Model: "opencode/big-pickle"}, RuntimeKindSubprocess, "--model", "opencode/big-pickle"},
+		{"codex exec", config.AgentProfile{Provider: "codex", Model: "gpt-test"}, RuntimeKindSubprocess, "-c", `model="gpt-test"`},
+		{"claude streaming", config.AgentProfile{Provider: "claude-code", Model: "claude-test"}, RuntimeKindStreamingStdio, "--model", "claude-test"},
 	}
 	for _, tc := range cases {
-		t.Run(tc.provider, func(t *testing.T) {
-			assert.Equal(t, tc.want, skipModelSuffixForProvider(tc.provider))
+		t.Run(tc.name, func(t *testing.T) {
+			adapter, _, err := adapterFor(tc.profile, "executor", tc.kind)
+			require.NoError(t, err)
+			args := composeBuildArgs(buildArgsParams{Adapter: adapter, Profile: tc.profile, TurnPrompt: "do the thing"})
+
+			count := 0
+			for i, a := range args {
+				if a == tc.flag && i+1 < len(args) && args[i+1] == tc.value {
+					count++
+				}
+			}
+			assert.Equal(t, 1, count, "argv should carry %s %s exactly once: %q", tc.flag, tc.value, args)
+			if p := slices.Index(args, "do the thing"); p >= 0 {
+				assert.Less(t, slices.Index(args, tc.value), p, "the model must precede the prompt: %q", args)
+			}
 		})
 	}
+
+	t.Run("empty model: no model flag", func(t *testing.T) {
+		profile := config.AgentProfile{Provider: "opencode"}
+		adapter, _, err := adapterFor(profile, "executor", RuntimeKindSubprocess)
+		require.NoError(t, err)
+		args := composeBuildArgs(buildArgsParams{Adapter: adapter, Profile: profile, TurnPrompt: "hello"})
+		assert.NotContains(t, args, "--model")
+	})
 }
 
 // TestProfileArgsExcludingDevFlag verifies the dev flag is stripped before

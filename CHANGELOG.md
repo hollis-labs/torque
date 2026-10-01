@@ -61,6 +61,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Every turn of a launch runs its own argv, resolved from the prepared launch
+  template (agentkit v0.13.0, go-agent-wrapper v0.16.0): the turn's prompt,
+  last after `--`, and the session the previous turn reported. The profile's
+  model is set on each runtime's adapter (Claude and Codex join OpenCode and
+  agy), and its args and Claude's `--settings` go to the template's own
+  extra-argument slot. Codex app-server now receives `-c model=…` before the
+  profile's args.
+- Codex sessions get the daemon's `mux` MCP server only under
+  `permission_mode: bypassPermissions`; every other posture, unset included,
+  plants just the run's own loopback (CW-20261001-0110). Codex runs MCP tools
+  marked read-only without asking, so the approval responder could not gate
+  mux's tools. Claude and OpenCode planting is unchanged.
 - Runtimes are selected through the go-providers registry and
   go-agent-wrapper v0.15.0's `launch.Select` (agentkit v0.12.2, go-providers
   v0.34.1, go-sandbox v0.4.1), with the profile's runtime kind passed as the
@@ -139,6 +151,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- Later turns of `codex exec` and `opencode run` sessions reach the CLI.
+  Every turn re-ran the first turn's argv, so text sent with SendTurn never
+  arrived; codex exec also dropped the profile's model and args. Codex exec
+  still starts a new thread each turn: go-providers' exec convention has no
+  resume argument yet.
+- OpenCode sessions get their briefing on the first turn. OpenCode runs in
+  the project directory, so the `Boot @./boot.md` kickoff pointed at a file
+  that is not there; it now receives `boot.md`'s content instead.
+- A session whose first turn fails during start-up (an opencode, codex exec
+  or agy run on the go-agent-wrapper path) reports why. The run's error now
+  carries the provider's error line and the stderr tail (at most 2 KiB) after
+  "process exited 1", and the turn's output reaches `session.log` and
+  `stream.jsonl`, which stayed empty before (CW-20261001-0105).
+- A profile's `args` may not contain `--` or start with a non-option: they
+  go among the agent CLI's options, ahead of the `--` before the prompt, where
+  either would turn flags into prompt text. `profiles.yaml` loading and
+  `torque profiles lint` both reject them and name the profile and argument
+  (CW-20261001-0121).
+- The boot kickoff, the planted `process.md` and the agent execution docs
+  name the per-task MCP server `loopback`, the name go-providers plants it
+  under (codex's `[mcp_servers.loopback]`, the `loopback` entry in Claude's
+  `.mcp.json` and OpenCode's config). They said `torque_loopback`, a server
+  no worker has (CW-20261001-0114).
 - An agent CLI installed outside the daemon's PATH launches. Boot pins the
   path go-providers' Detect resolves (its `*_CLI_PATH` override, PATH, then
   install dirs such as `~/.opencode/bin` and `~/.local/bin`) as the planted
