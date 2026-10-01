@@ -132,6 +132,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- A session whose first turn fails during start-up (an opencode, codex exec
+  or agy run on the go-agent-wrapper path) reports why. The run's error now
+  carries the provider's error line and the stderr tail (at most 2 KiB) after
+  "process exited 1", and the turn's output reaches `session.log` and
+  `stream.jsonl`, which stayed empty before (CW-20261001-0105).
 - A profile's `args` may not contain `--` or start with a non-option: they
   go among the agent CLI's options, ahead of the `--` before the prompt, where
   either would turn flags into prompt text. `profiles.yaml` loading and

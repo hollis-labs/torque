@@ -1420,6 +1420,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		sidecar: sidecar,
 		fanout:  opts.eventFanout,
 		stderr:  stderrWriter,
+		capture: &bootCapture{},
 		onReady: func() { readyOnce.Do(func() { close(readyCh) }) },
 		onDone:  oneshotOnDone,
 	}
@@ -1479,27 +1480,32 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		_ = deps.UpdateSessionState(context.Background(), sessID, string(StatusRunning), 0, nil)
 	case <-h.runDone:
 		runCancel()
-		closeStderr()
-		sidecar.Close()
-		shutdownLoopbackHandle(loopback)
-		bootDirPlanted = false
-		_ = os.RemoveAll(capturedBootDir)
 		failErr := h.runErr
 		if failErr == nil {
 			failErr = fmt.Errorf("wrapper.Run exited before session became ready")
 		}
-		_ = deps.UpdateSessionState(context.Background(), sessID, string(StatusFailed), 0, nil)
-		return nil, fmt.Errorf("%w: %v", ErrBootFailed, failErr)
-	case <-ctx.Done():
-		runCancel()
-		<-h.runDone
+		// A first turn that failed inside runtime.Start left its output
+		// only in the sink's capture; write it out and carry the gist into
+		// the error before the sidecars close (CW-20261001-0105).
+		detail := sink.flushBootFailure(failErr)
 		closeStderr()
 		sidecar.Close()
 		shutdownLoopbackHandle(loopback)
 		bootDirPlanted = false
 		_ = os.RemoveAll(capturedBootDir)
 		_ = deps.UpdateSessionState(context.Background(), sessID, string(StatusFailed), 0, nil)
-		return nil, fmt.Errorf("%w: %v", ErrBootFailed, ctx.Err())
+		return nil, fmt.Errorf("%w: %v%s", ErrBootFailed, failErr, detail)
+	case <-ctx.Done():
+		runCancel()
+		<-h.runDone
+		detail := sink.flushBootFailure(ctx.Err())
+		closeStderr()
+		sidecar.Close()
+		shutdownLoopbackHandle(loopback)
+		bootDirPlanted = false
+		_ = os.RemoveAll(capturedBootDir)
+		_ = deps.UpdateSessionState(context.Background(), sessID, string(StatusFailed), 0, nil)
+		return nil, fmt.Errorf("%w: %v%s", ErrBootFailed, ctx.Err(), detail)
 	}
 	bootDirPlanted = false
 
