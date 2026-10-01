@@ -287,6 +287,57 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
     tokens alone, so it now skips Claude runs, which are mostly cache and
     would come out several times too low; only `unknown` rows are
     candidates, so a `none` row is not backfilled.
+- The HTTP and MCP session resume (`POST /api/v1/sessions/{id}/resume`,
+  `torque_session_resume`, `Manager.Resume`) makes the same decision as
+  `ResumeSession` (CW-20261001-0203). It continues the checkpoint's provider
+  conversation only when a provider session id was recorded, the profile
+  still boots the runtime that recorded it, and Torque wires that runtime's
+  resume; otherwise it boots fresh with the kickoff. What changes:
+  - **codex app-server:** a resume used to pass the thread id, which the
+    app-server ignores, and skip the kickoff, so the new session sat silent.
+    It now boots fresh and fires the kickoff on a new thread.
+  - **claude-code (and opencode run, pi, the other wired runtimes):**
+    `Checkpoint` never recorded the provider session id, so a checkpoint
+    resume always started a session with no conversation to continue and, as
+    `ModeResume`, no kickoff. A checkpoint now records the session's provider
+    session id (a checkpoint written before this falls back to its session's
+    own), and a resume launches the CLI with it (`claude --resume <id>`).
+  - **Every resume is a long-lived boot that runs the kickoff,** like
+    `ResumeSession`'s, as a new session bound to the source session's task,
+    project and role, with the task bundle planted. It was an unlinked
+    session with no task before. On subprocess-per-turn runtimes (claude
+    subprocess, opencode run) the call now returns after the kickoff turn
+    ends; streaming-stdio is unaffected.
+  - **A lost provider session boots fresh once** when the loss shows before
+    Boot returns, which is the case on subprocess-per-turn runtimes. A
+    streaming-stdio resume finds out on its first turn, and an ACP agent
+    without `loadSession` opens a new session without saying so
+    (CW-20261001-0202).
+  - The session's `Resumed` field (meta `torque.resumed`) is true when the
+    launch carried a provider session id: what Torque asked for, which an
+    ACP agent without `loadSession` can still ignore. It reads back on every
+    session read.
+- A long-lived run on the go-agent-wrapper path (opencode serve, claude-code,
+  agy, ACP) ends as soon as a turn fails, blocked with the provider's
+  message, as a Codex app-server run already did. An opencode serve worker
+  whose model opencode did not know (`session.error`: "Model not found: …")
+  left its task in `doing` and its run running with no tokens until the
+  30-minute inactivity threshold. The policy is that any genuine failed turn
+  blocks the run. That includes the turn the reminder pump sends a worker
+  that stopped without moving its task (#166): when that turn fails, the
+  run is now blocked rather than taking the unsignalled route. opencode
+  serve errors that do not end its turn stay in the session's stream and
+  leave the run going: one naming no session (a plugin that fails to load,
+  a skill opencode cannot parse), a context overflow (opencode compacts the
+  session and continues), and an abort (Torque's own Stop). The reason, and
+  the error in the stream, is the provider's message: its first line, at
+  most 500 bytes, redacted before it is cut. opencode's raw event and stack
+  trace stay in `serve-http.log`. The session stays `failed` when the agent
+  exits cleanly once stopped (CW-20261001-0169).
+- A Codex app-server turn failure that echoed a launch secret put the
+  secret in the run's reason: the stream's copy of the message was
+  redacted, the copy that ended the run was not. Both are redacted now,
+  before the message is cut to its bound (CW-20261001-0169).
 - Torque's tests no longer write session workspaces into the operator's
   `~/.torque/workspaces`. Every test's agent dependencies get a temp root
   (`testenv.WorkspacesRoot(t)`), and under `go test` a workspaces root inside

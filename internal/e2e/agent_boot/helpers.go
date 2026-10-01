@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/go-providers/providertest"
 	"github.com/hollis-labs/go-sqlite/sqlitekit"
 	"github.com/oklog/ulid/v2"
 	"github.com/stretchr/testify/require"
@@ -160,4 +162,16 @@ func plantCheckpoint(t *testing.T, store *sqlstore.Store, sessID, providerSessio
 		Note:       "agent_boot test plant",
 	}))
 	return cpID
+}
+
+// fixtureSessionID is the provider session id a go-providers fixture reports
+// ("sessionID" for opencode, "session_id" for claude): what a later turn must
+// resume. Read from the fixture, not written into a test, because the
+// libraries renormalize their fixtures' ids between releases.
+func fixtureSessionID(t *testing.T, fixture string) string {
+	t.Helper()
+	raw := providertest.ReadFixture(t, fixture+".jsonl")
+	m := regexp.MustCompile(`"(?:sessionID|session_id)":"([^"]+)"`).FindSubmatch(raw)
+	require.NotNil(t, m, "fixture %s reports no session id", fixture)
+	return string(m[1])
 }
