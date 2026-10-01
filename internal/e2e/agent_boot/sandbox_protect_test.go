@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -26,12 +28,51 @@ import (
 // launches (CW-20261001-0141). These boot real launch paths with a protected
 // directory and a helper standing in for the CLI that tries to write into it.
 
+// requireSandboxTestsEnv turns a skipped sandbox test into a failure. The
+// agent-os gate sets it, so the tests that enforce write-protection are known
+// to have run there; a CI runner without a usable bubblewrap leaves it unset
+// and they skip, with the reason.
+const requireSandboxTestsEnv = "TORQUE_REQUIRE_SANDBOX_TESTS"
+
+// requireWriteProtect skips the test when this host cannot actually
+// write-protect a path. The backend's own capability report is not enough: on
+// Linux it is static and always says supported, so it cannot tell a runner
+// with no bubblewrap, or one that forbids unprivileged user namespaces
+// (Ubuntu's AppArmor restriction), from a working host. Production stays
+// fail-closed: there a launch is refused when the sandbox cannot be applied.
 func requireWriteProtect(t *testing.T) {
 	t.Helper()
+	reason := writeProtectUnavailable()
+	if reason == "" {
+		return
+	}
+	if os.Getenv(requireSandboxTestsEnv) == "1" {
+		t.Fatalf("%s=1, but this host cannot write-protect paths: %s", requireSandboxTestsEnv, reason)
+	}
+	t.Skipf("this host cannot write-protect paths: %s (set %s=1 to fail instead)", reason, requireSandboxTestsEnv)
+}
+
+// writeProtectUnavailable returns why a launch cannot be write-protected here,
+// or "" when it can. On Linux it runs bubblewrap with the user namespace the
+// protection needs, rather than trusting a capability report.
+func writeProtectUnavailable() string {
 	caps := sandbox.ResolveBackendCapabilities("", sandbox.BackendAuto)
 	if !caps.Supported || !slices.Contains(caps.Capabilities, sandbox.CapWriteProtect) {
-		t.Skipf("the %s sandbox backend cannot write-protect paths here", caps.Backend)
+		return fmt.Sprintf("the %s sandbox backend reports no write-protect capability", caps.Backend)
 	}
+	if runtime.GOOS != "linux" {
+		return ""
+	}
+	bwrap, err := exec.LookPath("bwrap")
+	if err != nil {
+		return "bwrap (bubblewrap) is not on PATH"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, bwrap, "--unshare-user", "--ro-bind", "/", "/", "true").CombinedOutput(); err != nil {
+		return fmt.Sprintf("bwrap cannot start a sandbox here (%v: %s)", err, strings.TrimSpace(string(out)))
+	}
+	return ""
 }
 
 // requireDenied asserts a write failed because the directory is

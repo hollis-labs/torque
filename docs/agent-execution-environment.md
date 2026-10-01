@@ -371,6 +371,18 @@ profiles file's directory is still the one Torque protected at startup
 
 Closing those is go-sandbox's follow-up (CW-0128).
 
+### Tests
+
+The write-denial end-to-end tests (`TestBoot_ProtectedPathsDenyAgentWrites_*`
+in `internal/e2e/agent_boot`) run a real bubblewrap. They skip, naming why,
+where bubblewrap is missing or forbidden to create a user namespace (a CI
+runner, Ubuntu's AppArmor restriction): the check runs `bwrap --unshare-user`
+rather than trusting the backend's capability report, which on Linux is
+static. `TORQUE_REQUIRE_SANDBOX_TESTS=1` turns that skip into a failure; the
+agent-os gate sets it, so on a host that is meant to enforce the protection
+those tests are known to have run. Production is unaffected: a launch that
+cannot be sandboxed is refused.
+
 Torque's own git, run outside any sandbox in repositories agents can write,
 does not run what an agent plants there: every daemon git carries
 `core.fsmonitor=false`, `core.hooksPath=/dev/null`,
