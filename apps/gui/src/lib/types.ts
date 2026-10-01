@@ -360,6 +360,8 @@ export interface TaskScopeRollupResponse {
 }
 
 export interface TaskFilter {
+  /** Static eligibility; runtime dispatch guards are not evaluated. */
+  eligible?: boolean
   status?: TaskStatus[]
   priority?: number[]
   tags?: string[]
