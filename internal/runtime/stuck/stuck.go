@@ -29,8 +29,8 @@
 //   - α.2 (Manager.ResumeSession + ResumeOptions.DiagnosticNote): the
 //     RESUME branch invokes this primitive directly. Capability transparency
 //     is preserved — ResumeSession internally branches on
-//     ProviderCapabilities(provider).SupportsResume; the probe does NOT
-//     re-check the capability.
+//     Manager.ResumesSession (the registry-derived capability); the probe
+//     does NOT re-check it.
 //   - α.3 (reactor.Dispatcher): the RESPOND branch routes the received
 //     status_update envelope through the same dispatcher α.3 wires into
 //     production. status_update:blocked is the only status_update sub-state

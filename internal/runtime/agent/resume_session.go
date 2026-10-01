@@ -12,9 +12,9 @@ import (
 // per-session state persisted on the sessions row (AgentProfile, Workdir,
 // ProjectID, TaskID, the provider session-id captured in the resume_hint
 // column by the OnSessionID callback during the original boot). Falls back
-// to fresh-boot when ProviderCapabilities(provider).SupportsResume is false
-// — capability check is the single decision point per sprint-α D4 (no per-
-// call probes, no try-resume-then-fallback runtime detection).
+// to fresh-boot unless ResumesSession says the profile's runtime genuinely
+// resumes — the single decision point per sprint-α D4 (no per-call probes,
+// no try-resume-then-fallback runtime detection).
 //
 // Lifecycle: returns a freshly-booted (or freshly-resumed) *Session in the
 // long-lived mode. Callers can then SendInput / Attach / Stop / Wait
@@ -24,20 +24,20 @@ import (
 // the resumed transcript prepends an operator note, then optionally
 // SendInputs follow-up instructions.
 //
-// Resume vs fresh-boot:
+// Resume vs fresh-boot (ResumesSession, Resume in capabilities.go):
 //
-//   - SupportsResume=true (claude — and codex as of α.1's declared
-//     capability, though the codex go-providers v0.16.1 adapter does not
-//     yet thread cliSessionID into argv): the persisted resume_hint is
-//     threaded into Options.ProviderSessionIDOverride; Boot sets
-//     StartOptions.SessionIDPreset; the claude adapter prepends
-//     `--resume <session-id>` to argv on the first turn after Start.
-//   - SupportsResume=false (gemini, copilot, opencode): fresh-boot —
-//     same AgentProfile / Workdir / ProjectID / TaskID rehydration, no
-//     SessionIDPreset, no `--resume` in argv. The new boot gets a fresh
-//     session-id; the prior session's transcript is NOT recovered (and
-//     was never going to be on these adapters — their CLIs lack a native
-//     resume primitive).
+//   - Resumed (claude-code streaming-stdio and subprocess, opencode
+//     subprocess, the ACP runtimes whose registry declares resume): the
+//     persisted resume_hint is threaded into
+//     Options.ProviderSessionIDOverride; Boot sets
+//     StartOptions.SessionIDPreset (wrapper SessionIDPreset), which the
+//     launch renders as the CLI's resume argument or an ACP session sends
+//     in session/load.
+//   - Fresh (everything else, including codex app-server and agy until
+//     their resume is wired: CW-20261001-0180, CW-20261001-0181): same
+//     AgentProfile / Workdir / ProjectID / TaskID rehydration, no
+//     SessionIDPreset. The new boot gets a fresh session-id; the prior
+//     session's transcript is NOT recovered.
 //
 // Boot-dir handling: Boot plants a fresh per-task tempdir + CLAUDE.md +
 // `.mcp.json` on every call. ResumeSession does NOT attempt to re-use the
@@ -58,6 +58,20 @@ import (
 // fired. Operators / dashboards link the two via the resume_hint column
 // (same provider session-id), and a future enhancement can stamp a
 // SessionMeta key with the prior sessID for stronger linkage.
+// ResumesSession reports whether ResumeSession continues rec's conversation
+// rather than booting fresh (D4: the single decision point, a declared
+// capability, not a runtime probe). It does when rec has a stored provider
+// session id, the runtime its profile boots now is the one that recorded
+// it, and Torque genuinely resumes that runtime in that kind
+// (GenuinelyResumable, from the go-providers registry, CW-20261001-0174).
+func (m *Manager) ResumesSession(rec *sqlstore.SessionRecord) bool {
+	if rec == nil || len(rec.ResumeHint) == 0 {
+		return false
+	}
+	provider, kind := m.RuntimeForProfile(rec.AgentProfile)
+	return sameRuntime(rec.Provider, provider) && GenuinelyResumable(provider, kind)
+}
+
 func (m *Manager) ResumeSession(ctx context.Context, sessionID string, opts ResumeOptions) (*Session, error) {
 	if sessionID == "" {
 		return nil, fmt.Errorf("agent.Manager.ResumeSession: sessionID required")
@@ -76,10 +90,6 @@ func (m *Manager) ResumeSession(ctx context.Context, sessionID string, opts Resu
 		}
 		return nil, fmt.Errorf("agent.Manager.ResumeSession: get session: %w", err)
 	}
-
-	// D4: SupportsResume is the single decision point. The declared
-	// capability — not a runtime probe — picks the branch.
-	caps := ProviderCapabilities(rec.Provider)
 
 	projectID := ""
 	if rec.ProjectID.Valid {
@@ -114,16 +124,16 @@ func (m *Manager) ResumeSession(ctx context.Context, sessionID string, opts Resu
 		}
 	}
 
-	if caps.SupportsResume && len(rec.ResumeHint) > 0 {
+	if m.ResumesSession(rec) {
 		// State-based resume: thread the persisted provider session-id
 		// through Options.ProviderSessionIDOverride. Boot stamps
-		// StartOptions.SessionIDPreset; the per-provider adapter prepends
-		// `--resume <id>` on the first turn (claude today).
+		// StartOptions.SessionIDPreset; the launch renders it into the
+		// CLI's resume argument (claude --resume, opencode --session), or
+		// an ACP session sends it in session/load.
 		bootOpts.ProviderSessionIDOverride = string(rec.ResumeHint)
 	}
-	// SupportsResume=false (or true-but-no-resume-hint) → fresh-boot. The
-	// adapter argv carries no --resume flag; the new session gets a new
-	// provider session-id on first turn.
+	// Otherwise fresh-boot: no resume argument; the new session gets a
+	// new provider session-id on first turn.
 
 	sess, err := Boot(ctx, m.deps, bootOpts)
 	if err != nil {

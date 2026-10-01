@@ -159,7 +159,7 @@ func (d *CheckpointResponseDispatcher) recordBreadcrumb(
 	if prev != nil {
 		payload.OriginalSessionID = prev.ID
 		payload.Provider = prev.Provider
-		payload.UsedResume = agent.ProviderCapabilities(prev.Provider).SupportsResume
+		payload.UsedResume = d.sessions.ResumesSession(prev)
 	}
 	if newSess != nil {
 		payload.NewSessionID = newSess.ID

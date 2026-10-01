@@ -232,10 +232,11 @@ type ResumeRequest struct {
 // sprint α.2). State-based resume — distinct from ResumeRequest's
 // checkpoint-based path: ResumeSession looks up the persisted per-session
 // state (AgentProfile + Workdir + ProjectID + TaskID + provider session-id
-// from the sessions row) and re-boots, threading `--resume <id>` into the
-// adapter argv when ProviderCapabilities(provider).SupportsResume is true,
-// or fresh-booting (no --resume flag) when it is not. Capability check is
-// the single decision point — no per-call probing.
+// from the sessions row) and re-boots, threading the stored id into the
+// launch when Manager.ResumesSession says the runtime genuinely resumes
+// (registry-declared and wired, ProviderCapabilities(provider,
+// kind).SupportsResume), or fresh-booting when it does not. Capability check
+// is the single decision point — no per-call probing.
 //
 // Designed for the reactor harness's α.4 (HITL response → ResumeSession +
 // send_input) and α.5 (stuck-task recovery → checkpoint, then resume with

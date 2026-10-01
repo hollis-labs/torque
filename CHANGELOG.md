@@ -82,6 +82,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Resume capabilities come from the go-providers registry, per runtime and
+  mode, instead of provider-name switches (CW-20261001-0174).
+  `agent.Resume(provider, kind)` reports what the registry declares and what
+  Torque wires: a declared resume counts only where the launch takes the
+  stored session id and a lost id cannot pass for a resume.
+  - **Resumes:** claude-code (streaming-stdio, subprocess), and opencode
+    `run`, which gains resume via `--session <id>`; it booted fresh before.
+    Pi and opencode over ACP resume via `session/load`.
+  - **Declared but not wired yet:** codex app-server (CW-20261001-0180)
+    and agy (CW-20261001-0181). A Codex `ResumeSession` now boots fresh
+    instead of passing an id the app-server ignored.
+  - **Same runtime required:** `ResumeSession` and planstart's redispatch
+    resume only when the session's profile still boots the runtime that
+    recorded the id.
+  - **Breadcrumb:** the HITL response breadcrumb's `used_resume` reports
+    what `ResumeSession` did. It had claimed a resume for a row with no
+    stored session id.
 - go-agent-wrapper v0.21.1, agentkit v0.19.1, go-providers v0.39.0 and
   go-sandbox v0.5.1 (CW-20261001-0157). A claude-code launch now carries
   `--permission-mode <mode>` (`acceptEdits` when the profile sets none,

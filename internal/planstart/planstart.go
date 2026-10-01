@@ -98,10 +98,10 @@ type RedispatchStore interface {
 // *agent.Manager implements it; tests pass a stub. Boot drives the
 // orchestrator session — no separate SendInput kickoff step.
 //
-// ProviderForProfile resolves a profile name to the provider Boot would use
-// for it. Redispatch consults this BEFORE wiring a resume hint so the gate
-// reflects the actually-booted provider (not the recorded prior provider,
-// which can diverge after an operator profile switch).
+// RuntimeForProfile resolves a profile name to the provider and runtime kind
+// Boot would use for it. Redispatch consults this BEFORE wiring a resume
+// hint so the gate reflects the actually-booted runtime (not the recorded
+// prior provider, which can diverge after an operator profile switch).
 //
 // IsAlive returns true when the named session is in the manager's live
 // in-memory registry. Redispatch uses it to distinguish a truly-live
@@ -110,7 +110,7 @@ type RedispatchStore interface {
 // — the latter must proceed with a fresh boot.
 type SessionManager interface {
 	Boot(ctx context.Context, opts agent.Options) (*agent.Session, error)
-	ProviderForProfile(name string) string
+	RuntimeForProfile(name string) (string, agent.RuntimeKind)
 	IsAlive(sessionID string) bool
 }
 
@@ -409,7 +409,7 @@ func Redispatch(ctx context.Context, store RedispatchStore, mgr SessionManager, 
 
 	// Provider-session resume, layered on top of the recovery pack. When the
 	// prior orchestrator session is genuinely resumable (claude today — NOT
-	// codex; see agent.GenuinelyResumableProvider) and persisted a provider
+	// codex; see agent.GenuinelyResumable) and persisted a provider
 	// session-id, thread it via ProviderSessionIDOverride so the fresh boot
 	// restores the real transcript via `--resume` IN ADDITION to the bounded
 	// recovered-context block. The kickoff still fires (autoFire is independent
@@ -426,11 +426,11 @@ func Redispatch(ctx context.Context, store RedispatchStore, mgr SessionManager, 
 	// kickoff — Redispatch sends no follow-up turn, so the orchestrator would
 	// boot silent. Requiring priorSession.Provider == bootedProvider (and
 	// genuine resume on the booted side) keeps that mismatch from ever firing.
-	bootedProvider := mgr.ProviderForProfile(orchestrator.Profile)
+	bootedProvider, bootedKind := mgr.RuntimeForProfile(orchestrator.Profile)
 	usedResume := false
 	if priorSession != nil &&
 		priorSession.Provider == bootedProvider &&
-		agent.GenuinelyResumableProvider(bootedProvider) &&
+		agent.GenuinelyResumable(bootedProvider, bootedKind) &&
 		len(priorSession.ResumeHint) > 0 {
 		bootOpts.ProviderSessionIDOverride = string(priorSession.ResumeHint)
 		usedResume = true
