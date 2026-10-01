@@ -337,6 +337,42 @@ type wrapperHandle struct {
 	// stable to read only after runDone closes (single-writer, closed-once).
 	runDone chan struct{}
 	runErr  error
+
+	// finished is set, under Manager.mu, once wr.Run has returned and the
+	// session's terminal state is written. The run goroutine owns removing
+	// the handle from wrapperSessions (finishWrapperSession); a handle that
+	// finished before Boot registered it is never registered.
+	finished bool
+}
+
+// wait blocks until wr.Run returns (or ctx ends) and reports its outcome in
+// Manager.Wait's shape. The run goroutine writes the session's terminal
+// state before runDone closes, so a successful wait means the row is
+// already terminal.
+func (h *wrapperHandle) wait(ctx context.Context) (int, error) {
+	select {
+	case <-h.runDone:
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+	if h.runErr == nil {
+		return 0, nil
+	}
+	if errors.Is(h.runErr, context.Canceled) || errors.Is(h.runErr, context.DeadlineExceeded) {
+		return 0, h.runErr
+	}
+	// wrapper.Wrapper.Run returns only an error (no exit code); recover
+	// the code from the underlying agentsessions/exec termination error
+	// it wraps, same as the legacy path's WaitSession result.
+	var exitErr *agentsessions.ExitError
+	if errors.As(h.runErr, &exitErr) {
+		return exitErr.Code, h.runErr
+	}
+	var eerr *exec.ExitError
+	if errors.As(h.runErr, &eerr) {
+		return eerr.ExitCode(), h.runErr
+	}
+	return 0, h.runErr
 }
 
 // registerWrapperSession associates a wrapper.Wrapper handle with sessID so
@@ -347,7 +383,24 @@ func (m *Manager) registerWrapperSession(sessID string, h *wrapperHandle) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if h.finished {
+		return
+	}
 	m.wrapperSessions[sessID] = h
+}
+
+// finishWrapperSession marks h finished and drops it from wrapperSessions.
+// Called by the run goroutine once wr.Run has returned and the terminal
+// state is written -- not by teardownSession, because Stop tears down
+// before the process has exited and a Wait after Stop must still find the
+// handle to block on (CW-20261001-0041).
+func (m *Manager) finishWrapperSession(sessID string, h *wrapperHandle) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	h.finished = true
+	if m.wrapperSessions[sessID] == h {
+		delete(m.wrapperSessions, sessID)
+	}
 }
 
 // wrapperHandleFor returns the registered wrapperHandle for sessID, if any.
@@ -374,7 +427,9 @@ func (m *Manager) teardownSession(sessID string) {
 	delete(m.streams, sessID)
 	bootDir := m.bootDirs[sessID]
 	delete(m.bootDirs, sessID)
-	delete(m.wrapperSessions, sessID)
+	// wrapperSessions is left alone: the run goroutine removes the handle
+	// once wr.Run returns (finishWrapperSession), so Wait after Stop blocks
+	// on the real exit instead of missing the handle.
 	m.mu.Unlock()
 	// Stop the poller first so it doesn't race with the watch goroutine's
 	// terminal-state write (a final Touch landing after StateSink wrote done
@@ -567,29 +622,7 @@ func (m *Manager) Stop(ctx context.Context, id string) error {
 // hid termination causes from consumers; this is the correct shape.
 func (m *Manager) Wait(ctx context.Context, id string) (int, error) {
 	if h, ok := m.wrapperHandleFor(id); ok {
-		select {
-		case <-h.runDone:
-		case <-ctx.Done():
-			return 0, ctx.Err()
-		}
-		if h.runErr == nil {
-			return 0, nil
-		}
-		if errors.Is(h.runErr, context.Canceled) || errors.Is(h.runErr, context.DeadlineExceeded) {
-			return 0, h.runErr
-		}
-		// wrapper.Wrapper.Run returns only an error (no exit code); recover
-		// the code from the underlying agentsessions/exec termination error
-		// it wraps, same as the legacy path's WaitSession result.
-		var exitErr *agentsessions.ExitError
-		if errors.As(h.runErr, &exitErr) {
-			return exitErr.Code, h.runErr
-		}
-		var eerr *exec.ExitError
-		if errors.As(h.runErr, &eerr) {
-			return eerr.ExitCode(), h.runErr
-		}
-		return 0, h.runErr
+		return h.wait(ctx)
 	}
 	code, err := m.inner.WaitSession(ctx, id)
 	if err == nil {

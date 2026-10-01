@@ -19,6 +19,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- `agentkit` v0.11.1: a child that prints its last lines and exits at once
+  no longer has them dropped (jsonrpc-stdio, serve-http, PTY).
 - `go-agent-wrapper` v0.14.0 and `agentkit` v0.11.0 (adds `go-permission`
   v0.1.0; `go-providers` stays v0.30.0). No behaviour change in Torque: the
   wrapper's new `PermissionPosture` answers Codex app-server approvals, but
@@ -47,6 +49,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- Tests can no longer run a real agent CLI. The wrapper-boot e2e fixture was
+  found only through `CLAUDE_CLI_PATH`, while the wrapper path resolves a bare
+  `claude` through PATH, so `make test` ran the developer's real Claude Code
+  (a paid model call per run) and a bootstrap test reached the real
+  `opencode`. Every package that can reach a launcher now installs refusing
+  shims for the agent CLIs first on PATH (`testenv.RunWithAgentShims`).
+- On the go-agent-wrapper path, `Manager.Wait` after `Manager.Stop` waits for
+  the run to end. Stop dropped the session's wrapper handle, so Wait returned
+  at once and the session row could still read `running`.
 - Dispatched workers are told the repository's configured remote is the
   only push target: never add, guess or repoint a remote, and stop with
   `torque_task_blocked` and the evidence on unrelated history or someone
