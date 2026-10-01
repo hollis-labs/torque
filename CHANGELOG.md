@@ -186,6 +186,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- A session on the go-agent-wrapper path (claude-code, opencode, agy, ACP)
+  is torn down however it ends: its boot dir is removed and its loopback MCP
+  listener, stderr and stream sidecars closed when the agent exits on its
+  own, as the legacy path does on terminal state. Before, only an explicit
+  Stop did it, so a manual session or orchestrator whose agent exited kept
+  them until the daemon stopped. Manager.Shutdown now stops and tears down
+  these sessions too; it reached only the legacy sessions. A boot that fails
+  after its boot dir is allocated (planting, Codex authentication, launch
+  conversion) removes the dir instead of leaving it in `$TMPDIR/torque-boot`
+  with no session row to name it (CW-20261001-0161).
 - OpenCode `serve-http` sessions no longer hang on a permission prompt.
   Torque answers each `permission.asked` through serve's
   `/permission/{id}/reply`, by the profile's `permission_mode`:

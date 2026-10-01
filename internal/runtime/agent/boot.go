@@ -337,6 +337,15 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: prepare launch: %v", ErrBootFailed, err)
 	}
+	// Prepare allocated the boot dir, and it is Torque's to remove
+	// (DefaultBuildDirRoot): every return before bootLegacy or bootWrapper
+	// takes it over drops it, as does a launch that plants nothing into it
+	// (CW-20261001-0161).
+	dropPreparedBootDir := func() {
+		if prepared.PlantedBootDir != "" {
+			_ = os.RemoveAll(prepared.PlantedBootDir)
+		}
+	}
 	// Task-scoped + daemon-scoped PlantContext fields the shared plan
 	// does not carry: the MCP loopback URL (Torque still CONSTRUCTS the
 	// loopback itself — only the URL flows here) and the mux MCP entry
@@ -370,15 +379,16 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	bootDirProvider, hasBootDir := cliAdapter.(provider.BootDirProvider)
 	var preparedExecution *agentlaunch.PreparedExecution
 	if hasBootDir {
-		preparedExecution, err = providerplant.PrepareExecution(ctx, prepared, providerplant.WithAdapter(bootDirProvider))
+		preparedExecution, err = plantBootDir(ctx, prepared, providerplant.WithAdapter(bootDirProvider))
 		if err != nil {
 			shutdownLoopbackHandle(loopback)
+			dropPreparedBootDir()
 			return nil, fmt.Errorf("%w: plant boot dir: %v", ErrBootFailed, err)
 		}
 		if profile.Provider == "codex" {
 			if err := prepareCodexAuth(ctx, env, preparedExecution); err != nil {
 				shutdownLoopbackHandle(loopback)
-				_ = os.RemoveAll(prepared.PlantedBootDir)
+				dropPreparedBootDir()
 				return nil, fmt.Errorf("%w: prepare Codex authentication: %v", ErrBootFailed, err)
 			}
 		}
@@ -400,10 +410,14 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		prepared.Env = envVarValues(preparedExecution.Bindings.Env)
 		prepared.Workdir = preparedExecution.Bindings.CWD
 		logPlantResult(sessID, preparedExecution)
+	} else {
+		// Nothing is planted, so no session owns the dir.
+		dropPreparedBootDir()
 	}
 	sessionLaunch, err := sessionshim.ToSessionLaunch(prepared)
 	if err != nil {
 		shutdownLoopbackHandle(loopback)
+		dropPreparedBootDir()
 		return nil, fmt.Errorf("%w: convert prepared launch: %v", ErrBootFailed, err)
 	}
 	// capturedBootDir is the planted dir; "" for adapters with no
@@ -463,6 +477,10 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	}
 	return bootLegacy(ctx, deps, mgr, opts, pb)
 }
+
+// plantBootDir plants a prepared launch's boot dir (providerplant's
+// PrepareExecution); a var so a test can make planting fail.
+var plantBootDir = providerplant.PrepareExecution
 
 // plantedBoot bundles everything Boot's shared prefix (profile resolution
 // through boot-dir planting) computes, so bootLegacy and bootWrapper can
@@ -1530,12 +1548,15 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 
 	mgr.registerWrapperSession(sessID, h)
 	if opts.Mode != ModeOneShot {
-		mgr.registerLoopback(sessID, loopback)
-		mgr.registerStderrCloser(sessID, closeStderr)
-		mgr.registerStreamCloser(sessID, sidecar.Close)
-		if capturedBootDir != "" {
-			mgr.registerBootDir(sessID, capturedBootDir)
-		}
+		// Torn down by Stop, Shutdown, or the run goroutine when the
+		// session ends on its own (finishWrapperSession); released at once
+		// if it already has.
+		mgr.adoptWrapperResources(sessID, h, wrapperResources{
+			loopback:    loopback,
+			closeStderr: closeStderr,
+			closeStream: sidecar.Close,
+			bootDir:     capturedBootDir,
+		})
 		// No registerPidPoller here: KindSessionHeartbeat/KindProcessStarted
 		// from the sink replace pid_poller.go's job for wrapper-routed
 		// sessions (see wrapper_sink.go's Write doc comments).
