@@ -82,6 +82,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- go-agent-wrapper v0.23.0, agentkit v0.20.1 and go-providers v0.40.0
+  (go-sandbox stays v0.5.1; CW-20261001-0141). They bring the
+  `ProtectedPaths` Torque now sets, and turn interrupts Torque does not use
+  yet. An OpenCode serve turn that fails ends once, as a failure, instead of
+  a failure followed by a completion. OpenCode errors carry the error's name,
+  model and reference after the message. Launch argv, environment and
+  planted config are unchanged for every runtime.
 - go-agent-wrapper v0.21.1, agentkit v0.19.1, go-providers v0.39.0 and
   go-sandbox v0.5.1 (CW-20261001-0157). A claude-code launch now carries
   `--permission-mode <mode>` (`acceptEdits` when the profile sets none,
