@@ -273,7 +273,7 @@ func TestKickoffMarkdown(t *testing.T) {
 	assert.Contains(t, body, "/repo/source")
 	assert.Contains(t, body, "$TORQUE_WORK_ROOT")
 	assert.Contains(t, body, "Walk the plan.")
-	assert.Contains(t, body, "torque_loopback")
+	assert.Contains(t, body, "`loopback` MCP server", "the name go-providers plants the per-task server under")
 
 	// Empty role falls back to AgentProfile.
 	body = kickoffMarkdown(Options{AgentProfile: "planner"}, "")

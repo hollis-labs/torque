@@ -52,7 +52,7 @@ func kickoffMarkdown(opts Options, role string) string {
 }
 
 // kickoffLoopbackTools points the agent at the per-task loopback's tools.
-const kickoffLoopbackTools = "Use the `torque_loopback` MCP server's task-scoped tools (no `task_id` parameter required) for self-task operations. Prefer them over `mcp__mux__torque_*` for the booted task.\n\n"
+const kickoffLoopbackTools = "Use the `loopback` MCP server's task-scoped tools (no `task_id` parameter required) for self-task operations. Prefer them over `mcp__mux__torque_*` for the booted task.\n\n"
 
 // kickoffHeader is the kickoff's opening: who the agent is, the task and
 // plan it serves, and the workspace it writes in.
