@@ -453,6 +453,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Security
 
+- A Claude worker no longer gets the `mux` MCP aggregator by default
+  (CW-20261001-0226). The daemon planted `mux mcp --proxy --servers
+  vanta,torque,cerberus` for every Claude session, `cerberus` (deploy and ssh
+  on hosts) being the riskiest of those, and recent worker sessions never
+  called mux, only their loopback. Claude sessions now get the run's loopback
+  alone, on every runtime kind and role. A profile grants mux servers
+  deliberately with the new optional `mux_servers` field, which plants
+  `mux mcp --proxy --servers <exactly those>` with the daemon's other mux
+  arguments: `mux_servers: [vanta, tesseract]`. Names are checked against the
+  known mux servers at profile load (an unknown, empty or repeated name is an
+  error), and `torque profiles lint` reports the same. `cerberus` is only ever
+  planted when a profile names it, and naming it warns at load and in the lint
+  (a warning, which does not fail it). What each runtime plants by default
+  is unchanged for the others: OpenCode gets mux with the daemon's default
+  servers, and Codex and every ACP runtime get it only under
+  `permission_mode: bypassPermissions`; `mux_servers` narrows their set. See
+  docs/agent-execution-environment.md.
 - A Claude agent Torque launches loads only the MCP servers Torque plants,
   through `--mcp-config <boot dir>/.mcp.json`. Torque now adds
   `--strict-mcp-config`, which stops Claude also loading the operator's

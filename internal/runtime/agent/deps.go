@@ -135,6 +135,11 @@ type Dependencies struct {
 	// Daemon-scoped today; TORQUE_MUX_ARGS env var override is
 	// supported at startup. Per-Boot per-task scoping (e.g. read-only
 	// token for some workers) is filed as a follow-up.
+	//
+	// Not every session gets a mux entry (plantsMux), and a profile's
+	// mux_servers replaces the `--servers` value here for its sessions
+	// (muxArgsFor): a Claude worker gets none unless its profile names
+	// servers (CW-20261001-0226).
 	MuxArgs []string
 
 	// MuxEnv carries optional KEY=VALUE pairs the planted Mux entry

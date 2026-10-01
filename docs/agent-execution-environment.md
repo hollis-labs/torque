@@ -94,6 +94,63 @@ Fresh task state and mutations still go through the task-scoped
 not a replacement for updates, checkpoints, summaries, review transitions, or
 blocked transitions.
 
+## MCP servers an agent can reach
+
+A launched agent reaches the MCP servers **Torque plants for it, and no
+others**. Every session gets the run's own task-scoped **`loopback`** server,
+which carries its torque tools (`torque_comment_add`, `torque_task_review`, …).
+Whether it also gets the daemon's **`mux`** aggregator (`mux mcp --proxy
+--servers <names>`, which proxies servers such as `vanta`, `torque`,
+`tesseract` and `cerberus`) depends on the runtime:
+
+| Runtime | Planted by default |
+|---|---|
+| `claude-code` (every runtime kind and role) | `loopback` only. **No `mux`.** |
+| `opencode` (native) | `loopback` and `mux` with the daemon's default servers. |
+| `codex`, and every ACP runtime (`copilot`, `pi`, …) | `loopback` only; `mux` under `permission_mode: bypassPermissions`, with the daemon's default servers. |
+
+The daemon's default server set is `vanta,torque,cerberus` (or
+`TORQUE_MUX_ARGS`). `cerberus` can deploy to and run commands on hosts, which
+is why a Claude worker no longer gets it by default.
+
+### The `mux_servers` profile field
+
+A profile grants mux servers deliberately with `mux_servers`:
+
+```yaml
+agent_profiles:
+  analyst-claude-code:
+    executor: cli
+    provider: claude-code
+    mux_servers: [vanta, tesseract]
+```
+
+Torque then plants `mux mcp --proxy --servers vanta,tesseract …` for that
+profile's sessions, **exactly those servers**, with the daemon's other mux
+arguments (token, scopes) kept, beside the `loopback`. It is the whole of the
+mux surface those sessions can reach.
+
+- Names come from a known set (`cerberus`, `fragments-engine`, `hadron`,
+  `loom`, `nanite`, `tangent`, `tesseract`, `tether`, `torque`, `vanta`). An
+  unknown, empty or repeated name is a **load-time error** naming the profile,
+  and `torque profiles lint` reports it.
+- `cerberus` is **never granted by default**. A profile that names it gets a
+  warning when profiles load and from `torque profiles lint` (a warning, which
+  does not fail the lint), because it grants deploy and ssh.
+- For `opencode`, `mux_servers` narrows the daemon's default set. For `codex`
+  and ACP runtimes it narrows the set too, but mux is still planted only under
+  `bypassPermissions` (the lint warns when a profile sets it otherwise).
+
+### Claude loads only what Torque plants
+
+Torque launches Claude with `--strict-mcp-config`, so Claude loads only the
+servers in the planted `<boot dir>/.mcp.json` and **not** the operator's
+user-level `~/.claude.json` `mcpServers` (an interactive `mux` with every
+server, and anything else configured there). This is an interim Torque-side
+flag, until go-providers' Claude launch carries it. Setting
+`TORQUE_CLAUDE_STRICT_MCP` to `0`, `false`, `off` or `no` turns it off (a WARN
+is logged at each launch naming the value); any other value keeps it on.
+
 ## Per-run worktree contract
 
 By default an agent runs directly in `repo_root` (`work_root == repo_root`,

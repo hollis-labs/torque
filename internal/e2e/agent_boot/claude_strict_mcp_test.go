@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -109,13 +110,131 @@ func TestClaudeLaunch_StrictMCPConfig_KillSwitch(t *testing.T) {
 	}
 }
 
-// strict mode does not change what Torque plants: where a profile gets the
-// mux server, it is still in the planted file beside the loopback.
-func TestClaudeLaunch_StrictMCPConfig_PlantedMuxIsStillThere(t *testing.T) {
-	_, servers := bootClaude(t, "", "worker", agent.Options{}, func(cd *composedDeps) {
-		cd.Deps.MuxCommand = "/usr/local/bin/mux"
-		cd.Deps.MuxArgs = []string{"mcp", "--proxy", "--servers", "vanta,torque,cerberus"}
-	})
-	assert.Contains(t, servers, "loopback")
-	assert.Contains(t, servers, "mux")
+// muxArgs reads a planted mux server's argv out of the planted .mcp.json.
+func muxArgs(t *testing.T, servers map[string]json.RawMessage) []string {
+	t.Helper()
+	raw, ok := servers["mux"]
+	require.True(t, ok, "no mux server planted: %v", servers)
+	var entry struct {
+		Command string   `json:"command"`
+		Args    []string `json:"args"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &entry), string(raw))
+	assert.Equal(t, "/usr/local/bin/mux", entry.Command)
+	return entry.Args
+}
+
+// withDaemonMux gives the daemon a mux binary and its default argv, the
+// shape the production bootstrap resolves (internal/runtime/bootstrap/mux.go).
+func withDaemonMux(cd *composedDeps) {
+	cd.Deps.MuxCommand = "/usr/local/bin/mux"
+	cd.Deps.MuxArgs = []string{"mcp", "--proxy", "--servers", "vanta,torque,cerberus", "--token", "local-dev", "--scopes", "session.write,message.write"}
+}
+
+// A Claude worker gets NO planted mux by default (CW-20261001-0226): the
+// daemon's default `mux mcp --proxy --servers vanta,torque,cerberus` goes
+// away for it, cerberus (deploy, ssh) being the riskiest server and the
+// sessions never calling mux. The planted file is the run's loopback alone,
+// on both runtime kinds and under every role, even with a mux binary on the
+// daemon.
+func TestClaudeLaunch_NoMuxByDefault(t *testing.T) {
+	for _, kind := range []string{"", "subprocess"} {
+		for _, role := range []string{"worker", "planner", "reviewer-end-agent"} {
+			name := kind
+			if name == "" {
+				name = "streaming-stdio"
+			}
+			t.Run(name+"/"+role, func(t *testing.T) {
+				_, servers := bootClaude(t, kind, role, agent.Options{Role: role}, withDaemonMux)
+				assert.Contains(t, servers, "loopback")
+				assert.NotContains(t, servers, "mux", "no mux unless the profile names mux_servers")
+				assert.Len(t, servers, 1, "the loopback alone: %v", servers)
+			})
+		}
+	}
+}
+
+// A profile that names mux_servers gets mux planted with exactly those, the
+// daemon's token and scopes kept; cerberus is in the planted set only when
+// the profile names it. The loopback is untouched.
+func TestClaudeLaunch_MuxServersPlantsExactlyThoseNamed(t *testing.T) {
+	for _, kind := range []string{"", "subprocess"} {
+		for _, tc := range []struct {
+			name    string
+			servers []string
+			want    string
+		}{
+			{"two servers", []string{"vanta", "tesseract"}, "vanta,tesseract"},
+			{"one server", []string{"torque"}, "torque"},
+			{"cerberus named", []string{"vanta", "cerberus"}, "vanta,cerberus"},
+		} {
+			name := kind
+			if name == "" {
+				name = "streaming-stdio"
+			}
+			t.Run(name+"/"+tc.name, func(t *testing.T) {
+				_, servers := bootClaude(t, kind, "worker", agent.Options{}, func(cd *composedDeps) {
+					withDaemonMux(cd)
+					prof := cd.Deps.Profiles.(config.ProfileMap)["worker"]
+					prof.MuxServers = tc.servers
+					cd.Deps.Profiles = config.ProfileMap{"worker": prof}
+				})
+				assert.Contains(t, servers, "loopback")
+				assert.Equal(t,
+					[]string{"mcp", "--proxy", "--servers", tc.want, "--token", "local-dev", "--scopes", "session.write,message.write"},
+					muxArgs(t, servers))
+			})
+		}
+	}
+}
+
+// bootOpencodeConfig boots opencode (run, subprocess-per-turn) against a fake
+// CLI and returns the "mcp" servers planted in its opencode.json.
+func bootOpencodeConfig(t *testing.T, mux bool, servers []string) map[string]json.RawMessage {
+	t.Helper()
+	fake := providertest.New(t, runtimes.OpenCode, providertest.Replay("opencode/run_turn1"))
+	fake.Install()
+	cd := composeDeps(t, fakeRuntimeConfig{}, "opencode")
+	cd.Deps.RuntimeFactory = nil
+	cd.Deps.Profiles = config.ProfileMap{"worker": {Executor: "cli", Provider: "opencode", MuxServers: servers}}
+	require.NoError(t, cd.Store.CreateTask(&sqlstore.TaskRecord{ID: "CW-OC-MUX", Title: "opencode mux", Priority: 2}))
+	cd.Deps.Loopback = func(id, _ string) (agent.LoopbackHandle, error) {
+		return serveWorkerLoopback(t, cd.Store, id), nil
+	}
+	if mux {
+		withDaemonMux(cd)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	sess, err := cd.Manager.Boot(ctx, agent.Options{TaskID: "CW-OC-MUX", AgentProfile: "worker", Workdir: t.TempDir(), Mode: agent.ModeLongLived})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), sess.ID) })
+	require.Eventually(t, func() bool { return len(fake.Calls()) > 0 }, 5*time.Second, 20*time.Millisecond)
+	dir, ok := fake.Call(0).Getenv("OPENCODE_CONFIG_DIR")
+	require.True(t, ok, "opencode is pointed at its planted config dir")
+	raw, err := os.ReadFile(filepath.Join(dir, "opencode.json"))
+	require.NoError(t, err)
+	var cfg struct {
+		MCP map[string]json.RawMessage `json:"mcp"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &cfg), string(raw))
+	return cfg.MCP
+}
+
+// OpenCode on its native runtime is unchanged by the Claude decision: it
+// still gets the daemon's mux with the daemon's default servers, and a
+// profile's mux_servers narrows them.
+func TestOpencodeLaunch_MuxDefaultsUnchanged(t *testing.T) {
+	var entry struct {
+		Command []string `json:"command"`
+	}
+	servers := bootOpencodeConfig(t, true, nil)
+	require.Contains(t, servers, "mux")
+	require.NoError(t, json.Unmarshal(servers["mux"], &entry))
+	assert.Equal(t, []string{"/usr/local/bin/mux", "mcp", "--proxy", "--servers", "vanta,torque,cerberus", "--token", "local-dev", "--scopes", "session.write,message.write"}, entry.Command)
+
+	servers = bootOpencodeConfig(t, true, []string{"vanta"})
+	require.Contains(t, servers, "mux")
+	require.NoError(t, json.Unmarshal(servers["mux"], &entry))
+	assert.Equal(t, []string{"/usr/local/bin/mux", "mcp", "--proxy", "--servers", "vanta", "--token", "local-dev", "--scopes", "session.write,message.write"}, entry.Command)
 }

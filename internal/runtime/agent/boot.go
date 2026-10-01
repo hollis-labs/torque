@@ -355,10 +355,13 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	prepared.PlantContext.MCPLoopbackURL = loopbackURL
 	if plantsMux(profile, runtimeKind) {
 		prepared.PlantContext.SelfMCPCommand = deps.MuxCommand
-		prepared.PlantContext.SelfMCPArgs = append([]string(nil), deps.MuxArgs...)
+		prepared.PlantContext.SelfMCPArgs = muxArgsFor(deps.MuxArgs, profile)
 		prepared.PlantContext.SelfMCPEnv = muxEnvSliceToMap(deps.MuxEnv)
+		if deps.MuxCommand != "" {
+			log.Printf("agent.Boot: session=%s: mux MCP planted with %s", sessID, muxServersLogValue(prepared.PlantContext.SelfMCPArgs))
+		}
 	} else if deps.MuxCommand != "" {
-		log.Printf("agent.Boot: session=%s: mux MCP not planted for codex permission_mode %q; only bypassPermissions gets it (CW-20261001-0110)", sessID, profile.PermissionMode)
+		log.Printf("agent.Boot: session=%s: mux MCP not planted: %s", sessID, muxNotPlantedReason(profile))
 	}
 	// Plant the provider boot dir. WithAdapter pins the exact adapter
 	// Torque resolved (adapterFor) — critically the BARE-mode claude

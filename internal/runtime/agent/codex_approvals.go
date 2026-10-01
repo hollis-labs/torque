@@ -2,7 +2,9 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
+	"strings"
 
 	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/hollis-labs/agentkit/agentruntime/turn"
@@ -61,27 +63,66 @@ func codexApprovalMode(profile config.AgentProfile) gopermission.Mode {
 }
 
 // plantsMux reports whether a session gets the daemon's `mux` MCP server
-// (deps.MuxCommand), which proxies vanta, torque and cerberus, cerberus
-// among them able to run commands and stop services on the host. Outside
-// yolo only the run's own loopback is offered, structurally, wherever Torque
-// cannot gate mux's tools by posture:
+// (deps.MuxCommand), which proxies vanta, torque and cerberus by default,
+// cerberus among them able to run commands and stop services on the host.
 //
-//   - Codex (CW-20261001-0110). Codex runs an MCP tool its server marks
-//     readOnlyHint without asking, so the approval responder
-//     (codexApprovalHook) never sees those calls; the live smoke had
-//     mux_health run unasked under a default profile.
-//   - Every ACP session (CW-20261001-0120). Whether an ACP agent asks
-//     before running an MCP tool is unverified, and Torque answers no ACP
-//     permission request yet (CW-20261001-0113).
+//   - Claude (CW-20261001-0226): only when the profile grants it by name
+//     (mux_servers). A Claude worker's planted set is the run's loopback
+//     alone by default, since cerberus is the riskiest server and the worker
+//     sessions never called mux. Claude also loads no MCP server Torque did
+//     not plant (--strict-mcp-config), so a profile's mux_servers is all of
+//     the mux surface its sessions reach.
+//   - Codex (CW-20261001-0110) and every ACP session (CW-20261001-0120):
+//     outside yolo only the run's own loopback is offered, structurally,
+//     wherever Torque cannot gate mux's tools by posture. Codex runs an MCP
+//     tool its server marks readOnlyHint without asking, so the approval
+//     responder (codexApprovalHook) never sees those calls; the live smoke had
+//     mux_health run unasked under a default profile. Whether an ACP agent
+//     asks before running an MCP tool is unverified, and Torque answers no ACP
+//     permission request yet (CW-20261001-0113). Both get mux only under an
+//     explicit bypassPermissions; unset and every other posture get the
+//     loopback alone. Their mux_servers, when set, narrow it.
+//   - OpenCode on its native runtime keeps mux as before: its tool approvals
+//     do not have that bypass.
 //
-// Both get mux only under an explicit bypassPermissions; unset and every
-// other posture get the loopback alone. Claude and OpenCode on their native
-// runtimes keep mux as before: their tool approvals do not have that bypass.
+// muxArgsFor says which servers a session that gets mux gets.
 func plantsMux(profile config.AgentProfile, kind RuntimeKind) bool {
-	if !kind.ACP() && runtimeIDFor(profile.Provider) != string(runtimes.Codex) {
-		return true
+	runtime := runtimeIDFor(profile.Provider)
+	if kind.ACP() || runtime == string(runtimes.Codex) {
+		return config.PermissionMode(profile.PermissionMode) == config.PermissionModeBypass
 	}
-	return config.PermissionMode(profile.PermissionMode) == config.PermissionModeBypass
+	if runtime == string(runtimes.Claude) {
+		return len(profile.MuxServers) > 0
+	}
+	return true
+}
+
+// muxArgsFor is the argv the planted mux entry runs for profile: the daemon's
+// MuxArgs (deps.MuxArgs: the interactive shape, or TORQUE_MUX_ARGS) with
+// `--servers` set to exactly the profile's mux_servers when it names any.
+// Without mux_servers the daemon's own server set stands, which is what
+// OpenCode, and Codex and ACP under bypassPermissions, get by default. A
+// daemon argv with no `--servers` gets one appended (a dangling one gets its
+// value), so a named set always narrows mux to it.
+func muxArgsFor(base []string, profile config.AgentProfile) []string {
+	args := append([]string(nil), base...)
+	if len(profile.MuxServers) == 0 {
+		return args
+	}
+	servers := strings.Join(profile.MuxServers, ",")
+	for i, a := range args {
+		switch {
+		case a == "--servers" && i+1 < len(args):
+			args[i+1] = servers
+			return args
+		case a == "--servers": // a dangling flag takes the value
+			return append(args, servers)
+		case strings.HasPrefix(a, "--servers="):
+			args[i] = "--servers=" + servers
+			return args
+		}
+	}
+	return append(args, "--servers", servers)
 }
 
 // codexLoopbackMCPServer is the [mcp_servers.<name>] key go-providers
@@ -124,3 +165,26 @@ func codexApprovalHook(sessID string, profile config.AgentProfile) func(string, 
 // runs a tool its server marks read-only without asking, so this list never
 // sees those calls.
 var codexMCPAllow = []string{codexLoopbackMCPServer}
+
+// muxServersLogValue names the servers a planted mux argv runs, for the boot
+// log: the value of its `--servers`.
+func muxServersLogValue(args []string) string {
+	for i, a := range args {
+		switch {
+		case a == "--servers" && i+1 < len(args):
+			return "--servers " + args[i+1]
+		case strings.HasPrefix(a, "--servers="):
+			return a
+		}
+	}
+	return "mux's own default servers (no --servers in its argv)"
+}
+
+// muxNotPlantedReason says why plantsMux kept mux out of a session, for the
+// boot log.
+func muxNotPlantedReason(profile config.AgentProfile) string {
+	if runtimeIDFor(profile.Provider) == string(runtimes.Claude) {
+		return "a Claude session gets it only when its profile names mux_servers (CW-20261001-0226)"
+	}
+	return fmt.Sprintf("permission_mode %q; Codex and ACP sessions get it only under bypassPermissions (CW-20261001-0110, -0120)", profile.PermissionMode)
+}

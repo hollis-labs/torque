@@ -30,17 +30,27 @@ func TestBootCodexPlantsMuxOnlyUnderBypass(t *testing.T) {
 	cases := []struct {
 		permissionMode string
 		wantMux        bool
+		// muxServers is the profile's mux_servers (CW-20261001-0226): it
+		// narrows the planted mux's servers, but never plants it outside
+		// bypassPermissions.
+		muxServers []string
+		wantArgs   string
 	}{
-		{"", false},
-		{"default", false},
-		{"acceptEdits", false},
-		{"plan", false},
-		{"bypassPermissions", true},
+		{permissionMode: "", wantMux: false},
+		{permissionMode: "default", wantMux: false},
+		{permissionMode: "acceptEdits", wantMux: false},
+		{permissionMode: "plan", wantMux: false},
+		{permissionMode: "bypassPermissions", wantMux: true, wantArgs: `"--servers"`},
+		{permissionMode: "acceptEdits", wantMux: false, muxServers: []string{"tesseract"}},
+		{permissionMode: "bypassPermissions", wantMux: true, muxServers: []string{"tesseract"}, wantArgs: `"--servers", "tesseract"`},
 	}
 	for _, tc := range cases {
 		name := tc.permissionMode
 		if name == "" {
 			name = "unset"
+		}
+		if len(tc.muxServers) > 0 {
+			name += "+mux_servers"
 		}
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -56,8 +66,8 @@ func TestBootCodexPlantsMuxOnlyUnderBypass(t *testing.T) {
 			cd.Deps.RuntimeFactory = nil
 			cd.Deps.Loopback = func(string, string) (agent.LoopbackHandle, error) { return fixedLoopback{}, nil }
 			cd.Deps.MuxCommand = "/usr/local/bin/mux"
-			cd.Deps.MuxArgs = []string{"mcp", "--proxy"}
-			cd.Deps.Profiles = config.ProfileMap{"worker": {Executor: "cli", Provider: "codex", PermissionMode: tc.permissionMode}}
+			cd.Deps.MuxArgs = []string{"mcp", "--proxy", "--servers", "vanta,torque,cerberus"}
+			cd.Deps.Profiles = config.ProfileMap{"worker": {Executor: "cli", Provider: "codex", PermissionMode: tc.permissionMode, MuxServers: tc.muxServers}}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			recordPath := filepath.Join(dir, "process.json")
@@ -78,6 +88,10 @@ func TestBootCodexPlantsMuxOnlyUnderBypass(t *testing.T) {
 			assert.Contains(t, toml, "[mcp_servers.loopback]", "every codex posture keeps the run's own loopback")
 			if tc.wantMux {
 				assert.Contains(t, toml, "[mcp_servers.mux]")
+				assert.Contains(t, toml, tc.wantArgs)
+				if len(tc.muxServers) > 0 {
+					assert.NotContains(t, toml, "cerberus", "only the named servers are planted")
+				}
 			} else {
 				assert.NotContains(t, toml, "[mcp_servers.mux]", "mux must not be planted for permission_mode %q", tc.permissionMode)
 			}

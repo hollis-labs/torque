@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/hollis-labs/agentkit/agentruntime/turn"
@@ -116,37 +117,78 @@ func TestCodexApprovalHook_MCPToolCallsOnlyOnLoopback(t *testing.T) {
 }
 
 // plantsMux withholds mux short of an explicit bypassPermissions from codex
-// sessions (CW-20261001-0110) and from every ACP session (CW-20261001-0120);
-// Claude and OpenCode on their native runtimes are unchanged.
+// sessions (CW-20261001-0110) and from every ACP session (CW-20261001-0120),
+// and from a Claude session unless its profile names mux_servers
+// (CW-20261001-0226); OpenCode on its native runtime is unchanged.
 func TestPlantsMux(t *testing.T) {
+	granted := []string{"vanta", "tesseract"}
 	for _, tc := range []struct {
 		provider string
 		kind     RuntimeKind
 		mode     string
+		servers  []string
 		want     bool
 	}{
-		{"codex", RuntimeKindJsonRpcStdio, "", false},
-		{"codex", RuntimeKindJsonRpcStdio, "default", false},
-		{"codex", RuntimeKindJsonRpcStdio, "acceptEdits", false},
-		{"codex", RuntimeKindJsonRpcStdio, "plan", false},
-		{"codex", RuntimeKindJsonRpcStdio, "dontAsk", false},
-		{"codex", RuntimeKindJsonRpcStdio, "bypassPermissions", true},
-		{"claude-code", RuntimeKindStreamingStdio, "", true},
-		{"claude-code", RuntimeKindStreamingStdio, "plan", true},
-		{"opencode", RuntimeKindSubprocess, "", true},
-		{"copilot", RuntimeKindACPStdio, "", false},
-		{"copilot", RuntimeKindACPStdio, "default", false},
-		{"copilot", RuntimeKindACPStdio, "acceptEdits", false},
-		{"copilot", RuntimeKindACPStdio, "plan", false},
-		{"copilot", RuntimeKindACPTCP, "bypassPermissions", true},
-		{"copilot", RuntimeKindACPStdio, "bypassPermissions", true},
-		{"claude-code", RuntimeKindACPStdio, "acceptEdits", false},
-		{"opencode", RuntimeKindACPStdio, "", false},
-		{"pi", RuntimeKindACPStdio, "bypassPermissions", true},
+		{"codex", RuntimeKindJsonRpcStdio, "", nil, false},
+		{"codex", RuntimeKindJsonRpcStdio, "default", nil, false},
+		{"codex", RuntimeKindJsonRpcStdio, "acceptEdits", nil, false},
+		{"codex", RuntimeKindJsonRpcStdio, "plan", nil, false},
+		{"codex", RuntimeKindJsonRpcStdio, "dontAsk", nil, false},
+		{"codex", RuntimeKindJsonRpcStdio, "bypassPermissions", nil, true},
+		{"codex", RuntimeKindJsonRpcStdio, "acceptEdits", granted, false},
+		{"codex", RuntimeKindJsonRpcStdio, "bypassPermissions", granted, true},
+		// Claude: none by default, whatever the posture or runtime kind.
+		{"claude-code", RuntimeKindStreamingStdio, "", nil, false},
+		{"claude-code", RuntimeKindStreamingStdio, "plan", nil, false},
+		{"claude-code", RuntimeKindStreamingStdio, "bypassPermissions", nil, false},
+		{"claude-code", RuntimeKindSubprocess, "", nil, false},
+		{"claude-code", "", "", nil, false},
+		{"Claude-Code", RuntimeKindStreamingStdio, "", nil, false},
+		// Claude: what a profile names is planted, in any posture or kind.
+		{"claude-code", RuntimeKindStreamingStdio, "", granted, true},
+		{"claude-code", RuntimeKindStreamingStdio, "plan", granted, true},
+		{"claude-code", RuntimeKindSubprocess, "acceptEdits", granted, true},
+		{"claude-code", "", "", granted, true},
+		{"Claude-Code", RuntimeKindStreamingStdio, "", granted, true},
+		{"opencode", RuntimeKindSubprocess, "", nil, true},
+		{"opencode", RuntimeKindSubprocess, "", granted, true},
+		{"copilot", RuntimeKindACPStdio, "", nil, false},
+		{"copilot", RuntimeKindACPStdio, "default", nil, false},
+		{"copilot", RuntimeKindACPStdio, "acceptEdits", nil, false},
+		{"copilot", RuntimeKindACPStdio, "plan", nil, false},
+		{"copilot", RuntimeKindACPTCP, "bypassPermissions", nil, true},
+		{"copilot", RuntimeKindACPStdio, "bypassPermissions", nil, true},
+		{"copilot", RuntimeKindACPStdio, "acceptEdits", granted, false},
+		{"claude-code", RuntimeKindACPStdio, "acceptEdits", nil, false},
+		{"claude-code", RuntimeKindACPStdio, "acceptEdits", granted, false},
+		{"opencode", RuntimeKindACPStdio, "", nil, false},
+		{"pi", RuntimeKindACPStdio, "bypassPermissions", nil, true},
 	} {
-		got := plantsMux(config.AgentProfile{Provider: tc.provider, PermissionMode: tc.mode}, tc.kind)
-		assert.Equal(t, tc.want, got, "%s/%s/%q", tc.provider, tc.kind, tc.mode)
+		got := plantsMux(config.AgentProfile{Provider: tc.provider, PermissionMode: tc.mode, MuxServers: tc.servers}, tc.kind)
+		assert.Equal(t, tc.want, got, "%s/%s/%q/%v", tc.provider, tc.kind, tc.mode, tc.servers)
 	}
+}
+
+// A profile's mux_servers narrows the planted mux argv to exactly those
+// servers; the daemon's other args (token, scopes) stay, and a daemon argv
+// with no --servers gets one.
+func TestMuxArgsFor(t *testing.T) {
+	base := []string{"mcp", "--proxy", "--servers", "vanta,torque,cerberus", "--token", "local-dev", "--scopes", "session.write"}
+	named := config.AgentProfile{MuxServers: []string{"vanta", "tesseract"}}
+
+	assert.Equal(t, base, muxArgsFor(base, config.AgentProfile{}), "unset: the daemon's own set stands")
+	assert.Equal(t,
+		[]string{"mcp", "--proxy", "--servers", "vanta,tesseract", "--token", "local-dev", "--scopes", "session.write"},
+		muxArgsFor(base, named))
+	assert.Equal(t, []string{"mcp", "--servers=vanta,tesseract"}, muxArgsFor([]string{"mcp", "--servers=torque"}, named), "the = spelling")
+	assert.Equal(t, []string{"mcp", "--proxy", "--servers", "vanta,tesseract"}, muxArgsFor([]string{"mcp", "--proxy"}, named), "none in the daemon's argv: appended")
+	assert.Equal(t, []string{"mcp", "--servers", "vanta,tesseract"}, muxArgsFor([]string{"mcp", "--servers"}, named), "a dangling --servers is not a value")
+	assert.Equal(t, []string{"torque"}, strings.Split(muxArgsFor(base, config.AgentProfile{MuxServers: []string{"torque"}})[3], ","))
+
+	// cerberus is only ever in the planted set when the profile names it.
+	assert.NotContains(t, muxArgsFor(base, named)[3], "cerberus")
+	assert.Contains(t, muxArgsFor(base, config.AgentProfile{MuxServers: []string{"vanta", "cerberus"}})[3], "cerberus")
+	assert.Equal(t, "vanta,torque,cerberus", base[3], "the daemon's argv is not modified")
 }
 
 // The launch plan's Provider.Permission is a go-permission Mode since

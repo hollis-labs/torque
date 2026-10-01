@@ -36,14 +36,14 @@ type muxResolution struct {
 // TORQUE_MUX_ARGS_JSON — is a deferred follow-up; not wired yet.)
 //
 // Spelling these out as a single source of truth prevents drift between
-// the per-task plant shape and the user's interactive shell shape —
-// agents that work interactively will see the same aggregator surface
-// when dispatched as a torque task.
+// the per-task plant shape and the user's interactive shell shape.
 //
-// Mirroring the interactive shape verbatim is also the lowest-risk
-// initial default: anything the interactive `claude → mux` flow can do,
-// the per-task agent can also do (modulo whatever stdio-ownership
-// semantics differ between claude and opencode/codex).
+// This is the set a session that gets mux gets by default (OpenCode, and
+// Codex and ACP under bypassPermissions); it is not what a Claude worker
+// gets. A Claude worker gets no mux unless its profile names mux_servers,
+// which replace this set's `--servers` for that profile's sessions, since
+// cerberus (deploy, ssh) is the riskiest server and the worker sessions
+// never called mux (CW-20261001-0226).
 var defaultMuxArgs = []string{
 	"mcp", "--proxy",
 	"--servers", "vanta,torque,cerberus",
