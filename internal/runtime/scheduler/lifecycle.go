@@ -336,6 +336,9 @@ func (lm *LifecycleManager) transition(task *sqlstore.TaskRecord, runID int64, n
 	if shouldCommentEndAgentFailure(task, newStatus) {
 		lm.commentEndAgentFailure(task, blockedReason)
 	}
+	if shouldCheckEndAgentAudit(task, newStatus) {
+		lm.commentSkippedEndAgentAudit(task)
+	}
 
 	return nil
 }

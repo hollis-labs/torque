@@ -325,15 +325,31 @@ and startup warns so.
   where Torque adds no protected directory. The skip fails closed. It
   applies only when the launch's `sandbox_mode` is positively `read-only` or
   `workspace-write`: the planted default (every posture except an app-server
-  launch under `bypassPermissions`, which plants `danger-full-access`), or a
-  profile arg Torque reads (`--sandbox`/`-s`, `-c sandbox_mode=`,
-  `--full-auto`). The no-sandbox flags (`--dangerously-bypass-approvals-and-sandbox`,
-  `--yolo`), any other sandbox mode, and any arg that bears on the sandbox
-  in a way Torque does not read (another `-c` key naming a sandbox or
-  permission, such as `sandbox_workspace_write.writable_roots` or
-  `default_permissions`; `--add-dir`; `--profile`/`-p`; any argument naming a
-  sandbox, permission, bypass or yolo) leave the launch wrapped. A skipped
-  launch logs that it was left to codex.
+  launch under `bypassPermissions`, which plants `danger-full-access`, taken
+  from the same agentkit function the adapter is set up with), or a profile
+  arg Torque reads (`--sandbox`/`-s`, `-c sandbox_mode=`, `--full-auto`).
+  Everything else leaves the launch wrapped:
+  - a no-sandbox flag (`--dangerously-bypass-approvals-and-sandbox`,
+    `--yolo`) **anywhere** in the args, whatever else is selected: codex
+    ranks it above every other selector;
+  - selectors that do not all agree on a confining mode. `--sandbox`/`-s`,
+    `--full-auto` and `-c sandbox_mode=` each count once, and the last
+    `-c sandbox_mode=` is `-c`'s value. Torque does not rely on codex's own
+    ranking (`--sandbox` beats `-c`, checked against codex-cli 0.159.3), so
+    `--sandbox read-only -c sandbox_mode="danger-full-access"` is wrapped
+    even though codex would run it read-only;
+  - any single-dash argument with its value attached (`-s=danger-full-access`,
+    `-sdanger-full-access`; clap accepts both), and a selector or flag with
+    no value after it;
+  - any other sandbox mode, and any arg that bears on the sandbox in a way
+    Torque does not read (another `-c` key naming a sandbox or permission,
+    such as `sandbox_workspace_write.writable_roots` or `default_permissions`;
+    `--add-dir`; `--profile`/`-p`; any argument naming a sandbox,
+    permission, bypass or yolo).
+
+  A skipped launch logs that it was left to codex. It confines writes only if
+  the thread's working directory and `TMPDIR` are outside the protected
+  directories; there is no launch-time check of that yet.
 - **No nested sandboxes.** Inside the protection a process cannot create its
   own user namespace (on Ubuntu, AppArmor denies it), so anything that
   sandboxes itself with bubblewrap or `unshare` fails there: tests that use

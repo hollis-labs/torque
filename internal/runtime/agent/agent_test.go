@@ -332,7 +332,8 @@ func TestKickoffMarkdown(t *testing.T) {
 	for _, role := range []string{"orchestrator", "planner", "reviewer-end-agent"} {
 		for _, omits := range []bool{false, true} {
 			got := kickoffMarkdown(Options{TaskID: "CW-1"}, role, omits)
-			assert.Contains(t, got, "the full surface: pass the `task_id`", "%s omits=%v", role, omits)
+			assert.Contains(t, got, "pass the task id as the tool's schema asks", "%s omits=%v", role, omits)
+			assert.Contains(t, got, "`id` on some tools and `task_id` on others", "%s omits=%v", role, omits)
 			assert.NotContains(t, got, "no `task_id` parameter required", "%s omits=%v", role, omits)
 		}
 		assert.Contains(t, kickoffMarkdown(Options{TaskID: "CW-1"}, role, true), "only Torque tools")
