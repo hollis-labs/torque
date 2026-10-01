@@ -54,7 +54,9 @@ func TestBootCodexProcessCommandAndKickoff(t *testing.T) {
 	require.NoError(t, err)
 	var rec codexProcessRecord
 	require.NoError(t, json.Unmarshal(raw, &rec))
-	require.Equal(t, []string{"app-server", "--enable", "test_feature", "-c", `model="configured-model"`}, rec.Args)
+	// The model is CodexAdapter.Model, which the app-server convention places
+	// right after the subcommand; the profile's args follow at its extra slot.
+	require.Equal(t, []string{"app-server", "-c", `model="configured-model"`, "--enable", "test_feature"}, rec.Args)
 	require.Equal(t, []string{"initialize", "thread/start", "turn/start"}, rec.Methods)
 	require.Equal(t, workdir, rec.ThreadCWD)
 	require.NotEmpty(t, rec.Home)

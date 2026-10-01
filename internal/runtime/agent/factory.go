@@ -116,8 +116,10 @@ func adapterFor(profile config.AgentProfile, profileName string, kind RuntimeKin
 }
 
 // applyProfileOptions sets the profile's options on the adapter
-// provider.NewAdapter built. These are the fields Torque owned before the
-// registry, unchanged in meaning:
+// provider.NewAdapter built. Every runtime takes the profile's model on its
+// adapter: the projected launch convention places it in the provider's own
+// spelling (`--model`, or codex's `-c model=`), before the extra-argument
+// slot and any `-- <prompt>`, on every turn (CW-20261001-0094). Beyond that:
 //
 //   - Claude: --dangerously-skip-permissions in profile.Args selects the
 //     developer variant (SkipPermissions, which go-providers plants as
@@ -128,21 +130,24 @@ func adapterFor(profile config.AgentProfile, profileName string, kind RuntimeKin
 //     codex's OS sandbox (danger-full-access) so the MCP loopback is
 //     reachable; nothing else changes the sandbox. The exec path is left as
 //     it was.
-//   - OpenCode: `--agent <profile name>` and the profile's model, which
-//     opencode needs before the positional prompt.
-//   - Antigravity (agy): the profile's model, and the resolved permission
-//     mode as agy's headless posture (bypassPermissions → bypass,
-//     acceptEdits → accept-edits, plan → plan, default → agy's own
-//     auto-deny).
+//   - OpenCode: `--agent <profile name>`.
+//   - Antigravity (agy): the resolved permission mode as agy's headless
+//     posture (bypassPermissions → bypass, acceptEdits → accept-edits,
+//     plan → plan, default → agy's own auto-deny).
+//
+// The profile's own args are not adapter fields; Boot adds them to the
+// prepared launch template (torqueLaunchArgs).
 func applyProfileOptions(cli provider.CLIAdapter, profile config.AgentProfile, profileName string, mode runtimes.Mode) error {
 	switch a := cli.(type) {
 	case *provider.ClaudeAdapter:
+		a.Model = profile.Model
 		if profileIsDevMode(profile) {
 			a.SkipPermissions = true
 			return nil
 		}
 		a.PermissionMode = string(profile.ResolvedPermissionMode())
 	case *provider.CodexAdapter:
+		a.Model = profile.Model
 		if mode != runtimes.ModeJSONRPCStdio || profile.ResolvedPermissionMode() != config.PermissionModeBypass {
 			return nil
 		}
@@ -156,9 +161,6 @@ func applyProfileOptions(cli provider.CLIAdapter, profile config.AgentProfile, p
 			return fmt.Errorf("opencode provider requires Options.AgentProfile to be set (maps to opencode --agent)")
 		}
 		a.Agent = profileName
-		// Model goes on the adapter so BuildArgs emits `--model <X>` before
-		// the positional prompt; boot.go's generic --model suffix skips
-		// opencode for that reason (skipModelSuffix).
 		a.Model = profile.Model
 	case *provider.AntigravityAdapter:
 		a.Model = profile.Model
