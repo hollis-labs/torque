@@ -524,8 +524,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   sessions lose `mux_discover`, `mux_call` into the rest of mux's catalog and
   mux's own Tether tools. A Claude session over ACP (`runtime_kind: acp-stdio`) is not
   covered by `--strict-mcp-config`, whose bridge takes no such flag: it gets no
-  default mux, and is warned about at launch and in the lint. See
-  docs/agent-execution-environment.md.
+  default mux, and is warned about at launch and in the lint. The planted
+  kickoff no longer tells a session to prefer its loopback "over
+  `mcp__mux__torque_*`" as though it had a mux server: it says so only if the
+  session also has one. See docs/agent-execution-environment.md.
 - A Claude agent Torque launches loads only the MCP servers Torque plants,
   through `--mcp-config <boot dir>/.mcp.json`. Torque now adds
   `--strict-mcp-config`, which stops Claude also loading the operator's

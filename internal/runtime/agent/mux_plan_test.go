@@ -148,6 +148,14 @@ func TestPlanMux(t *testing.T) {
 	if assert.Len(t, plan.Notes, 1) {
 		assert.Contains(t, plan.Notes[0], "torque is dropped")
 	}
+	// Under protection the daemon's own list already lacks torque (bootstrap's
+	// muxWithoutTorque narrows it); the default plan curates what is left.
+	protectedDaemon := protected
+	protectedDaemon.MuxArgs = []string{"mcp", "--proxy", "--servers", "vanta,cerberus", "--token", "t"}
+	plan = planMux(&protectedDaemon, config.AgentProfile{Provider: "opencode"}, RuntimeKindSubprocess)
+	assert.True(t, plan.Plant)
+	assert.Equal(t, []string{"mcp", "--proxy", "--token", "t", "--only", "vanta,cerberus"}, plan.Args)
+
 	// A grant of torque alone drops to nothing: no mux, never the daemon's wider default.
 	torqueOnly := claude
 	torqueOnly.MuxServers = []string{"torque"}
