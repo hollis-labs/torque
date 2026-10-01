@@ -1,19 +1,25 @@
 package mcpadapter_test
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/hollis-labs/go-modelsdev/modelsdev"
+	"github.com/hollis-labs/torque/internal/modelcatalog"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
 	"github.com/hollis-labs/torque/internal/service"
 	"github.com/hollis-labs/torque/internal/service/pagination"
 	"github.com/stretchr/testify/require"
 )
 
-// All row-list tools are named here, including the CW-0565 service families.
-// Pending rows become contract cases when that dependency is integrated.
+// Behavioral policy cases include the integrated CW-0565 resource families.
 func TestMCPListPolicyTable(t *testing.T) {
 	svc := setupServiceDirect(t)
 	for _, feature := range []string{"projects", "epics", "sprints", "collections"} {
@@ -21,25 +27,43 @@ func TestMCPListPolicyTable(t *testing.T) {
 	}
 	task, err := svc.Task.Create(service.TaskCreateInput{Title: "table fixture", Manual: true})
 	require.NoError(t, err)
-	a := adapterFromService(svc)
+	store := svc.Store()
+	require.NoError(t, store.CreateCollection(&sqlstore.CollectionRecord{ID: "COL-table", Name: "table fixture"}))
+	require.NoError(t, store.AddTaskToCollection(task.ID, "COL-table", 1))
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: "IN-table", Title: "inbox fixture", Manual: true}))
+	require.NoError(t, store.AddTaskToInbox("IN-table"))
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: "PL-table", Title: "plan fixture", Kind: "plan", Manual: true}))
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: "CH-table", Title: "child fixture", ParentID: sql.NullString{String: "PL-table", Valid: true}, Manual: true}))
+	require.NoError(t, store.CreateArtifact(&sqlstore.ArtifactRecord{TaskID: task.ID, Type: "fixture", Content: "fixture"}))
+	require.NoError(t, store.CreateTemplate(&sqlstore.TemplateRecord{ID: "TPL-table", Version: 1, Name: "fixture", Kind: "task"}))
+	require.NoError(t, store.CreateCheckpoint(&sqlstore.CheckpointRecord{TaskID: task.ID, CorrelationID: "table", Type: "message", PayloadJSON: `{}`, EmitterSourceType: "system"}))
+	require.NoError(t, store.CreateSession(&sqlstore.SessionRecord{ID: "SES-table", Workdir: t.TempDir(), State: "running"}))
+	require.NoError(t, store.CreateSessionCheckpoint(&sqlstore.SessionCheckpointRecord{ID: "SCP-table", SessionID: "SES-table", Note: "fixture"}))
+	// The catalog is a local fake; neither model discovery nor session reads
+	// should reach an operator cache or launch a provider CLI.
+	catalog := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]modelsdev.Provider{
+			"fixture": {ID: "fixture", Name: "fixture", Models: map[string]modelsdev.Model{"one": {ID: "one", Name: "one"}}},
+		}))
+	}))
+	defer catalog.Close()
+	svc.Models = modelcatalog.New(modelsdev.WithURL(catalog.URL), modelsdev.WithHTTPClient(catalog.Client()), modelsdev.WithCacheDir(t.TempDir()))
+	require.NoError(t, svc.Models.Refresh(context.Background()))
+	a := adapterFromService(svc).WithSessions(agent.NewManager(&agent.Dependencies{Store: store}))
 	cases := []struct {
-		name    string
-		args    map[string]any
-		pending string
+		name string
+		args map[string]any
 	}{
-		{"torque_task_list", nil, ""}, {"torque_run_list", nil, ""}, {"torque_project_list", nil, ""}, {"torque_epic_list", nil, ""}, {"torque_sprint_list", nil, ""}, {"torque_issue_list", nil, ""}, {"torque_plan_list", nil, ""}, {"torque_tag_list", nil, ""},
-		{"torque_comment_list", map[string]any{"entity_type": "task", "entity_id": task.ID}, ""},
-		{"torque_comment_search", map[string]any{"query": "fixture"}, ""},
-		{"torque_task_subtodo_list", map[string]any{"task_id": task.ID}, ""},
-		{"torque_session_list", nil, "CW-0565"}, {"torque_session_checkpoint_list", nil, "CW-0565 (new tool)"},
-		{"torque_artifact_list", nil, "CW-0565"}, {"torque_collection_list", nil, "CW-0565"}, {"torque_collection_tasks_list", nil, "CW-0565"}, {"torque_collection_inbox_list", nil, "CW-0565"},
-		{"torque_plan_list_children", nil, "CW-0565"}, {"torque_task_checkpoint_list", nil, "CW-0565"}, {"torque_task_checkpoints_pending", nil, "CW-0565"}, {"torque_template_list", nil, "CW-0565"}, {"torque_models_list", nil, "CW-0565"},
+		{"torque_task_list", nil}, {"torque_run_list", nil}, {"torque_project_list", nil}, {"torque_epic_list", nil}, {"torque_sprint_list", nil}, {"torque_issue_list", nil}, {"torque_plan_list", nil}, {"torque_tag_list", nil},
+		{"torque_comment_list", map[string]any{"entity_type": "task", "entity_id": task.ID}},
+		{"torque_comment_search", map[string]any{"query": "fixture"}},
+		{"torque_task_subtodo_list", map[string]any{"task_id": task.ID}},
+		{"torque_session_list", nil}, {"torque_session_checkpoint_list", map[string]any{"session_id": "SES-table"}},
+		{"torque_artifact_list", map[string]any{"task_id": task.ID}}, {"torque_collection_list", nil}, {"torque_collection_tasks_list", map[string]any{"collection_id": "COL-table"}}, {"torque_collection_inbox_list", nil},
+		{"torque_plan_list_children", map[string]any{"plan_id": "PL-table"}}, {"torque_task_checkpoint_list", map[string]any{"task_id": task.ID}}, {"torque_task_checkpoints_pending", nil}, {"torque_template_list", nil}, {"torque_models_list", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.pending != "" {
-				t.Skip("cursor adapter pending " + tc.pending)
-			}
 			for _, input := range []string{"", "999"} {
 				args := map[string]any{}
 				for k, v := range tc.args {
