@@ -82,6 +82,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Codex app-server's MCP tool-call approvals keep the run's loopback as the
+  only server approved outside `bypassPermissions`, now through agentkit's
+  `CodexApprovalResponder.MCPAllow` instead of Torque's own override.
+  Decisions are unchanged; the log reason names the allow-list
+  (CW-20261001-0124).
 - go-agent-wrapper v0.21.1, agentkit v0.19.1, go-providers v0.39.0 and
   go-sandbox v0.5.1 (CW-20261001-0157). A claude-code launch now carries
   `--permission-mode <mode>` (`acceptEdits` when the profile sets none,
