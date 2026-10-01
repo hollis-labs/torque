@@ -143,11 +143,13 @@ func TestCheckpointResponseDispatcher_SessionPresent_EmitsBreadcrumbAndAttemptsR
 // used_resume=true: the same decision ResumeSession made (CW-20261001-0174).
 // The row's provider is the bare "claude" alias, the same runtime.
 func TestCheckpointResponseDispatcher_GenuineResume_RecordsUsedResume(t *testing.T) {
-	// A fixture claude that stays up until its stdin closes: against the
-	// refusing shim, which exits at once, the first-turn write raced the
-	// exit and failed the boot about a third of the time, leaving
-	// used_resume false.
-	providertest.New(t, runtimes.Claude, providertest.Script(providertest.AwaitEOF())).Install()
+	// A fake claude CLI that lives long enough for Boot to succeed: the agent
+	// CLI shim exits at once, and whether Boot then returned a session or an
+	// error was a race, which made used_resume (read off the new session)
+	// flaky. Replaying a captured resumed stream keeps the session up.
+	fake := providertest.New(t, runtimes.Claude, providertest.Replay("claude/stream_resume"))
+	fake.ExpectErrors() // the dispatcher's own turn is not part of the capture
+	fake.Install()
 	store := sqlitetest.OpenStore(t)
 	deps := &agent.Dependencies{
 		Store:          store,
@@ -170,8 +172,7 @@ func TestCheckpointResponseDispatcher_GenuineResume_RecordsUsedResume(t *testing
 	}))
 	require.NoError(t, store.UpdateSessionResumeHint(sessID, []byte("prov-sess-xyz")))
 
-	// The resumed boot runs the fixture claude; whether the dispatch itself
-	// errors does not matter here.
+	// Whether the dispatch's own turn succeeds does not matter here.
 	_ = d.DispatchResponse(context.Background(), service.CheckpointResponseDispatch{
 		TaskID: "CW-ALPHA4-T2", CorrelationID: "01HK_ALPHA4_RESUME", ResponseJSON: `{"answer":"go"}`,
 	})
@@ -184,4 +185,8 @@ func TestCheckpointResponseDispatcher_GenuineResume_RecordsUsedResume(t *testing
 	}
 	require.NoError(t, json.Unmarshal([]byte(events[0].Payload), &payload))
 	assert.True(t, payload.UsedResume, "claude-code resumes, and the row has a stored provider session id")
+	require.Eventually(t, func() bool { return len(fake.Calls()) > 0 }, 5*time.Second, 10*time.Millisecond)
+	got, ok := fake.Call(0).ArgAfter("--resume")
+	require.True(t, ok, "the resume reached the CLI: %v", fake.Call(0).Args)
+	assert.Equal(t, "prov-sess-xyz", got)
 }
