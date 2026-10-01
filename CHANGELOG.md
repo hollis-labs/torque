@@ -44,6 +44,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   usage from `turn.completed` and `turn.failed` and still emits the turn's
   done event; without that, a wrapper-path ModeOneShot run timed out waiting
   for its turn to finish.
+- Retired runtime-kind spellings keep working where they are stored. A
+  profiles.yaml `runtime_kind` of `subprocess`, `cli`, `serve-http`,
+  `app-server` or `pty-debug` loads as its current mode
+  (`subprocess-per-turn`, `http-sse`, `jsonrpc-stdio`, `pty`) with one
+  deprecation warning per profile. Session rows that hold an old token read
+  back as the current mode and are not rewritten; new rows store only current
+  tokens.
 
 ### Fixed
 

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/hollis-labs/torque/internal/runtimetoken"
 )
 
 // ErrSessionNotFound is returned by GetSession / UpdateSession* when no
@@ -52,7 +54,26 @@ func scanSession(row interface {
 	if err != nil {
 		return nil, err
 	}
+	s.RuntimeKind = currentRuntimeKind(s.RuntimeKind)
 	return s, nil
+}
+
+// currentRuntimeKind maps a runtime_kind token to its runtimes.Mode
+// spelling via runtimetoken.Normalize. Sessions are read and written
+// through it, so older rows holding a retired token (`cli`, `subprocess`,
+// `serve-http`) read back as the current mode and new rows store only
+// current tokens, without rewriting stored data (CW-20261001-0063). Empty,
+// unknown or garbage values pass through unchanged: a read must never fail
+// on an old row, and boot validation reports a bad kind when it is used.
+// pty-debug's Debug flag is dropped: a session row has no posture to carry
+// it, and Torque never booted a pty-debug session (its validation rejected
+// the token).
+func currentRuntimeKind(raw string) string {
+	tok, err := runtimetoken.Normalize(raw)
+	if err != nil || tok.Mode == "" {
+		return raw
+	}
+	return string(tok.Mode)
 }
 
 // CreateSession inserts a new session row in state='launching'. The caller
@@ -75,7 +96,7 @@ func (s *Store) CreateSession(rec *SessionRecord) error {
 			id, launch_profile, agent_profile, provider, runtime_id, runtime_kind,
 			workdir, project_id, task_id, state, pid, meta
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		rec.ID, rec.LaunchProfile, rec.AgentProfile, rec.Provider, rec.RuntimeID, rec.RuntimeKind,
+		rec.ID, rec.LaunchProfile, rec.AgentProfile, rec.Provider, rec.RuntimeID, currentRuntimeKind(rec.RuntimeKind),
 		rec.Workdir, rec.ProjectID, rec.TaskID, state, rec.PID, meta,
 	)
 	if err != nil {
