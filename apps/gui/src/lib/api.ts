@@ -51,10 +51,7 @@ export interface RunQuery {
   include_total?: boolean
 }
 
-export interface RunPage {
-  items: Run[]
-  meta: { returned: number; limit: number; has_more: boolean; next_cursor: string | null; total?: number }
-}
+export type RunPage = ListPage<Run>
 
 export interface AggregateFacet {
   dimension: string
@@ -179,6 +176,8 @@ function taskFilterParams(filter?: TaskFilter): Record<string, string | number |
   if (filter?.search) params['search'] = filter.search
   if (filter?.limit !== undefined) params['limit'] = filter.limit
   if (filter?.offset !== undefined) params['offset'] = filter.offset
+  if (filter?.cursor !== undefined) params['cursor'] = filter.cursor
+  if (filter?.include_total !== undefined) params['include_total'] = filter.include_total
   if (filter?.kind) params['kind'] = filter.kind
   if (filter?.parent_id !== undefined) params['parent_id'] = filter.parent_id
   if (filter?.manual !== undefined) params['manual'] = filter.manual ? 'true' : 'false'
@@ -296,7 +295,7 @@ export class TorqueApiClient {
     return `${this.baseUrl}${path}`
   }
 
-  private async get<T>(path: string, params?: Record<string, string | number | boolean | undefined>): Promise<T> {
+  private async get<T>(path: string, params?: Record<string, string | number | boolean | undefined>, signal?: AbortSignal): Promise<T> {
     let url = this.url(path)
     if (params) {
       const search = new URLSearchParams()
@@ -306,7 +305,7 @@ export class TorqueApiClient {
       const qs = search.toString()
       if (qs) url += `?${qs}`
     }
-    const res = await fetch(url, { headers: { 'Accept': 'application/json' } })
+    const res = await fetch(url, { headers: { 'Accept': 'application/json' }, signal })
     return parseResponse<T>(res)
   }
 
@@ -351,6 +350,16 @@ export class TorqueApiClient {
 
   async listTasks(filter?: TaskFilter): Promise<{ tasks: Task[]; total: number }> {
     return this.pageTasks<Task>(filter)
+  }
+
+  /** One bounded task page; cursor mode by default, totals opt in. */
+  async listTaskPage(filter?: TaskFilter, signal?: AbortSignal): Promise<ListPage<Task>> {
+    return this.get<ListPage<Task>>('/tasks', taskFilterParams(filter), signal)
+  }
+
+  /** One bounded summary page, suitable for usePagedList. */
+  async listTaskSummaryPage(filter?: TaskFilter, signal?: AbortSignal): Promise<ListPage<TaskSummary>> {
+    return this.get<ListPage<TaskSummary>>('/tasks', { ...taskFilterParams(filter), fields: 'summary' }, signal)
   }
 
   /**
@@ -431,12 +440,12 @@ export class TorqueApiClient {
     return { tasks: page.items, ...page.meta }
   }
 
-  async taskFacets(filter?: Omit<TaskFilter, "limit" | "offset" | "sort_by" | "sort_dir">, dimensions = 'status'): Promise<TaskFacetResult> {
+  async taskFacets(filter?: Omit<TaskFilter, 'limit' | 'offset' | 'sort_by' | 'sort_dir'>, dimensions = 'status'): Promise<TaskFacetResult> {
     return this.get<TaskFacetResult>('/tasks/facets', { ...taskFilterParams(filter), dimensions })
   }
 
-  async getTask(id: string): Promise<Task> {
-    return this.get<Task>(`/tasks/${id}`)
+  async getTask(id: string, signal?: AbortSignal): Promise<Task> {
+    return this.get<Task>(`/tasks/${id}`, undefined, signal)
   }
 
   async createTask(data: Partial<Omit<Task, 'tags'>> & { tags?: string[] }): Promise<Task> {
@@ -470,9 +479,9 @@ export class TorqueApiClient {
   // Issues
   // -------------------------
 
-  async listIssues(filter?: ListQuery & { project_id?: string; status?: string }): Promise<ListPage<Task>> {
+  async listIssues(filter?: ListQuery & { project_id?: string; status?: string }, signal?: AbortSignal): Promise<ListPage<Task>> {
     const { search, ...params } = filter ?? {}
-    return this.get<ListPage<Task>>('/issues', { ...params, query: search })
+    return this.get<ListPage<Task>>('/issues', { ...params, query: search }, signal)
   }
 
   async getIssue(id: string): Promise<Task> {
@@ -491,8 +500,8 @@ export class TorqueApiClient {
   // Runs
   // -------------------------
 
-  async pageRuns(params: RunQuery = {}): Promise<RunPage> {
-    const res = await this.get<{ items: ApiRunRecord[]; meta: RunPage['meta'] }>('/runs', { ...params })
+  async pageRuns(params: RunQuery = {}, signal?: AbortSignal): Promise<RunPage> {
+    const res = await this.get<{ items: ApiRunRecord[]; meta: RunPage['meta'] }>('/runs', { ...params }, signal)
     return { items: res.items.map(normalizeRun), meta: res.meta }
   }
 
@@ -570,11 +579,11 @@ export class TorqueApiClient {
    * other entity types use the flat /comments?entity_type=…&entity_id=…
    * shape.
    */
-  async listComments(entityType: string, entityID: string, query?: Omit<ListQuery, 'search'>): Promise<ListPage<Comment>> {
+  async listComments(entityType: string, entityID: string, query?: Omit<ListQuery, 'search'>, signal?: AbortSignal): Promise<ListPage<Comment>> {
     if (entityType === 'task') {
-      return this.get<ListPage<Comment>>(`/tasks/${entityID}/comments`, query)
+      return this.get<ListPage<Comment>>(`/tasks/${entityID}/comments`, query, signal)
     }
-    return this.get<ListPage<Comment>>('/comments', { ...query, entity_type: entityType, entity_id: entityID })
+    return this.get<ListPage<Comment>>('/comments', { ...query, entity_type: entityType, entity_id: entityID }, signal)
   }
 
   async addComment(
@@ -722,10 +731,10 @@ export class TorqueApiClient {
   // Projects
   // -------------------------
 
-  async listProjects(status?: string, query?: ListQuery): Promise<ListPage<Project>> {
+  async listProjects(status?: string, query?: ListQuery, signal?: AbortSignal): Promise<ListPage<Project>> {
     const params: Record<string, string | number | boolean | undefined> = { ...query }
     if (status) params['status'] = status
-    return this.get<ListPage<Project>>('/projects', params)
+    return this.get<ListPage<Project>>('/projects', params, signal)
   }
 
   async getProject(id: string): Promise<Project> {
@@ -771,8 +780,8 @@ export class TorqueApiClient {
   // Sprints
   // -------------------------
 
-  async listSprints(params?: ListQuery & { status?: string; project_id?: string; include_archived?: boolean }): Promise<ListPage<Sprint>> {
-    return this.get<ListPage<Sprint>>('/sprints', { ...params })
+  async listSprints(params?: ListQuery & { status?: string; project_id?: string; include_archived?: boolean }, signal?: AbortSignal): Promise<ListPage<Sprint>> {
+    return this.get<ListPage<Sprint>>('/sprints', { ...params }, signal)
   }
 
   async getSprint(id: string): Promise<Sprint> {
@@ -799,8 +808,8 @@ export class TorqueApiClient {
   // Epics
   // -------------------------
 
-  async listEpics(params?: ListQuery & { status?: string; project_id?: string; include_archived?: boolean }): Promise<ListPage<Epic>> {
-    return this.get<ListPage<Epic>>('/epics', { ...params })
+  async listEpics(params?: ListQuery & { status?: string; project_id?: string; include_archived?: boolean }, signal?: AbortSignal): Promise<ListPage<Epic>> {
+    return this.get<ListPage<Epic>>('/epics', { ...params }, signal)
   }
 
   async getEpic(id: string): Promise<Epic> {

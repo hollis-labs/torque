@@ -672,3 +672,48 @@ describe('TorqueApiClient.pageRuns', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('single-page task adapters', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('fetches one summary cursor page, preserves optional metadata, and forwards cancellation', async () => {
+    const page = { items: [{ id: 'T-1' }], meta: { returned: 1, limit: 2, has_more: true, next_cursor: 'next' } }
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(page))
+    vi.stubGlobal('fetch', fetchMock)
+    const abort = new AbortController()
+    const result = await new TorqueApiClient('/api/v1').listTaskSummaryPage({ project_id: 'PRJ-1', limit: 2, cursor: 'previous' }, abort.signal)
+    expect(result).toEqual(page)
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const url = new URL(fetchMock.mock.calls[0][0], 'http://localhost')
+    expect(url.searchParams.get('fields')).toBe('summary')
+    expect(url.searchParams.get('cursor')).toBe('previous')
+    expect(url.searchParams.has('offset')).toBe(false)
+    expect(url.searchParams.has('include_total')).toBe(false)
+    expect(fetchMock.mock.calls[0][1].signal).toBe(abort.signal)
+  })
+
+  it('forwards explicit offset zero and include_total on full-row pages', async () => {
+    const page = { items: [], meta: { returned: 0, limit: 50, has_more: false, next_cursor: null, offset: 0, next_offset: null, total: 0 } }
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(page))
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await new TorqueApiClient('/api/v1').listTaskPage({ offset: 0, include_total: true })).toEqual(page)
+    const url = new URL(fetchMock.mock.calls[0][0], 'http://localhost')
+    expect(url.searchParams.get('offset')).toBe('0')
+    expect(url.searchParams.get('include_total')).toBe('true')
+    expect(url.searchParams.has('fields')).toBe(false)
+  })
+
+  it('forwards signals through the existing resource page adapters', async () => {
+    const page = { items: [], meta: { returned: 0, limit: 50, has_more: false, next_cursor: null } }
+    const fetchMock = vi.fn().mockImplementation(async () => jsonResponse(page))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new TorqueApiClient('/api/v1')
+    const signal = new AbortController().signal
+    await Promise.all([
+      client.pageRuns({}, signal), client.listProjects(undefined, {}, signal),
+      client.listEpics({}, signal), client.listSprints({}, signal), client.listIssues({}, signal),
+      client.listComments('task', 'T-1', {}, signal), client.listComments('project', 'PRJ-1', {}, signal),
+    ])
+    expect(fetchMock.mock.calls.every(([, init]) => init.signal === signal)).toBe(true)
+  })
+})
