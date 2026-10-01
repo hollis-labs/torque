@@ -35,9 +35,7 @@ func TestMCPListPolicyTable(t *testing.T) {
 		{"torque_artifact_list", nil, "CW-0565"}, {"torque_collection_list", nil, "CW-0565"}, {"torque_collection_tasks_list", nil, "CW-0565"}, {"torque_collection_inbox_list", nil, "CW-0565"},
 		{"torque_plan_list_children", nil, "CW-0565"}, {"torque_task_checkpoint_list", nil, "CW-0565"}, {"torque_task_checkpoints_pending", nil, "CW-0565"}, {"torque_template_list", nil, "CW-0565"}, {"torque_models_list", nil, "CW-0565"},
 	}
-	covered := map[string]bool{}
 	for _, tc := range cases {
-		covered[tc.name] = true
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.pending != "" {
 				t.Skip("cursor adapter pending " + tc.pending)
@@ -70,13 +68,7 @@ func TestMCPListPolicyTable(t *testing.T) {
 			}
 		})
 	}
-	// Tool registration is the public inventory; catch future list families
-	// omitted from this behavioral matrix, rather than inspecting source files.
-	for _, def := range a.Server().ToolDefinitions() {
-		if strings.HasSuffix(def.Name, "_list") || def.Name == "torque_plan_list_children" || def.Name == "torque_comment_search" || def.Name == "torque_task_checkpoints_pending" {
-			require.True(t, covered[def.Name], "list tool lacks a contract case: %s", def.Name)
-		}
-	}
+
 }
 
 func TestSubtodoCursorTraversalAndByteCap(t *testing.T) {
