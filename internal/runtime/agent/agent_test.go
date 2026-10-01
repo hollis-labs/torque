@@ -190,9 +190,12 @@ func TestSelectRuntimeKind(t *testing.T) {
 
 		// Invalid profile kind.
 		{"invalid kind → error", "codex", "tui", "", true},
-		// A leaf mode Torque cannot launch yet (ACP arrives with the
-		// registry-driven wrapper Select, CW-20260930-0134).
-		{"acp-stdio → error", "codex", "acp-stdio", "", true},
+		// ACP modes (CW-20261001-0097): a profile opts Claude, Codex or
+		// OpenCode into acp-stdio; Copilot and Pi default to it.
+		{"profile kind acp-stdio", "codex", "acp-stdio", RuntimeKindACPStdio, false},
+		{"profile kind acp-tcp", "copilot", "acp-tcp", RuntimeKindACPTCP, false},
+		{"copilot default → acp-stdio", "copilot", "", RuntimeKindACPStdio, false},
+		{"pi default → acp-stdio", "pi", "", RuntimeKindACPStdio, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -264,6 +267,17 @@ func TestFirstTurnKickoff(t *testing.T) {
 	assert.Equal(t, "Boot @./boot.md", firstTurnKickoff(boot, "/work/project", ""), "no content to inline")
 }
 
+// One-shot: the prompt alone where the runtime runs in its boot dir, as
+// before; boot.md's content, which carries the prompt, where it does not.
+func TestOneShotTurn(t *testing.T) {
+	const boot, md = "/tmp/torque-boot/b1", "# Boot\n\n## First turn\n\nwrite the report\n"
+	assert.Equal(t, "write the report", oneShotTurn("write the report", boot, boot, md), "claude: the prompt alone")
+	assert.Equal(t, md, oneShotTurn("write the report", boot, "/work/project", md), "opencode: the briefing, prompt included")
+	assert.Equal(t, "Boot @./boot.md", oneShotTurn("", boot, boot, md), "no prompt: the kickoff pointer")
+	assert.Equal(t, md, oneShotTurn("", boot, "/work/project", md))
+	assert.Equal(t, "write the report", oneShotTurn("write the report", "", "/work/project", ""), "nothing planted")
+}
+
 // TestKickoffMarkdown verifies the planted boot.md content carries the
 // task framing the LLM needs on its first turn (and after compaction
 // when re-reading the file).
@@ -284,7 +298,7 @@ func TestKickoffMarkdown(t *testing.T) {
 	assert.Contains(t, body, "/repo/source")
 	assert.Contains(t, body, "$TORQUE_WORK_ROOT")
 	assert.Contains(t, body, "Walk the plan.")
-	assert.Contains(t, body, "torque_loopback")
+	assert.Contains(t, body, "`loopback` MCP server", "the name go-providers plants the per-task server under")
 
 	// Empty role falls back to AgentProfile.
 	body = kickoffMarkdown(Options{AgentProfile: "planner"}, "")

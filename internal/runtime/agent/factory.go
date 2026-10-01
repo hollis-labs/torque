@@ -22,6 +22,7 @@ import (
 type selectedRuntime struct {
 	// cli is the configured go-providers adapter. bootLegacy drives it
 	// directly; providerplant plants the boot dir from it on both paths.
+	// Nil for an ACP mode, which has no go-providers adapter (bootACP).
 	cli provider.CLIAdapter
 	// wrapper is launch.Select's adapter for the same (runtime, mode),
 	// built around cli. bootWrapper hands it to wrapper.Config.Adapter.
@@ -48,9 +49,10 @@ type selectedRuntime struct {
 //     it does not drive, Claude's PTY TUI for one, is refused here, before
 //     anything is planted.
 //
-// ACP modes (Copilot and Pi have no other) are refused with a reason:
-// Torque's boot plants a boot dir (task bundle, loopback MCP) that ACP
-// sessions have no slot for yet, and SendTurn has no ACP delivery
+// An ACP mode (Copilot and Pi have no other; Claude, Codex and OpenCode
+// take acp-stdio from profile.RuntimeKind) has no go-providers adapter:
+// launch.Select builds the wrapper's ACP adapter from the runtime and mode
+// alone, and bootACP launches it without a planted boot dir
 // (CW-20261001-0097).
 //
 // profileName is the torque agent-profile lookup key. OpenCode needs it:
@@ -78,14 +80,12 @@ func selectRuntime(profile config.AgentProfile, profileName string, kind Runtime
 	if mode == "" {
 		mode = desc.DefaultMode
 	}
-	if mode.ACP() {
-		return selectedRuntime{}, fmt.Errorf(
-			"%s runs over ACP (%s) and Torque does not launch ACP sessions yet (CW-20261001-0097); its native modes: %s",
-			desc.ID, mode, modeList(desc.NativeModes()))
-	}
 	if !desc.Supports(mode) {
 		return selectedRuntime{}, fmt.Errorf(
-			"%s provider does not support runtime kind %q; supported: %s", profile.Provider, string(mode), modeList(desc.NativeModes()))
+			"%s provider does not support runtime kind %q; supported: %s", profile.Provider, string(mode), modeList(supportedModes(desc)))
+	}
+	if mode.ACP() {
+		return selectACPRuntime(profile, desc, mode)
 	}
 	cli, err := provider.NewAdapter(desc.ID, mode)
 	if err != nil {
@@ -185,6 +185,16 @@ func antigravityPermission(mode config.PermissionMode) string {
 }
 
 func launchableProviderList() string { return strings.Join(config.LaunchableProviders(), ", ") }
+
+// supportedModes lists every mode the registry declares for the runtime,
+// native and ACP.
+func supportedModes(desc registry.Descriptor) []runtimes.Mode {
+	out := make([]runtimes.Mode, len(desc.Modes))
+	for i, ms := range desc.Modes {
+		out[i] = ms.Mode
+	}
+	return out
+}
 
 func modeList(modes []runtimes.Mode) string {
 	out := make([]string, len(modes))
