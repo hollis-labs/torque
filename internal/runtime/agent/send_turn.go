@@ -48,6 +48,14 @@ func (m *Manager) SendTurn(ctx context.Context, sess *Session, text string) (err
 	if sess.ID == "" {
 		return fmt.Errorf("agent.Manager.SendTurn: session has empty ID")
 	}
+	// The turn is in flight from the send, not from its reply's first
+	// parsed event (trackTurns, CW-20261001-0117).
+	abortTurn := m.beginSentTurn(sess.ID)
+	defer func() {
+		if err != nil {
+			abortTurn()
+		}
+	}()
 
 	// Trace the per-turn drive — the unit of work for "I asked this session
 	// to do another turn." Distinct from torque.agent.boot (one-shot session

@@ -71,6 +71,10 @@ type Manager struct {
 	// LivePID dispatch on whichever map holds the sessID.
 	wrapperSessions map[string]*wrapperHandle
 
+	// turnTrackers maps a long-lived session's ID to the runtime's turn
+	// tracker, which SendTurn opens a turn on (trackTurns).
+	turnTrackers sync.Map
+
 	// codexTurns caches per-session Codex app-server thread state for the
 	// JsonRpcStdio runtime kind. Populated lazily by SendTurn after
 	// thread/start succeeds; dropped by teardownSession when the session

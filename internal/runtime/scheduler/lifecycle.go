@@ -92,6 +92,19 @@ func (lm *LifecycleManager) HandleResult(taskID string, runID int64, result *exe
 		return lm.markRunSuperseded(task, runID, result)
 	}
 
+	if err := lm.applyResult(task, runID, result); err != nil {
+		return err
+	}
+	if c := result.TaskComment; c != nil && result.Status != "canceled" {
+		if err := lm.store.AddComment(&sqlstore.CommentRecord{EntityType: "task", EntityID: taskID, Author: c.Author, Content: c.Content}); err != nil {
+			log.Printf("[lifecycle] result comment on %s failed: %v", taskID, err)
+		}
+	}
+	return nil
+}
+
+// applyResult moves the task as result.Status says.
+func (lm *LifecycleManager) applyResult(task *sqlstore.TaskRecord, runID int64, result *executor.ExecutionResult) error {
 	switch result.Status {
 	case "done":
 		return lm.handleDone(task, runID, result)
