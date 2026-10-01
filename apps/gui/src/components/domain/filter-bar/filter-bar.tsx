@@ -1,20 +1,27 @@
-import type { ReactNode } from 'react'
-import { Folder, Calendar, BookOpen, Hash, SlidersHorizontal } from 'lucide-react'
-import { FilterCycleToggle, FilterEntityCombobox, FilterSearchInput, type CycleOption } from '@hollis-labs/sysop-ui/data'
+import { useState, type ComponentProps, type ReactNode } from 'react'
+import { Folder, Calendar, BookOpen, Hash, SlidersHorizontal, Plus, Zap } from 'lucide-react'
+import { FilterEntityCombobox, FilterSearchInput } from '@hollis-labs/sysop-ui/data'
 import { STATUS_COLORS, DEFAULT_STATUS_COLOR, PRIORITIES, TASK_STATUSES } from '@/lib/constants'
 import type { ManualFilter } from '@/lib/ops-filters-storage'
 import type { Epic, Project, Sprint, Tag, TaskStatus } from '@/lib/types'
 
-const MANUAL_CYCLE_OPTIONS: readonly [
-  CycleOption<ManualFilter>,
-  ...CycleOption<ManualFilter>[],
-] = [
-  { value: 'both', label: 'Both', dotColor: 'bg-text-subtle', title: 'All tasks (no manual filter)' },
-  { value: 'auto', label: 'Auto', dotColor: 'bg-status-doing', title: 'Scheduler-eligible (manual=false)' },
-  { value: 'manual', label: 'Manual', dotColor: 'bg-status-paused', title: 'Held for review (manual=true)' },
-]
+function CompactEntityFilter({ onCreate, createLabel, onMore, loadingMore, ...props }: ComponentProps<typeof FilterEntityCombobox> & { onMore?: () => void; loadingMore?: boolean }) {
+  return <div className="inline-flex items-stretch [&>button]:rounded-r-none">
+    <FilterEntityCombobox {...props} />
+    {onMore && <button type="button" disabled={loadingMore} onClick={onMore} aria-label={`Load more ${props.allLabel.toLowerCase()}`}
+      className="h-7 border border-l-0 border-border-subtle bg-panel-2/50 px-1.5 text-[10px] text-text-soft">More</button>}
+    {onCreate && <button type="button" onClick={onCreate} aria-label={createLabel ?? 'New item'}
+      title={createLabel} className="inline-flex h-7 items-center gap-1 rounded-r border border-l-0 border-border-subtle bg-panel-2/50 px-1.5 text-[10px] text-text-soft">
+      <Plus className="h-3 w-3" /> New
+    </button>}
+  </div>
+}
 
 interface FilterBarProps {
+  eligibleOnly?: boolean
+  onEligibleChange?: (enabled: boolean) => void
+  editorControls?: ReactNode
+  activeViewName?: string
   activeStatuses: TaskStatus[]
   onStatusToggle: (status: TaskStatus) => void
   /** Available statuses to show — defaults to all TASK_STATUSES */
@@ -22,7 +29,7 @@ interface FilterBarProps {
   /** Show priority filter chips */
   activePriorities?: number[]
   onPriorityToggle?: (priority: number) => void
-  /** Manual-flag cycle (Both / Auto / Manual). Omit to hide the control. */
+  /** Manual and Auto toggles; both enabled or both disabled mean no restriction. Omit to hide the control. */
   manualFilter?: ManualFilter
   onManualFilterChange?: (value: ManualFilter) => void
   /**
@@ -46,6 +53,10 @@ interface FilterBarProps {
   tags?: Tag[]
   tagSlug?: string | null
   onTagChange?: (slug: string | null) => void
+  onProjectMore?: () => void
+  onEpicMore?: () => void
+  onSprintMore?: () => void
+  pickerLoading?: boolean
   onProjectCreate?: () => void
   onEpicCreate?: () => void
   onTagCreate?: () => void
@@ -65,6 +76,10 @@ interface FilterBarProps {
 }
 
 export function FilterBar({
+  eligibleOnly = false,
+  onEligibleChange,
+  editorControls,
+  activeViewName,
   activeStatuses,
   onStatusToggle,
   availableStatuses = TASK_STATUSES,
@@ -87,6 +102,10 @@ export function FilterBar({
   tags,
   tagSlug,
   onTagChange,
+  onProjectMore,
+  onEpicMore,
+  onSprintMore,
+  pickerLoading,
   onProjectCreate,
   onEpicCreate,
   onTagCreate,
@@ -97,6 +116,7 @@ export function FilterBar({
   onClear,
   children,
 }: FilterBarProps) {
+  const [editorOpen, setEditorOpen] = useState(false)
   const showGroups = Boolean(onProjectChange || onSprintChange || onEpicChange || onTagChange)
   const twoRow = searchQuery !== undefined && onSearchChange !== undefined
 
@@ -112,6 +132,7 @@ export function FilterBar({
             <button
               key={status}
               type="button"
+              aria-pressed={active}
               onClick={() => onStatusToggle(status)}
               className={`rounded border px-2 py-0.5 text-[10px] uppercase tracking-wider transition-all ${
                 active
@@ -135,6 +156,7 @@ export function FilterBar({
               <button
                 key={value}
                 type="button"
+                aria-pressed={active}
                 onClick={() => onPriorityToggle(value)}
                 className={`rounded border px-2 py-0.5 text-[10px] font-medium tracking-wider transition-all ${
                   active
@@ -149,18 +171,18 @@ export function FilterBar({
         </div>
       )}
 
-      {/* Manual cycle */}
-      {onManualFilterChange && (
-        <div className="flex items-center gap-1 border-l border-border pl-3">
-          <span className="mr-1 text-[10px] uppercase tracking-wider text-text-subtle">Manual:</span>
-          <FilterCycleToggle
-            options={MANUAL_CYCLE_OPTIONS}
-            value={manualFilter ?? 'both'}
-            onChange={onManualFilterChange}
-            ariaLabel="Manual filter"
-          />
-        </div>
-      )}
+      {onManualFilterChange && <div className="flex items-center gap-1 border-l border-border pl-3">
+        {(['manual', 'auto'] as const).map(value => {
+          const on = manualFilter === 'both' || manualFilter === undefined || manualFilter === value
+          const other = value === 'manual' ? 'auto' : 'manual'
+          const otherOn = manualFilter === 'both' || manualFilter === undefined || manualFilter === other
+          return <button key={value} type="button" aria-pressed={on}
+            onClick={() => onManualFilterChange(on ? (otherOn ? other : 'both') : 'both')}
+            className={`rounded border px-2 py-0.5 text-[10px] uppercase tracking-wider ${on ? 'border-status-doing/40 bg-status-doing/10 text-text-soft' : 'border-border text-text-subtle opacity-50'}`}>
+            {value === 'manual' ? 'Manual' : 'Auto'}
+          </button>
+        })}
+      </div>}
 
       {/* System toggle (kind=internal) — CW-20260503-0011 */}
       {onIncludeInternalChange && (
@@ -190,12 +212,13 @@ export function FilterBar({
       {showGroups && (
         <div className="flex flex-wrap items-center gap-2 border-l border-border pl-3">
           {onProjectChange && (
-            <FilterEntityCombobox
+            <CompactEntityFilter
               icon={<Folder className="h-3.5 w-3.5" />}
               items={projects ?? []}
               value={projectId ?? null}
               onChange={onProjectChange}
-              allLabel="All projects"
+              onMore={onProjectMore} loadingMore={pickerLoading}
+              allLabel="Projects"
               ariaLabel="Filter by project"
               onCreate={onProjectCreate}
               createLabel="New project"
@@ -203,12 +226,13 @@ export function FilterBar({
             />
           )}
           {onEpicChange && (
-            <FilterEntityCombobox
+            <CompactEntityFilter
               icon={<BookOpen className="h-3.5 w-3.5" />}
               items={epics ?? []}
               value={epicId ?? null}
               onChange={onEpicChange}
-              allLabel="All epics"
+              onMore={onEpicMore} loadingMore={pickerLoading}
+              allLabel="Epics"
               ariaLabel="Filter by epic"
               onCreate={onEpicCreate}
               createLabel="New epic"
@@ -216,12 +240,13 @@ export function FilterBar({
             />
           )}
           {onSprintChange && (
-            <FilterEntityCombobox
+            <CompactEntityFilter
               icon={<Calendar className="h-3.5 w-3.5" />}
               items={sprints ?? []}
               value={sprintId ?? null}
               onChange={onSprintChange}
-              allLabel="All sprints"
+              onMore={onSprintMore} loadingMore={pickerLoading}
+              allLabel="Sprints"
               ariaLabel="Filter by sprint"
               onCreate={onSprintCreate}
               createLabel="New sprint"
@@ -229,12 +254,12 @@ export function FilterBar({
             />
           )}
           {onTagChange && (
-            <FilterEntityCombobox
+            <CompactEntityFilter
               icon={<Hash className="h-3.5 w-3.5" />}
               items={(tags ?? []).map((t) => ({ id: t.slug, name: t.name }))}
               value={tagSlug ?? null}
               onChange={onTagChange}
-              allLabel="All tags"
+              allLabel="Tags"
               ariaLabel="Filter by tag"
               onCreate={onTagCreate}
               createLabel="New tag"
@@ -246,23 +271,31 @@ export function FilterBar({
   )
 
   if (twoRow) {
-    const showClear = Boolean(onClear) && (activeFilterCount > 0 || (searchQuery ?? '').length > 0)
-    const showSummary = activeFilterCount > 0 || (searchQuery ?? '').length > 0
+    const hasSearch = !eligibleOnly && (searchQuery ?? '').length > 0
+    const showClear = Boolean(onClear) && (activeFilterCount > 0 || hasSearch)
+    const showSummary = activeFilterCount > 0 || hasSearch
 
     let summaryText = ''
-    if (activeFilterCount > 0 && (searchQuery ?? '').length > 0) {
-      summaryText = `${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'} · ${searchMatchCount ?? 0} match${searchMatchCount === 1 ? '' : 'es'}`
+    if (activeFilterCount > 0 && hasSearch) {
+      summaryText = `${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'} · ${searchMatchCount ?? '…'} match${searchMatchCount === 1 ? '' : 'es'}`
     } else if (activeFilterCount > 0) {
       summaryText = `${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'}`
-    } else if ((searchQuery ?? '').length > 0) {
-      summaryText = `${searchMatchCount ?? 0} match${searchMatchCount === 1 ? '' : 'es'}`
+    } else if (hasSearch) {
+      summaryText = `${searchMatchCount ?? '…'} match${searchMatchCount === 1 ? '' : 'es'}`
     }
 
     return (
       <div className="flex flex-col border-b border-border bg-panel">
         {/* Row 1: search hero + summary + clear */}
         <div className="flex items-center gap-3 px-4 py-2">
-          <FilterSearchInput value={searchQuery ?? ''} onChange={onSearchChange!} />
+          {onEligibleChange && <button type="button" aria-pressed={eligibleOnly} onClick={() => onEligibleChange(!eligibleOnly)}
+            title="Static task eligibility: Todo automatic tasks with allowed kinds, required profile selectors, and all dependencies done. Runtime capacity, project availability, and profile readiness are not evaluated."
+            className={`inline-flex h-8 items-center gap-1 rounded border px-2 text-xs ${eligibleOnly ? 'border-status-doing bg-status-doing/10 text-status-doing' : 'border-border text-text-soft'}`}>
+            <Zap className="h-3.5 w-3.5" /> Eligible
+          </button>}
+          <fieldset disabled={eligibleOnly} className={`min-w-0 flex-1 ${eligibleOnly ? 'opacity-40' : ''}`}>
+            <FilterSearchInput value={searchQuery ?? ''} onChange={onSearchChange!} debounceMs={0} />
+          </fieldset>
           <div className="inline-flex h-8 items-center gap-1.5 rounded border border-border bg-panel-2/50 px-2 text-[10px] uppercase tracking-wider text-text-soft">
             <SlidersHorizontal className="h-3.5 w-3.5" />
             {activeFilterCount}
@@ -272,6 +305,11 @@ export function FilterBar({
               {summaryText}
             </span>
           )}
+          {activeViewName && <span className="max-w-40 truncate text-xs text-text-soft">{activeViewName}</span>}
+          <button type="button" aria-label="Edit filters and saved views" aria-expanded={editorOpen}
+            onClick={() => setEditorOpen(!editorOpen)} className="rounded border border-border p-2 text-text-soft">
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+          </button>
           {showClear && (
             <button
               type="button"
@@ -284,7 +322,9 @@ export function FilterBar({
           )}
         </div>
         {/* Row 2: compact chip row */}
-        <div className="border-t border-border px-4 py-2">{chipRow}</div>
+        <fieldset disabled={eligibleOnly} className={`border-t border-border px-4 py-2 ${eligibleOnly ? 'opacity-40' : ''}`}>{chipRow}</fieldset>
+        {eligibleOnly && <p className="px-4 pb-2 text-xs text-text-subtle">Static eligibility; the scheduler may still skip tasks for runtime reasons.</p>}
+        {editorOpen && editorControls && <div className="border-t border-border px-4 py-3">{editorControls}</div>}
       </div>
     )
   }
