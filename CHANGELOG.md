@@ -497,6 +497,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Security
 
+- The codex launches Torque leaves to codex's own sandbox are fewer
+  (CW-20261001-0256). Three families of codex profile args still skipped
+  Torque's write protection while codex ran unsandboxed: an attached short
+  option (`-s=danger-full-access`, `-sdanger-full-access`); mixed selectors,
+  where `--yolo --sandbox read-only` and `--sandbox danger-full-access -c
+  sandbox_mode="read-only"` came out read-only although codex ranks the
+  bypass and `--sandbox` flags above `-c`; and an app-server bypass mode
+  hard-coded instead of taken from the function the adapter uses. Now a bypass
+  flag anywhere wraps the launch, selectors must all agree on a confining mode
+  or the launch is wrapped, any single-dash argument with an attached value
+  or a selector with no value wraps, and the bypass mode comes from agentkit's
+  `ResolveCodexPolicy`. Only a profile that positively selects `read-only` or
+  `workspace-write` is left to codex's own sandbox. The orchestrator-class
+  kickoff names the task id parameter as the tool's schema does (`id` on some
+  tools, `task_id` on others).
 - Agents can no longer write Torque's state directories (CW-20261001-0141).
   An agent running as the operator's uid could otherwise rewrite Torque's
   database or profiles to grant itself authority. Every agent launch
