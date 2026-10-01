@@ -41,7 +41,12 @@ func raceFixture(t *testing.T, op string) (sched *Scheduler, store *sqlstore.Sto
 	require.NoError(t, err)
 	backdateRunStartedAt(t, store, id, 10*time.Second)
 	backdateTaskUpdatedAt(t, store, taskID, 10*time.Second)
+	finished := false
 	sched.stateWriter = &finishBeforeWriter{Writer: sched.stateWriter, op: op, finish: func() {
+		if finished {
+			return // the run finishes once, however many times the reaper runs
+		}
+		finished = true
 		require.NoError(t, store.CompleteRun(id, sqlstore.RunCompletion{Status: "done", PromptTokens: 10, Cost: 0.25, CostSource: "provider"}))
 		_, err := store.AppendCostLedger(&sqlstore.CostLedgerRecord{TaskID: taskID, RunID: id, Cost: 0.25, CostSource: "provider", ProviderCost: 0.25})
 		require.NoError(t, err)
@@ -112,4 +117,44 @@ func TestRecoverOrphanRun_ALostRunIsStillReclaimed(t *testing.T) {
 	task, err := store.GetTask("CW-REAP-LOST")
 	require.NoError(t, err)
 	assert.Equal(t, "todo", task.Status)
+}
+
+// Leaving a task alone when its run finished first does not strand it. If the
+// worker died before the lifecycle moved the task out of `doing`, the task is
+// still `doing` with no heartbeat, and the next scan finds it by that alone
+// (task_doing_no_worker does not look at its runs): its running-run list is
+// now empty, so it is requeued exactly as it was before the guard existed.
+func TestRecoverStuckTask_ATaskLeftInDoingIsRequeuedOnTheNextScan(t *testing.T) {
+	for _, tc := range []struct {
+		name, op string
+		reap     func(*Scheduler, string, int64)
+	}{
+		{"stuck-task reaper", "scheduler_stuck_task_recovery", func(s *Scheduler, task string, _ int64) {
+			s.recoverStuckTask(context.Background(), healthscan.ModeTick, healthscan.Anomaly{Kind: healthscan.AnomalyTaskDoingNoWorker, TaskID: task, ObservedAt: time.Now().Add(-10 * time.Second)})
+		}},
+		{"orphan-run reaper", "scheduler_orphan_run_recovery", func(s *Scheduler, task string, run int64) {
+			s.recoverOrphanRun(context.Background(), healthscan.ModeTick, healthscan.Anomaly{Kind: healthscan.AnomalyRunRunningNoWorker, TaskID: task, RunID: run, ObservedAt: time.Now().Add(-10 * time.Second)})
+		}},
+		{"orphaned-worker reaper", "scheduler_orphan_recovery", func(s *Scheduler, task string, run int64) {
+			s.recoverOrphanedWorker(context.Background(), StaleWorker{WorkerID: "w-" + task, TaskID: task, RunID: run, Executor: "mock"})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sched, store, taskID, runID := raceFixture(t, tc.op)
+
+			tc.reap(sched, taskID, runID)
+			requireFinishedRunLeftAlone(t, store, taskID, runID)
+
+			// The next scan: the task is still `doing` and has no heartbeat.
+			sched.recoverStuckTask(context.Background(), healthscan.ModeTick, healthscan.Anomaly{
+				Kind: healthscan.AnomalyTaskDoingNoWorker, TaskID: taskID, ObservedAt: time.Now().Add(-10 * time.Second),
+			})
+			task, err := store.GetTask(taskID)
+			require.NoError(t, err)
+			assert.Equal(t, "todo", task.Status, "the next scan requeues the task: it is not stranded in doing")
+			run, err := store.GetRun(runID)
+			require.NoError(t, err)
+			assert.Equal(t, "done", run.Status, "and the run that finished is still left as it finished")
+		})
+	}
 }
