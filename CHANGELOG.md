@@ -82,6 +82,34 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- go-agent-wrapper v0.25.6 (from v0.23.0), agentkit v0.21.1 (from v0.20.3),
+  go-providers v0.42.0 (from v0.40.0), go-sandbox v0.6.0 (from v0.5.1),
+  go-runner v0.8.2 (from v0.7.0) and go-llm-contracts v0.4.0 (from v0.3.0);
+  go-llm-types stays v0.5.1 (CW-20261001-0220). agentkit is a direct require
+  at v0.21.1; do not pair go-providers v0.41.0 or later with agentkit v0.20.3 or
+  earlier, which breaks codex exec turn 2. Effects on Torque:
+  - **codex exec resumes its thread from turn 2** (go-providers v0.41.0): in a
+    live session, `exec … --cd <dir> resume <thread> -- <prompt>`, with
+    `--cd` in front of `resume`, and the thread id is reported as the provider
+    session id, so a codex exec session now stores a `resume_hint`. Torque
+    does not resume it across sessions: the allow-list leaves (codex,
+    subprocess-per-turn) unwired, so no cold boot hands a stored thread id to
+    a fresh `CODEX_HOME`, where that thread does not exist (CW-20261001-0255
+    tracks wiring it). Tested: `ResumeSession` and `Manager.Resume` boot a
+    codex exec session fresh, and turn 2 in a live session resumes.
+  - **Streaming-stdio, per-turn and ACP agents report a lost provider
+    session** (agentkit v0.20.2 to v0.21.1, wrapper v0.25.5): see the resume
+    entry below.
+  - OpenCode serve: reasoning reaches the turn as thought, not reply text, and
+    a compaction summary no longer reaches the reply (agentkit v0.20.5,
+    v0.20.6); an error with no session id, or a context overflow OpenCode
+    compacts, no longer fails a turn (agentkit v0.20.3; Torque's own sink
+    filter for the same errors, added earlier, is now redundant but harmless).
+  - go-agent-wrapper v0.25.6 fixes a host panic when an ACP agent exits during
+    a prompt; `CancelTurn` is advertised for claude streaming-stdio, codex
+    app-server and OpenCode serve, which Torque does not use yet.
+  - go-sandbox v0.6.0 adds `DenyUserServiceManager`, and go-runner v0.8.2
+    resource-limit and long-line fixes; Torque uses neither yet.
 - go-agent-wrapper v0.23.0 (from v0.21.1), agentkit v0.20.3 (from v0.19.1)
   and go-providers v0.40.0 (from v0.39.0); go-sandbox stays v0.5.1
   (CW-20261001-0141). They bring the `ProtectedPaths` Torque now sets, and

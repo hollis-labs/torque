@@ -165,13 +165,13 @@ func plantCheckpoint(t *testing.T, store *sqlstore.Store, sessID, providerSessio
 }
 
 // fixtureSessionID is the provider session id a go-providers fixture reports
-// ("sessionID" for opencode, "session_id" for claude): what a later turn must
+// ("sessionID" for opencode, "session_id" for claude, "thread_id" for codex): what a later turn must
 // resume. Read from the fixture, not written into a test, because the
 // libraries renormalize their fixtures' ids between releases.
 func fixtureSessionID(t *testing.T, fixture string) string {
 	t.Helper()
 	raw := providertest.ReadFixture(t, fixture+".jsonl")
-	m := regexp.MustCompile(`"(?:sessionID|session_id)":"([^"]+)"`).FindSubmatch(raw)
+	m := regexp.MustCompile(`"(?:sessionID|session_id|thread_id)":"([^"]+)"`).FindSubmatch(raw)
 	require.NotNil(t, m, "fixture %s reports no session id", fixture)
 	return string(m[1])
 }

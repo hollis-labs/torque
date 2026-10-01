@@ -99,3 +99,22 @@ func TestSameRuntime(t *testing.T) {
 	assert.False(t, SameRuntime("claude-code", ""))
 	assert.False(t, SameRuntime("gemini", "gemini"), "unknown providers are no runtime")
 }
+
+// go-providers v0.41.0 makes codex exec (subprocess-per-turn) resume its
+// thread, and the registry declares it, but Torque does not wire it: no cold
+// boot may hand a stored thread id to a fresh CODEX_HOME, where that thread
+// does not exist. The allow-list is what keeps ResumeSession, Manager.Resume
+// and planstart from passing one (CW-20261001-0255 tracks wiring it).
+func TestResume_CodexExecIsDeclaredButNotWired(t *testing.T) {
+	for _, kind := range []RuntimeKind{RuntimeKindSubprocess, ""} {
+		got := Resume("codex", kind)
+		if kind == "" {
+			// codex's registry default is the app-server, which declares it too.
+			got = Resume("codex", RuntimeKindJsonRpcStdio)
+		}
+		assert.True(t, got.Declared, "codex/%q", kind)
+		assert.False(t, got.Wired, "codex/%q must not be wired", kind)
+		assert.NotEmpty(t, got.NotWired)
+		assert.False(t, GenuinelyResumable("codex", kind))
+	}
+}
