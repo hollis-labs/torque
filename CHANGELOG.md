@@ -132,6 +132,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- A profile's `args` may not contain `--` or start with a non-option: they
+  go among the agent CLI's options, ahead of the `--` before the prompt, where
+  either would turn flags into prompt text. `profiles.yaml` loading and
+  `torque profiles lint` both reject them and name the profile and argument
+  (CW-20261001-0121).
 - The boot kickoff, the planted `process.md` and the agent execution docs
   name the per-task MCP server `loopback`, the name go-providers plants it
   under (codex's `[mcp_servers.loopback]`, the `loopback` entry in Claude's
