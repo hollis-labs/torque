@@ -2,9 +2,9 @@ package scheduler_test
 
 import (
 	"database/sql"
-	"github.com/hollis-labs/torque/internal/modelcatalog"
 	"testing"
 
+	"github.com/hollis-labs/torque/internal/modelcatalog"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/torque/internal/runtime/executor"

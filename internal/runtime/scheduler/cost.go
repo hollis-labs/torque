@@ -124,7 +124,7 @@ func (c *CostTracker) GlobalTotal() (float64, error) {
 // TotalsBySource returns the ledger's cost totals keyed by cost_source. They
 // sum to GlobalTotal.
 func (c *CostTracker) TotalsBySource() (map[string]float64, error) {
-	rows, err := c.store.DB().Query(`SELECT cost_source, COALESCE(SUM(cost), 0) FROM cost_ledger GROUP BY cost_source`)
+	rows, err := c.store.ReadDB().Query(`SELECT cost_source, COALESCE(SUM(cost), 0) FROM cost_ledger GROUP BY cost_source`)
 	if err != nil {
 		return nil, err
 	}

@@ -246,43 +246,47 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   pricing: cache reads at the cache-read price and cache writes at the
   cache-write price, and for codex, whose input counts its cached tokens,
   only the uncached remainder at the input price. Before, Claude's reported
-  cost was discarded and every cache read was priced as input, so codex runs
-  were recorded 3 to 7 times too high (run 1079: $110.96, now $15.38).
-  `runs.cost` and the run's `cost_ledger` row are written in the same
-  transaction as the run's completion, so the run, its task's cost and the
-  scheduler's `total_cost` agree; they were separate writes through the
-  telemetry queue. Runs and ledger rows record cache read and write tokens,
-  and a `cost_source`: `provider`, `estimate`, `mixed` (some turns reported
-  a cost, some were estimated) or `none`; ledger rows also keep the provider
-  and estimated parts. `torque_scheduler_status` adds `total_cost_by_source`.
-  The `claude-code` provider now finds Anthropic's prices
-  (CW-20261001-0182), and an opencode model id `<provider>/<model>` finds
-  that provider's. Estimates use the catalog's cache-write price, which for
-  Anthropic is the 5-minute tier; Claude's 1-hour cache writes cost more,
-  which is one reason its own figure comes first. Costs are reported, not
-  enforced: `CostBudget` still stops nothing. Existing rows are not
-  repriced. Migration 034.
-- A long-lived run on the go-agent-wrapper path (opencode serve, claude-code,
-  agy, ACP) ends as soon as a turn fails, blocked with the provider's
-  message, as a Codex app-server run already did. An opencode serve worker
-  whose model opencode did not know (`session.error`: "Model not found: …")
-  left its task in `doing` and its run running with no tokens until the
-  30-minute inactivity threshold. The policy is that any genuine failed turn
-  blocks the run. That includes the turn the reminder pump sends a worker
-  that stopped without moving its task (#166): when that turn fails, the
-  run is now blocked rather than taking the unsignalled route. opencode
-  serve errors that do not end its turn stay in the session's stream and
-  leave the run going: one naming no session (a plugin that fails to load,
-  a skill opencode cannot parse), a context overflow (opencode compacts the
-  session and continues), and an abort (Torque's own Stop). The reason, and
-  the error in the stream, is the provider's message: its first line, at
-  most 500 bytes, redacted before it is cut. opencode's raw event and stack
-  trace stay in `serve-http.log`. The session stays `failed` when the agent
-  exits cleanly once stopped (CW-20261001-0169).
-- A Codex app-server turn failure that echoed a launch secret put the
-  secret in the run's reason: the stream's copy of the message was
-  redacted, the copy that ended the run was not. Both are redacted now,
-  before the message is cut to its bound (CW-20261001-0169).
+  cost was discarded and every cache read was priced as input, so a codex
+  run like 1079 was recorded at $110.96 where this prices it at $15.38.
+  - **One write.** `runs.cost` and the run's `cost_ledger` row are written
+    in the same transaction as the run's completion (they were separate
+    writes through the telemetry queue), so for a run completed after this
+    migration the run, its task's cost and the scheduler's `total_cost`
+    agree. A ledger insert that fails is rolled back and logged and no
+    longer fails the completion: the run is completed with its cost and only
+    its ledger row is missing.
+  - **Provenance.** Runs and ledger rows record cache read and write tokens
+    and a `cost_source`: `provider`, `estimate`, `mixed` (some turns reported
+    a cost, some were estimated) or `none`; ledger rows also keep the
+    provider and estimated parts. `torque_scheduler_status` adds
+    `total_cost_by_source`. Migration 034.
+  - **The profile priced is the one that ran.** A task's profile resolves as
+    the executor resolves it, launch_profile first; a task with only a
+    launch_profile used to look up no profile and cost 0.
+  - **Every way a run ends keeps its usage.** A run killed by daemon
+    shutdown, or failed or cancelled after the executor had accumulated
+    usage, records that usage and its cost. The orphan reapers only reclaim a
+    run that is still running, so a run that finished a moment earlier is not
+    reset to failed at cost 0.
+  - **Catalog lookups.** The `claude-code` provider now finds Anthropic's
+    prices (CW-20261001-0182), and an opencode model id `<provider>/<model>`
+    finds that provider's.
+  - **What it does not do.** Estimates use the catalog's cache-write price,
+    which for Anthropic is the 5-minute tier; Claude's 1-hour cache writes
+    cost more, which is one reason its own figure comes first. A run whose
+    model the catalog lacks keeps the provider's figure and is labelled
+    `provider` even if some tokens could not be priced. Costs are reported,
+    not enforced: `CostBudget` still stops nothing.
+  - **History is not repriced.** Existing rows keep their figures, and
+    `runs.cost` and the ledger were not written together before, so for
+    older runs they do not all agree; the all-time `total_cost` still
+    includes the old cache-unaware estimates (`models_dev`), which
+    `total_cost_by_source` shows apart. Sprint cost and the over-budget
+    filter still read `runs.cost` while `total_cost` reads the ledger.
+  - **`torque cost-backfill`** prices a legacy row from input and output
+    tokens alone, so it now skips Claude runs, which are mostly cache and
+    would come out several times too low; only `unknown` rows are
+    candidates, so a `none` row is not backfilled.
 - Torque's tests no longer write session workspaces into the operator's
   `~/.torque/workspaces`. Every test's agent dependencies get a temp root
   (`testenv.WorkspacesRoot(t)`), and under `go test` a workspaces root inside

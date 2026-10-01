@@ -284,8 +284,13 @@ func (s *Scheduler) Status() SchedulerStatus {
 	if s.telemetryWriter != nil {
 		telemetryDepth, _ = s.telemetryWriter.Depth(context.Background())
 	}
-	total, _ := s.cost.GlobalTotal()
+	// One read of the ledger gives both figures, so total_cost is exactly the
+	// sum of its per-source split, never two reads that straddle a write.
 	bySource, _ := s.cost.TotalsBySource()
+	var total float64
+	for _, v := range bySource {
+		total += v
+	}
 
 	return SchedulerStatus{
 		Enabled:                        enabled,
