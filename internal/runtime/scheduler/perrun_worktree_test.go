@@ -116,13 +116,8 @@ func TestDispatchUsesPerRunWorktreeWhenEnabled(t *testing.T) {
 	assert.Equal(t, expected, jobs[0].WorkingDir, "executor should run inside the per-run worktree")
 
 	// Clean run with no commits/uncommitted work — cleanup should remove it.
-	// Cleanup runs in the worker after the job returns, so wait for it rather
-	// than trusting the sleep above (flaked under parallel load,
-	// CW-20261001-0034).
-	assert.Eventually(t, func() bool {
-		_, statErr := os.Stat(expected)
-		return os.IsNotExist(statErr)
-	}, 10*time.Second, 50*time.Millisecond, "clean worktree should be removed after run")
+	_, statErr := os.Stat(expected)
+	assert.True(t, os.IsNotExist(statErr), "clean worktree should be removed after run")
 }
 
 func TestDispatchPreservesWorktreeWhenAgentLeavesWork(t *testing.T) {
