@@ -41,7 +41,7 @@ func TestCodexApprovalMode_MapsEveryPermissionMode(t *testing.T) {
 // The hook answers each approval kind per the posture, and still refuses a
 // request that is not an approval.
 func TestCodexApprovalHook_AnswersPerPosture(t *testing.T) {
-	mcpToolCall := json.RawMessage(`{"_meta":{"codex_approval_kind":"mcp_tool_call"}}`)
+	mcpToolCall := json.RawMessage(`{"serverName":"loopback","_meta":{"codex_approval_kind":"mcp_tool_call"}}`)
 	requests := []struct {
 		name, method string
 		params       json.RawMessage
@@ -78,4 +78,39 @@ func TestCodexApprovalHook_AnswersPerPosture(t *testing.T) {
 	hook := codexApprovalHook("SES-TEST", config.AgentProfile{Provider: "codex"})
 	_, rpcErr := hook("item/tool/requestUserInput", json.RawMessage(`{}`))
 	require.NotNil(t, rpcErr, "a request the responder cannot decide for a human is still refused")
+}
+
+// Outside yolo an MCP tool call is approved only on the run's loopback
+// server. The planted mux server reaches cerberus (ssh, docker) and more, so
+// default, accept-edits and an unset mode decline it, as they do any other
+// or unnamed server. plan declines everything; yolo (bypassPermissions)
+// approves everything.
+func TestCodexApprovalHook_MCPToolCallsOnlyOnLoopback(t *testing.T) {
+	servers := []string{"loopback", "mux", "torque", "torque_loopback", ""}
+	want := map[string]map[string]bool{
+		"":                  {"loopback": true},
+		"default":           {"loopback": true},
+		"acceptEdits":       {"loopback": true},
+		"plan":              {},
+		"bypassPermissions": {"loopback": true, "mux": true, "torque": true, "torque_loopback": true, "": true},
+	}
+	for mode, allowed := range want {
+		hook := codexApprovalHook("SES-TEST", config.AgentProfile{Provider: "codex", PermissionMode: mode})
+		for _, server := range servers {
+			params := json.RawMessage(`{"serverName":"` + server + `","_meta":{"codex_approval_kind":"mcp_tool_call"}}`)
+			result, rpcErr := hook(turn.CodexElicitationMethod, params)
+			require.Nil(t, rpcErr, "mode %q server %q: an MCP tool-call approval gets a decision", mode, server)
+			raw, err := json.Marshal(result)
+			require.NoError(t, err)
+			var answer struct {
+				Action string `json:"action"`
+			}
+			require.NoError(t, json.Unmarshal(raw, &answer))
+			wantAction := "decline"
+			if allowed[server] {
+				wantAction = "accept"
+			}
+			assert.Equal(t, wantAction, answer.Action, "mode %q server %q", mode, server)
+		}
+	}
 }

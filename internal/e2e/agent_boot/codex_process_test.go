@@ -127,7 +127,7 @@ func TestCodexRPCProcessHelper(t *testing.T) {
 		if request.Method == "turn/start" && os.Getenv("TORQUE_TEST_CODEX_APPROVAL") != "" {
 			// What codex app-server sends before an MCP tool call it gates.
 			if err := encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": "approval-1", "method": "mcpServer/elicitation/request", "params": map[string]any{
-				"threadId": "thread-process", "turnId": "turn-process", "serverName": "torque",
+				"threadId": "thread-process", "turnId": "turn-process", "serverName": os.Getenv("TORQUE_TEST_CODEX_APPROVAL"),
 				"message": "Allow the torque_task_get tool?",
 				"_meta":   map[string]any{"codex_approval_kind": "mcp_tool_call"},
 			}}); err != nil {
@@ -143,10 +143,11 @@ func TestCodexRPCProcessHelper(t *testing.T) {
 // the hook and the answer back.
 func TestBootCodexProcessAnswersApprovalRequest(t *testing.T) {
 	for _, tc := range []struct {
-		name, permissionMode, wantAction string
+		name, permissionMode, server, wantAction string
 	}{
-		{"unset permission_mode is the default posture and approves the MCP tool call", "", "accept"},
-		{"plan declines it", "plan", "decline"},
+		{"unset permission_mode approves a tool call on the run's loopback", "", "loopback", "accept"},
+		{"unset permission_mode declines a tool call on mux", "", "mux", "decline"},
+		{"plan declines a tool call on the loopback", "plan", "loopback", "decline"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -164,7 +165,7 @@ func TestBootCodexProcessAnswersApprovalRequest(t *testing.T) {
 			defer cancel()
 			recordPath := filepath.Join(dir, "process.json")
 			sess, err := cd.Manager.Boot(ctx, agent.Options{TaskID: "CW-CODEX-APPROVAL", AgentProfile: "worker", Workdir: t.TempDir(), Mode: agent.ModeLongLived, Env: map[string]string{
-				"TORQUE_TEST_CODEX_HELPER": "1", "TORQUE_TEST_CODEX_RECORD": recordPath, "TORQUE_TEST_CODEX_APPROVAL": "1",
+				"TORQUE_TEST_CODEX_HELPER": "1", "TORQUE_TEST_CODEX_RECORD": recordPath, "TORQUE_TEST_CODEX_APPROVAL": tc.server,
 			}})
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), sess.ID) })
