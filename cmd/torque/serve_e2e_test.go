@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/hollis-labs/torque/internal/persistence/appdb"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -284,4 +286,71 @@ func TestServeSweepsOrphanSessionsAtStartup(t *testing.T) {
 	}
 	assert.Equal(t, "crashed", state("SES-ORPHAN"), "serve sweeps a session whose process is gone")
 	assert.Equal(t, "running", state("SES-ALIVE"), "and spares one whose process is alive")
+}
+
+// runServe mounts the MCP endpoint, wired as production wires it
+// (CW-20261001-0199): behind the API's origin policy, with the daemon's own
+// scheduler (torque_scheduler_toggle works, which stdio `torque mcp` cannot
+// do) and with no poll registry (torque_inbox_poll is unavailable, as over
+// stdio, since /mcp has no broker to drain an enabled poll).
+func TestServeMountsTheMCPEndpoint(t *testing.T) {
+	dir := t.TempDir()
+	isolateTorquePaths(t, dir)
+	t.Setenv("TORQUE_DB_PATH", filepath.Join(dir, "test.db"))
+	t.Setenv("TORQUE_DATA_DIR", dir)
+	t.Setenv("TORQUE_POSTGRES_DSN", "")
+	t.Setenv("TORQUE_PROFILES_PATH", filepath.Join(dir, "no-such-profiles.yaml"))
+	t.Setenv("TORQUE_SCHED_ENABLED", "true")
+	t.Setenv("TORQUE_SCHED_WORKERS", "1")
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	base := "http://" + ln.Addr().String()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- runServe(ctx, ln, httpserver.Security{}) }()
+	waitForListen(t, base+"/api/v1/scheduler/status", 30*time.Second)
+
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "serve-e2e", Version: "1"}, nil).
+		Connect(ctx, &mcp.StreamableClientTransport{Endpoint: base + "/mcp", DisableStandaloneSSE: true, MaxRetries: -1}, nil)
+	require.NoError(t, err, "runServe must serve MCP at /mcp")
+	t.Cleanup(func() { _ = cs.Close() })
+
+	var names []string
+	for tool, err := range cs.Tools(ctx, nil) {
+		require.NoError(t, err)
+		names = append(names, tool.Name)
+	}
+	assert.Contains(t, names, "torque_task_create")
+
+	call := func(name string, args map[string]any) (string, bool) {
+		res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+		require.NoError(t, err)
+		require.NotEmpty(t, res.Content)
+		return res.Content[0].(*mcp.TextContent).Text, res.IsError
+	}
+	text, isErr := call("torque_scheduler_toggle", map[string]any{"enabled": true})
+	assert.False(t, isErr, "the daemon's scheduler is wired into /mcp: %s", text)
+	text, isErr = call("torque_inbox_poll", map[string]any{"to": "msg://agent/local/some-agent"})
+	assert.True(t, isErr)
+	assert.Contains(t, text, "inbox polling not available")
+
+	req, err := http.NewRequest(http.MethodPost, base+"/mcp", strings.NewReader("{}"))
+	require.NoError(t, err)
+	req.Header.Set("Origin", "https://evil.example")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	assert.Contains(t, string(body), "origin not allowed", "/mcp is behind the API's origin policy")
+
+	cancel()
+	select {
+	case err := <-done:
+		assert.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("runServe did not shut down")
+	}
 }

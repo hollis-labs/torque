@@ -42,8 +42,9 @@ Torque is designed as a local-first tool for one operator on one machine.
   local user who can reach the port is still trusted.
 - **Binding any other address requires a token.** `torque serve` refuses to
   start on a non-loopback `--addr` (including `:8990` and `0.0.0.0`) unless
-  `TORQUE_API_TOKEN` or `--token` is set. With a token set, every `/api`
-  request, loopback ones included, must send `Authorization: Bearer <token>`.
+  `TORQUE_API_TOKEN` or `--token` is set. With a token set, every `/api/v1`
+  and `/mcp` request, loopback ones included, must send
+  `Authorization: Bearer <token>`.
   Other browser origins must be listed in `TORQUE_CORS_ORIGINS` or
   `--cors-origin`. Serve has no TLS, so put a TLS-terminating proxy in front
   of it before the token crosses a network.
@@ -58,6 +59,14 @@ Torque is designed as a local-first tool for one operator on one machine.
 - **`torque mcp`** speaks MCP over stdio to the process that launched it and can
   create and change tasks; run it only for clients you trust. Write and
   destructive tools are available to that client.
+- **`/mcp`**, served by `torque serve`, carries the same write surface as
+  `/api/v1` and is gated exactly as it is: the same origin policy and bearer
+  token on the same listener, so it is reachable no more widely than the API.
+  `torque mcp --remote` is its stdio client. Treat anyone who can call `/mcp`
+  as able to do whatever the tools allow. Unlike stdio `torque mcp`, `/mcp`
+  is wired to the daemon's live scheduler, so `torque_scheduler_toggle` works
+  through it: an agent whose `torque mcp` runs `--remote` can pause and resume
+  dispatch, with the authority of the `/api/v1` scheduler toggle.
 - New tasks created through MCP start as `manual`, so they do not dispatch until
   someone promotes them; treat that as a safeguard, not an access control.
 - Tasks run with whatever tools, permissions and environment the task or launch
