@@ -369,6 +369,8 @@ export interface TaskFilter {
   search?: string
   limit?: number
   offset?: number
+  cursor?: string
+  include_total?: boolean
   /** Narrow to a single task-kind. "plan" is used by the Plans GUI. */
   kind?: TaskKind
   /**
@@ -711,6 +713,8 @@ export interface ListPage<T> {
     has_more: boolean
     next_cursor: string | null
     total?: number
+    offset?: number
+    next_offset?: number | null
     sort_by?: string
     sort_dir?: 'asc' | 'desc'
   }

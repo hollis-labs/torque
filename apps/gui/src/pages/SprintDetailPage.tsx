@@ -14,7 +14,7 @@ import { EVENT_REFETCH_DEBOUNCE_MS } from '@/lib/debounce'
 import { rollupFromStatusCounts } from '@/lib/scope-metrics'
 import type { Project, Sprint, TaskScopeRollupResponse } from '@/lib/types'
 
-const SSE_EVENTS = ['sprint.updated', 'sprint.created', 'sprint.deleted', 'task.updated', 'task.created', 'task.transitioned']
+const SSE_EVENTS = ['sprint.updated', 'sprint.created', 'sprint.deleted']
 
 export default function SprintDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -24,11 +24,19 @@ export default function SprintDetailPage() {
   const [sprint, setSprint] = useState<Sprint | null>(null)
   const [project, setProject] = useState<Project | null>(null)
   const [taskRollup, setTaskRollup] = useState<TaskScopeRollupResponse | null>(null)
-  const taskPage = usePagedTaskSummaries({ sprint_id: id })
-  const reloadTasks = taskPage.reload
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const loadGeneration = useRef(0)
+
+  const refreshCounts = useCallback(async () => {
+    if (!id) return
+    const gen = loadGeneration.current
+    try {
+      const rollup = await api.taskRollup('sprint_id', { sprint_id: id })
+      if (gen === loadGeneration.current) setTaskRollup(rollup)
+    } catch { /* Keep the current counts on a failed background refresh. */ }
+  }, [api, id])
+  const taskPage = usePagedTaskSummaries({ sprint_id: id }, undefined, refreshCounts)
 
   // background: an event-driven refresh, which keeps the page on screen
   // instead of swapping in the skeleton.
@@ -43,7 +51,6 @@ export default function SprintDetailPage() {
       const [nextSprint, rollupRes] = await Promise.all([
         api.getSprint(id),
         api.taskRollup('sprint_id', { sprint_id: id }),
-        reloadTasks(),
       ])
       if (myGen !== loadGeneration.current) return
       const nextProject = nextSprint.project_id
@@ -60,7 +67,7 @@ export default function SprintDetailPage() {
     } finally {
       if (myGen === loadGeneration.current) setLoading(false)
     }
-  }, [api, id, reloadTasks])
+  }, [api, id])
 
   useEffect(() => {
     void load()
@@ -139,6 +146,11 @@ export default function SprintDetailPage() {
           <ScopeTaskPanel
             tasks={taskPage.tasks}
             total={taskPage.total}
+            hasMore={taskPage.hasMore}
+            isStale={taskPage.isStale}
+            loading={taskPage.loading}
+            error={taskPage.error}
+            onRetry={() => { void taskPage.refresh(); void refreshCounts() }}
             onLoadMore={() => void taskPage.loadMore()}
             loadingMore={taskPage.loadingMore}
           />
