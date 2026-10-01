@@ -26,6 +26,9 @@ type Server struct {
 	// routes return 503 in that mode rather than panic, mirroring sched=nil
 	// behavior.
 	sessions *agent.Manager
+
+	// mcp serves the MCP tool surface at /mcp (WithMCP). Nil answers 503.
+	mcp http.Handler
 	// broker is the typed envelope dispatcher (CW-20260503-0013, S1.3).
 	// Wired via SetBroker; /api/v1/broker/* routes 503 when nil.
 	broker *broker.Broker
@@ -66,6 +69,21 @@ func (s *Server) WithSessions(mgr *agent.Manager) *Server {
 	return s
 }
 
+// WithMCP mounts the MCP tool surface at /mcp (bootstrap.DaemonMCPHandler).
+// Like WithSessions, call it before the listener accepts connections.
+func (s *Server) WithMCP(h http.Handler) *Server {
+	s.mcp = h
+	return s
+}
+
+func (s *Server) serveMCP(w http.ResponseWriter, r *http.Request) {
+	if s.mcp == nil {
+		writeError(w, http.StatusServiceUnavailable, "the MCP endpoint is not configured on this server")
+		return
+	}
+	s.mcp.ServeHTTP(w, r)
+}
+
 func (s *Server) routes() {
 	r := s.router
 
@@ -74,6 +92,17 @@ func (s *Server) routes() {
 	// X-Real-IP / X-Forwarded-For, which let any caller claim to be
 	// loopback and pass adminGate (CW-20260930-0224). RemoteAddr is the TCP
 	// peer; nothing here trusts forwarding headers.
+
+	// MCP over Streamable HTTP: the tool surface `torque mcp` serves on
+	// stdio, for clients that must not open the database (agents under
+	// ProtectedPaths, through `torque mcp --remote`; CW-20261001-0199).
+	// Same listener and the same auth and origin policy as /api/v1, so it
+	// is never reachable more widely than the API.
+	r.Group(func(r chi.Router) {
+		r.Use(s.corsMiddleware)
+		r.Use(s.requireToken)
+		r.Handle("/mcp", http.HandlerFunc(s.serveMCP))
+	})
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(s.corsMiddleware)

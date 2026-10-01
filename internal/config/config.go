@@ -191,8 +191,8 @@ func Load() (*Config, error) {
 		// TORQUE_DB_PATH env override; no extra envOr needed here.
 		DBPath:       layout.MainDB(),
 		PostgresDSN:  os.Getenv("TORQUE_POSTGRES_DSN"),
-		HTTPPort:     envInt("TORQUE_HTTP_PORT", 8990),
-		APIToken:     strings.TrimSpace(os.Getenv("TORQUE_API_TOKEN")),
+		HTTPPort:     HTTPPortFromEnv(),
+		APIToken:     APITokenFromEnv(),
 		CORSOrigins:  envList("TORQUE_CORS_ORIGINS"),
 		RepoRoot:     os.Getenv("TORQUE_REPO"),
 		DataDir:      envOr("TORQUE_DATA_DIR", layout.DataDir()),
@@ -306,6 +306,16 @@ func envOr(key, fallback string) string {
 	}
 	return fallback
 }
+
+// HTTPPortFromEnv is the daemon's HTTP port as Load resolves it
+// (TORQUE_HTTP_PORT, default 8990). Unlike Load it resolves no paths, so it
+// creates nothing: `torque mcp --remote` uses it under ProtectedPaths, where
+// go-apppaths could not materialize the data dir (CW-20261001-0199).
+func HTTPPortFromEnv() int { return envInt("TORQUE_HTTP_PORT", 8990) }
+
+// APITokenFromEnv is the HTTP API token as Load resolves it
+// (TORQUE_API_TOKEN), without resolving any paths.
+func APITokenFromEnv() string { return strings.TrimSpace(os.Getenv("TORQUE_API_TOKEN")) }
 
 func envInt(key string, fallback int) int {
 	if v := os.Getenv(key); v != "" {

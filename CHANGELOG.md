@@ -8,6 +8,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- `torque serve` serves the MCP tool surface at `/mcp` (Streamable HTTP,
+  stateless) behind the same auth as `/api/v1`. `torque mcp --remote[=URL]`
+  (or `TORQUE_MCP_REMOTE`) relays stdio to it without opening the database,
+  creating any directory or running the orphan sweep, for agents whose
+  sandbox write-protects Torque's state. `/mcp` has no inbox-poll registry,
+  as stdio has none; the relay forwards requests concurrently, never
+  follows a redirect with the bearer, answers requests outstanding when the
+  daemon's connection dies, and reads `--remote URL` (without `=`) as an
+  error. A request that fails fails only itself (each forwarded request has
+  its own connection), an empty `--remote=` or `TORQUE_MCP_REMOTE` is an
+  error rather than the local database (a launcher exporting it empty to
+  mean "unset" must unset it), a URL value that cannot be validated is never
+  echoed in an error, and neither is a query string. A URL with an `@` that
+  is not `user:password@host` (a password holding an unencoded `/`, `#` or
+  `?` makes it parse as a different host) is refused before anything is
+  dialed (CW-20261001-0199).
 - A long-lived worker that ends its turn without moving its task out of
   `doing` is reminded once, then routed, instead of holding its project's
   slot until the 30-minute inactivity threshold. After 90 seconds idle
