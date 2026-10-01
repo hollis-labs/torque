@@ -132,6 +132,45 @@ func TestBootCopilotACP_OneShot(t *testing.T) {
 	}, acpSessionNewServers(t, calls[0]))
 }
 
+// TestBootCopilotACP_MuxOnlyUnderBypass is CW-20261001-0120's posture gate,
+// extending CW-20261001-0110 to ACP: an ACP session is offered the daemon's
+// mux MCP server only under bypassPermissions. Every other posture, unset
+// included, gets the run's loopback alone.
+func TestBootCopilotACP_MuxOnlyUnderBypass(t *testing.T) {
+	loopback := map[string]any{"type": "http", "name": "loopback", "url": "http://127.0.0.1:9/mcp", "headers": []any{}}
+	mux := map[string]any{"name": "mux", "command": "/usr/local/bin/mux", "args": []any{"mcp"}, "env": []any{map[string]any{"name": "MUX_TOKEN", "value": "x"}}}
+	for _, tc := range []struct {
+		permissionMode string
+		want           []map[string]any
+	}{
+		{"", []map[string]any{loopback}},
+		{"default", []map[string]any{loopback}},
+		{"acceptEdits", []map[string]any{loopback}},
+		{"plan", []map[string]any{loopback}},
+		{"bypassPermissions", []map[string]any{loopback, mux}},
+	} {
+		t.Run("mode="+tc.permissionMode, func(t *testing.T) {
+			fake := providertest.New(t, runtimes.Copilot, providertest.Replay("copilot/acp_turn"))
+			fake.Install()
+			cd := composeACPDeps(t, "copilot")
+			cd.Deps.Profiles = config.ProfileMap{"worker": {Executor: "cli", Provider: "copilot", PermissionMode: tc.permissionMode}}
+			cd.Deps.MuxCommand = "/usr/local/bin/mux"
+			cd.Deps.MuxArgs = []string{"mcp"}
+			cd.Deps.MuxEnv = []string{"MUX_TOKEN=x"}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			sess, err := cd.Manager.Boot(ctx, agent.Options{
+				TaskID: "CW-ACP-MUX", AgentProfile: "worker", Workdir: t.TempDir(), Mode: agent.ModeOneShot, Description: "say hello",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, agent.StatusDone, sess.Status)
+			require.Len(t, fake.Calls(), 1)
+			assert.Equal(t, tc.want, acpSessionNewServers(t, fake.Calls()[0]))
+		})
+	}
+}
+
 // TestBootCopilotACP_LongLivedSendTurn: a long-lived copilot session gets
 // its kickoff as the first prompt, and a later SendTurn reaches the same
 // ACP session as a second session/prompt.

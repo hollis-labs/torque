@@ -91,17 +91,18 @@ func selectACPRuntime(profile config.AgentProfile, desc registry.Descriptor, mod
 
 // acpMCPServers is the MCP server set an ACP session receives in session/new
 // (and session/load): the per-task loopback over streamable HTTP and, when
-// the daemon has one, the mux aggregator over stdio. The values are the ones
-// Boot hands go-providers for a native boot dir (PlantContext.MCPLoopbackURL
-// and SelfMCPCommand/Args/Env). go-agent-wrapper sends the HTTP one only to
-// an agent that advertises mcpCapabilities.http and reports the rest
-// through OnACPDiagnostic (acpSkippedMCPServers).
-func acpMCPServers(loopbackURL string, deps *Dependencies) []acp.MCPServer {
+// withMux is set and the daemon has one, the mux aggregator over stdio.
+// withMux is plantsMux's answer, which for ACP is bypassPermissions only. The
+// values are the ones Boot hands go-providers for a native boot dir
+// (PlantContext.MCPLoopbackURL and SelfMCPCommand/Args/Env). go-agent-wrapper
+// sends the HTTP one only to an agent that advertises mcpCapabilities.http
+// and reports the rest through OnACPDiagnostic (acpSkippedMCPServers).
+func acpMCPServers(loopbackURL string, deps *Dependencies, withMux bool) []acp.MCPServer {
 	var servers []acp.MCPServer
 	if loopbackURL != "" {
 		servers = append(servers, acp.MCPServer{Name: acpLoopbackMCPServer, URL: loopbackURL})
 	}
-	if deps != nil && deps.MuxCommand != "" {
+	if withMux && deps != nil && deps.MuxCommand != "" {
 		servers = append(servers, acp.MCPServer{
 			Name:    acpMuxMCPServer,
 			Command: deps.MuxCommand,
@@ -207,6 +208,10 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 		return nil, fmt.Errorf("%w: %s sessions take no go-sandbox profile (go-agent-wrapper refuses one for ACP agents)", ErrBootFailed, runtimeKind)
 	}
 
+	withMux := plantsMux(profile, runtimeKind)
+	if !withMux && deps.MuxCommand != "" {
+		log.Printf("agent.Boot: session=%s: mux MCP not offered to the ACP session for permission_mode %q; only bypassPermissions gets it (CW-20261001-0120)", sessID, profile.PermissionMode)
+	}
 	stderrWriter, _, closeStderr := openStderrSidecar(opts.RunID, ws.LogPath)
 	diagnostics := &acpDiagnostics{w: stderrWriter}
 	cfg := wrapper.Config{
@@ -221,7 +226,7 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 		WorkspaceDir:      ws.WorkspaceDir,
 		LogPath:           ws.LogPath,
 		HeartbeatInterval: mgr.pidPollInterval,
-		ACPMCPServers:     acpMCPServers(pb.loopbackURL, deps),
+		ACPMCPServers:     acpMCPServers(pb.loopbackURL, deps, withMux),
 		OnACPDiagnostic:   diagnostics.observe,
 	}
 

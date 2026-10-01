@@ -340,7 +340,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	// (deps.MuxCommand/MuxArgs/MuxEnv). These are runtime values, kept
 	// off the persisted-at-rest LaunchPlan deliberately.
 	prepared.PlantContext.MCPLoopbackURL = loopbackURL
-	if plantsMux(profile) {
+	if plantsMux(profile, runtimeKind) {
 		prepared.PlantContext.SelfMCPCommand = deps.MuxCommand
 		prepared.PlantContext.SelfMCPArgs = append([]string(nil), deps.MuxArgs...)
 		prepared.PlantContext.SelfMCPEnv = muxEnvSliceToMap(deps.MuxEnv)

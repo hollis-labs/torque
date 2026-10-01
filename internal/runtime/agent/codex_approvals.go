@@ -45,22 +45,28 @@ func codexApprovalMode(profile config.AgentProfile) gopermission.Mode {
 	}
 }
 
-// plantsMux reports whether a session's boot dir gets the daemon's `mux` MCP
-// server (deps.MuxCommand), which proxies vanta, torque and cerberus,
-// cerberus among them able to run commands and stop services on the host.
+// plantsMux reports whether a session gets the daemon's `mux` MCP server
+// (deps.MuxCommand), which proxies vanta, torque and cerberus, cerberus
+// among them able to run commands and stop services on the host. Outside
+// yolo only the run's own loopback is offered, structurally, wherever Torque
+// cannot gate mux's tools by posture:
 //
-// Codex sessions get it only under bypassPermissions (CW-20261001-0110).
-// Codex runs an MCP tool its server marks readOnlyHint without asking, so
-// the approval responder (codexApprovalHook) never sees those calls and
-// cannot gate them by posture; the live smoke had mux_health run unasked
-// under a default profile. Every other posture plants only the run's own
-// loopback. Claude and OpenCode keep mux as before: their tool approvals do
-// not have that bypass.
-func plantsMux(profile config.AgentProfile) bool {
-	if runtimeIDFor(profile.Provider) != string(runtimes.Codex) {
+//   - Codex (CW-20261001-0110). Codex runs an MCP tool its server marks
+//     readOnlyHint without asking, so the approval responder
+//     (codexApprovalHook) never sees those calls; the live smoke had
+//     mux_health run unasked under a default profile.
+//   - Every ACP session (CW-20261001-0120). Whether an ACP agent asks
+//     before running an MCP tool is unverified, and Torque answers no ACP
+//     permission request yet (CW-20261001-0113).
+//
+// Both get mux only under an explicit bypassPermissions; unset and every
+// other posture get the loopback alone. Claude and OpenCode on their native
+// runtimes keep mux as before: their tool approvals do not have that bypass.
+func plantsMux(profile config.AgentProfile, kind RuntimeKind) bool {
+	if !kind.ACP() && runtimeIDFor(profile.Provider) != string(runtimes.Codex) {
 		return true
 	}
-	return codexApprovalMode(profile) == gopermission.ModeYolo
+	return config.PermissionMode(profile.PermissionMode) == config.PermissionModeBypass
 }
 
 // codexLoopbackMCPServer is the [mcp_servers.<name>] key go-providers

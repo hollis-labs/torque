@@ -142,8 +142,8 @@ func serveWorkerLoopback(t *testing.T, store *sqlstore.Store, taskID string) *te
 // TestBootCopilotACP_WorkerCallsLoopbackMCP is CW-20261001-0097's acceptance,
 // completed by go-agent-wrapper v0.19.0 (CW-20261001-0120): a long-lived
 // Copilot task run boots through agent.Boot, session/new hands the agent
-// Torque's loopback and mux, and the worker's tool call on the loopback
-// lands a comment on its task.
+// Torque's loopback (and, at this default posture, not mux), and the
+// worker's tool call on the loopback lands a comment on its task.
 func TestBootCopilotACP_WorkerCallsLoopbackMCP(t *testing.T) {
 	dir := t.TempDir()
 	executable, err := os.Executable()
@@ -199,6 +199,5 @@ func TestBootCopilotACP_WorkerCallsLoopbackMCP(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &servers))
 	assert.Equal(t, []map[string]any{
 		{"type": "http", "name": "loopback", "url": loopbackURL, "headers": []any{}},
-		{"name": "mux", "command": "/usr/local/bin/mux", "args": []any{"mcp"}, "env": []any{}},
-	}, servers, "session/new carries the loopback and mux under the names native boot dirs plant")
+	}, servers, "session/new carries the loopback under the name native boot dirs plant, and no mux outside bypassPermissions")
 }

@@ -31,9 +31,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   which run only over ACP, and Claude, Codex and OpenCode with
   `runtime_kind: acp-stdio`. go-agent-wrapper owns the ACP session; Torque
   plants no boot dir for it. `session/new` carries the run's MCP servers
-  under the names native boot dirs use: `loopback` over HTTP and, when the
-  daemon has one, `mux` over stdio (go-agent-wrapper v0.19.0,
-  CW-20261001-0120). The task bundle and kickoff are the first prompt, sent
+  under the names native boot dirs use (go-agent-wrapper v0.19.0,
+  CW-20261001-0120): `loopback` over HTTP, and the daemon's `mux` over stdio
+  only under `permission_mode: bypassPermissions`. Every other posture,
+  unset included, offers the loopback alone, as for Codex
+  (CW-20261001-0110): whether an ACP agent asks before running an MCP tool
+  is unverified, and Torque answers no ACP permission request yet. The task bundle and kickoff are the first prompt, sent
   once the session exists so the kickoff can say whether the loopback's
   tools are there, and `SendTurn` sends each later turn as a
   `session/prompt`. The session's ACP diagnostics (the agent's stderr,
