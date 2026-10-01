@@ -111,6 +111,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- The boot kickoff, the planted `process.md` and the agent execution docs
+  name the per-task MCP server `loopback`, the name go-providers plants it
+  under (codex's `[mcp_servers.loopback]`, the `loopback` entry in Claude's
+  `.mcp.json` and OpenCode's config). They said `torque_loopback`, a server
+  no worker has (CW-20261001-0114).
 - An agent CLI installed outside the daemon's PATH launches. Boot pins the
   path go-providers' Detect resolves (its `*_CLI_PATH` override, PATH, then
   install dirs such as `~/.opencode/bin` and `~/.local/bin`) as the planted
