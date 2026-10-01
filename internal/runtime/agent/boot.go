@@ -1463,6 +1463,12 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 
 		terminalFailure: opts.terminalFailure,
 	}
+	// A resumed streaming-stdio session is ready before its first turn can
+	// show the CLI has lost the session; judge it before Boot returns
+	// (resume_verdict.go, CW-20261001-0202).
+	if autoFire && runtimeKind == RuntimeKindStreamingStdio {
+		sink.resume = newResumeWatch(cliAdapter, sessionIDPreset)
+	}
 	if usesOpencodePermissionReplies(profile, runtimeKind) {
 		sink.opencodePerms = newOpencodePermissionResponder(permissionPosture(profile), spawnWorkdir, stderrWriter)
 	}
@@ -1548,6 +1554,25 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		_ = os.RemoveAll(capturedBootDir)
 		_ = deps.UpdateSessionState(context.Background(), sessID, string(StatusFailed), 0, nil)
 		return nil, fmt.Errorf("%w: %v%s", ErrBootFailed, ctx.Err(), detail)
+	}
+	// A resume of a provider session the CLI no longer has fails the first
+	// turn, after ready: fail the boot with provider.ErrProviderSessionLost,
+	// as a subprocess runtime does, so ResumeSession and planstart boot
+	// fresh once (CW-20261001-0202).
+	if sink.resume != nil {
+		if lostErr := sink.resume.wait(ctx, h.runDone); lostErr != nil {
+			runCancel()
+			<-h.runDone
+			sink.flushBootFailure(lostErr)
+			closeStderr()
+			sidecar.Close()
+			shutdownLoopbackHandle(loopback)
+			bootDirPlanted = false
+			_ = os.RemoveAll(capturedBootDir)
+			_ = deps.UpdateSessionState(context.Background(), sessID, string(StatusFailed), 0, nil)
+			log.Printf("agent.Boot: session=%s: the provider no longer has resume session %q (%v)", sessID, sessionIDPreset, lostErr)
+			return nil, &bootFailedError{detail: pb.redact.Text(lostErr.Error()), cause: lostErr}
+		}
 	}
 	bootDirPlanted = false
 

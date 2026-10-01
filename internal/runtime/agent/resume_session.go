@@ -33,7 +33,9 @@ func (m *Manager) ResumesSession(rec *sqlstore.SessionRecord) bool {
 // to fresh-boot unless ResumesSession says the profile's runtime genuinely
 // resumes — the single decision point per sprint-α D4 (no per-call probes).
 // The one fallback after the decision: a resume whose provider no longer
-// has the session (Boot fails with provider.ErrProviderSessionLost) boots
+// has the session (Boot fails with provider.ErrProviderSessionLost: a
+// subprocess launch's first turn fails, and Boot judges a streaming-stdio
+// launch from the CLI's stderr and first frame, resume_verdict.go) boots
 // fresh once, with the kickoff. The returned Session's Resumed says which
 // it did.
 //

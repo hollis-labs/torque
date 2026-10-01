@@ -240,6 +240,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- A claude-code (streaming-stdio) resume whose provider session is gone now
+  boots fresh once, with the kickoff, as a subprocess resume already did
+  (CW-20261001-0174). Boot returned as soon as the process was up, so the
+  lost id failed the first turn afterwards: the worker was reported
+  `Resumed` and ended `failed`. Boot now waits, up to 3 s, for the CLI's
+  first sign of whether the resume held (a non-error frame, or its "No
+  conversation found with session ID" on stderr), and fails with
+  `ErrProviderSessionLost` on the latter, so `ResumeSession` and planstart
+  fall back and report `Resumed=false` / `used_resume=false`. A healthy
+  resume returns at the first frame; any other outcome behaves as before
+  (CW-20261001-0202).
 - A long-lived run on the go-agent-wrapper path (opencode serve, claude-code,
   agy, ACP) ends as soon as a turn fails, blocked with the provider's
   message, as a Codex app-server run already did. An opencode serve worker

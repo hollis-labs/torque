@@ -58,6 +58,11 @@ type torqueRuntimeEventSink struct {
 	// (flushBootFailure, CW-20261001-0105). Nil disables it.
 	capture *bootCapture
 
+	// resume judges whether a resumed streaming-stdio session's resume held,
+	// from its stderr and stdout (resume_verdict.go, CW-20261001-0202). Nil
+	// for every other session, and once Boot has its answer it is ignored.
+	resume *resumeWatch
+
 	// opencodePerms answers an opencode serve session's permission prompts
 	// from the stdout lines carrying its SSE frames (CW-20261001-0148).
 	// Nil for every other session.
@@ -121,14 +126,20 @@ func (s *torqueRuntimeEventSink) Write(ctx context.Context, ev runtimeevents.Eve
 		s.handleTurnFailed(ctx, ev.Payload, ev.Process.ProviderSessionID)
 	case runtimeevents.KindStderrLine:
 		s.handleStderrLine(ev.Payload)
-		if line, ok := decodeStreamLine(ev.Payload); ok && s.capture != nil {
-			s.capture.addStderr(s.redact.Text(line))
+		if line, ok := decodeStreamLine(ev.Payload); ok {
+			s.resume.stderrLine(line)
+			if s.capture != nil {
+				s.capture.addStderr(s.redact.Text(line))
+			}
 		}
+	case runtimeevents.KindSessionLost:
+		s.resume.sessionLost()
 	case runtimeevents.KindStdoutLine:
 		line, ok := decodeStreamLine(ev.Payload)
 		if !ok {
 			break
 		}
+		s.resume.stdoutLine(line)
 		if s.opencodePerms != nil {
 			s.opencodePerms.observe(line)
 		}

@@ -24,7 +24,10 @@ type ResumeSupport struct {
 	// ever attempted. What happens when the id is lost varies:
 	//   - a subprocess launch fails its first turn with a SessionLostError,
 	//     and ResumeSession and planstart boot fresh once instead;
-	//   - a streaming-stdio launch fails the turn after Boot;
+	//   - a streaming-stdio launch is ready before its first turn can fail;
+	//     Boot judges the resume from the CLI's stderr and first frame
+	//     (resume_verdict.go) and fails with the same error, so the same
+	//     fresh boot follows (CW-20261001-0202);
 	//   - an ACP agent that does not advertise loadSession opens a new
 	//     session without saying so, which Torque does not detect yet
 	//     (CW-20261001-0202).
