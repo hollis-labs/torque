@@ -201,7 +201,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   these sessions too; it reached only the legacy sessions. A boot that fails
   after its boot dir is allocated (planting, Codex authentication, launch
   conversion) removes the dir instead of leaving it in `$TMPDIR/torque-boot`
-  with no session row to name it (CW-20261001-0161).
+  with no session row to name it (CW-20261001-0161). A codex app-server
+  session (the legacy path) that ends before Boot has registered its
+  resources has them released on arrival rather than kept until the daemon
+  stops (CW-20261001-0166).
 - OpenCode `serve-http` sessions no longer hang on a permission prompt.
   Torque answers each `permission.asked` through serve's
   `/permission/{id}/reply`, by the profile's `permission_mode`:

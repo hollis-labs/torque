@@ -46,15 +46,19 @@ type Manager struct {
 	nowFn           func() time.Time
 	pidPollInterval time.Duration
 
-	mu             sync.RWMutex
-	stopped        bool
-	inner          *agentsessions.Manager
-	loopbacks      map[string]LoopbackHandle // sessID → handle; shut down in Stop
-	stderrs        map[string]func()         // sessID → close() for the per-session stderr sidecar
-	streams        map[string]func()         // sessID → close() for the per-session stream sidecar (CW-20260509-0001)
-	bootDirs       map[string]string         // sessID → ephemeral boot dir; os.RemoveAll in Stop
-	pidPollers     map[string]func()         // sessID → close() for the per-session PID poller (CW-20260509-0008) -- legacy (jsonrpc-stdio) sessions only; wrapper-routed sessions get PID/heartbeat from torqueRuntimeEventSink instead (CW-20260904-0098)
-	activityFrozen map[string]struct{}       // sessID → suppress heartbeat TouchSession after an error/auth frame; lifted by content-bearing stream events or teardown (CW-20260519-0130)
+	mu        sync.RWMutex
+	stopped   bool
+	inner     *agentsessions.Manager
+	loopbacks map[string]LoopbackHandle // sessID → handle; shut down in Stop
+	stderrs   map[string]func()         // sessID → close() for the per-session stderr sidecar
+	streams   map[string]func()         // sessID → close() for the per-session stream sidecar (CW-20260509-0001)
+	bootDirs  map[string]string         // sessID → ephemeral boot dir; os.RemoveAll in Stop
+	// pendingAdoption holds legacy sessions between m.inner.Start and Boot
+	// handing over their resources; true once the session has ended
+	// meanwhile (beginLegacyAdoption).
+	pendingAdoption map[string]bool
+	pidPollers      map[string]func()   // sessID → close() for the per-session PID poller (CW-20260509-0008) -- legacy (jsonrpc-stdio) sessions only; wrapper-routed sessions get PID/heartbeat from torqueRuntimeEventSink instead (CW-20260904-0098)
+	activityFrozen  map[string]struct{} // sessID → suppress heartbeat TouchSession after an error/auth frame; lifted by content-bearing stream events or teardown (CW-20260519-0130)
 
 	terminalMu              sync.Mutex
 	terminalFailed          map[string]struct{} // sessID → provider terminal failure already classified; state sink/event sink must not downgrade to done
@@ -100,6 +104,7 @@ func NewManager(deps *Dependencies) *Manager {
 		stderrs:          make(map[string]func()),
 		streams:          make(map[string]func()),
 		bootDirs:         make(map[string]string),
+		pendingAdoption:  make(map[string]bool),
 		pidPollers:       make(map[string]func()),
 		activityFrozen:   make(map[string]struct{}),
 		terminalFailed:   make(map[string]struct{}),
@@ -264,71 +269,6 @@ func (m *Manager) ProviderForProfile(name string) string {
 	return config.GetProfileOrDefault(m.deps.Profiles, name).Provider
 }
 
-// registerLoopback associates a per-session loopback handle so Stop / Wait
-// completion can shut it down deterministically. Caller takes ownership of
-// the lifetime when registerLoopback returns; Boot for ModeOneShot bypasses
-// this registration and shuts the handle down inline (synchronous lifecycle).
-func (m *Manager) registerLoopback(sessID string, h LoopbackHandle) {
-	if h == nil {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.loopbacks[sessID] = h
-}
-
-// registerStderrCloser associates a per-session stderr-sidecar closer so
-// Stop / sweep can flush + close the file. Same lifetime contract as
-// registerLoopback.
-func (m *Manager) registerStderrCloser(sessID string, closer func()) {
-	if closer == nil {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.stderrs[sessID] = closer
-}
-
-// registerStreamCloser associates a per-session stream-sidecar closer (the
-// CW-20260509-0001 stream.jsonl writer) so Stop / sweep can flush the
-// drain goroutine + close the file. Same lifetime contract as
-// registerStderrCloser.
-func (m *Manager) registerStreamCloser(sessID string, closer func()) {
-	if closer == nil {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.streams[sessID] = closer
-}
-
-// registerBootDir associates the per-task ephemeral tempdir with the session
-// so terminal-state observation + explicit Stop can os.RemoveAll it. Without
-// this, non-OneShot Modes (LongLived / Subagent / Background / Resume) would
-// leak $TMPDIR/torque-boot-* directories (with .mcp.json carrying the
-// loopback URL) until OS-level housekeeping reclaimed them. ModeOneShot
-// continues to clean inline via Boot's defer.
-func (m *Manager) registerBootDir(sessID, bootDir string) {
-	if bootDir == "" {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.bootDirs[sessID] = bootDir
-}
-
-// registerPidPoller associates the per-session PID-poller closer (CW-20260509-0008)
-// so Stop / sweep can stop the goroutine. Same lifetime contract as the other
-// per-session registrations.
-func (m *Manager) registerPidPoller(sessID string, closer func()) {
-	if closer == nil {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.pidPollers[sessID] = closer
-}
-
 // wrapperHandle is the go-agent-wrapper-routed counterpart to the legacy
 // path's implicit registration inside m.inner (agentsessions.Manager).
 // wrapper.Wrapper has no shared registry of its own -- each Run() owns a
@@ -351,19 +291,24 @@ type wrapperHandle struct {
 	finished bool
 }
 
-// wrapperResources are the per-session resources a long-lived wrapper
-// session holds until it ends: the loopback MCP listener, the stderr and
-// stream sidecars, and the planted boot dir. Each may be empty.
-type wrapperResources struct {
+// sessionResources are the per-session resources a long-lived session
+// holds until it ends: the loopback MCP listener, the stderr and stream
+// sidecars, the planted boot dir and (legacy path) the PID poller. Each may
+// be empty.
+type sessionResources struct {
 	loopback    LoopbackHandle
 	closeStderr func()
 	closeStream func()
 	bootDir     string
+	closePoller func()
 }
 
 // release frees the resources directly, for a session that ended before
 // they could be registered.
-func (r wrapperResources) release() {
+func (r sessionResources) release() {
+	if r.closePoller != nil {
+		r.closePoller()
+	}
 	shutdownLoopbackHandle(r.loopback)
 	if r.closeStderr != nil {
 		r.closeStderr()
@@ -373,6 +318,25 @@ func (r wrapperResources) release() {
 	}
 	if r.bootDir != "" {
 		_ = os.RemoveAll(r.bootDir)
+	}
+}
+
+// registerLocked hands r to teardownSession. m.mu must be held.
+func (m *Manager) registerLocked(sessID string, r sessionResources) {
+	if r.loopback != nil {
+		m.loopbacks[sessID] = r.loopback
+	}
+	if r.closeStderr != nil {
+		m.stderrs[sessID] = r.closeStderr
+	}
+	if r.closeStream != nil {
+		m.streams[sessID] = r.closeStream
+	}
+	if r.bootDir != "" {
+		m.bootDirs[sessID] = r.bootDir
+	}
+	if r.closePoller != nil {
+		m.pidPollers[sessID] = r.closePoller
 	}
 }
 
@@ -420,32 +384,57 @@ func (m *Manager) registerWrapperSession(sessID string, h *wrapperHandle) {
 	m.wrapperSessions[sessID] = h
 }
 
-// adoptWrapperResources registers res for teardown with sessID's session,
-// as registerLoopback, registerStderrCloser, registerStreamCloser and
-// registerBootDir do one by one. If the session has already ended (its run
+// adoptWrapperResources registers res for teardown with sessID's session
+// (teardownSession releases them on Stop or terminal state). If the session
+// has already ended (its run
 // goroutine called finishWrapperSession, which tore down whatever was
 // registered then), nothing would release res later, so it is released at
 // once instead. Both sides hold m.mu, so a session ending while Boot hands
 // its resources over cannot leak them.
-func (m *Manager) adoptWrapperResources(sessID string, h *wrapperHandle, res wrapperResources) {
+func (m *Manager) adoptWrapperResources(sessID string, h *wrapperHandle, res sessionResources) {
 	m.mu.Lock()
 	if h == nil || h.finished {
 		m.mu.Unlock()
 		res.release()
 		return
 	}
-	if res.loopback != nil {
-		m.loopbacks[sessID] = res.loopback
+	m.registerLocked(sessID, res)
+	m.mu.Unlock()
+}
+
+// beginLegacyAdoption marks a legacy (agentsessions) session whose
+// resources Boot will hand over once m.inner.Start returns. The session can
+// end before then: its terminal event runs teardownSession, which finds
+// nothing registered yet and records the end here instead
+// (CW-20261001-0166). Pair it with adoptLegacyResources, or with
+// abandonLegacyAdoption on a path that never hands anything over.
+func (m *Manager) beginLegacyAdoption(sessID string) {
+	m.mu.Lock()
+	m.pendingAdoption[sessID] = false
+	m.mu.Unlock()
+}
+
+// abandonLegacyAdoption drops the mark when Boot fails before handing over.
+func (m *Manager) abandonLegacyAdoption(sessID string) {
+	m.mu.Lock()
+	delete(m.pendingAdoption, sessID)
+	m.mu.Unlock()
+}
+
+// adoptLegacyResources is adoptWrapperResources for the legacy path: res is
+// registered for teardown, or released at once if the session already ended
+// (beginLegacyAdoption). Both sides hold m.mu, so a session that ends while
+// Boot hands its resources over cannot leak them.
+func (m *Manager) adoptLegacyResources(sessID string, res sessionResources) {
+	m.mu.Lock()
+	ended := m.pendingAdoption[sessID]
+	delete(m.pendingAdoption, sessID)
+	if ended {
+		m.mu.Unlock()
+		res.release()
+		return
 	}
-	if res.closeStderr != nil {
-		m.stderrs[sessID] = res.closeStderr
-	}
-	if res.closeStream != nil {
-		m.streams[sessID] = res.closeStream
-	}
-	if res.bootDir != "" {
-		m.bootDirs[sessID] = res.bootDir
-	}
+	m.registerLocked(sessID, res)
 	m.mu.Unlock()
 }
 
@@ -483,6 +472,11 @@ func (m *Manager) wrapperHandleFor(sessID string) (*wrapperHandle, bool) {
 // terminal-state observation in busEventSink.
 func (m *Manager) teardownSession(sessID string) {
 	m.mu.Lock()
+	if _, pending := m.pendingAdoption[sessID]; pending {
+		// Boot has not handed this session's resources over yet; tell it
+		// to release them on arrival (adoptLegacyResources).
+		m.pendingAdoption[sessID] = true
+	}
 	pidCloser := m.pidPollers[sessID]
 	delete(m.pidPollers, sessID)
 	loopback := m.loopbacks[sessID]

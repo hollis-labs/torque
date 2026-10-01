@@ -478,6 +478,10 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	return bootLegacy(ctx, deps, mgr, opts, pb)
 }
 
+// legacyAdoptHook runs just before bootLegacy hands a long-lived session's
+// resources over; a test uses it to end the session first.
+var legacyAdoptHook = func(string) {}
+
 // plantBootDir plants a prepared launch's boot dir (providerplant's
 // PrepareExecution); a var so a test can make planting fail.
 var plantBootDir = providerplant.PrepareExecution
@@ -552,7 +556,7 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 	// Single deferred cleanup guarded by bootDirPlanted: it fires for
 	// every intermediate pre-Start failure and is a no-op once cleared.
 	// The flag is cleared the instant mgr.inner.Start() returns nil, so
-	// the success path keeps the dir (registerBootDir / OneShot inline
+	// the success path keeps the dir (adoptLegacyResources / OneShot inline
 	// cleanup take over) and the Start-error path — which clears the flag
 	// too — does its own os.RemoveAll without this defer double-removing.
 	bootDirPlanted := capturedBootDir != ""
@@ -704,7 +708,7 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 	// child spawn, so the captured path is available immediately after
 	// Start returns nil). Workdir on the row stays at opts.Workdir — the
 	// project root, which is the most useful forensic value; the planted
-	// bootDir lives in metaKeyBootDir and registerBootDir.
+	// bootDir lives in metaKeyBootDir and the adopted session resources.
 	persistedMeta := callerSessionMeta(opts.SessionMeta)
 	persistedMeta[metaKeyMode] = opts.Mode.String()
 	persistedMeta[metaKeyWorkspaceDir] = ws.WorkspaceDir
@@ -1033,7 +1037,11 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 	if opts.Mode != ModeOneShot && !opts.RetainContextOnLongLivedStart {
 		startCtx = context.WithoutCancel(ctx)
 	}
+	if opts.Mode != ModeOneShot {
+		mgr.beginLegacyAdoption(sessID)
+	}
 	if err := mgr.inner.Start(startCtx, startReq); err != nil {
+		mgr.abandonLegacyAdoption(sessID)
 		closeStderr()
 		closeStreamFanout()
 		shutdownLoopbackHandle(loopback)
@@ -1049,7 +1057,7 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 		return nil, fmt.Errorf("%w: %v", ErrBootFailed, err)
 	}
 	// Start succeeded — the planted boot dir is now owned by the running
-	// session (registerBootDir below for long-lived modes, the OneShot
+	// session (adoptLegacyResources below for long-lived modes, the OneShot
 	// inline defer for ModeOneShot). Clear the leak guard so the deferred
 	// cleanup is a no-op on every success path.
 	bootDirPlanted = false
@@ -1072,22 +1080,28 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 	// runs synchronously below and drives its own teardown via Stop.
 	// Boot dir cleanup is consumer-owned post Stage-2 (the session lib's
 	// AutoPlantBootDir terminal-state cleanup is no longer in play):
-	// registerBootDir hands the planted dir to Manager.teardownSession,
+	// adoptLegacyResources hands the planted dir to Manager.teardownSession,
 	// which os.RemoveAll's it on Stop / terminal-state observation.
 	if opts.Mode != ModeOneShot {
-		mgr.registerLoopback(sessID, loopback)
-		mgr.registerStderrCloser(sessID, closeStderr)
-		mgr.registerStreamCloser(sessID, closeStreamFanout)
-		if capturedBootDir != "" {
-			mgr.registerBootDir(sessID, capturedBootDir)
-		}
+		legacyAdoptHook(sessID)
 		// Per-session PID poller (CW-20260509-0008): the lib records pid only
 		// at launch (always 0 for adapter-mode) and never refreshes the row's
 		// last_activity between turns. The poller bridges that gap and drives
 		// a clean Stop the moment Health.Alive flips false so orchestrators
 		// finish in state=done instead of waiting for the next daemon-restart
 		// sweep to mark the row crashed.
-		mgr.registerPidPoller(sessID, startPidPoller(mgr, sessID, mgr.pidPollInterval))
+		//
+		// All of it is handed over at once: a session that already ended
+		// (its terminal event ran teardownSession before this point) gets
+		// it released here instead of registered with nothing left to
+		// release it (CW-20261001-0166).
+		mgr.adoptLegacyResources(sessID, sessionResources{
+			loopback:    loopback,
+			closeStderr: closeStderr,
+			closeStream: closeStreamFanout,
+			bootDir:     capturedBootDir,
+			closePoller: startPidPoller(mgr, sessID, mgr.pidPollInterval),
+		})
 	}
 
 	sess = &Session{
@@ -1549,13 +1563,13 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		// Torn down by Stop, Shutdown, or the run goroutine when the
 		// session ends on its own (finishWrapperSession); released at once
 		// if it already has.
-		mgr.adoptWrapperResources(sessID, h, wrapperResources{
+		mgr.adoptWrapperResources(sessID, h, sessionResources{
 			loopback:    loopback,
 			closeStderr: closeStderr,
 			closeStream: sidecar.Close,
 			bootDir:     capturedBootDir,
 		})
-		// No registerPidPoller here: KindSessionHeartbeat/KindProcessStarted
+		// No PID poller here: KindSessionHeartbeat/KindProcessStarted
 		// from the sink replace pid_poller.go's job for wrapper-routed
 		// sessions (see wrapper_sink.go's Write doc comments).
 	}
