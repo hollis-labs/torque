@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/hollis-labs/torque/internal/service/pagination"
 	"strconv"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 )
 
 func (a *Adapter) registerSubtodoTools() {

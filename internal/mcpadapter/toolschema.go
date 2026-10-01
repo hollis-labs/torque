@@ -2,6 +2,7 @@ package mcpadapter
 
 import (
 	"fmt"
+
 	"github.com/hollis-labs/torque/internal/service/pagination"
 )
 
