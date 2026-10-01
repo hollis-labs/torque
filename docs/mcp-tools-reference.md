@@ -731,12 +731,15 @@ provides a deliberate override without claiming an authorization model.
 ### Run list cursor contract
 
 `torque_run_list` queries across tasks by default; `task_id` is optional.
-It accepts task/project/sprint/epic scopes, CSV `status`, inclusive `since`
+It accepts task/project/sprint/epic scopes, CSV `status`, `executor`, `profile`, inclusive `since`
 and `until` (RFC3339 or Unix milliseconds), `limit`, `offset`, `cursor`,
 `sort_by`, `sort_dir`, `include_total`, and `verbose`. Sorts are `started_at`
 (default descending), `status`, `duration` and `cost`, with numeric ID
 ascending for ties. Duration is rounded completed elapsed milliseconds;
-unfinished runs sort at -1.
+unfinished runs sort at -1. `executor` matches runs.executor. `profile` is the
+current task launch_profile, falling back to agent_profile, not its historical
+profile at run time. CSV entries are trimmed, deduplicated and blanks ignored;
+unknown values return no matches. Values in one filter use OR; filters use AND.
 
 The payload is `{items,meta:{returned,limit,has_more,next_cursor,total?}}`: page
 size defaults to 50 and clamps at 200, total is opt-in, and the final cursor
@@ -755,7 +758,7 @@ feature flag; run facets are always registered.
 | `torque_project_facets` | `status`, `search`, `include_archived` | `status` |
 | `torque_epic_facets` | `status`, `project_id`, `search`, `include_archived` | `status`, `project_id`, `priority` |
 | `torque_sprint_facets` | `status`, `project_id`, `search`, `include_archived`, `over_budget`, `cost_budget_min`, `cost_budget_max` | `status`, `project_id`, `approval_mode` |
-| `torque_run_facets` | `task_id`, `project_id`, `sprint_id`, `epic_id`, CSV `status`, inclusive `since`/`until` (RFC3339 or Unix milliseconds) | `status`, `executor`, `profile` |
+| `torque_run_facets` | `task_id`, `project_id`, `sprint_id`, `epic_id`, CSV `status`/`executor`/`profile`, inclusive `since`/`until` (RFC3339 or Unix milliseconds) | `status`, `executor`, `profile` |
 
 `dimensions` is CSV (defaults to all supported, duplicates removed).
 `bucket_limit` defaults to 50, zero uses the default, values above 200 clamp,
@@ -804,7 +807,9 @@ with zero totals and an empty status map. Buckets are chronological and
 
 Required `since`/`until` use the inclusive run-start filters from
 `torque_run_list` (RFC3339 or Unix millis). Optional `task_id`, `project_id`,
-`sprint_id`, `epic_id` and CSV `status` share the same cohort predicates.
+`sprint_id`, `epic_id` and CSV `status`/`executor`/`profile` share the same cohort predicates.
+Profile matches the current task selector (launch_profile, fallback agent_profile),
+exactly as the profile facet bucket; it is not a historical run snapshot.
 `bucket` is hour or day, default day; `tz_offset_minutes` is a fixed offset
 integer between -840 and 840, default 0. Fixed offsets do not model DST.
 An inclusive upper bound exactly on an edge includes that edge's bucket.

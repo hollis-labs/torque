@@ -9,6 +9,9 @@ import (
 	"strings"
 )
 
+// Profiles reflect the task's current selector, not a historical run snapshot.
+const runProfileExpr = "COALESCE(NULLIF(profile_task.launch_profile,''),profile_task.agent_profile)"
+
 // RunFilterSQL is the cohort predicate shared by pages, counts and facets.
 // Alias r is runs; scoped queries also join tasks as t.
 func (s *Store) RunFilterSQL(f RunFilter) (string, string, []any) {
@@ -17,6 +20,9 @@ func (s *Store) RunFilterSQL(f RunFilter) (string, string, []any) {
 	args := []any{}
 	if f.ProjectID != "" || f.SprintID != "" || f.EpicID != "" {
 		from += " INNER JOIN tasks t ON t.id = r.task_id"
+	}
+	if len(f.Profiles) > 0 {
+		from += " LEFT JOIN tasks profile_task ON profile_task.id = r.task_id"
 	}
 	for _, v := range []struct{ col, value string }{{"r.task_id", f.TaskID}, {"t.project_id", f.ProjectID}, {"t.sprint_id", f.SprintID}, {"t.epic_id", f.EpicID}} {
 		if v.value != "" {
@@ -34,13 +40,19 @@ func (s *Store) RunFilterSQL(f RunFilter) (string, string, []any) {
 		v, _ := s.timestampArg(f.Until.UTC().Format(SQLiteDatetimeLayoutWithFractional))
 		args = append(args, v)
 	}
-	if len(f.Statuses) > 0 {
-		marks := make([]string, len(f.Statuses))
-		for i, v := range f.Statuses {
-			marks[i] = "?"
-			args = append(args, v)
+	for _, filter := range []struct {
+		column string
+		values []string
+	}{{"r.status", f.Statuses}, {"r.executor", f.Executors}, {runProfileExpr, f.Profiles}} {
+		if len(filter.values) == 0 {
+			continue
 		}
-		where = append(where, "r.status IN ("+strings.Join(marks, ",")+")")
+		marks := make([]string, len(filter.values))
+		for i, value := range filter.values {
+			marks[i] = "?"
+			args = append(args, value)
+		}
+		where = append(where, filter.column+" IN ("+strings.Join(marks, ",")+")")
 	}
 	return from, " WHERE " + strings.Join(where, " AND "), args
 }

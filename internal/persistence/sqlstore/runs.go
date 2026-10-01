@@ -191,6 +191,8 @@ type RunFilter struct {
 	ProjectID      string
 	SprintID       string
 	EpicID         string
+	Executors      []string
+	Profiles       []string
 	Statuses       []string
 	Since          time.Time
 	Until          time.Time

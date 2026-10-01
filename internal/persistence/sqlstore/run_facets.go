@@ -5,8 +5,10 @@ package sqlstore
 // legacy agent profile; runs do not persist a historical profile snapshot.
 func (s *Store) RunFacets(f RunFilter, dims []string, limit int) (EntityFacetResult, error) {
 	from, where, args := s.RunFilterSQL(f)
-	from += " LEFT JOIN tasks profile_task ON profile_task.id = r.task_id"
-	columns := map[string]string{"status": "r.status", "executor": "r.executor", "profile": "COALESCE(NULLIF(profile_task.launch_profile,''),profile_task.agent_profile)"}
+	if len(f.Profiles) == 0 {
+		from += " LEFT JOIN tasks profile_task ON profile_task.id = r.task_id"
+	}
+	columns := map[string]string{"status": "r.status", "executor": "r.executor", "profile": runProfileExpr}
 	out, err := s.columnFacets(from, where, args, dims, columns, limit)
 	if err != nil {
 		return out, err

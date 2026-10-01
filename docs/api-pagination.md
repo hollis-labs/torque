@@ -155,11 +155,15 @@ all list pages to count them in the browser. Available aggregates are:
   `bucket_limit` bounds parent groups independently of each dimension's buckets.
   All statuses for a returned parent are complete.
 - HTTP `GET /api/v1/runs/facets`, MCP `torque_run_facets`: the exact `/runs`
-  cohort filters (`task_id`, `project_id`, `sprint_id`, `epic_id`, CSV `status`,
+  cohort filters (`task_id`, `project_id`, `sprint_id`, `epic_id`, CSV `status`, `executor`, `profile`,
   inclusive `since`/`until` as RFC3339 or Unix milliseconds). Dimensions are
   `status`, `executor`, `profile`. The profile bucket is the **current task
   profile, not the profile at run time**: nonempty `launch_profile`, falling
-  back to `agent_profile`. Runs do not store a historical profile snapshot.
+  back to `agent_profile`. The `profile` filter uses that exact same expression;
+  `executor` matches the raw run executor. CSV values are trimmed, deduplicated
+  and empty entries ignored, as for status; unknown values simply match no rows.
+  Values within each filter use OR; separate filters combine with AND.
+  Runs do not store a historical profile snapshot.
   `totals` is `{cost,prompt_tokens,completion_tokens}`: cost from canonical
   `cost_ledger` rows joined by run ID to the matching runs, tokens from run
   records. The date window filters run start times, never ledger timestamps.
@@ -167,7 +171,8 @@ all list pages to count them in the browser. Available aggregates are:
   multiplies token or run counts. Empty cohorts return zero totals.
 
 - HTTP `GET /api/v1/runs/timeseries`, MCP `torque_run_timeseries`:
-  gap-free hourly/daily aggregates over the same run cohort. `since` and
+  gap-free hourly/daily aggregates over the same run cohort, including CSV
+  status/executor/current task profile. `since` and
   `until` are required inclusive run-start bounds (RFC3339 or Unix millis).
   `bucket=hour|day` defaults to day. `tz_offset_minutes` is a fixed offset
   from UTC, default 0, integer -840 through 840; it does not apply DST rules.
@@ -248,7 +253,7 @@ source and MCP `tools/list`.
 | Projects `/projects` | C (CW-0563): paged by default; T: met | C: named entity allow-list; T: retain | C (CW-0563): status, archive, search; T: met | C (CW-0563): opt-in total; T: met | C: `/projects/facets`, `torque_project_facets` + bounded parent task rollups; T: retain | C (CW-0563): `torque_project_list`, common query/count envelope; T: met |
 | Issues `/issues`, `/issues/search` | C (CW-0563): paged list/search by default; T: met | C: task allow-list; T: retain | C: project, status, query, fixed issue kind; T: retain | C (CW-0563): opt-in cohort total; T: met | C: no dedicated issue facets; T: task facets with issue kind | C (CW-0563): `torque_issue_list`, common envelope/count semantics; T: met |
 | Comments `/comments`, `/comments/search`, `/tasks/{id}/comments` | C (CW-0563): paged list/search/nested task list; T: met | C: `created_at`; T: retain | C: entity scope(s), author, dates, search; T: retain nested task restrictions | C (CW-0563): opt-in total; T: met | C: none; T: count through include_total, facets pending | C (CW-0563): `torque_comment_list`, `torque_comment_search`, shared 50/200/count policy; T: met |
-| Runs `/runs` | Implemented in CW-20261001-0562: cursor default, 50/200 policy; explicit offset incl. 0 without cursor emits offset/next_offset (CW-0626) | `started_at`, `status`, `duration`, `cost`; default `started_at desc`, numeric `id asc` | Shared task/project/sprint/epic scopes, CSV status, inclusive since/until (RFC3339 or Unix millis) | Opt-in `include_total`, cohort before cursor/offset/limit | `/runs/facets`, `torque_run_facets`: status/executor/current task profile + ledger cost/run tokens | `torque_run_list` shares service query and items/meta; MCP byte trims preserve continuation |
+| Runs `/runs` | Implemented in CW-20261001-0562: cursor default, 50/200 policy; explicit offset incl. 0 without cursor emits offset/next_offset (CW-0626) | `started_at`, `status`, `duration`, `cost`; default `started_at desc`, numeric `id asc` | Shared task/project/sprint/epic scopes, CSV status/executor/current task profile (CW-0663), inclusive since/until (RFC3339 or Unix millis) | Opt-in `include_total`, cohort before cursor/offset/limit | `/runs/facets`, `torque_run_facets`: status/executor/current task profile + ledger cost/run tokens | `torque_run_list` shares service query and items/meta; MCP byte trims preserve continuation |
 | Sessions `/sessions` | C: limit only; T: paged | C: fixed newest-first; T: proposed session fields below | C: state, task, project; T: retain + server query pending | C: none; T: opt-in total | C: none; T: count through include_total, facets pending | C: `torque_session_list` without continuation; T: paged parity |
 | Artifacts `/artifacts`, `/tasks/{id}/artifacts` | C: none; T: paged | C: fixed newest-first; T: proposed artifact fields below | C: required task; T: retain + type/run/query pending | C: none; T: opt-in total | C: none; T: count through include_total, facets pending | C: `torque_artifact_list`, brief/verbose byte cap; T: paged parity |
 | Collections `/collections` | C: none; T: paged | C: no public sort; T: proposed collection fields below | C: status; T: retain + server query pending | C: none; T: opt-in total | C: none; T: count through include_total, facets pending | C: `torque_collection_list` byte cap; T: paged parity |

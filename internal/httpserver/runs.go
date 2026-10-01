@@ -24,7 +24,7 @@ type runResponse struct {
 
 func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	allowed := map[string]bool{}
-	for _, key := range []string{"task_id", "project_id", "sprint_id", "epic_id", "status", "since", "until", "limit", "offset", "sort_by", "sort_dir", "cursor", "include_total"} {
+	for _, key := range []string{"task_id", "project_id", "sprint_id", "epic_id", "status", "executor", "profile", "since", "until", "limit", "offset", "sort_by", "sort_dir", "cursor", "include_total"} {
 		allowed[key] = true
 	}
 	q, e := parseStrictQuery(r, allowed)
@@ -32,7 +32,7 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, e.Error())
 		return
 	}
-	query := service.RunQuery{TaskID: q.Get("task_id"), ProjectID: q.Get("project_id"), SprintID: q.Get("sprint_id"), EpicID: q.Get("epic_id"), Statuses: strings.Split(q.Get("status"), ","), Since: q.Get("since"), Until: q.Get("until"), SortBy: q.Get("sort_by"), SortDir: q.Get("sort_dir"), Cursor: q.Get("cursor")}
+	query := service.RunQuery{TaskID: q.Get("task_id"), ProjectID: q.Get("project_id"), SprintID: q.Get("sprint_id"), EpicID: q.Get("epic_id"), Statuses: strings.Split(q.Get("status"), ","), Executors: strings.Split(q.Get("executor"), ","), Profiles: strings.Split(q.Get("profile"), ","), Since: q.Get("since"), Until: q.Get("until"), SortBy: q.Get("sort_by"), SortDir: q.Get("sort_dir"), Cursor: q.Get("cursor")}
 	query.Limit, e = queryInt(q, "limit")
 	if e != nil {
 		writeError(w, http.StatusBadRequest, e.Error())
