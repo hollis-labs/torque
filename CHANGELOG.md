@@ -26,6 +26,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Codex app-server approval requests are answered from the profile's
+  `permission_mode` instead of refused with -32601. Under `default`,
+  `acceptEdits` and an unset mode, MCP tool calls are approved only on the
+  run's own loopback server; every other server (including the planted
+  `mux`, which reaches cerberus) is declined, as are sandbox escalations
+  (`acceptEdits` also approves file changes). `plan` declines everything.
+  `bypassPermissions` maps to yolo and approves everything: the
+  `orchestrator` and `codex-implementer` profiles, which already run in a
+  danger-full-access sandbox, now get unattended mux/cerberus MCP approval
+  (flagged to revisit).
 - agentkit v0.12.2, go-providers v0.34.1, go-sandbox v0.4.1 and
   agent-contracts-leaf v0.3.0 (Sprint 4 PR1). go-providers v0.34.1 and
   go-sandbox v0.4.1 are security fixes; with v0.34.1 a launch that carries

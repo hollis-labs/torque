@@ -22,6 +22,11 @@ type codexProcessRecord struct {
 	Methods   []string `json:"methods"`
 	ThreadCWD string   `json:"thread_cwd"`
 	AuthReady bool     `json:"auth_ready"`
+	// ApprovalResult / ApprovalError are Torque's answer to the approval
+	// request the helper sends after turn/start when
+	// TORQUE_TEST_CODEX_APPROVAL is set.
+	ApprovalResult json.RawMessage `json:"approval_result,omitempty"`
+	ApprovalError  json.RawMessage `json:"approval_error,omitempty"`
 }
 
 // Run the real JSON-RPC runtime against a controlled subprocess. Replacing
@@ -78,16 +83,32 @@ func TestCodexRPCProcessHelper(t *testing.T) {
 		}
 	}
 	decoder, encoder := json.NewDecoder(os.Stdin), json.NewEncoder(os.Stdout)
+	writeRecord := func() {
+		raw, _ := json.Marshal(rec)
+		if err := os.WriteFile(os.Getenv("TORQUE_TEST_CODEX_RECORD"), raw, 0600); err != nil {
+			os.Exit(3)
+		}
+	}
 	for {
 		var request struct {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
 			Params map[string]any  `json:"params"`
+			Result json.RawMessage `json:"result"`
+			Error  json.RawMessage `json:"error"`
 		}
 		if err := decoder.Decode(&request); err != nil {
 			os.Exit(0)
 		}
 		if len(request.ID) == 0 {
+			continue
+		}
+		if request.Method == "" {
+			// A response from Torque to a request this helper sent.
+			if string(request.ID) == `"approval-1"` {
+				rec.ApprovalResult, rec.ApprovalError = request.Result, request.Error
+				writeRecord()
+			}
 			continue
 		}
 		rec.Methods = append(rec.Methods, request.Method)
@@ -99,13 +120,71 @@ func TestCodexRPCProcessHelper(t *testing.T) {
 		if request.Method == "turn/start" {
 			result["turn"] = map[string]string{"id": "turn-process"}
 		}
-		raw, _ := json.Marshal(rec)
-		if err := os.WriteFile(os.Getenv("TORQUE_TEST_CODEX_RECORD"), raw, 0600); err != nil {
-			os.Exit(3)
-		}
+		writeRecord()
 		if err := encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": result}); err != nil {
 			os.Exit(4)
 		}
+		if request.Method == "turn/start" && os.Getenv("TORQUE_TEST_CODEX_APPROVAL") != "" {
+			// What codex app-server sends before an MCP tool call it gates.
+			if err := encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": "approval-1", "method": "mcpServer/elicitation/request", "params": map[string]any{
+				"threadId": "thread-process", "turnId": "turn-process", "serverName": os.Getenv("TORQUE_TEST_CODEX_APPROVAL"),
+				"message": "Allow the torque_task_get tool?",
+				"_meta":   map[string]any{"codex_approval_kind": "mcp_tool_call"},
+			}}); err != nil {
+				os.Exit(5)
+			}
+		}
+	}
+}
+
+// Torque answers a codex app-server approval request from the profile's
+// permission_mode instead of refusing it with -32601 (CW-20261001-0055).
+// The real JSON-RPC runtime carries the request from the codex process to
+// the hook and the answer back.
+func TestBootCodexProcessAnswersApprovalRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name, permissionMode, server, wantAction string
+	}{
+		{"unset permission_mode approves a tool call on the run's loopback", "", "loopback", "accept"},
+		{"unset permission_mode declines a tool call on mux", "", "mux", "decline"},
+		{"plan declines a tool call on the loopback", "plan", "loopback", "decline"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			executable, err := os.Executable()
+			require.NoError(t, err)
+			binary := filepath.Join(dir, "codex")
+			quoted := "'" + strings.ReplaceAll(executable, "'", "'\\''") + "'"
+			require.NoError(t, os.WriteFile(binary, []byte(fmt.Sprintf("#!/bin/sh\nexec %s -test.run=TestCodexRPCProcessHelper -- \"$@\"\n", quoted)), 0700))
+			t.Setenv("CODEX_CLI_PATH", binary)
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			cd := composeDeps(t, fakeRuntimeConfig{}, "codex")
+			cd.Deps.RuntimeFactory = nil
+			cd.Deps.Profiles = config.ProfileMap{"worker": {Executor: "cli", Provider: "codex", PermissionMode: tc.permissionMode}}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			recordPath := filepath.Join(dir, "process.json")
+			sess, err := cd.Manager.Boot(ctx, agent.Options{TaskID: "CW-CODEX-APPROVAL", AgentProfile: "worker", Workdir: t.TempDir(), Mode: agent.ModeLongLived, Env: map[string]string{
+				"TORQUE_TEST_CODEX_HELPER": "1", "TORQUE_TEST_CODEX_RECORD": recordPath, "TORQUE_TEST_CODEX_APPROVAL": tc.server,
+			}})
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), sess.ID) })
+
+			var rec codexProcessRecord
+			require.Eventually(t, func() bool {
+				raw, err := os.ReadFile(recordPath)
+				if err != nil || json.Unmarshal(raw, &rec) != nil {
+					return false
+				}
+				return len(rec.ApprovalResult) > 0 || len(rec.ApprovalError) > 0
+			}, 5*time.Second, 20*time.Millisecond, "the codex process never received an answer to its approval request")
+			require.Empty(t, string(rec.ApprovalError), "the approval request was refused with an error (-32601 before CW-20261001-0055)")
+			var answer struct {
+				Action string `json:"action"`
+			}
+			require.NoError(t, json.Unmarshal(rec.ApprovalResult, &answer))
+			require.Equal(t, tc.wantAction, answer.Action)
+		})
 	}
 }
 
