@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
+	"github.com/hollis-labs/go-agent-wrapper/acp"
 	"github.com/hollis-labs/go-agent-wrapper/adapters"
 	"github.com/hollis-labs/go-agent-wrapper/launch"
 	llmtypes "github.com/hollis-labs/go-llm-types"
@@ -82,9 +83,8 @@ func TestSelectRuntime_Refusals(t *testing.T) {
 		{"bare claude stays retired", "claude", RuntimeKindStreamingStdio, "bare claude provider retired"},
 		{"empty provider", "", RuntimeKindSubprocess, "profile has empty provider"},
 		{"unknown provider", "gemini", RuntimeKindSubprocess, `unknown provider "gemini"`},
-		{"ACP-only copilot", "copilot", "", "copilot runs over ACP"},
-		{"ACP-only pi", "pi", "", "pi runs over ACP"},
 		{"mode the registry lacks", "opencode", RuntimeKindJsonRpcStdio, `does not support runtime kind "jsonrpc-stdio"`},
+		{"ACP mode the registry lacks", "pi", RuntimeKindACPTCP, `does not support runtime kind "acp-tcp"; supported: acp-stdio`},
 		{"claude PTY has no launch factory", "claude-code", RuntimeKindPTY, "unsupported selection"},
 	}
 	for _, tc := range cases {
@@ -96,6 +96,58 @@ func TestSelectRuntime_Refusals(t *testing.T) {
 	}
 	_, err := selectRuntime(config.AgentProfile{Provider: "claude-code"}, "worker", RuntimeKindPTY)
 	assert.True(t, errors.Is(err, launch.ErrUnsupportedSelection))
+}
+
+// TestSelectRuntime_ACP pins CW-20261001-0097: an ACP mode selects the
+// wrapper's ACP client adapter through launch.Select with no go-providers
+// adapter, for the ACP-only runtimes and for the native runtimes' acp-stdio.
+func TestSelectRuntime_ACP(t *testing.T) {
+	cases := []struct {
+		provider string
+		kind     RuntimeKind
+		runtime  runtimes.ID
+	}{
+		{"copilot", RuntimeKindACPStdio, runtimes.Copilot},
+		{"copilot", RuntimeKindACPTCP, runtimes.Copilot},
+		{"copilot-cli", RuntimeKindACPStdio, runtimes.Copilot},
+		{"pi", RuntimeKindACPStdio, runtimes.Pi},
+		{"pi-acp", RuntimeKindACPStdio, runtimes.Pi},
+		{"claude-code", RuntimeKindACPStdio, runtimes.Claude},
+		{"codex", RuntimeKindACPStdio, runtimes.Codex},
+		{"opencode", RuntimeKindACPStdio, runtimes.OpenCode},
+	}
+	for _, tc := range cases {
+		t.Run(tc.provider+"/"+string(tc.kind), func(t *testing.T) {
+			sel, err := selectRuntime(config.AgentProfile{Provider: tc.provider}, "worker", tc.kind)
+			require.NoError(t, err)
+			assert.Nil(t, sel.cli, "an ACP mode has no go-providers adapter")
+			require.NotNil(t, sel.wrapper)
+			_, ok := sel.wrapper.(acp.ClientAdapter)
+			assert.True(t, ok, "an ACP selection is an acp.ClientAdapter")
+			desc := sel.wrapper.Describe()
+			assert.Equal(t, adapters.ProtocolACP, desc.Protocol)
+			assert.Equal(t, string(tc.runtime), desc.Provider)
+			assert.True(t, sel.caps.ProviderSessionID, "session/new's sessionId is the provider session id")
+		})
+	}
+}
+
+func TestACPTaskDispatchRefusal(t *testing.T) {
+	// Pi never reaches the loopback, in any mode.
+	for _, mode := range []Mode{ModeOneShot, ModeLongLived} {
+		assert.Contains(t, acpTaskDispatchRefusal("pi", RuntimeKindACPStdio, mode), "pi-acp cannot reach Torque's loopback MCP")
+		assert.Contains(t, acpTaskDispatchRefusal("pi-acp", RuntimeKindACPStdio, mode), "pi-acp cannot reach Torque's loopback MCP")
+	}
+	// Until the wrapper delivers mcpServers, no ACP runtime can run a
+	// long-lived task worker; a one-shot run ends with its turn.
+	require.False(t, acpSessionsGetMCPServers, "update this test with the go-agent-wrapper v0.19.0 bump")
+	for _, provider := range []string{"copilot", "claude-code", "codex", "opencode"} {
+		assert.Equal(t, acpLongLivedTaskRunRefusal, acpTaskDispatchRefusal(provider, RuntimeKindACPStdio, ModeLongLived), provider)
+		assert.Empty(t, acpTaskDispatchRefusal(provider, RuntimeKindACPStdio, ModeOneShot), provider)
+	}
+	assert.Equal(t, acpLongLivedTaskRunRefusal, acpTaskDispatchRefusal("copilot", RuntimeKindACPTCP, ModeLongLived))
+	// Native kinds are never refused here.
+	assert.Empty(t, acpTaskDispatchRefusal("claude-code", RuntimeKindStreamingStdio, ModeLongLived))
 }
 
 func TestSelectRuntime_ClaudeDevModeAndAntigravityPosture(t *testing.T) {

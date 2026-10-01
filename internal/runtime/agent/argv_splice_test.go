@@ -69,9 +69,31 @@ func TestTorqueLaunchArgs(t *testing.T) {
 
 func TestTrimArgvPrefix(t *testing.T) {
 	prefix := []string{"app-server", "-c", `model="m"`}
-	assert.Equal(t, []string{"--enable", "f"}, trimArgvPrefix([]string{"app-server", "-c", `model="m"`, "--enable", "f"}, prefix))
-	assert.Empty(t, trimArgvPrefix(prefix, prefix))
+	rest, ok := trimArgvPrefix([]string{"app-server", "-c", `model="m"`, "--enable", "f"}, prefix)
+	assert.True(t, ok)
+	assert.Equal(t, []string{"--enable", "f"}, rest)
+	rest, ok = trimArgvPrefix(prefix, prefix)
+	assert.True(t, ok)
+	assert.Empty(t, rest)
 	other := []string{"app-server", "--enable", "f"}
-	assert.Equal(t, other, trimArgvPrefix(other, prefix), "argv without the prefix is unchanged")
-	assert.Equal(t, other, trimArgvPrefix(other, nil))
+	rest, ok = trimArgvPrefix(other, prefix)
+	assert.False(t, ok, "an argv that does not open with the prefix is reported")
+	assert.Equal(t, other, rest)
+	_, ok = trimArgvPrefix(other, nil)
+	assert.True(t, ok, "an empty prefix always matches")
+}
+
+// bootLegacy splices only what follows the adapter's own app-server command;
+// a prepared argv that does not open with it fails the boot instead of
+// running the command twice.
+func TestCodexAppServerArgs(t *testing.T) {
+	command := []string{"app-server", "-c", `model="m"`}
+	args, err := codexAppServerArgs([]string{"app-server", "-c", `model="m"`, "--enable", "f"}, command)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--enable", "f"}, args)
+
+	_, err = codexAppServerArgs([]string{"app-server", "--enable", "f"}, command)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `["app-server" "--enable" "f"]`)
+	assert.Contains(t, err.Error(), `model=\"m\"`)
 }

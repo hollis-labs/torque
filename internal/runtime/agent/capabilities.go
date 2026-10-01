@@ -27,6 +27,8 @@ import (
 //	gemini      → false (no native resume primitive; falls back to fresh-boot)
 //	copilot     → false (no native resume; gemini-style fresh-boot fallback)
 //	opencode    → false (no native resume primitive; falls back to fresh-boot)
+//	pi          → false (ACP session/load exists, but no resume path is wired;
+//	                     fresh-boot like copilot)
 //
 // Unknown provider names report zero-value capabilities (all false). The
 // caller is expected to validate provider name separately via adapterFor at
@@ -47,7 +49,7 @@ func ProviderCapabilities(provider string) executor.ExecutorCapabilities {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "claude", "claude-code", "codex":
 		caps.SupportsResume = true
-	case "gemini", "copilot", "opencode":
+	case "gemini", "copilot", "opencode", "pi":
 		caps.SupportsResume = false
 	default:
 		// Unknown provider — zero-value capability set (everything false).

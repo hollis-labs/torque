@@ -114,3 +114,25 @@ func TestCodexApprovalHook_MCPToolCallsOnlyOnLoopback(t *testing.T) {
 		}
 	}
 }
+
+// plantsMux withholds mux only from codex sessions short of
+// bypassPermissions (CW-20261001-0110); Claude and OpenCode are unchanged.
+func TestPlantsMux(t *testing.T) {
+	for _, tc := range []struct {
+		provider, mode string
+		want           bool
+	}{
+		{"codex", "", false},
+		{"codex", "default", false},
+		{"codex", "acceptEdits", false},
+		{"codex", "plan", false},
+		{"codex", "dontAsk", false},
+		{"codex", "bypassPermissions", true},
+		{"claude-code", "", true},
+		{"claude-code", "plan", true},
+		{"opencode", "", true},
+	} {
+		got := plantsMux(config.AgentProfile{Provider: tc.provider, PermissionMode: tc.mode})
+		assert.Equal(t, tc.want, got, "%s/%q", tc.provider, tc.mode)
+	}
+}
