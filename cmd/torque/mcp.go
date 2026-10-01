@@ -2,25 +2,45 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
+	"net/url"
 	"os"
+	"strings"
 
 	"github.com/hollis-labs/torque/internal/config"
-	"github.com/hollis-labs/torque/internal/mcpadapter"
+	"github.com/hollis-labs/torque/internal/mcpbridge"
 	"github.com/hollis-labs/torque/internal/modelcatalog"
 	"github.com/hollis-labs/torque/internal/persistence/appdb"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/torque/internal/runtime/bootstrap"
 	"github.com/hollis-labs/torque/internal/service"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 )
 
 func mcpCmd() *cobra.Command {
-	return &cobra.Command{
+	var remote string
+	cmd := &cobra.Command{
 		Use:   "mcp",
 		Short: "Start Torque MCP server (stdio transport)",
+		Long: `Start Torque MCP server (stdio transport).
+
+With --remote (or TORQUE_MCP_REMOTE), relay to the running daemon's /mcp
+endpoint instead of opening the database: the same tool surface, for
+clients that must not open main.db, such as an agent under ProtectedPaths.
+--remote alone, or TORQUE_MCP_REMOTE=1, uses
+http://127.0.0.1:$TORQUE_HTTP_PORT/mcp; a URL selects another endpoint.`,
+		// stdout carries the MCP protocol: an error must not print usage
+		// onto it.
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Before config.Load: resolving app paths materializes the data
+			// dir, which --remote must never create or touch.
+			if endpoint := remoteMCPEndpoint(remote, os.Getenv("TORQUE_MCP_REMOTE"), config.HTTPPortFromEnv()); endpoint != "" {
+				return runRemoteMCP(cmd, endpoint, config.APITokenFromEnv())
+			}
 			cfg, err := config.Load()
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
@@ -124,11 +144,53 @@ func mcpCmd() *cobra.Command {
 			// route go-mcp-sanitize warn telemetry to stderr (CW-20260509-0033,
 			// mirrors vanta-conduit v0.6.1).
 			sanitizeLogger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-			adapter := mcpadapter.New(svc, nil).
-				WithSessions(agentDeps.Sessions).
-				WithLogger(sanitizeLogger)
+			adapter := bootstrap.StdioMCPAdapter(svc, agentDeps.Sessions, sanitizeLogger)
 
 			return adapter.Server().Run(cmd.Context())
 		},
 	}
+	cmd.Flags().StringVar(&remote, "remote", "", "relay to the daemon's /mcp endpoint (default http://127.0.0.1:$TORQUE_HTTP_PORT/mcp) instead of opening the database")
+	cmd.Flags().Lookup("remote").NoOptDefVal = remoteDefault
+	return cmd
 }
+
+// remoteDefault is --remote given without a URL.
+const remoteDefault = "default"
+
+// remoteMCPEndpoint returns the daemon MCP URL `torque mcp` relays to, or
+// "" to serve from the local database. The flag wins over
+// TORQUE_MCP_REMOTE; "default", "1" and "true" mean the daemon on this
+// host's TORQUE_HTTP_PORT.
+func remoteMCPEndpoint(flag, env string, port int) string {
+	v := strings.TrimSpace(flag)
+	if v == "" {
+		v = strings.TrimSpace(env)
+	}
+	switch strings.ToLower(v) {
+	case "", "0", "false":
+		return ""
+	case remoteDefault, "1", "true":
+		return fmt.Sprintf("http://127.0.0.1:%d/mcp", port)
+	}
+	return v
+}
+
+// runRemoteMCP relays stdio to the daemon (mcpbridge). It loads no config
+// paths, opens no database, runs no migrations or orphan sweep, and writes
+// nothing (CW-20261001-0199).
+func runRemoteMCP(cmd *cobra.Command, endpoint, token string) error {
+	u, err := url.Parse(endpoint)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("torque mcp --remote: %q is not an http(s) URL", endpoint)
+	}
+	local := &mcp.IOTransport{Reader: io.NopCloser(cmd.InOrStdin()), Writer: nopWriteCloser{cmd.OutOrStdout()}}
+	return mcpbridge.Run(cmd.Context(), local, mcpbridge.Options{
+		Endpoint: endpoint,
+		Token:    token,
+		Log:      cmd.ErrOrStderr(),
+	})
+}
+
+type nopWriteCloser struct{ io.Writer }
+
+func (nopWriteCloser) Close() error { return nil }

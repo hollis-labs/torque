@@ -284,6 +284,9 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	handler := httpserver.New(svc, sched)
 	handler.WithSessions(agentDeps.Sessions)
 	handler.WithSecurity(sec)
+	// /mcp: the `torque mcp` tool surface for clients that must not open
+	// the database (`torque mcp --remote`; CW-20261001-0199).
+	handler.WithMCP(bootstrap.DaemonMCPHandler(svc, sched, agentDeps.Sessions, pollRegistry, reminderRegistry, slog.Default()))
 
 	// Durable messaging substrate (CW-20260503-0012, S1.2). Same SQLite DB
 	// the rest of the runtime uses; migration 022_messages.sql created the
