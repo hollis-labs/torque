@@ -12,6 +12,10 @@ import (
 	"github.com/hollis-labs/torque/internal/runtime/steering"
 )
 
+// brokerURNShape is the one address form the broker tools take. Their params
+// are strings, so unlike HTTP /broker/send there is no object form here.
+const brokerURNShape = "msg://<kind>/<authority>/<id>[/<subid>]"
+
 // registerBrokerTools surfaces the typed envelope broker (CW-20260503-0013)
 // over MCP. Tools reply with a domain error when the adapter has no broker
 // wired (mcp-only stdio path), mirroring the sessionmgr contract.
@@ -23,8 +27,8 @@ Validation: kind must be a known envelope type; from/to must be canonical msg://
 Response shape: data = <Envelope> singleton — id, kind, from, to, thread_id, in_reply_to, created_at, payload, etc.
 Example: {"kind":"notice","from":"msg://agent/test/alice","to":"msg://agent/test/bob","payload":"{\"hello\":\"world\"}"}`),
 		withString("kind", required(), desc("Envelope kind: notice|status_update|handoff|escalation|response")),
-		withString("from", required(), desc("Sender URN (msg://kind/authority/id[/subid])")),
-		withString("to", required(), desc("Recipient URN")),
+		withString("from", required(), desc("Sender URN string: "+brokerURNShape)),
+		withString("to", required(), desc("Recipient URN string: "+brokerURNShape)),
 		withString("payload", desc("JSON-encoded payload (string)")),
 		withString("content_type", desc("Override default application/json")),
 		withString("thread_id", desc("Conversation thread ID")),
@@ -39,8 +43,8 @@ Use for synchronous agent-to-agent calls (orchestrator asks reviewer for disposi
 timeout_seconds clamps to [1, 600]; defaults to 30. On timeout the call returns a domain error and the request envelope persists — issue torque_broker_send for a follow-up Cancel-equivalent if the request is no longer meaningful.
 Response shape: data = <Envelope> for the response (kind=response, in_reply_to=<request id>).
 Example: {"from":"msg://agent/test/alice","to":"msg://agent/test/bob","payload":"{\"q\":\"ping\"}","timeout_seconds":"15"}`),
-		withString("from", required(), desc("Requester URN")),
-		withString("to", required(), desc("Responder URN")),
+		withString("from", required(), desc("Requester URN string: "+brokerURNShape)),
+		withString("to", required(), desc("Responder URN string: "+brokerURNShape)),
 		withString("payload", desc("JSON-encoded request body")),
 		withString("content_type"),
 		withString("thread_id"),
@@ -55,7 +59,7 @@ Use to poll for incoming envelopes when not running a Subscribe stream (HTTP /ap
 kind / channel / thread_id filter values combine via AND; within a slice values OR. Limit caps the page (0 = unlimited).
 Response shape: data = {envelopes: [<Envelope>...]}.
 Example: {"to":"msg://agent/test/alice","limit":"20"}`),
-		withString("to", required(), desc("Recipient URN")),
+		withString("to", required(), desc("Recipient URN string: "+brokerURNShape)),
 		withString("kind", desc("Filter by envelope kind (comma-separated for multi)")),
 		withString("channel", desc("Filter by channel (comma-separated for multi)")),
 		withString("thread_id", desc("Filter by thread")),
@@ -68,7 +72,7 @@ By default Torque delivers envelopes addressed to a live agent by injecting them
 The opt-in is time-bounded: it lapses after poll_ttl_seconds (returned in the response) unless you poll again. Keep polling on a cadence shorter than the TTL to stay opted in; stop polling (or pass release=true) to revert to inject-at-turn. 'to' MUST be your own address and match how senders address you (e.g. msg://agent/<authority>/<your-task-id>).
 Response shape: data = {to, polling, poll_ttl_seconds, count, envelopes:[<Envelope>...], drain_hint?}.
 Example: {"to":"msg://agent/local/CW-20260518-0042","limit":"20"}`),
-		withString("to", required(), desc("Your own recipient URN (msg://kind/authority/id[/subid])")),
+		withString("to", required(), desc("Your own recipient URN string: "+brokerURNShape)),
 		withString("kind", desc("Filter drained envelopes by kind (comma-separated for multi)")),
 		withString("channel", desc("Filter drained envelopes by channel (comma-separated for multi)")),
 		withString("thread_id", desc("Filter drained envelopes by thread")),
@@ -101,11 +105,11 @@ func (a *Adapter) handleBrokerSend(ctx context.Context, req map[string]any) (any
 	}
 	from, err := gomsg.ParseURN(reqStr(req, "from"))
 	if err != nil {
-		return errResult(ErrCodeArgInvalid, "from: "+err.Error(), "from")
+		return errResult(ErrCodeArgInvalid, "from: "+err.Error()+"; want "+brokerURNShape, "from")
 	}
 	to, err := gomsg.ParseURN(reqStr(req, "to"))
 	if err != nil {
-		return errResult(ErrCodeArgInvalid, "to: "+err.Error(), "to")
+		return errResult(ErrCodeArgInvalid, "to: "+err.Error()+"; want "+brokerURNShape, "to")
 	}
 	env := gomsg.Envelope{
 		Kind:        gomsg.Kind(reqStr(req, "kind")),
@@ -141,11 +145,11 @@ func (a *Adapter) handleBrokerRequest(ctx context.Context, req map[string]any) (
 	}
 	from, err := gomsg.ParseURN(reqStr(req, "from"))
 	if err != nil {
-		return errResult(ErrCodeArgInvalid, "from: "+err.Error(), "from")
+		return errResult(ErrCodeArgInvalid, "from: "+err.Error()+"; want "+brokerURNShape, "from")
 	}
 	to, err := gomsg.ParseURN(reqStr(req, "to"))
 	if err != nil {
-		return errResult(ErrCodeArgInvalid, "to: "+err.Error(), "to")
+		return errResult(ErrCodeArgInvalid, "to: "+err.Error()+"; want "+brokerURNShape, "to")
 	}
 	timeout := reqInt(req, "timeout_seconds")
 	if timeout == 0 {
@@ -188,7 +192,7 @@ func (a *Adapter) handleBrokerInbox(ctx context.Context, req map[string]any) (an
 	}
 	to, err := gomsg.ParseURN(reqStr(req, "to"))
 	if err != nil {
-		return errResult(ErrCodeArgInvalid, "to: "+err.Error(), "to")
+		return errResult(ErrCodeArgInvalid, "to: "+err.Error()+"; want "+brokerURNShape, "to")
 	}
 	filter := gomsg.Filter{
 		ThreadID: reqStr(req, "thread_id"),
@@ -223,7 +227,7 @@ func (a *Adapter) handleInboxPoll(ctx context.Context, req map[string]any) (any,
 	}
 	to, err := gomsg.ParseURN(reqStr(req, "to"))
 	if err != nil {
-		return errResult(ErrCodeArgInvalid, "to: "+err.Error(), "to")
+		return errResult(ErrCodeArgInvalid, "to: "+err.Error()+"; want "+brokerURNShape, "to")
 	}
 	// Canonical URN — the exact string the steering bridge keys on as
 	// env.To.URN(), so opt-in and bridge-side check agree.
