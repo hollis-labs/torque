@@ -163,6 +163,27 @@ func TestBootPiACP_RefusedForTaskRun(t *testing.T) {
 	assert.Empty(t, fake.Calls(), "nothing is spawned for a refused run")
 }
 
+// TestBootCopilotACP_RefusedForLongLivedTaskRun: until go-agent-wrapper
+// hands session/new Torque's MCP servers, a long-lived task worker on any
+// ACP runtime could not signal review, so Boot refuses the run. One-shot
+// runs (TestBootCopilotACP_OneShot) and manual sessions
+// (TestBootCopilotACP_LongLivedSendTurn) still launch.
+func TestBootCopilotACP_RefusedForLongLivedTaskRun(t *testing.T) {
+	fake := providertest.New(t, runtimes.Copilot)
+	fake.Install()
+	cd := composeACPDeps(t, "copilot")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, err := cd.Manager.Boot(ctx, agent.Options{
+		TaskID: "CW-ACP-LONG-RUN", RunID: 43, AgentProfile: "worker", Workdir: t.TempDir(), Mode: agent.ModeLongLived,
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, agent.ErrAdapterNotFound), "%v", err)
+	assert.Contains(t, err.Error(), "a long-lived task worker could not signal review; one-shot runs and manual sessions are allowed")
+	assert.Empty(t, fake.Calls(), "nothing is spawned for a refused run")
+}
+
 // TestBootPiACP_ManualSession: without a dispatching run, pi boots over
 // ACP and completes a turn.
 func TestBootPiACP_ManualSession(t *testing.T) {

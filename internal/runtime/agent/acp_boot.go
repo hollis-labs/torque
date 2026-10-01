@@ -38,7 +38,7 @@ const (
 )
 
 // acpTaskDispatchRefusals names the ACP runtimes a scheduler-dispatched task
-// run cannot use, and why. A task worker reports through the per-task
+// run cannot use at all, and why. A task worker reports through the per-task
 // loopback MCP (comments, review, blocked); one that cannot reach it would
 // run until its timeout without signalling anything. Manual sessions are not
 // refused: an operator driving one reads its output directly.
@@ -46,17 +46,28 @@ var acpTaskDispatchRefusals = map[runtimes.ID]string{
 	runtimes.Pi: "pi-acp cannot reach Torque's loopback MCP (mcpCapabilities.http=false); a task worker could not comment or signal review",
 }
 
-// acpTaskDispatchRefusal returns why a scheduler-dispatched task run cannot
-// use the provider in the given runtime kind, or "" when it can.
-func acpTaskDispatchRefusal(providerName string, kind RuntimeKind) string {
+// acpLongLivedTaskRunRefusal is why a long-lived task run cannot use any ACP
+// runtime while acpSessionsGetMCPServers is false. A long-lived worker ends
+// by signalling review through the loopback; without it the run sits until
+// its ceiling. A one-shot run ends with its turn, so it is allowed.
+const acpLongLivedTaskRunRefusal = "an ACP session cannot reach Torque's loopback MCP until go-agent-wrapper v0.19.0 (session/new gets an empty mcpServers), so a long-lived task worker could not signal review; one-shot runs and manual sessions are allowed"
+
+// acpTaskDispatchRefusal returns why a scheduler-dispatched task run in the
+// given mode cannot use the provider in the given runtime kind, or "" when
+// it can.
+func acpTaskDispatchRefusal(providerName string, kind RuntimeKind, mode Mode) string {
 	if !kind.ACP() {
 		return ""
 	}
-	desc, ok := registry.Lookup(providerName)
-	if !ok {
-		return ""
+	if desc, ok := registry.Lookup(providerName); ok {
+		if reason := acpTaskDispatchRefusals[desc.ID]; reason != "" {
+			return reason
+		}
 	}
-	return acpTaskDispatchRefusals[desc.ID]
+	if mode != ModeOneShot && !acpSessionsGetMCPServers {
+		return acpLongLivedTaskRunRefusal
+	}
+	return ""
 }
 
 // selectACPRuntime builds the wrapper's ACP adapter for (runtime, mode).
@@ -96,13 +107,17 @@ func acpMCPServers(loopbackURL string, deps *Dependencies) []provider.MCPServerS
 	return servers
 }
 
+// acpSessionsGetMCPServers reports whether the pinned go-agent-wrapper hands
+// an ACP session the MCP servers Torque gives it. v0.15.0 has no field for
+// them: every ACP client it ships sends `"mcpServers": []`. The field
+// arrives in v0.19.0; the bump sets it in attachACPMCPServers and turns
+// this on, which also lifts acpLongLivedTaskRunRefusal.
+const acpSessionsGetMCPServers = false
+
 // attachACPMCPServers hands servers to the wrapper for session/new and
-// reports whether they reach the agent. go-agent-wrapper v0.15.0 has no
-// field for them: every ACP client it ships sends `"mcpServers": []`. The
-// field arrives in v0.19.0; until Torque pins it and sets the field here,
-// this returns false and the session runs without Torque's MCP tools.
+// reports whether they reach the agent; see acpSessionsGetMCPServers.
 func attachACPMCPServers(_ *wrapper.Config, _ []provider.MCPServerSpec) bool {
-	return false
+	return acpSessionsGetMCPServers
 }
 
 // acpKickoff is an ACP session's first turn. It is the native kickoff with
@@ -145,7 +160,7 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 	// the run rather than let it time out. A boot that carries a RunID was
 	// dispatched by the scheduler; manual sessions carry none.
 	if opts.RunID > 0 {
-		if reason := acpTaskDispatchRefusal(profile.Provider, runtimeKind); reason != "" {
+		if reason := acpTaskDispatchRefusal(profile.Provider, runtimeKind, opts.Mode); reason != "" {
 			shutdownLoopbackHandle(loopback)
 			return nil, fmt.Errorf("%w: %s", ErrAdapterNotFound, reason)
 		}

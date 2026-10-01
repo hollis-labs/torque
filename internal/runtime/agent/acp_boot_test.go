@@ -50,20 +50,28 @@ func TestACPKickoff(t *testing.T) {
 	assert.NotContains(t, noTask, "task bundle follows")
 }
 
-// Every Validate job is a task run, so pi is refused at enqueue as a
-// permanent error rather than spending a run on a worker that cannot report.
-func TestExecutorValidate_RefusesPiTaskRuns(t *testing.T) {
+// Every Validate job is a task run, so a worker that cannot report is
+// refused at enqueue as a permanent error rather than spending a run on it:
+// pi in any mode, and every ACP runtime for a long-lived (kind=agent) run
+// until the wrapper delivers mcpServers.
+func TestExecutorValidate_RefusesACPTaskRunsThatCannotReport(t *testing.T) {
 	deps := &Dependencies{Profiles: config.ProfileMap{
 		"pi-worker":      {Executor: "cli", Provider: "pi"},
 		"copilot-worker": {Executor: "cli", Provider: "copilot"},
 	}}
 	e := NewExecutor(deps)
+	var perm *executor.PermanentError
 
 	err := e.Validate(&executor.ExecutionJob{TaskID: "CW-1", AgentProfile: "pi-worker"})
 	require.Error(t, err)
-	var perm *executor.PermanentError
 	assert.True(t, errors.As(err, &perm), "a runtime that cannot report is permanent, not retryable: %v", err)
 	assert.Contains(t, err.Error(), "pi-acp cannot reach Torque's loopback MCP")
 
-	assert.NoError(t, e.Validate(&executor.ExecutionJob{TaskID: "CW-2", AgentProfile: "copilot-worker"}))
+	err = e.Validate(&executor.ExecutionJob{TaskID: "CW-2", Kind: "agent", AgentProfile: "copilot-worker"})
+	require.Error(t, err)
+	assert.True(t, errors.As(err, &perm), "%v", err)
+	assert.Contains(t, err.Error(), acpLongLivedTaskRunRefusal)
+
+	assert.NoError(t, e.Validate(&executor.ExecutionJob{TaskID: "CW-3", AgentProfile: "copilot-worker"}),
+		"a one-shot copilot run ends with its turn")
 }

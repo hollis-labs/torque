@@ -105,7 +105,7 @@ func (e *Executor) Validate(job *executor.ExecutionJob) error {
 	}
 	// Every job here is a task run; refuse a runtime its worker could not
 	// report from, before a run is spent on it (bootACP refuses it too).
-	if reason := acpTaskDispatchRefusal(profile.Provider, kind); reason != "" {
+	if reason := acpTaskDispatchRefusal(profile.Provider, kind, modeForJob(job)); reason != "" {
 		return executor.NewPermanentError(fmt.Errorf("%s provider: %s", profile.Provider, reason))
 	}
 	resolvedWD, err := executor.ResolveWorkingDir(job.WorkingDir)

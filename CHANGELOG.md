@@ -35,7 +35,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   Profile lint accepts `copilot` and `pi`. A scheduler-dispatched task run on
   Pi is refused, at enqueue and in Boot: pi-acp drops the MCP servers it is
   given, so its worker could not reach the loopback to comment or signal
-  review. Manual Pi sessions launch. Known gap: go-agent-wrapper v0.15.0
+  review. Manual Pi sessions launch. Until the wrapper delivers MCP servers
+  (below), a long-lived task run (kind `agent`) on any ACP runtime is refused
+  the same way; one-shot runs and manual sessions launch. Known gap: go-agent-wrapper v0.15.0
   sends `session/new` an empty `mcpServers`, so no ACP session gets the
   loopback or mux MCP yet. Torque builds the list (`loopback` over HTTP,
   `mux` over stdio, as planted for native runtimes) and tells the worker its
