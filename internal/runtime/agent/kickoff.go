@@ -101,7 +101,7 @@ func kickoffMarkdown(opts Options, role string, muxOmitsTorque bool) string {
 	if opts.TaskID != "" {
 		body += "Your assigned task bundle is already planted under the boot dir's `tasks/` directory. Start with `tasks/README.md` and the task's `task.md`, `task.json`, and `process.md` files instead of calling MCP just to look up task, run, project, or session IDs. For opencode, resolve this under `$OPENCODE_CONFIG_DIR/tasks/` because the process cwd is the project dir.\n\n"
 	}
-	return body + kickoffFirstTurn(opts)
+	return body + kickoffFirstTurn(opts, continuesConversation(opts))
 }
 
 // kickoffLoopbackTools points the agent at the per-task loopback's tools. The
@@ -178,14 +178,28 @@ func kickoffHeader(opts Options, role string) string {
 	return body
 }
 
+// continuesConversation reports whether the boot resumes a provider
+// conversation (a session id handed to the launch, or ModeResume): that
+// conversation already holds the task, so the kickoff does not repeat its
+// description as a first turn, which a continuation could read as "restart the
+// task". The planted task.md and task.json keep the full description either
+// way (CW-20261001-0249). An ACP session is not asked: an ACP agent that does
+// not advertise loadSession opens a new session without saying so
+// (CW-20261001-0202), so there the description stays (acpKickoff).
+func continuesConversation(opts Options) bool {
+	return opts.ProviderSessionIDOverride != "" || opts.Mode == ModeResume
+}
+
 // kickoffFirstTurn is the kickoff's close: the first turn's instruction and
-// any task framing the caller added.
-func kickoffFirstTurn(opts Options) string {
+// any task framing the caller added. continuation says the boot resumes a
+// provider conversation that already holds the task, so the description is
+// not repeated as a first turn (continuesConversation).
+func kickoffFirstTurn(opts Options, continuation bool) string {
 	body := ""
 	if opts.OneShotPrompt != "" {
 		body += "## First turn\n\n"
 		body += opts.OneShotPrompt + "\n"
-	} else if opts.Description != "" {
+	} else if opts.Description != "" && !continuation {
 		body += "## First turn\n\n"
 		body += opts.Description + "\n"
 	}

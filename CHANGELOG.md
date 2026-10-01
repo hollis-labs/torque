@@ -254,6 +254,36 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- A session re-launched for a task (`ResumeSession`, which the HITL response
+  and stuck-task recovery use, and the HTTP/MCP session resume,
+  `Manager.Resume`) is handed the task the way a dispatch hands it
+  (CW-20261001-0249). It carried only the task id, so a fresh boot (codex
+  app-server, a checkpoint with no recorded id, another runtime's id, a lost
+  provider session) planted a blank `task.md` and `task.json`, with an empty
+  kind. It now loads the task row and builds the boot options with the
+  scheduler's own mapping (`scheduler.BuildJob`, shared with dispatch): title,
+  description, kind, status, priority, parent, sprint, epic, dependencies, the
+  task's system prompt (a resume's diagnostic note, or a resume request's
+  system prompt, goes ahead of it), agent file and environment (a request's env
+  wins; a request that moves the session to another runtime does not hand it
+  the task's env). The session keeps its own agent profile, workdir and role,
+  and its project; a session row with no project inherits the task's. It is
+  **not** given the task's running run: a boot that carries a run id is one the
+  scheduler dispatched, and a re-launch is not the run's worker. A task that
+  cannot be read leaves the bare task id, and an agent file that cannot be
+  loaded is dropped, each with a log line, so a re-launch does not fail on
+  context it can do without. When the launch continues a provider conversation
+  (a genuine resume), the kickoff does not repeat the task's description as a
+  first turn, which a continuation could read as "restart the task"; the
+  planted `task.md` and `task.json` keep it either way, and a fresh boot is
+  given it. An ACP session keeps the description as its first turn even when
+  resumed, since an ACP agent without `loadSession` starts a new session without
+  saying so (CW-20261001-0202). Note that `kind` here only fills the planted `task.json`: the
+  idle-after-done nudge runs in the scheduler's long-lived dispatch, which a
+  re-launched session does not go through. A re-launched worker session, being
+  a long-lived boot, gets the "Worker — long-lived dispatch contract" template
+  in its planted system prompt, as a dispatched worker does (a resume of an
+  orchestrator-class role does not).
 - A run's cost is one figure, priced once (CW-20260912-0003). The cost a
   runtime reports (Claude's `total_cost_usd`) is taken as given; the tokens
   of turns that reported none are estimated from models.dev with cache

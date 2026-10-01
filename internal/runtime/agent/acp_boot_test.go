@@ -71,7 +71,7 @@ func TestACPKickoff(t *testing.T) {
 	assert.NotContains(t, got, `"task_id"`, "task.json is not inlined; task.md carries the same facts")
 	assert.NotContains(t, got, kickoffLoopbackTools)
 	assert.Contains(t, got, "Torque's task-scoped MCP tools are not available in this session")
-	assert.True(t, strings.HasSuffix(got, kickoffFirstTurn(opts)))
+	assert.True(t, strings.HasSuffix(got, kickoffFirstTurn(opts, false)))
 
 	withTools := acpKickoff(opts, "worker", bundle, true)
 	assert.Contains(t, withTools, kickoffLoopbackTools)
