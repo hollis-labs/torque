@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
-	"github.com/hollis-labs/agentkit/agentruntime/runtimebind"
 	"github.com/hollis-labs/agentkit/agentsessions"
 	"github.com/hollis-labs/go-agent-wrapper/adapters"
 	"github.com/hollis-labs/go-agent-wrapper/launch"
@@ -151,11 +150,11 @@ func applyProfileOptions(cli provider.CLIAdapter, profile config.AgentProfile, p
 		if mode != runtimes.ModeJSONRPCStdio || profile.ResolvedPermissionMode() != config.PermissionModeBypass {
 			return nil
 		}
-		policy, err := runtimebind.ResolveCodexPolicy(runtimebind.CodexPolicyRequest{Runtime: mode, Bypass: true})
+		sandboxMode, err := codexBypassSandboxMode(mode)
 		if err != nil {
 			return fmt.Errorf("resolve codex policy: %w", err)
 		}
-		a.SandboxMode = policy.SandboxMode
+		a.SandboxMode = sandboxMode
 	case *provider.OpencodeAdapter:
 		if profileName == "" {
 			return fmt.Errorf("opencode provider requires Options.AgentProfile to be set (maps to opencode --agent)")
