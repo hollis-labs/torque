@@ -1453,6 +1453,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 			state = string(StatusFailed)
 		}
 		_ = deps.UpdateSessionState(context.Background(), sessID, state, 0, nil)
+		mgr.finishWrapperSession(sessID, h)
 	}()
 
 	// Block until KindSessionReady (SendInput/Stop become safe -- mirrors
@@ -1559,8 +1560,11 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		_ = mgr.Stop(stopCtx, sessID)
 		stopCancel()
 
+		// Wait on this run's own handle, not mgr.Wait: the session's
+		// terminal state is written before h.runDone closes, so Boot returns
+		// with the row already final (CW-20261001-0041).
 		waitCtx, waitCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		exitCode, _ := mgr.Wait(waitCtx, sessID)
+		exitCode, _ := h.wait(waitCtx)
 		waitCancel()
 
 		sess.ExitCode = &exitCode
