@@ -11,7 +11,6 @@ import (
 	"time"
 
 	gomsg "github.com/hollis-labs/go-messaging"
-	"github.com/hollis-labs/go-messaging/memstore"
 
 	"github.com/hollis-labs/torque/internal/messaging"
 )
@@ -57,12 +56,17 @@ func fedSurface(t *testing.T, backing gomsg.Store) *httptest.Server {
 			writeJSON(w, http.StatusCreated, out)
 		case strings.HasPrefix(rest, "/thread/"): // Thread
 			threadID := strings.TrimPrefix(rest, "/thread/")
-			envs, err := backing.Thread(r.Context(), threadID, gomsg.Filter{})
+			query, err := messaging.ParsePageQuery(r.URL.Query(), false)
 			if err != nil {
 				writeErr(w, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"messages": envs})
+			page, err := backing.(messaging.PageStore).ThreadPage(r.Context(), threadID, gomsg.Filter{}, query)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, messaging.MessageEnvelope(page, query, false))
 		case strings.HasSuffix(rest, "/consume"): // Consume
 			id := strings.TrimSuffix(strings.TrimPrefix(rest, "/"), "/consume")
 			var body struct {
@@ -115,7 +119,7 @@ func newHTTPStore(t *testing.T, endpoint string) *messaging.HTTPStore {
 // surface: Send → Get, Thread, Consume, Cancel.
 func TestHTTPStoreRoundTrip(t *testing.T) {
 	ctx := context.Background()
-	srv := fedSurface(t, memstore.New())
+	srv := fedSurface(t, messaging.NewStore(newDB(t)))
 	store := newHTTPStore(t, srv.URL)
 
 	env := gomsg.Envelope{
@@ -158,7 +162,7 @@ func TestHTTPStoreRoundTrip(t *testing.T) {
 
 // TestHTTPStoreGetNotFound: a 404 from the peer maps to messaging.ErrNotFound.
 func TestHTTPStoreGetNotFound(t *testing.T) {
-	srv := fedSurface(t, memstore.New())
+	srv := fedSurface(t, messaging.NewStore(newDB(t)))
 	store := newHTTPStore(t, srv.URL)
 
 	_, err := store.Get(context.Background(), "does-not-exist")
@@ -236,7 +240,7 @@ func TestHTTPStoreUnreachablePeer(t *testing.T) {
 // TestHTTPStoreInboxSubscribeNotFederated: Inbox and Subscribe are never
 // federated (ADR-0002 §4); both fail with ErrStoreUnavailable.
 func TestHTTPStoreInboxSubscribeNotFederated(t *testing.T) {
-	srv := fedSurface(t, memstore.New())
+	srv := fedSurface(t, messaging.NewStore(newDB(t)))
 	store := newHTTPStore(t, srv.URL)
 
 	if _, err := store.Inbox(context.Background(), addr("peer-b", "y"), gomsg.Filter{}); !errors.Is(err, gomsg.ErrStoreUnavailable) {

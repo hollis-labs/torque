@@ -48,7 +48,7 @@ export default function TemplatesPage() {
   const fetchTemplates = useCallback(async () => {
     try {
       const result = await api.listTemplates({ include_archived: includeArchived })
-      setTemplates(result.templates)
+      setTemplates(result.items)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load templates')

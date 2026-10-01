@@ -106,7 +106,7 @@ export default function BoardPage() {
   // Total rows matching the current filter+search from the list endpoint —
   // authoritative for the summary's "M matches" display. Distinct from
   // `tasks.length`, which reflects the windowed/capped payload.
-  const [totalMatchCount, setTotalMatchCount] = useState<number>(0)
+  const [totalMatchCount, setTotalMatchCount] = useState<number | undefined>(undefined)
 
   // Create-modal state
   const [projectCreateOpen, setProjectCreateOpen] = useState(false)
@@ -295,6 +295,8 @@ export default function BoardPage() {
     const myGen = ++fetchGeneration.current
     try {
       const result = await api.listTasks({
+        limit: 50,
+        include_total: true,
         status: activeStatuses,
         priority: activePriorities.length ? activePriorities : undefined,
         project_id: projectId ?? undefined,
@@ -306,8 +308,8 @@ export default function BoardPage() {
         include_internal: includeInternal || undefined,
       })
       if (myGen !== fetchGeneration.current) return
-      setTasks(result.tasks)
-      setTotalMatchCount(result.total)
+      setTasks(result.items)
+      setTotalMatchCount(result.meta.total)
       setError(null)
     } catch (err) {
       if (myGen !== fetchGeneration.current) return
@@ -520,6 +522,7 @@ export default function BoardPage() {
         <SchedulerToggleButton />
         <RestartFrontendButton />
       </PageHeader>
+      <p className="px-4 py-2 text-sm text-muted-foreground">Showing one page of up to 50 matching tasks. Board summaries describe this page.</p>
       {!loading && !error && <SummaryCards cards={summaryCards} />}
       <FilterBar
         activeStatuses={activeStatuses}

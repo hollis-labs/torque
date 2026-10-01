@@ -3,6 +3,7 @@ package mcpadapter
 import (
 	"context"
 	"fmt"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"time"
 
 	"github.com/hollis-labs/torque/internal/hitl"
@@ -56,10 +57,11 @@ Example: {"correlation_id":"01HK...","reason":"superseded","canceler_source_type
 	a.addTool(newTool("torque_task_checkpoint_list",
 		withDescription(`List checkpoints emitted against one task, newest first. Brief shape drops payload/response bodies; pass verbose="true" for full records.
 Use to inspect one task's checkpoint history; torque_task_checkpoints_pending for cross-task pending-only view.
-Response shape: data = {items: [<briefCheckpoint or CheckpointRecord>...], meta: {truncated, returned, limit, hint?}}.
+Response shape: data = {items: [<briefCheckpoint or CheckpointRecord>...], meta: {truncated, returned, limit, has_more, next_cursor, total?, offset?, next_offset?, hint?}}.
 Example: {"task_id":"T-123"}`),
 		withString("task_id", required(), desc("Task ID")),
 		withString("verbose", desc("Return full records instead of brief (string 'true'/'false', default false)")),
+		withResourcePageParams("checkpoints"),
 	), a.handleCheckpointList)
 
 	a.addTool(newTool("torque_task_checkpoint_get",
@@ -73,9 +75,10 @@ Example: {"correlation_id":"01HK..."}`),
 	a.addTool(newTool("torque_task_checkpoints_pending",
 		withDescription(`List every pending (unresolved) checkpoint across all tasks, oldest first — the global response queue.
 Use for agent/user dashboards that need to triage outstanding decision gates; torque_task_checkpoint_list for single-task scope.
-Response shape: data = {items: [<briefCheckpoint or CheckpointRecord>...], meta: {truncated, returned, limit, hint?}}.
+Response shape: data = {items: [<briefCheckpoint or CheckpointRecord>...], meta: {truncated, returned, limit, has_more, next_cursor, total?, offset?, next_offset?, hint?}}.
 Example: {}`),
 		withString("verbose", desc("Return full records instead of brief (string 'true'/'false', default false)")),
+		withResourcePageParams("pending_checkpoints"),
 	), a.handleCheckpointPending)
 }
 
@@ -128,21 +131,7 @@ func (a *Adapter) handleCheckpointCancel(ctx context.Context, req map[string]any
 }
 
 func (a *Adapter) handleCheckpointList(ctx context.Context, req map[string]any) (any, error) {
-	verbose := reqStrBool(req, "verbose")
-	list, err := a.svc.Checkpoint.ListForTask(reqStr(req, "task_id"))
-	if err != nil {
-		return errFromService(err)
-	}
-	limit := defaultGenericListLimit
-	items := make([]any, 0, len(list))
-	for _, c := range list {
-		if verbose {
-			items = append(items, c)
-		} else {
-			items = append(items, toBriefCheckpoint(c))
-		}
-	}
-	return cappedJSONResult(items, limit)
+	return a.handleResourceList(ctx, req, "checkpoints", sqlstore.ResourcePageFilter{TaskID: reqStr(req, "task_id")})
 }
 
 func (a *Adapter) handleCheckpointGet(ctx context.Context, req map[string]any) (any, error) {
@@ -150,21 +139,7 @@ func (a *Adapter) handleCheckpointGet(ctx context.Context, req map[string]any) (
 }
 
 func (a *Adapter) handleCheckpointPending(ctx context.Context, req map[string]any) (any, error) {
-	verbose := reqStrBool(req, "verbose")
-	pending, err := a.svc.Checkpoint.ListPending()
-	if err != nil {
-		return errFromService(err)
-	}
-	limit := defaultGenericListLimit
-	items := make([]any, 0, len(pending))
-	for _, c := range pending {
-		if verbose {
-			items = append(items, c)
-		} else {
-			items = append(items, toBriefCheckpoint(c))
-		}
-	}
-	return cappedJSONResult(items, limit)
+	return a.handleResourceList(ctx, req, "pending_checkpoints", sqlstore.ResourcePageFilter{})
 }
 
 // checkpointResultByCorr loads the current row for correlationID and returns

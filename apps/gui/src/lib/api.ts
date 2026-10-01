@@ -153,18 +153,6 @@ interface ApiArtifactRecord {
   CreatedAt: string
 }
 
-interface TaskListResponse<T = Task> {
-  tasks: T[]
-  total: number
-  returned?: number
-  limit?: number
-  offset?: number
-  has_more?: boolean
-  next_offset?: number | null
-}
-
-const TASK_LIST_PAGE_SIZE = 200
-
 function taskFilterParams(filter?: TaskFilter): Record<string, string | number | boolean | undefined> {
   const params: Record<string, string | number | boolean | undefined> = {}
   if (filter?.status?.length) params['status'] = filter.status.join(',')
@@ -185,27 +173,6 @@ function taskFilterParams(filter?: TaskFilter): Record<string, string | number |
   if (filter?.sort_by) params['sort_by'] = filter.sort_by
   if (filter?.sort_dir) params['sort_dir'] = filter.sort_dir
   return params
-}
-
-/**
- * Coerce any of the shapes the artifact list endpoints have historically
- * returned into a real `Artifact[]`. The frontend shipped against two
- * variants: a `{artifacts: [...]}` envelope (both legacy and alias
- * routes) and, briefly during overnight merges, a bare array. We also
- * defensively treat null / unexpected bodies as an empty list so the
- * tab renders its empty state instead of crashing on `.map`.
- */
-export function normalizeArtifactList(raw: unknown): Artifact[] {
-  if (Array.isArray(raw)) {
-    return (raw as ApiArtifactRecord[]).map(normalizeArtifact)
-  }
-  if (raw && typeof raw === 'object') {
-    const inner = (raw as { artifacts?: unknown }).artifacts
-    if (Array.isArray(inner)) {
-      return (inner as ApiArtifactRecord[]).map(normalizeArtifact)
-    }
-  }
-  return []
 }
 
 function normalizeArtifact(raw: ApiArtifactRecord): Artifact {
@@ -348,8 +315,8 @@ export class TorqueApiClient {
   // Tasks
   // -------------------------
 
-  async listTasks(filter?: TaskFilter): Promise<{ tasks: Task[]; total: number }> {
-    return this.pageTasks<Task>(filter)
+  async listTasks(filter?: TaskFilter, signal?: AbortSignal): Promise<ListPage<Task>> {
+    return this.listTaskPage(filter, signal)
   }
 
   /** One bounded task page; cursor mode by default, totals opt in. */
@@ -367,8 +334,8 @@ export class TorqueApiClient {
    * (`fields=summary`), for list views that render neither. The bodies were
    * most of a task list's bytes (CW-20261001-0005).
    */
-  async listTaskSummaries(filter?: TaskFilter): Promise<{ tasks: TaskSummary[]; total: number }> {
-    return this.pageTasks<TaskSummary>(filter, 'summary')
+  async listTaskSummaries(filter?: TaskFilter, signal?: AbortSignal): Promise<ListPage<TaskSummary>> {
+    return this.listTaskSummaryPage(filter, signal)
   }
 
   /**
@@ -376,73 +343,14 @@ export class TorqueApiClient {
    * instead of paging every task to count it. `filter` narrows the cohort
    * the same way it narrows listTasks; paging fields are not accepted.
    */
-  async taskRollup(groupBy: TaskScopeKey, filter?: Omit<TaskFilter, 'limit' | 'offset' | 'sort_by' | 'sort_dir'>): Promise<TaskScopeRollupResponse> {
+  async taskRollup(groupBy: TaskScopeKey, filter?: Omit<TaskFilter, 'limit' | 'offset' | 'cursor' | 'include_total' | 'sort_by' | 'sort_dir'>): Promise<TaskScopeRollupResponse> {
     return this.get<TaskScopeRollupResponse>('/tasks/rollup', { group_by: groupBy, ...taskFilterParams(filter) })
-  }
-
-  private async pageTasks<T extends TaskSummary>(filter: TaskFilter | undefined, fields?: 'summary'): Promise<{ tasks: T[]; total: number }> {
-    const explicitLimit = filter?.limit
-    const startOffset = filter?.offset ?? 0
-    if (explicitLimit !== undefined && (!Number.isSafeInteger(explicitLimit) || !Number.isFinite(explicitLimit))) {
-      throw new ApiError(0, 'Task list limit must be a finite safe integer.')
-    }
-    if (!Number.isSafeInteger(startOffset) || !Number.isFinite(startOffset) || startOffset < 0) {
-      throw new ApiError(0, 'Task list offset must be a non-negative safe integer.')
-    }
-    const target = explicitLimit !== undefined && explicitLimit > 0 ? explicitLimit : undefined
-    const tasks: T[] = []
-    let total = 0
-    let offset = startOffset
-    // Ask for the server's maximum page from the start. Without a limit the
-    // server answers with its default of 50 and continuation keeps that size,
-    // which quadrupled the request count (CW-20261001-0023).
-    let nextLimit = target === undefined ? TASK_LIST_PAGE_SIZE : Math.min(target, TASK_LIST_PAGE_SIZE)
-
-    for (;;) {
-      if (target !== undefined && target - tasks.length <= 0) {
-        return { tasks, total }
-      }
-      const page = await this.fetchTaskPage<T>({ ...filter, limit: nextLimit, offset }, fields)
-      total = page.total
-      tasks.push(...page.tasks)
-
-      if (target !== undefined && tasks.length >= target) {
-        return { tasks, total }
-      }
-      if (!page.has_more) {
-        return { tasks, total }
-      }
-      const nextOffset = page.next_offset
-      if (typeof nextOffset !== 'number' || !Number.isSafeInteger(nextOffset) || nextOffset <= offset) {
-        throw new ApiError(200, 'Task list response did not provide a usable forward continuation.')
-      }
-      if (page.tasks.length === 0) {
-        throw new ApiError(200, 'Task list response reported more pages without returning progress.')
-      }
-      offset = nextOffset
-      const continuationLimit = page.limit
-      const remaining = target === undefined ? TASK_LIST_PAGE_SIZE : target - tasks.length
-      if (typeof continuationLimit === 'number' && Number.isSafeInteger(continuationLimit) && continuationLimit > 0) {
-        nextLimit = Math.min(continuationLimit, TASK_LIST_PAGE_SIZE, remaining)
-      } else if (target === undefined) {
-        nextLimit = TASK_LIST_PAGE_SIZE
-      } else {
-        nextLimit = Math.min(remaining, TASK_LIST_PAGE_SIZE)
-      }
-    }
-  }
-
-  private async fetchTaskPage<T>(filter: TaskFilter, fields?: 'summary'): Promise<TaskListResponse<T>> {
-    const params = taskFilterParams(filter)
-    if (fields) params['fields'] = fields
-    params['include_total'] = true
-    const page = await this.get<{ items: T[]; meta: { total: number; returned: number; limit: number; offset?: number; has_more: boolean; next_offset?: number | null } }>('/tasks', params)
-    return { tasks: page.items, ...page.meta }
   }
 
   async taskFacets(filter?: Omit<TaskFilter, 'limit' | 'offset' | 'sort_by' | 'sort_dir'>, dimensions = 'status'): Promise<TaskFacetResult> {
     return this.get<TaskFacetResult>('/tasks/facets', { ...taskFilterParams(filter), dimensions })
   }
+
 
   async getTask(id: string, signal?: AbortSignal): Promise<Task> {
     return this.get<Task>(`/tasks/${id}`, undefined, signal)
@@ -521,29 +429,9 @@ export class TorqueApiClient {
   // Artifacts
   // -------------------------
 
-  async listArtifacts(taskId: string): Promise<Artifact[]> {
-    // Try the nested route first, fall back to the legacy query-string
-    // form. Both are served by the same backend handler and return a
-    // `{artifacts: [...]}` envelope, but older bundled server binaries
-    // predate the alias and fall through to the SPA index.html for the
-    // nested URL — that makes `res.json()` reject, so we retry against
-    // the query-string form. On 404 / transport failure / unrecognized
-    // body we return `[]` so the UI renders an empty state instead of
-    // crashing on a non-array `.map`.
-    const attempts: Array<() => Promise<unknown>> = [
-      () => this.get<unknown>(`/tasks/${taskId}/artifacts`),
-      () => this.get<unknown>('/artifacts', { task_id: taskId }),
-    ]
-    for (const attempt of attempts) {
-      try {
-        return normalizeArtifactList(await attempt())
-      } catch (err) {
-        if (err instanceof ApiError && err.status === 404) return []
-        // Any other failure (non-JSON body, 5xx, network) falls through
-        // to the next attempt; the final catch returns [].
-      }
-    }
-    return []
+  async listArtifacts(taskId: string, query?: ListQuery): Promise<ListPage<Artifact>> {
+    const page = await this.get<ListPage<ApiArtifactRecord>>(`/tasks/${taskId}/artifacts`, { ...query })
+    return { items: page.items.map(normalizeArtifact), meta: page.meta }
   }
 
   async createArtifact(data: {
@@ -716,11 +604,8 @@ export class TorqueApiClient {
    * returns an empty list rather than failing — consumers should retry.
    * Optional `provider` narrows to a single provider id.
    */
-  async listModels(provider?: string): Promise<ModelEntry[]> {
-    const params: Record<string, string | number | boolean | undefined> = {}
-    if (provider) params['provider'] = provider
-    const res = await this.get<{ models: ModelEntry[] }>('/models', params)
-    return res.models ?? []
+  async listModels(provider?: string, query?: ListQuery): Promise<ListPage<ModelEntry>> {
+    return this.get<ListPage<ModelEntry>>('/models', { ...query, provider })
   }
 
   async getModel(provider: string, model: string): Promise<ModelEntry> {
@@ -869,11 +754,8 @@ export class TorqueApiClient {
   // Templates
   // -------------------------
 
-  async listTemplates(params?: { kind?: string; include_archived?: boolean }): Promise<{ templates: Template[] }> {
-    const qs: Record<string, string | number | boolean | undefined> = {}
-    if (params?.kind) qs['kind'] = params.kind
-    if (params?.include_archived) qs['include_archived'] = 'true'
-    return this.get<{ templates: Template[] }>('/templates', qs)
+  async listTemplates(params?: ListQuery & { kind?: string; include_archived?: boolean }): Promise<ListPage<Template>> {
+    return this.get<ListPage<Template>>('/templates', { ...params })
   }
 
   async getTemplate(id: string, version?: number): Promise<Template> {
@@ -906,8 +788,8 @@ export class TorqueApiClient {
   // Plans
   // -------------------------
 
-  async listPlans(): Promise<{ plans: Task[] }> {
-    return this.get<{ plans: Task[] }>('/plans')
+  async listPlans(query?: ListQuery): Promise<ListPage<Task>> {
+    return this.get<ListPage<Task>>('/plans', { ...query })
   }
 
   async getPlan(id: string): Promise<PlanDetail> {
@@ -935,10 +817,8 @@ export class TorqueApiClient {
     return this.delete<void>(`/plans/${planId}/phases/${phaseId}`)
   }
 
-  async listPlanChildren(planId: string, phaseId?: string): Promise<{ tasks: Task[] }> {
-    const params: Record<string, string | number | boolean | undefined> = {}
-    if (phaseId) params['phase_id'] = phaseId
-    return this.get<{ tasks: Task[] }>(`/plans/${planId}/children`, params)
+  async listPlanChildren(planId: string, phaseId?: string, query?: ListQuery): Promise<ListPage<Task>> {
+    return this.get<ListPage<Task>>(`/plans/${planId}/children`, { ...query, phase_id: phaseId })
   }
 
   /**
@@ -960,11 +840,8 @@ export class TorqueApiClient {
   // Collections
   // -------------------------
 
-  async listCollections(status?: 'active' | 'archived' | 'all'): Promise<Collection[]> {
-    const params: Record<string, string | number | boolean | undefined> = {}
-    if (status) params['status'] = status
-    const res = await this.get<{ collections: Collection[] }>('/collections', params)
-    return res.collections ?? []
+  async listCollections(status?: 'active' | 'archived' | 'all', query?: ListQuery): Promise<ListPage<Collection>> {
+    return this.get<ListPage<Collection>>('/collections', { ...query, status })
   }
 
   async getCollection(id: string): Promise<Collection> {
@@ -993,9 +870,8 @@ export class TorqueApiClient {
     return this.post<Collection>(`/collections/${id}/unarchive`)
   }
 
-  async listCollectionTasks(collectionId: string): Promise<Task[]> {
-    const res = await this.get<{ tasks: Task[] }>(`/collections/${collectionId}/tasks`)
-    return res.tasks ?? []
+  async listCollectionTasks(collectionId: string, query?: ListQuery): Promise<ListPage<Task>> {
+    return this.get<ListPage<Task>>(`/collections/${collectionId}/tasks`, { ...query })
   }
 
   async addTaskToCollection(
@@ -1037,9 +913,8 @@ export class TorqueApiClient {
     return this.post<void>('/collections/tasks/move', body)
   }
 
-  async listInboxTasks(): Promise<Task[]> {
-    const res = await this.get<{ tasks: Task[] }>('/collections/inbox/tasks')
-    return res.tasks ?? []
+  async listInboxTasks(query?: ListQuery): Promise<ListPage<Task>> {
+    return this.get<ListPage<Task>>('/collections/inbox/tasks', { ...query })
   }
 
   async addTaskToInbox(taskId: string): Promise<void> {
@@ -1050,12 +925,12 @@ export class TorqueApiClient {
   // Checkpoints
   // -------------------------
 
-  async listPendingCheckpoints(): Promise<{ checkpoints: Checkpoint[] }> {
-    return this.get<{ checkpoints: Checkpoint[] }>('/checkpoints/pending')
+  async listPendingCheckpoints(query?: ListQuery): Promise<ListPage<Checkpoint>> {
+    return this.get<ListPage<Checkpoint>>('/checkpoints/pending', { ...query })
   }
 
-  async listTaskCheckpoints(taskId: string): Promise<{ checkpoints: Checkpoint[] }> {
-    return this.get<{ checkpoints: Checkpoint[] }>(`/tasks/${taskId}/checkpoints`)
+  async listTaskCheckpoints(taskId: string, query?: ListQuery): Promise<ListPage<Checkpoint>> {
+    return this.get<ListPage<Checkpoint>>(`/tasks/${taskId}/checkpoints`, { ...query })
   }
 
   async getCheckpoint(correlationId: string): Promise<Checkpoint> {
@@ -1110,24 +985,13 @@ export class TorqueApiClient {
    * the action is operator-initiated (not auto-polled) so it does not
    * silently consume delivery on an agent's behalf.
    */
-  async getInbox(to: string, filter?: MessageFilter): Promise<MessageEnvelope[]> {
-    const res = await this.get<{ messages: MessageEnvelope[] | null }>('/messages/inbox', {
-      to,
-      kind: filter?.kind,
-      channel: filter?.channel,
-      thread_id: filter?.thread_id,
-      limit: filter?.limit,
-    })
-    return res.messages ?? []
+  async getInbox(to: string, filter?: MessageFilter & { include_total?: boolean }): Promise<ListPage<MessageEnvelope>> {
+    return this.get<ListPage<MessageEnvelope>>('/messages/inbox', { ...filter, to })
   }
 
   /** Read a thread by id — non-destructive (`GET /messages/thread/{id}`). */
-  async getThread(threadId: string, filter?: MessageFilter): Promise<MessageEnvelope[]> {
-    const res = await this.get<{ messages: MessageEnvelope[] | null }>(
-      `/messages/thread/${encodeURIComponent(threadId)}`,
-      { kind: filter?.kind, channel: filter?.channel, limit: filter?.limit },
-    )
-    return res.messages ?? []
+  async getThread(threadId: string, filter?: MessageFilter & ListQuery): Promise<ListPage<MessageEnvelope>> {
+    return this.get<ListPage<MessageEnvelope>>(`/messages/thread/${encodeURIComponent(threadId)}`, { ...filter })
   }
 
   /** Fetch a single envelope by id — non-destructive. */

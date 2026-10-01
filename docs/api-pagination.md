@@ -5,8 +5,8 @@ CW-20261001-0561 defines the HTTP and MCP list contract for
 EP-20261001-0013, *Server-driven lists — query, sort, cursor-page, never
 fetch-all*. The normative sections below describe the intended completed
 contract. The matrices explicitly separate it from the source-checked baseline
-at `a672493` (2026-10-01), with runs reconciled for CW-20261001-0562 and the five
-adjacent-family rows updated for CW-20261001-0563. They do not claim the complete target is already deployed.
+at `a672493` (2026-10-01), with S1 rows reconciled for CW-0562, CW-0563, CW-0565,
+CW-0626 and the merged facets/index tasks. They do not claim the complete target is already deployed.
 Reconcile this document against the merged S1 implementation before declaring
 it a current API reference.
 
@@ -282,8 +282,8 @@ not the cohort or export. A consumer must not preload every page on mount.
 ## Endpoint capability matrix
 
 All HTTP paths below are relative to `/api/v1`. `C` means current source at
-`a672493`, except implemented cells marked CW-0562/CW-0563; `T` means S1 target.
-CW-0563 cells describe the implementation in that task; other target cells
+`a672493`, except implemented cells marked with S1 task IDs, including CW-0565; `T` means S1 target.
+Marked cells describe their task implementations; other target cells
 remain pending. `paged` means cursor plus the
 shared 50/200 policy and metadata above. `opt-in total` means
 `include_total=true`, not an always-computed count. `none` means no public
@@ -300,32 +300,52 @@ source and MCP `tools/list`.
 | Issues `/issues`, `/issues/search` | C (CW-0563): paged list/search by default; T: met | C: task allow-list; T: retain | C: project, status, query, fixed issue kind; T: retain | C (CW-0563): opt-in cohort total; T: met | C: no dedicated issue facets; T: task facets with issue kind | C (CW-0563): `torque_issue_list`, common envelope/count semantics; T: met |
 | Comments `/comments`, `/comments/search`, `/tasks/{id}/comments` | C (CW-0563): paged list/search/nested task list; T: met | C: `created_at`; T: retain | C: entity scope(s), author, dates, search; T: retain nested task restrictions | C (CW-0563): opt-in total; T: met | C: none; T: count through include_total, facets pending | C (CW-0563): `torque_comment_list`, `torque_comment_search`, shared 50/200/count policy; T: met |
 | Runs `/runs` | Implemented in CW-20261001-0562: cursor default, 50/200 policy; explicit offset incl. 0 without cursor emits offset/next_offset (CW-0626) | `started_at`, `status`, `duration`, `cost`; default `started_at desc`, numeric `id asc` | Shared task/project/sprint/epic scopes, CSV status, inclusive since/until (RFC3339 or Unix millis) | Opt-in `include_total`, cohort before cursor/offset/limit | `/runs/facets`, `torque_run_facets`: status/executor/current task profile + ledger cost/run tokens | `torque_run_list` shares service query and items/meta; MCP byte trims preserve continuation |
-| Sessions `/sessions` | C: limit only; T: paged | C: fixed newest-first; T: proposed session fields below | C: state, task, project; T: retain + server query pending | C: none; T: opt-in total | C: none; T: count through include_total, facets pending | C: `torque_session_list` without continuation; T: paged parity |
-| Artifacts `/artifacts`, `/tasks/{id}/artifacts` | C: none; T: paged | C: fixed newest-first; T: proposed artifact fields below | C: required task; T: retain + type/run/query pending | C: none; T: opt-in total | C: none; T: count through include_total, facets pending | C: `torque_artifact_list`, brief/verbose byte cap; T: paged parity |
-| Collections `/collections` | C: none; T: paged | C: no public sort; T: proposed collection fields below | C: status; T: retain + server query pending | C: none; T: opt-in total | C: none; T: count through include_total, facets pending | C: `torque_collection_list` byte cap; T: paged parity |
-| Collection tasks `/collections/{id}/tasks`, `/collections/inbox/tasks` | C: none; T: paged | C: collection order, no public sort; T: position + task fields proposed | C: collection path/inbox scope; T: retain + task filters pending | C: none; T: opt-in total | C: none; T: task facets under equivalent collection scope | C: `torque_collection_tasks_list`, `torque_collection_inbox_list`; T: paged parity |
-| Plans `/plans` | C: HTTP none/MCP cursor; T: paged | C: MCP task allow-list; T: same on HTTP | C: HTTP fixed plan kind, MCP scopes/status/search; T: shared query, fixed kind | C: none; T: opt-in total | C: no dedicated plan facets; T: task facets with plan kind | C: `torque_plan_list`, transport mismatch; T: common query contract |
-| Plan children `/plans/{id}/children` | C: none; T: paged | C: no public sort; T: task fields proposed | C: plan path, optional phase; T: retain + task filters pending | C: none; T: opt-in total | C: none; T: task facets under equivalent parent/phase scope | C: `torque_plan_list_children` byte cap only; T: paged parity |
-| Checkpoints `/tasks/{id}/checkpoints`, `/checkpoints/pending`, `/sessions/{id}/checkpoints` | C: task/pending no cursor, session limit only; T: paged | C: fixed per-family order; T: proposed checkpoint fields below | C: task/session path or pending status; T: preserve these distinct scopes | C: none; T: opt-in total | C: none; T: count through include_total, facets pending | C: task list/pending and session checkpoint tools, no cursor; T: same paging, preserve different record types |
-| Templates `/templates` | C: none; T: paged | C: no public sort; T: proposed template fields below | C: kind, archive; T: retain + server query pending | C: none; T: opt-in total | C: none; T: count through include_total, facets pending | C: `torque_template_list` byte cap; T: paged parity |
-| Models `/models` | C: none; T: paged | C: no public sort; T: proposed model fields below | C: provider; T: retain + catalog query pending | C: none; T: opt-in total | C: none; T: count through include_total, facets pending | C: `torque_models_list` byte cap, HTTP fetch-all; T: common paging |
-| Messages `/messages/inbox`, `/messages/thread/{thread_id}` | C: limit only; T: paged read lists | C: no public sort; T: proposed message fields below | C: recipient/thread, kind/channel/limit; T: retain read scope | C: none; T: opt-in total on read lists | C: none; T: count through include_total, facets pending | C: broker inbox drains delivery, no read-list parity; T: read parity pending, never equate a drain with a read |
+| Sessions `/sessions` | CW-0565: cursor default, optional offset, shared 50/200 | `created_at`, `state`; newest first, session ID asc | state, task/project scope, search on ID/task/workdir | Opt-in filtered cohort total | List count only; facets pending | `torque_session_list`, same query/meta; existing Session snapshot preserved |
+| Artifacts `/artifacts`, `/tasks/{id}/artifacts` | CW-0565: cursor default, optional offset, shared 50/200 | `created_at`, `type`; newest first, numeric ID asc | Required task (path wins), type, run_id, content/URL/path search | Opt-in filtered cohort total | List count only; facets pending | `torque_artifact_list`, same query/meta; brief/verbose and byte continuation retained |
+| Collections `/collections` | CW-0565: cursor default, optional offset, shared 50/200 | name/status/creation/update; default name asc, ID asc | active/archived/all (default active), ID/name/description search | Opt-in filtered cohort total | List count only; facets pending | `torque_collection_list`, same query/meta |
+| Collection tasks `/collections/{id}/tasks`, `/collections/inbox/tasks` | CW-0565: cursor default, optional offset, shared 50/200 | position + task allow-list; default position asc, task ID asc | Path/inbox scope; task status/priority/project/sprint/epic, tags, text search | Opt-in scoped filtered cohort total | Task facets under equivalent scope remain separate | `torque_collection_tasks_list`, `torque_collection_inbox_list`; task projection retained |
+| Plans `/plans` | CW-0565: cursor default, optional offset, shared 50/200 | Task allow-list; priority asc, ID asc | Fixed plan kind; status/priority/project/sprint/epic, tags, search | Opt-in filtered plan cohort total | Task facets with plan kind | `torque_plan_list`, same query/meta; task projection retained |
+| Plan children `/plans/{id}/children` | CW-0565: cursor default, optional offset, shared 50/200 | Task allow-list; priority asc, task ID asc | Required plan path, phase_id; status/priority/project/sprint/epic, tags, search | Opt-in scoped filtered cohort total | Task facets under equivalent parent/phase remain separate | `torque_plan_list_children`, same query/meta; task projection retained |
+| Checkpoints `/tasks/{id}/checkpoints`, `/checkpoints/pending`, `/sessions/{id}/checkpoints` | CW-0565: cursor default, optional offset, shared 50/200 | Task: creation/status; history desc, pending asc, correlation ID asc. Recovery: creation desc, checkpoint ID asc | Preserve task/session/pending scopes; task history status; recovery ID/note or HITL correlation/type/payload search | Opt-in scoped filtered cohort total | List count only; facets pending | `torque_task_checkpoint_list`, `torque_task_checkpoints_pending`, `torque_session_checkpoint_list`; HITL and recovery projections stay distinct |
+| Templates `/templates` | CW-0565: cursor default, optional offset, shared 50/200 | name/kind/creation/update; name asc, ID/version identity asc | kind, include_archived, ID/name/description search | Opt-in filtered version-row cohort total | List count only; facets pending | `torque_template_list`, same query/meta; versions remain separate rows |
+| Models `/models` | CW-0565: cursor default, optional offset, shared 50/200 | name/provider_id/id; name asc, provider/model identity asc | provider, case-insensitive name/model/provider search; catalog snapshot | Opt-in filtered catalog-row total (cold cache 0) | List count only; facets pending | `torque_models_list`, same query/meta; HTTP and brief/verbose MCP projections retained |
+| Messages `/messages/inbox`, `/messages/thread/{thread_id}` | CW-0565: inbox drain list: each call delivers its page, no cursor/offset. Thread: cursor default; offset available on one store, positive federated offset rejects with use-cursor guidance | `created_at`; thread asc/desc, message ID asc; inbox asc only | Recipient/thread scopes, kind/channel/thread filters retained | Inbox: undelivered cohort before this drain. Thread: exact with one store; multiple stores omit total and emit total_unavailable=federated | Non-mutating count/peek; no message facets | No pure-read MCP thread list exists; broker inbox/inbox_poll remain actions unchanged. CW-20260912-0114 remains separate |
 
-Messages require special reconciliation: `torque_broker_inbox` and
-`torque_inbox_poll` atomically drain/mark delivered envelopes. They are actions,
-not equivalent to the HTTP message read lists. Adding continuation must preserve
-delivery guarantees; do not turn a read-list count or page traversal into a
-message acknowledgement. Session checkpoints likewise describe runtime recovery
-records, separate from task HITL checkpoints.
+Messages have two distinct traversal models. `GET /messages/inbox` remains
+an operator-initiated **drain list: each call delivers its page**. It fetches
+exactly `limit` rows and marks only those rows delivered, never `limit+1`.
+A separate non-mutating EXISTS after delivery sets `has_more`; `next_cursor`
+is always null. Calling again retrieves the next undelivered batch. The opt-in
+`total` counts the filtered undelivered cohort immediately before this call's
+page is delivered, within the same transaction; it decreases on later calls.
+Cursor, offset, and descending delivery order are rejected for inbox batches.
+`torque_broker_inbox` and `torque_inbox_poll` remain their existing delivery
+actions; this change does not turn them into pure reads or alter ack behavior.
+The inbox-mutation question remains [CW-20260912-0114](https://torque.nanite.cloud/tasks/CW-20260912-0114).
+
+`GET /messages/thread/{thread_id}` is a pure read. It preserves federation:
+each store contributes at most `limit+1` rows after the cursor in the shared
+`(created_at, message ID)` order, merged and deduplicated before emitting one
+page. Continuation uses the last emitted row, including when peers hold the
+same message ID. Whole-cohort `total` is exact for one store; when multiple
+stores participate, `include_total=true` is safe but the response omits
+`total` and adds `meta.total_unavailable="federated"`. It never sums overlapping
+peer counts. Positive offset with multiple stores returns a 400 error naming
+`offset` and advising use of cursor; offset zero and cursor mode remain valid.
+Single-store threads support offset/next_offset. Peer HTTP thread reads use the
+same bounded envelope; peers without paging support fail explicitly rather
+than triggering an unbounded history fetch. Federation authorizes thread
+participation through an EXISTS query before any paged data or count is sent.
+
+Session checkpoints describe runtime recovery records, separate from task
+HITL checkpoints; their schemas are preserved inside the common envelope.
 
 ### Sort allow-lists and defaults
 
 Existing public allow-lists below are checked against service/adapter source.
-Runs fields are the implementation owner's confirmed S1 target. **Proposed**
-rows are draft choices for families with no public sort at the baseline, not
-claims of implementation or additional epic decisions. Implementation owners
-must confirm or revise them at reconciliation, including tie-breaks and null
-ordering.
+The rows marked implemented include the owner-confirmed allow-lists,
+defaults, unique tie-breaks and null ordering. These reconcile the original
+proposed choices for families that had no public sort at the baseline.
 
 | Resource | Allowed `sort_by` | Default | State |
 |---|---|---|---|
@@ -334,16 +354,16 @@ ordering.
 | Epics, sprints | `name`, `status`, `updated_at`, `created_at` | `updated_at desc`, `id asc` | Current and target |
 | Comments | `created_at` | List `asc`, search `desc`; numeric `id asc` | Current and target |
 | Runs | `started_at`, `status`, `duration`, `cost` | `started_at desc`, numeric `id asc` | Implemented CW-20261001-0562; duration is rounded completed elapsed milliseconds, unfinished sentinel -1 |
-| Sessions | `created_at`, `state` | `created_at desc`, `id asc` | Proposed target |
-| Artifacts | `created_at`, `type` | `created_at desc`, numeric `id asc` | Proposed target |
-| Collections | `name`, `status`, `created_at`, `updated_at` | `name asc`, `id asc` | Proposed target |
-| Collection tasks | `position`, `priority`, `status`, `updated_at`, `created_at` | `position asc`, task `id asc` | Proposed target; preserve authored collection order |
-| Plan children | `priority`, `status`, `updated_at`, `created_at` | `priority asc`, task `id asc` | Proposed target; preserve phase filter |
-| Task checkpoints | `created_at`, `status` | Task history `created_at desc`; pending queue `created_at asc`; correlation ID tie-break | Proposed target |
-| Session checkpoints | `created_at` | `created_at desc`, unique checkpoint ID | Proposed target; separate recovery record schema |
-| Templates | `name`, `kind`, `created_at`, `updated_at` | `name asc`, template ID/version tie-break | Proposed target |
-| Models | `name`, `provider_id`, `id` | `name asc`, provider/model pair tie-break | Proposed target; catalog-backed |
-| Messages | `created_at` | `created_at asc`, message ID tie-break | Proposed target; read-list semantics only |
+| Sessions | `created_at`, `state` | `created_at desc`, `id asc` | Implemented CW-0565 |
+| Artifacts | `created_at`, `type` | `created_at desc`, numeric `id asc` | Implemented CW-0565; creation order revised from the previous oldest-first source |
+| Collections | `name`, `status`, `created_at`, `updated_at` | `name asc`, `id asc` | Implemented CW-0565; status derives active/archived from archived_at |
+| Collection tasks | `position`, `priority`, `status`, `updated_at`, `created_at` | `position asc`, task `id asc` | Implemented CW-0565; null position maps to max int64 (last asc, first desc); task ID breaks ties. Inbox has null positions and therefore ID order by default |
+| Plan children | `priority`, `status`, `updated_at`, `created_at` | `priority asc`, task `id asc` | Implemented CW-0565; phase filtered in SQL before paging/count |
+| Task checkpoints | `created_at`, `status` | Task history `created_at desc`; pending queue `created_at asc`; correlation ID tie-break | Implemented CW-0565; created_at is the emitted_at alias |
+| Session checkpoints | `created_at` | `created_at desc`, unique checkpoint ID | Implemented CW-0565; separate recovery record schema |
+| Templates | `name`, `kind`, `created_at`, `updated_at` | `name asc`, template ID/version tie-break | Implemented CW-0565; lexical ID + colon + decimal version identity; versions are distinct rows |
+| Models | `name`, `provider_id`, `id` | `name asc`, provider/model pair tie-break | Implemented CW-0565; catalog-backed, identity encoded as provider/model JSON pair |
+| Messages | `created_at` | `created_at asc`, message ID tie-break | Implemented CW-0565; inbox asc only, thread asc/desc |
 
 Tag catalog lists also fall under the universal 50/200 and opt-in total policy,
 even though they are outside the task's required matrix: the current tag cursor
@@ -428,3 +448,21 @@ and unpaged search body are removed. The Torque GUI keeps its existing internal
 Its existing traversal behavior is retained for CW-0571/CW-0572 to replace.
 Tachyon work-ops CW-0630 and Tangent CW-0631 own cross-project adapters; no live
 deploy before those consumers land.
+
+### Remaining-family reconciliation (CW-20261001-0565)
+
+The rows marked CW-0565 describe authored HTTP, service/store, MCP and GUI
+implementations. The old named arrays and raw list shapes are removed. GUI
+callers consume one page and retain the current record projections; full
+paging/picker UX remains later work, and no live deployment is included.
+SQL list/count filters share the same predicates. Cursor keys are non-null:
+required strings/timestamps keep their existing values; the only nullable sort
+key, collection position, uses max int64 as the sentinel described above.
+All sorts use an ascending unique identity tie-break in both primary directions.
+
+Verification includes HTTP/MCP parity over 205 matching rows across eleven
+SQL resource families, every allowed sort in both directions, limit clamp,
+filtered whole-cohort totals, and cursor traversal through tied sort keys.
+Catalog tests cover duplicate model IDs across providers. Message tests cover
+exact delivery counts, successive batches, pure-read fractional-time cursors,
+federated deduplication at page boundaries, and count availability.

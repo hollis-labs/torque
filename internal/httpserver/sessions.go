@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/hollis-labs/agentkit/agentsessions"
 	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
 	"github.com/hollis-labs/torque/internal/sessioninput"
 )
@@ -29,19 +29,7 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	if !s.requireSessions(w) {
 		return
 	}
-	q := r.URL.Query()
-	limit, _ := strconv.Atoi(q.Get("limit"))
-	out, err := s.sessions.List(
-		agent.Status(q.Get("state")),
-		q.Get("task_id"),
-		q.Get("project_id"),
-		limit,
-	)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"sessions": out})
+	s.serveResourceList(w, r, "sessions", sqlstore.ResourcePageFilter{})
 }
 
 type launchSessionBody struct {
@@ -307,14 +295,7 @@ func (s *Server) listSessionCheckpoints(w http.ResponseWriter, r *http.Request) 
 	if !s.requireSessions(w) {
 		return
 	}
-	id := chi.URLParam(r, "id")
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	cps, err := s.sessions.ListCheckpoints(id, limit)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"checkpoints": cps})
+	s.serveResourceList(w, r, "session_checkpoints", sqlstore.ResourcePageFilter{SessionID: chi.URLParam(r, "id")})
 }
 
 type resumeBody struct {
