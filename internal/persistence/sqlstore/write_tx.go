@@ -126,40 +126,65 @@ func (w *WriteTx) CreateRun(r *RunRecord) (int64, error) {
 
 // CompleteRun stamps terminal run fields inside the transaction.
 func (w *WriteTx) CompleteRun(id int64, c RunCompletion) error {
+	_, err := w.completeRun(id, c)
+	return err
+}
+
+// CompleteRunWithCost stamps terminal run fields and, when the run row took
+// them, inserts the run's cost_ledger row in the same transaction, so
+// runs.cost and the ledger hold the same figure (CW-20260912-0003). A run an
+// operator already cancelled, superseded or killed keeps its row as stamped
+// and gets no ledger row: the two never disagree.
+func (w *WriteTx) CompleteRunWithCost(id int64, c RunCompletion, ledger *CostLedgerRecord) error {
+	updated, err := w.completeRun(id, c)
+	if err != nil || !updated || ledger == nil {
+		return err
+	}
+	ledger.RunID = id
+	ledger.Cost = c.Cost
+	ledger.CostSource = c.CostSource
+	_, err = appendCostLedger(w.tx, ledger)
+	return err
+}
+
+// completeRun reports whether the run row was updated.
+func (w *WriteTx) completeRun(id int64, c RunCompletion) (bool, error) {
 	var exitCode sql.NullInt64
 	if c.ExitCode != nil {
 		exitCode = sql.NullInt64{Int64: int64(*c.ExitCode), Valid: true}
 	}
 
 	const q = `UPDATE runs SET status = ?, ended_at = ?, prompt_tokens = ?,
-		completion_tokens = ?, cost = ?, exit_code = ?, error_message = ?
+		completion_tokens = ?, cost = ?, exit_code = ?, error_message = ?,
+		cache_read_tokens = ?, cache_write_tokens = ?, cost_source = ?
 		WHERE id = ? AND status NOT IN ('cancelled','superseded','killed')`
 
 	res, err := w.tx.Exec(q,
 		c.Status, time.Now().UTC(),
 		c.PromptTokens, c.CompletionTokens, c.Cost,
 		exitCode, c.ErrorMessage,
+		c.CacheReadTokens, c.CacheWriteTokens, c.CostSource,
 		id,
 	)
 	if err != nil {
-		return err
+		return false, err
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return err
+		return false, err
 	}
 	if n > 0 {
-		return nil
+		return true, nil
 	}
 
 	var status string
 	if err := w.tx.QueryRow(`SELECT status FROM runs WHERE id = ?`, id).Scan(&status); err != nil {
 		if err == sql.ErrNoRows {
-			return fmt.Errorf("run %d not found", id)
+			return false, fmt.Errorf("run %d not found", id)
 		}
-		return err
+		return false, err
 	}
-	return nil
+	return false, nil
 }
 
 // AppendRunEvent inserts a run_events row inside the transaction.

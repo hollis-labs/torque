@@ -19,13 +19,13 @@ import (
 // persistent disable belongs in config, not a runtime toggle.
 const schedulerStatusDescription = `Get scheduler status: enabled flag, worker counts, queue depth, cost, subscribers, stale-heartbeat threshold.
 Use to confirm auto-dispatch is live before creating manual=false tasks, or to monitor worker/queue load. Same shape as GET /api/v1/scheduler/status. In stdio MCP mode this tool falls back to a read-only proxy against the local serve process at http://127.0.0.1:$TORQUE_HTTP_PORT/api/v1/scheduler/status, so clients can still tell whether auto-dispatch is live.
-Response shape: data = {enabled, max_workers, active_workers, queue_depth, total_cost, subscribers, stale_heartbeat_seconds}.
+Response shape: data = {enabled, max_workers, active_workers, queue_depth, total_cost, total_cost_by_source, subscribers, stale_heartbeat_seconds}. total_cost is the cost ledger's sum; total_cost_by_source splits it by provenance: provider (the CLI reported it; a list-price figure, not an invoice), estimate (priced from the model catalog, cache-aware), mixed, none (unpriced), and older rows as executor, models_dev (cache-unaware estimates) and unknown.
 Example: {}`
 
 const schedulerToggleDescription = `Enable or disable the task scheduler.
 Use to pause auto-dispatch for a session (e.g. before a mass-flip or noisy debug) and resume afterwards. Session-scoped: reset on serve restart (scheduler re-initializes from config); persistent disable belongs in torque_settings_save, not here. This requires an in-process scheduler; stdio MCP clients should use torque_scheduler_status for read-only serve-process state.
 Idempotent — toggling to the current state is a no-op and returns the same status. Unlike the HTTP toggle (which always flips), this tool takes an explicit enabled arg so agents don't have to read-modify-write across two tool calls.
-Response shape: data = {enabled, max_workers, active_workers, queue_depth, total_cost, subscribers, stale_heartbeat_seconds}.
+Response shape: data = {enabled, max_workers, active_workers, queue_depth, total_cost, total_cost_by_source, subscribers, stale_heartbeat_seconds}. total_cost is the cost ledger's sum; total_cost_by_source splits it by provenance: provider (the CLI reported it; a list-price figure, not an invoice), estimate (priced from the model catalog, cache-aware), mixed, none (unpriced), and older rows as executor, models_dev (cache-unaware estimates) and unknown.
 Example: {"enabled":"false"}`
 
 func (a *Adapter) registerSchedulerTools() {

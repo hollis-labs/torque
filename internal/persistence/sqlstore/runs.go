@@ -21,6 +21,12 @@ type RunRecord struct {
 	ExitCode         sql.NullInt64
 	ErrorMessage     string
 	Metadata         sql.NullString
+	// CacheReadTokens / CacheWriteTokens are the run's prompt-cache totals,
+	// and CostSource where Cost came from: provider, estimate, mixed or
+	// none ('' for runs completed before migration 034). CW-20260912-0003.
+	CacheReadTokens  int
+	CacheWriteTokens int
+	CostSource       string
 }
 
 // RunCompletion holds the fields written when a run finishes.
@@ -28,7 +34,10 @@ type RunCompletion struct {
 	Status           string
 	PromptTokens     int
 	CompletionTokens int
+	CacheReadTokens  int
+	CacheWriteTokens int
 	Cost             float64
+	CostSource       string
 	ExitCode         *int
 	ErrorMessage     string
 }
@@ -81,15 +90,20 @@ func (s *Store) GetTaskRunAggregate(taskID string) (*TaskRunAggregate, error) {
 	}
 
 	// cost_ledger lookup. Aggregates SUM(cost) and picks the highest-
-	// priority cost_source via MIN() over a CASE — `executor` (measured) is
-	// rank 1, `models_dev` (estimated) is rank 2, `unknown` is rank 3, so
+	// priority cost_source via MIN() over a CASE — `provider` (and the
+	// pre-034 `executor`) is measured, rank 1; `estimate` and `mixed` (and
+	// the pre-034 `models_dev`) are estimated, rank 2; `none`/`unknown` is
+	// rank 3, so
 	// MIN selects the most authoritative source seen across the task's
 	// ledger rows. NULL CostSource (no rows) leaves the field empty so the
 	// GUI can decide between "—" (no data) and "$0.00" (measured-and-zero).
 	const ledgerQ = `SELECT COALESCE(SUM(cost), 0),
 		MIN(CASE cost_source
 			WHEN 'executor' THEN 1
+			WHEN 'provider' THEN 1
 			WHEN 'models_dev' THEN 2
+			WHEN 'estimate' THEN 2
+			WHEN 'mixed' THEN 2
 			ELSE 3
 		END)
 		FROM cost_ledger WHERE task_id = ?`
@@ -140,13 +154,15 @@ func (s *Store) CreateRun(r *RunRecord) (int64, error) {
 // GetRun fetches a single run by ID.
 func (s *Store) GetRun(id int64) (*RunRecord, error) {
 	const q = `SELECT id, task_id, executor, status, started_at, ended_at,
-		prompt_tokens, completion_tokens, cost, exit_code, error_message, metadata
+		prompt_tokens, completion_tokens, cost, exit_code, error_message, metadata,
+		cache_read_tokens, cache_write_tokens, cost_source
 		FROM runs WHERE id = ?`
 
 	var r RunRecord
 	err := s.ReadDB().QueryRow(q, id).Scan(
 		&r.ID, &r.TaskID, &r.Executor, &r.Status, &r.StartedAt, &r.EndedAt,
 		&r.PromptTokens, &r.CompletionTokens, &r.Cost, &r.ExitCode, &r.ErrorMessage, &r.Metadata,
+		&r.CacheReadTokens, &r.CacheWriteTokens, &r.CostSource,
 	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("run %d not found", id)
@@ -185,7 +201,8 @@ func (s *Store) ListRunsFiltered(f RunFilter) ([]RunRecord, error) {
 	)
 
 	sel := `SELECT r.id, r.task_id, r.executor, r.status, r.started_at, r.ended_at,
-		r.prompt_tokens, r.completion_tokens, r.cost, r.exit_code, r.error_message, r.metadata
+		r.prompt_tokens, r.completion_tokens, r.cost, r.exit_code, r.error_message, r.metadata,
+		r.cache_read_tokens, r.cache_write_tokens, r.cost_source
 		FROM runs r`
 	if f.ProjectID != "" {
 		sel += ` INNER JOIN tasks t ON t.id = r.task_id`
@@ -231,6 +248,7 @@ func (s *Store) ListRunsFiltered(f RunFilter) ([]RunRecord, error) {
 		if err := rows.Scan(
 			&r.ID, &r.TaskID, &r.Executor, &r.Status, &r.StartedAt, &r.EndedAt,
 			&r.PromptTokens, &r.CompletionTokens, &r.Cost, &r.ExitCode, &r.ErrorMessage, &r.Metadata,
+			&r.CacheReadTokens, &r.CacheWriteTokens, &r.CostSource,
 		); err != nil {
 			return nil, err
 		}
@@ -308,13 +326,15 @@ func (s *Store) CompleteRun(id int64, c RunCompletion) error {
 	// already matches a non-operator terminal. Operator-terminal statuses
 	// are excluded so the late-arriving executor result cannot clobber them.
 	const q = `UPDATE runs SET status = ?, ended_at = ?, prompt_tokens = ?,
-		completion_tokens = ?, cost = ?, exit_code = ?, error_message = ?
+		completion_tokens = ?, cost = ?, exit_code = ?, error_message = ?,
+		cache_read_tokens = ?, cache_write_tokens = ?, cost_source = ?
 		WHERE id = ? AND status NOT IN ('cancelled','superseded','killed')`
 
 	res, err := s.db.Exec(q,
 		c.Status, time.Now().UTC(),
 		c.PromptTokens, c.CompletionTokens, c.Cost,
 		exitCode, c.ErrorMessage,
+		c.CacheReadTokens, c.CacheWriteTokens, c.CostSource,
 		id,
 	)
 	if err != nil {

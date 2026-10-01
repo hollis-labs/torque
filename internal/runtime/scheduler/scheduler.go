@@ -40,7 +40,13 @@ type SchedulerStatus struct {
 	QueueDepth          int     `json:"queue_depth"`
 	TelemetryQueueDepth int     `json:"telemetry_queue_depth"`
 	TotalCost           float64 `json:"total_cost"`
-	Subscribers         int     `json:"subscribers"`
+	// TotalCostBySource splits TotalCost by each ledger row's cost source,
+	// so an agent can tell provider-reported cost from estimates: provider,
+	// estimate, mixed and none since migration 034, and the older
+	// executor, models_dev (cache-unaware estimates) and unknown rows under
+	// their own names (CW-20260912-0003).
+	TotalCostBySource map[string]float64 `json:"total_cost_by_source,omitempty"`
+	Subscribers       int                `json:"subscribers"`
 	// StaleHeartbeatThresholdSeconds is the number of seconds since a
 	// worker's last heartbeat after which it is considered stale and its
 	// row is pruned by the next scheduler tick. Surfaced here so operators
@@ -279,6 +285,7 @@ func (s *Scheduler) Status() SchedulerStatus {
 		telemetryDepth, _ = s.telemetryWriter.Depth(context.Background())
 	}
 	total, _ := s.cost.GlobalTotal()
+	bySource, _ := s.cost.TotalsBySource()
 
 	return SchedulerStatus{
 		Enabled:                        enabled,
@@ -287,6 +294,7 @@ func (s *Scheduler) Status() SchedulerStatus {
 		QueueDepth:                     depth,
 		TelemetryQueueDepth:            telemetryDepth,
 		TotalCost:                      total,
+		TotalCostBySource:              bySource,
 		Subscribers:                    s.bus.SubscriberCount(),
 		StaleHeartbeatThresholdSeconds: s.cfg.StaleSeconds,
 	}
@@ -1359,15 +1367,35 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 			return nil, err
 		}
 
-		runCompletedPayload := runCompletedEventPayload(result)
+		// Resolve the run's cost once, provider first then a cache-aware
+		// estimate, and write the same figure to runs.cost and the run's
+		// cost_ledger row in one transaction (CW-20260912-0003).
+		sprintID := ""
+		if task.SprintID.Valid {
+			sprintID = task.SprintID.String
+		}
+		cost := s.resolveCost(task.AgentProfile, result)
+		runCompletedPayload := runCompletedEventPayload(result, cost)
 		if err := s.stateWriter.Submit(context.Background(), "scheduler_run_completed", func(tx *sqlstore.WriteTx) error {
-			if err := tx.CompleteRun(capturedRunID, sqlstore.RunCompletion{
+			if err := tx.CompleteRunWithCost(capturedRunID, sqlstore.RunCompletion{
 				Status:           result.Status,
 				PromptTokens:     result.Tokens.PromptTokens,
 				CompletionTokens: result.Tokens.CompletionTokens,
-				Cost:             result.Cost,
+				CacheReadTokens:  result.Tokens.CacheReadTokens,
+				CacheWriteTokens: result.Tokens.CacheWriteTokens,
+				Cost:             cost.Cost,
+				CostSource:       string(cost.Source),
 				ExitCode:         result.ExitCode,
 				ErrorMessage:     result.Reason,
+			}, &sqlstore.CostLedgerRecord{
+				TaskID:           capturedTaskID,
+				SprintID:         sprintID,
+				PromptTokens:     result.Tokens.PromptTokens,
+				CompletionTokens: result.Tokens.CompletionTokens,
+				CacheReadTokens:  result.Tokens.CacheReadTokens,
+				CacheWriteTokens: result.Tokens.CacheWriteTokens,
+				ProviderCost:     cost.ProviderCost,
+				EstimatedCost:    cost.EstimatedCost,
 			}); err != nil {
 				return err
 			}
@@ -1382,28 +1410,10 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 			log.Printf("[scheduler] run completion write failed for %s (run %d): %v", capturedTaskID, capturedRunID, err)
 		}
 
-		// Record cost. resolveCost decides whether the executor's reported
-		// figure is authoritative or whether to backfill from the models.dev
-		// catalog when result.Cost is 0 but tokens > 0 (Phase 2 of the
-		// modelcatalog series).
-		sprintID := ""
-		if task.SprintID.Valid {
-			sprintID = task.SprintID.String
-		}
-		cost, source := s.resolveCost(task.AgentProfile, result)
-		s.cost.Record(CostEntry{
-			TaskID:           capturedTaskID,
-			RunID:            capturedRunID,
-			SprintID:         sprintID,
-			Cost:             cost,
-			PromptTokens:     result.Tokens.PromptTokens,
-			CompletionTokens: result.Tokens.CompletionTokens,
-			Source:           source,
-		})
-
 		runCompletedSSE := map[string]interface{}{
-			"status": result.Status,
-			"cost":   result.Cost,
+			"status":      result.Status,
+			"cost":        cost.Cost,
+			"cost_source": string(cost.Source),
 		}
 		// VerificationRan is the gate for the Phase 3 observability
 		// fields. Keying off VerificationRan (not off the content
@@ -1946,10 +1956,11 @@ func mergeStringMaps(base map[string]string, overlay map[string]string) map[stri
 // see; omitting the field whenever it's 0 would make that case
 // indistinguishable from a ModeOneShot run where verification didn't
 // fire at all.
-func runCompletedEventPayload(result *executor.ExecutionResult) string {
+func runCompletedEventPayload(result *executor.ExecutionResult, cost ResolvedCost) string {
 	payload := map[string]any{
-		"status": result.Status,
-		"cost":   result.Cost,
+		"status":      result.Status,
+		"cost":        cost.Cost,
+		"cost_source": string(cost.Source),
 	}
 	if result.VerificationRan {
 		payload["verification_ran"] = true
@@ -1966,7 +1977,7 @@ func runCompletedEventPayload(result *executor.ExecutionResult) string {
 		// Fallback to the pre-Phase-3 minimal shape so observers always
 		// see something parseable. The marshal failure is logged
 		// upstream by the caller via writeq's error path.
-		return fmt.Sprintf(`{"status":%q,"cost":%v}`, result.Status, result.Cost)
+		return fmt.Sprintf(`{"status":%q,"cost":%v,"cost_source":%q}`, result.Status, cost.Cost, cost.Source)
 	}
 	return string(b)
 }

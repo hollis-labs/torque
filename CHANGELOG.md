@@ -209,6 +209,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- A run's cost is one figure, priced once (CW-20260912-0003). The cost a
+  runtime reports (Claude's `total_cost_usd`) is taken as given; the tokens
+  of turns that reported none are estimated from models.dev with cache
+  pricing: cache reads at the cache-read price and cache writes at the
+  cache-write price, and for codex, whose input counts its cached tokens,
+  only the uncached remainder at the input price. Before, Claude's reported
+  cost was discarded and every cache read was priced as input, so codex runs
+  were recorded 3 to 7 times too high (run 1079: $110.96, now $15.38).
+  `runs.cost` and the run's `cost_ledger` row are written in the same
+  transaction as the run's completion, so the run, its task's cost and the
+  scheduler's `total_cost` agree; they were separate writes through the
+  telemetry queue. Runs and ledger rows record cache read and write tokens,
+  and a `cost_source`: `provider`, `estimate`, `mixed` (some turns reported
+  a cost, some were estimated) or `none`; ledger rows also keep the provider
+  and estimated parts. `torque_scheduler_status` adds `total_cost_by_source`.
+  The `claude-code` provider now finds Anthropic's prices
+  (CW-20261001-0182), and an opencode model id `<provider>/<model>` finds
+  that provider's. Estimates use the catalog's cache-write price, which for
+  Anthropic is the 5-minute tier; Claude's 1-hour cache writes cost more,
+  which is one reason its own figure comes first. Costs are reported, not
+  enforced: `CostBudget` still stops nothing. Existing rows are not
+  repriced. Migration 034.
 - An ACP agent that exits during launch no longer crashes the Torque daemon
   with "send on closed channel" (go-agent-wrapper v0.21.1,
   CW-20261001-0129).

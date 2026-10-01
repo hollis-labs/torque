@@ -31,13 +31,27 @@ import (
 // this map when adding new CLI providers.
 func CatalogProviderID(provider string) string {
 	switch provider {
-	case "claude":
+	case "claude", "claude-code", "claudecode":
+		// claude-code is the spelling every Claude profile uses; without it
+		// no Claude run was ever priced (CW-20261001-0182).
 		return "anthropic"
 	case "codex":
 		return "openai"
+	case "open-code":
+		return "opencode"
 	default:
 		return provider
 	}
+}
+
+// UsageInputIncludesCacheRead reports whether a runtime's reported input
+// tokens already include its cache reads. Codex reports OpenAI's usage,
+// whose input counts cached tokens; Claude Code and OpenCode report cache
+// reads on top of input (CW-20260912-0003). It follows the runtime, not the
+// model: an opencode profile running an OpenAI model still reports
+// opencode's way.
+func UsageInputIncludesCacheRead(provider string) bool {
+	return provider == "codex"
 }
 
 // AgentProfile defines the configuration for an executor agent.

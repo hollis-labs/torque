@@ -90,13 +90,16 @@ type briefProject struct {
 }
 
 type briefRun struct {
-	ID        int64   `json:"id"`
-	TaskID    string  `json:"task_id"`
-	Executor  string  `json:"executor,omitempty"`
-	Status    string  `json:"status"`
-	ExitCode  *int64  `json:"exit_code,omitempty"`
-	Cost      float64 `json:"cost,omitempty"`
-	StartedAt string  `json:"started_at"`
+	ID       int64   `json:"id"`
+	TaskID   string  `json:"task_id"`
+	Executor string  `json:"executor,omitempty"`
+	Status   string  `json:"status"`
+	ExitCode *int64  `json:"exit_code,omitempty"`
+	Cost     float64 `json:"cost,omitempty"`
+	// CostSource is where Cost came from: provider, estimate, mixed or
+	// none (CW-20260912-0003); empty for runs before migration 034.
+	CostSource string `json:"cost_source,omitempty"`
+	StartedAt  string `json:"started_at"`
 }
 
 type briefTemplate struct {
@@ -211,13 +214,14 @@ func toBriefRun(r sqlstore.RunRecord) briefRun {
 		exit = &v
 	}
 	return briefRun{
-		ID:        r.ID,
-		TaskID:    r.TaskID,
-		Executor:  r.Executor,
-		Status:    r.Status,
-		ExitCode:  exit,
-		Cost:      r.Cost,
-		StartedAt: r.StartedAt.UTC().Format(time.RFC3339),
+		ID:         r.ID,
+		TaskID:     r.TaskID,
+		Executor:   r.Executor,
+		Status:     r.Status,
+		ExitCode:   exit,
+		Cost:       r.Cost,
+		CostSource: r.CostSource,
+		StartedAt:  r.StartedAt.UTC().Format(time.RFC3339),
 	}
 }
 

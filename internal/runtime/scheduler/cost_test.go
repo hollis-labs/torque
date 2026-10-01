@@ -2,6 +2,7 @@ package scheduler_test
 
 import (
 	"database/sql"
+	"github.com/hollis-labs/torque/internal/modelcatalog"
 	"testing"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -124,125 +125,123 @@ func TestCostTrackerWithinBudget(t *testing.T) {
 	assert.True(t, ok)
 }
 
-// TestResolveCost covers the four branches of the cost-decision policy.
-// Lifted out of scheduler.Scheduler so we can exercise it without standing
-// up a full scheduler — the policy is the interesting part, the wiring is
-// the trivial part.
+// TestResolveCost covers the cost-decision policy (CW-20260912-0003):
+// provider cost first, a cache-aware estimate for the tokens that came
+// without one, and the provenance of the result. Lifted out of
+// scheduler.Scheduler so the policy can be exercised without a full
+// scheduler.
 func TestResolveCost(t *testing.T) {
-	estimateOK := func(p, m string, in, out int) (float64, bool) {
-		// 1k tokens at 3/M + 1k at 15/M = 0.003 + 0.015 = 0.018 (for symmetry).
-		return float64(in)*3/1_000_000 + float64(out)*15/1_000_000, true
+	// A flat 3/M input, 15/M output, 0.3/M cache read, 3.75/M cache write.
+	estimateOK := func(_, _ string, u modelcatalog.UsageTokens) (float64, bool, bool) {
+		return (float64(u.Input)*3 + float64(u.Output)*15 + float64(u.CacheRead)*0.3 + float64(u.CacheWrite)*3.75) / 1_000_000, false, true
 	}
-	estimateMiss := func(string, string, int, int) (float64, bool) { return 0, false }
+	estimateMiss := func(string, string, modelcatalog.UsageTokens) (float64, bool, bool) { return 0, false, false }
 	resolveProfile := func(name string) (string, string, bool) {
 		if name == "claude" {
-			return "anthropic", "claude-sonnet-4-6", true
+			return "claude-code", "claude-sonnet-4-5", true
 		}
 		return "", "", false
 	}
+	tokens := executor.TokenUsage{PromptTokens: 1000, CompletionTokens: 500}
 
-	t.Run("executor reported wins", func(t *testing.T) {
-		cost, src := scheduler.ResolveCost("claude",
-			&executor.ExecutionResult{Cost: 0.42, Tokens: executor.TokenUsage{PromptTokens: 1000, CompletionTokens: 500}},
-			estimateOK, resolveProfile, true)
-		assert.Equal(t, 0.42, cost)
-		assert.Equal(t, scheduler.CostSourceExecutor, src)
+	t.Run("provider-reported for every event", func(t *testing.T) {
+		rc := scheduler.ResolveCost("claude", &executor.ExecutionResult{Cost: 0.42, Tokens: tokens}, estimateOK, resolveProfile, true)
+		assert.Equal(t, scheduler.ResolvedCost{Cost: 0.42, ProviderCost: 0.42, Source: scheduler.CostSourceProvider}, rc)
 	})
 
-	t.Run("backfill when executor reports zero with positive tokens", func(t *testing.T) {
-		cost, src := scheduler.ResolveCost("claude",
-			&executor.ExecutionResult{Cost: 0, Tokens: executor.TokenUsage{PromptTokens: 1000, CompletionTokens: 500}},
-			estimateOK, resolveProfile, true)
-		assert.InDelta(t, 0.0105, cost, 0.0001)
-		assert.Equal(t, scheduler.CostSourceModelsDev, src)
+	t.Run("part provider-reported, part estimated", func(t *testing.T) {
+		// A resumed Claude session: its first turn reports no cost and is
+		// estimated; the others carry Claude's own figure.
+		rc := scheduler.ResolveCost("claude", &executor.ExecutionResult{
+			Cost:           0.42,
+			Tokens:         executor.TokenUsage{PromptTokens: 2000, CompletionTokens: 1000},
+			UnpricedTokens: tokens,
+		}, estimateOK, resolveProfile, true)
+		assert.Equal(t, scheduler.CostSourceMixed, rc.Source)
+		assert.InDelta(t, 0.42, rc.ProviderCost, 1e-9)
+		assert.InDelta(t, 0.0105, rc.EstimatedCost, 1e-9, "only the unpriced tokens are estimated")
+		assert.InDelta(t, 0.4305, rc.Cost, 1e-9)
 	})
 
-	t.Run("flag off skips backfill", func(t *testing.T) {
-		cost, src := scheduler.ResolveCost("claude",
-			&executor.ExecutionResult{Cost: 0, Tokens: executor.TokenUsage{PromptTokens: 1000, CompletionTokens: 500}},
-			estimateOK, resolveProfile, false)
-		assert.Equal(t, 0.0, cost)
-		assert.Equal(t, scheduler.CostSourceUnknown, src)
+	t.Run("estimated when no event carried a cost", func(t *testing.T) {
+		rc := scheduler.ResolveCost("claude", &executor.ExecutionResult{Tokens: tokens, UnpricedTokens: tokens}, estimateOK, resolveProfile, true)
+		assert.Equal(t, scheduler.CostSourceEstimate, rc.Source)
+		assert.InDelta(t, 0.0105, rc.Cost, 1e-9)
+		assert.Equal(t, rc.Cost, rc.EstimatedCost)
 	})
 
-	t.Run("zero tokens skips backfill", func(t *testing.T) {
-		cost, src := scheduler.ResolveCost("claude",
-			&executor.ExecutionResult{Cost: 0, Tokens: executor.TokenUsage{}},
-			estimateOK, resolveProfile, true)
-		assert.Equal(t, 0.0, cost)
-		assert.Equal(t, scheduler.CostSourceUnknown, src)
+	t.Run("an executor that does not split has all its tokens estimated", func(t *testing.T) {
+		rc := scheduler.ResolveCost("claude", &executor.ExecutionResult{Tokens: tokens}, estimateOK, resolveProfile, true)
+		assert.Equal(t, scheduler.CostSourceEstimate, rc.Source)
+		assert.InDelta(t, 0.0105, rc.Cost, 1e-9)
 	})
 
-	t.Run("unknown profile skips backfill", func(t *testing.T) {
-		cost, src := scheduler.ResolveCost("not-a-profile",
-			&executor.ExecutionResult{Cost: 0, Tokens: executor.TokenUsage{PromptTokens: 1000}},
-			estimateOK, resolveProfile, true)
-		assert.Equal(t, 0.0, cost)
-		assert.Equal(t, scheduler.CostSourceUnknown, src)
+	t.Run("cache tokens are priced at their own rates", func(t *testing.T) {
+		u := executor.TokenUsage{PromptTokens: 36, CompletionTokens: 1804, CacheReadTokens: 132711, CacheWriteTokens: 20565}
+		rc := scheduler.ResolveCost("claude", &executor.ExecutionResult{Tokens: u, UnpricedTokens: u}, estimateOK, resolveProfile, true)
+		assert.InDelta(t, 0.14410005, rc.Cost, 1e-9)
 	})
 
-	t.Run("catalog miss falls through", func(t *testing.T) {
-		cost, src := scheduler.ResolveCost("claude",
-			&executor.ExecutionResult{Cost: 0, Tokens: executor.TokenUsage{PromptTokens: 1000}},
-			estimateMiss, resolveProfile, true)
-		assert.Equal(t, 0.0, cost)
-		assert.Equal(t, scheduler.CostSourceUnknown, src)
-	})
+	none := []struct {
+		name     string
+		profile  string
+		result   *executor.ExecutionResult
+		estimate scheduler.EstimateUsageFn
+		backfill bool
+	}{
+		{"backfill off", "claude", &executor.ExecutionResult{Tokens: tokens}, estimateOK, false},
+		{"no tokens", "claude", &executor.ExecutionResult{}, estimateOK, true},
+		{"unknown profile", "not-a-profile", &executor.ExecutionResult{Tokens: tokens}, estimateOK, true},
+		{"model not in the catalog", "claude", &executor.ExecutionResult{Tokens: tokens}, estimateMiss, true},
+		{"no catalog", "claude", &executor.ExecutionResult{Tokens: tokens}, nil, true},
+		{"no result", "claude", nil, estimateOK, true},
+	}
+	for _, tc := range none {
+		t.Run("none: "+tc.name, func(t *testing.T) {
+			rc := scheduler.ResolveCost(tc.profile, tc.result, tc.estimate, resolveProfile, tc.backfill)
+			assert.Equal(t, scheduler.ResolvedCost{Source: scheduler.CostSourceNone}, rc, "0 here means unknown, not free")
+		})
+	}
 
-	t.Run("nil estimate fn skips backfill", func(t *testing.T) {
-		cost, src := scheduler.ResolveCost("claude",
-			&executor.ExecutionResult{Cost: 0, Tokens: executor.TokenUsage{PromptTokens: 1000}},
-			nil, resolveProfile, true)
-		assert.Equal(t, 0.0, cost)
-		assert.Equal(t, scheduler.CostSourceUnknown, src)
+	t.Run("provider cost stands when the rest cannot be priced", func(t *testing.T) {
+		rc := scheduler.ResolveCost("claude", &executor.ExecutionResult{Cost: 0.42, Tokens: tokens, UnpricedTokens: tokens}, estimateMiss, resolveProfile, true)
+		assert.Equal(t, scheduler.CostSourceProvider, rc.Source)
+		assert.InDelta(t, 0.42, rc.Cost, 1e-9)
 	})
 }
 
-// TestScheduler_ResolveCost_NormalizesProviderAlias is the smoke test for
-// the CW-20260510-0100 dashboard fix: a profile with `provider: claude`
-// (CLI brand) MUST hit the models.dev catalog under the canonical
-// `anthropic` namespace, not the literal `claude` string. Without the
-// CatalogProviderID normalization in scheduler.resolveCost, the gate at
-// cost.go:152 falls through and writes cost_source='unknown' — which
-// renders as $0.00 on the dashboard.
-//
-// We don't stand up a real catalog here (that's what the live HTTP test
-// covers) — instead we assert that the provider passed to the estimate
-// closure was normalized.
-func TestScheduler_ResolveCost_NormalizesProviderAlias(t *testing.T) {
-	var seenProvider, seenModel string
-	estimate := func(p, m string, in, out int) (float64, bool) {
-		seenProvider = p
-		seenModel = m
-		return 0.018, true
+// The estimate is asked under the catalog's provider id, with the runtime's
+// own input convention: claude-code is Anthropic's and reports cache reads
+// on top of input (CW-20261001-0182, which left every Claude run unpriced);
+// codex is OpenAI's and counts them in input; opencode keeps its id and its
+// "<provider>/<model>" model, which the catalog splits.
+func TestResolveCost_CatalogProviderAndInputConvention(t *testing.T) {
+	for _, tc := range []struct {
+		provider, model  string
+		wantProvider     string
+		wantIncludesRead bool
+	}{
+		{"claude-code", "claude-sonnet-4-5", "anthropic", false},
+		{"claude", "claude-sonnet-4-5", "anthropic", false},
+		{"codex", "gpt-5.5", "openai", true},
+		{"opencode", "opencode/claude-sonnet-4-5", "opencode", false},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			var gotProvider, gotModel string
+			var gotUsage modelcatalog.UsageTokens
+			estimate := func(p, m string, u modelcatalog.UsageTokens) (float64, bool, bool) {
+				gotProvider, gotModel, gotUsage = p, m, u
+				return 0.01, false, true
+			}
+			resolveProfile := func(string) (string, string, bool) { return tc.provider, tc.model, true }
+			rc := scheduler.ResolveCost("worker", &executor.ExecutionResult{Tokens: executor.TokenUsage{PromptTokens: 10, CacheReadTokens: 5}}, estimate, resolveProfile, true)
+			assert.Equal(t, scheduler.CostSourceEstimate, rc.Source)
+			assert.Equal(t, tc.wantProvider, gotProvider)
+			assert.Equal(t, tc.model, gotModel)
+			assert.Equal(t, tc.wantIncludesRead, gotUsage.InputIncludesCacheRead)
+			assert.Equal(t, 5, gotUsage.CacheRead)
+		})
 	}
-	resolveProfile := func(name string) (string, string, bool) {
-		// Returns the already-normalized catalog provider id. The
-		// package-level ResolveCost trusts its resolveProfile callback
-		// to hand back canonical ids; the actual CLI-brand →
-		// catalog-id normalization happens upstream in
-		// (*Scheduler).resolveCost via config.CatalogProviderID.
-		// This test exercises the package-level cost-shape contract
-		// (estimate receives whatever the closure returns and the
-		// CostSourceModelsDev tag flows correctly).
-		// TODO(follow-up): add a sibling test in package scheduler
-		// that constructs a real *Scheduler and calls resolveCost
-		// with Profile{Provider: "claude"} to lock the
-		// CatalogProviderID call site against regression.
-		if name == "torque-backend" {
-			return "anthropic", "claude-sonnet-4-5", true
-		}
-		return "", "", false
-	}
-
-	cost, src := scheduler.ResolveCost("torque-backend",
-		&executor.ExecutionResult{Cost: 0, Tokens: executor.TokenUsage{PromptTokens: 1000, CompletionTokens: 500}},
-		estimate, resolveProfile, true)
-
-	assert.InDelta(t, 0.018, cost, 0.0001)
-	assert.Equal(t, scheduler.CostSourceModelsDev, src)
-	assert.Equal(t, "anthropic", seenProvider, "estimate must see catalog provider id, not CLI brand")
-	assert.Equal(t, "claude-sonnet-4-5", seenModel)
 }
 
 // TestCostTracker_RecordsSource verifies the cost_source column round-trips.

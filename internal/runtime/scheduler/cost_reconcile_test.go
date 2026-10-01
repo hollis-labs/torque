@@ -1,0 +1,119 @@
+package scheduler_test
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/hollis-labs/go-modelsdev/modelsdev"
+	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/modelcatalog"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+type staticProfiles config.ProfileMap
+
+func (p staticProfiles) CurrentProfiles() config.ProfileMap { return config.ProfileMap(p) }
+
+// A run's cost is resolved once and written to runs.cost and its
+// cost_ledger row together, so the run, its task's aggregate and the
+// scheduler's total_cost all read the same figures (CW-20260912-0003). Four
+// runs through the real completion path, one per provenance, with a
+// models.dev fixture and tonight's run 1140 as the codex estimate.
+func TestSchedulerRunCostIsOneFigure(t *testing.T) {
+	sched, store, mock := setupScheduler(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]modelsdev.Provider{
+			"openai":    {ID: "openai", Models: map[string]modelsdev.Model{"gpt-5.5": {ID: "gpt-5.5", Cost: modelsdev.Pricing{Input: 5, Output: 30, CacheRead: 0.5}}}},
+			"anthropic": {ID: "anthropic", Models: map[string]modelsdev.Model{"claude-sonnet-4-5": {ID: "claude-sonnet-4-5", Cost: modelsdev.Pricing{Input: 3, Output: 15, CacheWrite: 3.75, CacheRead: 0.3}}}},
+		})
+	}))
+	defer srv.Close()
+	catalog := modelcatalog.New(modelsdev.WithURL(srv.URL), modelsdev.WithHTTPClient(srv.Client()), modelsdev.WithCacheDir(t.TempDir()), modelsdev.WithCacheTTL(24*time.Hour))
+	require.NoError(t, catalog.Refresh(context.Background()))
+	sched.Models = catalog
+	sched.Profiles = staticProfiles{
+		"codex-worker":  {Executor: "cli", Provider: "codex", Model: "gpt-5.5"},
+		"claude-worker": {Executor: "cli", Provider: "claude-code", Model: "claude-sonnet-4-5"},
+	}
+
+	resumed := executor.TokenUsage{PromptTokens: 12, CompletionTokens: 300, CacheReadTokens: 40000, CacheWriteTokens: 5000}
+	runs := []struct {
+		taskID, profile string
+		result          executor.ExecutionResult
+		wantSource      string
+		wantCost        float64
+	}{
+		{"CW-COST-PROVIDER", "claude-worker", executor.ExecutionResult{
+			Status: "done", Cost: 0.1904,
+			Tokens: executor.TokenUsage{PromptTokens: 36, CompletionTokens: 1804, CacheReadTokens: 132711, CacheWriteTokens: 20565},
+		}, "provider", 0.1904},
+		{"CW-COST-MIXED", "claude-worker", executor.ExecutionResult{
+			Status: "done", Cost: 0.14,
+			Tokens:         executor.TokenUsage{PromptTokens: 36, CompletionTokens: 1804, CacheReadTokens: 132711, CacheWriteTokens: 20565},
+			UnpricedTokens: resumed,
+		}, "mixed", 0.14 + (12*3+300*15+40000*0.3+5000*3.75)/1e6},
+		{"CW-COST-ESTIMATE", "codex-worker", executor.ExecutionResult{
+			Status: "done",
+			Tokens: executor.TokenUsage{PromptTokens: 58212, CompletionTokens: 830, CacheReadTokens: 40064},
+		}, "estimate", 0.135672},
+		{"CW-COST-NONE", "not-a-profile", executor.ExecutionResult{
+			Status: "done",
+			Tokens: executor.TokenUsage{PromptTokens: 100, CompletionTokens: 10},
+		}, "none", 0},
+	}
+	for _, r := range runs {
+		require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+			ID: r.taskID, Title: r.taskID, Status: "todo", Priority: 1,
+			Executor: "mock", AgentProfile: r.profile, OnDone: "close",
+		}))
+		res := r.result
+		mock.SetResult(&res)
+		require.NoError(t, sched.Tick(context.Background()))
+		require.Eventually(t, func() bool {
+			runs, err := store.ListRuns(r.taskID)
+			return err == nil && len(runs) == 1 && runs[0].Status != "running"
+		}, 5*time.Second, 10*time.Millisecond, "run for %s never completed", r.taskID)
+		sched.DrainResults()
+	}
+
+	var sum float64
+	for _, r := range runs {
+		run := requireSingleRun(t, store, r.taskID)
+		assert.Equal(t, r.wantSource, run.CostSource, r.taskID)
+		assert.InDelta(t, r.wantCost, run.Cost, 1e-9, r.taskID)
+		assert.Equal(t, r.result.Tokens.CacheReadTokens, run.CacheReadTokens, r.taskID)
+		assert.Equal(t, r.result.Tokens.CacheWriteTokens, run.CacheWriteTokens, r.taskID)
+
+		var ledgerCost, provider, estimated float64
+		var source string
+		var cacheRead int
+		require.NoError(t, store.DB().QueryRow(`SELECT cost, cost_source, provider_cost, estimated_cost, cache_read_tokens FROM cost_ledger WHERE run_id = ?`, run.ID).
+			Scan(&ledgerCost, &source, &provider, &estimated, &cacheRead))
+		assert.Equal(t, run.Cost, ledgerCost, "%s: runs.cost == the run's ledger figure", r.taskID)
+		assert.Equal(t, run.CostSource, source, r.taskID)
+		assert.InDelta(t, ledgerCost, provider+estimated, 1e-9, "%s: cost is its provider and estimated parts", r.taskID)
+		assert.Equal(t, run.CacheReadTokens, cacheRead, r.taskID)
+
+		agg, err := store.GetTaskRunAggregate(r.taskID)
+		require.NoError(t, err)
+		assert.InDelta(t, run.Cost, agg.Cost, 1e-9, "%s: the task aggregate is its ledger", r.taskID)
+		sum += run.Cost
+	}
+
+	status := sched.Status()
+	assert.InDelta(t, sum, status.TotalCost, 1e-9, "scheduler total_cost == the sum of the ledger")
+	var bySource float64
+	for _, v := range status.TotalCostBySource {
+		bySource += v
+	}
+	assert.InDelta(t, status.TotalCost, bySource, 1e-9, "the by-source split adds up to total_cost")
+	assert.InDelta(t, 0.135672, status.TotalCostBySource["estimate"], 1e-9)
+	assert.Contains(t, status.TotalCostBySource, "none")
+}
