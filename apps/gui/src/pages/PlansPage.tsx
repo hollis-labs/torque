@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import { PageHeader, EmptyState, Skeleton, Button, CopyableId } from '@hollis-labs/sysop-ui'
 import { CreatePlanDialog } from '@/components/domain/create-plan-dialog'
 import { useApi } from '@/hooks/use-api'
+import { usePagedList } from '@/hooks/use-paged-list'
+import { ListPageControls } from '@/components/domain/list-page-controls'
 import type { PlanDetail, Task } from '@/lib/types'
 
 interface PlanRow {
@@ -26,44 +28,22 @@ function PlansSkeleton() {
 export default function PlansPage() {
   const api = useApi()
   const navigate = useNavigate()
-  const [rows, setRows] = useState<PlanRow[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
-
-  const fetchPlans = useCallback(async () => {
-    try {
-      const { items: plans } = await api.listPlans()
-      // Hydrate each row with phase count + progress. Small N — the listing
-      // view never shows enough plans to make this expensive.
-      const details = await Promise.all(
-        plans.map(async (task) => {
-          try {
-            const detail = await api.getPlan(task.id)
-            return {
-              task: detail.task,
-              phaseCount: detail.plan.phases.length,
-              totalChildren: detail.progress.total_children,
-              done: detail.progress.done,
-            } satisfies PlanRow
-          } catch {
-            return { task, phaseCount: 0, totalChildren: 0, done: 0 } satisfies PlanRow
-          }
-        })
-      )
-      setRows(details)
-      setError(null)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load plans')
-    } finally {
-      setLoading(false)
-    }
-  }, [api])
-
-  useEffect(() => {
-    setLoading(true)
-    fetchPlans()
-  }, [fetchPlans])
+  const page = usePagedList({
+    params: { sort_by: 'updated_at', sort_dir: 'desc' as const, include_total: true },
+    fetchPage: async ({ params, cursor, signal }) => {
+      const result = await api.listPlans({ ...params, cursor }, signal)
+      const items = await Promise.all(result.items.map(async task => {
+        try {
+          const detail = await api.getPlan(task.id)
+          return { task: detail.task, phaseCount: detail.plan.phases.length, totalChildren: detail.progress.total_children, done: detail.progress.done } satisfies PlanRow
+        } catch { return { task, phaseCount: 0, totalChildren: 0, done: 0 } satisfies PlanRow }
+      }))
+      return { items, meta: result.meta }
+    },
+    getId: row => row.task.id,
+  })
+  const { items: rows, loading, error, reload: fetchPlans } = page
 
   function handleCreated(plan: PlanDetail) {
     navigate(`/plans/${plan.task.id}`)
@@ -78,11 +58,12 @@ export default function PlansPage() {
         </Button>
       </PageHeader>
 
+      <ListPageControls page={page} label="plans" />
       <div className="flex-1 overflow-auto">
-        {loading ? (
+        {loading && rows.length === 0 ? (
           <PlansSkeleton />
-        ) : error ? (
-          <EmptyState variant="error" title="Something went wrong" description={error} action={{ label: 'Retry', onClick: fetchPlans }} />
+        ) : error && rows.length === 0 ? (
+          <EmptyState variant="error" title="Something went wrong" description={error.message} action={{ label: 'Retry', onClick: fetchPlans }} />
         ) : rows.length === 0 ? (
           <EmptyState
             variant="empty"

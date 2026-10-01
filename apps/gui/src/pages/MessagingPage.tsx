@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Bot, Inbox, RefreshCw, Send, User, X } from 'lucide-react'
+import { Bot, Inbox, Send, User, X } from 'lucide-react'
 import {
   PageHeader,
   SummaryCards,
@@ -13,6 +13,8 @@ import {
 } from '@hollis-labs/sysop-ui'
 import { ComposeMessageDialog } from '@/components/domain/compose-message-dialog'
 import { useApi } from '@/hooks/use-api'
+import { usePagedList } from '@/hooks/use-paged-list'
+import { ListPageControls } from '@/components/domain/list-page-controls'
 import { notifyError, notifySuccess } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import {
@@ -146,6 +148,7 @@ export default function MessagingPage() {
     agent: [],
   })
   const [loading, setLoading] = useState(false)
+  const [hasMoreInbox, setHasMoreInbox] = useState<Record<ScopeKey, boolean>>({ user: false, agent: false })
   const [error, setError] = useState<string | null>(null)
   const [loaded, setLoaded] = useState<Record<ScopeKey, boolean>>({
     user: false,
@@ -179,7 +182,8 @@ export default function MessagingPage() {
       setLoading(true)
       setError(null)
       try {
-        const envs = await api.getInbox(addr.trim())
+        const envs = await api.getInbox(addr.trim(), { limit: 50 })
+        setHasMoreInbox(previous => ({ ...previous, [target]: envs.meta.has_more }))
         mergeIntoScope(target, envs.items)
         setLoaded((prev) => ({ ...prev, [target]: true }))
       } catch (err) {
@@ -194,6 +198,12 @@ export default function MessagingPage() {
   function commitAddress() {
     const next = draft.trim()
     if (!next) return
+    if (next !== addresses[scope]) {
+      setPanels(previous => ({ ...previous, [scope]: [] }))
+      setHasMoreInbox(previous => ({ ...previous, [scope]: false }))
+      setLoaded(previous => ({ ...previous, [scope]: false }))
+      setSelectedCorrespondent(null)
+    }
     const updated = { ...addresses, [scope]: next }
     setAddresses(updated)
     persistAddresses(updated)
@@ -253,9 +263,9 @@ export default function MessagingPage() {
   }, [messages, conversations])
 
   const summaryCards = [
-    { label: scopeMeta.label, value: messages.length, subtitle: 'messages' },
-    { label: 'Pending', value: counts.pending, accentColor: '#f59e0b' },
-    { label: 'Conversations', value: counts.conversations, accentColor: '#60a5fa' },
+    { label: scopeMeta.label, value: messages.length, subtitle: 'loaded messages' },
+    { label: 'Loaded pending', value: counts.pending, accentColor: '#f59e0b' },
+    { label: 'Loaded conversations', value: counts.conversations, accentColor: '#60a5fa' },
     {
       label: 'Stream',
       value: sseStatus,
@@ -326,7 +336,7 @@ export default function MessagingPage() {
           onClick={commitAddress}
           disabled={!draft.trim() || !addressValid || loading}
         >
-          {loading ? 'Loading…' : 'Load inbox'}
+          {loading ? 'Receiving…' : 'Receive batch'}
         </Button>
         {loaded[scope] && committedAddress && (
           <Button
@@ -334,9 +344,9 @@ export default function MessagingPage() {
             variant="outline"
             onClick={() => loadInbox(committedAddress, scope)}
             disabled={loading}
-            aria-label="Refresh inbox"
+            aria-label="Receive next batch"
           >
-            <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+            {hasMoreInbox[scope] ? 'Receive next batch' : 'Check for new messages'}
           </Button>
         )}
         <span className="text-[11px] text-zinc-600">
@@ -476,59 +486,20 @@ function ConversationPanel({
   const [sending, setSending] = useState(false)
   const [cancelingId, setCancelingId] = useState<string | null>(null)
   const [canceledIds, setCanceledIds] = useState<Set<string>>(() => new Set())
-  const [backfilling, setBackfilling] = useState(false)
-  const [backfillError, setBackfillError] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
-
-  // Messages oldest-first for chat-style rendering. Inbound + outbound + any
-  // backfilled history all flow in through the `messages` prop, so SSE and
-  // sends stay live without separate panel state.
-  const displayed = useMemo(
-    () =>
-      [...messages].sort(
-        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-      ),
-    [messages],
-  )
+  const threads = backfillThreadKeys(messages)
+  const [selectedThread, setSelectedThread] = useState(() => threads[0] ?? '')
+  const history = usePagedList({
+    enabled: !!selectedThread,
+    params: { thread_id: selectedThread, sort_by: 'created_at', sort_dir: 'desc' as const, limit: 50, include_total: true },
+    fetchPage: ({ params, cursor, signal }) => api.getThread(params.thread_id, { sort_by: params.sort_by, sort_dir: params.sort_dir, limit: params.limit, include_total: params.include_total, cursor }, signal),
+    getId: message => message.id,
+  })
+  // This chat layout merges only explicitly loaded history with live/received rows.
+  const displayed = useMemo(() => mergeMessages(messages, history.items).reverse(), [messages, history.items])
   const latest = displayed.length > 0 ? displayed[displayed.length - 1] : null
-
-  // Backfill: `getInbox` only drains messages addressed TO the operator, so a
-  // conversation's own outbound replies are missing after a reload. Fetch each
-  // distinct thread the conversation touches and merge the union back up. This
-  // is best-effort — failures are surfaced but non-blocking.
-  useEffect(() => {
-    let cancelled = false
-    // Captured from the mount render — the panel is keyed by correspondent,
-    // so a new conversation remounts it with its own initial message set.
-    const tids = backfillThreadKeys(messages)
-    if (tids.length === 0) return
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- backfill status reflects the effect-owned async request.
-    setBackfilling(true)
-    setBackfillError(null)
-    ;(async () => {
-      try {
-        const results = await Promise.all(tids.map((tid) => api.getThread(tid)))
-        if (cancelled) return
-        const union = results.flatMap((page) => page.items)
-        if (union.length > 0) onChanged(union)
-      } catch (err) {
-        if (!cancelled) {
-          setBackfillError(
-            err instanceof Error ? err.message : 'Failed to load conversation history',
-          )
-        }
-      } finally {
-        if (!cancelled) setBackfilling(false)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-    // Runs once per correspondent — the panel is keyed by correspondent, so a
-    // new conversation remounts it. `messages` and `onChanged` are read from
-    // the mount closure and intentionally excluded from deps.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [correspondent])
+  const backfilling = history.loading
+  const backfillError = history.error?.message
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: 'nearest' })
@@ -596,10 +567,17 @@ function ConversationPanel({
         </Button>
       </div>
 
+      <div className="border-b border-zinc-800 px-4 py-2 text-xs text-muted-foreground">
+        Showing received/live messages and the loaded thread pages only.
+        {threads.length > 0 && <select aria-label="Conversation thread" value={selectedThread} onChange={event => setSelectedThread(event.target.value)} className="ml-2 bg-background">
+          {threads.map(id => <option key={id} value={id}>{id}</option>)}
+        </select>}
+      </div>
+      {selectedThread && <ListPageControls page={history} label="history messages" />}
       <div className="flex flex-1 flex-col gap-3 overflow-auto p-6">
         {backfillError && (
           <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200/80">
-            Couldn't load full history: {backfillError}
+            Couldn't load history page: {backfillError}
           </div>
         )}
 
