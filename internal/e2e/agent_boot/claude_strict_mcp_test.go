@@ -61,9 +61,9 @@ func bootClaude(t *testing.T, runtimeKind, profileName string, opts agent.Option
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), sess.ID) })
 
-	require.Eventually(t, func() bool { return len(fake.Calls()) > 0 }, 5*time.Second, 20*time.Millisecond)
-	args := fake.Call(0).Args
-	cfgPath, ok := fake.Call(0).ArgAfter("--mcp-config")
+	call := firstCall(t, fake)
+	args := call.Args
+	cfgPath, ok := call.ArgAfter("--mcp-config")
 	require.True(t, ok, "claude is launched with --mcp-config: %q", args)
 	raw, err := os.ReadFile(cfgPath)
 	require.NoError(t, err)
@@ -227,8 +227,7 @@ func bootOpencodeConfig(t *testing.T, mux bool, servers []string) map[string]jso
 	sess, err := cd.Manager.Boot(ctx, agent.Options{TaskID: "CW-OC-MUX", AgentProfile: "worker", Workdir: t.TempDir(), Mode: agent.ModeLongLived})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), sess.ID) })
-	require.Eventually(t, func() bool { return len(fake.Calls()) > 0 }, 5*time.Second, 20*time.Millisecond)
-	dir, ok := fake.Call(0).Getenv("OPENCODE_CONFIG_DIR")
+	dir, ok := firstCall(t, fake).Getenv("OPENCODE_CONFIG_DIR")
 	require.True(t, ok, "opencode is pointed at its planted config dir")
 	raw, err := os.ReadFile(filepath.Join(dir, "opencode.json"))
 	require.NoError(t, err)
@@ -276,7 +275,10 @@ func TestClaudeLaunch_StrictMCPConfig_OnTurnTwo(t *testing.T) {
 	t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), sess.ID) })
 	require.Eventually(t, func() bool { return len(fake.Calls()) >= 1 && fake.Call(0).Exited }, 5*time.Second, 20*time.Millisecond)
 	require.NoError(t, cd.Manager.SendTurn(ctx, sess, "turn two"))
-	require.Eventually(t, func() bool { return len(fake.Calls()) >= 2 }, 5*time.Second, 20*time.Millisecond)
+	require.Eventually(t, func() bool {
+		calls := fake.Calls()
+		return len(calls) >= 2 && len(calls[0].Args) > 0 && len(calls[1].Args) > 0
+	}, 5*time.Second, 20*time.Millisecond, "both turns launch the CLI and record their argv")
 
 	assertStrictOnce(t, fake.Call(0).Args)
 	assertStrictOnce(t, fake.Call(1).Args)

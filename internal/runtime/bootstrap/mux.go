@@ -38,12 +38,23 @@ type muxResolution struct {
 // Spelling these out as a single source of truth prevents drift between
 // the per-task plant shape and the user's interactive shell shape.
 //
-// This is the set a session that gets mux gets by default (OpenCode, and
-// Codex and ACP under bypassPermissions); it is not what a Claude worker
-// gets. A Claude worker gets no mux unless its profile names mux_servers,
-// which replace this set's `--servers` for that profile's sessions, since
-// cerberus (deploy, ssh) is the riskiest server and the worker sessions
-// never called mux (CW-20261001-0226).
+// This is the daemon's argv, not always what a session runs. When a session
+// is planted mux, agent.muxArgsFor curates it with `--only`: the servers
+// `--servers` names (or a profile's mux_servers instead) are planted as
+// `--only <servers>`, which gives the session exactly those servers' tools and
+// not mux_discover, mux_call into the rest of mux's catalog, or mux's own
+// Tether tools. Under `--only` the token and scopes below, which authorize
+// those native tools (session.write, message.write), are inert, though they
+// still ride in the argv; they matter again only for an operator argv with no
+// `--servers` (mux then proxies everything, natively).
+//
+// Which sessions get mux at all: OpenCode, and Codex and ACP under
+// bypassPermissions. Not a Claude worker, unless its profile names
+// mux_servers, since cerberus (deploy, ssh) is the riskiest server and the
+// worker sessions never called mux (CW-20261001-0226).
+//
+// `--only` needs mux v0.6.0 or later (2026-05-21); an older mux fails at flag
+// parse.
 var defaultMuxArgs = []string{
 	"mcp", "--proxy",
 	"--servers", "vanta,torque,cerberus",

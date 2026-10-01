@@ -148,19 +148,21 @@ spawns every enabled upstream server in its catalog inside its child process,
 and `--only` only leaves their tools unreachable (`mux_call` and discovery are
 suppressed). Only mux's `--confine` (Tether #88), which spawns just the allowed
 upstreams, would stop the spawn; it is tracked as CW-20261001-0259. A server id
-mux does not know is ignored, not an error.
+mux does not know is ignored, not an error. Planting `--only` needs **mux
+v0.6.0 or later** (it landed 2026-05-21); an older mux fails at flag parse.
 
 - Names come from a known set (`cerberus`, `fragments-engine`, `hadron`,
-  `loom`, `nanite`, `sigil`, `tangent`, `tangent-dev`, `tesseract`, `tether`,
-  `torque`, `vanta`): the server ids mux proxies, from its catalog's
-  `mcp-servers/`, plus the two the daemon's default set and the interactive
-  config name. An unknown, empty or repeated name is a **load-time error**
-  naming the profile, and `torque profiles lint` reports it.
+  `loom`, `nanite`, `sigil`, `tangent`, `tangent-dev`, `tesseract`, `torque`,
+  `vanta`): the server ids mux proxies, from its catalog's `mcp-servers/`, plus
+  `vanta`, which the daemon's default set names. `tether` is not one: mux's own
+  Tether tools are native, not a catalog server. An unknown, empty or repeated
+  name is a **load-time error** naming the profile, and `torque profiles lint`
+  reports it.
 - **`cerberus` and `nanite` are never granted by default.** `cerberus` can
-  deploy to and ssh into hosts; `nanite` serves `dev_bash`, which runs shell
-  commands on the host. A profile that names either gets a warning when
-  profiles load and from `torque profiles lint` (a warning, which does not fail
-  the lint), saying what it grants.
+  deploy to and ssh into hosts; `nanite` serves `dev_bash`, `python_run` and
+  `dev_write`, which run commands and write files on the host. A profile that
+  names either gets a warning when profiles load and from `torque profiles
+  lint` (a warning, which does not fail the lint), saying what it grants.
 - For `opencode`, `mux_servers` narrows the daemon's default set. For `codex`
   and ACP runtimes it narrows the set too, but mux is still planted only under
   `bypassPermissions` (the lint warns when a profile sets it otherwise).

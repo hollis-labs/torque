@@ -101,3 +101,17 @@ func TestExecutorValidate_RefusesPiTaskRuns(t *testing.T) {
 	assert.NoError(t, e.Validate(&executor.ExecutionJob{TaskID: "CW-2", Kind: "agent", AgentProfile: "copilot-worker"}))
 	assert.NoError(t, e.Validate(&executor.ExecutionJob{TaskID: "CW-3", AgentProfile: "copilot-worker"}))
 }
+
+// A Claude session over ACP is warned at launch that Torque cannot confirm it
+// loads only the MCP servers it sends: the bridge takes no
+// --strict-mcp-config. No other runtime gets the warning.
+func TestClaudeOverACPWarning(t *testing.T) {
+	for _, provider := range []string{"claude-code", "Claude-Code", "claude"} {
+		w := claudeOverACPWarning(config.AgentProfile{Provider: provider})
+		assert.Contains(t, w, "--strict-mcp-config", provider)
+		assert.Contains(t, w, "Claude session over ACP", provider)
+	}
+	for _, provider := range []string{"copilot", "pi", "opencode", "codex", "agy", ""} {
+		assert.Empty(t, claudeOverACPWarning(config.AgentProfile{Provider: provider}), provider)
+	}
+}

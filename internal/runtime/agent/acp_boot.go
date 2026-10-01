@@ -89,6 +89,17 @@ func selectACPRuntime(profile config.AgentProfile, desc registry.Descriptor, mod
 	return selectedRuntime{wrapper: launched, caps: capabilitiesForRuntimeKind(RuntimeKind(mode))}, nil
 }
 
+// claudeOverACPWarning is what a Claude session over ACP is warned of at
+// launch, "" for any other runtime (CW-20261001-0226). Over ACP Claude runs
+// behind a third-party bridge that takes no --strict-mcp-config, so what else
+// it loads beyond the servers sent in session/new is not Torque's to restrict.
+func claudeOverACPWarning(profile config.AgentProfile) string {
+	if runtimeIDFor(profile.Provider) != string(runtimes.Claude) {
+		return ""
+	}
+	return "a Claude session over ACP cannot be launched with --strict-mcp-config (the bridge takes no such flag), so Torque cannot confirm it loads only the MCP servers it sends in session/new"
+}
+
 // acpMCPServers is the MCP server set an ACP session receives in session/new
 // (and session/load): the per-task loopback over streamable HTTP and, when
 // the session's mux plan plants one, the mux aggregator over stdio. For ACP
@@ -216,11 +227,8 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 
 	mux := planMux(deps, profile, runtimeKind)
 	logMuxPlan(sessID, deps, mux)
-	if runtimeIDFor(profile.Provider) == string(runtimes.Claude) {
-		// Over ACP Claude runs behind a third-party bridge that takes no
-		// --strict-mcp-config, so what else it loads beyond the servers sent
-		// in session/new is not Torque's to restrict (CW-20261001-0226).
-		log.Printf("agent.Boot: session=%s: WARN a Claude session over ACP cannot be launched with --strict-mcp-config (the bridge takes no such flag), so Torque cannot confirm it loads only the MCP servers it sends in session/new", sessID)
+	if warning := claudeOverACPWarning(profile); warning != "" {
+		log.Printf("agent.Boot: session=%s: WARN %s", sessID, warning)
 	}
 	rawStderr, _, closeRawStderr := openStderrSidecar(opts.RunID, ws.LogPath)
 	stderrWriter, closeStderr := redactStderr(rawStderr, closeRawStderr, pb.redact)

@@ -39,6 +39,9 @@ func TestLoadProfiles_MuxServersValidation(t *testing.T) {
 		{"empty", `["tesseract", ""]`, `mux_servers[1] is empty`},
 		{"repeated", `[torque, torque]`, `mux_servers[1]: "torque" is listed twice`},
 		{"case", `[Cerberus]`, `unknown mux server "Cerberus"`},
+		// tether is mux's own native tools, not a catalog server: under --only
+		// it would plant a mux with nothing in it.
+		{"tether", `[tether]`, `unknown mux server "tether"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "profiles.yaml")
@@ -69,7 +72,7 @@ func TestLoadProfiles_MuxServersDangerousWarns(t *testing.T) {
 	assert.Empty(t, profiles["tidy"].DangerousMuxGrants())
 	assert.Contains(t, logs.String(), "WARNING")
 	assert.Contains(t, logs.String(), `agent_profiles["deployer"] mux_servers names cerberus, which grants deploy and ssh`)
-	assert.Contains(t, logs.String(), `agent_profiles["deployer"] mux_servers names nanite, which grants shell execution: its dev_bash tool`)
+	assert.Contains(t, logs.String(), `agent_profiles["deployer"] mux_servers names nanite, which grants host command execution and file writes: its dev_bash, python_run and dev_write tools`)
 	assert.NotContains(t, logs.String(), `"tidy"`)
 }
 
@@ -117,7 +120,7 @@ func TestLintProfilesYAML_MuxServers(t *testing.T) {
 		assert.True(t, p.Warning, "cerberus and nanite are warnings")
 	}
 	assert.Contains(t, byPath["agent_profiles.deployer.mux_servers"][0].Message, "cerberus grants deploy and ssh")
-	assert.Contains(t, byPath["agent_profiles.deployer.mux_servers"][1].Message, "nanite grants shell execution: its dev_bash tool")
+	assert.Contains(t, byPath["agent_profiles.deployer.mux_servers"][1].Message, "nanite grants host command execution and file writes: its dev_bash, python_run and dev_write tools")
 
 	for _, name := range []string{"worker-codex", "worker-copilot"} {
 		got := byPath["agent_profiles."+name+".mux_servers"]

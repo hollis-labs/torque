@@ -15,9 +15,11 @@ import (
 // mux takes its servers from the catalog's mcp-servers/*.yaml ids, which
 // differ by machine; this is the set Torque knows: those ids on the
 // operator's machine (cerberus, fragments-engine, hadron, loom, nanite,
-// sigil, tangent, tangent-dev, tesseract, torque), and vanta and tether,
-// which the daemon's default set and the interactive config name. A server
-// mux gains is added here when a profile needs to name it.
+// sigil, tangent, tangent-dev, tesseract, torque), and vanta, which the
+// daemon's default set names. `tether` is not one: mux's own Tether tools are
+// native, not an upstream catalog server, so naming it under `--only` would
+// plant a mux with nothing in it. A server mux gains is added here when a
+// profile needs to name it.
 var KnownMuxServers = []string{
 	"cerberus",
 	"fragments-engine",
@@ -28,7 +30,6 @@ var KnownMuxServers = []string{
 	"tangent",
 	"tangent-dev",
 	"tesseract",
-	"tether",
 	"torque",
 	"vanta",
 }
@@ -37,10 +38,11 @@ var KnownMuxServers = []string{
 // and why. None is ever part of a Claude worker's defaults; a profile that
 // names one gets a warning (the load log, the lint) saying what it grants.
 //   - cerberus can deploy to hosts and ssh into them.
-//   - nanite serves dev_bash, which runs shell commands on the host.
+//   - nanite serves dev_bash, python_run and dev_write (dev_edit): host
+//     command execution and file writes.
 var DangerousMuxServers = map[string]string{
 	"cerberus": "deploy and ssh: its sessions can deploy to and run commands on hosts",
-	"nanite":   "shell execution: its dev_bash tool runs shell commands on the host",
+	"nanite":   "host command execution and file writes: its dev_bash, python_run and dev_write tools run commands and change files on the host",
 }
 
 // validateMuxServers checks a profile's mux_servers: every entry names a

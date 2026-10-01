@@ -512,7 +512,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   the planted token and scopes. Names are checked against the known mux servers
   at profile load (an unknown, empty or repeated name is an error), and `torque
   profiles lint` reports the same. `cerberus` (deploy, ssh) and `nanite` (its
-  `dev_bash` runs shell commands) are only ever planted when a profile names
+  `dev_bash`, `python_run` and `dev_write` run commands and write files on the
+  host) are only ever planted when a profile names
   them, and naming either warns at load and in the lint, saying what it grants
   (a warning, which does not fail the lint). While Torque's state is
   write-protected a profile's `mux_servers` lose `torque`, and a profile that
@@ -524,7 +525,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   sessions lose `mux_discover`, `mux_call` into the rest of mux's catalog and
   mux's own Tether tools. A Claude session over ACP (`runtime_kind: acp-stdio`) is not
   covered by `--strict-mcp-config`, whose bridge takes no such flag: it gets no
-  default mux, and is warned about at launch and in the lint. The planted
+  default mux, and is warned about at launch and in the lint. Planting `--only`
+  needs mux v0.6.0 or later. The planted
   kickoff no longer tells a session to prefer its loopback "over
   `mcp__mux__torque_*`" as though it had a mux server: it says so only if the
   session also has one. See docs/agent-execution-environment.md.
