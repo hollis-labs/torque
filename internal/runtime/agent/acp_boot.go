@@ -439,9 +439,11 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 			_ = deps.UpdateSessionState(context.Background(), sessID, string(StatusFailed), 0, nil)
 			return nil, fmt.Errorf("%w: send ACP kickoff: %v", ErrBootFailed, err)
 		}
-		mgr.registerLoopback(sessID, loopback)
-		mgr.registerStderrCloser(sessID, closeStderr)
-		mgr.registerStreamCloser(sessID, sidecar.Close)
+		mgr.adoptWrapperResources(sessID, h, sessionResources{
+			loopback:    loopback,
+			closeStderr: closeStderr,
+			closeStream: sidecar.Close,
+		})
 	}
 
 	if opts.Mode == ModeOneShot {
