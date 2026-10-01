@@ -14,6 +14,7 @@ require (
 	github.com/hollis-labs/go-messaging v0.5.0
 	github.com/hollis-labs/go-modelsdev v0.2.0
 	github.com/hollis-labs/go-otel v0.6.1
+	github.com/hollis-labs/go-permission v0.1.0
 	github.com/hollis-labs/go-providers v0.30.0
 	github.com/hollis-labs/go-queue v0.2.0
 	github.com/hollis-labs/go-runner v0.7.0
@@ -50,7 +51,6 @@ require (
 	github.com/hollis-labs/go-harness-filters v0.1.1 // indirect
 	github.com/hollis-labs/go-llm-contracts v0.3.0 // indirect
 	github.com/hollis-labs/go-materialize v0.1.0 // indirect
-	github.com/hollis-labs/go-permission v0.1.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect

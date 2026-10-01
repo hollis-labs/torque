@@ -852,7 +852,12 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 	// routes idempotent: whichever signal arrives first wins, the
 	// other is a no-op.
 	var jsonRpcNotificationHook func(string, json.RawMessage)
+	var jsonRpcRequestHook func(string, json.RawMessage) (any, *agentsessions.JsonRpcError)
 	if runtimeKind == RuntimeKindJsonRpcStdio {
+		// Codex app-server asks before an MCP tool call or a sandbox
+		// escalation and blocks the action until answered; with no request
+		// hook each one got -32601 (CW-20261001-0055).
+		jsonRpcRequestHook = codexApprovalHook(sessID, profile)
 		hookOnDone := oneshotOnDone // nil for non-oneshot modes
 		// emit projects a codex-derived StreamEvent into the stream fanout
 		// (→ stream.jsonl histogram + downstream cost accumulator +
@@ -977,6 +982,7 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 			ExtraArgs:               bootDirExtraArgs,
 			PlantContext:            sessionLaunch.Options.PlantContext,
 			JsonRpcNotificationHook: jsonRpcNotificationHook,
+			JsonRpcRequestHook:      jsonRpcRequestHook,
 		},
 		SessionMeta: opts.SessionMeta,
 	}
