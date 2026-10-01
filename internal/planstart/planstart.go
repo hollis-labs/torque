@@ -24,6 +24,7 @@ import (
 	"time"
 
 	feotel "github.com/hollis-labs/go-otel"
+	"github.com/hollis-labs/go-providers/provider"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/hollis-labs/torque/internal/orchestrator"
@@ -429,7 +430,7 @@ func Redispatch(ctx context.Context, store RedispatchStore, mgr SessionManager, 
 	bootedProvider, bootedKind := mgr.RuntimeForProfile(orchestrator.Profile)
 	usedResume := false
 	if priorSession != nil &&
-		priorSession.Provider == bootedProvider &&
+		agent.SameRuntime(priorSession.Provider, bootedProvider) &&
 		agent.GenuinelyResumable(bootedProvider, bootedKind) &&
 		len(priorSession.ResumeHint) > 0 {
 		bootOpts.ProviderSessionIDOverride = string(priorSession.ResumeHint)
@@ -447,6 +448,16 @@ func Redispatch(ctx context.Context, store RedispatchStore, mgr SessionManager, 
 	)
 
 	sess, err := mgr.Boot(ctx, bootOpts)
+	if err != nil && usedResume && errors.Is(err, provider.ErrProviderSessionLost) {
+		// The provider no longer has the prior conversation: boot fresh,
+		// with the kickoff; the recovery pack carries the context.
+		log.Printf("planstart: provider session for plan=%s prior_session=%s is gone; booting fresh: %v",
+			planID, priorSessionID(priorSession), err)
+		bootOpts.ProviderSessionIDOverride = ""
+		usedResume = false
+		span.SetAttributes(attribute.Bool("torque.recovery.used_resume", false))
+		sess, err = mgr.Boot(ctx, bootOpts)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("planstart: redispatch orchestrator: %w", err)
 	}

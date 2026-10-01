@@ -157,6 +157,7 @@ type Session struct {
 	PID             int               `json:"PID"`
 	ExitCode        *int              `json:"ExitCode,omitempty"`
 	ResumeHint      []byte            `json:"ResumeHint,omitempty"`
+	Resumed         bool              `json:"Resumed,omitempty"` // ResumeSession continued the stored provider conversation (CW-20261001-0174)
 	Meta            map[string]string `json:"Meta,omitempty"`
 	CreatedAt       time.Time         `json:"CreatedAt"`
 	UpdatedAt       time.Time         `json:"UpdatedAt"`
@@ -284,3 +285,15 @@ var (
 	// ErrWorkdirRequired — Options.Workdir is empty and there's no fallback.
 	ErrWorkdirRequired = errors.New("agent: Workdir is required")
 )
+
+// bootFailedError is an ErrBootFailed whose message is the redacted
+// detail while errors.Is still reaches its cause: a resume whose provider
+// session is gone (provider.ErrProviderSessionLost) is booted fresh by
+// ResumeSession and planstart (CW-20261001-0174).
+type bootFailedError struct {
+	detail string // redacted
+	cause  error
+}
+
+func (e *bootFailedError) Error() string   { return ErrBootFailed.Error() + ": " + e.detail }
+func (e *bootFailedError) Unwrap() []error { return []error{ErrBootFailed, e.cause} }

@@ -100,13 +100,14 @@ func TestResumeSession_Codex_FreshBoot(t *testing.T) {
 
 	assert.Nil(t, cd.Runtime.sessionIDPreset.Load(),
 		"codex app-server resume is not wired: ResumeSession must boot fresh, not pass an id the runtime ignores")
-	// A fresh boot runs the kickoff on a new thread: thread/start, never
-	// thread/resume.
+	// A fresh boot runs the kickoff on a new thread: thread/start then
+	// turn/start, never thread/resume.
 	var methods []string
 	for _, c := range cd.Runtime.lastSession().recordedJsonRpcCalls() {
 		methods = append(methods, c.Method)
 	}
 	assert.Contains(t, methods, "thread/start")
+	assert.Contains(t, methods, "turn/start", "the kickoff fires")
 	assert.NotContains(t, methods, "thread/resume")
 }
 

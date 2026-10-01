@@ -1534,7 +1534,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		bootDirPlanted = false
 		_ = os.RemoveAll(capturedBootDir)
 		_ = deps.UpdateSessionState(context.Background(), sessID, string(StatusFailed), 0, nil)
-		return nil, fmt.Errorf("%w: %s", ErrBootFailed, pb.redact.Text(failErr.Error()+detail))
+		return nil, &bootFailedError{detail: pb.redact.Text(failErr.Error() + detail), cause: failErr}
 	case <-ctx.Done():
 		runCancel()
 		<-h.runDone

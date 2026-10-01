@@ -7,49 +7,23 @@ import (
 	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/hollis-labs/go-providers/registry"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"github.com/hollis-labs/torque/internal/config"
 )
 
 // Resume is derived from the go-providers registry's per-mode capabilities
 // (CW-20261001-0174). Declared follows the descriptor for every runtime and
-// mode it lists; Wired is the subset Torque genuinely resumes. Changing a
-// Wired value changes what ResumeSession, the HITL dispatcher and planstart
-// do for that runtime.
+// mode it lists; Wired is the allow-list of pairs Torque genuinely resumes,
+// so a mode a library bump adds stays unwired. Changing the wired set
+// changes what ResumeSession, the HITL dispatcher and planstart do for
+// that runtime.
 func TestResume_FromTheRegistry(t *testing.T) {
-	type want struct{ declared, wired bool }
-	expect := map[runtimes.ID]map[runtimes.Mode]want{
-		runtimes.Claude: {
-			runtimes.ModeStreamingStdio:    {true, true},
-			runtimes.ModeSubprocessPerTurn: {true, true},
-			runtimes.ModePTY:               {true, false}, // Torque has no PTY launch for Claude
-			runtimes.ModeACPStdio:          {false, false},
-		},
-		runtimes.Codex: {
-			runtimes.ModeJSONRPCStdio:      {true, false}, // CW-20261001-0180
-			runtimes.ModeSubprocessPerTurn: {false, false},
-			runtimes.ModeACPStdio:          {false, false},
-		},
-		runtimes.OpenCode: {
-			runtimes.ModeSubprocessPerTurn: {true, true}, // opencode run --session <id>
-			runtimes.ModeHTTPSSE:           {false, false},
-			runtimes.ModeACPStdio:          {true, true}, // session/load
-		},
-		runtimes.Copilot: {
-			runtimes.ModeACPStdio: {false, false},
-			runtimes.ModeACPTCP:   {false, false},
-		},
-		runtimes.Pi: {
-			runtimes.ModeACPStdio: {true, true}, // session/load
-		},
-		runtimes.Antigravity: {
-			runtimes.ModeSubprocessPerTurn: {true, false}, // CW-20261001-0181
-		},
+	wired := map[runtimes.ID][]runtimes.Mode{
+		runtimes.Claude:   {runtimes.ModeStreamingStdio, runtimes.ModeSubprocessPerTurn}, // --resume <id>
+		runtimes.OpenCode: {runtimes.ModeSubprocessPerTurn, runtimes.ModeACPStdio},       // --session <id>, session/load
+		runtimes.Pi:       {runtimes.ModeACPStdio},                                       // session/load
 	}
 	for _, d := range registry.All() {
-		modes, ok := expect[d.ID]
-		require.True(t, ok, "runtime %s is in the registry but not in this table", d.ID)
 		// The name Torque launches the runtime under: the id, or for Claude
 		// its claude-code alias (the bare claude provider is retired).
 		name := string(d.ID)
@@ -60,12 +34,9 @@ func TestResume_FromTheRegistry(t *testing.T) {
 			}
 		}
 		for _, ms := range d.Modes {
-			w, ok := modes[ms.Mode]
-			require.True(t, ok, "%s/%s is in the registry but not in this table", d.ID, ms.Mode)
 			got := Resume(name, RuntimeKind(ms.Mode))
 			assert.Equal(t, d.Has(ms.Mode, runtimes.CapResume), got.Declared, "%s/%s: Declared follows the descriptor", d.ID, ms.Mode)
-			assert.Equal(t, w.declared, got.Declared, "%s/%s declared", d.ID, ms.Mode)
-			assert.Equal(t, w.wired, got.Wired, "%s/%s wired", d.ID, ms.Mode)
+			assert.Equal(t, slices.Contains(wired[d.ID], ms.Mode), got.Wired, "%s/%s wired", d.ID, ms.Mode)
 			if got.Declared && !got.Wired {
 				assert.NotEmpty(t, got.NotWired, "%s/%s: a declared resume Torque does not wire says why", d.ID, ms.Mode)
 			}
@@ -73,6 +44,9 @@ func TestResume_FromTheRegistry(t *testing.T) {
 			assert.Equal(t, got.Wired, ProviderCapabilities(name, RuntimeKind(ms.Mode)).SupportsResume)
 		}
 	}
+	// The ones Torque does not wire yet say which task tracks them.
+	assert.Contains(t, Resume("codex", RuntimeKindJsonRpcStdio).NotWired, "CW-20261001-0180")
+	assert.Contains(t, Resume("agy", "").NotWired, "CW-20261001-0181")
 }
 
 // An empty kind is the runtime's registry default, as Boot resolves it;
@@ -88,6 +62,10 @@ func TestResume_KindAndNameResolution(t *testing.T) {
 	assert.True(t, bare.Declared)
 	assert.False(t, bare.Wired, "Boot refuses the bare claude provider")
 	assert.Contains(t, bare.NotWired, "does not launch claude")
+
+	// Names match in any case, as Boot's registry lookup does.
+	assert.True(t, Resume("Claude-Code", "").Wired)
+	assert.True(t, Resume("OPENCODE", RuntimeKindSubprocess).Wired)
 }
 
 // A provider the registry does not know is not a known-good adapter.
@@ -114,9 +92,10 @@ func TestProviderCapabilities_ExecutorFlags(t *testing.T) {
 // Two provider names are the same runtime when the registry says so: a
 // session id one recorded means something to the other.
 func TestSameRuntime(t *testing.T) {
-	assert.True(t, sameRuntime("claude", "claude-code"))
-	assert.True(t, sameRuntime("opencode", "open-code"))
-	assert.False(t, sameRuntime("claude-code", "codex"))
-	assert.False(t, sameRuntime("claude-code", ""))
-	assert.False(t, sameRuntime("gemini", "gemini"), "unknown providers are no runtime")
+	assert.True(t, SameRuntime("claude", "claude-code"))
+	assert.True(t, SameRuntime("opencode", "open-code"))
+	assert.True(t, SameRuntime("Claude-Code", "claude"), "in any case")
+	assert.False(t, SameRuntime("claude-code", "codex"))
+	assert.False(t, SameRuntime("claude-code", ""))
+	assert.False(t, SameRuntime("gemini", "gemini"), "unknown providers are no runtime")
 }

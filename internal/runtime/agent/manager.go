@@ -18,6 +18,7 @@ import (
 	"github.com/hollis-labs/agentkit/agentsessions"
 	"github.com/hollis-labs/go-agent-wrapper/wrapper"
 	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/launchprofile"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/runtime/writeq"
 	"github.com/oklog/ulid/v2"
@@ -261,14 +262,18 @@ func (m *Manager) KnownProfiles() config.ProfileMap {
 // default mode). Callers that gate resume on the BOOTED runtime (planstart.
 // Redispatch, ResumeSession: the profile's runtime may differ from a prior
 // session's recorded one after an operator profile switch) read this before
-// composing Options. Returns the configured fallback when the named profile
-// is missing, mirroring config.GetProfileOrDefault's lookup; an invalid kind
-// resolves to "" (the registry default), and Boot then refuses the profile.
+// composing Options. The profile resolves as Boot resolves it
+// (launchprofile.Resolve, with the configured fallback for a missing name);
+// an invalid kind resolves to "" (the registry default), and Boot then
+// refuses the profile.
 func (m *Manager) RuntimeForProfile(name string) (string, RuntimeKind) {
 	if m == nil || m.deps == nil {
 		return "", ""
 	}
-	profile := config.GetProfileOrDefault(m.deps.Profiles, name)
+	profile := launchprofile.Resolve(launchprofile.ResolveRequest{
+		LegacyAgentProfile: name,
+		Source:             m.deps.Profiles,
+	}).AgentProfile
 	kind, err := selectRuntimeKind(profile.Provider, profile.RuntimeKind)
 	if err != nil {
 		kind = ""
