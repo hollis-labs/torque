@@ -263,7 +263,8 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 		cfg.FirstTurnPayload = firstTurn
 	}
 
-	stderrWriter, _, closeStderr := openStderrSidecar(opts.RunID, ws.LogPath)
+	rawStderr, _, closeRawStderr := openStderrSidecar(opts.RunID, ws.LogPath)
+	stderrWriter, closeStderr := redactStderr(rawStderr, closeRawStderr, pb.redact)
 	sidecar := openStreamSidecar(ws.LogDir)
 
 	var oneshotDone chan struct{}
@@ -283,6 +284,7 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 		sidecar: sidecar,
 		fanout:  opts.eventFanout,
 		stderr:  stderrWriter,
+		redact:  pb.redact,
 		onReady: func() { readyOnce.Do(func() { close(readyCh) }) },
 		onDone:  oneshotOnDone,
 	})

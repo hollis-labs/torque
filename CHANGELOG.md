@@ -152,6 +152,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   carries the provider's error line and the stderr tail (at most 2 KiB) after
   "process exited 1", and the turn's output reaches `session.log` and
   `stream.jsonl`, which stayed empty before (CW-20261001-0105).
+- A session no longer persists a credential its agent CLI echoes. The
+  value of every secret-named variable in the launch env (`*TOKEN*`,
+  `*API_KEY*`, `*SECRET*` and the like, from the session's env, the
+  daemon's env and the mux env) is replaced with `[redacted]`, matching
+  exactly, in the run's error, `session.log`, the per-run stderr log,
+  `stream.jsonl` and the events the executor records (CW-20261001-0123).
 - A profile's `args` may not contain `--` or start with a non-option: they
   go among the agent CLI's options, ahead of the `--` before the prompt, where
   either would turn flags into prompt text. `profiles.yaml` loading and
