@@ -199,6 +199,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - An ACP agent that exits during launch no longer crashes the Torque daemon
   with "send on closed channel" (go-agent-wrapper v0.21.1,
   CW-20261001-0129).
+- OpenCode `serve-http` sessions no longer hang on a permission prompt.
+  Torque answers each `permission.asked` through serve's
+  `/permission/{id}/reply`, by the profile's `permission_mode`:
+  - `bypassPermissions`: once.
+  - `default` and `acceptEdits`: read-only tools, and `external_directory`
+    asked by one of them; `acceptEdits` also grants `edit`. Commands,
+    fetches and writes outside the worktree are declined, with a message
+    the model sees.
+  - `plan`: nothing.
+
+  Each decision is logged to `session.log`. The sessions also run the
+  profile's model and Torque's planted agent: `OPENCODE_CONFIG_CONTENT`
+  carries `model` and `default_agent`, which serve never got as flags.
+  Before, they ran opencode's default model as its `build` agent.
+
+  serve's raw output (its stdout and every SSE frame) now goes to
+  `logs/serve-http.log`: agentkit opens its runtime log without O_APPEND,
+  and its writes overwrote what Torque appended to `session.log`
+  (CW-20261001-0148).
 - Thinking from Claude, Codex, OpenCode and Pi over ACP is recorded as
   thinking, not as the agent's output. Their ACP thought chunks are marked
   only `phase: "thought"`, which Torque's event sink did not read
@@ -264,6 +283,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   still means the default, and rows already carrying an unregistered
   executor stay editable. `torque mcp` validates against the same names as
   `torque serve`; a process with no executor registry does not validate.
+- Tests no longer fill the shared `$TMPDIR`. Each package's test binary
+  runs in a temp root of its own (`testenv.RunWithAgentShims`, through
+  `$TMPDIR`), which holds its boot dirs (`torque-boot`), run stderr
+  sidecars (`torque/runs`), `t.TempDir()`s and agent CLI shims, and is
+  removed when the binary exits. Before, test boot dirs stayed in the host's
+  `/tmp/torque-boot` (1.6G on the overnight host's 16G tmpfs), and every
+  helper process a test re-executes left a `torque-agent-shims-*` dir behind
+  (456 of them). A package whose tests leave a boot dir in their root now
+  fails, naming the dir and what was planted in it (CW-20261001-0144).
 - Tests can no longer run a real agent CLI. The wrapper-boot e2e fixture was
   found only through `CLAUDE_CLI_PATH`, while the wrapper path resolves a bare
   `claude` through PATH, so `make test` ran the developer's real Claude Code
