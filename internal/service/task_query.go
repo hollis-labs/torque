@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	DefaultTaskQueryLimit = 50
-	MaxTaskQueryLimit     = 200
+	DefaultTaskQueryLimit = pagination.DefaultLimit
+	MaxTaskQueryLimit     = pagination.MaxLimit
 	TaskQueryDefaultSort  = "priority"
 	TaskQueryDefaultDir   = "asc"
 	DefaultTaskFacetLimit = 50
@@ -361,6 +361,9 @@ func normalizeTaskFacetLimit(n int) (int, error) {
 }
 
 func normalizeTaskQuery(q TaskQuery) (sqlstore.TaskFilter, int, string, string, error) {
+	if q.Limit < 0 {
+		return sqlstore.TaskFilter{}, 0, "", "", &ValidationError{Field: "limit", Message: "limit must be non-negative"}
+	}
 	if q.Cursor != "" && q.Offset > 0 {
 		return sqlstore.TaskFilter{}, 0, "", "", &ValidationError{Field: "cursor", Message: "cursor cannot be combined with a positive offset"}
 	}

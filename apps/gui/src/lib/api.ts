@@ -133,10 +133,6 @@ interface TaskListResponse<T = Task> {
   offset?: number
   has_more?: boolean
   next_offset?: number | null
-  continuation?: {
-    limit?: number
-    offset?: number
-  } | null
 }
 
 const TASK_LIST_PAGE_SIZE = 200
@@ -376,7 +372,7 @@ export class TorqueApiClient {
       if (!page.has_more) {
         return { tasks, total }
       }
-      const nextOffset = page.next_offset ?? page.continuation?.offset
+      const nextOffset = page.next_offset
       if (typeof nextOffset !== 'number' || !Number.isSafeInteger(nextOffset) || nextOffset <= offset) {
         throw new ApiError(200, 'Task list response did not provide a usable forward continuation.')
       }
@@ -384,7 +380,7 @@ export class TorqueApiClient {
         throw new ApiError(200, 'Task list response reported more pages without returning progress.')
       }
       offset = nextOffset
-      const continuationLimit = page.continuation?.limit
+      const continuationLimit = page.limit
       const remaining = target === undefined ? TASK_LIST_PAGE_SIZE : target - tasks.length
       if (typeof continuationLimit === 'number' && Number.isSafeInteger(continuationLimit) && continuationLimit > 0) {
         nextLimit = Math.min(continuationLimit, TASK_LIST_PAGE_SIZE, remaining)
@@ -399,7 +395,9 @@ export class TorqueApiClient {
   private async fetchTaskPage<T>(filter: TaskFilter, fields?: 'summary'): Promise<TaskListResponse<T>> {
     const params = taskFilterParams(filter)
     if (fields) params['fields'] = fields
-    return this.get<TaskListResponse<T>>('/tasks', params)
+    params['include_total'] = true
+    const page = await this.get<{ items: T[]; meta: { total: number; returned: number; limit: number; offset?: number; has_more: boolean; next_offset?: number | null } }>('/tasks', params)
+    return { tasks: page.items, ...page.meta }
   }
 
   async getTask(id: string): Promise<Task> {
@@ -429,7 +427,8 @@ export class TorqueApiClient {
   }
 
   async searchTasks(query: string): Promise<Task[]> {
-    return this.get<Task[]>('/tasks/search', { q: query })
+    const page = await this.get<{ items: Task[] }>('/tasks/search', { q: query })
+    return page.items
   }
 
   // -------------------------

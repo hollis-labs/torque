@@ -43,7 +43,7 @@ func TestHTTP_TaskList_RepeatedTagPredicates(t *testing.T) {
 		var result map[string]interface{}
 		require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
 		resp.Body.Close()
-		raw := result["tasks"].([]interface{})
+		raw := result["items"].([]interface{})
 		out := make([]string, 0, len(raw))
 		for _, t := range raw {
 			out = append(out, t.(map[string]interface{})["title"].(string))
@@ -112,7 +112,7 @@ func TestHTTP_TaskList_TagPredicates_BoundaryCases(t *testing.T) {
 		var result map[string]interface{}
 		require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
 		resp.Body.Close()
-		raw := result["tasks"].([]interface{})
+		raw := result["items"].([]interface{})
 		out := make([]string, 0, len(raw))
 		for _, t := range raw {
 			out = append(out, t.(map[string]interface{})["title"].(string))

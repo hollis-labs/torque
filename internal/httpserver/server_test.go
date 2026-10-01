@@ -140,7 +140,7 @@ func TestHTTP_TaskList_FilterByManual(t *testing.T) {
 		var result map[string]interface{}
 		require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
 		resp.Body.Close()
-		raw := result["tasks"].([]interface{})
+		raw := result["items"].([]interface{})
 		out := make([]string, 0, len(raw))
 		for _, t := range raw {
 			out = append(out, t.(map[string]interface{})["id"].(string))
@@ -170,7 +170,7 @@ func TestHTTP_TaskList_FilterByKind(t *testing.T) {
 	var result map[string]interface{}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
 	resp.Body.Close()
-	tasks := result["tasks"].([]interface{})
+	tasks := result["items"].([]interface{})
 	require.Len(t, tasks, 1)
 	assert.Equal(t, "external", tasks[0].(map[string]interface{})["kind"])
 }
@@ -194,7 +194,7 @@ func TestHTTP_TaskList_DefaultExcludesInternal(t *testing.T) {
 		var result map[string]interface{}
 		require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
 		resp.Body.Close()
-		raw := result["tasks"].([]interface{})
+		raw := result["items"].([]interface{})
 		out := make([]string, 0, len(raw))
 		for _, t := range raw {
 			out = append(out, t.(map[string]interface{})["id"].(string))
@@ -274,7 +274,7 @@ func TestIntegration_TaskWithFacets_ThroughAllLayers(t *testing.T) {
 	var listResult map[string]interface{}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&listResult))
 	resp.Body.Close()
-	tasks := listResult["tasks"].([]interface{})
+	tasks := listResult["items"].([]interface{})
 	require.Len(t, tasks, 1)
 	assert.Equal(t, id, tasks[0].(map[string]interface{})["id"])
 	assert.Equal(t, "normal", tasks[0].(map[string]interface{})["trust"])
@@ -322,7 +322,7 @@ func TestListTasks(t *testing.T) {
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
 	resp.Body.Close()
-	tasks := result["tasks"].([]interface{})
+	tasks := result["items"].([]interface{})
 	assert.Len(t, tasks, 2)
 }
 
@@ -341,7 +341,7 @@ func TestHTTP_TaskList_PaginationMetadata(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	resp.Body.Close()
 
-	first := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks?search=page&priority=0,2&limit=1")
+	first := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks?search=page&priority=0,2&limit=1&offset=0&include_total=true")
 	require.Len(t, first.tasks, 1)
 	assert.Equal(t, alphaID, first.tasks[0]["id"])
 	assert.Equal(t, 3, first.total)
@@ -350,25 +350,21 @@ func TestHTTP_TaskList_PaginationMetadata(t *testing.T) {
 	assert.Equal(t, 0, first.offset)
 	assert.True(t, first.hasMore)
 	assert.Equal(t, 1, first.nextOffset)
-	require.NotNil(t, first.continuation)
-	assert.Equal(t, 1, first.continuation["limit"])
-	assert.Equal(t, 1, first.continuation["offset"])
 
-	second := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks?search=page&priority=0,2&limit=1&offset=1")
+	second := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks?search=page&priority=0,2&limit=1&offset=1&include_total=true")
 	require.Len(t, second.tasks, 1)
 	assert.Equal(t, betaID, second.tasks[0]["id"])
 	assert.Equal(t, 3, second.total)
 	assert.True(t, second.hasMore)
 	assert.Equal(t, 2, second.nextOffset)
 
-	boundary := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks?search=page&limit=3")
+	boundary := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks?search=page&limit=3&offset=0&include_total=true")
 	assert.Len(t, boundary.tasks, 3)
 	assert.Equal(t, 3, boundary.total)
 	assert.False(t, boundary.hasMore)
 	assert.Nil(t, boundary.nextOffset)
-	assert.Nil(t, boundary.continuation)
 
-	empty := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks?search=page&limit=2&offset=5")
+	empty := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks?search=page&limit=2&offset=5&include_total=true")
 	assert.Empty(t, empty.tasks)
 	assert.Equal(t, 3, empty.total)
 	assert.Equal(t, 0, empty.returned)
@@ -382,7 +378,7 @@ func TestHTTP_TaskList_DefaultLimitAndCap(t *testing.T) {
 		httpCreateTask(t, ts.URL, "default cap")
 	}
 
-	defaultPage := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks")
+	defaultPage := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks?offset=0&include_total=true")
 	assert.Len(t, defaultPage.tasks, 50)
 	assert.Equal(t, 205, defaultPage.total)
 	assert.Equal(t, 50, defaultPage.returned)
@@ -390,7 +386,7 @@ func TestHTTP_TaskList_DefaultLimitAndCap(t *testing.T) {
 	assert.True(t, defaultPage.hasMore)
 	assert.Equal(t, 50, defaultPage.nextOffset)
 
-	capped := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks?limit=999")
+	capped := decodeHTTPTaskList(t, ts.URL+"/api/v1/tasks?limit=999&offset=0&include_total=true")
 	assert.Len(t, capped.tasks, 200)
 	assert.Equal(t, 205, capped.total)
 	assert.Equal(t, 200, capped.limit)
@@ -507,7 +503,7 @@ func TestHTTP_TaskList_QueryOperatorsAndFacets(t *testing.T) {
 	sevenID := create("seven bug", 7, []string{"bug"}, "")
 	largeID := create("large precise", 2, nil, `{"priority":9007199254740993}`)
 
-	filter := "/api/v1/tasks?tags_any=bug,bug,%20&tags_none=backend&priority_gte=0&priority_lte=7&limit=1"
+	filter := "/api/v1/tasks?tags_any=bug,bug,%20&tags_none=backend&priority_gte=0&priority_lte=7&limit=1&include_total=true"
 	first := decodeHTTPTaskList(t, ts.URL+filter)
 	require.Len(t, first.tasks, 1)
 	assert.Equal(t, zeroID, first.tasks[0]["id"])
@@ -625,7 +621,7 @@ func httpTaskListIDs(t *testing.T, url string) []string {
 	var result map[string]interface{}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
 	resp.Body.Close()
-	raw := result["tasks"].([]interface{})
+	raw := result["items"].([]interface{})
 	out := make([]string, 0, len(raw))
 	for _, task := range raw {
 		out = append(out, task.(map[string]interface{})["id"].(string))
@@ -634,15 +630,14 @@ func httpTaskListIDs(t *testing.T, url string) []string {
 }
 
 type decodedHTTPTaskList struct {
-	tasks        []map[string]interface{}
-	total        int
-	returned     int
-	limit        int
-	offset       int
-	hasMore      bool
-	nextOffset   interface{}
-	nextCursor   interface{}
-	continuation map[string]interface{}
+	tasks      []map[string]interface{}
+	total      int
+	returned   int
+	limit      int
+	offset     int
+	hasMore    bool
+	nextOffset interface{}
+	nextCursor interface{}
 }
 
 func decodeHTTPTaskList(t *testing.T, url string) decodedHTTPTaskList {
@@ -654,35 +649,27 @@ func decodeHTTPTaskList(t *testing.T, url string) decodedHTTPTaskList {
 
 	var result map[string]interface{}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
-	rawTasks := result["tasks"].([]interface{})
+	rawTasks := result["items"].([]interface{})
 	tasks := make([]map[string]interface{}, 0, len(rawTasks))
 	for _, raw := range rawTasks {
 		tasks = append(tasks, raw.(map[string]interface{}))
 	}
-	var continuation map[string]interface{}
-	if raw, ok := result["continuation"].(map[string]interface{}); ok {
-		continuation = raw
-		if n, ok := continuation["limit"].(float64); ok {
-			continuation["limit"] = int(n)
-		}
-		if n, ok := continuation["offset"].(float64); ok {
-			continuation["offset"] = int(n)
-		}
-	}
-	nextOffset := result["next_offset"]
+	meta := result["meta"].(map[string]interface{})
+	total, _ := meta["total"].(float64)
+	offset, _ := meta["offset"].(float64)
+	nextOffset := meta["next_offset"]
 	if n, ok := nextOffset.(float64); ok {
 		nextOffset = int(n)
 	}
 	return decodedHTTPTaskList{
-		tasks:        tasks,
-		total:        int(result["total"].(float64)),
-		returned:     int(result["returned"].(float64)),
-		limit:        int(result["limit"].(float64)),
-		offset:       int(result["offset"].(float64)),
-		hasMore:      result["has_more"].(bool),
-		nextOffset:   nextOffset,
-		nextCursor:   result["next_cursor"],
-		continuation: continuation,
+		tasks:      tasks,
+		total:      int(total),
+		returned:   int(meta["returned"].(float64)),
+		limit:      int(meta["limit"].(float64)),
+		offset:     int(offset),
+		hasMore:    meta["has_more"].(bool),
+		nextOffset: nextOffset,
+		nextCursor: meta["next_cursor"],
 	}
 }
 

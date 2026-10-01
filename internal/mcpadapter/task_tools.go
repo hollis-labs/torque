@@ -1207,7 +1207,11 @@ func (a *Adapter) handleTaskList(ctx context.Context, req map[string]any) (any, 
 	if err != nil {
 		return errFromService(err)
 	}
-	return a.taskListCursorEnvelopeWithTotal(page.Tasks, page.Limit, verbose, isTypedFormat(format), page.SortBy, page.SortDir, page.HasMoreFromQuery, optionalTotal(page))
+	var offset []int
+	if _, present := req["offset"]; present && query.Cursor == "" {
+		offset = []int{page.Offset}
+	}
+	return a.taskListCursorEnvelopeWithTotal(page.Tasks, page.Limit, verbose, isTypedFormat(format), page.SortBy, page.SortDir, page.HasMoreFromQuery, optionalTotal(page), offset...)
 }
 
 func (a *Adapter) handleTaskFacets(ctx context.Context, req map[string]any) (any, error) {
@@ -1287,7 +1291,7 @@ func (a *Adapter) taskListCursorEnvelope(tasks []sqlstore.TaskRecord, limit int,
 	return a.taskListCursorEnvelopeWithTotal(tasks, limit, verbose, false, sortBy, sortDir, hasMoreFromQuery, nil)
 }
 
-func (a *Adapter) taskListCursorEnvelopeWithTotal(tasks []sqlstore.TaskRecord, limit int, verbose bool, typed bool, sortBy, sortDir string, hasMoreFromQuery bool, total *int) (any, error) {
+func (a *Adapter) taskListCursorEnvelopeWithTotal(tasks []sqlstore.TaskRecord, limit int, verbose bool, typed bool, sortBy, sortDir string, hasMoreFromQuery bool, total *int, offset ...int) (any, error) {
 	items := make([]any, 0, len(tasks))
 	for _, t := range tasks {
 		if typed {
@@ -1322,7 +1326,7 @@ func (a *Adapter) taskListCursorEnvelopeWithTotal(tasks []sqlstore.TaskRecord, l
 	cursorAt := func(i int) (sortValue, id string) {
 		return taskSortValue(tasks[i], sortBy), tasks[i].ID
 	}
-	return cappedCursorJSONResultWithTotal(items, limit, total, sortBy, sortDir, hasMoreFromQuery, cursorAt)
+	return cappedCursorJSONResultWithTotal(items, limit, total, sortBy, sortDir, hasMoreFromQuery, cursorAt, offset...)
 }
 
 func optionalTotal(page service.TaskQueryResult) *int {

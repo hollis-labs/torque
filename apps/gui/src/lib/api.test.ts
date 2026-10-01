@@ -155,24 +155,26 @@ describe('TorqueApiClient.listTasks', () => {
   it('fetches all pages when no caller limit is supplied', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({
-        tasks: [{ id: 'TASK-1' }, { id: 'TASK-2' }],
-        total: 3,
-        returned: 2,
-        limit: 2,
-        offset: 0,
-        has_more: true,
-        next_offset: 2,
-        continuation: { limit: 2, offset: 2 },
+        items: [{ id: 'TASK-1' }, { id: 'TASK-2' }],
+        meta: {
+          total: 3,
+          returned: 2,
+          limit: 2,
+          offset: 0,
+          has_more: true,
+          next_offset: 2,
+        },
       }))
       .mockResolvedValueOnce(jsonResponse({
-        tasks: [{ id: 'TASK-3' }],
-        total: 3,
-        returned: 1,
-        limit: 2,
-        offset: 2,
-        has_more: false,
-        next_offset: null,
-        continuation: null,
+        items: [{ id: 'TASK-3' }],
+        meta: {
+          total: 3,
+          returned: 1,
+          limit: 2,
+          offset: 2,
+          has_more: false,
+          next_offset: null,
+        },
       }))
 
     const out = await client.listTasks({ status: ['todo'], tags: ['torque', 'api'] })
@@ -180,8 +182,8 @@ describe('TorqueApiClient.listTasks', () => {
     expect(out.tasks.map((t) => t.id)).toEqual(['TASK-1', 'TASK-2', 'TASK-3'])
     expect(out.total).toBe(3)
     expect(calledUrls()).toEqual([
-      '/api/v1/tasks?status=todo&tags=torque%2Capi&limit=200&offset=0',
-      '/api/v1/tasks?status=todo&tags=torque%2Capi&limit=2&offset=2',
+      '/api/v1/tasks?status=todo&tags=torque%2Capi&limit=200&offset=0&include_total=true',
+      '/api/v1/tasks?status=todo&tags=torque%2Capi&limit=2&offset=2&include_total=true',
     ])
   })
 
@@ -190,22 +192,25 @@ describe('TorqueApiClient.listTasks', () => {
     const second = Array.from({ length: 50 }, (_, i) => ({ id: `TASK-${i + 201}` }))
     fetchMock
       .mockResolvedValueOnce(jsonResponse({
-        tasks: first,
-        total: 400,
-        returned: 200,
-        limit: 200,
-        offset: 10,
-        has_more: true,
-        next_offset: 210,
-        continuation: { limit: 200, offset: 210 },
+        items: first,
+        meta: {
+          total: 400,
+          returned: 200,
+          limit: 200,
+          offset: 10,
+          has_more: true,
+          next_offset: 210,
+        },
       }))
       .mockResolvedValueOnce(jsonResponse({
-        tasks: second,
-        total: 400,
-        returned: 50,
-        limit: 50,
-        offset: 210,
-        has_more: true,
+        items: second,
+        meta: {
+          total: 400,
+          returned: 50,
+          limit: 50,
+          offset: 210,
+          has_more: true,
+        },
       }))
 
     const out = await client.listTasks({ limit: 250, offset: 10, manual: true })
@@ -213,35 +218,39 @@ describe('TorqueApiClient.listTasks', () => {
     expect(out.tasks).toHaveLength(250)
     expect(out.total).toBe(400)
     expect(calledUrls()).toEqual([
-      '/api/v1/tasks?limit=200&offset=10&manual=true',
-      '/api/v1/tasks?limit=50&offset=210&manual=true',
+      '/api/v1/tasks?limit=200&offset=10&manual=true&include_total=true',
+      '/api/v1/tasks?limit=50&offset=210&manual=true&include_total=true',
     ])
   })
 
   it('treats zero and negative caller limits as uncapped overall', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({
-        tasks: [{ id: 'TASK-1' }],
-        total: 1,
-        returned: 1,
-        limit: 200,
-        offset: 0,
-        has_more: false,
+        items: [{ id: 'TASK-1' }],
+        meta: {
+          total: 1,
+          returned: 1,
+          limit: 200,
+          offset: 0,
+          has_more: false,
+        },
       }))
       .mockResolvedValueOnce(jsonResponse({
-        tasks: [{ id: 'TASK-2' }],
-        total: 1,
-        returned: 1,
-        limit: 200,
-        offset: 0,
-        has_more: false,
+        items: [{ id: 'TASK-2' }],
+        meta: {
+          total: 1,
+          returned: 1,
+          limit: 200,
+          offset: 0,
+          has_more: false,
+        },
       }))
 
     await expect(client.listTasks({ limit: 0 })).resolves.toMatchObject({ total: 1 })
     await expect(client.listTasks({ limit: -1 })).resolves.toMatchObject({ total: 1 })
     expect(calledUrls()).toEqual([
-      '/api/v1/tasks?limit=200&offset=0',
-      '/api/v1/tasks?limit=200&offset=0',
+      '/api/v1/tasks?limit=200&offset=0&include_total=true',
+      '/api/v1/tasks?limit=200&offset=0&include_total=true',
     ])
   })
 
@@ -255,13 +264,15 @@ describe('TorqueApiClient.listTasks', () => {
 
   it('rejects non-progressing continuation metadata', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({
-      tasks: [{ id: 'TASK-1' }],
-      total: 2,
-      returned: 1,
-      limit: 1,
-      offset: 0,
-      has_more: true,
-      next_offset: 0,
+      items: [{ id: 'TASK-1' }],
+      meta: {
+        total: 2,
+        returned: 1,
+        limit: 1,
+        offset: 0,
+        has_more: true,
+        next_offset: 0,
+      },
     }))
 
     await expect(client.listTasks()).rejects.toThrow(/usable forward continuation/i)
@@ -269,13 +280,15 @@ describe('TorqueApiClient.listTasks', () => {
 
   it('rejects fractional continuation metadata', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({
-      tasks: [{ id: 'TASK-1' }],
-      total: 2,
-      returned: 1,
-      limit: 1,
-      offset: 0,
-      has_more: true,
-      next_offset: 1.5,
+      items: [{ id: 'TASK-1' }],
+      meta: {
+        total: 2,
+        returned: 1,
+        limit: 1,
+        offset: 0,
+        has_more: true,
+        next_offset: 1.5,
+      },
     }))
 
     await expect(client.listTasks()).rejects.toThrow(/usable forward continuation/i)
@@ -284,20 +297,22 @@ describe('TorqueApiClient.listTasks', () => {
   it('listTaskSummaries pages with fields=summary', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({
-        tasks: [{ id: 'TASK-1' }],
-        total: 2,
-        has_more: true,
-        next_offset: 1,
-        continuation: { limit: 1, offset: 1 },
+        items: [{ id: 'TASK-1' }],
+        meta: {
+          total: 2,
+          limit: 1,
+          has_more: true,
+          next_offset: 1,
+        },
       }))
-      .mockResolvedValueOnce(jsonResponse({ tasks: [{ id: 'TASK-2' }], total: 2, has_more: false }))
+      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'TASK-2' }], meta: { total: 2, limit: 1, has_more: false, next_cursor: null, next_offset: null } }))
 
     const out = await client.listTaskSummaries({ project_id: 'PRJ-1' })
 
     expect(out.tasks.map((t) => t.id)).toEqual(['TASK-1', 'TASK-2'])
     expect(calledUrls()).toEqual([
-      '/api/v1/tasks?project_id=PRJ-1&limit=200&offset=0&fields=summary',
-      '/api/v1/tasks?project_id=PRJ-1&limit=1&offset=1&fields=summary',
+      '/api/v1/tasks?project_id=PRJ-1&limit=200&offset=0&fields=summary&include_total=true',
+      '/api/v1/tasks?project_id=PRJ-1&limit=1&offset=1&fields=summary&include_total=true',
     ])
   })
 })

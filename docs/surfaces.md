@@ -76,19 +76,25 @@ For example, `?tags_any=api,ui&tags_none=blocked&missing=sprint_id&priority_lte=
 selects unassigned tasks with either tag, without the excluded tag, inside the
 numeric bound. These names carry no scheduling meaning.
 
-Task lists keep the legacy HTTP envelope and always include `total`, where
-`total` is the full matching cohort under the supplied filters, excluding
-cursor/offset/limit. Page-specific metadata is additive: `returned`, effective
-`limit`/`offset`, `has_more`, `next_offset`, `next_cursor`, `sort_by`,
-`sort_dir`, and `continuation` describe the current page. Offset calls keep
-offset-shaped `continuation`; cursor calls advance with `cursor`, `sort_by`,
-and `sort_dir` and do not emit a misleading positive `next_offset`. The bounded
-default page size is 50 and the maximum effective `limit` is 200; `limit<=0`
-uses the default and oversized limits are clamped. Offset pagination is not a
-snapshot: concurrent writes between requests can move later pages.
-Clients that need a complete refreshed task set, including the GUI shared API
-client, must follow `continuation` until `has_more=false`; clients that pass a
-positive `limit` should treat it as their own overall cap.
+Task lists (`GET /tasks`) and search (`GET /tasks/search?q=...`) return
+`{items,meta}`. Search is paged with the same query, filters, sort allow-list,
+and 50/default, 200/max page policy; `q` is required and replaces `search` on
+that route. `fields=summary` changes the projection only. There are no legacy
+flat task, count, sort, or continuation fields.
+
+`meta` always includes `returned`, `limit`, `has_more`, and nullable
+`next_cursor`. `has_more` comes from a limit+1 probe, including on exactly-full
+last pages; HTTP only counts the matching cohort with `include_total=true`,
+which adds `meta.total` before cursor/offset/limit. Omitted or false totals
+are absent, including on empty pages.
+
+Tasks and runs share `pagination.NewPageMeta`. Explicit `offset`, including
+`offset=0`, with no non-empty cursor selects offset mode and includes
+`meta.offset` and nullable `meta.next_offset` (`offset+returned` while more
+rows exist, null on the last page). Without explicit offset, cursor mode omits
+both offset fields. `offset=0` plus a cursor remains cursor mode; positive
+`offset` plus cursor rejects. Keep the same sort and filters on continuation.
+See [the common contract](api-pagination.md).
 
 `fields=summary` on `GET /api/v1/tasks` leaves `description` and
 `system_prompt` out of each task; every other key and the envelope are

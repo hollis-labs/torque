@@ -38,6 +38,7 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, e.Error())
 		return
 	}
+	query.OffsetSet = q.Has("offset")
 	query.Offset, e = queryInt(q, "offset")
 	if e != nil {
 		writeError(w, http.StatusBadRequest, e.Error())
