@@ -32,7 +32,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
-- go-agent-wrapper v0.17.0, agentkit v0.14.2 and go-providers v0.36.0 (with
+- go-agent-wrapper v0.17.1, agentkit v0.14.2 and go-providers v0.36.0 (with
   go-llm-types v0.5.1 and go-runtime-events v0.2.1). Per-turn runtimes always
   report typed events: a denied tool or a failed sign-in now also appears as
   a `[permission_denied:…]` or `[auth_failed]` line in the session's raw
