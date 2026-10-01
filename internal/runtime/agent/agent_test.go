@@ -251,6 +251,19 @@ func TestKickoffPayloadForBootDir(t *testing.T) {
 		kickoffPayloadForBootDir("/tmp/torque-boot/agentlaunch-bootdir-123"))
 }
 
+// A runtime that runs in its boot dir follows the `@./boot.md` pointer; one
+// that runs elsewhere (opencode, in the project dir) gets boot.md's content,
+// since the pointer would resolve against the wrong directory
+// (CW-20261001-0104).
+func TestFirstTurnKickoff(t *testing.T) {
+	const boot, md = "/tmp/torque-boot/b1", "# Boot\n\nbriefing"
+	assert.Equal(t, "Boot @./boot.md", firstTurnKickoff(boot, boot, md), "cwd is the boot dir")
+	assert.Equal(t, "Boot @./boot.md", firstTurnKickoff(boot, boot+"/", md), "paths compare cleaned")
+	assert.Equal(t, md, firstTurnKickoff(boot, "/work/project", md), "cwd is the project dir")
+	assert.Equal(t, "Boot @./boot.md", firstTurnKickoff("", "/work/project", md), "nothing planted")
+	assert.Equal(t, "Boot @./boot.md", firstTurnKickoff(boot, "/work/project", ""), "no content to inline")
+}
+
 // TestKickoffMarkdown verifies the planted boot.md content carries the
 // task framing the LLM needs on its first turn (and after compaction
 // when re-reading the file).

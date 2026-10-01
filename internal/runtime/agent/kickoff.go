@@ -37,6 +37,21 @@ func kickoffPayloadForBootDir(bootDir string) string {
 	return "Boot @" + filepath.Join(bootDir, "boot.md")
 }
 
+// firstTurnKickoff is the wrapper path's kickoff turn for a runtime that runs
+// in workdir. Where that is the planted boot dir, `Boot @./boot.md` points at
+// the planted file. OpenCode runs in the project dir, with the boot dir as
+// its OPENCODE_CONFIG_DIR, so the pointer resolves against the wrong
+// directory and the agent never sees its briefing (CW-20261001-0104); such a
+// runtime gets boot.md's content as the turn instead. That is what opencode
+// run's first turn carried before agentkit v0.13.0, when every turn ran the
+// prepared argv and its prompt was the planted boot content.
+func firstTurnKickoff(bootDir, workdir, kickoffMD string) string {
+	if bootDir == "" || kickoffMD == "" || filepath.Clean(bootDir) == filepath.Clean(workdir) {
+		return kickoffPayload("")
+	}
+	return kickoffMD
+}
+
 // kickoffMarkdown returns the content planted into <bootDir>/boot.md. Read by
 // the agent on its first turn (via the @./boot.md reference) and again post-
 // compaction (since the file lives on disk). Keep concise: the systemPrompt

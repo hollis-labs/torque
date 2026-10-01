@@ -36,12 +36,17 @@ func TestBoot_LaterTurnsCarryTheirOwnPrompt(t *testing.T) {
 		flags []string
 		// resume is the session id turn 1 reported, which turn 2 must carry.
 		resume string
+		// kickoff is what turn 1's prompt must contain: the `@./boot.md`
+		// pointer where the CLI runs in the boot dir, boot.md's own content
+		// where it runs in the project dir (CW-20261001-0104).
+		kickoff string
 	}{
 		{
 			name: "codex exec", id: runtimes.Codex, fixtures: [2]string{"codex/exec_turn1", "codex/exec_turn2_resume"},
 			profile: config.AgentProfile{Executor: "cli", Provider: "codex", RuntimeKind: "subprocess-per-turn", Model: "codex-test-model", Args: []string{"--enable", "probe_feature"}},
 			command: "exec",
 			flags:   []string{`model="codex-test-model"`, "--enable", "probe_feature", "--json"},
+			kickoff: "Boot @./boot.md",
 			// No resume: go-providers' codex exec convention (v0.34.1, and
 			// v0.35.0) has no resume argument, so turn 2 starts a new thread
 			// where codex resumes with `exec resume <thread>`. That is the
@@ -53,6 +58,7 @@ func TestBoot_LaterTurnsCarryTheirOwnPrompt(t *testing.T) {
 			command: "run",
 			flags:   []string{"--agent", "--model", "opencode/test-model", "--log-level", "WARN"},
 			resume:  "ses_f0d6f8b4bffeveyfKIA5MI2bYi",
+			kickoff: "**Task ID:** `CW-TEST-TURNS`",
 		},
 	}
 	const turnTwo = "--turn-two: report status"
@@ -75,8 +81,9 @@ func TestBoot_LaterTurnsCarryTheirOwnPrompt(t *testing.T) {
 			require.Eventually(t, func() bool { return len(fake.Calls()) >= 2 }, 10*time.Second, 20*time.Millisecond, "turn 2 never launched the CLI")
 
 			first, second := fake.Call(0).Args, fake.Call(1).Args
-			t.Logf("turn 1: %q", first)
+			t.Logf("turn 1: %.300q", first)
 			t.Logf("turn 2: %q", second)
+			require.Contains(t, first[len(first)-1], tc.kickoff, "turn 1 must carry the kickoff: %q", first)
 			require.Equal(t, turnTwo, second[len(second)-1], "turn 2 must run its own prompt: %q", second)
 			require.NotEqual(t, first[len(first)-1], second[len(second)-1], "turn 2 re-ran turn 1's prompt")
 			if tc.resume != "" {
@@ -145,6 +152,7 @@ func TestBoot_ClaudeStreamingTurnsReachStdinOnce(t *testing.T) {
 		require.NoError(t, cd.Manager.SendTurn(ctx, sess, "turn two"))
 		stdin := settle(fake, 2)
 		require.Len(t, stdin, 2, "kickoff, then turn two: %q", stdin)
+		require.Contains(t, stdin[0], "Boot @./boot.md", "claude runs in its boot dir and follows the pointer")
 		require.Contains(t, stdin[1], `"content":"turn two"`)
 		require.Len(t, fake.Calls(), 1, "streaming turns share one process")
 		args := fake.Call(0).Args

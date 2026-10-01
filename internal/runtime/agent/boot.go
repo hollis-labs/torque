@@ -1354,7 +1354,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		}
 		if err := sessionkit.ApplyFirstTurnPolicy(&firstTurnOpts, sessionkit.FirstTurnPolicy{
 			Mode:   sessionkit.AutoFireFirstTurn,
-			Prompt: kickoffPayload(""),
+			Prompt: firstTurnKickoff(capturedBootDir, spawnWorkdir, pb.kickoffMD),
 			Turn: turn.Options{
 				Provider: profile.Provider,
 				Runtime:  turnRuntime,
@@ -1520,7 +1520,7 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 
 		prompt := composeUserPrompt(opts)
 		if prompt == "" {
-			prompt = kickoffPayload("")
+			prompt = firstTurnKickoff(capturedBootDir, spawnWorkdir, pb.kickoffMD)
 		}
 		// SendTurn (not raw SendInput) so streaming-stdio's turn.Frame NDJSON
 		// encoding is applied -- claude rejects unframed plaintext on stdin
