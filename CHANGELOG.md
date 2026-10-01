@@ -20,6 +20,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- `make build-prod` embeds the GUI on Linux: it copied `apps/gui/dist/`, which
+  GNU cp nests as `dist/dist`, so the binary 404'd on `/`. `make install` now
+  installs that GUI-embedded build, to an overridable `BINDIR`, and `make gui`
+  installs with `npm ci` so a build no longer dirties the lockfile.
 - MCP write paths reject a non-integer priority.
 - Operator pause is recorded as cancellation; task deadlines are enforced for
   long-lived runs; parent-owned task review is allowed.
