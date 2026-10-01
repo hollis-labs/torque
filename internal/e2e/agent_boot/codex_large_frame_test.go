@@ -91,8 +91,9 @@ func TestCodexLargeFrameHelper(t *testing.T) {
 
 // bootCodexLargeFrame boots a long-lived codex session against
 // TestCodexLargeFrameHelper, gives the large frame time to be read, then
-// sends a steering turn and returns its error.
-func bootCodexLargeFrame(t *testing.T, outputBytes int) error {
+// sends a steering turn and returns its error, with the path of the
+// session's stream.jsonl.
+func bootCodexLargeFrame(t *testing.T, outputBytes int) (streamLog string, err error) {
 	t.Helper()
 	dir := t.TempDir()
 	executable, err := os.Executable()
@@ -116,24 +117,30 @@ func bootCodexLargeFrame(t *testing.T, outputBytes int) error {
 	time.Sleep(500 * time.Millisecond)
 	steerCtx, steerCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer steerCancel()
-	return cd.Manager.SendTurn(steerCtx, sess, "steering after the large output")
+	return filepath.Join(sess.WorkspaceDir, "logs", "stream.jsonl"), cd.Manager.SendTurn(steerCtx, sess, "steering after the large output")
 }
 
 // A frame just under agentkit's 1 MiB line limit is read, and steering
 // afterwards is answered.
 func TestBootCodexLargeFrameUnderLineLimit(t *testing.T) {
-	require.NoError(t, bootCodexLargeFrame(t, 900*1024),
-		"steering after a 900 KiB command output must be delivered")
+	_, err := bootCodexLargeFrame(t, 900*1024)
+	require.NoError(t, err, "steering after a 900 KiB command output must be delivered")
 }
 
 // A frame over the old 1 MiB line limit must not kill the control channel.
 // Since agentkit v0.14.1 the reader routes lines up to 64 MiB whole
-// (CW-20261001-0086, CW-20260913-0001), so steering after a 1.5 MiB command
-// output is answered; before, the reader stopped silently and steering timed
-// out while the session still read as running.
+// (CW-20261001-0086, CW-20260913-0001): the 1.5 MiB command item itself
+// reaches stream.jsonl as its Bash tool call, the message after it follows,
+// and steering is answered. Before, the reader stopped silently and steering
+// timed out while the session still read as running. A reader that skipped
+// the long line would pass the steering check but not the tool call's.
 func TestBootCodexOversizedFrameKeepsSteeringUsable(t *testing.T) {
-	err := bootCodexLargeFrame(t, 3*1024*1024/2)
+	streamLog, err := bootCodexLargeFrame(t, 3*1024*1024/2)
 	require.NotErrorIs(t, err, context.DeadlineExceeded,
 		"a 1.5 MiB command output left steering to time out instead of reporting the reader failure: %v", err)
 	require.NoError(t, err, "steering after a 1.5 MiB command output must be delivered")
+	require.Eventually(t, func() bool {
+		raw, err := os.ReadFile(streamLog)
+		return err == nil && strings.Contains(string(raw), "cat huge.log") && strings.Contains(string(raw), "after the large output")
+	}, 5*time.Second, 20*time.Millisecond, "the 1.5 MiB command item and the message after it must reach %s", streamLog)
 }

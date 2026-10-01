@@ -87,6 +87,7 @@ func AgentDeps(
 		MuxArgs:          muxCfg.Args,
 		MuxEnv:           muxCfg.Env,
 		Reminder:         reminderReg,
+		Polls:            pollReg,
 		// WorkspacesRoot defaults to $HOME/.torque/workspaces inside
 		// agent.WorkspaceCreate when left empty.
 	}

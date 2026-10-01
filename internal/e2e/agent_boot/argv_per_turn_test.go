@@ -112,7 +112,7 @@ func TestBoot_LaterTurnsCarryTheirOwnPrompt(t *testing.T) {
 // each later turn as its own frame, all on one process.
 func TestBoot_ClaudeStreamingTurnsReachStdinOnce(t *testing.T) {
 	profile := config.AgentProfile{Executor: "cli", Provider: "claude-code", Model: "claude-test-model", Args: []string{"--max-turns", "7"}}
-	boot := func(t *testing.T, mode agent.Mode) (*providertest.Fake, *composedDeps, *agent.Session) {
+	boot := func(t *testing.T, mode agent.Mode, description string) (*providertest.Fake, *composedDeps, *agent.Session) {
 		// Answer the first frame with a result so a one-shot Boot sees its
 		// turn complete; the fake records every later frame regardless.
 		fake := providertest.New(t, runtimes.Claude, providertest.Script(
@@ -126,7 +126,7 @@ func TestBoot_ClaudeStreamingTurnsReachStdinOnce(t *testing.T) {
 		cd.Deps.Profiles = config.ProfileMap{"worker": profile}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		sess, err := cd.Manager.Boot(ctx, agent.Options{TaskID: "CW-TEST-STDIN", AgentProfile: "worker", Workdir: t.TempDir(), Mode: mode})
+		sess, err := cd.Manager.Boot(ctx, agent.Options{TaskID: "CW-TEST-STDIN", AgentProfile: "worker", Workdir: t.TempDir(), Mode: mode, Description: description})
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), sess.ID) })
 		return fake, cd, sess
@@ -139,13 +139,22 @@ func TestBoot_ClaudeStreamingTurnsReachStdinOnce(t *testing.T) {
 	}
 
 	t.Run("one-shot", func(t *testing.T) {
-		fake, _, _ := boot(t, agent.ModeOneShot)
+		fake, _, _ := boot(t, agent.ModeOneShot, "")
 		stdin := settle(fake, 1)
 		require.Len(t, stdin, 1, "the kickoff must reach stdin exactly once: %q", stdin)
 	})
 
+	// Claude runs in its boot dir, so a one-shot with a description sends
+	// the description alone, as before agentkit v0.13.0.
+	t.Run("one-shot with a description", func(t *testing.T) {
+		fake, _, _ := boot(t, agent.ModeOneShot, "write the quarterly report")
+		stdin := settle(fake, 1)
+		require.Len(t, stdin, 1, "%q", stdin)
+		require.Equal(t, `{"type":"user","message":{"role":"user","content":"write the quarterly report"}}`, stdin[0])
+	})
+
 	t.Run("long-lived", func(t *testing.T) {
-		fake, cd, sess := boot(t, agent.ModeLongLived)
+		fake, cd, sess := boot(t, agent.ModeLongLived, "")
 		settle(fake, 1)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -170,4 +179,37 @@ func countArg(args []string, want string) int {
 		}
 	}
 	return n
+}
+
+// OpenCode runs in the project dir, so a one-shot opencode run gets boot.md's
+// content as its prompt, description included, not the description alone:
+// the briefing (task bundle under $OPENCODE_CONFIG_DIR, work-root rule, task
+// framing) is otherwise out of its reach. On main every opencode run turn
+// carried it, as the prepared argv's prompt (CW-20261001-0094 review).
+func TestBoot_OpencodeOneShotCarriesItsBriefing(t *testing.T) {
+	fake := providertest.New(t, runtimes.OpenCode, providertest.Replay("opencode/run_turn1"))
+	fake.Install()
+	cd := composeDeps(t, fakeRuntimeConfig{}, string(runtimes.OpenCode))
+	cd.Deps.RuntimeFactory = nil
+	cd.Deps.Profiles = config.ProfileMap{"worker": {Executor: "cli", Provider: "opencode", Model: "opencode/test-model"}}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, err := cd.Manager.Boot(ctx, agent.Options{
+		TaskID: "CW-TEST-ONESHOT", AgentProfile: "worker", Workdir: t.TempDir(),
+		Mode: agent.ModeOneShot, Description: "write the quarterly report",
+	})
+	require.NoError(t, err)
+	require.Len(t, fake.Calls(), 1)
+	args := fake.Call(0).Args
+	end := slices.Index(args, "--")
+	require.Equal(t, len(args)-2, end, "the prompt is the only argument after --: %.300q", args)
+	prompt := args[len(args)-1]
+	for _, want := range []string{
+		"**Task ID:** `CW-TEST-ONESHOT`",
+		"$OPENCODE_CONFIG_DIR/tasks/",
+		"Workspace rule:",
+		"## First turn\n\nwrite the quarterly report",
+	} {
+		require.Contains(t, prompt, want, "the one-shot prompt must carry the briefing")
+	}
 }

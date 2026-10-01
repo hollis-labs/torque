@@ -3,6 +3,8 @@ package steering
 import (
 	"sync"
 	"time"
+
+	gomsg "github.com/hollis-labs/go-messaging"
 )
 
 // DefaultPollTTL is the freshness window for a polling opt-in. An agent
@@ -61,6 +63,29 @@ func NewPollRegistry(ttl time.Duration) *PollRegistry {
 		now:  time.Now,
 		seen: make(map[string]time.Time),
 	}
+}
+
+// IsPollingAddress reports whether a fresh opt-in names an address of kind
+// with id, whatever its authority or sub-id: the poll tool keys on the URN
+// its caller passed, while the long-lived runtime knows only the session
+// and task it runs. Nil-safe; an unparsable entry never matches.
+func (r *PollRegistry) IsPollingAddress(kind gomsg.AddressKind, id string) bool {
+	if r == nil || id == "" {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.now()
+	for urn, at := range r.seen {
+		if now.Sub(at) > r.ttl {
+			continue
+		}
+		addr, err := gomsg.ParseURN(urn)
+		if err == nil && addr.Kind == kind && addr.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // MarkPolling records (or refreshes) a polling opt-in for urn. Called by

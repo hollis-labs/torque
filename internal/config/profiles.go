@@ -171,6 +171,32 @@ func validatePermissionMode(profileName, raw string) error {
 		profileName, raw, strings.Join(valid, ", "))
 }
 
+// validateProfileArgs checks a profile's `args`, the launch flags Torque
+// passes to the agent CLI itself (Launch.ExtraArgs), outside agentkit's own
+// validation (CW-20261001-0121). They go among the CLI's options, before
+// the `--` that ends options ahead of the prompt, so:
+//
+//   - a literal `--` would end options early, and the flags after it, then
+//     Torque's own, would reach the agent as prompt text;
+//   - a first arg that is not an option would be read as the prompt or a
+//     subcommand. A later non-option is the value of the flag before it
+//     (`--effort high`) and is fine.
+func validateProfileArgs(profileName string, args []string) error {
+	for i, arg := range args {
+		if arg == "--" {
+			return fmt.Errorf(
+				"agent_profiles[%q].args[%d]: %q is not allowed: it ends the CLI's options, so the flags after it (and Torque's own) would reach the agent as prompt text",
+				profileName, i, arg)
+		}
+	}
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		return fmt.Errorf(
+			"agent_profiles[%q].args[0]: %q is not an option (it does not start with \"-\"); profile args go among the CLI's options, where a leading positional would be read as the prompt or a subcommand",
+			profileName, args[0])
+	}
+	return nil
+}
+
 // ResolvedPermissionMode returns the profile's PermissionMode, substituting
 // DefaultPermissionMode when the field is empty. Callers should use this
 // rather than reading PermissionMode directly so the unset-means-acceptEdits
@@ -321,6 +347,9 @@ func LoadProfilesFile(path string) (Profiles, error) {
 	// into the spawned agent's .claude/settings.json (CW-20260517-0038).
 	for name, prof := range out.Profiles {
 		if err := validatePermissionMode(name, prof.PermissionMode); err != nil {
+			return Profiles{}, fmt.Errorf("parse profiles %s: %w", path, err)
+		}
+		if err := validateProfileArgs(name, prof.Args); err != nil {
 			return Profiles{}, fmt.Errorf("parse profiles %s: %w", path, err)
 		}
 	}

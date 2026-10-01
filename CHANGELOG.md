@@ -8,6 +8,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- A long-lived worker that ends its turn without moving its task out of
+  `doing` is reminded once, then routed, instead of holding its project's
+  slot until the 30-minute inactivity threshold. After 90 seconds idle
+  following a completed turn it gets one reminder turn to call
+  `torque_task_review` or `torque_task_blocked`. Still idle 90 seconds later,
+  engine-side verification routes the run: to review if it left commits on
+  its branch or comments or artifacts on the task, to blocked otherwise, with
+  a `[system/auto-route]` comment on the task saying so. The window is task
+  metadata `idle_nudge_seconds` (0 to 3600; 0 turns it off). It applies to
+  `kind=agent` worker tasks only, never mid-turn, and never while the worker
+  waits by design: on a pending checkpoint, on a child task still open, on
+  steering messages it has not dismissed, or with its inbox polling active.
 - Pending HITL checkpoints are escalated once when nobody answers them: after
   24h (72h for `message`), the scheduler posts a `[system/checkpoint]`
   comment on the task and publishes `checkpoint.escalated`, and the
@@ -75,7 +87,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   output, and the wrapper's `agent.permission_denied`, `session.auth_failed`
   and `session.lost` events are accepted and not yet acted on. Without a
   launch template, a session's extra arguments go before a prompt's `--`
-  again, as with agentkit v0.12.3.
+  again, as with agentkit v0.12.3. Torque's ACP launches pick up the
+  wrapper's ACP fixes: a child's last frame at exit, such as a
+  `session/close` reply, is no longer lost (v0.17.1), and ACP deltas carry
+  `block_id`, with `phase` on Copilot's as on the other runtimes (v0.17.0).
 - Every turn of a launch runs its own argv, resolved from the prepared launch
   template (agentkit v0.13.0, go-agent-wrapper v0.16.0): the turn's prompt,
   last after `--`, and the session the previous turn reported. The profile's
@@ -170,6 +185,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   thinking, not as the agent's output. Their ACP thought chunks are marked
   only `phase: "thought"`, which Torque's event sink did not read
   (CW-20261001-0120).
+- A Codex app-server session whose output reader fails on a read error now
+  reads as not alive (agentkit v0.14.1), so Torque's session poller stops it
+  and its session row goes terminal. Before, the reader stopped silently and
+  the row stayed running.
 - Steering a Codex app-server session keeps working after a command prints
   more than 1 MiB on one line. The session reader stopped at that line, so
   later turns timed out while the session still looked alive (#149); lines up
@@ -182,6 +201,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - OpenCode sessions get their briefing on the first turn. OpenCode runs in
   the project directory, so the `Boot @./boot.md` kickoff pointed at a file
   that is not there; it now receives `boot.md`'s content instead.
+- An `opencode run` session with a long task description launches. Its
+  first turn carries `boot.md`'s content as one argument, which Linux
+  refuses past 128 KiB ("argument list too long"); above 100 KiB the turn is
+  `Boot @<boot dir>/boot.md`, an absolute path, and Torque logs why
+  (CW-20261001-0121).
+- A session whose first turn fails during start-up (an opencode, codex exec
+  or agy run on the go-agent-wrapper path) reports why. The run's error now
+  carries the provider's error line and the stderr tail (at most 2 KiB) after
+  "process exited 1", and the turn's output reaches `session.log` and
+  `stream.jsonl`, which stayed empty before (CW-20261001-0105).
+- A profile's `args` may not contain `--` or start with a non-option: they
+  go among the agent CLI's options, ahead of the `--` before the prompt, where
+  either would turn flags into prompt text. `profiles.yaml` loading and
+  `torque profiles lint` both reject them and name the profile and argument
+  (CW-20261001-0121).
 - The boot kickoff, the planted `process.md` and the agent execution docs
   name the per-task MCP server `loopback`, the name go-providers plants it
   under (codex's `[mcp_servers.loopback]`, the `loopback` entry in Claude's

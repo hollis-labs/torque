@@ -322,6 +322,14 @@ func lintProfileDefinition(line int, name string, profile AgentProfile) []Profil
 		}
 	}
 
+	if err := validateProfileArgs(name, profile.Args); err != nil {
+		problems = append(problems, ProfileLintProblem{
+			Line:    line,
+			Path:    basePath + ".args",
+			Message: err.Error(),
+		})
+	}
+
 	if prob, ok := dishonestProfileNameProblem(line, name, provider); ok {
 		problems = append(problems, prob)
 	}
