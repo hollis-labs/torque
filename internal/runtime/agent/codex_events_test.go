@@ -2,11 +2,15 @@ package agent
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	llmtypes "github.com/hollis-labs/go-llm-types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hollis-labs/torque/internal/redact"
 )
 
 func TestCodexItemCompletedEvent_CommandExecution(t *testing.T) {
@@ -57,7 +61,7 @@ func TestCodexItemCompletedEvent_IgnoredTypes(t *testing.T) {
 
 func TestCodexTurnCompletedFailure_NestedFailedPayload(t *testing.T) {
 	params := json.RawMessage(`{"threadId":"thread-1","turn":{"id":"turn-1","items":[],"status":"failed","error":{"message":"unexpected status 401: missing auth","codexErrorInfo":"other","additionalDetails":null},"startedAt":"2026-09-12T00:03:00Z","completedAt":"2026-09-12T00:03:34Z"}}`)
-	msg, ok := codexTurnCompletedFailure(params)
+	msg, ok := codexTurnCompletedFailure(params, nil)
 	require.True(t, ok)
 	assert.Equal(t, "codex terminal turn failed: unexpected status 401: missing auth", msg)
 	assert.NotContains(t, msg, "codexErrorInfo")
@@ -69,7 +73,26 @@ func TestCodexTurnCompletedFailure_IgnoresSuccessfulOrMalformedPayloads(t *testi
 		`{"status":"failed","errorMessage":"top-level legacy shape"}`,
 		`not-json`,
 	} {
-		_, ok := codexTurnCompletedFailure(json.RawMessage(raw))
+		_, ok := codexTurnCompletedFailure(json.RawMessage(raw), nil)
 		assert.False(t, ok, "raw=%s", raw)
 	}
+}
+
+// The reason is redacted before it is cut to its bound, so a secret
+// straddling the cut keeps no prefix, and the cut lands on a rune boundary.
+func TestCodexTurnCompletedFailure_RedactsBeforeCutting(t *testing.T) {
+	const secret = "sk-straddle-secret-0123456789"
+	failed := func(message string) json.RawMessage {
+		b, err := json.Marshal(map[string]any{"turn": map[string]any{"status": "failed", "error": map[string]any{"message": message}}})
+		require.NoError(t, err)
+		return b
+	}
+	msg, ok := codexTurnCompletedFailure(failed(strings.Repeat("x", 230)+secret), redact.New(secret))
+	require.True(t, ok)
+	assert.NotContains(t, msg, "sk-strad")
+
+	msg, ok = codexTurnCompletedFailure(failed(strings.Repeat("x", 239)+"é and more"), nil)
+	require.True(t, ok)
+	assert.True(t, utf8.ValidString(msg), "the cut never splits a rune")
+	assert.Equal(t, codexTerminalFailurePrefix+": "+strings.Repeat("x", 239)+"...", msg)
 }

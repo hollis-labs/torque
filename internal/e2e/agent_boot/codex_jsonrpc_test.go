@@ -168,6 +168,43 @@ func TestExecutor_LongLivedCodexTerminalFailedTurnBlocksAndMarksSessionFailed(t 
 	assert.Contains(t, sessions[0].MetaJSON, `"torque.run_id"`)
 }
 
+// A codex turn failure that echoes a launch secret reaches the run's reason
+// redacted. The stream's error was already redacted, but the failure
+// channel carried the raw message, and the reason joins the two
+// (CW-20261001-0169).
+func TestExecutor_LongLivedCodexTerminalFailedTurnReasonIsRedacted(t *testing.T) {
+	const secret = "sk-test-codex-fail-0123456789abcdef"
+	t.Setenv("OPENAI_API_KEY", secret)
+	cd := composeDeps(t, fakeRuntimeConfig{
+		PTY: false,
+		JsonRpcResponses: map[string]json.RawMessage{
+			"thread/start": json.RawMessage(`{"thread": {"id": "thread-codex-secret-001"}}`),
+		},
+		TurnCompletedNotification: json.RawMessage(`{"threadId":"thread-codex-secret-001","turn":{"id":"turn-1","items":[],"status":"failed","error":{"message":"unexpected status 401: Incorrect API key provided: ` + secret + `"}}}`),
+	}, "codex")
+
+	const taskID = "CW-TEST-CODEX-SECRET"
+	require.NoError(t, cd.Store.CreateTask(&sqlstore.TaskRecord{
+		ID: taskID, Title: "codex secret", Status: "doing",
+		Executor: "cli", AgentProfile: "torque-backend",
+	}))
+	runID, err := cd.Store.CreateRun(&sqlstore.RunRecord{TaskID: taskID, Executor: "cli", Status: sqlstore.RunStatusRunning})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := agent.NewExecutor(cd.Deps).Run(ctx, &executor.ExecutionJob{
+		TaskID: taskID, TaskTitle: "codex secret",
+		Kind: "agent", TaskStatus: "doing", AgentProfile: "torque-backend",
+		WorkingDir: t.TempDir(), RunID: runID, Description: "trigger a failed codex turn",
+	}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "blocked", result.Status)
+	assert.NotContains(t, result.Reason, secret)
+	assert.Contains(t, result.Reason, "Incorrect API key provided: [redacted]")
+}
+
 // TestBoot_ModeLongLived_CodexJsonRpcStdio_PostStartKickoff covers the
 // long-lived JsonRpcStdio path: AutoFireFirstTurn stays false (so the
 // lib's auto-SendInput doesn't fire plaintext at the codex app-server),

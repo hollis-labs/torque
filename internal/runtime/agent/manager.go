@@ -438,6 +438,24 @@ func (m *Manager) adoptLegacyResources(sessID string, res sessionResources) {
 	m.mu.Unlock()
 }
 
+// endWrapperState writes the state a wrapper-path session ended in (its
+// run goroutine's write once wr.Run returns), unless a long-lived run has
+// already written it failed or canceled (protectTerminalFailure,
+// protectTerminalCanceled): an agent that exits cleanly once Torque stops
+// it must not turn a blocked run's session done. The classification is
+// dropped either way, since no later write reads it; the legacy path drops
+// it in normalizeTerminalEvent (CW-20261001-0169).
+func (m *Manager) endWrapperState(ctx context.Context, deps *Dependencies, sessID, state string) {
+	m.terminalMu.Lock()
+	defer m.terminalMu.Unlock()
+	protected := m.terminalFailureProtected(sessID) || m.terminalCanceledProtected(sessID)
+	delete(m.terminalFailed, sessID)
+	delete(m.terminalCanceled, sessID)
+	if !protected {
+		_ = deps.UpdateSessionState(ctx, sessID, state, 0, nil)
+	}
+}
+
 // finishWrapperSession marks h finished, drops it from wrapperSessions and
 // tears the session down (CW-20261001-0161). Called by the run goroutine
 // once wr.Run has returned and the terminal state is written, whether or

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strings"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
 	llmtypes "github.com/hollis-labs/go-llm-types"
@@ -62,6 +63,14 @@ type torqueRuntimeEventSink struct {
 	// Nil for every other session.
 	opencodePerms *opencodePermissionResponder
 
+	// terminalFailure, when non-nil, receives the reason of every failed
+	// turn: a long-lived scheduler run ends on it at once
+	// (outcomeTerminalFailure), as it does for a Codex app-server turn that
+	// completes as failed. Without it a turn the provider refused, such as
+	// opencode serve's session.error for an unknown model, left the task in
+	// doing until the inactivity threshold (CW-20261001-0169).
+	terminalFailure chan<- string
+
 	onReady func()
 	onDone  func()
 }
@@ -109,7 +118,7 @@ func (s *torqueRuntimeEventSink) Write(ctx context.Context, ev runtimeevents.Eve
 	case runtimeevents.KindTurnCompleted:
 		s.handleTurnCompleted(ctx, ev.Payload)
 	case runtimeevents.KindTurnFailed:
-		s.handleTurnFailed(ctx, ev.Payload)
+		s.handleTurnFailed(ctx, ev.Payload, ev.Process.ProviderSessionID)
 	case runtimeevents.KindStderrLine:
 		s.handleStderrLine(ev.Payload)
 		if line, ok := decodeStreamLine(ev.Payload); ok && s.capture != nil {
@@ -251,7 +260,7 @@ type turnFailedPayload struct {
 	Error string `json:"error"`
 }
 
-func (s *torqueRuntimeEventSink) handleTurnFailed(_ context.Context, raw json.RawMessage) {
+func (s *torqueRuntimeEventSink) handleTurnFailed(_ context.Context, raw json.RawMessage, providerSessionID string) {
 	var p turnFailedPayload
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &p)
@@ -259,7 +268,160 @@ func (s *torqueRuntimeEventSink) handleTurnFailed(_ context.Context, raw json.Ra
 	if u := turnUsageFrom(raw); u != nil {
 		s.emit(llmtypes.StreamEvent{Type: llmtypes.EventUsage, Usage: u})
 	}
-	s.emit(llmtypes.StreamEvent{Type: llmtypes.EventError, Error: p.Error})
+	// The stream and the run's reason carry the same readable message, as
+	// the Codex path's do; opencode serve's raw event stays in its
+	// serve-http.log.
+	msg := turnFailureText(p.Error, s.redact)
+	s.emit(llmtypes.StreamEvent{Type: llmtypes.EventError, Error: msg})
+	// Every genuine failed turn ends a long-lived run, blocked, as a Codex
+	// app-server run's does, the reminder pump's turns included. An
+	// opencode serve error that does not end its turn stays in the stream.
+	if s.terminalFailure == nil || opencodeErrorContinues(p.Error, providerSessionID) {
+		return
+	}
+	select {
+	case s.terminalFailure <- msg:
+	default:
+	}
+}
+
+// turnFailureMaxLen bounds a failed turn's reason.
+const turnFailureMaxLen = 500
+
+// turnFailureText is the reason a failed turn gives its run: the provider's
+// message (turnFailureMessage), redacted with r, then cut to its first line
+// and at most turnFailureMaxLen bytes. Redaction comes first: the redactor
+// matches whole secrets, so a cut through one would keep its prefix.
+func turnFailureText(raw string, r *redact.Redactor) string {
+	text := r.Text(turnFailureMessage(raw))
+	if i := strings.IndexByte(text, '\n'); i >= 0 {
+		text = text[:i]
+	}
+	text = strings.TrimSpace(text)
+	if cut := truncateBytes(text, turnFailureMaxLen); cut != text {
+		text = cut + "…"
+	}
+	return text
+}
+
+// turnFailureEvent is a failed turn's error when it is JSON. opencode
+// serve's is its whole session.error SSE event, which agentkit forwards as
+// the error, with the message at properties.error.data.message and, on the
+// second report, a stack trace after it; /global/event wraps the same
+// event in payload. Other runtimes send the message itself, or an object
+// with a message or an error.
+type turnFailureEvent struct {
+	Type       string             `json:"type"`
+	Message    string             `json:"message"`
+	Error      json.RawMessage    `json:"error"`
+	Properties opencodeErrorProps `json:"properties"`
+	Payload    *struct {
+		Type       string             `json:"type"`
+		Properties opencodeErrorProps `json:"properties"`
+	} `json:"payload"`
+}
+
+type opencodeErrorProps struct {
+	SessionID string          `json:"sessionID"`
+	Error     json.RawMessage `json:"error"`
+}
+
+func parseTurnFailure(raw string) (turnFailureEvent, bool) {
+	var ev turnFailureEvent
+	text := strings.TrimSpace(raw)
+	if !strings.HasPrefix(text, "{") || json.Unmarshal([]byte(text), &ev) != nil {
+		return ev, false
+	}
+	if ev.Payload != nil && ev.Payload.Type != "" {
+		ev.Type, ev.Properties = ev.Payload.Type, ev.Payload.Properties
+	}
+	return ev, true
+}
+
+// turnFailureMessage is the provider's message in a failed turn's error:
+// the error object's message (errorMessage), the object's own message, or
+// the error as sent.
+func turnFailureMessage(raw string) string {
+	ev, ok := parseTurnFailure(raw)
+	if !ok {
+		return strings.TrimSpace(raw)
+	}
+	for _, candidate := range []json.RawMessage{ev.Properties.Error, ev.Error} {
+		if msg := errorMessage(candidate); msg != "" {
+			return msg
+		}
+	}
+	if ev.Message != "" {
+		return ev.Message
+	}
+	return strings.TrimSpace(raw)
+}
+
+// errorMessage reads an error object's message, at data.message or message,
+// or its name when it has no message (an opencode NamedError), or the error
+// itself when it is a string.
+func errorMessage(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var asString string
+	if json.Unmarshal(raw, &asString) == nil {
+		return asString
+	}
+	var obj struct {
+		Name    string `json:"name"`
+		Message string `json:"message"`
+		Data    struct {
+			Message string `json:"message"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(raw, &obj) != nil {
+		return ""
+	}
+	switch {
+	case obj.Data.Message != "":
+		return obj.Data.Message
+	case obj.Message != "":
+		return obj.Message
+	}
+	return obj.Name
+}
+
+// opencodeContinuingErrors are the opencode serve session.error names that
+// do not end the turn. opencode (1.18.33) publishes ContextOverflowError
+// from SessionProcessor.halt, then compacts the session and continues the
+// turn (auto-compaction is on by default). MessageAbortedError comes only
+// from an abort, which is Torque's own Stop: that ends the run itself.
+var opencodeContinuingErrors = map[string]bool{
+	"ContextOverflowError": true,
+	"MessageAbortedError":  true,
+}
+
+// opencodeErrorContinues reports whether a failed turn is an opencode serve
+// session.error that does not end the run. agentkit (serve_http_session.go)
+// makes every session.error the turn's failure, including:
+//   - one that names no session: opencode reports a plugin that fails to
+//     load, or a skill it cannot parse ("Failed to parse skill …"), this
+//     way, and carries on;
+//   - one that names another session than this one's, when the wrapper
+//     has its id (agentkit already drops those it can tell apart);
+//   - a known error that does not end the turn (opencodeContinuingErrors).
+//
+// Any other failed turn, opencode's or another runtime's, ends the run.
+func opencodeErrorContinues(raw, providerSessionID string) bool {
+	ev, ok := parseTurnFailure(raw)
+	if !ok || ev.Type != "session.error" {
+		return false
+	}
+	sid := ev.Properties.SessionID
+	if sid == "" || (providerSessionID != "" && sid != providerSessionID) {
+		return true
+	}
+	var named struct {
+		Name string `json:"name"`
+	}
+	_ = json.Unmarshal(ev.Properties.Error, &named)
+	return opencodeContinuingErrors[named.Name]
 }
 
 // stderrLinePayload mirrors go-agent-wrapper's io_streams.go newStreamWriter
