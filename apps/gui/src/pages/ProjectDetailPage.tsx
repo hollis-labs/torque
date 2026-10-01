@@ -11,7 +11,7 @@ import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
 import { isHtmlApiFallbackError } from '@/lib/api'
 import { buildTaskRollup, groupTasksByScope } from '@/lib/scope-metrics'
-import type { Epic, Project, ProjectArtifact, Sprint, Task } from '@/lib/types'
+import type { Epic, Project, ProjectArtifact, Sprint, TaskSummary } from '@/lib/types'
 
 const SSE_EVENTS = ['project.updated', 'project.created', 'project.deleted', 'task.updated', 'task.created', 'task.transitioned']
 
@@ -30,7 +30,7 @@ export default function ProjectDetailPage() {
   const navigate = useNavigate()
   const { lastEvent } = useSSE(SSE_EVENTS)
   const [project, setProject] = useState<Project | null>(null)
-  const [tasks, setTasks] = useState<Task[]>([])
+  const [tasks, setTasks] = useState<TaskSummary[]>([])
   const [sprints, setSprints] = useState<Sprint[]>([])
   const [epics, setEpics] = useState<Epic[]>([])
   const [artifacts, setArtifacts] = useState<ProjectArtifact[]>([])
@@ -47,7 +47,7 @@ export default function ProjectDetailPage() {
     try {
       const [nextProject, taskRes, sprintRes, epicRes] = await Promise.all([
         api.getProject(id),
-        api.listTasks({ project_id: id }),
+        api.listTaskSummaries({ project_id: id }),
         api.listSprints({ project_id: id }),
         api.listEpics({ project_id: id }),
       ])

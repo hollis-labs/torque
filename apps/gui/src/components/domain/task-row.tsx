@@ -9,10 +9,10 @@ import { SubtodosBadge } from './subtodos-panel'
 import { formatRelativeTime } from '@/lib/utils'
 import { hasBlockedReason, truncateBlockedReason } from '@/lib/blocked-reason'
 import { TAG_TEXT_CLASSES } from '@/lib/constants'
-import type { Task, TaskStatus } from '@/lib/types'
+import type { Task, TaskStatus, TaskSummary } from '@/lib/types'
 
 interface TaskRowProps {
-  task: Task
+  task: TaskSummary
   selected?: boolean
   onSelect?: (id: string, selected: boolean) => void
   onTransition?: (id: string, status: TaskStatus) => void

@@ -19,13 +19,18 @@ import (
 // drives the run's ExecutionResult.Status downstream — see ApplyTo for the
 // concrete mapping. CW-20260519-0095 Phase 3.
 //
-// The two failure verdicts (VerdictFailedNoCommitsWithEdits, VerdictBlocked
-// NoAction) intentionally produce DIFFERENT lifecycle statuses (failed vs
-// blocked) because they describe materially different operator interventions:
+// Both failure verdicts (VerdictFailedNoCommitsWithEdits, VerdictBlocked
+// NoAction) park the task in `blocked`; their reasons name the different
+// operator interventions they need:
 //
 //   - edits-without-commits is an agent-correctness bug ("forgot to
-//     commit") → retry-or-block per the on_fail rule, the operator will
-//     usually re-run the same scope.
+//     commit"). The diff is preserved in the run's worktree, and the reason
+//     names that worktree, how many paths are uncommitted, and the remedy:
+//     commit or discard them there, then re-queue. It is not retried under
+//     the on_fail rule: a retry re-dispatched at once into a fresh worktree
+//     off origin/main, stranding the diff, and occupied the project's slot
+//     while a worker that forgot to commit usually forgot again
+//     (CW-20261001-0028).
 //   - no-action is a task-spec bug ("scope unclear or task malformed")
 //     → blocked with reason, the operator needs to fix the task before
 //     redispatch makes sense.
@@ -71,7 +76,8 @@ const (
 	// VerdictFailedNoCommitsWithEdits — the worker left uncommitted
 	// changes in its worktree (`git status --porcelain` is non-empty) but
 	// committed nothing on the run-branch. "Did work but didn't ship
-	// it." Lifecycle picks failed → on_fail rule. Tool names do not
+	// it." Lifecycle parks the task in blocked, with a reason that points
+	// at the preserved worktree; on_fail does not apply. Tool names do not
 	// decide this: a Bash call is not an edit unless it left a diff.
 	VerdictFailedNoCommitsWithEdits
 
@@ -242,7 +248,9 @@ func VerifyWorkerCompletion(ctx context.Context, workdirRepoRoot, worktreePath, 
 	}
 	if changed > 0 {
 		v.Kind = VerdictFailedNoCommitsWithEdits
-		v.Reason = fmt.Sprintf("worker exited with edits but no commits on run-branch (%d uncommitted path(s) in worktree; tool calls: %s)", changed, formatHistogram(hist))
+		// The dirty worktree survives per-run cleanup (worktreeHasWork), so
+		// the reason can send the operator to it.
+		v.Reason = fmt.Sprintf("worker exited with edits but no commits on run-branch: %d uncommitted path(s) preserved in worktree %s (tool calls: %s); commit or discard them there, then re-queue the task", changed, worktreePath, formatHistogram(hist))
 		return v
 	}
 	if len(hist) > 0 || taskOutput > 0 {
@@ -258,7 +266,8 @@ func VerifyWorkerCompletion(ctx context.Context, workdirRepoRoot, worktreePath, 
 // ApplyTo overlays the verdict onto an existing ExecutionResult-shaped
 // (status, reason) pair. Returns (status, reason). Used by the long-lived
 // executor in the agent package to override its tentative review result
-// when verification fails.
+// when verification fails. Both failure verdicts return "blocked", which the
+// lifecycle applies as-is: no retry count, no re-dispatch.
 //
 // Why returning a tuple instead of mutating: the verifier lives in the
 // scheduler package and the result shape lives in the executor package;
@@ -272,9 +281,7 @@ func (v WorkerVerdict) ApplyTo(currentStatus, currentReason string) (status, rea
 		// loop set — typically "review" for the worker's self-transition
 		// path.
 		return currentStatus, currentReason
-	case VerdictFailedNoCommitsWithEdits:
-		return "failed", v.Reason
-	case VerdictBlockedNoAction:
+	case VerdictFailedNoCommitsWithEdits, VerdictBlockedNoAction:
 		return "blocked", v.Reason
 	default:
 		return currentStatus, currentReason

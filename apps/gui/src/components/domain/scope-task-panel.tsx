@@ -1,10 +1,10 @@
 import { TaskTable } from '@/components/domain/task-table'
-import type { Task } from '@/lib/types'
+import type { TaskSummary } from '@/lib/types'
 
 interface ScopeTaskPanelProps {
   title?: string
   description?: string
-  tasks: Task[]
+  tasks: TaskSummary[]
 }
 
 export function ScopeTaskPanel({

@@ -35,7 +35,8 @@ func TestVerifyWorkerCompletion_Passed(t *testing.T) {
 
 // TestVerifyWorkerCompletion_FailedNoCommitsWithEdits is the "did work
 // but didn't ship it" path — the worker left uncommitted changes in its
-// worktree and landed zero commits. Lifecycle picks this up as a failed run.
+// worktree and landed zero commits. The reason names the worktree that holds
+// the diff and the remedy, since lifecycle parks the task in blocked.
 func TestVerifyWorkerCompletion_FailedNoCommitsWithEdits(t *testing.T) {
 	worktreePath := makeGitRepoWithCommits(t, 0)
 	dirtyWorktree(t, worktreePath)
@@ -50,6 +51,8 @@ func TestVerifyWorkerCompletion_FailedNoCommitsWithEdits(t *testing.T) {
 	assert.Equal(t, 0, verdict.CommitCount)
 	assert.Contains(t, verdict.Reason, "edits but no commits")
 	assert.Contains(t, verdict.Reason, "2 uncommitted path(s)")
+	assert.Contains(t, verdict.Reason, "preserved in worktree "+worktreePath)
+	assert.Contains(t, verdict.Reason, "commit or discard them there, then re-queue the task")
 	assert.Contains(t, verdict.Reason, "Edit=1")
 	assert.Empty(t, verdict.SkipReason)
 }
@@ -253,10 +256,10 @@ func TestApplyTo_OverridesOnlyForFailures(t *testing.T) {
 		assert.Equal(t, "original", r)
 	})
 
-	t.Run("failed-no-commits overrides to failed", func(t *testing.T) {
+	t.Run("failed-no-commits overrides to blocked", func(t *testing.T) {
 		v := WorkerVerdict{Kind: VerdictFailedNoCommitsWithEdits, Reason: "edits but no commits"}
 		s, r := v.ApplyTo("review", "")
-		assert.Equal(t, "failed", s)
+		assert.Equal(t, "blocked", s, "blocked, not failed: a retry would strand the diff (CW-20261001-0028)")
 		assert.Equal(t, "edits but no commits", r)
 	})
 

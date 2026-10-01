@@ -19,10 +19,10 @@ import {
 import { Skeleton } from '@hollis-labs/sysop-ui'
 import { useApi } from '@/hooks/use-api'
 import { notifyError } from '@/lib/toast'
-import type { Collection, Task } from '@/lib/types'
+import type { Collection, Task, TaskSummary } from '@/lib/types'
 
 interface QuickAddDialogProps {
-  task: Task
+  task: TaskSummary
   open: boolean
   onOpenChange: (open: boolean) => void
   /**

@@ -24,10 +24,10 @@ import { QuickAddDialog } from '@/components/collections/QuickAddDialog'
 import { useApi } from '@/hooks/use-api'
 import { notifyError, notifySuccess } from '@/lib/toast'
 import { STATUS_LABEL, TASK_STATUSES } from '@/lib/constants'
-import type { Task, TaskStatus } from '@/lib/types'
+import type { Task, TaskStatus, TaskSummary } from '@/lib/types'
 
 interface TaskActionsMenuProps {
-  task: Task
+  task: TaskSummary
   onChange?: (task: Task) => void
   onDelete?: (id: string) => void
   align?: 'start' | 'end'
@@ -107,14 +107,16 @@ export function TaskActionsMenu({
 
   async function handleMoveToBacklog() {
     try {
-      let current = task
-      if (current.status !== 'todo') {
-        current = await api.transitionTask(task.id, 'todo')
+      // Only a task the API returned goes to onChange: the prop may be a
+      // summary row without its description.
+      let updated: Task | null = null
+      if (task.status !== 'todo') {
+        updated = await api.transitionTask(task.id, 'todo')
       }
-      if (!current.manual) {
-        current = await api.updateTask(task.id, { manual: true })
+      if (!(updated ?? task).manual) {
+        updated = await api.updateTask(task.id, { manual: true })
       }
-      onChange?.(current)
+      if (updated) onChange?.(updated)
       notifySuccess('Moved to backlog')
     } catch (err) {
       notifyError(err, 'Failed to move to backlog')

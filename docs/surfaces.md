@@ -90,6 +90,25 @@ Clients that need a complete refreshed task set, including the GUI shared API
 client, must follow `continuation` until `has_more=false`; clients that pass a
 positive `limit` should treat it as their own overall cap.
 
+`fields=summary` on `GET /api/v1/tasks` leaves `description` and
+`system_prompt` out of each task; every other key and the envelope are
+unchanged. Omitting `fields` returns the full task, and any other value is a
+`400`. List views use it because the description alone was most of a page's
+bytes.
+
+Task scope rollup (`GET /api/v1/tasks/rollup?group_by=project_id|epic_id|sprint_id`)
+counts tasks per scope and status in one grouped query, so a scope overview
+needs no task pages. It takes the task-list filters above (including the
+default that hides `kind=internal`), so `&project_id=<id>` narrows it to one
+scope. It rejects `limit`, `offset`, `cursor`, `sort_by` and `sort_dir`. The
+response is
+`{group_by, total, scopes:[{scope_id, total, counts:{<status>: n}}]}`: one
+entry per scope with at least one matching task, ordered by `scope_id`. Tasks
+whose scope column is NULL or empty are left out. `total` counts the matching
+tasks that have the scope set, in any status. Counts are keyed by raw status,
+and clients derive their own buckets. The GUI's open bucket, for example, is
+`backlog+todo+queued`.
+
 Tag catalog contract (`GET /api/v1/tags`): with no query string, the endpoint
 keeps the legacy GUI-compatible shape `{tags:[...]}` and legacy ordering by
 `name COLLATE NOCASE ASC`. Supplying any query string opts into the bounded

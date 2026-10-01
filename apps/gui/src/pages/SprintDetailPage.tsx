@@ -9,7 +9,7 @@ import { ScopeTaskPanel } from '@/components/domain/scope-task-panel'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
 import { buildTaskRollup } from '@/lib/scope-metrics'
-import type { Project, Sprint, Task } from '@/lib/types'
+import type { Project, Sprint, TaskSummary } from '@/lib/types'
 
 const SSE_EVENTS = ['sprint.updated', 'sprint.created', 'sprint.deleted', 'task.updated', 'task.created', 'task.transitioned']
 
@@ -20,7 +20,7 @@ export default function SprintDetailPage() {
   const { lastEvent } = useSSE(SSE_EVENTS)
   const [sprint, setSprint] = useState<Sprint | null>(null)
   const [project, setProject] = useState<Project | null>(null)
-  const [tasks, setTasks] = useState<Task[]>([])
+  const [tasks, setTasks] = useState<TaskSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const loadGeneration = useRef(0)
@@ -33,7 +33,7 @@ export default function SprintDetailPage() {
     try {
       const [nextSprint, taskRes] = await Promise.all([
         api.getSprint(id),
-        api.listTasks({ sprint_id: id }),
+        api.listTaskSummaries({ sprint_id: id }),
       ])
       if (myGen !== loadGeneration.current) return
       const nextProject = nextSprint.project_id

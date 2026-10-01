@@ -336,6 +336,29 @@ export interface Epic {
   updated_at: string
 }
 
+/**
+ * A task without its free-text bodies, as GET /tasks?fields=summary returns
+ * it. List views take this rather than Task so they work from either.
+ */
+export type TaskSummary = Omit<Task, 'description' | 'system_prompt'>
+
+/** The task columns a scope rollup can group by. */
+export type TaskScopeKey = 'project_id' | 'epic_id' | 'sprint_id'
+
+/** One scope's task counts from GET /tasks/rollup, keyed by raw status. */
+export interface TaskScopeRollup {
+  scope_id: string
+  total: number
+  counts: Record<string, number>
+}
+
+export interface TaskScopeRollupResponse {
+  group_by: TaskScopeKey
+  /** Matching tasks with the group_by scope set, in any status. */
+  total: number
+  scopes: TaskScopeRollup[]
+}
+
 export interface TaskFilter {
   status?: TaskStatus[]
   priority?: number[]
