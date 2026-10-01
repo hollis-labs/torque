@@ -315,52 +315,9 @@ func commentCursorArg(sortBy, sv string) (any, error) {
 // different defaults, not a different query shape at this layer — see
 // comment_tools.go).
 func (s *Store) SearchComments(f CommentFilter) ([]CommentRecord, error) {
-	var where []string
-	var args []any
-
-	if f.Search != "" {
-		pattern := "%" + f.Search + "%"
-		where = append(where, "content LIKE ?")
-		args = append(args, pattern)
-	}
-	if f.EntityType != "" {
-		where = append(where, "entity_type = ?")
-		args = append(args, f.EntityType)
-	}
-	if f.EntityID != "" {
-		where = append(where, "entity_id = ?")
-		args = append(args, f.EntityID)
-	} else if len(f.EntityIDs) > 0 {
-		placeholders := make([]string, len(f.EntityIDs))
-		for i, id := range f.EntityIDs {
-			placeholders[i] = "?"
-			args = append(args, id)
-		}
-		where = append(where, "entity_id IN ("+strings.Join(placeholders, ",")+")")
-	}
-	if f.Author != "" {
-		where = append(where, "author = ?")
-		args = append(args, f.Author)
-	}
-	// Range bounds compare against the normalized timestamp key,
-	// not the raw column text — a legacy-shaped row (" +0000 UTC") is
-	// lexically greater than the same instant's canonical text, so a raw
-	// `created_at <= ?` bound silently dropped it. See timestampSortKey.
-	if f.CreatedAfter != "" {
-		where = append(where, s.timestampSortKey("created_at")+" >= ?")
-		bound, err := s.timestampArg(f.CreatedAfter)
-		if err != nil {
-			return nil, err
-		}
-		args = append(args, bound)
-	}
-	if f.CreatedBefore != "" {
-		where = append(where, s.timestampSortKey("created_at")+" <= ?")
-		bound, err := s.timestampArg(f.CreatedBefore)
-		if err != nil {
-			return nil, err
-		}
-		args = append(args, bound)
+	where, args, err := s.commentListPredicates(f)
+	if err != nil {
+		return nil, err
 	}
 
 	// PRIM-002 sort column + PRIM-001 cursor predicate — see commentSortColumn's
@@ -428,4 +385,65 @@ func (s *Store) SearchComments(f CommentFilter) ([]CommentRecord, error) {
 		comments = append(comments, c)
 	}
 	return comments, rows.Err()
+}
+
+func (s *Store) commentListPredicates(f CommentFilter) ([]string, []any, error) {
+	var where []string
+	var args []any
+
+	if f.Search != "" {
+		pattern := "%" + f.Search + "%"
+		where = append(where, "content LIKE ?")
+		args = append(args, pattern)
+	}
+	if f.EntityType != "" {
+		where = append(where, "entity_type = ?")
+		args = append(args, f.EntityType)
+	}
+	if f.EntityID != "" {
+		where = append(where, "entity_id = ?")
+		args = append(args, f.EntityID)
+	} else if len(f.EntityIDs) > 0 {
+		placeholders := make([]string, len(f.EntityIDs))
+		for i, id := range f.EntityIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		where = append(where, "entity_id IN ("+strings.Join(placeholders, ",")+")")
+	}
+	if f.Author != "" {
+		where = append(where, "author = ?")
+		args = append(args, f.Author)
+	}
+	// Range bounds compare against the normalized timestamp key,
+	// not the raw column text — a legacy-shaped row (" +0000 UTC") is
+	// lexically greater than the same instant's canonical text, so a raw
+	// `created_at <= ?` bound silently dropped it. See timestampSortKey.
+	if f.CreatedAfter != "" {
+		where = append(where, s.timestampSortKey("created_at")+" >= ?")
+		bound, err := s.timestampArg(f.CreatedAfter)
+		if err != nil {
+			return nil, nil, err
+		}
+		args = append(args, bound)
+	}
+	if f.CreatedBefore != "" {
+		where = append(where, s.timestampSortKey("created_at")+" <= ?")
+		bound, err := s.timestampArg(f.CreatedBefore)
+		if err != nil {
+			return nil, nil, err
+		}
+		args = append(args, bound)
+	}
+
+	return where, args, nil
+}
+
+// CountComments counts the filtered cohort, excluding cursor and page bounds.
+func (s *Store) CountComments(f CommentFilter) (int, error) {
+	where, args, err := s.commentListPredicates(f)
+	if err != nil {
+		return 0, err
+	}
+	return s.countFiltered("comments", where, args)
 }

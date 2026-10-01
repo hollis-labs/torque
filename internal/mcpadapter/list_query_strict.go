@@ -84,6 +84,9 @@ func reqExactBool(req map[string]any, key string) (bool, error) {
 }
 
 func reqQueryCursor(req map[string]any) (service.CursorQuery, error) {
+	if _, ok := req["offset"]; ok {
+		return service.CursorQuery{}, argError(ErrCodeArgInvalid, "offset is unsupported on cursor-only lists", "offset")
+	}
 	limit, errRes := reqQueryInt(req, "limit")
 	if errRes != nil {
 		return service.CursorQuery{}, errRes
@@ -100,5 +103,9 @@ func reqQueryCursor(req map[string]any) (service.CursorQuery, error) {
 	if errRes != nil {
 		return service.CursorQuery{}, errRes
 	}
-	return service.CursorQuery{Limit: limit, SortBy: sortBy, SortDir: sortDir, Cursor: cursor}, nil
+	includeTotal, errRes := reqQueryBool(req, "include_total")
+	if errRes != nil {
+		return service.CursorQuery{}, errRes
+	}
+	return service.CursorQuery{IncludeTotal: includeTotal, Limit: limit, SortBy: sortBy, SortDir: sortDir, Cursor: cursor}, nil
 }

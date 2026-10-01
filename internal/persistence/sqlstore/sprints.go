@@ -29,6 +29,7 @@ type SprintRecord struct {
 // IncludeArchived defaults to false: archived rows (archived_at IS NOT
 // NULL) are excluded unless the caller explicitly asks for them.
 type SprintFilter struct {
+	Search          string
 	Status          string
 	ProjectID       string
 	IncludeArchived bool
@@ -158,40 +159,8 @@ func (s *Store) ListSprints(f SprintFilter) ([]SprintRecord, error) {
 	query := `SELECT id, name, goal, status, approval_mode, cost_budget, project_id,
 		started_at, ended_at, archived_at, created_at, updated_at FROM sprints`
 
-	var conditions []string
-	var args []interface{}
+	conditions, args := sprintListPredicates(f)
 
-	if f.Status != "" {
-		conditions = append(conditions, "status = ?")
-		args = append(args, f.Status)
-	}
-	if f.ProjectID != "" {
-		conditions = append(conditions, "project_id = ?")
-		args = append(args, f.ProjectID)
-	}
-	if !f.IncludeArchived {
-		conditions = append(conditions, "archived_at IS NULL")
-	}
-	if f.CostBudgetMin != nil {
-		conditions = append(conditions, "cost_budget >= ?")
-		args = append(args, *f.CostBudgetMin)
-	}
-	if f.CostBudgetMax != nil {
-		conditions = append(conditions, "cost_budget <= ?")
-		args = append(args, *f.CostBudgetMax)
-	}
-	if f.OverBudget {
-		conditions = append(conditions, `cost_budget IS NOT NULL AND cost_budget < (
-			SELECT COALESCE(SUM(r.cost), 0) FROM runs r
-			INNER JOIN tasks t ON r.task_id = t.id
-			WHERE t.sprint_id = sprints.id
-		)`)
-	}
-
-	// PRIM-002 sort column + PRIM-001 cursor predicate. sortCol == "" means
-	// "no sort_by supplied" (or an unrecognized one slipping past the MCP
-	// layer's validation, defensively treated the same) — preserves the
-	// original hardcoded default order below rather than the cursor path.
 	sortCol := sprintSortColumn(f.SortBy)
 	// Cursor predicates and ordering must compare the same precise key.
 	sortKey := s.timestampSortKey(sortCol)
@@ -416,4 +385,51 @@ func (s *Store) SprintCostUsed(sprintID string) (float64, error) {
 		return total.Float64, nil
 	}
 	return 0, nil
+}
+
+// sprintListPredicates is shared by page and whole-cohort count queries.
+func sprintListPredicates(f SprintFilter) ([]string, []any) {
+	var conditions []string
+	var args []interface{}
+
+	if f.Status != "" {
+		conditions = append(conditions, "status = ?")
+		args = append(args, f.Status)
+	}
+	if f.ProjectID != "" {
+		conditions = append(conditions, "project_id = ?")
+		args = append(args, f.ProjectID)
+	}
+	if !f.IncludeArchived {
+		conditions = append(conditions, "archived_at IS NULL")
+	}
+	if f.CostBudgetMin != nil {
+		conditions = append(conditions, "cost_budget >= ?")
+		args = append(args, *f.CostBudgetMin)
+	}
+	if f.CostBudgetMax != nil {
+		conditions = append(conditions, "cost_budget <= ?")
+		args = append(args, *f.CostBudgetMax)
+	}
+	if f.OverBudget {
+		conditions = append(conditions, `cost_budget IS NOT NULL AND cost_budget < (
+			SELECT COALESCE(SUM(r.cost), 0) FROM runs r
+			INNER JOIN tasks t ON r.task_id = t.id
+			WHERE t.sprint_id = sprints.id
+		)`)
+	}
+
+	if f.Search != "" {
+		pattern := "%" + f.Search + "%"
+		conditions = append(conditions, "(id LIKE ? OR name LIKE ? OR goal LIKE ?)")
+		args = append(args, pattern, pattern, pattern)
+	}
+
+	return conditions, args
+}
+
+// CountSprints counts the filtered cohort, excluding cursor and page bounds.
+func (s *Store) CountSprints(f SprintFilter) (int, error) {
+	where, args := sprintListPredicates(f)
+	return s.countFiltered("sprints", where, args)
 }

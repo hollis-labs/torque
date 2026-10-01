@@ -597,6 +597,50 @@ describe('TorqueApiClient messaging client', () => {
   })
 })
 
+describe('adjacent list pages', () => {
+  const client = new TorqueApiClient('/api/v1')
+  let fetchMock: ReturnType<typeof vi.fn>
+  const page = {
+    items: [{ id: 'row-1' }],
+    meta: { returned: 1, limit: 50, has_more: true, next_cursor: 'next-page', total: 205 },
+  }
+
+  beforeEach(() => {
+    fetchMock = vi.fn().mockResolvedValue(jsonResponse(page))
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+  })
+
+  it.each([
+    ['projects', () => client.listProjects('active', { search: 'needle', include_total: true }), '/projects', 'search'],
+    ['epics', () => client.listEpics({ project_id: 'PRJ-1', search: 'needle', include_total: true }), '/epics', 'search'],
+    ['sprints', () => client.listSprints({ project_id: 'PRJ-1', search: 'needle', include_total: true }), '/sprints', 'search'],
+    ['issues', () => client.listIssues({ project_id: 'PRJ-1', search: 'needle', include_total: true }), '/issues', 'query'],
+  ] as const)('returns one %s page without traversing continuation', async (_name, list, path, queryKey) => {
+    expect(await list()).toEqual(page)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const url = new URL(fetchMock.mock.calls[0][0] as string, 'http://localhost')
+    expect(url.pathname).toBe(`/api/v1${path}`)
+    expect(url.searchParams.get(queryKey)).toBe('needle')
+    expect(url.searchParams.get('include_total')).toBe('true')
+  })
+
+  it.each([
+    ['task', '/api/v1/tasks/ROW-1/comments'],
+    ['epic', '/api/v1/comments'],
+  ])('returns one %s comment page and forwards cursor', async (entityType, path) => {
+    expect(await client.listComments(entityType, 'ROW-1', { cursor: 'previous', limit: 2 })).toEqual(page)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const url = new URL(fetchMock.mock.calls[0][0] as string, 'http://localhost')
+    expect(url.pathname).toBe(path)
+    expect(url.searchParams.get('cursor')).toBe('previous')
+    expect(url.searchParams.get('limit')).toBe('2')
+    if (entityType !== 'task') {
+      expect(url.searchParams.get('entity_type')).toBe(entityType)
+      expect(url.searchParams.get('entity_id')).toBe('ROW-1')
+    }
+  })
+})
+
 describe('TorqueApiClient.pageRuns', () => {
   afterEach(() => vi.unstubAllGlobals())
 

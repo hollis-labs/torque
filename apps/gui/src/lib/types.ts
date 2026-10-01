@@ -701,3 +701,26 @@ export interface BrokerRequest {
   metadata?: Record<string, string>
   timeout_seconds?: number
 }
+
+/** One bounded server list page; total is present only when requested. */
+export interface ListPage<T> {
+  items: T[]
+  meta: {
+    returned: number
+    limit: number
+    has_more: boolean
+    next_cursor: string | null
+    total?: number
+    sort_by?: string
+    sort_dir?: 'asc' | 'desc'
+  }
+}
+
+export interface ListQuery {
+  limit?: number
+  cursor?: string
+  sort_by?: string
+  sort_dir?: 'asc' | 'desc'
+  include_total?: boolean
+  search?: string
+}

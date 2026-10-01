@@ -49,8 +49,8 @@ export default function SprintsPage() {
         api.taskRollup('sprint_id'),
       ])
       if (myGen !== loadGeneration.current) return
-      setSprints(sprintRes.sprints)
-      setProjects(projectRes.projects)
+      setSprints(sprintRes.items)
+      setProjects(projectRes.items)
       setTaskRollup(rollupRes)
     } catch (err) {
       // A failed background refresh leaves the loaded page in place.

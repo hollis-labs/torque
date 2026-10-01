@@ -34,7 +34,7 @@ export default function SprintEditPage() {
       .then(([nextSprint, projectRes]) => {
         if (cancelled) return
         setSprint(nextSprint)
-        setProjects(projectRes.projects)
+        setProjects(projectRes.items)
         setDraft({
           name: nextSprint.name,
           goal: nextSprint.goal ?? '',

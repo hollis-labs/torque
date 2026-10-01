@@ -212,9 +212,9 @@ export default function TaskDetailPage() {
       api.listSprints(),
       api.listEpics(),
     ]).then(([pRes, sRes, eRes]) => {
-      if (pRes.status === 'fulfilled') setProjects(pRes.value.projects)
-      if (sRes.status === 'fulfilled') setSprints(sRes.value.sprints)
-      if (eRes.status === 'fulfilled') setEpics(eRes.value.epics)
+      if (pRes.status === 'fulfilled') setProjects(pRes.value.items)
+      if (sRes.status === 'fulfilled') setSprints(sRes.value.items)
+      if (eRes.status === 'fulfilled') setEpics(eRes.value.items)
       setPickersLoading(false)
     })
   }, [editing, api])
@@ -224,7 +224,7 @@ export default function TaskDetailPage() {
   useEffect(() => {
     if (!id || !taskLoaded || editing) return
     if (activeTab === 'comments' && comments === null) {
-      api.listComments('task', id).then(setComments).catch(() => setComments([]))
+      api.listComments('task', id).then((page) => setComments(page.items)).catch(() => setComments([]))
     }
     if (activeTab === 'logs') {
       // Timeline unions runs, comments, and artifacts — load any that are
@@ -237,7 +237,7 @@ export default function TaskDetailPage() {
         }).catch(() => { if (runTaskRef.current === id) setRuns([]) })
       }
       if (comments === null) {
-        api.listComments('task', id).then(setComments).catch(() => setComments([]))
+        api.listComments('task', id).then((page) => setComments(page.items)).catch(() => setComments([]))
       }
       if (artifacts === null) {
         api.listArtifacts(id).then(setArtifacts).catch(() => setArtifacts([]))

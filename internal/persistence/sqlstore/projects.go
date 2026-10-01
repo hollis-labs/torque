@@ -40,6 +40,7 @@ type ProjectRecord struct {
 // internals); the MCP layer (torque_project_list) always resolves a
 // default SortBy/SortDir before calling ListProjects.
 type ProjectFilter struct {
+	Search          string
 	Status          string
 	IncludeArchived bool
 	Limit           int
@@ -132,16 +133,7 @@ func projectCursorArg(sortBy, sv string) (any, error) {
 func (s *Store) ListProjects(f ProjectFilter) ([]ProjectRecord, error) {
 	query := `SELECT id, name, description, repo_path, agent_path, read_paths, write_paths, context_paths, permissions, rules, status, icon, archived_at, created_at, updated_at FROM projects`
 
-	var conditions []string
-	var args []interface{}
-
-	if f.Status != "" {
-		conditions = append(conditions, "status = ?")
-		args = append(args, f.Status)
-	}
-	if !f.IncludeArchived {
-		conditions = append(conditions, "archived_at IS NULL")
-	}
+	conditions, args := projectListPredicates(f)
 
 	sortCol := projectSortColumn(f.SortBy)
 	// Cursor predicates and ordering must compare the same precise key.
@@ -364,4 +356,32 @@ func (s *Store) NextProjectID() (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%s%04d", prefix, maxSeq+1), nil
+}
+
+// projectListPredicates is shared by page and whole-cohort count queries.
+func projectListPredicates(f ProjectFilter) ([]string, []any) {
+	var conditions []string
+	var args []interface{}
+
+	if f.Status != "" {
+		conditions = append(conditions, "status = ?")
+		args = append(args, f.Status)
+	}
+	if !f.IncludeArchived {
+		conditions = append(conditions, "archived_at IS NULL")
+	}
+
+	if f.Search != "" {
+		pattern := "%" + f.Search + "%"
+		conditions = append(conditions, "(id LIKE ? OR name LIKE ? OR description LIKE ?)")
+		args = append(args, pattern, pattern, pattern)
+	}
+
+	return conditions, args
+}
+
+// CountProjects counts the filtered cohort, excluding cursor and page bounds.
+func (s *Store) CountProjects(f ProjectFilter) (int, error) {
+	where, args := projectListPredicates(f)
+	return s.countFiltered("projects", where, args)
 }

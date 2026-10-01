@@ -225,14 +225,14 @@ export default function BoardPage() {
   // Fetch pickers once on mount
   const refreshPickers = useCallback(async () => {
     const [p, s, e, t] = await Promise.all([
-      api.listProjects().catch(() => ({ projects: [] as Project[] })),
-      api.listSprints().catch(() => ({ sprints: [] as Sprint[] })),
-      api.listEpics().catch(() => ({ epics: [] as Epic[] })),
+      api.listProjects().catch(() => ({ items: [] as Project[] })),
+      api.listSprints().catch(() => ({ items: [] as Sprint[] })),
+      api.listEpics().catch(() => ({ items: [] as Epic[] })),
       api.listTags().catch(() => ({ tags: [] as Tag[] })),
     ])
-    setProjects(p.projects)
-    setSprints(s.sprints)
-    setEpics(e.epics)
+    setProjects(p.items)
+    setSprints(s.items)
+    setEpics(e.items)
     setTags(t.tags)
   }, [api])
 

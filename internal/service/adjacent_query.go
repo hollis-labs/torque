@@ -10,19 +10,6 @@ import (
 	"github.com/hollis-labs/torque/internal/service/pagination"
 )
 
-const (
-	DefaultGenericQueryLimit = 100
-	MaxGenericQueryLimit     = 500
-
-	DefaultCommentListLimit   = 50
-	MaxCommentListLimit       = 200
-	DefaultCommentSearchLimit = 25
-	MaxCommentSearchLimit     = 100
-
-	DefaultIssueQueryLimit = 50
-	MaxIssueQueryLimit     = 200
-)
-
 var (
 	ProjectQuerySortFields = []string{"name", "status", "updated_at", "created_at"}
 	SprintQuerySortFields  = []string{"name", "status", "updated_at", "created_at"}
@@ -46,19 +33,22 @@ const (
 )
 
 type CursorQuery struct {
-	Limit   int
-	SortBy  string
-	SortDir string
-	Cursor  string
+	IncludeTotal bool
+	Limit        int
+	SortBy       string
+	SortDir      string
+	Cursor       string
 }
 
 type ProjectQuery struct {
+	Search          string
 	Status          string
 	IncludeArchived bool
 	CursorQuery
 }
 
 type SprintQuery struct {
+	Search          string
 	Status          string
 	ProjectID       string
 	IncludeArchived bool
@@ -103,11 +93,12 @@ type NormalizedCursorQuery struct {
 }
 
 func NormalizeProjectQuery(q ProjectQuery) (sqlstore.ProjectFilter, NormalizedCursorQuery, error) {
-	n, err := normalizeCursorQuery(q.CursorQuery, DefaultGenericQueryLimit, MaxGenericQueryLimit, ProjectQueryDefaultSort, ProjectQueryDefaultDir, ProjectQuerySortFields)
+	n, err := normalizeCursorQuery(q.CursorQuery, pagination.DefaultLimit, pagination.MaxLimit, ProjectQueryDefaultSort, ProjectQueryDefaultDir, ProjectQuerySortFields)
 	if err != nil {
 		return sqlstore.ProjectFilter{}, NormalizedCursorQuery{}, err
 	}
 	return sqlstore.ProjectFilter{
+		Search:          q.Search,
 		Status:          q.Status,
 		IncludeArchived: q.IncludeArchived,
 		Limit:           n.Limit + 1,
@@ -125,11 +116,12 @@ func NormalizeSprintQuery(q SprintQuery) (sqlstore.SprintFilter, NormalizedCurso
 	if q.CostBudgetMax != nil && (math.IsNaN(*q.CostBudgetMax) || math.IsInf(*q.CostBudgetMax, 0)) {
 		return sqlstore.SprintFilter{}, NormalizedCursorQuery{}, &ValidationError{Field: "cost_budget_max", Message: "cost_budget_max must be a finite number"}
 	}
-	n, err := normalizeCursorQuery(q.CursorQuery, DefaultGenericQueryLimit, MaxGenericQueryLimit, SprintQueryDefaultSort, SprintQueryDefaultDir, SprintQuerySortFields)
+	n, err := normalizeCursorQuery(q.CursorQuery, pagination.DefaultLimit, pagination.MaxLimit, SprintQueryDefaultSort, SprintQueryDefaultDir, SprintQuerySortFields)
 	if err != nil {
 		return sqlstore.SprintFilter{}, NormalizedCursorQuery{}, err
 	}
 	return sqlstore.SprintFilter{
+		Search:          q.Search,
 		Status:          q.Status,
 		ProjectID:       q.ProjectID,
 		IncludeArchived: q.IncludeArchived,
@@ -145,7 +137,7 @@ func NormalizeSprintQuery(q SprintQuery) (sqlstore.SprintFilter, NormalizedCurso
 }
 
 func NormalizeEpicQuery(q EpicQuery) (EpicListInput, NormalizedCursorQuery, error) {
-	n, err := normalizeCursorQuery(q.CursorQuery, DefaultGenericQueryLimit, MaxGenericQueryLimit, EpicQueryDefaultSort, EpicQueryDefaultDir, EpicQuerySortFields)
+	n, err := normalizeCursorQuery(q.CursorQuery, pagination.DefaultLimit, pagination.MaxLimit, EpicQueryDefaultSort, EpicQueryDefaultDir, EpicQuerySortFields)
 	if err != nil {
 		return EpicListInput{}, NormalizedCursorQuery{}, err
 	}
@@ -163,7 +155,7 @@ func NormalizeEpicQuery(q EpicQuery) (EpicListInput, NormalizedCursorQuery, erro
 }
 
 func NormalizeIssueQuery(q IssueQuery) (IssueListInput, NormalizedCursorQuery, error) {
-	n, err := normalizeCursorQuery(q.CursorQuery, DefaultIssueQueryLimit, MaxIssueQueryLimit, IssueQueryDefaultSort, IssueQueryDefaultDir, IssueQuerySortFields)
+	n, err := normalizeCursorQuery(q.CursorQuery, pagination.DefaultLimit, pagination.MaxLimit, IssueQueryDefaultSort, IssueQueryDefaultDir, IssueQuerySortFields)
 	if err != nil {
 		return IssueListInput{}, NormalizedCursorQuery{}, err
 	}
@@ -180,11 +172,11 @@ func NormalizeIssueQuery(q IssueQuery) (IssueListInput, NormalizedCursorQuery, e
 }
 
 func NormalizeCommentListQuery(q CommentQuery) (sqlstore.CommentFilter, NormalizedCursorQuery, error) {
-	return normalizeCommentQuery(q, DefaultCommentListLimit, MaxCommentListLimit, CommentListDefaultDir)
+	return normalizeCommentQuery(q, pagination.DefaultLimit, pagination.MaxLimit, CommentListDefaultDir)
 }
 
 func NormalizeCommentSearchQuery(q CommentQuery) (sqlstore.CommentFilter, NormalizedCursorQuery, error) {
-	return normalizeCommentQuery(q, DefaultCommentSearchLimit, MaxCommentSearchLimit, CommentSearchDefaultDir)
+	return normalizeCommentQuery(q, pagination.DefaultLimit, pagination.MaxLimit, CommentSearchDefaultDir)
 }
 
 func normalizeCommentQuery(q CommentQuery, defLimit, maxLimit int, defDir string) (sqlstore.CommentFilter, NormalizedCursorQuery, error) {

@@ -5,7 +5,8 @@ CW-20261001-0561 defines the HTTP and MCP list contract for
 EP-20261001-0013, *Server-driven lists — query, sort, cursor-page, never
 fetch-all*. The normative sections below describe the intended completed
 contract. The matrices explicitly separate it from the source-checked baseline
-at `a672493` (2026-10-01); they do not claim the target is already deployed.
+at `a672493` (2026-10-01), with runs reconciled for CW-20261001-0562 and the five
+adjacent-family rows updated for CW-20261001-0563. They do not claim the complete target is already deployed.
 Reconcile this document against the merged S1 implementation before declaring
 it a current API reference.
 
@@ -130,7 +131,9 @@ not the cohort or export. A consumer must not preload every page on mount.
 ## Endpoint capability matrix
 
 All HTTP paths below are relative to `/api/v1`. `C` means current source at
-`a672493`; `T` means S1 target, still pending. `paged` means cursor plus the
+`a672493`, except implemented cells marked CW-0562/CW-0563; `T` means S1 target.
+CW-0563 cells describe the implementation in that task; other target cells
+remain pending. `paged` means cursor plus the
 shared 50/200 policy and metadata above. `opt-in total` means
 `include_total=true`, not an always-computed count. `none` means no public
 facet endpoint was identified in that family's handlers, not that the cohort
@@ -140,11 +143,11 @@ source and MCP `tools/list`.
 | Endpoint family | Cursor | Sort | Filters/query | Total | Facets/counts | MCP parity |
 |---|---|---|---|---|---|---|
 | Tasks `/tasks`, `/tasks/search` | CW-20261001-0626: 50/200 pages; explicit offset incl. 0 without cursor emits offset/next_offset, otherwise cursor mode | `priority`, `status`, `updated_at`, `created_at`; default `priority asc`, `id asc` | Shared scopes/status/priority/tags/text/dates/budgets/presence/internal filters; search requires `q` | Opt-in `include_total` on HTTP/MCP, exact filtered cohort before paging | Task facets + HTTP scope rollup | `torque_task_list` shares filters/query/meta; brief/verbose/typed projection differences retained |
-| Epics `/epics` | C: HTTP advanced opt-in, MCP yes, 100/500; T: paged | C: named entity allow-list; T: retain | C: project, status, archive, search; T: retain | C: none in cursor envelope; T: opt-in total | C: none; T: task rollup supplies progress, entity facets pending | C: `torque_epic_list`, cursor filters shared; T: remove HTTP legacy mode |
-| Sprints `/sprints` | C: HTTP advanced opt-in, MCP yes, 100/500; T: paged | C: named entity allow-list; T: retain | C: project, status, archive, over-budget/budget bounds; T: retain | C: none in cursor envelope; T: opt-in total | C: none; T: task rollup supplies progress, entity facets pending | C: `torque_sprint_list`, cursor filters shared; T: remove HTTP legacy mode |
-| Projects `/projects` | C: HTTP advanced opt-in, MCP yes, 100/500; T: paged | C: named entity allow-list; T: retain | C: status, archive; T: retain, server text query pending | C: none in cursor envelope; T: opt-in total | C: none; T: task rollup supplies progress, entity facets pending | C: `torque_project_list`, cursor filters shared; T: remove HTTP legacy mode |
-| Issues `/issues`, `/issues/search` | C: HTTP advanced opt-in, MCP yes, 50/200; T: paged | C: task allow-list; T: retain | C: project, status, query, fixed issue kind; T: retain | C: legacy HTTP total can be page length; cursor none; T: opt-in cohort total | C: no dedicated issue facets; T: task facets with issue kind | C: `torque_issue_list`; T: common envelope/count semantics |
-| Comments `/comments`, `/comments/search`, `/tasks/{id}/comments` | C: HTTP list advanced opt-in/MCP cursor; search 25/100, list 50/200; T: paged for both | C: `created_at`; T: retain | C: entity scope(s), author, dates, search; T: retain nested task restrictions | C: none; T: opt-in total | C: none; T: count through include_total, facets pending | C: `torque_comment_list`, `torque_comment_search`; T: common policy for search too |
+| Epics `/epics` | C (CW-0563): paged by default; T: met | C: named entity allow-list; T: retain | C: project, status, archive, search; T: retain | C (CW-0563): opt-in total; T: met | C: none; T: task rollup supplies progress, entity facets pending | C (CW-0563): `torque_epic_list`, common query/count envelope; T: met |
+| Sprints `/sprints` | C (CW-0563): paged by default; T: met | C: named entity allow-list; T: retain | C (CW-0563): project, status, archive, search, over-budget/budget bounds; T: retain | C (CW-0563): opt-in total; T: met | C: none; T: task rollup supplies progress, entity facets pending | C (CW-0563): `torque_sprint_list`, common query/count envelope; T: met |
+| Projects `/projects` | C (CW-0563): paged by default; T: met | C: named entity allow-list; T: retain | C (CW-0563): status, archive, search; T: met | C (CW-0563): opt-in total; T: met | C: none; T: task rollup supplies progress, entity facets pending | C (CW-0563): `torque_project_list`, common query/count envelope; T: met |
+| Issues `/issues`, `/issues/search` | C (CW-0563): paged list/search by default; T: met | C: task allow-list; T: retain | C: project, status, query, fixed issue kind; T: retain | C (CW-0563): opt-in cohort total; T: met | C: no dedicated issue facets; T: task facets with issue kind | C (CW-0563): `torque_issue_list`, common envelope/count semantics; T: met |
+| Comments `/comments`, `/comments/search`, `/tasks/{id}/comments` | C (CW-0563): paged list/search/nested task list; T: met | C: `created_at`; T: retain | C: entity scope(s), author, dates, search; T: retain nested task restrictions | C (CW-0563): opt-in total; T: met | C: none; T: count through include_total, facets pending | C (CW-0563): `torque_comment_list`, `torque_comment_search`, shared 50/200/count policy; T: met |
 | Runs `/runs` | Implemented in CW-20261001-0562: cursor default, 50/200 policy; explicit offset incl. 0 without cursor emits offset/next_offset (CW-0626) | `started_at`, `status`, `duration`, `cost`; default `started_at desc`, numeric `id asc` | Shared task/project/sprint/epic scopes, CSV status, inclusive since/until (RFC3339 or Unix millis) | Opt-in `include_total`, cohort before cursor/offset/limit | Facets pending CW-20261001-0564 | `torque_run_list` shares service query and items/meta; MCP byte trims preserve continuation |
 | Sessions `/sessions` | C: limit only; T: paged | C: fixed newest-first; T: proposed session fields below | C: state, task, project; T: retain + server query pending | C: none; T: opt-in total | C: none; T: count through include_total, facets pending | C: `torque_session_list` without continuation; T: paged parity |
 | Artifacts `/artifacts`, `/tasks/{id}/artifacts` | C: none; T: paged | C: fixed newest-first; T: proposed artifact fields below | C: required task; T: retain + type/run/query pending | C: none; T: opt-in total | C: none; T: count through include_total, facets pending | C: `torque_artifact_list`, brief/verbose byte cap; T: paged parity |
@@ -202,8 +205,13 @@ merely because they are often small.
 The baseline was read from authored code first, then compared with
 [surfaces.md](surfaces.md#http-api) and
 [mcp-tools-reference.md](mcp-tools-reference.md#list-envelope-and-pagination).
-Those pages describe pre-S1 behavior, including legacy opt-in shapes; their
-older pagination prose is not the target contract.
+The adjacent-list sections now reflect CW-0563; other pre-S1 pagination prose
+is not the target contract. CW-0563 was verified with HTTP/MCP parity tests over
+205-row matching cohorts: default/maximum bounds, all allowed sort directions,
+continuation, filtered totals, omitted/empty counts, and default envelopes.
+GUI API tests verify one request per call even when has_more is true.
+Full GUI paging/picker UX remains with CW-0572/CW-0577; these lists are not a
+complete GUI catalog yet and must not be deployed ahead of consumer migration.
 
 - [Service task query](../internal/service/task_query.go),
   [adjacent query](../internal/service/adjacent_query.go), and

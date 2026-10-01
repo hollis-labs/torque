@@ -42,7 +42,7 @@ Example: {"id":"CW-20260514-0001"}`),
 Merges the former torque_issue_search into this one tool (ADR-0004 §3) — pass "query" for the old search behavior; omit it for a pure filtered list. Limit is now always pushed to the DB layer (no more full-fetch-then-truncate).
 Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under — pass a different sort_by/sort_dir without dropping cursor and you get error.code=arg_invalid.
 Explicit malformed, blank, fractional, overflow, unsafe native-float, or negative limit values reject with error.code=arg_invalid, field=limit; omitted limit defaults to 50 and oversized limits clamp to 200.
-Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, has_more, next_cursor}}.
+Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, has_more, next_cursor, total?}}.
 Example: {"project_id":"PRJ-...","status":"backlog","query":"login","limit":"50","sort_by":"updated_at","sort_dir":"desc"}`),
 		withString("project_id", desc("Optional project ID filter")),
 		withString("status", desc("Optional status filter (e.g. backlog, todo, doing, done)")),
@@ -52,6 +52,7 @@ Example: {"project_id":"PRJ-...","status":"backlog","query":"login","limit":"50"
 		withString("sort_by", desc("Sort field: priority|status|updated_at|created_at (default priority)")),
 		withString("sort_dir", desc("Sort direction: asc|desc (default asc)")),
 		withString("cursor", desc("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
+		withString("include_total", desc("Include meta.total for the whole matching cohort (default false; COUNT is opt-in).")),
 	), a.handleIssueList)
 
 	a.addTool(newTool("torque_issue_bulk_update",
@@ -194,7 +195,7 @@ func (a *Adapter) handleIssueList(ctx context.Context, req map[string]any) (any,
 	if err != nil {
 		return errFromService(err)
 	}
-	issues, err := a.svc.Issue.List(input)
+	issues, total, err := a.svc.Issue.ListWithTotal(input, cursor.IncludeTotal)
 	if err != nil {
 		return errFromService(err)
 	}
@@ -203,7 +204,7 @@ func (a *Adapter) handleIssueList(ctx context.Context, req map[string]any) (any,
 	if hasMoreFromQuery {
 		issues = issues[:normalized.Limit]
 	}
-	return a.issueListCursorEnvelope(issues, normalized.Limit, verbose, normalized.SortBy, normalized.SortDir, hasMoreFromQuery)
+	return a.issueListCursorEnvelope(issues, normalized.Limit, verbose, normalized.SortBy, normalized.SortDir, hasMoreFromQuery, total)
 }
 
 // issueListCursorEnvelope is torque_issue_list's {items, meta} cursor-
@@ -211,7 +212,7 @@ func (a *Adapter) handleIssueList(ctx context.Context, req map[string]any) (any,
 // already be trimmed to at most `limit` records. Verbose items use
 // issueWithTags (Body+Tags, no DependsOn — matching issueResult's singleton
 // shape); brief items reuse toBriefTask since issue rows are TaskRecord.
-func (a *Adapter) issueListCursorEnvelope(issues []sqlstore.TaskRecord, limit int, verbose bool, sortBy, sortDir string, hasMoreFromQuery bool) (any, error) {
+func (a *Adapter) issueListCursorEnvelope(issues []sqlstore.TaskRecord, limit int, verbose bool, sortBy, sortDir string, hasMoreFromQuery bool, total *int) (any, error) {
 	items := make([]any, 0, len(issues))
 	for _, t := range issues {
 		if verbose {
@@ -232,7 +233,7 @@ func (a *Adapter) issueListCursorEnvelope(issues []sqlstore.TaskRecord, limit in
 	cursorAt := func(i int) (sortValue, id string) {
 		return taskSortValue(issues[i], sortBy), issues[i].ID
 	}
-	return cappedCursorJSONResult(items, limit, sortBy, sortDir, hasMoreFromQuery, cursorAt)
+	return cappedCursorJSONResultWithTotal(items, limit, total, sortBy, sortDir, hasMoreFromQuery, cursorAt)
 }
 
 // buildIssueUpdateInput turns a torque_issue_update/torque_issue_bulk_update

@@ -34,7 +34,7 @@ func sprintsJSON(sprints []sqlstore.SprintRecord) []map[string]interface{} {
 }
 
 func (s *Server) listSprints(w http.ResponseWriter, r *http.Request) {
-	allowed := map[string]bool{"status": true, "project_id": true, "include_archived": true, "over_budget": true, "cost_budget_min": true, "cost_budget_max": true, "limit": true, "cursor": true, "sort_by": true, "sort_dir": true}
+	allowed := map[string]bool{"status": true, "project_id": true, "include_archived": true, "over_budget": true, "cost_budget_min": true, "cost_budget_max": true, "limit": true, "cursor": true, "sort_by": true, "sort_dir": true, "include_total": true, "search": true}
 	q, qerr := parseStrictQuery(r, allowed)
 	if qerr != nil {
 		writeHTTPQueryError(w, qerr)
@@ -42,22 +42,6 @@ func (s *Server) listSprints(w http.ResponseWriter, r *http.Request) {
 	}
 	status := queryString(q, "status")
 	projectID := queryString(q, "project_id")
-	if !hasAnyQueryKey(q, "include_archived", "over_budget", "cost_budget_min", "cost_budget_max", "limit", "cursor", "sort_by", "sort_dir") {
-		sprints, err := s.svc.Sprint.List(sqlstore.SprintFilter{Status: status, ProjectID: projectID})
-		if err != nil {
-			if _, ok := err.(*service.FeatureDisabledError); ok {
-				writeError(w, http.StatusNotFound, err.Error())
-				return
-			}
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if sprints == nil {
-			sprints = []sqlstore.SprintRecord{}
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"sprints": sprintsJSON(sprints)})
-		return
-	}
 	includeArchived, qerr := queryBool(q, "include_archived")
 	if qerr != nil {
 		writeHTTPQueryError(w, qerr)
@@ -84,6 +68,7 @@ func (s *Server) listSprints(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	filter, normalized, err := service.NormalizeSprintQuery(service.SprintQuery{
+		Search:          queryString(q, "search"),
 		Status:          status,
 		ProjectID:       projectID,
 		IncludeArchived: includeArchived,
@@ -96,7 +81,7 @@ func (s *Server) listSprints(w http.ResponseWriter, r *http.Request) {
 		writeAdjacentServiceError(w, err)
 		return
 	}
-	sprints, err := s.svc.Sprint.List(filter)
+	sprints, total, err := s.svc.Sprint.ListWithTotal(filter, cursor.IncludeTotal)
 	if err != nil {
 		if _, ok := err.(*service.FeatureDisabledError); ok {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -117,7 +102,7 @@ func (s *Server) listSprints(w http.ResponseWriter, r *http.Request) {
 		last := sprints[len(sprints)-1]
 		nextCursor = pagination.Encode(normalized.SortBy, normalized.SortDir, service.SprintQuerySortValue(last, normalized.SortBy), last.ID)
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"items": sprintsJSON(sprints), "meta": advancedMeta(normalized.Limit, normalized.SortBy, normalized.SortDir, hasMore, nextCursor, len(sprints))})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": sprintsJSON(sprints), "meta": advancedMeta(normalized.Limit, normalized.SortBy, normalized.SortDir, hasMore, nextCursor, len(sprints), total)})
 }
 
 func (s *Server) getSprint(w http.ResponseWriter, r *http.Request) {

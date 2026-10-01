@@ -46,9 +46,9 @@ function installStubFetch() {
     const url = String(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url)
     let body: unknown = {}
     if (url.includes('/tasks')) body = { tasks: [] }
-    else if (url.includes('/projects')) body = { projects: [] }
-    else if (url.includes('/sprints')) body = { sprints: [] }
-    else if (url.includes('/epics')) body = { epics: [] }
+    else if (url.includes('/projects')) body = { items: [], meta: { returned: 0, limit: 50, has_more: false, next_cursor: null } }
+    else if (url.includes('/sprints')) body = { items: [], meta: { returned: 0, limit: 50, has_more: false, next_cursor: null } }
+    else if (url.includes('/epics')) body = { items: [], meta: { returned: 0, limit: 50, has_more: false, next_cursor: null } }
     else if (url.includes('/tags')) body = { tags: [] }
     return new Response(JSON.stringify(body), {
       status: 200,
