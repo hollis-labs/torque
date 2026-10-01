@@ -21,8 +21,10 @@ func TestCodexApprovalMode_MapsEveryPermissionMode(t *testing.T) {
 		{"acceptEdits", gopermission.ModeAcceptEdits},
 		{"plan", gopermission.ModePlan},
 		{"bypassPermissions", gopermission.ModeYolo},
-		// Unset is acceptEdits (ResolvedPermissionMode), never yolo.
-		{"", gopermission.ModeAcceptEdits},
+		// Unset is the responder's headless default: neither the acceptEdits
+		// Claude resolves to (which for Codex approves writes outside the
+		// writable roots) nor yolo.
+		{"", gopermission.ModeDefault},
 		// Load-time validation rejects this; a profile built in code that
 		// skips validation still gets the responder's default, not yolo.
 		{"dontAsk", gopermission.ModeDefault},
@@ -52,7 +54,7 @@ func TestCodexApprovalHook_AnswersPerPosture(t *testing.T) {
 	allowed := map[string][3]bool{
 		"default":           {true, false, false},
 		"acceptEdits":       {true, true, false},
-		"":                  {true, true, false},
+		"":                  {true, false, false},
 		"plan":              {false, false, false},
 		"bypassPermissions": {true, true, true},
 	}

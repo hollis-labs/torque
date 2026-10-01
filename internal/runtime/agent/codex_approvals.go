@@ -23,11 +23,13 @@ import (
 //	plan              → plan          everything declined
 //	bypassPermissions → yolo          everything approved
 //
-// An unset mode resolves to acceptEdits through ResolvedPermissionMode, the
-// same posture Claude gets. A value load-time validation would have rejected
-// falls back to the responder's default posture, never to yolo.
+// An unset mode gets the responder's headless default, not the acceptEdits
+// that ResolvedPermissionMode gives Claude: for Codex a file-change approval
+// is a write outside the writable roots, which an operator should opt into
+// rather than inherit. A value load-time validation would have rejected also
+// falls back to the default posture, never to yolo.
 func codexApprovalMode(profile config.AgentProfile) gopermission.Mode {
-	switch profile.ResolvedPermissionMode() {
+	switch config.PermissionMode(profile.PermissionMode) {
 	case config.PermissionModeDefault:
 		return gopermission.ModeDefault
 	case config.PermissionModeAcceptEdits:

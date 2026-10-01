@@ -145,7 +145,7 @@ func TestBootCodexProcessAnswersApprovalRequest(t *testing.T) {
 	for _, tc := range []struct {
 		name, permissionMode, wantAction string
 	}{
-		{"unset permission_mode is acceptEdits and approves the MCP tool call", "", "accept"},
+		{"unset permission_mode is the default posture and approves the MCP tool call", "", "accept"},
 		{"plan declines it", "plan", "decline"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
