@@ -68,13 +68,19 @@ export default function TaskDetailPage() {
   const [comments, setComments] = useState<Comment[] | null>(null)
   const [runs, setRuns] = useState<Run[] | null>(null)
   const runTaskRef = useRef(id)
-  runTaskRef.current = id
+  const [runTaskID, setRunTaskID] = useState(id)
   const [runCursor, setRunCursor] = useState<string | null>(null)
   const [loadingMoreRuns, setLoadingMoreRuns] = useState(false)
-  useEffect(() => {
+  // Reset this task's run page before rendering a different task.
+  if (runTaskID !== id) {
+    setRunTaskID(id)
     setRuns(null)
     setRunCursor(null)
     setLoadingMoreRuns(false)
+  }
+  useEffect(() => {
+    runTaskRef.current = id
+    return () => { runTaskRef.current = undefined }
   }, [id])
   const [artifacts, setArtifacts] = useState<Artifact[] | null>(null)
   const [activeTab, setActiveTab] = useState('details')
