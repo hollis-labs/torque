@@ -397,7 +397,9 @@ export class TorqueApiClient {
   private async fetchTaskPage<T>(filter: TaskFilter, fields?: 'summary'): Promise<TaskListResponse<T>> {
     const params = taskFilterParams(filter)
     if (fields) params['fields'] = fields
-    return this.get<TaskListResponse<T>>('/tasks', params)
+    params['include_total'] = true
+    const page = await this.get<{ items: T[]; meta: { total: number; returned: number; limit: number; offset?: number; has_more: boolean; next_offset?: number | null } }>('/tasks', params)
+    return { tasks: page.items, ...page.meta }
   }
 
   async getTask(id: string): Promise<Task> {
@@ -427,7 +429,8 @@ export class TorqueApiClient {
   }
 
   async searchTasks(query: string): Promise<Task[]> {
-    return this.get<Task[]>('/tasks/search', { q: query })
+    const page = await this.get<{ items: Task[] }>('/tasks/search', { q: query })
+    return page.items
   }
 
   // -------------------------

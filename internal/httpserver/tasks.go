@@ -14,11 +14,12 @@ import (
 	"github.com/hollis-labs/torque/internal/hitl"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 )
 
 const (
-	defaultHTTPTaskListLimit = 50
-	maxHTTPTaskListLimit     = 200
+	defaultHTTPTaskListLimit = pagination.DefaultLimit
+	maxHTTPTaskListLimit     = pagination.MaxLimit
 )
 
 // taskJSON converts a TaskRecord to a JSON-friendly map with snake_case keys
@@ -441,12 +442,20 @@ func nullJSONString(v any) *sql.NullString {
 }
 
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
+	s.taskListPage(w, r, false)
+}
+
+func (s *Server) taskListPage(w http.ResponseWriter, r *http.Request, search bool) {
 	q, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
 		writeFieldError(w, http.StatusBadRequest, "query", "invalid query string: "+err.Error())
 		return
 	}
-	query, qerr := parseHTTPTaskQuery(q, "fields")
+	extra := []string{"fields", "include_total"}
+	if search {
+		extra = append(extra, "q")
+	}
+	query, qerr := parseHTTPTaskQuery(q, extra...)
 	if qerr != nil {
 		writeFieldError(w, http.StatusBadRequest, qerr.field, qerr.Error())
 		return
@@ -456,7 +465,25 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 		writeFieldError(w, http.StatusBadRequest, "fields", "fields must be summary or omitted")
 		return
 	}
-	query.WithTotal = true
+	if search {
+		if strings.TrimSpace(q.Get("q")) == "" {
+			writeFieldError(w, http.StatusBadRequest, "q", "query parameter 'q' is required")
+			return
+		}
+		if q.Has("search") {
+			writeFieldError(w, http.StatusBadRequest, "search", "use q for /tasks/search, not search")
+			return
+		}
+		query.Search = q.Get("q")
+	}
+	if q.Has("include_total") {
+		v, err := parseTaskListBool(q.Get("include_total"), "include_total")
+		if err != nil {
+			writeFieldError(w, http.StatusBadRequest, "include_total", err.Error())
+			return
+		}
+		query.WithTotal = v
+	}
 
 	result, err := s.svc.Task.Query(query)
 	if err != nil {
@@ -484,51 +511,20 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	hasMore := result.HasMoreFromQuery
-	var nextOffset interface{}
-	var continuation interface{}
-	var nextCursor interface{}
-	if hasMore {
-		next := result.Offset + len(out)
-		if len(result.Tasks) > 0 {
-			cursor := service.TaskQueryCursor(result.Tasks[len(result.Tasks)-1], result.SortBy, result.SortDir)
-			nextCursor = cursor
-		}
-		if query.Cursor != "" {
-			nextOffset = nil
-			continuation = map[string]interface{}{
-				"limit":    result.Limit,
-				"sort_by":  result.SortBy,
-				"sort_dir": result.SortDir,
-				"cursor":   nextCursor,
-			}
-		} else {
-			nextOffset = next
-			continuation = map[string]interface{}{
-				"limit":  result.Limit,
-				"offset": next,
-			}
-		}
-	} else {
-		nextOffset = nil
-		nextCursor = nil
-		continuation = nil
+	var nextCursor *string
+	if result.HasMoreFromQuery && len(result.Tasks) > 0 {
+		cursor := service.TaskQueryCursor(result.Tasks[len(result.Tasks)-1], result.SortBy, result.SortDir)
+		nextCursor = &cursor
 	}
-	// Offset pagination reports an exact count for the matching cohort, but
-	// concurrent writes between requests can still shift later pages.
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"tasks":        out,
-		"total":        result.Total,
-		"returned":     len(out),
-		"limit":        result.Limit,
-		"offset":       result.Offset,
-		"has_more":     hasMore,
-		"next_offset":  nextOffset,
-		"next_cursor":  nextCursor,
-		"sort_by":      result.SortBy,
-		"sort_dir":     result.SortDir,
-		"continuation": continuation,
-	})
+	var total, offset *int
+	if result.TotalValid {
+		total = &result.Total
+	}
+	if q.Has("offset") && query.Cursor == "" {
+		offset = &result.Offset
+	}
+	meta := pagination.NewPageMeta(len(out), result.Limit, result.HasMoreFromQuery, nextCursor, total, offset)
+	writeJSON(w, http.StatusOK, map[string]any{"items": out, "meta": meta})
 }
 
 func (s *Server) taskFacets(w http.ResponseWriter, r *http.Request) {
@@ -1321,23 +1317,5 @@ func (s *Server) bulkTransitionTasks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) searchTasks(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query().Get("q")
-	if q == "" {
-		writeError(w, http.StatusBadRequest, "query parameter 'q' is required")
-		return
-	}
-	tasks, err := s.svc.Task.Search(q)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if tasks == nil {
-		tasks = []sqlstore.TaskRecord{}
-	}
-	out, err := s.tasksJSON(tasks)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"tasks": out})
+	s.taskListPage(w, r, true)
 }

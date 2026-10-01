@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
-	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,7 +25,7 @@ func TestRunListHTTPMCPParity(t *testing.T) {
 	}
 	type envelope struct {
 		Items []sqlstore.RunRecord `json:"items"`
-		Meta  service.RunPageMeta  `json:"meta"`
+		Meta  pagination.PageMeta  `json:"meta"`
 	}
 	get := func(params map[string]any) envelope {
 		t.Helper()
@@ -106,7 +106,7 @@ func TestRunListByteTrimPreservesCursor(t *testing.T) {
 	}
 	type envelope struct {
 		Items []sqlstore.RunRecord `json:"items"`
-		Meta  service.RunPageMeta  `json:"meta"`
+		Meta  pagination.PageMeta  `json:"meta"`
 	}
 	var ids []int64
 	cursor := ""

@@ -469,13 +469,9 @@ func cappedJSONResult(items []any, limit int) (any, error) {
 // HasMore/NextCursor flag whether the QUERY itself has more rows beyond this
 // page. The two can differ — see cappedCursorJSONResult's doc comment.
 type listMetaCursor struct {
-	Truncated  bool    `json:"truncated"`
-	Returned   int     `json:"returned"`
-	Limit      int     `json:"limit"`
-	Total      *int    `json:"total,omitempty"`
-	HasMore    bool    `json:"has_more"`
-	NextCursor *string `json:"next_cursor"`
-	Hint       string  `json:"hint,omitempty"`
+	pagination.PageMeta
+	Truncated bool   `json:"truncated"`
+	Hint      string `json:"hint,omitempty"`
 }
 
 // listEnvelopeCursor is listEnvelope's cursor-pagination companion — see
@@ -580,7 +576,11 @@ func cappedCursorJSONResult(items []any, limit int, sortBy, sortDir string, hasM
 	return cappedCursorJSONResultWithTotal(items, limit, nil, sortBy, sortDir, hasMoreFromQuery, cursorAt)
 }
 
-func cappedCursorJSONResultWithTotal(items []any, limit int, total *int, sortBy, sortDir string, hasMoreFromQuery bool, cursorAt func(lastIncludedIndex int) (sortValue, id string)) (any, error) {
+func cappedCursorJSONResultWithTotal(items []any, limit int, total *int, sortBy, sortDir string, hasMoreFromQuery bool, cursorAt func(lastIncludedIndex int) (sortValue, id string), offset ...int) (any, error) {
+	var offsetPtr *int
+	if len(offset) > 0 {
+		offsetPtr = &offset[0]
+	}
 	envelopeFor := func(n int) listEnvelopeCursor {
 		trimmed := items[:n]
 		hasMore := hasMoreFromQuery || n < len(items)
@@ -591,12 +591,8 @@ func cappedCursorJSONResultWithTotal(items []any, limit int, total *int, sortBy,
 			nextCursor = &s
 		}
 		meta := listMetaCursor{
-			Truncated:  n < len(items),
-			Returned:   n,
-			Limit:      limit,
-			Total:      total,
-			HasMore:    hasMore,
-			NextCursor: nextCursor,
+			PageMeta:  pagination.NewPageMeta(n, limit, hasMore, nextCursor, total, offsetPtr),
+			Truncated: n < len(items),
 		}
 		if meta.Truncated {
 			meta.Hint = "response too large; add filters or lower limit"

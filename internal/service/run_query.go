@@ -23,24 +23,18 @@ type RunQuery struct {
 	Until        string
 	Limit        int
 	Offset       int
+	OffsetSet    bool
 	SortBy       string
 	SortDir      string
 	Cursor       string
 	IncludeTotal bool
 }
 
-type RunPageMeta struct {
-	HasMore    bool    `json:"has_more"`
-	NextCursor *string `json:"next_cursor"`
-	Returned   int     `json:"returned"`
-	Limit      int     `json:"limit"`
-	Total      *int    `json:"total,omitempty"`
-}
 type RunQueryResult struct {
 	SortBy  string
 	SortDir string
 	Runs    []sqlstore.RunRecord
-	Meta    RunPageMeta
+	Meta    pagination.PageMeta
 }
 
 // NormalizeRunQuery exposes the shared cohort validation to run facets.
@@ -141,16 +135,21 @@ func (s *RunService) Query(q RunQuery) (RunQueryResult, error) {
 		}
 		return RunQueryResult{}, err
 	}
-	meta := RunPageMeta{Limit: limit, HasMore: len(runs) > limit}
-	if meta.HasMore {
+	hasMore := len(runs) > limit
+	var nextCursor *string
+	if hasMore {
 		runs = runs[:limit]
 		last := runs[len(runs)-1]
 		cursor := pagination.Encode(sortBy, dir, last.QuerySortValue, strconv.FormatInt(last.ID, 10))
-		meta.NextCursor = &cursor
+		nextCursor = &cursor
 	}
-	meta.Returned = len(runs)
+	var totalPtr, offset *int
 	if q.IncludeTotal {
-		meta.Total = &total
+		totalPtr = &total
 	}
+	if (q.OffsetSet || q.Offset > 0) && q.Cursor == "" {
+		offset = &q.Offset
+	}
+	meta := pagination.NewPageMeta(len(runs), limit, hasMore, nextCursor, totalPtr, offset)
 	return RunQueryResult{Runs: runs, Meta: meta, SortBy: sortBy, SortDir: dir}, nil
 }

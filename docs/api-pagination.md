@@ -41,6 +41,15 @@ on continuation requests. A malformed cursor or one issued for another sort
 rejects. A positive `offset` cannot be combined with a `cursor`, including a
 request that also supplies sort parameters. Sort plus offset without a cursor
 is allowed where offset is supported. `offset=0` does not advance the page.
+For tasks (`/tasks`, `/tasks/search`, `torque_task_list`) and runs (`/runs`,
+`torque_run_list`), an **explicit `offset` parameter, including `offset=0`,
+with no non-empty cursor selects offset mode**. Its metadata includes `offset`
+and `next_offset`: the latter is `offset + returned` when `has_more=true` and
+null otherwise. Without an explicit offset, the default is cursor mode and
+both offset fields are omitted. `offset=0` with a non-empty cursor remains
+cursor mode; a positive offset with a non-empty cursor rejects. Clients starting
+an offset traversal must send `offset=0` explicitly on its first page.
+
 Keep filters and scope identical while traversing; when either changes, discard
 the cursor and start again. Cursors are not portable between resources.
 
@@ -130,13 +139,13 @@ source and MCP `tools/list`.
 
 | Endpoint family | Cursor | Sort | Filters/query | Total | Facets/counts | MCP parity |
 |---|---|---|---|---|---|---|
-| Tasks `/tasks` | C: yes, offset also supported; T: paged by default | C: task allow-list; T: retain | C: scopes, status/priority, tags, text, dates, budgets, presence, internal visibility; T: retain shared validation | C: HTTP always; MCP opt-in; T: opt-in total on both | C: task facets + HTTP scope rollup; T: retain | C: `torque_task_list`, filters shared but envelope/count differ; T: common payload/count policy |
+| Tasks `/tasks`, `/tasks/search` | CW-20261001-0626: 50/200 pages; explicit offset incl. 0 without cursor emits offset/next_offset, otherwise cursor mode | `priority`, `status`, `updated_at`, `created_at`; default `priority asc`, `id asc` | Shared scopes/status/priority/tags/text/dates/budgets/presence/internal filters; search requires `q` | Opt-in `include_total` on HTTP/MCP, exact filtered cohort before paging | Task facets + HTTP scope rollup | `torque_task_list` shares filters/query/meta; brief/verbose/typed projection differences retained |
 | Epics `/epics` | C: HTTP advanced opt-in, MCP yes, 100/500; T: paged | C: named entity allow-list; T: retain | C: project, status, archive, search; T: retain | C: none in cursor envelope; T: opt-in total | C: none; T: task rollup supplies progress, entity facets pending | C: `torque_epic_list`, cursor filters shared; T: remove HTTP legacy mode |
 | Sprints `/sprints` | C: HTTP advanced opt-in, MCP yes, 100/500; T: paged | C: named entity allow-list; T: retain | C: project, status, archive, over-budget/budget bounds; T: retain | C: none in cursor envelope; T: opt-in total | C: none; T: task rollup supplies progress, entity facets pending | C: `torque_sprint_list`, cursor filters shared; T: remove HTTP legacy mode |
 | Projects `/projects` | C: HTTP advanced opt-in, MCP yes, 100/500; T: paged | C: named entity allow-list; T: retain | C: status, archive; T: retain, server text query pending | C: none in cursor envelope; T: opt-in total | C: none; T: task rollup supplies progress, entity facets pending | C: `torque_project_list`, cursor filters shared; T: remove HTTP legacy mode |
 | Issues `/issues`, `/issues/search` | C: HTTP advanced opt-in, MCP yes, 50/200; T: paged | C: task allow-list; T: retain | C: project, status, query, fixed issue kind; T: retain | C: legacy HTTP total can be page length; cursor none; T: opt-in cohort total | C: no dedicated issue facets; T: task facets with issue kind | C: `torque_issue_list`; T: common envelope/count semantics |
 | Comments `/comments`, `/comments/search`, `/tasks/{id}/comments` | C: HTTP list advanced opt-in/MCP cursor; search 25/100, list 50/200; T: paged for both | C: `created_at`; T: retain | C: entity scope(s), author, dates, search; T: retain nested task restrictions | C: none; T: opt-in total | C: none; T: count through include_total, facets pending | C: `torque_comment_list`, `torque_comment_search`; T: common policy for search too |
-| Runs `/runs` | Implemented in CW-20261001-0562: cursor default, optional offset, 50/200 policy | `started_at`, `status`, `duration`, `cost`; default `started_at desc`, numeric `id asc` | Shared task/project/sprint/epic scopes, CSV status, inclusive since/until (RFC3339 or Unix millis) | Opt-in `include_total`, cohort before cursor/offset/limit | Facets pending CW-20261001-0564 | `torque_run_list` shares service query and items/meta; MCP byte trims preserve continuation |
+| Runs `/runs` | Implemented in CW-20261001-0562: cursor default, 50/200 policy; explicit offset incl. 0 without cursor emits offset/next_offset (CW-0626) | `started_at`, `status`, `duration`, `cost`; default `started_at desc`, numeric `id asc` | Shared task/project/sprint/epic scopes, CSV status, inclusive since/until (RFC3339 or Unix millis) | Opt-in `include_total`, cohort before cursor/offset/limit | Facets pending CW-20261001-0564 | `torque_run_list` shares service query and items/meta; MCP byte trims preserve continuation |
 | Sessions `/sessions` | C: limit only; T: paged | C: fixed newest-first; T: proposed session fields below | C: state, task, project; T: retain + server query pending | C: none; T: opt-in total | C: none; T: count through include_total, facets pending | C: `torque_session_list` without continuation; T: paged parity |
 | Artifacts `/artifacts`, `/tasks/{id}/artifacts` | C: none; T: paged | C: fixed newest-first; T: proposed artifact fields below | C: required task; T: retain + type/run/query pending | C: none; T: opt-in total | C: none; T: count through include_total, facets pending | C: `torque_artifact_list`, brief/verbose byte cap; T: paged parity |
 | Collections `/collections` | C: none; T: paged | C: no public sort; T: proposed collection fields below | C: status; T: retain + server query pending | C: none; T: opt-in total | C: none; T: count through include_total, facets pending | C: `torque_collection_list` byte cap; T: paged parity |
@@ -243,3 +252,20 @@ Verification: `TestRunQueryCursorAndTotals`, `TestRunQuerySortsAndCohort`,
 and `TestRunListHTTPMCPParity` cover inserts between pages, tied sort keys,
 legacy timestamp formats, all four sorts in both directions, totals, limits,
 scopes and validation on temporary databases.
+
+### Task list/search and shared metadata reconciliation (CW-20261001-0626)
+
+HTTP `/tasks` and `/tasks/search` return `{items,meta}` only. Summary projection
+(`fields=summary`) uses the same envelope. Search requires `q` and applies the
+same filters, paging, sort and validation as task lists; `search` is not accepted
+alongside `q`. Both use a limit+1 probe for `has_more` and only count when
+`include_total=true`; exactly-full final and empty pages have no continuation.
+`pagination.NewPageMeta` owns metadata for HTTP task pages and HTTP/MCP runs
+and task-list MCP pages, including mode-specific offset fields.
+
+The former flat task body (`tasks`, top-level count/paging/sort/continuation)
+and unpaged search body are removed. The Torque GUI keeps its existing internal
+`{tasks,total}` adapter by decoding `items/meta` and explicitly requesting totals.
+Its existing traversal behavior is retained for CW-0571/CW-0572 to replace.
+Tachyon work-ops CW-0630 and Tangent CW-0631 own cross-project adapters; no live
+deploy before those consumers land.

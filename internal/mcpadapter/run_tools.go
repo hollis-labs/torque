@@ -40,7 +40,7 @@ func (a *Adapter) handleRunList(ctx context.Context, req map[string]any) (any, e
 	if q.Limit, _, err = reqTaskListInt(req, "limit"); err != nil {
 		return nil, argError(ErrCodeArgInvalid, err.Error(), "limit")
 	}
-	if q.Offset, _, err = reqTaskListInt(req, "offset"); err != nil {
+	if q.Offset, q.OffsetSet, err = reqTaskListInt(req, "offset"); err != nil {
 		return nil, argError(ErrCodeArgInvalid, err.Error(), "offset")
 	}
 	if q.IncludeTotal, err = reqTaskListBool(req, "include_total"); err != nil {
@@ -62,9 +62,13 @@ func (a *Adapter) handleRunList(ctx context.Context, req map[string]any) (any, e
 			items = append(items, toBriefRun(r))
 		}
 	}
+	var offset []int
+	if result.Meta.OffsetMeta != nil {
+		offset = []int{result.Meta.Offset}
+	}
 	response, err := cappedCursorJSONResultWithTotal(items, result.Meta.Limit, result.Meta.Total, result.SortBy, result.SortDir, result.Meta.HasMore, func(i int) (string, string) {
 		return result.Runs[i].QuerySortValue, strconv.FormatInt(result.Runs[i].ID, 10)
-	})
+	}, offset...)
 	if err != nil {
 		return response, err
 	}
