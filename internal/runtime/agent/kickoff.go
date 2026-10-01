@@ -111,13 +111,14 @@ const kickoffLoopbackTools = "Use the `loopback` MCP server's task-scoped tools 
 
 // kickoffLoopbackFullSurface is kickoffLoopbackTools for an orchestrator-class
 // role, whose loopback carries the full Torque surface: unlike a worker's, it
-// is not bound to one task, so every call names the task it acts on.
-const kickoffLoopbackFullSurface = "Use the `loopback` MCP server's Torque tools (the full surface: pass the `task_id` of the task each call acts on). If your session also has a `mux` server, prefer them over its `mcp__mux__torque_*` tools.\n\n"
+// is not bound to one task, so every call names the task it acts on, under
+// whichever parameter name that tool's schema uses (`id` or `task_id`).
+const kickoffLoopbackFullSurface = "Use the `loopback` MCP server's Torque tools (the full surface: each call names the task it acts on, so pass the task id as the tool's schema asks, which is `id` on some tools and `task_id` on others). If your session also has a `mux` server, prefer them over its `mcp__mux__torque_*` tools.\n\n"
 
 // kickoffLoopbackFullSurfaceOnly is kickoffLoopbackFullSurface while Torque
 // write-protects its state: mux serves no `torque` tools, so the loopback
 // carries the same `torque_*` tools mux did.
-const kickoffLoopbackFullSurfaceOnly = "Use the `loopback` MCP server's Torque tools (the full surface: pass the `task_id` of the task each call acts on). They are this session's only Torque tools: while Torque write-protects its state, the `mux` server carries no `torque` tools, and the `torque_*` tools it carried are on the loopback.\n\n"
+const kickoffLoopbackFullSurfaceOnly = "Use the `loopback` MCP server's Torque tools (the full surface: each call names the task it acts on, so pass the task id as the tool's schema asks, which is `id` on some tools and `task_id` on others). They are this session's only Torque tools: while Torque write-protects its state, the `mux` server carries no `torque` tools, and the `torque_*` tools it carried are on the loopback.\n\n"
 
 // kickoffLoopbackLine picks the kickoff's loopback paragraph: the full
 // surface for an orchestrator-class role (orchestrator, planner,

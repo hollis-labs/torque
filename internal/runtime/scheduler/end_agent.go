@@ -9,6 +9,8 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -317,11 +319,120 @@ func (lm *LifecycleManager) commentEndAgentFailure(internal *sqlstore.TaskRecord
 	}
 }
 
+// endAgentClosedTag is the tag the end-agent's clean-audit path puts on its
+// target (default-end-agent.md, Step 1).
+const endAgentClosedTag = "agent-closed"
+
+// isEndAgentCommentAuthor reports whether a comment's author is the
+// end-agent's. The stored author has two shapes. Through the run's loopback
+// it is stored as given, `[system/end-agent]`, which is also the author of
+// Torque's own lifecycle comments. Through mux it is caller-suffixed,
+// `[system/end-agent]-<8 hex>` (every audit comment since 2026-09-14 on the
+// live DB: 46 of 46), and those comments' content does not carry the prefix
+// ("Audit complete — …"). Only the author prefix matches both
+// (CW-20261001-0195).
+func isEndAgentCommentAuthor(author string) bool {
+	return strings.HasPrefix(author, EndAgentAuthor)
+}
+
+// hasEndAgentMetadata reports whether a task's metadata carries the
+// `end_agent` key enqueueEndAgent stamps on every end-agent task.
+func hasEndAgentMetadata(meta sql.NullString) bool {
+	if !meta.Valid {
+		return false
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal([]byte(meta.String), &m) != nil {
+		return false
+	}
+	_, ok := m["end_agent"]
+	return ok
+}
+
+// shouldCheckEndAgentAudit reports whether a transition is an end-agent task
+// finishing as `done`, the one outcome that says nothing about whether the
+// audit happened (CW-20261001-0195).
+func shouldCheckEndAgentAudit(task *sqlstore.TaskRecord, newStatus string) bool {
+	if newStatus != "done" || task.Kind != "internal" {
+		return false
+	}
+	if !task.ParentID.Valid || task.ParentID.String == "" {
+		return false
+	}
+	return hasEndAgentMetadata(task.Metadata)
+}
+
+// endAgentAuditSkipped reports whether an end-agent task that finished `done`
+// left its target's audit undone: the target is still in `review`, carries no
+// `agent-closed` tag, and has no comment by the end-agent posted at or after
+// the end-agent task was created. Every path of the template ends in one of
+// those: a clean audit tags and closes the target, and findings leave a
+// comment trail. A comment from an earlier review round does not count.
+func endAgentAuditSkipped(endAgent, target *sqlstore.TaskRecord, targetTags []string, targetComments []sqlstore.CommentRecord) bool {
+	if target.Status != "review" || slices.Contains(targetTags, endAgentClosedTag) {
+		return false
+	}
+	for _, c := range targetComments {
+		if isEndAgentCommentAuthor(c.Author) && !c.CreatedAt.Before(endAgent.CreatedAt) {
+			return false
+		}
+	}
+	return true
+}
+
+// commentSkippedEndAgentAudit posts a `[system/end-agent]` comment on the
+// target of an end-agent that finished `done` without auditing it: such a run
+// (a reviewer that answered with a question and made no tool calls, run 1194)
+// left its target in `review` with nothing to show the audit never happened.
+// Best effort, like commentEndAgentFailure: a read error is logged and
+// nothing is posted, so a clean audit is never flagged on a failed read. The
+// comment's own author counts as an end-agent comment on a later check, so a
+// target is flagged once.
+func (lm *LifecycleManager) commentSkippedEndAgentAudit(endAgent *sqlstore.TaskRecord) {
+	targetID := endAgent.ParentID.String
+	target, err := lm.store.GetTask(targetID)
+	if err != nil {
+		log.Printf("[end-agent] audit check for target=%s: read target: %v", targetID, err)
+		return
+	}
+	if target.Status != "review" {
+		return
+	}
+	tags, err := lm.store.ListTaskTags(targetID)
+	if err != nil {
+		log.Printf("[end-agent] audit check for target=%s: read tags: %v", targetID, err)
+		return
+	}
+	slugs := make([]string, 0, len(tags))
+	for _, t := range tags {
+		slugs = append(slugs, t.Slug)
+	}
+	comments, err := lm.store.ListComments(targetID)
+	if err != nil {
+		log.Printf("[end-agent] audit check for target=%s: read comments: %v", targetID, err)
+		return
+	}
+	if !endAgentAuditSkipped(endAgent, target, slugs, comments) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), endAgentFailureCommentTimeout)
+	defer cancel()
+	if err := lm.telemetry.AddComment(ctx, &sqlstore.CommentRecord{
+		EntityType: sqlstore.EntityTypeTask,
+		EntityID:   targetID,
+		Author:     EndAgentAuthor,
+		Content: EndAgentAuthor + " " + endAgent.ID + " finished without recording an audit" +
+			" — target stays at `review`; human follow-up required.",
+	}); err != nil {
+		log.Printf("[end-agent] add skipped-audit comment for target=%s: %v", targetID, err)
+	}
+}
+
 // shouldCommentEndAgentFailure reports whether a transition deserves a
 // failure comment. Fires on internal tasks with a parent_id that
 // transition to a non-success terminal — `blocked` or `failed`. `done`
 // is the success path (the reviewer succeeded — its own audit comments
-// stand on their own).
+// stand on their own, which commentSkippedEndAgentAudit checks it left).
 func shouldCommentEndAgentFailure(task *sqlstore.TaskRecord, newStatus string) bool {
 	if task.Kind != "internal" {
 		return false
