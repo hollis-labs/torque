@@ -1,6 +1,8 @@
 package httpserver
 
 import (
+	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 	"net/http"
 	"strings"
 
@@ -66,20 +68,44 @@ func toModelEntryFromModel(providerID string, m modelsdev.Model) modelEntry {
 // On a cold cache (refresher hasn't fetched yet) the response is `{models: []}`
 // with HTTP 200 — clients should retry rather than treat absence as fatal.
 func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
-	if s.svc.Models == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"models": []any{}})
+	q, e := parseStrictQuery(r, map[string]bool{"provider": true, "search": true, "limit": true, "sort_by": true, "sort_dir": true, "cursor": true, "offset": true, "include_total": true})
+	if e != nil {
+		writeHTTPQueryError(w, e)
 		return
 	}
-	all := s.svc.Models.List()
-	providerFilter := strings.TrimSpace(r.URL.Query().Get("provider"))
-	out := make([]modelEntry, 0, len(all))
-	for _, m := range all {
-		if providerFilter != "" && m.ProviderID != providerFilter {
-			continue
-		}
-		out = append(out, toModelEntry(m))
+	c, e := queryCursor(q)
+	if e != nil {
+		writeHTTPQueryError(w, e)
+		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"models": out})
+	rq := service.ResourceQuery{CursorQuery: c}
+	if _, ok := q["offset"]; ok {
+		v, e := queryInt(q, "offset")
+		if e != nil {
+			writeHTTPQueryError(w, e)
+			return
+		}
+		rq.Offset = &v
+	}
+	page, err := s.svc.ListModelPage(strings.TrimSpace(queryString(q, "provider")), queryString(q, "search"), rq)
+	if err != nil {
+		writeAdjacentServiceError(w, err)
+		return
+	}
+	more := len(page.Rows) > page.Query.Limit
+	if more {
+		page.Rows = page.Rows[:page.Query.Limit]
+	}
+	items := make([]modelEntry, 0, len(page.Rows))
+	for _, row := range page.Rows {
+		items = append(items, toModelEntry(row.Record.(modelsdev.ModelRef)))
+	}
+	next := ""
+	if more && len(page.Rows) > 0 {
+		last := page.Rows[len(page.Rows)-1]
+		next = pagination.Encode(page.Query.SortBy, page.Query.SortDir, last.SortValue, last.ID)
+	}
+	writeJSON(w, 200, map[string]any{"items": items, "meta": advancedPageMeta(page.Query.Limit, page.Query.SortBy, page.Query.SortDir, more, next, len(items), page.Total, page.Offset)})
 }
 
 // getModel returns metadata for a single (provider, model) pair. Returns 404

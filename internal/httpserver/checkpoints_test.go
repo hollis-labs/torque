@@ -189,7 +189,7 @@ func TestHTTP_Checkpoint_ListForTask(t *testing.T) {
 	var result map[string]interface{}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
 	resp.Body.Close()
-	list := result["checkpoints"].([]interface{})
+	list := result["items"].([]interface{})
 	assert.Len(t, list, 2)
 }
 
@@ -207,7 +207,7 @@ func TestHTTP_Checkpoint_Pending(t *testing.T) {
 	var result map[string]interface{}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
 	resp.Body.Close()
-	list := result["checkpoints"].([]interface{})
+	list := result["items"].([]interface{})
 	assert.Len(t, list, 1)
 }
 

@@ -9,22 +9,6 @@ import (
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/planstart"
 	"github.com/hollis-labs/torque/internal/service"
-	"github.com/hollis-labs/torque/internal/service/pagination"
-)
-
-// planSortAllowList is torque_plan_list's sort_by allow-list (PRIM-002).
-// Identical to Task's (taskSortAllowList) since plans are Task rows with the
-// same sortable columns — kept as its own var rather than sharing Task's so
-// Plan's list surface doesn't silently change if Task's allow-list evolves.
-var planSortAllowList = []string{"priority", "status", "updated_at", "created_at"}
-
-// planSortDefaultBy/planSortDefaultDir are torque_plan_list's default
-// sort_by/sort_dir when the caller omits both — mirrors taskSortDefaultBy/
-// Dir (see task_tools.go) so the two dedicated list tools behave
-// consistently for callers that don't specify an order.
-const (
-	planSortDefaultBy  = "priority"
-	planSortDefaultDir = "asc"
 )
 
 // registerPlanTools exposes the PlanService convenience operations over MCP.
@@ -66,11 +50,12 @@ Example: {"status":"todo","limit":"25","sort_by":"updated_at","sort_dir":"desc"}
 		withString("epic_id", desc("Filter by epic ID (requires features.epics)")),
 		withString("tags", desc("JSON array of tag slugs — AND-match; plan must have all listed tags")),
 		withString("search", desc("Substring match on title + description (case-insensitive)")),
-		withString("limit", desc("Max results (integer, default 100, max 200)")),
+		withString("limit", desc("Max results (integer, default 50, max 200)")),
 		withString("verbose", desc("Return full records instead of brief (string 'true'/'false', default false)")),
 		withString("sort_by", desc("Sort field: priority|status|updated_at|created_at (default priority)")),
 		withString("sort_dir", desc("Sort direction: asc|desc (default asc)")),
 		withString("cursor", desc("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
+		withResourcePageParams("plans"),
 	), a.handlePlanList)
 
 	a.addTool(newTool("torque_plan_update",
@@ -118,12 +103,13 @@ Example: {"plan_id":"T-999","phase_id":"ph-2"}`),
 	a.addTool(newTool("torque_plan_list_children",
 		withDescription(`List tasks whose parent_id matches the plan; phase_id narrows to children of one phase via metadata.phase_id.
 Use to inspect per-phase execution tasks; torque_task_list with parent_id filter is the lower-level analog. Reuses the task list envelope (brief/verbose).
-Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, hint?}}.
+Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, has_more, next_cursor, total?, offset?, next_offset?, hint?}}.
 Example: {"plan_id":"T-999","phase_id":"ph-1"}`),
 		withString("plan_id", required(), desc("Plan task ID")),
 		withString("phase_id", desc("Optional phase_id filter")),
-		withString("limit", desc("Max results (integer, default 100, max 200)")),
+		withString("limit", desc("Max results (integer, default 50, max 200)")),
 		withString("verbose", desc("Return full records instead of brief (string 'true'/'false', default false)")),
+		withResourcePageParams("plan_children"),
 	), a.handlePlanListChildren)
 
 	a.addTool(newTool("torque_plan_start",
@@ -188,76 +174,7 @@ func (a *Adapter) handlePlanGet(ctx context.Context, req map[string]any) (any, e
 // and the same taskListCursorEnvelope response builder (plans are Task rows,
 // so the envelope needs no plan-specific variant).
 func (a *Adapter) handlePlanList(ctx context.Context, req map[string]any) (any, error) {
-	limit := clampLimit(reqInt(req, "limit"), defaultGenericListLimit, maxTaskListLimit)
-	verbose := reqStrBool(req, "verbose")
-
-	sortBy := planSortDefaultBy
-	if raw := reqStr(req, "sort_by"); raw != "" {
-		v, err := pagination.ValidateSortBy(raw, planSortAllowList...)
-		if err != nil {
-			return errResult(ErrCodeArgInvalid, err.Error(), "sort_by")
-		}
-		sortBy = v
-	}
-	sortDir := planSortDefaultDir
-	if raw := reqStr(req, "sort_dir"); raw != "" {
-		v, err := pagination.ValidateSortDir(raw)
-		if err != nil {
-			return errResult(ErrCodeArgInvalid, err.Error(), "sort_dir")
-		}
-		sortDir = v
-	}
-
-	var afterSortValue, afterID string
-	if raw := reqStr(req, "cursor"); raw != "" {
-		c, err := pagination.Decode(raw)
-		if err != nil {
-			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid cursor: %v", err), "cursor")
-		}
-		if err := c.Validate(sortBy, sortDir); err != nil {
-			return errResult(ErrCodeArgInvalid, err.Error(), "cursor")
-		}
-		afterSortValue, afterID = c.SortValue, c.ID
-	}
-
-	priorityFilter, _, errRes := reqPriorityArg(req)
-	if errRes != nil {
-		return nil, errRes
-	}
-
-	filter := sqlstore.TaskFilter{
-		Status:    reqStr(req, "status"),
-		Priority:  priorityFilter,
-		ProjectID: reqStr(req, "project_id"),
-		SprintID:  reqStr(req, "sprint_id"),
-		EpicID:    reqStr(req, "epic_id"),
-		Search:    reqStr(req, "search"),
-		// Fetch one extra row beyond limit so has_more can be determined
-		// without a separate COUNT(*) query (mirrors handleTaskList).
-		Limit:          limit + 1,
-		SortBy:         sortBy,
-		SortDir:        sortDir,
-		AfterSortValue: afterSortValue,
-		AfterID:        afterID,
-	}
-	if tags, err := reqStrSlice(req, "tags"); err != nil {
-		return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tags JSON: %v", err), "tags")
-	} else if tags != nil {
-		filter.TagSlugs = tags
-	}
-
-	// PlanService.List force-sets filter.Kind = "plan" regardless of
-	// anything set here, so no explicit Kind field is needed above.
-	plans, err := a.svc.Plan.List(filter)
-	if err != nil {
-		return errFromService(err)
-	}
-
-	hasMoreFromQuery := len(plans) > limit
-	if hasMoreFromQuery {
-		plans = plans[:limit]
-	}
-	return a.taskListCursorEnvelope(plans, limit, verbose, sortBy, sortDir, hasMoreFromQuery)
+	return a.handleResourceList(ctx, req, "plans", sqlstore.ResourcePageFilter{})
 }
 
 // handlePlanUpdate is torque_plan_update's handler. Presence-based (not
@@ -350,25 +267,7 @@ func (a *Adapter) handlePlanRemovePhase(ctx context.Context, req map[string]any)
 }
 
 func (a *Adapter) handlePlanListChildren(ctx context.Context, req map[string]any) (any, error) {
-	// limit was previously hardcoded to maxTaskListLimit (200, the system
-	// maximum) regardless of caller intent, with no actual truncation
-	// applied — tasksToEnvelope/cappedJSONResult don't slice items down to
-	// limit themselves (see handleIssueList for the established truncate-
-	// before-envelope pattern), so every call silently returned the FULL
-	// unbounded child set with meta.limit just stamped at 200. Now a real,
-	// caller-adjustable param with a sane default (matches the other
-	// generic list tools' default, response.go's defaultGenericListLimit).
-	limit := clampLimit(reqInt(req, "limit"), defaultGenericListLimit, maxTaskListLimit)
-	verbose := reqStrBool(req, "verbose")
-	children, err := a.svc.Plan.ListChildren(reqStr(req, "plan_id"), reqStr(req, "phase_id"))
-	if err != nil {
-		return errFromService(err)
-	}
-	if len(children) > limit {
-		children = children[:limit]
-	}
-	// Reuse the task envelope: plan children are just tasks.
-	return a.tasksToEnvelope(children, limit, verbose)
+	return a.handleResourceList(ctx, req, "plan_children", sqlstore.ResourcePageFilter{ParentID: reqStr(req, "plan_id")})
 }
 
 // handlePlanStart boots an Orchestrator session for a kind=plan task

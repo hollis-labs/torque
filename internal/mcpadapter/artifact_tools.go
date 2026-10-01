@@ -31,10 +31,11 @@ Example: {"task_id":"T-123","type":"file","file_path":"/tmp/report.md"}`),
 	a.addTool(newTool("torque_artifact_list",
 		withDescription(`List all artifacts for a task, newest first. Default brief shape drops inline content body for size; pass verbose="true" for full records.
 Use to discover outputs; torque_artifact_get when you have the numeric ID. torque_comment_list is the prose/discussion analog.
-Response shape: data = {items: [<briefArtifact or ArtifactRecord>...], meta: {truncated, returned, limit, hint?}}.
+Response shape: data = {items: [<briefArtifact or ArtifactRecord>...], meta: {truncated, returned, limit, has_more, next_cursor, total?, offset?, next_offset?, hint?}}.
 Example: {"task_id":"T-123"}`),
 		withString("task_id", required(), desc("Task ID")),
 		withString("verbose", desc("Return full records instead of brief (string 'true'/'false', default false)")),
+		withResourcePageParams("artifacts"),
 	), a.handleArtifactList)
 
 	a.addTool(newTool("torque_artifact_get",
@@ -114,21 +115,7 @@ func (a *Adapter) handleArtifactCreate(ctx context.Context, req map[string]any) 
 }
 
 func (a *Adapter) handleArtifactList(ctx context.Context, req map[string]any) (any, error) {
-	verbose := reqStrBool(req, "verbose")
-	artifacts, err := a.svc.Artifact.List(reqStr(req, "task_id"))
-	if err != nil {
-		return errFromService(err)
-	}
-	limit := defaultGenericListLimit
-	items := make([]any, 0, len(artifacts))
-	for _, a := range artifacts {
-		if verbose {
-			items = append(items, a)
-		} else {
-			items = append(items, toBriefArtifact(a))
-		}
-	}
-	return cappedJSONResult(items, limit)
+	return a.handleResourceList(ctx, req, "artifacts", sqlstore.ResourcePageFilter{TaskID: reqStr(req, "task_id")})
 }
 
 func (a *Adapter) handleArtifactGet(ctx context.Context, req map[string]any) (any, error) {
