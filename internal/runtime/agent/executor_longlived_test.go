@@ -17,6 +17,7 @@ import (
 	"github.com/hollis-labs/torque/internal/runtime/steering"
 	"github.com/hollis-labs/torque/internal/runtime/writeq"
 	"github.com/hollis-labs/torque/internal/testutil/sqlitetest"
+	"github.com/hollis-labs/torque/internal/testutil/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -221,7 +222,7 @@ func TestAwaitLongLivedCompletion_SelfTransitionToReview(t *testing.T) {
 		AgentProfile: "test",
 	}))
 
-	deps := &Dependencies{Store: store}
+	deps := &Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store}
 
 	prevInterval := statusPollInterval
 	statusPollInterval = 50 * time.Millisecond
@@ -259,7 +260,7 @@ func TestAwaitLongLivedCompletion_IdleReap(t *testing.T) {
 		AgentProfile: "test",
 	}))
 
-	deps := &Dependencies{Store: store}
+	deps := &Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store}
 
 	prevInterval := statusPollInterval
 	statusPollInterval = 50 * time.Millisecond
@@ -289,7 +290,7 @@ func TestAwaitLongLivedCompletion_HardCeiling(t *testing.T) {
 		AgentProfile: "test",
 	}))
 
-	deps := &Dependencies{Store: store}
+	deps := &Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store}
 
 	prevInterval := statusPollInterval
 	statusPollInterval = 50 * time.Millisecond
@@ -358,8 +359,9 @@ func TestRunLongLived_TaskDeadlineStopsSession(t *testing.T) {
 	deadline := deadlineTestBudget
 	fr := &deadlineFakeRuntime{}
 	deps := &Dependencies{
-		Store:       store,
-		StateWriter: writeq.NewDirect(store),
+		WorkspacesRoot: testenv.WorkspacesRoot(t),
+		Store:          store,
+		StateWriter:    writeq.NewDirect(store),
 		Profiles: config.ProfileMap{
 			"test": {Executor: "cli", Provider: "claude-code", RuntimeKind: "streaming-stdio"},
 		},
@@ -411,8 +413,9 @@ func TestRunLongLived_TaskDeadlineCoversLaunch(t *testing.T) {
 	}))
 	deadline := deadlineTestBudget
 	deps := &Dependencies{
-		Store:       store,
-		StateWriter: writeq.NewDirect(store),
+		WorkspacesRoot: testenv.WorkspacesRoot(t),
+		Store:          store,
+		StateWriter:    writeq.NewDirect(store),
 		Profiles: config.ProfileMap{
 			"test": {Executor: "cli", Provider: "claude-code", RuntimeKind: "streaming-stdio"},
 		},
@@ -461,8 +464,9 @@ func TestRunLongLived_UpstreamDeadlineIsNotTaskDeadline(t *testing.T) {
 	}))
 	maxDuration := time.Second
 	deps := &Dependencies{
-		Store:       store,
-		StateWriter: writeq.NewDirect(store),
+		WorkspacesRoot: testenv.WorkspacesRoot(t),
+		Store:          store,
+		StateWriter:    writeq.NewDirect(store),
 		Profiles: config.ProfileMap{
 			"test": {Executor: "cli", Provider: "claude-code", RuntimeKind: "streaming-stdio"},
 		},
@@ -535,7 +539,7 @@ func TestAwaitLongLivedCompletion_TaskDeadlinePreservesTransitionPrecedence(t *t
 			if tc.transition {
 				require.NoError(t, store.TransitionTask(taskID, "review"))
 			}
-			deps := &Dependencies{Store: store}
+			deps := &Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store}
 
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -573,7 +577,7 @@ func TestAwaitLongLivedCompletion_CtxCancelWhileDoing(t *testing.T) {
 		AgentProfile: "test",
 	}))
 
-	deps := &Dependencies{Store: store}
+	deps := &Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store}
 
 	prevInterval := statusPollInterval
 	statusPollInterval = 50 * time.Millisecond
@@ -610,7 +614,7 @@ func TestAwaitLongLivedCompletion_CtxCancelAfterSelfTransition(t *testing.T) {
 		AgentProfile: "test",
 	}))
 
-	deps := &Dependencies{Store: store}
+	deps := &Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store}
 
 	// Long poll interval so the race resolves via the ctx.Done branch,
 	// not via the status ticker.
@@ -643,7 +647,7 @@ func TestAwaitLongLivedCompletion_CtxCancelAfterOperatorPause(t *testing.T) {
 		AgentProfile: "test",
 	}))
 
-	deps := &Dependencies{Store: store}
+	deps := &Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store}
 
 	prevInterval := statusPollInterval
 	statusPollInterval = time.Hour
@@ -680,8 +684,9 @@ func TestRunLongLived_OperatorPauseCancelsRunAndSession(t *testing.T) {
 	}))
 	fr := &deadlineFakeRuntime{}
 	deps := &Dependencies{
-		Store:       store,
-		StateWriter: writeq.NewDirect(store),
+		WorkspacesRoot: testenv.WorkspacesRoot(t),
+		Store:          store,
+		StateWriter:    writeq.NewDirect(store),
 		Profiles: config.ProfileMap{
 			"test": {Executor: "cli", Provider: "claude-code", RuntimeKind: "streaming-stdio"},
 		},
@@ -959,7 +964,7 @@ func TestAwaitLongLivedCompletion_TerminalFailureBlocks(t *testing.T) {
 		ID: taskID, Title: "terminal provider failure", Status: "doing",
 		Executor: "cli", AgentProfile: "codex",
 	}))
-	deps := &Dependencies{Store: store}
+	deps := &Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store}
 	terminalFailureCh := make(chan string, 1)
 	terminalFailureCh <- "codex terminal turn failed: unexpected status 401"
 

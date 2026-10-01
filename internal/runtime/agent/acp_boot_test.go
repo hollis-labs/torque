@@ -12,12 +12,13 @@ import (
 
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/runtime/executor"
+	"github.com/hollis-labs/torque/internal/testutil/testenv"
 )
 
 // The servers an ACP session gets are the loopback and mux entries a native
 // boot dir plants, under the same names.
 func TestACPMCPServers(t *testing.T) {
-	deps := &Dependencies{MuxCommand: "/usr/bin/mux", MuxArgs: []string{"mcp"}, MuxEnv: []string{"MUX_TOKEN=x"}}
+	deps := &Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), MuxCommand: "/usr/bin/mux", MuxArgs: []string{"mcp"}, MuxEnv: []string{"MUX_TOKEN=x"}}
 	got := acpMCPServers("http://127.0.0.1:4321/mcp", deps, true)
 	assert.Equal(t, []acp.MCPServer{
 		{Name: "loopback", URL: "http://127.0.0.1:4321/mcp"},
@@ -28,7 +29,7 @@ func TestACPMCPServers(t *testing.T) {
 
 	assert.Equal(t, []acp.MCPServer{{Name: "loopback", URL: "http://127.0.0.1:4321/mcp"}},
 		acpMCPServers("http://127.0.0.1:4321/mcp", deps, false), "outside bypassPermissions only the loopback is offered")
-	assert.Empty(t, acpMCPServers("", &Dependencies{}, true), "no loopback and no mux: nothing to send")
+	assert.Empty(t, acpMCPServers("", &Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t)}, true), "no loopback and no mux: nothing to send")
 	assert.Equal(t, []acp.MCPServer{{Name: "loopback", URL: "http://l/mcp"}}, acpMCPServers("http://l/mcp", nil, true))
 }
 
@@ -85,7 +86,7 @@ func TestACPKickoff(t *testing.T) {
 // are judged at launch from the capability they report, so a Copilot task
 // run validates in either mode.
 func TestExecutorValidate_RefusesPiTaskRuns(t *testing.T) {
-	deps := &Dependencies{Profiles: config.ProfileMap{
+	deps := &Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Profiles: config.ProfileMap{
 		"pi-worker":      {Executor: "cli", Provider: "pi"},
 		"copilot-worker": {Executor: "cli", Provider: "copilot"},
 	}}

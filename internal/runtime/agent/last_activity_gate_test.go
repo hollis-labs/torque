@@ -11,6 +11,7 @@ import (
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/testutil/sqlitetest"
+	"github.com/hollis-labs/torque/internal/testutil/testenv"
 )
 
 // TestObserveStreamEvent_ErrorFrameFreezesActivity covers the freeze trigger:
@@ -124,7 +125,7 @@ func TestObserveStreamEvent_MetadataEventsLeaveGateUnchanged(t *testing.T) {
 // last_activity column the dashboard + monitors observe.
 func TestTouchSessionUnlessFrozen_HonorsGate(t *testing.T) {
 	store := newGateTestStore(t)
-	deps := &Dependencies{Store: store}
+	deps := &Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store}
 	mgr := NewManager(deps)
 
 	const sessID = "SES-FREEZE-1"
@@ -177,7 +178,7 @@ func TestTouchSessionUnlessFrozen_HonorsGate(t *testing.T) {
 // a session terminates, its gate entry must be dropped so the map does not
 // accumulate over the daemon's lifetime.
 func TestTeardownSession_ClearsActivityGate(t *testing.T) {
-	mgr := NewManager(&Dependencies{})
+	mgr := NewManager(&Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t)})
 
 	const sessID = "SES-TEARDOWN-1"
 	mgr.markActivityFrozen(sessID)

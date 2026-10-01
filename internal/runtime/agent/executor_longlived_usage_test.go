@@ -19,6 +19,7 @@ import (
 	"github.com/hollis-labs/torque/internal/runtime/executor"
 	"github.com/hollis-labs/torque/internal/runtime/steering"
 	"github.com/hollis-labs/torque/internal/runtime/writeq"
+	"github.com/hollis-labs/torque/internal/testutil/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -151,8 +152,9 @@ func runFixtureLongLived(t *testing.T, lines []string, split int, grace, delay t
 	}
 	fr := &replayRuntime{replay: replay}
 	deps := &Dependencies{
-		Store:       store,
-		StateWriter: writeq.NewDirect(store),
+		WorkspacesRoot: testenv.WorkspacesRoot(t),
+		Store:          store,
+		StateWriter:    writeq.NewDirect(store),
 		Profiles: config.ProfileMap{
 			"test": {Executor: "cli", Provider: "claude-code", RuntimeKind: "streaming-stdio"},
 		},
