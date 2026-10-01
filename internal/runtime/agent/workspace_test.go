@@ -113,3 +113,44 @@ func TestWorkspaceCreateUnscopedProjectKey(t *testing.T) {
 		t.Errorf("WorkspaceDir = %q, want unscoped key", ws.WorkspaceDir)
 	}
 }
+
+// In a test, a workspaces root inside the real ~/.torque is refused, so a
+// test whose Dependencies leave WorkspacesRoot empty fails loudly instead of
+// writing into the operator's ~/.torque/workspaces (CW-20261001-0175), and
+// nothing is created there. Elsewhere under $HOME is allowed: a $TMPDIR
+// under $HOME must keep working for t.TempDir(). The cases that create
+// dirs run against a stand-in home, so the test never writes to the real
+// one.
+func TestWorkspaceCreateRefusesTheRealTorqueDirInTests(t *testing.T) {
+	if startHome != "" {
+		err := refuseRealHomeInTests(filepath.Join(startHome, ".torque", "workspaces"))
+		if err == nil || !strings.Contains(err.Error(), "testenv.WorkspacesRoot(t)") {
+			t.Fatalf("the real default root: err = %v, want a refusal naming testenv.WorkspacesRoot(t)", err)
+		}
+	}
+
+	home := t.TempDir()
+	prev := startHome
+	startHome = home
+	t.Cleanup(func() { startHome = prev })
+	t.Setenv("HOME", home)
+
+	if _, err := WorkspaceCreate("", "unscoped", "SES-GUARD", t.TempDir(), ""); err == nil {
+		t.Fatal("the default root (~/.torque/workspaces) must be refused")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".torque")); !os.IsNotExist(err) {
+		t.Fatalf("the refused workspace was created anyway (stat err %v)", err)
+	}
+	if _, err := WorkspaceCreate(filepath.Join(home, ".torque", "elsewhere"), "p", "SES-GUARD", t.TempDir(), ""); err == nil {
+		t.Fatal("an explicit root inside ~/.torque must be refused too")
+	}
+	for _, root := range []string{
+		filepath.Join(home, ".cache", "task-tmp", "workspaces"), // under $HOME, outside ~/.torque
+		filepath.Join(home, ".torque-other"),                    // a sibling that only shares the prefix
+		t.TempDir(),
+	} {
+		if _, err := WorkspaceCreate(root, "p", "SES-GUARD", t.TempDir(), ""); err != nil {
+			t.Fatalf("root %s must be accepted: %v", root, err)
+		}
+	}
+}

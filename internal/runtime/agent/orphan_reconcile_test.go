@@ -11,6 +11,7 @@ import (
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/runtime/writeq"
 	"github.com/hollis-labs/torque/internal/testutil/sqlitetest"
+	"github.com/hollis-labs/torque/internal/testutil/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,7 +19,7 @@ import (
 func TestReconcileInterruptedRuns_BlocksExplicitCrashedRun(t *testing.T) {
 	store := sqlitetest.OpenStore(t)
 	defer store.Close()
-	mgr := NewManager(&Dependencies{Store: store, StateWriter: writeq.NewDirect(store)})
+	mgr := NewManager(&Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store, StateWriter: writeq.NewDirect(store)})
 
 	runID := seedInterruptedRun(t, store, "CW-ORPHAN-1", false)
 	seedSession(t, store, "SES-CRASHED", "crashed", "CW-ORPHAN-1", runID)
@@ -62,7 +63,7 @@ func TestReconcileInterruptedRuns_SkipsUnsafeBoundaries(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			store := sqlitetest.OpenStore(t)
 			defer store.Close()
-			mgr := NewManager(&Dependencies{Store: store, StateWriter: writeq.NewDirect(store)})
+			mgr := NewManager(&Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store, StateWriter: writeq.NewDirect(store)})
 
 			runID := seedTaskRun(t, store, tt.taskID, tt.status, tt.manual)
 			if tt.newerRun {
@@ -95,7 +96,7 @@ func TestReconcileInterruptedRuns_SkipsUnsafeBoundaries(t *testing.T) {
 func TestManagerSweep_SparesPIDZeroLaunchingSession(t *testing.T) {
 	store := sqlitetest.OpenStore(t)
 	defer store.Close()
-	mgr := NewManager(&Dependencies{Store: store})
+	mgr := NewManager(&Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store})
 	seedSessionMeta(t, store, "SES-PID0", "launching", "CW-PID0", `{}`)
 
 	count, err := mgr.Sweep()
@@ -110,7 +111,7 @@ func TestManagerSweep_SparesPIDZeroLaunchingSession(t *testing.T) {
 func TestManagerTerminalFailureProtectionBlocksDelayedDoneOverwrite(t *testing.T) {
 	store := sqlitetest.OpenStore(t)
 	defer store.Close()
-	mgr := NewManager(&Dependencies{Store: store, StateWriter: writeq.NewDirect(store)})
+	mgr := NewManager(&Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store, StateWriter: writeq.NewDirect(store)})
 	seedSessionMeta(t, store, "SES-TERMINAL-FAIL", "running", "CW-TERMINAL-FAIL", `{}`)
 
 	sinkAtBoundary := make(chan struct{})
@@ -171,7 +172,7 @@ func TestManagerTerminalFailureProtectionBlocksDelayedDoneOverwrite(t *testing.T
 func TestManagerTerminalCanceledProtectionBlocksDelayedDoneOverwrite(t *testing.T) {
 	store := sqlitetest.OpenStore(t)
 	defer store.Close()
-	mgr := NewManager(&Dependencies{Store: store, StateWriter: writeq.NewDirect(store)})
+	mgr := NewManager(&Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store, StateWriter: writeq.NewDirect(store)})
 	seedSessionMeta(t, store, "SES-TERMINAL-CANCEL", "running", "CW-TERMINAL-CANCEL", `{}`)
 
 	sinkAtBoundary := make(chan struct{})

@@ -99,6 +99,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   - **Breadcrumb:** the HITL response breadcrumb's `used_resume` reports
     what `ResumeSession` did. It had claimed a resume for a row with no
     stored session id.
+- Codex app-server's MCP tool-call approvals keep the run's loopback as the
+  only server approved outside `bypassPermissions`, now through agentkit's
+  `CodexApprovalResponder.MCPAllow` instead of Torque's own override.
+  Decisions are unchanged; the log reason names the allow-list
+  (CW-20261001-0124).
 - go-agent-wrapper v0.21.1, agentkit v0.19.1, go-providers v0.39.0 and
   go-sandbox v0.5.1 (CW-20261001-0157). A claude-code launch now carries
   `--permission-mode <mode>` (`acceptEdits` when the profile sets none,
@@ -221,6 +226,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- Torque's tests no longer write session workspaces into the operator's
+  `~/.torque/workspaces`. Every test's agent dependencies get a temp root
+  (`testenv.WorkspacesRoot(t)`), and under `go test` a workspaces root inside
+  the real `~/.torque` is refused with an error naming that helper
+  (CW-20261001-0175).
 - An ACP agent that exits during launch no longer crashes the Torque daemon
   with "send on closed channel" (go-agent-wrapper v0.21.1,
   CW-20261001-0129).
