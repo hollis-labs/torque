@@ -1,6 +1,6 @@
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright');
 import { fileURLToPath } from 'node:url';
-const baseURL = process.env.GUI_BASE_URL ?? `${baseURL}`;
+const baseURL = process.env.GUI_BASE_URL ?? 'http://127.0.0.1:5218';
 import {mkdirSync,writeFileSync} from 'node:fs';
 const dir = fileURLToPath(new URL('.', import.meta.url));
 mkdirSync(dir,{recursive:true});
