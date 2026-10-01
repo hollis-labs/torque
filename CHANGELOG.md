@@ -52,6 +52,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   worktree passes when the worker made tool calls or left comments or
   artifacts on its task. Read-only claude-code runs are no longer graded
   blocked or failed.
+- A long-lived run graded "edits but no commits" now parks its task in
+  `blocked` instead of retrying under `on_fail`. The reason names the
+  preserved worktree, how many paths are uncommitted, and the remedy: commit
+  or discard them there, then re-queue. A retry used to re-dispatch at once
+  into a fresh worktree off `origin/main`, stranding the diff and holding the
+  project's slot.
 
 ## [0.3.0] - 2026-05-17
 
