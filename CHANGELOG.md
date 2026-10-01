@@ -214,6 +214,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   (`testenv.WorkspacesRoot(t)`), and under `go test` a workspaces root inside
   the real `~/.torque` is refused with an error naming that helper
   (CW-20261001-0175).
+- The reviewer end-agent's task description no longer names a reviewer
+  version. It said "V1 reviewer" while the stamped template is V2, and one
+  reviewer stopped to ask which protocol to follow instead of auditing. It
+  now reads "Disposition audit for <id> (reviewer end-agent)."
+  (CW-20261001-0187).
 - An ACP agent that exits during launch no longer crashes the Torque daemon
   with "send on closed channel" (go-agent-wrapper v0.21.1,
   CW-20261001-0129).
