@@ -93,10 +93,11 @@ func oneShotTurn(prompt, bootDir, workdir, kickoffMD string) string {
 // the agent on its first turn (via the @./boot.md reference) and again post-
 // compaction (since the file lives on disk). Keep concise: the systemPrompt
 // already loaded via CLAUDE.md / AGENTS.md / agents/<name>.md carries the
-// persona; this file is task-specific.
-func kickoffMarkdown(opts Options, role string) string {
+// persona; this file is task-specific. muxOmitsTorque says the session's
+// mux server carries no torque tools (Dependencies.MuxOmitsTorque).
+func kickoffMarkdown(opts Options, role string, muxOmitsTorque bool) string {
 	body := kickoffHeader(opts, role)
-	body += kickoffLoopbackTools
+	body += kickoffLoopbackLine(role, muxOmitsTorque)
 	if opts.TaskID != "" {
 		body += "Your assigned task bundle is already planted under the boot dir's `tasks/` directory. Start with `tasks/README.md` and the task's `task.md`, `task.json`, and `process.md` files instead of calling MCP just to look up task, run, project, or session IDs. For opencode, resolve this under `$OPENCODE_CONFIG_DIR/tasks/` because the process cwd is the project dir.\n\n"
 	}
@@ -105,6 +106,39 @@ func kickoffMarkdown(opts Options, role string) string {
 
 // kickoffLoopbackTools points the agent at the per-task loopback's tools.
 const kickoffLoopbackTools = "Use the `loopback` MCP server's task-scoped tools (no `task_id` parameter required) for self-task operations. Prefer them over `mcp__mux__torque_*` for the booted task.\n\n"
+
+// kickoffLoopbackFullSurface is kickoffLoopbackTools for an orchestrator-class
+// role, whose loopback carries the full Torque surface: unlike a worker's, it
+// is not bound to one task, so every call names the task it acts on, under
+// whichever parameter name that tool's schema uses (`id` or `task_id`).
+const kickoffLoopbackFullSurface = "Use the `loopback` MCP server's Torque tools (the full surface: each call names the task it acts on, so pass the task id as the tool's schema asks, which is `id` on some tools and `task_id` on others). Prefer them over `mcp__mux__torque_*`.\n\n"
+
+// kickoffLoopbackFullSurfaceOnly is kickoffLoopbackFullSurface while Torque
+// write-protects its state: mux serves no `torque` tools, so the loopback
+// carries the same `torque_*` tools mux did.
+const kickoffLoopbackFullSurfaceOnly = "Use the `loopback` MCP server's Torque tools (the full surface: each call names the task it acts on, so pass the task id as the tool's schema asks, which is `id` on some tools and `task_id` on others). They are this session's only Torque tools: while Torque write-protects its state, the `mux` server carries no `torque` tools, and the `torque_*` tools it carried are on the loopback.\n\n"
+
+// kickoffLoopbackLine picks the kickoff's loopback paragraph: the full
+// surface for an orchestrator-class role (orchestrator, planner,
+// reviewer-end-agent), the task-scoped subset for everything else, and, while
+// mux serves no torque tools, the variant that says the loopback is the only
+// Torque surface.
+func kickoffLoopbackLine(role string, muxOmitsTorque bool) string {
+	switch {
+	case isOrchestratorClassRoleForPrompt(role) && muxOmitsTorque:
+		return kickoffLoopbackFullSurfaceOnly
+	case isOrchestratorClassRoleForPrompt(role):
+		return kickoffLoopbackFullSurface
+	case muxOmitsTorque:
+		return kickoffLoopbackOnly
+	}
+	return kickoffLoopbackTools
+}
+
+// kickoffLoopbackOnly replaces kickoffLoopbackTools while Torque
+// write-protects its state: mux then serves no torque tools, so the loopback
+// is the session's only way to reach Torque.
+const kickoffLoopbackOnly = "Use the `loopback` MCP server's task-scoped tools (no `task_id` parameter required) for self-task operations. They are this session's only Torque tools: while Torque write-protects its state, the `mux` server carries no `torque` tools.\n\n"
 
 // kickoffHeader is the kickoff's opening: who the agent is, the task and
 // plan it serves, and the workspace it writes in.

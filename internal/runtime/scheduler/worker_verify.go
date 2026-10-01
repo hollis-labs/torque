@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/hollis-labs/torque/internal/gitexec"
 )
 
 // WorkerVerdict captures the engine-side completion verification result for
@@ -327,9 +329,7 @@ func preferredBases(base string) []string {
 }
 
 func revListCount(ctx context.Context, worktreePath, rangeArg string) (int, error) {
-	cmd := exec.CommandContext(ctx, "git", "rev-list", "--count", rangeArg)
-	cmd.Dir = worktreePath
-	out, err := cmd.CombinedOutput()
+	out, err := gitexec.Command(ctx, worktreePath, "rev-list", "--count", rangeArg).CombinedOutput()
 	if err != nil {
 		return 0, fmt.Errorf("git rev-list --count %s in %s: %s: %w", rangeArg, worktreePath, strings.TrimSpace(string(out)), err)
 	}
@@ -346,9 +346,7 @@ func revListCount(ctx context.Context, worktreePath, rangeArg string) (int, erro
 // worktree holds work (worktree.worktreeHasWork), so a run graded "edits
 // but no commits" is also one whose worktree is preserved for inspection.
 func countUncommittedChanges(ctx context.Context, worktreePath string) (int, error) {
-	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
-	cmd.Dir = worktreePath
-	out, err := cmd.Output()
+	out, err := gitexec.Command(ctx, worktreePath, "status", "--porcelain").Output()
 	if err != nil {
 		var detail string
 		var exitErr *exec.ExitError

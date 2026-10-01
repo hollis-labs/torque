@@ -82,6 +82,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- go-agent-wrapper v0.23.0 (from v0.21.1), agentkit v0.20.3 (from v0.19.1)
+  and go-providers v0.40.0 (from v0.39.0); go-sandbox stays v0.5.1
+  (CW-20261001-0141). They bring the `ProtectedPaths` Torque now sets, and
+  turn interrupts Torque does not use yet. Effects on Torque:
+  - OpenCode serve: a failed turn ends once, as a failure, not as a failure
+    followed by a completion. An error with no session id (a plugin that
+    failed to load) is logged instead of failing the turn, and a context
+    overflow OpenCode goes on to compact no longer fails it.
+  - OpenCode errors carry the error's name, model and reference after the
+    message.
+  - A resume that lost its session also emits `session.lost`; Torque does
+    not read that event.
+  - Launch argv, environment and planted config are unchanged for every
+    runtime.
 - Resume capabilities come from the go-providers registry, per runtime and
   mode, instead of provider-name switches (CW-20261001-0174).
   `agent.Resume(provider, kind)` reports what the registry declares and
@@ -265,6 +279,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   given it. Note that `kind` here only fills the planted `task.json`: the
   idle-after-done nudge runs in the scheduler's long-lived dispatch, which a
   re-launched session does not go through.
+- A reviewer end-agent that ends `done` without auditing its target no
+  longer passes silently (CW-20261001-0195). When its target is still in
+  `review`, is not tagged `agent-closed` and has no comment by the end-agent
+  since the end-agent was created, Torque posts `[system/end-agent] <id>
+  finished without recording an audit — target stays at review; human
+  follow-up required.` on the target, once. The end-agent's comments are
+  matched by the author prefix `[system/end-agent]`: the author is stored as
+  given through a run's loopback and caller-suffixed
+  (`[system/end-agent]-<8 hex>`) through mux, and the audit comments posted
+  through mux do not carry the prefix in their content.
 - The HTTP and MCP session resume (`POST /api/v1/sessions/{id}/resume`,
   `torque_session_resume`, `Manager.Resume`) makes the same decision as
   `ResumeSession` (CW-20261001-0203). It continues the checkpoint's provider
@@ -508,6 +532,84 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Security
 
+- The codex launches Torque leaves to codex's own sandbox are fewer
+  (CW-20261001-0256). Three families of codex profile args still skipped
+  Torque's write protection while codex ran unsandboxed: an attached short
+  option (`-s=danger-full-access`, `-sdanger-full-access`); mixed selectors,
+  where `--yolo --sandbox read-only` and `--sandbox danger-full-access -c
+  sandbox_mode="read-only"` came out read-only although codex ranks the
+  bypass and `--sandbox` flags above `-c`; and an app-server bypass mode
+  hard-coded instead of taken from the function the adapter uses. Now a bypass
+  flag anywhere wraps the launch, selectors must all agree on a confining mode
+  or the launch is wrapped, any single-dash argument with an attached value
+  or a selector with no value wraps, and the bypass mode comes from agentkit's
+  `ResolveCodexPolicy`. Only a profile that positively selects `read-only` or
+  `workspace-write` is left to codex's own sandbox. The orchestrator-class
+  kickoff names the task id parameter as the tool's schema does (`id` on some
+  tools, `task_id` on others).
+- Agents can no longer write Torque's state directories (CW-20261001-0141).
+  An agent running as the operator's uid could otherwise rewrite Torque's
+  database or profiles to grant itself authority. Every agent launch
+  write-protects the following, through go-agent-wrapper's and agentkit's
+  `ProtectedPaths` (go-sandbox v0.5.1, which also stops an agent from
+  renaming them aside):
+  - the data, state and config dirs;
+  - the directories of the main and queue databases;
+  - the directory of the profiles file the daemon reads;
+  - the session workspaces root and `~/.torque`;
+  - the agent and end-agent template dirs when overridden.
+
+  A missing one is created 0700 first, and startup logs each as protected
+  or skipped. It stops direct writes only: `~/.bashrc`, systemd user units,
+  git hooks and `systemd-run --user` remain same-uid routes.
+  - It fails closed. Each of these refuses every agent launch, logged at
+    startup:
+    - a sandbox backend that cannot write-protect;
+    - nothing left to protect;
+    - a directory reached through a symlink the agent could re-point;
+    - a directory that is, or contains, a shared one (`/`, the home
+      directory or an ancestor, `/tmp`, `/var/tmp`, the temp dir), such as
+      `TORQUE_DB_PATH=/tmp/x.db`, which would make it read-only to every
+      agent.
+
+    An ACP launch is refused ("ACP sandbox protect not yet supported
+    (CW-20261001-0162)").
+  - While it is on, the planted `mux` server proxies no `torque` server.
+    Inside the sandbox `torque mcp` cannot write its database. The
+    session's loopback carries the task's Torque tools, and the kickoff says
+    so. Orchestrator-class roles keep the full surface on their loopback,
+    where the tools are `mcp__loopback__torque_*` instead of
+    `mcp__mux__torque_*` and take an explicit `task_id`; their kickoff says
+    so. Workers lose cross-task reads until CW-20261001-0199.
+  - A codex launch that positively selects codex's own sandbox (`read-only`
+    or `workspace-write`: the planted default or `--sandbox`, `-c
+    sandbox_mode=`, `--full-auto`) is not wrapped: codex's sandbox cannot
+    start inside Torque's, and it already confines writes. The skip fails
+    closed: `--yolo`, `--dangerously-bypass-approvals-and-sandbox`, any other
+    sandbox mode, and any argument bearing on the sandbox or permissions
+    that Torque does not read (`default_permissions`,
+    `sandbox_workspace_write.*`, `--add-dir`, `--profile`) leave the launch
+    wrapped.
+  - Under the protection, nested sandboxes (bubblewrap- or `unshare`-based
+    tests, Chromium's sandbox) cannot start.
+  - The profiles watcher reloads only while the profiles directory is still
+    the one protected at startup, by device and inode.
+  - `TORQUE_SANDBOX_PROTECT=0` turns it off, with a startup warning that
+    shows the value. An unrecognised value (`disable`) leaves it on and
+    warns.
+- `torque mcp` no longer sweeps orphaned sessions at startup; only
+  `torque serve`, which owns them, does. A `torque mcp` in another PID
+  namespace saw every live session as dead (CW-20261001-0141).
+- The git Torque runs itself, outside any sandbox, in repositories agents
+  can write no longer runs commands their config plants (CW-20261001-0141):
+  - Every daemon git carries `core.fsmonitor=false`,
+    `core.hooksPath=/dev/null`, `protocol.ext.allow=never` and
+    `submodule.recurse=false`.
+  - The repository's own filter drivers are emptied.
+  - The per-run worktree's best-effort `fetch origin` is skipped when the
+    repository's config sets a credential helper, `core.sshCommand`,
+    `core.gitProxy`, a remote's `uploadpack`, a URL rewrite or a protocol
+    policy.
 - A planted OpenCode boot dir's `opencode.json`, which carries the MCP
   servers' environment (the `mux` entry's env included), is written owner-only
   (0600, go-providers v0.36.0). It was 0644. The boot dir itself was already

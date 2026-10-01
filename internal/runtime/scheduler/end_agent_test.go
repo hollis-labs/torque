@@ -308,6 +308,162 @@ func TestEndAgent_SuccessLeavesNoFailureComment(t *testing.T) {
 	assert.Empty(t, comments, "no system-failure comment on success path")
 }
 
+// CW-20261001-0195: an end-agent run that ends `done` without auditing its
+// target (a reviewer that answered with a question and made no tool calls)
+// leaves the target in `review` with nothing to show it. The signal is the
+// absence of an end-agent comment on the target since the end-agent was
+// created, matched on the stored AUTHOR: the loopback stores it as given
+// (`[system/end-agent]`), mux caller-suffixed (`[system/end-agent]-6a380d1f`),
+// and the suffixed audit comments' content carries no prefix.
+const endAgentMuxAuthor = scheduler.EndAgentAuthor + "-6a380d1f"
+
+// finishEndAgent seeds a target in the given status and an end-agent task
+// for it, lets arrange add what the "reviewer" left behind, then ends the
+// end-agent run `done` through the lifecycle. It returns the target's
+// comments afterwards.
+func finishEndAgent(t *testing.T, id, targetStatus string, arrange func(store *sqlstore.Store, target, endAgent *sqlstore.TaskRecord)) []sqlstore.CommentRecord {
+	t.Helper()
+	store := setupEndAgentStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	lm := scheduler.NewLifecycleManager(store, bus)
+
+	target := &sqlstore.TaskRecord{
+		ID: "CW-TARGET-" + id, Title: "executor task", Status: targetStatus,
+		Executor: "cli", AgentProfile: "torque-backend", Kind: "agent",
+	}
+	require.NoError(t, store.CreateTask(target))
+	endAgent := &sqlstore.TaskRecord{
+		ID: "CW-ENDAGENT-" + id, Title: "end-agent: " + target.ID, Status: "doing",
+		Executor: "cli", AgentProfile: scheduler.EndAgentProfile,
+		Kind: "internal", OnDone: "close",
+		ParentID: sql.NullString{String: target.ID, Valid: true},
+		Metadata: sql.NullString{String: `{"end_agent":{"template":"<embedded>","target_task_id":"` + target.ID + `"}}`, Valid: true},
+	}
+	require.NoError(t, store.CreateTask(endAgent))
+	if arrange != nil {
+		arrange(store, target, endAgent)
+	}
+
+	require.NoError(t, lm.HandleResult(endAgent.ID, 1, &executor.ExecutionResult{Status: "done"}))
+	post, err := store.GetTask(endAgent.ID)
+	require.NoError(t, err)
+	require.Equal(t, "done", post.Status)
+
+	comments, err := store.ListComments(target.ID)
+	require.NoError(t, err)
+	return comments
+}
+
+func addComment(t *testing.T, store *sqlstore.Store, taskID, author, content string) {
+	t.Helper()
+	require.NoError(t, store.AddComment(&sqlstore.CommentRecord{EntityID: taskID, Author: author, Content: content}))
+}
+
+func TestEndAgent_SkippedAuditIsFlaggedOnTheTarget(t *testing.T) {
+	comments := finishEndAgent(t, "SKIP", "review", func(store *sqlstore.Store, target, _ *sqlstore.TaskRecord) {
+		// What the worker and the operator left: not the end-agent's.
+		addComment(t, store, target.ID, "orch-torque-d65ca734", "please review")
+		addComment(t, store, target.ID, "session-3a0a5750", "done, see PR")
+	})
+	require.Len(t, comments, 3, "the two seeded comments and one flag")
+	flag := comments[2]
+	assert.Equal(t, scheduler.EndAgentAuthor, flag.Author)
+	assert.True(t, strings.HasPrefix(flag.Content, scheduler.EndAgentAuthor+" CW-ENDAGENT-SKIP finished without recording an audit"), flag.Content)
+	assert.Contains(t, flag.Content, "target stays at `review`")
+	assert.Contains(t, flag.Content, "human follow-up required")
+}
+
+// Both stored author shapes are an audit: a clean audit is never flagged.
+func TestEndAgent_AuditCommentInEitherAuthorShapeIsNotFlagged(t *testing.T) {
+	for _, tc := range []struct{ name, author, content string }{
+		{"loopback, stored as given", scheduler.EndAgentAuthor, "Audit complete — 4 verified, 0 patched, 0 advisory, 0 follow-ups filed, 0 needs-human-follow-up."},
+		{"mux, caller-suffixed, no prefix in the content", endAgentMuxAuthor, "Audit complete — 4 verified, 0 patched, 0 advisory, 0 follow-ups filed, 1 needs-human-follow-up. Task remains in review."},
+		{"mux, a finding comment", endAgentMuxAuthor, "Audit miss (check 7 — work_completion): the task asked for a Step 3 comment."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			comments := finishEndAgent(t, "AUDITED", "review", func(store *sqlstore.Store, target, _ *sqlstore.TaskRecord) {
+				addComment(t, store, target.ID, tc.author, tc.content)
+			})
+			require.Len(t, comments, 1, "only the audit comment: nothing flagged")
+			assert.Equal(t, tc.author, comments[0].Author)
+		})
+	}
+}
+
+// The other clean ends: the end-agent closed the target out, or moved it
+// away from review, or tagged it.
+func TestEndAgent_ClosedOrMovedTargetIsNotFlagged(t *testing.T) {
+	t.Run("agent-closed tag, target still in review", func(t *testing.T) {
+		comments := finishEndAgent(t, "TAGGED", "review", func(store *sqlstore.Store, target, _ *sqlstore.TaskRecord) {
+			require.NoError(t, store.CreateTagIfNotExists(&sqlstore.TagRecord{Slug: "agent-closed", Name: "agent-closed"}))
+			require.NoError(t, store.SetTaskTags(target.ID, []string{"agent-closed"}))
+		})
+		assert.Empty(t, comments)
+	})
+	for _, status := range []string{"done", "blocked", "todo"} {
+		t.Run("target moved to "+status, func(t *testing.T) {
+			comments := finishEndAgent(t, "MOVED-"+status, "review", func(store *sqlstore.Store, target, _ *sqlstore.TaskRecord) {
+				require.NoError(t, store.DB().QueryRow(`UPDATE tasks SET status = ? WHERE id = ? RETURNING id`, status, target.ID).Scan(new(string)))
+			})
+			assert.Empty(t, comments)
+		})
+	}
+}
+
+// An audit comment from an earlier review round does not satisfy a later
+// end-agent: only comments at or after its creation count.
+func TestEndAgent_AuditCommentFromAnEarlierRoundDoesNotCount(t *testing.T) {
+	comments := finishEndAgent(t, "ROUND2", "review", func(store *sqlstore.Store, target, _ *sqlstore.TaskRecord) {
+		addComment(t, store, target.ID, endAgentMuxAuthor, "Audit complete — round one.")
+		_, err := store.DB().Exec(`UPDATE comments SET created_at = datetime('now', '-2 hours') WHERE entity_id = ?`, target.ID)
+		require.NoError(t, err)
+	})
+	require.Len(t, comments, 2)
+	assert.Equal(t, scheduler.EndAgentAuthor, comments[1].Author)
+	assert.Contains(t, comments[1].Content, "finished without recording an audit")
+}
+
+// A target is flagged once: the flag is itself an end-agent comment.
+func TestEndAgent_SkippedAuditIsFlaggedOnce(t *testing.T) {
+	store := setupEndAgentStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	lm := scheduler.NewLifecycleManager(store, bus)
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: "CW-TARGET-ONCE", Title: "t", Status: "review", Executor: "cli", Kind: "agent"}))
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-ENDAGENT-ONCE", Title: "end-agent", Status: "doing", Executor: "cli", Kind: "internal", OnDone: "close",
+		AgentProfile: scheduler.EndAgentProfile,
+		ParentID:     sql.NullString{String: "CW-TARGET-ONCE", Valid: true},
+		Metadata:     sql.NullString{String: `{"end_agent":{"target_task_id":"CW-TARGET-ONCE"}}`, Valid: true},
+	}))
+	for i := 0; i < 2; i++ {
+		require.NoError(t, lm.HandleResult("CW-ENDAGENT-ONCE", int64(i+1), &executor.ExecutionResult{Status: "done"}))
+	}
+	comments, err := store.ListComments("CW-TARGET-ONCE")
+	require.NoError(t, err)
+	assert.Len(t, comments, 1)
+}
+
+// A done internal task that is not an end-agent (no end_agent metadata) is
+// never checked, and neither is a failed or blocked end-agent (that path has
+// its own failure comment).
+func TestEndAgent_AuditCheckOnlyForADoneEndAgent(t *testing.T) {
+	store := setupEndAgentStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	lm := scheduler.NewLifecycleManager(store, bus)
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: "CW-TARGET-OTHER", Title: "t", Status: "review", Executor: "cli", Kind: "agent"}))
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-INTERNAL-OTHER", Title: "some internal task", Status: "doing", Executor: "cli", Kind: "internal", OnDone: "close",
+		ParentID: sql.NullString{String: "CW-TARGET-OTHER", Valid: true},
+	}))
+	require.NoError(t, lm.HandleResult("CW-INTERNAL-OTHER", 1, &executor.ExecutionResult{Status: "done"}))
+	comments, err := store.ListComments("CW-TARGET-OTHER")
+	require.NoError(t, err)
+	assert.Empty(t, comments, "an internal task without end_agent metadata is not audited")
+}
+
 // CW-20260519-0081: when the end-agent enqueue cannot be persisted, the
 // failure must be OBSERVABLE — a `[system/end-agent] failed to enqueue`
 // comment on the target plus an `end_agent_enqueue_failed` run_event — so the
