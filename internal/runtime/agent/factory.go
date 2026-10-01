@@ -2,199 +2,194 @@ package agent
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/hollis-labs/agentkit/agentruntime/runtimebind"
 	"github.com/hollis-labs/agentkit/agentsessions"
+	"github.com/hollis-labs/go-agent-wrapper/adapters"
+	"github.com/hollis-labs/go-agent-wrapper/launch"
 	"github.com/hollis-labs/go-providers/provider"
+	"github.com/hollis-labs/go-providers/registry"
+
 	"github.com/hollis-labs/torque/internal/config"
 )
 
-// adapterFor maps a profile's provider name + the resolved RuntimeKind
-// to a go-providers CLIAdapter and the agentsessions Runtime
-// capabilities the lib should declare. The RuntimeKind selects which
-// constructor variant fires (e.g. claude PTY vs Bare; codex
-// subprocess vs app-server) and the capability set the Runtime
-// publishes (which the lib reads to pick the session implementation).
-//
-// profileName is the torque agent-profile lookup key. Most adapters
-// ignore it; OpencodeAdapter requires it because `opencode run`
-// dispatches via `--agent <name>`, and by convention the torque
-// profile name is the opencode agent name.
-//
-// Per-provider runtime-kind support:
-//
-//   - claude:      Retired (bare + PTY removed 2026-05-16). Use
-//     claude-code for the streaming-stdio claude path.
-//   - claude-code: StreamingStdio only. Other kinds error — claude-code
-//     is a long-lived NDJSON-over-stdin shape, not a
-//     print-mode subprocess.
-//   - codex:       Subprocess (print-mode), JsonRpcStdio (app-server).
-//     The default per selectRuntimeKind is JsonRpcStdio;
-//     operators can opt back to print-mode by setting
-//     profile.RuntimeKind: subprocess.
-//   - opencode:    Subprocess (default, `opencode run --agent <name>`)
-//     or ServeHTTP (opt-in via profile.RuntimeKind=
-//     serve-http; spawns `opencode serve` and attaches
-//     via the child's HTTP API for long-lived multi-
-//     turn workers). The default per selectRuntimeKind
-//     stays Subprocess for back-compat; operators flip
-//     to ServeHTTP per-profile.
-//   - gemini:      Unsupported (PTY adapter removed in go-providers
-//     v0.12.0).
-//   - copilot:     Unsupported (same as gemini).
-func adapterFor(profile config.AgentProfile, profileName string, kind RuntimeKind) (provider.CLIAdapter, agentsessions.Capabilities, error) {
-	baseCaps := capabilitiesForRuntimeKind(kind)
+// selectedRuntime is a profile's runtime as Boot launches it: the
+// go-providers adapter Torque configured from the profile, the
+// go-agent-wrapper adapter launch.Select returned for it, and the
+// agentsessions capabilities the lib reads to pick the session shape.
+type selectedRuntime struct {
+	// cli is the configured go-providers adapter. bootLegacy drives it
+	// directly; providerplant plants the boot dir from it on both paths.
+	cli provider.CLIAdapter
+	// wrapper is launch.Select's adapter for the same (runtime, mode),
+	// built around cli. bootWrapper hands it to wrapper.Config.Adapter.
+	wrapper adapters.Adapter
+	caps    agentsessions.Capabilities
+}
 
+// selectRuntime resolves the profile's provider through the go-providers
+// runtime registry and launches it with go-agent-wrapper's launch.Select
+// (CW-20260930-0134). It replaces the per-provider constructor switch:
+//
+//  1. The provider must name a registry runtime (an id such as `codex`, or
+//     an alias such as `claude-code` or `agy`). The bare `claude` name stays
+//     retired (see below).
+//  2. The mode is the resolved RuntimeKind, passed to Select explicitly so
+//     a registry default can never change what an existing profile runs
+//     (Codex's registry default is jsonrpc-stdio, Torque's too, but the
+//     choice stays Torque's).
+//  3. go-providers' provider.NewAdapter builds the adapter in that mode's
+//     shape, the constructor table agentkit's planting path shares, and
+//     the profile's options are set on it (applyProfileOptions).
+//  4. launch.Select validates the pair against the registry and the
+//     wrapper's closed factory set and returns the wrapper adapter. A mode
+//     it does not drive, Claude's PTY TUI for one, is refused here, before
+//     anything is planted.
+//
+// ACP modes (Copilot and Pi have no other) are refused with a reason:
+// Torque's boot plants a boot dir (task bundle, loopback MCP) that ACP
+// sessions have no slot for yet, and SendTurn has no ACP delivery
+// (CW-20261001-0097).
+//
+// profileName is the torque agent-profile lookup key. OpenCode needs it:
+// `opencode run` dispatches via `--agent <name>`, and by convention the
+// torque profile name is the opencode agent name.
+func selectRuntime(profile config.AgentProfile, profileName string, kind RuntimeKind) (selectedRuntime, error) {
 	switch profile.Provider {
+	case "":
+		return selectedRuntime{}, fmt.Errorf(
+			"profile has empty provider; agent.Boot requires a runtime from the go-providers registry (%s)", launchableProviderList())
 	case "claude":
 		// Bare-mode claude (subprocess-per-turn) and claude PTY were
 		// retired 2026-05-16. Bare mode's unsolved problem was the
 		// OAuth/"Not logged in" auth gap; claude-code (streaming-stdio)
-		// does not have it and is the supported claude path. PTY driving
-		// was never proven for the dogfooded providers.
-		return nil, agentsessions.Capabilities{}, fmt.Errorf(
+		// does not have it and is the supported claude path.
+		return selectedRuntime{}, fmt.Errorf(
 			"bare claude provider retired 2026-05-16; use provider=claude-code (streaming-stdio)")
-
-	case "claude-code":
-		// StreamingStdio long-lived NDJSON-over-stdin runtime (Anthropic's
-		// "Streaming Input Mode (Default & Recommended)" per the Agent SDK
-		// docs). `claude -p --input-format stream-json --output-format
-		// stream-json --verbose` — one long-lived process, KV-cache reused
-		// across turns until stdin EOF. The go-agent-sessions streamingStdio
-		// runtime owns the stdin loop, attach fan-out, and session-id handling.
-		//
-		// Reference shape: agent-mux v005-07 `newClaudeCodeRuntime`
-		// (internal/app/service.go:171-181) using gop.NewClaudeAdapterStreamingStdio()
-		// + Caps.StreamingStdio: true. Substrate unblocked since
-		// go-providers v0.17.0 + go-agent-sessions v0.9.x.
-		//
-		// Critically: does NOT pass `--bare`. Claude's normal config
-		// discovery applies — cwd-local `.claude/settings.json` (planted by
-		// the same BootDirSpec the bare path uses, includes apiKeyHelper if
-		// threaded) AND operator-global `~/.claude.json` keychain auth are
-		// both honored. This sidesteps the bare-mode "Not logged in" gap
-		// surfaced by CW-20260513-0015 smoke 2026-05-12.
-		if kind != RuntimeKindStreamingStdio {
-			return nil, agentsessions.Capabilities{}, fmt.Errorf(
-				"claude-code provider only supports runtime kind streaming-stdio; got %q", string(kind))
-		}
-		caps := baseCaps
-		// CheckpointResume: false — claude `--resume <id>` semantics differ
-		// in streaming mode (re-injects context every turn vs KV-cache
-		// reuse). Conservative default; revisit when the long-lived resume
-		// path is empirically validated.
-		if profileIsDevMode(profile) {
-			// Dev profiles carry --dangerously-skip-permissions; the dev
-			// adapter sets SkipPermissions, which go-providers plants as
-			// permissions.defaultMode=bypassPermissions. Leave PermissionMode
-			// unset so that back-compat path stands.
-			return provider.NewClaudeAdapterDevStreamingStdio(), caps, nil
-		}
-		// Thread the profile's permission mode into the adapter. Since
-		// go-providers v0.19.0, ClaudeAdapter.PermissionMode plants
-		// permissions.defaultMode directly into the .claude/settings.json —
-		// no post-Plant settings.json rewrite needed (CW-20260517-0038).
-		claudeAdapter := provider.NewClaudeAdapterStreamingStdio()
-		claudeAdapter.PermissionMode = string(profile.ResolvedPermissionMode())
-		return claudeAdapter, caps, nil
-
-	case "codex":
-		// codex supports Subprocess (print-mode: `codex exec`) and
-		// JsonRpcStdio (app-server: `codex app-server`). go-providers
-		// v0.17.1 ships `NewCodexAdapterAppServer()`; the underlying
-		// `codex app-server` process speaks JSON-RPC 2.0 over stdio
-		// with thread persistence in memory until 30-min idle.
-		// `thread/start` + `thread/resume` are JSON-RPC methods, not
-		// CLI flags — so per-turn params are intentionally dropped from
-		// BuildArgs. Turn delivery in JsonRpcStdio mode goes through
-		// SendTurn (in this package), NOT mgr.SendInput (which is the
-		// JSON-RPC raw-bytes escape hatch).
-		switch kind {
-		case RuntimeKindJsonRpcStdio:
-			appServer := provider.NewCodexAdapterAppServer()
-			policy, err := runtimebind.ResolveCodexPolicy(runtimebind.CodexPolicyRequest{
-				Runtime: runtimes.ModeJSONRPCStdio,
-				Bypass:  profile.ResolvedPermissionMode() == config.PermissionModeBypass,
-			})
-			if err != nil {
-				return nil, agentsessions.Capabilities{}, fmt.Errorf("resolve codex policy: %w", err)
-			}
-			if profile.ResolvedPermissionMode() == config.PermissionModeBypass {
-				appServer.SandboxMode = policy.SandboxMode
-			}
-			return appServer, baseCaps, nil
-		case RuntimeKindSubprocess, "":
-			return provider.NewCodexAdapter(), baseCaps, nil
-		default:
-			return nil, agentsessions.Capabilities{}, fmt.Errorf(
-				"codex provider does not support runtime kind %q; supported: subprocess, jsonrpc-stdio", string(kind))
-		}
-
-	case "gemini":
-		// gemini PTY adapter dropped in go-providers v0.12.0 (unused PTY-only
-		// adapter cleanup). Profiles wired to "gemini" must migrate to a
-		// supported provider or restore the adapter in a future go-providers
-		// release. Treated here as a permanent-error provider.
-		return nil, agentsessions.Capabilities{}, fmt.Errorf(
-			"gemini provider not supported (PTY adapter removed in go-providers v0.12.0); migrate the profile to a supported provider")
-
-	case "copilot":
-		// copilot PTY adapter dropped in go-providers v0.12.0 (same as
-		// gemini). See comment above.
-		return nil, agentsessions.Capabilities{}, fmt.Errorf(
-			"copilot provider not supported (PTY adapter removed in go-providers v0.12.0); migrate the profile to a supported provider")
-
-	case "opencode":
-		if profileName == "" {
-			return nil, agentsessions.Capabilities{}, fmt.Errorf(
-				"opencode provider requires Options.AgentProfile to be set (maps to opencode --agent)")
-		}
-		switch kind {
-		case RuntimeKindSubprocess, "":
-			// Subprocess (default): one-shot `opencode run --agent <name>`
-			// per turn. Suitable for bounded mechanical tasks
-			// (--no-pipeline). For V2-pipeline multi-turn workers use
-			// the ServeHTTP runtime instead.
-			adapter := provider.NewOpencodeAdapter()
-			adapter.Agent = profileName
-			// Thread profile.Model through so OpencodeAdapter.BuildArgs
-			// emits `--model <X>` BEFORE the positional prompt — opencode
-			// requires the model flag to precede the message arg. The
-			// generic `--model` suffix in agent.Boot's BuildArgs wrapper
-			// is suppressed for opencode (see boot.go's skipModelSuffix
-			// branch); without this assignment opencode would launch
-			// with whatever default the agent's opencode.json declares,
-			// ignoring the profile's Model field entirely.
-			adapter.Model = profile.Model
-			return adapter, baseCaps, nil
-		case RuntimeKindServeHTTP:
-			// Long-lived: spawn `opencode serve --port 0 --hostname
-			// 127.0.0.1`; go-agent-sessions' serveHttpSession (v0.10.0)
-			// captures the bound port from stdout, then attaches via
-			// the child's HTTP API for session + message endpoints +
-			// SSE streaming. The adapter (go-providers v0.23.0's
-			// NewOpencodeAdapterServeHTTP) only owns the argv shape;
-			// the I/O loop, attach fan-out, and session-id handling
-			// live in the consumer runtime.
-			adapter := provider.NewOpencodeAdapterServeHTTP()
-			adapter.Agent = profileName
-			adapter.Model = profile.Model
-			return adapter, baseCaps, nil
-		default:
-			return nil, agentsessions.Capabilities{}, fmt.Errorf(
-				"opencode provider does not support runtime kind %q; supported: subprocess, serve-http", string(kind))
-		}
-
-	case "":
-		return nil, agentsessions.Capabilities{}, fmt.Errorf(
-			"profile has empty provider; agent.Boot requires a go-providers-known provider name (claude|claude-code|codex|gemini|copilot|opencode)")
-
-	default:
-		return nil, agentsessions.Capabilities{}, fmt.Errorf(
-			"unknown provider %q; agent.Boot accepts: claude, claude-code, codex, gemini, copilot, opencode",
-			profile.Provider)
 	}
+	desc, ok := registry.Lookup(profile.Provider)
+	if !ok {
+		return selectedRuntime{}, fmt.Errorf(
+			"unknown provider %q; agent.Boot accepts the go-providers registry runtimes: %s", profile.Provider, launchableProviderList())
+	}
+	mode := kind.Mode()
+	if mode == "" {
+		mode = desc.DefaultMode
+	}
+	if mode.ACP() {
+		return selectedRuntime{}, fmt.Errorf(
+			"%s runs over ACP (%s) and Torque does not launch ACP sessions yet (CW-20261001-0097); its native modes: %s",
+			desc.ID, mode, modeList(desc.NativeModes()))
+	}
+	if !desc.Supports(mode) {
+		return selectedRuntime{}, fmt.Errorf(
+			"%s provider does not support runtime kind %q; supported: %s", profile.Provider, string(mode), modeList(desc.NativeModes()))
+	}
+	cli, err := provider.NewAdapter(desc.ID, mode)
+	if err != nil {
+		return selectedRuntime{}, fmt.Errorf("%s provider, runtime kind %q: %w", profile.Provider, string(mode), err)
+	}
+	if err := applyProfileOptions(cli, profile, profileName, mode); err != nil {
+		return selectedRuntime{}, err
+	}
+	launched, err := launch.Select(launch.Selection{
+		Runtime:    string(desc.ID),
+		Mode:       mode,
+		CLIAdapter: cli,
+	})
+	if err != nil {
+		return selectedRuntime{}, fmt.Errorf("%s provider, runtime kind %q: %w", profile.Provider, string(mode), err)
+	}
+	return selectedRuntime{cli: cli, wrapper: launched, caps: capabilitiesForRuntimeKind(RuntimeKind(mode))}, nil
+}
+
+// adapterFor returns the configured go-providers adapter and capabilities
+// for the profile's runtime; see selectRuntime.
+func adapterFor(profile config.AgentProfile, profileName string, kind RuntimeKind) (provider.CLIAdapter, agentsessions.Capabilities, error) {
+	sel, err := selectRuntime(profile, profileName, kind)
+	if err != nil {
+		return nil, agentsessions.Capabilities{}, err
+	}
+	return sel.cli, sel.caps, nil
+}
+
+// applyProfileOptions sets the profile's options on the adapter
+// provider.NewAdapter built. These are the fields Torque owned before the
+// registry, unchanged in meaning:
+//
+//   - Claude: --dangerously-skip-permissions in profile.Args selects the
+//     developer variant (SkipPermissions, which go-providers plants as
+//     permissions.defaultMode=bypassPermissions); otherwise the resolved
+//     permission mode is planted into .claude/settings.json
+//     (CW-20260517-0038).
+//   - Codex app-server: an operator's explicit bypassPermissions disables
+//     codex's OS sandbox (danger-full-access) so the MCP loopback is
+//     reachable; nothing else changes the sandbox. The exec path is left as
+//     it was.
+//   - OpenCode: `--agent <profile name>` and the profile's model, which
+//     opencode needs before the positional prompt.
+//   - Antigravity (agy): the profile's model, and the resolved permission
+//     mode as agy's headless posture (bypassPermissions → bypass,
+//     acceptEdits → accept-edits, plan → plan, default → agy's own
+//     auto-deny).
+func applyProfileOptions(cli provider.CLIAdapter, profile config.AgentProfile, profileName string, mode runtimes.Mode) error {
+	switch a := cli.(type) {
+	case *provider.ClaudeAdapter:
+		if profileIsDevMode(profile) {
+			a.SkipPermissions = true
+			return nil
+		}
+		a.PermissionMode = string(profile.ResolvedPermissionMode())
+	case *provider.CodexAdapter:
+		if mode != runtimes.ModeJSONRPCStdio || profile.ResolvedPermissionMode() != config.PermissionModeBypass {
+			return nil
+		}
+		policy, err := runtimebind.ResolveCodexPolicy(runtimebind.CodexPolicyRequest{Runtime: mode, Bypass: true})
+		if err != nil {
+			return fmt.Errorf("resolve codex policy: %w", err)
+		}
+		a.SandboxMode = policy.SandboxMode
+	case *provider.OpencodeAdapter:
+		if profileName == "" {
+			return fmt.Errorf("opencode provider requires Options.AgentProfile to be set (maps to opencode --agent)")
+		}
+		a.Agent = profileName
+		// Model goes on the adapter so BuildArgs emits `--model <X>` before
+		// the positional prompt; boot.go's generic --model suffix skips
+		// opencode for that reason (skipModelSuffix).
+		a.Model = profile.Model
+	case *provider.AntigravityAdapter:
+		a.Model = profile.Model
+		a.Permission = antigravityPermission(profile.ResolvedPermissionMode())
+	}
+	return nil
+}
+
+// antigravityPermission maps a profile permission mode onto agy's posture
+// vocabulary (go-providers AntigravityAdapter.Permission).
+func antigravityPermission(mode config.PermissionMode) string {
+	switch mode {
+	case config.PermissionModeBypass:
+		return "bypass"
+	case config.PermissionModeAcceptEdits:
+		return "accept-edits"
+	case config.PermissionModePlan:
+		return "plan"
+	default:
+		return ""
+	}
+}
+
+func launchableProviderList() string { return strings.Join(config.LaunchableProviders(), ", ") }
+
+func modeList(modes []runtimes.Mode) string {
+	out := make([]string, len(modes))
+	for i, m := range modes {
+		out[i] = string(m)
+	}
+	return strings.Join(out, ", ")
 }
 
 // shouldDropBootDirExtraArgs reports whether bootLegacy must drop the

@@ -85,10 +85,11 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		return nil, fmt.Errorf("%w: runtime kind: %v", ErrAdapterNotFound, err)
 	}
 
-	cliAdapter, caps, err := adapterFor(profile, agentProfileName, runtimeKind)
+	selected, err := selectRuntime(profile, agentProfileName, runtimeKind)
 	if err != nil {
 		return nil, fmt.Errorf("%w: adapter: %v", ErrAdapterNotFound, err)
 	}
+	cliAdapter, caps := selected.cli, selected.caps
 
 	// Session ID + role (used for SessionMeta + boot.md content). Role
 	// precedence: explicit Options.Role > LaunchProfile.Role > legacy
@@ -385,6 +386,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		agentProfileName:  agentProfileName,
 		runtimeKind:       runtimeKind,
 		cliAdapter:        cliAdapter,
+		wrapperAdapter:    selected.wrapper,
 		caps:              caps,
 		sessID:            sessID,
 		role:              role,
@@ -435,6 +437,7 @@ type plantedBoot struct {
 	agentProfileName  string
 	runtimeKind       RuntimeKind
 	cliAdapter        provider.CLIAdapter
+	wrapperAdapter    adapters.Adapter
 	caps              agentsessions.Capabilities
 	sessID            string
 	role              string
@@ -1273,24 +1276,11 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		spawnWorkdir = execution.Bindings.CWD
 	}
 
-	launchMode, err := adaptersLaunchModeFor(runtimeKind)
-	if err != nil {
-		shutdownLoopbackHandle(loopback)
-		return nil, fmt.Errorf("%w: %v", ErrBootFailed, err)
-	}
-	// adapters.Select wraps Torque's already-configured cliAdapter (bare-mode
-	// claude, dev-mode variants, permission mode, apiKeyHelper -- adapterFor
-	// is still authoritative for all of it) into the shape wrapper.Config.
-	// Adapter needs, without reimplementing per-provider adapter construction.
-	wrapperAdapter, err := adapters.Select(adapters.Selection{
-		Provider:   adapters.Provider(runtimeIDFor(profile.Provider)),
-		LaunchMode: launchMode,
-		CLIAdapter: cliAdapter,
-	})
-	if err != nil {
-		shutdownLoopbackHandle(loopback)
-		return nil, fmt.Errorf("%w: select wrapper adapter: %v", ErrBootFailed, err)
-	}
+	// launch.Select already built and validated the wrapper adapter for
+	// this (runtime, mode) around Torque's configured cliAdapter, in Boot's
+	// shared prefix (selectRuntime), so a pair the wrapper does not drive
+	// fails there, before anything is planted.
+	wrapperAdapter := pb.wrapperAdapter
 
 	// Resume preset: same contract as the legacy path (boot.go's own
 	// ModeResume / ProviderSessionIDOverride handling).
@@ -1603,22 +1593,6 @@ func mergeCallerEnvIntoPrepared(callerEnv []string, existing map[string]agentlau
 		out[key] = agentlaunch.EnvVar{Value: val, Source: "caller", Precedence: 10}
 	}
 	return out
-}
-
-// adaptersLaunchModeFor maps a bootWrapper-reachable RuntimeKind onto
-// go-agent-wrapper's adapters.LaunchMode. JsonRpcStdio and PTY never reach
-// this function (Boot's dispatch routes them to bootLegacy).
-func adaptersLaunchModeFor(kind RuntimeKind) (adapters.LaunchMode, error) {
-	switch kind {
-	case RuntimeKindStreamingStdio:
-		return adapters.LaunchStreamingStdio, nil
-	case RuntimeKindSubprocess:
-		return adapters.LaunchSubprocessPerTurn, nil
-	case RuntimeKindServeHTTP:
-		return adapters.LaunchServeHTTP, nil
-	default:
-		return "", fmt.Errorf("no go-agent-wrapper launch mode for runtime kind %q", kind)
-	}
 }
 
 // findCheckpoint locates a checkpoint by ID via the store's direct lookup

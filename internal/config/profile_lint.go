@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
 
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
+	"github.com/hollis-labs/go-agent-wrapper/launch"
 	"github.com/hollis-labs/go-providers/registry"
 	"gopkg.in/yaml.v3"
 )
@@ -48,14 +51,30 @@ var apiProviderCatalog = map[string]profileProviderSpec{
 	},
 }
 
-// cliLaunchableProviders are the provider names agent.adapterFor builds an
-// adapter for. Every other runtime in the go-providers registry, and every
-// other alias, lints with the reason Torque cannot launch it yet. The
-// registry-driven wrapper Select (CW-20260930-0134) removes this list.
-var cliLaunchableProviders = map[string]bool{
-	"claude-code": true,
-	"codex":       true,
-	"opencode":    true,
+// LaunchableProviders lists the cli provider names agent.Boot launches:
+// every go-providers registry id and alias whose runtime has a native mode
+// go-agent-wrapper's launch.Select drives (CW-20260930-0134), except the
+// retired bare `claude`. ACP-only runtimes (Copilot, Pi) are left out until
+// Torque launches ACP sessions (CW-20261001-0097).
+func LaunchableProviders() []string {
+	native := map[runtimes.ID]bool{}
+	for _, k := range launch.Supported() {
+		if !k.Mode.ACP() {
+			native[k.Runtime] = true
+		}
+	}
+	var out []string
+	for _, d := range registry.All() {
+		if !native[d.ID] {
+			continue
+		}
+		for _, name := range append([]string{string(d.ID)}, d.Aliases...) {
+			if name != "claude" {
+				out = append(out, name)
+			}
+		}
+	}
+	return out
 }
 
 // profileProviderCatalog is the executor-api vendors plus, for executor
@@ -87,14 +106,14 @@ func buildProfileProviderCatalog() map[string]profileProviderSpec {
 // cliLaunchReason is "" when Torque launches the named runtime, else why not.
 func cliLaunchReason(name string, desc registry.Descriptor) string {
 	switch {
-	case cliLaunchableProviders[name]:
+	case slices.Contains(LaunchableProviders(), name):
 		return ""
 	case name == "claude":
 		return "bare claude provider retired 2026-05-16; use provider=claude-code"
 	case len(desc.NativeModes()) == 0:
-		return fmt.Sprintf("%s is ACP-only; Torque launches ACP runtimes once the registry-driven wrapper Select lands (CW-20260930-0134)", desc.ID)
+		return fmt.Sprintf("%s is ACP-only and Torque does not launch ACP sessions yet (CW-20261001-0097)", desc.ID)
 	default:
-		return fmt.Sprintf("Torque builds %s adapters only under the names claude-code, codex and opencode until CW-20260930-0134", desc.ID)
+		return fmt.Sprintf("Torque has no launch path for %s's native modes", desc.ID)
 	}
 }
 

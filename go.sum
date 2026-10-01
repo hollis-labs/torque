@@ -45,8 +45,8 @@ github.com/hollis-labs/agent-contracts-leaf v0.3.0 h1:tOAbq1y2Qtkk/S81hpSTlE3ZIs
 github.com/hollis-labs/agent-contracts-leaf v0.3.0/go.mod h1:Yp3iEG7I1qHxGL+Ad085RDVP5xUM/dbL0nFxzCAQ9/w=
 github.com/hollis-labs/agentkit v0.12.2 h1:i3OV0YODMlp2TlU9ciLDSWCpDSNt1ongtNishtpxWz8=
 github.com/hollis-labs/agentkit v0.12.2/go.mod h1:qqM7Fi3KX/41iMuGczqrc+bSoUGTqiLvTkmOmsGwsPY=
-github.com/hollis-labs/go-agent-wrapper v0.14.0 h1:wlH6Jsv4TZRG1yN6BSWT62cvzp1kAGekzlsrRv4oy2g=
-github.com/hollis-labs/go-agent-wrapper v0.14.0/go.mod h1:22itKHmoTCOjseR6S807sWFZ+6etwd54gpPInpRNNlc=
+github.com/hollis-labs/go-agent-wrapper v0.15.0 h1:KajcNh6r7r/++nk/5hwIlvE8oyNrI3GZ0Or9g+s8324=
+github.com/hollis-labs/go-agent-wrapper v0.15.0/go.mod h1:vYz+80A/EmY6Z9SdCcSdaVvR9tIJgh4Z8oz7033KqT8=
 github.com/hollis-labs/go-apppaths v0.1.0 h1:LJQv483BhOoizLL4qKwsLcCbM0lQoVrNvksJ1thycd4=
 github.com/hollis-labs/go-apppaths v0.1.0/go.mod h1:b3gOdAFgSYY9ZT7VUooAczFdb6o0C2xSGQa7ktcyw30=
 github.com/hollis-labs/go-harness-filters v0.1.1 h1:uTAF+ejKhje+rXMEOwTHsO7ig2fCAQnkANXgZBAyYZA=
