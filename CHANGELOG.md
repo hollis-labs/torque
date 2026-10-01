@@ -27,6 +27,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   initial project status on create; relative artifact paths resolve from the
   task workdir; session env and meta exposed over MCP.
 - Scheduler tests updated for `CancelCauseFunc`.
+- Long-lived run verification grades every runtime by one rule: commits pass;
+  an uncommitted diff (not a Bash call) is "edits but no commits"; a clean
+  worktree passes when the worker made tool calls or left comments or
+  artifacts on its task. Read-only claude-code runs are no longer graded
+  blocked or failed.
 
 ## [0.3.0] - 2026-05-17
 

@@ -997,3 +997,24 @@ func (s *deadlineFakeSession) Health() agentsessions.HealthStatus {
 func (s *deadlineFakeSession) CheckpointHints() (agentsessions.CheckpointHint, bool) {
 	return agentsessions.CheckpointHint{}, false
 }
+
+// TestTaskOutputCount pins the baseline the long-lived executor hands the
+// verifier: comments plus artifacts on the task, and ok=false when there is
+// no store to ask (CW-20261001-0013).
+func TestTaskOutputCount(t *testing.T) {
+	store := newTestStoreForLongLived(t)
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: "CW-OUTPUT", Title: "t", Status: "doing", Kind: "agent"}))
+
+	n, ok := taskOutputCount(store, "CW-OUTPUT")
+	require.True(t, ok)
+	assert.Equal(t, 0, n)
+
+	require.NoError(t, store.AddComment(&sqlstore.CommentRecord{EntityID: "CW-OUTPUT", Author: "agent", Content: "Summary: read-only review"}))
+	require.NoError(t, store.CreateArtifact(&sqlstore.ArtifactRecord{TaskID: "CW-OUTPUT", Type: "inline", Content: "report"}))
+	n, ok = taskOutputCount(store, "CW-OUTPUT")
+	require.True(t, ok)
+	assert.Equal(t, 2, n)
+
+	_, ok = taskOutputCount(nil, "CW-OUTPUT")
+	assert.False(t, ok)
+}

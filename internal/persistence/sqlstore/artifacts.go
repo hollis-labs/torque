@@ -99,6 +99,18 @@ func (s *Store) ListArtifacts(taskID string) ([]ArtifactRecord, error) {
 	return artifacts, rows.Err()
 }
 
+// CountArtifacts returns how many artifacts a task has, without loading
+// their content. Read-only counterpart to ListArtifacts; the long-lived
+// executor takes it before and after a run to tell whether the worker left
+// anything on its task (CW-20261001-0013).
+func (s *Store) CountArtifacts(taskID string) (int, error) {
+	var n int
+	if err := s.ReadDB().QueryRow(`SELECT COUNT(*) FROM artifacts WHERE task_id = ?`, taskID).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // UpdateArtifact patches mutable artifact columns by ID and returns the fresh
 // row. ID, owning task and creation timestamp are immutable.
 func (s *Store) UpdateArtifact(id int64, patch ArtifactPatch) (*ArtifactRecord, error) {
