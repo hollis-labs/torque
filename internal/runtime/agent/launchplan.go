@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
+	"github.com/hollis-labs/go-providers/registry"
 	"strings"
 
 	"github.com/hollis-labs/torque/internal/config"
@@ -14,16 +15,17 @@ import (
 // translation helpers boot.go still needs to bridge Torque's enums into
 // the shared agentlaunch contract.
 
-// mapProviderID normalizes a Torque provider name to the provider id the
-// agentlaunch matrix recognizes. Torque models the claude streaming-stdio
-// runtime as a distinct provider name ("claude-code") for adapter-factory
-// purposes; the matrix models it as the streaming-stdio runtime of
-// provider "claude". Every other name passes through verbatim.
-func mapProviderID(torqueProvider string) string {
-	if torqueProvider == "claude-code" {
-		return "claude"
+// runtimeIDFor resolves a profile's provider name to the go-providers
+// registry's canonical runtime id, which the launch plan, the matrix and
+// go-agent-wrapper all key on: "claude-code" is an alias of "claude". A name
+// the registry does not know passes through unchanged so the caller's own
+// validation names it. Replaces mapProviderID and adaptersProviderFor, which
+// each kept a copy of the claude-code mapping (CW-20261001-0064).
+func runtimeIDFor(provider string) string {
+	if desc, ok := registry.Lookup(provider); ok {
+		return string(desc.ID)
 	}
-	return torqueProvider
+	return provider
 }
 
 // mapRuntimeKind maps Torque's RuntimeKind onto the runtimes.Mode the
