@@ -54,6 +54,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- A task can no longer be created or updated with an executor this Torque
+  process has not registered: HTTP answers 422 and MCP `arg_invalid`,
+  naming the registered executors (`api`, `cli`, `mock`). An empty executor
+  still means the default, and rows already carrying an unregistered
+  executor stay editable. `torque mcp` validates against the same names as
+  `torque serve`; a process with no executor registry does not validate.
 - Tests can no longer run a real agent CLI. The wrapper-boot e2e fixture was
   found only through `CLAUDE_CLI_PATH`, while the wrapper path resolves a bare
   `claude` through PATH, so `make test` ran the developer's real Claude Code
