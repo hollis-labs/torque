@@ -2,7 +2,6 @@ package agent
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 
 	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
@@ -23,9 +22,16 @@ import (
 // load-time validation would have rejected also falls back to default,
 // never to yolo.
 func permissionPosture(profile config.AgentProfile) gopermission.Mode {
-	switch config.PermissionMode(profile.PermissionMode) {
-	case config.PermissionModeDefault:
-		return gopermission.ModeDefault
+	return permissionModeFor(config.PermissionMode(profile.PermissionMode))
+}
+
+// permissionModeFor maps a profile's permission_mode, which profiles spell in
+// Claude's settings vocabulary, onto go-permission's Mode, the one spelling
+// the launch plan (agentkit v0.17.0) and the approval responders take. A
+// value load-time validation would have rejected falls back to default,
+// never to yolo.
+func permissionModeFor(mode config.PermissionMode) gopermission.Mode {
+	switch mode {
 	case config.PermissionModeAcceptEdits:
 		return gopermission.ModeAcceptEdits
 	case config.PermissionModePlan:
@@ -91,23 +97,18 @@ const codexLoopbackMCPServer = "loopback"
 // traced to the posture that declined it.
 //
 // Outside yolo, an MCP tool call is approved only on the run's loopback
-// server, which a worker needs to report its result. The responder approves
-// MCP tool calls from any server under default and accept-edits, and a
-// session also carries the planted `mux` server, whose tools reach
-// cerberus (ssh, docker) and more; an unattended worker must not run those
-// without a human. Calls to any other server get the responder's own
-// decline.
+// server, which a worker needs to report its result: codexMCPAllow is the
+// responder's allow-list (agentkit's CodexApprovalResponder.MCPAllow,
+// CW-20261001-0124). The posture alone approves MCP tool calls from any
+// server under default and accept-edits, and a session can also carry the
+// planted `mux` server, whose tools reach cerberus (ssh, docker) and more;
+// an unattended worker must not run those without a human. A call to any
+// other server, or one that names none, is declined. plan declines every
+// call and yolo approves every call, as before.
 func codexApprovalHook(sessID string, profile config.AgentProfile) func(string, json.RawMessage) (any, *agentsessions.JsonRpcError) {
-	responder := turn.CodexApprovalResponder{Mode: codexApprovalMode(profile)}
-	declineAll := turn.CodexApprovalResponder{Mode: gopermission.ModePlan}
+	responder := turn.CodexApprovalResponder{Mode: codexApprovalMode(profile), MCPAllow: codexMCPAllow}
 	return func(method string, params json.RawMessage) (any, *agentsessions.JsonRpcError) {
 		out := responder.Decide(method, params)
-		if out.Err == nil && out.Allowed && out.Kind == turn.CodexApprovalMCPToolCall && responder.Mode != gopermission.ModeYolo {
-			if server := codexElicitationServer(params); server != codexLoopbackMCPServer {
-				out = declineAll.Decide(method, params)
-				out.Reason = fmt.Sprintf("MCP tool call on server %q declined: only the run's %q server is approved without a human (mode %s)", server, codexLoopbackMCPServer, responder.Mode)
-			}
-		}
 		if out.Err != nil {
 			log.Printf("agent.Boot: codex request session=%s method=%s refused: %s", sessID, method, out.Err.Message)
 		} else {
@@ -117,12 +118,9 @@ func codexApprovalHook(sessID string, profile config.AgentProfile) func(string, 
 	}
 }
 
-// codexElicitationServer returns the MCP server an elicitation request names,
-// or "" when params carry none.
-func codexElicitationServer(params json.RawMessage) string {
-	var p struct {
-		ServerName string `json:"serverName"`
-	}
-	_ = json.Unmarshal(params, &p)
-	return p.ServerName
-}
+// codexMCPAllow lists the MCP servers whose tool calls a Codex session's
+// default and accept-edits postures approve: the run's own loopback alone.
+// plantsMux keeps mux out of those sessions' config as well, since Codex
+// runs a tool its server marks read-only without asking, so this list never
+// sees those calls.
+var codexMCPAllow = []string{codexLoopbackMCPServer}

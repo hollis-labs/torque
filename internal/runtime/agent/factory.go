@@ -227,6 +227,17 @@ func shouldDropBootDirExtraArgs(provider string, kind RuntimeKind) bool {
 	return provider == "opencode" && kind == RuntimeKindServeHTTP
 }
 
+// legacyRuntimeKindAllowed reports whether bootLegacy may launch kind.
+// Production routes only codex app-server (jsonrpc-stdio) there: every
+// other kind launches through go-agent-wrapper, and PTY has no launch
+// factory. bootLegacy's argv splice is right for app-server alone (see the
+// ExtraArgs comment there), so another kind is refused rather than spawned
+// with its command repeated. The RuntimeFactory test seam may run any kind;
+// its runtimes spawn nothing (CW-20261001-0080).
+func legacyRuntimeKindAllowed(kind RuntimeKind, testSeam bool) bool {
+	return testSeam || kind == RuntimeKindJsonRpcStdio
+}
+
 // profileIsDevMode reports whether the profile opts into Claude's
 // `--dangerously-skip-permissions` developer-mode flag. Forked from
 // cliexec.ProfileIsDevMode (which is being deleted in P6).
