@@ -30,6 +30,31 @@ func drainHeartbeats(sub <-chan SchedulerEvent, d time.Duration) []SchedulerEven
 	}
 }
 
+// waitHeartbeats collects heartbeats from sub until it has n or timeout
+// passes, and reports how long the n took.
+func waitHeartbeats(sub <-chan SchedulerEvent, n int, timeout time.Duration) ([]SchedulerEvent, time.Duration) {
+	start := time.Now()
+	deadline := time.After(timeout)
+	var out []SchedulerEvent
+	for len(out) < n {
+		select {
+		case <-deadline:
+			return out, time.Since(start)
+		case ev, ok := <-sub:
+			if !ok {
+				return out, time.Since(start)
+			}
+			if ev.Type != "run.progress" {
+				continue
+			}
+			if data, _ := ev.Data.(map[string]interface{}); data["kind"] == "heartbeat" {
+				out = append(out, ev)
+			}
+		}
+	}
+	return out, time.Since(start)
+}
+
 func TestProgressHeartbeatEmitsAtInterval(t *testing.T) {
 	t.Parallel()
 
@@ -37,15 +62,24 @@ func TestProgressHeartbeatEmitsAtInterval(t *testing.T) {
 	defer bus.Close()
 	sub := bus.Subscribe()
 
-	h := newProgressHeartbeat(bus, 20*time.Millisecond)
+	const interval = 20 * time.Millisecond
+	h := newProgressHeartbeat(bus, interval)
 	started := time.Now().UTC()
 	h.start("task-1", 42, "worker-1", started)
 	defer h.stop(42)
 
-	// Collect for ~120ms — expect at least 3 heartbeats for a 20ms interval.
-	events := drainHeartbeats(sub, 120*time.Millisecond)
+	// Wait for three heartbeats rather than counting what lands in a fixed
+	// 120ms window: under a parallel `make test` the ticker goroutine can be
+	// scheduled late, and the window then closed on two (CW-20261001-0041).
+	// The bound is generous; a ticker cannot fire early, so three
+	// heartbeats taking at least two intervals is a pacing check that
+	// cannot flake.
+	events, took := waitHeartbeats(sub, 3, 5*time.Second)
 	if len(events) < 3 {
-		t.Fatalf("expected >=3 heartbeats in 120ms, got %d", len(events))
+		t.Fatalf("expected 3 heartbeats within 5s at a %v interval, got %d", interval, len(events))
+	}
+	if took < 2*interval {
+		t.Errorf("3 heartbeats arrived in %v; a %v interval cannot produce them faster than %v", took, interval, 2*interval)
 	}
 
 	for _, ev := range events {
