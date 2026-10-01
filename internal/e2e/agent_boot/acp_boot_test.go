@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -63,9 +65,40 @@ func acpPrompts(t *testing.T, call providertest.Call) []string {
 	return out
 }
 
+// acpSessionNewServers returns the mcpServers the fake received in
+// session/new.
+func acpSessionNewServers(t *testing.T, call providertest.Call) []map[string]any {
+	t.Helper()
+	for _, line := range call.Stdin {
+		var frame struct {
+			Method string `json:"method"`
+			Params struct {
+				MCPServers []map[string]any `json:"mcpServers"`
+			} `json:"params"`
+		}
+		if json.Unmarshal([]byte(line), &frame) == nil && frame.Method == "session/new" {
+			return frame.Params.MCPServers
+		}
+	}
+	t.Fatalf("no session/new in the fake's stdin")
+	return nil
+}
+
+// acpSessionLog reads the one session.log under the deps' workspaces root.
+func acpSessionLog(t *testing.T, cd *composedDeps) string {
+	t.Helper()
+	logs, err := filepath.Glob(filepath.Join(cd.Deps.WorkspacesRoot, "*", "*", "logs", "session.log"))
+	require.NoError(t, err)
+	require.Len(t, logs, 1, "one session, one session.log")
+	b, err := os.ReadFile(logs[0])
+	require.NoError(t, err)
+	return string(b)
+}
+
 // TestBootCopilotACP_OneShot: a scheduler-dispatched copilot run boots over
-// acp-stdio, and its single turn carries the kickoff with the task bundle
-// inline, since an ACP session has no boot dir to plant it in.
+// acp-stdio, session/new carries the loopback (Copilot advertises
+// mcpCapabilities.http), and its single turn carries the kickoff with the
+// task bundle inline, since an ACP session has no boot dir to plant it in.
 func TestBootCopilotACP_OneShot(t *testing.T) {
 	fake := providertest.New(t, runtimes.Copilot, providertest.Replay("copilot/acp_turn"))
 	fake.Install()
@@ -93,9 +126,10 @@ func TestBootCopilotACP_OneShot(t *testing.T) {
 	assert.Contains(t, first, "# Worker Process", "process.md rides the first turn")
 	assert.Contains(t, first, "## First turn\n\nsay hello")
 	assert.NotContains(t, first, "already planted under the boot dir")
-	// The wrapper cannot hand the loopback to session/new yet, so the
-	// kickoff must not send the worker looking for its tools.
-	assert.Contains(t, first, "Torque's task-scoped MCP tools are not available in this session")
+	assert.Contains(t, first, "Use the `loopback` MCP server's task-scoped tools", "the session has the loopback, so the kickoff points at it")
+	assert.Equal(t, []map[string]any{
+		{"type": "http", "name": "loopback", "url": "http://127.0.0.1:9/mcp", "headers": []any{}},
+	}, acpSessionNewServers(t, calls[0]))
 }
 
 // TestBootCopilotACP_LongLivedSendTurn: a long-lived copilot session gets
@@ -163,25 +197,36 @@ func TestBootPiACP_RefusedForTaskRun(t *testing.T) {
 	assert.Empty(t, fake.Calls(), "nothing is spawned for a refused run")
 }
 
-// TestBootCopilotACP_RefusedForLongLivedTaskRun: until go-agent-wrapper
-// hands session/new Torque's MCP servers, a long-lived task worker on any
-// ACP runtime could not signal review, so Boot refuses the run. One-shot
-// runs (TestBootCopilotACP_OneShot) and manual sessions
-// (TestBootCopilotACP_LongLivedSendTurn) still launch.
-func TestBootCopilotACP_RefusedForLongLivedTaskRun(t *testing.T) {
-	fake := providertest.New(t, runtimes.Copilot)
+// TestBootCopilotACP_LongLivedTaskRunRefusedWithoutHTTPMCP: an agent that
+// does not advertise mcpCapabilities.http is not sent the loopback, so a
+// long-lived task worker on it could not signal review. Boot stops it once
+// session/new has shown that, and the dropped server is in session.log.
+func TestBootCopilotACP_LongLivedTaskRunRefusedWithoutHTTPMCP(t *testing.T) {
+	fake := providertest.New(t, runtimes.Copilot, providertest.Script(
+		providertest.Recv(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`),
+		providertest.Send(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":false,"mcpCapabilities":{"http":false,"sse":false}},"authMethods":[]}}`),
+		providertest.Recv(`{"jsonrpc":"2.0","id":2,"method":"session/new"}`),
+		providertest.Send(`{"jsonrpc":"2.0","id":2,"result":{"sessionId":"no-http"}}`),
+		providertest.AwaitEOF(),
+		providertest.Exit(0),
+	))
 	fake.Install()
 	cd := composeACPDeps(t, "copilot")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	_, err := cd.Manager.Boot(ctx, agent.Options{
-		TaskID: "CW-ACP-LONG-RUN", RunID: 43, AgentProfile: "worker", Workdir: t.TempDir(), Mode: agent.ModeLongLived,
+		TaskID: "CW-ACP-NO-HTTP", RunID: 43, AgentProfile: "worker", Workdir: t.TempDir(), Mode: agent.ModeLongLived,
 	})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, agent.ErrAdapterNotFound), "%v", err)
-	assert.Contains(t, err.Error(), "a long-lived task worker could not signal review; one-shot runs and manual sessions are allowed")
-	assert.Empty(t, fake.Calls(), "nothing is spawned for a refused run")
+	assert.Contains(t, err.Error(), "copilot does not accept HTTP MCP servers (no mcpCapabilities.http), so the loopback was not sent and a long-lived task worker could not signal review")
+
+	calls := fake.Calls()
+	require.Len(t, calls, 1)
+	assert.Empty(t, acpSessionNewServers(t, calls[0]), "the wrapper sends an agent without http no HTTP server")
+	assert.Empty(t, acpPrompts(t, calls[0]), "a refused run gets no kickoff")
+	assert.Contains(t, acpSessionLog(t, cd), "acp protocol: agent does not accept HTTP MCP servers (no mcpCapabilities.http); not sent: loopback")
 }
 
 // TestBootPiACP_ManualSession: without a dispatching run, pi boots over
@@ -203,4 +248,8 @@ func TestBootPiACP_ManualSession(t *testing.T) {
 	prompts := acpPrompts(t, fake.Calls()[0])
 	require.Len(t, prompts, 1)
 	assert.Contains(t, prompts[0], "## First turn\n\nsay hi")
+	// pi-acp advertises no mcpCapabilities.http: the loopback is not sent,
+	// the kickoff says so, and session.log records the drop.
+	assert.Contains(t, prompts[0], "Torque's task-scoped MCP tools are not available in this session")
+	assert.Contains(t, acpSessionLog(t, cd), "not sent: loopback")
 }
