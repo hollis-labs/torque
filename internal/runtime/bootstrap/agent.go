@@ -17,8 +17,8 @@ import (
 	"github.com/hollis-labs/torque/internal/toolbroker"
 )
 
-// AgentDeps constructs the unified agent.Dependencies + Manager and runs
-// the startup orphan sweep. Replaces the prior bootstrap.SessionMgr +
+// AgentDeps constructs the unified agent.Dependencies + Manager. Replaces
+// the prior bootstrap.SessionMgr +
 // cliexec.New(profiles, svc, tools) split — every callsite that previously
 // reached for sessionmgr.Manager or cliexec.CLIExecutor now gets the
 // composed deps and routes through agent.Boot.
@@ -29,9 +29,10 @@ import (
 //     executors still see a non-nil router.
 //   - bus may be nil; session.state_changed events are silently dropped.
 //
-// Returns deps with deps.Sessions populated and Sweep run; caller binds
-// the returned manager into HTTP/MCP handlers (server.WithSessions,
-// adapter.WithSessions).
+// Returns deps with deps.Sessions populated; caller binds the returned
+// manager into HTTP/MCP handlers (server.WithSessions,
+// adapter.WithSessions). It does not sweep orphaned sessions: only the
+// daemon that owns them does (SweepOrphanSessions).
 //
 // closer is always non-nil — invoke at daemon shutdown to drain the session
 // lifecycle hook goroutine + any in-flight observer-spawned stop work
@@ -102,22 +103,6 @@ func AgentDeps(
 	deps.Loopback = loopbackBuilder(svc, func() *agent.Manager { return deps.Sessions }, pollReg, reminderReg)
 	deps.Sessions = agent.NewManager(deps)
 
-	// Orphan sweep: mirror the prior sessionmgr.Sweep behavior. Any
-	// `launching` / `running` rows whose process is gone after a daemon
-	// restart get marked `crashed` so dashboards reflect reality.
-	swept, err := deps.Sessions.Sweep()
-	if err != nil {
-		return nil, nil, fmt.Errorf("agent orphan sweep: %w", err)
-	}
-	if swept > 0 {
-		// Surface the sweep count via a top-level lifecycle event so
-		// dashboards know a daemon restart marked sessions crashed.
-		emitter := agent.NewSchedulerEmitter(bus)
-		emitter.EmitSessionEvent("session.sweep", map[string]interface{}{
-			"swept": swept,
-		})
-	}
-
 	// CW-20260509-0028 layer 1 + 2 — orchestrator self-stop.
 	// Layer 1: plan-terminal transitions, observed via the service-layer
 	// TaskTransitionObserver hook (primary; covers MCP/HTTP/scheduler
@@ -154,6 +139,27 @@ func AgentDeps(
 		}
 	}
 	return deps, closer, nil
+}
+
+// SweepOrphanSessions marks `launching` / `running` session rows whose
+// process is gone as `crashed`, so dashboards reflect reality after a daemon
+// restart, and publishes the count as session.sweep. Only `torque serve`,
+// which owns the sessions, runs it: a `torque mcp` process is not their
+// owner, and one that mux runs inside an agent's sandbox sees no other
+// process (a new PID namespace) and cannot write the database
+// (CW-20261001-0141).
+func SweepOrphanSessions(deps *agent.Dependencies, bus *scheduler.EventBus) error {
+	swept, err := deps.Sessions.Sweep()
+	if err != nil {
+		return fmt.Errorf("agent orphan sweep: %w", err)
+	}
+	if swept > 0 {
+		emitter := agent.NewSchedulerEmitter(bus)
+		emitter.EmitSessionEvent("session.sweep", map[string]interface{}{
+			"swept": swept,
+		})
+	}
+	return nil
 }
 
 // resolveApiKeyHelperPath returns the absolute path to a Torque

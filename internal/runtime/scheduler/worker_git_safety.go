@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+
+	"github.com/hollis-labs/torque/internal/gitexec"
 )
 
 // RunGitState is the part of a run's git state the engine compares before
@@ -147,9 +149,7 @@ func diffRemotes(before, after map[string]string) string {
 // `git merge-base` exits 1 with no output in exactly that case; any other
 // failure is returned as an error.
 func noCommonHistory(ctx context.Context, dir, a, b string) (bool, error) {
-	cmd := exec.CommandContext(ctx, "git", "merge-base", a, b)
-	cmd.Dir = dir
-	out, err := cmd.Output()
+	out, err := gitexec.Command(ctx, dir, "merge-base", a, b).Output()
 	if err == nil {
 		return false, nil
 	}
@@ -161,9 +161,7 @@ func noCommonHistory(ctx context.Context, dir, a, b string) (bool, error) {
 }
 
 func gitOutput(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = dir
-	out, err := cmd.Output()
+	out, err := gitexec.Command(ctx, dir, args...).Output()
 	if err != nil {
 		return "", err
 	}
