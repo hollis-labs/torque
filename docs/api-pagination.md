@@ -93,7 +93,7 @@ turn a traversable cohort into an unrecoverable fetch-all cutoff.
 ### Counts, facets, and exports
 
 Use aggregate endpoints for dashboard counts and filter choices; do not fetch
-all list pages to count them in the browser. Existing task aggregates are:
+all list pages to count them in the browser. Available aggregates are:
 
 - HTTP `GET /api/v1/tasks/facets`, MCP `torque_task_facets`: filtered cohort
   `matching_count` plus buckets for requested dimensions. Dimensions are
@@ -104,12 +104,46 @@ all list pages to count them in the browser. Existing task aggregates are:
   task counts by scope and raw status. This counts tasks within scopes, not
   the number of projects, epics, or sprints.
 
-Both count the whole matching cohort and reject row `limit`, `offset`,
+- HTTP `GET /api/v1/projects/facets`, `/epics/facets`, `/sprints/facets`;
+  MCP `torque_project_facets`, `torque_epic_facets`, `torque_sprint_facets`:
+  entity `matching_count` and dimension buckets using the corresponding
+  list filters (including parent `search`). Dimensions: projects `status`;
+  epics `status`, `project_id`, `priority`; sprints `status`, `project_id`,
+  `approval_mode`.
+  `dimensions` is CSV, defaults to all supported dimensions, and deduplicates.
+  `task_rollups` contains `{scopes:[{scope_id,total,counts}],total_distinct,
+  returned,truncated}` for the matching parents. `counts` is keyed by raw task
+  status, excludes internal tasks, and includes parents with zero tasks.
+  Parent groups sort by task total descending then parent ID ascending;
+  `bucket_limit` bounds parent groups independently of each dimension's buckets.
+  All statuses for a returned parent are complete.
+- HTTP `GET /api/v1/runs/facets`, MCP `torque_run_facets`: the exact `/runs`
+  cohort filters (`task_id`, `project_id`, `sprint_id`, `epic_id`, CSV `status`,
+  inclusive `since`/`until` as RFC3339 or Unix milliseconds). Dimensions are
+  `status`, `executor`, `profile`. The profile bucket is the **current task
+  profile, not the profile at run time**: nonempty `launch_profile`, falling
+  back to `agent_profile`. Runs do not store a historical profile snapshot.
+  `totals` is `{cost,prompt_tokens,completion_tokens}`: cost from canonical
+  `cost_ledger` rows joined by run ID to the matching runs, tokens from run
+  records. The date window filters run start times, never ledger timestamps.
+  Runs without ledger rows contribute zero cost. Ledger multiplicity never
+  multiplies token or run counts. Empty cohorts return zero totals.
+
+Entity and run facets return `{matching_count,bucket_limit,dimensions,
+facets:[{dimension,buckets:[{value,count}],total_distinct,returned,truncated}]}`
+plus the parent `task_rollups` or run `totals` described above. `bucket_limit`
+defaults to 50, clamps above 200, and rejects negatives; zero uses the default.
+MCP may trim buckets or whole parent groups to its response byte budget,
+updating `returned`/`truncated` while preserving exact counts and totals.
+GUI stat-card consumption is tracked separately in S3; these routes require
+no list fetch to obtain cohort counts or rollups.
+
+All aggregates count the whole matching cohort and reject row `limit`, `offset`,
 `cursor`, `sort_by`, and `sort_dir`. Facets apply all active filters, including
 the facet's own dimension. Buckets are ordered count descending then value
 ascending (typed values, with null treated separately); they report truncation
-explicitly. Other facet/count routes in the target matrix remain pending until
-implementation supplies their exact names and schemas. `include_total` is the
+explicitly. Remaining facet/count routes in the target matrix remain pending
+until implementation supplies their exact names and schemas. `include_total` is the
 list's count facility and does not imply a facets endpoint exists.
 
 **Export all means a streaming NDJSON endpoint, never a larger page.** Export
@@ -134,12 +168,12 @@ source and MCP `tools/list`.
 | Endpoint family | Cursor | Sort | Filters/query | Total | Facets/counts | MCP parity |
 |---|---|---|---|---|---|---|
 | Tasks `/tasks` | C: yes, offset also supported; T: paged by default | C: task allow-list; T: retain | C: scopes, status/priority, tags, text, dates, budgets, presence, internal visibility; T: retain shared validation | C: HTTP always; MCP opt-in; T: opt-in total on both | C: task facets + HTTP scope rollup; T: retain | C: `torque_task_list`, filters shared but envelope/count differ; T: common payload/count policy |
-| Epics `/epics` | C (CW-0563): paged by default; T: met | C: named entity allow-list; T: retain | C: project, status, archive, search; T: retain | C (CW-0563): opt-in total; T: met | C: none; T: task rollup supplies progress, entity facets pending | C (CW-0563): `torque_epic_list`, common query/count envelope; T: met |
-| Sprints `/sprints` | C (CW-0563): paged by default; T: met | C: named entity allow-list; T: retain | C (CW-0563): project, status, archive, search, over-budget/budget bounds; T: retain | C (CW-0563): opt-in total; T: met | C: none; T: task rollup supplies progress, entity facets pending | C (CW-0563): `torque_sprint_list`, common query/count envelope; T: met |
-| Projects `/projects` | C (CW-0563): paged by default; T: met | C: named entity allow-list; T: retain | C (CW-0563): status, archive, search; T: met | C (CW-0563): opt-in total; T: met | C: none; T: task rollup supplies progress, entity facets pending | C (CW-0563): `torque_project_list`, common query/count envelope; T: met |
+| Epics `/epics` | C (CW-0563): paged by default; T: met | C: named entity allow-list; T: retain | C: project, status, archive, search; T: retain | C (CW-0563): opt-in total; T: met | C: `/epics/facets`, `torque_epic_facets` + bounded parent task rollups; T: retain | C (CW-0563): `torque_epic_list`, common query/count envelope; T: met |
+| Sprints `/sprints` | C (CW-0563): paged by default; T: met | C: named entity allow-list; T: retain | C (CW-0563): project, status, archive, search, over-budget/budget bounds; T: retain | C (CW-0563): opt-in total; T: met | C: `/sprints/facets`, `torque_sprint_facets` + bounded parent task rollups; T: retain | C (CW-0563): `torque_sprint_list`, common query/count envelope; T: met |
+| Projects `/projects` | C (CW-0563): paged by default; T: met | C: named entity allow-list; T: retain | C (CW-0563): status, archive, search; T: met | C (CW-0563): opt-in total; T: met | C: `/projects/facets`, `torque_project_facets` + bounded parent task rollups; T: retain | C (CW-0563): `torque_project_list`, common query/count envelope; T: met |
 | Issues `/issues`, `/issues/search` | C (CW-0563): paged list/search by default; T: met | C: task allow-list; T: retain | C: project, status, query, fixed issue kind; T: retain | C (CW-0563): opt-in cohort total; T: met | C: no dedicated issue facets; T: task facets with issue kind | C (CW-0563): `torque_issue_list`, common envelope/count semantics; T: met |
 | Comments `/comments`, `/comments/search`, `/tasks/{id}/comments` | C (CW-0563): paged list/search/nested task list; T: met | C: `created_at`; T: retain | C: entity scope(s), author, dates, search; T: retain nested task restrictions | C (CW-0563): opt-in total; T: met | C: none; T: count through include_total, facets pending | C (CW-0563): `torque_comment_list`, `torque_comment_search`, shared 50/200/count policy; T: met |
-| Runs `/runs` | Implemented in CW-20261001-0562: cursor default, optional offset, 50/200 policy | `started_at`, `status`, `duration`, `cost`; default `started_at desc`, numeric `id asc` | Shared task/project/sprint/epic scopes, CSV status, inclusive since/until (RFC3339 or Unix millis) | Opt-in `include_total`, cohort before cursor/offset/limit | Facets pending CW-20261001-0564 | `torque_run_list` shares service query and items/meta; MCP byte trims preserve continuation |
+| Runs `/runs` | Implemented in CW-20261001-0562: cursor default, optional offset, 50/200 policy | `started_at`, `status`, `duration`, `cost`; default `started_at desc`, numeric `id asc` | Shared task/project/sprint/epic scopes, CSV status, inclusive since/until (RFC3339 or Unix millis) | Opt-in `include_total`, cohort before cursor/offset/limit | `/runs/facets`, `torque_run_facets`: status/executor/current task profile + ledger cost/run tokens | `torque_run_list` shares service query and items/meta; MCP byte trims preserve continuation |
 | Sessions `/sessions` | C: limit only; T: paged | C: fixed newest-first; T: proposed session fields below | C: state, task, project; T: retain + server query pending | C: none; T: opt-in total | C: none; T: count through include_total, facets pending | C: `torque_session_list` without continuation; T: paged parity |
 | Artifacts `/artifacts`, `/tasks/{id}/artifacts` | C: none; T: paged | C: fixed newest-first; T: proposed artifact fields below | C: required task; T: retain + type/run/query pending | C: none; T: opt-in total | C: none; T: count through include_total, facets pending | C: `torque_artifact_list`, brief/verbose byte cap; T: paged parity |
 | Collections `/collections` | C: none; T: paged | C: no public sort; T: proposed collection fields below | C: status; T: retain + server query pending | C: none; T: opt-in total | C: none; T: count through include_total, facets pending | C: `torque_collection_list` byte cap; T: paged parity |

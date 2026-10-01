@@ -9,6 +9,7 @@ import (
 )
 
 func (a *Adapter) registerEpicTools() {
+	a.registerEntityFacetTool("epic")
 	a.addTool(newTool("torque_epic_create",
 		withDescription(`Create an epic (feature-flagged: requires features.epics). Returns the EpicRecord.
 Use to group multiple sprints under one multi-sprint initiative; sibling torque_sprint_create for short-cycle cohorts, torque_project_create for repo-level grouping.

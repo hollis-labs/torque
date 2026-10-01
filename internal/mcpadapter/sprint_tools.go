@@ -9,6 +9,7 @@ import (
 )
 
 func (a *Adapter) registerSprintTools() {
+	a.registerEntityFacetTool("sprint")
 	a.addTool(newTool("torque_sprint_create",
 		withDescription(`Create a sprint (feature-flagged: requires features.sprints). Returns the SprintRecord.
 Use to scope a cohort of tasks under a common approval_mode + cost budget; prefer torque_epic_create for long-running multi-sprint initiatives, torque_project_create for infrastructure grouping. approval_mode=approve_sprint is a completion gate, not a kickoff action: start work by promoting the first sprint tasks to manual=false via torque_task_update, then let the scheduler dispatch them.

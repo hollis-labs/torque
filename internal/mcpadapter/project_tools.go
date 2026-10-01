@@ -11,6 +11,7 @@ import (
 )
 
 func (a *Adapter) registerProjectTools() {
+	a.registerEntityFacetTool("project")
 	a.addTool(newTool("torque_project_create",
 		withDescription(`Create a project (feature-flagged: requires features.projects). Returns the ProjectRecord.
 Use to group long-lived work by repo/app; sprints scope short-cycle execution, epics scope multi-sprint initiatives.
