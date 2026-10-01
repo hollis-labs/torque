@@ -36,6 +36,8 @@ import type {
 } from './types'
 
 export interface RunQuery {
+  executor?: string
+  profile?: string
   task_id?: string
   project_id?: string
   sprint_id?: string
@@ -413,11 +415,11 @@ export class TorqueApiClient {
     return { items: res.items.map(normalizeRun), meta: res.meta }
   }
 
-  async runFacets(params: Pick<RunQuery, 'task_id' | 'project_id' | 'sprint_id' | 'epic_id' | 'status' | 'since' | 'until'> = {}, dimensions = 'status,executor,profile'): Promise<RunFacetResult> {
-    return this.get<RunFacetResult>('/runs/facets', { ...params, dimensions })
+  async runFacets(params: Pick<RunQuery, 'task_id' | 'project_id' | 'sprint_id' | 'epic_id' | 'status' | 'executor' | 'profile' | 'since' | 'until'> = {}, dimensions = 'status,executor,profile', signal?: AbortSignal): Promise<RunFacetResult> {
+    return this.get<RunFacetResult>('/runs/facets', { ...params, dimensions }, signal)
   }
 
-  async runTimeSeries(params: { since: string; until: string; bucket: 'hour' | 'day'; tz_offset_minutes?: number }): Promise<RunTimeSeries> {
+  async runTimeSeries(params: Pick<RunQuery, 'task_id' | 'project_id' | 'sprint_id' | 'epic_id' | 'status' | 'executor' | 'profile'> & { since: string; until: string; bucket: 'hour' | 'day'; tz_offset_minutes?: number }): Promise<RunTimeSeries> {
     return this.get<RunTimeSeries>('/runs/timeseries', { ...params })
   }
 
