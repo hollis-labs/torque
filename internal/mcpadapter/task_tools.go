@@ -494,6 +494,7 @@ Example, over-budget cohort: {"cost_budget_gte":"50","updated_after":"2026-08-01
 		withString("missing", desc("JSON/native string array of missing fields. Supported: project_id, sprint_id, epic_id, parent_id, source_ref, collection_id, cost_budget, token_budget, max_duration_ms, tags. Empty list is no-op; blank/unknown fields reject.")),
 		withString("present", desc("JSON/native string array of present fields. Same supported field set as missing. SQL NULL is missing; empty string and numeric 0 are present; tags means at least one task_tags link.")),
 		withString("manual", desc("Filter by manual flag: 'manual'/'true'/'1' → manual only; 'auto'/'false'/'0' → scheduled only; 'both' or omit → no filter")),
+		withString("eligible", desc("Restrict to static scheduler eligibility: todo, automatic, allowed kind, required profile selector, and done dependencies. Runtime availability is not evaluated. Default false (no restriction).")),
 		withString("include_internal", desc("Include kind=internal automation tasks (Reviewer end-agents etc.). Default false: internal rows are suppressed unless kind='internal' is requested explicitly. Accepts 'true'/'1'/'yes'.")),
 		withString("search", desc("Substring match on title + description (case-insensitive)")),
 		withString("agent_profile", desc("Filter by agent_profile (exact match)")),
@@ -549,6 +550,7 @@ Response shape: data = {matching_count, bucket_limit, dimensions, facets:[{dimen
 		withString("missing", desc("JSON/native string array of missing fields. Supported: "+strings.Join(service.TaskPresenceFields, ", ")+". SQL NULL is missing; tags means no task-tag links. [] is no-op; null/blank/unknown fields reject.")),
 		withString("present", desc("JSON/native string array of present fields. Supported: "+strings.Join(service.TaskPresenceFields, ", ")+". Empty string and numeric 0 are present; tags means at least one link. [] is no-op; null/blank/unknown fields reject.")),
 		withString("manual", desc("Filter by manual flag: 'manual'/'true'/'1', 'auto'/'false'/'0', or 'both'/omit")),
+		withString("eligible", desc("Restrict to static scheduler eligibility: todo, automatic, allowed kind, required profile selector, and done dependencies. Runtime availability is not evaluated. Default false (no restriction).")),
 		withString("include_internal", desc("Include kind=internal automation tasks. Default false unless kind='internal' is requested.")),
 		withString("search", desc("Substring match on title + description (case-insensitive)")),
 		withString("agent_profile", desc("Filter by agent_profile")),
@@ -1002,6 +1004,10 @@ func taskQueryFromMCP(req map[string]any) (service.TaskQuery, error) {
 	if err != nil {
 		return service.TaskQuery{}, argError(ErrCodeArgInvalid, err.Error(), "include_internal")
 	}
+	eligible, err := reqTaskListBool(req, "eligible")
+	if err != nil {
+		return service.TaskQuery{}, argError(ErrCodeArgInvalid, err.Error(), "eligible")
+	}
 	manual, err := parseManualFilter(req)
 	if err != nil {
 		return service.TaskQuery{}, argError(ErrCodeArgInvalid, err.Error(), "manual")
@@ -1055,6 +1061,7 @@ func taskQueryFromMCP(req map[string]any) (service.TaskQuery, error) {
 		EpicID:          epicID,
 		Search:          search,
 		Manual:          manual,
+		Eligible:        eligible,
 		AgentProfile:    agentProfile,
 		LaunchProfile:   launchProfile,
 		IncludeInternal: includeInternal,

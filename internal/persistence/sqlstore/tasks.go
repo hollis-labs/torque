@@ -246,6 +246,9 @@ type TaskFilter struct {
 	// Manual-flag filter. Nil = no filter; otherwise matches manual=0/1.
 	Manual *bool
 
+	// Eligible restricts the cohort to the static, data-only Picker checks.
+	Eligible bool
+
 	// Inclusive UTC range bounds in SQLiteDatetimeLayout, with optional
 	// fractional seconds. Adapters normalize caller timezone offsets; the
 	// store normalizes SQL keys and bind values for its database dialect.
@@ -863,6 +866,10 @@ func scanTaskFacetBucket(rows *sql.Rows, dim string) (TaskFacetBucket, error) {
 func (s *Store) taskListPredicates(f TaskFilter) ([]string, []any, error) {
 	var where []string
 	var args []any
+
+	if f.Eligible {
+		where = append(where, staticEligibleTaskPredicate)
+	}
 
 	if len(f.Statuses) > 0 {
 		placeholders := make([]string, len(f.Statuses))

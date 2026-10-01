@@ -69,6 +69,7 @@ type TaskQuery struct {
 	ParentID       string
 	ParentIDSet    bool
 	Manual         *bool
+	Eligible       bool
 	TagSlugs       []string
 	TagSlugsAny    []string
 	TagSlugsNone   []string
@@ -442,6 +443,7 @@ func normalizeTaskQuery(q TaskQuery) (sqlstore.TaskFilter, int, string, string, 
 		Trust:            q.Trust,
 		CheckpointMode:   q.CheckpointMode,
 		Manual:           q.Manual,
+		Eligible:         q.Eligible,
 		TagSlugs:         trimUniqueNonEmpty(q.TagSlugs),
 		TagSlugsAny:      trimUniqueNonEmpty(q.TagSlugsAny),
 		TagSlugsNone:     trimUniqueNonEmpty(q.TagSlugsNone),

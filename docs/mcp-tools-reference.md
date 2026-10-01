@@ -185,7 +185,7 @@ Full field reference: ADR-0004 §4. Source: `internal/mcpadapter/task_tools.go`,
 |---|---|
 | `torque_task_create` | Create a task. Safety override forces `manual=true` on every create (an agent must promote it via `torque_task_update {"manual":false}` before the scheduler dispatches it) — the response's `dispatch_notice` spells out the exact promotion call. Optional `subtodos[]` seeds an initial checklist atomically. Optional `deliverable_preset` is preserved on create and get, matching HTTP. |
 | `torque_task_get` | Fetch one task by id, **including its 10 most recent comments by default** (CW-20260910-0057). `comments="false"` opts out; `comments_limit` widens the window (max 100). |
-| `torque_task_list` | Filter + free-text `search` + sort + cursor-paginate, all in one tool (no separate search tool). Shares the public task-query contract with HTTP: status/statuses[]/priority/kind/trust/checkpoint_mode/parent_id/project_id/sprint_id/epic_id/tags[]/manual/agent_profile/launch_profile, `created_*`/`updated_*` RFC3339 ranges, and `*_gte`/`*_lte` budget/duration range filters. `include_internal` (default false) hides `kind=internal` automation rows unless `kind=internal` is requested explicitly. |
+| `torque_task_list` | Filter + free-text `search` + sort + cursor-paginate, all in one tool (no separate search tool). Shares the public task-query contract with HTTP: status/statuses[]/priority/kind/trust/checkpoint_mode/parent_id/project_id/sprint_id/epic_id/tags[]/manual/eligible/agent_profile/launch_profile, `created_*`/`updated_*` RFC3339 ranges, and `*_gte`/`*_lte` budget/duration range filters. `include_internal` (default false) hides `kind=internal` automation rows unless `kind=internal` is requested explicitly. |
 | `torque_task_facets` | Count distinct values for supported task dimensions over the same filtered cohort as `torque_task_list`, without fetching task records or counting a page. HTTP equivalent: `GET /api/v1/tasks/facets`. |
 | `torque_task_update` | Partial patch. Numeric sentinel `-1` = unlimited on budget fields. `status` is accepted and routed through the same path as `torque_task_transition` — before CW-20260909-0011 the arg was silently dropped and the call still answered `ok:true`. |
 | `torque_task_delete` | Hard delete (runs/artifacts/comments cascade). Prefer `transition` to `abandoned` for an audit-preserving close — reachable from any status in one call. |
@@ -251,6 +251,21 @@ is at fault. Omitted values remain unfiltered/defaulted, `manual` keeps
 `parent_id` keeps the empty/`null` root sentinel. Cursor tokens are opaque,
 sort-specific, and filter-specific by caller contract: when reusing
 `meta.next_cursor`, retain the same filters plus the same `sort_by`/`sort_dir`.
+
+`eligible=true` on `torque_task_list` and `torque_task_facets` selects static
+scheduler eligibility: `todo`, automatic, kind other than `parent`/`plan`/`issue`,
+a nonempty agent or launch profile selector for `agent`/`internal`, and every
+dependency `done`. It intersects with other filters and ordinary internal-task
+visibility. False/omitted means no eligibility restriction. It accepts native
+booleans or strings `true/false`, `1/0`, `yes/no`; invalid values reject.
+Runtime worker/project availability, project allowlists, scheduler enablement,
+global budget, and executor/profile launch readiness are not evaluated.
+See [the exact shared SQL predicate and runtime exclusions](api-pagination.md#static-task-eligibility).
+Keep `eligible` unchanged in every continuation call, for example:
+
+```json
+{"eligible":true,"project_id":"PRJ-1","search":"parser","sort_by":"priority","sort_dir":"asc","limit":"50","cursor":"<meta.next_cursor>"}
+```
 
 Priority list filters are exact arbitrary integers, not a 1-5 vocabulary:
 `0`, negative values, and large int64 values are legal exact values. Use
