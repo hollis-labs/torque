@@ -157,6 +157,7 @@ type Session struct {
 	PID             int               `json:"PID"`
 	ExitCode        *int              `json:"ExitCode,omitempty"`
 	ResumeHint      []byte            `json:"ResumeHint,omitempty"`
+	Resumed         bool              `json:"Resumed,omitempty"` // ResumeSession continued the stored provider conversation (CW-20261001-0174)
 	Meta            map[string]string `json:"Meta,omitempty"`
 	CreatedAt       time.Time         `json:"CreatedAt"`
 	UpdatedAt       time.Time         `json:"UpdatedAt"`
@@ -232,10 +233,11 @@ type ResumeRequest struct {
 // sprint α.2). State-based resume — distinct from ResumeRequest's
 // checkpoint-based path: ResumeSession looks up the persisted per-session
 // state (AgentProfile + Workdir + ProjectID + TaskID + provider session-id
-// from the sessions row) and re-boots, threading `--resume <id>` into the
-// adapter argv when ProviderCapabilities(provider).SupportsResume is true,
-// or fresh-booting (no --resume flag) when it is not. Capability check is
-// the single decision point — no per-call probing.
+// from the sessions row) and re-boots, threading the stored id into the
+// launch when Manager.ResumesSession says the runtime genuinely resumes
+// (registry-declared and wired, ProviderCapabilities(provider,
+// kind).SupportsResume), or fresh-booting when it does not. Capability check
+// is the single decision point — no per-call probing.
 //
 // Designed for the reactor harness's α.4 (HITL response → ResumeSession +
 // send_input) and α.5 (stuck-task recovery → checkpoint, then resume with
@@ -283,3 +285,15 @@ var (
 	// ErrWorkdirRequired — Options.Workdir is empty and there's no fallback.
 	ErrWorkdirRequired = errors.New("agent: Workdir is required")
 )
+
+// bootFailedError is an ErrBootFailed whose message is the redacted
+// detail while errors.Is still reaches its cause: a resume whose provider
+// session is gone (provider.ErrProviderSessionLost) is booted fresh by
+// ResumeSession and planstart (CW-20261001-0174).
+type bootFailedError struct {
+	detail string // redacted
+	cause  error
+}
+
+func (e *bootFailedError) Error() string   { return ErrBootFailed.Error() + ": " + e.detail }
+func (e *bootFailedError) Unwrap() []error { return []error{ErrBootFailed, e.cause} }

@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hollis-labs/torque/internal/testutil/testenv"
 )
 
 // TestWrapperHandleLifetime pins CW-20261001-0041: Stop's teardownSession
@@ -16,7 +18,7 @@ import (
 // wr.Run has returned (finishWrapperSession); a handle that finished before
 // Boot registered it is never registered.
 func TestWrapperHandleLifetime(t *testing.T) {
-	m := NewManager(&Dependencies{})
+	m := NewManager(&Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t)})
 	h := &wrapperHandle{runDone: make(chan struct{})}
 	m.registerWrapperSession("SES-W", h)
 

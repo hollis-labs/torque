@@ -324,6 +324,8 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 		redact:  pb.redact,
 		onReady: func() { readyOnce.Do(func() { close(readyCh) }) },
 		onDone:  oneshotOnDone,
+
+		terminalFailure: opts.terminalFailure,
 	})
 
 	wr, err := wrapper.New(cfg)
@@ -352,7 +354,7 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 		if h.runErr != nil {
 			state = string(StatusFailed)
 		}
-		_ = deps.UpdateSessionState(context.Background(), sessID, state, 0, nil)
+		mgr.endWrapperState(context.Background(), deps, sessID, state)
 		mgr.finishWrapperSession(sessID, h)
 	}()
 

@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hollis-labs/torque/internal/testutil/testenv"
 )
 
 // bootLegacy's argv splice is right for codex app-server alone; production
@@ -26,7 +28,7 @@ func TestLegacyRuntimeKindAllowed(t *testing.T) {
 func TestBootLegacy_RefusesOtherKindsOutsideTheSeam(t *testing.T) {
 	bootDir := filepath.Join(t.TempDir(), "agentlaunch-bootdir-test")
 	require.NoError(t, os.MkdirAll(bootDir, 0o700))
-	_, err := bootLegacy(context.Background(), &Dependencies{}, nil, Options{}, &plantedBoot{
+	_, err := bootLegacy(context.Background(), &Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t)}, nil, Options{}, &plantedBoot{
 		runtimeKind:     RuntimeKindSubprocess,
 		capturedBootDir: bootDir,
 	})

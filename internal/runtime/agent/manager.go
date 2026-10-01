@@ -18,6 +18,7 @@ import (
 	"github.com/hollis-labs/agentkit/agentsessions"
 	"github.com/hollis-labs/go-agent-wrapper/wrapper"
 	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/launchprofile"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/runtime/writeq"
 	"github.com/oklog/ulid/v2"
@@ -255,18 +256,29 @@ func (m *Manager) KnownProfiles() config.ProfileMap {
 	return config.CurrentProfiles(m.deps.Profiles)
 }
 
-// ProviderForProfile resolves a profile name to the provider Boot will use
-// when that profile is supplied via Options.AgentProfile. Callers that gate
-// resume/preset wiring on the BOOTED provider (e.g. planstart.Redispatch — the
-// orchestrator profile's provider may differ from a prior session's recorded
-// provider after an operator profile switch) read this before composing
-// Options. Returns the configured fallback when the named profile is missing,
-// mirroring config.GetProfileOrDefault's lookup.
-func (m *Manager) ProviderForProfile(name string) string {
+// RuntimeForProfile resolves a profile name to the provider and runtime kind
+// Boot will use when that profile is supplied via Options.AgentProfile,
+// with Boot's own kind resolution (profile.RuntimeKind, else the registry's
+// default mode). Callers that gate resume on the BOOTED runtime (planstart.
+// Redispatch, ResumeSession: the profile's runtime may differ from a prior
+// session's recorded one after an operator profile switch) read this before
+// composing Options. The profile resolves as Boot resolves it
+// (launchprofile.Resolve, with the configured fallback for a missing name);
+// an invalid kind resolves to "" (the registry default), and Boot then
+// refuses the profile.
+func (m *Manager) RuntimeForProfile(name string) (string, RuntimeKind) {
 	if m == nil || m.deps == nil {
-		return ""
+		return "", ""
 	}
-	return config.GetProfileOrDefault(m.deps.Profiles, name).Provider
+	profile := launchprofile.Resolve(launchprofile.ResolveRequest{
+		LegacyAgentProfile: name,
+		Source:             m.deps.Profiles,
+	}).AgentProfile
+	kind, err := selectRuntimeKind(profile.Provider, profile.RuntimeKind)
+	if err != nil {
+		kind = ""
+	}
+	return profile.Provider, kind
 }
 
 // wrapperHandle is the go-agent-wrapper-routed counterpart to the legacy
@@ -436,6 +448,24 @@ func (m *Manager) adoptLegacyResources(sessID string, res sessionResources) {
 	}
 	m.registerLocked(sessID, res)
 	m.mu.Unlock()
+}
+
+// endWrapperState writes the state a wrapper-path session ended in (its
+// run goroutine's write once wr.Run returns), unless a long-lived run has
+// already written it failed or canceled (protectTerminalFailure,
+// protectTerminalCanceled): an agent that exits cleanly once Torque stops
+// it must not turn a blocked run's session done. The classification is
+// dropped either way, since no later write reads it; the legacy path drops
+// it in normalizeTerminalEvent (CW-20261001-0169).
+func (m *Manager) endWrapperState(ctx context.Context, deps *Dependencies, sessID, state string) {
+	m.terminalMu.Lock()
+	defer m.terminalMu.Unlock()
+	protected := m.terminalFailureProtected(sessID) || m.terminalCanceledProtected(sessID)
+	delete(m.terminalFailed, sessID)
+	delete(m.terminalCanceled, sessID)
+	if !protected {
+		_ = deps.UpdateSessionState(ctx, sessID, state, 0, nil)
+	}
 }
 
 // finishWrapperSession marks h finished, drops it from wrapperSessions and

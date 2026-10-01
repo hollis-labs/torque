@@ -3,6 +3,7 @@ package agent_boot
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -75,20 +76,20 @@ func TestResumeSession_Claude_ThreadsProviderSessionID(t *testing.T) {
 	assert.Equal(t, "claude-code", rec.Provider)
 }
 
-// TestResumeSession_Codex_ThreadsProviderSessionID covers the second
-// SupportsResume=true provider. The codex adapter in go-providers v0.16.1
-// does not yet thread cliSessionID into argv (its BuildArgs ignores the
-// parameter — "Resume is interactive-only in Codex" per the adapter
-// comment), but the substrate's job is to feed SessionIDPreset based on
-// the declared capability; per-adapter argv wiring is the go-providers
-// codex adapter's concern. This test pins the substrate behavior so when
-// go-providers ships codex resume support, no torque-side change is
-// needed.
-func TestResumeSession_Codex_ThreadsProviderSessionID(t *testing.T) {
-	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "codex")
+// TestResumeSession_Codex_FreshBoot: the registry declares resume for codex
+// app-server (thread/resume), but Torque does not wire it yet
+// (CW-20261001-0180): it neither sets agentkit's ResumeThreadID nor fires a
+// resumed session's kickoff. Threading the stored id would claim a resume
+// that silently starts a fresh thread, so ResumeSession boots fresh
+// (CW-20261001-0174).
+func TestResumeSession_Codex_FreshBoot(t *testing.T) {
+	cd := composeDeps(t, fakeRuntimeConfig{
+		JsonRpcResponses: map[string]json.RawMessage{
+			"thread/start": json.RawMessage(`{"thread": {"id": "thread-fresh-1"}}`),
+		},
+	}, "codex")
 
-	const providerSessionID = "codex-thread-id-xyz-789"
-	plantSessionForResume(t, cd.Store, "SES-RESUME-CODEX", "codex", providerSessionID, t.TempDir(), "torque-backend")
+	plantSessionForResume(t, cd.Store, "SES-RESUME-CODEX", "codex", "codex-thread-id-xyz-789", t.TempDir(), "torque-backend")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -97,19 +98,27 @@ func TestResumeSession_Codex_ThreadsProviderSessionID(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, sess)
 
-	preset := cd.Runtime.sessionIDPreset.Load()
-	require.NotNil(t, preset, "ResumeSession (codex, SupportsResume=true) must populate SessionIDPreset")
-	assert.Equal(t, providerSessionID, *preset)
+	assert.Nil(t, cd.Runtime.sessionIDPreset.Load(),
+		"codex app-server resume is not wired: ResumeSession must boot fresh, not pass an id the runtime ignores")
+	// A fresh boot runs the kickoff on a new thread: thread/start then
+	// turn/start, never thread/resume.
+	var methods []string
+	for _, c := range cd.Runtime.lastSession().recordedJsonRpcCalls() {
+		methods = append(methods, c.Method)
+	}
+	assert.Contains(t, methods, "thread/start")
+	assert.Contains(t, methods, "turn/start", "the kickoff fires")
+	assert.NotContains(t, methods, "thread/resume")
 }
 
-// TestResumeSession_Opencode_FreshBoot exercises the SupportsResume=false
-// fallback: opencode has no native --resume primitive, so ResumeSession
-// must boot fresh — same AgentProfile + Workdir + ProjectID + TaskID
-// rehydration, but no SessionIDPreset on StartOptions.
-func TestResumeSession_Opencode_FreshBoot(t *testing.T) {
+// TestResumeSession_Opencode_ThreadsProviderSessionID: opencode run resumes
+// with --session <id> (the registry declares it for subprocess-per-turn, and
+// the launch template renders the id), so ResumeSession threads the stored
+// id (CW-20261001-0174). It booted fresh before, from a hardcoded list.
+func TestResumeSession_Opencode_ThreadsProviderSessionID(t *testing.T) {
 	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "opencode")
 
-	plantSessionForResume(t, cd.Store, "SES-RESUME-OPENCODE", "opencode", "ignored-session-id", t.TempDir(), "torque-backend")
+	plantSessionForResume(t, cd.Store, "SES-RESUME-OPENCODE", "opencode", "ses_opencode_1", t.TempDir(), "torque-backend")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -120,8 +129,25 @@ func TestResumeSession_Opencode_FreshBoot(t *testing.T) {
 	assert.Equal(t, agent.ModeLongLived, sess.Mode)
 
 	preset := cd.Runtime.sessionIDPreset.Load()
-	assert.Nil(t, preset,
-		"ResumeSession (opencode, SupportsResume=false) must NOT populate SessionIDPreset — fresh-boot fallback only")
+	require.NotNil(t, preset, "opencode subprocess resumes: ResumeSession must populate SessionIDPreset")
+	assert.Equal(t, "ses_opencode_1", *preset)
+}
+
+// TestResumeSession_ProfileSwitchedRuntime_FreshBoot: a stored id belongs to
+// the runtime that recorded it. When the session's profile now boots a
+// different runtime, ResumeSession boots fresh rather than handing a
+// claude session id to codex.
+func TestResumeSession_ProfileSwitchedRuntime_FreshBoot(t *testing.T) {
+	cd := composeDeps(t, fakeRuntimeConfig{PTY: true}, "opencode")
+
+	plantSessionForResume(t, cd.Store, "SES-RESUME-SWITCHED", "claude-code", "claude-session-1", t.TempDir(), "torque-backend")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := cd.Manager.ResumeSession(ctx, "SES-RESUME-SWITCHED", agent.ResumeOptions{})
+	require.NoError(t, err)
+	assert.Nil(t, cd.Runtime.sessionIDPreset.Load(), "a claude session id must not reach opencode")
 }
 
 // TestResumeSession_UnknownSessionID surfaces the typed not-found error so
@@ -194,9 +220,9 @@ func TestResumeSession_FreshBoot_RehydratesFields(t *testing.T) {
 		TaskID:       sql.NullString{String: "CW-TASK-42", Valid: true},
 		State:        "done",
 		MetaJSON:     `{"role":"orchestrator","plan_id":"CW-PLAN-9"}`,
-		// ResumeHint intentionally empty: opencode's adapter doesn't
-		// expose a provider session-id, so the original boot never
-		// stamped one. Fresh-boot is the only correct branch.
+		// ResumeHint intentionally empty: the original boot never stamped
+		// a provider session-id, so even a runtime that resumes boots
+		// fresh. Fresh-boot is the only correct branch.
 	}))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -215,7 +241,7 @@ func TestResumeSession_FreshBoot_RehydratesFields(t *testing.T) {
 		"TaskID must rehydrate from the original row")
 
 	preset := cd.Runtime.sessionIDPreset.Load()
-	assert.Nil(t, preset, "opencode fresh-boot must NOT populate SessionIDPreset")
+	assert.Nil(t, preset, "with no stored session id, ResumeSession must NOT populate SessionIDPreset")
 }
 
 // TestResumeSession_StatePersistence_OnSessionID_FlowsToResumeHint covers

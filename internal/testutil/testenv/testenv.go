@@ -12,6 +12,7 @@ package testenv
 import (
 	"os"
 	"strings"
+	"testing"
 )
 
 // keepPrefix marks variables that tests set on purpose for a re-executed
@@ -29,4 +30,13 @@ func UnsetTorqueEnv() {
 			_ = os.Unsetenv(key)
 		}
 	}
+}
+
+// WorkspacesRoot returns a temp dir for a test's agent.Dependencies
+// WorkspacesRoot. Left empty, the root defaults to $HOME/.torque/workspaces,
+// the operator's real session logs, and agent.WorkspaceCreate refuses that
+// in a test (CW-20261001-0175).
+func WorkspacesRoot(t testing.TB) string {
+	t.Helper()
+	return t.TempDir()
 }

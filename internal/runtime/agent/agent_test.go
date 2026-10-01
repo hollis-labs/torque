@@ -7,6 +7,7 @@ import (
 
 	"github.com/hollis-labs/go-providers/provider"
 	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/testutil/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -397,8 +398,8 @@ func TestAdapterFor_OpencodeWiring(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.True(t, caps.BinaryRequired)
-			assert.False(t, caps.ProviderSessionID, "opencode lacks --resume")
-			assert.False(t, caps.CheckpointResume, "opencode lacks --resume")
+			assert.True(t, caps.ProviderSessionID, "opencode run reports its session id, which a resume passes back as --session <id>")
+			assert.False(t, caps.CheckpointResume)
 
 			oa, ok := adapter.(*provider.OpencodeAdapter)
 			require.True(t, ok, "adapter should be *provider.OpencodeAdapter, got %T", adapter)
@@ -711,7 +712,7 @@ func TestResolveTimeout(t *testing.T) {
 // pointer is captured (not snapshotted) so the AgentDeps two-step
 // construction works.
 func TestNewManager(t *testing.T) {
-	deps := &Dependencies{}
+	deps := &Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t)}
 	mgr := NewManager(deps)
 	require.NotNil(t, mgr)
 	assert.Equal(t, deps, mgr.deps)
@@ -727,7 +728,7 @@ func TestNewManager(t *testing.T) {
 // runtime stack's nil-sink convention). Caller (bootstrap) always wires a
 // real store; this branch is the test path.
 func TestManager_Sweep_NilStore(t *testing.T) {
-	mgr := NewManager(&Dependencies{})
+	mgr := NewManager(&Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t)})
 	swept, err := mgr.Sweep()
 	assert.NoError(t, err)
 	assert.Equal(t, 0, swept)

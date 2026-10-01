@@ -5,15 +5,18 @@ import (
 	"database/sql"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
 	"github.com/hollis-labs/torque/internal/runtime/bootstrap"
 	"github.com/hollis-labs/torque/internal/service"
 	"github.com/hollis-labs/torque/internal/testutil/sqlitetest"
+	"github.com/hollis-labs/torque/internal/testutil/testenv"
 )
 
 // Sprint α.4 (CW-20260512-0062): when no session row is bound to the
@@ -25,7 +28,7 @@ import (
 // e.g. crashed during launch before persistence).
 func TestCheckpointResponseDispatcher_NoSessionRow_ReturnsSentinel(t *testing.T) {
 	store := sqlitetest.OpenStore(t)
-	deps := &agent.Dependencies{Store: store}
+	deps := &agent.Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store}
 	deps.Sessions = agent.NewManager(deps)
 
 	d := bootstrap.NewCheckpointResponseDispatcher(store, deps.Sessions)
@@ -65,15 +68,16 @@ func TestCheckpointResponseDispatcher_NilDeps_ReturnsSentinel(t *testing.T) {
 // fails, so postmortem queries can still see the chain.
 func TestCheckpointResponseDispatcher_SessionPresent_EmitsBreadcrumbAndAttemptsResume(t *testing.T) {
 	store := sqlitetest.OpenStore(t)
-	deps := &agent.Dependencies{Store: store}
+	deps := &agent.Dependencies{WorkspacesRoot: testenv.WorkspacesRoot(t), Store: store}
 	deps.Sessions = agent.NewManager(deps)
 	d := bootstrap.NewCheckpointResponseDispatcher(store, deps.Sessions)
 
 	// Plant a sessions row that DispatchResponse will pick up. The row
 	// doesn't need to be live — ResumeSession reads AgentProfile +
 	// Workdir + TaskID + ResumeHint off the persisted row regardless of
-	// state. Provider="claude" so the capability lookup returns
-	// SupportsResume=true and the breadcrumb's used_resume flag is true.
+	// state. No profile is configured, so the session's "default" profile
+	// boots no runtime: ResumeSession boots fresh (and fails), and the
+	// breadcrumb's used_resume says so.
 	const sessID = "SES-TEST-ALPHA4"
 	rec := &sqlstore.SessionRecord{
 		ID:           sessID,
@@ -87,6 +91,9 @@ func TestCheckpointResponseDispatcher_SessionPresent_EmitsBreadcrumbAndAttemptsR
 		TaskID:       sql.NullString{String: "CW-ALPHA4-T1", Valid: true},
 	}
 	require.NoError(t, store.CreateSession(rec))
+	// CreateSession does not write resume_hint; the OnSessionID callback
+	// does, through UpdateSessionResumeHint.
+	require.NoError(t, store.UpdateSessionResumeHint(sessID, []byte("prov-sess-xyz")))
 
 	err := d.DispatchResponse(context.Background(), service.CheckpointResponseDispatch{
 		TaskID:        "CW-ALPHA4-T1",
@@ -123,8 +130,51 @@ func TestCheckpointResponseDispatcher_SessionPresent_EmitsBreadcrumbAndAttemptsR
 	assert.Equal(t, "01HK_ALPHA4_CORR", payload.CorrelationID)
 	assert.Equal(t, sessID, payload.OriginalSessionID)
 	assert.Equal(t, "claude", payload.Provider)
-	assert.True(t, payload.UsedResume,
-		"used_resume reflects ProviderCapabilities (claude → true); a runtime probe is NOT used per D4")
+	assert.False(t, payload.UsedResume,
+		"used_resume reflects Manager.ResumesSession: the profile boots no runtime, so no resume; a runtime probe is NOT used per D4")
 	assert.Equal(t, len(`{"answer":"go"}`), payload.OperatorResponseLen)
 	assert.NotEmpty(t, payload.Error, "failed resume must record the error on the breadcrumb")
+}
+
+// With a profile whose runtime Torque genuinely resumes (claude-code,
+// streaming-stdio) and a stored provider session id, the breadcrumb records
+// used_resume=true: the same decision ResumeSession made (CW-20261001-0174).
+// The row's provider is the bare "claude" alias, the same runtime.
+func TestCheckpointResponseDispatcher_GenuineResume_RecordsUsedResume(t *testing.T) {
+	store := sqlitetest.OpenStore(t)
+	deps := &agent.Dependencies{
+		Store:          store,
+		WorkspacesRoot: t.TempDir(),
+		Profiles:       config.ProfileMap{"default": {Executor: "cli", Provider: "claude-code", PermissionMode: "acceptEdits"}},
+	}
+	deps.Sessions = agent.NewManager(deps)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = deps.Sessions.Shutdown(ctx)
+	})
+	d := bootstrap.NewCheckpointResponseDispatcher(store, deps.Sessions)
+
+	const sessID = "SES-TEST-ALPHA4-RESUME"
+	require.NoError(t, store.CreateSession(&sqlstore.SessionRecord{
+		ID: sessID, AgentProfile: "default", Provider: "claude", RuntimeKind: "streaming-stdio",
+		Workdir: t.TempDir(), State: "done",
+		TaskID: sql.NullString{String: "CW-ALPHA4-T2", Valid: true},
+	}))
+	require.NoError(t, store.UpdateSessionResumeHint(sessID, []byte("prov-sess-xyz")))
+
+	// The resumed boot runs the agent CLI shim, which refuses; whether the
+	// dispatch itself errors does not matter here.
+	_ = d.DispatchResponse(context.Background(), service.CheckpointResponseDispatch{
+		TaskID: "CW-ALPHA4-T2", CorrelationID: "01HK_ALPHA4_RESUME", ResponseJSON: `{"answer":"go"}`,
+	})
+
+	events, err := store.ListRunEvents(sqlstore.RunEventFilter{TaskID: "CW-ALPHA4-T2", Types: []string{"checkpoint.response_dispatched"}})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	var payload struct {
+		UsedResume bool `json:"used_resume"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(events[0].Payload), &payload))
+	assert.True(t, payload.UsedResume, "claude-code resumes, and the row has a stored provider session id")
 }
