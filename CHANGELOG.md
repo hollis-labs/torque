@@ -27,6 +27,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   Projects, Epics and Sprints pages use the rollup instead of paging every
   task (17 MB in 78 requests on a 4,097-task store, now one 3 KB request), and
   the scope detail pages use the summary list.
+- ACP runtimes launch from Torque: Copilot (`acp-stdio`, `acp-tcp`) and Pi,
+  which run only over ACP, and Claude, Codex and OpenCode with
+  `runtime_kind: acp-stdio`. go-agent-wrapper owns the ACP session; Torque
+  plants no boot dir for it and sends the task bundle and kickoff as the
+  first prompt, and `SendTurn` sends each later turn as a `session/prompt`.
+  Profile lint accepts `copilot` and `pi`. A scheduler-dispatched task run on
+  Pi is refused, at enqueue and in Boot: pi-acp drops the MCP servers it is
+  given, so its worker could not reach the loopback to comment or signal
+  review. Manual Pi sessions launch. Until the wrapper delivers MCP servers
+  (below), a long-lived task run (kind `agent`) on any ACP runtime is refused
+  the same way; one-shot runs and manual sessions launch. Known gap: go-agent-wrapper v0.15.0
+  sends `session/new` an empty `mcpServers`, so no ACP session gets the
+  loopback or mux MCP yet. Torque builds the list (`loopback` over HTTP,
+  `mux` over stdio, as planted for native runtimes) and tells the worker its
+  MCP tools are unavailable until the wrapper takes it; that field arrives in
+  go-agent-wrapper v0.19.0, and the loopback wiring activates with the bump
+  to it (CW-20261001-0097).
 - Open-source project documents: `CHANGELOG.md`, `CONTRIBUTING.md`,
   `SECURITY.md`, `TRADEMARK.md`; MIT `LICENSE`.
 
@@ -39,6 +56,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   agy), and its args and Claude's `--settings` go to the template's own
   extra-argument slot. Codex app-server now receives `-c model=…` before the
   profile's args.
+- Codex sessions get the daemon's `mux` MCP server only under
+  `permission_mode: bypassPermissions`; every other posture, unset included,
+  plants just the run's own loopback (CW-20261001-0110). Codex runs MCP tools
+  marked read-only without asking, so the approval responder could not gate
+  mux's tools. Claude and OpenCode planting is unchanged.
 - Runtimes are selected through the go-providers registry and
   go-agent-wrapper v0.15.0's `launch.Select` (agentkit v0.12.2, go-providers
   v0.34.1, go-sandbox v0.4.1), with the profile's runtime kind passed as the
@@ -46,11 +68,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   constructor table and sets the profile's options on it, so the launch argv
   of existing claude-code, codex and opencode profiles is unchanged.
   Antigravity (`antigravity` or `agy`) can now be launched: one `agy` per
-  turn, with the profile's model and permission mode. Copilot and Pi run only
-  over ACP, which Torque does not launch yet; their profiles are refused with
-  that reason, and so is a mode the wrapper does not drive (Claude's PTY),
-  before anything is planted. Profile lint accepts every registry name Torque
-  launches, aliases included (`agy`, `open-code`).
+  turn, with the profile's model and permission mode. A mode the wrapper does
+  not drive (Claude's PTY) is refused before anything is planted. Profile
+  lint accepts every registry name Torque launches, aliases included (`agy`,
+  `open-code`).
 - Codex app-server approval requests are answered from the profile's
   `permission_mode` instead of refused with -32601. Under `default`,
   `acceptEdits` and an unset mode, MCP tool calls are approved only on the
@@ -126,6 +147,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - OpenCode sessions get their briefing on the first turn. OpenCode runs in
   the project directory, so the `Boot @./boot.md` kickoff pointed at a file
   that is not there; it now receives `boot.md`'s content instead.
+- The boot kickoff, the planted `process.md` and the agent execution docs
+  name the per-task MCP server `loopback`, the name go-providers plants it
+  under (codex's `[mcp_servers.loopback]`, the `loopback` entry in Claude's
+  `.mcp.json` and OpenCode's config). They said `torque_loopback`, a server
+  no worker has (CW-20261001-0114).
 - An agent CLI installed outside the daemon's PATH launches. Boot pins the
   path go-providers' Detect resolves (its `*_CLI_PATH` override, PATH, then
   install dirs such as `~/.opencode/bin` and `~/.local/bin`) as the planted

@@ -192,7 +192,7 @@ func renderTaskProcessMarkdown(ctx plantedTaskContext) string {
 	b.WriteString("1. Read `task.md`, then inspect files from `work_root` (`$TORQUE_WORK_ROOT`).\n")
 	b.WriteString("2. Make the smallest complete change for the assigned task.\n")
 	b.WriteString("3. Run focused verification that matches the change.\n")
-	b.WriteString("4. Use the `torque_loopback` MCP task-scoped tools to report the result. Do not pass a `task_id`; this boot is already bound to `")
+	b.WriteString("4. Use the `loopback` MCP server's task-scoped tools to report the result. Do not pass a `task_id`; this boot is already bound to `")
 	b.WriteString(ctx.TaskID)
 	b.WriteString("`.\n\n")
 	b.WriteString("Useful local facts:\n\n")
@@ -205,7 +205,7 @@ func renderTaskProcessMarkdown(ctx plantedTaskContext) string {
 	b.WriteString("\nCompletion guidance:\n\n")
 	b.WriteString("- If the implementation is ready for review, call `torque_task_review` with a concise summary and evidence.\n")
 	b.WriteString("- If blocked, call `torque_task_blocked` with the blocker and next needed action.\n")
-	b.WriteString("- If you need to record progress without transitioning, use the task-scoped summary/checkpoint tools available on `torque_loopback`.\n")
+	b.WriteString("- If you need to record progress without transitioning, use the task-scoped summary/checkpoint tools on the `loopback` MCP server.\n")
 	return b.String()
 }
 

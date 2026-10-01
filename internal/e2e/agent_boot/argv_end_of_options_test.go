@@ -65,7 +65,14 @@ func TestBoot_ArgvKeepsTorqueFlagsBeforeEndOfOptions(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = cd.Manager.Stop(context.Background(), sess.ID) })
 
-			require.Eventually(t, func() bool { return len(fake.Calls()) > 0 }, 10*time.Second, 20*time.Millisecond, "the fake %s was never launched", tc.id)
+			// Wait for the call's start record, not just its file:
+			// providertest creates the call file before writing the
+			// record that carries Args, so a long-lived fake (claude
+			// streaming) read in between shows argv [] (flaked in CI).
+			require.Eventually(t, func() bool {
+				calls := fake.Calls()
+				return len(calls) > 0 && len(calls[0].Args) > 0
+			}, 10*time.Second, 20*time.Millisecond, "the fake %s was never launched", tc.id)
 			args := fake.Call(0).Args
 			t.Logf("argv: %q", args)
 			end := slices.Index(args, "--")
