@@ -367,6 +367,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Security
 
+- Agents can no longer write Torque's state directories (CW-20261001-0141).
+  Every agent launch write-protects the data, state and config dirs, the
+  directories of the main and queue databases and of the profiles file, the
+  session workspaces root and `~/.torque`, through go-agent-wrapper's and
+  agentkit's `ProtectedPaths` (go-sandbox v0.5.1). An agent running as the
+  operator's uid could otherwise rewrite Torque's database or profiles to
+  grant itself authority. It stops direct writes only: `~/.bashrc`, systemd
+  user units, git hooks and `systemd-run --user` remain same-uid routes.
+  - It fails closed. A sandbox backend that cannot write-protect refuses
+    every agent launch, logged at startup. An ACP launch is refused ("ACP
+    sandbox protect not yet supported (CW-20261001-0162)").
+  - `TORQUE_SANDBOX_PROTECT=0` turns it off.
 - A planted OpenCode boot dir's `opencode.json`, which carries the MCP
   servers' environment (the `mux` entry's env included), is written owner-only
   (0600, go-providers v0.36.0). It was 0644. The boot dir itself was already

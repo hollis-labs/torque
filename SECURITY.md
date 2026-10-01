@@ -87,6 +87,12 @@ make network calls; review them before enabling.
   it
 - no built-in TLS
 - no at-rest encryption
-- executors run with the operator's permissions; there is no sandbox beyond what
-  the launched tool provides
+- executors run with the operator's uid. Torque write-protects its own state
+  directories from the agents it launches (databases, config, session
+  workspaces; see
+  [docs/agent-execution-environment.md](docs/agent-execution-environment.md#control-plane-write-protection)),
+  but that sandbox stops direct writes only: a same-uid agent can still plant
+  code that runs outside it later (`~/.bashrc`, systemd user units, git hooks)
+  or ask a same-uid service to write for it (`systemd-run --user`). Beyond
+  that there is no sandbox other than what the launched tool provides.
 - pre-1.0 contracts and schema

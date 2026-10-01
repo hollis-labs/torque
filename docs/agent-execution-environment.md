@@ -250,6 +250,49 @@ never offered.
 > mode. `permission_mode` configures the latter only; the two are
 > deliberately disjoint.
 
+## Control-plane write protection
+
+An agent runs as the operator's uid, so without a sandbox it could rewrite
+Torque's databases, config or profiles to grant itself authority. Every agent
+launch write-protects Torque's state directories (CW-20261001-0141):
+
+- the data dir and the main database's dir (`~/.local/share/torque`);
+- the state dir and the queue database's dir (`~/.local/state/torque`);
+- the config dir and the profiles file's dir (`~/.config/torque`);
+- the session workspaces root, and `~/.torque` (default workspaces, agent
+  templates).
+
+Each is protected by its real path, and only if it is an existing directory.
+Directories rather than files, because SQLite's `-wal`/`-shm` sidecars and
+atomic saves would defeat file-level protection. A path that is `/`, the home
+directory or an ancestor of it is never protected. `torque serve` logs the
+list at startup.
+
+How it is applied: go-agent-wrapper's `Config.ProtectedPaths` on the wrapper
+path and agentkit's `StartOptions.ProtectedPaths` on the legacy path fold the
+directories into the one sandbox around the agent. With no other sandbox,
+that is a host-filesystem profile whose only effect is the protection: the
+agent sees the host filesystem, writable, except these directories, which
+are read-only. The agent's working directory and everything else it writes
+are unaffected, and Torque itself writes its state as before.
+
+It fails closed:
+
+- A sandbox backend that cannot write-protect refuses every agent launch.
+  `torque serve` logs an error at startup when that is the case. On Linux the
+  backend is bubblewrap (`bwrap`).
+- An ACP launch (Copilot, Pi, or an `acp-*` runtime kind) is refused: the
+  wrapper has no protect-only sandbox for ACP yet (CW-20261001-0162).
+
+`TORQUE_SANDBOX_PROTECT=0` (or `false`, `off`, `no`) turns protection off for
+the whole daemon, without a rollback, if the backend misbehaves on a host.
+
+Limits: the protection stops direct writes to those directories. It is not an
+isolation boundary. The agent can still plant code that runs outside the
+sandbox later (`~/.bashrc`, `~/.config/systemd/user`, a repository's git
+hooks), and can ask a same-uid service to write for it (`systemd-run --user`
+over the user bus). Closing those is go-sandbox's follow-up (CW-0128).
+
 ## External constraints — not Torque's to fix
 
 These behaviors are outside Torque's control. Agents and orchestrators
