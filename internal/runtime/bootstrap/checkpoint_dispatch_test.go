@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
+	"github.com/hollis-labs/go-providers/providertest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -141,6 +143,11 @@ func TestCheckpointResponseDispatcher_SessionPresent_EmitsBreadcrumbAndAttemptsR
 // used_resume=true: the same decision ResumeSession made (CW-20261001-0174).
 // The row's provider is the bare "claude" alias, the same runtime.
 func TestCheckpointResponseDispatcher_GenuineResume_RecordsUsedResume(t *testing.T) {
+	// A fixture claude that stays up until its stdin closes: against the
+	// refusing shim, which exits at once, the first-turn write raced the
+	// exit and failed the boot about a third of the time, leaving
+	// used_resume false.
+	providertest.New(t, runtimes.Claude, providertest.Script(providertest.AwaitEOF())).Install()
 	store := sqlitetest.OpenStore(t)
 	deps := &agent.Dependencies{
 		Store:          store,
@@ -163,8 +170,8 @@ func TestCheckpointResponseDispatcher_GenuineResume_RecordsUsedResume(t *testing
 	}))
 	require.NoError(t, store.UpdateSessionResumeHint(sessID, []byte("prov-sess-xyz")))
 
-	// The resumed boot runs the agent CLI shim, which refuses; whether the
-	// dispatch itself errors does not matter here.
+	// The resumed boot runs the fixture claude; whether the dispatch itself
+	// errors does not matter here.
 	_ = d.DispatchResponse(context.Background(), service.CheckpointResponseDispatch{
 		TaskID: "CW-ALPHA4-T2", CorrelationID: "01HK_ALPHA4_RESUME", ResponseJSON: `{"answer":"go"}`,
 	})
