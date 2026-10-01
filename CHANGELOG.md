@@ -29,9 +29,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   per-step token usage and a done event per turn instead of plain-text lines.
   The OpenCode boot dir defines the agent in `agents/<name>.md` frontmatter
   and no longer plants `agents.json` or an `opencode.json` agent block.
+- go-agent-wrapper v0.13.1: a turn's usage now arrives on its single terminal
+  event instead of a second `turn.completed`. The wrapper event sink reads
+  usage from `turn.completed` and `turn.failed` and still emits the turn's
+  done event; without that, a wrapper-path ModeOneShot run timed out waiting
+  for its turn to finish.
 
 ### Fixed
 
+- A manual task in `doing` no longer holds its project's scheduler slot. The
+  picker never dispatches manual tasks, so one being worked outside the
+  scheduler kept every dispatchable task in its project at `project_busy`.
 - Stuck-task recovery no longer resets manual tasks. A manual task is never
   dispatched, so at `doing` it has no worker heartbeat; the health scan
   reported it as `task_doing_no_worker` every tick and re-queued it to `todo`

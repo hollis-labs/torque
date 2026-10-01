@@ -7,7 +7,7 @@ require (
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/google/uuid v1.6.0
 	github.com/hollis-labs/agentkit v0.10.0
-	github.com/hollis-labs/go-agent-wrapper v0.13.0
+	github.com/hollis-labs/go-agent-wrapper v0.13.1
 	github.com/hollis-labs/go-apppaths v0.1.0
 	github.com/hollis-labs/go-llm-types v0.3.0
 	github.com/hollis-labs/go-mcp v0.4.3

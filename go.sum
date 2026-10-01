@@ -43,8 +43,8 @@ github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
 github.com/hollis-labs/agentkit v0.10.0 h1:7L81MTYSfqZZOQTrhe26dO74YT0cYVtvNPpbOA3Kklo=
 github.com/hollis-labs/agentkit v0.10.0/go.mod h1:IMsp3Pc0VH2PvYEuT5WeFXxj/SAX8YMgSXXgLEwaXDc=
-github.com/hollis-labs/go-agent-wrapper v0.13.0 h1:riQbS451rjfsMQnRRk2xMHtyXbuRVk+G6h/GWcUFQTY=
-github.com/hollis-labs/go-agent-wrapper v0.13.0/go.mod h1:EpN3WPjzWBVfxF4TzQWswUPL2K5TUWoKWrLPnGyymLQ=
+github.com/hollis-labs/go-agent-wrapper v0.13.1 h1:zm8Y4vOVbcGcP8lJecMD/hl+siDQ+WJmW9bX5ElA9yc=
+github.com/hollis-labs/go-agent-wrapper v0.13.1/go.mod h1:EpN3WPjzWBVfxF4TzQWswUPL2K5TUWoKWrLPnGyymLQ=
 github.com/hollis-labs/go-apppaths v0.1.0 h1:LJQv483BhOoizLL4qKwsLcCbM0lQoVrNvksJ1thycd4=
 github.com/hollis-labs/go-apppaths v0.1.0/go.mod h1:b3gOdAFgSYY9ZT7VUooAczFdb6o0C2xSGQa7ktcyw30=
 github.com/hollis-labs/go-harness-filters v0.1.1 h1:uTAF+ejKhje+rXMEOwTHsO7ig2fCAQnkANXgZBAyYZA=
