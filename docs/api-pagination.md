@@ -88,6 +88,57 @@ empty cohort. Omit `total` otherwise; do not substitute page length or an
 approximation. Additional metadata such as resolved sort, offset, or MCP
 `truncated`/`hint` may describe the page without changing these core fields.
 
+### Static task eligibility
+
+`eligible=true` restricts `/api/v1/tasks` (including search),
+`/api/v1/tasks/facets`, `/api/v1/tasks/rollup`, `torque_task_list`, and
+`torque_task_facets` to the data-only eligibility checks in `Picker.Pick`.
+Omitting it or passing `false` adds no restriction; it does not select the
+inverse cohort. Boolean values accept `true/false`, `1/0`, or `yes/no`
+(case-insensitive); malformed or empty explicit values reject. MCP also
+accepts native booleans.
+
+All other filters intersect with this predicate. Counts and facets use the
+same cohort before paging. Keep `eligible` and every other filter unchanged
+when following a cursor. Internal tasks remain hidden by the normal visibility
+rule unless `include_internal=true` or `kind=internal` is supplied.
+
+The shared SQL predicate is:
+
+```sql
+tasks.status = 'todo'
+AND tasks.manual = 0
+AND tasks.kind NOT IN ('parent', 'plan', 'issue')
+AND (tasks.kind NOT IN ('agent', 'internal')
+     OR tasks.agent_profile <> '' OR tasks.launch_profile <> '')
+AND NOT EXISTS (
+    SELECT 1 FROM task_dependencies td
+    LEFT JOIN tasks dep ON dep.id = td.depends_on_task_id
+    WHERE td.task_id = tasks.id
+      AND (dep.id IS NULL OR dep.status <> 'done')
+)
+```
+
+Only `done` satisfies a dependency; `archived` does not. Dependency deletion
+prunes its edge through the existing foreign key. Profile selectors are tested
+for a nonempty stored string, without trimming or verifying that the named
+profile exists. There is no executor-specific condition; other allowed kinds
+can have empty profile selectors.
+
+This is **static eligibility**, not a dispatch guarantee. It deliberately does
+not evaluate the configured project allowlist, projects occupied by doing tasks,
+projects allocated earlier in the current pick pass, worker capacity/pick limit,
+scheduler enablement, the global cost ceiling, or runtime executor/profile
+availability and launch readiness. Retry, checkpoint, and lifecycle handling
+remain the scheduler's responsibility; their persisted status changes affect
+this filter only through the `status='todo'` condition. Picker behavior is
+unchanged.
+
+For example, `/api/v1/tasks?eligible=true&project_id=PRJ-1&include_total=true`
+and `/api/v1/tasks/facets?eligible=true&project_id=PRJ-1` count the same cohort.
+The rollup additionally excludes tasks without the requested grouping scope,
+as it does for every other task filter.
+
 ### COUNT cost evidence
 
 Keep `include_total` opt-in on every list, including small tables. Exact

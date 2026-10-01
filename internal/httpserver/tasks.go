@@ -645,6 +645,13 @@ func parseHTTPTaskQuery(q url.Values, extra ...string) (service.TaskQuery, *task
 	if v := q.Get("kind"); v != "" {
 		query.Kind = v
 	}
+	if _, ok := q["eligible"]; ok {
+		v, err := parseTaskListBool(q.Get("eligible"), "eligible")
+		if err != nil {
+			return query, &taskListQueryError{field: "eligible", message: err.Error()}
+		}
+		query.Eligible = v
+	}
 	if _, ok := q["include_internal"]; ok {
 		v, err := parseTaskListBool(q.Get("include_internal"), "include_internal")
 		if err != nil {
@@ -775,7 +782,7 @@ func writeFieldError(w http.ResponseWriter, status int, field, msg string) {
 func validateTaskListQueryKeys(q url.Values, extra ...string) *taskListQueryError {
 	supported := map[string]bool{
 		"status": true, "priority": true, "priority_gte": true, "priority_lte": true, "sprint_id": true, "project_id": true, "epic_id": true,
-		"executor": true, "kind": true, "include_internal": true, "source_type": true,
+		"executor": true, "kind": true, "include_internal": true, "eligible": true, "source_type": true,
 		"source_ref": true, "trust": true, "checkpoint_mode": true, "parent_id": true,
 		"manual": true, "tags": true, "tag": true, "tags_any": true, "tags_none": true, "missing": true, "present": true, "search": true, "limit": true, "offset": true,
 		"agent_profile": true, "launch_profile": true,
@@ -793,7 +800,7 @@ func validateTaskListQueryKeys(q url.Values, extra ...string) *taskListQueryErro
 		if !supported[key] {
 			return &taskListQueryError{
 				field:   key,
-				message: "unsupported query parameter " + key + "; supported task-list parameters are status, priority, priority_gte, priority_lte, sprint_id, project_id, epic_id, executor, kind, include_internal, source_type, source_ref, trust, checkpoint_mode, parent_id, manual, tags, tag, tags_any, tags_none, missing, present, search, agent_profile, launch_profile, created_after, created_before, updated_after, updated_before, cost_budget_gte, cost_budget_lte, token_budget_gte, token_budget_lte, max_duration_ms_gte, max_duration_ms_lte, max_retries_gte, max_retries_lte, sort_by, sort_dir, cursor, limit, offset" + strings.Join(append([]string{""}, extra...), ", "),
+				message: "unsupported query parameter " + key + "; supported task-list parameters are status, priority, priority_gte, priority_lte, sprint_id, project_id, epic_id, executor, kind, include_internal, eligible, source_type, source_ref, trust, checkpoint_mode, parent_id, manual, tags, tag, tags_any, tags_none, missing, present, search, agent_profile, launch_profile, created_after, created_before, updated_after, updated_before, cost_budget_gte, cost_budget_lte, token_budget_gte, token_budget_lte, max_duration_ms_gte, max_duration_ms_lte, max_retries_gte, max_retries_lte, sort_by, sort_dir, cursor, limit, offset" + strings.Join(append([]string{""}, extra...), ", "),
 			}
 		}
 		if len(values) > 1 {
