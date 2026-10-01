@@ -182,6 +182,14 @@ type ExecutionResult struct {
 	// 0-commit verified failure becomes distinguishable from a
 	// "verification didn't run" baseline.
 	VerificationRan bool
+
+	// TaskComment, when set, is a comment the lifecycle posts on the task
+	// once it has applied this result: after the task has moved, so the
+	// comment never precedes the status it describes. Not posted for a
+	// result the lifecycle does not apply (a superseded run, an operator-
+	// cancelled run, a cancel result). The long-lived executor uses it to
+	// record that Torque routed an idle worker (CW-20261001-0117).
+	TaskComment *TaskComment
 }
 
 // ExecutorCapabilities declares what features an executor supports.
@@ -231,4 +239,10 @@ func ToolUseEvent(name, argsSummary string) ExecutionEvent {
 		Type:    EventToolUse,
 		ToolUse: &ToolUse{Name: name, ArgsSummary: argsSummary},
 	}
+}
+
+// TaskComment is a comment for the lifecycle to post on the task.
+type TaskComment struct {
+	Author  string
+	Content string
 }

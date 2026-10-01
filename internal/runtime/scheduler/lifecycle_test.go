@@ -647,3 +647,45 @@ done:
 	assert.Equal(t, "doing", from,
 		"on_done event must carry from=doing post-normalize so cancel-on-transition hook sees the canonical edge")
 }
+
+// A result's TaskComment is posted once the lifecycle has moved the task,
+// and not for a result it does not apply (CW-20261001-0117).
+func TestLifecycleResultTaskComment(t *testing.T) {
+	comment := &executor.TaskComment{Author: "[system/auto-route]", Content: "Moved to review by Torque: auto-routed."}
+	authored := func(t *testing.T, store *sqlstore.Store, id string) []string {
+		comments, err := store.ListCommentsForEntity(sqlstore.EntityTypeTask, id)
+		require.NoError(t, err)
+		var out []string
+		for _, c := range comments {
+			if c.Author == comment.Author {
+				out = append(out, c.Content)
+			}
+		}
+		return out
+	}
+
+	t.Run("posted after the task moves", func(t *testing.T) {
+		store := setupLifecycleStore(t)
+		bus := scheduler.NewEventBus()
+		defer bus.Close()
+		lm := scheduler.NewLifecycleManager(store, bus)
+		require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0001", Title: "Task", Status: "doing", Executor: "cli"}))
+
+		require.NoError(t, lm.HandleResult("CW-0001", 1, &executor.ExecutionResult{Status: "review", TaskComment: comment}))
+		task, err := store.GetTask("CW-0001")
+		require.NoError(t, err)
+		assert.Equal(t, "review", task.Status)
+		assert.Equal(t, []string{comment.Content}, authored(t, store, "CW-0001"))
+	})
+
+	t.Run("not for a cancel result", func(t *testing.T) {
+		store := setupLifecycleStore(t)
+		bus := scheduler.NewEventBus()
+		defer bus.Close()
+		lm := scheduler.NewLifecycleManager(store, bus)
+		require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: "CW-0002", Title: "Task", Status: "paused", Executor: "cli"}))
+
+		require.NoError(t, lm.HandleResult("CW-0002", 1, &executor.ExecutionResult{Status: "canceled", TaskComment: comment}))
+		assert.Empty(t, authored(t, store, "CW-0002"))
+	})
+}
