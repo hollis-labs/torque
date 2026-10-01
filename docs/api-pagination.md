@@ -5,8 +5,8 @@ CW-20261001-0561 defines the HTTP and MCP list contract for
 EP-20261001-0013, *Server-driven lists — query, sort, cursor-page, never
 fetch-all*. The normative sections below describe the intended completed
 contract. The matrices explicitly separate it from the source-checked baseline
-at `a672493` (2026-10-01), with the five adjacent-family rows updated for
-CW-20261001-0563. They do not claim the complete target is already deployed.
+at `a672493` (2026-10-01), with runs reconciled for CW-20261001-0562 and the five
+adjacent-family rows updated for CW-20261001-0563. They do not claim the complete target is already deployed.
 Reconcile this document against the merged S1 implementation before declaring
 it a current API reference.
 
@@ -122,7 +122,7 @@ not the cohort or export. A consumer must not preload every page on mount.
 ## Endpoint capability matrix
 
 All HTTP paths below are relative to `/api/v1`. `C` means current source at
-`a672493`, except adjacent-family cells marked CW-0563; `T` means S1 target.
+`a672493`, except implemented cells marked CW-0562/CW-0563; `T` means S1 target.
 CW-0563 cells describe the implementation in that task; other target cells
 remain pending. `paged` means cursor plus the
 shared 50/200 policy and metadata above. `opt-in total` means
@@ -223,3 +223,31 @@ COUNT semantics/cost, byte-trim continuation, legacy-shape removal, and export
 availability. Any target not landed remains explicitly pending. This draft does
 not fulfill the task's final implemented-behavior reconciliation or merge
 acceptance by itself.
+
+### Runs implementation reconciliation (CW-20261001-0562)
+
+HTTP `/runs` and MCP `torque_run_list` now use the same service query, bounded
+by `pagination.DefaultLimit`/`MaxLimit`. Omitting filters queries across tasks;
+`task_id` is optional on both transports. HTTP record projection remains the
+decorated RunRecord, and MCP retains brief/verbose projections. The legacy
+HTTP `{runs:[...]}` shape and MCP fetch-all-then-cap path are removed.
+
+SQLite normalizes legacy/canonical UTC timestamp spellings without losing
+nanosecond precision for start-time ordering and inclusive bounds. Duration
+uses the SQL-computed rounded elapsed milliseconds, with unfinished rows at
+-1. A total and its page share one read snapshot; no count runs otherwise.
+MCP byte trimming emits a cursor for the last row actually sent. An individual
+verbose record exceeding the byte budget returns `arg_invalid` with guidance
+to request brief rows or retrieve that run separately.
+
+Runs browsing lazily appends pages and sends its status filter to the server.
+Task Logs expose older runs via cursor continuation. Ops/preview widgets
+consume the first recent page; usage charts explicitly describe that sample.
+SSE patches loaded runs; Refresh restarts Runs browsing for new rows.
+No list client preloads the whole run cohort. Index and PostgreSQL COUNT
+measurements remain CW-20261001-0570; facets remain CW-20261001-0564.
+
+Verification: `TestRunQueryCursorAndTotals`, `TestRunQuerySortsAndCohort`,
+and `TestRunListHTTPMCPParity` cover inserts between pages, tied sort keys,
+legacy timestamp formats, all four sorts in both directions, totals, limits,
+scopes and validation on temporary databases.

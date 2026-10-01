@@ -361,7 +361,7 @@ func TestFullStack_AdjacentHTTPMCPParity_ComposedQueriesAndCursors(t *testing.T)
 func TestFullStack_AdjacentHTTPQueryValidationAndDefaultPages(t *testing.T) {
 	a, ts, _ := setupAdjacentQueryParitySurfaces(t)
 	repoPath := t.TempDir()
-	for i := 0; i < service.DefaultGenericQueryLimit+2; i++ {
+	for i := 0; i < pagination.DefaultLimit+2; i++ {
 		text, isErr := callTool(t, a, "torque_project_create", map[string]any{"name": fmt.Sprintf("archivable-%03d", i), "repo_path": repoPath})
 		require.False(t, isErr, "project create %d: %s", i, text)
 		var p map[string]any
