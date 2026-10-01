@@ -38,6 +38,23 @@ func TestACPAgentHelper(t *testing.T) {
 	if os.Getenv("TORQUE_TEST_ACP_AGENT") != "1" {
 		return
 	}
+	// TORQUE_TEST_PROTECT_PROBE=1: at start, try to write into the protected
+	// directory and the working directory, and record both outcomes (the ACP
+	// counterpart of TestProtectProbeHelper, CW-20261001-0162).
+	if os.Getenv("TORQUE_TEST_PROTECT_PROBE") == "1" {
+		attempt := func(path string) string {
+			if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+				return err.Error()
+			}
+			return "wrote"
+		}
+		rec := protectProbeRecord{
+			ProtectWrite: attempt(filepath.Join(os.Getenv("TORQUE_TEST_PROTECT_DIR"), "agent-wrote")),
+			CwdWrite:     attempt("agent-cwd-write"),
+		}
+		raw, _ := json.Marshal(rec)
+		_ = os.WriteFile(os.Getenv("TORQUE_TEST_PROTECT_RECORD"), raw, 0o600)
+	}
 	var mu sync.Mutex
 	enc := json.NewEncoder(os.Stdout)
 	write := func(v any) {

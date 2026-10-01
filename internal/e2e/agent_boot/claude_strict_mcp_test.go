@@ -83,6 +83,11 @@ func assertStrictOnce(t *testing.T, args []string) {
 	if end := slices.Index(args, "--"); end >= 0 {
 		assert.Less(t, slices.Index(args, "--strict-mcp-config"), end, "the flag must come before --: %q", args)
 	}
+	// agentkit v0.21.0 puts per-turn extras at the launch convention's slot,
+	// in front of --add-dir; Torque's flags ride that slot.
+	if dir := slices.Index(args, "--add-dir"); dir >= 0 {
+		assert.Less(t, slices.Index(args, "--strict-mcp-config"), dir, "the flag must come before --add-dir: %q", args)
+	}
 }
 
 // Both claude runtime kinds Torque launches (streaming-stdio, the default,

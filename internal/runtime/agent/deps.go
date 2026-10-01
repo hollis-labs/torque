@@ -178,8 +178,9 @@ type Dependencies struct {
 	// passes them as go-agent-wrapper's Config.ProtectedPaths and bootLegacy
 	// as agentkit's StartOptions.ProtectedPaths; both fold them into the one
 	// sandbox around the child, and a backend that cannot write-protect
-	// refuses the launch. An ACP boot is refused while they are set
-	// (errACPProtectUnsupported). A codex launch that runs in codex's own
+	// refuses the launch. An ACP boot passes them as the wrapper's
+	// Config.ProtectedPaths, which runs the agent under its protect-only
+	// sandbox profile (wrapper v0.25.0+). A codex launch that runs in codex's own
 	// sandbox is not wrapped (launchProtectedPaths). Empty when ProtectEnv
 	// turns protection off, and in tests that do not set it.
 	ProtectedPaths []string

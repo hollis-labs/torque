@@ -34,8 +34,10 @@ func TestBoot_LaterTurnsCarryTheirOwnPrompt(t *testing.T) {
 		command string
 		// flags must appear before "--" on every turn.
 		flags []string
-		// resume is the session id turn 1 reported, which turn 2 must carry.
-		resume string
+		// resume is the session id turn 1 reported, which turn 2 must carry;
+		// resumeAfter, when set, is a flag turn 2 must carry before the resume.
+		resume      string
+		resumeAfter string
 		// kickoff is what turn 1's prompt must contain: the `@./boot.md`
 		// pointer where the CLI runs in the boot dir, boot.md's own content
 		// where it runs in the project dir (CW-20261001-0104).
@@ -47,10 +49,12 @@ func TestBoot_LaterTurnsCarryTheirOwnPrompt(t *testing.T) {
 			command: "exec",
 			flags:   []string{`model="codex-test-model"`, "--enable", "probe_feature", "--json"},
 			kickoff: "Boot @./boot.md",
-			// No resume: go-providers' codex exec convention (v0.34.1, and
-			// v0.35.0) has no resume argument, so turn 2 starts a new thread
-			// where codex resumes with `exec resume <thread>`. That is the
-			// provider's convention to carry, not a Torque splice.
+			// go-providers v0.41.0: codex exec resumes its thread from turn 2,
+			// `exec … --cd <dir> resume <thread> -- <prompt>`, with --cd in front
+			// of `resume` (codex refuses it after the subcommand). That is in a
+			// live session, in its own CODEX_HOME, where the thread exists.
+			resume:      fixtureSessionID(t, "codex/exec_turn1"),
+			resumeAfter: "--cd",
 		},
 		{
 			name: "opencode run", id: runtimes.OpenCode, fixtures: [2]string{"opencode/run_turn1", "opencode/run_turn2_resume"},
@@ -88,6 +92,12 @@ func TestBoot_LaterTurnsCarryTheirOwnPrompt(t *testing.T) {
 			require.NotEqual(t, first[len(first)-1], second[len(second)-1], "turn 2 re-ran turn 1's prompt")
 			if tc.resume != "" {
 				require.Contains(t, second, tc.resume, "turn 2 must resume the session turn 1 reported: %q", second)
+			}
+			if tc.resumeAfter != "" {
+				after, at := slices.Index(second, tc.resumeAfter), slices.Index(second, "resume")
+				require.NotEqual(t, -1, after, "turn 2 lacks %q: %q", tc.resumeAfter, second)
+				require.NotEqual(t, -1, at, "turn 2 lacks the resume subcommand: %q", second)
+				require.Less(t, after, at, "%q must come before `resume`: %q", tc.resumeAfter, second)
 			}
 			for i, args := range [][]string{first, second} {
 				end := slices.Index(args, "--")

@@ -202,7 +202,7 @@ func (m *Manager) ResumeSession(ctx context.Context, sessionID string, opts Resu
 		// an ACP session sends it in session/load. A lost one boots fresh.
 		resume := bootOpts
 		resume.ProviderSessionIDOverride = string(rec.ResumeHint)
-		sess, err = bootWithFreshFallback(ctx, m.deps, resume, bootOpts, "ResumeSession "+sessionID)
+		sess, err = m.bootWithFreshFallback(ctx, resume, bootOpts, "ResumeSession "+sessionID)
 	} else {
 		// Fresh-boot: no resume argument; the new session gets a new
 		// provider session-id on first turn.

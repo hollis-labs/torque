@@ -98,6 +98,45 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- A claude-code (streaming-stdio) resume whose provider session is gone boots
+  fresh once, with the kickoff, as a subprocess resume already did
+  (CW-20261001-0202). With agentkit v0.21.1 and wrapper v0.25.6 the loss
+  arrives as the wrapper's `session.lost` event after Boot has returned, so
+  `ResumeSession` and `Manager.Resume` now watch a resumed streaming session
+  until the provider reports the session gone (they stop it and boot fresh),
+  the first turn shows content (the resume holds), the session ends, or 8
+  seconds pass. The fresh boot happens at most once and is not watched; the
+  wait adds up to the time to the first content of a healthy resume. Not
+  covered: planstart's redispatch, which still only sees a loss that fails
+  Boot.
+- go-agent-wrapper v0.25.6 (from v0.23.0), agentkit v0.21.1 (from v0.20.3),
+  go-providers v0.42.0 (from v0.40.0), go-sandbox v0.6.0 (from v0.5.1),
+  go-runner v0.8.2 (from v0.7.0) and go-llm-contracts v0.4.0 (from v0.3.0);
+  go-llm-types stays v0.5.1 (CW-20261001-0220). agentkit is a direct require
+  at v0.21.1; do not pair go-providers v0.41.0 or later with agentkit v0.20.3 or
+  earlier, which breaks codex exec turn 2. Effects on Torque:
+  - **codex exec resumes its thread from turn 2** (go-providers v0.41.0): in a
+    live session, `exec … --cd <dir> resume <thread> -- <prompt>`, with
+    `--cd` in front of `resume`, and the thread id is reported as the provider
+    session id, so a codex exec session now stores a `resume_hint`. Torque
+    does not resume it across sessions: the allow-list leaves (codex,
+    subprocess-per-turn) unwired, so no cold boot hands a stored thread id to
+    a fresh `CODEX_HOME`, where that thread does not exist (CW-20261001-0255
+    tracks wiring it). Tested: `ResumeSession` and `Manager.Resume` boot a
+    codex exec session fresh, and turn 2 in a live session resumes.
+  - **Streaming-stdio, per-turn and ACP agents report a lost provider
+    session** (agentkit v0.20.2 to v0.21.1, wrapper v0.25.5): see the resume
+    entry below.
+  - OpenCode serve: reasoning reaches the turn as thought, not reply text, and
+    a compaction summary no longer reaches the reply (agentkit v0.20.5,
+    v0.20.6); an error with no session id, or a context overflow OpenCode
+    compacts, no longer fails a turn (agentkit v0.20.3; Torque's own sink
+    filter for the same errors, added earlier, is now redundant but harmless).
+  - go-agent-wrapper v0.25.6 fixes a host panic when an ACP agent exits during
+    a prompt; `CancelTurn` is advertised for claude streaming-stdio, codex
+    app-server and OpenCode serve, which Torque does not use yet.
+  - go-sandbox v0.6.0 adds `DenyUserServiceManager`, and go-runner v0.8.2
+    resource-limit and long-line fixes; Torque uses neither yet.
 - go-agent-wrapper v0.23.0 (from v0.21.1), agentkit v0.20.3 (from v0.19.1)
   and go-providers v0.40.0 (from v0.39.0); go-sandbox stays v0.5.1
   (CW-20261001-0141). They bring the `ProtectedPaths` Torque now sets, and
@@ -130,9 +169,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
     first turn finds the provider no longer has the session (claude: "No
     conversation found", a `SessionLostError`), `ResumeSession` and
     planstart's redispatch boot fresh once, with the kickoff, rather than
-    fail. Not covered yet (CW-20261001-0202): a streaming-stdio resume
-    whose id is lost fails its first turn after Boot, and an ACP agent
-    without `loadSession` opens a new session without saying so.
+    fail. A streaming-stdio resume whose id is lost is covered the same way
+    since agentkit v0.21.1 (below). Not covered yet (CW-20261001-0202): an
+    ACP agent without `loadSession` opens a new session without saying so.
   - **Declared but not wired yet:** codex app-server (CW-20261001-0180)
     and agy (CW-20261001-0181). A Codex `ResumeSession` now boots fresh
     instead of passing an id the app-server ignored.
@@ -610,6 +649,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Security
 
+- An ACP launch (Copilot, Pi, an `acp-*` runtime kind) is write-protected like
+  any other (CW-20261001-0162). Since #176 an ACP boot was refused while
+  protection was on, because go-agent-wrapper had no protect-only sandbox for
+  ACP. With wrapper v0.25.0 and later Torque passes its protected paths as the
+  wrapper's `Config.ProtectedPaths`, and the ACP agent runs under its
+  protect-only profile (the host filesystem, writable, with those directories
+  read-only); a platform that cannot write-protect refuses the launch.
+  `TORQUE_SANDBOX_PROTECT=0` still turns protection off for every launch,
+  ACP included. Tested against an ACP agent helper (a write into the protected
+  directory fails, a write in the working directory lands); **not live-tested**
+  against a real Copilot or Pi binary, which the development host lacks.
 - A Claude worker no longer gets the `mux` MCP aggregator by default
   (CW-20261001-0226). The daemon planted `mux mcp --proxy --servers
   vanta,torque,cerberus` for every Claude session, `cerberus` (deploy and ssh
