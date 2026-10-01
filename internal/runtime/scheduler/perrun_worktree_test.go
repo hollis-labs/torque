@@ -107,8 +107,7 @@ func TestDispatchUsesPerRunWorktreeWhenEnabled(t *testing.T) {
 	mock.SetResult(&executor.ExecutionResult{Status: "done"})
 
 	require.NoError(t, sched.Tick(context.Background()))
-	time.Sleep(400 * time.Millisecond)
-	sched.DrainResults()
+	waitForTaskStatus(t, sched, store, "CW-WT-0001", "done")
 
 	jobs := mock.RecordedJobs()
 	require.Len(t, jobs, 1)
@@ -158,8 +157,7 @@ func TestDispatchPreservesWorktreeWhenAgentLeavesWork(t *testing.T) {
 	}))
 
 	require.NoError(t, sched.Tick(context.Background()))
-	time.Sleep(500 * time.Millisecond)
-	sched.DrainResults()
+	waitForTaskStatus(t, sched, store, "CW-WT-0002", "done")
 
 	// Worktree should be preserved because uncommitted work is present.
 	_, statErr := os.Stat(expected)
@@ -185,8 +183,7 @@ func TestPerRunWorktreeDisabledByDefault(t *testing.T) {
 	mock.SetResult(&executor.ExecutionResult{Status: "done"})
 
 	require.NoError(t, sched.Tick(context.Background()))
-	time.Sleep(300 * time.Millisecond)
-	sched.DrainResults()
+	waitForTaskStatus(t, sched, store, "CW-WT-0003", "done")
 
 	jobs := mock.RecordedJobs()
 	require.Len(t, jobs, 1)
@@ -217,8 +214,8 @@ func TestConcurrentRunsGetSeparateWorktrees(t *testing.T) {
 	mock.SetResult(&executor.ExecutionResult{Status: "done"})
 
 	require.NoError(t, sched.Tick(context.Background()))
-	time.Sleep(800 * time.Millisecond)
-	sched.DrainResults()
+	waitForTaskStatus(t, sched, store, "CW-CONCUR-0001", "done")
+	waitForTaskStatus(t, sched, store, "CW-CONCUR-0002", "done")
 
 	jobs := mock.RecordedJobs()
 	require.Len(t, jobs, 2)
@@ -231,6 +228,22 @@ func TestConcurrentRunsGetSeparateWorktrees(t *testing.T) {
 		assert.False(t, seen[j.WorkingDir], "concurrent runs must not collide on the same worktree path: %s", j.WorkingDir)
 		seen[j.WorkingDir] = true
 	}
+}
+
+// waitForTaskStatus drains scheduler results until task id reaches want
+// (OnDone=close takes a successful run to done). The per-run worktree
+// cleanup is deferred inside the worker's job, which returns before the
+// pool posts its result, so once the result is processed the cleanup has
+// already run. A fixed sleep raced that cleanup under parallel load: it
+// shells out to git and to gh (FetchMergedHeadRefs) and can take longer
+// than the sleep allowed (CW-20261001-0034).
+func waitForTaskStatus(t *testing.T, sched *scheduler.Scheduler, store *sqlstore.Store, id, want string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		sched.DrainResults()
+		task, err := store.GetTask(id)
+		return err == nil && task.Status == want
+	}, 30*time.Second, 25*time.Millisecond, "task %s never reached %q", id, want)
 }
 
 // writeBeforeReturnExecutor is a tiny test executor that drops a file at
