@@ -21,7 +21,7 @@ const (
 	MaxTaskFacetLimit     = 200
 )
 
-var TaskQuerySortFields = []string{"priority", "status", "updated_at", "created_at"}
+var TaskQuerySortFields = []string{"priority", "status", "updated_at", "created_at", "title"}
 var TaskFacetDimensions = []string{
 	"status", "priority", "manual", "kind", "executor", "agent_profile", "launch_profile",
 	"project_id", "sprint_id", "epic_id", "parent_id", "tags",
@@ -542,6 +542,8 @@ func TaskQuerySortValue(t sqlstore.TaskRecord, sortBy string) string {
 		return fmt.Sprint(t.Priority)
 	case "status":
 		return t.Status
+	case "title":
+		return t.Title
 	case "updated_at":
 		return t.UpdatedAt.UTC().Format(sqlstore.SQLiteDatetimeLayoutWithFractional)
 	case "created_at":

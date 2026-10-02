@@ -390,7 +390,7 @@ export interface TaskFilter {
    */
   include_internal?: boolean
   /** Server-side order; the server default is priority asc. */
-  sort_by?: 'priority' | 'status' | 'updated_at' | 'created_at'
+  sort_by?: 'priority' | 'status' | 'updated_at' | 'created_at' | 'title'
   sort_dir?: 'asc' | 'desc'
 }
 

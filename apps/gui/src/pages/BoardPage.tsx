@@ -33,7 +33,7 @@ import type { Epic, FeatureFlags, Project, Sprint, Tag, TagColor, TaskFilter, Ta
 const FILTER_PARAM_KEYS = ['status', 'priority', 'project_id', 'sprint_id', 'epic_id', 'tag', 'manual', 'eligible', 'sort_by', 'sort_dir'] as const
 
 type BoardParams = Omit<TaskFilter, 'cursor' | 'offset'>
-const SORT_FIELDS = ['priority', 'status', 'updated_at', 'created_at'] as const
+const SORT_FIELDS = ['priority', 'status', 'updated_at', 'created_at', 'title'] as const
 
 function parseStatusParam(raw: string | null): TaskStatus[] {
   if (raw === null) return DEFAULT_ACTIVE_STATUSES

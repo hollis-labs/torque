@@ -19,7 +19,7 @@ import (
 // taskSortAllowList is torque_task_list's sort_by allow-list (PRIM-002).
 // Order here also drives the arg_invalid error message via
 // pagination.ValidateSortBy.
-var taskSortAllowList = []string{"priority", "status", "updated_at", "created_at"}
+var taskSortAllowList = []string{"priority", "status", "updated_at", "created_at", "title"}
 
 // taskSortDefaultBy/taskSortDefaultDir are torque_task_list's default
 // sort_by/sort_dir when the caller omits both — chosen to preserve
@@ -464,7 +464,7 @@ Example, longer thread: {"id":"T-123","comments_limit":"50"}`, defaultTaskGetCom
 	), a.handleTaskGet)
 
 	a.addTool(newTool("torque_task_list",
-		withDescription(`List tasks with optional status/priority/facet filters; ordered priority ASC (tiebreak id ASC) by default. Pass sort_by (priority|status|updated_at|created_at) and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid.
+		withDescription(`List tasks with optional status/priority/facet filters; ordered priority ASC (tiebreak id ASC) by default. Pass sort_by (priority|status|updated_at|created_at|title) and sort_dir (asc|desc) to change order; title is ASCII case-insensitive with id ASC ties. An unrecognized value returns error.code=arg_invalid.
 Use for browsing or filtered cohorts; pass search directly for free-text queries (no separate search tool — matches Issue's already-merged shape) and torque_task_get when you already know the ID. Default returns ~150B briefTask records (lowercase JSON) so large fan-outs fit under the 100KB cap; pass verbose="true" for full TaskRecord columns. Pass format="typed" for the additive snake_case/native JSON projection; typed+verbose returns full typed records, typed without verbose returns a richer brief record with nullable scope refs.
 Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under — pass a different sort_by/sort_dir without dropping cursor and you get error.code=arg_invalid.
 statuses[] OR-matches against status (takes precedence over status when both are set). created_after/created_before/updated_after/updated_before are RFC3339 timestamps, inclusive bounds. *_gte/*_lte budget/duration filters compare directly against the stored column — a task that never set that budget (NULL) never matches either bound, so unset-budget tasks are naturally excluded rather than needing a separate "has budget" filter.
@@ -515,7 +515,7 @@ Example, over-budget cohort: {"cost_budget_gte":"50","updated_after":"2026-08-01
 		withString("verbose", desc("Return full records instead of brief (string 'true'/'false', default false)")),
 		withString("format", desc("Response format: legacy (default) or typed. typed returns snake_case/native JSON values; with verbose=true it returns full typed records.")),
 		withString("include_total", desc("When true, include meta.total for the full matching cohort, excluding cursor/offset/limit. Default false keeps list calls cheap.")),
-		withString("sort_by", desc("Sort field: priority|status|updated_at|created_at (default priority)")),
+		withString("sort_by", desc("Sort field: priority|status|updated_at|created_at|title (default priority)")),
 		withString("sort_dir", desc("Sort direction: asc|desc (default asc)")),
 		withString("cursor", desc("Opaque pagination cursor from a previous call's meta.next_cursor; omit for the first page. Must match this call's sort_by/sort_dir.")),
 	), a.handleTaskList)

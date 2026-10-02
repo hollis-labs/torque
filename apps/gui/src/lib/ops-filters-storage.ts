@@ -62,7 +62,7 @@ export function parseOpsFilters(raw: unknown): OpsFilters | null {
     // surface internal=hidden, matching the backend default.
     includeInternal: f.includeInternal === true,
     ...(f.eligibleOnly === true ? { eligibleOnly: true } : {}),
-    ...(['priority', 'status', 'updated_at', 'created_at'].includes(String(f.sortBy)) ? { sortBy: f.sortBy as OpsFilters['sortBy'] } : {}),
+    ...(['priority', 'status', 'updated_at', 'created_at', 'title'].includes(String(f.sortBy)) ? { sortBy: f.sortBy as OpsFilters['sortBy'] } : {}),
     ...(f.sortDir === 'asc' || f.sortDir === 'desc' ? { sortDir: f.sortDir } : {}),
   }
 }

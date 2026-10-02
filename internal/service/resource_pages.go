@@ -25,7 +25,9 @@ type ResourcePage struct {
 func ResourceSortPolicy(resource string) (fields []string, by, dir string) {
 	switch resource {
 	case "plans", "plan_children":
-		return TaskQuerySortFields, TaskQueryDefaultSort, TaskQueryDefaultDir
+		// Plans retain their own allowlist; task-list sort additions are not
+		// supported by the separate resource-page store.
+		return []string{"priority", "status", "updated_at", "created_at"}, TaskQueryDefaultSort, TaskQueryDefaultDir
 	case "collection_tasks", "collection_inbox":
 		return []string{"position", "priority", "status", "updated_at", "created_at"}, "position", "asc"
 	case "sessions":

@@ -187,6 +187,21 @@ func TestFullStack_RemainingResourcePages(t *testing.T) {
 				}
 			}
 
+			if tc.resource == "plans" || tc.resource == "plan_children" {
+				// A task-list-only sort must reject, rather than reach an
+				// unsupported resource-store column and return HTTP 500.
+				params.Set("sort_by", "title")
+				args["sort_by"] = "title"
+				resp, err := http.Get(ts.URL + "/api/v1" + tc.path + "?" + params.Encode())
+				require.NoError(t, err)
+				resp.Body.Close()
+				require.Equal(t, 400, resp.StatusCode)
+				text, isErr := callTool(t, a, tc.tool, args)
+				require.True(t, isErr, text)
+				params.Del("sort_by")
+				delete(args, "sort_by")
+			}
+
 			params.Del("cursor")
 			delete(args, "cursor")
 			params.Set("search", "missing")

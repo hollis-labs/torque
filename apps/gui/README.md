@@ -131,7 +131,7 @@ Refresh” action wired to `refresh()`. Failures to refresh a row also mark it
 stale. Events never fetch the list. Patches preserve loaded order; new rows and
 changed sort positions appear on explicit refresh.
 
-Operations uses `usePagedList` in cursor mode with 50 task summaries per request. Status, priority, scope, tags, manual mode, internal visibility, debounced search and static eligibility are server query parameters; status cards use `/tasks/facets` with the identical cohort. Status / priority / date headers reset the cursor and request server order. Scroll loads one continuation page. Under search or eligibility, visible-row activity displays an inline refresh action; aggregate counts continue updating independently.
+Operations uses `usePagedList` in cursor mode with 50 task summaries per request. Status, priority, scope, tags, manual mode, internal visibility, debounced search and static eligibility are server query parameters; status cards use `/tasks/facets` with the identical cohort. Title / status / priority / date headers reset the cursor and request server order. Scroll loads one continuation page. Under search or eligibility, visible-row activity displays an inline refresh action; aggregate counts continue updating independently.
 
 The filter editor stores named views in browser-local storage. Apply restores a snapshot, Reset restores the selected view (or defaults), and Save as / Save over explicitly persist it. Clear only resets working filters. Eligibility temporarily overrides the other filters and restores them when disabled; its tooltip distinguishes static eligibility from scheduler runtime checks. Review screenshots and an isolated 4,001-task network trace are in `artifacts/CW-20261001-0574/`.
 

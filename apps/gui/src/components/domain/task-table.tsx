@@ -17,7 +17,7 @@ const EMPTY_COPY = {
 }
 
 export type TaskTableSort = NonNullable<TaskFilter['sort_by']>
-type SortKey = TaskTableSort | 'title'
+type SortKey = TaskTableSort
 type SortDir = 'asc' | 'desc'
 
 
@@ -66,7 +66,6 @@ export function TaskTable({
   const sentinelRef = useRef<HTMLTableRowElement | null>(null)
 
   function handleSortClick(key: SortKey) {
-    if (key === 'title') return // Title is not in the server sort allowlist.
     onSortChange?.(key, sortKey === key && sortDir === 'asc' ? 'desc' : 'asc')
   }
 
@@ -149,13 +148,13 @@ export function TaskTable({
                   <button
                     type="button"
                     className="inline-flex items-center gap-1 hover:text-zinc-300 transition-colors"
-                    disabled={!onSortChange || key === 'title'}
+                    disabled={!onSortChange}
                     onClick={() => handleSortClick(key)}
                   >
                     {label}
-                    {key !== 'title' && <span className={isSorted ? 'text-zinc-200' : 'text-zinc-700'}>
+                    <span className={isSorted ? 'text-zinc-200' : 'text-zinc-700'}>
                       {isSorted ? (sortDir === 'asc' ? '↑' : '↓') : '⇕'}
-                    </span>}
+                    </span>
                   </button>
                 </th>
               )
