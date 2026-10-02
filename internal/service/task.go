@@ -368,8 +368,8 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 			if err != nil {
 				return nil, &ValidationError{Field: "sprint_id", Message: "sprint not found: " + input.SprintID}
 			}
-			if sprint.Status == "inactive" {
-				return nil, &ValidationError{Field: "sprint_id", Message: "cannot add tasks to an inactive sprint"}
+			if sprint.Status == "completed" {
+				return nil, &ValidationError{Field: "sprint_id", Message: "cannot add tasks to a completed sprint"}
 			}
 		} else {
 			// Feature not enabled — silently clear the association

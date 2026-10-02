@@ -3,6 +3,7 @@ package service_test
 import (
 	"testing"
 
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,21 +21,37 @@ func TestTaskCreateValidatesSprintExists(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestTaskCreateRejectsInactiveSprint(t *testing.T) {
-	svc := setupService(t)
-	svc.Feature.Enable("sprints")
-
-	sprint, _ := svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint"})
-	// Sprint starts as active; move to inactive
-	svc.Sprint.Transition(sprint.ID, "inactive")
-
-	_, err := svc.Task.Create(service.TaskCreateInput{
-		Title:       "Task",
-		Description: "In an inactive sprint",
-		SprintID:    sprint.ID,
-	})
-	assert.Error(t, err)
-	assert.IsType(t, &service.ValidationError{}, err)
+func TestTaskCreateSprintStatus(t *testing.T) {
+	for _, status := range []string{"active", "inactive", "completed"} {
+		t.Run(status, func(t *testing.T) {
+			svc := setupService(t)
+			require.NoError(t, svc.Feature.Enable("sprints"))
+			sprint, err := svc.Sprint.Create(service.SprintCreateInput{Name: "Sprint"})
+			require.NoError(t, err)
+			if status != "active" {
+				require.NoError(t, svc.Sprint.Transition(sprint.ID, status))
+			}
+			task, err := svc.Task.Create(service.TaskCreateInput{
+				Title: "Task", Description: "Sprint insertion", SprintID: sprint.ID, Manual: true,
+			})
+			if status == "completed" {
+				require.Nil(t, task)
+				var validation *service.ValidationError
+				require.ErrorAs(t, err, &validation)
+				assert.Equal(t, "sprint_id", validation.Field)
+				assert.Equal(t, "cannot add tasks to a completed sprint", validation.Message)
+				tasks, listErr := svc.Task.List(sqlstore.TaskFilter{SprintID: sprint.ID})
+				require.NoError(t, listErr)
+				assert.Empty(t, tasks)
+				return
+			}
+			require.NoError(t, err)
+			persisted, err := svc.Task.Get(task.ID)
+			require.NoError(t, err)
+			assert.True(t, persisted.SprintID.Valid)
+			assert.Equal(t, sprint.ID, persisted.SprintID.String)
+		})
+	}
 }
 
 func TestTaskCreateValidatesProjectExists(t *testing.T) {

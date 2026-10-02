@@ -29,6 +29,10 @@ type SprintCreateInput struct {
 // reached done. Both active→completed and inactive→completed are allowed
 // (the latter so abandoned sprints can be closed without first reactivating).
 // There is no outgoing edge from "completed".
+//
+// Task creation accepts active and inactive sprints: inactive work can be
+// planned before reactivation. Completed sprints reject new tasks because
+// they are closed. TaskService.Create enforces this insertion matrix.
 var validSprintTransitions = map[string][]string{
 	"active":    {"inactive", "completed"},
 	"inactive":  {"active", "completed"},
