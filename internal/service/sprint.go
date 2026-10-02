@@ -33,7 +33,9 @@ type SprintCreateInput struct {
 //
 // Task creation accepts active and inactive sprints: inactive work can be
 // planned before reactivation. Completed sprints reject new tasks because
-// they are closed. TaskService.Create enforces this insertion matrix.
+// they are closed. TaskService.Create and Update (including BulkUpdate) enforce
+// this insertion matrix. Unassignment and assignment to the task's current
+// sprint remain allowed, so tasks already in closed sprints stay editable.
 var validSprintTransitions = map[string][]string{
 	"active":    {"inactive", "completed"},
 	"inactive":  {"active", "completed"},
@@ -412,6 +414,22 @@ func (s *SprintService) validateEpicProject(epicID, projectID string) error {
 	}
 	if projectID != "" && (!epic.ProjectID.Valid || epic.ProjectID.String != projectID) {
 		return &ValidationError{Field: "epic_id", Message: "epic must belong to the sprint's project"}
+	}
+	return nil
+}
+
+// validateSprintAssignment checks only a new, non-empty association. Existing
+// membership in a completed sprint remains editable and can be cleared.
+func (s *TaskService) validateSprintAssignment(target, current string) error {
+	if target == "" || target == current {
+		return nil
+	}
+	sprint, err := s.store.GetSprint(target)
+	if err != nil {
+		return &ValidationError{Field: "sprint_id", Message: "sprint not found: " + target}
+	}
+	if sprint.Status == "completed" {
+		return &ValidationError{Field: "sprint_id", Message: "cannot add tasks to a completed sprint"}
 	}
 	return nil
 }
