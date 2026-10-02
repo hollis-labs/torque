@@ -8,7 +8,7 @@ import (
 
 func (s *Server) entityFacets(entity string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		allowed := map[string]bool{"status": true, "include_archived": true, "dimensions": true, "bucket_limit": true, "search": true}
+		allowed := map[string]bool{"status": true, "include_archived": true, "dimensions": true, "bucket_limit": true, "search": true, "rollup_ids": true}
 		if entity != "projects" {
 			allowed["project_id"] = true
 		}
@@ -35,6 +35,9 @@ func (s *Server) entityFacets(entity string) http.HandlerFunc {
 		opts := service.FacetOptions{BucketLimit: limit}
 		if _, ok := q["dimensions"]; ok {
 			opts.Dimensions = splitHTTPFacetCSV(q.Get("dimensions"))
+		}
+		if _, ok := q["rollup_ids"]; ok {
+			opts.RollupIDs = splitHTTPFacetCSV(q.Get("rollup_ids"))
 		}
 		status := q.Get("status")
 		switch entity {

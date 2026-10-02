@@ -1,16 +1,20 @@
 package service
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 )
 
 // FacetOptions bounds aggregate buckets independently of row pagination.
 type FacetOptions struct {
 	Dimensions  []string
 	BucketLimit int
+	// Nil selects the default top parents; non-nil selects only these cohort IDs.
+	RollupIDs []string
 }
 type ProjectFacetQuery struct {
 	ProjectQuery
@@ -59,6 +63,23 @@ func normalizeEntityFacets(o FacetOptions, c CursorQuery, allowed []string) ([]s
 	}
 	return dims, limit, nil
 }
+func normalizeRollupIDs(ids []string) ([]string, error) {
+	if ids == nil {
+		return nil, nil
+	}
+	out := []string{}
+	for _, raw := range ids {
+		id := strings.TrimSpace(raw)
+		if id != "" && !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	if len(out) > pagination.MaxLimit {
+		return nil, &ValidationError{Field: "rollup_ids", Message: fmt.Sprintf("rollup_ids must contain at most %d distinct IDs", pagination.MaxLimit)}
+	}
+	return out, nil
+}
+
 func (s *ProjectService) Facets(q ProjectFacetQuery) (sqlstore.EntityFacetResult, error) {
 	if err := s.feature.Require("projects"); err != nil {
 		return sqlstore.EntityFacetResult{}, err
@@ -67,11 +88,15 @@ func (s *ProjectService) Facets(q ProjectFacetQuery) (sqlstore.EntityFacetResult
 	if err != nil {
 		return sqlstore.EntityFacetResult{}, err
 	}
+	ids, err := normalizeRollupIDs(q.RollupIDs)
+	if err != nil {
+		return sqlstore.EntityFacetResult{}, err
+	}
 	f, _, err := NormalizeProjectQuery(q.ProjectQuery)
 	if err != nil {
 		return sqlstore.EntityFacetResult{}, err
 	}
-	return s.store.ProjectFacets(f, dims, limit)
+	return s.store.ProjectFacets(f, dims, limit, ids)
 }
 func (s *EpicService) Facets(q EpicFacetQuery) (sqlstore.EntityFacetResult, error) {
 	if err := s.feature.Require("epics"); err != nil {
@@ -81,11 +106,15 @@ func (s *EpicService) Facets(q EpicFacetQuery) (sqlstore.EntityFacetResult, erro
 	if err != nil {
 		return sqlstore.EntityFacetResult{}, err
 	}
+	ids, err := normalizeRollupIDs(q.RollupIDs)
+	if err != nil {
+		return sqlstore.EntityFacetResult{}, err
+	}
 	f, _, err := NormalizeEpicQuery(q.EpicQuery)
 	if err != nil {
 		return sqlstore.EntityFacetResult{}, err
 	}
-	return s.store.EpicFacets(sqlstore.EpicFilter{Status: f.Status, ProjectID: f.ProjectID, Search: f.Search, IncludeArchived: f.IncludeArchived}, dims, limit)
+	return s.store.EpicFacets(sqlstore.EpicFilter{Status: f.Status, ProjectID: f.ProjectID, Search: f.Search, IncludeArchived: f.IncludeArchived}, dims, limit, ids)
 }
 func (s *SprintService) Facets(q SprintFacetQuery) (sqlstore.EntityFacetResult, error) {
 	if err := s.feature.Require("sprints"); err != nil {
@@ -95,9 +124,13 @@ func (s *SprintService) Facets(q SprintFacetQuery) (sqlstore.EntityFacetResult, 
 	if err != nil {
 		return sqlstore.EntityFacetResult{}, err
 	}
+	ids, err := normalizeRollupIDs(q.RollupIDs)
+	if err != nil {
+		return sqlstore.EntityFacetResult{}, err
+	}
 	f, _, err := NormalizeSprintQuery(q.SprintQuery)
 	if err != nil {
 		return sqlstore.EntityFacetResult{}, err
 	}
-	return s.store.SprintFacets(f, dims, limit)
+	return s.store.SprintFacets(f, dims, limit, ids)
 }

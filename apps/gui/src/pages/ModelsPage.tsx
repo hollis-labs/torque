@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Sparkles } from 'lucide-react'
+import { useState } from 'react'
 import { useApi } from '@/hooks/use-api'
-import { notifyError } from '@/lib/toast'
 import { PageHeader } from '@hollis-labs/sysop-ui'
-import { FilterEntityCombobox } from '@hollis-labs/sysop-ui/data'
-import type { ModelEntry } from '@/lib/types'
+import { usePagedList } from '@/hooks/use-paged-list'
+import { useListSearch } from '@/hooks/use-list-search'
+import { ListPageControls } from '@/components/domain/list-page-controls'
 
 type SortKey = 'provider' | 'name' | 'context' | 'output' | 'cost'
 
@@ -15,87 +14,18 @@ interface SortState {
 
 export default function ModelsPage() {
   const api = useApi()
-  const [models, setModels] = useState<ModelEntry[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [providerFilter, setProviderFilter] = useState<string | null>(null)
+  const [providerFilter, setProviderFilter] = useState('')
   const [search, setSearch] = useState('')
+  const serverSearch = useListSearch(search)
+  const provider = useListSearch(providerFilter)
   const [sort, setSort] = useState<SortState>({ key: 'provider', dir: 'asc' })
-
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      try {
-        const result = await api.listModels()
-        if (!cancelled) {
-          setModels(result.items)
-          setError(null)
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to load models')
-          notifyError(err, 'Failed to load models')
-        }
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [api])
-
-  const providers = useMemo(() => {
-    const set = new Set(models.map((m) => m.provider_id))
-    return Array.from(set)
-      .sort()
-      .map((id) => ({ id, name: id }))
-  }, [models])
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    return models.filter((m) => {
-      if (providerFilter && m.provider_id !== providerFilter) return false
-      if (q && !m.id.toLowerCase().includes(q) && !m.name.toLowerCase().includes(q)) return false
-      return true
-    })
-  }, [models, providerFilter, search])
-
-  const sorted = useMemo(() => {
-    const copy = [...filtered]
-    copy.sort((a, b) => {
-      let av: string | number = ''
-      let bv: string | number = ''
-      switch (sort.key) {
-        case 'provider':
-          av = a.provider_id
-          bv = b.provider_id
-          break
-        case 'name':
-          av = a.name || a.id
-          bv = b.name || b.id
-          break
-        case 'context':
-          av = a.limit?.context_window ?? 0
-          bv = b.limit?.context_window ?? 0
-          break
-        case 'output':
-          av = a.limit?.max_output_tokens ?? 0
-          bv = b.limit?.max_output_tokens ?? 0
-          break
-        case 'cost':
-          av = a.cost?.input ?? 0
-          bv = b.cost?.input ?? 0
-          break
-      }
-      if (av < bv) return sort.dir === 'asc' ? -1 : 1
-      if (av > bv) return sort.dir === 'asc' ? 1 : -1
-      // Stable secondary sort by provider then id.
-      if (a.provider_id !== b.provider_id) return a.provider_id < b.provider_id ? -1 : 1
-      return a.id < b.id ? -1 : 1
-    })
-    return copy
-  }, [filtered, sort])
+  const page = usePagedList({
+    params: { provider, search: serverSearch, sort_by: sort.key === 'provider' ? 'provider_id' : sort.key, sort_dir: sort.dir, include_total: true },
+    fetchPage: ({ params, cursor, signal }) => api.listModels(params.provider, { search: params.search, sort_by: params.sort_by, sort_dir: params.sort_dir, include_total: params.include_total, cursor }, signal),
+    getId: model => `${model.provider_id}/${model.id}`,
+  })
+  const { items: models, loading, error } = page
+  const sorted = models
 
   function toggleSort(key: SortKey) {
     setSort((prev) => {
@@ -109,14 +39,7 @@ export default function ModelsPage() {
       <PageHeader title="Models" />
 
       <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800/80 bg-zinc-950 px-4 py-2.5">
-        <FilterEntityCombobox
-          icon={<Sparkles className="h-3.5 w-3.5" />}
-          items={providers}
-          value={providerFilter}
-          onChange={setProviderFilter}
-          allLabel="All providers"
-          ariaLabel="Filter by provider"
-        />
+        <input aria-label="Filter by provider" value={providerFilter} onChange={event => setProviderFilter(event.target.value)} placeholder="Provider id (all if empty)" className="h-7 rounded border border-zinc-800 bg-zinc-900/50 px-2 text-xs" />
         <input
           type="search"
           value={search}
@@ -125,16 +48,17 @@ export default function ModelsPage() {
           className="h-7 rounded border border-zinc-800 bg-zinc-900/50 px-2 text-[12px] text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-600 focus:outline-none"
         />
         <span className="ml-auto text-[10px] uppercase tracking-wider text-zinc-500">
-          {sorted.length} of {models.length}
+          {models.length} of {page.total ?? '…'} loaded
           {models.length === 0 && !loading && ' — catalog empty (cold cache?)'}
         </span>
       </div>
 
+      <ListPageControls page={page} label="models" />
       <div className="flex-1 overflow-auto">
-        {loading ? (
+        {loading && models.length === 0 ? (
           <div className="p-8 text-center text-[12px] text-zinc-500">Loading catalog…</div>
-        ) : error ? (
-          <div className="p-8 text-center text-[12px] text-rose-400">{error}</div>
+        ) : error && models.length === 0 ? (
+          <div className="p-8 text-center text-[12px] text-rose-400">{error.message}</div>
         ) : sorted.length === 0 ? (
           <div className="p-8 text-center text-[12px] text-zinc-500">
             {models.length === 0

@@ -1,8 +1,11 @@
 package service
 
 import (
+	"cmp"
 	"encoding/json"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/hollis-labs/go-modelsdev/modelsdev"
@@ -16,9 +19,50 @@ func ModelCursor(m modelsdev.ModelRef, by string) (string, string) {
 		key = m.ProviderID
 	case "id":
 		key = m.ID
+	case "cost":
+		key = strconv.FormatFloat(m.Cost.Input, 'g', -1, 64)
+	case "context":
+		key = strconv.Itoa(m.Limit.ContextWindow)
+	case "output":
+		key = strconv.Itoa(m.Limit.MaxOutputTokens)
 	}
 	id, _ := json.Marshal([]string{m.ProviderID, m.ID})
 	return key, string(id)
+}
+
+// modelSortCompare is used for both ordering and cursor continuation.
+// Catalog value structs have no presence flags: free and unknown both use zero.
+func modelSortCompare(by, dir, a, b string) int {
+	result := cmp.Compare(a, b)
+	switch by {
+	case "cost":
+		av, _ := strconv.ParseFloat(a, 64)
+		bv, _ := strconv.ParseFloat(b, 64)
+		result = cmp.Compare(av, bv)
+	case "context", "output":
+		av, _ := strconv.ParseInt(a, 10, 64)
+		bv, _ := strconv.ParseInt(b, 10, 64)
+		result = cmp.Compare(av, bv)
+	}
+	if dir == "desc" {
+		return -result
+	}
+	return result
+}
+
+func validateModelSortCursor(by, value string) error {
+	switch by {
+	case "cost":
+		v, err := strconv.ParseFloat(value, 64)
+		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+			return &ValidationError{Field: "cursor", Message: "invalid model cost cursor"}
+		}
+	case "context", "output":
+		if _, err := strconv.ParseInt(value, 10, 64); err != nil {
+			return &ValidationError{Field: "cursor", Message: "invalid model limit cursor"}
+		}
+	}
+	return nil
 }
 
 // Models are catalog-backed. Paging takes one in-memory catalog snapshot;
@@ -27,6 +71,11 @@ func (s *Service) ListModelPage(provider, search string, q ResourceQuery) (Resou
 	n, err := NormalizeResourceQuery("models", q)
 	if err != nil {
 		return ResourcePage{}, err
+	}
+	if n.AfterID != "" {
+		if err := validateModelSortCursor(n.SortBy, n.AfterSortValue); err != nil {
+			return ResourcePage{}, err
+		}
 	}
 	rows := make([]sqlstore.ResourceRow, 0)
 	if s.Models != nil {
@@ -42,13 +91,11 @@ func (s *Service) ListModelPage(provider, search string, q ResourceQuery) (Resou
 		}
 	}
 	sort.Slice(rows, func(i, j int) bool {
-		if rows[i].SortValue == rows[j].SortValue {
+		order := modelSortCompare(n.SortBy, n.SortDir, rows[i].SortValue, rows[j].SortValue)
+		if order == 0 {
 			return rows[i].ID < rows[j].ID
 		}
-		if n.SortDir == "desc" {
-			return rows[i].SortValue > rows[j].SortValue
-		}
-		return rows[i].SortValue < rows[j].SortValue
+		return order < 0
 	})
 	var total *int
 	if q.IncludeTotal {
@@ -58,11 +105,8 @@ func (s *Service) ListModelPage(provider, search string, q ResourceQuery) (Resou
 	if n.AfterID != "" {
 		filtered := rows[:0]
 		for _, row := range rows {
-			after := row.SortValue > n.AfterSortValue
-			if n.SortDir == "desc" {
-				after = row.SortValue < n.AfterSortValue
-			}
-			if after || (row.SortValue == n.AfterSortValue && row.ID > n.AfterID) {
+			order := modelSortCompare(n.SortBy, n.SortDir, row.SortValue, n.AfterSortValue)
+			if order > 0 || (order == 0 && row.ID > n.AfterID) {
 				filtered = append(filtered, row)
 			}
 		}
