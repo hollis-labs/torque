@@ -14,7 +14,7 @@ interface ScopeOverviewCardProps {
     total: number
     done: number
     completion: number
-  }
+  } | null
   metrics: Array<{
     label: string
     value: string | number
@@ -66,10 +66,10 @@ export function ScopeOverviewCard({
         <div className="mb-2 flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.2em] text-zinc-500">
           <span>Task Progress</span>
           <span className="font-mono text-zinc-400">
-            {progress.done}/{progress.total} ({progress.completion}%)
+            {progress ? `${progress.done}/${progress.total} (${progress.completion}%)` : '—'}
           </span>
         </div>
-        <ProgressBar value={progress.completion} className="h-3 rounded-full bg-zinc-900" />
+        {progress && <ProgressBar value={progress.completion} className="h-3 rounded-full bg-zinc-900" />}
       </div>
 
       <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2">

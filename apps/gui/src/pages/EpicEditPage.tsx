@@ -3,17 +3,17 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { Save } from 'lucide-react'
 import { Skeleton, Button, Input, Textarea, EmptyState } from '@hollis-labs/sysop-ui'
 import { DetailHeader } from '@hollis-labs/sysop-ui/layout'
+import { ScopePicker } from '@/components/domain/scope-picker'
 import { ScopeFormField } from '@/components/domain/scope-form-field'
 import { useApi } from '@/hooks/use-api'
 import { notifyError, notifySuccess } from '@/lib/toast'
-import type { ContainerStatus, Epic, Project } from '@/lib/types'
+import type { ContainerStatus, Epic } from '@/lib/types'
 
 export default function EpicEditPage() {
   const { id } = useParams<{ id: string }>()
   const api = useApi()
   const navigate = useNavigate()
   const [epic, setEpic] = useState<Epic | null>(null)
-  const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -29,11 +29,10 @@ export default function EpicEditPage() {
     if (!id) return
     let cancelled = false
     setLoading(true)
-    void Promise.all([api.getEpic(id), api.listProjects()])
-      .then(([nextEpic, projectRes]) => {
+    void api.getEpic(id)
+      .then((nextEpic) => {
         if (cancelled) return
         setEpic(nextEpic)
-        setProjects(projectRes.items)
         setDraft({
           name: nextEpic.name,
           description: nextEpic.description ?? '',
@@ -109,10 +108,7 @@ export default function EpicEditPage() {
             <Textarea rows={5} value={draft.description} onChange={(e) => setDraft((prev) => ({ ...prev, description: e.target.value }))} />
           </ScopeFormField>
           <ScopeFormField label="Project">
-            <select className="h-9 rounded-md border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-100" value={draft.project_id} onChange={(e) => setDraft((prev) => ({ ...prev, project_id: e.target.value }))}>
-              <option value="">None</option>
-              {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-            </select>
+            <ScopePicker kind="project" value={draft.project_id} onChange={id => setDraft(prev => ({ ...prev, project_id: id ?? '' }))} />
           </ScopeFormField>
           <ScopeFormField label="Priority">
             <Input value={draft.priority} onChange={(e) => setDraft((prev) => ({ ...prev, priority: e.target.value }))} placeholder="Optional integer" />

@@ -9,6 +9,8 @@ import {
   DialogTitle,
 } from '@hollis-labs/sysop-ui'
 import { Tabs, TabsContent, TabsList, TabsTrigger, Button, Input, Label, Textarea } from '@hollis-labs/sysop-ui'
+import { ScopePicker } from './scope-picker'
+import { useListSearch } from '@/hooks/use-list-search'
 import { useApi } from '@/hooks/use-api'
 import { isHtmlApiFallbackError } from '@/lib/api'
 import { notifyError, notifySuccess } from '@/lib/toast'
@@ -247,6 +249,14 @@ export function ScopeManagerDialog({ open, onOpenChange, flags, onDataChange }: 
   const [saving, setSaving] = useState(false)
   const [showInactive, setShowInactive] = useState(false)
   const [sortOrder, setSortOrder] = useState<'title' | 'updated'>('updated')
+  const [searchInput, setSearchInput] = useState('')
+  const search = useListSearch(searchInput)
+  const listQuery = useMemo(() => ({ limit: 50, search, status: showInactive ? undefined : 'active', sort_by: sortOrder === 'title' ? 'name' : 'updated_at', sort_dir: sortOrder === 'title' ? 'asc' as const : 'desc' as const }), [search, showInactive, sortOrder])
+  const [hasMore, setHasMore] = useState({ projects: false, epics: false, sprints: false })
+  const [projectRecords, setProjectRecords] = useState(new Map<string, Project>())
+  const [epicRecords, setEpicRecords] = useState(new Map<string, Epic>())
+  const [sprintRecords, setSprintRecords] = useState(new Map<string, Sprint>())
+
 
   useEffect(() => {
     if (availableTabs.length > 0 && !availableTabs.includes(activeTab)) {
@@ -261,14 +271,18 @@ export function ScopeManagerDialog({ open, onOpenChange, flags, onDataChange }: 
     void (async () => {
       try {
         const [projectRes, epicRes, sprintRes] = await Promise.all([
-          flags.projects ? api.listProjects() : Promise.resolve({ items: [] as Project[] }),
-          flags.epics ? api.listEpics() : Promise.resolve({ items: [] as Epic[] }),
-          flags.sprints ? api.listSprints() : Promise.resolve({ items: [] as Sprint[] }),
+          flags.projects ? api.listProjects(listQuery.status, listQuery) : Promise.resolve({ items: [] as Project[], meta: { has_more: false } }),
+          flags.epics ? api.listEpics(listQuery) : Promise.resolve({ items: [] as Epic[], meta: { has_more: false } }),
+          flags.sprints ? api.listSprints(listQuery) : Promise.resolve({ items: [] as Sprint[], meta: { has_more: false } }),
         ])
         if (cancelled) return
         setProjects(projectRes.items)
         setEpics(epicRes.items)
         setSprints(sprintRes.items)
+        setHasMore({ projects: projectRes.meta.has_more, epics: epicRes.meta.has_more, sprints: sprintRes.meta.has_more })
+        setProjectRecords(prev => mergeUnchangedRecords(prev, projectRes.items))
+        setEpicRecords(prev => mergeUnchangedRecords(prev, epicRes.items))
+        setSprintRecords(prev => mergeUnchangedRecords(prev, sprintRes.items))
         const firstProject = projectRes.items[0] ?? null
         const firstEpic = epicRes.items[0] ?? null
         const firstSprint = sprintRes.items[0] ?? null
@@ -284,19 +298,38 @@ export function ScopeManagerDialog({ open, onOpenChange, flags, onDataChange }: 
     return () => {
       cancelled = true
     }
-  }, [api, flags.projects, flags.epics, flags.sprints, open])
+  }, [api, flags.projects, flags.epics, flags.sprints, open, listQuery])
 
-  const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null
-  const selectedEpic = epics.find((epic) => epic.id === selectedEpicId) ?? null
-  const selectedSprint = sprints.find((sprint) => sprint.id === selectedSprintId) ?? null
-  const visibleProjects = useMemo(() => sortItems(projects, showInactive, sortOrder), [projects, showInactive, sortOrder])
-  const visibleEpics = useMemo(() => sortItems(epics, showInactive, sortOrder), [epics, showInactive, sortOrder])
-  const visibleSprints = useMemo(() => sortItems(sprints, showInactive, sortOrder), [sprints, showInactive, sortOrder])
+  useEffect(() => {
+    if (!open || !selectedProjectId) return
+    let active = true
+    void api.getProject(selectedProjectId).then(record => { if (active) setProjectRecords(prev => new Map(prev).set(record.id, record)) }).catch(error => { if (active) notifyError(error, 'Could not load selected project') })
+    return () => { active = false }
+  }, [api, open, selectedProjectId])
+  useEffect(() => {
+    if (!open || !selectedEpicId) return
+    let active = true
+    void api.getEpic(selectedEpicId).then(record => { if (active) setEpicRecords(prev => new Map(prev).set(record.id, record)) }).catch(error => { if (active) notifyError(error, 'Could not load selected epic') })
+    return () => { active = false }
+  }, [api, open, selectedEpicId])
+  useEffect(() => {
+    if (!open || !selectedSprintId) return
+    let active = true
+    void api.getSprint(selectedSprintId).then(record => { if (active) setSprintRecords(prev => new Map(prev).set(record.id, record)) }).catch(error => { if (active) notifyError(error, 'Could not load selected sprint') })
+    return () => { active = false }
+  }, [api, open, selectedSprintId])
+
+  const selectedProject = projectRecords.get(selectedProjectId ?? '') ?? null
+  const selectedSprint = sprintRecords.get(selectedSprintId ?? '') ?? null
+  const visibleProjects = !search && hasMore.projects ? [] : projects
+  const visibleEpics = !search && hasMore.epics ? [] : epics
+  const visibleSprints = !search && hasMore.sprints ? [] : sprints
 
   useEffect(() => {
     setProjectDraft(selectedProject ? projectToDraft(selectedProject) : emptyProjectDraft())
   }, [selectedProject])
 
+  const selectedEpic = epicRecords.get(selectedEpicId ?? '') ?? null
   useEffect(() => {
     setEpicDraft(selectedEpic ? epicToDraft(selectedEpic) : emptyEpicDraft())
   }, [selectedEpic])
@@ -340,37 +373,40 @@ export function ScopeManagerDialog({ open, onOpenChange, flags, onDataChange }: 
   }
 
   async function refreshProjects(selectId?: string | null) {
-    const res = await api.listProjects()
+    const res = await api.listProjects(listQuery.status, listQuery)
     setProjects(res.items)
-    const nextId = selectId ?? selectedProjectId
-    if (nextId === null) {
-      setSelectedProjectId(null)
-    } else {
-      setSelectedProjectId(nextId && res.items.some((project) => project.id === nextId) ? nextId : res.items[0]?.id ?? null)
+    setHasMore(prev => ({ ...prev, projects: res.meta.has_more }))
+    const nextId = selectId === undefined ? selectedProjectId : selectId
+    setSelectedProjectId(nextId)
+    if (nextId) {
+      const record = await api.getProject(nextId)
+      setProjectRecords(prev => new Map(prev).set(nextId, record))
     }
     onDataChange?.()
   }
 
   async function refreshEpics(selectId?: string | null) {
-    const res = await api.listEpics()
+    const res = await api.listEpics(listQuery)
     setEpics(res.items)
-    const nextId = selectId ?? selectedEpicId
-    if (nextId === null) {
-      setSelectedEpicId(null)
-    } else {
-      setSelectedEpicId(nextId && res.items.some((epic) => epic.id === nextId) ? nextId : res.items[0]?.id ?? null)
+    setHasMore(prev => ({ ...prev, epics: res.meta.has_more }))
+    const nextId = selectId === undefined ? selectedEpicId : selectId
+    setSelectedEpicId(nextId)
+    if (nextId) {
+      const record = await api.getEpic(nextId)
+      setEpicRecords(prev => new Map(prev).set(nextId, record))
     }
     onDataChange?.()
   }
 
   async function refreshSprints(selectId?: string | null) {
-    const res = await api.listSprints()
+    const res = await api.listSprints(listQuery)
     setSprints(res.items)
-    const nextId = selectId ?? selectedSprintId
-    if (nextId === null) {
-      setSelectedSprintId(null)
-    } else {
-      setSelectedSprintId(nextId && res.items.some((sprint) => sprint.id === nextId) ? nextId : res.items[0]?.id ?? null)
+    setHasMore(prev => ({ ...prev, sprints: res.meta.has_more }))
+    const nextId = selectId === undefined ? selectedSprintId : selectId
+    setSelectedSprintId(nextId)
+    if (nextId) {
+      const record = await api.getSprint(nextId)
+      setSprintRecords(prev => new Map(prev).set(nextId, record))
     }
     onDataChange?.()
   }
@@ -586,6 +622,7 @@ export function ScopeManagerDialog({ open, onOpenChange, flags, onDataChange }: 
               <div className="flex min-h-0 min-w-0 flex-col rounded-xl border border-zinc-800 bg-zinc-950/60">
                 <ListToolbar
                   title="Projects"
+                  search={searchInput} onSearch={setSearchInput}
                   showInactive={showInactive}
                   sortOrder={sortOrder}
                   onToggleInactive={setShowInactive}
@@ -606,8 +643,9 @@ export function ScopeManagerDialog({ open, onOpenChange, flags, onDataChange }: 
                       <span className="text-[11px] text-zinc-500">{project.id}</span>
                     </button>
                   ))}
+                  {!loading && hasMore.projects && search && <p className="px-2 text-xs text-zinc-500">More matches available. Refine your search.</p>}
                   {!loading && visibleProjects.length === 0 && (
-                    <div className="px-2 py-4 text-sm text-zinc-500">No projects yet.</div>
+                    <div className="px-2 py-4 text-sm text-zinc-500">{hasMore.projects && !search ? "More than 50 projects match. Type to search." : "No matching projects."}</div>
                   )}
                 </div>
               </div>
@@ -779,6 +817,8 @@ export function ScopeManagerDialog({ open, onOpenChange, flags, onDataChange }: 
           <TabsContent value="epics" className="min-h-0 flex-1 overflow-hidden">
             <EntityLayout
               title="Epics"
+              search={searchInput} onSearch={setSearchInput}
+              hasMore={hasMore.epics}
               loading={loading}
               items={visibleEpics.map((epic) => ({ id: epic.id, label: epic.name, sublabel: epic.id }))}
               selectedId={selectedEpicId}
@@ -806,10 +846,7 @@ export function ScopeManagerDialog({ open, onOpenChange, flags, onDataChange }: 
                   </select>
                 </Field>
                 <Field label="Project">
-                  <select className="h-8 rounded-md border border-zinc-800 bg-zinc-950 px-2 text-sm text-zinc-100" value={epicDraft.projectId} onChange={(e) => setEpicDraft((prev) => ({ ...prev, projectId: e.target.value }))}>
-                    <option value={NONE}>No project</option>
-                    {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-                  </select>
+                  <ScopePicker kind="project" value={epicDraft.projectId === NONE ? null : epicDraft.projectId} onChange={id => setEpicDraft(prev => ({ ...prev, projectId: id ?? NONE }))} />
                 </Field>
                 <Field label="Priority">
                   <Input value={epicDraft.priority} onChange={(e) => setEpicDraft((prev) => ({ ...prev, priority: e.target.value }))} placeholder="1-3" />
@@ -830,6 +867,8 @@ export function ScopeManagerDialog({ open, onOpenChange, flags, onDataChange }: 
           <TabsContent value="sprints" className="min-h-0 flex-1 overflow-hidden">
             <EntityLayout
               title="Sprints"
+              search={searchInput} onSearch={setSearchInput}
+              hasMore={hasMore.sprints}
               loading={loading}
               items={visibleSprints.map((sprint) => ({ id: sprint.id, label: sprint.name, sublabel: sprint.id }))}
               selectedId={selectedSprintId}
@@ -858,10 +897,7 @@ export function ScopeManagerDialog({ open, onOpenChange, flags, onDataChange }: 
                   </select>
                 </Field>
                 <Field label="Project">
-                  <select className="h-8 rounded-md border border-zinc-800 bg-zinc-950 px-2 text-sm text-zinc-100" value={sprintDraft.projectId} onChange={(e) => setSprintDraft((prev) => ({ ...prev, projectId: e.target.value }))}>
-                    <option value={NONE}>No project</option>
-                    {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-                  </select>
+                  <ScopePicker kind="project" value={sprintDraft.projectId === NONE ? null : sprintDraft.projectId} onChange={id => setSprintDraft(prev => ({ ...prev, projectId: id ?? NONE }))} />
                 </Field>
                 <Field label="Approval mode">
                   <Input value={sprintDraft.approvalMode} onChange={(e) => setSprintDraft((prev) => ({ ...prev, approvalMode: e.target.value }))} />
@@ -898,6 +934,7 @@ function Field({ label, children, className }: { label: string; children: ReactN
 
 function EntityLayout({
   title,
+  search, onSearch, hasMore,
   items,
   selectedId,
   onSelect,
@@ -910,6 +947,9 @@ function EntityLayout({
   children,
 }: {
   title: string
+  search: string
+  onSearch: (value: string) => void
+  hasMore: boolean
   items: Array<{ id: string; label: string; sublabel: string }>
   selectedId: string | null | undefined
   onSelect: (id: string | null) => void
@@ -926,6 +966,7 @@ function EntityLayout({
       <div className="flex min-h-0 min-w-0 flex-col rounded-xl border border-zinc-800 bg-zinc-950/60">
         <ListToolbar
           title={title}
+          search={search} onSearch={onSearch}
           showInactive={showInactive}
           sortOrder={sortOrder}
           onToggleInactive={onToggleInactive}
@@ -946,7 +987,8 @@ function EntityLayout({
               <span className="text-[11px] text-zinc-500">{item.sublabel}</span>
             </button>
           ))}
-          {!loading && items.length === 0 && <div className="px-2 py-4 text-sm text-zinc-500">Nothing here yet.</div>}
+          {!loading && hasMore && search && <p className="px-2 text-xs text-zinc-500">More matches available. Refine your search.</p>}
+          {!loading && items.length === 0 && <div className="px-2 py-4 text-sm text-zinc-500">{hasMore && !search ? "More than 50 match. Type to search." : "No matches."}</div>}
         </div>
       </div>
       <div className="no-scrollbar min-h-0 min-w-0 overflow-y-auto rounded-xl border border-zinc-800 bg-zinc-950/60 p-4" tabIndex={0}>
@@ -958,6 +1000,7 @@ function EntityLayout({
 
 function ListToolbar({
   title,
+  search, onSearch,
   showInactive,
   sortOrder,
   onToggleInactive,
@@ -965,6 +1008,8 @@ function ListToolbar({
   onCreate,
 }: {
   title: string
+  search: string
+  onSearch: (value: string) => void
   showInactive: boolean
   sortOrder: 'title' | 'updated'
   onToggleInactive: (next: boolean) => void
@@ -979,6 +1024,7 @@ function ListToolbar({
           <Plus className="h-3.5 w-3.5" />
         </Button>
       </div>
+      <Input aria-label={`Search ${title.toLowerCase()}`} placeholder="Type to search…" value={search} onChange={event => onSearch(event.target.value)} className="mb-2 h-7" />
       <div className="flex items-center gap-2">
         <label className="flex items-center gap-1.5 text-[11px] text-zinc-400">
           <input type="checkbox" checked={showInactive} onChange={(e) => onToggleInactive(e.target.checked)} />
@@ -997,18 +1043,10 @@ function ListToolbar({
   )
 }
 
-function sortItems<T extends { name: string; status: string; updated_at: string }>(
-  items: T[],
-  showInactive: boolean,
-  sortOrder: 'title' | 'updated'
-): T[] {
-  const filtered = showInactive ? items : items.filter((item) => item.status === 'active')
-  return [...filtered].sort((a, b) => {
-    if (sortOrder === 'title') {
-      return a.name.localeCompare(b.name)
-    }
-    return b.updated_at.localeCompare(a.updated_at)
-  })
+function mergeUnchangedRecords<T extends { id: string }>(previous: Map<string, T>, rows: T[]) {
+  const next = new Map(previous)
+  for (const row of rows) if (!next.has(row.id)) next.set(row.id, row)
+  return next
 }
 
 function EntityHeader({

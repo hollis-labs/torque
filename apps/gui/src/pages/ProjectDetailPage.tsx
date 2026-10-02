@@ -9,6 +9,8 @@ import { ScopeCollectionPanel } from '@/components/domain/scope-collection-panel
 import { ScopeTaskPanel } from '@/components/domain/scope-task-panel'
 import { useApi } from '@/hooks/use-api'
 import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
+import { usePagedList } from '@/hooks/use-paged-list'
+import { useListSearch } from '@/hooks/use-list-search'
 import { usePagedTaskSummaries } from '@/hooks/use-paged-task-summaries'
 import { useSSE } from '@/hooks/use-sse'
 import { EVENT_REFETCH_DEBOUNCE_MS } from '@/lib/debounce'
@@ -36,8 +38,21 @@ export default function ProjectDetailPage() {
   const [taskRollup, setTaskRollup] = useState<TaskScopeRollupResponse | null>(null)
   const [sprintRollup, setSprintRollup] = useState<TaskScopeRollupResponse | null>(null)
   const [epicRollup, setEpicRollup] = useState<TaskScopeRollupResponse | null>(null)
-  const [sprints, setSprints] = useState<Sprint[]>([])
-  const [epics, setEpics] = useState<Epic[]>([])
+  const [childFacets, setChildFacets] = useState<{ sprints: number; epics: number } | null>(null)
+  const [sprintSearch, setSprintSearch] = useState('')
+  const [epicSearch, setEpicSearch] = useState('')
+  const sprintQuery = useListSearch(sprintSearch)
+  const epicQuery = useListSearch(epicSearch)
+  const sprintPage = usePagedList<Sprint, { project_id?: string; search: string; limit: number; include_total: boolean }>({
+    enabled: !!id, params: { project_id: id, search: sprintQuery, limit: 50, include_total: true }, getId: item => item.id,
+    fetchPage: ({ params, cursor, signal }) => api.listSprints({ ...params, ...(cursor ? { cursor } : {}) }, signal),
+  })
+  const epicPage = usePagedList<Epic, { project_id?: string; search: string; limit: number; include_total: boolean }>({
+    enabled: !!id, params: { project_id: id, search: epicQuery, limit: 50, include_total: true }, getId: item => item.id,
+    fetchPage: ({ params, cursor, signal }) => api.listEpics({ ...params, ...(cursor ? { cursor } : {}) }, signal),
+  })
+  const sprints = sprintPage.items
+  const epics = epicPage.items
   const [artifacts, setArtifacts] = useState<ProjectArtifact[]>([])
   const [artifactWarning, setArtifactWarning] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -73,21 +88,20 @@ export default function ProjectDetailPage() {
     try {
       // Per-sprint and per-epic counts stay within this project, as the
       // client-side grouping of the project's tasks did.
-      const [nextProject, rollupRes, sprintRollupRes, epicRollupRes, sprintRes, epicRes] = await Promise.all([
+      const [nextProject, rollupRes, sprintRollupRes, epicRollupRes, childSprints, childEpics] = await Promise.all([
         api.getProject(id),
         api.taskRollup('project_id', { project_id: id }),
         api.taskRollup('sprint_id', { project_id: id }),
         api.taskRollup('epic_id', { project_id: id }),
-        api.listSprints({ project_id: id }),
-        api.listEpics({ project_id: id }),
+        api.parentFacets('sprint', { project_id: id }, []),
+        api.parentFacets('epic', { project_id: id }, []),
       ])
       if (myGen !== loadGeneration.current) return
       setProject(nextProject)
       setTaskRollup(rollupRes)
       setSprintRollup(sprintRollupRes)
       setEpicRollup(epicRollupRes)
-      setSprints(sprintRes.items)
-      setEpics(epicRes.items)
+      setChildFacets({ sprints: childSprints.matching_count, epics: childEpics.matching_count })
 
       try {
         const artifactRes = await api.listProjectArtifacts(id)
@@ -165,8 +179,8 @@ export default function ProjectDetailPage() {
             meta={[
               { label: 'Repo Path', value: <span className="font-mono text-xs text-zinc-300">{project.repo_path || 'Not set'}</span> },
               { label: 'Agent Path', value: <span className="font-mono text-xs text-zinc-300">{project.agent_path || 'Not set'}</span> },
-              { label: 'Sprints', value: sprints.length },
-              { label: 'Epics', value: epics.length },
+              { label: 'Sprints', value: childFacets?.sprints ?? '—' },
+              { label: 'Epics', value: childFacets?.epics ?? '—' },
             ]}
             actions={
               <>
@@ -185,6 +199,9 @@ export default function ProjectDetailPage() {
           <div className="grid gap-6 xl:grid-cols-2">
             <ScopeCollectionPanel
               title="Sprints"
+              search={sprintSearch} onSearch={setSprintSearch}
+              total={sprintPage.total} hasMore={sprintPage.hasMore} loading={sprintPage.loading} error={sprintPage.error?.message}
+              onLoadMore={() => void sprintPage.loadMore()} onRefresh={() => void sprintPage.reload()}
               items={sprints.map((sprint) => ({
                 id: sprint.id,
                 title: sprint.name,
@@ -197,6 +214,9 @@ export default function ProjectDetailPage() {
             />
             <ScopeCollectionPanel
               title="Epics"
+              search={epicSearch} onSearch={setEpicSearch}
+              total={epicPage.total} hasMore={epicPage.hasMore} loading={epicPage.loading} error={epicPage.error?.message}
+              onLoadMore={() => void epicPage.loadMore()} onRefresh={() => void epicPage.reload()}
               items={epics.map((epic) => ({
                 id: epic.id,
                 title: epic.name,

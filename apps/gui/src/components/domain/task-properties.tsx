@@ -1,7 +1,6 @@
 import { Link } from 'react-router-dom'
-import { BookOpen, Calendar, Folder } from 'lucide-react'
 import { Input, Switch, CollapsibleSection, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@hollis-labs/sysop-ui'
-import { FilterEntityCombobox } from '@hollis-labs/sysop-ui/data'
+import { ScopePicker } from './scope-picker'
 import { formatCostBudget } from '@/lib/sentinel-display'
 import { UNLIMITED, type Task, type Project, type Sprint, type Epic } from '@/lib/types'
 
@@ -13,7 +12,6 @@ interface TaskPropertiesProps {
   projects: Project[]
   sprints: Sprint[]
   epics: Epic[]
-  pickersLoading: boolean
 }
 
 export function TaskProperties({
@@ -24,7 +22,6 @@ export function TaskProperties({
   projects,
   sprints,
   epics,
-  pickersLoading,
 }: TaskPropertiesProps) {
   const source = editing ? draft : task
 
@@ -105,14 +102,7 @@ export function TaskProperties({
 
         <Field label="Project">
           {editing ? (
-            <FilterEntityCombobox
-              icon={<Folder className="h-3.5 w-3.5" />}
-              items={projects.map((p) => ({ id: p.id, name: p.name }))}
-              value={source.project_id}
-              onChange={(v) => onDraftChange('project_id', v)}
-              allLabel={pickersLoading ? 'loading…' : 'none'}
-              ariaLabel="Project"
-            />
+            <ScopePicker kind="project" label="Project" value={source.project_id} onChange={id => onDraftChange('project_id', id)} />
           ) : source.project_id ? (
             <LinkedValue to={`/projects/${source.project_id}`}>
               {projects.find((p) => p.id === source.project_id)?.name ?? source.project_id}
@@ -124,14 +114,7 @@ export function TaskProperties({
 
         <Field label="Sprint">
           {editing ? (
-            <FilterEntityCombobox
-              icon={<Calendar className="h-3.5 w-3.5" />}
-              items={sprints.map((s) => ({ id: s.id, name: s.name }))}
-              value={source.sprint_id}
-              onChange={(v) => onDraftChange('sprint_id', v)}
-              allLabel={pickersLoading ? 'loading…' : 'none'}
-              ariaLabel="Sprint"
-            />
+            <ScopePicker kind="sprint" label="Sprint" value={source.sprint_id} onChange={id => onDraftChange('sprint_id', id)} projectId={source.project_id ?? undefined} />
           ) : source.sprint_id ? (
             <LinkedValue to={`/sprints/${source.sprint_id}`}>
               {sprints.find((s) => s.id === source.sprint_id)?.name ?? source.sprint_id}
@@ -143,14 +126,7 @@ export function TaskProperties({
 
         <Field label="Epic">
           {editing ? (
-            <FilterEntityCombobox
-              icon={<BookOpen className="h-3.5 w-3.5" />}
-              items={epics.map((e) => ({ id: e.id, name: e.name }))}
-              value={source.epic_id}
-              onChange={(v) => onDraftChange('epic_id', v)}
-              allLabel={pickersLoading ? 'loading…' : 'none'}
-              ariaLabel="Epic"
-            />
+            <ScopePicker kind="epic" label="Epic" value={source.epic_id} onChange={id => onDraftChange('epic_id', id)} projectId={source.project_id ?? undefined} />
           ) : source.epic_id ? (
             <LinkedValue to={`/epics/${source.epic_id}`}>
               {epics.find((e) => e.id === source.epic_id)?.name ?? source.epic_id}

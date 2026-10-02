@@ -293,7 +293,15 @@ defaults to 50, clamps above 200, and rejects negatives; zero uses the default.
 MCP may trim buckets or whole parent groups to its response byte budget,
 updating `returned`/`truncated` while preserving exact counts and totals.
 These routes require no list fetch to obtain cohort counts or rollups. The
-Dashboard and Board request aggregate cohorts separately from their loaded rows.
+Dashboard, Board and parent pages request aggregate cohorts separately from their loaded rows.
+Epics/Sprints/Projects GUI pages keep 50 rows on screen with explicit Next/Previous
+navigation; only Next at the loaded boundary fetches another cursor page. Their
+facets use the same search/status/archive/project filters and `rollup_ids` for
+exactly the displayed IDs. Summary task counts use full `task_totals`; project
+child cards use `child_totals` and each row's `children`. SSE bursts refresh these
+aggregates through the shared hook without fetching list pages; Refresh updates
+changed rows. Parent selectors use one 50-row search page and direct selected-ID
+lookups, with “Type to search” for an initial match set exceeding that page.
 
 All aggregates count the whole matching cohort and reject row `limit`, `offset`,
 `cursor`, `sort_by`, and `sort_dir`. Facets apply all active filters, including

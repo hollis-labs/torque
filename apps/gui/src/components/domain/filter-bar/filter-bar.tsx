@@ -1,10 +1,11 @@
+import { ScopePicker } from '../scope-picker'
 import { useState, type ComponentProps, type ReactNode } from 'react'
-import { Folder, Calendar, BookOpen, Hash, SlidersHorizontal, Plus, Zap } from 'lucide-react'
+import { Hash, SlidersHorizontal, Plus, Zap } from 'lucide-react'
 import { FilterEntityCombobox, FilterSearchInput } from '@hollis-labs/sysop-ui/data'
 import { STATUS_COLORS, DEFAULT_STATUS_COLOR, PRIORITIES, TASK_STATUSES } from '@/lib/constants'
 import type { ManualFilter } from '@/lib/ops-filters-storage'
 import { TagFilter } from './tag-filter'
-import type { Epic, Project, Sprint, Tag, TagColor, TaskStatus } from '@/lib/types'
+import type {  Tag, TagColor, TaskStatus } from '@/lib/types'
 
 function CompactEntityFilter({ onCreate, createLabel, onMore, loadingMore, ...props }: ComponentProps<typeof FilterEntityCombobox> & { onMore?: () => void; loadingMore?: boolean }) {
   return <div className="inline-flex items-stretch [&>button]:rounded-r-none">
@@ -41,14 +42,11 @@ interface FilterBarProps {
   includeInternal?: boolean
   onIncludeInternalChange?: (value: boolean) => void
   /** Project / Sprint / Epic / Tag combobox selectors (all optional) */
-  projects?: Project[]
   projectId?: string | null
   onProjectChange?: (id: string | null) => void
-  sprints?: Sprint[]
   sprintId?: string | null
   onSprintChange?: (id: string | null) => void
   onSprintCreate?: () => void
-  epics?: Epic[]
   epicId?: string | null
   onEpicChange?: (id: string | null) => void
   tags?: Tag[]
@@ -63,10 +61,6 @@ interface FilterBarProps {
   onTagRetry?: () => void
   tagSlug?: string | null
   onTagChange?: (slug: string | null) => void
-  onProjectMore?: () => void
-  onEpicMore?: () => void
-  onSprintMore?: () => void
-  pickerLoading?: boolean
   onProjectCreate?: () => void
   onEpicCreate?: () => void
   onTagCreate?: () => void
@@ -99,23 +93,16 @@ export function FilterBar({
   onManualFilterChange,
   includeInternal = false,
   onIncludeInternalChange,
-  projects,
   projectId,
   onProjectChange,
-  sprints,
   sprintId,
   onSprintChange,
   onSprintCreate,
-  epics,
   epicId,
   onEpicChange,
   tags, selectedTag, tagQuery, onTagQueryChange, tagColor, onTagColorChange, onTagMore, tagLoading, tagError, onTagRetry,
   tagSlug,
   onTagChange,
-  onProjectMore,
-  onEpicMore,
-  onSprintMore,
-  pickerLoading,
   onProjectCreate,
   onEpicCreate,
   onTagCreate,
@@ -222,46 +209,13 @@ export function FilterBar({
       {showGroups && (
         <div className="flex flex-wrap items-center gap-2 border-l border-border pl-3">
           {onProjectChange && (
-            <CompactEntityFilter
-              icon={<Folder className="h-3.5 w-3.5" />}
-              items={projects ?? []}
-              value={projectId ?? null}
-              onChange={onProjectChange}
-              onMore={onProjectMore} loadingMore={pickerLoading}
-              allLabel="Projects"
-              ariaLabel="Filter by project"
-              onCreate={onProjectCreate}
-              createLabel="New project"
-              showStateControls
-            />
+            <div className="inline-flex items-center gap-1"><ScopePicker kind="project" value={projectId} onChange={onProjectChange} placeholder="Projects" label="Filter by project" className="h-7 w-40 justify-between text-xs" />{onProjectCreate && <button type="button" aria-label="New project" onClick={onProjectCreate} className="h-7 rounded border border-border px-2 text-xs"><Plus className="size-3" /></button>}</div>
           )}
           {onEpicChange && (
-            <CompactEntityFilter
-              icon={<BookOpen className="h-3.5 w-3.5" />}
-              items={epics ?? []}
-              value={epicId ?? null}
-              onChange={onEpicChange}
-              onMore={onEpicMore} loadingMore={pickerLoading}
-              allLabel="Epics"
-              ariaLabel="Filter by epic"
-              onCreate={onEpicCreate}
-              createLabel="New epic"
-              showStateControls
-            />
+            <div className="inline-flex items-center gap-1"><ScopePicker kind="epic" value={epicId} onChange={onEpicChange} projectId={projectId ?? undefined} placeholder="Epics" label="Filter by epic" className="h-7 w-40 justify-between text-xs" />{onEpicCreate && <button type="button" aria-label="New epic" onClick={onEpicCreate} className="h-7 rounded border border-border px-2 text-xs"><Plus className="size-3" /></button>}</div>
           )}
           {onSprintChange && (
-            <CompactEntityFilter
-              icon={<Calendar className="h-3.5 w-3.5" />}
-              items={sprints ?? []}
-              value={sprintId ?? null}
-              onChange={onSprintChange}
-              onMore={onSprintMore} loadingMore={pickerLoading}
-              allLabel="Sprints"
-              ariaLabel="Filter by sprint"
-              onCreate={onSprintCreate}
-              createLabel="New sprint"
-              showStateControls
-            />
+            <div className="inline-flex items-center gap-1"><ScopePicker kind="sprint" value={sprintId} onChange={onSprintChange} projectId={projectId ?? undefined} placeholder="Sprints" label="Filter by sprint" className="h-7 w-40 justify-between text-xs" />{onSprintCreate && <button type="button" aria-label="New sprint" onClick={onSprintCreate} className="h-7 rounded border border-border px-2 text-xs"><Plus className="size-3" /></button>}</div>
           )}
           {onTagChange && (onTagQueryChange && onTagColorChange ? <TagFilter tags={tags ?? []} selected={selectedTag}
             value={tagSlug ?? null} onChange={onTagChange} query={tagQuery ?? ''} onQueryChange={onTagQueryChange}

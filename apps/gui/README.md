@@ -135,4 +135,23 @@ Operations uses `usePagedList` in cursor mode with 50 task summaries per request
 
 The filter editor stores named views in browser-local storage. Apply restores a snapshot, Reset restores the selected view (or defaults), and Save as / Save over explicitly persist it. Clear only resets working filters. Eligibility temporarily overrides the other filters and restores them when disabled; its tooltip distinguishes static eligibility from scheduler runtime checks. Review screenshots and an isolated 4,001-task network trace are in `artifacts/CW-20261001-0574/`.
 
+
+Epics, Sprints and Projects use `useParentPage` over `usePagedList`: server search,
+status, archive and sort; 50 rendered rows; explicit Next/Previous; same-cohort
+facet cards and `rollup_ids` for exactly the displayed IDs. Requested rollups are
+complete even for parents outside the default top buckets. A missing/failed
+metric shows “—”; zero is shown only when the server supplies it. Task-progress
+bars retain their existing active-work status grouping, while Scoped Tasks uses
+the server's total of all non-internal tasks. SSE bursts refresh facets, never
+row pages; Refresh resets the loaded cursor traversal.
+
+`ScopePicker` replaces sampled parent dropdowns with a single 50-row server
+search page. Empty search with more matches asks the user to type; typed searches
+with more results ask for refinement. There are no cursor exhaustion loops.
+Selected IDs resolve independently and remain selected when outside the search
+page. Create/edit dialogs, task properties, Operations filters and Scope Manager
+use server searches. Project detail children use explicit continuation and
+server search. Evidence for 360 projects, 435 epics/sprints and 2,160 tasks is in
+`artifacts/CW-20261001-0577/`.
+
 Vitest uses one to two workers through `vitest.config.ts`, so the existing `npm run test:run` command has the same worker budget locally and in CI. The CPU-count default can oversubscribe shared hosts; prior runs intermittently timed out ScopeManagerDialog’s initial form and Collections’ continued-page renders. Assertion timeouts and behavior checks are unchanged; use explicit CLI worker overrides only when profiling concurrency.

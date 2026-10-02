@@ -8,21 +8,14 @@ import {
   DialogTitle,
 } from '@hollis-labs/sysop-ui'
 import { Button, Input, Label, Textarea } from '@hollis-labs/sysop-ui'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@hollis-labs/sysop-ui'
+import { ScopePicker } from './scope-picker'
 import { useApi } from '@/hooks/use-api'
 import { notifyError, notifySuccess } from '@/lib/toast'
-import type { Project, Sprint } from '@/lib/types'
+import type { Sprint } from '@/lib/types'
 
 interface SprintCreateDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  projects: Project[]
   defaultProjectId?: string | null
   onCreated?: (sprint: Sprint) => void
 }
@@ -32,7 +25,6 @@ const NONE_VALUE = '__none__'
 export function SprintCreateDialog({
   open,
   onOpenChange,
-  projects,
   defaultProjectId,
   onCreated,
 }: SprintCreateDialogProps) {
@@ -105,19 +97,7 @@ export function SprintCreateDialog({
           </div>
           <div className="flex flex-col gap-1.5">
             <Label>Project</Label>
-            <Select value={projectId} onValueChange={(v) => v && setProjectId(v)}>
-              <SelectTrigger aria-label="Sprint project" size="sm" className="h-8 w-full">
-                <SelectValue placeholder="No project" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NONE_VALUE}>No project</SelectItem>
-                {projects.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ScopePicker kind="project" label="Sprint project" value={projectId === NONE_VALUE ? null : projectId} onChange={id => setProjectId(id ?? NONE_VALUE)} />
           </div>
         </div>
 

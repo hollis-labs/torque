@@ -1,17 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ExternalLink, Pencil, Plus } from 'lucide-react'
 import { Skeleton, Button, PageHeader, SummaryCards, EmptyState } from '@hollis-labs/sysop-ui'
 import { ProjectCreateDialog } from '@/components/domain/project-create-dialog'
 import { ScopeOverviewCard } from '@/components/domain/scope-overview-card'
-import { useApi } from '@/hooks/use-api'
-import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
-import { useSSE } from '@/hooks/use-sse'
-import { EVENT_REFETCH_DEBOUNCE_MS } from '@/lib/debounce'
-import { rollupFromStatusCounts, rollupsByScope } from '@/lib/scope-metrics'
-import type { Epic, Project, Sprint, TaskScopeRollupResponse } from '@/lib/types'
-
-const SSE_EVENTS = ['project.updated', 'project.created', 'project.deleted', 'task.updated', 'task.created', 'task.transitioned']
+import { useParentPage } from '@/hooks/use-parent-page'
+import { ParentPageControls } from '@/components/domain/parent-page-controls'
+import { rollupFromStatusCounts } from '@/lib/scope-metrics'
+import type { Project } from '@/lib/types'
 
 function PageSkeleton() {
   return (
@@ -23,77 +19,26 @@ function PageSkeleton() {
 }
 
 export default function ProjectsPage() {
-  const api = useApi()
   const navigate = useNavigate()
-  const { lastEvent } = useSSE(SSE_EVENTS)
-  const [projects, setProjects] = useState<Project[]>([])
-  const [taskRollup, setTaskRollup] = useState<TaskScopeRollupResponse | null>(null)
-  const [sprints, setSprints] = useState<Sprint[]>([])
-  const [epics, setEpics] = useState<Epic[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const page = useParentPage<Project>('project')
+  const { loading, error } = page
   const [createOpen, setCreateOpen] = useState(false)
-  const loadGeneration = useRef(0)
-
-  // background: an event-driven refresh, which keeps the page on screen
-  // instead of swapping in the skeleton.
-  const load = useCallback(async ({ background = false } = {}) => {
-    const myGen = ++loadGeneration.current
-    if (!background) {
-      setLoading(true)
-      setError(null)
-    }
-    try {
-      const [projectRes, rollupRes, sprintRes, epicRes] = await Promise.all([
-        api.listProjects(),
-        api.taskRollup('project_id'),
-        api.listSprints(),
-        api.listEpics(),
-      ])
-      if (myGen !== loadGeneration.current) return
-      setProjects(projectRes.items)
-      setTaskRollup(rollupRes)
-      setSprints(sprintRes.items)
-      setEpics(epicRes.items)
-    } catch (err) {
-      // A failed background refresh leaves the loaded page in place.
-      if (myGen !== loadGeneration.current || background) return
-      setError(err instanceof Error ? err.message : 'Failed to load projects')
-    } finally {
-      if (myGen === loadGeneration.current) setLoading(false)
-    }
-  }, [api])
-
-  useEffect(() => {
-    void load()
-  }, [load])
-
-  const scheduleReload = useDebouncedCallback(() => void load({ background: true }), EVENT_REFETCH_DEBOUNCE_MS)
-  useEffect(() => {
-    if (!lastEvent) return
-    scheduleReload()
-  }, [lastEvent, scheduleReload])
-
-  const projectRollups = useMemo(() => rollupsByScope(taskRollup), [taskRollup])
-  const activeCount = projects.filter((project) => project.status === 'active').length
-  const scopedTaskCount = taskRollup?.total ?? 0
-
+  const totals = page.facets?.result
+  function facetCount(dimension: string, value: string | number): number | string {
+    const facet = totals?.facets.find(facet => facet.dimension === dimension)
+    return facet?.buckets.find(bucket => bucket.value === value)?.count ?? (facet && !facet.truncated ? 0 : '—')
+  }
   const summaryCards = [
-    { label: 'Projects', value: projects.length },
-    { label: 'Active', value: activeCount, accentColor: '#34d399' },
-    { label: 'Scoped Tasks', value: scopedTaskCount, accentColor: '#60a5fa' },
-    { label: 'Sprints', value: sprints.length, accentColor: '#fbbf24' },
-    { label: 'Epics', value: epics.length, accentColor: '#a78bfa' },
+    { label: 'Projects', value: totals?.matching_count ?? '—' },
+    { label: 'Active', value: facetCount('status', 'active'), accentColor: '#34d399' },
+    { label: 'Scoped Tasks', value: totals?.task_totals.total ?? '—', accentColor: '#60a5fa' },
+    { label: 'Sprints', value: totals?.child_totals?.sprints ?? '—', accentColor: '#fbbf24' },
+    { label: 'Epics', value: totals?.child_totals?.epics ?? '—', accentColor: '#a78bfa' },
   ]
-
-  const projectCards = useMemo(() => {
-    return projects.map((project) => {
-      const rollup = projectRollups.get(project.id) ?? rollupFromStatusCounts({})
-      const projectSprintCount = sprints.filter((sprint) => sprint.project_id === project.id).length
-      const projectEpicCount = epics.filter((epic) => epic.project_id === project.id).length
-      return { project, rollup, projectSprintCount, projectEpicCount }
-    })
-  }, [projects, projectRollups, sprints, epics])
+  const projectCards = page.items.map(project => {
+    const scope = page.rollups?.find(scope => scope.scope_id === project.id)
+    return { project, rollup: scope ? rollupFromStatusCounts(scope.counts) : null, projectSprintCount: scope?.children?.sprints ?? '—', projectEpicCount: scope?.children?.epics ?? '—' }
+  })
 
   return (
     <div className="flex h-full flex-col">
@@ -107,7 +52,9 @@ export default function ProjectsPage() {
           New Project
         </Button>
       </PageHeader>
-      {!loading && !error && <SummaryCards cards={summaryCards} />}
+      <SummaryCards cards={summaryCards} />
+      {page.facets?.error && <p role="alert" className="px-6 text-sm text-destructive">Counts unavailable: {page.facets.error}</p>}
+      <ParentPageControls kind="project" query={page.query} onChange={page.changeQuery} pageStart={page.pageStart} hasNext={page.hasNext} loading={loading} stale={page.isStale} previous={page.previousPage} next={() => void page.nextPage()} refresh={page.refresh} />
 
       <ProjectCreateDialog
         open={createOpen}
@@ -120,14 +67,14 @@ export default function ProjectsPage() {
           <PageSkeleton />
         ) : error ? (
           <div className="p-6">
-            <EmptyState variant="error" title="Something went wrong" description={error} action={{ label: 'Retry', onClick: () => void load() }} />
+            <EmptyState variant="error" title="Something went wrong" description={error.message} action={{ label: 'Retry', onClick: page.refresh }} />
           </div>
         ) : projectCards.length === 0 ? (
           <div className="p-6">
             <EmptyState
               variant="empty"
-              title="No projects yet"
-              description="No projects exist yet."
+              title="No matching projects"
+              description="Try a different search, status or archive filter."
               action={{ label: 'Create project', onClick: () => setCreateOpen(true) }}
             />
           </div>
@@ -144,10 +91,10 @@ export default function ProjectsPage() {
                 description={project.description}
                 progress={rollup}
                 metrics={[
-                  { label: 'Open', value: rollup.open },
-                  { label: 'Doing', value: rollup.doing, accentColor: '#60a5fa' },
-                  { label: 'Blocked', value: rollup.blocked, accentColor: '#f87171' },
-                  { label: 'Done', value: rollup.done, accentColor: '#34d399' },
+                  { label: 'Open', value: rollup?.open ?? '—' },
+                  { label: 'Doing', value: rollup?.doing ?? '—', accentColor: '#60a5fa' },
+                  { label: 'Blocked', value: rollup?.blocked ?? '—', accentColor: '#f87171' },
+                  { label: 'Done', value: rollup?.done ?? '—', accentColor: '#34d399' },
                 ]}
                 meta={[
                   { label: 'Repo Path', value: <span className="font-mono text-xs text-zinc-300">{project.repo_path || 'Not set'}</span> },

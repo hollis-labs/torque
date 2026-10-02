@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { ProgressBar } from '@hollis-labs/sysop-ui'
+import { Button, Input, ProgressBar } from '@hollis-labs/sysop-ui'
 import { StatusBadge } from '@/components/domain/status-badge'
 
 interface ScopeCollectionItem {
@@ -19,19 +19,29 @@ interface ScopeCollectionPanelProps {
   title: string
   items: ScopeCollectionItem[]
   emptyMessage: string
+  search?: string
+  onSearch?: (value: string) => void
+  total?: number
+  hasMore?: boolean
+  loading?: boolean
+  error?: string
+  onLoadMore?: () => void
+  onRefresh?: () => void
 }
 
-export function ScopeCollectionPanel({ title, items, emptyMessage }: ScopeCollectionPanelProps) {
+export function ScopeCollectionPanel({ title, items, emptyMessage, search, onSearch, total, hasMore, loading, error, onLoadMore, onRefresh }: ScopeCollectionPanelProps) {
   return (
     <section className="rounded-2xl border border-zinc-800/80 bg-zinc-950/70">
       <div className="flex items-center justify-between border-b border-zinc-800/80 px-5 py-4">
         <div>
           <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-400">{title}</h2>
-          <p className="mt-1 text-sm text-zinc-500">{items.length}</p>
+          <p className="mt-1 text-sm text-zinc-500">{items.length} loaded{total !== undefined && ` of ${total}`}</p>
         </div>
       </div>
+      {onSearch && <Input aria-label={`Search project ${title.toLowerCase()}`} placeholder={`Search ${title.toLowerCase()}…`} value={search ?? ''} onChange={event => onSearch(event.target.value)} className="m-3 w-[calc(100%-1.5rem)]" />}
+      {error && <p role="alert" className="px-5 text-sm text-destructive">{error}<Button size="sm" variant="outline" onClick={onRefresh}>Retry</Button></p>}
       {items.length === 0 ? (
-        <div className="px-5 py-8 text-sm text-zinc-500">{emptyMessage}</div>
+        <div className="px-5 py-8 text-sm text-zinc-500">{loading ? 'Loading…' : emptyMessage}</div>
       ) : (
         <div className="divide-y divide-zinc-800/70">
           {items.map((item) => (
@@ -65,6 +75,7 @@ export function ScopeCollectionPanel({ title, items, emptyMessage }: ScopeCollec
           ))}
         </div>
       )}
+      {hasMore && <div className="px-5 py-3"><Button size="sm" variant="outline" onClick={onLoadMore} disabled={loading}>{loading ? 'Loading…' : `Load more ${title.toLowerCase()}`}</Button></div>}
     </section>
   )
 }
