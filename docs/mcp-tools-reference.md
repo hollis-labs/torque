@@ -239,9 +239,14 @@ does not skip catalog rows. `include_total` defaults to false; only true adds
 the exact filtered catalog count before cursor/limit. The fixed allow-list is
 `sort_by=name`, `sort_dir=asc`; other sorts reject.
 
-`torque_task_list` sort: `sort_by` ∈ `priority\|status\|updated_at\|created_at`,
+`torque_task_list` sort: `sort_by` ∈ `priority\|status\|updated_at\|created_at\|title`,
 default `priority asc` (tiebreak `id asc`). HTTP `GET /api/v1/tasks` uses the
-same public default order; lower-level service/store list calls used by engine
+same public default order. Title sorts case-insensitively for ASCII letters
+(SQLite `COLLATE NOCASE`; PostgreSQL equivalent ASCII folding), with `id asc`
+breaking ties in either direction. Cursor comparisons use the identical key
+and remain bound to sort field/direction. HTTP explicit offset paging also
+works; MCP retains its cursor-only task-list argument contract.
+Lower-level service/store list calls used by engine
 internals retain their legacy ordering.
 
 `torque_task_list` validates explicit query arguments instead of broadening

@@ -1,0 +1,84 @@
+package main
+
+import (
+	"database/sql"
+	"fmt"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+	_ "modernc.org/sqlite"
+	"os"
+	"path/filepath"
+	"sort"
+	"time"
+)
+
+func must(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+func main() {
+	dir, err := os.MkdirTemp("", "torque-title-probe-")
+	must(err)
+	defer os.RemoveAll(dir)
+	db, err := sql.Open("sqlite", filepath.Join(dir, "fixture.db"))
+	must(err)
+	must(migrations.Run(db))
+	tx, err := db.Begin()
+	must(err)
+	stmt, err := tx.Prepare(`INSERT INTO tasks(id,title,status,kind,priority) VALUES(?,?,'todo','agent',?)`)
+	must(err)
+	for n := 0; n < 4300; n++ {
+		_, err = stmt.Exec(fmt.Sprintf("T-%05d", n), fmt.Sprintf("%s task %04d", []string{"Alpha", "aLPHA", "beta", "BETA", "zebra"}[n%5], n%1075), n%3+1)
+		must(err)
+	}
+	must(stmt.Close())
+	must(tx.Commit())
+	store, err := sqlstore.New(db, "sqlite")
+	must(err)
+	defer store.Close()
+	for _, indexed := range []bool{false, true} {
+		if indexed {
+			_, err = store.DB().Exec(`CREATE INDEX fixture_title ON tasks(title COLLATE NOCASE, id)`)
+			must(err)
+		}
+		// Execute a read to refresh reader schema after the writer adds the candidate.
+		_, err = store.ListTasks(sqlstore.TaskFilter{SortBy: "title", SortDir: "asc", Limit: 51, ExcludeInternal: true})
+		must(err)
+		fmt.Printf("indexed=%v\n", indexed)
+		for _, cursor := range []bool{false, true} {
+			q := `EXPLAIN QUERY PLAN SELECT * FROM tasks WHERE kind != 'internal'`
+			args := []any{}
+			f := sqlstore.TaskFilter{SortBy: "title", SortDir: "asc", Limit: 51, ExcludeInternal: true}
+			if cursor {
+				q += ` AND (title COLLATE NOCASE > ? OR (title COLLATE NOCASE = ? AND id > ?))`
+				args = []any{"beta task 0500", "beta task 0500", "T-00500"}
+				f.AfterSortValue = "beta task 0500"
+				f.AfterID = "T-00500"
+			}
+			q += fmt.Sprintf(` ORDER BY title COLLATE NOCASE ASC,id ASC LIMIT 51 /* indexed=%v */`, indexed)
+			plan, err := store.ReadDB().Query(q, args...)
+			must(err)
+			fmt.Printf("cursor=%v plan:\n", cursor)
+			for plan.Next() {
+				var id, parent, unused int
+				var detail string
+				must(plan.Scan(&id, &parent, &unused, &detail))
+				fmt.Println(detail)
+			}
+			must(plan.Err())
+			must(plan.Close())
+			var timings []time.Duration
+			for n := 0; n < 105; n++ {
+				start := time.Now()
+				_, err = store.ListTasks(f)
+				must(err)
+				if n >= 5 {
+					timings = append(timings, time.Since(start))
+				}
+			}
+			sort.Slice(timings, func(i, j int) bool { return timings[i] < timings[j] })
+			fmt.Printf("actual ListTasks full-projection warm100 median=%s p95=%s\n", timings[50], timings[95])
+		}
+	}
+}
