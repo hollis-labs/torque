@@ -28,6 +28,10 @@ await p.route('**/api/v1/**', async route => {
     if (id === 'B-0') { status = 409; data = { error: 'membership changed' } }
     else { await new Promise(resolve => setTimeout(resolve, 150)); small = small.filter(t => t.id !== id) }
   }
+  else if (method === 'PUT' && path === '/collections/COL-2/tasks/order') {
+    const ids = route.request().postDataJSON().task_ids
+    small = ids.map(id => small.find(task => task.id === id)).filter(Boolean)
+  }
   else if (/^\/collections\/[^/]+\/tasks$/.test(path)) {
     let cohort = path.includes('COL-1/') ? tasks : path.includes('COL-2/') ? small : []
     cohort = cohort.filter(t => (!query.search || t.title.toLowerCase().includes(query.search.toLowerCase())) && (!query.status || t.status === query.status))
@@ -76,6 +80,29 @@ try {
   const deletes = requests.filter(r => r.method === 'DELETE')
   if (deletes.length !== 4) throw new Error(`clear did not stop scheduling (${deletes.length} calls)`)
   await capture('05-clear-partial-result')
+  // Simulate a server move while its former collection is about to be hidden.
+  // The old COL-1 cache must not decide the drag source in visible COL-2.
+  const moved = { ...tasks.find(task => task.id === 'T-0'), collection_id: 'COL-2' }
+  tasks = tasks.filter(task => task.id !== 'T-0')
+  small.push(moved)
+  const visibleCollections = p.waitForResponse(response => { const url = new URL(response.url()); return url.pathname.endsWith('/collections') && url.searchParams.get('search') === 'Collection 2' })
+  await p.getByRole('textbox', { name: 'Search collections', exact: true }).fill('Collection 2')
+  await visibleCollections
+  await p.waitForFunction(() => !document.querySelector('[aria-label="Actions for collection Engineering backlog"]'))
+  await p.getByRole('button', { name: 'Actions for collection Collection 2', exact: true }).waitFor()
+  await p.getByText('Task 0 production backlog', { exact: true }).waitFor()
+  await p.locator('[data-task-id="T-0"] [aria-label="Drag to reorder"]').scrollIntoViewIfNeeded()
+  const handle = await p.locator('[data-task-id="T-0"] [aria-label="Drag to reorder"]').boundingBox()
+  const target = await p.locator('[data-task-id="B-0"]').boundingBox()
+  const reordered = p.waitForRequest(request => request.method() === 'PUT' && new URL(request.url()).pathname.endsWith('/collections/COL-2/tasks/order'))
+  await p.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2)
+  await p.mouse.down()
+  await p.mouse.move(handle.x + handle.width / 2 + 8, handle.y + handle.height / 2, { steps: 2 })
+  await p.mouse.move(target.x + 30, target.y + target.height / 2, { steps: 8 })
+  await p.mouse.up()
+  const order = (await reordered).postDataJSON().task_ids
+  if (requests.some(r => r.path === '/collections/tasks/move') || new Set(order).size !== order.length) throw new Error('hidden cache supplied the drag source')
+  await capture('07-visible-cohort-drag')
   await p.getByRole('textbox', { name: 'Search collections', exact: true }).fill('Collection 70')
   await p.getByRole('button', { name: 'Actions for collection Collection 70', exact: true }).waitFor()
   await capture('06-server-collection-search')

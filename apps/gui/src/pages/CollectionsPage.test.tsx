@@ -29,7 +29,7 @@ it('pages large collections and task cohorts only on explicit continuation', asy
   fireEvent.click(screen.getByRole('button', { name: 'Load more collections' }))
   await waitFor(() => expect(listCollectionTasks).toHaveBeenCalledTimes(3))
   expect(listCollections.mock.calls[1][1]).toMatchObject({ cursor: 'collections-next', sort_by: 'created_at' })
-})
+}, 15000) // This integration case renders 100 real drag/menu rows in jsdom.
 
 it('uses server task search/status and resets the cursor cohort', async () => {
   listCollections.mockResolvedValue(page([collection('COL-1')], 1, null))

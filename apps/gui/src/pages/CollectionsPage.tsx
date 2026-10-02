@@ -454,12 +454,12 @@ export default function CollectionsPage() {
   const findContainerForTask = useCallback(
     (taskId: string): { collectionId: string | null } | undefined => {
       if (inboxTasks.some((t) => t.id === taskId)) return { collectionId: null }
-      for (const [colId, tasks] of Object.entries(tasksByCollection)) {
-        if (tasks.some((t) => t.id === taskId)) return { collectionId: colId }
+      for (const collection of collections) {
+        if (tasksByCollection[collection.id]?.some(task => task.id === taskId)) return { collectionId: collection.id }
       }
       return undefined
     },
-    [inboxTasks, tasksByCollection],
+    [inboxTasks, collections, tasksByCollection],
   )
 
   /** Resolve a `over.id` (either a task id or a `container:` token)
@@ -658,12 +658,12 @@ export default function CollectionsPage() {
       const inboxHit = inboxTasks.find((t) => t.id === activeDragTaskId)
       if (inboxHit) return inboxHit
     }
-    for (const tasks of Object.values(tasksByCollection)) {
-      const hit = tasks.find((t) => t.id === activeDragTaskId)
+    for (const collection of collections) {
+      const hit = tasksByCollection[collection.id]?.find(task => task.id === activeDragTaskId)
       if (hit) return hit
     }
     return null
-  }, [activeDragTaskId, inboxTasks, tasksByCollection])
+  }, [activeDragTaskId, inboxTasks, collections, tasksByCollection])
 
   return (
     <DndContext
