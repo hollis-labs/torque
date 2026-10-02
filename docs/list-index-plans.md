@@ -2,9 +2,11 @@
 
 Snapshot of the authored SQL at main `37fa8c0` (including `/runs`), plus
 migration 035. This is evidence for that migration, not a performance gate.
-The [complete result](evidence/list-index-plans-20261001.json) records each SQL
+The [complete result](https://github.com/hollis-labs/torque/blob/a22bcfa9860bc12d59681389d0959e2c9915aaf6/docs/evidence/list-index-plans-20261001.json) records each SQL
 query, both SQLite EXPLAIN QUERY PLAN outputs, both PostgreSQL plan trees,
-and COUNT queries with EXPLAIN ANALYZE/BUFFERS and timing ranges.
+and COUNT queries with EXPLAIN ANALYZE/BUFFERS and timing ranges. The raw JSON
+is archived at that immutable PR commit; this summary and the reproduction
+script remain in the tree under the [evidence convention](evidence/README.md).
 
 ## Method and limits
 

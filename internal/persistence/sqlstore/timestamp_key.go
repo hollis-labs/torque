@@ -15,6 +15,7 @@ func isTimestampSortColumn(col string) bool {
 // one fixed-width key. Padding uses text only, preserving all nine fractional
 // digits without floating-point rounding. Callers use this same key for range
 // bounds, cursor predicates and ordering. PostgreSQL compares typed timestamps.
+// Migration 035's SQLite expression indexes depend on this exact SQL text; changing it silently stops their use and requires a new migration.
 func (s *Store) timestampSortKey(col string) string {
 	if !isTimestampSortColumn(col) {
 		return col
