@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -23,6 +24,10 @@ func (s *Server) listSubtodos(w http.ResponseWriter, r *http.Request) {
 	}
 	page, queryErr := s.svc.Task.QuerySubtodos(chi.URLParam(r, "id"), q)
 	if queryErr != nil {
+		if errors.Is(queryErr, sqlstore.ErrTaskNotFound) {
+			writeError(w, http.StatusNotFound, queryErr.Error())
+			return
+		}
 		writeAdjacentServiceError(w, queryErr)
 		return
 	}

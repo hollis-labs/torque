@@ -151,6 +151,10 @@ func TestTagSubtodoEmptyAndSortContract(t *testing.T) {
 			require.True(t, failed, text)
 		}
 	}
+	resp, err := http.Get(ts.URL + "/api/v1/tasks/missing/subtodos")
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 	items := []sqlstore.Subtodo{{ID: "z", Text: "First"}, {ID: "a", Text: "Second"}, {ID: "m", Text: "Last"}}
 	require.NoError(t, store.SetSubtodos("empty", items))
 	q := url.Values{"limit": {"1"}, "sort_by": {"position"}, "sort_dir": {"desc"}, "include_total": {"true"}}
