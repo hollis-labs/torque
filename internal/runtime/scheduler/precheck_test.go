@@ -2,8 +2,7 @@ package scheduler_test
 
 import (
 	"database/sql"
-	"os"
-	"path/filepath"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -226,8 +225,10 @@ func TestWorktreePrecheck_WarnsNonGitWorkingDir(t *testing.T) {
 
 func TestWorktreePrecheck_PassesGitWorkingDir(t *testing.T) {
 	repo := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
-		t.Fatal(err)
+	cmd := exec.Command("git", "init", "-b", "main")
+	cmd.Dir = repo
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
 	}
 	res := scheduler.WorktreePrecheck(repo, true, scheduler.PrecheckBlock)
 	assert.Empty(t, res.BlockReason)
