@@ -8,6 +8,20 @@ and COUNT queries with EXPLAIN ANALYZE/BUFFERS and timing ranges. The raw JSON
 is archived at that immutable PR commit; this summary and the reproduction
 script remain in the tree under the [evidence convention](evidence/README.md).
 
+## Migration 037 correction — CW-20261002-0008
+
+Migration 037 drops `idx_runs_page_duration_asc` and `_desc` on SQLite and
+PostgreSQL. Rehearsal found that different SQLite builds can evaluate the
+julianday/ROUND duration expression differently, making the stored index keys
+inconsistent for another build. Do not use date/time or floating-point functions
+in SQLite expression indexes. PostgreSQL's immutable-expression enforcement does
+not have that SQLite portability issue; its override drops the same family for
+symmetry. Other 035 indexes remain. Duration ORDER BY and cursor expressions
+are unchanged and now execute without these indexes.
+
+The duration rows below describe the historical 035-only plans, not current
+plans after 037. The archived measurements remain evidence of that snapshot.
+
 ## Method and limits
 
 - SQLite 3.53.4 is Torque's pinned modernc driver, not Python's bundled planner.
