@@ -319,6 +319,7 @@ export interface Sprint {
   approval_mode: string
   cost_budget: number | null
   project_id: string | null
+  epic_id?: string | null
   started_at: string | null
   ended_at: string | null
   created_at: string

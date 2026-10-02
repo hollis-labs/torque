@@ -18,6 +18,7 @@ type SprintRecord struct {
 	ApprovalMode string
 	CostBudget   sql.NullFloat64
 	ProjectID    sql.NullString
+	EpicID       sql.NullString
 	StartedAt    sql.NullTime
 	EndedAt      sql.NullTime
 	ArchivedAt   sql.NullTime
@@ -32,6 +33,7 @@ type SprintFilter struct {
 	Search          string
 	Status          string
 	ProjectID       string
+	EpicID          string
 	IncludeArchived bool
 
 	// Budget-range filter (ENT-SPRINT). CostBudgetMin/Max compare against
@@ -75,6 +77,7 @@ type SprintUpdate struct {
 	ApprovalMode *string
 	CostBudget   *float64
 	ProjectID    *string
+	EpicID       *string
 }
 
 // CreateSprint inserts a new sprint with defaults applied.
@@ -87,10 +90,10 @@ func (s *Store) CreateSprint(sp *SprintRecord) error {
 	}
 
 	_, err := s.db.Exec(`INSERT INTO sprints (
-		id, name, goal, status, approval_mode, cost_budget, project_id, started_at, ended_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, name, goal, status, approval_mode, cost_budget, project_id, epic_id, started_at, ended_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sp.ID, sp.Name, sp.Goal, sp.Status, sp.ApprovalMode,
-		sp.CostBudget, sp.ProjectID, sp.StartedAt, sp.EndedAt,
+		sp.CostBudget, sp.ProjectID, sp.EpicID, sp.StartedAt, sp.EndedAt,
 	)
 	return err
 }
@@ -99,11 +102,11 @@ func (s *Store) CreateSprint(sp *SprintRecord) error {
 func (s *Store) GetSprint(id string) (*SprintRecord, error) {
 	sp := &SprintRecord{}
 	err := s.ReadDB().QueryRow(`SELECT
-		id, name, goal, status, approval_mode, cost_budget, project_id,
+		id, name, goal, status, approval_mode, cost_budget, project_id, epic_id,
 		started_at, ended_at, archived_at, created_at, updated_at
 	FROM sprints WHERE id = ?`, id).Scan(
 		&sp.ID, &sp.Name, &sp.Goal, &sp.Status, &sp.ApprovalMode,
-		&sp.CostBudget, &sp.ProjectID, &sp.StartedAt, &sp.EndedAt,
+		&sp.CostBudget, &sp.ProjectID, &sp.EpicID, &sp.StartedAt, &sp.EndedAt,
 		&sp.ArchivedAt, &sp.CreatedAt, &sp.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -156,7 +159,7 @@ func sprintCursorArg(sortBy, sv string) (any, error) {
 // pagination). Archived rows (archived_at IS NOT NULL) are excluded unless
 // f.IncludeArchived is true.
 func (s *Store) ListSprints(f SprintFilter) ([]SprintRecord, error) {
-	query := `SELECT id, name, goal, status, approval_mode, cost_budget, project_id,
+	query := `SELECT id, name, goal, status, approval_mode, cost_budget, project_id, epic_id,
 		started_at, ended_at, archived_at, created_at, updated_at FROM sprints`
 
 	conditions, args := sprintListPredicates(f)
@@ -216,7 +219,7 @@ func (s *Store) ListSprints(f SprintFilter) ([]SprintRecord, error) {
 		var sp SprintRecord
 		if err := rows.Scan(
 			&sp.ID, &sp.Name, &sp.Goal, &sp.Status, &sp.ApprovalMode,
-			&sp.CostBudget, &sp.ProjectID, &sp.StartedAt, &sp.EndedAt,
+			&sp.CostBudget, &sp.ProjectID, &sp.EpicID, &sp.StartedAt, &sp.EndedAt,
 			&sp.ArchivedAt, &sp.CreatedAt, &sp.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -254,6 +257,11 @@ func (s *Store) UpdateSprint(id string, u SprintUpdate) error {
 		} else {
 			args = append(args, *u.ProjectID)
 		}
+	}
+
+	if u.EpicID != nil {
+		sets = append(sets, "epic_id = ?")
+		args = append(args, sql.NullString{String: *u.EpicID, Valid: *u.EpicID != ""})
 	}
 
 	if len(sets) == 0 {
@@ -399,6 +407,10 @@ func sprintListPredicates(f SprintFilter) ([]string, []any) {
 	if f.ProjectID != "" {
 		conditions = append(conditions, "project_id = ?")
 		args = append(args, f.ProjectID)
+	}
+	if f.EpicID != "" {
+		conditions = append(conditions, "epic_id = ?")
+		args = append(args, f.EpicID)
 	}
 	if !f.IncludeArchived {
 		conditions = append(conditions, "archived_at IS NULL")

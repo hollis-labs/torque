@@ -65,6 +65,7 @@ type briefTask struct {
 }
 
 type briefSprint struct {
+	EpicID       string `json:"epic_id,omitempty"`
 	ID           string `json:"id"`
 	Name         string `json:"name"`
 	Status       string `json:"status"`
@@ -170,6 +171,7 @@ func toBriefSprint(s sqlstore.SprintRecord) briefSprint {
 		projectID = s.ProjectID.String
 	}
 	return briefSprint{
+		EpicID:       s.EpicID.String,
 		ID:           s.ID,
 		Name:         s.Name,
 		Status:       s.Status,

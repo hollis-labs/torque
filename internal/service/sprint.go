@@ -21,6 +21,7 @@ type SprintCreateInput struct {
 	ApprovalMode string
 	CostBudget   *float64
 	ProjectID    string // optional
+	EpicID       string // optional
 }
 
 // validSprintTransitions defines the sprint status FSM.
@@ -64,6 +65,9 @@ func (s *SprintService) Create(input SprintCreateInput) (*sqlstore.SprintRecord,
 		}
 	}
 
+	if err := s.validateEpicProject(input.EpicID, input.ProjectID); err != nil {
+		return nil, err
+	}
 	id, err := s.store.NextSprintID()
 	if err != nil {
 		return nil, err
@@ -85,6 +89,9 @@ func (s *SprintService) Create(input SprintCreateInput) (*sqlstore.SprintRecord,
 		record.ProjectID = sql.NullString{String: input.ProjectID, Valid: true}
 	}
 
+	if input.EpicID != "" {
+		record.EpicID = sql.NullString{String: input.EpicID, Valid: true}
+	}
 	if err := s.store.CreateSprint(record); err != nil {
 		return nil, err
 	}
@@ -100,7 +107,7 @@ func (s *SprintService) Get(id string) (*sqlstore.SprintRecord, error) {
 	return s.store.GetSprint(id)
 }
 
-// List returns sprints matching filter (status/project_id/archived-state
+// List returns sprints matching filter (status/project_id/epic_id/archived-state
 // filters, PRIM-002 sort_by/sort_dir, PRIM-001 cursor pagination, and the
 // cost-budget-range/over-budget filter — ENT-SPRINT). Takes the full
 // sqlstore.SprintFilter directly, mirroring TaskService.List's pattern, so
@@ -133,6 +140,22 @@ func (s *SprintService) Update(id string, update sqlstore.SprintUpdate) error {
 			Message: "must be one of: auto, approve_sprint, approve_each",
 		}
 	}
+	if update.EpicID != nil || update.ProjectID != nil {
+		current, err := s.store.GetSprint(id)
+		if err != nil {
+			return err
+		}
+		epicID, projectID := current.EpicID.String, current.ProjectID.String
+		if update.EpicID != nil {
+			epicID = *update.EpicID
+		}
+		if update.ProjectID != nil {
+			projectID = *update.ProjectID
+		}
+		if err := s.validateEpicProject(epicID, projectID); err != nil {
+			return err
+		}
+	}
 	return s.store.UpdateSprint(id, update)
 }
 
@@ -160,7 +183,7 @@ func (s *SprintService) BulkUpdate(ids []string, update sqlstore.SprintUpdate, s
 	}
 
 	hasUpdate := update.Name != nil || update.Goal != nil || update.ApprovalMode != nil ||
-		update.CostBudget != nil || update.ProjectID != nil
+		update.CostBudget != nil || update.ProjectID != nil || update.EpicID != nil
 
 	return RunBulk(ids, func(id string) error {
 		if status != "" {
@@ -375,4 +398,20 @@ func (s *SprintService) ApproveTask(sprintID, taskID string) error {
 	}
 
 	return s.task.Transition(context.Background(), taskID, "done")
+}
+
+// validateEpicProject permits an unscoped sprint, but a project-scoped sprint
+// must belong to its epic's project. Clearing epic_id removes this constraint.
+func (s *SprintService) validateEpicProject(epicID, projectID string) error {
+	if epicID == "" {
+		return nil
+	}
+	epic, err := s.store.GetEpic(epicID)
+	if err != nil {
+		return &ValidationError{Field: "epic_id", Message: "epic not found: " + epicID}
+	}
+	if projectID != "" && (!epic.ProjectID.Valid || epic.ProjectID.String != projectID) {
+		return &ValidationError{Field: "epic_id", Message: "epic must belong to the sprint's project"}
+	}
+	return nil
 }

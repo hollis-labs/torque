@@ -21,6 +21,7 @@ Example: {"status":"active","dimensions":"status","bucket_limit":"20"}`), withSt
 	}
 	options = append(options, withString("search", desc("Same substring search as the list.")))
 	if entity == "sprint" {
+		options = append(options, withString("epic_id", desc("Same epic filter as the sprint list.")))
 		for _, key := range []string{"over_budget", "cost_budget_min", "cost_budget_max"} {
 			options = append(options, withString(key, desc("Same budget filter as the list.")))
 		}
@@ -75,6 +76,10 @@ func (a *Adapter) handleEntityFacets(entity string, req map[string]any) (any, er
 	case "epic":
 		result, err = a.svc.Epic.Facets(service.EpicFacetQuery{EpicQuery: service.EpicQuery{Status: status, ProjectID: project, Search: search, IncludeArchived: archived}, FacetOptions: opts})
 	case "sprint":
+		epic, e := reqQueryString(req, "epic_id")
+		if e != nil {
+			return nil, e
+		}
 		over, e := reqQueryBool(req, "over_budget")
 		if e != nil {
 			return nil, e
@@ -87,7 +92,7 @@ func (a *Adapter) handleEntityFacets(entity string, req map[string]any) (any, er
 		if e != nil {
 			return nil, e
 		}
-		result, err = a.svc.Sprint.Facets(service.SprintFacetQuery{SprintQuery: service.SprintQuery{Status: status, Search: search, ProjectID: project, IncludeArchived: archived, OverBudget: over, CostBudgetMin: min, CostBudgetMax: max}, FacetOptions: opts})
+		result, err = a.svc.Sprint.Facets(service.SprintFacetQuery{SprintQuery: service.SprintQuery{EpicID: epic, Status: status, Search: search, ProjectID: project, IncludeArchived: archived, OverBudget: over, CostBudgetMin: min, CostBudgetMax: max}, FacetOptions: opts})
 	}
 	if err != nil {
 		return errFromService(err)

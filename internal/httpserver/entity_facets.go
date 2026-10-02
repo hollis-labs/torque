@@ -13,7 +13,7 @@ func (s *Server) entityFacets(entity string) http.HandlerFunc {
 			allowed["project_id"] = true
 		}
 		if entity == "sprints" {
-			for _, key := range []string{"over_budget", "cost_budget_min", "cost_budget_max"} {
+			for _, key := range []string{"epic_id", "over_budget", "cost_budget_min", "cost_budget_max"} {
 				allowed[key] = true
 			}
 		}
@@ -71,7 +71,7 @@ func (s *Server) entityFacets(entity string) http.HandlerFunc {
 				writeHTTPQueryError(w, qerr)
 				return
 			}
-			result, err := s.svc.Sprint.Facets(service.SprintFacetQuery{SprintQuery: service.SprintQuery{Status: status, Search: q.Get("search"), ProjectID: q.Get("project_id"), IncludeArchived: archived, OverBudget: over, CostBudgetMin: min, CostBudgetMax: max}, FacetOptions: opts})
+			result, err := s.svc.Sprint.Facets(service.SprintFacetQuery{SprintQuery: service.SprintQuery{EpicID: q.Get("epic_id"), Status: status, Search: q.Get("search"), ProjectID: q.Get("project_id"), IncludeArchived: archived, OverBudget: over, CostBudgetMin: min, CostBudgetMax: max}, FacetOptions: opts})
 			if err != nil {
 				writeAdjacentServiceError(w, err)
 				return
