@@ -18,6 +18,7 @@ func sprintJSON(sp *sqlstore.SprintRecord) map[string]interface{} {
 		"approval_mode": sp.ApprovalMode,
 		"cost_budget":   nullFloat(sp.CostBudget),
 		"project_id":    nullStr(sp.ProjectID),
+		"epic_id":       nullStr(sp.EpicID),
 		"started_at":    nullTime(sp.StartedAt),
 		"ended_at":      nullTime(sp.EndedAt),
 		"created_at":    sp.CreatedAt,
@@ -34,7 +35,7 @@ func sprintsJSON(sprints []sqlstore.SprintRecord) []map[string]interface{} {
 }
 
 func (s *Server) listSprints(w http.ResponseWriter, r *http.Request) {
-	allowed := map[string]bool{"status": true, "project_id": true, "include_archived": true, "over_budget": true, "cost_budget_min": true, "cost_budget_max": true, "limit": true, "cursor": true, "sort_by": true, "sort_dir": true, "include_total": true, "search": true}
+	allowed := map[string]bool{"status": true, "project_id": true, "epic_id": true, "include_archived": true, "over_budget": true, "cost_budget_min": true, "cost_budget_max": true, "limit": true, "cursor": true, "sort_by": true, "sort_dir": true, "include_total": true, "search": true}
 	q, qerr := parseStrictQuery(r, allowed)
 	if qerr != nil {
 		writeHTTPQueryError(w, qerr)
@@ -71,6 +72,7 @@ func (s *Server) listSprints(w http.ResponseWriter, r *http.Request) {
 		Search:          queryString(q, "search"),
 		Status:          status,
 		ProjectID:       projectID,
+		EpicID:          queryString(q, "epic_id"),
 		IncludeArchived: includeArchived,
 		OverBudget:      overBudget,
 		CostBudgetMin:   min,
@@ -126,6 +128,7 @@ func (s *Server) createSprint(w http.ResponseWriter, r *http.Request) {
 		ApprovalMode string   `json:"approval_mode"`
 		CostBudget   *float64 `json:"cost_budget"`
 		ProjectID    string   `json:"project_id"`
+		EpicID       string   `json:"epic_id"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -138,6 +141,7 @@ func (s *Server) createSprint(w http.ResponseWriter, r *http.Request) {
 		ApprovalMode: req.ApprovalMode,
 		CostBudget:   req.CostBudget,
 		ProjectID:    req.ProjectID,
+		EpicID:       req.EpicID,
 	})
 	if err != nil {
 		if _, ok := err.(*service.ValidationError); ok {
@@ -179,6 +183,15 @@ func (s *Server) updateSprint(w http.ResponseWriter, r *http.Request) {
 	}
 	if v, ok := req["project_id"].(string); ok {
 		update.ProjectID = &v
+	}
+
+	if raw, present := req["epic_id"]; present {
+		value, valid := raw.(string)
+		if raw != nil && !valid {
+			writeError(w, http.StatusBadRequest, "epic_id must be a string or null")
+			return
+		}
+		update.EpicID = &value
 	}
 
 	if err := s.svc.Sprint.Update(id, update); err != nil {

@@ -19,6 +19,7 @@ Example: {"name":"Sprint 17","goal":"Land Phase C","approval_mode":"approve_each
 		withString("goal", desc("Sprint goal")),
 		withString("approval_mode", desc("auto|approve_sprint|approve_each (default approve_each)")),
 		withString("cost_budget", desc("Maximum cost budget (numeric)")),
+		withString("epic_id", desc("Epic ID; must exist and match project_id when set; empty string clears on update. Deleting the epic clears this link.")),
 		withString("project_id", desc("Project ID to associate this sprint with (requires features.projects)")),
 	), a.handleSprintCreate)
 
@@ -40,6 +41,7 @@ Example: {"id":"SP-17","status":"completed"}`),
 		withString("goal", desc("New goal")),
 		withString("approval_mode", desc("New approval mode")),
 		withString("cost_budget", desc("New cost budget (numeric)")),
+		withString("epic_id", desc("Epic ID; must exist and match project_id when set; empty string clears on update. Deleting the epic clears this link.")),
 		withString("project_id", desc("Project ID to associate this sprint with (requires features.projects); pass empty string to clear")),
 		withString("status", desc("Transition target: active|inactive|completed")),
 	), a.handleSprintUpdate)
@@ -54,6 +56,7 @@ Example: {"ids":"[\"SP-17\",\"SP-18\"]","project_id":"PRJ-1"}`),
 		withString("goal", desc("New goal")),
 		withString("approval_mode", desc("New approval mode")),
 		withString("cost_budget", desc("New cost budget (numeric)")),
+		withString("epic_id", desc("Epic ID; must exist and match project_id when set; empty string clears on update. Deleting the epic clears this link.")),
 		withString("project_id", desc("Project ID to associate these sprints with (requires features.projects); pass empty string to clear")),
 		withString("status", desc("Transition target applied to every id: active|inactive|completed")),
 	), a.handleSprintBulkUpdate)
@@ -83,13 +86,14 @@ Example: {"id":"SP-17"}`),
 	), a.handleSprintUnarchive)
 
 	a.addTool(newTool("torque_sprint_list",
-		withDescription(`List sprints with optional status/project/budget filters; ordered updated_at DESC (tiebreak id ASC, per DEC-001) by default. Pass sort_by (name|status|updated_at|created_at) and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid.
+		withDescription(`List sprints with optional status/project/epic/budget filters; ordered updated_at DESC (tiebreak id ASC, per DEC-001) by default. Pass sort_by (name|status|updated_at|created_at) and sort_dir (asc|desc) to change order; an unrecognized value returns error.code=arg_invalid.
 Use for browsing; torque_sprint_get when you know the ID. Default brief shape drops goal body for size; pass verbose="true" for full records. Archived sprints are excluded unless include_archived="true".
 Cursor pagination: pass the previous call's meta.next_cursor back as cursor to fetch the next page; meta.next_cursor is null once exhausted. A cursor is only valid for the exact sort_by/sort_dir it was issued under — pass a different sort_by/sort_dir without dropping cursor and you get error.code=arg_invalid.
 Explicit malformed, blank, fractional, overflow, unsafe native-float, or negative limit values reject with error.code=arg_invalid, field=limit; omitted limit defaults to 50 and oversized limits clamp to 200. Cost budget bounds must be finite numbers when present.
 Response shape: data = {items: [<briefSprint or SprintRecord>...], meta: {truncated, returned, limit, has_more, next_cursor, total?}}.
 Example: {"status":"active","cost_budget_min":"10","sort_by":"updated_at","sort_dir":"desc"}`),
 		withString("status", desc("Filter: active|inactive|completed")),
+		withString("epic_id", desc("Filter by sprint epic membership. Archived epics keep links; include_archived controls sprint visibility only.")),
 		withString("project_id", desc("Filter by project ID (requires features.projects)")),
 		withString("include_archived", desc("Include archived sprints (string 'true'/'false', default false)")),
 		withString("cost_budget_min", desc("Only sprints with cost_budget >= this value (numeric; sprints with no budget set never match)")),
@@ -123,11 +127,15 @@ Example: {"id":"SP-17"}`),
 }
 
 func (a *Adapter) handleSprintCreate(ctx context.Context, req map[string]any) (any, error) {
+	if _, err := reqQueryString(req, "epic_id"); err != nil {
+		return nil, err
+	}
 	input := service.SprintCreateInput{
 		Name:         reqStr(req, "name"),
 		Goal:         reqStr(req, "goal"),
 		ApprovalMode: reqStr(req, "approval_mode"),
 		ProjectID:    reqStr(req, "project_id"),
+		EpicID:       reqStr(req, "epic_id"),
 	}
 
 	if budget := reqFloat(req, "cost_budget"); budget > 0 {
@@ -200,10 +208,18 @@ func buildSprintUpdate(req map[string]any) (sqlstore.SprintUpdate, bool) {
 		update.ProjectID = &v
 		hasUpdate = true
 	}
+	if reqHasArg(req, "epic_id") {
+		v := reqStr(req, "epic_id")
+		update.EpicID = &v
+		hasUpdate = true
+	}
 	return update, hasUpdate
 }
 
 func (a *Adapter) handleSprintUpdate(ctx context.Context, req map[string]any) (any, error) {
+	if _, err := reqQueryString(req, "epic_id"); err != nil {
+		return nil, err
+	}
 	id := reqStr(req, "id")
 
 	// Handle status transition separately
@@ -233,6 +249,9 @@ func (a *Adapter) handleSprintUpdate(ctx context.Context, req map[string]any) (a
 // SprintService.BulkUpdate, then shapes the result through bulkResult — the
 // same {succeeded, failed} envelope every bulk_* verb uses.
 func (a *Adapter) handleSprintBulkUpdate(ctx context.Context, req map[string]any) (any, error) {
+	if _, err := reqQueryString(req, "epic_id"); err != nil {
+		return nil, err
+	}
 	ids, errRes := reqIDs(req)
 	if errRes != nil {
 		return nil, errRes
@@ -287,10 +306,15 @@ func (a *Adapter) handleSprintList(ctx context.Context, req map[string]any) (any
 		return nil, errRes
 	}
 
+	epicID, errRes := reqQueryString(req, "epic_id")
+	if errRes != nil {
+		return nil, errRes
+	}
 	query := service.SprintQuery{
 		Search:          search,
 		Status:          status,
 		ProjectID:       projectID,
+		EpicID:          epicID,
 		IncludeArchived: includeArchived,
 		OverBudget:      overBudget,
 		CursorQuery:     cursor,

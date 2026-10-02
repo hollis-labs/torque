@@ -321,7 +321,7 @@ exact accepted parameters remain in the handlers and MCP `tools/list`.
 | --- | --- | --- | --- | --- | --- | --- |
 | Tasks `/tasks`, `/tasks/search` | Paged; explicit offset incl. 0 without cursor emits offset/next_offset, otherwise cursor mode | `priority`, `status`, `updated_at`, `created_at`, `title`; title ASCII case-insensitive, default `priority asc`, `id asc` | Shared scopes/status/priority/tags/text/dates/budgets/presence/internal/static `eligible` filters; search requires `q` | Opt-in `include_total` on HTTP/MCP, exact filtered cohort before paging | Task facets + HTTP scope rollup | `torque_task_list` shares filters/query/meta; brief/verbose/typed projection differences retained |
 | Epics `/epics` | paged by default | named entity allow-list | project, status, archive, search | opt-in total | `/epics/facets`, `torque_epic_facets` + requested-ID task rollups and exact task_totals | `torque_epic_list`, common query/count envelope |
-| Sprints `/sprints` | paged by default | named entity allow-list | project, status, archive, search, over-budget/budget bounds | opt-in total | `/sprints/facets`, `torque_sprint_facets` + requested-ID task rollups and exact task_totals | `torque_sprint_list`, common query/count envelope |
+| Sprints `/sprints` | paged by default | named entity allow-list | project, epic_id, status, archive, search, over-budget/budget bounds | opt-in total | `/sprints/facets`, `torque_sprint_facets` + requested-ID task rollups and exact task_totals | `torque_sprint_list`, common query/count envelope |
 | Projects `/projects` | paged by default | named entity allow-list | status, archive, search | opt-in total | `/projects/facets`, `torque_project_facets` + requested-ID task rollups, task_totals and children/child_totals | `torque_project_list`, common query/count envelope |
 | Issues `/issues`, `/issues/search` | paged list/search by default | `priority`, `status`, `updated_at`, `created_at` | project, status, query, fixed issue kind | opt-in cohort total | Task facets with kind=issue; no dedicated route | `torque_issue_list`, common envelope/count semantics |
 | Comments `/comments`, `/comments/search`, `/tasks/{id}/comments` | paged list/search/nested task list | `created_at` | entity scope(s), author, dates, search | opt-in total | none | `torque_comment_list`, `torque_comment_search`, shared 50/200/count policy |
@@ -338,6 +338,20 @@ exact accepted parameters remain in the handlers and MCP `tools/list`.
 | Messages `/messages/inbox`, `/messages/thread/{thread_id}` | Inbox drain list: each call delivers its page, no cursor/offset. Thread: cursor default; offset available on one store, positive federated offset rejects with use-cursor guidance | `created_at`; thread asc/desc, message ID asc; inbox asc only | Recipient/thread scopes, kind/channel/thread filters retained | Inbox: undelivered cohort before this drain. Thread: exact with one store; multiple stores omit total and emit total_unavailable=federated | Non-mutating count/peek; no message facets | No pure-read MCP thread list exists; broker inbox/inbox_poll remain actions unchanged. CW-20260912-0114 remains separate |
 | Tags `/tags` | Cursor-only, shared 50/200 | Fixed `name` asc (NOCASE), slug asc tie-break | Literal query over slug/name/description, exact color | Opt-in filtered catalog total | Task tag facets for usage; catalog total includes unused tags | `torque_tag_list`, same query/sort/total semantics |
 | Subtodos `/tasks/{id}/subtodos` | Cursor-only, shared 50/200 | `position` asc by default, desc supported; position is unique within parent array | Required task scope | Opt-in full checklist total before cursor/limit | List total only | `torque_task_subtodo_list`, same service query; brief/verbose MCP projections retained |
+
+Sprint epic membership: `epic_id` is nullable and is returned by HTTP sprint
+records and MCP sprint records (brief lists omit an unset link). Sprint create
+and update accept it; omission on update keeps the current link, and an empty
+string or HTTP JSON null clears it. The epic must exist; a project-scoped
+sprint must use an epic belonging to that project. Changes to either field
+validate the resulting pair. Deleting an epic clears the link and keeps the
+sprint; archiving an epic preserves its links and does not hide its sprints.
+`include_archived` on sprint lists/facets controls sprint visibility only.
+The `epic_id` filter feeds the same sprint cohort for HTTP/MCP pages, opt-in
+counts, facets, task rollups and task totals. Tasks retain their independent
+`epic_id`: sprint membership does not infer task epic ownership or change epic
+task rollups.
+
 
 Messages have two distinct traversal models. `GET /messages/inbox` remains
 an operator-initiated **drain list: each call delivers its page**. It fetches

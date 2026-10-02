@@ -51,6 +51,7 @@ type SprintQuery struct {
 	Search          string
 	Status          string
 	ProjectID       string
+	EpicID          string
 	IncludeArchived bool
 	OverBudget      bool
 	CostBudgetMin   *float64
@@ -124,6 +125,7 @@ func NormalizeSprintQuery(q SprintQuery) (sqlstore.SprintFilter, NormalizedCurso
 		Search:          q.Search,
 		Status:          q.Status,
 		ProjectID:       q.ProjectID,
+		EpicID:          q.EpicID,
 		IncludeArchived: q.IncludeArchived,
 		CostBudgetMin:   q.CostBudgetMin,
 		CostBudgetMax:   q.CostBudgetMax,

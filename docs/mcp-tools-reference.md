@@ -629,15 +629,22 @@ Short-cycle execution cohort with an optional cost budget (feature-flagged:
 
 | Tool | Purpose |
 |---|---|
-| `torque_sprint_create` | Create. `approval_mode` ∈ `auto\|approve_sprint\|approve_each` (default `approve_each`). |
+| `torque_sprint_create` | Create. Optional `epic_id` must exist and match `project_id` when set. `approval_mode` ∈ `auto\|approve_sprint\|approve_each` (default `approve_each`). |
 | `torque_sprint_get` | Fetch by id plus derived budget headroom: `{sprint, within_budget, cost_remaining}`. |
-| `torque_sprint_update` | Partial patch; `status` transitions (`active\|inactive\|completed`) are handled inline in the same call. |
+| `torque_sprint_update` | Partial patch; optional `epic_id` (empty clears, omitted keeps) validates the resulting epic/project pair; `status` transitions (`active\|inactive\|completed`) are handled inline in the same call. |
 | `torque_sprint_bulk_update` | Same field set + optional status transition, applied across `ids[]`. |
 | `torque_sprint_delete` | Hard delete; tasks keep their row with `sprint_id` cleared. Prefer `archive`. |
 | `torque_sprint_archive` / `torque_sprint_unarchive` | Soft-delete, orthogonal to `status`. |
-| `torque_sprint_list` | Filter (`status`, `project_id`, `cost_budget_min`/`max`, `over_budget`) + sort. No free-text search on Sprint. |
+| `torque_sprint_list` | Filter (`status`, `project_id`, `epic_id`, archive, `search`, `cost_budget_min`/`max`, `over_budget`) + cursor paging and sort. |
 | `torque_sprint_approve` | **Closes** the review gate: approve one task (`task_id`) or every task currently in `review` (omit `task_id`). Does *not* start dispatch. |
 | `torque_sprint_start` | **Opens** the dispatch gate: bulk-promotes every `manual=true` task in the sprint to `manual=false`. This is how you "start" a sprint under `approval_mode=approve_sprint` — a fresh sprint has nothing in `review` yet, so calling `approve` first reports 0 approved. Idempotent. |
+
+Sprint records include nullable epic membership (`epic_id`; brief lists omit
+unset links). `torque_sprint_facets` accepts the same `epic_id` filter and
+computes counts and task rollups over that sprint cohort. Archived epics keep
+links and do not hide sprints; `include_archived` governs sprint archival only.
+Deleting an epic clears sprint links and keeps sprints. Task epic ownership and
+epic task rollups remain independent of sprint membership.
 
 Sprint has two distinct bulk-scoped convenience verbs (`approve`, `start`) —
 don't confuse them: `approve` closes, `start` opens. `torque_sprint_list`
