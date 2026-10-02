@@ -1235,3 +1235,21 @@ func timeUntilUTCMidnight() time.Duration {
 	nextMidnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
 	return nextMidnight.Sub(now)
 }
+
+func TestTaskFacets_EmptyFilteredCohortHasNoBuckets(t *testing.T) {
+	store := setupTestStore(t)
+	require.NoError(t, store.CreateTask(sampleTask("CW-20261002-9001")))
+	facets, matching, err := store.TaskFacets(sqlstore.TaskFacetRequest{
+		Filter:     sqlstore.TaskFilter{Search: "no matching fixture"},
+		Dimensions: []string{"status", "priority", "manual", "tags"},
+		Limit:      1,
+	})
+	require.NoError(t, err)
+	assert.Zero(t, matching)
+	require.Len(t, facets, 4)
+	for _, facet := range facets {
+		assert.Empty(t, facet.Buckets)
+		assert.Zero(t, facet.TotalDistinct)
+		assert.False(t, facet.Truncated)
+	}
+}
