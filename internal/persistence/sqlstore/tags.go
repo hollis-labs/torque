@@ -31,11 +31,12 @@ type TagUpdate struct {
 }
 
 type TagFilter struct {
-	Query     string
-	Color     string
-	Limit     int
-	AfterName string
-	AfterSlug string
+	IncludeTotal bool
+	Query        string
+	Color        string
+	Limit        int
+	AfterName    string
+	AfterSlug    string
 }
 
 type TagListResult struct {
@@ -128,14 +129,15 @@ func (s *Store) ListTags() ([]TagRecord, error) {
 
 func (s *Store) ListTagsPage(f TagFilter) (TagListResult, error) {
 	where, args := tagListPredicates(f, false)
-
-	countQ := `SELECT COUNT(*) FROM tags`
-	if len(where) > 0 {
-		countQ += " WHERE " + strings.Join(where, " AND ")
-	}
 	var total int
-	if err := s.ReadDB().QueryRow(countQ, args...).Scan(&total); err != nil {
-		return TagListResult{}, err
+	if f.IncludeTotal {
+		countQ := `SELECT COUNT(*) FROM tags`
+		if len(where) > 0 {
+			countQ += " WHERE " + strings.Join(where, " AND ")
+		}
+		if err := s.ReadDB().QueryRow(countQ, args...).Scan(&total); err != nil {
+			return TagListResult{}, err
+		}
 	}
 
 	where, args = tagListPredicates(f, true)

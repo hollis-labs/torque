@@ -501,9 +501,8 @@ export class TorqueApiClient {
   // Subtodos
   // -------------------------
 
-  async listSubtodos(taskId: string): Promise<Subtodo[]> {
-    const res = await this.get<{ subtodos: Subtodo[] }>(`/tasks/${taskId}/subtodos`)
-    return res.subtodos ?? []
+  async listSubtodos(taskId: string, query?: { limit?: number; cursor?: string; sort_by?: 'position'; sort_dir?: 'asc' | 'desc'; include_total?: boolean }, signal?: AbortSignal): Promise<ListPage<Subtodo>> {
+    return this.get<ListPage<Subtodo>>(`/tasks/${taskId}/subtodos`, query, signal)
   }
 
   /**
@@ -720,8 +719,8 @@ export class TorqueApiClient {
   // Tags
   // -------------------------
 
-  async listTags(): Promise<{ tags: Tag[] }> {
-    return this.get<{ tags: Tag[] }>('/tags')
+  async listTags(query?: { query?: string; color?: TagColor; limit?: number; cursor?: string; sort_by?: 'name'; sort_dir?: 'asc'; include_total?: boolean }, signal?: AbortSignal): Promise<ListPage<Tag>> {
+    return this.get<ListPage<Tag>>('/tags', query, signal)
   }
 
   async getTag(slug: string): Promise<Tag> {

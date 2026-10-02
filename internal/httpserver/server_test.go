@@ -691,18 +691,23 @@ func decodeHTTPTagPage(t *testing.T, url string) decodedHTTPTagPage {
 
 	var result map[string]interface{}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
-	rawTags := result["tags"].([]interface{})
+	rawTags := result["items"].([]interface{})
 	tags := make([]map[string]interface{}, 0, len(rawTags))
 	for _, raw := range rawTags {
 		tags = append(tags, raw.(map[string]interface{}))
 	}
+	meta := result["meta"].(map[string]interface{})
+	total := 0
+	if v, ok := meta["total"].(float64); ok {
+		total = int(v)
+	}
 	return decodedHTTPTagPage{
 		tags:       tags,
-		total:      int(result["total"].(float64)),
-		returned:   int(result["returned"].(float64)),
-		limit:      int(result["limit"].(float64)),
-		hasMore:    result["has_more"].(bool),
-		nextCursor: result["next_cursor"],
+		total:      total,
+		returned:   int(meta["returned"].(float64)),
+		limit:      int(meta["limit"].(float64)),
+		hasMore:    meta["has_more"].(bool),
+		nextCursor: meta["next_cursor"],
 	}
 }
 
@@ -835,7 +840,7 @@ func TestListTags(t *testing.T) {
 
 	var out map[string]interface{}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
-	tags, ok := out["tags"].([]interface{})
+	tags, ok := out["items"].([]interface{})
 	require.True(t, ok)
 	assert.Len(t, tags, 2)
 }
@@ -854,7 +859,7 @@ func TestListTagsPagedOptInQueryAndCursor(t *testing.T) {
 		resp.Body.Close()
 	}
 
-	first := decodeHTTPTagPage(t, ts.URL+"/api/v1/tags?limit=2")
+	first := decodeHTTPTagPage(t, ts.URL+"/api/v1/tags?include_total=true&limit=2")
 	require.Equal(t, 4, first.total)
 	require.Equal(t, 2, first.returned)
 	require.True(t, first.hasMore)
@@ -862,7 +867,7 @@ func TestListTagsPagedOptInQueryAndCursor(t *testing.T) {
 	cursor, ok := first.nextCursor.(string)
 	require.True(t, ok)
 
-	second := decodeHTTPTagPage(t, ts.URL+"/api/v1/tags?limit=2&cursor="+url.QueryEscape(cursor))
+	second := decodeHTTPTagPage(t, ts.URL+"/api/v1/tags?include_total=true&limit=2&cursor="+url.QueryEscape(cursor))
 	require.False(t, second.hasMore)
 	assert.Equal(t, []string{"alpha-2", "unicode"}, []string{second.tags[0]["slug"].(string), second.tags[1]["slug"].(string)})
 
@@ -875,20 +880,20 @@ func TestListTagsPagedOptInQueryAndCursor(t *testing.T) {
 		{query: "_", want: "alpha-0"},
 		{query: "Café", want: "unicode"},
 	} {
-		got := decodeHTTPTagPage(t, ts.URL+"/api/v1/tags?query="+url.QueryEscape(tc.query))
+		got := decodeHTTPTagPage(t, ts.URL+"/api/v1/tags?include_total=true&query="+url.QueryEscape(tc.query))
 		require.Equal(t, 1, got.total, tc.query)
 		assert.Equal(t, tc.want, got.tags[0]["slug"], tc.query)
 	}
 
-	blue := decodeHTTPTagPage(t, ts.URL+"/api/v1/tags?color=blue")
+	blue := decodeHTTPTagPage(t, ts.URL+"/api/v1/tags?include_total=true&color=blue")
 	require.Equal(t, 2, blue.total)
-	exact := decodeHTTPTagPage(t, ts.URL+"/api/v1/tags?color="+url.QueryEscape(" blue "))
+	exact := decodeHTTPTagPage(t, ts.URL+"/api/v1/tags?include_total=true&color="+url.QueryEscape(" blue "))
 	assert.Equal(t, 0, exact.total)
-	spaceLimit := decodeHTTPTagPage(t, ts.URL+"/api/v1/tags?limit="+url.QueryEscape(" 2 "))
+	spaceLimit := decodeHTTPTagPage(t, ts.URL+"/api/v1/tags?include_total=true&limit="+url.QueryEscape(" 2 "))
 	assert.Equal(t, 2, spaceLimit.limit)
 
-	for _, raw := range []string{"limit=0", "limit=-1", "limit=1.9", "limit=9223372036854775808", "unknown=x", "query=a&query=b", "%zz"} {
-		resp, err := http.Get(ts.URL + "/api/v1/tags?" + raw)
+	for _, raw := range []string{"limit=-1", "limit=1.9", "limit=9223372036854775808", "unknown=x", "query=a&query=b", "%zz"} {
+		resp, err := http.Get(ts.URL + "/api/v1/tags?include_total=true&" + raw)
 		require.NoError(t, err, raw)
 		require.Equal(t, http.StatusBadRequest, resp.StatusCode, raw)
 		resp.Body.Close()

@@ -1,26 +1,52 @@
 package httpserver
 
 import (
+	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 )
 
-// listSubtodos returns the structural checklist attached to the task. Always
-// responds with a `{subtodos: [...]}` envelope and an array body (never null)
-// so the client can map over it without a presence guard.
+// listSubtodos reads a bounded position-ordered page of the task checklist.
 func (s *Server) listSubtodos(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	items, err := s.svc.Task.ListSubtodos(id)
+	values, err := parseStrictQuery(r, map[string]bool{"limit": true, "cursor": true, "sort_by": true, "sort_dir": true, "include_total": true})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeHTTPQueryError(w, err)
 		return
 	}
-	if items == nil {
-		items = []sqlstore.Subtodo{}
+	q, err := queryCursor(values)
+	if err != nil {
+		writeHTTPQueryError(w, err)
+		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"subtodos": items})
+	page, queryErr := s.svc.Task.QuerySubtodos(chi.URLParam(r, "id"), q)
+	if queryErr != nil {
+		if errors.Is(queryErr, sqlstore.ErrTaskNotFound) {
+			writeError(w, http.StatusNotFound, queryErr.Error())
+			return
+		}
+		writeAdjacentServiceError(w, queryErr)
+		return
+	}
+	more := len(page.Items) > page.Query.Limit
+	if more {
+		page.Items = page.Items[:page.Query.Limit]
+	}
+	var next *string
+	if more && len(page.Items) > 0 {
+		i := len(page.Items) - 1
+		v := pagination.Encode(page.Query.SortBy, page.Query.SortDir, strconv.Itoa(page.Positions[i]), page.Items[i].ID)
+		next = &v
+	}
+	meta := pagination.NewPageMeta(len(page.Items), page.Query.Limit, more, next, page.Total, nil)
+	writeJSON(w, http.StatusOK, map[string]any{"items": page.Items, "meta": struct {
+		pagination.PageMeta
+		SortBy  string `json:"sort_by"`
+		SortDir string `json:"sort_dir"`
+	}{meta, page.Query.SortBy, page.Query.SortDir}})
 }
 
 // addSubtodo appends a new checklist item. The id must be unique within the

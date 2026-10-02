@@ -84,7 +84,7 @@ func TestListTagsPageStableNameCollationAndCursor(t *testing.T) {
 		require.NoError(t, store.CreateTag(&fixtures[i]))
 	}
 
-	filter := sqlstore.TagFilter{Limit: 2}
+	filter := sqlstore.TagFilter{IncludeTotal: true, Limit: 2}
 	page1, err := store.ListTagsPage(filter)
 	require.NoError(t, err)
 	require.Equal(t, 4, page1.Total)
@@ -124,19 +124,19 @@ func TestListTagsPageLiteralSearchAndExactColor(t *testing.T) {
 		{query: `\`, want: "slash"},
 		{query: "Café", want: "unicode"},
 	} {
-		got, err := store.ListTagsPage(sqlstore.TagFilter{Query: tc.query})
+		got, err := store.ListTagsPage(sqlstore.TagFilter{IncludeTotal: true, Query: tc.query})
 		require.NoError(t, err, tc.query)
 		require.Len(t, got.Tags, 1, tc.query)
 		assert.Equal(t, tc.want, got.Tags[0].Slug, tc.query)
 		assert.Equal(t, 1, got.Total, tc.query)
 	}
 
-	got, err := store.ListTagsPage(sqlstore.TagFilter{Query: "plain", Color: "blue"})
+	got, err := store.ListTagsPage(sqlstore.TagFilter{IncludeTotal: true, Query: "plain", Color: "blue"})
 	require.NoError(t, err)
 	require.Len(t, got.Tags, 2)
 	assert.Equal(t, 2, got.Total)
 
-	got, err = store.ListTagsPage(sqlstore.TagFilter{Color: " blue "})
+	got, err = store.ListTagsPage(sqlstore.TagFilter{IncludeTotal: true, Color: " blue "})
 	require.NoError(t, err)
 	assert.Empty(t, got.Tags, "color filter is exact equality, not trimmed")
 	assert.Equal(t, 0, got.Total)
