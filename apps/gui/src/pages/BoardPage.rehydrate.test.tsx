@@ -50,7 +50,7 @@ function installStubFetch() {
     else if (url.includes('/projects')) body = { items: [], meta: { returned: 0, limit: 50, has_more: false, next_cursor: null } }
     else if (url.includes('/sprints')) body = { items: [], meta: { returned: 0, limit: 50, has_more: false, next_cursor: null } }
     else if (url.includes('/epics')) body = { items: [], meta: { returned: 0, limit: 50, has_more: false, next_cursor: null } }
-    else if (url.includes('/tags')) body = { tags: [] }
+    else if (url.includes('/tags')) body = { items: [], meta: { returned: 0, limit: 50, has_more: false, next_cursor: null } }
     return new Response(JSON.stringify(body), {
       status: 200,
       headers: { 'content-type': 'application/json' },

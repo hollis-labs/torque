@@ -7,7 +7,6 @@ import (
 	"strconv"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
-	"github.com/hollis-labs/torque/internal/service/pagination"
 )
 
 func (a *Adapter) registerSubtodoTools() {
@@ -15,13 +14,14 @@ func (a *Adapter) registerSubtodoTools() {
 		withDescription(`List the structural checklist (subtodos) on a task. Brief shape drops the evidence column; pass verbose="true" for full records.
 Use to inspect gating state; sibling torque_task_subtodo_add/torque_task_subtodo_done mutate. Unlike comments, subtodos drive lifecycle (required items block done).
 Cursor pages default to 50, max 200, in checklist position ASC order. Pass next_cursor with the same task_id and sort. Byte-cap pages include a concrete continuation call.
-Response shape: data = {items: [<briefSubtodo or Subtodo>...], meta: {truncated, returned, limit, has_more, next_cursor, hint?}}.
+Response shape: data = {items: [<briefSubtodo or Subtodo>...], meta: {truncated, returned, limit, has_more, next_cursor, total?, hint?}}.
 Example: {"task_id":"T-123"}`),
 		withString("task_id", required(), desc("Task ID")),
 		withString("limit", desc("Page size, default 50, max 200")),
 		withString("cursor", desc("Opaque next_cursor from the previous page")),
 		withString("sort_by", desc("Checklist position (position, default)")),
 		withString("sort_dir", desc("asc (default) or desc")),
+		withString("include_total", desc("Opt-in exact checklist total before cursor/limit; default false")),
 		withString("verbose", desc("Return full records instead of brief (string 'true'/'false', default false)")),
 	), a.handleSubtodoList)
 
@@ -81,58 +81,31 @@ func (a *Adapter) handleSubtodoList(ctx context.Context, req map[string]any) (an
 	if err := validateTaskListStringArgs(req, "task_id", "cursor", "sort_by", "sort_dir"); err != nil {
 		return nil, err
 	}
-	rawLimit, _, err := reqTaskListInt(req, "limit")
+	q, err := reqQueryCursor(req)
 	if err != nil {
-		return nil, argError(ErrCodeArgInvalid, err.Error(), "limit")
+		return nil, err
 	}
-	if rawLimit < 0 {
-		return nil, argError(ErrCodeArgInvalid, "limit must be positive", "limit")
-	}
-	limit := clampLimit(rawLimit, pagination.DefaultLimit, pagination.MaxLimit)
 	verbose, err := reqTaskListBool(req, "verbose")
 	if err != nil {
 		return nil, argError(ErrCodeArgInvalid, err.Error(), "verbose")
 	}
-	sortBy, sortDir, value, afterID, err := resolveSortAndCursor(req, "position", "asc", "position")
-	if err != nil {
-		return nil, err
-	}
-	after := -1
-	if afterID != "" {
-		after, err = strconv.Atoi(value)
-		if err != nil || after < 0 {
-			return nil, argError(ErrCodeArgInvalid, "invalid checklist cursor position", "cursor")
-		}
-	}
-	items, err := a.svc.Task.ListSubtodos(reqStr(req, "task_id"))
+	page, err := a.svc.Task.QuerySubtodos(reqStr(req, "task_id"), q)
 	if err != nil {
 		return errFromService(err)
 	}
-	positions := make([]int, 0, len(items))
-	for i := range items {
-		if afterID != "" && ((sortDir == "asc" && i <= after) || (sortDir == "desc" && i >= after)) {
-			continue
-		}
-		positions = append(positions, i)
-	}
-	if sortDir == "desc" {
-		for i, j := 0, len(positions)-1; i < j; i, j = i+1, j-1 {
-			positions[i], positions[j] = positions[j], positions[i]
-		}
-	}
-	more := len(positions) > limit
+	more := len(page.Items) > page.Query.Limit
 	if more {
-		positions = positions[:limit]
+		page.Items = page.Items[:page.Query.Limit]
 	}
-	out := make([]any, 0, len(positions))
-	for _, i := range positions {
+	out := make([]any, 0, len(page.Items))
+	for _, item := range page.Items {
 		if verbose {
-			out = append(out, items[i])
+			out = append(out, item)
 		} else {
-			out = append(out, toBriefSubtodo(items[i]))
+			out = append(out, toBriefSubtodo(item))
 		}
 	}
-	return cappedCursorJSONResult(out, limit, sortBy, sortDir, more, func(i int) (string, string) { index := positions[i]; return strconv.Itoa(index), items[index].ID })
+	return cappedCursorJSONResultWithTotal(out, page.Query.Limit, page.Total, page.Query.SortBy, page.Query.SortDir, more, func(i int) (string, string) { return strconv.Itoa(page.Positions[i]), page.Items[i].ID })
 }
 
 func (a *Adapter) handleSubtodoAdd(ctx context.Context, req map[string]any) (any, error) {

@@ -3,7 +3,8 @@ import { Folder, Calendar, BookOpen, Hash, SlidersHorizontal, Plus, Zap } from '
 import { FilterEntityCombobox, FilterSearchInput } from '@hollis-labs/sysop-ui/data'
 import { STATUS_COLORS, DEFAULT_STATUS_COLOR, PRIORITIES, TASK_STATUSES } from '@/lib/constants'
 import type { ManualFilter } from '@/lib/ops-filters-storage'
-import type { Epic, Project, Sprint, Tag, TaskStatus } from '@/lib/types'
+import { TagFilter } from './tag-filter'
+import type { Epic, Project, Sprint, Tag, TagColor, TaskStatus } from '@/lib/types'
 
 function CompactEntityFilter({ onCreate, createLabel, onMore, loadingMore, ...props }: ComponentProps<typeof FilterEntityCombobox> & { onMore?: () => void; loadingMore?: boolean }) {
   return <div className="inline-flex items-stretch [&>button]:rounded-r-none">
@@ -51,6 +52,15 @@ interface FilterBarProps {
   epicId?: string | null
   onEpicChange?: (id: string | null) => void
   tags?: Tag[]
+  selectedTag?: Tag | null
+  tagQuery?: string
+  onTagQueryChange?: (query: string) => void
+  tagColor?: TagColor | ''
+  onTagColorChange?: (color: TagColor | '') => void
+  onTagMore?: () => void
+  tagLoading?: boolean
+  tagError?: string
+  onTagRetry?: () => void
   tagSlug?: string | null
   onTagChange?: (slug: string | null) => void
   onProjectMore?: () => void
@@ -99,7 +109,7 @@ export function FilterBar({
   epics,
   epicId,
   onEpicChange,
-  tags,
+  tags, selectedTag, tagQuery, onTagQueryChange, tagColor, onTagColorChange, onTagMore, tagLoading, tagError, onTagRetry,
   tagSlug,
   onTagChange,
   onProjectMore,
@@ -253,7 +263,10 @@ export function FilterBar({
               showStateControls
             />
           )}
-          {onTagChange && (
+          {onTagChange && (onTagQueryChange && onTagColorChange ? <TagFilter tags={tags ?? []} selected={selectedTag}
+            value={tagSlug ?? null} onChange={onTagChange} query={tagQuery ?? ''} onQueryChange={onTagQueryChange}
+            color={tagColor ?? ''} onColorChange={onTagColorChange} onMore={onTagMore} loading={tagLoading}
+            error={tagError} onRetry={onTagRetry} onCreate={onTagCreate} /> : (
             <CompactEntityFilter
               icon={<Hash className="h-3.5 w-3.5" />}
               items={(tags ?? []).map((t) => ({ id: t.slug, name: t.name }))}
@@ -264,7 +277,7 @@ export function FilterBar({
               onCreate={onTagCreate}
               createLabel="New tag"
             />
-          )}
+          ))}
         </div>
       )}
     </div>
