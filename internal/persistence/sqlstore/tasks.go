@@ -108,11 +108,24 @@ var ErrInvalidCursor = errors.New("invalid cursor")
 // scheduler internals) working unchanged.
 func taskSortColumn(sortBy string) string {
 	switch sortBy {
-	case "priority", "status", "updated_at", "created_at":
+	case "priority", "status", "updated_at", "created_at", "title":
 		return sortBy
 	default:
 		return ""
 	}
+}
+
+// taskSortKey is used by both ORDER BY and the keyset predicate. SQLite
+// NOCASE folds ASCII A-Z only; PostgreSQL translate + C collation preserves
+// that same behavior without depending on the database locale.
+func (s *Store) taskSortKey(col string) string {
+	if col == "title" {
+		if _, sqlite := s.dialect.(sqliteDialect); sqlite {
+			return "title COLLATE NOCASE"
+		}
+		return `translate(title, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz') COLLATE "C"`
+	}
+	return s.timestampSortKey(col)
 }
 
 // taskCursorArg validates the cursor value before the query builder binds it.
@@ -125,7 +138,7 @@ func taskCursorArg(sortBy, sv string) (any, error) {
 			return nil, fmt.Errorf("%w: sort value for priority must be an integer: %v", ErrInvalidCursor, err)
 		}
 		return n, nil
-	case "status":
+	case "status", "title":
 		return sv, nil
 	case "updated_at", "created_at":
 		if _, err := time.Parse(SQLiteDatetimeLayout, sv); err != nil {
@@ -1105,7 +1118,7 @@ func (s *Store) taskListPredicates(f TaskFilter) ([]string, []any, error) {
 	// original hardcoded default order below rather than the cursor path.
 	sortCol := taskSortColumn(f.SortBy)
 	// Cursor predicates and ordering must compare the same precise key.
-	sortKey := s.timestampSortKey(sortCol)
+	sortKey := s.taskSortKey(sortCol)
 	desc := strings.EqualFold(f.SortDir, "desc")
 	if sortCol != "" && f.AfterID != "" {
 		arg, err := taskCursorArg(f.SortBy, f.AfterSortValue)
@@ -1115,6 +1128,17 @@ func (s *Store) taskListPredicates(f TaskFilter) ([]string, []any, error) {
 		arg, err = s.timestampCursorArg(sortCol, arg)
 		if err != nil {
 			return nil, nil, err
+		}
+		if sortCol == "title" {
+			if _, sqlite := s.dialect.(sqliteDialect); !sqlite {
+				// Match NOCASE's ASCII folding for the bound cursor value too.
+				arg = strings.Map(func(r rune) rune {
+					if r >= 'A' && r <= 'Z' {
+						return r + ('a' - 'A')
+					}
+					return r
+				}, arg.(string))
+			}
 		}
 		cmp := ">"
 		if desc {
@@ -1131,7 +1155,7 @@ func (s *Store) taskListPredicates(f TaskFilter) ([]string, []any, error) {
 
 func (s *Store) listTasksRows(f TaskFilter, where []string, args []any) ([]TaskRecord, error) {
 	sortCol := taskSortColumn(f.SortBy)
-	sortKey := s.timestampSortKey(sortCol)
+	sortKey := s.taskSortKey(sortCol)
 	desc := strings.EqualFold(f.SortDir, "desc")
 
 	q := `SELECT ` + taskSelectCols + ` FROM tasks`

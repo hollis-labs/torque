@@ -14,7 +14,7 @@ var (
 	ProjectQuerySortFields = []string{"name", "status", "updated_at", "created_at"}
 	SprintQuerySortFields  = []string{"name", "status", "updated_at", "created_at"}
 	EpicQuerySortFields    = []string{"name", "status", "updated_at", "created_at"}
-	IssueQuerySortFields   = TaskQuerySortFields
+	IssueQuerySortFields   = []string{"priority", "status", "updated_at", "created_at"}
 	CommentQuerySortFields = []string{"created_at"}
 )
 

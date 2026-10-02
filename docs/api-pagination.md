@@ -313,7 +313,7 @@ source and MCP `tools/list`.
 
 | Endpoint family | Cursor | Sort | Filters/query | Total | Facets/counts | MCP parity |
 |---|---|---|---|---|---|---|
-| Tasks `/tasks`, `/tasks/search` | CW-20261001-0626: 50/200 pages; explicit offset incl. 0 without cursor emits offset/next_offset, otherwise cursor mode | `priority`, `status`, `updated_at`, `created_at`; default `priority asc`, `id asc` | Shared scopes/status/priority/tags/text/dates/budgets/presence/internal filters; search requires `q` | Opt-in `include_total` on HTTP/MCP, exact filtered cohort before paging | Task facets + HTTP scope rollup | `torque_task_list` shares filters/query/meta; brief/verbose/typed projection differences retained |
+| Tasks `/tasks`, `/tasks/search` | CW-20261001-0626: 50/200 pages; explicit offset incl. 0 without cursor emits offset/next_offset, otherwise cursor mode | `priority`, `status`, `updated_at`, `created_at`, `title`; title ASCII case-insensitive, default `priority asc`, `id asc` | Shared scopes/status/priority/tags/text/dates/budgets/presence/internal filters; search requires `q` | Opt-in `include_total` on HTTP/MCP, exact filtered cohort before paging | Task facets + HTTP scope rollup | `torque_task_list` shares filters/query/meta; brief/verbose/typed projection differences retained |
 | Epics `/epics` | C (CW-0563): paged by default; T: met | C: named entity allow-list; T: retain | C: project, status, archive, search; T: retain | C (CW-0563): opt-in total; T: met | C: `/epics/facets`, `torque_epic_facets` + requested-ID rollups and exact task_totals (CW-0678); T: met | C (CW-0563): `torque_epic_list`, common query/count envelope; T: met |
 | Sprints `/sprints` | C (CW-0563): paged by default; T: met | C: named entity allow-list; T: retain | C (CW-0563): project, status, archive, search, over-budget/budget bounds; T: retain | C (CW-0563): opt-in total; T: met | C: `/sprints/facets`, `torque_sprint_facets` + requested-ID rollups and exact task_totals (CW-0678); T: met | C (CW-0563): `torque_sprint_list`, common query/count envelope; T: met |
 | Projects `/projects` | C (CW-0563): paged by default; T: met | C: named entity allow-list; T: retain | C (CW-0563): status, archive, search; T: met | C (CW-0563): opt-in total; T: met | C: `/projects/facets`, `torque_project_facets` + requested-ID rollups, task_totals, children/child_totals (CW-0678); T: met | C (CW-0563): `torque_project_list`, common query/count envelope; T: met |
@@ -369,7 +369,8 @@ proposed choices for families that had no public sort at the baseline.
 
 | Resource | Allowed `sort_by` | Default | State |
 |---|---|---|---|
-| Tasks, issues, plans | `priority`, `status`, `updated_at`, `created_at` | `priority asc`, `id asc` tie-break | Current (plans MCP); target HTTP/MCP |
+| Tasks | `priority`, `status`, `updated_at`, `created_at`, `title` | `priority asc`, `id asc` tie-break | Implemented HTTP/MCP; title uses ASCII case folding (SQLite NOCASE), id asc ties in both directions |
+| Issues, plans | `priority`, `status`, `updated_at`, `created_at` | `priority asc`, `id asc` tie-break | Current (plans MCP); target HTTP/MCP |
 | Projects | `name`, `status`, `updated_at`, `created_at` | `name asc`, `id asc` | Current and target |
 | Epics, sprints | `name`, `status`, `updated_at`, `created_at` | `updated_at desc`, `id asc` | Current and target |
 | Comments | `created_at` | List `asc`, search `desc`; numeric `id asc` | Current and target |

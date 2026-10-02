@@ -12,7 +12,7 @@ import { readOpsViews } from '@/lib/ops-saved-views'
 vi.mock('@/components/domain/task-table', () => ({ TaskTable: ({ tasks, onLoadMore, onSortChange }: {
   tasks: TaskSummary[]; onLoadMore: () => void; onSortChange: (key: string, dir: string) => void
 }) => <div><output aria-label="Loaded rows">{tasks.map(task => task.id).join(',')}</output>
-  <button onClick={onLoadMore}>Next rows</button><button onClick={() => onSortChange('priority', 'asc')}>Sort priority</button></div> }))
+  <button onClick={onLoadMore}>Next rows</button><button onClick={() => onSortChange('priority', 'asc')}>Sort priority</button><button onClick={() => onSortChange('title', 'asc')}>Sort title</button></div> }))
 vi.mock('@/components/domain/scheduler-toggle-button', () => ({ SchedulerToggleButton: () => null }))
 vi.mock('@/components/domain/restart-frontend-button', () => ({ RestartFrontendButton: () => null }))
 
@@ -67,6 +67,9 @@ describe('Board server paging and cohorts', () => {
     await waitFor(() => expect(taskQueries().at(-1)?.searchParams.get('sort_by')).toBe('priority'))
     expect(taskQueries().at(-1)?.searchParams.has('cursor')).toBe(false)
     await waitFor(() => expect(screen.getByLabelText('Loaded rows').textContent?.split(',')).toHaveLength(50))
+    fireEvent.click(screen.getByText('Sort title'))
+    await waitFor(() => expect(taskQueries().at(-1)?.searchParams.get('sort_by')).toBe('title'))
+    expect(taskQueries().at(-1)?.searchParams.has('cursor')).toBe(false)
   })
   it('eligibility replaces working filters for both requests and restores them when disabled', async () => {
     mount('/operations?status=review&manual=manual&project_id=P1')
