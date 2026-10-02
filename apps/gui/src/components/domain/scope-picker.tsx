@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
+import { Popover as PopoverPrimitive } from '@base-ui/react/popover'
 import { Check, ChevronsUpDown } from 'lucide-react'
-import { Button, Command, CommandGroup, CommandInput, CommandItem, CommandList, Popover, PopoverContent, PopoverTrigger } from '@hollis-labs/sysop-ui'
+import { Button, Command, CommandGroup, CommandInput, CommandItem, CommandList, Popover, PopoverTrigger } from '@hollis-labs/sysop-ui'
 import { useApi } from '@/hooks/use-api'
 import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
 import { usePagedList } from '@/hooks/use-paged-list'
@@ -63,8 +64,10 @@ export function ScopePicker({ kind, value, onChange, projectId, label, placehold
       <PopoverTrigger render={<Button variant="outline" disabled={disabled} role="combobox" aria-expanded={open} aria-label={label ?? `Choose ${kind}`} className={className ?? 'h-8 w-full justify-between font-normal'} />}>
         <span className="truncate">{selectedName}</span><ChevronsUpDown className="ml-2 size-3.5 shrink-0 opacity-50" />
       </PopoverTrigger>
-      <PopoverContent className="w-80 p-0" align="start">
-        <Command shouldFilter={false}>
+      <PopoverPrimitive.Portal>
+        <PopoverPrimitive.Positioner sideOffset={4} align="start" className="isolate z-[70]">
+          <PopoverPrimitive.Popup className="w-80 rounded-lg bg-popover p-0 text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-none">
+        <Command shouldFilter={false} label={`Search ${kind}s`}>
           <CommandInput placeholder={`Search ${kind}s…`} value={input} onValueChange={text => { setInput(text); scheduleSearch() }} aria-label={`Search ${kind}s`} />
           <CommandList>
             <CommandGroup>
@@ -79,7 +82,9 @@ export function ScopePicker({ kind, value, onChange, projectId, label, placehold
             </div>
           </CommandList>
         </Command>
-      </PopoverContent>
+          </PopoverPrimitive.Popup>
+        </PopoverPrimitive.Positioner>
+      </PopoverPrimitive.Portal>
     </Popover>
   )
 }

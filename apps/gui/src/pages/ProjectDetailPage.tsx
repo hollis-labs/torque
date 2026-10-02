@@ -15,7 +15,6 @@ import { usePagedTaskSummaries } from '@/hooks/use-paged-task-summaries'
 import { useSSE } from '@/hooks/use-sse'
 import { EVENT_REFETCH_DEBOUNCE_MS } from '@/lib/debounce'
 import { isHtmlApiFallbackError } from '@/lib/api'
-import type { ParentFacetResult } from '@/lib/api'
 import { rollupFromStatusCounts, rollupsByScope } from '@/lib/scope-metrics'
 import type { Epic, Project, ProjectArtifact, Sprint, TaskScopeRollupResponse } from '@/lib/types'
 
@@ -39,7 +38,7 @@ export default function ProjectDetailPage() {
   const [taskRollup, setTaskRollup] = useState<TaskScopeRollupResponse | null>(null)
   const [sprintRollup, setSprintRollup] = useState<TaskScopeRollupResponse | null>(null)
   const [epicRollup, setEpicRollup] = useState<TaskScopeRollupResponse | null>(null)
-  const [childFacets, setChildFacets] = useState<ParentFacetResult | null>(null)
+  const [childFacets, setChildFacets] = useState<{ sprints: number; epics: number } | null>(null)
   const [sprintSearch, setSprintSearch] = useState('')
   const [epicSearch, setEpicSearch] = useState('')
   const sprintQuery = useListSearch(sprintSearch)
@@ -89,19 +88,20 @@ export default function ProjectDetailPage() {
     try {
       // Per-sprint and per-epic counts stay within this project, as the
       // client-side grouping of the project's tasks did.
-      const [nextProject, rollupRes, sprintRollupRes, epicRollupRes, children] = await Promise.all([
+      const [nextProject, rollupRes, sprintRollupRes, epicRollupRes, childSprints, childEpics] = await Promise.all([
         api.getProject(id),
         api.taskRollup('project_id', { project_id: id }),
         api.taskRollup('sprint_id', { project_id: id }),
         api.taskRollup('epic_id', { project_id: id }),
-        api.parentFacets('project', {}, [id]),
+        api.parentFacets('sprint', { project_id: id }, []),
+        api.parentFacets('epic', { project_id: id }, []),
       ])
       if (myGen !== loadGeneration.current) return
       setProject(nextProject)
       setTaskRollup(rollupRes)
       setSprintRollup(sprintRollupRes)
       setEpicRollup(epicRollupRes)
-      setChildFacets(children)
+      setChildFacets({ sprints: childSprints.matching_count, epics: childEpics.matching_count })
 
       try {
         const artifactRes = await api.listProjectArtifacts(id)
@@ -179,8 +179,8 @@ export default function ProjectDetailPage() {
             meta={[
               { label: 'Repo Path', value: <span className="font-mono text-xs text-zinc-300">{project.repo_path || 'Not set'}</span> },
               { label: 'Agent Path', value: <span className="font-mono text-xs text-zinc-300">{project.agent_path || 'Not set'}</span> },
-              { label: 'Sprints', value: childFacets?.task_rollups.scopes.find(scope => scope.scope_id === id)?.children?.sprints ?? '—' },
-              { label: 'Epics', value: childFacets?.task_rollups.scopes.find(scope => scope.scope_id === id)?.children?.epics ?? '—' },
+              { label: 'Sprints', value: childFacets?.sprints ?? '—' },
+              { label: 'Epics', value: childFacets?.epics ?? '—' },
             ]}
             actions={
               <>

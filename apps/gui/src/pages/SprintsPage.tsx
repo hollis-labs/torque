@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { ExternalLink, Pencil, Plus } from 'lucide-react'
 import { Skeleton, Button, PageHeader, SummaryCards, EmptyState } from '@hollis-labs/sysop-ui'
 import { SprintCreateDialog } from '@/components/domain/sprint-create-dialog'
-import { ScopeName } from '@/components/domain/scope-name'
+import { ScopeName, ScopeNames } from '@/components/domain/scope-name'
 import { ScopeOverviewCard } from '@/components/domain/scope-overview-card'
 import { useParentPage } from '@/hooks/use-parent-page'
 import { ParentPageControls } from '@/components/domain/parent-page-controls'
@@ -80,6 +80,7 @@ export default function SprintsPage() {
           </div>
         ) : (
           <div className="flex flex-col gap-4 p-6">
+            <ScopeNames kind="project" ids={page.items.flatMap(item => item.project_id ? [item.project_id] : [])}>
             {sprintCards.map(({ sprint, rollup }) => (
               <ScopeOverviewCard
                 key={sprint.id}
@@ -116,6 +117,7 @@ export default function SprintsPage() {
                 }
               />
             ))}
+            </ScopeNames>
           </div>
         )}
       </div>
