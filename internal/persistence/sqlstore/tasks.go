@@ -752,12 +752,10 @@ func (s *Store) taskColumnFacet(dim string, where []string, args []any, limit in
 	if len(where) > 0 {
 		from += " WHERE " + strings.Join(where, " AND ")
 	}
-	totalQ := "SELECT COUNT(*) FROM (SELECT " + col + from + " GROUP BY " + col + ") task_facet_values"
+	// Count the grouped buckets before LIMIT in the same query. A separate
+	// distinct-count query repeats the entire cohort scan for every dimension.
 	var total int
-	if err := s.ReadDB().QueryRow(totalQ, args...).Scan(&total); err != nil {
-		return TaskFacetResult{}, err
-	}
-	q := "SELECT " + col + ", COUNT(*) AS c" + from + " GROUP BY " + col +
+	q := "SELECT " + col + ", COUNT(*) AS c, COUNT(*) OVER ()" + from + " GROUP BY " + col +
 		" ORDER BY c DESC, CASE WHEN " + col + " IS NULL THEN 1 ELSE 0 END ASC, " + col + " ASC"
 	if limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", limit+1)
@@ -769,7 +767,7 @@ func (s *Store) taskColumnFacet(dim string, where []string, args []any, limit in
 	defer rows.Close()
 	buckets := []TaskFacetBucket{}
 	for rows.Next() {
-		b, err := scanTaskFacetBucket(rows, dim)
+		b, err := scanTaskFacetBucket(rows, dim, &total)
 		if err != nil {
 			return TaskFacetResult{}, err
 		}
@@ -790,18 +788,11 @@ func (s *Store) taskTagFacet(where []string, args []any, limit int) (TaskFacetRe
 	if len(where) > 0 {
 		base += " WHERE " + strings.Join(where, " AND ")
 	}
-	totalQ := "SELECT COUNT(*) FROM (" +
-		"SELECT tt.tag_slug FROM task_tags tt JOIN (" + base + ") cohort ON cohort.id = tt.task_id GROUP BY tt.tag_slug " +
-		"UNION ALL SELECT NULL WHERE EXISTS (SELECT 1 FROM (" + base + ") cohort_missing WHERE NOT EXISTS (SELECT 1 FROM task_tags tx WHERE tx.task_id = cohort_missing.id))" +
-		") task_tag_values"
-	totalArgs := append([]any{}, args...)
-	totalArgs = append(totalArgs, args...)
+	// The task_tags primary key (task_id, tag_slug) and unique cohort IDs
+	// make each joined row one task per tag; DISTINCT adds no information.
 	var total int
-	if err := s.ReadDB().QueryRow(totalQ, totalArgs...).Scan(&total); err != nil {
-		return TaskFacetResult{}, err
-	}
-	q := "SELECT value, c FROM (" +
-		"SELECT tt.tag_slug AS value, COUNT(DISTINCT tt.task_id) AS c, 0 AS is_null FROM task_tags tt JOIN (" + base + ") cohort ON cohort.id = tt.task_id GROUP BY tt.tag_slug " +
+	q := "SELECT value, c, COUNT(*) OVER () FROM (" +
+		"SELECT tt.tag_slug AS value, COUNT(*) AS c, 0 AS is_null FROM task_tags tt JOIN (" + base + ") cohort ON cohort.id = tt.task_id GROUP BY tt.tag_slug " +
 		"UNION ALL SELECT NULL AS value, COUNT(*) AS c, 1 AS is_null FROM (" + base + ") cohort_missing WHERE NOT EXISTS (SELECT 1 FROM task_tags tx WHERE tx.task_id = cohort_missing.id)" +
 		") task_tag_counts WHERE c > 0 ORDER BY c DESC, is_null ASC, value ASC"
 	queryArgs := append([]any{}, args...)
@@ -816,7 +807,7 @@ func (s *Store) taskTagFacet(where []string, args []any, limit int) (TaskFacetRe
 	defer rows.Close()
 	buckets := []TaskFacetBucket{}
 	for rows.Next() {
-		b, err := scanTaskFacetBucket(rows, "tags")
+		b, err := scanTaskFacetBucket(rows, "tags", &total)
 		if err != nil {
 			return TaskFacetResult{}, err
 		}
@@ -843,12 +834,12 @@ func taskFacetColumn(dim string) (string, bool) {
 	}
 }
 
-func scanTaskFacetBucket(rows *sql.Rows, dim string) (TaskFacetBucket, error) {
+func scanTaskFacetBucket(rows *sql.Rows, dim string, total *int) (TaskFacetBucket, error) {
 	var count int
 	switch dim {
 	case "priority":
 		var v sql.NullInt64
-		if err := rows.Scan(&v, &count); err != nil {
+		if err := rows.Scan(&v, &count, total); err != nil {
 			return TaskFacetBucket{}, err
 		}
 		if !v.Valid {
@@ -857,7 +848,7 @@ func scanTaskFacetBucket(rows *sql.Rows, dim string) (TaskFacetBucket, error) {
 		return TaskFacetBucket{Value: TaskFacetValue{Value: int(v.Int64)}, Count: count}, nil
 	case "manual":
 		var v sql.NullInt64
-		if err := rows.Scan(&v, &count); err != nil {
+		if err := rows.Scan(&v, &count, total); err != nil {
 			return TaskFacetBucket{}, err
 		}
 		if !v.Valid {
@@ -866,7 +857,7 @@ func scanTaskFacetBucket(rows *sql.Rows, dim string) (TaskFacetBucket, error) {
 		return TaskFacetBucket{Value: TaskFacetValue{Value: v.Int64 != 0}, Count: count}, nil
 	default:
 		var v sql.NullString
-		if err := rows.Scan(&v, &count); err != nil {
+		if err := rows.Scan(&v, &count, total); err != nil {
 			return TaskFacetBucket{}, err
 		}
 		if !v.Valid {
