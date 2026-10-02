@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Archive, Plus } from 'lucide-react'
 import {
   DndContext,
@@ -33,6 +33,8 @@ import {
 import { CollectionCreateDialog } from '@/components/domain/collection-create-dialog'
 import { CollectionTaskRow } from '@/components/domain/collection-task-row'
 import { useApi } from '@/hooks/use-api'
+import { usePagedList } from '@/hooks/use-paged-list'
+import { ListPageControls } from '@/components/domain/list-page-controls'
 import { useSSE } from '@/hooks/use-sse'
 import { notifyError, notifySuccess } from '@/lib/toast'
 import type { Collection, Task } from '@/lib/types'
@@ -160,7 +162,7 @@ function CollectionHeader({ collection, taskCount, onUpdate, onArchive }: Collec
           >
             {collection.name}
             <span className="ml-2 text-[11px] font-normal text-zinc-500">
-              {taskCount} {taskCount === 1 ? 'task' : 'tasks'}
+              {taskCount} loaded tasks
             </span>
           </button>
         )}
@@ -260,15 +262,40 @@ function CollectionTaskTable({ collectionKey, tasks, emptyHint }: CollectionTask
   )
 }
 
+/** Each mounted collection owns one cursor chain; no page-wide task fan-out. */
+function PagedCollectionTasks({ collectionKey, tasks, emptyHint, generation, report }: {
+  collectionKey: string | null; tasks: Task[]; emptyHint: string; generation: number
+  report: (key: string | null, tasks: Task[], hasMore: boolean) => void
+}) {
+  const api = useApi()
+  const page = usePagedList({
+    queryKey: `${collectionKey ?? 'inbox'}:${generation}`,
+    params: { sort_by: 'position', sort_dir: 'asc' as const, include_total: true },
+    fetchPage: ({ params, cursor, signal }) => collectionKey === null
+      ? api.listInboxTasks({ ...params, cursor }, signal)
+      : api.listCollectionTasks(collectionKey, { ...params, cursor }, signal),
+    getId: task => task.id,
+  })
+  useEffect(() => { report(collectionKey, page.items, page.hasMore || page.loading || !page.meta) }, [collectionKey, page.items, page.hasMore, page.loading, page.meta, report])
+  return <>
+    <CollectionTaskTable collectionKey={collectionKey} tasks={tasks} emptyHint={page.loading ? 'Loading tasks…' : emptyHint} />
+    <ListPageControls page={page} label="tasks" />
+  </>
+}
+
 export default function CollectionsPage() {
   const api = useApi()
   const { lastEvent } = useSSE(SSE_EVENTS)
-  const loadGeneration = useRef(0)
-  const [collections, setCollections] = useState<Collection[]>([])
+  const [generation, setGeneration] = useState(0)
+  const collectionsPage = usePagedList({
+    params: { sort_by: 'created_at', sort_dir: 'asc' as const, include_total: true },
+    fetchPage: ({ params, cursor, signal }) => api.listCollections('active', { ...params, cursor }, signal),
+    getId: collection => collection.id,
+  })
+  const { items: collections, loading, error, reload: reloadCollections, applyEvent: updateCollectionRow } = collectionsPage
+  const [moreByCollection, setMoreByCollection] = useState<Record<string, boolean>>({})
   const [inboxTasks, setInboxTasks] = useState<Task[]>([])
   const [tasksByCollection, setTasksByCollection] = useState<Record<string, Task[]>>({})
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
   const [archiveTarget, setArchiveTarget] = useState<Collection | null>(null)
   const [archiving, setArchiving] = useState(false)
@@ -284,63 +311,30 @@ export default function CollectionsPage() {
   )
 
   const load = useCallback(async () => {
-    const myGen = ++loadGeneration.current
-    setLoading(true)
-    setError(null)
-    try {
-      const [activePage, inboxPage] = await Promise.all([
-        api.listCollections('active'),
-        api.listInboxTasks(),
-      ])
-      if (myGen !== loadGeneration.current) return
-      const taskMap: Record<string, Task[]> = {}
-      // Fan out task fetches so each collection populates independently;
-      // cheaper than a single mega-endpoint and matches the backend
-      // shape (collection list and task list are separate resources).
-      const taskResults = await Promise.all(
-        activePage.items.map((c) => api.listCollectionTasks(c.id).then((t) => [c.id, t.items] as const)),
-      )
-      if (myGen !== loadGeneration.current) return
-      for (const [id, t] of taskResults) {
-        taskMap[id] = t
-      }
-      setCollections(activePage.items)
-      setInboxTasks(inboxPage.items)
-      setTasksByCollection(taskMap)
-    } catch (err) {
-      if (myGen !== loadGeneration.current) return
-      setError(err instanceof Error ? err.message : 'Failed to load collections')
-    } finally {
-      if (myGen === loadGeneration.current) setLoading(false)
+    setGeneration(value => value + 1)
+    await reloadCollections()
+  }, [reloadCollections])
+
+  const reportTasks = useCallback((key: string | null, rows: Task[], hasMore: boolean) => {
+    if (key === null) setInboxTasks(rows)
+    else {
+      setTasksByCollection(previous => previous[key] === rows ? previous : { ...previous, [key]: rows })
+      setMoreByCollection(previous => previous[key] === hasMore ? previous : { ...previous, [key]: hasMore })
     }
-  }, [api])
-
-  useEffect(() => {
-    void load()
-  }, [load])
-
-  // SSE refetch — collections fire a wide event surface and the refetch
-  // is cheap (one collections list + one inbox + N per-collection task
-  // lists, all parallel), so a blanket reload keeps the page honest
-  // without optimistic-state bookkeeping for events from sibling
-  // sessions.
-  useEffect(() => {
-    if (!lastEvent) return
-    void load()
-  }, [lastEvent, load])
+  }, [])
 
   const handleUpdateCollection = useCallback(
     async (id: string, fields: { name?: string; description?: string }) => {
       try {
         const updated = await api.updateCollection(id, fields)
-        setCollections((prev) => prev.map((c) => (c.id === id ? updated : c)))
+        updateCollectionRow({ id, item: updated })
         notifySuccess('Collection updated')
       } catch (err) {
         notifyError(err, 'Failed to update collection')
         throw err
       }
     },
-    [api],
+    [api, updateCollectionRow],
   )
 
   function requestArchive(id: string) {
@@ -441,6 +435,11 @@ export default function CollectionsPage() {
       const target = resolveDropTarget(overId)
       if (!target) return
 
+      // Partial reorders would assign new positions over unseen rows. Require a complete destination.
+      if (target.collectionId !== null && moreByCollection[target.collectionId] !== false) {
+        notifyError(new Error('Load the remaining destination tasks before reordering or dropping here.'), 'Collection has more tasks')
+        return
+      }
       const sameContainer = source.collectionId === target.collectionId
 
       // Compute target index in the destination list. When dropping on
@@ -552,17 +551,14 @@ export default function CollectionsPage() {
           .catch(onError)
       }
     },
-    [api, inboxTasks, tasksByCollection, load, findContainerForTask, resolveDropTarget],
+    [api, inboxTasks, tasksByCollection, moreByCollection, load, findContainerForTask, resolveDropTarget],
   )
 
   const handleDragCancel = useCallback(() => {
     setActiveDragTaskId(null)
   }, [])
 
-  const sortedCollections = useMemo(
-    () => [...collections].sort((a, b) => a.created_at.localeCompare(b.created_at)),
-    [collections],
-  )
+  const sortedCollections = collections
 
   const activeDragTask = useMemo<Task | null>(() => {
     if (!activeDragTaskId) return null
@@ -593,11 +589,13 @@ export default function CollectionsPage() {
           </Button>
         </PageHeader>
 
+        <ListPageControls page={collectionsPage} label="collections" />
+        {lastEvent && <p className="px-4 py-1 text-xs text-muted-foreground">Collections changed. Refresh to update the loaded pages.</p>}
         {loading && collections.length === 0 ? (
           <PageSkeleton />
         ) : error ? (
           <div className="m-6 rounded-md border border-rose-900/60 bg-rose-950/30 p-4 text-[13px] text-rose-300">
-            {error}
+            {error.message}
           </div>
         ) : (
           <div className="flex-1 overflow-auto">
@@ -608,10 +606,12 @@ export default function CollectionsPage() {
                   <p className="text-[12px] text-zinc-500">tasks awaiting organization</p>
                 </div>
                 <span className="text-[11px] text-zinc-500">
-                  {inboxTasks.length} {inboxTasks.length === 1 ? 'task' : 'tasks'}
+                  {inboxTasks.length} loaded tasks
                 </span>
               </div>
-              <CollectionTaskTable
+              <PagedCollectionTasks
+                generation={generation}
+                report={reportTasks}
                 collectionKey={null}
                 tasks={inboxTasks}
                 emptyHint="Inbox is empty. Drop tasks here to clear collection assignment."
@@ -626,7 +626,9 @@ export default function CollectionsPage() {
                   onUpdate={handleUpdateCollection}
                   onArchive={requestArchive}
                 />
-                <CollectionTaskTable
+                <PagedCollectionTasks
+                  generation={generation}
+                  report={reportTasks}
                   collectionKey={collection.id}
                   tasks={tasksByCollection[collection.id] ?? []}
                   emptyHint="Drop tasks here to add them to this collection."

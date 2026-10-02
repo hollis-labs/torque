@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useSearchParams, useLocation, useNavigate } from 'react-router-dom'
 import { Skeleton, PageHeader, SummaryCards, EmptyState, Button } from '@hollis-labs/sysop-ui'
 import { FilterBar } from '@/components/domain/filter-bar'
-import { TaskTable } from '@/components/domain/task-table'
+import { TaskTable, type TaskTableSort } from '@/components/domain/task-table'
 import { ProjectCreateDialog } from '@/components/domain/project-create-dialog'
 import { EpicCreateDialog } from '@/components/domain/epic-create-dialog'
 import { SprintCreateDialog } from '@/components/domain/sprint-create-dialog'
@@ -12,8 +12,10 @@ import { SchedulerToggleButton } from '@/components/domain/scheduler-toggle-butt
 import { ScopeManagerDialog } from '@/components/domain/scope-manager-dialog'
 import { useApi } from '@/hooks/use-api'
 import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
-import { useSSE } from '@/hooks/use-sse'
-import { EVENT_REFETCH_DEBOUNCE_MS } from '@/lib/debounce'
+import { usePagedList, type ListChange, type PageRequest } from '@/hooks/use-paged-list'
+import { OpsSavedViews } from '@/components/domain/ops-saved-views'
+import { readOpsViews, saveOpsViews, readActiveOpsView, saveActiveOpsView } from '@/lib/ops-saved-views'
+import type { TaskFacetResult } from '@/lib/api'
 import { notifyError } from '@/lib/toast'
 import { DEFAULT_ACTIVE_STATUSES, TASK_STATUSES } from '@/lib/constants'
 import { saveTaskListCursor } from '@/lib/task-list-cursor'
@@ -26,11 +28,12 @@ import {
   type OpsFilters,
 } from '@/lib/ops-filters-storage'
 import { FolderTree } from 'lucide-react'
-import type { Epic, FeatureFlags, Project, Sprint, Tag, Task, TaskStatus } from '@/lib/types'
+import type { Epic, FeatureFlags, Project, Sprint, Tag, TaskFilter, TaskSummary, TaskStatus } from '@/lib/types'
 
-const FILTER_PARAM_KEYS = ['status', 'priority', 'project_id', 'sprint_id', 'epic_id', 'tag', 'manual'] as const
+const FILTER_PARAM_KEYS = ['status', 'priority', 'project_id', 'sprint_id', 'epic_id', 'tag', 'manual', 'eligible', 'sort_by', 'sort_dir'] as const
 
-const SSE_EVENTS = ['task.created', 'task.updated', 'task.transitioned']
+type BoardParams = Omit<TaskFilter, 'cursor' | 'offset'>
+const SORT_FIELDS = ['priority', 'status', 'updated_at', 'created_at'] as const
 
 function parseStatusParam(raw: string | null): TaskStatus[] {
   if (raw === null) return DEFAULT_ACTIVE_STATUSES
@@ -62,7 +65,6 @@ function TableSkeleton() {
 
 export default function BoardPage() {
   const api = useApi()
-  const { lastEvent } = useSSE(SSE_EVENTS)
   const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
   const navigate = useNavigate()
@@ -85,10 +87,12 @@ export default function BoardPage() {
   const sprintId = searchParams.get('sprint_id')
   const epicId = searchParams.get('epic_id')
   const tagSlug = searchParams.get('tag')
+  const eligibleOnly = searchParams.get('eligible') === '1'
+  const sortBy: TaskTableSort = SORT_FIELDS.find(field => field === searchParams.get('sort_by')) ?? 'updated_at'
+  const sortDir = searchParams.get('sort_dir') === 'asc' ? 'asc' : 'desc'
+  const [views, setViews] = useState(readOpsViews)
+  const [activeViewId, setActiveViewId] = useState(readActiveOpsView)
 
-  const [tasks, setTasks] = useState<Task[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState<string>('')
   // System (kind=internal) toggle — storage-only, default off. Surfacing
   // automation tasks (Reviewer end-agents etc.) is an admin/diagnostic
@@ -102,11 +106,6 @@ export default function BoardPage() {
   const [epics, setEpics] = useState<Epic[]>([])
   const [tags, setTags] = useState<Tag[]>([])
   const [flags, setFlags] = useState<FeatureFlags>({ projects: false, epics: false, sprints: false })
-
-  // Total rows matching the current filter+search from the list endpoint —
-  // authoritative for the summary's "M matches" display. Distinct from
-  // `tasks.length`, which reflects the windowed/capped payload.
-  const [totalMatchCount, setTotalMatchCount] = useState<number | undefined>(undefined)
 
   // Create-modal state
   const [projectCreateOpen, setProjectCreateOpen] = useState(false)
@@ -190,6 +189,9 @@ export default function BoardPage() {
     if (stored.epicId) next.set('epic_id', stored.epicId)
     if (stored.tagSlug) next.set('tag', stored.tagSlug)
     if (stored.manual && stored.manual !== 'both') next.set('manual', stored.manual)
+    if (stored.eligibleOnly) next.set('eligible', '1')
+    if (stored.sortBy) next.set('sort_by', stored.sortBy)
+    if (stored.sortDir) next.set('sort_dir', stored.sortDir)
 
     if (next.toString() === searchParams.toString()) {
       // No-op — don't call setSearchParams. A replace with unchanged URL
@@ -219,22 +221,32 @@ export default function BoardPage() {
       manual: manualFilter,
       search,
       includeInternal,
+      ...(eligibleOnly ? { eligibleOnly: true } : {}),
+      sortBy,
+      sortDir,
     })
-  }, [hydrated, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, manualFilter, search, includeInternal])
+  }, [hydrated, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, manualFilter, search, includeInternal, eligibleOnly, sortBy, sortDir])
 
-  // Fetch pickers once on mount
+  const pickerGeneration = useRef(0)
+  const [pickerCursors, setPickerCursors] = useState<{ projects?: string | null; epics?: string | null; sprints?: string | null }>({})
+  const [pickerLoading, setPickerLoading] = useState<string | null>(null)
+  // Scope options are bounded pages too; selected IDs are fetched separately.
+  // Fetch pickers on project changes
   const refreshPickers = useCallback(async () => {
+    const gen = ++pickerGeneration.current
     const [p, s, e, t] = await Promise.all([
-      api.listProjects().catch(() => ({ items: [] as Project[] })),
-      api.listSprints().catch(() => ({ items: [] as Sprint[] })),
-      api.listEpics().catch(() => ({ items: [] as Epic[] })),
+      api.listProjects(undefined, { limit: 50 }).catch(() => ({ items: [] as Project[] })),
+      api.listSprints({ project_id: projectId ?? undefined, limit: 50 }).catch(() => ({ items: [] as Sprint[] })),
+      api.listEpics({ project_id: projectId ?? undefined, limit: 50 }).catch(() => ({ items: [] as Epic[] })),
       api.listTags().catch(() => ({ tags: [] as Tag[] })),
     ])
+    if (gen !== pickerGeneration.current) return
+    setPickerCursors({ projects: 'meta' in p ? p.meta.next_cursor : null, sprints: 'meta' in s ? s.meta.next_cursor : null, epics: 'meta' in e ? e.meta.next_cursor : null })
     setProjects(p.items)
     setSprints(s.items)
     setEpics(e.items)
     setTags(t.tags)
-  }, [api])
+  }, [api, projectId])
 
   useEffect(() => {
     let cancelled = false
@@ -258,86 +270,136 @@ export default function BoardPage() {
     }
   }, [api])
 
-  // Cascade sprint/epic options by selected project (client-side filter)
-  const visibleSprints = useMemo(
-    () => (projectId ? sprints.filter((s) => s.project_id === projectId) : sprints),
-    [sprints, projectId]
-  )
-  const visibleEpics = useMemo(
-    () => (projectId ? epics.filter((e) => e.project_id === projectId) : epics),
-    [epics, projectId]
-  )
-
-  // Auto-clear sprint/epic selection if it falls outside the cascaded set.
+  const visibleSprints = sprints
+  const visibleEpics = epics
   useEffect(() => {
-    const sprintInvalid = sprintId && !visibleSprints.some((s) => s.id === sprintId)
-    const epicInvalid = epicId && !visibleEpics.some((e) => e.id === epicId)
-    if (!sprintInvalid && !epicInvalid) return
-    // Wait until we've actually loaded the lists; otherwise everything looks "invalid".
-    if (sprints.length === 0 && epics.length === 0) return
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev)
-        if (sprintInvalid) next.delete('sprint_id')
-        if (epicInvalid) next.delete('epic_id')
-        return next
-      },
-      { replace: true }
-    )
-  }, [projectId, sprintId, epicId, visibleSprints, visibleEpics, sprints.length, epics.length, setSearchParams])
-
-  // Monotonic request id so a slow older fetch can't overwrite a fast newer
-  // one. The filter-change and SSE-refresh effects both call fetchTasks, so
-  // multiple responses can be in flight; only the latest should mutate state.
-  const fetchGeneration = useRef(0)
-
-  const fetchTasks = useCallback(async () => {
-    const myGen = ++fetchGeneration.current
+    let cancelled = false
+    if (projectId && !projects.some(item => item.id === projectId)) void api.getProject(projectId).then(item => {
+      if (!cancelled) setProjects(previous => previous.some(existing => existing.id === item.id) ? previous : [...previous, item])
+    }).catch(() => {})
+    if (sprintId && !sprints.some(item => item.id === sprintId)) void api.getSprint(sprintId).then(item => {
+      if (!cancelled) setSprints(previous => previous.some(existing => existing.id === item.id) ? previous : [...previous, item])
+    }).catch(() => {})
+    if (epicId && !epics.some(item => item.id === epicId)) void api.getEpic(epicId).then(item => {
+      if (!cancelled) setEpics(previous => previous.some(existing => existing.id === item.id) ? previous : [...previous, item])
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [api, projectId, sprintId, epicId, projects, sprints, epics])
+  async function loadPicker(kind: 'projects' | 'sprints' | 'epics') {
+    const cursor = pickerCursors[kind]
+    if (!cursor || pickerLoading) return
+    const gen = pickerGeneration.current
+    setPickerLoading(kind)
     try {
-      const result = await api.listTasks({
-        limit: 50,
-        include_total: true,
-        status: activeStatuses,
-        priority: activePriorities.length ? activePriorities : undefined,
-        project_id: projectId ?? undefined,
-        sprint_id: sprintId ?? undefined,
-        epic_id: epicId ?? undefined,
-        tags: tagSlug ? [tagSlug] : undefined,
-        manual: manualFilter === 'both' ? undefined : manualFilter === 'manual',
-        search: search || undefined,
-        include_internal: includeInternal || undefined,
-      })
-      if (myGen !== fetchGeneration.current) return
-      setTasks(result.items)
-      setTotalMatchCount(result.meta.total)
-      setError(null)
-    } catch (err) {
-      if (myGen !== fetchGeneration.current) return
-      setError(err instanceof Error ? err.message : 'Failed to load tasks')
-    } finally {
-      if (myGen === fetchGeneration.current) {
-        setLoading(false)
+      const query = { cursor, limit: 50, project_id: projectId ?? undefined }
+      if (kind === 'projects') {
+        const result = await api.listProjects(undefined, { cursor, limit: 50 })
+        if (gen !== pickerGeneration.current) return
+        setProjects(previous => [...new Map([...previous, ...result.items].map(item => [item.id, item])).values()])
+        setPickerCursors(previous => ({ ...previous, projects: result.meta.next_cursor }))
+      } else if (kind === 'sprints') {
+        const result = await api.listSprints(query)
+        if (gen !== pickerGeneration.current) return
+        setSprints(previous => [...new Map([...previous, ...result.items].map(item => [item.id, item])).values()])
+        setPickerCursors(previous => ({ ...previous, sprints: result.meta.next_cursor }))
+      } else {
+        const result = await api.listEpics(query)
+        if (gen !== pickerGeneration.current) return
+        setEpics(previous => [...new Map([...previous, ...result.items].map(item => [item.id, item])).values()])
+        setPickerCursors(previous => ({ ...previous, epics: result.meta.next_cursor }))
       }
+    } catch (error) { notifyError(error, 'Failed to load filter options') }
+    finally { setPickerLoading(null) }
+  }
+
+  const [serverSearch, setServerSearch] = useState(() => readOpsFilters()?.search.trim() ?? '')
+  const scheduleSearch = useDebouncedCallback(() => setServerSearch(search.trim()), 300)
+  useEffect(() => { scheduleSearch() }, [search, scheduleSearch])
+  const rawFilters: BoardParams = eligibleOnly ? { eligible: true } : {
+    status: activeStatuses,
+    priority: activePriorities.length ? activePriorities : undefined,
+    project_id: projectId ?? undefined,
+    sprint_id: sprintId ?? undefined,
+    epic_id: epicId ?? undefined,
+    tags: tagSlug ? [tagSlug] : undefined,
+    manual: manualFilter === 'both' ? undefined : manualFilter === 'manual',
+    search: serverSearch || undefined,
+    include_internal: includeInternal || undefined,
+  }
+  const cohortKey = JSON.stringify(rawFilters)
+  const filters = useMemo(() => JSON.parse(cohortKey) as BoardParams, [cohortKey])
+  const listQueryKey = JSON.stringify({ ...filters, sort_by: sortBy, sort_dir: sortDir })
+  const facetRequest = useRef<AbortController | null>(null)
+  const facetGeneration = useRef(0)
+  const [facetState, setFacetState] = useState<{ key: string; data?: TaskFacetResult; error?: string }>({ key: '' })
+  const fetchFacets = useCallback(async () => {
+    const gen = ++facetGeneration.current
+    facetRequest.current?.abort()
+    const abort = new AbortController()
+    facetRequest.current = abort
+    try {
+      const data = await api.taskFacets(filters, 'status', abort.signal)
+      if (!abort.signal.aborted && gen === facetGeneration.current) setFacetState({ key: cohortKey, data })
+    } catch (error) {
+      if (!abort.signal.aborted && gen === facetGeneration.current) setFacetState({ key: cohortKey, error: error instanceof Error ? error.message : 'Failed to load counts' })
     }
-  }, [api, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, manualFilter, search, includeInternal])
-
-  // Refetch when filters/search change. Intentionally does NOT setLoading(true)
-  // — the initial useState(true) covers the first-mount skeleton; subsequent
-  // fetches keep the current rows visible and swap data in place when the
-  // response lands, so filter/search changes feel instant instead of flashing
-  // the skeleton.
+  }, [api, filters, cohortKey])
   useEffect(() => {
     if (!hydrated) return
-    fetchTasks()
-  }, [hydrated, fetchTasks])
+    // Synchronize the remote facet query; its error path may complete immediately.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void fetchFacets()
+    return () => { facetRequest.current?.abort() }
+  }, [hydrated, fetchFacets])
+  const facets = facetState.key === cohortKey ? facetState.data : undefined
+  const countsError = facetState.key === cohortKey ? facetState.error : undefined
 
-  // Refresh on SSE events, once per burst: each refresh pages the whole
-  // filtered task list.
-  const scheduleRefresh = useDebouncedCallback(() => void fetchTasks(), EVENT_REFETCH_DEBOUNCE_MS)
-  useEffect(() => {
-    if (!hydrated) return
-    if (lastEvent) scheduleRefresh()
-  }, [hydrated, lastEvent, scheduleRefresh])
+  const visibleIds = useRef(new Set<string>())
+  const opaqueQuery = useRef({ key: listQueryKey, enabled: false })
+  const [staleMembershipKey, setStaleMembershipKey] = useState<string | null>(null)
+  const [membershipQueryKey, setMembershipQueryKey] = useState(listQueryKey)
+  if (membershipQueryKey !== listQueryKey) {
+    setMembershipQueryKey(listQueryKey)
+    setStaleMembershipKey(null)
+  }
+  useEffect(() => { opaqueQuery.current = { key: listQueryKey, enabled: Boolean(filters.eligible || filters.search) } }, [listQueryKey, filters])
+  const subscribe = useCallback((onChange: (change: ListChange<TaskSummary>) => void) => api.subscribeEvents(event => {
+    if (!['task.created', 'task.updated', 'task.transitioned', 'task.deleted'].includes(event.type)) return
+    const id = event.data.task_id
+    if (typeof id !== 'string') return
+    if (visibleIds.current.has(id) && opaqueQuery.current.enabled) setStaleMembershipKey(opaqueQuery.current.key)
+    const status = event.type === 'task.transitioned' && typeof event.data.status === 'string'
+      ? event.data.status as TaskStatus : undefined
+    onChange({ id, patch: status ? { status } : undefined, remove: event.type === 'task.deleted',
+      refresh: !status && event.type !== 'task.deleted' })
+  }), [api])
+  const fetchPage = useCallback(({ params, cursor, signal }: PageRequest<BoardParams>) =>
+    api.listTaskSummaryPage({ ...params, cursor }, signal), [api])
+  const fetchItem = useCallback((id: string | number, { signal }: { signal: AbortSignal }) =>
+    api.getTask(String(id), signal).catch(error => {
+      if (error instanceof Error && 'status' in error && error.status === 404) return null
+      throw error
+    }), [api])
+  const page = usePagedList({ fetchPage, fetchItem, params: { ...filters, limit: 50, sort_by: sortBy, sort_dir: sortDir },
+    getId: (task: TaskSummary) => task.id, enabled: hydrated, subscribe, onInvalidate: fetchFacets,
+    matches: (task: TaskSummary) => (!filters.status?.length || filters.status.includes(task.status))
+      && (!filters.priority?.length || filters.priority.includes(task.priority))
+      && (!filters.project_id || task.project_id === filters.project_id)
+      && (!filters.epic_id || task.epic_id === filters.epic_id)
+      && (!filters.sprint_id || task.sprint_id === filters.sprint_id)
+      && (filters.manual === undefined || task.manual === filters.manual)
+      && (filters.include_internal || task.kind !== 'internal')
+      && (!filters.tags?.length || filters.tags.every(slug => task.tags?.some(tag => tag.slug === slug))) })
+  const tasks = page.items
+  const loading = page.loading && tasks.length === 0
+  const error = page.error?.message
+  useEffect(() => { visibleIds.current = new Set(tasks.map(task => task.id)) }, [tasks])
+  const refreshPage = page.refresh
+  const refresh = useCallback(() => {
+    setStaleMembershipKey(null)
+    void refreshPage()
+    void fetchFacets()
+  }, [refreshPage, fetchFacets])
 
   function updateParams(mutate: (params: URLSearchParams) => void) {
     setSearchParams(
@@ -368,6 +430,9 @@ export default function BoardPage() {
       manual: manualFilter,
       search,
       includeInternal,
+      ...(eligibleOnly ? { eligibleOnly: true } : {}),
+      sortBy,
+      sortDir,
       ...overrides,
     })
   }
@@ -403,12 +468,13 @@ export default function BoardPage() {
 
   function handleGroupChange(key: 'project_id' | 'sprint_id' | 'epic_id' | 'tag', value: string | null) {
     const overrides: Partial<OpsFilters> = {}
-    if (key === 'project_id') overrides.projectId = value
+    if (key === 'project_id') { overrides.projectId = value; overrides.epicId = null; overrides.sprintId = null }
     else if (key === 'sprint_id') overrides.sprintId = value
     else if (key === 'epic_id') overrides.epicId = value
     else if (key === 'tag') overrides.tagSlug = value
     persistFilters(overrides)
     updateParams((p) => {
+      if (key === 'project_id') { p.delete('sprint_id'); p.delete('epic_id') }
       if (value === null) p.delete(key)
       else p.set(key, value)
     })
@@ -429,14 +495,14 @@ export default function BoardPage() {
 
   async function handleTransition(id: string, status: TaskStatus) {
     try {
-      await api.transitionTask(id, status)
-      fetchTasks()
+      const task = await api.transitionTask(id, status)
+      page.applyEvent({ id, item: task })
     } catch (err) {
       notifyError(err, 'Failed to update task status')
     }
   }
 
-  const activeFilterCount =
+  const activeFilterCount = eligibleOnly ? 1 :
     (activeStatuses.length !== DEFAULT_ACTIVE_STATUSES.length ? 1 : 0) +
     (activePriorities.length > 0 ? 1 : 0) +
     (manualFilter !== 'both' ? 1 : 0) +
@@ -446,7 +512,7 @@ export default function BoardPage() {
     (epicId !== null ? 1 : 0) +
     (tagSlug !== null ? 1 : 0)
 
-  const searchMatchCount = search ? totalMatchCount : undefined
+  const searchMatchCount = search && search.trim() === serverSearch ? facets?.matching_count : undefined
 
   const emptyVariant = activeFilterCount > 0 || search.length > 0 ? 'no-results' : 'no-tasks'
 
@@ -462,6 +528,49 @@ export default function BoardPage() {
       },
       { replace: true }
     )
+  }
+
+  const workingFilters: OpsFilters = { statuses: activeStatuses, priorities: activePriorities, projectId, sprintId, epicId,
+    tagSlug, manual: manualFilter, search, includeInternal, ...(eligibleOnly ? { eligibleOnly: true } : {}), sortBy, sortDir }
+  const activeView = views.find(view => view.id === activeViewId)
+  function filterKey(filters: OpsFilters) {
+    const normalized = { ...filters, eligibleOnly: Boolean(filters.eligibleOnly), sortBy: filters.sortBy ?? 'updated_at', sortDir: filters.sortDir ?? 'desc' }
+    return JSON.stringify(Object.fromEntries(Object.entries(normalized).sort(([a], [b]) => a.localeCompare(b))))
+  }
+  const viewModified = !activeView || filterKey(activeView.filters) !== filterKey(workingFilters)
+  function selectView(id: string) { setActiveViewId(id); saveActiveOpsView(id) }
+  function applyFilters(filters: OpsFilters) {
+    saveOpsFilters(filters)
+    setSearch(filters.search)
+    setIncludeInternal(filters.includeInternal)
+    updateParams(params => {
+      FILTER_PARAM_KEYS.forEach(key => params.delete(key))
+      const defaultStatuses = filters.statuses.length === DEFAULT_ACTIVE_STATUSES.length && DEFAULT_ACTIVE_STATUSES.every(status => filters.statuses.includes(status))
+      if (!defaultStatuses) params.set('status', filters.statuses.join(','))
+      if (filters.priorities.length) params.set('priority', filters.priorities.join(','))
+      if (filters.projectId) params.set('project_id', filters.projectId)
+      if (filters.sprintId) params.set('sprint_id', filters.sprintId)
+      if (filters.epicId) params.set('epic_id', filters.epicId)
+      if (filters.tagSlug) params.set('tag', filters.tagSlug)
+      if (filters.manual !== 'both') params.set('manual', filters.manual)
+      if (filters.eligibleOnly) params.set('eligible', '1')
+      if (filters.sortBy) params.set('sort_by', filters.sortBy)
+      if (filters.sortDir) params.set('sort_dir', filters.sortDir)
+    })
+  }
+  function applyView() { if (activeView) applyFilters(activeView.filters) }
+  function saveViewAs(name: string) {
+    const view = { id: crypto.randomUUID(), name, filters: workingFilters }
+    const next = [...views, view]
+    setViews(next); saveOpsViews(next); selectView(view.id)
+  }
+  function saveViewOver() {
+    const next = views.map(view => view.id === activeViewId ? { ...view, filters: workingFilters } : view)
+    setViews(next); saveOpsViews(next)
+  }
+  function handleSortChange(sort: TaskTableSort, dir: 'asc' | 'desc') {
+    persistFilters({ sortBy: sort, sortDir: dir })
+    updateParams(params => { params.set('sort_by', sort); params.set('sort_dir', dir) })
   }
 
   const cursorFilter = useMemo(
@@ -483,10 +592,12 @@ export default function BoardPage() {
     [cursorFilter]
   )
 
-  const openCount = tasks.filter((t) => ['backlog', 'todo', 'queued'].includes(t.status)).length
-  const doingCount = tasks.filter((t) => t.status === 'doing').length
-  const reviewCount = tasks.filter((t) => t.status === 'review').length
-  const blockedCount = tasks.filter((t) => t.status === 'blocked').length
+  const statusCounts = Object.fromEntries((facets?.facets.find(facet => facet.dimension === 'status')?.buckets ?? [])
+    .map(bucket => [String(bucket.value), bucket.count]))
+  const openCount = (statusCounts.backlog ?? 0) + (statusCounts.todo ?? 0) + (statusCounts.queued ?? 0)
+  const doingCount = statusCounts.doing ?? 0
+  const reviewCount = statusCounts.review ?? 0
+  const blockedCount = statusCounts.blocked ?? 0
 
   const summaryCards = [
     { label: 'Open Tasks', value: openCount },
@@ -522,9 +633,21 @@ export default function BoardPage() {
         <SchedulerToggleButton />
         <RestartFrontendButton />
       </PageHeader>
-      <p className="px-4 py-2 text-sm text-muted-foreground">Showing one page of up to 50 matching tasks. Board summaries describe this page.</p>
-      {!loading && !error && <SummaryCards cards={summaryCards} />}
+      {facets && <SummaryCards cards={summaryCards} />}
+      {countsError && <p role="alert" className="px-4 py-2 text-xs text-red-400">{countsError} <button onClick={() => void fetchFacets()}>Retry counts</button></p>}
+      {(page.isStale || staleMembershipKey === listQueryKey) && <div className="flex items-center gap-2 px-4 py-2 text-xs text-text-soft">
+        <Button variant="outline" size="sm" onClick={refresh}>Updated — refresh</Button>
+      </div>}
       <FilterBar
+        activeViewName={activeView ? `${activeView.name}${viewModified ? ' *' : ''}` : undefined}
+        eligibleOnly={eligibleOnly}
+        onEligibleChange={(value) => {
+          persistFilters({ eligibleOnly: value })
+          updateParams(params => { if (value) params.set('eligible', '1'); else params.delete('eligible') })
+        }}
+        editorControls={<OpsSavedViews views={views} activeId={activeViewId} onSelect={selectView}
+          onApply={applyView} onReset={() => activeView ? applyFilters(activeView.filters) : handleClearFilters()}
+          onSaveAs={saveViewAs} onSaveOver={saveViewOver} modified={viewModified} />}
         activeStatuses={activeStatuses}
         onStatusToggle={handleStatusToggle}
         activePriorities={activePriorities}
@@ -534,6 +657,10 @@ export default function BoardPage() {
         includeInternal={includeInternal}
         onIncludeInternalChange={handleIncludeInternalChange}
         projects={projects}
+        onProjectMore={pickerCursors.projects ? () => void loadPicker('projects') : undefined}
+        onEpicMore={pickerCursors.epics ? () => void loadPicker('epics') : undefined}
+        onSprintMore={pickerCursors.sprints ? () => void loadPicker('sprints') : undefined}
+        pickerLoading={pickerLoading !== null}
         projectId={projectId}
         onProjectChange={(id) => handleGroupChange('project_id', id)}
         onProjectCreate={() => setProjectCreateOpen(true)}
@@ -598,7 +725,7 @@ export default function BoardPage() {
         flags={flags}
         onDataChange={() => {
           refreshPickers()
-          fetchTasks()
+          void fetchFacets()
         }}
       />
       <div ref={scrollContainerRef} className="flex-1 overflow-auto">
@@ -609,21 +736,20 @@ export default function BoardPage() {
             variant="error"
             title="Something went wrong"
             description={error}
-            action={{ label: 'Retry', onClick: fetchTasks }}
+            action={{ label: 'Retry', onClick: refresh }}
           />
         ) : (
           <TaskTable
             tasks={tasks}
             onTransition={handleTransition}
-            onTaskChange={(updated) => {
-              // Optimistic in-place patch keeps the row visible during the
-              // round-trip; fetchTasks() then reconciles with the active
-              // filter so a row pushed outside the filter (e.g. transitioned
-              // to done while filtering on todo) drops out of the list.
-              setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)))
-              fetchTasks()
-            }}
-            onTaskDelete={(id) => setTasks((prev) => prev.filter((t) => t.id !== id))}
+            onTaskChange={(updated) => page.applyEvent({ id: updated.id, item: updated })}
+            onTaskDelete={(id) => page.applyEvent({ id, remove: true })}
+            hasMore={page.hasMore}
+            loadingMore={page.loadingMore}
+            onLoadMore={page.loadMore}
+            sortBy={sortBy}
+            sortDir={sortDir}
+            onSortChange={handleSortChange}
             emptyVariant={emptyVariant}
             onVisibleOrderChange={handleVisibleOrderChange}
             scrollRootRef={scrollContainerRef}

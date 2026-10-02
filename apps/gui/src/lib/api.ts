@@ -36,6 +36,8 @@ import type {
 } from './types'
 
 export interface RunQuery {
+  executor?: string
+  profile?: string
   task_id?: string
   project_id?: string
   sprint_id?: string
@@ -155,6 +157,7 @@ interface ApiArtifactRecord {
 
 function taskFilterParams(filter?: TaskFilter): Record<string, string | number | boolean | undefined> {
   const params: Record<string, string | number | boolean | undefined> = {}
+  if (filter?.eligible !== undefined) params['eligible'] = filter.eligible
   if (filter?.status?.length) params['status'] = filter.status.join(',')
   if (filter?.priority?.length) params['priority'] = filter.priority.join(',')
   if (filter?.tags?.length) params['tags'] = filter.tags.join(',')
@@ -347,8 +350,8 @@ export class TorqueApiClient {
     return this.get<TaskScopeRollupResponse>('/tasks/rollup', { group_by: groupBy, ...taskFilterParams(filter) })
   }
 
-  async taskFacets(filter?: Omit<TaskFilter, 'limit' | 'offset' | 'sort_by' | 'sort_dir'>, dimensions = 'status'): Promise<TaskFacetResult> {
-    return this.get<TaskFacetResult>('/tasks/facets', { ...taskFilterParams(filter), dimensions })
+  async taskFacets(filter?: Omit<TaskFilter, 'limit' | 'offset' | 'cursor' | 'include_total' | 'sort_by' | 'sort_dir'>, dimensions = 'status', signal?: AbortSignal): Promise<TaskFacetResult> {
+    return this.get<TaskFacetResult>('/tasks/facets', { ...taskFilterParams(filter), dimensions }, signal)
   }
 
 
@@ -413,11 +416,11 @@ export class TorqueApiClient {
     return { items: res.items.map(normalizeRun), meta: res.meta }
   }
 
-  async runFacets(params: Pick<RunQuery, 'task_id' | 'project_id' | 'sprint_id' | 'epic_id' | 'status' | 'since' | 'until'> = {}, dimensions = 'status,executor,profile'): Promise<RunFacetResult> {
-    return this.get<RunFacetResult>('/runs/facets', { ...params, dimensions })
+  async runFacets(params: Pick<RunQuery, 'task_id' | 'project_id' | 'sprint_id' | 'epic_id' | 'status' | 'executor' | 'profile' | 'since' | 'until'> = {}, dimensions = 'status,executor,profile', signal?: AbortSignal): Promise<RunFacetResult> {
+    return this.get<RunFacetResult>('/runs/facets', { ...params, dimensions }, signal)
   }
 
-  async runTimeSeries(params: { since: string; until: string; bucket: 'hour' | 'day'; tz_offset_minutes?: number }): Promise<RunTimeSeries> {
+  async runTimeSeries(params: Pick<RunQuery, 'task_id' | 'project_id' | 'sprint_id' | 'epic_id' | 'status' | 'executor' | 'profile'> & { since: string; until: string; bucket: 'hour' | 'day'; tz_offset_minutes?: number }): Promise<RunTimeSeries> {
     return this.get<RunTimeSeries>('/runs/timeseries', { ...params })
   }
 
@@ -429,8 +432,8 @@ export class TorqueApiClient {
   // Artifacts
   // -------------------------
 
-  async listArtifacts(taskId: string, query?: ListQuery): Promise<ListPage<Artifact>> {
-    const page = await this.get<ListPage<ApiArtifactRecord>>(`/tasks/${taskId}/artifacts`, { ...query })
+  async listArtifacts(taskId: string, query?: ListQuery, signal?: AbortSignal): Promise<ListPage<Artifact>> {
+    const page = await this.get<ListPage<ApiArtifactRecord>>(`/tasks/${taskId}/artifacts`, { ...query }, signal)
     return { items: page.items.map(normalizeArtifact), meta: page.meta }
   }
 
@@ -604,8 +607,8 @@ export class TorqueApiClient {
    * returns an empty list rather than failing — consumers should retry.
    * Optional `provider` narrows to a single provider id.
    */
-  async listModels(provider?: string, query?: ListQuery): Promise<ListPage<ModelEntry>> {
-    return this.get<ListPage<ModelEntry>>('/models', { ...query, provider })
+  async listModels(provider?: string, query?: ListQuery, signal?: AbortSignal): Promise<ListPage<ModelEntry>> {
+    return this.get<ListPage<ModelEntry>>('/models', { ...query, provider }, signal)
   }
 
   async getModel(provider: string, model: string): Promise<ModelEntry> {
@@ -754,8 +757,8 @@ export class TorqueApiClient {
   // Templates
   // -------------------------
 
-  async listTemplates(params?: ListQuery & { kind?: string; include_archived?: boolean }): Promise<ListPage<Template>> {
-    return this.get<ListPage<Template>>('/templates', { ...params })
+  async listTemplates(params?: ListQuery & { kind?: string; include_archived?: boolean }, signal?: AbortSignal): Promise<ListPage<Template>> {
+    return this.get<ListPage<Template>>('/templates', { ...params }, signal)
   }
 
   async getTemplate(id: string, version?: number): Promise<Template> {
@@ -788,8 +791,8 @@ export class TorqueApiClient {
   // Plans
   // -------------------------
 
-  async listPlans(query?: ListQuery): Promise<ListPage<Task>> {
-    return this.get<ListPage<Task>>('/plans', { ...query })
+  async listPlans(query?: ListQuery, signal?: AbortSignal): Promise<ListPage<Task>> {
+    return this.get<ListPage<Task>>('/plans', { ...query }, signal)
   }
 
   async getPlan(id: string): Promise<PlanDetail> {
@@ -817,8 +820,8 @@ export class TorqueApiClient {
     return this.delete<void>(`/plans/${planId}/phases/${phaseId}`)
   }
 
-  async listPlanChildren(planId: string, phaseId?: string, query?: ListQuery): Promise<ListPage<Task>> {
-    return this.get<ListPage<Task>>(`/plans/${planId}/children`, { ...query, phase_id: phaseId })
+  async listPlanChildren(planId: string, phaseId?: string, query?: ListQuery, signal?: AbortSignal): Promise<ListPage<Task>> {
+    return this.get<ListPage<Task>>(`/plans/${planId}/children`, { ...query, phase_id: phaseId }, signal)
   }
 
   /**
@@ -840,8 +843,8 @@ export class TorqueApiClient {
   // Collections
   // -------------------------
 
-  async listCollections(status?: 'active' | 'archived' | 'all', query?: ListQuery): Promise<ListPage<Collection>> {
-    return this.get<ListPage<Collection>>('/collections', { ...query, status })
+  async listCollections(status?: 'active' | 'archived' | 'all', query?: ListQuery, signal?: AbortSignal): Promise<ListPage<Collection>> {
+    return this.get<ListPage<Collection>>('/collections', { ...query, status }, signal)
   }
 
   async getCollection(id: string): Promise<Collection> {
@@ -870,8 +873,8 @@ export class TorqueApiClient {
     return this.post<Collection>(`/collections/${id}/unarchive`)
   }
 
-  async listCollectionTasks(collectionId: string, query?: ListQuery): Promise<ListPage<Task>> {
-    return this.get<ListPage<Task>>(`/collections/${collectionId}/tasks`, { ...query })
+  async listCollectionTasks(collectionId: string, query?: ListQuery, signal?: AbortSignal): Promise<ListPage<Task>> {
+    return this.get<ListPage<Task>>(`/collections/${collectionId}/tasks`, { ...query }, signal)
   }
 
   async addTaskToCollection(
@@ -913,8 +916,8 @@ export class TorqueApiClient {
     return this.post<void>('/collections/tasks/move', body)
   }
 
-  async listInboxTasks(query?: ListQuery): Promise<ListPage<Task>> {
-    return this.get<ListPage<Task>>('/collections/inbox/tasks', { ...query })
+  async listInboxTasks(query?: ListQuery, signal?: AbortSignal): Promise<ListPage<Task>> {
+    return this.get<ListPage<Task>>('/collections/inbox/tasks', { ...query }, signal)
   }
 
   async addTaskToInbox(taskId: string): Promise<void> {
@@ -990,8 +993,8 @@ export class TorqueApiClient {
   }
 
   /** Read a thread by id — non-destructive (`GET /messages/thread/{id}`). */
-  async getThread(threadId: string, filter?: MessageFilter & ListQuery): Promise<ListPage<MessageEnvelope>> {
-    return this.get<ListPage<MessageEnvelope>>(`/messages/thread/${encodeURIComponent(threadId)}`, { ...filter })
+  async getThread(threadId: string, filter?: MessageFilter & ListQuery, signal?: AbortSignal): Promise<ListPage<MessageEnvelope>> {
+    return this.get<ListPage<MessageEnvelope>>(`/messages/thread/${encodeURIComponent(threadId)}`, { ...filter }, signal)
   }
 
   /** Fetch a single envelope by id — non-destructive. */

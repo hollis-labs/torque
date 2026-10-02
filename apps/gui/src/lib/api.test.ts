@@ -520,3 +520,48 @@ describe('remaining list pages', () => {
     expect(url.searchParams.get('include_total')).toBe('true')
   })
 })
+
+
+describe('run cohort adapters', () => {
+  afterEach(() => vi.restoreAllMocks())
+  it('preserves executor/profile and window filters on list, facets and time-series', async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(jsonResponse({ items: [], meta: { has_more: false, next_cursor: null, returned: 0, limit: 50 } })))
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    const client = new TorqueApiClient('/api/v1')
+    const cohort = { executor: 'cli,api', profile: 'codex,claude', status: 'done,failed', since: '2026-10-01T00:00:00Z', until: '2026-10-02T00:00:00Z' }
+    const signal = new AbortController().signal
+    await client.pageRuns(cohort, signal)
+    await client.runFacets(cohort, 'status,executor,profile', signal)
+    await client.runTimeSeries({ ...cohort, bucket: 'day' })
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    for (const [request] of fetchMock.mock.calls) {
+      const query = new URL(request, 'http://fixture').searchParams
+      for (const [key, value] of Object.entries(cohort)) expect(query.get(key)).toBe(value)
+      expect(query.has('include_total')).toBe(false)
+    }
+    expect(fetchMock.mock.calls[1][1].signal).toBe(signal)
+  })
+})
+
+describe('remaining family cancellation', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  it.each(['artifacts', 'models', 'templates', 'plans', 'children', 'collections', 'collection tasks', 'inbox tasks', 'thread'])('forwards AbortSignal for %s', async family => {
+    const fetch = vi.fn().mockResolvedValue(jsonResponse({ items: [], meta: { returned: 0, limit: 50, has_more: false, next_cursor: null } }))
+    vi.stubGlobal('fetch', fetch)
+    const client = new TorqueApiClient('/api/v1')
+    const signal = new AbortController().signal
+    switch (family) {
+      case 'artifacts': await client.listArtifacts('T-1', {}, signal); break
+      case 'models': await client.listModels(undefined, {}, signal); break
+      case 'templates': await client.listTemplates({}, signal); break
+      case 'plans': await client.listPlans({}, signal); break
+      case 'children': await client.listPlanChildren('T-1', undefined, {}, signal); break
+      case 'collections': await client.listCollections('active', {}, signal); break
+      case 'collection tasks': await client.listCollectionTasks('COL-1', {}, signal); break
+      case 'inbox tasks': await client.listInboxTasks({}, signal); break
+      case 'thread': await client.getThread('thread', {}, signal); break
+    }
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch.mock.calls[0][1].signal).toBe(signal)
+  })
+})
