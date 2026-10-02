@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- Protected agent profiles granted mux Torque tools use the tokenless daemon
+  relay instead of opening its database (CW-20261001-0320). Token deployments
+  keep withholding the grant; Claude still requires explicit `mux_servers`.
+
 ### Added
 
 - `torque serve` serves the MCP tool surface at `/mcp` (Streamable HTTP,

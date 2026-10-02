@@ -267,7 +267,7 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 		return fmt.Errorf("bootstrap agent deps: %w", err)
 	}
 	defer agentDepsClose()
-	bootstrap.ProtectControlPlane(agentDeps, cfg)
+	bootstrap.ProtectControlPlaneWithRemote(agentDeps, cfg, ln.Addr(), sec.Token != "")
 	if err := bootstrap.SweepOrphanSessions(agentDeps, sched.EventBus()); err != nil {
 		return err
 	}
