@@ -526,4 +526,3 @@ should not rely on them for Torque-orchestrated runs.
 - **Non-claude provider permission modes** (codex / opencode) have their own
   approval models; `permission_mode` currently governs `claude-code` only.
   Threading it to other providers is a tracked follow-up.
-
