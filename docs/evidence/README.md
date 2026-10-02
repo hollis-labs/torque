@@ -31,6 +31,7 @@ summaries, reproduction sources and referenced PNGs remain in the tree.
 | `apps/gui/artifacts/CW-20261001-0574/network.json` | [#209](https://github.com/hollis-labs/torque/pull/209) | [073b369](https://github.com/hollis-labs/torque/blob/073b36974c2837963556fb41af195323e220dda0/apps/gui/artifacts/CW-20261001-0574/network.json) |
 | `apps/gui/artifacts/CW-20261001-0575/network.json` | [#202](https://github.com/hollis-labs/torque/pull/202) | [a2ed29b](https://github.com/hollis-labs/torque/blob/a2ed29b68e5e190f75c9a08c65535d41ebcedba2/apps/gui/artifacts/CW-20261001-0575/network.json) |
 | `apps/gui/artifacts/CW-20261001-0576/network.json` | [#207](https://github.com/hollis-labs/torque/pull/207) | [bced88a](https://github.com/hollis-labs/torque/blob/bced88a6cb5071af64af6788cc087ec6cbc3bf85/apps/gui/artifacts/CW-20261001-0576/network.json) |
+| `apps/gui/artifacts/CW-20261001-0577/network.json` | [#219](https://github.com/hollis-labs/torque/pull/219) | [1419942](https://github.com/hollis-labs/torque/blob/141994289b333e8287ca187add4103a3f7cb7872/apps/gui/artifacts/CW-20261001-0577/network.json) |
 | `apps/gui/artifacts/CW-20261001-0578/network.json` | [#212](https://github.com/hollis-labs/torque/pull/212) | [82a3527](https://github.com/hollis-labs/torque/blob/82a352760898e3db21c5bbc39a4ce87ca7a8fa88/apps/gui/artifacts/CW-20261001-0578/network.json) |
 
 Retrieve a snapshot without restoring it to the working tree:
