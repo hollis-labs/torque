@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -123,6 +124,25 @@ func TestProtectControlPlane(t *testing.T) {
 		assert.Equal(t, []string{"mcp", "--proxy", "--servers", "vanta,cerberus", "--token", "local-dev", "--scopes", "session.write,message.write"}, deps.MuxArgs)
 		assert.Equal(t, "vanta,torque,cerberus", defaultMuxArgs[3], "the package default is untouched")
 	})
+	t.Run("tokenless daemon retains torque through remote relay", func(t *testing.T) {
+		t.Setenv(agent.ProtectEnv, "")
+		deps := &agent.Dependencies{MuxCommand: "/bin/renamed-proxy", MuxArgs: append([]string(nil), defaultMuxArgs...)}
+		ProtectControlPlaneWithRemote(deps, cfg, &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8990}, false)
+		assert.NotEmpty(t, deps.ProtectedPaths)
+		assert.Empty(t, deps.ProtectRefusal)
+		assert.False(t, deps.MuxOmitsTorque)
+		assert.Equal(t, "/bin/renamed-proxy", deps.MuxCommand)
+		assert.Equal(t, defaultMuxArgs, deps.MuxArgs)
+		assert.Contains(t, deps.MuxEnv, "TORQUE_MCP_REMOTE=http://127.0.0.1:8990/mcp")
+	})
+	t.Run("token daemon still omits torque", func(t *testing.T) {
+		t.Setenv(agent.ProtectEnv, "")
+		deps := &agent.Dependencies{MuxCommand: "/bin/mux", MuxArgs: append([]string(nil), defaultMuxArgs...)}
+		ProtectControlPlaneWithRemote(deps, cfg, &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8990}, true)
+		assert.True(t, deps.MuxOmitsTorque)
+		assert.Empty(t, deps.MuxEnv)
+	})
+
 	t.Run("a refused protection leaves mux alone", func(t *testing.T) {
 		t.Setenv(agent.ProtectEnv, "")
 		bad := *cfg

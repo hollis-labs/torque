@@ -1,12 +1,16 @@
 package bootstrap
 
 import (
+	"log"
 	"log/slog"
+	"net"
 	"net/http"
+	"strconv"
 
 	httptransport "github.com/hollis-labs/go-mcp/transport/http"
 
 	"github.com/hollis-labs/torque/internal/mcpadapter"
+	"github.com/hollis-labs/torque/internal/mcpbridge"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
 	"github.com/hollis-labs/torque/internal/runtime/scheduler"
 	"github.com/hollis-labs/torque/internal/service"
@@ -46,4 +50,47 @@ func DaemonMCPHandler(svc *service.Service, sched *scheduler.Scheduler, sessions
 		a = a.WithLogger(logger)
 	}
 	return httptransport.NewHandler(a.Server(), httptransport.HandlerOptions{})
+}
+
+// PlantRemoteMCP points the `torque mcp` that mux starts for an agent at
+// the daemon's /mcp while protection is on (CW-20261001-0199). Under
+// ProtectedPaths that child cannot open main.db; with mcpbridge.RemoteEnv in
+// the planted mux entry's env (mux passes its env to the servers it
+// starts) it relays to the daemon instead, so the agent keeps the torque_*
+// tools without write access to Torque's state.
+//
+// It plants nothing without protection or a mux, and nothing when the API
+// requires a token: agents never receive TORQUE_API_TOKEN (FilterEnv strips
+// it), so the relay could only be refused.
+func PlantRemoteMCP(deps *agent.Dependencies, listen net.Addr, tokenRequired bool) bool {
+	if deps == nil || len(deps.ProtectedPaths) == 0 || deps.MuxCommand == "" {
+		return false
+	}
+	if tokenRequired {
+		log.Printf("[sandbox] the API requires TORQUE_API_TOKEN, which agents do not get, so mux's torque server is not pointed at the daemon's /mcp (CW-20261001-0199)")
+		return false
+	}
+	url := DaemonMCPURL(listen)
+	if url == "" {
+		return false
+	}
+	deps.MuxOmitsTorque = false
+	deps.MuxEnv = append(deps.MuxEnv, mcpbridge.RemoteEnv+"="+url)
+	log.Printf("[sandbox] mux's torque server relays to %s (%s) while Torque's state is write-protected", url, mcpbridge.RemoteEnv)
+	return true
+}
+
+// DaemonMCPURL is the /mcp URL an agent on this host reaches the daemon at:
+// the loopback address when listening on loopback, 127.0.0.1 for every interface,
+// else the address it listens on. "" for a non-TCP listener.
+func DaemonMCPURL(listen net.Addr) string {
+	tcp, ok := listen.(*net.TCPAddr)
+	if !ok || tcp.Port == 0 {
+		return ""
+	}
+	host := "127.0.0.1"
+	if tcp.IP != nil && !tcp.IP.IsUnspecified() {
+		host = tcp.IP.String()
+	}
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(tcp.Port)) + "/mcp"
 }

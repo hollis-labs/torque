@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -30,10 +31,20 @@ import (
 // cannot write-protect refuses every launch too, and this logs it at
 // startup. Each candidate is logged as protected or skipped, with why.
 //
-// While protection is on, the planted mux server serves no torque tools
+// Without a tokenless daemon relay, the planted mux serves no torque tools
 // (deps.MuxOmitsTorque): mux would run `torque mcp` inside the agent's
 // sandbox, where Torque's database is read-only.
 func ProtectControlPlane(deps *agent.Dependencies, cfg *config.Config) {
+	protectControlPlane(deps, cfg, nil, true)
+}
+
+// ProtectControlPlaneWithRemote retains mux Torque tools when the protected
+// daemon can serve them without exposing an API token to agents.
+func ProtectControlPlaneWithRemote(deps *agent.Dependencies, cfg *config.Config, listen net.Addr, tokenRequired bool) {
+	protectControlPlane(deps, cfg, listen, tokenRequired)
+}
+
+func protectControlPlane(deps *agent.Dependencies, cfg *config.Config, listen net.Addr, tokenRequired bool) {
 	if deps == nil || cfg == nil {
 		return
 	}
@@ -61,7 +72,9 @@ func ProtectControlPlane(deps *agent.Dependencies, cfg *config.Config) {
 	}
 	log.Printf("[sandbox] agent launches write-protect %v (%s backend; %s=0 turns this off)", deps.ProtectedPaths, caps.Backend, agent.ProtectEnv)
 	guardProfilesReload(deps, cfg)
-	muxWithoutTorque(deps)
+	if !PlantRemoteMCP(deps, listen, tokenRequired) {
+		muxWithoutTorque(deps)
+	}
 	warnWorkInsideProtected(deps, cfg)
 }
 

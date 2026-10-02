@@ -407,19 +407,14 @@ and startup warns so.
 
 ### What changes for agents
 
-- **No `torque` tools on mux.** While protection is on, the planted `mux`
-  server proxies no `torque` server. mux would run `torque mcp` inside the
-  agent's sandbox, where Torque's database is read-only. The session's
-  loopback serves the task's Torque tools, and the kickoff says it is the
-  only Torque surface. Orchestrator-class roles (orchestrator, planner,
-  reviewer end-agent) get the full Torque surface on their loopback and lose
-  no capability, but **their tool names change**: what they called as
-  `mcp__mux__torque_*` is `mcp__loopback__torque_*` (the spelling in Claude;
-  the loopback server and the `torque_*` tool names in other runtimes), and
-  it takes an explicit `task_id` on every call. Their kickoff says so. Workers
-  lose cross-task reads (`torque_task_list`, search) until `torque mcp` can
-  proxy the daemon (CW-20261001-0199). When the mux args cannot be narrowed
-  (`--proxy` with no `--servers`), mux is not planted.
+- **Mux Torque tools use the daemon relay.** On a tokenless daemon, the
+  planted mux entry carries `TORQUE_MCP_REMOTE=<daemon /mcp URL>` and its
+  `torque mcp` child never opens the protected database. Profile grants still
+  curate servers with `--only`; Claude must explicitly name
+  `mux_servers: [torque]`. Protection and the task loopback stay active.
+  Token deployments and local stdio `torque mcp` keep omitting Torque from
+  mux: agents never receive `TORQUE_API_TOKEN`, and scoped credentials are
+  separate work. Without a relay, an uncuratable mux is not planted.
 - **Codex keeps its own sandbox, when the profile positively selects one.** A
   codex launch whose commands run in codex's own OS sandbox is not wrapped in
   Torque's: codex's sandbox could not start inside it, and it already
