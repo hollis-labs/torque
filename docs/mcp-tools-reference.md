@@ -219,7 +219,7 @@ Tag records use HTTP-aligned snake_case fields:
 `slug`, `name`, `description`, `color`, `created_at`, `updated_at`. `slug`
 is lookup identity; `name` is mutable display text.
 
-`torque_tag_list` response shape:
+`torque_tag_list` response shape with `include_total=true`:
 
 ```json
 {
@@ -228,14 +228,16 @@ is lookup identity; `name` is mutable display text.
 }
 ```
 
-Default limit is 50 and max is 200. Explicit `limit<=0`, fractional strings,
-and overflows return `arg_invalid`; native JSON numbers are accepted only when
+Default limit is 50 and max is 200; zero selects the default. Explicit negative
+limits, fractional strings, and overflows return `arg_invalid`; native JSON numbers are accepted only when
 integral. Ordering is `name COLLATE NOCASE ASC, slug ASC`, matching HTTP
 `GET /api/v1/tags` default ordering and the cursor predicate. `query` is a
 literal substring over slug/name/description with `%`, `_`, and backslash
 escaped; `color` is exact equality. `meta.next_cursor` is derived from the last
 tag actually emitted after the MCP 100KB response cap, so byte-cap trimming
-does not skip catalog rows.
+does not skip catalog rows. `include_total` defaults to false; only true adds
+the exact filtered catalog count before cursor/limit. The fixed allow-list is
+`sort_by=name`, `sort_dir=asc`; other sorts reject.
 
 `torque_task_list` sort: `sort_by` ∈ `priority\|status\|updated_at\|created_at`,
 default `priority asc` (tiebreak `id asc`). HTTP `GET /api/v1/tasks` uses the
@@ -537,7 +539,7 @@ since they're Task rows. Source: `internal/mcpadapter/subtodo_tools.go`.
 
 | Tool | Purpose |
 |---|---|
-| `torque_task_subtodo_list` | List a task's checklist. |
+| `torque_task_subtodo_list` | Cursor page of a task's checklist, default 50/max 200, position asc/desc, opt-in exact `include_total`; brief/verbose projection retained. |
 | `torque_task_subtodo_add` | Append one item; `id` is optional (server auto-generates when omitted — supply a slug like `"check-auth-flow"` to keep it deterministic). |
 | `torque_task_subtodo_bulk_add` | Seed a whole checklist in one call. Response keys `succeeded`/`failed` on the *resolved* id (caller-supplied or generated), not an input echo — a failed item without an assigned id is keyed by positional placeholder (`"item[1]"`). |
 | `torque_task_subtodo_done` | Mark an item done with an `evidence` string (artifact id, commit SHA, URL, note). |

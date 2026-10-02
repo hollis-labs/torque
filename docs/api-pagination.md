@@ -1,19 +1,16 @@
 # API list and pagination contract
 
-**Status: implementation reconciliation in progress (CW-20261001-0627).**
-The reference below describes merged S1 HTTP/MCP behavior for
-EP-20261001-0013. Stable sections were read against `e57ba81` on 2026-10-01.
-The models numeric sorts and remaining GUI consumers are merged at `46089e4`.
-Final verification awaits CW-0677 tag/checklist paging; its merged verification
-commit will be recorded here before this reconciliation PR opens.
-Source state does not establish what binary is deployed.
+**Status: implemented S1 contract (CW-20261001-0627).**
+Verified against merged commit `628cc1a6d35e1de0fcdaaa27cb7a6007dff11728`
+on 2026-10-02, including CW-0670, CW-0574, CW-0576, CW-0578, CW-0678,
+and CW-0677. Source state does not establish what binary is deployed.
 
 ## One list contract
 
 The endpoint families in the matrix are server-filtered, server-sorted, and
-paged by default, including their nested lists. Message inbox draining and the
-HTTP tag/checklist exceptions below have distinct response or traversal rules. HTTP returns `{items, meta}`; MCP puts that
-same payload inside its existing `{ok:true, data:{items, meta}}` envelope.
+paged by default, including their nested lists. Message inbox draining has
+distinct traversal rules, described below. HTTP returns `{items, meta}`; MCP
+puts that same payload inside its existing `{ok:true, data:{items, meta}}` envelope.
 Projection differences (brief, verbose, summary, typed records) do not change
 paging or cohort semantics.
 
@@ -81,12 +78,13 @@ is null on the final page, including an empty result. Follow it until
 `has_more=false`, requesting pages as the consumer needs them.
 
 With `include_total=true`, local list queries add `meta.total`, an exact
-non-negative count of the
-matching cohort **before cursor, offset, and limit**, using the same filters,
+non-negative count of the matching cohort **before cursor, offset, and limit**,
+using the same filters,
 visibility rules, and required scope as the items query. Return `total:0` for an
 empty cohort. Omit `total` otherwise; do not substitute page length or an
 approximation. Federated message threads instead omit unavailable totals and
-report `meta.total_unavailable="federated"`, as described below. Additional metadata such as resolved sort, offset, or MCP
+report `meta.total_unavailable="federated"`, as described below. Additional
+metadata such as resolved sort, offset, or MCP
 `truncated`/`hint` may describe the page without changing these core fields.
 
 ### MCP byte-cap continuation
@@ -338,6 +336,8 @@ exact accepted parameters remain in the handlers and MCP `tools/list`.
 | Templates `/templates` | Cursor default, optional offset, shared 50/200 | name/kind/creation/update; name asc, ID/version identity asc | kind, include_archived, ID/name/description search | Opt-in filtered version-row cohort total | List total only; no dedicated facets | `torque_template_list`, same query/meta; versions remain separate rows |
 | Models `/models` | Cursor default, optional offset, shared 50/200 | name/provider_id/id/cost/context/output; name asc, provider/model identity asc | provider, case-insensitive name/model/provider search; catalog snapshot | Opt-in filtered catalog-row total (cold cache 0) | List total only; no dedicated facets | `torque_models_list`, same query/meta; HTTP and brief/verbose MCP projections retained |
 | Messages `/messages/inbox`, `/messages/thread/{thread_id}` | Inbox drain list: each call delivers its page, no cursor/offset. Thread: cursor default; offset available on one store, positive federated offset rejects with use-cursor guidance | `created_at`; thread asc/desc, message ID asc; inbox asc only | Recipient/thread scopes, kind/channel/thread filters retained | Inbox: undelivered cohort before this drain. Thread: exact with one store; multiple stores omit total and emit total_unavailable=federated | Non-mutating count/peek; no message facets | No pure-read MCP thread list exists; broker inbox/inbox_poll remain actions unchanged. CW-20260912-0114 remains separate |
+| Tags `/tags` | Cursor-only, shared 50/200 | Fixed `name` asc (NOCASE), slug asc tie-break | Literal query over slug/name/description, exact color | Opt-in filtered catalog total | Task tag facets for usage; catalog total includes unused tags | `torque_tag_list`, same query/sort/total semantics |
+| Subtodos `/tasks/{id}/subtodos` | Cursor-only, shared 50/200 | `position` asc by default, desc supported; position is unique within parent array | Required task scope | Opt-in full checklist total before cursor/limit | List total only | `torque_task_subtodo_list`, same service query; brief/verbose MCP projections retained |
 
 Messages have two distinct traversal models. `GET /messages/inbox` remains
 an operator-initiated **drain list: each call delivers its page**. It fetches
@@ -389,24 +389,33 @@ the inbox drain and tag catalog, which preserve their fixed ascending order.
 | Task checkpoints | `created_at`, `status` | Task history `created_at desc`; pending queue `created_at asc`; correlation ID tie-break | created_at is the emitted_at alias |
 | Session checkpoints | `created_at` | `created_at desc`, unique checkpoint ID | separate recovery record schema |
 | Templates | `name`, `kind`, `created_at`, `updated_at` | `name asc`, template ID/version tie-break | lexical ID + colon + decimal version identity; versions are distinct rows |
+| Tags | `name` | `name asc` (NOCASE), slug asc tie-break | fixed asc on HTTP/MCP |
+| Subtodos | `position` | `position asc`; desc supported | unique parent-array position, with item ID in cursor |
 | Models | `name`, `provider_id`, `id`, `cost`, `context`, `output` | `name asc`, provider/model pair tie-break | catalog-backed; provider/model JSON identity. Input USD/million tokens and context/output token limits sort numerically before paging. Zero represents free or unknown (first asc, last desc) |
 | Messages | `created_at` | `created_at asc`, message ID tie-break | inbox asc only, thread asc/desc |
 
-### HTTP exceptions outside the matrix
+### Tag catalog and checklist pages
 
-`GET /tags` without any query string still returns the complete legacy
-`{tags:[...]}` catalog. Supplying a query string selects its bounded 50/200
-cursor path with `{tags,total,returned,limit,has_more,next_cursor,sort_by,sort_dir}`,
-fixed `name COLLATE NOCASE asc, slug asc`, `query`/`color` filters, and an
-always-computed total. This HTTP path does not accept `include_total`.
-`torque_tag_list` instead uses the common MCP items/meta envelope and opt-in
-filtered total.
+`GET /tags` always returns the common bounded envelope, including with no query
+string. It accepts exactly `query`, `color`, `limit`, `cursor`, `sort_by`,
+`sort_dir`, and `include_total`; unknown/repeated parameters reject. The fixed
+sort is `name COLLATE NOCASE asc, slug asc`. Query text is a literal substring
+over slug/name/description; color is exact equality without trimming. Totals
+are absent by default and count the filtered catalog only when requested.
+`torque_tag_list` uses the same query, fixed sort and total policy.
 
-`GET /tasks/{id}/subtodos` still returns the whole structural checklist as
-`{subtodos:[...]}`. `torque_task_subtodo_list` uses common 50/200 cursor pages,
-`position asc` by default (desc supported), and optional total. Because the
-checklist is stored as parent JSON, MCP paging bounds the response rather than
-avoiding the parent read; edits can move positions between pages.
+`GET /tasks/{id}/subtodos` and `torque_task_subtodo_list` share a bounded
+position query: `position asc` by default, `desc` supported, and `include_total`
+opt-in. HTTP accepts exactly `limit`, `cursor`, `sort_by`, `sort_dir`, and
+`include_total`, with no offset. Because the checklist is stored as parent
+JSON, paging bounds the response rather than avoiding the parent read; edits
+can move positions between pages. Mutations and embedded task records retain
+their existing shapes.
+
+The GUI searches tag pages on the server by query/color, preserves those
+filters on explicit Load more, and fetches a selected tag by identity. Task
+detail renders checklist pages, loads more on demand, and reloads one page
+after a mutation. Neither list is collected through an exhaustion loop.
 
 ## Source evidence and reconciliation
 
@@ -426,7 +435,7 @@ Reconciliation reads authored merged code first. Relevant implementations:
   from delivery batches and preserve federated count limitations.
 - [HTTP router](../internal/httpserver/server.go), family handlers, and
   [MCP envelopes](../internal/mcpadapter/response.go) establish public shapes,
-  byte-cap continuation, and the explicit tag/checklist exceptions above.
+  byte-cap continuation, and bounded tag/checklist reads.
 
 Existing task/run/adjacent/resource/model/message parity tests cover
 empty/final pages, equal sort keys, cursor/sort/offset rejection, filtered and
@@ -435,7 +444,7 @@ nested totals, and byte-cap continuation. The integrated
 50/200, cursor/has_more presence, and returned matching payload length.
 No documentation/source-agreement test or inventory guard is added.
 COUNT measurements and reproducible index evidence are linked above; no export
-route is registered. Final merged-tree verification awaits CW-0677.
+route is registered. The verification commit and date are recorded above.
 
 ### Runs implementation reconciliation (CW-20261001-0562)
 
@@ -445,8 +454,9 @@ by `pagination.DefaultLimit`/`MaxLimit`. Omitting filters queries across tasks;
 decorated RunRecord, and MCP retains brief/verbose projections. The legacy
 HTTP `{runs:[...]}` shape and MCP fetch-all-then-cap path are removed.
 
-SQLite normalizes legacy/canonical UTC timestamp spellings without losing
-nanosecond precision for start-time ordering and inclusive bounds. Duration
+SQLite query expressions normalize legacy/canonical UTC timestamp spellings
+without losing nanosecond precision for start-time ordering and inclusive
+bounds; stored timestamps are not rewritten. Duration
 uses the SQL-computed rounded elapsed milliseconds, with unfinished rows at
 -1. A total and its page share one read snapshot; no count runs otherwise.
 MCP byte trimming emits a cursor for the last row actually sent. An individual

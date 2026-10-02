@@ -122,19 +122,24 @@ tasks that have the scope set, in any status. Counts are keyed by raw status,
 and clients derive their own buckets. The GUI's open bucket, for example, is
 `backlog+todo+queued`.
 
-Tag catalog contract (`GET /api/v1/tags`): with no query string, the endpoint
-keeps the legacy GUI-compatible shape `{tags:[...]}` and legacy ordering by
-`name COLLATE NOCASE ASC`. Supplying any query string opts into the bounded
-catalog query path; supported keys are exactly `query`, `color`, `limit`, and
-`cursor`, and unknown or repeated keys return `400` with `error` and `field`.
-`query` is a literal substring over slug/name/description; `%`, `_`, and
-backslash are escaped rather than treated as wildcards. `color` is exact
-equality, not trimmed. The opt-in response is `{tags,total,returned,limit,
-has_more,next_cursor,sort_by,sort_dir}` where `total` is the full filtered
-catalog count excluding cursor/limit. Ordering and cursor predicates both use
-`name COLLATE NOCASE ASC, slug ASC`, so duplicate/case-variant display names
-page stably. Default limit is 50, max is 200; explicit `limit<=0`, fractions,
-and overflows are rejected.
+Tag catalog contract (`GET /api/v1/tags`): always `{items,meta}`, default 50,
+maximum 200, including with no query string. Supported keys are exactly
+`query`, `color`, `limit`, `cursor`, `sort_by`, `sort_dir`, and `include_total`;
+unknown/repeated keys reject. Query is a literal substring over
+slug/name/description (SQL wildcards escaped); color is exact and untrimmed.
+The fixed order and cursor predicate use `name COLLATE NOCASE ASC, slug ASC`.
+Zero limit uses the default; malformed, fractional, overflowing or negative
+limits reject. Only `include_total=true` counts/adds the full filtered catalog
+before cursor/limit. MCP `torque_tag_list` shares this policy.
+
+Task checklists (`GET /tasks/{id}/subtodos`, `torque_task_subtodo_list`) share
+50/200 cursor pages, unique array `position` asc by default or desc, and opt-in
+full checklist total. HTTP accepts only `limit`, `cursor`, `sort_by`,
+`sort_dir`, and `include_total`; there is no offset. The parent JSON is still
+read, so paging bounds emitted rows rather than storage reads. Checklist
+mutations and task-record embedding retain their existing shapes. GUI tag
+search uses server query/color pages; task-detail checklist continuation is
+explicit. Neither GUI list drains all pages automatically.
 
 Adjacent entity HTTP lists (`/projects`, `/sprints`, `/epics`, `/issues`, and
 `/comments`, including searches and nested task comments) always return
@@ -215,7 +220,7 @@ unfiltered/defaulted. Priority filters are exact arbitrary integers, including
 array for OR-matching; passing both is rejected as ambiguous, and
 `priorities=[]` is rejected. `include_total=true` additively includes
 `meta.total` for the full matching cohort, excluding cursor/offset/limit; it
-defaults to false so legacy lightweight calls avoid a full count. Cursor
+defaults to false so ordinary pages avoid a full count. Cursor
 pagination still derives `meta.next_cursor` from the last row actually emitted
 after the 100KB response cap is applied.
 
