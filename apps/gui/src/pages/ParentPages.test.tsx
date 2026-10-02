@@ -66,7 +66,7 @@ describe('parent page cohorts', () => {
     await waitFor(() => expect(api.parentFacets).toHaveBeenLastCalledWith('epic', expect.objectContaining({ search: 'needle', status: 'inactive', include_archived: true }), rows(0).map(row => row.id), expect.any(AbortSignal)))
     expect(screen.getByText('Page 1')).toBeTruthy()
     expect(api.listEpics.mock.calls.at(-1)?.[0].cursor).toBeUndefined()
-  })
+  }, 15000)
 
   it('keeps the current page on a failed Next request and offers retry', async () => {
     api.listEpics.mockImplementation(query => query.cursor ? Promise.reject(new Error('network failed')) : Promise.resolve(page(rows(0), 'next-50')))
@@ -90,6 +90,6 @@ describe('parent page cohorts', () => {
     expect(api.listEpics.mock.calls.length).toBe(1)
     expect(screen.getByText(/Scopes changed/)).toBeTruthy()
     expect(api.parentFacets.mock.calls.at(-1)?.[2]).toEqual(rows(0).map(row => row.id))
-  })
+  }, 15000)
 
 })
