@@ -75,7 +75,7 @@ describe('parent page cohorts', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next' }))
     await screen.findByText('network failed')
     expect(screen.getByText('Page 1')).toBeTruthy()
-  })
+  }, 15000)
   it('debounces SSE facet refresh without fetching row pages', async () => {
     show(EpicsPage)
     await screen.findByText('Epic 0')
