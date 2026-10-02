@@ -364,12 +364,8 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	// Validate sprint association
 	if input.SprintID != "" {
 		if s.feature != nil && s.feature.IsEnabled("sprints") {
-			sprint, err := s.store.GetSprint(input.SprintID)
-			if err != nil {
-				return nil, &ValidationError{Field: "sprint_id", Message: "sprint not found: " + input.SprintID}
-			}
-			if sprint.Status == "completed" {
-				return nil, &ValidationError{Field: "sprint_id", Message: "cannot add tasks to a completed sprint"}
+			if err := s.validateSprintAssignment(input.SprintID, ""); err != nil {
+				return nil, err
 			}
 		} else {
 			// Feature not enabled — silently clear the association
@@ -626,6 +622,15 @@ func (s *TaskService) Update(id string, input TaskUpdateInput) error {
 	existing, err := s.store.GetTask(id)
 	if err != nil {
 		return err
+	}
+	if input.SprintID != nil {
+		target := ""
+		if input.SprintID.Valid {
+			target = input.SprintID.String
+		}
+		if err := s.validateSprintAssignment(target, existing.SprintID.String); err != nil {
+			return err
+		}
 	}
 	effectiveKind := ptrOrDefault(input.Kind, existing.Kind)
 	effectiveExecutor := ptrOrDefault(input.Executor, existing.Executor)
