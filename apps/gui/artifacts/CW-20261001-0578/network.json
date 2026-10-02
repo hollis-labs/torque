@@ -30,6 +30,25 @@
       "method": "GET"
     },
     {
+      "path": "/collections/inbox/tasks",
+      "query": {
+        "include_total": "true",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections",
+      "query": {
+        "include_total": "true",
+        "sort_by": "created_at",
+        "sort_dir": "asc",
+        "status": "active"
+      },
+      "method": "GET"
+    },
+    {
       "path": "/events",
       "query": {},
       "method": "GET"
@@ -968,13 +987,14 @@
       "method": "GET"
     },
     {
-      "path": "/events",
-      "query": {},
-      "method": "GET"
-    },
-    {
-      "path": "/events",
-      "query": {},
+      "path": "/models",
+      "query": {
+        "search": "",
+        "sort_by": "provider_id",
+        "sort_dir": "asc",
+        "include_total": "true",
+        "provider": ""
+      },
       "method": "GET"
     },
     {
@@ -1038,6 +1058,15 @@
     {
       "path": "/events",
       "query": {},
+      "method": "GET"
+    },
+    {
+      "path": "/plans",
+      "query": {
+        "include_total": "true",
+        "sort_by": "updated_at",
+        "sort_dir": "desc"
+      },
       "method": "GET"
     },
     {
@@ -1437,6 +1466,24 @@
         "sort_by": "started_at",
         "sort_dir": "desc",
         "task_id": "T-000"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/tasks/T-000/comments",
+      "query": {
+        "sort_by": "created_at",
+        "sort_dir": "desc",
+        "include_total": "true"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/tasks/T-000/artifacts",
+      "query": {
+        "sort_by": "created_at",
+        "sort_dir": "desc",
+        "include_total": "true"
       },
       "method": "GET"
     },
