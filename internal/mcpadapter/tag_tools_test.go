@@ -43,7 +43,7 @@ func TestFullStack_TagCatalogMCP_ListEmptyPagedAndLiteralSearch(t *testing.T) {
 		require.False(t, isErr, "create should not error: %s", text)
 	}
 
-	text, isErr = callTool(t, a, "torque_tag_list", map[string]interface{}{"limit": "2"})
+	text, isErr = callTool(t, a, "torque_tag_list", map[string]interface{}{"limit": "2", "include_total": "true"})
 	require.False(t, isErr, "page1 should not error: %s", text)
 	var first decodedTagPage
 	parseData(t, text, &first)
@@ -79,7 +79,7 @@ func TestFullStack_TagCatalogMCP_ListEmptyPagedAndLiteralSearch(t *testing.T) {
 		{query: `\`, want: "slash"},
 		{query: "Café", want: "unicode"},
 	} {
-		text, isErr = callTool(t, a, "torque_tag_list", map[string]interface{}{"query": tc.query})
+		text, isErr = callTool(t, a, "torque_tag_list", map[string]interface{}{"query": tc.query, "include_total": "true"})
 		require.False(t, isErr, "query %q should not error: %s", tc.query, text)
 		var got decodedTagPage
 		parseData(t, text, &got)
@@ -111,7 +111,7 @@ func TestFullStack_TagCatalogMCP_LargeCatalogByteCapTraversalAndHistoricalSlug(t
 	}
 
 	seen := make(map[string]bool)
-	args := map[string]interface{}{"limit": "200", "query": "Cap"}
+	args := map[string]interface{}{"limit": "200", "query": "Cap", "include_total": "true"}
 	for page := 0; page < 10; page++ {
 		text, isErr := callTool(t, a, "torque_tag_list", args)
 		require.False(t, isErr, "page %d should not error: %s", page, text)
@@ -145,7 +145,7 @@ func TestFullStack_TagCatalogMCP_LargeCatalogByteCapTraversalAndHistoricalSlug(t
 	parseData(t, text, &gotLong)
 	assert.Equal(t, historical, gotLong["slug"])
 
-	text, isErr = callTool(t, a, "torque_tag_list", map[string]interface{}{"query": "historical-long-slug"})
+	text, isErr = callTool(t, a, "torque_tag_list", map[string]interface{}{"query": "historical-long-slug", "include_total": "true"})
 	require.False(t, isErr, "list should include historical long slug: %s", text)
 	var listed decodedTagPage
 	parseData(t, text, &listed)
@@ -196,7 +196,6 @@ func TestFullStack_TagCatalogMCP_CreateGetUpdateFailures(t *testing.T) {
 		{name: "duplicate", tool: "torque_tag_create", args: map[string]interface{}{"name": "API"}, code: "conflict", field: "slug"},
 		{name: "missing", tool: "torque_tag_get", args: map[string]interface{}{"slug": "missing"}, code: "not_found"},
 		{name: "bad type", tool: "torque_tag_get", args: map[string]interface{}{"slug": 12}, code: "arg_invalid", field: "slug"},
-		{name: "limit zero", tool: "torque_tag_list", args: map[string]interface{}{"limit": "0"}, code: "arg_invalid", field: "limit"},
 		{name: "limit negative", tool: "torque_tag_list", args: map[string]interface{}{"limit": "-1"}, code: "arg_invalid", field: "limit"},
 		{name: "limit fraction", tool: "torque_tag_list", args: map[string]interface{}{"limit": "1.9"}, code: "arg_invalid", field: "limit"},
 		{name: "limit overflow", tool: "torque_tag_list", args: map[string]interface{}{"limit": "9223372036854775808"}, code: "arg_invalid", field: "limit"},

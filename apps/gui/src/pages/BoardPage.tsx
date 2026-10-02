@@ -28,7 +28,7 @@ import {
   type OpsFilters,
 } from '@/lib/ops-filters-storage'
 import { FolderTree } from 'lucide-react'
-import type { FeatureFlags, Tag, TaskFilter, TaskSummary, TaskStatus } from '@/lib/types'
+import type { FeatureFlags, Tag, TagColor, TaskFilter, TaskSummary, TaskStatus } from '@/lib/types'
 
 const FILTER_PARAM_KEYS = ['status', 'priority', 'project_id', 'sprint_id', 'epic_id', 'tag', 'manual', 'eligible', 'sort_by', 'sort_dir'] as const
 
@@ -101,7 +101,23 @@ export default function BoardPage() {
   const [includeInternal, setIncludeInternal] = useState<boolean>(false)
 
   // Group picker data
-  const [tags, setTags] = useState<Tag[]>([])
+  const [tagQuery, setTagQuery] = useState('')
+  const [serverTagQuery, setServerTagQuery] = useState('')
+  const [tagColor, setTagColor] = useState<TagColor | ''>('')
+  const [selectedTag, setSelectedTag] = useState<Tag | null>(null)
+  const scheduleTagQuery = useDebouncedCallback(() => setServerTagQuery(tagQuery), 300)
+  useEffect(() => { scheduleTagQuery() }, [tagQuery, scheduleTagQuery])
+  const tagPage = usePagedList({
+    params: { query: serverTagQuery || undefined, color: tagColor || undefined, limit: 50 },
+    fetchPage: ({ params, cursor, signal }) => api.listTags({ ...params, cursor }, signal),
+    getId: (tag: Tag) => tag.slug,
+  })
+  useEffect(() => {
+    if (!tagSlug) return
+    const abort = new AbortController()
+    void api.getTag(tagSlug).then(tag => { if (!abort.signal.aborted) setSelectedTag(tag) }).catch(() => {})
+    return () => abort.abort()
+  }, [api, tagSlug])
   const [flags, setFlags] = useState<FeatureFlags>({ projects: false, epics: false, sprints: false })
 
   // Create-modal state
@@ -223,12 +239,6 @@ export default function BoardPage() {
       sortDir,
     })
   }, [hydrated, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, manualFilter, search, includeInternal, eligibleOnly, sortBy, sortDir])
-
-  const refreshPickers = useCallback(async () => {
-    const result = await api.listTags().catch(() => ({ tags: [] as Tag[] }))
-    setTags(result.tags)
-  }, [api])
-  useEffect(() => { void refreshPickers() }, [refreshPickers])
 
   useEffect(() => {
     let cancelled = false
@@ -598,7 +608,11 @@ export default function BoardPage() {
         epicId={epicId}
         onEpicChange={(id) => handleGroupChange('epic_id', id)}
         onEpicCreate={() => setEpicCreateOpen(true)}
-        tags={tags}
+        tags={tagPage.items}
+        selectedTag={selectedTag?.slug === tagSlug ? selectedTag : null}
+        tagQuery={tagQuery} onTagQueryChange={setTagQuery} tagColor={tagColor} onTagColorChange={setTagColor}
+        onTagMore={tagPage.meta?.has_more ? () => void tagPage.loadMore() : undefined}
+        tagLoading={tagPage.loading} tagError={tagPage.error?.message} onTagRetry={() => void tagPage.reload()}
         tagSlug={tagSlug}
         onTagChange={(slug) => handleGroupChange('tag', slug)}
         onTagCreate={() => setTagCreateOpen(true)}
@@ -613,7 +627,7 @@ export default function BoardPage() {
         open={projectCreateOpen}
         onOpenChange={setProjectCreateOpen}
         onCreated={(p) => {
-          refreshPickers()
+
           handleGroupChange('project_id', p.id)
         }}
       />
@@ -623,7 +637,7 @@ export default function BoardPage() {
 
         defaultProjectId={projectId}
         onCreated={(e) => {
-          refreshPickers()
+
           handleGroupChange('epic_id', e.id)
         }}
       />
@@ -633,7 +647,7 @@ export default function BoardPage() {
 
         defaultProjectId={projectId}
         onCreated={(sprint) => {
-          refreshPickers()
+
           handleGroupChange('sprint_id', sprint.id)
         }}
       />
@@ -641,7 +655,7 @@ export default function BoardPage() {
         open={tagCreateOpen}
         onOpenChange={setTagCreateOpen}
         onCreated={(tag) => {
-          refreshPickers()
+          void tagPage.reload()
           handleGroupChange('tag', tag.slug)
         }}
       />
@@ -650,7 +664,7 @@ export default function BoardPage() {
         onOpenChange={setScopeManagerOpen}
         flags={flags}
         onDataChange={() => {
-          refreshPickers()
+
           void fetchFacets()
         }}
       />

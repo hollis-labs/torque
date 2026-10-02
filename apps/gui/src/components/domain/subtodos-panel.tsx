@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Check, CircleAlert, Pencil, Plus, Trash2, X } from 'lucide-react'
 import { useApi } from '@/hooks/use-api'
+import { usePagedList } from '@/hooks/use-paged-list'
 import { notifyError } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { Button, Input } from '@hollis-labs/sysop-ui'
@@ -19,6 +20,11 @@ interface DraftEdit {
 
 export function SubtodosPanel({ taskId, subtodos, onChange }: SubtodosPanelProps) {
   const api = useApi()
+  const page = usePagedList({
+    params: { limit: 50, include_total: true }, queryKey: taskId,
+    fetchPage: ({ params, cursor, signal }) => api.listSubtodos(taskId, { ...params, cursor }, signal),
+    getId: (item: Subtodo) => item.id,
+  })
   const [pending, setPending] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState<DraftEdit>({ text: '', required: false })
@@ -36,6 +42,7 @@ export function SubtodosPanel({ taskId, subtodos, onChange }: SubtodosPanelProps
     try {
       const updated = await api.markSubtodoDone(taskId, item.id)
       onChange(updated)
+      await page.reload()
     } catch (err) {
       notifyError(err, 'Failed to mark subtodo done')
     } finally {
@@ -62,6 +69,7 @@ export function SubtodosPanel({ taskId, subtodos, onChange }: SubtodosPanelProps
         required: editDraft.required,
       })
       onChange(updated)
+      await page.reload()
       cancelEdit()
     } catch (err) {
       notifyError(err, 'Failed to update subtodo')
@@ -75,6 +83,7 @@ export function SubtodosPanel({ taskId, subtodos, onChange }: SubtodosPanelProps
     try {
       const updated = await api.deleteSubtodo(taskId, itemID)
       onChange(updated)
+      await page.reload()
       if (editingId === itemID) cancelEdit()
     } catch (err) {
       notifyError(err, 'Failed to delete subtodo')
@@ -95,6 +104,7 @@ export function SubtodosPanel({ taskId, subtodos, onChange }: SubtodosPanelProps
         required: addDraft.required,
       })
       onChange(updated)
+      await page.reload()
       setAdding(false)
       setAddDraft({ text: '', required: false })
     } catch (err) {
@@ -140,6 +150,13 @@ export function SubtodosPanel({ taskId, subtodos, onChange }: SubtodosPanelProps
         </Button>
       </div>
 
+      {page.error && <p role="alert">{page.error.message} <button onClick={() => void page.reload()}>Retry</button></p>}
+      {page.loading && <p role="status">Loading checklist…</p>}
+      <div className="flex items-center gap-2 text-xs text-zinc-500">
+        <span>{page.items.length} loaded{page.meta?.total !== undefined ? ` of ${page.meta.total}` : ''}</span>
+        <Button size="sm" variant="outline" disabled={page.loading} onClick={() => void page.reload()}>Refresh</Button>
+        {page.meta?.has_more && <Button size="sm" variant="outline" disabled={page.loading} onClick={() => void page.loadMore()}>Load more</Button>}
+      </div>
       {total === 0 && !adding && (
         <p className="text-[13px] text-zinc-500">
           No checklist yet. Use Add to create one.
@@ -148,7 +165,7 @@ export function SubtodosPanel({ taskId, subtodos, onChange }: SubtodosPanelProps
 
       {(total > 0 || adding) && (
         <ul className="flex flex-col divide-y divide-zinc-800/60 rounded-md border border-zinc-800/60 bg-zinc-950">
-          {subtodos.map((item) => {
+          {page.items.map((item) => {
             const busy = pending === item.id
             const isEditing = editingId === item.id
             return (

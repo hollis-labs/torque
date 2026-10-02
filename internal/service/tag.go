@@ -27,11 +27,14 @@ type TagCreateInput struct {
 type TagUpdateInput = sqlstore.TagUpdate
 
 type TagListInput struct {
-	Query     string
-	Color     string
-	Limit     int
-	AfterName string
-	AfterSlug string
+	IncludeTotal bool
+	SortBy       string
+	SortDir      string
+	Query        string
+	Color        string
+	Limit        int
+	AfterName    string
+	AfterSlug    string
 }
 
 type TagListResult struct {
@@ -42,8 +45,8 @@ type TagListResult struct {
 }
 
 const (
-	DefaultTagListLimit = 50
-	MaxTagListLimit     = 200
+	DefaultTagListLimit = pagination.DefaultLimit
+	MaxTagListLimit     = pagination.MaxLimit
 	TagListSortBy       = "name"
 	TagListSortDir      = "asc"
 )
@@ -148,6 +151,15 @@ func (s *TagService) List() ([]sqlstore.TagRecord, error) {
 }
 
 func (s *TagService) ListPage(input TagListInput) (TagListResult, error) {
+	if input.Limit < 0 {
+		return TagListResult{}, &ValidationError{Field: "limit", Message: "limit must be non-negative"}
+	}
+	if input.SortBy != "" && input.SortBy != TagListSortBy {
+		return TagListResult{}, &ValidationError{Field: "sort_by", Message: "sort_by must be name"}
+	}
+	if input.SortDir != "" && input.SortDir != TagListSortDir {
+		return TagListResult{}, &ValidationError{Field: "sort_dir", Message: "sort_dir must be asc"}
+	}
 	limit := input.Limit
 	if limit <= 0 {
 		limit = DefaultTagListLimit
@@ -157,11 +169,12 @@ func (s *TagService) ListPage(input TagListInput) (TagListResult, error) {
 	}
 
 	tags, err := s.store.ListTagsPage(sqlstore.TagFilter{
-		Query:     input.Query,
-		Color:     input.Color,
-		Limit:     limit + 1,
-		AfterName: input.AfterName,
-		AfterSlug: input.AfterSlug,
+		IncludeTotal: input.IncludeTotal,
+		Query:        input.Query,
+		Color:        input.Color,
+		Limit:        limit + 1,
+		AfterName:    input.AfterName,
+		AfterSlug:    input.AfterSlug,
 	})
 	if err != nil {
 		return TagListResult{}, err
