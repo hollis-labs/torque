@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/service/pagination"
 	"github.com/stretchr/testify/require"
 )
 
@@ -108,4 +109,76 @@ func TestTagSubtodoHTTPMCPPageParity(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTagSubtodoEmptyAndSortContract(t *testing.T) {
+	a, ts, db := setupTaskQueryParitySurfaces(t)
+	defer ts.Close()
+	store, err := sqlstore.New(db, "sqlite")
+	require.NoError(t, err)
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: "empty", Title: "Empty", Manual: true}))
+	for _, family := range []struct {
+		path, tool string
+		args       map[string]interface{}
+	}{
+		{"/tags", "torque_tag_list", map[string]interface{}{}},
+		{"/tasks/empty/subtodos", "torque_task_subtodo_list", map[string]interface{}{"task_id": "empty"}},
+	} {
+		for _, total := range []bool{false, true} {
+			family.args["include_total"] = total
+			hp := httpTaskPage(t, ts.URL+"/api/v1"+family.path+fmt.Sprintf("?include_total=%t", total))
+			text, failed := callTool(t, a, family.tool, family.args)
+			require.False(t, failed, text)
+			var mp map[string]interface{}
+			parseData(t, text, &mp)
+			for _, page := range []map[string]interface{}{hp, mp} {
+				require.Empty(t, page["items"])
+				meta := page["meta"].(map[string]interface{})
+				require.Equal(t, false, meta["has_more"])
+				require.Nil(t, meta["next_cursor"])
+				if total {
+					require.Equal(t, float64(0), meta["total"])
+				} else {
+					require.NotContains(t, meta, "total")
+				}
+			}
+		}
+		for _, args := range []map[string]interface{}{{"unknown": "yes"}, {"include_total": "perhaps"}, {"sort_by": "nope"}, {"cursor": "broken"}} {
+			if family.tool == "torque_task_subtodo_list" {
+				args["task_id"] = "empty"
+			}
+			text, failed := callTool(t, a, family.tool, args)
+			require.True(t, failed, text)
+		}
+	}
+	items := []sqlstore.Subtodo{{ID: "z", Text: "First"}, {ID: "a", Text: "Second"}, {ID: "m", Text: "Last"}}
+	require.NoError(t, store.SetSubtodos("empty", items))
+	q := url.Values{"limit": {"1"}, "sort_by": {"position"}, "sort_dir": {"desc"}, "include_total": {"true"}}
+	args := map[string]interface{}{"task_id": "empty", "verbose": true, "limit": "1", "sort_by": "position", "sort_dir": "desc", "include_total": true}
+	for _, id := range []string{"m", "a", "z"} {
+		hp := httpTaskPage(t, ts.URL+"/api/v1/tasks/empty/subtodos?"+q.Encode())
+		text, failed := callTool(t, a, "torque_task_subtodo_list", args)
+		require.False(t, failed, text)
+		var mp map[string]interface{}
+		parseData(t, text, &mp)
+		for _, page := range []map[string]interface{}{hp, mp} {
+			require.Equal(t, id, page["items"].([]interface{})[0].(map[string]interface{})["id"])
+			require.Equal(t, float64(3), page["meta"].(map[string]interface{})["total"])
+		}
+		cursor := hp["meta"].(map[string]interface{})["next_cursor"]
+		if cursor != nil {
+			args["cursor"] = cursor
+			q.Set("cursor", cursor.(string))
+		}
+	}
+	for _, c := range []string{pagination.Encode("position", "asc", "1", "a"), pagination.Encode("position", "desc", "-1", "a")} {
+		resp, err := http.Get(ts.URL + "/api/v1/tasks/empty/subtodos?sort_dir=desc&cursor=" + url.QueryEscape(c))
+		require.NoError(t, err)
+		resp.Body.Close()
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	}
+	// A valid position cursor beyond the end produces an empty final page.
+	page := httpTaskPage(t, ts.URL+"/api/v1/tasks/empty/subtodos?cursor="+pagination.Encode("position", "asc", "999", "past"))
+	require.Empty(t, page["items"])
+	require.Equal(t, false, page["meta"].(map[string]interface{})["has_more"])
 }

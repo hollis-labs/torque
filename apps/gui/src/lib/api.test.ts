@@ -542,3 +542,28 @@ describe('run cohort adapters', () => {
     expect(fetchMock.mock.calls[1][1].signal).toBe(signal)
   })
 })
+
+
+describe('TorqueApiClient tag and checklist pages', () => {
+  afterEach(() => vi.restoreAllMocks())
+  it('makes one tag request and preserves query, color and continuation', async () => {
+    const page = { items: [{ slug: 'blue', name: 'Blue', color: 'blue' }], meta: { returned: 1, limit: 50, has_more: true, next_cursor: 'next' } }
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(page))
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    const signal = new AbortController().signal
+    const client = new TorqueApiClient('/api/v1')
+    expect(await client.listTags({ query: 'needle', color: 'blue', limit: 50, cursor: 'after' }, signal)).toEqual(page)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/tags?query=needle&color=blue&limit=50&cursor=after')
+    expect(fetchMock.mock.calls[0][1].signal).toBe(signal)
+  })
+  it('makes one checklist request and keeps its exact opt-in total', async () => {
+    const page = { items: [], meta: { returned: 0, limit: 50, has_more: false, next_cursor: null, total: 0 } }
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(page))
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    const client = new TorqueApiClient('/api/v1')
+    expect(await client.listSubtodos('T-1', { include_total: true, sort_by: 'position', sort_dir: 'desc' })).toEqual(page)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/tasks/T-1/subtodos?include_total=true&sort_by=position&sort_dir=desc')
+  })
+})
