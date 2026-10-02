@@ -170,8 +170,14 @@ implemented capability matrix for the other resource families.
 
 Every route also accepts `limit`, `cursor`, `sort_by`, `sort_dir`, and
 `include_total`. Filters apply before paging; keep scope, filters, and sort
-unchanged for continuation. GUI callers parse `items` and make one page request;
-full paging UI and remote picker conversion are follow-ups in S2/S3.
+unchanged for continuation. GUI callers parse `items` and make one page request.
+Epics, Sprints and Projects pages render 50 rows at a time through the shared
+cursor hook. Search/status/archive/sort run on the server; cards use same-cohort
+facets, and `rollup_ids` requests exactly the IDs on screen. Parent selectors
+search one bounded server page as the user types and resolve selected IDs
+separately, including selections outside that page. Large match sets prompt
+“Type to search” rather than collecting every option. Project-detail child lists
+have explicit cursor continuation and server search.
 
 HTTP `entity_ids` is a JSON-string query value such as
 `entity_ids=["T-1","T-2"]`; URL-encode it in real requests. Whole `null`,

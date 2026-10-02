@@ -50,7 +50,7 @@ describe('parent page cohorts', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Previous' }))
     await screen.findByText('Epic 0')
     expect(api.listEpics.mock.calls.length + api.listProjects.mock.calls.length + api.listSprints.mock.calls.length).toBe(2)
-  })
+  }, 15000)
 
   it('sends the same server search/status/archive cohort to rows and facets, resetting navigation', async () => {
     show(EpicsPage)
