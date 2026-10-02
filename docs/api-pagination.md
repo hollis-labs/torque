@@ -155,7 +155,9 @@ as it does for every other task filter.
 Keep `include_total` opt-in on every list, including small tables. Exact
 COUNT visits the entire matching cohort; a bounded page can stop after its
 continuation probe. Migration 035 supplies sort/cohort indexes but does not
-make COUNT constant-cost.
+make COUNT constant-cost. Migration 037 removes the two run-duration expression
+indexes because their date/float results are not portable between SQLite builds;
+duration sorting and cursors retain their query expressions and run unindexed.
 
 CW-20261001-0570 measured PostgreSQL 17.11 using synthetic data at the current
 4,330-task cardinality (read-only `/tasks/facets`, 2026-10-01) and 43,300 tasks.
