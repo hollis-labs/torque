@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Archive, Plus } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { MoreHorizontal, Plus } from 'lucide-react'
 import {
   DndContext,
   DragOverlay,
@@ -19,7 +19,7 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
-import { Skeleton, Button, Input, Textarea, PageHeader } from '@hollis-labs/sysop-ui'
+import { Skeleton, Button, Input, Textarea, PageHeader, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '@hollis-labs/sysop-ui'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,11 +35,18 @@ import { CollectionTaskRow } from '@/components/domain/collection-task-row'
 import { useApi } from '@/hooks/use-api'
 import { usePagedList } from '@/hooks/use-paged-list'
 import { ListPageControls } from '@/components/domain/list-page-controls'
+import { useListSearch } from '@/hooks/use-list-search'
+import { runCollectionActions } from '@/lib/collection-actions'
+import { CollectionTaskMenu } from '@/components/collections/CollectionTaskMenu'
+import { CollectionMoveDialog } from '@/components/collections/CollectionMoveDialog'
+import { TASK_STATUSES, STATUS_LABEL } from '@/lib/constants'
 import { useSSE } from '@/hooks/use-sse'
 import { notifyError, notifySuccess } from '@/lib/toast'
-import type { Collection, Task } from '@/lib/types'
+import type { Collection, Task, TaskStatus } from '@/lib/types'
 
 const SSE_EVENTS = [
+  'task.updated',
+  'task.transitioned',
   'collection.created',
   'collection.updated',
   'collection.archived',
@@ -84,9 +91,13 @@ interface CollectionHeaderProps {
   taskCount: number
   onUpdate: (id: string, fields: { name?: string; description?: string }) => Promise<void>
   onArchive: (id: string) => void
+  onUnarchive: () => void
+  onClear: () => void
+  clearDisabledReason?: string
+  busy: boolean
 }
 
-function CollectionHeader({ collection, taskCount, onUpdate, onArchive }: CollectionHeaderProps) {
+function CollectionHeader({ collection, taskCount, onUpdate, onArchive, onUnarchive, onClear, clearDisabledReason, busy }: CollectionHeaderProps) {
   // Drafts re-seed from the canonical collection whenever editing
   // begins. When NOT editing, the displayed value is read directly
   // from `collection`, so SSE / sibling-session edits flow through
@@ -201,16 +212,16 @@ function CollectionHeader({ collection, taskCount, onUpdate, onArchive }: Collec
           </button>
         )}
       </div>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="text-zinc-400 hover:text-zinc-200"
-        onClick={() => onArchive(collection.id)}
-        aria-label={`Archive collection ${collection.name}`}
-        title="Archive collection"
-      >
-        <Archive className="h-4 w-4" />
-      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger render={<Button variant="ghost" size="sm" />} disabled={busy} aria-label={`Actions for collection ${collection.name}`}><MoreHorizontal className="h-4 w-4" /></DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={() => { startEditingName(); startEditingDesc() }}>Edit metadata</DropdownMenuItem>
+          {collection.archived_at ? <DropdownMenuItem onClick={onUnarchive}>Unarchive collection</DropdownMenuItem> : <DropdownMenuItem onClick={() => onArchive(collection.id)}>Archive collection</DropdownMenuItem>}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem disabled={!!clearDisabledReason} onClick={onClear}>Clear collection tasks</DropdownMenuItem>
+          {clearDisabledReason && <p className="max-w-64 px-2 py-1 text-xs text-muted-foreground">{clearDisabledReason}</p>}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   )
 }
@@ -222,6 +233,7 @@ interface CollectionTaskTableProps {
   collectionKey: string | null
   tasks: Task[]
   emptyHint: string
+  rowControls: (task: Task, key: string | null) => { leading: ReactNode; trailing: ReactNode; draggable: boolean }
 }
 
 /**
@@ -233,7 +245,7 @@ interface CollectionTaskTableProps {
  *
  * Drag/drop intent is owned by the page; this component only renders.
  */
-function CollectionTaskTable({ collectionKey, tasks, emptyHint }: CollectionTaskTableProps) {
+function CollectionTaskTable({ collectionKey, tasks, emptyHint, rowControls }: CollectionTaskTableProps) {
   const containerId = collectionKey === null ? INBOX_CONTAINER_ID : collectionContainerID(collectionKey)
   const { setNodeRef, isOver } = useDroppable({ id: containerId })
 
@@ -252,7 +264,7 @@ function CollectionTaskTable({ collectionKey, tasks, emptyHint }: CollectionTask
           <table className="min-w-full">
             <tbody className="divide-y divide-zinc-800/60">
               {tasks.map((task) => (
-                <CollectionTaskRow key={task.id} task={task} />
+                <CollectionTaskRow key={task.id} task={task} {...rowControls(task, collectionKey)} />
               ))}
             </tbody>
           </table>
@@ -263,22 +275,30 @@ function CollectionTaskTable({ collectionKey, tasks, emptyHint }: CollectionTask
 }
 
 /** Each mounted collection owns one cursor chain; no page-wide task fan-out. */
-function PagedCollectionTasks({ collectionKey, tasks, emptyHint, generation, report }: {
+function PagedCollectionTasks({ collectionKey, tasks, emptyHint, generation, report, filters, rowControls }: {
   collectionKey: string | null; tasks: Task[]; emptyHint: string; generation: number
-  report: (key: string | null, tasks: Task[], hasMore: boolean) => void
+  report: (key: string | null, tasks: Task[], hasMore: boolean, queryKey: string) => void
+  filters: { search: string; status: TaskStatus | undefined; sort_by: string; sort_dir: 'asc' | 'desc' }
+  rowControls: CollectionTaskTableProps['rowControls']
 }) {
   const api = useApi()
+  const cohortKey = JSON.stringify({ filters, generation })
+  const fetchedCohort = useRef('')
   const page = usePagedList({
     queryKey: `${collectionKey ?? 'inbox'}:${generation}`,
-    params: { sort_by: 'position', sort_dir: 'asc' as const, include_total: true },
-    fetchPage: ({ params, cursor, signal }) => collectionKey === null
-      ? api.listInboxTasks({ ...params, cursor }, signal)
-      : api.listCollectionTasks(collectionKey, { ...params, cursor }, signal),
+    params: { ...filters, include_total: true },
+    fetchPage: async ({ params, cursor, signal }) => {
+      const result = collectionKey === null
+        ? await api.listInboxTasks({ ...params, cursor }, signal)
+        : await api.listCollectionTasks(collectionKey, { ...params, cursor }, signal)
+      if (!signal.aborted) fetchedCohort.current = cohortKey
+      return result
+    },
     getId: task => task.id,
   })
-  useEffect(() => { report(collectionKey, page.items, page.hasMore || page.loading || !page.meta) }, [collectionKey, page.items, page.hasMore, page.loading, page.meta, report])
+  useEffect(() => { report(collectionKey, page.items, page.hasMore || page.loading || !page.meta || !!page.error || page.isStale || fetchedCohort.current !== cohortKey, cohortKey) }, [collectionKey, page.items, page.hasMore, page.loading, page.meta, page.error, page.isStale, cohortKey, report])
   return <>
-    <CollectionTaskTable collectionKey={collectionKey} tasks={tasks} emptyHint={page.loading ? 'Loading tasks…' : emptyHint} />
+    <CollectionTaskTable collectionKey={collectionKey} tasks={tasks} rowControls={rowControls} emptyHint={page.loading ? 'Loading tasks…' : emptyHint} />
     <ListPageControls page={page} label="tasks" />
   </>
 }
@@ -287,13 +307,35 @@ export default function CollectionsPage() {
   const api = useApi()
   const { lastEvent } = useSSE(SSE_EVENTS)
   const [generation, setGeneration] = useState(0)
+  const [collectionSearch, setCollectionSearch] = useState('')
+  const [collectionStatus, setCollectionStatus] = useState<'active' | 'archived' | 'all'>('active')
+  const [taskSearch, setTaskSearch] = useState('')
+  const [taskStatus, setTaskStatus] = useState<TaskStatus | undefined>()
+  const [taskSort, setTaskSort] = useState('position')
+  const [taskDir, setTaskDir] = useState<'asc' | 'desc'>('asc')
+  const search = useListSearch(collectionSearch)
+  const filteredTaskSearch = useListSearch(taskSearch)
+  const [selected, setSelected] = useState<Record<string, Task>>({})
+  const [actionBusy, setActionBusy] = useState(false)
+  const [actionResult, setActionResult] = useState<{ label: string; succeeded: string[]; failed: { id: string; message: string }[]; notStarted: string[] } | null>(null)
+  const [moveIds, setMoveIds] = useState<string[] | null>(null)
+  const [removeTarget, setRemoveTarget] = useState<{ name: string; rows: Task[]; collectionId?: string; cohortKey?: string } | null>(null)
+  const [acknowledgedEvent, setAcknowledgedEvent] = useState(lastEvent)
+  const eventRef = useRef(lastEvent)
+  useEffect(() => { eventRef.current = lastEvent }, [lastEvent])
+  const stale = lastEvent !== acknowledgedEvent
+  const filters = { search: filteredTaskSearch, status: taskStatus, sort_by: taskSort, sort_dir: taskDir }
+  const taskCohortKey = JSON.stringify({ filters, generation })
+  const filtersPending = taskSearch.trim() !== filteredTaskSearch || collectionSearch.trim() !== search
+  const canDrag = !taskSearch.trim() && !taskStatus && taskSort === 'position' && taskDir === 'asc' && !actionBusy && !stale && collectionStatus === 'active'
+
   const collectionsPage = usePagedList({
-    params: { sort_by: 'created_at', sort_dir: 'asc' as const, include_total: true },
-    fetchPage: ({ params, cursor, signal }) => api.listCollections('active', { ...params, cursor }, signal),
+    params: { search, status: collectionStatus, sort_by: 'created_at', sort_dir: 'asc' as const, include_total: true },
+    fetchPage: ({ params, cursor, signal }) => api.listCollections(params.status, { search: params.search, sort_by: params.sort_by, sort_dir: params.sort_dir, include_total: params.include_total, cursor }, signal),
     getId: collection => collection.id,
   })
   const { items: collections, loading, error, reload: reloadCollections, applyEvent: updateCollectionRow } = collectionsPage
-  const [moreByCollection, setMoreByCollection] = useState<Record<string, boolean>>({})
+  const [moreByCollection, setMoreByCollection] = useState<Record<string, { blocked: boolean; queryKey: string }>>({})
   const [inboxTasks, setInboxTasks] = useState<Task[]>([])
   const [tasksByCollection, setTasksByCollection] = useState<Record<string, Task[]>>({})
   const [createOpen, setCreateOpen] = useState(false)
@@ -312,16 +354,65 @@ export default function CollectionsPage() {
 
   const load = useCallback(async () => {
     setGeneration(value => value + 1)
+    setSelected({})
+    setAcknowledgedEvent(eventRef.current)
     await reloadCollections()
   }, [reloadCollections])
 
-  const reportTasks = useCallback((key: string | null, rows: Task[], hasMore: boolean) => {
+  const reportTasks = useCallback((key: string | null, rows: Task[], hasMore: boolean, queryKey: string) => {
     if (key === null) setInboxTasks(rows)
     else {
       setTasksByCollection(previous => previous[key] === rows ? previous : { ...previous, [key]: rows })
-      setMoreByCollection(previous => previous[key] === hasMore ? previous : { ...previous, [key]: hasMore })
+      setMoreByCollection(previous => previous[key]?.blocked === hasMore && previous[key]?.queryKey === queryKey ? previous : { ...previous, [key]: { blocked: hasMore, queryKey } })
     }
   }, [])
+
+  async function applyAction(label: string, ids: string[], action: (id: string) => Promise<void>) {
+    if (actionBusy || stale || filtersPending) return
+    setActionBusy(true)
+    setActionResult(null)
+    try {
+      const result = await runCollectionActions(ids, action)
+      setActionResult({ label, ...result })
+      if (!result.failed.length) notifySuccess(`${label}: ${result.succeeded.length} ${label.startsWith('Remove') ? 'removed' : 'succeeded'}`)
+      else notifyError(new Error(`${label}: ${result.succeeded.length} ${label.startsWith('Remove') ? 'removed' : 'succeeded'}, ${result.failed.length} failed, ${result.notStarted.length} not attempted. See details on the page.`), label)
+      await load()
+    } finally { setActionBusy(false) }
+  }
+
+  const selectedRows = Object.values(selected)
+  const selectedIds = selectedRows.map(task => task.id)
+  const selectedMembers = selectedRows.filter(task => task.collection_id)
+  function clearReason(id: string) {
+    if (actionBusy || loading || filtersPending || stale) return 'Refresh the loaded pages and wait for loading to finish.'
+    if (taskSearch.trim() || taskStatus) return 'Reset task filters before clearing this collection.'
+    if (moreByCollection[id]?.blocked !== false || moreByCollection[id]?.queryKey !== taskCohortKey) return 'Load remaining tasks before clearing this collection.'
+    if (!(tasksByCollection[id]?.length)) return 'This collection has no tasks.'
+    return undefined
+  }
+  function rowControls(task: Task, key: string | null) {
+    const scoped = { ...task, collection_id: key }
+    return {
+      draggable: canDrag,
+      leading: <input type="checkbox" aria-label={`Select ${task.title}`} checked={!!selected[task.id]} disabled={actionBusy || filtersPending} onChange={event => setSelected(previous => {
+        const next = { ...previous }
+        if (event.target.checked) next[task.id] = scoped
+        else delete next[task.id]
+        return next
+      })} />,
+      trailing: <CollectionTaskMenu task={scoped} disabled={actionBusy || filtersPending || stale} onStatus={status => void applyAction('Change status', [task.id], async id => { await api.transitionTask(id, status) })} onMove={() => setMoveIds([task.id])} onInbox={() => void applyAction('Move to inbox', [task.id], id => api.addTaskToInbox(id))} onRemove={() => setRemoveTarget({ name: collections.find(collection => collection.id === key)?.name ?? 'collection', rows: [scoped] })} />,
+    }
+  }
+
+  async function confirmRemove() {
+    if (!removeTarget || actionBusy || stale || (removeTarget.collectionId && (clearReason(removeTarget.collectionId) || removeTarget.cohortKey !== taskCohortKey))) return
+    const target = removeTarget
+    await applyAction('Remove collection assignments', target.rows.map(task => task.id), id => {
+      const task = target.rows.find(row => row.id === id)!
+      return api.removeTaskFromCollection(task.collection_id!, id)
+    })
+    setRemoveTarget(null)
+  }
 
   const handleUpdateCollection = useCallback(
     async (id: string, fields: { name?: string; description?: string }) => {
@@ -429,6 +520,7 @@ export default function CollectionsPage() {
       const taskId = String(active.id)
       const overId = String(over.id)
 
+      if (!canDrag) return
       const source = findContainerForTask(taskId)
       if (!source) return
 
@@ -436,7 +528,7 @@ export default function CollectionsPage() {
       if (!target) return
 
       // Partial reorders would assign new positions over unseen rows. Require a complete destination.
-      if (target.collectionId !== null && moreByCollection[target.collectionId] !== false) {
+      if (target.collectionId !== null && (moreByCollection[target.collectionId]?.blocked !== false || moreByCollection[target.collectionId]?.queryKey !== taskCohortKey)) {
         notifyError(new Error('Load the remaining destination tasks before reordering or dropping here.'), 'Collection has more tasks')
         return
       }
@@ -551,7 +643,7 @@ export default function CollectionsPage() {
           .catch(onError)
       }
     },
-    [api, inboxTasks, tasksByCollection, moreByCollection, load, findContainerForTask, resolveDropTarget],
+    [api, inboxTasks, tasksByCollection, moreByCollection, taskCohortKey, canDrag, load, findContainerForTask, resolveDropTarget],
   )
 
   const handleDragCancel = useCallback(() => {
@@ -589,8 +681,33 @@ export default function CollectionsPage() {
           </Button>
         </PageHeader>
 
-        <ListPageControls page={collectionsPage} label="collections" />
-        {lastEvent && <p className="px-4 py-1 text-xs text-muted-foreground">Collections changed. Refresh to update the loaded pages.</p>}
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3">
+          <Input aria-label="Search collections" placeholder="Search collections…" value={collectionSearch} onChange={event => { setCollectionSearch(event.target.value); setSelected({}) }} className="max-w-56" />
+          <select aria-label="Collection archive filter" className="rounded border border-border bg-background p-2 text-xs" value={collectionStatus} onChange={event => { setCollectionStatus(event.target.value as typeof collectionStatus); setSelected({}) }}>{['active', 'archived', 'all'].map(status => <option key={status} value={status}>{status} collections</option>)}</select>
+          <Input aria-label="Search collection tasks" placeholder="Search tasks in each collection…" value={taskSearch} onChange={event => { setTaskSearch(event.target.value); setSelected({}) }} className="max-w-64" />
+          <select aria-label="Sort collection tasks" className="rounded border border-border bg-background p-2 text-xs" value={taskSort} onChange={event => { setTaskSort(event.target.value); setSelected({}) }}>{['position', 'priority', 'status', 'updated_at', 'created_at'].map(sort => <option key={sort} value={sort}>{sort}</option>)}</select>
+          <Button size="sm" variant="outline" onClick={() => { setTaskDir(previous => previous === 'asc' ? 'desc' : 'asc'); setSelected({}) }}>{taskDir === 'asc' ? 'Ascending' : 'Descending'}</Button>
+          <Button size="sm" variant="ghost" onClick={() => { setTaskSearch(''); setTaskStatus(undefined); setTaskSort('position'); setTaskDir('asc'); setSelected({}) }}>Reset task filters</Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-1 px-4 py-2" aria-label="Task status filters">
+          <Button size="sm" variant={!taskStatus ? 'default' : 'outline'} aria-pressed={!taskStatus} onClick={() => { setTaskStatus(undefined); setSelected({}) }}>All statuses</Button>
+          {TASK_STATUSES.map(status => <Button key={status} size="sm" variant={taskStatus === status ? 'default' : 'outline'} aria-pressed={taskStatus === status} onClick={() => { setTaskStatus(status); setSelected({}) }}>{STATUS_LABEL[status]}</Button>)}
+        </div>
+        <p className="px-4 text-xs text-muted-foreground">Search, status and order apply on the server to each task cohort. Selection covers only checked loaded rows. Drag ordering is available with unfiltered position order and a fully loaded destination.</p>
+        {selectedIds.length > 0 && <div className="flex flex-wrap items-center gap-2 px-4 py-2">
+          <span>{selectedIds.length} selected</span>
+          <DropdownMenu><DropdownMenuTrigger render={<Button size="sm" variant="outline" />} disabled={actionBusy || stale}>Change selected status</DropdownMenuTrigger><DropdownMenuContent>{TASK_STATUSES.map(status => <DropdownMenuItem key={status} onClick={() => void applyAction('Change selected status', selectedIds, async id => { await api.transitionTask(id, status) })}>{STATUS_LABEL[status]}</DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu>
+          <Button size="sm" variant="outline" disabled={actionBusy || stale} onClick={() => setMoveIds(selectedIds)}>Move selected…</Button>
+          <Button size="sm" variant="outline" disabled={actionBusy || stale || !selectedMembers.length} onClick={() => setRemoveTarget({ name: 'their collections', rows: selectedMembers })}>Remove {selectedMembers.length} collection assignments</Button>
+          <Button size="sm" variant="ghost" disabled={actionBusy} onClick={() => setSelected({})}>Clear selection</Button>
+        </div>}
+        {actionResult && <div role={actionResult.failed.length ? 'alert' : 'status'} className="mx-4 my-2 rounded border border-border p-3 text-xs">
+          {actionResult.label}: {actionResult.succeeded.length} {actionResult.label.startsWith('Remove') ? 'removed' : 'succeeded'}, {actionResult.failed.length} failed, {actionResult.notStarted.length} not attempted.
+          {actionResult.failed.map(failure => <p key={failure.id}>{failure.id}: {failure.message}</p>)}
+          {!!actionResult.notStarted.length && <p>Not attempted: {actionResult.notStarted.join(', ')}</p>}
+        </div>}
+        <ListPageControls page={{ ...collectionsPage, reload: load }} label="collections" />
+        {stale && <p className="px-4 py-1 text-xs text-muted-foreground">Collections changed. Refresh to update the loaded pages.</p>}
         {loading && collections.length === 0 ? (
           <PageSkeleton />
         ) : error ? (
@@ -610,6 +727,8 @@ export default function CollectionsPage() {
                 </span>
               </div>
               <PagedCollectionTasks
+                filters={filters}
+                rowControls={rowControls}
                 generation={generation}
                 report={reportTasks}
                 collectionKey={null}
@@ -625,8 +744,14 @@ export default function CollectionsPage() {
                   taskCount={tasksByCollection[collection.id]?.length ?? 0}
                   onUpdate={handleUpdateCollection}
                   onArchive={requestArchive}
+                  busy={actionBusy}
+                  onUnarchive={() => void applyAction('Unarchive collection', [collection.id], async id => { await api.unarchiveCollection(id) })}
+                  clearDisabledReason={clearReason(collection.id)}
+                  onClear={() => setRemoveTarget({ name: collection.name, rows: tasksByCollection[collection.id] ?? [], collectionId: collection.id, cohortKey: taskCohortKey })}
                 />
                 <PagedCollectionTasks
+                  filters={filters}
+                  rowControls={rowControls}
                   generation={generation}
                   report={reportTasks}
                   collectionKey={collection.id}
@@ -638,7 +763,7 @@ export default function CollectionsPage() {
 
             {sortedCollections.length === 0 && (
               <div className="mx-4 my-6 rounded-md border border-dashed border-zinc-800 px-6 py-10 text-center text-[13px] text-zinc-500">
-                No active collections yet. Create one to start organizing tasks.
+                No collections match this search and archive filter. Change the filters or create a collection.
               </div>
             )}
           </div>
@@ -650,6 +775,12 @@ export default function CollectionsPage() {
           onCreated={() => void load()}
         />
 
+        {moveIds && <CollectionMoveDialog count={moveIds.length} busy={actionBusy} onClose={() => setMoveIds(null)} onChoose={id => { if (stale) { notifyError(new Error('Close this dialog and refresh changed pages before moving tasks.'), 'Pages changed'); return } void applyAction('Move tasks', moveIds, taskId => id ? api.moveTask(taskId, id) : api.addTaskToInbox(taskId)).then(() => setMoveIds(null)) }} />}
+        <AlertDialog open={!!removeTarget} onOpenChange={open => { if (!open && !actionBusy) setRemoveTarget(null) }}>
+          <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Remove {removeTarget?.rows.length ?? 0} tasks from "{removeTarget?.name}"?</AlertDialogTitle><AlertDialogDescription>This only removes them from the collection. Tasks are not deleted. Failed and unattempted IDs will be reported; the list refreshes from the server afterwards.</AlertDialogDescription></AlertDialogHeader>
+            <AlertDialogFooter><AlertDialogCancel disabled={actionBusy}>Cancel</AlertDialogCancel><Button onClick={() => void confirmRemove()} disabled={actionBusy || stale || !!(removeTarget?.collectionId && (clearReason(removeTarget.collectionId) || removeTarget.cohortKey !== taskCohortKey))}>{actionBusy ? 'Removing…' : 'Remove assignments'}</Button></AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         <AlertDialog open={archiveTarget !== null} onOpenChange={(open) => !open && setArchiveTarget(null)}>
           <AlertDialogContent>
             <AlertDialogHeader>
