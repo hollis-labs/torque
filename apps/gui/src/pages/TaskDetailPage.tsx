@@ -72,7 +72,6 @@ export default function TaskDetailPage() {
   const [projects, setProjects] = useState<Project[]>([])
   const [sprints, setSprints] = useState<Sprint[]>([])
   const [epics, setEpics] = useState<Epic[]>([])
-  const [pickersLoading, setPickersLoading] = useState(false)
 
   // Fetch task on mount / id change
   useEffect(() => {
@@ -186,23 +185,6 @@ export default function TaskDetailPage() {
         .catch(() => {})
     }
   }, [task, api])
-
-  // Edit-mode picker loading: fetch the full container lists only when
-  // entering edit mode (drives the project/sprint/epic <Select> options).
-  useEffect(() => {
-    if (!editing) return
-    setPickersLoading(true)
-    Promise.allSettled([
-      api.listProjects(),
-      api.listSprints(),
-      api.listEpics(),
-    ]).then(([pRes, sRes, eRes]) => {
-      if (pRes.status === 'fulfilled') setProjects(pRes.value.items)
-      if (sRes.status === 'fulfilled') setSprints(sRes.value.items)
-      if (eRes.status === 'fulfilled') setEpics(eRes.value.items)
-      setPickersLoading(false)
-    })
-  }, [editing, api])
 
   // Lazy-load tab content (view mode only)
   const taskLoaded = task !== null
@@ -478,7 +460,6 @@ export default function TaskDetailPage() {
               projects={projects}
               sprints={sprints}
               epics={epics}
-              pickersLoading={pickersLoading}
             />
 
             <CollapsibleSection label="Description" accent="neutral" collapsible={false}>
@@ -543,7 +524,6 @@ export default function TaskDetailPage() {
                   projects={projects}
                   sprints={sprints}
                   epics={epics}
-                  pickersLoading={pickersLoading}
                 />
 
                 <TaskFacets task={task} />

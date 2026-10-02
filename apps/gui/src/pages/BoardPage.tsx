@@ -28,7 +28,7 @@ import {
   type OpsFilters,
 } from '@/lib/ops-filters-storage'
 import { FolderTree } from 'lucide-react'
-import type { Epic, FeatureFlags, Project, Sprint, Tag, TaskFilter, TaskSummary, TaskStatus } from '@/lib/types'
+import type { FeatureFlags, Tag, TaskFilter, TaskSummary, TaskStatus } from '@/lib/types'
 
 const FILTER_PARAM_KEYS = ['status', 'priority', 'project_id', 'sprint_id', 'epic_id', 'tag', 'manual', 'eligible', 'sort_by', 'sort_dir'] as const
 
@@ -101,9 +101,6 @@ export default function BoardPage() {
   const [includeInternal, setIncludeInternal] = useState<boolean>(false)
 
   // Group picker data
-  const [projects, setProjects] = useState<Project[]>([])
-  const [sprints, setSprints] = useState<Sprint[]>([])
-  const [epics, setEpics] = useState<Epic[]>([])
   const [tags, setTags] = useState<Tag[]>([])
   const [flags, setFlags] = useState<FeatureFlags>({ projects: false, epics: false, sprints: false })
 
@@ -227,36 +224,11 @@ export default function BoardPage() {
     })
   }, [hydrated, activeStatuses, activePriorities, projectId, sprintId, epicId, tagSlug, manualFilter, search, includeInternal, eligibleOnly, sortBy, sortDir])
 
-  const pickerGeneration = useRef(0)
-  const [pickerCursors, setPickerCursors] = useState<{ projects?: string | null; epics?: string | null; sprints?: string | null }>({})
-  const [pickerLoading, setPickerLoading] = useState<string | null>(null)
-  // Scope options are bounded pages too; selected IDs are fetched separately.
-  // Fetch pickers on project changes
   const refreshPickers = useCallback(async () => {
-    const gen = ++pickerGeneration.current
-    const [p, s, e, t] = await Promise.all([
-      api.listProjects(undefined, { limit: 50 }).catch(() => ({ items: [] as Project[] })),
-      api.listSprints({ project_id: projectId ?? undefined, limit: 50 }).catch(() => ({ items: [] as Sprint[] })),
-      api.listEpics({ project_id: projectId ?? undefined, limit: 50 }).catch(() => ({ items: [] as Epic[] })),
-      api.listTags().catch(() => ({ tags: [] as Tag[] })),
-    ])
-    if (gen !== pickerGeneration.current) return
-    setPickerCursors({ projects: 'meta' in p ? p.meta.next_cursor : null, sprints: 'meta' in s ? s.meta.next_cursor : null, epics: 'meta' in e ? e.meta.next_cursor : null })
-    setProjects(p.items)
-    setSprints(s.items)
-    setEpics(e.items)
-    setTags(t.tags)
-  }, [api, projectId])
-
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      if (!cancelled) await refreshPickers()
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [refreshPickers])
+    const result = await api.listTags().catch(() => ({ tags: [] as Tag[] }))
+    setTags(result.tags)
+  }, [api])
+  useEffect(() => { void refreshPickers() }, [refreshPickers])
 
   useEffect(() => {
     let cancelled = false
@@ -269,48 +241,6 @@ export default function BoardPage() {
       cancelled = true
     }
   }, [api])
-
-  const visibleSprints = sprints
-  const visibleEpics = epics
-  useEffect(() => {
-    let cancelled = false
-    if (projectId && !projects.some(item => item.id === projectId)) void api.getProject(projectId).then(item => {
-      if (!cancelled) setProjects(previous => previous.some(existing => existing.id === item.id) ? previous : [...previous, item])
-    }).catch(() => {})
-    if (sprintId && !sprints.some(item => item.id === sprintId)) void api.getSprint(sprintId).then(item => {
-      if (!cancelled) setSprints(previous => previous.some(existing => existing.id === item.id) ? previous : [...previous, item])
-    }).catch(() => {})
-    if (epicId && !epics.some(item => item.id === epicId)) void api.getEpic(epicId).then(item => {
-      if (!cancelled) setEpics(previous => previous.some(existing => existing.id === item.id) ? previous : [...previous, item])
-    }).catch(() => {})
-    return () => { cancelled = true }
-  }, [api, projectId, sprintId, epicId, projects, sprints, epics])
-  async function loadPicker(kind: 'projects' | 'sprints' | 'epics') {
-    const cursor = pickerCursors[kind]
-    if (!cursor || pickerLoading) return
-    const gen = pickerGeneration.current
-    setPickerLoading(kind)
-    try {
-      const query = { cursor, limit: 50, project_id: projectId ?? undefined }
-      if (kind === 'projects') {
-        const result = await api.listProjects(undefined, { cursor, limit: 50 })
-        if (gen !== pickerGeneration.current) return
-        setProjects(previous => [...new Map([...previous, ...result.items].map(item => [item.id, item])).values()])
-        setPickerCursors(previous => ({ ...previous, projects: result.meta.next_cursor }))
-      } else if (kind === 'sprints') {
-        const result = await api.listSprints(query)
-        if (gen !== pickerGeneration.current) return
-        setSprints(previous => [...new Map([...previous, ...result.items].map(item => [item.id, item])).values()])
-        setPickerCursors(previous => ({ ...previous, sprints: result.meta.next_cursor }))
-      } else {
-        const result = await api.listEpics(query)
-        if (gen !== pickerGeneration.current) return
-        setEpics(previous => [...new Map([...previous, ...result.items].map(item => [item.id, item])).values()])
-        setPickerCursors(previous => ({ ...previous, epics: result.meta.next_cursor }))
-      }
-    } catch (error) { notifyError(error, 'Failed to load filter options') }
-    finally { setPickerLoading(null) }
-  }
 
   const [serverSearch, setServerSearch] = useState(() => readOpsFilters()?.search.trim() ?? '')
   const scheduleSearch = useDebouncedCallback(() => setServerSearch(search.trim()), 300)
@@ -656,19 +586,15 @@ export default function BoardPage() {
         onManualFilterChange={handleManualFilterChange}
         includeInternal={includeInternal}
         onIncludeInternalChange={handleIncludeInternalChange}
-        projects={projects}
-        onProjectMore={pickerCursors.projects ? () => void loadPicker('projects') : undefined}
-        onEpicMore={pickerCursors.epics ? () => void loadPicker('epics') : undefined}
-        onSprintMore={pickerCursors.sprints ? () => void loadPicker('sprints') : undefined}
-        pickerLoading={pickerLoading !== null}
+
         projectId={projectId}
         onProjectChange={(id) => handleGroupChange('project_id', id)}
         onProjectCreate={() => setProjectCreateOpen(true)}
-        sprints={visibleSprints}
+
         sprintId={sprintId}
         onSprintChange={(id) => handleGroupChange('sprint_id', id)}
         onSprintCreate={() => setSprintCreateOpen(true)}
-        epics={visibleEpics}
+
         epicId={epicId}
         onEpicChange={(id) => handleGroupChange('epic_id', id)}
         onEpicCreate={() => setEpicCreateOpen(true)}
@@ -694,7 +620,7 @@ export default function BoardPage() {
       <EpicCreateDialog
         open={epicCreateOpen}
         onOpenChange={setEpicCreateOpen}
-        projects={projects}
+
         defaultProjectId={projectId}
         onCreated={(e) => {
           refreshPickers()
@@ -704,7 +630,7 @@ export default function BoardPage() {
       <SprintCreateDialog
         open={sprintCreateOpen}
         onOpenChange={setSprintCreateOpen}
-        projects={projects}
+
         defaultProjectId={projectId}
         onCreated={(sprint) => {
           refreshPickers()

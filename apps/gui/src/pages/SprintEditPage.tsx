@@ -3,17 +3,17 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { Save } from 'lucide-react'
 import { Skeleton, Button, Input, Textarea, EmptyState } from '@hollis-labs/sysop-ui'
 import { DetailHeader } from '@hollis-labs/sysop-ui/layout'
+import { ScopePicker } from '@/components/domain/scope-picker'
 import { ScopeFormField } from '@/components/domain/scope-form-field'
 import { useApi } from '@/hooks/use-api'
 import { notifyError, notifySuccess } from '@/lib/toast'
-import type { ContainerStatus, Project, Sprint } from '@/lib/types'
+import type { ContainerStatus, Sprint } from '@/lib/types'
 
 export default function SprintEditPage() {
   const { id } = useParams<{ id: string }>()
   const api = useApi()
   const navigate = useNavigate()
   const [sprint, setSprint] = useState<Sprint | null>(null)
-  const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -30,11 +30,10 @@ export default function SprintEditPage() {
     if (!id) return
     let cancelled = false
     setLoading(true)
-    void Promise.all([api.getSprint(id), api.listProjects()])
-      .then(([nextSprint, projectRes]) => {
+    void api.getSprint(id)
+      .then((nextSprint) => {
         if (cancelled) return
         setSprint(nextSprint)
-        setProjects(projectRes.items)
         setDraft({
           name: nextSprint.name,
           goal: nextSprint.goal ?? '',
@@ -115,10 +114,7 @@ export default function SprintEditPage() {
             <Textarea rows={5} value={draft.goal} onChange={(e) => setDraft((prev) => ({ ...prev, goal: e.target.value }))} />
           </ScopeFormField>
           <ScopeFormField label="Project">
-            <select className="h-9 rounded-md border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-100" value={draft.project_id} onChange={(e) => setDraft((prev) => ({ ...prev, project_id: e.target.value }))}>
-              <option value="">None</option>
-              {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-            </select>
+            <ScopePicker kind="project" value={draft.project_id} onChange={id => setDraft(prev => ({ ...prev, project_id: id ?? '' }))} />
           </ScopeFormField>
           <ScopeFormField label="Approval Mode">
             <select className="h-9 rounded-md border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-100" value={draft.approval_mode} onChange={(e) => setDraft((prev) => ({ ...prev, approval_mode: e.target.value }))}>

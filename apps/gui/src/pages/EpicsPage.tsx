@@ -1,17 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ExternalLink, Pencil, Plus } from 'lucide-react'
 import { Skeleton, Button, PageHeader, SummaryCards, EmptyState } from '@hollis-labs/sysop-ui'
 import { EpicCreateDialog } from '@/components/domain/epic-create-dialog'
+import { ScopeName } from '@/components/domain/scope-name'
 import { ScopeOverviewCard } from '@/components/domain/scope-overview-card'
-import { useApi } from '@/hooks/use-api'
-import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
-import { useSSE } from '@/hooks/use-sse'
-import { EVENT_REFETCH_DEBOUNCE_MS } from '@/lib/debounce'
-import { rollupFromStatusCounts, rollupsByScope } from '@/lib/scope-metrics'
-import type { Epic, Project, TaskScopeRollupResponse } from '@/lib/types'
-
-const SSE_EVENTS = ['epic.updated', 'epic.created', 'epic.deleted', 'task.updated', 'task.created', 'task.transitioned']
+import { useParentPage } from '@/hooks/use-parent-page'
+import { ParentPageControls } from '@/components/domain/parent-page-controls'
+import { rollupFromStatusCounts } from '@/lib/scope-metrics'
+import type { Epic } from '@/lib/types'
 
 function PageSkeleton() {
   return (
@@ -23,72 +20,25 @@ function PageSkeleton() {
 }
 
 export default function EpicsPage() {
-  const api = useApi()
   const navigate = useNavigate()
-  const { lastEvent } = useSSE(SSE_EVENTS)
-  const [epics, setEpics] = useState<Epic[]>([])
-  const [projects, setProjects] = useState<Project[]>([])
-  const [taskRollup, setTaskRollup] = useState<TaskScopeRollupResponse | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const page = useParentPage<Epic>('epic')
+  const { loading, error } = page
   const [createOpen, setCreateOpen] = useState(false)
-  const loadGeneration = useRef(0)
-
-  // background: an event-driven refresh, which keeps the page on screen
-  // instead of swapping in the skeleton.
-  const load = useCallback(async ({ background = false } = {}) => {
-    const myGen = ++loadGeneration.current
-    if (!background) {
-      setLoading(true)
-      setError(null)
-    }
-    try {
-      const [epicRes, projectRes, rollupRes] = await Promise.all([
-        api.listEpics(),
-        api.listProjects(),
-        api.taskRollup('epic_id'),
-      ])
-      if (myGen !== loadGeneration.current) return
-      setEpics(epicRes.items)
-      setProjects(projectRes.items)
-      setTaskRollup(rollupRes)
-    } catch (err) {
-      // A failed background refresh leaves the loaded page in place.
-      if (myGen !== loadGeneration.current || background) return
-      setError(err instanceof Error ? err.message : 'Failed to load epics')
-    } finally {
-      if (myGen === loadGeneration.current) setLoading(false)
-    }
-  }, [api])
-
-  useEffect(() => {
-    void load()
-  }, [load])
-
-  const scheduleReload = useDebouncedCallback(() => void load({ background: true }), EVENT_REFETCH_DEBOUNCE_MS)
-  useEffect(() => {
-    if (!lastEvent) return
-    scheduleReload()
-  }, [lastEvent, scheduleReload])
-
-  const epicRollups = useMemo(() => rollupsByScope(taskRollup), [taskRollup])
-  const projectNames = useMemo(
-    () => new Map(projects.map((project) => [project.id, project.name])),
-    [projects]
-  )
-
+  const totals = page.facets?.result
+  function facetCount(dimension: string, value: string | number): number | string {
+    const facet = totals?.facets.find(facet => facet.dimension === dimension)
+    return facet?.buckets.find(bucket => bucket.value === value)?.count ?? (facet && !facet.truncated ? 0 : '—')
+  }
   const summaryCards = [
-    { label: 'Epics', value: epics.length },
-    { label: 'Active', value: epics.filter((epic) => epic.status === 'active').length, accentColor: '#34d399' },
-    { label: 'Scoped Tasks', value: taskRollup?.total ?? 0, accentColor: '#a78bfa' },
-    { label: 'P1', value: epics.filter((epic) => epic.priority === 1).length, accentColor: '#f87171' },
+    { label: 'Epics', value: totals?.matching_count ?? '—' },
+    { label: 'Active', value: facetCount('status', 'active'), accentColor: '#34d399' },
+    { label: 'Scoped Tasks', value: totals?.task_totals.total ?? '—', accentColor: '#a78bfa' },
+    { label: 'P1', value: facetCount('priority', 1), accentColor: '#f87171' },
   ]
-
-  const epicCards = useMemo(() => {
-    return epics.map((epic) => {
-      return { epic, rollup: epicRollups.get(epic.id) ?? rollupFromStatusCounts({}) }
-    })
-  }, [epics, epicRollups])
+  const epicCards = page.items.map(epic => {
+    const scope = page.rollups?.find(scope => scope.scope_id === epic.id)
+    return { epic, rollup: scope ? rollupFromStatusCounts(scope.counts) : null }
+  })
 
   return (
     <div className="flex h-full flex-col">
@@ -102,12 +52,13 @@ export default function EpicsPage() {
           New Epic
         </Button>
       </PageHeader>
-      {!loading && !error && <SummaryCards cards={summaryCards} />}
+      <SummaryCards cards={summaryCards} />
+      {page.facets?.error && <p role="alert" className="px-6 text-sm text-destructive">Counts unavailable: {page.facets.error}</p>}
+      <ParentPageControls kind="epic" query={page.query} onChange={page.changeQuery} pageStart={page.pageStart} hasNext={page.hasNext} loading={loading} stale={page.isStale} previous={page.previousPage} next={() => void page.nextPage()} refresh={page.refresh} />
 
       <EpicCreateDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
-        projects={projects}
         onCreated={(epic) => navigate(`/epics/${epic.id}`)}
       />
 
@@ -116,14 +67,14 @@ export default function EpicsPage() {
           <PageSkeleton />
         ) : error ? (
           <div className="p-6">
-            <EmptyState variant="error" title="Something went wrong" description={error} action={{ label: 'Retry', onClick: () => void load() }} />
+            <EmptyState variant="error" title="Something went wrong" description={error.message} action={{ label: 'Retry', onClick: page.refresh }} />
           </div>
         ) : epicCards.length === 0 ? (
           <div className="p-6">
             <EmptyState
               variant="empty"
-              title="No epics yet"
-              description="No epics exist yet."
+              title="No matching epics"
+              description="Try a different search, status or archive filter."
               action={{ label: 'Create epic', onClick: () => setCreateOpen(true) }}
             />
           </div>
@@ -140,13 +91,13 @@ export default function EpicsPage() {
                 description={epic.description}
                 progress={rollup}
                 metrics={[
-                  { label: 'Open', value: rollup.open },
-                  { label: 'Doing', value: rollup.doing, accentColor: '#60a5fa' },
-                  { label: 'Blocked', value: rollup.blocked, accentColor: '#f87171' },
-                  { label: 'Done', value: rollup.done, accentColor: '#34d399' },
+                  { label: 'Open', value: rollup?.open ?? '—' },
+                  { label: 'Doing', value: rollup?.doing ?? '—', accentColor: '#60a5fa' },
+                  { label: 'Blocked', value: rollup?.blocked ?? '—', accentColor: '#f87171' },
+                  { label: 'Done', value: rollup?.done ?? '—', accentColor: '#34d399' },
                 ]}
                 meta={[
-                  { label: 'Project', value: epic.project_id ? (projectNames.get(epic.project_id) ?? epic.project_id) : 'None' },
+                  { label: 'Project', value: epic.project_id ? <ScopeName kind="project" id={epic.project_id} /> : 'None' },
                   { label: 'Priority', value: epic.priority === null ? 'None' : `P${epic.priority}` },
                   { label: 'Updated', value: new Date(epic.updated_at).toLocaleDateString() },
                 ]}

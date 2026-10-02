@@ -1,17 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ExternalLink, Pencil, Plus } from 'lucide-react'
 import { Skeleton, Button, PageHeader, SummaryCards, EmptyState } from '@hollis-labs/sysop-ui'
 import { SprintCreateDialog } from '@/components/domain/sprint-create-dialog'
+import { ScopeName } from '@/components/domain/scope-name'
 import { ScopeOverviewCard } from '@/components/domain/scope-overview-card'
-import { useApi } from '@/hooks/use-api'
-import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
-import { useSSE } from '@/hooks/use-sse'
-import { EVENT_REFETCH_DEBOUNCE_MS } from '@/lib/debounce'
-import { rollupFromStatusCounts, rollupsByScope } from '@/lib/scope-metrics'
-import type { Project, Sprint, TaskScopeRollupResponse } from '@/lib/types'
-
-const SSE_EVENTS = ['sprint.updated', 'sprint.created', 'sprint.deleted', 'task.updated', 'task.created', 'task.transitioned']
+import { useParentPage } from '@/hooks/use-parent-page'
+import { ParentPageControls } from '@/components/domain/parent-page-controls'
+import { rollupFromStatusCounts } from '@/lib/scope-metrics'
+import type { Sprint } from '@/lib/types'
 
 function PageSkeleton() {
   return (
@@ -23,72 +20,25 @@ function PageSkeleton() {
 }
 
 export default function SprintsPage() {
-  const api = useApi()
   const navigate = useNavigate()
-  const { lastEvent } = useSSE(SSE_EVENTS)
-  const [sprints, setSprints] = useState<Sprint[]>([])
-  const [projects, setProjects] = useState<Project[]>([])
-  const [taskRollup, setTaskRollup] = useState<TaskScopeRollupResponse | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const page = useParentPage<Sprint>('sprint')
+  const { loading, error } = page
   const [createOpen, setCreateOpen] = useState(false)
-  const loadGeneration = useRef(0)
-
-  // background: an event-driven refresh, which keeps the page on screen
-  // instead of swapping in the skeleton.
-  const load = useCallback(async ({ background = false } = {}) => {
-    const myGen = ++loadGeneration.current
-    if (!background) {
-      setLoading(true)
-      setError(null)
-    }
-    try {
-      const [sprintRes, projectRes, rollupRes] = await Promise.all([
-        api.listSprints(),
-        api.listProjects(),
-        api.taskRollup('sprint_id'),
-      ])
-      if (myGen !== loadGeneration.current) return
-      setSprints(sprintRes.items)
-      setProjects(projectRes.items)
-      setTaskRollup(rollupRes)
-    } catch (err) {
-      // A failed background refresh leaves the loaded page in place.
-      if (myGen !== loadGeneration.current || background) return
-      setError(err instanceof Error ? err.message : 'Failed to load sprints')
-    } finally {
-      if (myGen === loadGeneration.current) setLoading(false)
-    }
-  }, [api])
-
-  useEffect(() => {
-    void load()
-  }, [load])
-
-  const scheduleReload = useDebouncedCallback(() => void load({ background: true }), EVENT_REFETCH_DEBOUNCE_MS)
-  useEffect(() => {
-    if (!lastEvent) return
-    scheduleReload()
-  }, [lastEvent, scheduleReload])
-
-  const sprintRollups = useMemo(() => rollupsByScope(taskRollup), [taskRollup])
-  const projectNames = useMemo(
-    () => new Map(projects.map((project) => [project.id, project.name])),
-    [projects]
-  )
-
+  const totals = page.facets?.result
+  function facetCount(dimension: string, value: string | number): number | string {
+    const facet = totals?.facets.find(facet => facet.dimension === dimension)
+    return facet?.buckets.find(bucket => bucket.value === value)?.count ?? (facet && !facet.truncated ? 0 : '—')
+  }
   const summaryCards = [
-    { label: 'Sprints', value: sprints.length },
-    { label: 'Active', value: sprints.filter((sprint) => sprint.status === 'active').length, accentColor: '#34d399' },
-    { label: 'Completed', value: sprints.filter((sprint) => sprint.status === 'completed').length, accentColor: '#60a5fa' },
-    { label: 'Scoped Tasks', value: taskRollup?.total ?? 0, accentColor: '#fbbf24' },
+    { label: 'Sprints', value: totals?.matching_count ?? '—' },
+    { label: 'Active', value: facetCount('status', 'active'), accentColor: '#34d399' },
+    { label: 'Completed', value: facetCount('status', 'completed'), accentColor: '#60a5fa' },
+    { label: 'Scoped Tasks', value: totals?.task_totals.total ?? '—', accentColor: '#fbbf24' },
   ]
-
-  const sprintCards = useMemo(() => {
-    return sprints.map((sprint) => {
-      return { sprint, rollup: sprintRollups.get(sprint.id) ?? rollupFromStatusCounts({}) }
-    })
-  }, [sprints, sprintRollups])
+  const sprintCards = page.items.map(sprint => {
+    const scope = page.rollups?.find(scope => scope.scope_id === sprint.id)
+    return { sprint, rollup: scope ? rollupFromStatusCounts(scope.counts) : null }
+  })
 
   return (
     <div className="flex h-full flex-col">
@@ -102,12 +52,13 @@ export default function SprintsPage() {
           New Sprint
         </Button>
       </PageHeader>
-      {!loading && !error && <SummaryCards cards={summaryCards} />}
+      <SummaryCards cards={summaryCards} />
+      {page.facets?.error && <p role="alert" className="px-6 text-sm text-destructive">Counts unavailable: {page.facets.error}</p>}
+      <ParentPageControls kind="sprint" query={page.query} onChange={page.changeQuery} pageStart={page.pageStart} hasNext={page.hasNext} loading={loading} stale={page.isStale} previous={page.previousPage} next={() => void page.nextPage()} refresh={page.refresh} />
 
       <SprintCreateDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
-        projects={projects}
         onCreated={(sprint) => navigate(`/sprints/${sprint.id}`)}
       />
 
@@ -116,14 +67,14 @@ export default function SprintsPage() {
           <PageSkeleton />
         ) : error ? (
           <div className="p-6">
-            <EmptyState variant="error" title="Something went wrong" description={error} action={{ label: 'Retry', onClick: () => void load() }} />
+            <EmptyState variant="error" title="Something went wrong" description={error.message} action={{ label: 'Retry', onClick: page.refresh }} />
           </div>
         ) : sprintCards.length === 0 ? (
           <div className="p-6">
             <EmptyState
               variant="empty"
-              title="No sprints yet"
-              description="No sprints exist yet."
+              title="No matching sprints"
+              description="Try a different search, status or archive filter."
               action={{ label: 'Create sprint', onClick: () => setCreateOpen(true) }}
             />
           </div>
@@ -140,13 +91,13 @@ export default function SprintsPage() {
                 description={sprint.goal}
                 progress={rollup}
                 metrics={[
-                  { label: 'Open', value: rollup.open },
-                  { label: 'Doing', value: rollup.doing, accentColor: '#60a5fa' },
-                  { label: 'Review', value: rollup.review, accentColor: '#a78bfa' },
-                  { label: 'Done', value: rollup.done, accentColor: '#34d399' },
+                  { label: 'Open', value: rollup?.open ?? '—' },
+                  { label: 'Doing', value: rollup?.doing ?? '—', accentColor: '#60a5fa' },
+                  { label: 'Review', value: rollup?.review ?? '—', accentColor: '#a78bfa' },
+                  { label: 'Done', value: rollup?.done ?? '—', accentColor: '#34d399' },
                 ]}
                 meta={[
-                  { label: 'Project', value: sprint.project_id ? (projectNames.get(sprint.project_id) ?? sprint.project_id) : 'None' },
+                  { label: 'Project', value: sprint.project_id ? <ScopeName kind="project" id={sprint.project_id} /> : 'None' },
                   { label: 'Approval', value: sprint.approval_mode || 'approve_each' },
                   { label: 'Budget', value: sprint.cost_budget === null ? 'None' : `$${sprint.cost_budget.toFixed(2)}` },
                   { label: 'Updated', value: new Date(sprint.updated_at).toLocaleDateString() },

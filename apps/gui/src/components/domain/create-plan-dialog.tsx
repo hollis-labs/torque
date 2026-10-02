@@ -7,23 +7,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@hollis-labs/sysop-ui'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@hollis-labs/sysop-ui'
+import { ScopePicker } from './scope-picker'
 import { Button, Input, Label, Textarea } from '@hollis-labs/sysop-ui'
 import { useApi } from '@/hooks/use-api'
 import { notifyError, notifySuccess } from '@/lib/toast'
-import type { PlanDetail, PlanPhaseInput, Project, Sprint } from '@/lib/types'
+import type { PlanDetail, PlanPhaseInput } from '@/lib/types'
 
 interface CreatePlanDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  projects?: Project[]
-  sprints?: Sprint[]
   defaultProjectId?: string | null
   defaultSprintId?: string | null
   onCreated?: (plan: PlanDetail) => void
@@ -34,8 +26,6 @@ const NONE_VALUE = '__none__'
 export function CreatePlanDialog({
   open,
   onOpenChange,
-  projects,
-  sprints,
   defaultProjectId,
   defaultSprintId,
   onCreated,
@@ -47,8 +37,6 @@ export function CreatePlanDialog({
   const [sprintId, setSprintId] = useState<string>(defaultSprintId ?? NONE_VALUE)
   const [phasesText, setPhasesText] = useState('Foundation, Integration, Rollout')
   const [submitting, setSubmitting] = useState(false)
-  const [ownProjects, setOwnProjects] = useState<Project[] | null>(null)
-  const [ownSprints, setOwnSprints] = useState<Sprint[] | null>(null)
 
   useEffect(() => {
     if (open) {
@@ -59,19 +47,6 @@ export function CreatePlanDialog({
       setPhasesText('Foundation, Integration, Rollout')
     }
   }, [open, defaultProjectId, defaultSprintId])
-
-  useEffect(() => {
-    if (!open) return
-    if (!projects) {
-      api.listProjects().then((r) => setOwnProjects(r.items)).catch(() => setOwnProjects([]))
-    }
-    if (!sprints) {
-      api.listSprints().then((r) => setOwnSprints(r.items)).catch(() => setOwnSprints([]))
-    }
-  }, [open, api, projects, sprints])
-
-  const projectOptions = projects ?? ownProjects ?? []
-  const sprintOptions = sprints ?? ownSprints ?? []
 
   const trimmedTitle = title.trim()
   const canSubmit = trimmedTitle.length > 0 && !submitting
@@ -151,31 +126,11 @@ export function CreatePlanDialog({
           </div>
           <div className="flex flex-col gap-1.5">
             <Label>Project</Label>
-            <Select value={projectId} onValueChange={(v) => v && setProjectId(v)}>
-              <SelectTrigger aria-label="Plan project" size="sm" className="h-8 w-full">
-                <SelectValue placeholder="No project" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NONE_VALUE}>No project</SelectItem>
-                {projectOptions.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ScopePicker kind="project" label="Plan project" value={projectId === NONE_VALUE ? null : projectId} onChange={id => { setProjectId(id ?? NONE_VALUE); setSprintId(NONE_VALUE) }} />
           </div>
           <div className="flex flex-col gap-1.5">
             <Label>Sprint</Label>
-            <Select value={sprintId} onValueChange={(v) => v && setSprintId(v)}>
-              <SelectTrigger aria-label="Plan sprint" size="sm" className="h-8 w-full">
-                <SelectValue placeholder="No sprint" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NONE_VALUE}>No sprint</SelectItem>
-                {sprintOptions.map((s) => (
-                  <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ScopePicker kind="sprint" label="Plan sprint" projectId={projectId === NONE_VALUE ? undefined : projectId} value={sprintId === NONE_VALUE ? null : sprintId} onChange={id => setSprintId(id ?? NONE_VALUE)} />
           </div>
         </div>
 

@@ -66,6 +66,19 @@ export interface TaskFacetResult {
   matching_count: number
   facets: AggregateFacet[]
 }
+export interface ParentQuery extends Omit<ListQuery, 'cursor' | 'offset'> {
+  status?: string
+  project_id?: string
+  include_archived?: boolean
+}
+export interface ParentFacetResult extends TaskFacetResult {
+  task_totals: { total: number; counts: Record<string, number> }
+  task_rollups: {
+    scopes: { scope_id: string; total: number; counts: Record<string, number>; children?: { sprints: number; epics: number } }[]
+    total_distinct: number; returned: number; truncated: boolean
+  }
+  child_totals?: { sprints: number; epics: number }
+}
 export interface RunFacetResult extends TaskFacetResult {
   totals: { cost: number; prompt_tokens: number; completion_tokens: number }
 }
@@ -619,10 +632,14 @@ export class TorqueApiClient {
   // Projects
   // -------------------------
 
-  async listProjects(status?: string, query?: ListQuery, signal?: AbortSignal): Promise<ListPage<Project>> {
+  async listProjects(status?: string, query?: ListQuery & { include_archived?: boolean }, signal?: AbortSignal): Promise<ListPage<Project>> {
     const params: Record<string, string | number | boolean | undefined> = { ...query }
     if (status) params['status'] = status
     return this.get<ListPage<Project>>('/projects', params, signal)
+  }
+
+  async parentFacets(kind: 'project' | 'epic' | 'sprint', query: Pick<ParentQuery, 'status' | 'search' | 'project_id' | 'include_archived'>, rollupIds: string[], signal?: AbortSignal): Promise<ParentFacetResult> {
+    return this.get<ParentFacetResult>(`/${kind}s/facets`, { ...query, dimensions: kind === 'epic' ? 'status,priority' : 'status', rollup_ids: rollupIds.join(',') }, signal)
   }
 
   async getProject(id: string): Promise<Project> {
