@@ -28,7 +28,7 @@ import {
   type OpsFilters,
 } from '@/lib/ops-filters-storage'
 import { FolderTree } from 'lucide-react'
-import type { Epic, FeatureFlags, Project, Sprint, Tag, TaskFilter, TaskSummary, TaskStatus } from '@/lib/types'
+import type { Epic, FeatureFlags, Project, Sprint, Tag, TagColor, TaskFilter, TaskSummary, TaskStatus } from '@/lib/types'
 
 const FILTER_PARAM_KEYS = ['status', 'priority', 'project_id', 'sprint_id', 'epic_id', 'tag', 'manual', 'eligible', 'sort_by', 'sort_dir'] as const
 
@@ -104,7 +104,23 @@ export default function BoardPage() {
   const [projects, setProjects] = useState<Project[]>([])
   const [sprints, setSprints] = useState<Sprint[]>([])
   const [epics, setEpics] = useState<Epic[]>([])
-  const [tags, setTags] = useState<Tag[]>([])
+  const [tagQuery, setTagQuery] = useState('')
+  const [serverTagQuery, setServerTagQuery] = useState('')
+  const [tagColor, setTagColor] = useState<TagColor | ''>('')
+  const [selectedTag, setSelectedTag] = useState<Tag | null>(null)
+  const scheduleTagQuery = useDebouncedCallback(() => setServerTagQuery(tagQuery), 300)
+  useEffect(() => { scheduleTagQuery() }, [tagQuery, scheduleTagQuery])
+  const tagPage = usePagedList({
+    params: { query: serverTagQuery || undefined, color: tagColor || undefined, limit: 50 },
+    fetchPage: ({ params, cursor, signal }) => api.listTags({ ...params, cursor }, signal),
+    getId: (tag: Tag) => tag.slug,
+  })
+  useEffect(() => {
+    if (!tagSlug) return
+    const abort = new AbortController()
+    void api.getTag(tagSlug).then(tag => { if (!abort.signal.aborted) setSelectedTag(tag) }).catch(() => {})
+    return () => abort.abort()
+  }, [api, tagSlug])
   const [flags, setFlags] = useState<FeatureFlags>({ projects: false, epics: false, sprints: false })
 
   // Create-modal state
@@ -234,18 +250,16 @@ export default function BoardPage() {
   // Fetch pickers on project changes
   const refreshPickers = useCallback(async () => {
     const gen = ++pickerGeneration.current
-    const [p, s, e, t] = await Promise.all([
+    const [p, s, e] = await Promise.all([
       api.listProjects(undefined, { limit: 50 }).catch(() => ({ items: [] as Project[] })),
       api.listSprints({ project_id: projectId ?? undefined, limit: 50 }).catch(() => ({ items: [] as Sprint[] })),
       api.listEpics({ project_id: projectId ?? undefined, limit: 50 }).catch(() => ({ items: [] as Epic[] })),
-      api.listTags().catch(() => ({ tags: [] as Tag[] })),
     ])
     if (gen !== pickerGeneration.current) return
     setPickerCursors({ projects: 'meta' in p ? p.meta.next_cursor : null, sprints: 'meta' in s ? s.meta.next_cursor : null, epics: 'meta' in e ? e.meta.next_cursor : null })
     setProjects(p.items)
     setSprints(s.items)
     setEpics(e.items)
-    setTags(t.tags)
   }, [api, projectId])
 
   useEffect(() => {
@@ -672,7 +686,11 @@ export default function BoardPage() {
         epicId={epicId}
         onEpicChange={(id) => handleGroupChange('epic_id', id)}
         onEpicCreate={() => setEpicCreateOpen(true)}
-        tags={tags}
+        tags={tagPage.items}
+        selectedTag={selectedTag?.slug === tagSlug ? selectedTag : null}
+        tagQuery={tagQuery} onTagQueryChange={setTagQuery} tagColor={tagColor} onTagColorChange={setTagColor}
+        onTagMore={tagPage.meta?.has_more ? () => void tagPage.loadMore() : undefined}
+        tagLoading={tagPage.loading} tagError={tagPage.error?.message} onTagRetry={() => void tagPage.reload()}
         tagSlug={tagSlug}
         onTagChange={(slug) => handleGroupChange('tag', slug)}
         onTagCreate={() => setTagCreateOpen(true)}
@@ -715,7 +733,7 @@ export default function BoardPage() {
         open={tagCreateOpen}
         onOpenChange={setTagCreateOpen}
         onCreated={(tag) => {
-          refreshPickers()
+          void tagPage.reload()
           handleGroupChange('tag', tag.slug)
         }}
       />

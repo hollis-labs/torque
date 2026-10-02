@@ -46,7 +46,7 @@ beforeEach(() => {
         meta: { returned: 50, limit: 50, has_more: true, next_cursor: `cursor-${start+50}` } }
     } else if (/\/tasks\/T-/.test(url.pathname)) body = { id: url.pathname.split('/').pop(), status: 'todo', kind: 'agent', manual: false, priority: 1, tags: [] }
     else if (/\/(projects|sprints|epics)$/.test(url.pathname)) body = { items: [], meta: { returned: 0, limit: 50, has_more: false, next_cursor: null } }
-    else if (url.pathname.endsWith('/tags')) body = { tags: [] }
+    else if (url.pathname.endsWith('/tags')) body = { items: [], meta: { returned: 0, limit: 50, has_more: false, next_cursor: null } }
     return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
   }))
 })
@@ -70,6 +70,30 @@ describe('Board server paging and cohorts', () => {
     fireEvent.click(screen.getByText('Sort title'))
     await waitFor(() => expect(taskQueries().at(-1)?.searchParams.get('sort_by')).toBe('title'))
     expect(taskQueries().at(-1)?.searchParams.has('cursor')).toBe(false)
+  })
+  it('searches tag pages on the server and preserves query and color when continuing', async () => {
+    const previous = globalThis.fetch
+    vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+      const url = new URL(input, 'http://test')
+      if (!url.pathname.endsWith('/tags')) return previous(input, init)
+      requests.push(url)
+      return new Response(JSON.stringify({ items: [{ slug: 'tag-result', name: 'Server tag', color: 'blue' }],
+        meta: { returned: 1, limit: 50, has_more: !url.searchParams.has('cursor'), next_cursor: url.searchParams.has('cursor') ? null : 'tag-next' } }),
+        { status: 200, headers: { 'content-type': 'application/json' } })
+    }))
+    mount()
+    await waitFor(() => expect(requests.filter(url => url.pathname.endsWith('/tags'))).toHaveLength(1))
+    fireEvent.click(screen.getByRole('button', { name: 'Filter by tag' }))
+    fireEvent.change(screen.getByLabelText('Search tags'), { target: { value: 'needle' } })
+    await waitFor(() => expect(requests.filter(url => url.pathname.endsWith('/tags')).at(-1)?.searchParams.get('query')).toBe('needle'))
+    fireEvent.change(screen.getByLabelText('Tag color'), { target: { value: 'blue' } })
+    await waitFor(() => expect(requests.filter(url => url.pathname.endsWith('/tags')).at(-1)?.searchParams.get('color')).toBe('blue'))
+    const before = requests.filter(url => url.pathname.endsWith('/tags')).length
+    fireEvent.click(screen.getByRole('button', { name: 'Load more tags' }))
+    await waitFor(() => expect(requests.filter(url => url.pathname.endsWith('/tags'))).toHaveLength(before + 1))
+    const query = requests.filter(url => url.pathname.endsWith('/tags')).at(-1)!.searchParams
+    expect(query.get('query')).toBe('needle'); expect(query.get('color')).toBe('blue'); expect(query.get('cursor')).toBe('tag-next')
+    expect(query.has('include_total')).toBe(false)
   })
   it('eligibility replaces working filters for both requests and restores them when disabled', async () => {
     mount('/operations?status=review&manual=manual&project_id=P1')

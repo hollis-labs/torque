@@ -29,7 +29,7 @@ type tagRecord struct {
 func (a *Adapter) registerTagTools() {
 	a.addTool(newTool("torque_tag_list",
 		withDescription(`List the global tag catalog, including tags currently linked to no tasks. This is catalog discovery only; scoped usage/counts live on torque_task_facets.
-Response shape: data = {items:[{slug,name,description,color,created_at,updated_at}], meta:{truncated,returned,limit,total,has_more,next_cursor,hint?}}. Default limit 50, max 200. Order is name COLLATE NOCASE ASC with slug ASC as the stable tiebreak, matching HTTP GET /tags default name ordering. query is a literal substring over slug/name/description; SQL wildcards are escaped and have no special meaning. color is an exact catalog color filter.
+Response shape: data = {items:[{slug,name,description,color,created_at,updated_at}], meta:{truncated,returned,limit,total?,has_more,next_cursor,hint?}}. Default limit 50, max 200. Order is name COLLATE NOCASE ASC with slug ASC as the stable tiebreak, matching HTTP GET /tags default name ordering. query is a literal substring over slug/name/description; SQL wildcards are escaped and have no special meaning. color is an exact catalog color filter.
 Continuation: pass meta.next_cursor back as cursor with the same query/color; the cursor is derived from the last tag actually emitted after the MCP byte cap.
 Errors: malformed limit/cursor or wrong argument types return error.code=arg_invalid with field set.
 Example: {"query":"api","limit":"50"}`),
@@ -37,6 +37,9 @@ Example: {"query":"api","limit":"50"}`),
 		withString("color", desc("Exact color filter: zinc|red|orange|amber|green|teal|blue|violet|pink")),
 		withString("limit", desc("Max results (integer, default 50, max 200)")),
 		withString("cursor", desc("Opaque cursor from meta.next_cursor; omit for the first page")),
+		withString("sort_by", desc("Fixed catalog sort: name")),
+		withString("sort_dir", desc("Fixed catalog direction: asc")),
+		withString("include_total", desc("Opt-in exact filtered catalog total; default false")),
 	), a.handleTagList)
 
 	a.addTool(newTool("torque_tag_get",
@@ -129,11 +132,14 @@ func tagLimitArg(req map[string]any) (int, error) {
 	if !present {
 		return defaultTagListLimit, nil
 	}
-	if limit <= 0 {
-		return 0, argError(ErrCodeArgInvalid, "limit must be greater than 0", "limit")
+	if limit < 0 {
+		return 0, argError(ErrCodeArgInvalid, "limit must be non-negative", "limit")
 	}
 	if limit > maxTagListLimit {
 		limit = maxTagListLimit
+	}
+	if limit == 0 {
+		limit = pagination.DefaultLimit
 	}
 	return limit, nil
 }
@@ -159,12 +165,27 @@ func (a *Adapter) handleTagList(ctx context.Context, req map[string]any) (any, e
 	if err != nil {
 		return errFromService(err)
 	}
+	includeTotal, err := reqTaskListBool(req, "include_total")
+	if err != nil {
+		return nil, argError(ErrCodeArgInvalid, err.Error(), "include_total")
+	}
+	sortBy, err := tagArg(req, "sort_by", false)
+	if err != nil {
+		return nil, err
+	}
+	sortDir, err := tagArg(req, "sort_dir", false)
+	if err != nil {
+		return nil, err
+	}
 	result, err := a.svc.Tag.ListPage(service.TagListInput{
-		Query:     query,
-		Color:     color,
-		Limit:     limit,
-		AfterName: afterName,
-		AfterSlug: afterSlug,
+		IncludeTotal: includeTotal,
+		SortBy:       sortBy,
+		SortDir:      sortDir,
+		Query:        query,
+		Color:        color,
+		Limit:        limit,
+		AfterName:    afterName,
+		AfterSlug:    afterSlug,
 	})
 	if err != nil {
 		return errFromService(err)
@@ -173,7 +194,11 @@ func (a *Adapter) handleTagList(ctx context.Context, req map[string]any) (any, e
 	for _, t := range result.Tags {
 		items = append(items, toTagRecord(t))
 	}
-	return cappedCursorJSONResultWithTotal(items, result.Limit, &result.Total, service.TagListSortBy, service.TagListSortDir, result.HasMoreFromQuery, func(i int) (string, string) {
+	var total *int
+	if includeTotal {
+		total = &result.Total
+	}
+	return cappedCursorJSONResultWithTotal(items, result.Limit, total, service.TagListSortBy, service.TagListSortDir, result.HasMoreFromQuery, func(i int) (string, string) {
 		return result.Tags[i].Name, result.Tags[i].Slug
 	})
 }

@@ -41,12 +41,10 @@ free-text messages; `field` is set when a single input field is at fault
 
 ### List envelope and pagination
 
-The shared [API pagination contract](api-pagination.md) defines the S1 target
-for HTTP and MCP: cursor defaults, universal 50/200 page sizes, opt-in totals,
-clean-break envelopes, and the [current/target endpoint matrix](api-pagination.md#endpoint-capability-matrix).
-The adjacent entity section below reflects CW-20261001-0563. Other families
-still require S1 reconciliation; their current descriptions do not override
-the target. See also the
+The shared [API pagination contract](api-pagination.md) describes implemented
+HTTP/MCP cursor defaults, universal 50/200 page sizes, opt-in totals, clean-break
+envelopes, and the [endpoint matrix](api-pagination.md#endpoint-capability-matrix).
+Remaining families use the same service queries and metadata policy. See also the
 [sort allow-lists](api-pagination.md#sort-allow-lists-and-defaults) and
 [counts, facets, and exports](api-pagination.md#counts-facets-and-exports).
 
@@ -69,12 +67,14 @@ stores the whole checklist as JSON, so paging bounds responses rather than
 avoiding that parent read. Concurrent checklist insertions/deletions can shift
 positions between calls, just as concurrent writes can shift offset pages.
 
-**Pending CW-20261001-0565 integration:** Sessions/session checkpoints,
-Artifacts, Collections/collection tasks/inbox, Plan children, Checkpoints/pending
-checkpoints, Templates, Models, and message read lists. Their older byte-only
-adapters do not yet satisfy the cursor contract. The MCP contract test table
-names those families as pending instead of claiming they are converted. Broker
-inbox/poll drain operations remain actions, with delivery semantics.
+Sessions/session checkpoints, artifacts, collections and scoped tasks/inbox,
+plan children, task/pending checkpoints, templates, and models also return
+cursor pages under the same 50/200 policy. Their nested scopes and original
+record projections are retained. The integrated behavioral table checks their
+cursor metadata, clamp, and emitted count. No pure-read MCP message thread tool
+is registered; broker inbox/poll operations remain actions with delivery
+semantics. HTTP message threads and inbox drains have distinct traversal rules
+[documented in the API contract](api-pagination.md#endpoint-capability-matrix).
 
 The ~100KB response cap is orthogonal to the row limit. `truncated=true` means
 the cap trimmed the page itself, and also sets `has_more=true`. The cursor is
@@ -219,7 +219,7 @@ Tag records use HTTP-aligned snake_case fields:
 `slug`, `name`, `description`, `color`, `created_at`, `updated_at`. `slug`
 is lookup identity; `name` is mutable display text.
 
-`torque_tag_list` response shape:
+`torque_tag_list` response shape with `include_total=true`:
 
 ```json
 {
@@ -228,14 +228,16 @@ is lookup identity; `name` is mutable display text.
 }
 ```
 
-Default limit is 50 and max is 200. Explicit `limit<=0`, fractional strings,
-and overflows return `arg_invalid`; native JSON numbers are accepted only when
+Default limit is 50 and max is 200; zero selects the default. Explicit negative
+limits, fractional strings, and overflows return `arg_invalid`; native JSON numbers are accepted only when
 integral. Ordering is `name COLLATE NOCASE ASC, slug ASC`, matching HTTP
 `GET /api/v1/tags` default ordering and the cursor predicate. `query` is a
 literal substring over slug/name/description with `%`, `_`, and backslash
 escaped; `color` is exact equality. `meta.next_cursor` is derived from the last
 tag actually emitted after the MCP 100KB response cap, so byte-cap trimming
-does not skip catalog rows.
+does not skip catalog rows. `include_total` defaults to false; only true adds
+the exact filtered catalog count before cursor/limit. The fixed allow-list is
+`sort_by=name`, `sort_dir=asc`; other sorts reject.
 
 `torque_task_list` sort: `sort_by` ∈ `priority\|status\|updated_at\|created_at\|title`,
 default `priority asc` (tiebreak `id asc`). HTTP `GET /api/v1/tasks` uses the
@@ -542,7 +544,7 @@ since they're Task rows. Source: `internal/mcpadapter/subtodo_tools.go`.
 
 | Tool | Purpose |
 |---|---|
-| `torque_task_subtodo_list` | List a task's checklist. |
+| `torque_task_subtodo_list` | Cursor page of a task's checklist, default 50/max 200, position asc/desc, opt-in exact `include_total`; brief/verbose projection retained. |
 | `torque_task_subtodo_add` | Append one item; `id` is optional (server auto-generates when omitted — supply a slug like `"check-auth-flow"` to keep it deterministic). |
 | `torque_task_subtodo_bulk_add` | Seed a whole checklist in one call. Response keys `succeeded`/`failed` on the *resolved* id (caller-supplied or generated), not an input echo — a failed item without an assigned id is keyed by positional placeholder (`"item[1]"`). |
 | `torque_task_subtodo_done` | Mark an item done with an `evidence` string (artifact id, commit SHA, URL, note). |
