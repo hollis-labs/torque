@@ -28,7 +28,7 @@ never opts into fetching everything.
 | `limit` | Default **50**, maximum effective **200**, for every list/search on HTTP and MCP. No per-resource exceptions. Oversized positive values clamp to 200. Zero selects the default. Explicit malformed, fractional, overflow or negative values reject; omit to select the default. |
 | `cursor` | Opaque continuation from `meta.next_cursor`; omit on the first request. Cursor pagination is the default. |
 | `sort_by` | One field from the resource's allow-list below. Unknown fields reject. |
-| `sort_dir` | `asc` or `desc`; omit for the resource default. |
+| `sort_dir` | A supported direction (`asc` or `desc`); fixed-order resources are noted below. Omit for the resource default. |
 | `offset` | Non-negative integer, only for a supported jump-to-page UI. Do not use it for ordinary traversal. Availability must be documented per endpoint; it is not an automatic requirement for every resource. |
 | `include_total` | Boolean, default false; true requests the exact whole-cohort count. |
 | Resource filters/query | Applied before sorting and paging, shared between transports. Preserve required path scopes. Unsupported or malformed explicit values reject rather than silently widening the query. |
@@ -359,8 +359,10 @@ same message ID. Whole-cohort `total` is exact for one store; when multiple
 stores participate, `include_total=true` is safe but the response omits
 `total` and adds `meta.total_unavailable="federated"`. It never sums overlapping
 peer counts. Positive offset with multiple stores returns a 400 error naming
-`offset` and advising use of cursor; offset zero and cursor mode remain valid.
-Single-store threads support offset/next_offset. Peer HTTP thread reads use the
+`offset` and advising use of cursor; offset zero without a cursor and cursor
+mode without an offset remain valid. Thread requests reject any cursor plus
+explicit offset combination, including zero. Single-store threads support
+offset/next_offset. Peer HTTP thread reads use the
 same bounded envelope; peers without paging support fail explicitly rather
 than triggering an unbounded history fetch. Federation authorizes thread
 participation through an EXISTS query before any paged data or count is sent.
