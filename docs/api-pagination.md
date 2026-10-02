@@ -294,8 +294,8 @@ plus the parent `task_rollups` or run `totals` described above. `bucket_limit`
 defaults to 50, clamps above 200, and rejects negatives; zero uses the default.
 MCP may trim buckets or whole parent groups to its response byte budget,
 updating `returned`/`truncated` while preserving exact counts and totals.
-These routes require no list fetch to obtain cohort counts or rollups. GUI
-consumer migration is verified separately before the final reconciliation.
+These routes require no list fetch to obtain cohort counts or rollups. The
+Dashboard and Board request aggregate cohorts separately from their loaded rows.
 
 All aggregates count the whole matching cohort and reject row `limit`, `offset`,
 `cursor`, `sort_by`, and `sort_dir`. Facets apply all active filters, including
@@ -476,18 +476,20 @@ alongside `q`. Both use a limit+1 probe for `has_more` and only count when
 and task-list MCP pages, including mode-specific offset fields.
 
 The former flat task body (`tasks`, top-level count/paging/sort/continuation)
-and unpaged search body are removed. The Torque GUI keeps its existing internal
-`{tasks,total}` adapter by decoding `items/meta` and explicitly requesting totals.
-Its existing traversal behavior is retained for CW-0571/CW-0572 to replace.
-Tachyon work-ops CW-0630 and Tangent CW-0631 own cross-project adapters; no live
-deploy before those consumers land.
+and unpaged search body are removed. The Torque GUI decodes `ListPage` and
+loads one page per request, with explicit continuation. Board totals come from
+facets, and Dashboard task totals come from aggregates; page length is not a
+cohort count. Tachyon work-ops and Tangent have separate cross-project adapters.
+Merge state does not establish deployment state.
 
 ### Remaining-family reconciliation (CW-20261001-0565)
 
-The rows marked CW-0565 describe authored HTTP, service/store, MCP and GUI
+The remaining-family rows describe authored HTTP, service/store, MCP and GUI
 implementations. The old named arrays and raw list shapes are removed. GUI
-callers consume one page and retain the current record projections; full
-paging/picker UX remains later work, and no live deployment is included.
+callers consume one page per request and retain record projections. Resource
+pages expose continuation; widgets and activity timelines label their loaded
+rows. Messaging keeps delivery batches separate from paged thread history.
+No live deployment is included.
 SQL list/count filters share the same predicates. Cursor keys are non-null:
 required strings/timestamps keep their existing values; the only nullable sort
 key, collection position, uses max int64 as the sentinel described above.
