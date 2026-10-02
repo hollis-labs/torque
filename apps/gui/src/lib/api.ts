@@ -53,6 +53,8 @@ export interface RunQuery {
   include_total?: boolean
 }
 
+export type CollectionTaskQuery = ListQuery & { status?: Task['status'] }
+
 export type RunPage = ListPage<Run>
 
 export interface AggregateFacet {
@@ -872,7 +874,7 @@ export class TorqueApiClient {
     return this.post<Collection>(`/collections/${id}/unarchive`)
   }
 
-  async listCollectionTasks(collectionId: string, query?: ListQuery, signal?: AbortSignal): Promise<ListPage<Task>> {
+  async listCollectionTasks(collectionId: string, query?: CollectionTaskQuery, signal?: AbortSignal): Promise<ListPage<Task>> {
     return this.get<ListPage<Task>>(`/collections/${collectionId}/tasks`, { ...query }, signal)
   }
 
@@ -915,7 +917,7 @@ export class TorqueApiClient {
     return this.post<void>('/collections/tasks/move', body)
   }
 
-  async listInboxTasks(query?: ListQuery, signal?: AbortSignal): Promise<ListPage<Task>> {
+  async listInboxTasks(query?: CollectionTaskQuery, signal?: AbortSignal): Promise<ListPage<Task>> {
     return this.get<ListPage<Task>>('/collections/inbox/tasks', { ...query }, signal)
   }
 

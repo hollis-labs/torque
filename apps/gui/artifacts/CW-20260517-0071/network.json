@@ -1,0 +1,5672 @@
+{
+  "fixture_sizes": {
+    "collections": 75,
+    "main_tasks": 301,
+    "clear_tasks": 8
+  },
+  "requests": [
+    {
+      "path": "/collections/inbox/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections",
+      "query": {
+        "search": "",
+        "sort_by": "created_at",
+        "sort_dir": "asc",
+        "include_total": "true",
+        "status": "active"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/events",
+      "query": {},
+      "method": "GET"
+    },
+    {
+      "path": "/events",
+      "query": {},
+      "method": "GET"
+    },
+    {
+      "path": "/collections/inbox/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-1/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-2/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-3/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-4/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-5/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-6/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-7/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-8/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-9/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-10/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-11/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-12/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-13/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-14/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-15/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-16/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-17/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-18/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-19/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-20/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-21/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-22/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-23/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-24/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-25/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-26/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-27/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-28/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-29/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-30/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-31/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-32/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-33/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-34/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-35/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-36/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-37/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-38/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-39/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-40/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-41/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-42/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-43/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-44/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-45/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-46/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-47/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-48/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-49/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-50/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/inbox/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-1/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-2/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-3/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-4/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-5/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-6/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-7/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-8/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-9/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-10/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-11/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-12/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-13/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-14/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-15/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-16/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-17/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-18/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-19/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-20/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-21/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-22/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-23/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-24/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-25/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-26/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-27/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-28/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-29/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-30/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-31/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-32/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-33/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-34/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-35/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-36/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-37/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-38/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-39/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-40/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-41/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-42/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-43/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-44/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-45/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-46/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-47/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-48/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-49/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-50/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/inbox/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-1/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-2/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-3/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-4/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-5/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-6/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-7/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-8/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-9/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-10/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-11/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-12/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-13/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-14/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-15/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-16/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-17/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-18/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-19/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-20/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-21/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-22/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-23/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-24/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-25/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-26/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-27/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-28/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-29/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-30/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-31/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-32/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-33/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-34/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-35/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-36/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-37/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-38/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-39/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-40/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-41/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-42/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-43/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-44/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-45/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-46/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-47/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-48/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-49/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-50/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/events",
+      "query": {},
+      "method": "GET"
+    },
+    {
+      "path": "/events",
+      "query": {},
+      "method": "GET"
+    },
+    {
+      "path": "/collections/inbox/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-1/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-2/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-3/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-4/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-5/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-6/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-7/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-8/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-9/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-10/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-11/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-12/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-13/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-14/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-15/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-16/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-17/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-18/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-19/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-20/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-21/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-22/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-23/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-24/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-25/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-26/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-27/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-28/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-29/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-30/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-31/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-32/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-33/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-34/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-35/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-36/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-37/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-38/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-39/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-40/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-41/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-42/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-43/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-44/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-45/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-46/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-47/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-48/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-49/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-50/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc",
+        "status": "doing"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/events",
+      "query": {},
+      "method": "GET"
+    },
+    {
+      "path": "/events",
+      "query": {},
+      "method": "GET"
+    },
+    {
+      "path": "/collections/inbox/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-1/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-2/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-3/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-4/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-5/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-6/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-7/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-8/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-9/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-10/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-11/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-12/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-13/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-14/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-15/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-16/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-17/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-18/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-19/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-20/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-21/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-22/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-23/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-24/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-25/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-26/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-27/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-28/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-29/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-30/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-31/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-32/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-33/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-34/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-35/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-36/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-37/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-38/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-39/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-40/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-41/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-42/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-43/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-44/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-45/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-46/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-47/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-48/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-49/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-50/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "300",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/inbox/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-1/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-2/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-3/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-4/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-5/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-6/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-7/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-8/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-9/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-10/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-11/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-12/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-13/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-14/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-15/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-16/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-17/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-18/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-19/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-20/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-21/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-22/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-23/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-24/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-25/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-26/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-27/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-28/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-29/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-30/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-31/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-32/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-33/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-34/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-35/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-36/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-37/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-38/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-39/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-40/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-41/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-42/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-43/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-44/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-45/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-46/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-47/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-48/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-49/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-50/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/events",
+      "query": {},
+      "method": "GET"
+    },
+    {
+      "path": "/events",
+      "query": {},
+      "method": "GET"
+    },
+    {
+      "path": "/tasks/T-0/transition",
+      "query": {},
+      "method": "POST"
+    },
+    {
+      "path": "/tasks/T-1/transition",
+      "query": {},
+      "method": "POST"
+    },
+    {
+      "path": "/collections",
+      "query": {
+        "search": "",
+        "sort_by": "created_at",
+        "sort_dir": "asc",
+        "include_total": "true",
+        "status": "active"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/inbox/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-1/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-2/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-3/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-4/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-5/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-6/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-7/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-8/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-9/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-10/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-11/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-12/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-13/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-14/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-15/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-16/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-17/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-18/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-19/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-20/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-21/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-22/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-23/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-24/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-25/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-26/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-27/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-28/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-29/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-30/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-31/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-32/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-33/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-34/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-35/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-36/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-37/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-38/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-39/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-40/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-41/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-42/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-43/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-44/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-45/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-46/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-47/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-48/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-49/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-50/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/inbox/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-1/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-2/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-3/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-4/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-5/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-6/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-7/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-8/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-9/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-10/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-11/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-12/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-13/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-14/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-15/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-16/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-17/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-18/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-19/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-20/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-21/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-22/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-23/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-24/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-25/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-26/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-27/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-28/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-29/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-30/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-31/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-32/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-33/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-34/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-35/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-36/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-37/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-38/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-39/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-40/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-41/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-42/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-43/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-44/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-45/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-46/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-47/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-48/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-49/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-50/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/events",
+      "query": {},
+      "method": "GET"
+    },
+    {
+      "path": "/events",
+      "query": {},
+      "method": "GET"
+    },
+    {
+      "path": "/events",
+      "query": {},
+      "method": "GET"
+    },
+    {
+      "path": "/events",
+      "query": {},
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-2/tasks/B-0",
+      "query": {},
+      "method": "DELETE"
+    },
+    {
+      "path": "/collections/COL-2/tasks/B-1",
+      "query": {},
+      "method": "DELETE"
+    },
+    {
+      "path": "/collections/COL-2/tasks/B-2",
+      "query": {},
+      "method": "DELETE"
+    },
+    {
+      "path": "/collections/COL-2/tasks/B-3",
+      "query": {},
+      "method": "DELETE"
+    },
+    {
+      "path": "/collections",
+      "query": {
+        "search": "",
+        "sort_by": "created_at",
+        "sort_dir": "asc",
+        "include_total": "true",
+        "status": "active"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/inbox/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-1/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-2/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-3/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-4/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-5/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-6/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-7/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-8/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-9/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-10/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-11/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-12/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-13/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-14/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-15/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-16/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-17/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-18/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-19/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-20/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-21/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-22/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-23/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-24/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-25/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-26/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-27/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-28/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-29/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-30/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-31/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-32/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-33/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-34/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-35/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-36/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-37/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-38/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-39/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-40/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-41/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-42/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-43/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-44/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-45/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-46/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-47/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-48/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-49/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-50/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/inbox/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-1/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-2/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-3/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-4/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-5/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-6/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-7/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-8/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-9/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-10/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-11/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-12/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-13/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-14/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-15/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-16/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-17/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-18/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-19/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-20/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-21/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-22/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-23/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-24/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-25/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-26/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-27/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-28/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-29/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-30/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-31/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-32/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-33/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-34/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-35/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-36/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-37/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-38/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-39/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-40/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-41/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-42/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-43/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-44/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-45/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-46/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-47/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-48/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-49/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-50/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/events",
+      "query": {},
+      "method": "GET"
+    },
+    {
+      "path": "/events",
+      "query": {},
+      "method": "GET"
+    },
+    {
+      "path": "/collections",
+      "query": {
+        "search": "Collection 2",
+        "sort_by": "created_at",
+        "sort_dir": "asc",
+        "include_total": "true",
+        "status": "active"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/inbox/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-2/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-20/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-21/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-22/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-23/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-24/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-25/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-26/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-27/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-28/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-29/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/inbox/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-2/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-20/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-21/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-22/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-23/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-24/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-25/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-26/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-27/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-28/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-29/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-2/tasks/order",
+      "query": {},
+      "method": "PUT"
+    },
+    {
+      "path": "/events",
+      "query": {},
+      "method": "GET"
+    },
+    {
+      "path": "/events",
+      "query": {},
+      "method": "GET"
+    },
+    {
+      "path": "/collections",
+      "query": {
+        "search": "Collection 70",
+        "sort_by": "created_at",
+        "sort_dir": "asc",
+        "include_total": "true",
+        "status": "active"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/inbox/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-70/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/inbox/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    },
+    {
+      "path": "/collections/COL-70/tasks",
+      "query": {
+        "include_total": "true",
+        "search": "",
+        "sort_by": "position",
+        "sort_dir": "asc"
+      },
+      "method": "GET"
+    }
+  ],
+  "errors": []
+}

@@ -1,4 +1,4 @@
-import { forwardRef, type CSSProperties, type HTMLAttributes } from 'react'
+import { forwardRef, type CSSProperties, type ReactNode, type HTMLAttributes } from 'react'
 import { GripVertical } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useSortable } from '@dnd-kit/sortable'
@@ -10,8 +10,7 @@ import type { Task } from '@/lib/types'
 
 /**
  * Lean read-only row for the Collections page. Intentionally narrower
- * than `TaskRow` from the BoardPage — no sort, no select, no actions
- * menu. Drag handle on the left, copyable ID, title (clickable to
+ * than `TaskRow` from the BoardPage — no column sorting. Optional selection and action slots stay owned by the page. Drag handle on the left, copyable ID, title (clickable to
  * detail page), status, priority.
  *
  * Drag-and-drop is wired via `@dnd-kit/sortable`. The row participates
@@ -25,6 +24,9 @@ interface CollectionTaskRowProps {
   /** Render as the drag overlay clone — no useSortable wiring, just
    * static visuals. The parent's `<DragOverlay>` passes this. */
   asOverlay?: boolean
+  leading?: ReactNode
+  trailing?: ReactNode
+  draggable?: boolean
 }
 
 /**
@@ -37,11 +39,13 @@ const StaticRowMarkup = forwardRef<
   HTMLTableRowElement,
   HTMLAttributes<HTMLTableRowElement> & {
     task: Task
+    leading?: ReactNode
+    trailing?: ReactNode
     listeners?: DraggableSyntheticListeners
     isDragging?: boolean
     isOverlay?: boolean
   }
->(function StaticRowMarkup({ task, listeners, isDragging, isOverlay, className, ...rest }, ref) {
+>(function StaticRowMarkup({ task, leading, trailing, listeners, isDragging, isOverlay, className, ...rest }, ref) {
   const baseClass = 'bg-zinc-950 hover:bg-zinc-900/35'
   // dnd-kit fades the source row to 0 opacity while a DragOverlay
   // renders the clone. Without this the user sees TWO rows during
@@ -65,6 +69,7 @@ const StaticRowMarkup = forwardRef<
       >
         <GripVertical className="h-3.5 w-3.5" aria-hidden="true" />
       </td>
+      {leading && <td className="w-8 py-2">{leading}</td>}
       <td className="w-px whitespace-nowrap py-2 pr-2 align-middle">
         <CopyableId id={task.id} />
       </td>
@@ -82,11 +87,12 @@ const StaticRowMarkup = forwardRef<
       <td className="w-px whitespace-nowrap py-2 pr-3 align-middle">
         <PriorityBadge priority={task.priority} />
       </td>
+      {trailing && <td className="w-8 py-2 pr-3">{trailing}</td>}
     </tr>
   )
 })
 
-export function CollectionTaskRow({ task, asOverlay = false }: CollectionTaskRowProps) {
+export function CollectionTaskRow({ task, asOverlay = false, ...controls }: CollectionTaskRowProps) {
   // The DragOverlay clone is rendered outside the SortableContext, so
   // useSortable() must be skipped — it would either error or attach
   // listeners that conflict with the live row's.
@@ -94,10 +100,10 @@ export function CollectionTaskRow({ task, asOverlay = false }: CollectionTaskRow
     return <StaticRowMarkup task={task} isOverlay />
   }
 
-  return <SortableRow task={task} />
+  return <SortableRow task={task} {...controls} />
 }
 
-function SortableRow({ task }: { task: Task }) {
+function SortableRow({ task, leading, trailing, draggable = true }: CollectionTaskRowProps) {
   const {
     attributes,
     listeners,
@@ -105,7 +111,7 @@ function SortableRow({ task }: { task: Task }) {
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: task.id })
+  } = useSortable({ id: task.id, disabled: !draggable })
 
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -117,6 +123,8 @@ function SortableRow({ task }: { task: Task }) {
       ref={setNodeRef}
       style={style}
       task={task}
+      leading={leading}
+      trailing={trailing}
       listeners={listeners}
       isDragging={isDragging}
       // Spreading attributes on the <tr> gives dnd-kit the aria-roledescription
