@@ -32,9 +32,9 @@ type PerRunOptions struct {
 	KeepDays int
 }
 
-// FindRepoRoot walks up from start looking for a .git directory or file
-// (file form covers worktrees themselves) and returns the absolute path of
-// the directory that contains it. Returns an error if no .git is found.
+// FindRepoRoot walks up from start looking for a .git directory with HEAD
+// or a gitdir pointer file resolving to such a directory (worktrees/submodules).
+// It returns the absolute repository root, or an error if none is found.
 func FindRepoRoot(start string) (string, error) {
 	abs, err := filepath.Abs(start)
 	if err != nil {
@@ -42,7 +42,7 @@ func FindRepoRoot(start string) (string, error) {
 	}
 	cur := abs
 	for {
-		if _, err := os.Stat(filepath.Join(cur, ".git")); err == nil {
+		if isRepoGitEntry(filepath.Join(cur, ".git")) {
 			return cur, nil
 		}
 		parent := filepath.Dir(cur)
@@ -51,6 +51,38 @@ func FindRepoRoot(start string) (string, error) {
 		}
 		cur = parent
 	}
+}
+
+// isRepoGitEntry checks repository markers without invoking git or accepting
+// an arbitrary .git entry. Relative gitdir pointers are relative to the file.
+func isRepoGitEntry(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	gitDir := path
+	if !info.IsDir() {
+		if !info.Mode().IsRegular() {
+			return false
+		}
+		data, err := os.ReadFile(path)
+		if err != nil || !strings.HasPrefix(string(data), "gitdir: ") {
+			return false
+		}
+		gitDir = strings.TrimSpace(strings.TrimPrefix(string(data), "gitdir: "))
+		if gitDir == "" {
+			return false
+		}
+		if !filepath.IsAbs(gitDir) {
+			gitDir = filepath.Join(filepath.Dir(path), gitDir)
+		}
+		info, err = os.Stat(gitDir)
+		if err != nil || !info.IsDir() {
+			return false
+		}
+	}
+	head, err := os.Stat(filepath.Join(gitDir, "HEAD"))
+	return err == nil && head.Mode().IsRegular()
 }
 
 // PerRunPath computes the absolute path of the per-run worktree for the given
