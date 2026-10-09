@@ -118,19 +118,13 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	// regardless because it's a no-op for untraced contexts and harmless when
 	// OTel is off.
 	if os.Getenv("HOLLIS_OTEL_DISABLED") != "1" && os.Getenv("TORQUE_OTEL_DISABLED") != "1" {
-		otelCtx := context.Background()
-		shutdown, otelErr := feotel.Init(
-			otelCtx,
+		defer feotel.InitOrWarn(
+			context.Background(), log.Printf, 5*time.Second,
 			feotel.WithServiceName("torque"),
 			feotel.WithServiceVersion(version),
 			feotel.WithServiceNamespace("hollis"),
 			feotel.WithEnvironment(torqueEnvironment()),
-		)
-		if otelErr != nil {
-			log.Printf("warning: OTel init failed: %v", otelErr)
-		} else {
-			defer func() { _ = shutdown(otelCtx) }()
-		}
+		)()
 	}
 	slog.SetDefault(slog.New(feotel.NewLogHandler(slog.NewTextHandler(os.Stderr, nil))))
 
