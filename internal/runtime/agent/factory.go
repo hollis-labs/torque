@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
-	"github.com/hollis-labs/agentkit/agentsessions"
-	"github.com/hollis-labs/go-agent-wrapper/adapters"
-	"github.com/hollis-labs/go-agent-wrapper/launch"
-	"github.com/hollis-labs/go-providers/provider"
-	"github.com/hollis-labs/go-providers/registry"
+	"github.com/hollis-labs/substrate/harness/adapters"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/substrate/harness/adapters/launch"
+	"github.com/hollis-labs/substrate/harness/adapters/provider"
+	"github.com/hollis-labs/substrate/harness/adapters/registry"
+	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
 
 	"github.com/hollis-labs/torque/internal/config"
 )

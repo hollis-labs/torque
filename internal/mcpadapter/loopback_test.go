@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	gomcp "github.com/hollis-labs/go-mcp/server"
+	gomcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
 	"github.com/hollis-labs/torque/internal/mcpadapter"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"

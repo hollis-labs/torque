@@ -14,7 +14,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
+	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
 )
 
 // ErrUnknown is returned for a token that is neither a runtimes.Mode nor a

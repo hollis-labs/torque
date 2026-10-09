@@ -70,7 +70,7 @@ type ErrorInfo struct {
 }
 
 // mcpToolError adapts Torque's {ok,data,error} envelope to go-mcp's
-// budget.StructuredError contract (github.com/hollis-labs/go-mcp/budget,
+// budget.StructuredError contract (github.com/hollis-labs/libs/plugin-mcp/go-mcp/budget,
 // added in v0.4.2 for exactly this shape of caller) so a failed call still
 // trips CallToolResult.IsError at the protocol framing level while keeping
 // the full {ok,data,error} envelope -- Torque's own domain-error meaning,

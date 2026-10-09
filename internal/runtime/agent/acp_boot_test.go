@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hollis-labs/go-agent-wrapper/acp"
+	"github.com/hollis-labs/substrate/harness/adapters/acp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 

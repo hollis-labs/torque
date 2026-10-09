@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	runtimeevents "github.com/hollis-labs/go-runtime-events/runtimeevents"
+	runtimeevents "github.com/hollis-labs/substrate/harness/adapters/runtimeevents"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

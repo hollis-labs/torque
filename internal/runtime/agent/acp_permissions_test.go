@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hollis-labs/go-agent-wrapper/acp"
-	gopermission "github.com/hollis-labs/go-permission"
+	"github.com/hollis-labs/substrate/harness/adapters/acp"
+	gopermission "github.com/hollis-labs/substrate/harness/interception/permission"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 

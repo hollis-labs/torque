@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"log"
 
-	"github.com/hollis-labs/agentkit/agentruntime/turn"
-	"github.com/hollis-labs/agentkit/agentsessions"
-	gopermission "github.com/hollis-labs/go-permission"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/substrate/harness/adapters/turn"
+	gopermission "github.com/hollis-labs/substrate/harness/interception/permission"
 
 	"github.com/hollis-labs/torque/internal/config"
 )

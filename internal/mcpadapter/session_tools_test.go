@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/agentkit/agentsessions"
-	gomcp "github.com/hollis-labs/go-mcp/server"
+	gomcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"

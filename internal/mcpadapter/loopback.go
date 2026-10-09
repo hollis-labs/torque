@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	gomcp "github.com/hollis-labs/go-mcp/server"
+	gomcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
 	"github.com/hollis-labs/torque/internal/hitl"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"

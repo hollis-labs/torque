@@ -9,10 +9,10 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/hollis-labs/agentkit/agentsessions"
-	llmtypes "github.com/hollis-labs/go-llm-types"
-	"github.com/hollis-labs/go-providers/provider"
-	"github.com/hollis-labs/go-providers/provider/events"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/substrate/harness/adapters/provider"
+	"github.com/hollis-labs/substrate/harness/adapters/provider/events"
+	llmtypes "github.com/hollis-labs/substrate/llm-core/llmtypes"
 )
 
 // fakeRuntimeConfig parametrizes the fakeRuntime constructor. PTY toggles

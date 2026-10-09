@@ -7,8 +7,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	llmtypes "github.com/hollis-labs/go-llm-types"
-	runtimeevents "github.com/hollis-labs/go-runtime-events/runtimeevents"
+	runtimeevents "github.com/hollis-labs/substrate/harness/adapters/runtimeevents"
+	llmtypes "github.com/hollis-labs/substrate/llm-core/llmtypes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 

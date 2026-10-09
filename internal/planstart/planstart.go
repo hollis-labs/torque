@@ -23,8 +23,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/hollis-labs/go-providers/provider"
 	feotel "github.com/hollis-labs/libs/util/otel"
+	"github.com/hollis-labs/substrate/harness/adapters/provider"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/hollis-labs/torque/internal/orchestrator"

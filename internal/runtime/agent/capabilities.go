@@ -3,9 +3,9 @@ package agent
 import (
 	"slices"
 
-	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
-	"github.com/hollis-labs/go-agent-wrapper/launch"
-	"github.com/hollis-labs/go-providers/registry"
+	"github.com/hollis-labs/substrate/harness/adapters/launch"
+	"github.com/hollis-labs/substrate/harness/adapters/registry"
+	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
 
 	"github.com/hollis-labs/torque/internal/runtime/executor"
 )

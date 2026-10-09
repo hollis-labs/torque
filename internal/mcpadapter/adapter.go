@@ -10,8 +10,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/hollis-labs/go-mcp/sanitize"
-	gomcp "github.com/hollis-labs/go-mcp/server"
+	"github.com/hollis-labs/libs/plugin-mcp/go-mcp/sanitize"
+	gomcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
 	feotel "github.com/hollis-labs/libs/util/otel"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"

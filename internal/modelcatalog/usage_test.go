@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/hollis-labs/go-modelsdev/modelsdev"
+	"github.com/hollis-labs/substrate/llm-core/modelsdev"
 	"github.com/hollis-labs/torque/internal/modelcatalog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

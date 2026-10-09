@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/go-modelsdev/modelsdev"
+	"github.com/hollis-labs/substrate/llm-core/modelsdev"
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/modelcatalog"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"

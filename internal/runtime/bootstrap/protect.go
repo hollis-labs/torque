@@ -10,7 +10,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/hollis-labs/go-sandbox/sandbox"
+	"github.com/hollis-labs/substrate/harness/sandbox"
 
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/orchestrator"

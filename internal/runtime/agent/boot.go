@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -14,23 +15,22 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
-	"github.com/hollis-labs/agentkit/agentlaunch"
-	"github.com/hollis-labs/agentkit/agentlaunch/launcher"
-	"github.com/hollis-labs/agentkit/agentlaunch/providerplant"
-	"github.com/hollis-labs/agentkit/agentlaunch/sessionshim"
-	runtimebootdir "github.com/hollis-labs/agentkit/agentruntime/bootdir"
-	"github.com/hollis-labs/agentkit/agentruntime/sessionkit"
-	"github.com/hollis-labs/agentkit/agentruntime/turn"
-	"github.com/hollis-labs/agentkit/agentsessions"
-	"github.com/hollis-labs/go-agent-wrapper/activity"
-	"github.com/hollis-labs/go-agent-wrapper/adapters"
-	"github.com/hollis-labs/go-agent-wrapper/wrapper"
-	llmtypes "github.com/hollis-labs/go-llm-types"
-	"github.com/hollis-labs/go-providers/provider"
-	"github.com/hollis-labs/go-sandbox/sandbox"
 	feotel "github.com/hollis-labs/libs/util/otel"
+	"github.com/hollis-labs/substrate/harness/adapters"
+	"github.com/hollis-labs/substrate/harness/adapters/activity"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/substrate/harness/adapters/provider"
+	"github.com/hollis-labs/substrate/harness/adapters/sessionkit"
+	"github.com/hollis-labs/substrate/harness/adapters/turn"
+	"github.com/hollis-labs/substrate/harness/adapters/wrapper"
+	"github.com/hollis-labs/substrate/harness/agentlaunch"
+	"github.com/hollis-labs/substrate/harness/agentlaunch/launcher"
+	"github.com/hollis-labs/substrate/harness/agentlaunch/sessionshim"
+	"github.com/hollis-labs/substrate/harness/sandbox"
+	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
+	llmtypes "github.com/hollis-labs/substrate/llm-core/llmtypes"
 	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/launchartifacts"
 	"github.com/hollis-labs/torque/internal/launchprofile"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/redact"
@@ -301,11 +301,7 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		Role:             role,
 		LoopbackURL:      loopbackURL,
 	})
-	injection, _, err := runtimebootdir.BuildInjection(runtimebootdir.Request{
-		Provider:    runtimeIDFor(profile.Provider),
-		Runtime:     rtKind,
-		NativeFiles: nativeFiles,
-	})
+	injection, err := taskInjection(nativeFiles)
 	if err != nil {
 		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: build injection: %v", ErrBootFailed, err)
@@ -347,11 +343,25 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: ensure boot dir root: %v", ErrBootFailed, err)
 	}
-	prepared, err := launcher.Prepare(ctx, compiled)
+	// Profile/runtime/plan validation and session allocation above are the
+	// existing launch decision. Bind only its still-live preparation operation.
+	controlParent, err := filepath.EvalSymlinks(filepath.Dir(ws.WorkspaceDir))
+	if err != nil {
+		shutdownLoopbackHandle(loopback)
+		return nil, fmt.Errorf("%w: resolve artifact control parent: %v", ErrBootFailed, err)
+	}
+	admission, releaseAdmission, err := mgr.beginArtifactLaunch(ctx, sessID, controlParent, compiled)
+	if err != nil {
+		shutdownLoopbackHandle(loopback)
+		return nil, fmt.Errorf("%w: artifact admission: %v", ErrBootFailed, err)
+	}
+	defer releaseAdmission()
+	prepared, custody, err := launchartifacts.Prepare(ctx, compiled, admission)
 	if err != nil {
 		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: prepare launch: %v", ErrBootFailed, err)
 	}
+	defer func() { err = errors.Join(err, custody.Close()) }()
 	// Prepare allocated the boot dir, and it is Torque's to remove
 	// (DefaultBuildDirRoot): every return before bootLegacy or bootWrapper
 	// takes it over drops it, as does a launch that plants nothing into it
@@ -375,27 +385,12 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 		log.Printf("agent.Boot: session=%s: mux MCP planted with %s", sessID, muxServersLogValue(mux.Args))
 	}
 	logMuxPlan(sessID, deps, mux)
-	// Plant the provider boot dir. WithAdapter pins the exact adapter
-	// Torque resolved (adapterFor) — critically the BARE-mode claude
-	// adapter, which providerplant's DefaultResolver would not select
-	// (it returns plain claude). Planting against the same adapter
-	// instance Torque spawns keeps the planted files byte-identical to
-	// the pre-Stage-2 AutoPlantBootDir output.
-	// PrepareExecution (agentkit v0.6.1+, shared materialize.Engine
-	// underneath) replaces the legacy Plant() call: Plant() ran the same
-	// projection/materialization internally but copied only Argv/Env/
-	// Workdir back onto the legacy PreparedLaunch, silently discarding the
-	// computed Materialization handle, AccessRequirements, and
-	// CapabilityDiagnostics (CW-20260906-0111). We replicate Plant()'s
-	// copy-back manually (prepared.Argv/Env/Workdir) so the unchanged
-	// sessionshim.ToSessionLaunch(prepared) call below keeps working, and
-	// additionally surface the previously-discarded diagnostics. preparedExecution
-	// is kept alive past this call site for CW-20260904-0098's wrapper.Config
-	// to consume directly, avoiding a second plant.
+	// Runtime projection owns bindings/effects; the canonical renderer owns
+	// artifact contents. Apply only through this accepted operation's custody.
 	bootDirProvider, hasBootDir := cliAdapter.(provider.BootDirProvider)
 	var preparedExecution *agentlaunch.PreparedExecution
 	if hasBootDir {
-		preparedExecution, err = plantBootDir(ctx, prepared, providerplant.WithAdapter(bootDirProvider))
+		preparedExecution, err = plantBootDir(ctx, prepared, bootDirProvider, custody.Authorize)
 		if err != nil {
 			shutdownLoopbackHandle(loopback)
 			dropPreparedBootDir()
@@ -499,9 +494,9 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 // resources over; a test uses it to end the session first.
 var legacyAdoptHook = func(string) {}
 
-// plantBootDir plants a prepared launch's boot dir (providerplant's
-// PrepareExecution); a var so a test can make planting fail.
-var plantBootDir = providerplant.PrepareExecution
+// plantBootDir applies canonical artifacts through the accepted launch's
+// inactive-root custody; a var so teardown tests can make planting fail.
+var plantBootDir = plantCanonicalArtifacts
 
 // plantedBoot bundles everything Boot's shared prefix (profile resolution
 // through boot-dir planting) computes, so bootLegacy and bootWrapper can

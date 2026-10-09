@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/agentkit/agentsessions"
-	llmtypes "github.com/hollis-labs/go-llm-types"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	llmtypes "github.com/hollis-labs/substrate/llm-core/llmtypes"
 	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"

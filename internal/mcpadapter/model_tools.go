@@ -3,7 +3,7 @@ package mcpadapter
 import (
 	"context"
 
-	"github.com/hollis-labs/go-modelsdev/modelsdev"
+	"github.com/hollis-labs/substrate/llm-core/modelsdev"
 )
 
 // briefModel drops the noisier fields (full modality + every cost variant) to

@@ -1,6 +1,6 @@
 module github.com/hollis-labs/torque
 
-go 1.26.6
+go 1.26.8
 
 toolchain go1.26.9
 
@@ -8,20 +8,12 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.71.0
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/google/uuid v1.6.0
-	github.com/hollis-labs/agent-contracts-leaf v0.3.0
-	github.com/hollis-labs/agentkit v0.21.1
-	github.com/hollis-labs/go-agent-wrapper v0.25.6
-	github.com/hollis-labs/go-llm-types v0.5.1
-	github.com/hollis-labs/go-mcp v0.4.3
-	github.com/hollis-labs/go-modelsdev v0.2.0
-	github.com/hollis-labs/go-permission v0.1.0
-	github.com/hollis-labs/go-providers v0.42.0
-	github.com/hollis-labs/go-runner v0.8.2
-	github.com/hollis-labs/go-runtime-events v0.2.1
-	github.com/hollis-labs/go-sandbox v0.6.0
-	github.com/hollis-labs/go-toolbroker v0.2.0
+	github.com/hollis-labs/libs/plugin-mcp v0.2.0
 	github.com/hollis-labs/libs/util v0.2.1
 	github.com/hollis-labs/plugin v0.0.0-20260410030617-741878c627b2
+	github.com/hollis-labs/substrate/agent v0.3.0
+	github.com/hollis-labs/substrate/harness v0.3.1
+	github.com/hollis-labs/substrate/llm-core v0.1.0
 	github.com/hollis-labs/substrate/mesh v0.1.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
@@ -47,10 +39,6 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
-	github.com/hollis-labs/go-harness-filters v0.1.1 // indirect
-	github.com/hollis-labs/go-llm-contracts v0.4.0 // indirect
-	github.com/hollis-labs/go-materialize v0.1.0 // indirect
-	github.com/hollis-labs/go-safefs v0.1.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
@@ -59,6 +47,7 @@ require (
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
+	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect

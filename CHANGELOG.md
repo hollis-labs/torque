@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- Adopt published Harness v0.3.1, llm-core v0.1.0, agent v0.3.0 and
+  plugin-mcp v0.2.0 packages (CW-20261009-0005). Agent boot artifacts use
+  canonical native rendering and the workspace engine, bound to the accepted
+  launch and its freshly allocated private inactive root. Runtime projection
+  still owns launch arguments, permission posture and declared preparation
+  effects; Codex authentication keeps its existing explicit execution-edge
+  preparation outside the artifact tree. Private plugin source remains private.
+
 ### Fixed
 
 - Protected agent profiles granted mux Torque tools use the tokenless daemon

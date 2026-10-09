@@ -16,10 +16,10 @@ import (
 	"syscall"
 	"time"
 
-	runtimeturn "github.com/hollis-labs/agentkit/agentruntime/turn"
-	"github.com/hollis-labs/agentkit/agentsessions"
-	"github.com/hollis-labs/go-agent-wrapper/wrapper"
-	"github.com/hollis-labs/go-providers/provider"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/substrate/harness/adapters/provider"
+	runtimeturn "github.com/hollis-labs/substrate/harness/adapters/turn"
+	"github.com/hollis-labs/substrate/harness/adapters/wrapper"
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/launchprofile"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -51,13 +51,14 @@ type Manager struct {
 	nowFn               func() time.Time
 	pidPollInterval     time.Duration
 
-	mu        sync.RWMutex
-	stopped   bool
-	inner     *agentsessions.Manager
-	loopbacks map[string]LoopbackHandle // sessID → handle; shut down in Stop
-	stderrs   map[string]func()         // sessID → close() for the per-session stderr sidecar
-	streams   map[string]func()         // sessID → close() for the per-session stream sidecar (CW-20260509-0001)
-	bootDirs  map[string]string         // sessID → ephemeral boot dir; os.RemoveAll in Stop
+	mu               sync.RWMutex
+	stopped          bool
+	artifactLaunches map[string]*artifactLaunch
+	inner            *agentsessions.Manager
+	loopbacks        map[string]LoopbackHandle // sessID → handle; shut down in Stop
+	stderrs          map[string]func()         // sessID → close() for the per-session stderr sidecar
+	streams          map[string]func()         // sessID → close() for the per-session stream sidecar (CW-20260509-0001)
+	bootDirs         map[string]string         // sessID → ephemeral boot dir; os.RemoveAll in Stop
 	// pendingAdoption holds legacy sessions between m.inner.Start and Boot
 	// handing over their resources; true once the session has ended
 	// meanwhile (beginLegacyAdoption).

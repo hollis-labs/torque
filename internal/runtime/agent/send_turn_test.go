@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/hollis-labs/agentkit/agentruntime/turn"
+	"github.com/hollis-labs/substrate/harness/adapters/turn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

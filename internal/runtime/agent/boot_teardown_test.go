@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/agentkit/agentlaunch"
-	"github.com/hollis-labs/agentkit/agentlaunch/providerplant"
-	"github.com/hollis-labs/agentkit/agentsessions"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/substrate/harness/adapters/provider"
+	"github.com/hollis-labs/substrate/harness/agentlaunch"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -27,7 +27,7 @@ func TestBoot_PlantFailureRemovesTheAllocatedBootDir(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	planted := false
 	prev := plantBootDir
-	plantBootDir = func(_ context.Context, prepared *agentlaunch.PreparedLaunch, _ ...providerplant.Option) (*agentlaunch.PreparedExecution, error) {
+	plantBootDir = func(_ context.Context, prepared *agentlaunch.PreparedLaunch, _ provider.BootDirProvider, _ agentlaunch.ArtifactAuthorizer) (*agentlaunch.PreparedExecution, error) {
 		_, err := os.Stat(prepared.PlantedBootDir)
 		planted = err == nil
 		return nil, errors.New("planting failed")
