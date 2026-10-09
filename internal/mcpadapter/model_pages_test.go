@@ -11,7 +11,7 @@ import (
 
 	"github.com/hollis-labs/torque/internal/service/pagination"
 
-	"github.com/hollis-labs/go-modelsdev/modelsdev"
+	"github.com/hollis-labs/substrate/llm-core/modelsdev"
 	"github.com/hollis-labs/torque/internal/httpserver"
 	"github.com/hollis-labs/torque/internal/modelcatalog"
 	"github.com/stretchr/testify/require"

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hollis-labs/go-modelsdev/modelsdev"
+	"github.com/hollis-labs/substrate/llm-core/modelsdev"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/runtime/scheduler"
 	"github.com/stretchr/testify/assert"

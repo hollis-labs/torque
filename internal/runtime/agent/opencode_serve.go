@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
-	gopermission "github.com/hollis-labs/go-permission"
-	"github.com/hollis-labs/go-providers/provider"
+	"github.com/hollis-labs/substrate/harness/adapters/provider"
+	gopermission "github.com/hollis-labs/substrate/harness/interception/permission"
+	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
 
 	"github.com/hollis-labs/torque/internal/config"
 )

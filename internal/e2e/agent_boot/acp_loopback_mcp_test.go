@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	httptransport "github.com/hollis-labs/go-mcp/transport/http"
+	httptransport "github.com/hollis-labs/libs/plugin-mcp/go-mcp/transport/http"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	llmtypes "github.com/hollis-labs/go-llm-types"
+	llmtypes "github.com/hollis-labs/substrate/llm-core/llmtypes"
 )
 
 // bootCaptureLines bounds how many stdout and stderr lines a session keeps

@@ -3,7 +3,7 @@ package modelcatalog
 import (
 	"strings"
 
-	"github.com/hollis-labs/go-modelsdev/modelsdev"
+	"github.com/hollis-labs/substrate/llm-core/modelsdev"
 )
 
 // UsageTokens are a run's token counts as its runtime reported them, for a

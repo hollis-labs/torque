@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	httptransport "github.com/hollis-labs/go-mcp/transport/http"
+	httptransport "github.com/hollis-labs/libs/plugin-mcp/go-mcp/transport/http"
 	"github.com/hollis-labs/torque/internal/mcpadapter"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
 	"github.com/hollis-labs/torque/internal/runtime/steering"

@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/agentkit/agentsessions"
-	llmtypes "github.com/hollis-labs/go-llm-types"
-	"github.com/hollis-labs/go-providers/provider"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/substrate/harness/adapters/provider"
+	llmtypes "github.com/hollis-labs/substrate/llm-core/llmtypes"
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/runtime/executor"

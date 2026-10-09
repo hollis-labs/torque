@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	llmtypes "github.com/hollis-labs/go-llm-types"
-	"github.com/hollis-labs/go-runner/runner"
+	"github.com/hollis-labs/substrate/harness/runner"
+	llmtypes "github.com/hollis-labs/substrate/llm-core/llmtypes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

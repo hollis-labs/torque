@@ -29,7 +29,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hollis-labs/go-toolbroker/broker"
+	"github.com/hollis-labs/substrate/agent/toolbroker/broker"
 	"github.com/hollis-labs/torque/internal/permission"
 	"github.com/hollis-labs/torque/internal/tool"
 	"github.com/hollis-labs/torque/internal/toolrouter"

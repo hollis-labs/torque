@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
+	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
 
 	"github.com/hollis-labs/torque/internal/config"
 )

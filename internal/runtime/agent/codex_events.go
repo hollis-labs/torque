@@ -5,8 +5,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/hollis-labs/agentkit/agentruntime/turn"
-	llmtypes "github.com/hollis-labs/go-llm-types"
+	"github.com/hollis-labs/substrate/harness/adapters/turn"
+	llmtypes "github.com/hollis-labs/substrate/llm-core/llmtypes"
 
 	"github.com/hollis-labs/torque/internal/redact"
 )

@@ -5,9 +5,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
-	"github.com/hollis-labs/agentkit/agentlaunch"
+	"github.com/hollis-labs/substrate/harness/agentlaunch"
 )
 
 const (
@@ -391,4 +392,16 @@ func stringSliceFromAny(raw any) []string {
 		}
 	}
 	return out
+}
+
+// taskInjection preserves the former bootdir helper's native-file validation.
+// Task bundles carry no provider-owned native settings or credential files.
+func taskInjection(files []agentlaunch.NativeFile) (agentlaunch.InjectionSpec, error) {
+	out := agentlaunch.InjectionSpec{NativeFiles: slices.Clone(files)}
+	for _, file := range out.NativeFiles {
+		if err := file.Validate(); err != nil {
+			return agentlaunch.InjectionSpec{}, err
+		}
+	}
+	return out, nil
 }

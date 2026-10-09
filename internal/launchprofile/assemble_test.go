@@ -5,11 +5,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
-	"github.com/hollis-labs/agentkit/agentlaunch"
+	"github.com/hollis-labs/substrate/harness/agentlaunch"
+	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
 	"github.com/hollis-labs/torque/internal/config"
 
-	gopermission "github.com/hollis-labs/go-permission"
+	gopermission "github.com/hollis-labs/substrate/harness/interception/permission"
 )
 
 func TestBuildLaunchPlan_StampsAnnotationsAndIdentity(t *testing.T) {

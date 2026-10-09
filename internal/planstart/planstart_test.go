@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/go-providers/provider"
+	"github.com/hollis-labs/substrate/harness/adapters/provider"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/planstart"
 	"github.com/hollis-labs/torque/internal/runtime/agent"

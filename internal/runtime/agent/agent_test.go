@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hollis-labs/go-providers/provider"
+	"github.com/hollis-labs/substrate/harness/adapters/provider"
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/testutil/testenv"
 	"github.com/stretchr/testify/assert"
