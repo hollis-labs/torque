@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	gomsg "github.com/hollis-labs/go-messaging"
+	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
 
 	"github.com/hollis-labs/torque/internal/broker"
 	"github.com/hollis-labs/torque/internal/runtime/steering"

@@ -28,7 +28,7 @@ import (
 	"net/http"
 	"sort"
 
-	messaging "github.com/hollis-labs/go-messaging"
+	messaging "github.com/hollis-labs/substrate/mesh/messaging"
 )
 
 // ForeignRoute is one entry in the foreign-route registry: the peer install

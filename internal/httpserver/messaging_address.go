@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	gomsg "github.com/hollis-labs/go-messaging"
+	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
 )
 
 // messagingAddressShape names both accepted forms of a messaging address, so

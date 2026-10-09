@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/hollis-labs/agentkit/agentruntime/turn"
-	feotel "github.com/hollis-labs/go-otel"
+	feotel "github.com/hollis-labs/libs/util/otel"
 	"go.opentelemetry.io/otel/attribute"
 )
 

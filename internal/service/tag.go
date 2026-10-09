@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hollis-labs/go-strutil"
+	"github.com/hollis-labs/libs/util/strutil"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service/pagination"
 )

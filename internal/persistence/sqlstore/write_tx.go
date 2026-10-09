@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/hollis-labs/go-sqlite/txutil"
+	"github.com/hollis-labs/libs/util/sqlite/txutil"
 )
 
 // WriteTx is a transaction-scoped helper for serialized runtime state writes.

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/hollis-labs/go-sqlite/sqlitekit"
+	"github.com/hollis-labs/libs/util/sqlite/sqlitekit"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
 )

@@ -12,7 +12,7 @@ import (
 
 	"github.com/hollis-labs/go-mcp/sanitize"
 	gomcp "github.com/hollis-labs/go-mcp/server"
-	feotel "github.com/hollis-labs/go-otel"
+	feotel "github.com/hollis-labs/libs/util/otel"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	otelprop "go.opentelemetry.io/otel/propagation"

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/go-providers/providertest"
-	"github.com/hollis-labs/go-sqlite/sqlitekit"
+	"github.com/hollis-labs/libs/util/sqlite/sqlitekit"
 	"github.com/oklog/ulid/v2"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"

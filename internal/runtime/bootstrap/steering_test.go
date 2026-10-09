@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	gomsg "github.com/hollis-labs/go-messaging"
-	"github.com/hollis-labs/go-messaging/memstore"
+	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
+	"github.com/hollis-labs/substrate/mesh/messaging/memstore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
