@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	gomsg "github.com/hollis-labs/go-messaging"
-	"github.com/hollis-labs/go-messaging/memstore"
-	"github.com/hollis-labs/go-sqlite/sqlitekit"
+	"github.com/hollis-labs/libs/util/sqlite/sqlitekit"
+	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
+	"github.com/hollis-labs/substrate/mesh/messaging/memstore"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
 
 	tqmsg "github.com/hollis-labs/torque/internal/messaging"

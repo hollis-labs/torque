@@ -15,8 +15,8 @@ import (
 	"syscall"
 	"time"
 
-	feotel "github.com/hollis-labs/go-otel"
-	"github.com/hollis-labs/go-otel/propagation"
+	feotel "github.com/hollis-labs/libs/util/otel"
+	"github.com/hollis-labs/libs/util/otel/propagation"
 
 	"github.com/hollis-labs/torque/internal/broker"
 	"github.com/hollis-labs/torque/internal/config"

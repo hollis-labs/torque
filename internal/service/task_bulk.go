@@ -3,7 +3,7 @@ package service
 import (
 	"strings"
 
-	"github.com/hollis-labs/go-strutil"
+	"github.com/hollis-labs/libs/util/strutil"
 )
 
 // PRIM-003: shared bulk-operation pattern applied to Task. BulkUpdate,

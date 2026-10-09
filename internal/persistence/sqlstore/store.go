@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/hollis-labs/go-sqlite/sqlitekit"
+	"github.com/hollis-labs/libs/util/sqlite/sqlitekit"
 )
 
 type Store struct {

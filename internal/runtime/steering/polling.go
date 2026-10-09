@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	gomsg "github.com/hollis-labs/go-messaging"
+	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
 )
 
 // DefaultPollTTL is the freshness window for a polling opt-in. An agent

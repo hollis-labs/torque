@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hollis-labs/go-messaging"
-	"github.com/hollis-labs/go-sqlite/txutil"
+	"github.com/hollis-labs/libs/util/sqlite/txutil"
+	"github.com/hollis-labs/substrate/mesh/messaging"
 )
 
 // Compile-time assertion: *Store satisfies messaging.Store.

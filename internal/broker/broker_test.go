@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	gomsg "github.com/hollis-labs/go-messaging"
-	"github.com/hollis-labs/go-sqlite/sqlitekit"
+	"github.com/hollis-labs/libs/util/sqlite/sqlitekit"
+	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
 	"github.com/hollis-labs/torque/internal/broker"
 	clockmsg "github.com/hollis-labs/torque/internal/messaging"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"

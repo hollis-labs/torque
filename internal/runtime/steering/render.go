@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	gomsg "github.com/hollis-labs/go-messaging"
+	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
 )
 
 // turnTextKeys lists the JSON object fields the renderer treats as the

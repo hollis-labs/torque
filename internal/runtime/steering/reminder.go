@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	gomsg "github.com/hollis-labs/go-messaging"
+	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
 )
 
 // ReminderRegistry tracks steering envelopes injected into a live agent's

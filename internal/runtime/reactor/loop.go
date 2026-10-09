@@ -5,7 +5,7 @@ import (
 	"log"
 	"sync"
 
-	gomsg "github.com/hollis-labs/go-messaging"
+	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
 )
 
 // Subscriber is the narrow surface Loop needs from the broker — a Subscribe

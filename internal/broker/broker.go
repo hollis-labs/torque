@@ -12,8 +12,8 @@ import (
 	"errors"
 	"fmt"
 
-	gomsg "github.com/hollis-labs/go-messaging"
-	feotel "github.com/hollis-labs/go-otel"
+	feotel "github.com/hollis-labs/libs/util/otel"
+	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
 	"go.opentelemetry.io/otel/attribute"
 )
 

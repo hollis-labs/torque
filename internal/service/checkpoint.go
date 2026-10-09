@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	feotel "github.com/hollis-labs/go-otel"
+	feotel "github.com/hollis-labs/libs/util/otel"
 	"github.com/oklog/ulid/v2"
 	"go.opentelemetry.io/otel/attribute"
 
