@@ -1015,6 +1015,17 @@ func (s *Scheduler) worktreeSpec() worktree.Spec {
 	}
 }
 
+type runProfileSnapshot struct {
+	Provider        string `json:"provider,omitempty"`
+	Model           string `json:"model,omitempty"`
+	Executor        string `json:"executor,omitempty"`
+	RuntimeKind     string `json:"runtime_kind,omitempty"`
+	PermissionMode  string `json:"permission_mode,omitempty"`
+	LaunchProfileID string `json:"launch_profile_id,omitempty"`
+	Role            string `json:"role,omitempty"`
+	Tier            string `json:"tier,omitempty"`
+}
+
 func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) (err error) {
 	// Trace per-task dispatch — the unit of work for "scheduler picked a task
 	// and tried to launch its run." Wraps the executor lookup, pre-dispatch
@@ -1097,13 +1108,31 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 			LegacyAgentProfile: task.AgentProfile,
 			Source:             s.Profiles,
 		})
-		profileSnapshotBytes, _ := json.Marshal(compiledProfile)
+		snapshot := runProfileSnapshot{
+			Provider:        compiledProfile.AgentProfile.Provider,
+			Model:           compiledProfile.AgentProfile.Model,
+			Executor:        compiledProfile.AgentProfile.Executor,
+			RuntimeKind:     compiledProfile.AgentProfile.RuntimeKind,
+			PermissionMode:  compiledProfile.AgentProfile.PermissionMode,
+			LaunchProfileID: compiledProfile.Profile.ID,
+			Role:            compiledProfile.Profile.Role,
+			Tier:            compiledProfile.Profile.Tier,
+		}
+		profileSnapshotBytes, marshalErr := json.Marshal(snapshot)
+		profileSnapshotStr := sql.NullString{}
+		if marshalErr != nil {
+			log.Printf("MARSHAL ERR: %v", marshalErr)
+		}
+		if marshalErr == nil {
+
+			profileSnapshotStr = sql.NullString{String: string(profileSnapshotBytes), Valid: true}
+		}
 
 		runID, err = tx.CreateRun(&sqlstore.RunRecord{
 			TaskID:          task.ID,
 			Executor:        task.Executor,
 			Status:          "running",
-			ProfileSnapshot: sql.NullString{String: string(profileSnapshotBytes), Valid: true},
+			ProfileSnapshot: profileSnapshotStr,
 		})
 
 		if err != nil {
@@ -1504,14 +1533,32 @@ func (s *Scheduler) handlePermanentValidationError(task sqlstore.TaskRecord, ver
 			LegacyAgentProfile: task.AgentProfile,
 			Source:             s.Profiles,
 		})
-		profileSnapshotBytes, _ := json.Marshal(compiledProfile)
+		snapshot := runProfileSnapshot{
+			Provider:        compiledProfile.AgentProfile.Provider,
+			Model:           compiledProfile.AgentProfile.Model,
+			Executor:        compiledProfile.AgentProfile.Executor,
+			RuntimeKind:     compiledProfile.AgentProfile.RuntimeKind,
+			PermissionMode:  compiledProfile.AgentProfile.PermissionMode,
+			LaunchProfileID: compiledProfile.Profile.ID,
+			Role:            compiledProfile.Profile.Role,
+			Tier:            compiledProfile.Profile.Tier,
+		}
+		profileSnapshotBytes, marshalErr := json.Marshal(snapshot)
+		profileSnapshotStr := sql.NullString{}
+		if marshalErr != nil {
+			log.Printf("MARSHAL ERR: %v", marshalErr)
+		}
+		if marshalErr == nil {
+
+			profileSnapshotStr = sql.NullString{String: string(profileSnapshotBytes), Valid: true}
+		}
 
 		runID, err = tx.CreateRun(&sqlstore.RunRecord{
 			TaskID:          task.ID,
 			Executor:        task.Executor,
 			Status:          "blocked",
 			ErrorMessage:    reason,
-			ProfileSnapshot: sql.NullString{String: string(profileSnapshotBytes), Valid: true},
+			ProfileSnapshot: profileSnapshotStr,
 		})
 
 		if err != nil {
