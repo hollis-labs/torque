@@ -66,6 +66,9 @@ func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, dependsOn []str
 		"manual":             t.Manual,
 		"executor":           t.Executor,
 		"launch_profile":     t.LaunchProfile,
+		"role":               t.Role,
+		"tier":               t.Tier,
+		"capability_profile": parseFreeMap(t.CapabilityProfile),
 		"agent_profile":      t.AgentProfile,
 		"working_dir":        t.WorkingDir,
 		"tools":              parseStringArray(t.Tools),
@@ -284,6 +287,9 @@ type TaskCreateRequest struct {
 	Manual            bool                  `json:"manual,omitempty"`
 	Executor          string                `json:"executor,omitempty"`
 	LaunchProfile     string                `json:"launch_profile,omitempty"`
+	Role              string                `json:"role,omitempty"`
+	Tier              string                `json:"tier,omitempty"`
+	CapabilityProfile map[string]any      `json:"capability_profile,omitempty"`
 	AgentProfile      string                `json:"agent_profile,omitempty"`
 	WorkingDir        string                `json:"working_dir,omitempty"`
 	Tools             []string              `json:"tools,omitempty"`
@@ -336,6 +342,9 @@ type TaskUpdateRequest struct {
 	Manual            *bool                  `json:"manual,omitempty"`
 	Executor          *string                `json:"executor,omitempty"`
 	LaunchProfile     *string                `json:"launch_profile,omitempty"`
+	Role              *string                `json:"role,omitempty"`
+	Tier              *string                `json:"tier,omitempty"`
+	CapabilityProfile *map[string]any      `json:"capability_profile,omitempty"`
 	AgentProfile      *string                `json:"agent_profile,omitempty"`
 	WorkingDir        *string                `json:"working_dir,omitempty"`
 	Tools             *[]string              `json:"tools,omitempty"`
@@ -1032,6 +1041,9 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		Manual:            req.Manual,
 		Executor:          req.Executor,
 		LaunchProfile:     req.LaunchProfile,
+		Role:              req.Role,
+		Tier:              req.Tier,
+		
 		AgentProfile:      req.AgentProfile,
 		WorkingDir:        req.WorkingDir,
 		Tools:             req.Tools,
@@ -1123,6 +1135,9 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 		Manual:            req.Manual,
 		Executor:          req.Executor,
 		LaunchProfile:     req.LaunchProfile,
+		Role:              req.Role,
+		Tier:              req.Tier,
+		
 		AgentProfile:      req.AgentProfile,
 		WorkingDir:        req.WorkingDir,
 		SystemPrompt:      req.SystemPrompt,
@@ -1137,6 +1152,9 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// JSON-blob fields wrap as *sql.NullString
+	if req.CapabilityProfile != nil {
+		update.CapabilityProfile = nullJSONString(*req.CapabilityProfile)
+	}
 	if req.Tools != nil {
 		update.Tools = nullJSONString(*req.Tools)
 	}

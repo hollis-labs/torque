@@ -49,6 +49,9 @@ type LaunchProfile struct {
 	// workers get the restricted self-task subset; orchestrator-class roles
 	// get the full cross-task surface.
 	Role string
+	Tier string
+	CapabilityProfile *CapabilityProfile
+
 
 	// AgentProfile is the low-level provider/runtime config key. Phase 1
 	// delegates to the legacy agent_profiles registry (profiles.yaml) for the
@@ -109,3 +112,13 @@ const (
 	// was supplied — the "default" builtin is returned.
 	ProvenanceDefault ResolveProvenance = "default"
 )
+
+// CapabilityProfile describes the qualitative shape of the work.
+type CapabilityProfile struct {
+	TaskClass   string `json:"task_class,omitempty" yaml:"task_class,omitempty"`
+	Difficulty  string `json:"difficulty,omitempty" yaml:"difficulty,omitempty"`
+	Ambiguity   string `json:"ambiguity,omitempty" yaml:"ambiguity,omitempty"`
+	Modality    string `json:"modality,omitempty" yaml:"modality,omitempty"`
+	Autonomy    string `json:"autonomy,omitempty" yaml:"autonomy,omitempty"`
+	BudgetClass string `json:"budget_class,omitempty" yaml:"budget_class,omitempty"`
+}

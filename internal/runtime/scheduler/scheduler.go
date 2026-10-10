@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/hollis-labs/torque/internal/config"
+	"github.com/hollis-labs/torque/internal/launchprofile"
 	"github.com/hollis-labs/torque/internal/modelcatalog"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/persistence/writequeue"
@@ -1090,11 +1091,21 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 			return fmt.Errorf("transition to doing: %w", err)
 		}
 		var err error
-		runID, err = tx.CreateRun(&sqlstore.RunRecord{
-			TaskID:   task.ID,
-			Executor: task.Executor,
-			Status:   "running",
+
+		compiledProfile := launchprofile.Resolve(launchprofile.ResolveRequest{
+			LaunchProfile:      task.LaunchProfile,
+			LegacyAgentProfile: task.AgentProfile,
+			Source:             s.Profiles,
 		})
+		profileSnapshotBytes, _ := json.Marshal(compiledProfile)
+
+		runID, err = tx.CreateRun(&sqlstore.RunRecord{
+			TaskID:          task.ID,
+			Executor:        task.Executor,
+			Status:          "running",
+			ProfileSnapshot: sql.NullString{String: string(profileSnapshotBytes), Valid: true},
+		})
+
 		if err != nil {
 			return fmt.Errorf("create run: %w", err)
 		}
@@ -1487,12 +1498,22 @@ func (s *Scheduler) handlePermanentValidationError(task sqlstore.TaskRecord, ver
 	var runID int64
 	if err := s.stateWriter.Submit(context.Background(), "scheduler_permanent_validation", func(tx *sqlstore.WriteTx) error {
 		var err error
-		runID, err = tx.CreateRun(&sqlstore.RunRecord{
-			TaskID:       task.ID,
-			Executor:     task.Executor,
-			Status:       "blocked",
-			ErrorMessage: reason,
+
+		compiledProfile := launchprofile.Resolve(launchprofile.ResolveRequest{
+			LaunchProfile:      task.LaunchProfile,
+			LegacyAgentProfile: task.AgentProfile,
+			Source:             s.Profiles,
 		})
+		profileSnapshotBytes, _ := json.Marshal(compiledProfile)
+
+		runID, err = tx.CreateRun(&sqlstore.RunRecord{
+			TaskID:          task.ID,
+			Executor:        task.Executor,
+			Status:          "blocked",
+			ErrorMessage:    reason,
+			ProfileSnapshot: sql.NullString{String: string(profileSnapshotBytes), Valid: true},
+		})
+
 		if err != nil {
 			return err
 		}

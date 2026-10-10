@@ -27,6 +27,9 @@ type TemplateCreateInput struct {
 	AutoExecute          bool
 	Executor             string
 	LaunchProfile        string
+	Role                 string
+	Tier                 string
+	CapabilityProfile    map[string]any
 	AgentProfile         string
 	SystemPrompt         string
 	WorkingDir           string // supports {{var}} resolution at Instantiate
@@ -61,6 +64,9 @@ type TemplateUpdateInput struct {
 	AutoExecute          *bool
 	Executor             *string
 	LaunchProfile        *string
+	Role                 *string
+	Tier                 *string
+	CapabilityProfile    map[string]any
 	AgentProfile         *string
 	SystemPrompt         *string
 	WorkingDir           *string // pointer so empty-vs-unset is distinguishable

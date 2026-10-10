@@ -160,6 +160,9 @@ type TaskRecord struct {
 	Manual            bool
 	Executor          string
 	LaunchProfile     string
+	Role              string
+	Tier              string
+	CapabilityProfile sql.NullString
 	AgentProfile      string
 	WorkingDir        string
 	Tools             sql.NullString
@@ -367,6 +370,9 @@ type TaskUpdate struct {
 	Manual            *bool
 	Executor          *string
 	LaunchProfile     *string
+	Role              *string
+	Tier              *string
+	CapabilityProfile *sql.NullString
 	AgentProfile      *string
 	WorkingDir        *string
 	Tools             *sql.NullString
@@ -449,7 +455,7 @@ func applyDefaults(t *TaskRecord) {
 
 // The 44-column SELECT list used by GetTask, ListTasks, and SearchTasks.
 const taskSelectCols = `id, title, description, status, priority, manual,
-	executor, launch_profile, agent_profile, working_dir, tools, permissions, environment,
+	executor, launch_profile, role, tier, capability_profile, agent_profile, working_dir, tools, permissions, environment,
 	system_prompt, agent_file, files, cost_budget, max_retries, max_duration_ms, token_budget,
 	on_done, on_fail, on_review, escalation_chain, quality_gates, deliverables,
 	deliverable_preset, on_done_merge, blocked_reason, metadata,
@@ -466,7 +472,7 @@ func scanTask(row interface {
 	var manual int
 	err := row.Scan(
 		&t.ID, &t.Title, &t.Description, &t.Status, &t.Priority, &manual,
-		&t.Executor, &t.LaunchProfile, &t.AgentProfile, &t.WorkingDir, &t.Tools, &t.Permissions, &t.Environment,
+		&t.Executor, &t.LaunchProfile, &t.Role, &t.Tier, &t.CapabilityProfile, &t.AgentProfile, &t.WorkingDir, &t.Tools, &t.Permissions, &t.Environment,
 		&t.SystemPrompt, &t.AgentFile, &t.Files, &t.CostBudget, &t.MaxRetries, &t.MaxDurationMs, &t.TokenBudget,
 		&t.OnDone, &t.OnFail, &t.OnReview, &t.EscalationChain, &t.QualityGates, &t.Deliverables,
 		&t.DeliverablePreset, &t.OnDoneMerge, &t.BlockedReason, &t.Metadata,
@@ -496,18 +502,18 @@ func (s *Store) CreateTask(t *TaskRecord) error {
 
 	const q = `INSERT INTO tasks (
 		id, title, description, status, priority, manual,
-		executor, launch_profile, agent_profile, working_dir, tools, permissions, environment,
+		executor, launch_profile, role, tier, capability_profile, agent_profile, working_dir, tools, permissions, environment,
 		system_prompt, agent_file, files, cost_budget, max_retries, max_duration_ms, token_budget,
 		on_done, on_fail, on_review, escalation_chain, quality_gates, deliverables,
 		deliverable_preset, on_done_merge, blocked_reason, metadata,
 		sprint_id, project_id, epic_id,
 		kind, source_type, source_ref, trust, checkpoint_mode, on_checkpoint_response,
 		parent_id
-	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
 	_, err := s.db.Exec(q,
 		t.ID, t.Title, t.Description, t.Status, t.Priority, manual,
-		t.Executor, t.LaunchProfile, t.AgentProfile, t.WorkingDir, t.Tools, t.Permissions, t.Environment,
+		t.Executor, t.LaunchProfile, t.Role, t.Tier, t.CapabilityProfile, t.AgentProfile, t.WorkingDir, t.Tools, t.Permissions, t.Environment,
 		t.SystemPrompt, t.AgentFile, t.Files, t.CostBudget, t.MaxRetries, t.MaxDurationMs, t.TokenBudget,
 		t.OnDone, t.OnFail, t.OnReview, t.EscalationChain, t.QualityGates, t.Deliverables,
 		t.DeliverablePreset, t.OnDoneMerge, t.BlockedReason, t.Metadata,
@@ -1235,6 +1241,18 @@ func updateTaskExec(ex dbExecer, id string, u TaskUpdate) error {
 	if u.LaunchProfile != nil {
 		setClauses = append(setClauses, "launch_profile = ?")
 		args = append(args, *u.LaunchProfile)
+	}
+	if u.Role != nil {
+		setClauses = append(setClauses, "role = ?")
+		args = append(args, *u.Role)
+	}
+	if u.Tier != nil {
+		setClauses = append(setClauses, "tier = ?")
+		args = append(args, *u.Tier)
+	}
+	if u.CapabilityProfile != nil {
+		setClauses = append(setClauses, "capability_profile = ?")
+		args = append(args, *u.CapabilityProfile)
 	}
 	if u.AgentProfile != nil {
 		setClauses = append(setClauses, "agent_profile = ?")

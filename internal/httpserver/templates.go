@@ -23,6 +23,9 @@ func templateJSON(t *sqlstore.TemplateRecord) map[string]interface{} {
 		"auto_execute":           t.AutoExecute,
 		"executor":               nullStr(t.Executor),
 		"launch_profile":         nullStr(t.LaunchProfile),
+		"role":                   nullStr(t.Role),
+		"tier":                   nullStr(t.Tier),
+		"capability_profile":     parseFreeMap(t.CapabilityProfile),
 		"agent_profile":          nullStr(t.AgentProfile),
 		"system_prompt":          nullStr(t.SystemPrompt),
 		"working_dir":            nullStr(t.WorkingDir),
@@ -59,6 +62,9 @@ type templateCreateRequest struct {
 	AutoExecute          *bool                 `json:"auto_execute,omitempty"`
 	Executor             string                `json:"executor,omitempty"`
 	LaunchProfile        string                `json:"launch_profile,omitempty"`
+	Role                 string                `json:"role,omitempty"`
+	Tier                 string                `json:"tier,omitempty"`
+	CapabilityProfile    map[string]any        `json:"capability_profile,omitempty"`
 	AgentProfile         string                `json:"agent_profile,omitempty"`
 	SystemPrompt         string                `json:"system_prompt,omitempty"`
 	WorkingDir           string                `json:"working_dir,omitempty"`
@@ -90,6 +96,9 @@ type templateUpdateRequest struct {
 	AutoExecute          *bool                 `json:"auto_execute,omitempty"`
 	Executor             *string               `json:"executor,omitempty"`
 	LaunchProfile        *string               `json:"launch_profile,omitempty"`
+	Role                 *string               `json:"role,omitempty"`
+	Tier                 *string               `json:"tier,omitempty"`
+	CapabilityProfile    map[string]any       `json:"capability_profile,omitempty"`
 	AgentProfile         *string               `json:"agent_profile,omitempty"`
 	SystemPrompt         *string               `json:"system_prompt,omitempty"`
 	WorkingDir           *string               `json:"working_dir,omitempty"`
@@ -140,6 +149,9 @@ func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request) {
 		AutoExecute:          true, // default; overridden below if explicit
 		Executor:             req.Executor,
 		LaunchProfile:        req.LaunchProfile,
+		Role:                 req.Role,
+		Tier:                 req.Tier,
+		CapabilityProfile:    req.CapabilityProfile,
 		AgentProfile:         req.AgentProfile,
 		SystemPrompt:         req.SystemPrompt,
 		WorkingDir:           req.WorkingDir,
@@ -189,6 +201,9 @@ func (s *Server) updateTemplate(w http.ResponseWriter, r *http.Request) {
 		AutoExecute:          req.AutoExecute,
 		Executor:             req.Executor,
 		LaunchProfile:        req.LaunchProfile,
+		Role:                 req.Role,
+		Tier:                 req.Tier,
+		CapabilityProfile:    req.CapabilityProfile,
 		AgentProfile:         req.AgentProfile,
 		SystemPrompt:         req.SystemPrompt,
 		WorkingDir:           req.WorkingDir,

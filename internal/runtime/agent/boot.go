@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -746,16 +747,25 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 	rec := &sqlstore.SessionRecord{
 		ID:            sessID,
 		LaunchProfile: resolved.Profile.ID,
-		AgentProfile:  agentProfileName,
-		Provider:      profile.Provider,
-		RuntimeID:     runtime.ID(),
-		RuntimeKind:   runtime.Kind(),
-		Workdir:       opts.Workdir,
-		ProjectID:     nullableString(opts.ProjectID),
-		TaskID:        nullableString(opts.TaskID),
-		State:         string(StatusLaunching),
-		ResumeHint:    resumeHint,
-		MetaJSON:      metaJSON,
+		Role:          resolved.Profile.Role,
+		Tier:          resolved.Profile.Tier,
+		CapabilityProfile: func() sql.NullString {
+			if resolved.Profile.CapabilityProfile != nil {
+				b, _ := json.Marshal(resolved.Profile.CapabilityProfile)
+				return sql.NullString{String: string(b), Valid: true}
+			}
+			return sql.NullString{}
+		}(),
+		AgentProfile: agentProfileName,
+		Provider:     profile.Provider,
+		RuntimeID:    runtime.ID(),
+		RuntimeKind:  runtime.Kind(),
+		Workdir:      opts.Workdir,
+		ProjectID:    nullableString(opts.ProjectID),
+		TaskID:       nullableString(opts.TaskID),
+		State:        string(StatusLaunching),
+		ResumeHint:   resumeHint,
+		MetaJSON:     metaJSON,
 	}
 	if err := deps.CreateSession(context.Background(), rec); err != nil {
 		shutdownLoopbackHandle(loopback)

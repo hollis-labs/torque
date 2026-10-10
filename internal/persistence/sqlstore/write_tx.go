@@ -106,13 +106,13 @@ func (w *WriteTx) CreateRun(r *RunRecord) (int64, error) {
 	now := time.Now().UTC()
 	r.StartedAt = now
 
-	const q = `INSERT INTO runs (task_id, executor, status, started_at, prompt_tokens, completion_tokens, cost, exit_code, error_message, metadata)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	const q = `INSERT INTO runs (task_id, executor, status, started_at, prompt_tokens, completion_tokens, cost, exit_code, error_message, metadata, profile_snapshot)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	res, err := w.tx.Exec(q,
 		r.TaskID, r.Executor, r.Status, r.StartedAt,
 		r.PromptTokens, r.CompletionTokens, r.Cost,
-		r.ExitCode, r.ErrorMessage, r.Metadata,
+		r.ExitCode, r.ErrorMessage, r.Metadata, r.ProfileSnapshot,
 	)
 	if err != nil {
 		return 0, err

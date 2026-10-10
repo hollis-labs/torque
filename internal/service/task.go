@@ -99,6 +99,9 @@ type TaskCreateInput struct {
 	Manual            bool
 	Executor          string
 	LaunchProfile     string
+	Role              string
+	Tier              string
+	CapabilityProfile map[string]any
 	AgentProfile      string
 	WorkingDir        string
 	Tools             []string
@@ -412,6 +415,8 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		Manual:               input.Manual,
 		Executor:             effectiveExecutor,
 		LaunchProfile:        input.LaunchProfile,
+		Role:                 input.Role,
+		Tier:                 input.Tier,
 		AgentProfile:         input.AgentProfile,
 		WorkingDir:           input.WorkingDir,
 		SystemPrompt:         input.SystemPrompt,
@@ -444,6 +449,9 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	}
 	if len(input.Permissions) > 0 {
 		rec.Permissions = sql.NullString{String: marshalJSON(input.Permissions), Valid: true}
+	}
+	if len(input.CapabilityProfile) > 0 {
+		rec.CapabilityProfile = sql.NullString{String: marshalJSON(input.CapabilityProfile), Valid: true}
 	}
 	if len(input.Environment) > 0 {
 		rec.Environment = sql.NullString{String: marshalJSON(input.Environment), Valid: true}

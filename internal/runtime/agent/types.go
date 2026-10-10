@@ -143,6 +143,9 @@ type Session struct {
 	ID              string            `json:"ID"`
 	Mode            Mode              `json:"Mode"`
 	LaunchProfile   string            `json:"LaunchProfile"`
+	Role            string            `json:"Role"`
+	Tier            string            `json:"Tier"`
+	CapabilityProfile map[string]any `json:"CapabilityProfile,omitempty"`
 	AgentProfile    string            `json:"AgentProfile"`
 	Provider        string            `json:"Provider"`
 	RuntimeID       string            `json:"RuntimeID"`

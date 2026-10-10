@@ -27,6 +27,7 @@ type RunRecord struct {
 	CacheReadTokens  int
 	CacheWriteTokens int
 	CostSource       string
+	ProfileSnapshot  sql.NullString
 }
 
 // RunCompletion holds the fields written when a run finishes.
@@ -66,6 +67,7 @@ type TaskRunAggregate struct {
 	CompletionTokens int
 	Cost             float64
 	CostSource       string
+	ProfileSnapshot  sql.NullString
 }
 
 // GetTaskRunAggregate returns the run count / token / cost roll-up for a task.
@@ -137,13 +139,13 @@ func (s *Store) CreateRun(r *RunRecord) (int64, error) {
 	now := time.Now().UTC()
 	r.StartedAt = now
 
-	const q = `INSERT INTO runs (task_id, executor, status, started_at, prompt_tokens, completion_tokens, cost, exit_code, error_message, metadata)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	const q = `INSERT INTO runs (task_id, executor, status, started_at, prompt_tokens, completion_tokens, cost, exit_code, error_message, metadata, profile_snapshot)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	res, err := s.db.Exec(q,
 		r.TaskID, r.Executor, r.Status, r.StartedAt,
 		r.PromptTokens, r.CompletionTokens, r.Cost,
-		r.ExitCode, r.ErrorMessage, r.Metadata,
+		r.ExitCode, r.ErrorMessage, r.Metadata, r.ProfileSnapshot,
 	)
 	if err != nil {
 		return 0, err
@@ -160,14 +162,14 @@ func (s *Store) CreateRun(r *RunRecord) (int64, error) {
 func (s *Store) GetRun(id int64) (*RunRecord, error) {
 	const q = `SELECT id, task_id, executor, status, started_at, ended_at,
 		prompt_tokens, completion_tokens, cost, exit_code, error_message, metadata,
-		cache_read_tokens, cache_write_tokens, cost_source
+		cache_read_tokens, cache_write_tokens, cost_source, profile_snapshot
 		FROM runs WHERE id = ?`
 
 	var r RunRecord
 	err := s.ReadDB().QueryRow(q, id).Scan(
 		&r.ID, &r.TaskID, &r.Executor, &r.Status, &r.StartedAt, &r.EndedAt,
 		&r.PromptTokens, &r.CompletionTokens, &r.Cost, &r.ExitCode, &r.ErrorMessage, &r.Metadata,
-		&r.CacheReadTokens, &r.CacheWriteTokens, &r.CostSource,
+		&r.CacheReadTokens, &r.CacheWriteTokens, &r.CostSource, &r.ProfileSnapshot,
 	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("run %d not found", id)

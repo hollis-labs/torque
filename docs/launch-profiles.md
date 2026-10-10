@@ -13,9 +13,10 @@ launch profiles transparently.
 Three Go types in `internal/launchprofile`:
 
 - **`LaunchProfile`** — the user-facing launch family. Carries
-  `id`, `display_name`, `role`, `agent_profile` (the underlying registry
-  lookup key), free-form `annotations`. Example IDs: `orchestrator.default`,
-  `planner.default`, `worker.implementer`, `reviewer.code`, `default`.
+  `id`, `display_name`, `role`, `tier`, `capability_profile` (a typed block describing task shape),
+  `agent_profile` (the underlying registry lookup key), free-form `annotations`.
+  Example IDs: `orchestrator.default`, `planner.default`, `worker.implementer`, `reviewer.code`, `default`.
+  *Note:* `role`, `tier`, and `capability_profile` are also mirrored directly on Tasks, Templates, and Sessions.
 - **`CompiledLaunchProfile`** — the resolved, defaulted form. Wraps a
   `LaunchProfile` plus the underlying `config.AgentProfile` resolved from
   `profiles.yaml`, plus a `Provenance` tag (`explicit` / `legacy_map` /
