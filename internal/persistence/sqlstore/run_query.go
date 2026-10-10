@@ -140,7 +140,7 @@ func (s *Store) queryRuns(db runReader, f RunFilter) ([]RunRecord, error) {
 	}
 	q := `SELECT r.id,r.task_id,r.executor,r.status,r.started_at,r.ended_at,
  r.prompt_tokens,r.completion_tokens,r.cost,r.exit_code,r.error_message,r.metadata,
- r.cache_read_tokens,r.cache_write_tokens,r.cost_source,` + expr + from + where + " ORDER BY " + expr + " " + dir + ", r.id ASC"
+ r.cache_read_tokens,r.cache_write_tokens,r.cost_source,r.profile_snapshot,` + expr + from + where + " ORDER BY " + expr + " " + dir + ", r.id ASC"
 	if f.Limit > 0 {
 		q += " LIMIT ?"
 		args = append(args, f.Limit)
@@ -158,9 +158,10 @@ func (s *Store) queryRuns(db runReader, f RunFilter) ([]RunRecord, error) {
 	for rows.Next() {
 		var r RunRecord
 		var sortValue any
-		if err := rows.Scan(&r.ID, &r.TaskID, &r.Executor, &r.Status, &r.StartedAt, &r.EndedAt, &r.PromptTokens, &r.CompletionTokens, &r.Cost, &r.ExitCode, &r.ErrorMessage, &r.Metadata, &r.CacheReadTokens, &r.CacheWriteTokens, &r.CostSource, &sortValue); err != nil {
+		if err := rows.Scan(&r.ID, &r.TaskID, &r.Executor, &r.Status, &r.StartedAt, &r.EndedAt, &r.PromptTokens, &r.CompletionTokens, &r.Cost, &r.ExitCode, &r.ErrorMessage, &r.Metadata, &r.CacheReadTokens, &r.CacheWriteTokens, &r.CostSource, &r.ProfileSnapshot, &sortValue); err != nil {
 			return nil, err
 		}
+		projectRunProfileSnapshot(&r)
 		if f.SortBy == "" || f.SortBy == "started_at" {
 			r.QuerySortValue = r.StartedAt.UTC().Format(SQLiteDatetimeLayoutWithFractional)
 		} else {
