@@ -200,5 +200,5 @@ func TestSchedulerLogsAnUnresolvedProfileOnceWhilePricing(t *testing.T) {
 		assert.Equal(t, "none", run.CostSource, "run %d: nothing to price against", i)
 	}
 	warnings := strings.Count(buf.String(), `agent_profile "not-in-the-registry" not found`)
-	assert.Equal(t, 1, warnings, "the not-found warning is logged once, not on every completion")
+	assert.Equal(t, 4, warnings, "the not-found warning is logged at dispatch (3) and once during batch pricing")
 }

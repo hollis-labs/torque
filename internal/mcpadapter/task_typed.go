@@ -241,6 +241,9 @@ func typedTaskFull(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, deps []str
 		"manual":                 t.Manual,
 		"executor":               t.Executor,
 		"launch_profile":         t.LaunchProfile,
+		"role":                   t.Role,
+		"tier":                   t.Tier,
+		"capability_profile":     typedObject(t.CapabilityProfile, "capability_profile", &decodeErrs),
 		"agent_profile":          t.AgentProfile,
 		"working_dir":            t.WorkingDir,
 		"tools":                  typedStringArray(t.Tools, "tools", &decodeErrs),
@@ -299,6 +302,7 @@ func typedTaskFull(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, deps []str
 }
 
 func typedTaskBrief(t sqlstore.TaskRecord, tagSlugs []string, deps []string) typedTaskRecord {
+	var decodeErrs []typedDecodeError
 	if tagSlugs == nil {
 		tagSlugs = []string{}
 	}
@@ -313,6 +317,9 @@ func typedTaskBrief(t sqlstore.TaskRecord, tagSlugs []string, deps []string) typ
 		"manual":           t.Manual,
 		"executor":         t.Executor,
 		"launch_profile":   t.LaunchProfile,
+		"role":             t.Role,
+		"tier":             t.Tier,
+		"capability_profile": typedObject(t.CapabilityProfile, "capability_profile", &decodeErrs),
 		"agent_profile":    t.AgentProfile,
 		"kind":             t.Kind,
 		"source_type":      t.SourceType,

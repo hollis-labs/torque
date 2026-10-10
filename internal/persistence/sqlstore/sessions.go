@@ -19,6 +19,9 @@ var ErrSessionNotFound = errors.New("session not found")
 type SessionRecord struct {
 	ID            string
 	LaunchProfile string
+	Role          string
+	Tier          string
+	CapabilityProfile sql.NullString
 	AgentProfile  string
 	Provider      string
 	RuntimeID     string
@@ -37,7 +40,7 @@ type SessionRecord struct {
 	EndedAt       sql.NullTime
 }
 
-const sessionSelectCols = `id, launch_profile, agent_profile, provider, runtime_id, runtime_kind,
+const sessionSelectCols = `id, launch_profile, role, tier, capability_profile, agent_profile, provider, runtime_id, runtime_kind,
 	workdir, project_id, task_id, state, pid, exit_code, resume_hint, meta,
 	created_at, updated_at, last_activity, ended_at`
 
@@ -46,7 +49,7 @@ func scanSession(row interface {
 }) (*SessionRecord, error) {
 	s := &SessionRecord{}
 	err := row.Scan(
-		&s.ID, &s.LaunchProfile, &s.AgentProfile, &s.Provider, &s.RuntimeID, &s.RuntimeKind,
+		&s.ID, &s.LaunchProfile, &s.Role, &s.Tier, &s.CapabilityProfile, &s.AgentProfile, &s.Provider, &s.RuntimeID, &s.RuntimeKind,
 		&s.Workdir, &s.ProjectID, &s.TaskID, &s.State, &s.PID, &s.ExitCode,
 		&s.ResumeHint, &s.MetaJSON, &s.CreatedAt, &s.UpdatedAt, &s.LastActivity,
 		&s.EndedAt,
@@ -93,10 +96,10 @@ func (s *Store) CreateSession(rec *SessionRecord) error {
 	}
 	_, err := s.db.Exec(`
 		INSERT INTO sessions (
-			id, launch_profile, agent_profile, provider, runtime_id, runtime_kind,
+			id, launch_profile, role, tier, capability_profile, agent_profile, provider, runtime_id, runtime_kind,
 			workdir, project_id, task_id, state, pid, meta
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		rec.ID, rec.LaunchProfile, rec.AgentProfile, rec.Provider, rec.RuntimeID, currentRuntimeKind(rec.RuntimeKind),
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		rec.ID, rec.LaunchProfile, rec.Role, rec.Tier, rec.CapabilityProfile, rec.AgentProfile, rec.Provider, rec.RuntimeID, currentRuntimeKind(rec.RuntimeKind),
 		rec.Workdir, rec.ProjectID, rec.TaskID, state, rec.PID, meta,
 	)
 	if err != nil {

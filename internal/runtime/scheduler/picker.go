@@ -253,7 +253,8 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, PickDecisions, error) {
 		// it becomes eligible. (CW-20260503-0011 extends this guard to
 		// kind=internal; launch_profile addition is the 2026-05-26
 		// launch-profile refactor.)
-		if (task.Kind == "agent" || task.Kind == "internal") && task.AgentProfile == "" && task.LaunchProfile == "" {
+				hasCapabilityBlock := task.Role != "" || task.Tier != "" || (task.CapabilityProfile.Valid && task.CapabilityProfile.String != "")
+		if (task.Kind == "agent" || task.Kind == "internal") && task.AgentProfile == "" && task.LaunchProfile == "" && !hasCapabilityBlock {
 			record(task.ID, SkipReasonEmptyProfile)
 			continue
 		}

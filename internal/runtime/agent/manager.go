@@ -1422,18 +1422,30 @@ func sessionFromRecord(rec *sqlstore.SessionRecord) *Session {
 	s := &Session{
 		ID:            rec.ID,
 		LaunchProfile: rec.LaunchProfile,
-		AgentProfile:  rec.AgentProfile,
-		Provider:      rec.Provider,
-		RuntimeID:     rec.RuntimeID,
-		RuntimeKind:   rec.RuntimeKind,
-		Workdir:       rec.Workdir,
-		Status:        Status(rec.State),
-		PID:           rec.PID,
-		ResumeHint:    rec.ResumeHint,
-		Meta:          meta,
-		CreatedAt:     rec.CreatedAt,
-		UpdatedAt:     rec.UpdatedAt,
-		LastActivity:  rec.LastActivity,
+		Role:          rec.Role,
+		Tier:          rec.Tier,
+		CapabilityProfile: func() map[string]any {
+			if !rec.CapabilityProfile.Valid || rec.CapabilityProfile.String == "" {
+				return nil
+			}
+			var v map[string]any
+			if err := json.Unmarshal([]byte(rec.CapabilityProfile.String), &v); err != nil {
+				return nil
+			}
+			return v
+		}(),
+		AgentProfile: rec.AgentProfile,
+		Provider:     rec.Provider,
+		RuntimeID:    rec.RuntimeID,
+		RuntimeKind:  rec.RuntimeKind,
+		Workdir:      rec.Workdir,
+		Status:       Status(rec.State),
+		PID:          rec.PID,
+		ResumeHint:   rec.ResumeHint,
+		Meta:         meta,
+		CreatedAt:    rec.CreatedAt,
+		UpdatedAt:    rec.UpdatedAt,
+		LastActivity: rec.LastActivity,
 	}
 	if meta != nil {
 		s.Mode = parseModeString(meta[metaKeyMode])

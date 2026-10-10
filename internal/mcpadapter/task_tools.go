@@ -409,6 +409,9 @@ Example: {"title":"Fix auth bug","description":"Login returns 500","priority":"2
 		withString("tags", desc("JSON array of tag strings")),
 		withString("executor", desc("Executor type (default cli)")),
 		withString("launch_profile", desc("Torque launch_profile id (preferred). Drives the stable launch family at dispatch.")),
+		withString("role", desc("Torque role classifying the work (e.g. planner, worker).")),
+		withString("tier", desc("Torque tier classifying the work (e.g. baseline, advanced).")),
+		withString("capability_profile", desc("JSON object containing task_class, difficulty, ambiguity, modality, autonomy, budget_class.")),
 		withString("agent_profile", desc("Legacy agent_profile name. Honored when launch_profile is empty.")),
 		withString("working_dir", desc("Working directory. Auto-inherits from parent_id when omitted (CW-20260508-0004); pass explicitly only to override the parent's value.")),
 		withString("system_prompt", desc("System prompt override")),
@@ -587,6 +590,9 @@ Example: {"id":"T-123","priority":"1","tags":"[\"p0\",\"backend\"]"}`),
 		withBoolean("manual", desc("Manual flag")),
 		withString("executor", desc("Executor type")),
 		withString("launch_profile", desc("Torque launch_profile id (preferred). Empty string clears.")),
+		withString("role", desc("Torque role. Empty string clears.")),
+		withString("tier", desc("Torque tier. Empty string clears.")),
+		withString("capability_profile", desc("JSON object for capability_profile. string \"null\" clears.")),
 		withString("agent_profile", desc("Legacy agent_profile name.")),
 		withString("working_dir", desc("Working directory")),
 		withString("system_prompt", desc("System prompt override")),
@@ -806,6 +812,8 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req map[string]any) (any
 		Priority:             priority,
 		Executor:             reqStr(req, "executor"),
 		LaunchProfile:        reqStr(req, "launch_profile"),
+		Role:                 reqStr(req, "role"),
+		Tier:                 reqStr(req, "tier"),
 		AgentProfile:         reqStr(req, "agent_profile"),
 		WorkingDir:           reqStr(req, "working_dir"),
 		SystemPrompt:         reqStr(req, "system_prompt"),
@@ -886,6 +894,11 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req map[string]any) (any
 	// JSON-object/array fields with a non-[]string shape: unmarshal directly
 	// into TaskCreateInput's typed field, matching buildTaskUpdateInput's
 	// unmarshalBlob convention for the same field names on torque_task_update.
+	if raw := reqStr(req, "capability_profile"); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &input.CapabilityProfile); err != nil {
+			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid capability_profile JSON: %v", err), "capability_profile")
+		}
+	}
 	if raw := reqStr(req, "permissions"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &input.Permissions); err != nil {
 			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid permissions JSON: %v", err), "permissions")
@@ -1398,6 +1411,14 @@ func buildTaskUpdateInput(req map[string]any) (service.TaskUpdateInput, error) {
 		v := reqStr(req, "launch_profile")
 		update.LaunchProfile = &v
 	}
+	if _, ok := args["role"]; ok {
+		v := reqStr(req, "role")
+		update.Role = &v
+	}
+	if _, ok := args["tier"]; ok {
+		v := reqStr(req, "tier")
+		update.Tier = &v
+	}
 	if _, ok := args["agent_profile"]; ok {
 		v := reqStr(req, "agent_profile")
 		update.AgentProfile = &v
@@ -1489,7 +1510,7 @@ func buildTaskUpdateInput(req map[string]any) (service.TaskUpdateInput, error) {
 			return service.TaskUpdateInput{}, argError(ErrCodeArgInvalid, err.Error(), k)
 		}
 	}
-	for _, k := range []string{"permissions", "environment", "metadata"} {
+	for _, k := range []string{"permissions", "environment", "metadata", "capability_profile"} {
 		if err := unmarshalBlob(k, &scratchObj); err != nil {
 			return service.TaskUpdateInput{}, argError(ErrCodeArgInvalid, err.Error(), k)
 		}
@@ -1499,6 +1520,9 @@ func buildTaskUpdateInput(req map[string]any) (service.TaskUpdateInput, error) {
 	}
 	if ns := nullFromRaw("files"); ns != nil {
 		update.Files = ns
+	}
+	if ns := nullFromRaw("capability_profile"); ns != nil {
+		update.CapabilityProfile = ns
 	}
 	if ns := nullFromRaw("permissions"); ns != nil {
 		update.Permissions = ns
