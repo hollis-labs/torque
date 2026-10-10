@@ -350,6 +350,18 @@ func (s *TemplateService) applyTemplateToInput(tpl *sqlstore.TemplateRecord, in 
 	if tpl.AgentProfile.Valid {
 		input.AgentProfile = tpl.AgentProfile.String
 	}
+	if tpl.Role.Valid {
+		input.Role = tpl.Role.String
+	}
+	if tpl.Tier.Valid {
+		input.Tier = tpl.Tier.String
+	}
+	if tpl.CapabilityProfile.Valid && tpl.CapabilityProfile.String != "" {
+		var caps map[string]any
+		if err := unmarshalJSON([]byte(tpl.CapabilityProfile.String), &caps); err == nil {
+			input.CapabilityProfile = caps
+		}
+	}
 	if tpl.SystemPrompt.Valid {
 		resolved, err := ResolveVars(tpl.SystemPrompt.String, vars)
 		if err != nil {
@@ -498,6 +510,15 @@ func buildTemplateRecord(in TemplateCreateInput, id string, version int) *sqlsto
 	if in.AgentProfile != "" {
 		rec.AgentProfile = sql.NullString{String: in.AgentProfile, Valid: true}
 	}
+	if in.Role != "" {
+		rec.Role = sql.NullString{String: in.Role, Valid: true}
+	}
+	if in.Tier != "" {
+		rec.Tier = sql.NullString{String: in.Tier, Valid: true}
+	}
+	if in.CapabilityProfile != nil {
+		rec.CapabilityProfile = sql.NullString{String: marshalJSON(in.CapabilityProfile), Valid: true}
+	}
 	if in.SystemPrompt != "" {
 		rec.SystemPrompt = sql.NullString{String: in.SystemPrompt, Valid: true}
 	}
@@ -572,6 +593,15 @@ func mergeTemplateUpdate(prev *sqlstore.TemplateRecord, in TemplateUpdateInput) 
 	}
 	if in.AgentProfile != nil {
 		next.AgentProfile = sql.NullString{String: *in.AgentProfile, Valid: *in.AgentProfile != ""}
+	}
+	if in.Role != nil {
+		next.Role = sql.NullString{String: *in.Role, Valid: *in.Role != ""}
+	}
+	if in.Tier != nil {
+		next.Tier = sql.NullString{String: *in.Tier, Valid: *in.Tier != ""}
+	}
+	if in.CapabilityProfile != nil {
+		next.CapabilityProfile = sql.NullString{String: marshalJSON(in.CapabilityProfile), Valid: true}
 	}
 	if in.SystemPrompt != nil {
 		next.SystemPrompt = sql.NullString{String: *in.SystemPrompt, Valid: *in.SystemPrompt != ""}

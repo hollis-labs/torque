@@ -1043,6 +1043,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		LaunchProfile: req.LaunchProfile,
 		Role:          req.Role,
 		Tier:          req.Tier,
+		CapabilityProfile: req.CapabilityProfile,
 
 		AgentProfile:      req.AgentProfile,
 		WorkingDir:        req.WorkingDir,
