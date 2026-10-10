@@ -98,7 +98,7 @@ type templateUpdateRequest struct {
 	LaunchProfile        *string               `json:"launch_profile,omitempty"`
 	Role                 *string               `json:"role,omitempty"`
 	Tier                 *string               `json:"tier,omitempty"`
-	CapabilityProfile    map[string]any       `json:"capability_profile,omitempty"`
+	CapabilityProfile    map[string]any        `json:"capability_profile,omitempty"`
 	AgentProfile         *string               `json:"agent_profile,omitempty"`
 	SystemPrompt         *string               `json:"system_prompt,omitempty"`
 	WorkingDir           *string               `json:"working_dir,omitempty"`

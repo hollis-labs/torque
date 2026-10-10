@@ -140,32 +140,32 @@ func (s Status) Terminal() bool {
 // against the wire format; the safety win comes from omitempty + Terminal,
 // not from a casing change.
 type Session struct {
-	ID              string            `json:"ID"`
-	Mode            Mode              `json:"Mode"`
-	LaunchProfile   string            `json:"LaunchProfile"`
-	Role            string            `json:"Role"`
-	Tier            string            `json:"Tier"`
-	CapabilityProfile map[string]any `json:"CapabilityProfile,omitempty"`
-	AgentProfile    string            `json:"AgentProfile"`
-	Provider        string            `json:"Provider"`
-	RuntimeID       string            `json:"RuntimeID"`
-	RuntimeKind     string            `json:"RuntimeKind"`
-	Workdir         string            `json:"Workdir"`      // Torque work_root: the writable project/worktree path for tools and turns.
-	BootDir         string            `json:"BootDir"`      // ephemeral per-task tempdir
-	WorkspaceDir    string            `json:"WorkspaceDir"` // persistent ~/.torque/workspaces/<project>/<sessID>/
-	ProjectID       string            `json:"ProjectID"`
-	TaskID          string            `json:"TaskID"`
-	ParentSessionID string            `json:"ParentSessionID,omitempty"` // ModeSubagent
-	Status          Status            `json:"Status"`
-	PID             int               `json:"PID"`
-	ExitCode        *int              `json:"ExitCode,omitempty"`
-	ResumeHint      []byte            `json:"ResumeHint,omitempty"`
-	Resumed         bool              `json:"Resumed,omitempty"` // launched continuing a stored provider conversation (meta torque.resumed; CW-20261001-0174, -0203)
-	Meta            map[string]string `json:"Meta,omitempty"`
-	CreatedAt       time.Time         `json:"CreatedAt"`
-	UpdatedAt       time.Time         `json:"UpdatedAt"`
-	LastActivity    time.Time         `json:"LastActivity"`
-	EndedAt         *time.Time        `json:"EndedAt,omitempty"`
+	ID                string            `json:"ID"`
+	Mode              Mode              `json:"Mode"`
+	LaunchProfile     string            `json:"LaunchProfile"`
+	Role              string            `json:"Role"`
+	Tier              string            `json:"Tier"`
+	CapabilityProfile map[string]any    `json:"CapabilityProfile,omitempty"`
+	AgentProfile      string            `json:"AgentProfile"`
+	Provider          string            `json:"Provider"`
+	RuntimeID         string            `json:"RuntimeID"`
+	RuntimeKind       string            `json:"RuntimeKind"`
+	Workdir           string            `json:"Workdir"`      // Torque work_root: the writable project/worktree path for tools and turns.
+	BootDir           string            `json:"BootDir"`      // ephemeral per-task tempdir
+	WorkspaceDir      string            `json:"WorkspaceDir"` // persistent ~/.torque/workspaces/<project>/<sessID>/
+	ProjectID         string            `json:"ProjectID"`
+	TaskID            string            `json:"TaskID"`
+	ParentSessionID   string            `json:"ParentSessionID,omitempty"` // ModeSubagent
+	Status            Status            `json:"Status"`
+	PID               int               `json:"PID"`
+	ExitCode          *int              `json:"ExitCode,omitempty"`
+	ResumeHint        []byte            `json:"ResumeHint,omitempty"`
+	Resumed           bool              `json:"Resumed,omitempty"` // launched continuing a stored provider conversation (meta torque.resumed; CW-20261001-0174, -0203)
+	Meta              map[string]string `json:"Meta,omitempty"`
+	CreatedAt         time.Time         `json:"CreatedAt"`
+	UpdatedAt         time.Time         `json:"UpdatedAt"`
+	LastActivity      time.Time         `json:"LastActivity"`
+	EndedAt           *time.Time        `json:"EndedAt,omitempty"`
 }
 
 // sessionWire is the marshal-time projection that adds the derived Terminal

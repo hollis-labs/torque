@@ -289,7 +289,7 @@ type TaskCreateRequest struct {
 	LaunchProfile     string                `json:"launch_profile,omitempty"`
 	Role              string                `json:"role,omitempty"`
 	Tier              string                `json:"tier,omitempty"`
-	CapabilityProfile map[string]any      `json:"capability_profile,omitempty"`
+	CapabilityProfile map[string]any        `json:"capability_profile,omitempty"`
 	AgentProfile      string                `json:"agent_profile,omitempty"`
 	WorkingDir        string                `json:"working_dir,omitempty"`
 	Tools             []string              `json:"tools,omitempty"`
@@ -344,7 +344,7 @@ type TaskUpdateRequest struct {
 	LaunchProfile     *string                `json:"launch_profile,omitempty"`
 	Role              *string                `json:"role,omitempty"`
 	Tier              *string                `json:"tier,omitempty"`
-	CapabilityProfile *map[string]any      `json:"capability_profile,omitempty"`
+	CapabilityProfile *map[string]any        `json:"capability_profile,omitempty"`
 	AgentProfile      *string                `json:"agent_profile,omitempty"`
 	WorkingDir        *string                `json:"working_dir,omitempty"`
 	Tools             *[]string              `json:"tools,omitempty"`
@@ -1034,16 +1034,16 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	input := service.TaskCreateInput{
-		Title:             req.Title,
-		Description:       req.Description,
-		Priority:          req.Priority,
-		Tags:              req.Tags,
-		Manual:            req.Manual,
-		Executor:          req.Executor,
-		LaunchProfile:     req.LaunchProfile,
-		Role:              req.Role,
-		Tier:              req.Tier,
-		
+		Title:         req.Title,
+		Description:   req.Description,
+		Priority:      req.Priority,
+		Tags:          req.Tags,
+		Manual:        req.Manual,
+		Executor:      req.Executor,
+		LaunchProfile: req.LaunchProfile,
+		Role:          req.Role,
+		Tier:          req.Tier,
+
 		AgentProfile:      req.AgentProfile,
 		WorkingDir:        req.WorkingDir,
 		Tools:             req.Tools,
@@ -1129,15 +1129,15 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	update := sqlstore.TaskUpdate{
-		Title:             req.Title,
-		Description:       req.Description,
-		Priority:          req.Priority,
-		Manual:            req.Manual,
-		Executor:          req.Executor,
-		LaunchProfile:     req.LaunchProfile,
-		Role:              req.Role,
-		Tier:              req.Tier,
-		
+		Title:         req.Title,
+		Description:   req.Description,
+		Priority:      req.Priority,
+		Manual:        req.Manual,
+		Executor:      req.Executor,
+		LaunchProfile: req.LaunchProfile,
+		Role:          req.Role,
+		Tier:          req.Tier,
+
 		AgentProfile:      req.AgentProfile,
 		WorkingDir:        req.WorkingDir,
 		SystemPrompt:      req.SystemPrompt,

@@ -17,27 +17,27 @@ var ErrSessionNotFound = errors.New("session not found")
 // Soft-FK fields (ProjectID, TaskID) are stored as nullable strings since
 // SQLite does not enforce foreign keys by default in this codebase.
 type SessionRecord struct {
-	ID            string
-	LaunchProfile string
-	Role          string
-	Tier          string
+	ID                string
+	LaunchProfile     string
+	Role              string
+	Tier              string
 	CapabilityProfile sql.NullString
-	AgentProfile  string
-	Provider      string
-	RuntimeID     string
-	RuntimeKind   string
-	Workdir       string
-	ProjectID     sql.NullString
-	TaskID        sql.NullString
-	State         string
-	PID           int
-	ExitCode      sql.NullInt64
-	ResumeHint    []byte
-	MetaJSON      string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	LastActivity  time.Time
-	EndedAt       sql.NullTime
+	AgentProfile      string
+	Provider          string
+	RuntimeID         string
+	RuntimeKind       string
+	Workdir           string
+	ProjectID         sql.NullString
+	TaskID            sql.NullString
+	State             string
+	PID               int
+	ExitCode          sql.NullInt64
+	ResumeHint        []byte
+	MetaJSON          string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	LastActivity      time.Time
+	EndedAt           sql.NullTime
 }
 
 const sessionSelectCols = `id, launch_profile, role, tier, capability_profile, agent_profile, provider, runtime_id, runtime_kind,
