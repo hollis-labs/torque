@@ -38,6 +38,9 @@ func TestMigration036PopulatedPostgres(t *testing.T) {
  CREATE TABLE epics(id TEXT PRIMARY KEY);
  CREATE TABLE sprints(id TEXT PRIMARY KEY,name TEXT,goal TEXT,status TEXT,approval_mode TEXT,project_id TEXT,cost_budget REAL);
  CREATE TABLE tasks(id TEXT PRIMARY KEY,title TEXT,sprint_id TEXT REFERENCES sprints(id));
+ CREATE TABLE task_templates(id TEXT PRIMARY KEY,version INTEGER);
+ CREATE TABLE sessions(id TEXT PRIMARY KEY);
+ CREATE TABLE runs(id SERIAL PRIMARY KEY);
  INSERT INTO epics(id) VALUES ('E36');
  INSERT INTO sprints VALUES ('SP36','kept','goal','inactive','auto','P36',42);
  INSERT INTO tasks VALUES ('T36','kept task','SP36');`)
