@@ -4,12 +4,26 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
+	"strings"
 
 	"github.com/hollis-labs/libs/util/sqlite/sqlitekit"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
 )
+
+const allowUnsupportedPostgresEnv = "TORQUE_ALLOW_UNSUPPORTED_POSTGRES"
+
+func postgresStartupPolicy(dsn, override string) (bool, error) {
+	if strings.TrimSpace(dsn) == "" {
+		return false, nil
+	}
+	if override == "1" {
+		return true, nil
+	}
+	return false, fmt.Errorf("Postgres application storage is not supported: Torque CRUD still uses SQLite-style placeholders and LastInsertId; unset TORQUE_POSTGRES_DSN to use SQLite or set %s=1 to continue at your own risk", allowUnsupportedPostgresEnv)
+}
 
 // Open returns a *sql.DB plus the registered driver name ("sqlite" or
 // "postgres") so callers (e.g. sqlstore.New) can dispatch dialect-specific
@@ -23,7 +37,14 @@ import (
 // to a CWD-relative "torque.db" — that fallback was the data-loss footgun
 // CW-20260517-0060 removes; path resolution is now config's job alone.
 func Open(ctx context.Context, sqlitePath string) (*sql.DB, string, error) {
-	if dsn := os.Getenv("TORQUE_POSTGRES_DSN"); dsn != "" {
+	if dsn := strings.TrimSpace(os.Getenv("TORQUE_POSTGRES_DSN")); dsn != "" {
+		warn, err := postgresStartupPolicy(dsn, os.Getenv(allowUnsupportedPostgresEnv))
+		if err != nil {
+			return nil, "", err
+		}
+		if warn {
+			log.Printf("WARNING: %s=1: continuing with unsupported Postgres application storage; CRUD may fail because SQLite-style placeholders and LastInsertId remain in use", allowUnsupportedPostgresEnv)
+		}
 		db, err := sql.Open("pgx", dsn)
 		if err != nil {
 			return nil, "", fmt.Errorf("open postgres: %w", err)

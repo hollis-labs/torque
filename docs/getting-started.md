@@ -32,11 +32,17 @@ export TORQUE_DATA_DIR=.torque
 export TORQUE_PROFILES_PATH=/path/to/profiles.yaml
 ```
 
-To use Postgres instead of SQLite:
+SQLite is the supported application backend. Postgres migrations are retained,
+but the application CRUD path still uses SQLite-style placeholders and
+`LastInsertId`, so setting `TORQUE_POSTGRES_DSN` refuses startup by default.
+Adapter developers can bypass that guard explicitly:
 
 ```bash
 export TORQUE_POSTGRES_DSN=postgres://...
+export TORQUE_ALLOW_UNSUPPORTED_POSTGRES=1
 ```
+
+The override logs a prominent warning and is not a supported deployment mode.
 
 ## Notes About `serve` vs `mcp`
 

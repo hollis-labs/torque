@@ -66,8 +66,10 @@ disagreeing vocabularies.
 SQLite write ownership is explicit and already solved: handles come from
 `appdb.Open`, and `sqlstore.New` re-opens them as a single-connection writer
 plus a bounded reader. Do not add another write path or answer `SQLITE_BUSY`
-with `SetMaxOpenConns(1)`. Storage remains an open decision and Postgres works
-today via `TORQUE_POSTGRES_DSN`, so deep SQLite tuning is wasted work.
+with `SetMaxOpenConns(1)`. Storage remains an open decision. SQLite is the
+supported application backend; Postgres migrations remain, but application
+startup guards the incomplete CRUD adapter unless an explicit development
+override is set.
 
 Migrations are keyed by filename and applied once, so editing a landed one
 changes nothing on an existing database. Add a new numbered file. Feature flags

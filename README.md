@@ -1,8 +1,8 @@
 # Torque
 
 Torque is a task orchestration engine: a task FSM, a persistent queue and
-scheduler, pluggable executors, and HTTP + MCP surfaces over one SQLite or
-Postgres store. It dispatches work and records what happened. It is not a
+scheduler, pluggable executors, and HTTP + MCP surfaces over one SQLite store.
+It dispatches work and records what happened. It is not a
 general project-management suite, not a workflow engine for every product in
 the portfolio, and not an agent runtime — it does not host the agent it
 dispatches to.
@@ -125,7 +125,10 @@ Opt-in MCP tool groups are registered when the MCP process starts, based on pers
 Common environment variables:
 
 - `TORQUE_DB_PATH` — SQLite DB path, default `torque.db`
-- `TORQUE_POSTGRES_DSN` — if set, use Postgres instead of SQLite
+- `TORQUE_POSTGRES_DSN` — retained for migration work; application startup
+  refuses Postgres because CRUD is not yet Postgres-safe
+- `TORQUE_ALLOW_UNSUPPORTED_POSTGRES=1` — explicitly bypass that guard with a
+  startup warning; intended only for development of the incomplete adapter
 - `TORQUE_HTTP_PORT` — HTTP port for `serve`, default `8990` (bound on
   `127.0.0.1` unless `--addr` says otherwise)
 - `TORQUE_API_TOKEN` — bearer token required on `/api/v1` and `/mcp` requests; required to
