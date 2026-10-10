@@ -2,12 +2,19 @@
 
 ## Storage
 
-Torque opens either:
+SQLite is Torque's supported application database today. The Postgres
+migrations and migration tests remain maintained, but application CRUD is not
+yet Postgres-safe: queries still use SQLite-style `?` placeholders and insert
+paths depend on `LastInsertId`.
 
-- SQLite, when `TORQUE_POSTGRES_DSN` is not set
-- Postgres, when `TORQUE_POSTGRES_DSN` is set
+Setting `TORQUE_POSTGRES_DSN` therefore refuses application startup with a
+clear error. Developers working on the incomplete adapter can explicitly set
+`TORQUE_ALLOW_UNSUPPORTED_POSTGRES=1`; Torque logs a prominent warning before
+continuing through the existing Postgres connection and migration path.
 
-Schema migrations run on startup for both `serve` and `mcp`.
+Schema migrations run on startup for supported SQLite processes. Postgres
+migration tests invoke the migration runner directly against their disposable
+test database and do not use the application startup guard.
 
 ## Main Runtime Pieces
 
