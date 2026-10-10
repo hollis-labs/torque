@@ -34,6 +34,36 @@ func setupPickerStore(t *testing.T) *sqlstore.Store {
 	return store
 }
 
+func TestPicker_CapabilityBlockBackwardCompatibility(t *testing.T) {
+	store := setupPickerStore(t)
+	picker := scheduler.NewPicker(store)
+
+	// Pre-change fixture 1: No block, no profile -> Skipped
+	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-LEGACY-SKIP", Title: "Legacy Skip", Status: "todo", Priority: 1, Executor: "cli", Kind: "agent"})
+	
+	// Pre-change fixture 2: No block, agent_profile set -> Picked
+	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-LEGACY-PICK", Title: "Legacy Pick", Status: "todo", Priority: 1, Executor: "cli", Kind: "agent", AgentProfile: "cli-profile"})
+	
+	// Pre-change fixture 3: No block, launch_profile set -> Picked
+	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-LEGACY-PICK-LAUNCH", Title: "Legacy Pick Launch", Status: "todo", Priority: 1, Executor: "cli", Kind: "agent", LaunchProfile: "cli-profile"})
+
+	// New fixture 4: Block present, no profile -> Picked
+	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-NEW-PICK", Title: "New Pick", Status: "todo", Priority: 1, Executor: "cli", Kind: "agent", Role: "orchestrator"})
+
+	tasks, _, err := picker.Pick(10)
+	require.NoError(t, err)
+	assert.Len(t, tasks, 3)
+
+	var pickedIDs []string
+	for _, task := range tasks {
+		pickedIDs = append(pickedIDs, task.ID)
+	}
+	assert.Contains(t, pickedIDs, "CW-LEGACY-PICK")
+	assert.Contains(t, pickedIDs, "CW-LEGACY-PICK-LAUNCH")
+	assert.Contains(t, pickedIDs, "CW-NEW-PICK")
+	assert.NotContains(t, pickedIDs, "CW-LEGACY-SKIP")
+}
+
 func TestPickerEligibleTasks(t *testing.T) {
 	store := setupPickerStore(t)
 	picker := scheduler.NewPicker(store)
