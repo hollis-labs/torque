@@ -48,10 +48,9 @@ type LaunchProfile struct {
 	// SessionMeta and into the loopback MCP tool-surface selector — kind=agent
 	// workers get the restricted self-task subset; orchestrator-class roles
 	// get the full cross-task surface.
-	Role string
-	Tier string
+	Role              string
+	Tier              string
 	CapabilityProfile *CapabilityProfile
-
 
 	// AgentProfile is the low-level provider/runtime config key. Phase 1
 	// delegates to the legacy agent_profiles registry (profiles.yaml) for the

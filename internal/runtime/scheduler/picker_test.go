@@ -40,10 +40,10 @@ func TestPicker_CapabilityBlockBackwardCompatibility(t *testing.T) {
 
 	// Pre-change fixture 1: No block, no profile -> Skipped
 	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-LEGACY-SKIP", Title: "Legacy Skip", Status: "todo", Priority: 1, Executor: "cli", Kind: "agent"})
-	
+
 	// Pre-change fixture 2: No block, agent_profile set -> Picked
 	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-LEGACY-PICK", Title: "Legacy Pick", Status: "todo", Priority: 1, Executor: "cli", Kind: "agent", AgentProfile: "cli-profile"})
-	
+
 	// Pre-change fixture 3: No block, launch_profile set -> Picked
 	store.CreateTask(&sqlstore.TaskRecord{ID: "CW-LEGACY-PICK-LAUNCH", Title: "Legacy Pick Launch", Status: "todo", Priority: 1, Executor: "cli", Kind: "agent", LaunchProfile: "cli-profile"})
 
