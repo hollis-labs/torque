@@ -177,6 +177,7 @@ func (s *Store) GetRun(id int64) (*RunRecord, error) {
 	if err != nil {
 		return nil, err
 	}
+	projectRunProfileSnapshot(&r)
 	return &r, nil
 }
 
