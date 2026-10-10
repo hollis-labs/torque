@@ -22,6 +22,9 @@ Example: {"id":"backend-fix","name":"Backend Fix","description":"Fix {{issue}}",
 		withBoolean("auto_execute", desc("Default true — whether the scheduler picks up instantiated tasks")),
 		withString("executor", desc("Executor name for agent-kind tasks")),
 		withString("launch_profile", desc("Torque launch_profile id default — preferred over agent_profile.")),
+		withString("role", desc("Role override.")),
+		withString("tier", desc("Tier override.")),
+		withString("capability_profile", desc("JSON object of capability overrides.")),
 		withString("agent_profile", desc("Legacy agent_profile override. Honored when launch_profile is empty.")),
 		withString("system_prompt", desc("System prompt (supports {{var}})")),
 		withString("working_dir", desc("Task working directory (supports {{var}})")),
@@ -67,6 +70,9 @@ Example: {"id":"backend-fix","description":"Fix {{issue}} in {{component}}"}`),
 		withBoolean("auto_execute"),
 		withString("executor"),
 		withString("launch_profile"),
+		withString("role"),
+		withString("tier"),
+		withString("capability_profile"),
 		withString("agent_profile"),
 		withString("system_prompt"),
 		withString("working_dir"),
@@ -145,6 +151,8 @@ func (a *Adapter) handleTemplateCreate(ctx context.Context, req map[string]any) 
 		Kind:                 reqStr(req, "kind"),
 		Executor:             reqStr(req, "executor"),
 		LaunchProfile:        reqStr(req, "launch_profile"),
+		Role:                 reqStr(req, "role"),
+		Tier:                 reqStr(req, "tier"),
 		AgentProfile:         reqStr(req, "agent_profile"),
 		SystemPrompt:         reqStr(req, "system_prompt"),
 		WorkingDir:           reqStr(req, "working_dir"),
@@ -162,6 +170,22 @@ func (a *Adapter) handleTemplateCreate(ctx context.Context, req map[string]any) 
 		in.AutoExecute = true
 	}
 
+	if v, ok := req["capability_profile"]; ok {
+		switch typed := v.(type) {
+		case string:
+			if typed == "" {
+				in.CapabilityProfile = map[string]any{}
+			} else {
+				if err := json.Unmarshal([]byte(typed), &in.CapabilityProfile); err != nil {
+					return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid capability_profile JSON string: %v", err), "capability_profile")
+				}
+			}
+		case map[string]any:
+			in.CapabilityProfile = typed
+		default:
+			return errResult(ErrCodeArgInvalid, "capability_profile must be a JSON string or object", "capability_profile")
+		}
+	}
 	if raw := reqStr(req, "tools"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Tools); err != nil {
 			return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid tools JSON: %v", err), "tools")
@@ -258,6 +282,14 @@ func (a *Adapter) handleTemplateUpdate(ctx context.Context, req map[string]any) 
 		v := reqStr(req, "agent_profile")
 		in.AgentProfile = &v
 	}
+	if _, ok := args["role"]; ok {
+		v := reqStr(req, "role")
+		in.Role = &v
+	}
+	if _, ok := args["tier"]; ok {
+		v := reqStr(req, "tier")
+		in.Tier = &v
+	}
 	if _, ok := args["system_prompt"]; ok {
 		v := reqStr(req, "system_prompt")
 		in.SystemPrompt = &v
@@ -265,6 +297,22 @@ func (a *Adapter) handleTemplateUpdate(ctx context.Context, req map[string]any) 
 	if _, ok := args["working_dir"]; ok {
 		v := reqStr(req, "working_dir")
 		in.WorkingDir = &v
+	}
+	if v, ok := req["capability_profile"]; ok {
+		switch typed := v.(type) {
+		case string:
+			if typed == "" {
+				in.CapabilityProfile = map[string]any{}
+			} else {
+				if err := json.Unmarshal([]byte(typed), &in.CapabilityProfile); err != nil {
+					return errResult(ErrCodeArgInvalid, fmt.Sprintf("invalid capability_profile JSON string: %v", err), "capability_profile")
+				}
+			}
+		case map[string]any:
+			in.CapabilityProfile = typed
+		default:
+			return errResult(ErrCodeArgInvalid, "capability_profile must be a JSON string or object", "capability_profile")
+		}
 	}
 	if raw := reqStr(req, "tools"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in.Tools); err != nil {

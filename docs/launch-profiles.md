@@ -16,7 +16,7 @@ Three Go types in `internal/launchprofile`:
   `id`, `display_name`, `role`, `tier`, `capability_profile` (a typed block describing task shape),
   `agent_profile` (the underlying registry lookup key), free-form `annotations`.
   Example IDs: `orchestrator.default`, `planner.default`, `worker.implementer`, `reviewer.code`, `default`.
-  *Note:* `role`, `tier`, and `capability_profile` are also mirrored directly on Tasks, Templates, and Sessions.
+  *Note:* `role`, `tier`, and `capability_profile` are also mirrored directly on Tasks and Templates. Currently there is no catalog API to define standalone launch profiles via REST or MCP (they exist as hardcoded builtins mapping legacy types or in configuration); you specify these overrides directly on tasks/templates.
 - **`CompiledLaunchProfile`** — the resolved, defaulted form. Wraps a
   `LaunchProfile` plus the underlying `config.AgentProfile` resolved from
   `profiles.yaml`, plus a `Provenance` tag (`explicit` / `legacy_map` /
@@ -75,33 +75,35 @@ on a per-row basis.
 
 Migration `026_launch_profile.sql` adds a `launch_profile TEXT` column to
 each of:
-
 - `tasks` (`NOT NULL DEFAULT ''`)
 - `task_templates` (nullable)
 - `sessions` (`NOT NULL DEFAULT ''`)
 
-Domain structs (`sqlstore.TaskRecord`, `TemplateRecord`, `SessionRecord`)
-and `service.TaskCreateInput` / `TemplateCreateInput` / `TaskUpdate`
-gain a `LaunchProfile` field.
+Migration `038_capability_profile.sql` adds `role TEXT`, `tier TEXT`, `capability_profile TEXT` to `tasks` and `task_templates`, plus `profile_snapshot TEXT` to `runs`.
+On PostgreSQL, these use `TEXT` (rather than `JSONB`) to preserve byte fidelity for snapshots, mirroring SQLite.
+The `profile_snapshot` in `runs` is explicitly allowlisted upon write to prevent secret leakage (API Keys, System Prompts, Base URLs, Environment/Args are stripped; only structural fields like `launch_profile_id`, `provider`, `model`, `executor`, `runtime_kind`, `role`, `tier`, `permission_mode` are persisted).
+
+Domain structs (`sqlstore.TaskRecord`, `TemplateRecord`, `SessionRecord`, `RunRecord`)
+and input structs gain these corresponding fields.
 
 ## API surface
 
 | Surface | Field | Notes |
 |---|---|---|
-| `POST /api/v1/tasks` | `launch_profile` (string, optional) | New. Legacy `agent_profile` still accepted. |
-| `PATCH /api/v1/tasks/:id` | `launch_profile` (pointer) | New. |
-| `GET /api/v1/tasks/:id` | `launch_profile` (string) | New. Always emitted; empty when unset. |
-| `POST /api/v1/templates` | `launch_profile` (string) | New. |
-| `PATCH /api/v1/templates/:id` | `launch_profile` (pointer) | New. |
-| `POST /api/v1/sessions/launch` | `launch_profile` (string) | New. Validation of legacy `agent_profile` only fires when `launch_profile` is empty. |
-| `POST /api/v1/sessions/:id/resume` | `launch_profile` (string) | New. |
-| MCP `torque_session_create` | `launch_profile` (string) | `agent_profile` is no longer `Required` — either field satisfies. |
-| MCP `torque_session_launch` | `launch_profile` (string) | Same. |
-| MCP `torque_session_resume` | `launch_profile` (string) | New. |
-| MCP `torque_task_create` | `launch_profile` (string) | New. |
-| MCP `torque_task_update` | `launch_profile` (string) | New. |
-| MCP `torque_template_create` | `launch_profile` (string) | New. |
-| MCP `torque_template_update` | `launch_profile` (string) | New. |
+| `POST /api/v1/tasks` | `launch_profile`, `role`, `tier`, `capability_profile` | Legacy `agent_profile` still accepted. |
+| `PATCH /api/v1/tasks/:id` | `launch_profile`, `role`, `tier`, `capability_profile` | |
+| `GET /api/v1/tasks/:id` | `launch_profile`, `role`, `tier`, `capability_profile` | Always emitted. |
+| `POST /api/v1/templates` | `launch_profile`, `role`, `tier`, `capability_profile` | |
+| `PATCH /api/v1/templates/:id` | `launch_profile`, `role`, `tier`, `capability_profile` | |
+| `POST /api/v1/sessions/launch` | `launch_profile` | Validation of legacy `agent_profile` only fires when `launch_profile` is empty. |
+| `POST /api/v1/sessions/:id/resume` | `launch_profile` | |
+| MCP `torque_session_create` | `launch_profile` | `agent_profile` is no longer `Required`. |
+| MCP `torque_session_launch` | `launch_profile` | |
+| MCP `torque_session_resume` | `launch_profile` | |
+| MCP `torque_task_create` | `launch_profile`, `role`, `tier`, `capability_profile` | |
+| MCP `torque_task_update` | `launch_profile`, `role`, `tier`, `capability_profile` | |
+| MCP `torque_template_create` | `launch_profile`, `role`, `tier`, `capability_profile` | |
+| MCP `torque_template_update` | `launch_profile`, `role`, `tier`, `capability_profile` | |
 
 The HTTP and MCP create paths require **at least one** of `launch_profile`
 or `agent_profile`. `agent.Options.Validate` enforces this; the error

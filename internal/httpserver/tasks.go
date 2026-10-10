@@ -1034,15 +1034,16 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	input := service.TaskCreateInput{
-		Title:         req.Title,
-		Description:   req.Description,
-		Priority:      req.Priority,
-		Tags:          req.Tags,
-		Manual:        req.Manual,
-		Executor:      req.Executor,
-		LaunchProfile: req.LaunchProfile,
-		Role:          req.Role,
-		Tier:          req.Tier,
+		Title:             req.Title,
+		Description:       req.Description,
+		Priority:          req.Priority,
+		Tags:              req.Tags,
+		Manual:            req.Manual,
+		Executor:          req.Executor,
+		LaunchProfile:     req.LaunchProfile,
+		Role:              req.Role,
+		Tier:              req.Tier,
+		CapabilityProfile: req.CapabilityProfile,
 
 		AgentProfile:      req.AgentProfile,
 		WorkingDir:        req.WorkingDir,
