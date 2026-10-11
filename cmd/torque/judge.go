@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/hollis-labs/torque/internal/judge"
+	judgetether "github.com/hollis-labs/torque/internal/judge/tether"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
 	"github.com/spf13/cobra"
@@ -22,22 +25,27 @@ pick-one and rate-on-a-scale questions with probabilities, Torque owns the
 questions and thresholds, and every answer is recorded as a suggestion in a
 ledger. Nothing here changes a task.
 
-Only the keyword baseline decider is available until Tether's Decide operation
-and the JEV adapter exist (CW-20261010-0041). The baseline is the floor a real
-model has to beat.`,
+Deciders: baseline (no model, free: the floor a real model has to beat) and
+tether (Tether's Decide operation, which spends money at the provider; needs
+TORQUE_TETHER_URL and TORQUE_TETHER_TOKEN, and --yes).`,
 	}
 	cmd.AddCommand(judgeSetsCmd(), judgeEvalCmd(), judgeEnrichCmd(), judgeLedgerCmd())
 	return cmd
 }
 
-func decider(name string) (judge.Decider, error) {
+// decider returns the named decider and whether using it spends money.
+func decider(name string) (d judge.Decider, paid bool, err error) {
 	switch name {
 	case "baseline", "keyword-baseline":
-		return judge.Baseline{}, nil
-	case "jev":
-		return nil, fmt.Errorf("the jev decider needs Tether's Decide operation and the JEV adapter (CW-20261010-0041); use --decider baseline until then")
+		return judge.Baseline{}, false, nil
+	case "tether", "jev":
+		td := judgetether.New(os.Getenv("TORQUE_TETHER_URL"), os.Getenv("TORQUE_TETHER_TOKEN"))
+		if td == nil {
+			return nil, true, fmt.Errorf("the tether decider needs TORQUE_TETHER_URL (and TORQUE_TETHER_TOKEN) in the environment, and Tether's Decide operation (CW-20261010-0041)")
+		}
+		return td, true, nil
 	}
-	return nil, fmt.Errorf("unknown decider %q (available: baseline)", name)
+	return nil, false, fmt.Errorf("unknown decider %q (available: baseline, tether)", name)
 }
 
 func withJudge(fn func(ctx context.Context, svc *service.Service, out io.Writer) error) func(*cobra.Command, []string) error {
@@ -77,10 +85,11 @@ func judgeSetsCmd() *cobra.Command {
 }
 
 func judgeEvalCmd() *cobra.Command {
-	var set, decName string
-	var n int
+	var set, decName, outFile string
+	var n, concurrency, maxCalls int
 	var seed int64
-	var noFlips bool
+	var maxCost float64
+	var noFlips, estimate, yes bool
 	cmd := &cobra.Command{
 		Use:          "eval",
 		Short:        "Evaluate a question set against the tags tasks already carry",
@@ -94,40 +103,77 @@ confident disagreements.
 Existing tags are real but noisy labels, so review the disagreements before
 trusting a number. A Choice samples the natural mix of kinds; a yes/no question
 samples balanced positives and negatives, so its accuracy is on that mix.
-Tasks with no tags at all are never used as negatives.`,
+Tasks with no tags at all are never used as negatives.
+
+--estimate prints the calls and input tokens a run would use and what they
+cost, and calls nothing. A decider that spends money (tether) prints that
+estimate and stops unless you pass --yes; --max-calls and --max-cost stop a
+run before it passes a limit, and the report says it was truncated.`,
 		RunE: withJudge(func(ctx context.Context, svc *service.Service, out io.Writer) error {
-			d, err := decider(decName)
+			d, paid, err := decider(decName)
 			if err != nil {
 				return err
 			}
-			rep, err := svc.Judge.Evaluate(ctx, set, d, service.JudgeEvalOptions{N: n, Seed: seed, NoFlips: noFlips})
+			opts := service.JudgeEvalOptions{N: n, Seed: seed, NoFlips: noFlips, Concurrency: concurrency, MaxCalls: maxCalls, MaxCostUSD: maxCost}
+			if estimate || (paid && !yes) {
+				est, err := svc.Judge.EstimateEval(set, opts)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(out, "Estimate for %s with %d examples (up to %d labeled per question, seed %d):\n  %d calls (%d per example), about %d input tokens, about $%.4f at $%.3f per million input tokens.\n  The estimate counts the provider's fixed per-request overhead; the real figure is reported after a run.\n",
+					set, est.Examples, n, seed, est.Calls, est.CallsPerExample, est.EstimatedTokens, est.EstimatedUSD, judge.InputPricePerMTokUSD)
+				if estimate {
+					return nil
+				}
+				return fmt.Errorf("the %s decider spends money at the provider: nothing was asked. Re-run with --yes to proceed (add --max-cost to cap it)", decName)
+			}
+			rep, err := svc.Judge.Evaluate(ctx, set, d, opts)
 			if err != nil {
 				return err
 			}
 			fmt.Fprintf(out, "Sample: up to %d labeled examples per question, seed %d, from the tags tasks already carry.\n\n%s", n, seed, rep.Text())
+			if outFile != "" {
+				b, err := json.MarshalIndent(rep, "", "  ")
+				if err != nil {
+					return err
+				}
+				if err := os.WriteFile(outFile, b, 0o644); err != nil {
+					return err
+				}
+				fmt.Fprintf(out, "\nFull report written to %s\n", outFile)
+			}
 			return nil
 		}),
 	}
 	cmd.Flags().StringVar(&set, "set", "", "question set id (see `torque judge sets`)")
-	cmd.Flags().StringVar(&decName, "decider", "baseline", "decider: baseline")
+	cmd.Flags().StringVar(&decName, "decider", "baseline", "decider: baseline or tether")
 	cmd.Flags().IntVar(&n, "n", 200, "labeled examples per question")
 	cmd.Flags().Int64Var(&seed, "seed", 1, "sampling seed (the same seed draws the same sample)")
 	cmd.Flags().BoolVar(&noFlips, "no-flips", false, "skip the reordered second ask (halves the calls)")
+	cmd.Flags().IntVar(&concurrency, "concurrency", 1, "examples asked at once (the provider allows 80 requests per second)")
+	cmd.Flags().IntVar(&maxCalls, "max-calls", 0, "stop before more calls than this")
+	cmd.Flags().Float64Var(&maxCost, "max-cost", 0, "stop at this much input spend, in USD")
+	cmd.Flags().BoolVar(&estimate, "estimate", false, "print the estimated calls, tokens and cost and call nothing")
+	cmd.Flags().BoolVar(&yes, "yes", false, "proceed with a decider that spends money")
+	cmd.Flags().StringVar(&outFile, "out", "", "also write the full report as JSON to this file")
 	_ = cmd.MarkFlagRequired("set")
 	return cmd
 }
 
 func judgeEnrichCmd() *cobra.Command {
 	var set, task, decName string
-	var record bool
+	var record, yes bool
 	cmd := &cobra.Command{
 		Use:          "enrich",
 		Short:        "Ask a set's questions about one task and show (or record) the suggestions",
 		SilenceUsage: true,
 		RunE: withJudge(func(ctx context.Context, svc *service.Service, out io.Writer) error {
-			d, err := decider(decName)
+			d, paid, err := decider(decName)
 			if err != nil {
 				return err
+			}
+			if paid && !yes {
+				return fmt.Errorf("the %s decider spends money at the provider: nothing was asked. Re-run with --yes to proceed", decName)
 			}
 			recs, err := svc.Judge.EnrichTask(ctx, d, set, task, record)
 			if err != nil {
@@ -150,8 +196,9 @@ func judgeEnrichCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&set, "set", "", "question set id")
 	cmd.Flags().StringVar(&task, "task", "", "task id")
-	cmd.Flags().StringVar(&decName, "decider", "baseline", "decider: baseline")
+	cmd.Flags().StringVar(&decName, "decider", "baseline", "decider: baseline or tether")
 	cmd.Flags().BoolVar(&record, "record", false, "record the answers in the ledger")
+	cmd.Flags().BoolVar(&yes, "yes", false, "proceed with a decider that spends money")
 	_ = cmd.MarkFlagRequired("set")
 	_ = cmd.MarkFlagRequired("task")
 	return cmd

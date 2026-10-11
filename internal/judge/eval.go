@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -34,6 +36,14 @@ type EvalOptions struct {
 	Thresholds []float64
 	// MaxDisagreements caps the wrong answers listed per question. Default 8.
 	MaxDisagreements int
+	// Concurrency is how many examples are asked at once (default 1). Results
+	// are aggregated in example order, so the report is the same at any value.
+	Concurrency int
+	// MaxCalls and MaxCostUSD stop the run before it spends past them (0 = no
+	// limit). The report says it was truncated and how many examples ran.
+	// Reported input tokens are priced at InputPricePerMTokUSD.
+	MaxCalls   int
+	MaxCostUSD float64
 }
 
 // MinPositives is how many positive labels a yes/no question needs before its
@@ -98,9 +108,26 @@ type Report struct {
 	Calls           int
 	InputTokens     int
 	OutputTokens    int
-	EstimatedTokens int // our own estimate of the requests sent, for budgeting
+	EstimatedTokens int     // our own estimate of the requests sent, for budgeting
+	CostUSD         float64 // reported input tokens at the provider's price
+	NotRun          int     // examples skipped because MaxCalls or MaxCostUSD was reached
+	Truncated       bool
 	Latency         time.Duration
 	Questions       []QuestionReport
+}
+
+// exampleRun is everything asked about one example, collected without
+// touching shared state so examples can run concurrently.
+type exampleRun struct {
+	ran       bool // false: skipped by a limit
+	failed    bool // a call errored; the example is not scored
+	calls     int
+	estimated int
+	usage     Usage
+	latency   time.Duration
+	model     string
+	primary   Response
+	winners   map[string][]string // question key -> winning option per seed
 }
 
 // Evaluate asks every example's questions of the decider and scores the
@@ -118,8 +145,71 @@ func Evaluate(ctx context.Context, set *Set, d Decider, examples []Example, opts
 	if opts.MaxDisagreements == 0 {
 		opts.MaxDisagreements = 8
 	}
+	if opts.Concurrency < 1 {
+		opts.Concurrency = 1
+	}
 	rep := &Report{SetID: set.ID, SetVersion: set.Version, SetHash: set.Hash(), Decider: d.Name(), Examples: len(examples)}
 
+	// Phase 1: ask. Workers write only their own slot of runs.
+	runs := make([]exampleRun, len(examples))
+	var calls, inTokens int64
+	var wg sync.WaitGroup
+	jobs := make(chan int)
+	over := func() bool {
+		if opts.MaxCalls > 0 && int(atomic.LoadInt64(&calls))+len(opts.Seeds) > opts.MaxCalls {
+			return true
+		}
+		return opts.MaxCostUSD > 0 && CostUSD(int(atomic.LoadInt64(&inTokens))) >= opts.MaxCostUSD
+	}
+	for w := 0; w < opts.Concurrency; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				if ctx.Err() != nil || over() {
+					continue // leave the slot as not run
+				}
+				run := exampleRun{ran: true, winners: map[string][]string{}}
+				for si, seed := range opts.Seeds {
+					req := set.BuildRequest(examples[i].Fields, seed)
+					run.estimated += EstimateTokens(req)
+					resp, err := d.Decide(ctx, req)
+					atomic.AddInt64(&calls, 1)
+					run.calls++
+					if err != nil {
+						run.failed = true
+						break
+					}
+					atomic.AddInt64(&inTokens, int64(resp.Usage.InputTokens))
+					run.usage.InputTokens += resp.Usage.InputTokens
+					run.usage.OutputTokens += resp.Usage.OutputTokens
+					run.latency += resp.Latency
+					if run.model == "" {
+						run.model = resp.Model
+					}
+					if si == 0 {
+						run.primary = resp
+					}
+					for _, q := range set.Questions {
+						if q.Type == Choice {
+							run.winners[q.Key] = append(run.winners[q.Key], resp.Answers[q.Key].Choice)
+						}
+					}
+				}
+				runs[i] = run
+			}
+		}()
+	}
+	for i := range examples {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	// Phase 2: score, in example order, so the report does not depend on timing.
 	type scored struct {
 		conf    float64
 		correct bool
@@ -131,47 +221,30 @@ func Evaluate(ctx context.Context, set *Set, d Decider, examples []Example, opts
 	flips := map[string]int{}
 	compared := map[string]int{}
 
-	for _, ex := range examples {
-		if err := ctx.Err(); err != nil {
-			return nil, err
+	for i, ex := range examples {
+		run := runs[i]
+		if !run.ran {
+			rep.NotRun++
+			continue
 		}
-		var primary Response
-		ok := true
-		winners := map[string][]string{} // question key -> winner per seed
-		for si, seed := range opts.Seeds {
-			req := set.BuildRequest(ex.Fields, seed)
-			rep.EstimatedTokens += EstimateTokens(req)
-			resp, err := d.Decide(ctx, req)
-			rep.Calls++
-			if err != nil {
-				rep.Errors++
-				ok = false
-				break
-			}
-			rep.InputTokens += resp.Usage.InputTokens
-			rep.OutputTokens += resp.Usage.OutputTokens
-			rep.Latency += resp.Latency
-			if rep.Model == "" {
-				rep.Model = resp.Model
-			}
-			if si == 0 {
-				primary = resp
-			}
-			for _, q := range set.Questions {
-				if q.Type == Choice {
-					winners[q.Key] = append(winners[q.Key], resp.Answers[q.Key].Choice)
-				}
-			}
+		rep.Calls += run.calls
+		rep.EstimatedTokens += run.estimated
+		rep.InputTokens += run.usage.InputTokens
+		rep.OutputTokens += run.usage.OutputTokens
+		rep.Latency += run.latency
+		if rep.Model == "" {
+			rep.Model = run.model
 		}
-		if !ok {
+		if run.failed {
+			rep.Errors++
 			continue
 		}
 		for _, q := range set.Questions {
-			ans, has := primary.Answers[q.Key]
+			ans, has := run.primary.Answers[q.Key]
 			if !has {
 				continue
 			}
-			if w := winners[q.Key]; len(w) > 1 {
+			if w := run.winners[q.Key]; len(w) > 1 {
 				compared[q.Key]++
 				for _, x := range w[1:] {
 					if x != w[0] {
@@ -198,6 +271,8 @@ func Evaluate(ctx context.Context, set *Set, d Decider, examples []Example, opts
 			}
 		}
 	}
+	rep.CostUSD = CostUSD(rep.InputTokens)
+	rep.Truncated = rep.NotRun > 0
 
 	for _, q := range set.Questions {
 		qr := QuestionReport{Key: q.Key, Type: q.Type, Labeled: len(scores[q.Key])}
@@ -253,6 +328,32 @@ func Evaluate(ctx context.Context, set *Set, d Decider, examples []Example, opts
 	return rep, nil
 }
 
+// Estimate is what an evaluation would ask and cost, worked out without
+// calling anything.
+type Estimate struct {
+	Examples        int
+	CallsPerExample int
+	Calls           int
+	EstimatedTokens int
+	EstimatedUSD    float64
+}
+
+// EstimateEval works out the calls and input tokens an evaluation of these
+// examples would use, with the same request building and overhead as the real
+// run. Use it to approve a spend before making it.
+func EstimateEval(set *Set, examples []Example, opts EvalOptions) Estimate {
+	seeds := len(opts.Seeds)
+	if seeds == 0 {
+		seeds = 2
+	}
+	e := Estimate{Examples: len(examples), CallsPerExample: seeds, Calls: len(examples) * seeds}
+	for _, ex := range examples {
+		e.EstimatedTokens += EstimateTokens(set.BuildRequest(ex.Fields, 1)) * seeds
+	}
+	e.EstimatedUSD = CostUSD(e.EstimatedTokens)
+	return e
+}
+
 // judgeAnswer reads a decider's answer against a label: what it predicted,
 // how confident it was (Noul by |2p-1|), and whether it was right.
 func judgeAnswer(q SetQuestion, a Answer, l Label) (pred string, conf float64, correct bool) {
@@ -291,8 +392,11 @@ func ratio(n, d int) float64 {
 func (r *Report) Text() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Set %s v%d (%s)  decider %s  model %s\n", r.SetID, r.SetVersion, r.SetHash, r.Decider, orDash(r.Model))
-	fmt.Fprintf(&b, "%d examples, %d calls, %d errors; input tokens %d (estimated %d), output %d; model time %s\n",
-		r.Examples, r.Calls, r.Errors, r.InputTokens, r.EstimatedTokens, r.OutputTokens, r.Latency.Round(time.Millisecond))
+	fmt.Fprintf(&b, "%d examples, %d calls, %d errors; input tokens %d (estimated %d), output %d, input cost $%.4f; model time %s\n",
+		r.Examples, r.Calls, r.Errors, r.InputTokens, r.EstimatedTokens, r.OutputTokens, r.CostUSD, r.Latency.Round(time.Millisecond))
+	if r.Truncated {
+		fmt.Fprintf(&b, "TRUNCATED: stopped at the call or spend limit; %d of %d examples were not asked, so every figure below is on a partial sample.\n", r.NotRun, r.Examples)
+	}
 	for _, q := range r.Questions {
 		fmt.Fprintf(&b, "\n%s (%s): %d labeled, %.1f%% right, mean confidence %.2f", q.Key, q.Type, q.Labeled, q.Accuracy*100, q.MeanConf)
 		if q.Type == Choice {
