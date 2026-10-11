@@ -8,6 +8,7 @@ var knownFeatures = map[string]bool{
 	"projects":    true,
 	"epics":       true,
 	"collections": true,
+	"planner":     true,
 }
 
 // FeatureService controls opt-in feature flags stored in the settings table.
