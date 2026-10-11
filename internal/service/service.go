@@ -1,6 +1,8 @@
 package service
 
 import (
+	"time"
+
 	"github.com/hollis-labs/torque/internal/modelcatalog"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/persistence/writequeue"
@@ -31,6 +33,7 @@ type Service struct {
 	Plan       *PlanService
 	Issue      *IssueService
 	Workstream *WorkstreamService
+	Planner    *PlannerService
 
 	// Models is the shared models.dev catalog. nil in test wiring; populated
 	// by serve / mcp entry points. Callers that depend on model metadata
@@ -60,6 +63,7 @@ func New(store *sqlstore.Store) *Service {
 		Project:    &ProjectService{store: store, feature: feature},
 		Epic:       &EpicService{store: store, feature: feature},
 		Collection: &CollectionService{store: store, feature: feature},
+		Planner:    &PlannerService{store: store, feature: feature, now: time.Now},
 		Tag:        tag,
 		Checkpoint: &CheckpointService{store: store},
 		Template:   &TemplateService{store: store, tasks: task},
