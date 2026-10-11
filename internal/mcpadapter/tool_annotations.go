@@ -41,6 +41,7 @@ var toolAnnotations = map[string]toolHints{
 	"torque_collection_tasks_list":     {true, false, true},
 	"torque_collection_unarchive":      {false, false, true},
 	"torque_collection_update":         {false, false, true},
+	"torque_planner_board":             {true, false, true},
 	"torque_planner_comment":           {false, false, false},
 	"torque_planner_create":            {false, false, false},
 	"torque_planner_databases":         {true, false, true},

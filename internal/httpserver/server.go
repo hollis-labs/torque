@@ -197,6 +197,9 @@ func (s *Server) routes() {
 		// Static paths come before the parameterized {db} routes.
 		r.Get("/planner/databases", s.plannerDatabases)
 		r.Get("/planner/search", s.plannerSearch)
+		r.Get("/planner/board", s.plannerBoard)
+		r.Get("/planner/torque-titles", s.plannerTaskTitles)
+		r.Get("/planner/workstreams/{id}/tasks", s.plannerWorkstreamTasks)
 		r.Get("/planner/schema/{db}", s.plannerSchema)
 		r.Post("/planner/links", s.plannerRelate(true))
 		r.Delete("/planner/links", s.plannerRelate(false))

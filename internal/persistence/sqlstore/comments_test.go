@@ -424,3 +424,31 @@ func TestSearchComments_CursorPagination(t *testing.T) {
 		assert.True(t, seen[id], "id %d never visited", id)
 	}
 }
+
+func TestLatestCommentAt(t *testing.T) {
+	store := setupTestStore(t)
+	require.NoError(t, store.CreateTask(sampleTask("CW-A")))
+	require.NoError(t, store.CreateTask(sampleTask("CW-B")))
+	require.NoError(t, store.CreateTask(sampleTask("CW-C")))
+
+	for _, c := range []struct{ id, at string }{
+		{"CW-A", "2026-10-01 10:00:00"}, {"CW-A", "2026-10-03 09:30:00"}, {"CW-A", "2026-10-02 23:00:00"},
+		{"CW-B", "2026-10-05 00:00:01"},
+	} {
+		_, err := store.DB().Exec(`INSERT INTO comments (entity_type, entity_id, author, content, created_at) VALUES ('task', ?, 'a', 'x', ?)`, c.id, c.at)
+		require.NoError(t, err)
+	}
+	// A comment on another entity type with the same id is not counted.
+	_, err := store.DB().Exec(`INSERT INTO comments (entity_type, entity_id, author, content, created_at) VALUES ('epic', 'CW-C', 'a', 'x', '2026-10-09 00:00:00')`)
+	require.NoError(t, err)
+
+	got, err := store.LatestCommentAt("task", []string{"CW-A", "CW-B", "CW-C", "CW-none"})
+	require.NoError(t, err)
+	assert.Len(t, got, 2, "ids with no task comments are absent")
+	assert.Equal(t, "2026-10-03T09:30:00Z", got["CW-A"].UTC().Format("2006-01-02T15:04:05Z"))
+	assert.Equal(t, "2026-10-05T00:00:01Z", got["CW-B"].UTC().Format("2006-01-02T15:04:05Z"))
+
+	none, err := store.LatestCommentAt("task", nil)
+	require.NoError(t, err)
+	assert.Empty(t, none)
+}
