@@ -1,0 +1,38 @@
+id: task-decision-state
+version: 1
+purpose: task_enrichment
+applies_to: task
+description: >
+  Whether a task is ready to work (docs/task-tagging-conventions.md, dimension
+  2). Most tasks carry none of these tags, which is the normal dispatch-ready
+  case, so a suggestion needs high confidence.
+state:
+  - name: title
+    max_chars: 500
+  - name: description
+    max_chars: 4000
+questions:
+  - key: discuss_first
+    type: noul
+    instructions: "Does `description` leave a decision open that someone has to make before this task can be scoped?"
+    true: "An open question, an unresolved choice between approaches, or an explicit request to discuss or decide first."
+    false: "The approach is specified, or the decision has already been made."
+    tag: discuss-first
+    suggest_min: 0.7
+    label_tags: [discuss-first]
+  - key: needs_review
+    type: noul
+    instructions: "Does `description` say the task must first be checked against the current code or architecture because it may be out of date?"
+    true: "It asks to verify the task is still valid, or says it was written against an older state of the system."
+    false: "It does not mention being possibly out of date."
+    tag: needs-review
+    suggest_min: 0.7
+    label_tags: [needs-review]
+  - key: details_needed
+    type: noul
+    instructions: "Is `description` too underspecified to start work, with no clear scope or way to tell it is done?"
+    true: "The scope or acceptance is missing or vague enough that a worker would have to ask."
+    false: "A worker could start from what is written."
+    tag: details-needed
+    suggest_min: 0.7
+    label_tags: [details-needed]

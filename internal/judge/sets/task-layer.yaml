@@ -1,0 +1,29 @@
+id: task-layer
+version: 1
+purpose: task_enrichment
+applies_to: task
+description: >
+  Which layer a task touches (docs/task-tagging-conventions.md, dimension 4).
+  Full-stack tasks carry neither tag, so both questions can say no.
+state:
+  - name: title
+    max_chars: 500
+  - name: description
+    max_chars: 4000
+questions:
+  - key: frontend
+    type: noul
+    instructions: "Does the work in `title` and `description` change user-facing interface code: screens, components, styling or client-side behavior?"
+    true: "UI code, pages, components, styling, client-side state."
+    false: "No user-interface code changes."
+    tag: frontend
+    suggest_min: 0.6
+    label_tags: [frontend]
+  - key: backend
+    type: noul
+    instructions: "Does the work in `title` and `description` change server-side code: services, storage, APIs, background jobs or infrastructure?"
+    true: "Server code, database, API, queue or infrastructure changes."
+    false: "No server-side code changes."
+    tag: backend
+    suggest_min: 0.6
+    label_tags: [backend]
