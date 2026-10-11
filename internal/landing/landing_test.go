@@ -3,6 +3,9 @@ package landing
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -67,5 +70,35 @@ func TestParseEvidence(t *testing.T) {
 	}
 	if ParseEvidence("not json") != (Evidence{}) {
 		t.Fatal("malformed should be empty")
+	}
+}
+
+func TestCheckClean(t *testing.T) {
+	ctx := context.Background()
+	if got := CheckClean(ctx, ""); got != nil {
+		t.Fatalf("blank dir: %v", got)
+	}
+	if got := CheckClean(ctx, "/nonexistent/path"); got != nil {
+		t.Fatalf("missing dir: %v", got)
+	}
+	plain := t.TempDir()
+	if got := CheckClean(ctx, plain); got != nil {
+		t.Fatalf("non-git dir: %v", got)
+	}
+	repo := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-q", "-m", "x"}} {
+		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	if got := CheckClean(ctx, repo); got != nil {
+		t.Fatalf("clean repo: %v", got)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := CheckClean(ctx, repo)
+	if len(got) != 1 || !strings.Contains(got[0], "1 uncommitted change") {
+		t.Fatalf("dirty repo: %v", got)
 	}
 }

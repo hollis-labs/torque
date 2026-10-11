@@ -38,6 +38,13 @@ func (s *TaskService) LandingCheck(ctx context.Context, task *sqlstore.TaskRecor
 		sc = gh
 	}
 	v := landing.Evaluate(ctx, sc, policy, landing.ParseEvidence(task.Metadata.String))
+	if v.OK && !v.Waived {
+		// Merged work can still leave edits behind in the checkout; they would
+		// be lost with it.
+		if dirty := landing.CheckClean(ctx, task.WorkingDir); len(dirty) > 0 {
+			v = landing.Verdict{Missing: dirty}
+		}
+	}
 	if v.OK {
 		return ""
 	}

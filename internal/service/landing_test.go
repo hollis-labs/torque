@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -93,4 +96,30 @@ func TestQualityGateVocabulary(t *testing.T) {
 
 	_, err = svc.Template.Create(service.TemplateCreateInput{ID: "tpl", Name: "t", QualityGates: []string{"nope"}})
 	require.Error(t, err)
+}
+
+func TestLandingGate_DirtyWorkingDirBlocksEvenWhenMerged(t *testing.T) {
+	ctx := context.Background()
+	svc := setupService(t)
+	svc.Task.SetSourceControl(&stubSC{state: "MERGED"})
+
+	repo := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-q", "-m", "x"}} {
+		out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "left.txt"), []byte("x"), 0o644))
+
+	task, err := svc.Task.Create(service.TaskCreateInput{
+		Title: "t", OnDoneMerge: "pr", WorkingDir: repo,
+		Metadata: map[string]any{"landing": map[string]any{"pr_url": "u"}},
+	})
+	require.NoError(t, err)
+	require.Error(t, svc.Task.Transition(ctx, task.ID, "done"))
+	got, _ := svc.Task.Get(task.ID)
+	require.Equal(t, "blocked", got.Status)
+	require.Contains(t, got.BlockedReason, "uncommitted change")
+
+	require.NoError(t, os.Remove(filepath.Join(repo, "left.txt")))
+	require.NoError(t, svc.Task.Transition(ctx, task.ID, "done"))
 }
