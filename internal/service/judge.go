@@ -143,7 +143,10 @@ func (s *JudgeService) EnrichTask(ctx context.Context, d judge.Decider, setID, t
 			existing[t.Slug] = true
 		}
 	}
-	req := set.BuildRequest(map[string]string{"title": task.Title, "description": task.Description}, seedFor(taskID))
+	req, any := set.BuildSuggestionRequest(map[string]string{"title": task.Title, "description": task.Description}, seedFor(taskID))
+	if !any {
+		return nil, nil // every question in the set is disabled
+	}
 	resp, err := d.Decide(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("decide: %w", err)
@@ -152,7 +155,7 @@ func (s *JudgeService) EnrichTask(ctx context.Context, d judge.Decider, setID, t
 	var out []sqlstore.JudgmentRecord
 	for _, q := range set.Questions {
 		a, ok := resp.Answers[q.Key]
-		if !ok {
+		if !ok || q.Disabled {
 			continue
 		}
 		var suggested []string

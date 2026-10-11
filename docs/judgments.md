@@ -104,3 +104,28 @@ Per question, on the evaluation, compared with the baseline on the same sample:
 
 Anything short of that stays on the idea list or gets reworded and re-evaluated. A go means
 "suggest to a person", never "apply".
+
+## Results (live run, 2026-10-11, jev-1.13.0 through Tether)
+
+300 labeled tasks per question from the live store, every example asked twice with the options
+reordered; all runs had 0 errors and cost $0.03–0.05 each. "Baseline" is the free bag-of-words
+decider on the same sample.
+
+| Question | Baseline | JEV | Positives | Verdict | `suggest_min` |
+|---|---|---|---|---|---|
+| task-kind | 36.7% | 79.0% (flips 2%) | – | go, suggest only | 0.8 |
+| frontend | 58.0% | 86.7% | enough | go, suggest only | 0.7 |
+| backend | 56.3% | 80.3% | enough | go, suggest only | 0.7 |
+| discuss_first | 58.0% | 76.3% | enough | go, suggest only | 0.7 |
+| needs_review | – | 86.5% | 5 | not evaluable | disabled |
+| details_needed | – | 98.7% | 0 | not evaluable | disabled |
+
+Caveat on the labels: the first run of frontend, backend and discuss_first showed many confident
+"disagreements" that were the old tags being wrong or missing (`be`, `api`, `needs-discussion`,
+`design-first`; and an untagged task is not a negative). The label rules were then corrected
+(`label_tags` synonyms, `negative_tags`) from the corpus tag vocabulary, and the corrected numbers
+are the ones above. The fix was chosen after looking at the disagreements, so treat those three
+as slightly optimistic. task-kind labels were not changed.
+
+`needs_review` and `details_needed` are `disabled: true`: they are still asked and scored by an
+evaluation but never suggested until there are hand labels.

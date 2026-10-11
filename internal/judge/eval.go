@@ -109,7 +109,7 @@ type Report struct {
 	InputTokens     int
 	OutputTokens    int
 	EstimatedTokens int     // our own estimate of the requests sent, for budgeting
-	CostUSD         float64 // reported input tokens at the provider's price
+	CostUSD         float64 // the gateway's reported cost, else input tokens at the provider's price
 	NotRun          int     // examples skipped because MaxCalls or MaxCostUSD was reached
 	Truncated       bool
 	Latency         time.Duration
@@ -183,6 +183,7 @@ func Evaluate(ctx context.Context, set *Set, d Decider, examples []Example, opts
 					atomic.AddInt64(&inTokens, int64(resp.Usage.InputTokens))
 					run.usage.InputTokens += resp.Usage.InputTokens
 					run.usage.OutputTokens += resp.Usage.OutputTokens
+					run.usage.CostUSD += resp.Usage.CostUSD
 					run.latency += resp.Latency
 					if run.model == "" {
 						run.model = resp.Model
@@ -221,6 +222,7 @@ func Evaluate(ctx context.Context, set *Set, d Decider, examples []Example, opts
 	flips := map[string]int{}
 	compared := map[string]int{}
 
+	reportedCost := 0.0
 	for i, ex := range examples {
 		run := runs[i]
 		if !run.ran {
@@ -231,6 +233,7 @@ func Evaluate(ctx context.Context, set *Set, d Decider, examples []Example, opts
 		rep.EstimatedTokens += run.estimated
 		rep.InputTokens += run.usage.InputTokens
 		rep.OutputTokens += run.usage.OutputTokens
+		reportedCost += run.usage.CostUSD
 		rep.Latency += run.latency
 		if rep.Model == "" {
 			rep.Model = run.model
@@ -271,7 +274,10 @@ func Evaluate(ctx context.Context, set *Set, d Decider, examples []Example, opts
 			}
 		}
 	}
-	rep.CostUSD = CostUSD(rep.InputTokens)
+	rep.CostUSD = reportedCost
+	if rep.CostUSD == 0 {
+		rep.CostUSD = CostUSD(rep.InputTokens)
+	}
 	rep.Truncated = rep.NotRun > 0
 
 	for _, q := range set.Questions {

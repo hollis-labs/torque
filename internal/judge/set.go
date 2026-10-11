@@ -57,14 +57,26 @@ type SetQuestion struct {
 	Tags  map[string]string `yaml:"tags"`
 	NoTag []string          `yaml:"no_tag"`
 
-	// SuggestMin is the confidence at or above which a suggestion is shown.
-	// Starting values are conservative guesses; the evaluation sets them.
+	// SuggestMin is the confidence at or above which a suggestion is shown,
+	// set from the live evaluation (see docs/judgments.md, Results).
 	SuggestMin float64 `yaml:"suggest_min"`
+
+	// Disabled keeps a question out of suggestions (it is still asked and
+	// scored by an evaluation) until an evaluation supports it: for example a
+	// yes/no whose tag has too few positive labels to be judged.
+	Disabled bool `yaml:"disabled"`
 
 	// LabelTags says how an evaluation label is read from the item's existing
 	// tags (see docs/task-tagging-conventions.md): for a Choice, the single
-	// option-key tag present; for a Noul, the question's Tag present or not.
+	// option-key tag present; for a Noul, any of these tags present is a yes.
+	// List the real synonyms the corpus uses (be for backend, needs-discussion
+	// for discuss-first), or absence of the exact tag is mislabeled as no.
 	LabelTags []string `yaml:"label_tags"`
+
+	// NegativeTags makes a Noul's "no" labels deliberate: only a task that
+	// carries one of these (and none of LabelTags) is a negative. Without it, a
+	// task carrying any other tag is. An untagged task is never a negative.
+	NegativeTags []string `yaml:"negative_tags"`
 }
 
 // Set is a versioned collection of questions about one kind of item.
@@ -154,9 +166,32 @@ func (s *Set) Validate() error {
 	return nil
 }
 
-// Hash identifies the exact wording of a set, for the ledger.
+// Hash identifies what the model sees: the state fields and each question's
+// type, instructions, options, levels and yes/no text, in order. Thresholds,
+// tag mappings and evaluation labels are Torque's own settings, not wording, so
+// changing them does not change the hash (and so does not supersede recorded
+// suggestions). Bump Version too when the wording changes.
 func (s *Set) Hash() string {
-	b, _ := json.Marshal(s)
+	type visibleQuestion struct {
+		Key          string       `json:"key"`
+		Type         QuestionType `json:"type"`
+		Instructions string       `json:"instructions"`
+		Options      []Option     `json:"options,omitempty"`
+		Levels       []string     `json:"levels,omitempty"`
+		True         string       `json:"true,omitempty"`
+		False        string       `json:"false,omitempty"`
+		Shuffle      bool         `json:"shuffle,omitempty"`
+	}
+	visible := struct {
+		ID      string            `json:"id"`
+		State   []StateField      `json:"state"`
+		Purpose string            `json:"purpose"`
+		Qs      []visibleQuestion `json:"questions"`
+	}{ID: s.ID, State: s.State, Purpose: s.Purpose}
+	for _, q := range s.Questions {
+		visible.Qs = append(visible.Qs, visibleQuestion{q.Key, q.Type, q.Instructions, q.Options, q.Levels, q.True, q.False, q.Shuffle})
+	}
+	b, _ := json.Marshal(visible)
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])[:16]
 }
@@ -268,10 +303,28 @@ func EstimateTokens(req Request) int {
 	return (len(b)+3)/4 + RequestOverheadTokens
 }
 
+// BuildSuggestionRequest is BuildRequest without the disabled questions: what
+// is actually asked when enriching an item. It returns false when nothing is
+// enabled.
+func (s *Set) BuildSuggestionRequest(fields map[string]string, seed int64) (Request, bool) {
+	req := s.BuildRequest(fields, seed)
+	kept := req.Questions[:0]
+	for _, q := range req.Questions {
+		if sq, ok := s.Question(q.Key); ok && !sq.Disabled {
+			kept = append(kept, q)
+		}
+	}
+	req.Questions = kept
+	return req, len(kept) > 0
+}
+
 // SuggestedTags returns the tags an answer suggests under a question's
 // mapping: a Noul at or above SuggestMin confidence that says yes, or a Choice
 // at or above it whose winner is not excluded.
 func (q SetQuestion) SuggestedTags(a Answer) []string {
+	if q.Disabled {
+		return nil
+	}
 	switch q.Type {
 	case Noul:
 		// A Noul answer has no confidence field of its own: derive it from the probability.

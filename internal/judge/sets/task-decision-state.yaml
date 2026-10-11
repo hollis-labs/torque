@@ -18,8 +18,8 @@ questions:
     true: "An open question, an unresolved choice between approaches, or an explicit request to discuss or decide first."
     false: "The approach is specified, or the decision has already been made."
     tag: discuss-first
-    suggest_min: 0.7
-    label_tags: [discuss-first]
+    suggest_min: 0.7 # live eval: 80.7% agree above this, 60% covered
+    label_tags: [discuss-first, needs-discussion, needs-decision, design-first, discussion]
   - key: needs_review
     type: noul
     instructions: "Does `description` say the task must first be checked against the current code or architecture because it may be out of date?"
@@ -27,6 +27,7 @@ questions:
     false: "It does not mention being possibly out of date."
     tag: needs-review
     suggest_min: 0.7
+    disabled: true # only 5 positive labels in the corpus: cannot be evaluated from tags; needs hand labels
     label_tags: [needs-review]
   - key: details_needed
     type: noul
@@ -35,4 +36,5 @@ questions:
     false: "A worker could start from what is written."
     tag: details-needed
     suggest_min: 0.7
+    disabled: true # no positive labels in the corpus: cannot be evaluated from tags; needs hand labels
     label_tags: [details-needed]

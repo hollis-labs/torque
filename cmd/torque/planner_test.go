@@ -93,7 +93,7 @@ func TestJudgeCommands(t *testing.T) {
 
 	out, err := run("sets")
 	require.NoError(t, err)
-	for _, want := range []string{"task-kind", "task-decision-state", "task-layer", "suggest>=0.40"} {
+	for _, want := range []string{"task-kind", "task-decision-state", "task-layer", "suggest>=0.80"} {
 		assert.Contains(t, out, want)
 	}
 
@@ -134,16 +134,25 @@ func TestJudgeCommands(t *testing.T) {
 	require.Error(t, err, "--set is required")
 }
 
-// fakeDecide is a stand-in for Tether's /ai/decide: it answers every question
-// (the first option of a choice, 0.8 for a yes/no) and counts the requests.
+// fakeDecide is a stand-in for Tether's /ai/decide, in its as-built shape: it
+// answers every question (the first option of a choice, 0.8 for a yes/no) and
+// counts the requests.
 func fakeDecide(t *testing.T, calls *int32) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(calls, 1)
-		var req judge.Request
+		var env struct {
+			Request struct {
+				Decision struct {
+					Purpose   string           `json:"purpose"`
+					Questions []judge.Question `json:"questions"`
+				} `json:"decision"`
+			} `json:"request"`
+		}
 		b, _ := io.ReadAll(r.Body)
-		require.NoError(t, json.Unmarshal(b, &req))
+		require.NoError(t, json.Unmarshal(b, &env))
+		require.NotEmpty(t, env.Request.Decision.Purpose, "the budget rejects a request with no purpose")
 		answers := map[string]judge.Answer{}
-		for _, q := range req.Questions {
+		for _, q := range env.Request.Decision.Questions {
 			switch q.Type {
 			case judge.Choice:
 				probs := map[string]float64{}
@@ -156,7 +165,11 @@ func fakeDecide(t *testing.T, calls *int32) *httptest.Server {
 				answers[q.Key] = judge.Answer{Type: judge.Noul, Noul: 0.8}
 			}
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"answers": answers, "usage": map[string]int{"input_tokens": 300, "output_tokens": 5}, "model": "jev-1.13.0", "latency_ms": 90})
+		_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{
+			"provider": "jev", "model": "jev-1.13.0",
+			"decision": map[string]any{"answers": answers, "latency_ms": 90, "request_id": "r"},
+			"usage":    map[string]any{"input_tokens": 300, "output_tokens": 5, "estimated_cost_usd": 0.0000126},
+		}})
 	}))
 }
 
