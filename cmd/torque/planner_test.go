@@ -68,3 +68,61 @@ func TestPlannerBoardCommand(t *testing.T) {
 	require.NoError(t, runPlannerBoard(context.Background(), &out, service.PlannerBoardOptions{Limit: 5}, true))
 	assert.Contains(t, out.String(), `"limit": 5`)
 }
+
+func TestJudgeCommands(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TORQUE_DB_PATH", filepath.Join(tmp, "torque.db"))
+	t.Setenv("TORQUE_QUEUE_DB_PATH", filepath.Join(tmp, "queue.db"))
+
+	run := func(args ...string) (string, error) {
+		cmd := judgeCmd()
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		cmd.SetArgs(args)
+		err := cmd.ExecuteContext(context.Background())
+		return out.String(), err
+	}
+
+	out, err := run("sets")
+	require.NoError(t, err)
+	for _, want := range []string{"task-kind", "task-decision-state", "task-layer", "suggest>=0.40"} {
+		assert.Contains(t, out, want)
+	}
+
+	// A task with a kind tag, so there is something to label.
+	store, closeStore, err := openStoreForCLI()
+	require.NoError(t, err)
+	svc := service.New(store)
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "Fix the crash", Description: "It is broken: a bug that must be fixed.", Tags: []string{"bug"}})
+	require.NoError(t, err)
+	closeStore()
+
+	out, err = run("eval", "--set", "task-kind", "--n", "10")
+	require.NoError(t, err)
+	assert.Contains(t, out, "Set task-kind v1")
+	assert.Contains(t, out, "keyword-baseline")
+	assert.Contains(t, out, "1 labeled")
+
+	out, err = run("enrich", "--set", "task-kind", "--task", task.ID)
+	require.NoError(t, err)
+	assert.Contains(t, out, "Dry run")
+	out, _ = run("ledger")
+	assert.NotContains(t, out, task.ID, "a dry run records nothing")
+
+	out, err = run("enrich", "--set", "task-kind", "--task", task.ID, "--record")
+	require.NoError(t, err)
+	assert.Contains(t, out, "Recorded as suggestions by keyword-baseline")
+	out, err = run("ledger", "--subject", task.ID)
+	require.NoError(t, err)
+	assert.Contains(t, out, task.ID)
+	assert.Contains(t, out, "suggested")
+
+	_, err = run("eval", "--set", "task-kind", "--decider", "jev")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "CW-20261010-0041")
+	_, err = run("eval", "--set", "nope")
+	require.Error(t, err)
+	_, err = run("eval")
+	require.Error(t, err, "--set is required")
+}

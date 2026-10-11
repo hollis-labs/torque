@@ -34,6 +34,7 @@ type Service struct {
 	Issue      *IssueService
 	Workstream *WorkstreamService
 	Planner    *PlannerService
+	Judge      *JudgeService
 
 	// Models is the shared models.dev catalog. nil in test wiring; populated
 	// by serve / mcp entry points. Callers that depend on model metadata
@@ -64,6 +65,7 @@ func New(store *sqlstore.Store) *Service {
 		Epic:       &EpicService{store: store, feature: feature},
 		Collection: &CollectionService{store: store, feature: feature},
 		Planner:    &PlannerService{store: store, feature: feature, now: time.Now},
+		Judge:      &JudgeService{store: store},
 		Tag:        tag,
 		Checkpoint: &CheckpointService{store: store},
 		Template:   &TemplateService{store: store, tasks: task},
