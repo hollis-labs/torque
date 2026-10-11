@@ -274,6 +274,8 @@ export interface FeatureFlags {
   sprints: boolean
   projects: boolean
   epics: boolean
+  /** The portfolio planner. Older servers do not report it. */
+  planner?: boolean
 }
 
 export type ContainerStatus = 'active' | 'inactive' | 'completed'
@@ -732,4 +734,108 @@ export interface ListQuery {
   sort_dir?: 'asc' | 'desc'
   include_total?: boolean
   search?: string
+}
+
+// -------------------------
+// Planner (the portfolio planner; features.planner)
+// -------------------------
+
+export type PlannerDb =
+  | 'priorities'
+  | 'workstreams'
+  | 'roadmap'
+  | 'ideas'
+  | 'decisions'
+  | 'risks'
+  | 'inbox'
+
+export interface PlannerComment {
+  id: string
+  author: string
+  text: string
+  created: string
+  kind?: 'comment' | 'decision'
+}
+
+/** An external pointer: a Torque task, a PR, a URL, a file. */
+export interface PlannerLink {
+  kind: string
+  ref: string
+  label?: string
+}
+
+export interface PlannerOption {
+  id: string
+  label: string
+  summary?: string
+  pros?: string
+  cons?: string
+  proposed_by?: string
+  recommended?: boolean
+}
+
+/**
+ * One planner item. Only the fields every database shares are typed; the
+ * rest are per-database (see the schema from `plannerSchema`) and may carry
+ * fields the GUI does not know.
+ */
+export interface PlannerItem {
+  id: string
+  title: string
+  rev: number
+  status?: string
+  kind?: string
+  tldr?: string
+  notes?: string
+  priority?: number
+  order?: number
+  created?: string
+  updated?: string
+  author?: string
+  related_ids?: string[]
+  links?: PlannerLink[]
+  comments?: PlannerComment[]
+  options?: PlannerOption[]
+  [field: string]: unknown
+}
+
+export interface PlannerDatabaseInfo {
+  name: PlannerDb
+  prefix: string
+  schema: string
+  updated: string
+  count: number
+}
+
+export interface PlannerFieldSchema {
+  type?: string | string[]
+  enum?: string[]
+  description?: string
+  items?: string
+  ref?: string
+  minimum?: number
+  maximum?: number
+}
+
+export interface PlannerSchemaInfo {
+  db: PlannerDb
+  id: string
+  description: string
+  required: string[]
+  fields: Record<string, PlannerFieldSchema>
+  enums: Record<string, string[]>
+  link_kinds: string[]
+}
+
+export interface PlannerSearchHit {
+  db: PlannerDb
+  id: string
+  title: string
+  status?: string
+}
+
+export interface PlannerOrdered {
+  id: string
+  order: number
+  rev: number
 }

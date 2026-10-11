@@ -12,6 +12,13 @@ import type {
   Comment,
   SSEEvent,
   FeatureFlags,
+  PlannerDb,
+  PlannerDatabaseInfo,
+  PlannerItem,
+  PlannerLink,
+  PlannerOrdered,
+  PlannerSchemaInfo,
+  PlannerSearchHit,
   Project,
   ProjectArtifact,
   Sprint,
@@ -104,11 +111,17 @@ export interface RunTimeSeries {
 export class ApiError extends Error {
   status: number
   url?: string
-  constructor(status: number, message: string, url?: string) {
+  /** Machine code from the server body (planner routes: invalid, conflict, not_found, feature_disabled). */
+  code?: string
+  /** Structured detail from the server body: validation errors, or the current item of a conflict. */
+  details?: Record<string, unknown>
+  constructor(status: number, message: string, url?: string, extra?: { code?: string; details?: Record<string, unknown> }) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.url = url
+    this.code = extra?.code
+    this.details = extra?.details
   }
 }
 
@@ -242,19 +255,21 @@ async function parseResponse<T>(res: Response): Promise<T> {
 
   if (!res.ok) {
     let message = `HTTP ${res.status}`
+    let extra: { code?: string; details?: Record<string, unknown> } | undefined
     if (text.trim()) {
       if (isHtmlResponse(res, text)) {
         message = htmlRouteMessage(res)
       } else {
         try {
-          const body = JSON.parse(text) as { error?: string; message?: string }
+          const body = JSON.parse(text) as { error?: string; message?: string; code?: string; details?: Record<string, unknown> }
           message = body.error ?? body.message ?? message
+          if (body.code || body.details) extra = { code: body.code, details: body.details }
         } catch {
           message = text.trim() || message
         }
       }
     }
-    throw new ApiError(res.status, message, res.url)
+    throw new ApiError(res.status, message, res.url, extra)
   }
 
   if (!text.trim()) return undefined as unknown as T
@@ -598,6 +613,91 @@ export class TorqueApiClient {
       return primary as FeatureFlags
     }
     return this.get<FeatureFlags>('/features')
+  }
+
+  // -------------------------
+  // Planner (features.planner)
+  // -------------------------
+
+  /** Planner writes identify the browser, so the server records the owner as the author. */
+  private async plannerSend<T>(method: 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T> {
+    const res = await fetch(this.url(`/planner${path}`), {
+      method,
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Client': 'browser' },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    })
+    return parseResponse<T>(res)
+  }
+
+  async plannerDatabases(): Promise<PlannerDatabaseInfo[]> {
+    return this.get<PlannerDatabaseInfo[]>('/planner/databases')
+  }
+
+  async plannerSchema(db: PlannerDb): Promise<PlannerSchemaInfo> {
+    return this.get<PlannerSchemaInfo>(`/planner/schema/${db}`)
+  }
+
+  /** Every item of a database in manual order. Query parameters are exact-match filters. */
+  async plannerList(db: PlannerDb, opts?: { filters?: Record<string, string>; sort?: string }, signal?: AbortSignal): Promise<PlannerItem[]> {
+    return this.get<PlannerItem[]>(`/planner/${db}`, { ...opts?.filters, sort: opts?.sort }, signal)
+  }
+
+  async plannerGet(db: PlannerDb, id: string): Promise<PlannerItem> {
+    return this.get<PlannerItem>(`/planner/${db}/${encodeURIComponent(id)}`)
+  }
+
+  async plannerSearch(q: string, db?: PlannerDb, signal?: AbortSignal): Promise<PlannerSearchHit[]> {
+    return this.get<PlannerSearchHit[]>('/planner/search', { q, db }, signal)
+  }
+
+  async plannerCreate(db: PlannerDb, item: Record<string, unknown>): Promise<PlannerItem> {
+    return this.plannerSend<PlannerItem>('POST', `/${db}`, item)
+  }
+
+  /** Merge `patch` into an item; null removes a field. With `rev`, a stale rev is a 409 whose `details.current` is the item as it now is. */
+  async plannerUpdate(db: PlannerDb, id: string, patch: Record<string, unknown>, rev?: number): Promise<PlannerItem> {
+    return this.plannerSend<PlannerItem>('PATCH', `/${db}/${encodeURIComponent(id)}`, rev === undefined ? { patch } : { patch, rev })
+  }
+
+  async plannerComment(db: PlannerDb, id: string, text: string, kind?: 'comment' | 'decision'): Promise<PlannerItem> {
+    return this.plannerSend<PlannerItem>('POST', `/${db}/${encodeURIComponent(id)}/comments`, kind ? { text, kind } : { text })
+  }
+
+  async plannerLinkAdd(db: PlannerDb, id: string, link: PlannerLink): Promise<PlannerItem> {
+    return this.plannerSend<PlannerItem>('POST', `/${db}/${encodeURIComponent(id)}/links`, { link })
+  }
+
+  async plannerLinkRemove(db: PlannerDb, id: string, kind: string, ref: string): Promise<PlannerItem> {
+    return this.plannerSend<PlannerItem>('DELETE', `/${db}/${encodeURIComponent(id)}/links`, { kind, ref })
+  }
+
+  /** Give `ids` the order 10, 20, 30 ... in that sequence. */
+  async plannerReorder(db: PlannerDb, ids: string[]): Promise<PlannerOrdered[]> {
+    return this.plannerSend<PlannerOrdered[]>('POST', `/${db}/reorder`, { ids })
+  }
+
+  async plannerDecide(id: string, option: string, comment?: string): Promise<PlannerItem> {
+    return this.plannerSend<PlannerItem>('POST', `/decisions/${encodeURIComponent(id)}/decide`, comment ? { option, comment } : { option })
+  }
+
+  async plannerDefer(id: string, note?: string): Promise<PlannerItem> {
+    return this.plannerSend<PlannerItem>('POST', `/decisions/${encodeURIComponent(id)}/defer`, note ? { note } : {})
+  }
+
+  async plannerReopen(id: string): Promise<PlannerItem> {
+    return this.plannerSend<PlannerItem>('POST', `/decisions/${encodeURIComponent(id)}/reopen`, {})
+  }
+
+  async plannerInboxAdd(fields: { title: string; kind?: string; body?: string; path?: string }): Promise<PlannerItem> {
+    return this.plannerSend<PlannerItem>('POST', '/inbox', fields)
+  }
+
+  async plannerInboxPromote(id: string, toDb: PlannerDb, fields?: Record<string, unknown>): Promise<{ inbox: PlannerItem; item: PlannerItem }> {
+    return this.plannerSend('POST', `/inbox/${encodeURIComponent(id)}/promote`, fields ? { to_db: toDb, fields } : { to_db: toDb })
+  }
+
+  async plannerInboxDismiss(id: string, note?: string): Promise<PlannerItem> {
+    return this.plannerSend<PlannerItem>('POST', `/inbox/${encodeURIComponent(id)}/dismiss`, note ? { note } : {})
   }
 
   // -------------------------

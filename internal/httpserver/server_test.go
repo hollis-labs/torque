@@ -780,7 +780,7 @@ func TestSettingsFeatureFlagsAlias(t *testing.T) {
 	var flags map[string]bool
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&flags))
 	resp.Body.Close()
-	assert.Equal(t, map[string]bool{"projects": true, "epics": true, "sprints": true, "collections": false}, flags)
+	assert.Equal(t, map[string]bool{"projects": true, "epics": true, "sprints": true, "collections": false, "planner": false}, flags)
 }
 
 func TestCreateAndGetTag(t *testing.T) {
