@@ -2,6 +2,8 @@ package service_test
 
 import (
 	"context"
+	"database/sql"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -65,4 +67,30 @@ func TestLandingGate(t *testing.T) {
 		got, _ := svc.Task.Get(id)
 		require.Equal(t, "blocked", got.Status)
 	})
+}
+
+func TestQualityGateVocabulary(t *testing.T) {
+	svc := setupService(t)
+
+	_, err := svc.Task.Create(service.TaskCreateInput{Title: "ok", QualityGates: []string{"deliverables", "subtodos", "ci_green"}})
+	require.NoError(t, err)
+
+	for _, bad := range []string{"verify", "tests-pass"} {
+		_, err = svc.Task.Create(service.TaskCreateInput{Title: "bad", QualityGates: []string{bad}})
+		var verr *service.ValidationError
+		require.ErrorAs(t, err, &verr, bad)
+		require.Equal(t, "quality_gates", verr.Field)
+		require.Contains(t, verr.Message, "valid gates: deliverables, subtodos, ci_green")
+	}
+
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "upd"})
+	require.NoError(t, err)
+	bogus := sql.NullString{String: `["nope"]`, Valid: true}
+	err = svc.Task.Update(task.ID, service.TaskUpdateInput{TaskUpdate: sqlstore.TaskUpdate{QualityGates: &bogus}})
+	require.Error(t, err)
+	good := sql.NullString{String: `["ci_green"]`, Valid: true}
+	require.NoError(t, svc.Task.Update(task.ID, service.TaskUpdateInput{TaskUpdate: sqlstore.TaskUpdate{QualityGates: &good}}))
+
+	_, err = svc.Template.Create(service.TemplateCreateInput{ID: "tpl", Name: "t", QualityGates: []string{"nope"}})
+	require.Error(t, err)
 }

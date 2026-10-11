@@ -1,6 +1,7 @@
 package scheduler_test
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 	"time"
@@ -211,5 +212,32 @@ func TestParentRollup_Idempotent(t *testing.T) {
 
 	parent, err := store.GetTask("CW-P-8")
 	require.NoError(t, err)
+	assert.Equal(t, "done", parent.Status)
+}
+
+func TestParentRollup_LandingGateBlocksCloseAndDoesNotRepeat(t *testing.T) {
+	store := setupRollupStore(t)
+	createChildTask(t, store, "CW-C-L1", "done")
+	createParentTask(t, store, "CW-P-L", []string{"CW-C-L1"}, "close")
+
+	calls := 0
+	reason := "landing evidence missing: no PR recorded"
+	gate := func(context.Context, *sqlstore.TaskRecord) string { calls++; return reason }
+
+	require.NoError(t, scheduler.ParentRollupTickGated(store, nil, gate))
+	parent, err := store.GetTask("CW-P-L")
+	require.NoError(t, err)
+	assert.Equal(t, "blocked", parent.Status)
+	assert.Equal(t, reason, parent.BlockedReason)
+
+	// Later ticks leave the gate-blocked parent alone: no re-evaluation.
+	require.NoError(t, scheduler.ParentRollupTickGated(store, nil, gate))
+	assert.Equal(t, 1, calls)
+
+	// A passing gate leaves close behavior unchanged.
+	createChildTask(t, store, "CW-C-L2", "done")
+	createParentTask(t, store, "CW-P-L2", []string{"CW-C-L2"}, "close")
+	require.NoError(t, scheduler.ParentRollupTickGated(store, nil, func(context.Context, *sqlstore.TaskRecord) string { return "" }))
+	parent, _ = store.GetTask("CW-P-L2")
 	assert.Equal(t, "done", parent.Status)
 }

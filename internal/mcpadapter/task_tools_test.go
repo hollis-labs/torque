@@ -423,7 +423,7 @@ func TestFullStack_TaskUpdate_WritableFields(t *testing.T) {
 		"environment":      `{"FOO":"bar"}`,
 		"files":            `["a.go","b.go"]`,
 		"escalation_chain": `["oncall","lead"]`,
-		"quality_gates":    `["lint","tests"]`,
+		"quality_gates":    `["deliverables","ci_green"]`,
 		"deliverables":     `[{"type":"diff","required":true}]`,
 		"depends_on":       `["` + depID + `"]`,
 		"metadata":         `{"meta_key":"meta_val"}`,
@@ -443,7 +443,7 @@ func TestFullStack_TaskUpdate_WritableFields(t *testing.T) {
 	expectNullStringJSON("Environment", `{"FOO":"bar"}`)
 	expectNullStringJSON("Files", `["a.go","b.go"]`)
 	expectNullStringJSON("EscalationChain", `["oncall","lead"]`)
-	expectNullStringJSON("QualityGates", `["lint","tests"]`)
+	expectNullStringJSON("QualityGates", `["deliverables","ci_green"]`)
 	expectNullStringJSON("Deliverables", `[{"type":"diff","required":true}]`)
 	expectNullStringJSON("Metadata", `{"meta_key":"meta_val"}`)
 
@@ -2561,7 +2561,7 @@ func TestFullStack_TaskCreate_FieldExpansion(t *testing.T) {
 		"max_duration_ms":  "60000",
 		"token_budget":     "100000",
 		"escalation_chain": `["lead","manager"]`,
-		"quality_gates":    `["lint","tests"]`,
+		"quality_gates":    `["deliverables","ci_green"]`,
 		"deliverables":     `[{"type":"diff","required":true}]`,
 		"blocked_reason":   "waiting on legal",
 	})

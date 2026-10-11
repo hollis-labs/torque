@@ -1,8 +1,10 @@
 package scheduler
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
@@ -25,6 +27,18 @@ import (
 //   - Otherwise (work in flight, missing children) → parent is left
 //     unchanged so the next tick re-evaluates.
 func ParentRollupTick(store *sqlstore.Store, bus *EventBus) error {
+	return ParentRollupTickGated(store, bus, nil)
+}
+
+// landingBlockedPrefix starts every blocked reason the landing gate writes. A
+// parent blocked by it is left alone until a person changes its status, so the
+// gate does not re-run and re-escalate on every tick.
+const landingBlockedPrefix = "landing evidence missing"
+
+// ParentRollupTickGated is ParentRollupTick with a landing gate applied to the
+// close/notify exits. gate returns the unmet requirements for a parent about to
+// become done, or ""; nil disables it.
+func ParentRollupTickGated(store *sqlstore.Store, bus *EventBus, gate func(context.Context, *sqlstore.TaskRecord) string) error {
 	parents, err := store.ListTasks(sqlstore.TaskFilter{Kind: "parent"})
 	if err != nil {
 		return err
@@ -62,6 +76,17 @@ func ParentRollupTick(store *sqlstore.Store, bus *EventBus) error {
 				return err
 			}
 		case allDone:
+			if p.Status == "blocked" && strings.HasPrefix(p.BlockedReason, landingBlockedPrefix) {
+				continue
+			}
+			if gate != nil && (p.OnDone == "close" || p.OnDone == "notify") {
+				if reason := gate(context.Background(), &p); reason != "" {
+					if err := store.TransitionTaskWithReason(p.ID, "blocked", reason); err != nil {
+						return err
+					}
+					continue
+				}
+			}
 			if err := applyParentOnDone(store, bus, p); err != nil {
 				return err
 			}

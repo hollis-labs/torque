@@ -107,7 +107,7 @@ func TestSmoke_Criterion1_AllTemplatesCreate(t *testing.T) {
 			ID: "backend-fix", Name: "Backend Fix", Description: "Fix {{issue}} in {{repo_path}}",
 			Kind: "agent", Executor: "cli", AutoExecute: true,
 			OnDone: "review", OnFail: "retry", OnDoneMerge: "pr",
-			QualityGates: []string{"go vet ./...", "go test ./..."},
+			QualityGates: []string{"deliverables", "subtodos"},
 			Deliverables: []service.Deliverable{
 				{Type: "diff", Required: true},
 				{Type: "test-results", Required: true},
