@@ -19,6 +19,9 @@ import type {
   PlannerOrdered,
   PlannerSchemaInfo,
   PlannerSearchHit,
+  PlannerBoard,
+  PlannerTaskBrief,
+  PlannerWorkstreamTasks,
   Project,
   ProjectArtifact,
   Sprint,
@@ -631,6 +634,21 @@ export class TorqueApiClient {
 
   async plannerDatabases(): Promise<PlannerDatabaseInfo[]> {
     return this.get<PlannerDatabaseInfo[]>('/planner/databases')
+  }
+
+  /** The departure board: in flight, landed, pre-flight, holds. */
+  async plannerBoard(opts?: { recent_hours?: number; active_hours?: number; limit?: number }, signal?: AbortSignal): Promise<PlannerBoard> {
+    return this.get<PlannerBoard>('/planner/board', { ...opts }, signal)
+  }
+
+  /** Live title and status of Torque task ids; an unknown id maps to null. */
+  async plannerTaskTitles(ids: string[], signal?: AbortSignal): Promise<Record<string, PlannerTaskBrief | null>> {
+    return this.get<Record<string, PlannerTaskBrief | null>>('/planner/torque-titles', { ids: ids.join(',') }, signal)
+  }
+
+  /** The Torque tasks behind a workstream (its projects and tag): counts per status and the open ones. */
+  async plannerWorkstreamTasks(id: string, signal?: AbortSignal): Promise<PlannerWorkstreamTasks> {
+    return this.get<PlannerWorkstreamTasks>(`/planner/workstreams/${encodeURIComponent(id)}/tasks`, undefined, signal)
   }
 
   async plannerSchema(db: PlannerDb): Promise<PlannerSchemaInfo> {

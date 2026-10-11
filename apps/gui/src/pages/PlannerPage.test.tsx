@@ -3,11 +3,14 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { ApiError } from '@/lib/api'
-import type { PlannerItem, PlannerSchemaInfo } from '@/lib/types'
+import type { PlannerBoard, PlannerBoardRow, PlannerItem, PlannerSchemaInfo } from '@/lib/types'
 
 const { api, event } = vi.hoisted(() => ({
   api: {
     plannerDatabases: vi.fn(),
+    plannerBoard: vi.fn(),
+    plannerTaskTitles: vi.fn(),
+    plannerWorkstreamTasks: vi.fn(),
     plannerList: vi.fn(),
     plannerGet: vi.fn(),
     plannerSchema: vi.fn(),
@@ -65,12 +68,26 @@ const SCHEMAS: Record<string, PlannerSchemaInfo> = {
   }),
   inbox: schema('inbox', ['id', 'title'], { title: { type: 'string' }, body: { type: 'string' }, kind: { enum: ['topic', 'idea'] }, status: { enum: ['new', 'promoted', 'dismissed'] } }),
   ideas: schema('ideas', ['id', 'title', 'kind', 'status'], { title: { type: 'string' } }),
+  roadmap: schema('roadmap', ['id', 'title'], { title: { type: 'string' }, status: { enum: ['planned', 'in-progress'] }, tasks: { type: 'array', items: 'string' } }),
+  workstreams: schema('workstreams', ['id', 'title'], { title: { type: 'string' }, status: { enum: ['active', 'planned'] } }),
   priorities: schema('priorities', ['id', 'title', 'rank', 'status'], { title: { type: 'string' }, rank: { type: 'integer' }, status: { enum: ['active', 'queued'] } }),
 }
 
 const risk = (id: string, over: Partial<PlannerItem> = {}): PlannerItem => ({ id, title: `Risk ${id}`, rev: 1, kind: 'risk', severity: 'low', status: 'open', ...over })
 const counts = (n: Record<string, number> = {}) =>
   ['priorities', 'workstreams', 'roadmap', 'ideas', 'decisions', 'risks', 'inbox'].map((name) => ({ name, prefix: '', schema: '', updated: '', count: n[name] ?? 0 }))
+
+const emptyBoard = (over: Partial<PlannerBoard> = {}): PlannerBoard => ({
+  generated_at: '2026-10-11T12:00:00.000Z',
+  recent_hours: 72,
+  active_hours: 2,
+  limit: 30,
+  sections: { in_flight: [], landed: [], pre_flight: [], holds: [] },
+  counts: { in_flight: 0, landed: 0, pre_flight: 0, holds: 0 },
+  totals: { in_flight: 0, landed: 0, pre_flight: 0, holds: 0 },
+  notices: [],
+  ...over,
+})
 
 function Probe() {
   return <div data-testid="path">{useLocation().pathname}</div>
@@ -93,6 +110,9 @@ beforeEach(() => {
   api.plannerDatabases.mockResolvedValue(counts({ risks: 3, decisions: 2, inbox: 1 }))
   api.plannerSchema.mockImplementation((db: string) => Promise.resolve(SCHEMAS[db]))
   api.plannerList.mockResolvedValue([])
+  api.plannerBoard.mockResolvedValue(emptyBoard())
+  api.plannerTaskTitles.mockResolvedValue({})
+  api.plannerWorkstreamTasks.mockResolvedValue({ workstream_id: 'WS-x', torque_project_ids: [], torque_tag: '', counts: {}, total: 0, open: [], open_total: 0, note: 'This workstream names no Torque project or tag.' })
 })
 afterEach(() => {
   cleanup()
@@ -112,18 +132,22 @@ it('offers to turn the planner on when the feature is off, then loads it', async
   expect(api.setSetting).toHaveBeenCalledWith('features.planner', 'true')
 })
 
-it('shows the database tabs with counts and switches database through the route', async () => {
+it('lands on the board, shows the database tabs with counts and switches database through the route', async () => {
   api.plannerList.mockResolvedValue([risk('RK-001')])
   renderAt('/planner')
   expect(path()).toBe('/planner')
   const tab = await screen.findByRole('tab', { name: /Risks/ })
   expect(tab.textContent).toContain('3')
-  expect(screen.getByRole('tab', { name: /Priorities/ }).getAttribute('aria-selected')).toBe('true')
-  expect(api.plannerList).toHaveBeenCalledWith('priorities')
+  expect(screen.getByRole('tab', { name: 'Board' }).getAttribute('aria-selected')).toBe('true')
+  expect(api.plannerBoard).toHaveBeenCalled()
+  expect(api.plannerList).not.toHaveBeenCalled() // the board does not load a list
   fireEvent.click(tab)
   await screen.findByText('Risk RK-001')
   expect(path()).toBe('/planner/risks')
   expect(api.plannerList).toHaveBeenLastCalledWith('risks')
+  expect(screen.getByRole('tab', { name: 'Board' }).getAttribute('aria-selected')).toBe('false')
+  fireEvent.click(screen.getByRole('tab', { name: 'Board' }))
+  await waitFor(() => expect(path()).toBe('/planner/board'))
 })
 
 it('hides settled items until asked, filters by status chip and by text', async () => {
@@ -162,8 +186,9 @@ it('opens an item from the URL with its fields, Torque link and comments, and ad
   const dialog = await screen.findByRole('dialog')
   expect(within(dialog).getByText('The DB is one file.')).toBeTruthy()
   expect(within(dialog).getByText('rev 4', { exact: false })).toBeTruthy()
-  const torque = within(dialog).getByRole('link', { name: /api task \(CW-20261011-0050\)/ })
+  const torque = within(dialog).getByRole('link', { name: 'CW-20261011-0050' })
   expect(torque.getAttribute('href')).toBe('/tasks/CW-20261011-0050')
+  expect(within(dialog).getByText('api task')).toBeTruthy() // the link's own label
   const external = within(dialog).getByRole('link', { name: /example.com/ })
   expect(external.getAttribute('href')).toBe('https://example.com/x')
   expect(external.getAttribute('rel')).toContain('noopener')
@@ -335,4 +360,142 @@ it('creates an item from the required fields', async () => {
   fireEvent.click(within(dialog).getByRole('button', { name: 'Create risk' }))
   await waitFor(() => expect(api.plannerCreate).toHaveBeenCalledWith('risks', { title: 'New one', kind: 'risk', severity: 'low', status: 'open' }))
   await waitFor(() => expect(path()).toBe('/planner/risks/RK-001'))
+})
+
+// ---------- board ----------
+
+const brow = (over: Partial<PlannerBoardRow>): PlannerBoardRow => ({ source: 'torque', id: 'CW-20261011-0001', title: 'A task', status: 'doing', updated: '2026-10-11T10:00:00.000Z', ...over })
+
+it('shows the departure board with a row per line, the right words, and links to tasks and items', async () => {
+  api.plannerBoard.mockResolvedValue(
+    emptyBoard({
+      sections: {
+        in_flight: [brow({ id: 'CW-20261011-0001', title: 'Build the API', workstream: 'planner' }), brow({ id: 'CW-20261011-0002', title: 'Awaiting a look', status: 'review' }), brow({ source: 'roadmap', db: 'roadmap', id: 'RM-gui', title: 'GUI platform', status: 'in-progress' })],
+        landed: [brow({ id: 'CW-20261011-0003', title: 'Shipped it', status: 'done', updated: '2026-10-11T11:30:00.000Z' }), brow({ source: 'decision', db: 'decisions', id: 'DEC-021', title: 'Typed tables', status: 'decided' })],
+        pre_flight: [brow({ id: 'CW-20261011-0004', title: 'Quiet one', status: 'doing' }), brow({ id: 'CW-20261011-0005', title: 'Next up', status: 'queued' })],
+        holds: [brow({ source: 'decision', db: 'decisions', id: 'DEC-052', title: 'Inbox long-term', status: 'needs-decision' }), brow({ source: 'risk', db: 'risks', id: 'RK-007', title: 'No backups', status: 'open' }), brow({ source: 'inbox', db: 'inbox', id: 'IN-001', title: 'Look at JEV', status: 'new' })],
+      },
+      counts: { in_flight: 3, landed: 2, pre_flight: 2, holds: 3 },
+      totals: { in_flight: 9, landed: 2, pre_flight: 2, holds: 3 },
+      notices: ['Task comments unavailable; every doing task is shown as in flight.'],
+    }),
+  )
+  renderAt('/planner/board')
+  const flight = await screen.findByRole('region', { name: 'In flight' })
+  expect(within(flight).getByText('(+6 more)')).toBeTruthy()
+  expect(within(flight).getByRole('link', { name: 'IN FLIGHT CW-20261011-0001: Build the API' }).getAttribute('href')).toBe('/tasks/CW-20261011-0001')
+  expect(within(flight).getByRole('link', { name: 'ARRIVING CW-20261011-0002: Awaiting a look' })).toBeTruthy()
+  expect(within(flight).getByRole('link', { name: 'IN FLIGHT RM-gui: GUI platform' }).getAttribute('href')).toBe('/planner/roadmap/RM-gui')
+  expect(within(flight).getByText('planner')).toBeTruthy() // workstream
+  expect(within(flight).getAllByText('2h').length).toBeGreaterThan(0) // 10:00 against a 12:00 board
+
+  const landed = screen.getByRole('region', { name: 'Recently landed' })
+  expect(within(landed).getByRole('link', { name: 'LANDED CW-20261011-0003: Shipped it' })).toBeTruthy()
+  expect(within(landed).getByRole('link', { name: 'LANDED DEC-021: Typed tables' }).getAttribute('href')).toBe('/planner/decisions/DEC-021')
+
+  const pre = screen.getByRole('region', { name: 'Pre-flight' })
+  expect(within(pre).getByRole('link', { name: 'PREPARING CW-20261011-0004: Quiet one' })).toBeTruthy() // doing, but in pre-flight
+  expect(within(pre).getByRole('link', { name: 'QUEUED CW-20261011-0005: Next up' })).toBeTruthy()
+
+  const holds = screen.getByRole('region', { name: 'Holds' })
+  expect(within(holds).getByRole('link', { name: 'DECIDE DEC-052: Inbox long-term' })).toBeTruthy()
+  expect(within(holds).getByRole('link', { name: 'RISK RK-007: No backups' })).toBeTruthy()
+  expect(within(holds).getByRole('link', { name: 'TRIAGE IN-001: Look at JEV' }).getAttribute('href')).toBe('/planner/inbox/IN-001')
+
+  expect(screen.getByRole('status').textContent).toContain('Task comments unavailable')
+})
+
+it('says so when a board section is empty', async () => {
+  renderAt('/planner')
+  const holds = await screen.findByRole('region', { name: 'Holds' })
+  expect(within(holds).getByText('Nothing is waiting on you.')).toBeTruthy()
+  expect(within(screen.getByRole('region', { name: 'Pre-flight' })).getByText('Nothing is queued.')).toBeTruthy()
+})
+
+it('offers a retry when the board fails, and the New button adds to the inbox', async () => {
+  api.plannerBoard.mockRejectedValueOnce(new Error('database is locked'))
+  renderAt('/planner')
+  await screen.findByText('database is locked')
+  expect(screen.getByRole('button', { name: 'New inbox item' })).toBeTruthy()
+  api.plannerBoard.mockResolvedValue(emptyBoard())
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  await screen.findByRole('region', { name: 'In flight' })
+})
+
+it('refreshes the board when a task changes', async () => {
+  const view = renderAt('/planner/board')
+  await screen.findByRole('region', { name: 'In flight' })
+  const before = api.plannerBoard.mock.calls.length
+  api.plannerBoard.mockResolvedValue(emptyBoard({ sections: { in_flight: [brow({ id: 'CW-20261011-0009', title: 'Just started' })], landed: [], pre_flight: [], holds: [] }, counts: { in_flight: 1, landed: 0, pre_flight: 0, holds: 0 }, totals: { in_flight: 1, landed: 0, pre_flight: 0, holds: 0 } }))
+  event.current = { type: 'task.transitioned', data: { id: 'CW-20261011-0009' } }
+  view.rerender(
+    <MemoryRouter initialEntries={['/planner/board']}>
+      <Probe />
+      <Routes>
+        <Route path="/planner/:db" element={<PlannerPage />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+  await screen.findByText('Just started')
+  expect(api.plannerBoard.mock.calls.length).toBeGreaterThan(before)
+  expect(api.plannerList).not.toHaveBeenCalled() // a task event does not reload a list the board is not showing
+})
+
+// ---------- live Torque references ----------
+
+it('shows the live title and status of a linked Torque task, and says when Torque has no such task', async () => {
+  const item = risk('RK-001', { links: [{ kind: 'torque', ref: 'CW-20261011-0050', label: 'api' }, { kind: 'torque', ref: 'CW-20200101-9999' }] })
+  api.plannerList.mockResolvedValue([item])
+  api.plannerGet.mockResolvedValue(item)
+  api.plannerTaskTitles.mockResolvedValue({
+    'CW-20261011-0050': { id: 'CW-20261011-0050', title: 'Planner 4/7: API and MCP tools', status: 'done', priority: 2, updated_at: '2026-10-11T18:00:00.000Z' },
+    'CW-20200101-9999': null,
+  })
+  renderAt('/planner/risks/RK-001')
+  const dialog = await screen.findByRole('dialog')
+  await within(dialog).findByText('Planner 4/7: API and MCP tools')
+  expect(within(dialog).getByText('done')).toBeTruthy()
+  expect(within(dialog).getByText('not found in Torque')).toBeTruthy()
+  expect(api.plannerTaskTitles).toHaveBeenCalledTimes(1) // one lookup for every id the item points at
+  expect(api.plannerTaskTitles.mock.calls[0][0]).toEqual(['CW-20200101-9999', 'CW-20261011-0050'])
+})
+
+it("shows a roadmap item's tasks with their live titles", async () => {
+  const item: PlannerItem = { id: 'RM-gw', title: 'Gateway', rev: 1, status: 'planned', tasks: ['CW-20261001-0607', 'CW-20261001-0608'] }
+  api.plannerList.mockResolvedValue([item])
+  api.plannerGet.mockResolvedValue(item)
+  api.plannerTaskTitles.mockResolvedValue({ 'CW-20261001-0607': { id: 'CW-20261001-0607', title: 'Gateway budgets', status: 'doing', priority: 1, updated_at: '' }, 'CW-20261001-0608': null })
+  renderAt('/planner/roadmap/RM-gw')
+  const dialog = await screen.findByRole('dialog')
+  await within(dialog).findByText('Gateway budgets')
+  expect(within(dialog).getByRole('link', { name: 'CW-20261001-0607' }).getAttribute('href')).toBe('/tasks/CW-20261001-0607')
+})
+
+it("lists the Torque tasks behind a workstream, with counts per status", async () => {
+  const ws: PlannerItem = { id: 'WS-planner', title: 'Planner', rev: 1, status: 'active', torque_tag: 'ws-planner' }
+  api.plannerList.mockResolvedValue([ws])
+  api.plannerGet.mockResolvedValue(ws)
+  api.plannerWorkstreamTasks.mockResolvedValue({
+    workstream_id: 'WS-planner', torque_project_ids: ['PRJ-20260416-0001'], torque_tag: 'ws-planner',
+    counts: { doing: 2, done: 5 }, total: 7, open_total: 3,
+    open: [{ id: 'CW-20261011-0053', title: 'Board view', status: 'doing', priority: 3, updated_at: '' }, { id: 'CW-20261011-0054', title: 'Follow-ups', status: 'todo', priority: 3, updated_at: '' }],
+  })
+  renderAt('/planner/workstreams/WS-planner')
+  const dialog = await screen.findByRole('dialog')
+  const panel = await within(dialog).findByRole('region', { name: 'Torque tasks' })
+  expect(within(panel).getByText(/Torque tasks \(7\)/)).toBeTruthy()
+  expect(within(panel).getByText('PRJ-20260416-0001 · tag ws-planner')).toBeTruthy()
+  expect(within(panel).getByRole('link', { name: 'CW-20261011-0053' }).getAttribute('href')).toBe('/tasks/CW-20261011-0053')
+  expect(within(panel).getByText('Showing 2 of 3 open tasks.')).toBeTruthy()
+  expect(api.plannerWorkstreamTasks).toHaveBeenCalledWith('WS-planner', expect.anything())
+})
+
+it('tells a workstream with no Torque scope how to give it one', async () => {
+  const ws: PlannerItem = { id: 'WS-bare', title: 'Bare', rev: 1, status: 'planned' }
+  api.plannerList.mockResolvedValue([ws])
+  api.plannerGet.mockResolvedValue(ws)
+  renderAt('/planner/workstreams/WS-bare')
+  const dialog = await screen.findByRole('dialog')
+  await within(dialog).findByText(/names no Torque project or tag/)
+  expect(within(dialog).getByText(/Set torque_project_ids or torque_tag/)).toBeTruthy()
 })

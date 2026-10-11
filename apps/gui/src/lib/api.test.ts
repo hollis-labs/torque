@@ -663,6 +663,24 @@ describe('TorqueApiClient planner', () => {
     }
   })
 
+  it('reads the board, task titles and a workstream\'s tasks with GET', async () => {
+    const f = stubFetch({})
+    await client.plannerBoard({ recent_hours: 24, limit: 5 })
+    expect(call(f)).toMatchObject({ method: 'GET', url: '/api/v1/planner/board?recent_hours=24&limit=5' })
+
+    const g = stubFetch({})
+    await client.plannerBoard()
+    expect(call(g).url).toBe('/api/v1/planner/board')
+
+    const h = stubFetch({})
+    await client.plannerTaskTitles(['CW-20261011-0050', 'CW-20261011-0051'])
+    expect(call(h)).toMatchObject({ method: 'GET', url: '/api/v1/planner/torque-titles?ids=CW-20261011-0050%2CCW-20261011-0051' })
+
+    const i = stubFetch({})
+    await client.plannerWorkstreamTasks('WS-a b')
+    expect(call(i)).toMatchObject({ method: 'GET', url: '/api/v1/planner/workstreams/WS-a%20b/tasks' })
+  })
+
   it('keeps the code and details of a planner error', async () => {
     const current = { id: 'RK-1', title: 't', rev: 7 }
     stubFetch({ error: 'conflict: rev mismatch', code: 'conflict', details: { current } }, { status: 409 })

@@ -199,3 +199,71 @@ func TestHTTP_Planner_ReorderDecisionsAndInbox(t *testing.T) {
 	require.Equal(t, http.StatusOK, status)
 	assert.Equal(t, "dismissed", obj(body)["status"])
 }
+
+func TestHTTP_Planner_Board(t *testing.T) {
+	ts := setupTestServer(t)
+	enablePlannerFeature(t, ts.URL)
+	plannerCall(t, http.MethodPost, ts.URL, "/inbox", map[string]any{"title": "triage me"}, nil)
+	plannerCall(t, http.MethodPost, ts.URL, "/risks", map[string]any{"title": "big", "kind": "risk", "severity": "high"}, nil)
+
+	status, body := plannerCall(t, http.MethodGet, ts.URL, "/board", nil, nil)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	b := obj(body)
+	assert.Equal(t, []any{"RK-001", "IN-001"}, []any{
+		obj(obj(b["sections"])["holds"].([]any)[0])["id"],
+		obj(obj(b["sections"])["holds"].([]any)[1])["id"],
+	}, "/board is not shadowed by /{db}")
+	assert.EqualValues(t, 72, b["recent_hours"])
+	assert.EqualValues(t, 30, b["limit"])
+	assert.Equal(t, []any{}, b["notices"])
+
+	status, body = plannerCall(t, http.MethodGet, ts.URL, "/board?limit=1&recent_hours=6&active_hours=1", nil, nil)
+	require.Equal(t, http.StatusOK, status)
+	assert.EqualValues(t, 1, obj(body)["limit"])
+	assert.EqualValues(t, 6, obj(body)["recent_hours"])
+	assert.EqualValues(t, 1, obj(body)["active_hours"])
+
+	for _, q := range []string{"?limit=abc", "?limit=0x", "?recent_hours=soon", "?limit=500", "?recent_hours=-3"} {
+		status, body = plannerCall(t, http.MethodGet, ts.URL, "/board"+q, nil, nil)
+		assert.Equal(t, http.StatusBadRequest, status, q)
+		assert.Equal(t, "invalid", obj(body)["code"], q)
+	}
+}
+
+func TestHTTP_Planner_TorqueReferences(t *testing.T) {
+	ts := setupTestServer(t)
+	enablePlannerFeature(t, ts.URL)
+
+	taskResp, err := http.Post(ts.URL+"/api/v1/tasks", "application/json", bytes.NewBufferString(`{"title":"Referenced task","description":"x","executor":"cli","tags":["ws-demo"]}`))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, taskResp.StatusCode)
+	var task map[string]any
+	require.NoError(t, json.NewDecoder(taskResp.Body).Decode(&task))
+	taskResp.Body.Close()
+	id := task["id"].(string)
+
+	status, body := plannerCall(t, http.MethodGet, ts.URL, "/torque-titles?ids="+id+",CW-20200101-9999", nil, nil)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	titles := obj(body)
+	assert.Equal(t, "Referenced task", obj(titles[id])["title"])
+	assert.Nil(t, titles["CW-20200101-9999"])
+	assert.Contains(t, titles, "CW-20200101-9999")
+	status, body = plannerCall(t, http.MethodGet, ts.URL, "/torque-titles?ids=nope", nil, nil)
+	assert.Equal(t, http.StatusBadRequest, status)
+	assert.Equal(t, "invalid", obj(body)["code"])
+	status, body = plannerCall(t, http.MethodGet, ts.URL, "/torque-titles", nil, nil)
+	require.Equal(t, http.StatusOK, status, "no ids is an empty answer, not a database called torque-titles")
+	assert.Empty(t, obj(body))
+
+	plannerCall(t, http.MethodPost, ts.URL, "/workstreams", map[string]any{"title": "Demo", "torque_tag": "ws-demo"}, nil)
+	status, body = plannerCall(t, http.MethodGet, ts.URL, "/workstreams/WS-demo/tasks", nil, nil)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	ws := obj(body)
+	assert.Equal(t, "ws-demo", ws["torque_tag"])
+	assert.EqualValues(t, 1, ws["total"])
+	open := ws["open"].([]any)
+	require.Len(t, open, 1)
+	assert.Equal(t, id, obj(open[0])["id"])
+	status, _ = plannerCall(t, http.MethodGet, ts.URL, "/workstreams/WS-nope/tasks", nil, nil)
+	assert.Equal(t, http.StatusNotFound, status)
+}

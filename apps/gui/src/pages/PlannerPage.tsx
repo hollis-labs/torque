@@ -4,6 +4,7 @@ import { Plus, X } from 'lucide-react'
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { Button, EmptyState, Input, PageHeader, Skeleton } from '@hollis-labs/sysop-ui'
+import { PlannerBoardView } from '@/components/planner/planner-board'
 import { PlannerCreateDialog } from '@/components/planner/planner-create-dialog'
 import { PlannerDetailDialog } from '@/components/planner/planner-detail-dialog'
 import { PlannerRow } from '@/components/planner/planner-row'
@@ -13,20 +14,28 @@ import { useSSE } from '@/hooks/use-sse'
 import { ApiError } from '@/lib/api'
 import { PLANNER_DBS, filterItems, isPlannerDb, isSettled, moveId, plannerMeta, statusCounts } from '@/lib/planner'
 import { notifyError } from '@/lib/toast'
-import type { PlannerDatabaseInfo, PlannerDb, PlannerItem, PlannerSearchHit } from '@/lib/types'
+import type { PlannerBoard, PlannerDatabaseInfo, PlannerDb, PlannerItem, PlannerSearchHit } from '@/lib/types'
 
-const SSE_EVENTS = ['planner.changed']
+const SSE_EVENTS = ['planner.changed', 'task.created', 'task.updated', 'task.transitioned']
+/** The board is a live view: it also refreshes on its own while open. */
+const BOARD_REFRESH_MS = 30_000
 
 export default function PlannerPage() {
   const api = useApi()
   const navigate = useNavigate()
   const params = useParams<{ db?: string; id?: string }>()
+  // /planner and /planner/board are the departure board; /planner/<db> is a list.
+  const isBoard = params.db === undefined || params.db === 'board'
   const db: PlannerDb = isPlannerDb(params.db) ? params.db : 'priorities'
   const openId = params.id ? decodeURIComponent(params.id) : undefined
   const meta = plannerMeta(db)
+  const createDb: PlannerDb = isBoard ? 'inbox' : db // the board's New button adds to the inbox
+  const createMeta = plannerMeta(createDb)
 
   const [enabled, setEnabled] = useState<boolean | null>(null)
   const [counts, setCounts] = useState<PlannerDatabaseInfo[]>([])
+  const [board, setBoard] = useState<PlannerBoard | null>(null)
+  const [boardError, setBoardError] = useState<string | null>(null)
   const [items, setItems] = useState<PlannerItem[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState('')
@@ -60,9 +69,27 @@ export default function PlannerPage() {
     }
   }, [api, db])
 
+  const loadBoard = useCallback(async () => {
+    try {
+      setBoard(await api.plannerBoard())
+      setBoardError(null)
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'feature_disabled') setEnabled(false)
+      else setBoardError(err instanceof Error ? err.message : 'Failed to load the board')
+    }
+  }, [api])
+
   useEffect(() => {
     void loadCounts()
   }, [loadCounts])
+
+  // The board loads when opened and then keeps itself fresh.
+  useEffect(() => {
+    if (!isBoard) return
+    void loadBoard()
+    const t = setInterval(() => void loadBoard(), BOARD_REFRESH_MS)
+    return () => clearInterval(t)
+  }, [isBoard, loadBoard])
 
   // Switching database starts a fresh view.
   useEffect(() => {
@@ -71,16 +98,22 @@ export default function PlannerPage() {
     setQuery('')
     setShowSettled(false)
     setError(null)
-    void loadItems()
-  }, [loadItems])
+    if (!isBoard) void loadItems()
+  }, [loadItems, isBoard])
 
   // The server says something changed: reload the list, the counts and any open item.
   useEffect(() => {
     if (!lastEvent) return
+    if (isBoard) void loadBoard()
+    if (lastEvent.type.startsWith('task.')) {
+      setRefreshKey((k) => k + 1) // an open workstream or reference may show this task
+      return
+    }
     void loadCounts()
-    void loadItems()
+    if (!isBoard) void loadItems()
     setRefreshKey((k) => k + 1)
-  }, [lastEvent, loadCounts, loadItems])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastEvent])
 
   // Cross-database search, after a short pause in typing.
   useEffect(() => {
@@ -130,7 +163,8 @@ export default function PlannerPage() {
       setEnabled(true)
       setError(null)
       void loadCounts()
-      void loadItems()
+      if (isBoard) void loadBoard()
+      else void loadItems()
     } catch (err) {
       notifyError(err, 'Failed to turn on the planner')
     }
@@ -161,14 +195,26 @@ export default function PlannerPage() {
         <Input className="h-8 w-56" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search everything…" aria-label="Search the planner" />
         <Button size="sm" className="gap-1" onClick={() => setCreating(true)} disabled={enabled === null}>
           <Plus className="h-3.5 w-3.5" />
-          New {meta.singular}
+          New {createMeta.singular}
         </Button>
       </PageHeader>
 
-      <div role="tablist" aria-label="Planner databases" className="flex gap-1 overflow-x-auto border-b border-border px-4">
+      <div role="tablist" aria-label="Planner views" className="flex gap-1 overflow-x-auto border-b border-border px-4">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={isBoard && hits === null}
+          className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm ${isBoard && hits === null ? 'border-primary font-medium text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+          onClick={() => {
+            setSearch('')
+            navigate('/planner/board')
+          }}
+        >
+          Board
+        </button>
         {PLANNER_DBS.map((d) => {
           const n = countOf(d.key)
-          const active = d.key === db && hits === null
+          const active = !isBoard && d.key === db && hits === null
           return (
             <button
               key={d.key}
@@ -191,6 +237,21 @@ export default function PlannerPage() {
       <div className="flex-1 overflow-auto">
         {hits !== null ? (
           <SearchResults hits={hits} query={search.trim()} onClear={() => setSearch('')} onOpen={(h) => { setSearch(''); go(h.db, h.id) }} />
+        ) : isBoard ? (
+          boardError ? (
+            <div className="p-4">
+              <EmptyState variant="error" title="Something went wrong" description={boardError} action={{ label: 'Retry', onClick: () => void loadBoard() }} />
+            </div>
+          ) : board === null ? (
+            <div className="grid gap-4 p-4 xl:grid-cols-2">
+              <Skeleton className="h-40 w-full" />
+              <Skeleton className="h-40 w-full" />
+              <Skeleton className="h-40 w-full" />
+              <Skeleton className="h-40 w-full" />
+            </div>
+          ) : (
+            <PlannerBoardView board={board} />
+          )
         ) : (
           <>
             <p className="px-4 pt-3 text-sm text-muted-foreground">{meta.blurb}</p>
@@ -246,18 +307,19 @@ export default function PlannerPage() {
       </div>
 
       <PlannerCreateDialog
-        db={db}
+        db={createDb}
         open={creating}
         onOpenChange={setCreating}
         nextRank={maxRank + 1}
         onCreated={(it) => {
           void loadCounts()
-          void loadItems()
-          go(db, it.id)
+          if (isBoard) void loadBoard()
+          else void loadItems()
+          go(createDb, it.id)
         }}
       />
 
-      {openId && (
+      {openId && !isBoard && (
         <PlannerDetailDialog
           key={`${db}/${openId}`}
           db={db}

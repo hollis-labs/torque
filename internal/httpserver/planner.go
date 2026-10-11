@@ -4,6 +4,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/hollis-labs/torque/internal/service"
@@ -375,5 +377,64 @@ func (s *Server) plannerInboxDismiss(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.plannerChanged("inbox", id)
+	writeJSON(w, http.StatusOK, out)
+}
+
+// plannerBoard: GET /planner/board?recent_hours=&active_hours=&limit=
+func (s *Server) plannerBoard(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	var opts service.PlannerBoardOptions
+	for _, f := range []struct {
+		name string
+		dst  *float64
+	}{{"recent_hours", &opts.RecentHours}, {"active_hours", &opts.ActiveHours}} {
+		if v := q.Get(f.name); v != "" {
+			n, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				writePlannerError(w, &service.ValidationError{Field: f.name, Message: f.name + " must be a number"})
+				return
+			}
+			*f.dst = n
+		}
+	}
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			writePlannerError(w, &service.ValidationError{Field: "limit", Message: "limit must be an integer"})
+			return
+		}
+		opts.Limit = n
+	}
+	out, err := s.svc.Planner.Board(opts)
+	if err != nil {
+		writePlannerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// plannerTaskTitles: GET /planner/torque-titles?ids=a,b,c -> {id: {id,title,status,priority,updated_at} | null}
+func (s *Server) plannerTaskTitles(w http.ResponseWriter, r *http.Request) {
+	var ids []string
+	for _, id := range strings.Split(r.URL.Query().Get("ids"), ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	out, err := s.svc.Planner.TaskTitles(ids)
+	if err != nil {
+		writePlannerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// plannerWorkstreamTasks: GET /planner/workstreams/{id}/tasks
+func (s *Server) plannerWorkstreamTasks(w http.ResponseWriter, r *http.Request) {
+	out, err := s.svc.Planner.WorkstreamTasks(chi.URLParam(r, "id"))
+	if err != nil {
+		writePlannerError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, out)
 }

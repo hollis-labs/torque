@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,6 +23,7 @@ func plannerCmd() *cobra.Command {
 		Short: "Portfolio planner maintenance",
 	}
 	cmd.AddCommand(plannerImportCmd())
+	cmd.AddCommand(plannerBoardCmd())
 	return cmd
 }
 
@@ -138,4 +140,51 @@ func printPlannerImportReport(out io.Writer, r *service.PlannerImportReport) {
 			}
 		}
 	}
+}
+
+func plannerBoardCmd() *cobra.Command {
+	var recent, active float64
+	var limit int
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:          "board",
+		SilenceUsage: true,
+		Short:        "Print the planner departure board (in flight, landed, pre-flight, holds)",
+		Long: `Print the departure board: what is in flight, what just landed, what is
+preparing, and what is waiting on the owner, one row per line. This is the
+quick check-in an agent runs at the start of a session. It reads the Torque
+task store and the planner tables directly and needs features.planner.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runPlannerBoard(cmd.Context(), cmd.OutOrStdout(), service.PlannerBoardOptions{RecentHours: recent, ActiveHours: active, Limit: limit}, asJSON)
+		},
+	}
+	cmd.Flags().Float64Var(&recent, "recent-hours", 0, "window for landed items (default 72)")
+	cmd.Flags().Float64Var(&active, "active-hours", 0, "a doing task idle longer than this is preparing (default 2)")
+	cmd.Flags().IntVar(&limit, "limit", 0, "rows per section (default 30)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON instead of text")
+	return cmd
+}
+
+func runPlannerBoard(ctx context.Context, out io.Writer, opts service.PlannerBoardOptions, asJSON bool) error {
+	store, closeStore, err := openStoreForCLI()
+	if err != nil {
+		return err
+	}
+	defer closeStore()
+	svc := service.New(store)
+	board, err := svc.Planner.Board(opts)
+	if err != nil {
+		var fe *service.FeatureDisabledError
+		if errors.As(err, &fe) {
+			return fmt.Errorf("the planner is off: set features.planner = true (Settings, or PUT /api/v1/settings/features.planner)")
+		}
+		return err
+	}
+	if asJSON {
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		return enc.Encode(board)
+	}
+	_, err = fmt.Fprintln(out, service.BoardText(*board))
+	return err
 }

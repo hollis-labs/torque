@@ -21,8 +21,11 @@ import {
 } from '@hollis-labs/sysop-ui'
 import { PlannerFields } from '@/components/planner/planner-fields'
 import { PlannerStatus } from '@/components/planner/planner-status'
+import { TorqueTaskRef } from '@/components/planner/torque-task-ref'
+import { WorkstreamTasksPanel } from '@/components/planner/workstream-tasks-panel'
 import { useApi } from '@/hooks/use-api'
 import { usePlannerSchema } from '@/hooks/use-planner-schema'
+import { usePlannerTaskTitles } from '@/hooks/use-planner-task-titles'
 import { ApiError } from '@/lib/api'
 import {
   PLANNER_DBS,
@@ -40,7 +43,7 @@ import {
   type FieldError,
 } from '@/lib/planner'
 import { notifyError, notifySuccess } from '@/lib/toast'
-import type { PlannerDb, PlannerItem, PlannerLink } from '@/lib/types'
+import type { PlannerDb, PlannerItem, PlannerLink, PlannerTaskBrief } from '@/lib/types'
 
 interface PlannerDetailDialogProps {
   db: PlannerDb
@@ -74,6 +77,9 @@ export function PlannerDetailDialog({ db, id, refreshKey, onClose, onChanged, on
   const [busy, setBusy] = useState(false)
 
   const specs = useMemo(() => (schema ? fieldSpecs(schema) : []), [schema])
+  // Every Torque task the item points at, through a torque link or a `tasks` list: one lookup for the lot.
+  const taskIds = useMemo(() => torqueIdsOf(item), [item])
+  const titles = usePlannerTaskTitles(taskIds)
 
   const load = useCallback(async () => {
     try {
@@ -206,12 +212,15 @@ export function PlannerDetailDialog({ db, id, refreshKey, onClose, onChanged, on
                 </div>
               </div>
             ) : (
-              <FieldList item={item} specs={specs.map((s) => s.name)} schemaLabels={Object.fromEntries(specs.map((s) => [s.name, s.label]))} onOpen={onOpen} />
+              <FieldList item={item} specs={specs.map((s) => s.name)} schemaLabels={Object.fromEntries(specs.map((s) => [s.name, s.label]))} titles={titles} onOpen={onOpen} />
             )}
+
+            {db === 'workstreams' && <WorkstreamTasksPanel id={id} refreshKey={refreshKey} />}
 
             <LinksPanel
               item={item}
               kinds={schema?.link_kinds ?? []}
+              titles={titles}
               busy={busy}
               onAdd={(link) => write(() => api.plannerLinkAdd(db, id, link), 'Failed to add link')}
               onRemove={(link) => write(() => api.plannerLinkRemove(db, id, link.kind, link.ref), 'Failed to remove link')}
@@ -230,7 +239,20 @@ export function PlannerDetailDialog({ db, id, refreshKey, onClose, onChanged, on
 
 const SKIP_IN_LIST = new Set(['title', 'tldr', 'status', 'kind'])
 
-function FieldList({ item, specs, schemaLabels, onOpen }: { item: PlannerItem; specs: string[]; schemaLabels: Record<string, string>; onOpen: (db: PlannerDb, id: string) => void }) {
+const TORQUE_ID = /^[A-Z]{2,6}-\d{8}-\d{3,6}$/
+
+/** Torque task ids an item points at: its torque links, and the `tasks` list of a roadmap item. */
+function torqueIdsOf(item: PlannerItem | null): string[] {
+  if (!item) return []
+  const ids = new Set<string>()
+  for (const l of item.links ?? []) if (l.kind === 'torque' && TORQUE_ID.test(l.ref)) ids.add(l.ref)
+  if (Array.isArray(item.tasks)) for (const t of item.tasks) if (typeof t === 'string' && TORQUE_ID.test(t)) ids.add(t)
+  return [...ids]
+}
+
+type Titles = Record<string, PlannerTaskBrief | null>
+
+function FieldList({ item, specs, schemaLabels, titles, onOpen }: { item: PlannerItem; specs: string[]; schemaLabels: Record<string, string>; titles: Titles; onOpen: (db: PlannerDb, id: string) => void }) {
   const names = specs.filter((n) => !SKIP_IN_LIST.has(n))
   const rows = names.filter((n) => {
     const v = item[n]
@@ -243,7 +265,7 @@ function FieldList({ item, specs, schemaLabels, onOpen }: { item: PlannerItem; s
         <div key={n} className="contents">
           <dt className="text-xs uppercase tracking-wide text-muted-foreground">{schemaLabels[n] ?? n}</dt>
           <dd className="min-w-0 text-sm">
-            <FieldValue name={n} value={item[n]} onOpen={onOpen} />
+            <FieldValue name={n} value={item[n]} titles={titles} onOpen={onOpen} />
           </dd>
         </div>
       ))}
@@ -251,7 +273,16 @@ function FieldList({ item, specs, schemaLabels, onOpen }: { item: PlannerItem; s
   )
 }
 
-function FieldValue({ name, value, onOpen }: { name: string; value: unknown; onOpen: (db: PlannerDb, id: string) => void }) {
+function FieldValue({ name, value, titles, onOpen }: { name: string; value: unknown; titles: Titles; onOpen: (db: PlannerDb, id: string) => void }) {
+  if (name === 'tasks' && Array.isArray(value)) {
+    return (
+      <ul className="flex flex-col gap-1">
+        {value.map(String).map((id) => (
+          <li key={id}>{TORQUE_ID.test(id) ? <TorqueTaskRef id={id} brief={titles[id]} /> : <span className="font-mono text-xs">{id}</span>}</li>
+        ))}
+      </ul>
+    )
+  }
   if (Array.isArray(value) && REFERENCE_FIELDS(name)) {
     return (
       <div className="flex flex-wrap gap-1.5">
@@ -285,7 +316,7 @@ function FieldValue({ name, value, onOpen }: { name: string; value: unknown; onO
 
 // ---------- links ----------
 
-function LinksPanel({ item, kinds, busy, onAdd, onRemove }: { item: PlannerItem; kinds: string[]; busy: boolean; onAdd: (l: PlannerLink) => Promise<unknown>; onRemove: (l: PlannerLink) => Promise<unknown> }) {
+function LinksPanel({ item, kinds, titles, busy, onAdd, onRemove }: { item: PlannerItem; kinds: string[]; titles: Titles; busy: boolean; onAdd: (l: PlannerLink) => Promise<unknown>; onRemove: (l: PlannerLink) => Promise<unknown> }) {
   const [adding, setAdding] = useState(false)
   const [kind, setKind] = useState('torque')
   const [ref, setRef] = useState('')
@@ -320,7 +351,9 @@ function LinksPanel({ item, kinds, busy, onAdd, onRemove }: { item: PlannerItem;
           return (
             <li key={`${l.kind}:${l.ref}`} className="flex items-center gap-2 text-sm">
               <span className="w-20 shrink-0 text-xs uppercase tracking-wide text-muted-foreground">{l.kind}</span>
-              {target.to ? (
+              {l.kind === 'torque' && target.to ? (
+                <TorqueTaskRef id={l.ref} brief={titles[l.ref]} label={l.label} />
+              ) : target.to ? (
                 <Link to={target.to} className="min-w-0 truncate font-mono text-primary hover:underline">
                   {text}
                 </Link>

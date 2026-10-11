@@ -29,6 +29,18 @@ Response shape: data = [{name, prefix, schema, updated, count}].
 Example: {}`),
 	), a.handlePlannerDatabases)
 
+	a.addTool(newTool("torque_planner_board",
+		withDescription(`The departure board: what is in flight, what just landed, what is preparing, and what is waiting on the owner `+plannerFlagNote+`.
+Use it for a quick check-in at the start of a session. in_flight: Torque doing tasks with activity (an update or comment) within active_hours, roadmap in-progress, Torque review (ARRIVING). landed: Torque done and decided decisions within recent_hours, roadmap landed/done within 7 days. pre_flight: Torque queued, doing tasks with no recent activity (PREPARING), roadmap adopting, roadmap planned for now/next; never the todo backlog. holds: decisions needing a decision, open high risks, new inbox items (waiting on the owner).
+text=true returns the compact one-row-per-line board an agent can read at a glance instead of the JSON.
+Response shape: data = {generated_at, recent_hours, active_hours, limit, sections{in_flight,landed,pre_flight,holds:[{source,id,title,status,priority?,workstream?,updated,db?}]}, counts, totals, notices[]}; with text=true, data = {text}.
+Example: {"text":true}`),
+		withString("recent_hours", desc("Window for landed (default 72, max 2160)")),
+		withString("active_hours", desc("A doing task with no update or comment in this long is preparing, not in flight (default 2)")),
+		withString("limit", desc("Rows per section (default 30, max 200)")),
+		withBoolean("text", desc("Return the compact text board")),
+	), a.handlePlannerBoard)
+
 	a.addTool(newTool("torque_planner_schema",
 		withDescription(`Describe one database's item schema: required fields, every known field, enums by field, and the link kinds `+plannerFlagNote+`.
 Call before create/update when unsure which enum values a field accepts.
@@ -417,4 +429,21 @@ func (a *Adapter) handlePlannerInboxDismiss(ctx context.Context, req map[string]
 		return errFromService(err)
 	}
 	return okResult(out)
+}
+
+func (a *Adapter) handlePlannerBoard(ctx context.Context, req map[string]any) (any, error) {
+	opts := service.PlannerBoardOptions{Limit: reqInt(req, "limit")}
+	for key, dst := range map[string]*float64{"recent_hours": &opts.RecentHours, "active_hours": &opts.ActiveHours} {
+		if reqHasArg(req, key) {
+			*dst = float64(reqInt(req, key))
+		}
+	}
+	b, err := a.svc.Planner.Board(opts)
+	if err != nil {
+		return errFromService(err)
+	}
+	if reqBool(req, "text") {
+		return okResult(map[string]any{"text": service.BoardText(*b)})
+	}
+	return okResult(b)
 }

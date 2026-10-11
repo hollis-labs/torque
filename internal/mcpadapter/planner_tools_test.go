@@ -55,7 +55,7 @@ func TestPlannerToolsSurfacedWhenEnabled(t *testing.T) {
 		}
 	}
 	assert.Equal(t, []string{
-		"torque_planner_comment", "torque_planner_create", "torque_planner_databases", "torque_planner_decide",
+		"torque_planner_board", "torque_planner_comment", "torque_planner_create", "torque_planner_databases", "torque_planner_decide",
 		"torque_planner_defer", "torque_planner_get", "torque_planner_inbox_add", "torque_planner_inbox_dismiss",
 		"torque_planner_inbox_promote", "torque_planner_link_add", "torque_planner_link_remove", "torque_planner_list",
 		"torque_planner_relate", "torque_planner_reopen", "torque_planner_reorder", "torque_planner_schema",
@@ -162,4 +162,30 @@ func TestPlannerToolsDecisionsAndInbox(t *testing.T) {
 	plannerTool(t, a, "torque_planner_inbox_add", map[string]any{"title": "noise"})
 	dis := plannerTool(t, a, "torque_planner_inbox_dismiss", map[string]any{"id": "IN-002", "note": "dup"})
 	assert.Equal(t, "dismissed", dis["status"])
+}
+
+func TestPlannerBoardTool(t *testing.T) {
+	a := setupPlannerAdapter(t)
+	plannerTool(t, a, "torque_planner_inbox_add", map[string]any{"title": "Look at the board"})
+	plannerTool(t, a, "torque_planner_create", map[string]any{"db": "decisions", "item": map[string]any{"title": "Pick", "status": "needs-decision"}})
+
+	b := plannerTool(t, a, "torque_planner_board", map[string]any{})
+	sections := b["sections"].(map[string]any)
+	holds := sections["holds"].([]any)
+	require.Len(t, holds, 2)
+	assert.Equal(t, "DEC-001", holds[0].(map[string]any)["id"], "decisions first, then the inbox")
+	assert.EqualValues(t, 30, b["limit"])
+
+	small := plannerTool(t, a, "torque_planner_board", map[string]any{"limit": "1", "recent_hours": 24})
+	assert.EqualValues(t, 1, small["limit"])
+	assert.EqualValues(t, 24, small["recent_hours"])
+	assert.Len(t, small["sections"].(map[string]any)["holds"], 1)
+	assert.EqualValues(t, 2, small["totals"].(map[string]any)["holds"], "the total keeps the full count")
+
+	text := plannerTool(t, a, "torque_planner_board", map[string]any{"text": true})
+	assert.Contains(t, text["text"], "HOLDS (WAITING ON YOU)")
+	assert.Contains(t, text["text"], "DECIDE")
+
+	code, _ := plannerToolErr(t, a, "torque_planner_board", map[string]any{"limit": 999})
+	assert.Equal(t, "arg_invalid", code)
 }
