@@ -24,6 +24,10 @@ type LifecycleManager struct {
 	escalation  *EscalationEngine
 	telemetry   writequeue.TelemetryWriter
 	stateWriter writeq.Writer
+	// landingGate returns the unmet landing requirements for a task about to
+	// become done, or "". nil disables it. It guards only the close/notify
+	// on_done exits; the review exit already waits on a person.
+	landingGate func(context.Context, *sqlstore.TaskRecord) string
 }
 
 // NewLifecycleManager creates a new lifecycle manager.
@@ -45,6 +49,12 @@ func (lm *LifecycleManager) SetTelemetryWriter(w writequeue.TelemetryWriter) {
 		return
 	}
 	lm.telemetry = w
+}
+
+// SetLandingGate installs the landing check run before on_done close/notify
+// moves a task to done.
+func (lm *LifecycleManager) SetLandingGate(g func(context.Context, *sqlstore.TaskRecord) string) {
+	lm.landingGate = g
 }
 
 // SetStateWriter swaps the serialized state writer used for lifecycle-side
@@ -175,6 +185,13 @@ func (lm *LifecycleManager) handleDone(task *sqlstore.TaskRecord, runID int64, r
 		reason := "missing required subtodos: " + strings.Join(missing, ", ")
 		log.Printf("[lifecycle] task %s blocked by subtodo gate (%s)", task.ID, reason)
 		return lm.transition(task, runID, "blocked", reason)
+	}
+
+	if (task.OnDone == "close" || task.OnDone == "notify") && lm.landingGate != nil {
+		if reason := lm.landingGate(context.Background(), task); reason != "" {
+			log.Printf("[lifecycle] task %s blocked by landing gate (%s)", task.ID, reason)
+			return lm.transition(task, runID, "blocked", reason)
+		}
 	}
 
 	// Apply OnDone rule

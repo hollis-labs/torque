@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/hollis-labs/torque/internal/agentfile"
+	"github.com/hollis-labs/torque/internal/landing"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
@@ -161,6 +162,8 @@ type TaskService struct {
 	// dispatch to; nil disables the executor check. See
 	// SetRegisteredExecutors.
 	registeredExecutors func() []string
+	// sourceControl reads PR state for the landing gate; see SetSourceControl.
+	sourceControl landing.SourceControl
 }
 
 // SetRegisteredExecutors installs where Create and Update look up the
@@ -953,6 +956,11 @@ func (s *TaskService) Transition(ctx context.Context, id, newStatus string) (err
 	if err := checkTransition(task.Status, newStatus); err != nil {
 		return err
 	}
+	if newStatus == "done" && task.Status != "done" {
+		if err := s.EnforceLanding(ctx, task); err != nil {
+			return err
+		}
+	}
 	if err := s.store.TransitionTask(id, newStatus); err != nil {
 		return err
 	}
@@ -1056,8 +1064,15 @@ func (s *TaskService) TransitionWithComment(ctx context.Context, id, newStatus, 
 				),
 			}
 		}
-	} else if err := checkTransition(task.Status, newStatus); err != nil {
-		return err
+	} else {
+		if err := checkTransition(task.Status, newStatus); err != nil {
+			return err
+		}
+		if newStatus == "done" && task.Status != "done" {
+			if err := s.EnforceLanding(ctx, task); err != nil {
+				return err
+			}
+		}
 	}
 
 	wtx, err := s.store.BeginWriteTx(ctx)

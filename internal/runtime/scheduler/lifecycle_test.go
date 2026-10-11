@@ -1,6 +1,7 @@
 package scheduler_test
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 
@@ -64,6 +65,35 @@ func TestLifecycleDoneWithClose(t *testing.T) {
 	require.NoError(t, err)
 
 	task, _ := store.GetTask("CW-0001")
+	assert.Equal(t, "done", task.Status)
+}
+
+func TestLifecycleDoneWithClose_LandingGateBlocks(t *testing.T) {
+	store := setupLifecycleStore(t)
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	lm := scheduler.NewLifecycleManager(store, bus)
+	reason := "landing evidence missing: no PR recorded"
+	lm.SetLandingGate(func(context.Context, *sqlstore.TaskRecord) string { return reason })
+
+	store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-0001", Title: "Task", Status: "doing", Executor: "cli",
+		OnDone: "close",
+	})
+	require.NoError(t, lm.HandleResult("CW-0001", 1, &executor.ExecutionResult{Status: "done"}))
+
+	task, _ := store.GetTask("CW-0001")
+	assert.Equal(t, "blocked", task.Status)
+	assert.Equal(t, reason, task.BlockedReason)
+
+	// A passing gate leaves close behavior unchanged.
+	lm.SetLandingGate(func(context.Context, *sqlstore.TaskRecord) string { return "" })
+	store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-0002", Title: "Task", Status: "doing", Executor: "cli",
+		OnDone: "close",
+	})
+	require.NoError(t, lm.HandleResult("CW-0002", 2, &executor.ExecutionResult{Status: "done"}))
+	task, _ = store.GetTask("CW-0002")
 	assert.Equal(t, "done", task.Status)
 }
 
