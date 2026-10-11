@@ -31,6 +31,7 @@ func main() {
 	root.AddCommand(costBackfillCmd())
 	root.AddCommand(aarCmd())
 	root.AddCommand(fkOrphanCleanupCmd())
+	root.AddCommand(plannerCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
