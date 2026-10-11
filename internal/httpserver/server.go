@@ -250,6 +250,11 @@ func (s *Server) routes() {
 		r.Get("/scheduler/status", s.schedulerStatus)
 		r.Post("/scheduler/toggle", s.schedulerToggle)
 
+		// Workstream claims — claim-next for team runs (CW-20261011-0015).
+		r.Post("/workstreams/claim", s.claimWorkstream)
+		r.Post("/workstreams/claims/{id}/heartbeat", s.heartbeatWorkstreamClaim)
+		r.Post("/workstreams/claims/{id}/release", s.releaseWorkstreamClaim)
+
 		// Sessions — long-lived agent sessions (sessionmgr).
 		r.Get("/sessions", s.listSessions)
 		r.Post("/sessions/launch", s.launchSession)

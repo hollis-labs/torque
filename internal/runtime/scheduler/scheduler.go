@@ -286,6 +286,13 @@ func (s *Scheduler) EventBus() *EventBus {
 	return s.bus
 }
 
+// Enabled reports the go/pause flag without computing the full status.
+func (s *Scheduler) Enabled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.enabled
+}
+
 // Status returns the current scheduler status.
 func (s *Scheduler) Status() SchedulerStatus {
 	s.mu.RLock()
