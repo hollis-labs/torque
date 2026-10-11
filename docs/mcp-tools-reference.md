@@ -722,6 +722,7 @@ A done transition asks whether the work landed. It applies to `torque_task_trans
 - Evidence is read from task `metadata.landing`: `pr_url`; a waiver
   (`waived_by` with `waive_reason`); and, when CI is unavailable,
   `gate_mode: "author_pasted"` with non-empty `gate_output`.
+- A task with a `working_dir` that exists and is a git checkout must have no uncommitted changes, even when its PR is merged. A missing or non-git directory is skipped. A waiver covers this too.
 - When evidence is missing the task moves to `blocked` with the unmet requirements
   as `blocked_reason`, a `torque-landing` comment names the escalation target
   (`TORQUE_ESCALATION_PROXY`), and the caller gets a conflict naming the remedy.
