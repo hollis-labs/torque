@@ -104,7 +104,7 @@ to another port if it is occupied. The Cerberus resource proxies API requests
 to the dev API on 8992; a direct Vite launch defaults to the API on 8990 unless
 `TORQUE_GUI_API_ORIGIN` is set.
 
-`torque mcp` starts the MCP server over stdio. In that mode there is no in-process scheduler instance, so scheduler MCP tools report that the scheduler is not running in that process.
+`torque mcp` starts the MCP server over stdio. When a daemon answers on `TORQUE_HTTP_PORT` and neither `--remote` nor `TORQUE_MCP_REMOTE` is given, it relays to that daemon (below), so the daemon alone enforces the landing gate and claim policy. With no daemon it serves from the local database; there is then no in-process scheduler instance, so scheduler MCP tools report that the scheduler is not running in that process. A stdio process that was already running keeps the binary and mode it started with; restart it to pick up a new daemon or build. `TORQUE_MCP_REMOTE=0` forces the local database.
 
 `torque serve` also serves the same MCP tools at `/mcp` (Streamable HTTP, stateless) on its HTTP listener, behind the same auth as `/api/v1`: loopback hosts only without `TORQUE_API_TOKEN`, the bearer token with it. It is wired as stdio `torque mcp` is, with the daemon's own scheduler and session manager, and with no inbox-poll registry: `torque_inbox_poll` answers that polling is not available, as it does over stdio.
 

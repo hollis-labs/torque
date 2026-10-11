@@ -1,14 +1,17 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/mcpbridge"
@@ -28,6 +31,11 @@ func mcpCmd() *cobra.Command {
 		Use:   "mcp",
 		Short: "Start Torque MCP server (stdio transport)",
 		Long: `Start Torque MCP server (stdio transport).
+
+With neither --remote nor TORQUE_MCP_REMOTE, it relays to the daemon on this
+host when one answers on TORQUE_HTTP_PORT, so the daemon alone enforces the
+landing gate and claim policy, and serves from the local database only when no
+daemon is running. TORQUE_MCP_REMOTE=0 forces the local database.
 
 With --remote (or TORQUE_MCP_REMOTE), relay to the running daemon's /mcp
 endpoint instead of opening the database: the same tool surface, for
@@ -63,6 +71,17 @@ new torque mcp process.`,
 			endpoint, err := remoteMCPEndpoint(cmd.Flags().Changed("remote"), remote, envSet, env, config.HTTPPortFromEnv())
 			if err != nil {
 				return err
+			}
+			// Neither flag nor variable given: prefer the daemon when one is
+			// listening on this host. One process then owns enforcement (the
+			// landing gate, claim-next, go/pause); a stdio process that opened
+			// the database itself would run whatever binary it was started
+			// from, long after the daemon was upgraded (CW-20261011-0029).
+			if endpoint == "" && !cmd.Flags().Changed("remote") && !envSet {
+				if auto := autoRelayEndpoint(config.HTTPPortFromEnv(), config.APITokenFromEnv(), daemonListening); auto != "" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "torque mcp: relaying to the daemon at %s (TORQUE_MCP_REMOTE=0 serves from the local database)\n", auto)
+					endpoint = auto
+				}
 			}
 			if endpoint != "" {
 				return runRemoteMCP(cmd, endpoint, config.APITokenFromEnv())
@@ -201,6 +220,37 @@ func shownValue(v string) string {
 		return strconv.Quote(v[:i]) + " (query or fragment hidden: it may carry a key)"
 	}
 	return strconv.Quote(v)
+}
+
+// autoRelayEndpoint returns the local daemon's MCP URL when probe finds one on
+// port, else "" (serve from the local database). It is only consulted when the
+// caller gave neither --remote nor TORQUE_MCP_REMOTE.
+func autoRelayEndpoint(port int, token string, probe func(statusURL, token string) bool) string {
+	if probe(fmt.Sprintf("http://127.0.0.1:%d/api/v1/scheduler/status", port), token) {
+		return fmt.Sprintf("http://127.0.0.1:%d/mcp", port)
+	}
+	return ""
+}
+
+// daemonListening reports whether a Torque daemon answers at statusURL. Any
+// HTTP response counts, including 401: the daemon is there, and relaying
+// surfaces the auth error instead of silently opening the database around it.
+func daemonListening(statusURL, token string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, statusURL, nil)
+	if err != nil {
+		return false
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return true
 }
 
 // remoteDefault is --remote given without a URL.
