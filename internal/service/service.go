@@ -30,6 +30,7 @@ type Service struct {
 	Template   *TemplateService
 	Plan       *PlanService
 	Issue      *IssueService
+	Workstream *WorkstreamService
 
 	// Models is the shared models.dev catalog. nil in test wiring; populated
 	// by serve / mcp entry points. Callers that depend on model metadata
@@ -49,6 +50,7 @@ func New(store *sqlstore.Store) *Service {
 	return &Service{
 		store:      store,
 		Task:       task,
+		Workstream: &WorkstreamService{store: store, task: task},
 		Run:        &RunService{store: store},
 		Artifact:   &ArtifactService{store: store},
 		Comment:    &CommentService{store: store, writer: writequeue.NewDirect(store)},

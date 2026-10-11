@@ -317,6 +317,7 @@ Example: {}`),
 	a.registerCommentTools()
 	a.registerSettingsTools()
 	a.registerSchedulerTools()
+	a.registerWorkstreamTools()
 	a.registerCheckpointTools()
 	a.registerTemplateTools()
 	a.registerSubtodoTools()

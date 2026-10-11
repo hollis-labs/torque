@@ -708,6 +708,24 @@ Source: `internal/mcpadapter/plan_tools.go`.
 
 ---
 
+## Workstream claims (CW-20261011-0015)
+
+Claim-next for team runs. Torque owns the queue and the go/pause switch; the
+caller owns the team run, its sessions and placement. Torque never launches.
+HTTP equivalents: `POST /api/v1/workstreams/claim`,
+`POST /api/v1/workstreams/claims/{id}/heartbeat`,
+`POST /api/v1/workstreams/claims/{id}/release`.
+
+| Tool | Purpose |
+|---|---|
+| `torque_workstream_claim_next` | A free team run asks for the next cleared workstream (a `parent` task with children, `todo`, `manual=false`, dependencies `done`, no active claim). Returns `outcome` `dispatch` (claim held, task moves to `doing`), `defer` (`reason`: `paused`, `project_cap`, `no_cleared_work`) or `refuse`. Keyed on `team_run_id` (the Tether run id); the same `team_run_id` plus `idempotency_key` returns the same claim. Needs the serve-process scheduler for go/pause; stdio MCP clients use the HTTP route. |
+| `torque_workstream_heartbeat` | Extends the claim's lease (default 15 minutes). Torque never reclaims on silence alone. |
+| `torque_workstream_release` | Ends a claim: `completed` (asks for `done`, so it passes the landing gate; missing evidence leaves the task `blocked` and escalated, with the refusal in `reason`), `failed` (task `blocked`), `canceled`/`handoff` (task back to `todo`). |
+
+Go is the scheduler's `enabled` flag. Without a readable flag, claims defer as
+`paused`. The per-project cap is one concurrent claim by default. Per-environment
+caps are enforced by Tether at admission and are not read here yet.
+
 ## Where the real-FK / `depends_on` work lives
 
 Not a tool-surface change, but relevant to any agent reading `sprint_id`/
