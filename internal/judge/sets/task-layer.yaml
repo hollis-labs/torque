@@ -17,13 +17,15 @@ questions:
     true: "UI code, pages, components, styling, client-side state."
     false: "No user-interface code changes."
     tag: frontend
-    suggest_min: 0.6
-    label_tags: [frontend]
+    suggest_min: 0.7 # live eval: 94.5% agree above this, 78% covered
+    label_tags: [frontend, fe, ui]
+    negative_tags: [backend, be, api]
   - key: backend
     type: noul
     instructions: "Does the work in `title` and `description` change server-side code: services, storage, APIs, background jobs or infrastructure?"
     true: "Server code, database, API, queue or infrastructure changes."
     false: "No server-side code changes."
     tag: backend
-    suggest_min: 0.6
-    label_tags: [backend]
+    suggest_min: 0.7 # live eval: 83.8% agree above this, 74% covered
+    label_tags: [backend, be, api]
+    negative_tags: [frontend, fe, ui]

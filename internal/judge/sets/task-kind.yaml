@@ -15,7 +15,7 @@ questions:
     type: choice
     instructions: "What kind of work do `title` and `description` ask for?"
     shuffle: true
-    suggest_min: 0.4
+    suggest_min: 0.8 # live eval 2026-10-11: 84.9% agree with existing tags above this, 80% covered
     no_tag: [other]
     label_tags: [bug, feature, chore, cleanup, audit, docs]
     options:

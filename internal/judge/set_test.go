@@ -41,6 +41,41 @@ func TestSetHashChangesWithTheWording(t *testing.T) {
 	assert.NotEqual(t, h, b.Hash())
 }
 
+func TestHashTracksWhatTheModelSeesAndNothingElse(t *testing.T) {
+	sets, err := LoadSets()
+	require.NoError(t, err)
+	base := sets["task-layer"]
+	h := base.Hash()
+
+	clone := func() *Set {
+		c := *base
+		c.State = append([]StateField(nil), base.State...)
+		c.Questions = append([]SetQuestion(nil), base.Questions...)
+		return &c
+	}
+	// Settings Torque owns do not change what the model sees.
+	c := clone()
+	c.Questions[0].SuggestMin = 0.99
+	c.Questions[0].LabelTags = []string{"x"}
+	c.Questions[0].NegativeTags = []string{"y"}
+	c.Questions[0].Tag = "renamed"
+	c.Description = "different"
+	assert.Equal(t, h, c.Hash(), "thresholds, labels, tag mapping and description are not wording")
+
+	// Anything the model reads does.
+	for name, mutate := range map[string]func(*Set){
+		"instructions": func(c *Set) { c.Questions[0].Instructions += "?" },
+		"true text":    func(c *Set) { c.Questions[0].True += "." },
+		"state limit":  func(c *Set) { c.State[0].MaxChars++ },
+		"purpose":      func(c *Set) { c.Purpose = "other" },
+		"order":        func(c *Set) { c.Questions[0], c.Questions[1] = c.Questions[1], c.Questions[0] },
+	} {
+		c := clone()
+		mutate(c)
+		assert.NotEqual(t, h, c.Hash(), name)
+	}
+}
+
 func TestValidateRefusesBadSets(t *testing.T) {
 	good := `
 id: s
@@ -154,4 +189,22 @@ func TestSuggestedTags(t *testing.T) {
 
 	mapped := SetQuestion{Type: Choice, Tags: map[string]string{"doc": "docs"}, SuggestMin: 0.1}
 	assert.Equal(t, []string{"docs"}, mapped.SuggestedTags(Answer{Type: Choice, Choice: "doc", Confidence: 0.5}), "an option can map to a different tag")
+}
+
+func TestDisabledQuestionsAreAskedByEvalButNeverSuggested(t *testing.T) {
+	sets, err := LoadSets()
+	require.NoError(t, err)
+	set := sets["task-decision-state"]
+	fields := map[string]string{"title": "t", "description": "d"}
+
+	all := set.BuildRequest(fields, 1)
+	sug, ok := set.BuildSuggestionRequest(fields, 1)
+	require.True(t, ok)
+	assert.Len(t, all.Questions, 3)
+	require.Len(t, sug.Questions, 1)
+	assert.Equal(t, "discuss_first", sug.Questions[0].Key)
+
+	q, _ := set.Question("needs_review")
+	assert.True(t, q.Disabled)
+	assert.Empty(t, q.SuggestedTags(Answer{Type: Noul, Noul: 0.99}))
 }

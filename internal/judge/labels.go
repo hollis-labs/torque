@@ -31,9 +31,11 @@ type SampleOptions struct {
 //
 //   - Choice: the item carries exactly one of the label tags, and that tag is
 //     one of the question's option keys. Zero or several means unlabeled.
-//   - Noul: yes when the item carries the tag, no when it carries other tags
-//     but not this one. An item with no tags at all is unlabeled: an absent
-//     tag on an untagged item says nothing.
+//   - Noul: yes when the item carries any of the label tags (the corpus's real
+//     synonyms); no when it carries one of the question's negative tags and
+//     none of the label tags, or, when the question names no negative tags,
+//     when it carries any other tag. An item with no tags at all is
+//     unlabeled: an absent tag on an untagged item says nothing.
 //
 // The same seed always draws the same sample.
 func LabelExamples(set *Set, items []Item, opt SampleOptions) []Example {
@@ -76,12 +78,15 @@ func LabelExamples(set *Set, items []Item, opt SampleOptions) []Example {
 			if len(q.LabelTags) == 0 {
 				continue
 			}
-			tag := q.LabelTags[0]
 			var pos, neg []Item
 			for _, it := range sorted {
 				switch {
-				case has(it.Tags, tag):
+				case hasAny(it.Tags, q.LabelTags):
 					pos = append(pos, it)
+				case len(q.NegativeTags) > 0:
+					if hasAny(it.Tags, q.NegativeTags) {
+						neg = append(neg, it)
+					}
 				case len(it.Tags) > 0:
 					neg = append(neg, it)
 				}
@@ -111,6 +116,15 @@ func draw(rng *rand.Rand, total, n int) []int {
 	}
 	sort.Ints(idx)
 	return idx
+}
+
+func hasAny(tags, wanted []string) bool {
+	for _, w := range wanted {
+		if has(tags, w) {
+			return true
+		}
+	}
+	return false
 }
 
 func has(tags []string, t string) bool {

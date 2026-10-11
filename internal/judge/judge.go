@@ -66,6 +66,9 @@ type Answer struct {
 type Usage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
+	// CostUSD is the gateway's own estimate (input tokens times the provider's
+	// configured flat price), when it reports one.
+	CostUSD float64 `json:"estimated_cost_usd,omitempty"`
 }
 
 // Response carries the answers by question key.

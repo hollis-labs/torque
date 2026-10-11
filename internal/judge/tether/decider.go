@@ -1,8 +1,10 @@
 // Package tether is the judge.Decider that asks Tether's Decide operation
 // (POST /ai/decide), which routes to a decision provider such as JEV. The wire
-// shape is the contract in the Tether handoff (Tesseract workspace
-// project/tether/workspace/handoff/jev_decide_operation_and_adapter_2026_10_11);
-// if Tether's as-built shape differs, only encode and decode here change.
+// shape is Tether's as built (docs/api/README.md in the tether repo): the request
+// is {"request": {caller_id, model_hint, decision: {state, purpose, on_error,
+// questions}}} and the response {"response": {provider, model, decision:
+// {answers, latency_ms, request_id}, usage, route}}. Only encode and decode
+// depend on it.
 //
 // It reads the base URL and token the same way the rest of Torque does
 // (TORQUE_TETHER_URL, TORQUE_TETHER_TOKEN). It never logs, prints or returns
@@ -16,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -43,13 +46,22 @@ type Decider struct {
 	Attempts int // default 3
 }
 
-// New returns a Decider for baseURL, or nil when baseURL is empty.
+// New returns a Decider for baseURL, or nil when baseURL is empty. baseURL is
+// either an http(s) URL or unix:///absolute/path.sock for Tether's local
+// socket (its default transport; ~/.tether/run/tetherd.sock).
 func New(baseURL, token string) *Decider {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
 		return nil
 	}
-	return &Decider{BaseURL: baseURL, Token: token, Model: DefaultModel, HTTP: &http.Client{Timeout: 30 * time.Second}}
+	client := &http.Client{Timeout: 30 * time.Second}
+	if sock, ok := strings.CutPrefix(baseURL, "unix://"); ok {
+		client.Transport = &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", sock)
+		}}
+		baseURL = "http://unix" // the host is a placeholder; the dialer decides where the bytes go
+	}
+	return &Decider{BaseURL: baseURL, Token: token, Model: DefaultModel, HTTP: client}
 }
 
 // Name implements judge.Decider.
@@ -59,52 +71,96 @@ func (d *Decider) Name() string { return "tether-decide" }
 // the request.
 type Error struct {
 	Status  int
+	Code    string // Tether's error code: invalid_request, decision_failed, internal_error, ...
+	Kind    string // for decision_failed: auth, rate_limited, overloaded, timeout, circuit_open, unavailable
 	Message string
 
 	retryAfter time.Duration // from a Retry-After header, capped
 }
 
 func (e *Error) Error() string {
-	if e.Message == "" {
-		return fmt.Sprintf("tether decide: HTTP %d", e.Status)
+	head := fmt.Sprintf("tether decide: HTTP %d", e.Status)
+	if e.Kind != "" {
+		head += " (" + e.Kind + ")"
 	}
-	return fmt.Sprintf("tether decide: HTTP %d: %s", e.Status, e.Message)
+	if e.Message == "" {
+		return head
+	}
+	return head + ": " + e.Message
 }
 
 // Retryable reports whether trying again could succeed: rate limited (429),
-// overloaded (529) or a transient gateway failure.
+// overloaded (503) or a timeout (504). Not an open circuit breaker (waiting
+// is the point of it), not 502 (auth or unavailable), and not a budget
+// rejection or a malformed request. The gateway already retries the
+// provider's own 429 and 529.
 func (e *Error) Retryable() bool {
+	if e.Kind == "circuit_open" || e.Kind == "auth" || e.Kind == "unavailable" {
+		return false
+	}
 	switch e.Status {
-	case http.StatusTooManyRequests, 529, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+	case http.StatusTooManyRequests, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		return true
 	}
 	return false
 }
 
-// wireResponse is Tether's /ai/decide response.
-type wireResponse struct {
-	Answers   map[string]judge.Answer `json:"answers"`
-	Usage     judge.Usage             `json:"usage"`
-	Provider  string                  `json:"provider"`
-	Model     string                  `json:"model"`
-	LatencyMS int64                   `json:"latency_ms"`
-	RequestID string                  `json:"request_id"`
+// wireRequest is Tether's /ai/decide request.
+type wireRequest struct {
+	Request struct {
+		CallerID  string       `json:"caller_id,omitempty"`
+		ModelHint string       `json:"model_hint,omitempty"`
+		Decision  wireDecision `json:"decision"`
+	} `json:"request"`
 }
 
+type wireDecision struct {
+	State     any              `json:"state"`
+	Purpose   string           `json:"purpose"`
+	OnError   string           `json:"on_error,omitempty"`
+	Questions []judge.Question `json:"questions"`
+}
+
+// wireResponse is Tether's /ai/decide response.
+type wireResponse struct {
+	Response struct {
+		Provider string `json:"provider"`
+		Model    string `json:"model"`
+		Decision struct {
+			Answers   map[string]judge.Answer `json:"answers"`
+			LatencyMS int64                   `json:"latency_ms"`
+			RequestID string                  `json:"request_id"`
+		} `json:"decision"`
+		Usage judge.Usage `json:"usage"`
+	} `json:"response"`
+}
+
+// ErrNoPurpose is returned before any call is made: Tether's budget is scoped
+// by purpose and rejects a decide request that carries none.
+var ErrNoPurpose = errors.New("tether decide: a request must carry a purpose (spend accounting is per purpose)")
+
 func (d *Decider) encode(req judge.Request) ([]byte, error) {
-	if req.Model == "" {
-		req.Model = d.Model
+	if strings.TrimSpace(req.Purpose) == "" {
+		return nil, ErrNoPurpose
 	}
-	if req.Model == "" {
-		req.Model = DefaultModel
+	model := req.Model
+	if model == "" {
+		model = d.Model
 	}
-	if req.CallerID == "" {
-		req.CallerID = CallerID
+	if model == "" {
+		model = DefaultModel
 	}
-	if req.OnError == "" {
-		req.OnError = "fail_open"
+	var w wireRequest
+	w.Request.CallerID = req.CallerID
+	if w.Request.CallerID == "" {
+		w.Request.CallerID = CallerID
 	}
-	return json.Marshal(req) // questions and options are slices: their order is preserved on the wire
+	w.Request.ModelHint = model
+	w.Request.Decision = wireDecision{State: req.State, Purpose: req.Purpose, OnError: req.OnError, Questions: req.Questions}
+	if w.Request.Decision.OnError == "" {
+		w.Request.Decision.OnError = "fail_open"
+	}
+	return json.Marshal(w) // questions and options are slices: their order is preserved on the wire
 }
 
 func (d *Decider) decode(req judge.Request, body []byte) (judge.Response, error) {
@@ -112,9 +168,10 @@ func (d *Decider) decode(req judge.Request, body []byte) (judge.Response, error)
 	if err := json.Unmarshal(body, &w); err != nil {
 		return judge.Response{}, fmt.Errorf("tether decide: bad response: %w", err)
 	}
-	resp := judge.Response{Model: w.Model, Answers: map[string]judge.Answer{}, Usage: w.Usage, Latency: time.Duration(w.LatencyMS) * time.Millisecond}
+	r := w.Response
+	resp := judge.Response{Model: r.Model, Answers: map[string]judge.Answer{}, Usage: r.Usage, Latency: time.Duration(r.Decision.LatencyMS) * time.Millisecond}
 	for _, q := range req.Questions {
-		a, ok := w.Answers[q.Key]
+		a, ok := r.Decision.Answers[q.Key]
 		if !ok {
 			return judge.Response{}, fmt.Errorf("tether decide: no answer for question %q", q.Key)
 		}
@@ -213,7 +270,8 @@ func (d *Decider) once(ctx context.Context, req judge.Request, body []byte) (jud
 	defer res.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(res.Body, 4<<20))
 	if res.StatusCode != http.StatusOK {
-		e := &Error{Status: res.StatusCode, Message: errorMessage(raw, d.Token)}
+		code, kind, msg := errorFields(raw, d.Token)
+		e := &Error{Status: res.StatusCode, Code: code, Kind: kind, Message: msg}
 		if s := res.Header.Get("Retry-After"); s != "" {
 			if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 10 {
 				e.retryAfter = time.Duration(n) * time.Second
@@ -224,22 +282,21 @@ func (d *Decider) once(ctx context.Context, req judge.Request, body []byte) (jud
 	return d.decode(req, raw)
 }
 
-// errorMessage pulls a short message out of an error body, never the token.
-func errorMessage(raw []byte, token string) string {
+// errorFields reads Tether's error envelope: {"error": {"code", "message",
+// "details": {"kind", ...}}}. It never returns the token.
+func errorFields(raw []byte, token string) (code, kind, msg string) {
 	var env struct {
-		Error   any    `json:"error"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Details struct {
+				Kind string `json:"kind"`
+			} `json:"details"`
+		} `json:"error"`
 		Message string `json:"message"`
 	}
-	msg := ""
 	if json.Unmarshal(raw, &env) == nil {
-		switch e := env.Error.(type) {
-		case string:
-			msg = e
-		case map[string]any:
-			if m, ok := e["message"].(string); ok {
-				msg = m
-			}
-		}
+		code, kind, msg = env.Error.Code, env.Error.Details.Kind, env.Error.Message
 		if msg == "" {
 			msg = env.Message
 		}
@@ -247,7 +304,7 @@ func errorMessage(raw []byte, token string) string {
 	if len(msg) > 300 {
 		msg = msg[:300]
 	}
-	return sanitizeText(msg, token)
+	return code, kind, sanitizeText(msg, token)
 }
 
 func sanitize(err error, token string) error {

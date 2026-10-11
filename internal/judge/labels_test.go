@@ -35,29 +35,54 @@ func TestChoiceLabelsNeedExactlyOneKindTag(t *testing.T) {
 	assert.Equal(t, map[string]string{"one-bug": "bug", "one-docs": "docs", "another-bug": "bug"}, got)
 }
 
-func TestNoulLabelsTreatAnUntaggedItemAsUnlabeled(t *testing.T) {
-	sets, _ := LoadSets()
-	set := sets["task-layer"] // frontend and backend, label tags [frontend] and [backend]
-	ex := LabelExamples(set, items(map[string][]string{
-		"fe":       {"frontend", "ui"},
-		"be":       {"backend"},
-		"other":    {"docs"},
-		"untagged": nil,
-	}), SampleOptions{N: 100, Seed: 1})
-	labels := map[string]map[string]bool{}
-	for _, e := range ex {
+func labelsFor(t *testing.T, setID string, spec map[string][]string) map[string]map[string]bool {
+	sets, err := LoadSets()
+	require.NoError(t, err)
+	out := map[string]map[string]bool{}
+	for _, e := range LabelExamples(sets[setID], items(spec), SampleOptions{N: 100, Seed: 1}) {
 		for k, l := range e.Labels {
-			if labels[k] == nil {
-				labels[k] = map[string]bool{}
+			if out[k] == nil {
+				out[k] = map[string]bool{}
 			}
-			labels[k][e.ID] = l.Yes
+			out[k][e.ID] = l.Yes
 		}
 	}
-	assert.Equal(t, map[string]bool{"fe": true, "be": false, "other": false}, labels["frontend"], "an untagged item is not a negative")
-	assert.Equal(t, map[string]bool{"be": true, "fe": false, "other": false}, labels["backend"])
-	for _, e := range ex {
-		assert.NotEqual(t, "untagged", e.ID)
-	}
+	return out
+}
+
+func TestLayerLabelsUseRealSynonymsAndTheOppositeLayerAsTheNegative(t *testing.T) {
+	labels := labelsFor(t, "task-layer", map[string][]string{
+		"fe":        {"frontend", "ui"},
+		"fe-short":  {"fe"},
+		"ui-only":   {"ui"},
+		"be":        {"backend"},
+		"be-short":  {"be"},
+		"api":       {"api", "pagination"},
+		"fullstack": {"frontend", "backend"}, // both layers: positive for each
+		"docs":      {"docs"},                // neither layer: unlabeled, not a negative
+		"scheduler": {"scheduler"},           // no layer tag at all: unlabeled
+		"untagged":  nil,
+	})
+	assert.Equal(t, map[string]bool{
+		"fe": true, "fe-short": true, "ui-only": true, "fullstack": true, // fe, ui and frontend all mean frontend
+		"be": false, "be-short": false, "api": false, // an explicit backend-only task is a deliberate no
+	}, labels["frontend"])
+	assert.Equal(t, map[string]bool{
+		"be": true, "be-short": true, "api": true, "fullstack": true,
+		"fe": false, "fe-short": false, "ui-only": false,
+	}, labels["backend"])
+}
+
+func TestDecisionStateLabelsAcceptTheCorpusSynonyms(t *testing.T) {
+	labels := labelsFor(t, "task-decision-state", map[string][]string{
+		"canonical":  {"discuss-first"},
+		"discussion": {"needs-discussion"},
+		"decision":   {"needs-decision", "mcp"},
+		"design":     {"design-first"},
+		"other":      {"backend"}, // another tag, none of the synonyms: a negative (no negative_tags on this question)
+		"untagged":   nil,         // unlabeled
+	})
+	assert.Equal(t, map[string]bool{"canonical": true, "discussion": true, "decision": true, "design": true, "other": false}, labels["discuss_first"])
 }
 
 func TestNoulSamplesAreBalancedEvenWhenPositivesAreRare(t *testing.T) {
