@@ -193,6 +193,28 @@ func (s *Server) routes() {
 		r.Delete("/collections/{id}/tasks/{task_id}", s.removeTaskFromCollection)
 		r.Put("/collections/{id}/tasks/order", s.reorderCollectionTasks)
 
+		// Planner — the portfolio planner (feature-flagged: features.planner).
+		// Static paths come before the parameterized {db} routes.
+		r.Get("/planner/databases", s.plannerDatabases)
+		r.Get("/planner/search", s.plannerSearch)
+		r.Get("/planner/schema/{db}", s.plannerSchema)
+		r.Post("/planner/links", s.plannerRelate(true))
+		r.Delete("/planner/links", s.plannerRelate(false))
+		r.Post("/planner/inbox", s.plannerInboxAdd)
+		r.Post("/planner/inbox/{id}/promote", s.plannerInboxPromote)
+		r.Post("/planner/inbox/{id}/dismiss", s.plannerInboxDismiss)
+		r.Post("/planner/decisions/{id}/decide", s.plannerDecide)
+		r.Post("/planner/decisions/{id}/defer", s.plannerDefer)
+		r.Post("/planner/decisions/{id}/reopen", s.plannerReopen)
+		r.Get("/planner/{db}", s.plannerList)
+		r.Post("/planner/{db}", s.plannerCreate)
+		r.Post("/planner/{db}/reorder", s.plannerReorder)
+		r.Get("/planner/{db}/{id}", s.plannerGet)
+		r.Patch("/planner/{db}/{id}", s.plannerUpdate)
+		r.Post("/planner/{db}/{id}/comments", s.plannerComment)
+		r.Post("/planner/{db}/{id}/links", s.plannerLinkAdd)
+		r.Delete("/planner/{db}/{id}/links", s.plannerLinkRemove)
+
 		// Epics
 		r.Get("/epics", s.listEpics)
 		r.Get("/epics/facets", s.entityFacets("epics"))

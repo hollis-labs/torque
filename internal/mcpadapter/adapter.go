@@ -343,6 +343,9 @@ func (a *Adapter) registerOptInTools() {
 	if a.svc.Feature.IsEnabled("collections") {
 		a.registerCollectionTools()
 	}
+	if a.svc.Feature.IsEnabled("planner") {
+		a.registerPlannerTools()
+	}
 }
 
 func (a *Adapter) handleHealth(ctx context.Context, req map[string]any) (any, error) {
