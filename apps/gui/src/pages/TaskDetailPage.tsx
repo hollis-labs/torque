@@ -18,6 +18,7 @@ import { ParentPlanLink } from '@/components/domain/parent-plan-link'
 import { BlockedReasonAlert } from '@/components/domain/blocked-reason-alert'
 import { TaskProperties } from '@/components/domain/task-properties'
 import { TaskFacets } from '@/components/domain/task-facets'
+import { TaskSuggestions } from '@/components/domain/task-suggestions'
 import { ExecutionContext } from '@/components/domain/execution-context'
 import { LifecycleRules } from '@/components/domain/lifecycle-rules'
 import { DeliverablesAndDeps } from '@/components/domain/deliverables-deps'
@@ -527,6 +528,8 @@ export default function TaskDetailPage() {
                 />
 
                 <TaskFacets task={task} />
+
+                <TaskSuggestions taskId={task.id} onApplied={setTask} />
 
                 <CollapsibleSection label="Description" accent="neutral" collapsible={false}>
                   {task.description ? (

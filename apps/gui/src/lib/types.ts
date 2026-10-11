@@ -884,3 +884,40 @@ export interface PlannerWorkstreamTasks {
   open_total: number
   note?: string
 }
+
+// ---------- suggestions (the enrichment ledger) ----------
+
+/** An open tag suggestion: a model's answer, kept in the ledger until a person decides. */
+export interface Suggestion {
+  id: number
+  subject_type: string
+  subject_id: string
+  set_id: string
+  question_key: string
+  answer_type: 'noul' | 'choice' | 'score'
+  choice?: string
+  noul?: number
+  confidence: number
+  suggested: string[]
+  provider: string
+  model: string
+  disposition: string
+  created_at: string
+  task_title?: string
+  task_tags?: string[]
+}
+
+export interface JudgeStatus {
+  feature_enabled: boolean
+  decider_configured: boolean
+  decider?: string
+  active: boolean
+}
+
+/** Per set: question key → disposition → rows. */
+export type JudgeSummary = Record<string, Record<string, Record<string, number>>>
+
+export interface JudgeBulkResult {
+  decided: number
+  failed?: string[]
+}

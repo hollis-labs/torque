@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
-import { LayoutList, Play, BarChart3, Settings, Cog, FileText, Inbox, FolderTree, Sparkles, FolderKanban, MessagesSquare, Compass } from 'lucide-react'
+import { LayoutList, Play, BarChart3, Settings, Cog, FileText, Inbox, FolderTree, Sparkles, FolderKanban, MessagesSquare, Compass, Tags } from 'lucide-react'
 import { NavRail, TooltipProvider, Toaster, type NavRailItem } from '@hollis-labs/sysop-ui'
 import { ApiProvider } from '@/hooks/use-api'
 import { ActiveRunsProvider } from '@/hooks/use-active-runs'
@@ -27,11 +27,13 @@ import ModelsPage from '@/pages/ModelsPage'
 import CollectionsPage from '@/pages/CollectionsPage'
 import MessagingPage from '@/pages/MessagingPage'
 import PlannerPage from '@/pages/PlannerPage'
+import SuggestionsPage from '@/pages/SuggestionsPage'
 
 const NAV_DESTINATIONS = [
   { key: 'operations', to: '/operations', label: 'Operations', icon: <LayoutList className="h-4 w-4" /> },
   { key: 'collections', to: '/collections', label: 'Collections', icon: <FolderKanban className="h-4 w-4" /> },
   { key: 'planner', to: '/planner', label: 'Planner', icon: <Compass className="h-4 w-4" /> },
+  { key: 'suggestions', to: '/suggestions', label: 'Suggestions', icon: <Tags className="h-4 w-4" /> },
   { key: 'plans', to: '/plans', label: 'Plans', icon: <FolderTree className="h-4 w-4" /> },
   { key: 'templates', to: '/templates', label: 'Templates', icon: <FileText className="h-4 w-4" /> },
   { key: 'checkpoints', to: '/checkpoints', label: 'Checkpoints', icon: <Inbox className="h-4 w-4" /> },
@@ -71,6 +73,7 @@ function AppShell() {
           <Route path="/planner" element={<PlannerPage />} />
           <Route path="/planner/:db" element={<PlannerPage />} />
           <Route path="/planner/:db/:id" element={<PlannerPage />} />
+          <Route path="/suggestions" element={<SuggestionsPage />} />
           <Route path="/tasks/:id" element={<TaskDetailPage />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/:id" element={<ProjectDetailPage />} />
