@@ -71,7 +71,7 @@ func TestSuggestionsOverHTTP(t *testing.T) {
 	code, _, list := judgeCall(t, "GET", ts.URL+"/api/v1/judge/suggestions?task_id="+task.ID, nil)
 	require.Equal(t, 200, code)
 	require.Len(t, list, 1)
-	id := int64(list[0].(map[string]any)["ID"].(float64))
+	id := int64(list[0].(map[string]any)["id"].(float64))
 
 	code, obj, _ := judgeCall(t, "GET", ts.URL+"/api/v1/judge/status", nil)
 	require.Equal(t, 200, code)

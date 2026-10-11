@@ -32,31 +32,31 @@ const (
 
 // JudgmentRecord is one ledger row.
 type JudgmentRecord struct {
-	ID            int64
-	SubjectType   string // task | planner:<db>
-	SubjectID     string
-	SetID         string
-	SetVersion    int
-	SetHash       string
-	QuestionKey   string
-	AnswerType    string // noul | choice | score
-	Choice        string
-	Noul          *float64
-	Score         *float64
-	Probabilities map[string]float64
-	Confidence    float64
-	Suggested     []string
-	StateHash     string
-	Provider      string
-	Model         string
-	Purpose       string
-	InputTokens   int
-	OutputTokens  int
-	LatencyMS     int
-	Disposition   string
-	DecidedBy     string
-	DecidedAt     *time.Time
-	CreatedAt     time.Time
+	ID            int64              `json:"id"`
+	SubjectType   string             `json:"subject_type"` // task | planner:<db>
+	SubjectID     string             `json:"subject_id"`
+	SetID         string             `json:"set_id"`
+	SetVersion    int                `json:"set_version"`
+	SetHash       string             `json:"set_hash"`
+	QuestionKey   string             `json:"question_key"`
+	AnswerType    string             `json:"answer_type"` // noul | choice | score
+	Choice        string             `json:"choice,omitempty"`
+	Noul          *float64           `json:"noul,omitempty"`
+	Score         *float64           `json:"score,omitempty"`
+	Probabilities map[string]float64 `json:"probabilities"`
+	Confidence    float64            `json:"confidence"`
+	Suggested     []string           `json:"suggested"`
+	StateHash     string             `json:"state_hash"`
+	Provider      string             `json:"provider"`
+	Model         string             `json:"model"`
+	Purpose       string             `json:"purpose"`
+	InputTokens   int                `json:"input_tokens"`
+	OutputTokens  int                `json:"output_tokens"`
+	LatencyMS     int                `json:"latency_ms"`
+	Disposition   string             `json:"disposition"`
+	DecidedBy     string             `json:"decided_by,omitempty"`
+	DecidedAt     *time.Time         `json:"decided_at,omitempty"`
+	CreatedAt     time.Time          `json:"created_at"`
 }
 
 // JudgmentFilter narrows ListJudgments; empty fields match everything.
