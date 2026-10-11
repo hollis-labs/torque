@@ -3,6 +3,7 @@ package httpserver
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -80,4 +81,38 @@ func writeWorkstreamError(w http.ResponseWriter, err error) {
 	default:
 		writeError(w, http.StatusInternalServerError, err.Error())
 	}
+}
+
+// listWorkstreamClaims lists claims, default status active. Each item carries
+// expired=true when its lease has run out.
+func (s *Server) listWorkstreamClaims(w http.ResponseWriter, r *http.Request) {
+	status := r.URL.Query().Get("status")
+	if status == "" {
+		status = "active"
+	}
+	if status != "active" && status != "released" && status != "all" {
+		writeError(w, http.StatusBadRequest, "status must be active, released or all")
+		return
+	}
+	q := status
+	if status == "all" {
+		q = ""
+	}
+	claims, err := s.svc.Workstream.ListClaims(q)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	now := time.Now().UTC()
+	items := make([]map[string]any, 0, len(claims))
+	for _, c := range claims {
+		items = append(items, map[string]any{
+			"claim_id": c.ID, "task_id": c.TaskID, "project_id": c.ProjectID,
+			"team_id": c.TeamID, "team_run_id": c.TeamRunID, "actor": c.Actor,
+			"environment_id": c.EnvironmentID, "status": c.Status, "outcome": c.Outcome,
+			"lease_expires_at": c.LeaseExpiresAt,
+			"expired":          c.Status == "active" && c.LeaseExpiresAt.Before(now),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }

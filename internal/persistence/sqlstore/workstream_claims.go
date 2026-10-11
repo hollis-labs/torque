@@ -192,3 +192,41 @@ func (w *WriteTx) ProjectsWithActiveClaims() ([]string, error) {
 	}
 	return out, rows.Err()
 }
+
+// FindWorkstreamClaimByKey is the read-only form of the idempotency lookup, for
+// callers that must decide before opening a write transaction.
+func (s *Store) FindWorkstreamClaimByKey(teamRunID, key string) (*WorkstreamClaim, error) {
+	c, err := scanWorkstreamClaim(s.ReadDB().QueryRow(
+		`SELECT `+workstreamClaimCols+` FROM workstream_claims WHERE team_run_id = ? AND idempotency_key = ?`,
+		teamRunID, key))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return c, err
+}
+
+// ListWorkstreamClaims returns claims with the given status ("active" or
+// "released"), oldest first. An empty status returns all.
+func (s *Store) ListWorkstreamClaims(status string) ([]WorkstreamClaim, error) {
+	q := `SELECT ` + workstreamClaimCols + ` FROM workstream_claims`
+	var args []any
+	if status != "" {
+		q += ` WHERE status = ?`
+		args = append(args, status)
+	}
+	q += ` ORDER BY created_at ASC, id ASC`
+	rows, err := s.ReadDB().Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WorkstreamClaim
+	for rows.Next() {
+		c, err := scanWorkstreamClaim(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *c)
+	}
+	return out, rows.Err()
+}

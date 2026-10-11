@@ -4,11 +4,14 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/tetherclient"
 )
 
 // Claim outcomes. They are the dispatch-policy outcomes of spec CW-20261003-0154
@@ -24,6 +27,13 @@ const (
 	DeferPaused        = "paused"
 	DeferProjectCap    = "project_cap"
 	DeferNoClearedWork = "no_cleared_work"
+
+	// Tether-reported capacity. capacity_unknown fails closed: with a Tether
+	// reader configured, a claim that names an environment is not handed out
+	// on a capacity read that failed.
+	DeferEnvironmentCap    = "environment_cap"
+	DeferEnvironmentPaused = "environment_paused"
+	DeferCapacityUnknown   = "capacity_unknown"
 )
 
 // Default policy. Zero never means unlimited.
@@ -42,7 +52,21 @@ type WorkstreamService struct {
 	goFn       func() bool
 	projectCap int
 	leaseTTL   time.Duration
+	tether     TetherReader
 }
+
+// TetherReader is the read-only slice of Tether's API the claim path uses:
+// per-environment capacity and team-run state. nil (the default) means Tether
+// is not consulted: environment_id is recorded on the claim and not enforced,
+// and expired leases are surfaced but never requeued.
+type TetherReader interface {
+	Capacity(ctx context.Context, environmentID string) (*tetherclient.Capacity, error)
+	Run(ctx context.Context, runID string) (*tetherclient.RunState, error)
+}
+
+// SetTether installs the Tether reader. A nil *tetherclient.Client must be
+// passed as an untyped nil so the interface stays nil.
+func (s *WorkstreamService) SetTether(t TetherReader) { s.tether = t }
 
 // SetGo installs the go/pause source, normally the scheduler's enabled flag.
 // Without one, claims defer as paused: a process that cannot see the switch
@@ -103,6 +127,24 @@ func (s *WorkstreamService) ClaimNext(ctx context.Context, in ClaimInput) (*Clai
 	if strings.TrimSpace(in.TeamRunID) == "" {
 		return &ClaimResult{Outcome: ClaimRefuse, Reason: "invalid", Diagnostics: "team_run_id is required: claims are keyed on the Tether run id"}, nil
 	}
+	// Capacity is read before the write transaction opens so a slow Tether
+	// call never holds the writer. A retried claim still returns its existing
+	// lease: the idempotency lookup comes first.
+	if s.tether != nil && in.EnvironmentID != "" {
+		if in.IdempotencyKey != "" {
+			if prev, err := s.store.FindWorkstreamClaimByKey(in.TeamRunID, in.IdempotencyKey); err != nil {
+				return nil, err
+			} else if prev != nil {
+				return &ClaimResult{Outcome: ClaimDispatch, ClaimID: prev.ID, TaskID: prev.TaskID, LeaseExpiresAt: prev.LeaseExpiresAt}, nil
+			}
+		}
+		if s.goFn != nil && s.goFn() {
+			if d := s.capacityDefer(ctx, in.EnvironmentID); d != nil {
+				return d, nil
+			}
+		}
+	}
+
 	wtx, err := s.store.BeginWriteTx(ctx)
 	if err != nil {
 		return nil, err
@@ -157,6 +199,26 @@ func (s *WorkstreamService) ClaimNext(ctx context.Context, in ClaimInput) (*Clai
 	}
 	s.task.notifyTransition(ctx, next.TaskID, "todo", "doing")
 	return &ClaimResult{Outcome: ClaimDispatch, ClaimID: c.ID, TaskID: c.TaskID, LeaseExpiresAt: c.LeaseExpiresAt}, nil
+}
+
+// capacityDefer returns a Defer when Tether says the environment cannot take
+// another session, or when it cannot be read, else nil.
+func (s *WorkstreamService) capacityDefer(ctx context.Context, env string) *ClaimResult {
+	c, err := s.tether.Capacity(ctx, env)
+	if err != nil {
+		log.Printf("[workstream] capacity read for %q failed: %v", env, err)
+		return &ClaimResult{Outcome: ClaimDefer, Reason: DeferCapacityUnknown, Diagnostics: "Tether capacity read failed; not handing out work blind"}
+	}
+	if c.EnvironmentID != "" && c.EnvironmentID != env {
+		return &ClaimResult{Outcome: ClaimDefer, Reason: DeferCapacityUnknown, Diagnostics: "Tether reported capacity for a different environment"}
+	}
+	if strings.EqualFold(c.Admission, "paused") {
+		return &ClaimResult{Outcome: ClaimDefer, Reason: DeferEnvironmentPaused, Diagnostics: c.Reason}
+	}
+	if c.MaxSessions > 0 && c.ActiveSessions >= c.MaxSessions {
+		return &ClaimResult{Outcome: ClaimDefer, Reason: DeferEnvironmentCap}
+	}
+	return nil
 }
 
 // projectsAtCap returns the projects whose active claims reach the cap.
@@ -279,4 +341,73 @@ func newClaimID() string {
 		return fmt.Sprintf("clm_%d", time.Now().UnixNano())
 	}
 	return "clm_" + hex.EncodeToString(b[:])
+}
+
+// Sweep actions.
+const (
+	SweepRequeued   = "requeued"   // Tether says the run ended or is gone; task back to todo
+	SweepRunActive  = "run_active" // lease expired but the run is still alive; left alone
+	SweepUnverified = "unverified" // run state could not be read, or no Tether reader; left alone
+)
+
+// ExpiredClaim reports one expired lease and what the sweep did.
+type ExpiredClaim struct {
+	ClaimID        string    `json:"claim_id"`
+	TaskID         string    `json:"task_id"`
+	TeamRunID      string    `json:"team_run_id"`
+	LeaseExpiresAt time.Time `json:"lease_expires_at"`
+	Action         string    `json:"action"`
+	Detail         string    `json:"detail,omitempty"`
+}
+
+// SweepExpiredClaims handles claims whose lease has run out. Silence is not
+// death: a claim is requeued only when Tether's run-state read says the run
+// ended or no longer exists. Without a Tether reader, or when the read fails,
+// the claim is reported and left alone for review.
+func (s *WorkstreamService) SweepExpiredClaims(ctx context.Context) ([]ExpiredClaim, error) {
+	active, err := s.store.ListWorkstreamClaims("active")
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	var out []ExpiredClaim
+	for _, c := range active {
+		if !c.LeaseExpiresAt.Before(now) {
+			continue
+		}
+		e := ExpiredClaim{ClaimID: c.ID, TaskID: c.TaskID, TeamRunID: c.TeamRunID, LeaseExpiresAt: c.LeaseExpiresAt, Action: SweepUnverified}
+		if s.tether == nil {
+			e.Detail = "no Tether reader configured; cannot confirm the run ended"
+			out = append(out, e)
+			continue
+		}
+		run, err := s.tether.Run(ctx, c.TeamRunID)
+		switch {
+		case errors.Is(err, tetherclient.ErrRunNotFound):
+			e.Detail = "Tether has no such run"
+		case err != nil:
+			e.Detail = "run state unreadable: " + err.Error()
+			out = append(out, e)
+			continue
+		case !run.Ended():
+			e.Action, e.Detail = SweepRunActive, "run status "+run.Status
+			out = append(out, e)
+			continue
+		default:
+			e.Detail = "run ended: " + run.Status
+		}
+		if _, err := s.Release(ctx, c.ID, ReleaseHandoff, ""); err != nil {
+			e.Detail += "; requeue failed: " + err.Error()
+			out = append(out, e)
+			continue
+		}
+		e.Action = SweepRequeued
+		out = append(out, e)
+	}
+	return out, nil
+}
+
+// ListClaims returns claims by status for operators; expired is derived.
+func (s *WorkstreamService) ListClaims(status string) ([]sqlstore.WorkstreamClaim, error) {
+	return s.store.ListWorkstreamClaims(status)
 }
