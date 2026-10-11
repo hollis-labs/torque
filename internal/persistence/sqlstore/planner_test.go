@@ -158,3 +158,32 @@ func TestPlannerListOrdersByOrderThenInsertion(t *testing.T) {
 	require.NoError(t, err)
 	assert.ElementsMatch(t, ids, all)
 }
+
+func TestPlannerApplyIsAtomic(t *testing.T) {
+	store := setupTestStore(t)
+	require.NoError(t, store.PlannerCreate("inbox", sqlstore.PlannerItem{"id": "IN-1", "title": "t", "rev": 1,
+		"comments": []any{map[string]any{"id": "c-1", "text": "keep"}}}))
+
+	// The second write is stale (rev 1 expected 5): nothing from the batch lands.
+	err := store.PlannerApply([]sqlstore.PlannerWrite{
+		{DB: "ideas", Item: sqlstore.PlannerItem{"id": "ID-new", "title": "new"}, Create: true},
+		{DB: "inbox", Item: sqlstore.PlannerItem{"id": "IN-1", "title": "changed", "rev": 6}, ExpectedRev: 5},
+	})
+	require.True(t, errors.Is(err, sqlstore.ErrPlannerConflict))
+	_, err = store.PlannerGet("ideas", "ID-new")
+	assert.True(t, errors.Is(err, sqlstore.ErrPlannerNotFound), "the create rolled back")
+	got, err := store.PlannerGet("inbox", "IN-1")
+	require.NoError(t, err)
+	assert.Equal(t, "t", got["title"])
+
+	// A good rewrite replaces comments and links with the ones carried.
+	require.NoError(t, store.PlannerApply([]sqlstore.PlannerWrite{{DB: "inbox", ExpectedRev: 1, Item: sqlstore.PlannerItem{
+		"id": "IN-1", "title": "t2", "rev": 2,
+		"comments": []any{map[string]any{"id": "c-1", "text": "keep"}, map[string]any{"id": "c-2", "text": "new"}},
+		"links":    []any{map[string]any{"kind": "url", "ref": "https://x.test"}},
+	}}}))
+	got, err = store.PlannerGet("inbox", "IN-1")
+	require.NoError(t, err)
+	assert.Len(t, got["comments"], 2)
+	assert.Len(t, got["links"], 1)
+}

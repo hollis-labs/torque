@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "portfolio/workstreams@1",
+  "title": "portfolio/workstreams",
+  "description": "Workstreams: the Tether workstream containers and the Torque projects they map to, with current state.",
+  "type": "object",
+  "required": [
+    "schema",
+    "items"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "schema": {
+      "const": "portfolio/workstreams@1"
+    },
+    "updated": {
+      "type": "string"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "status"
+        ],
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "stable id, prefix + slug; never reused"
+          },
+          "title": {
+            "type": "string"
+          },
+          "tldr": {
+            "type": "string",
+            "description": "optional: one short paragraph. The central concept and the tension: what pulls different ways, what is at stake or undecided"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/link"
+            }
+          },
+          "source": {
+            "type": "string",
+            "description": "where this came from, e.g. session date or message id"
+          },
+          "created": {
+            "type": "string",
+            "format": "date"
+          },
+          "updated": {
+            "type": "string",
+            "format": "date"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "paused",
+              "planned",
+              "parked",
+              "done",
+              "unreviewed"
+            ]
+          },
+          "phase": {
+            "enum": [
+              "landing",
+              "adoption",
+              "planning",
+              "maintenance",
+              "unknown"
+            ]
+          },
+          "tether_workstream_id": {
+            "type": "string"
+          },
+          "torque_project_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "torque_tag": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string",
+            "description": "team or orchestrator currently accountable, or 'unallocated'"
+          },
+          "goal": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "description": "what is true now; dated in updated"
+          },
+          "next_step": {
+            "type": "string"
+          },
+          "blockers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "priority_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "roadmap_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rev": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "write counter, starts at 1, incremented by the service on every write; missing counts as 0"
+          },
+          "order": {
+            "type": "number",
+            "description": "list order within the database; items without it sort after those with it"
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5,
+            "description": "1 highest, same meaning as Torque"
+          },
+          "author": {
+            "type": "string",
+            "description": "who created the item (set by the service on create)"
+          },
+          "comments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/comment"
+            }
+          },
+          "related_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "generic link to item ids in any database"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "link": {
+      "type": "object",
+      "required": [
+        "kind",
+        "ref"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "torque",
+            "tesseract",
+            "tether",
+            "pr",
+            "adr",
+            "url",
+            "file",
+            "commit",
+            "workstream"
+          ]
+        },
+        "ref": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      }
+    },
+    "comment": {
+      "type": "object",
+      "required": [
+        "id",
+        "author",
+        "text",
+        "created"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "c-<n>, unique within the item"
+        },
+        "author": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "created": {
+          "type": "string",
+          "description": "ISO timestamp"
+        },
+        "kind": {
+          "enum": [
+            "comment",
+            "decision"
+          ]
+        }
+      }
+    }
+  }
+}

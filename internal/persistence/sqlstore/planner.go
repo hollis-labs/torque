@@ -260,6 +260,41 @@ func boolInt(b bool) int {
 // PlannerCreate inserts an item and its comments and links in one transaction.
 // The caller supplies id, rev and timestamps.
 func (s *Store) PlannerCreate(db string, item PlannerItem) error {
+	return s.PlannerApply([]PlannerWrite{{DB: db, Item: item, Create: true}})
+}
+
+// PlannerWrite is one write inside PlannerApply: an insert (Create) or a
+// rev-checked rewrite of the row plus its comments and links.
+type PlannerWrite struct {
+	DB          string
+	Item        PlannerItem
+	Create      bool
+	ExpectedRev int // for rewrites: the rev the caller read
+}
+
+// PlannerApply performs the writes in one transaction, in order; any failure
+// rolls all of them back. A rewrite replaces the item's comments and links
+// with the ones carried in Item, so callers pass the whole item.
+func (s *Store) PlannerApply(writes []PlannerWrite) error {
+	tx, err := s.beginWriteTx()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, w := range writes {
+		if w.Create {
+			err = plannerInsertTx(tx, w.DB, w.Item)
+		} else {
+			err = plannerRewriteTx(tx, w.DB, w.Item, w.ExpectedRev)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func plannerInsertTx(tx *sql.Tx, db string, item PlannerItem) error {
 	table, cols, err := plannerTable(db)
 	if err != nil {
 		return err
@@ -269,11 +304,6 @@ func (s *Store) PlannerCreate(db string, item PlannerItem) error {
 		return err
 	}
 	names := plannerWriteCols(cols)
-	tx, err := s.beginWriteTx()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
 	_, err = tx.Exec(fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", table,
 		strings.Join(names, ", "), strings.TrimSuffix(strings.Repeat("?, ", len(names)), ", ")), args...)
 	if err != nil {
@@ -282,11 +312,49 @@ func (s *Store) PlannerCreate(db string, item PlannerItem) error {
 		}
 		return err
 	}
-	id := item["id"].(string)
-	if err := plannerWriteChildren(tx, db, id, item); err != nil {
+	return plannerWriteChildren(tx, db, item["id"].(string), item)
+}
+
+func plannerRewriteTx(tx *sql.Tx, db string, item PlannerItem, expectedRev int) error {
+	table, cols, err := plannerTable(db)
+	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	args, err := plannerArgs(db, cols, item)
+	if err != nil {
+		return err
+	}
+	names := plannerWriteCols(cols)
+	sets := make([]string, 0, len(names)-1)
+	for _, n := range names[1:] {
+		sets = append(sets, n+" = ?")
+	}
+	res, err := tx.Exec(fmt.Sprintf("UPDATE %s SET %s WHERE id = ? AND rev = ?", table, strings.Join(sets, ", ")),
+		append(append([]any{}, args[1:]...), args[0], expectedRev)...)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		var cur int
+		switch err := tx.QueryRow(fmt.Sprintf("SELECT rev FROM %s WHERE id = ?", table), args[0]).Scan(&cur); {
+		case err == sql.ErrNoRows:
+			return fmt.Errorf("%w: %s/%s", ErrPlannerNotFound, db, args[0])
+		case err != nil:
+			return err
+		}
+		return fmt.Errorf("%w: %s/%s is at rev %d, caller read rev %d", ErrPlannerConflict, db, args[0], cur, expectedRev)
+	}
+	id := item["id"].(string)
+	for _, t := range []string{"planner_comments", "planner_links"} {
+		if _, err := tx.Exec("DELETE FROM "+t+" WHERE db = ? AND item_id = ?", db, id); err != nil {
+			return err
+		}
+	}
+	return plannerWriteChildren(tx, db, id, item)
 }
 
 func plannerWriteChildren(tx *sql.Tx, db, id string, item PlannerItem) error {
@@ -332,9 +400,9 @@ func asMaps(v any) []map[string]any {
 	return nil
 }
 
-// PlannerUpdate rewrites an item's row (not its comments or links, which have
-// their own writers). The write succeeds only when the stored rev equals
-// expectedRev; the caller supplies the new rev inside item.
+// PlannerUpdate rewrites an item's row only (not its comments or links, which
+// PlannerApply and the add/remove methods own). The write succeeds only when
+// the stored rev equals expectedRev; the caller supplies the new rev in item.
 func (s *Store) PlannerUpdate(db string, item PlannerItem, expectedRev int) error {
 	table, cols, err := plannerTable(db)
 	if err != nil {

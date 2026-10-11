@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "portfolio/decisions@1",
+  "title": "portfolio/decisions",
+  "description": "Decision log index. The durable record is Tesseract or an ADR; this is the quick-reference list with pointers.",
+  "type": "object",
+  "required": [
+    "schema",
+    "items"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "schema": {
+      "const": "portfolio/decisions@1"
+    },
+    "updated": {
+      "type": "string"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "status"
+        ],
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "stable id, prefix + slug; never reused"
+          },
+          "title": {
+            "type": "string"
+          },
+          "tldr": {
+            "type": "string",
+            "description": "optional: one short paragraph. The central concept and the tension: what pulls different ways, what is at stake or undecided"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/link"
+            }
+          },
+          "source": {
+            "type": "string",
+            "description": "where this came from, e.g. session date or message id"
+          },
+          "created": {
+            "type": "string",
+            "format": "date"
+          },
+          "updated": {
+            "type": "string",
+            "format": "date"
+          },
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "decided_by": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "needs-decision",
+              "decided",
+              "deferred",
+              "superseded",
+              "reversed"
+            ]
+          },
+          "area": {
+            "type": "string"
+          },
+          "decision": {
+            "type": "string"
+          },
+          "rationale": {
+            "type": "string"
+          },
+          "alternatives": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "supersedes": {
+            "type": "string"
+          },
+          "superseded_by": {
+            "type": "string"
+          },
+          "rev": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "write counter, starts at 1, incremented by the service on every write; missing counts as 0"
+          },
+          "order": {
+            "type": "number",
+            "description": "list order within the database; items without it sort after those with it"
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5,
+            "description": "1 highest, same meaning as Torque"
+          },
+          "author": {
+            "type": "string",
+            "description": "who created the item (set by the service on create)"
+          },
+          "comments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/comment"
+            }
+          },
+          "related_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "generic link to item ids in any database"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/option"
+            }
+          },
+          "selected_option": {
+            "type": "string",
+            "description": "id of the chosen option"
+          },
+          "decided_at": {
+            "type": "string",
+            "format": "date"
+          },
+          "defer_note": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "link": {
+      "type": "object",
+      "required": [
+        "kind",
+        "ref"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "torque",
+            "tesseract",
+            "tether",
+            "pr",
+            "adr",
+            "url",
+            "file",
+            "commit",
+            "workstream"
+          ]
+        },
+        "ref": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      }
+    },
+    "comment": {
+      "type": "object",
+      "required": [
+        "id",
+        "author",
+        "text",
+        "created"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "c-<n>, unique within the item"
+        },
+        "author": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "created": {
+          "type": "string",
+          "description": "ISO timestamp"
+        },
+        "kind": {
+          "enum": [
+            "comment",
+            "decision"
+          ]
+        }
+      }
+    },
+    "option": {
+      "type": "object",
+      "required": [
+        "id",
+        "label"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "a, b, c ..."
+        },
+        "label": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "pros": {
+          "type": "string"
+        },
+        "cons": {
+          "type": "string"
+        },
+        "recommended": {
+          "type": "boolean"
+        },
+        "proposed_by": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
