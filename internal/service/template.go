@@ -130,6 +130,9 @@ func (s *TemplateService) Create(in TemplateCreateInput) (*sqlstore.TemplateReco
 	if err := s.validateTemplateBudgets(in.CostBudget, in.MaxRetries, in.MaxDurationMs, in.TokenBudget); err != nil {
 		return nil, err
 	}
+	if err := validateQualityGates(in.QualityGates); err != nil {
+		return nil, err
+	}
 	next, err := s.store.NextTemplateVersion(in.ID)
 	if err != nil {
 		return nil, err
@@ -153,6 +156,9 @@ func (s *TemplateService) Update(id string, in TemplateUpdateInput) (*sqlstore.T
 		return nil, err
 	}
 	if err := s.validateTemplateBudgets(in.CostBudget, in.MaxRetries, in.MaxDurationMs, in.TokenBudget); err != nil {
+		return nil, err
+	}
+	if err := validateQualityGates(in.QualityGates); err != nil {
 		return nil, err
 	}
 	merged := mergeTemplateUpdate(prev, in)

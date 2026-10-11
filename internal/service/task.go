@@ -217,6 +217,9 @@ func (s *TaskService) SetCommentObserver(o CommentObserver) {
 
 // Create validates and creates a new task.
 func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error) {
+	if err := validateQualityGates(input.QualityGates); err != nil {
+		return nil, err
+	}
 	if input.Title == "" {
 		return nil, &ValidationError{Field: "title", Message: "title is required"}
 	}
@@ -621,6 +624,9 @@ func (s *TaskService) Update(id string, input TaskUpdateInput) error {
 		return &ValidationError{Field: "title", Message: "title cannot be cleared to empty"}
 	}
 
+	if err := validateQualityGatesJSON(input.QualityGates); err != nil {
+		return err
+	}
 	fields, err := extractUpdateFields(input)
 	if err != nil {
 		return err

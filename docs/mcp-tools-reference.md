@@ -708,6 +708,26 @@ Source: `internal/mcpadapter/plan_tools.go`.
 
 ---
 
+## Landing evidence and quality gates (CW-20261011-0012)
+
+A done transition asks whether the work landed. It applies to `torque_task_transition`
+(without `force`), the scheduler's `on_done` close/notify exits, and parent rollup.
+
+- `on_done_merge` other than `none` requires the task's PR to be `MERGED`.
+- Quality gate `ci_green` requires the PR's checks to pass. `deliverables` and
+  `subtodos` are enforced by the completion path and are on by default; naming them
+  makes that explicit. The vocabulary is closed: `deliverables`, `subtodos`,
+  `ci_green`. Create and update (tasks and templates) reject any other name and list
+  the valid ones. `verify` and `reviewer_verdict` are reserved until enforced.
+- Evidence is read from task `metadata.landing`: `pr_url`; a waiver
+  (`waived_by` with `waive_reason`); and, when CI is unavailable,
+  `gate_mode: "author_pasted"` with non-empty `gate_output`.
+- When evidence is missing the task moves to `blocked` with the unmet requirements
+  as `blocked_reason`, a `torque-landing` comment names the escalation target
+  (`TORQUE_ESCALATION_PROXY`), and the caller gets a conflict naming the remedy.
+  `force=true` is the explicit override. PR state is read through `gh` in the
+  project's `repo_path`.
+
 ## Workstream claims (CW-20261011-0015)
 
 Claim-next for team runs. Torque owns the queue and the go/pause switch; the

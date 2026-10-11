@@ -222,7 +222,7 @@ func TestFullStack_TaskTyped_FullParityWithHTTPValidRecord(t *testing.T) {
 		"max_duration_ms":        "60000",
 		"token_budget":           "12345",
 		"escalation_chain":       `["ops"]`,
-		"quality_gates":          `["tests"]`,
+		"quality_gates":          `["subtodos"]`,
 		"deliverables":           `[{"type":"note","required":false}]`,
 		"metadata":               `{"hitl":{"required_workflow":{"workflow_type":"approval","enforcement_mode":"required","requirements":{"response_required":true},"reason":"typed parity"}}}`,
 		"depends_on":             `["` + depID + `"]`,

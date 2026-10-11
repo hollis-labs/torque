@@ -630,7 +630,7 @@ func TestCreateWithAllFieldsRoundTrip(t *testing.T) {
 		OnReview:        "auto-approve",
 		OnDoneMerge:     "auto",
 		EscalationChain: []string{"senior-agent", "human-reviewer"},
-		QualityGates:    []string{"go test ./...", "go vet ./..."},
+		QualityGates:    []string{"deliverables", "ci_green"},
 		Deliverables: []service.Deliverable{
 			{Type: "diff", Required: true, Description: "Code changes"},
 			{Type: "test-results", Required: true},
@@ -679,7 +679,7 @@ func TestCreateWithAllFieldsRoundTrip(t *testing.T) {
 	assert.True(t, got.EscalationChain.Valid)
 	assert.Contains(t, got.EscalationChain.String, "senior-agent")
 	assert.True(t, got.QualityGates.Valid)
-	assert.Contains(t, got.QualityGates.String, "go test")
+	assert.Contains(t, got.QualityGates.String, "ci_green")
 	assert.True(t, got.Deliverables.Valid)
 	assert.Contains(t, got.Deliverables.String, "diff")
 	assert.True(t, got.Metadata.Valid)

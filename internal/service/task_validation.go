@@ -1,8 +1,12 @@
 package service
 
 import (
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/hollis-labs/torque/internal/hitl"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -525,4 +529,40 @@ func extractUpdateFields(input TaskUpdateInput) (taskWriteFields, error) {
 	}
 
 	return f, nil
+}
+
+// QualityGateNames is the closed vocabulary of quality_gates a task may name.
+// Every name here is enforced: deliverables and subtodos by the lifecycle
+// completion path (they are on by default; naming them makes that explicit),
+// ci_green by the landing gate on the done transition. Names that are planned
+// but not enforced (verify, reviewer_verdict) are rejected so nothing
+// advertises a constraint that does nothing (CW-20260902-0136).
+var QualityGateNames = []string{"deliverables", "subtodos", "ci_green"}
+
+// validateQualityGates rejects names outside QualityGateNames, listing the
+// valid ones so the caller can correct the call.
+func validateQualityGates(gates []string) error {
+	for _, g := range gates {
+		if !slices.Contains(QualityGateNames, g) {
+			return &ValidationError{
+				Field:   "quality_gates",
+				Message: fmt.Sprintf("unknown quality gate %q — valid gates: %s", g, strings.Join(QualityGateNames, ", ")),
+			}
+		}
+	}
+	return nil
+}
+
+// validateQualityGatesJSON validates a stored/updated JSON array. NULL, empty
+// and unparseable values pass: existing rows may hold legacy names, and they
+// must keep loading.
+func validateQualityGatesJSON(ns *sql.NullString) error {
+	if ns == nil || !ns.Valid || ns.String == "" {
+		return nil
+	}
+	var gates []string
+	if err := json.Unmarshal([]byte(ns.String), &gates); err != nil {
+		return &ValidationError{Field: "quality_gates", Message: "quality_gates must be a JSON array of gate names"}
+	}
+	return validateQualityGates(gates)
 }
