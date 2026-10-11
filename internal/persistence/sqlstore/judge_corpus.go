@@ -6,6 +6,7 @@ type JudgeTask struct {
 	ID          string
 	Title       string
 	Description string
+	Status      string
 	Tags        []string
 }
 
@@ -13,7 +14,7 @@ type JudgeTask struct {
 // with its tags, in id order. It reads two tables and joins them in memory;
 // a few thousand tasks is a few megabytes.
 func (s *Store) JudgeTaskCorpus() ([]JudgeTask, error) {
-	rows, err := s.ReadDB().Query(`SELECT id, title, description FROM tasks WHERE kind <> 'internal' ORDER BY id`)
+	rows, err := s.ReadDB().Query(`SELECT id, title, description, status FROM tasks WHERE kind <> 'internal' ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -22,7 +23,7 @@ func (s *Store) JudgeTaskCorpus() ([]JudgeTask, error) {
 	index := map[string]int{}
 	for rows.Next() {
 		var t JudgeTask
-		if err := rows.Scan(&t.ID, &t.Title, &t.Description); err != nil {
+		if err := rows.Scan(&t.ID, &t.Title, &t.Description, &t.Status); err != nil {
 			return nil, err
 		}
 		index[t.ID] = len(tasks)

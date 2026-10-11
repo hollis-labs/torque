@@ -109,6 +109,12 @@ func (s *Server) routes() {
 		r.Use(s.requireToken)
 
 		// Tasks
+		r.Get("/judge/status", s.judgeStatus)
+		r.Get("/judge/summary", s.judgeSummary)
+		r.Get("/judge/suggestions", s.judgeSuggestions)
+		r.Post("/judge/suggestions/bulk", s.judgeBulk)
+		r.Post("/judge/suggestions/{id}/accept", s.judgeAccept)
+		r.Post("/judge/suggestions/{id}/reject", s.judgeReject)
 		r.Get("/tasks", s.listTasks)
 		r.Post("/tasks", s.createTask)
 		r.Get("/tasks/search", s.searchTasks)
@@ -116,6 +122,7 @@ func (s *Server) routes() {
 		r.Get("/tasks/rollup", s.taskRollup)
 		r.Post("/tasks/bulk-transition", s.bulkTransitionTasks)
 		r.Get("/tasks/{id}", s.getTask)
+		r.Post("/tasks/{id}/enrich", s.judgeEnrich)
 		r.Put("/tasks/{id}", s.updateTask)
 		r.Delete("/tasks/{id}", s.deleteTask)
 		r.Post("/tasks/{id}/transition", s.transitionTask)

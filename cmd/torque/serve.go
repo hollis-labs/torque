@@ -22,6 +22,7 @@ import (
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/federation"
 	"github.com/hollis-labs/torque/internal/httpserver"
+	judgetether "github.com/hollis-labs/torque/internal/judge/tether"
 	clockmsg "github.com/hollis-labs/torque/internal/messaging"
 	"github.com/hollis-labs/torque/internal/modelcatalog"
 	"github.com/hollis-labs/torque/internal/persistence/appdb"
@@ -181,6 +182,12 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	// claim it for per-task MCP loopback wiring (CW-20260427-0059). Same
 	// handle reused by httpserver below.
 	svc := service.New(store)
+	// Enrichment on create: needs TORQUE_TETHER_URL here AND the `judge`
+	// feature switched on in settings; either one missing and nothing is asked.
+	if td := judgetether.New(os.Getenv("TORQUE_TETHER_URL"), os.Getenv("TORQUE_TETHER_TOKEN")); td != nil {
+		svc.Judge.SetDecider(td)
+		slog.Info("[judge] tether decider configured; suggestions run when the `judge` feature is enabled")
+	}
 	// Task writes name only an executor this registry has (CW-20260910-0087).
 	svc.Task.SetRegisteredExecutors(registry.List)
 	telemetryWriter, err := writequeue.New(store, telemetryDB, writequeue.DefaultConfig())
