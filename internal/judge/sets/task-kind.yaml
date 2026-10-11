@@ -1,0 +1,35 @@
+id: task-kind
+version: 1
+purpose: task_enrichment
+applies_to: task
+description: >
+  What kind of work a task asks for, from the portfolio tagging convention
+  (docs/task-tagging-conventions.md, dimension 1). One tag per task.
+state:
+  - name: title
+    max_chars: 500
+  - name: description
+    max_chars: 4000
+questions:
+  - key: kind
+    type: choice
+    instructions: "What kind of work do `title` and `description` ask for?"
+    shuffle: true
+    suggest_min: 0.4
+    no_tag: [other]
+    label_tags: [bug, feature, chore, cleanup, audit, docs]
+    options:
+      - key: bug
+        description: "Something is broken or behaves wrongly and must be fixed. Not new behavior, and not removal of unused code."
+      - key: feature
+        description: "A new capability or a deliberate change in behavior that users or other systems will notice. Not a fix for something that already should work."
+      - key: chore
+        description: "Routine, non-urgent maintenance: dependency bumps, renames, config, housekeeping. Not removal of dead code and not new behavior."
+      - key: cleanup
+        description: "Removing dead code or paying down technical debt without changing behavior. Not a bug fix."
+      - key: audit
+        description: "An investigation, review or research whose deliverable is findings or a decision, not an implementation."
+      - key: docs
+        description: "Documentation-only work: writing or fixing docs, ADRs, READMEs. No code change."
+      - key: other
+        description: "None of these fits, or the text is too thin to tell."
