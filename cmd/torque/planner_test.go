@@ -3,10 +3,17 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
+	"github.com/hollis-labs/torque/internal/judge"
 	"github.com/hollis-labs/torque/internal/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -125,4 +132,107 @@ func TestJudgeCommands(t *testing.T) {
 	require.Error(t, err)
 	_, err = run("eval")
 	require.Error(t, err, "--set is required")
+}
+
+// fakeDecide is a stand-in for Tether's /ai/decide: it answers every question
+// (the first option of a choice, 0.8 for a yes/no) and counts the requests.
+func fakeDecide(t *testing.T, calls *int32) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(calls, 1)
+		var req judge.Request
+		b, _ := io.ReadAll(r.Body)
+		require.NoError(t, json.Unmarshal(b, &req))
+		answers := map[string]judge.Answer{}
+		for _, q := range req.Questions {
+			switch q.Type {
+			case judge.Choice:
+				probs := map[string]float64{}
+				for _, o := range q.Options {
+					probs[o.Key] = 0.1 / float64(len(q.Options)-1)
+				}
+				probs["bug"] = 0.9
+				answers[q.Key] = judge.Answer{Type: judge.Choice, Choice: "bug", Probabilities: probs}
+			default:
+				answers[q.Key] = judge.Answer{Type: judge.Noul, Noul: 0.8}
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"answers": answers, "usage": map[string]int{"input_tokens": 300, "output_tokens": 5}, "model": "jev-1.13.0", "latency_ms": 90})
+	}))
+}
+
+func TestJudgeEvalEstimateGuardAndCaps(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TORQUE_DB_PATH", filepath.Join(tmp, "torque.db"))
+	t.Setenv("TORQUE_QUEUE_DB_PATH", filepath.Join(tmp, "queue.db"))
+	var calls int32
+	srv := fakeDecide(t, &calls)
+	defer srv.Close()
+	t.Setenv("TORQUE_TETHER_URL", srv.URL)
+	t.Setenv("TORQUE_TETHER_TOKEN", "test-token-123456")
+
+	store, closeStore, err := openStoreForCLI()
+	require.NoError(t, err)
+	svc := service.New(store)
+	for i := 0; i < 12; i++ {
+		_, err := svc.Task.Create(service.TaskCreateInput{Title: fmt.Sprintf("Fix crash %d", i), Description: "It is broken: a bug.", Tags: []string{"bug"}})
+		require.NoError(t, err)
+	}
+	closeStore()
+
+	run := func(args ...string) (string, error) {
+		cmd := judgeCmd()
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		cmd.SetArgs(args)
+		err := cmd.ExecuteContext(context.Background())
+		return out.String(), err
+	}
+
+	// --estimate calls nothing, for any decider.
+	out, err := run("eval", "--set", "task-kind", "--decider", "tether", "--estimate")
+	require.NoError(t, err)
+	assert.Contains(t, out, "Estimate for task-kind with 12 examples")
+	assert.Contains(t, out, "24 calls (2 per example)")
+	assert.Contains(t, out, "$")
+	assert.EqualValues(t, 0, atomic.LoadInt32(&calls))
+
+	// A paid decider shows the estimate and refuses without --yes.
+	out, err = run("eval", "--set", "task-kind", "--decider", "tether")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--yes")
+	assert.Contains(t, out, "Estimate for task-kind")
+	assert.EqualValues(t, 0, atomic.LoadInt32(&calls), "nothing is asked without --yes")
+	_, err = run("enrich", "--set", "task-kind", "--task", "CW-20260101-0001", "--decider", "tether")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--yes")
+
+	// With --yes it runs, concurrently, and can write the report.
+	report := filepath.Join(tmp, "report.json")
+	out, err = run("eval", "--set", "task-kind", "--decider", "tether", "--yes", "--concurrency", "4", "--out", report)
+	require.NoError(t, err)
+	assert.Contains(t, out, "tether-decide")
+	assert.Contains(t, out, "jev-1.13.0")
+	assert.Contains(t, out, "12 labeled")
+	assert.EqualValues(t, 24, atomic.LoadInt32(&calls))
+	b, err := os.ReadFile(report)
+	require.NoError(t, err)
+	var rep judge.Report
+	require.NoError(t, json.Unmarshal(b, &rep))
+	assert.Equal(t, "task-kind", rep.SetID)
+	assert.Equal(t, 24, rep.Calls)
+	assert.NotContains(t, string(b), "test-token-123456", "the token is never in a report")
+
+	// --max-calls stops the run and the report says so.
+	atomic.StoreInt32(&calls, 0)
+	out, err = run("eval", "--set", "task-kind", "--decider", "tether", "--yes", "--max-calls", "6")
+	require.NoError(t, err)
+	assert.Contains(t, out, "TRUNCATED")
+	assert.LessOrEqual(t, atomic.LoadInt32(&calls), int32(6))
+
+	// Without the URL the paid decider says what is missing.
+	t.Setenv("TORQUE_TETHER_URL", "")
+	_, err = run("eval", "--set", "task-kind", "--decider", "tether", "--estimate")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "TORQUE_TETHER_URL")
 }

@@ -215,3 +215,92 @@ func TestReportWarnsWhenAYesNoQuestionHasTooFewPositives(t *testing.T) {
 	rep, _ = Evaluate(context.Background(), set, always, examples, EvalOptions{Seeds: []int64{1}})
 	assert.NotContains(t, rep.Text(), "WARNING: only")
 }
+
+func labeledExamples(n int) []Example {
+	var out []Example
+	for i := 0; i < n; i++ {
+		out = append(out, Example{ID: fmt.Sprintf("e%03d", i), Fields: map[string]string{"title": fmt.Sprintf("e%d", i)}, Labels: map[string]Label{"kind": {Choice: "bug"}}})
+	}
+	return out
+}
+
+// mixedDecider is right on every third example and uses a little time, so a
+// concurrent run interleaves.
+func mixedDecider() Scripted {
+	return Scripted{Label: "mixed", Fn: func(req Request) (Response, error) {
+		var idx int
+		fmt.Sscanf(req.State.(map[string]string)["title"], "e%d", &idx)
+		key := "bug"
+		if idx%3 == 0 {
+			key = "docs"
+		}
+		return Response{Model: "m", Usage: Usage{InputTokens: 100, OutputTokens: 1}, Answers: map[string]Answer{"kind": answerFor(req.Questions[0], key, 0.2+float64(idx%7)/10)}}, nil
+	}}
+}
+
+func TestConcurrencyDoesNotChangeTheReport(t *testing.T) {
+	set := kindSet(t)
+	ex := labeledExamples(60)
+	one, err := Evaluate(context.Background(), set, mixedDecider(), ex, EvalOptions{Seeds: []int64{1, 2}, Concurrency: 1})
+	require.NoError(t, err)
+	many, err := Evaluate(context.Background(), set, mixedDecider(), ex, EvalOptions{Seeds: []int64{1, 2}, Concurrency: 8})
+	require.NoError(t, err)
+	one.Latency, many.Latency = 0, 0
+	assert.Equal(t, one, many, "the same report at any concurrency")
+	assert.Equal(t, 120, many.Calls)
+}
+
+func TestMaxCallsTruncatesAndSaysSo(t *testing.T) {
+	set := kindSet(t)
+	rep, err := Evaluate(context.Background(), set, mixedDecider(), labeledExamples(50), EvalOptions{Seeds: []int64{1, 2}, MaxCalls: 20})
+	require.NoError(t, err)
+	assert.LessOrEqual(t, rep.Calls, 20, "never spends past the cap")
+	assert.Equal(t, 10, rep.Calls/2, "ten examples fit under twenty calls of two seeds each")
+	assert.True(t, rep.Truncated)
+	assert.Equal(t, 40, rep.NotRun)
+	assert.Equal(t, 10, rep.Questions[0].Labeled, "only the examples that ran are scored")
+	assert.Contains(t, rep.Text(), "TRUNCATED")
+}
+
+func TestMaxCostStopsTheRun(t *testing.T) {
+	set := kindSet(t)
+	// 100 tokens a call at $0.042/M is $0.0000042; a $0.00002 cap allows about five calls.
+	rep, err := Evaluate(context.Background(), set, mixedDecider(), labeledExamples(50), EvalOptions{Seeds: []int64{1}, MaxCostUSD: 0.00002})
+	require.NoError(t, err)
+	assert.True(t, rep.Truncated)
+	assert.GreaterOrEqual(t, rep.Calls, 5)
+	assert.Less(t, rep.Calls, 50)
+	assert.InDelta(t, CostUSD(rep.InputTokens), rep.CostUSD, 1e-12)
+}
+
+func TestNoLimitsRunsEverythingAndReportsCost(t *testing.T) {
+	rep, err := Evaluate(context.Background(), kindSet(t), mixedDecider(), labeledExamples(10), EvalOptions{Seeds: []int64{1}})
+	require.NoError(t, err)
+	assert.False(t, rep.Truncated)
+	assert.Equal(t, 0, rep.NotRun)
+	assert.Equal(t, 1000, rep.InputTokens)
+	assert.InDelta(t, 0.000042, rep.CostUSD, 1e-9)
+	assert.Contains(t, rep.Text(), "input cost $0.0000")
+	assert.NotContains(t, rep.Text(), "TRUNCATED")
+}
+
+func TestEstimateEvalMatchesWhatTheRunSends(t *testing.T) {
+	set := kindSet(t)
+	ex := labeledExamples(25)
+	est := EstimateEval(set, ex, EvalOptions{Seeds: []int64{1, 2}})
+	assert.Equal(t, 25, est.Examples)
+	assert.Equal(t, 2, est.CallsPerExample)
+	assert.Equal(t, 50, est.Calls)
+	assert.Greater(t, est.EstimatedTokens, 50*RequestOverheadTokens, "the provider's fixed overhead is counted on every call")
+	assert.InDelta(t, CostUSD(est.EstimatedTokens), est.EstimatedUSD, 1e-12)
+
+	// The Baseline reports the same estimate as its usage, so a real run's estimate field must equal this.
+	rep, err := Evaluate(context.Background(), set, Baseline{}, ex, EvalOptions{Seeds: []int64{1, 2}})
+	require.NoError(t, err)
+	assert.Equal(t, est.EstimatedTokens, rep.EstimatedTokens)
+	assert.Equal(t, est.Calls, rep.Calls)
+}
+
+func TestEstimateDefaultsToTwoAsksPerExample(t *testing.T) {
+	assert.Equal(t, 2, EstimateEval(kindSet(t), labeledExamples(1), EvalOptions{}).CallsPerExample)
+}

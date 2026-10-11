@@ -216,7 +216,7 @@ func SetIDs(sets map[string]*Set) []string {
 func (s *Set) BuildRequest(fields map[string]string, seed int64) Request {
 	state := make(map[string]string, len(s.State))
 	for _, f := range s.State {
-		state[f.Name] = truncate(fields[f.Name], f.MaxChars)
+		state[f.Name] = truncate(Scrub(fields[f.Name]), f.MaxChars) // scrub first: a token cut by the limit would lose its tail and stop matching
 	}
 	req := Request{State: state, Purpose: s.Purpose}
 	for _, sq := range s.Questions {
@@ -246,12 +246,26 @@ func truncate(s string, max int) string {
 	return string(r[:max])
 }
 
-// EstimateTokens is a rough input-token count for a request (about four
-// characters per token), good enough to budget an evaluation; the provider
-// reports the real figure.
+// RequestOverheadTokens is the fixed per-request input cost the provider
+// adds on top of the text we send. Observed on the first live call (2026-10-11):
+// 282 input tokens for a ten-word state and one short question.
+const RequestOverheadTokens = 250
+
+// InputPricePerMTokUSD is JEV's price per million input tokens (docs, 2026-10);
+// output is free.
+const InputPricePerMTokUSD = 0.042
+
+// CostUSD is the input cost of n tokens at the JEV price.
+func CostUSD(inputTokens int) float64 {
+	return float64(inputTokens) * InputPricePerMTokUSD / 1e6
+}
+
+// EstimateTokens is a rough input-token count for a request: about four
+// characters per token of what we send, plus the provider's fixed overhead.
+// Good enough to budget an evaluation; the provider reports the real figure.
 func EstimateTokens(req Request) int {
 	b, _ := json.Marshal(req)
-	return (len(b) + 3) / 4
+	return (len(b)+3)/4 + RequestOverheadTokens
 }
 
 // SuggestedTags returns the tags an answer suggests under a question's

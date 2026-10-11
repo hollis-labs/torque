@@ -46,6 +46,10 @@ type Request struct {
 	Questions []Question `json:"questions"` // ordered; Key identifies the answer
 	Model     string     `json:"model,omitempty"`
 	Purpose   string     `json:"purpose,omitempty"`
+	CallerID  string     `json:"caller_id,omitempty"`
+	// OnError is the caller's declared failure mode for the gateway:
+	// "fail_open" or "fail_closed". Torque's suggestions fail open (do nothing).
+	OnError string `json:"on_error,omitempty"`
 }
 
 // Answer is the model's answer to one question.

@@ -49,7 +49,7 @@ the noisy side); and for yes/no, the positive and negative label counts with a *
 are fewer than 20 positives** (accuracy is then mostly the rate of saying no).
 
 The `baseline` decider is bag-of-words: no model, no network. It is the floor a real model has to
-beat. The `jev` decider arrives with Tether's Decide operation (CW-20261010-0041).
+beat. The `tether` decider asks Tether's Decide operation (`POST /ai/decide`), which routes to JEV.
 
 ## The ledger
 
@@ -69,3 +69,38 @@ torque judge ledger [--set …] [--subject …] [--disposition …]
 Add a YAML file under `internal/judge/sets/`, run `go test ./internal/judge/` (it validates every
 embedded set), then `torque judge eval` it before it suggests anything. Set `suggest_min` from the
 evaluation.
+
+## Running the live evaluation
+
+Needs Tether's `Decide` operation and the JEV provider (CW-20261010-0041), the owner's key stored
+in Tether, and `TORQUE_TETHER_URL` / `TORQUE_TETHER_TOKEN` in the environment. Torque never sees the
+provider key.
+
+```
+torque judge eval --set task-kind --decider tether --estimate     # calls and cost, calls nothing
+torque judge eval --set task-kind --decider tether --yes --concurrency 8 --max-cost 0.50 --out kind.json
+```
+
+A decider that spends money prints its estimate and stops unless you pass `--yes`; `--max-calls`
+and `--max-cost` stop a run before it passes a limit and the report says it was truncated. State is
+scrubbed of recognisable credentials (tokens, keys, PEM blocks) before it is sent, and a token or
+task text never appears in an error. Calls are retried only on 429 and overload statuses.
+Estimates (2026-10-11, 300 labeled per question, every example asked twice for the option-order
+check): task-kind about 600 calls and $0.03; task-layer about 1,160 calls and $0.04;
+task-decision-state about 1,010 calls and $0.04, at $0.042 per million input tokens (the provider
+adds about 250 input tokens of fixed overhead to every request).
+
+### What counts as a go (proposed before seeing any numbers)
+
+Per question, on the evaluation, compared with the baseline on the same sample:
+
+- It must clearly beat the baseline: at least ten points more accurate overall.
+- A suggestion threshold exists: some confidence at or above which at least 80% of the answers
+  agree with the existing tag AND at least 30% of the labeled examples are covered. That threshold
+  becomes `suggest_min`. Review its most confident disagreements by hand first: when the old tag
+  is the wrong one, the model is not.
+- Option-order flips on a choice stay under 10%; a higher rate means the options need rewording.
+- A yes/no question needs at least 20 positive labels, or hand labels, before it is judged.
+
+Anything short of that stays on the idea list or gets reworded and re-evaluated. A go means
+"suggest to a person", never "apply".

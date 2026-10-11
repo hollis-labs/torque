@@ -62,11 +62,36 @@ func (s *JudgeService) TaskItems() ([]judge.Item, error) {
 	return items, nil
 }
 
-// EvalOptions tunes JudgeService.Evaluate.
+// JudgeEvalOptions tunes JudgeService.Evaluate.
 type JudgeEvalOptions struct {
-	N       int   // sample size per question (default 200)
-	Seed    int64 // sampling seed
-	NoFlips bool  // skip the second, reordered ask (halves the calls)
+	N           int     // sample size per question (default 200)
+	Seed        int64   // sampling seed
+	NoFlips     bool    // skip the second, reordered ask (halves the calls)
+	Concurrency int     // examples asked at once (default 1)
+	MaxCalls    int     // stop before more calls than this (0 = no limit)
+	MaxCostUSD  float64 // stop at this much input spend (0 = no limit)
+}
+
+func (o JudgeEvalOptions) evalOptions() judge.EvalOptions {
+	eo := judge.EvalOptions{Concurrency: o.Concurrency, MaxCalls: o.MaxCalls, MaxCostUSD: o.MaxCostUSD}
+	if o.NoFlips {
+		eo.Seeds = []int64{1}
+	}
+	return eo
+}
+
+// EstimateEval works out what Evaluate would ask and cost, calling nothing.
+func (s *JudgeService) EstimateEval(setID string, opts JudgeEvalOptions) (judge.Estimate, error) {
+	set, err := s.Set(setID)
+	if err != nil {
+		return judge.Estimate{}, err
+	}
+	items, err := s.TaskItems()
+	if err != nil {
+		return judge.Estimate{}, err
+	}
+	examples := judge.LabelExamples(set, items, judge.SampleOptions{N: opts.N, Seed: opts.Seed})
+	return judge.EstimateEval(set, examples, opts.evalOptions()), nil
 }
 
 // Evaluate scores a question set against the tags tasks already carry.
@@ -80,11 +105,7 @@ func (s *JudgeService) Evaluate(ctx context.Context, setID string, d judge.Decid
 		return nil, err
 	}
 	examples := judge.LabelExamples(set, items, judge.SampleOptions{N: opts.N, Seed: opts.Seed})
-	eo := judge.EvalOptions{}
-	if opts.NoFlips {
-		eo.Seeds = []int64{1}
-	}
-	return judge.Evaluate(ctx, set, d, examples, eo)
+	return judge.Evaluate(ctx, set, d, examples, opts.evalOptions())
 }
 
 // stateHash identifies the exact state sent, without keeping the text.
