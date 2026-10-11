@@ -209,6 +209,7 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	// sched.EventBus() for session.state_changed lifecycle SSE.
 	sched := scheduler.New(store, q, registry, predicates, &cfg.Scheduler)
 	sched.SetTelemetryWriter(telemetryWriter)
+	sched.SetLandingGate(svc.Task.LandingCheck)
 	stateWriter := writeq.New(store, writeq.Options{})
 	sched.SetStateWriter(stateWriter)
 	writerCtx, writerCancel := context.WithCancel(context.Background())

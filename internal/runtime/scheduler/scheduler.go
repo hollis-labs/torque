@@ -221,6 +221,12 @@ func New(
 	return s
 }
 
+// SetLandingGate installs the landing check the lifecycle runs before an
+// on_done close/notify exit marks a task done.
+func (s *Scheduler) SetLandingGate(g func(context.Context, *sqlstore.TaskRecord) string) {
+	s.lifecycle.SetLandingGate(g)
+}
+
 // SetTelemetryWriter swaps the queue/direct sink used for telemetry-class
 // writes such as run_events and cost_ledger. Nil is ignored.
 func (s *Scheduler) SetTelemetryWriter(w writequeue.TelemetryWriter) {
