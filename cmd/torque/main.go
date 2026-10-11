@@ -32,6 +32,7 @@ func main() {
 	root.AddCommand(aarCmd())
 	root.AddCommand(fkOrphanCleanupCmd())
 	root.AddCommand(plannerCmd())
+	root.AddCommand(judgeCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)

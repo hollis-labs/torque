@@ -13,6 +13,7 @@ Start with:
 - [surfaces.md](surfaces.md) — the current HTTP and MCP surfaces at a high level
 - [api-pagination.md](api-pagination.md) — shared HTTP/MCP list target contract, endpoint matrix, and S1 reconciliation status
 - [mcp-tools-reference.md](mcp-tools-reference.md) — per-tool index and shared conventions (envelope, pagination, sort, bulk) for the Task/Subtodo/Comment/Project/Epic/Sprint/Issue/Plan MCP tools
+- [judgments.md](judgments.md) — structured judgments: question sets, evaluation against existing tags, and the enrichment ledger
 - [architecture/sqlite-concurrency-pattern.md](architecture/sqlite-concurrency-pattern.md) — the production SQLite concurrency pattern and reuse guidance
 - [hitl-workflows.md](hitl-workflows.md) — typed human-in-the-loop checkpoint workflow contracts
 - [review-routing.md](review-routing.md) — per-task review routing metadata and the `effective_review` read contract

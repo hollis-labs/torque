@@ -148,6 +148,10 @@ func TestSuggestedTags(t *testing.T) {
 	assert.Nil(t, layer.SuggestedTags(Answer{Type: Noul, Noul: 0.7, Confidence: NoulConfidence(0.7)}), "yes, but not confident enough")
 	assert.Nil(t, layer.SuggestedTags(Answer{Type: Noul, Noul: 0.05, Confidence: NoulConfidence(0.05)}), "a confident no suggests nothing")
 
+	// The provider's Noul answers carry no confidence field: it must come from the probability.
+	assert.Equal(t, []string{"frontend"}, layer.SuggestedTags(Answer{Type: Noul, Noul: 0.92}), "no confidence field, still suggests")
+	assert.Nil(t, layer.SuggestedTags(Answer{Type: Noul, Noul: 0.7}), "and still honours the threshold")
+
 	mapped := SetQuestion{Type: Choice, Tags: map[string]string{"doc": "docs"}, SuggestMin: 0.1}
 	assert.Equal(t, []string{"docs"}, mapped.SuggestedTags(Answer{Type: Choice, Choice: "doc", Confidence: 0.5}), "an option can map to a different tag")
 }

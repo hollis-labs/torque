@@ -258,22 +258,20 @@ func EstimateTokens(req Request) int {
 // mapping: a Noul at or above SuggestMin confidence that says yes, or a Choice
 // at or above it whose winner is not excluded.
 func (q SetQuestion) SuggestedTags(a Answer) []string {
-	if a.Confidence < q.SuggestMin {
-		return nil
-	}
 	switch q.Type {
 	case Noul:
+		// A Noul answer has no confidence field of its own: derive it from the probability.
 		if q.Tag != "" && a.Noul >= 0.5 && NoulConfidence(a.Noul) >= q.SuggestMin {
 			return []string{q.Tag}
 		}
 	case Choice:
+		if a.Confidence < q.SuggestMin || a.Choice == "" {
+			return nil
+		}
 		for _, skip := range q.NoTag {
 			if skip == a.Choice {
 				return nil
 			}
-		}
-		if a.Choice == "" {
-			return nil
 		}
 		if t, ok := q.Tags[a.Choice]; ok {
 			return []string{t}

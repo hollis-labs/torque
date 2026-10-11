@@ -36,6 +36,10 @@ type EvalOptions struct {
 	MaxDisagreements int
 }
 
+// MinPositives is how many positive labels a yes/no question needs before its
+// accuracy means anything. With fewer, accuracy is mostly the rate of saying no.
+const MinPositives = 20
+
 // Band is accuracy within a confidence range.
 type Band struct {
 	Lo, Hi  float64
@@ -75,6 +79,8 @@ type QuestionReport struct {
 	MeanConf      float64
 	Bands         []Band
 	Sweep         []SweepPoint
+	Positives     int     // Noul: labeled examples whose label is yes
+	Negatives     int     // Noul: labeled examples whose label is no
 	Flips         int     // Choice: examples whose winner changed with option order
 	FlipRate      float64 // Flips / examples compared
 	Disagreements []Disagreement
@@ -119,6 +125,8 @@ func Evaluate(ctx context.Context, set *Set, d Decider, examples []Example, opts
 		correct bool
 	}
 	scores := map[string][]scored{}
+	positives := map[string]int{}
+	negatives := map[string]int{}
 	dis := map[string][]Disagreement{}
 	flips := map[string]int{}
 	compared := map[string]int{}
@@ -178,6 +186,13 @@ func Evaluate(ctx context.Context, set *Set, d Decider, examples []Example, opts
 			}
 			pred, conf, correct := judgeAnswer(q, ans, label)
 			scores[q.Key] = append(scores[q.Key], scored{conf: conf, correct: correct})
+			if q.Type == Noul {
+				if label.Yes {
+					positives[q.Key]++
+				} else {
+					negatives[q.Key]++
+				}
+			}
 			if !correct {
 				dis[q.Key] = append(dis[q.Key], Disagreement{ExampleID: ex.ID, Predicted: pred, Label: labelString(q, label), Confidence: conf})
 			}
@@ -224,6 +239,7 @@ func Evaluate(ctx context.Context, set *Set, d Decider, examples []Example, opts
 			p.Accuracy = ratio(p.Correct, p.Covered)
 			qr.Sweep = append(qr.Sweep, p)
 		}
+		qr.Positives, qr.Negatives = positives[q.Key], negatives[q.Key]
 		qr.Flips = flips[q.Key]
 		qr.FlipRate = ratio(flips[q.Key], compared[q.Key])
 		d := dis[q.Key]
@@ -282,7 +298,13 @@ func (r *Report) Text() string {
 		if q.Type == Choice {
 			fmt.Fprintf(&b, ", option-order flips %.1f%% (%d)", q.FlipRate*100, q.Flips)
 		}
+		if q.Type == Noul {
+			fmt.Fprintf(&b, ", %d positive / %d negative labels", q.Positives, q.Negatives)
+		}
 		b.WriteString("\n")
+		if q.Type == Noul && q.Labeled > 0 && q.Positives < MinPositives {
+			fmt.Fprintf(&b, "  WARNING: only %d positive labels (need %d). Accuracy here is mostly how often the answer is no; it says nothing about finding the real cases. Label some by hand before judging this question.\n", q.Positives, MinPositives)
+		}
 		if q.Labeled == 0 {
 			b.WriteString("  no labels for this question\n")
 			continue

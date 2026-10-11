@@ -145,6 +145,8 @@ func TestEvaluateScoresNoulsByYesNoAndConfidence(t *testing.T) {
 	for _, q := range rep.Questions {
 		byKey[q.Key] = q
 	}
+	assert.Equal(t, 1, byKey["frontend"].Positives)
+	assert.Equal(t, 1, byKey["frontend"].Negatives)
 	assert.Equal(t, 1, byKey["frontend"].Correct, "right on a, wrong on b")
 	assert.Equal(t, 1, byKey["backend"].Correct)
 	assert.InDelta(t, 0.8, byKey["frontend"].MeanConf, 1e-9, "noul confidence is |2p-1|")
@@ -184,4 +186,32 @@ func TestEvaluateStopsWhenCancelled(t *testing.T) {
 	cancel()
 	_, err := Evaluate(ctx, kindSet(t), Baseline{}, []Example{{ID: "a"}}, EvalOptions{})
 	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestReportWarnsWhenAYesNoQuestionHasTooFewPositives(t *testing.T) {
+	sets, _ := LoadSets()
+	set := sets["task-layer"]
+	var examples []Example
+	for i := 0; i < 40; i++ {
+		examples = append(examples, Example{ID: fmt.Sprint(i), Labels: map[string]Label{"frontend": {Yes: i < 3}}}) // 3 positives, 37 negatives
+	}
+	always := Scripted{Fn: func(Request) (Response, error) {
+		return Response{Answers: map[string]Answer{"frontend": {Type: Noul, Noul: 0.01}, "backend": {Type: Noul, Noul: 0.01}}}, nil
+	}}
+	rep, err := Evaluate(context.Background(), set, always, examples, EvalOptions{Seeds: []int64{1}})
+	require.NoError(t, err)
+	q := rep.Questions[0]
+	assert.Equal(t, 3, q.Positives)
+	assert.Equal(t, 37, q.Negatives)
+	assert.InDelta(t, 0.925, q.Accuracy, 1e-9, "an answer that is always no scores 92.5% here, which is exactly the trap")
+	text := rep.Text()
+	assert.Contains(t, text, "3 positive / 37 negative labels")
+	assert.Contains(t, text, "WARNING: only 3 positive labels")
+
+	// With enough positives the warning goes away.
+	for i := 3; i < 25; i++ {
+		examples[i].Labels["frontend"] = Label{Yes: true}
+	}
+	rep, _ = Evaluate(context.Background(), set, always, examples, EvalOptions{Seeds: []int64{1}})
+	assert.NotContains(t, rep.Text(), "WARNING: only")
 }
