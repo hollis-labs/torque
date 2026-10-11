@@ -839,3 +839,48 @@ export interface PlannerOrdered {
   order: number
   rev: number
 }
+
+export type PlannerBoardSectionKey = 'in_flight' | 'landed' | 'pre_flight' | 'holds'
+
+/** One line of the departure board. Torque tasks have source "torque"; planner rows carry their database. */
+export interface PlannerBoardRow {
+  source: 'torque' | 'roadmap' | 'decision' | 'inbox' | 'risk'
+  id: string
+  title: string
+  status: string
+  priority?: number
+  workstream?: string
+  updated: string
+  db?: PlannerDb
+}
+
+export interface PlannerBoard {
+  generated_at: string
+  recent_hours: number
+  active_hours: number
+  limit: number
+  sections: Record<PlannerBoardSectionKey, PlannerBoardRow[]>
+  counts: Record<PlannerBoardSectionKey, number>
+  totals: Record<PlannerBoardSectionKey, number>
+  notices: string[]
+}
+
+/** A Torque task as the planner shows it beside a reference. */
+export interface PlannerTaskBrief {
+  id: string
+  title: string
+  status: string
+  priority: number
+  updated_at: string
+}
+
+export interface PlannerWorkstreamTasks {
+  workstream_id: string
+  torque_project_ids: string[]
+  torque_tag: string
+  counts: Record<string, number>
+  total: number
+  open: PlannerTaskBrief[]
+  open_total: number
+  note?: string
+}

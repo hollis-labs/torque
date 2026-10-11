@@ -786,6 +786,7 @@ stable `id` (never reused; a dropped item gets a status, there is no delete), a
 | `torque_planner_schema` | Required fields, every field, enums and link kinds of one database. |
 | `torque_planner_list` | Items of a database in manual order. `filters` match exactly (array fields by membership), `sort` is a field (`-` for descending). Brief by default (summary fields); `brief=false` for full items. |
 | `torque_planner_get` | One item in full, with comments and links. |
+| `torque_planner_board` | The departure board: **in flight** (Torque `doing` with an update or comment within `active_hours`, roadmap `in-progress`, Torque `review` as ARRIVING), **landed** (Torque `done` and decisions `decided` within `recent_hours`, roadmap `landed`/`done` within 7 days), **pre-flight** (Torque `queued`, `doing` tasks with no recent activity as PREPARING, roadmap `adopting` and `planned` for `now`/`next`; never the `todo` backlog), **holds** (decisions needing a decision, open `high` risks, new inbox items: waiting on the owner). `text=true` returns the compact one-row-per-line board for a quick check-in. Reads the task store directly; a comment counts as activity because Torque does not bump `updated_at` on one. |
 | `torque_planner_search` | Every term must appear in an item's id, title or text, including comments and options. |
 | `torque_planner_create` | Create an item. `id` is generated when omitted: sequential for `PR-` (two digits), `DEC-`, `RK-`, `IN-`; a slug of the title for `WS-`, `RM-`, `ID-`. Ids are unique across all databases. |
 | `torque_planner_update` | Merge `patch` into an item: arrays replaced, `null` removes a field. `id`, `created`, `comments` and `rev` cannot be patched. With `rev`, a mismatch is a `conflict` naming the current rev (HTTP also returns the current item); without it, last write wins. |
@@ -817,6 +818,18 @@ HTTP, under `/api/v1/planner` (JSON in and out; errors are
 | `POST /{db}/reorder` `{ids}` | reorder |
 | `POST /decisions/{id}/decide` `{option, comment?}`, `/defer` `{note?}`, `/reopen` | decision lifecycle |
 | `POST /inbox` `{title,...}`, `POST /inbox/{id}/promote` `{to_db, fields?}`, `/dismiss` `{note?}` | inbox |
+
+Also under `/api/v1/planner`:
+
+| Route | Operation |
+|---|---|
+| `GET /board?recent_hours=&active_hours=&limit=` | the departure board (defaults 72, 2, 30; limits 2160, 720, 200) |
+| `GET /torque-titles?ids=a,b,c` | live `{id, title, status, priority, updated_at}` of Torque task ids; an unknown id is `null` (at most 100) |
+| `GET /workstreams/{id}/tasks` | the Torque tasks behind a workstream: `counts` per status over its `torque_project_ids` (narrowed by `torque_tag` when set) and the open ones, newest first |
+
+Command line, against the configured database (needs `features.planner`): `torque planner board [--json] [--recent-hours N] [--active-hours N] [--limit N]` prints the board as text and is the quick check-in; `torque planner import --from <portfolio-tracker data dir> [--apply]` brings the tracker's JSON in (a report without `--apply`).
+
+In the GUI the Planner opens on the Board; each row opens its Torque task or planner item, and the board refreshes on task and planner events and every 30 seconds.
 
 Every write broadcasts a `planner.changed` event (`{db, id}`) on the SSE stream.
 

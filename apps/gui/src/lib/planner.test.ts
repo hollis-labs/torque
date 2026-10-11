@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BOARD_SECTIONS,
   PLANNER_DBS,
+  boardAge,
+  boardMore,
+  boardRowRoute,
+  boardWord,
   buildNewItem,
   buildPatch,
   conflictCurrent,
@@ -18,7 +23,7 @@ import {
   validateLinkDraft,
   validationErrors,
 } from '@/lib/planner'
-import type { PlannerItem, PlannerSchemaInfo } from '@/lib/types'
+import type { PlannerBoardRow, PlannerItem, PlannerSchemaInfo } from '@/lib/types'
 
 const item = (over: Partial<PlannerItem> & { id: string }): PlannerItem => ({ title: over.id, rev: 1, ...over })
 
@@ -237,5 +242,61 @@ describe('error details', () => {
     expect(conflictCurrent({ current: { id: 'RK-1', title: 't', rev: 3 } })?.rev).toBe(3)
     expect(conflictCurrent({ current: 'x' })).toBeNull()
     expect(conflictCurrent(undefined)).toBeNull()
+  })
+})
+
+describe('board', () => {
+  const row = (over: Partial<PlannerBoardRow>): PlannerBoardRow => ({ source: 'torque', id: 'CW-1', title: 't', status: 'doing', updated: '2026-10-11T10:00:00.000Z', ...over })
+
+  it('has the four sections in display order', () => {
+    expect(BOARD_SECTIONS.map((s) => s.key)).toEqual(['in_flight', 'landed', 'pre_flight', 'holds'])
+  })
+
+  it('names rows the way the departure board does', () => {
+    expect(boardWord('in_flight', row({ status: 'doing' }))).toEqual({ word: 'IN FLIGHT', tone: 'doing' })
+    expect(boardWord('in_flight', row({ status: 'review' })).word).toBe('ARRIVING')
+    expect(boardWord('in_flight', row({ source: 'roadmap', status: 'in-progress' })).word).toBe('IN FLIGHT')
+    expect(boardWord('landed', row({ status: 'done' })).word).toBe('LANDED')
+    expect(boardWord('landed', row({ source: 'decision', status: 'decided' })).word).toBe('LANDED')
+    expect(boardWord('pre_flight', row({ status: 'queued' })).word).toBe('QUEUED')
+    expect(boardWord('pre_flight', row({ source: 'roadmap', status: 'planned' })).word).toBe('QUEUED')
+    expect(boardWord('pre_flight', row({ source: 'roadmap', status: 'adopting' })).word).toBe('BOARDING')
+  })
+
+  it('calls a doing task in pre-flight preparing, not in flight', () => {
+    expect(boardWord('pre_flight', row({ status: 'doing' }))).toEqual({ word: 'PREPARING', tone: 'paused' })
+  })
+
+  it('names holds by what the owner has to do', () => {
+    expect(boardWord('holds', row({ source: 'decision', status: 'needs-decision' })).word).toBe('DECIDE')
+    expect(boardWord('holds', row({ source: 'inbox', status: 'new' })).word).toBe('TRIAGE')
+    expect(boardWord('holds', row({ source: 'risk', status: 'open' }))).toEqual({ word: 'RISK', tone: 'blocked' })
+  })
+
+  it('falls back to the upper-cased status for one it does not know', () => {
+    expect(boardWord('in_flight', row({ status: 'weird' })).word).toBe('WEIRD')
+  })
+
+  it('sends a Torque task to the task page and a planner row to its item', () => {
+    expect(boardRowRoute(row({ id: 'CW-20261011-0050' }))).toBe('/tasks/CW-20261011-0050')
+    expect(boardRowRoute(row({ source: 'decision', db: 'decisions', id: 'DEC-021' }))).toBe('/planner/decisions/DEC-021')
+    expect(boardRowRoute(row({ source: 'roadmap', db: 'roadmap', id: 'RM-a b' }))).toBe('/planner/roadmap/RM-a%20b')
+  })
+
+  it('rounds ages as the text board does', () => {
+    const now = Date.parse('2026-10-11T12:00:00.000Z')
+    expect(boardAge('2026-10-11T11:55:00.000Z', now)).toBe('5m')
+    expect(boardAge('2026-10-11T10:00:00.000Z', now)).toBe('2h')
+    expect(boardAge('2026-10-10T12:00:00.000Z', now)).toBe('24h')
+    expect(boardAge('2026-10-08T12:00:00.000Z', now)).toBe('3d')
+    expect(boardAge('2026-10-11T13:00:00.000Z', now)).toBe('0m') // never negative
+    expect(boardAge('', now)).toBe('')
+    expect(boardAge('garbage', now)).toBe('')
+  })
+
+  it('says how many rows a section is not showing', () => {
+    expect(boardMore(3, 9)).toBe('+6 more')
+    expect(boardMore(3, 3)).toBe('')
+    expect(boardMore(3, 2)).toBe('')
   })
 })

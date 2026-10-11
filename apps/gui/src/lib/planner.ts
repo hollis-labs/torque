@@ -1,4 +1,6 @@
 import type {
+  PlannerBoardRow,
+  PlannerBoardSectionKey,
   PlannerDb,
   PlannerFieldSchema,
   PlannerItem,
@@ -346,4 +348,55 @@ export function createDraft(db: PlannerDb, specs: FieldSpec[], nextRank: number)
     if (s.name === 'rank' && s.kind === 'int') d[s.name] = String(nextRank)
   }
   return d
+}
+
+// ---------- board ----------
+
+export const BOARD_SECTIONS: Array<{ key: PlannerBoardSectionKey; title: string; empty: string; blurb: string }> = [
+  { key: 'in_flight', title: 'In flight', empty: 'Nothing is being worked right now.', blurb: 'Actively worked, and work arriving for review.' },
+  { key: 'landed', title: 'Recently landed', empty: 'Nothing has landed in the window.', blurb: 'Finished tasks, landed roadmap items and decisions made.' },
+  { key: 'pre_flight', title: 'Pre-flight', empty: 'Nothing is queued.', blurb: 'Preparing, not executing: queued, quiet, boarding, planned for now or next.' },
+  { key: 'holds', title: 'Holds', empty: 'Nothing is waiting on you.', blurb: 'Decisions to make, open high risks, and an inbox to triage.' },
+]
+
+/** The label a board row carries (what the departure board calls it), and the kit tone it borrows. */
+export function boardWord(section: PlannerBoardSectionKey, row: PlannerBoardRow): { word: string; tone: ToneKey } {
+  if (section === 'holds') {
+    const hold = { decision: 'DECIDE', inbox: 'TRIAGE', risk: 'RISK' }[row.source as 'decision' | 'inbox' | 'risk'] ?? 'HOLD'
+    return { word: hold, tone: row.source === 'risk' ? 'blocked' : 'todo' }
+  }
+  if (section === 'pre_flight' && row.status === 'doing') return { word: 'PREPARING', tone: 'paused' }
+  const WORDS: Record<string, { word: string; tone: ToneKey }> = {
+    doing: { word: 'IN FLIGHT', tone: 'doing' },
+    'in-progress': { word: 'IN FLIGHT', tone: 'doing' },
+    review: { word: 'ARRIVING', tone: 'review' },
+    done: { word: 'LANDED', tone: 'done' },
+    landed: { word: 'LANDED', tone: 'done' },
+    decided: { word: 'LANDED', tone: 'done' },
+    queued: { word: 'QUEUED', tone: 'queued' },
+    planned: { word: 'QUEUED', tone: 'queued' },
+    adopting: { word: 'BOARDING', tone: 'review' },
+  }
+  return WORDS[row.status] ?? { word: row.status.toUpperCase(), tone: statusToneKey(row.status) }
+}
+
+/** Where a board row leads: a Torque task opens in the app, a planner row opens its item. */
+export function boardRowRoute(row: PlannerBoardRow): string {
+  if (row.source === 'torque' || !row.db) return `/tasks/${encodeURIComponent(row.id)}`
+  return `/planner/${row.db}/${encodeURIComponent(row.id)}`
+}
+
+/** "5m", "3h", "2d": how long ago, rounded the way the text board does. */
+export function boardAge(iso: string, nowMs: number): string {
+  const t = Date.parse(iso)
+  if (!Number.isFinite(t)) return ''
+  const m = Math.max(0, Math.round((nowMs - t) / 60000))
+  if (m < 60) return `${m}m`
+  if (m < 2880) return `${Math.round(m / 60)}h`
+  return `${Math.round(m / 1440)}d`
+}
+
+/** "(+4 more)" when a section holds more rows than it shows. */
+export function boardMore(shown: number, total: number): string {
+  return total > shown ? `+${total - shown} more` : ''
 }
