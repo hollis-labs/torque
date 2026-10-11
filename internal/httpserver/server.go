@@ -252,6 +252,7 @@ func (s *Server) routes() {
 
 		// Workstream claims — claim-next for team runs (CW-20261011-0015).
 		r.Post("/workstreams/claim", s.claimWorkstream)
+		r.Get("/workstreams/claims", s.listWorkstreamClaims)
 		r.Post("/workstreams/claims/{id}/heartbeat", s.heartbeatWorkstreamClaim)
 		r.Post("/workstreams/claims/{id}/release", s.releaseWorkstreamClaim)
 

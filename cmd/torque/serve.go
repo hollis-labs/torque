@@ -35,6 +35,7 @@ import (
 	"github.com/hollis-labs/torque/internal/runtime/waitpoll"
 	"github.com/hollis-labs/torque/internal/runtime/writeq"
 	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/tetherclient"
 	"github.com/hollis-labs/torque/internal/toolbroker"
 	"github.com/spf13/cobra"
 )
@@ -205,6 +206,12 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	sched.SetTelemetryWriter(telemetryWriter)
 	sched.SetLandingGate(svc.Task.LandingCheck)
 	svc.Workstream.SetGo(sched.Enabled)
+	// Tether reads (capacity, team-run state) are consulted only when
+	// TORQUE_TETHER_URL is set; Tether has not shipped them yet (CW-20261011-0015).
+	if tc := tetherclient.New(os.Getenv("TORQUE_TETHER_URL"), os.Getenv("TORQUE_TETHER_TOKEN")); tc != nil {
+		svc.Workstream.SetTether(tc)
+		log.Printf("[serve] workstream claims consult Tether at %s", tc.BaseURL)
+	}
 	stateWriter := writeq.New(store, writeq.Options{})
 	sched.SetStateWriter(stateWriter)
 	writerCtx, writerCancel := context.WithCancel(context.Background())
@@ -467,6 +474,11 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	go func() {
 		defer wg.Done()
 		watchProfiles(runCtx, profiles, time.Second)
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		sweepWorkstreamClaims(runCtx, svc.Workstream, time.Minute)
 	}()
 
 	// Federation mTLS listener (CW-20260518-0048, ADR-0002 §5): a dedicated

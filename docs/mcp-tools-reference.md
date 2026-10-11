@@ -744,8 +744,20 @@ HTTP equivalents: `POST /api/v1/workstreams/claim`,
 | `torque_workstream_release` | Ends a claim: `completed` (asks for `done`, so it passes the landing gate; missing evidence leaves the task `blocked` and escalated, with the refusal in `reason`), `failed` (task `blocked`), `canceled`/`handoff` (task back to `todo`). |
 
 Go is the scheduler's `enabled` flag. Without a readable flag, claims defer as
-`paused`. The per-project cap is one concurrent claim by default. Per-environment
-caps are enforced by Tether at admission and are not read here yet.
+`paused`. The per-project cap is one concurrent claim by default.
+
+Tether reads are off unless `TORQUE_TETHER_URL` is set (optional
+`TORQUE_TETHER_TOKEN`); Tether has not shipped them yet (CW-20261011-0015). When
+set, a claim that names an `environment_id` first reads `GET {url}/capacity` and
+defers with `environment_cap`, `environment_paused`, or `capacity_unknown` (the read
+failed or named another environment: fail closed). A claim with no `environment_id`
+does not consult Tether. A retried claim returns its existing lease before any read.
+
+A lease sweep runs every minute. A claim whose lease expired is requeued
+(`handoff`, task back to `todo`) only when `GET {url}/teams/runs/{run_id}` says the
+run ended or does not exist. With no Tether reader, an unreadable run, or a live run,
+the claim is left alone and logged once. `GET /api/v1/workstreams/claims?status=active|released|all`
+lists claims; each carries `expired`.
 
 ## Where the real-FK / `depends_on` work lives
 

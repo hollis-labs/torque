@@ -43,3 +43,19 @@ func TestWorkstreamRelease_UnknownClaimIs404(t *testing.T) {
 	resp, _ = postJSON(t, ts.URL+"/api/v1/workstreams/claims/clm_nope/heartbeat", map[string]any{})
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
+
+func TestWorkstreamClaimsList(t *testing.T) {
+	ts := setupTestServer(t)
+	resp, err := http.Get(ts.URL + "/api/v1/workstreams/claims")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	var out map[string][]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
+	assert.Equal(t, []any{}, out["items"])
+
+	bad, err := http.Get(ts.URL + "/api/v1/workstreams/claims?status=nope")
+	require.NoError(t, err)
+	defer bad.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, bad.StatusCode)
+}
