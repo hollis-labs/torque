@@ -5,6 +5,7 @@ import {
   boardAge,
   boardMore,
   boardRowRoute,
+  parseBoardOpen,
   boardWord,
   buildNewItem,
   buildPatch,
@@ -277,10 +278,21 @@ describe('board', () => {
     expect(boardWord('in_flight', row({ status: 'weird' })).word).toBe('WEIRD')
   })
 
-  it('sends a Torque task to the task page and a planner row to its item', () => {
-    expect(boardRowRoute(row({ id: 'CW-20261011-0050' }))).toBe('/tasks/CW-20261011-0050')
-    expect(boardRowRoute(row({ source: 'decision', db: 'decisions', id: 'DEC-021' }))).toBe('/planner/decisions/DEC-021')
-    expect(boardRowRoute(row({ source: 'roadmap', db: 'roadmap', id: 'RM-a b' }))).toBe('/planner/roadmap/RM-a%20b')
+  it('keeps the board underneath: a row opens its task or item in a modal over the board', () => {
+    expect(boardRowRoute(row({ id: 'CW-20261011-0050' }))).toBe('/planner/board?task=CW-20261011-0050')
+    expect(boardRowRoute(row({ source: 'decision', db: 'decisions', id: 'DEC-021' }))).toBe('/planner/board?open=decisions/DEC-021')
+    expect(boardRowRoute(row({ source: 'roadmap', db: 'roadmap', id: 'RM-a b' }))).toBe('/planner/board?open=roadmap/RM-a%20b')
+  })
+
+  it('reads what the board is asked to open, and ignores anything malformed', () => {
+    const q = (s: string) => parseBoardOpen(new URLSearchParams(s))
+    expect(q('open=decisions/DEC-021')).toEqual({ item: { db: 'decisions', id: 'DEC-021' }, task: undefined })
+    expect(q('open=roadmap/RM-a%20b').item).toEqual({ db: 'roadmap', id: 'RM-a b' })
+    expect(q('task=CW-20261011-0050')).toEqual({ item: undefined, task: 'CW-20261011-0050' })
+    expect(q('open=nope/X-1').item).toBeUndefined()
+    expect(q('open=decisions').item).toBeUndefined()
+    expect(q('open=decisions/').item).toBeUndefined()
+    expect(q('')).toEqual({ item: undefined, task: undefined })
   })
 
   it('rounds ages as the text board does', () => {

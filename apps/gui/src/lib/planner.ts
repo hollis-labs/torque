@@ -380,10 +380,27 @@ export function boardWord(section: PlannerBoardSectionKey, row: PlannerBoardRow)
   return WORDS[row.status] ?? { word: row.status.toUpperCase(), tone: statusToneKey(row.status) }
 }
 
-/** Where a board row leads: a Torque task opens in the app, a planner row opens its item. */
+/**
+ * Where a board row leads: back to the board with the item open in a modal
+ * (`?open=<db>/<id>` for a planner item, `?task=<id>` for a Torque task), so
+ * closing returns to the board and the view can be linked.
+ */
 export function boardRowRoute(row: PlannerBoardRow): string {
-  if (row.source === 'torque' || !row.db) return `/tasks/${encodeURIComponent(row.id)}`
-  return `/planner/${row.db}/${encodeURIComponent(row.id)}`
+  if (row.source === 'torque' || !row.db) return `/planner/board?task=${encodeURIComponent(row.id)}`
+  return `/planner/board?open=${row.db}/${encodeURIComponent(row.id)}`
+}
+
+/** What the board's query string asks to have open: a planner item or a Torque task. */
+export function parseBoardOpen(search: URLSearchParams): { item?: { db: PlannerDb; id: string }; task?: string } {
+  const open = search.get('open') ?? ''
+  const slash = open.indexOf('/')
+  const db = slash > 0 ? open.slice(0, slash) : ''
+  const id = slash > 0 ? decodeURIComponent(open.slice(slash + 1)) : ''
+  const task = search.get('task') ?? ''
+  return {
+    item: isPlannerDb(db) && id ? { db, id } : undefined,
+    task: task || undefined,
+  }
 }
 
 /** "5m", "3h", "2d": how long ago, rounded the way the text board does. */

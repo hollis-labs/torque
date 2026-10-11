@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Plus, X } from 'lucide-react'
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable'
@@ -8,11 +8,12 @@ import { PlannerBoardView } from '@/components/planner/planner-board'
 import { PlannerCreateDialog } from '@/components/planner/planner-create-dialog'
 import { PlannerDetailDialog } from '@/components/planner/planner-detail-dialog'
 import { PlannerRow } from '@/components/planner/planner-row'
+import { TorqueTaskDialog } from '@/components/planner/torque-task-dialog'
 import { PlannerStatus } from '@/components/planner/planner-status'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
 import { ApiError } from '@/lib/api'
-import { PLANNER_DBS, filterItems, isPlannerDb, isSettled, moveId, plannerMeta, statusCounts } from '@/lib/planner'
+import { PLANNER_DBS, filterItems, isPlannerDb, isSettled, moveId, parseBoardOpen, plannerMeta, statusCounts } from '@/lib/planner'
 import { notifyError } from '@/lib/toast'
 import type { PlannerBoard, PlannerDatabaseInfo, PlannerDb, PlannerItem, PlannerSearchHit } from '@/lib/types'
 
@@ -24,10 +25,12 @@ export default function PlannerPage() {
   const api = useApi()
   const navigate = useNavigate()
   const params = useParams<{ db?: string; id?: string }>()
+  const [searchParams, setSearchParams] = useSearchParams()
   // /planner and /planner/board are the departure board; /planner/<db> is a list.
   const isBoard = params.db === undefined || params.db === 'board'
   const db: PlannerDb = isPlannerDb(params.db) ? params.db : 'priorities'
   const openId = params.id ? decodeURIComponent(params.id) : undefined
+  const boardOpen = isBoard ? parseBoardOpen(searchParams) : {} // the board opens items in modals over itself
   const meta = plannerMeta(db)
   const createDb: PlannerDb = isBoard ? 'inbox' : db // the board's New button adds to the inbox
   const createMeta = plannerMeta(createDb)
@@ -318,6 +321,23 @@ export default function PlannerPage() {
           go(createDb, it.id)
         }}
       />
+
+      {boardOpen.item && (
+        <PlannerDetailDialog
+          key={`board/${boardOpen.item.db}/${boardOpen.item.id}`}
+          db={boardOpen.item.db}
+          id={boardOpen.item.id}
+          refreshKey={refreshKey}
+          onClose={() => setSearchParams({})}
+          onChanged={() => {
+            void loadCounts()
+            void loadBoard()
+          }}
+          onOpen={(nextDb, id) => navigate(`/planner/board?open=${nextDb}/${encodeURIComponent(id)}`)}
+        />
+      )}
+
+      {boardOpen.task && !boardOpen.item && <TorqueTaskDialog key={boardOpen.task} id={boardOpen.task} onClose={() => setSearchParams({})} />}
 
       {openId && !isBoard && (
         <PlannerDetailDialog
