@@ -129,3 +129,23 @@ as slightly optimistic. task-kind labels were not changed.
 
 `needs_review` and `details_needed` are `disabled: true`: they are still asked and scored by an
 evaluation but never suggested until there are hand labels.
+
+## Suggestions in use (pilot 4/5)
+
+Everything is suggestion-only: accepting adds tags to a task, nothing else, and every decision is a
+ledger row (`accepted`/`rejected`, who, when).
+
+- **API** (`/api/v1/judge/...`): `GET suggestions?task_id=&set=&question=&min=&max=&limit=`,
+  `POST suggestions/{id}/accept|reject`, `POST suggestions/bulk` (`action`, a confidence band
+  `min`/`max`, `set`, `question`, and a required `limit` of 1..500), `GET summary` (rows per
+  question and disposition: the acceptance rate), `GET status`, `POST /tasks/{id}/enrich`.
+- **A question a person already answered is not asked again**: a task carrying any tag in a
+  question's vocabulary (`Vocabulary()`) gets no suggestion for it, so a task tagged `feature`
+  never gets a second kind tag.
+- **Backfill**: `torque judge backfill --set task-kind --decider tether --estimate` shows the plan
+  and cost; add `--yes` (and `--max-cost`, `--limit`) to run. It asks open tasks that carry none of
+  the set's tags, once per wording of the set.
+- **On create**: `torque serve` with `TORQUE_TETHER_URL` set installs the Tether decider; new tasks
+  are enriched in the background only while the `judge` feature is on (opt-in setting
+  `features.judge`, off by default). A failure never fails or slows a create. Tasks created through
+  a local stdio `torque mcp` are not enriched; backfill picks them up.

@@ -51,6 +51,8 @@ func New(store *sqlstore.Store) *Service {
 	feature := &FeatureService{store: store}
 	tag := &TagService{store: store}
 	task := &TaskService{store: store, feature: feature, tags: tag}
+	judgeSvc := &JudgeService{store: store, tags: tag, feature: feature}
+	task.afterCreate = judgeSvc.EnrichOnCreate
 	return &Service{
 		store:      store,
 		Task:       task,
@@ -65,7 +67,7 @@ func New(store *sqlstore.Store) *Service {
 		Epic:       &EpicService{store: store, feature: feature},
 		Collection: &CollectionService{store: store, feature: feature},
 		Planner:    &PlannerService{store: store, feature: feature, now: time.Now},
-		Judge:      &JudgeService{store: store},
+		Judge:      judgeSvc,
 		Tag:        tag,
 		Checkpoint: &CheckpointService{store: store},
 		Template:   &TemplateService{store: store, tasks: task},

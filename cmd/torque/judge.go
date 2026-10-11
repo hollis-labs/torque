@@ -29,7 +29,7 @@ Deciders: baseline (no model, free: the floor a real model has to beat) and
 tether (Tether's Decide operation, which spends money at the provider; needs
 TORQUE_TETHER_URL and TORQUE_TETHER_TOKEN, and --yes).`,
 	}
-	cmd.AddCommand(judgeSetsCmd(), judgeEvalCmd(), judgeEnrichCmd(), judgeLedgerCmd())
+	cmd.AddCommand(judgeSetsCmd(), judgeEvalCmd(), judgeEnrichCmd(), judgeBackfillCmd(), judgeLedgerCmd())
 	return cmd
 }
 
@@ -228,5 +228,64 @@ func judgeLedgerCmd() *cobra.Command {
 	cmd.Flags().StringVar(&subject, "subject", "", "only this task or item id")
 	cmd.Flags().StringVar(&disposition, "disposition", "", "suggested, accepted, rejected, auto_applied or superseded")
 	cmd.Flags().IntVar(&limit, "limit", 50, "rows")
+	return cmd
+}
+
+func judgeBackfillCmd() *cobra.Command {
+	var set, decName string
+	var limit, concurrency int
+	var maxCost float64
+	var yes, estimate, includeDone bool
+	cmd := &cobra.Command{
+		Use:   "backfill",
+		Short: "Ask a set about the open tasks that carry none of its tags and record suggestions",
+		Long: `Backfill asks one question set about every open task that carries none of the
+tags that set is about (a task already tagged feature is not asked "what kind
+is this"), and records the answers as suggestions in the ledger. Nothing on a
+task changes; accept suggestions in the GUI or with the suggestions API.
+Re-running skips tasks already judged by the same wording of the set.`,
+		SilenceUsage: true,
+		RunE: withJudge(func(ctx context.Context, svc *service.Service, out io.Writer) error {
+			d, paid, err := decider(decName)
+			if err != nil {
+				return err
+			}
+			opts := service.BackfillOptions{SetID: set, Limit: limit, IncludeDone: includeDone, Concurrency: concurrency, MaxCostUSD: maxCost}
+			plan, err := svc.Judge.PlanBackfill(opts)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "%d tasks to ask (%d already judged), ~%d input tokens, ~$%.4f at the provider\n",
+				plan.Candidates, plan.AlreadyDone, plan.EstTokens, plan.EstCostUSD)
+			if estimate {
+				return nil
+			}
+			if paid && !yes {
+				return fmt.Errorf("the %s decider spends money at the provider: nothing was asked. Re-run with --yes to proceed", decName)
+			}
+			res, err := svc.Judge.Backfill(ctx, d, opts)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "asked %d, %d proposed a tag, %d failed", res.Asked, res.Suggestions, res.Failed)
+			if res.Truncated {
+				fmt.Fprint(out, ", stopped at --max-cost")
+			}
+			fmt.Fprintln(out)
+			for _, e := range res.Errors {
+				fmt.Fprintln(out, "  error:", e)
+			}
+			return nil
+		}),
+	}
+	cmd.Flags().StringVar(&set, "set", "", "question set id")
+	cmd.Flags().StringVar(&decName, "decider", "baseline", "decider: baseline or tether")
+	cmd.Flags().IntVar(&limit, "limit", 0, "ask about at most this many tasks (0 = all)")
+	cmd.Flags().IntVar(&concurrency, "concurrency", 4, "tasks asked at once")
+	cmd.Flags().Float64Var(&maxCost, "max-cost", 0, "stop before this much estimated input spend in USD (0 = no limit)")
+	cmd.Flags().BoolVar(&includeDone, "include-done", false, "also ask about done and archived tasks")
+	cmd.Flags().BoolVar(&estimate, "estimate", false, "show the plan and cost, ask nothing")
+	cmd.Flags().BoolVar(&yes, "yes", false, "proceed with a decider that spends money")
+	_ = cmd.MarkFlagRequired("set")
 	return cmd
 }

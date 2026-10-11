@@ -347,3 +347,47 @@ func (q SetQuestion) SuggestedTags(a Answer) []string {
 	}
 	return nil
 }
+
+// Vocabulary is the tags that settle a question for a task: carrying any of
+// them means the question is already answered by a person.
+func (q SetQuestion) Vocabulary() []string {
+	var v []string
+	v = append(v, q.LabelTags...)
+	if q.Tag != "" {
+		v = append(v, q.Tag)
+	}
+	v = append(v, q.NegativeTags...)
+	if len(v) == 0 && q.Type == Choice {
+		for _, o := range q.Options {
+			if t, ok := q.Tags[o.Key]; ok {
+				v = append(v, t)
+			} else if !containsString(q.NoTag, o.Key) {
+				v = append(v, o.Key)
+			}
+		}
+	}
+	return v
+}
+
+// Settled reports whether the tags already answer this question.
+func (q SetQuestion) Settled(tags []string) bool { return hasAny(tags, q.Vocabulary()) }
+
+// Needs reports whether a task with these tags has an enabled question still
+// open, so asking would produce something a person can use.
+func (s *Set) Needs(tags []string) bool {
+	for _, q := range s.Questions {
+		if !q.Disabled && !q.Settled(tags) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsString(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}

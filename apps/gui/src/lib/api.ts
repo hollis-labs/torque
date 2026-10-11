@@ -13,6 +13,10 @@ import type {
   SSEEvent,
   FeatureFlags,
   PlannerDb,
+  Suggestion,
+  JudgeStatus,
+  JudgeSummary,
+  JudgeBulkResult,
   PlannerDatabaseInfo,
   PlannerItem,
   PlannerLink,
@@ -616,6 +620,61 @@ export class TorqueApiClient {
       return primary as FeatureFlags
     }
     return this.get<FeatureFlags>('/features')
+  }
+
+  // -------------------------
+  // Suggestions (enrichment ledger)
+  // -------------------------
+
+  /** Decisions identify the browser, so the ledger records the owner as the decider. */
+  private async judgeSend<T>(path: string, body?: unknown): Promise<T> {
+    const res = await fetch(this.url(path), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Client': 'browser' },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    })
+    return parseResponse<T>(res)
+  }
+
+  async judgeStatus(signal?: AbortSignal): Promise<JudgeStatus> {
+    return this.get<JudgeStatus>('/judge/status', undefined, signal)
+  }
+
+  async judgeSummary(signal?: AbortSignal): Promise<JudgeSummary> {
+    return this.get<JudgeSummary>('/judge/summary', undefined, signal)
+  }
+
+  /** Open suggestions that propose a tag, highest confidence first. */
+  async judgeSuggestions(
+    opts?: { task_id?: string; set?: string; question?: string; min?: number; max?: number; limit?: number },
+    signal?: AbortSignal,
+  ): Promise<Suggestion[]> {
+    return this.get<Suggestion[]>('/judge/suggestions', { ...opts }, signal)
+  }
+
+  async judgeAccept(id: number): Promise<{ accepted: number; added_tags: string[] }> {
+    return this.judgeSend(`/judge/suggestions/${id}/accept`)
+  }
+
+  async judgeReject(id: number): Promise<{ rejected: number }> {
+    return this.judgeSend(`/judge/suggestions/${id}/reject`)
+  }
+
+  /** Decide every open suggestion in a confidence band; the server requires a limit of 1..500. */
+  async judgeBulk(body: {
+    action: 'accept' | 'reject'
+    set?: string
+    question?: string
+    min?: number
+    max?: number
+    limit: number
+  }): Promise<JudgeBulkResult> {
+    return this.judgeSend('/judge/suggestions/bulk', body)
+  }
+
+  /** Ask the server's decider about one task now. */
+  async judgeEnrich(taskId: string): Promise<{ answers: number; suggestions: number }> {
+    return this.judgeSend(`/tasks/${encodeURIComponent(taskId)}/enrich`)
   }
 
   // -------------------------

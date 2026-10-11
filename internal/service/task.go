@@ -156,6 +156,7 @@ type TaskService struct {
 	store              *sqlstore.Store
 	feature            *FeatureService
 	tags               *TagService
+	afterCreate        func(taskID string)    // set by New; never blocks or fails a create
 	transitionObserver TaskTransitionObserver // optional; nil disables the observer hook
 	commentObserver    CommentObserver        // optional; nil disables the observer hook
 	// registeredExecutors lists the executor names this process can
@@ -566,7 +567,11 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		}
 	}
 
-	return s.store.GetTask(id)
+	created, err := s.store.GetTask(id)
+	if err == nil && s.afterCreate != nil && created.Kind != "internal" {
+		s.afterCreate(id)
+	}
+	return created, err
 }
 
 // Get fetches a task by ID.

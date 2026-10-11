@@ -20,7 +20,15 @@ import (
 // the keyword baseline is another. Nothing here changes a task: an answer
 // becomes a suggestion in the ledger and a person or a measured rule decides.
 type JudgeService struct {
-	store *sqlstore.Store
+	store   *sqlstore.Store
+	tags    *TagService
+	feature *FeatureService
+
+	dmu     sync.RWMutex
+	decider judge.Decider // the live decider for enrichment on create; nil = none
+
+	qonce sync.Once
+	queue chan string
 
 	once sync.Once
 	sets map[string]*judge.Set
@@ -159,9 +167,11 @@ func (s *JudgeService) EnrichTask(ctx context.Context, d judge.Decider, setID, t
 			continue
 		}
 		var suggested []string
-		for _, t := range q.SuggestedTags(a) {
-			if !existing[t] {
-				suggested = append(suggested, t)
+		if !q.Settled(tagSlugs(existing)) { // a person already answered this one
+			for _, t := range q.SuggestedTags(a) {
+				if !existing[t] {
+					suggested = append(suggested, t)
+				}
 			}
 		}
 		rec := sqlstore.JudgmentRecord{
@@ -216,4 +226,12 @@ func mapJudgmentErr(err error) error {
 // Judgments lists ledger rows.
 func (s *JudgeService) Judgments(f sqlstore.JudgmentFilter) ([]sqlstore.JudgmentRecord, error) {
 	return s.store.ListJudgments(f)
+}
+
+func tagSlugs(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
