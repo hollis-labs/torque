@@ -318,6 +318,7 @@ func TestMergedHeadRefs_NoGhBinaryReturnsEmptySet(t *testing.T) {
 func gitOut(dir string, args ...string) (string, error) {
 	cmd := osexec.Command("git", args...)
 	cmd.Dir = dir
+	cmd.Env = hermeticGitEnv()
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
