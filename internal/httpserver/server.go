@@ -200,6 +200,8 @@ func (s *Server) routes() {
 		r.Delete("/collections/{id}/tasks/{task_id}", s.removeTaskFromCollection)
 		r.Put("/collections/{id}/tasks/order", s.reorderCollectionTasks)
 
+		s.forumRoutes(r)
+
 		// Planner — the portfolio planner (feature-flagged: features.planner).
 		// Static paths come before the parameterized {db} routes.
 		r.Get("/planner/databases", s.plannerDatabases)
