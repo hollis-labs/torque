@@ -22,12 +22,7 @@ func setupOriginAndClone(t *testing.T) string {
 	runIn := func(dir string, args ...string) {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=Test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=Test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
-		)
+		cmd.Env = hermeticGitEnv()
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "git %v: %s", args, out)
 	}
@@ -41,16 +36,14 @@ func setupOriginAndClone(t *testing.T) string {
 
 	// Make origin a bare clone of seed.
 	cmd := exec.Command("git", "clone", "--bare", seedDir, originDir)
-	cmd.Env = append(os.Environ(),
-		"GIT_AUTHOR_NAME=Test",
-		"GIT_AUTHOR_EMAIL=test@test.com",
-	)
+	cmd.Env = hermeticGitEnv()
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "clone --bare: %s", out)
 
 	// Clone origin into the working repo.
 	workDir := t.TempDir()
 	cmd = exec.Command("git", "clone", originDir, workDir)
+	cmd.Env = hermeticGitEnv()
 	out, err = cmd.CombinedOutput()
 	require.NoError(t, err, "clone: %s", out)
 
@@ -61,12 +54,7 @@ func gitInWt(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
-		"GIT_AUTHOR_NAME=Test",
-		"GIT_AUTHOR_EMAIL=test@test.com",
-		"GIT_COMMITTER_NAME=Test",
-		"GIT_COMMITTER_EMAIL=test@test.com",
-	)
+	cmd.Env = hermeticGitEnv()
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "git %v: %s", args, out)
 	return string(out)
