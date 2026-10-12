@@ -33,6 +33,7 @@ type Service struct {
 	Plan       *PlanService
 	Issue      *IssueService
 	Workstream *WorkstreamService
+	Forums     *ForumsService
 	Planner    *PlannerService
 	Judge      *JudgeService
 
@@ -66,6 +67,7 @@ func New(store *sqlstore.Store) *Service {
 		Project:    &ProjectService{store: store, feature: feature},
 		Epic:       &EpicService{store: store, feature: feature},
 		Collection: &CollectionService{store: store, feature: feature},
+		Forums:     &ForumsService{feature: feature},
 		Planner:    &PlannerService{store: store, feature: feature, now: time.Now},
 		Judge:      judgeSvc,
 		Tag:        tag,

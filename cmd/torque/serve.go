@@ -182,6 +182,8 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	// claim it for per-task MCP loopback wiring (CW-20260427-0059). Same
 	// handle reused by httpserver below.
 	svc := service.New(store)
+	// Human Forums requests require a dedicated local-operator credential.
+	svc.Forums.Client = tetherclient.NewForums(os.Getenv("TORQUE_TETHER_URL"), os.Getenv("TORQUE_TETHER_OPERATOR_TOKEN"))
 	// Enrichment on create: needs TORQUE_TETHER_URL here AND the `judge`
 	// feature switched on in settings; either one missing and nothing is asked.
 	if td := judgetether.New(os.Getenv("TORQUE_TETHER_URL"), os.Getenv("TORQUE_TETHER_TOKEN")); td != nil {
