@@ -3,7 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Plus, X } from 'lucide-react'
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import { Button, EmptyState, Input, PageHeader, Skeleton } from '@hollis-labs/sysop-ui'
+import { Button, EmptyState, Input, PageHeader, Skeleton, Tabs, TabsList, TabsTrigger } from '@hollis-labs/sysop-ui'
 import { PlannerBoardView } from '@/components/planner/planner-board'
 import { PlannerCreateDialog } from '@/components/planner/planner-create-dialog'
 import { PlannerDetailDialog } from '@/components/planner/planner-detail-dialog'
@@ -175,7 +175,7 @@ export default function PlannerPage() {
 
   if (enabled === false) {
     return (
-      <div className="flex h-full flex-col">
+      <div className="flex h-full min-w-0 flex-col">
         <PageHeader title="Planner" />
         <div className="p-6">
           <EmptyState
@@ -193,49 +193,25 @@ export default function PlannerPage() {
   const maxRank = Math.max(0, ...(db === 'priorities' ? (items ?? []).map((i) => (typeof i.rank === 'number' ? i.rank : 0)) : [0]))
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-w-0 flex-col">
       <PageHeader title="Planner">
-        <Input className="h-8 w-56" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search everything…" aria-label="Search the planner" />
         <Button size="sm" className="gap-1" onClick={() => setCreating(true)} disabled={enabled === null}>
           <Plus className="h-3.5 w-3.5" />
           New {createMeta.singular}
         </Button>
       </PageHeader>
 
-      <div role="tablist" aria-label="Planner views" className="flex gap-1 overflow-x-auto border-b border-border px-4">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={isBoard && hits === null}
-          className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm ${isBoard && hits === null ? 'border-primary font-medium text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-          onClick={() => {
-            setSearch('')
-            navigate('/planner/board')
-          }}
-        >
-          Board
-        </button>
-        {PLANNER_DBS.map((d) => {
-          const n = countOf(d.key)
-          const active = !isBoard && d.key === db && hits === null
-          return (
-            <button
-              key={d.key}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm ${active ? 'border-primary font-medium text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-              onClick={() => {
-                setSearch('')
-                go(d.key)
-              }}
-            >
-              {d.label}
-              {n !== undefined && <span className="ml-1.5 text-xs text-muted-foreground">{n}</span>}
-            </button>
-          )
-        })}
+      <div className="border-b border-zinc-800/80 px-4 py-3">
+        <Input className="h-8 w-full sm:w-72" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search everything…" aria-label="Search the planner" />
       </div>
+      <Tabs value={isBoard ? 'board' : db} onValueChange={value => { setSearch(''); navigate(`/planner/${value}`) }} className="min-w-0 border-b border-zinc-800/80 px-4 py-3">
+        <TabsList aria-label="Planner views" className="h-auto max-w-full flex-wrap justify-start">
+          <TabsTrigger value="board">Board</TabsTrigger>
+          {PLANNER_DBS.map(d => <TabsTrigger key={d.key} value={d.key}>
+            {d.label}{countOf(d.key) !== undefined && <span className="ml-1.5 text-[10px] text-zinc-500">{countOf(d.key)}</span>}
+          </TabsTrigger>)}
+        </TabsList>
+      </Tabs>
 
       <div className="flex-1 overflow-auto">
         {hits !== null ? (
@@ -246,7 +222,7 @@ export default function PlannerPage() {
               <EmptyState variant="error" title="Something went wrong" description={boardError} action={{ label: 'Retry', onClick: () => void loadBoard() }} />
             </div>
           ) : board === null ? (
-            <div className="grid gap-4 p-4 xl:grid-cols-2">
+            <div className="flex flex-col divide-y divide-zinc-800/80">
               <Skeleton className="h-40 w-full" />
               <Skeleton className="h-40 w-full" />
               <Skeleton className="h-40 w-full" />
@@ -257,7 +233,7 @@ export default function PlannerPage() {
           )
         ) : (
           <>
-            <p className="px-4 pt-3 text-sm text-muted-foreground">{meta.blurb}</p>
+            <p className="px-4 pt-3 text-[13px] text-muted-foreground">{meta.blurb}</p>
             <div className="flex flex-wrap items-center gap-2 px-4 py-3">
               <Input className="h-8 w-48" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`Filter ${meta.label.toLowerCase()}…`} aria-label={`Filter ${meta.label}`} />
               <button type="button" aria-pressed={status === ''} className={chip(status === '')} onClick={() => setStatus('')}>
@@ -290,7 +266,7 @@ export default function PlannerPage() {
                 <EmptyState variant="empty" title={`No ${meta.label.toLowerCase()} yet`} description={meta.blurb} action={{ label: `New ${meta.singular}`, onClick: () => setCreating(true) }} />
               </div>
             ) : visible.length === 0 ? (
-              <p className="px-4 py-6 text-sm text-muted-foreground">Nothing matches. Clear the filter or show settled items.</p>
+              <p className="px-4 py-6 text-[13px] text-muted-foreground">Nothing matches. Clear the filter or show settled items.</p>
             ) : (
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
                 <SortableContext items={visible.map((i) => i.id)} strategy={verticalListSortingStrategy} disabled={!canReorder}>
@@ -358,14 +334,14 @@ export default function PlannerPage() {
 }
 
 function chip(active: boolean): string {
-  return `rounded-full border px-2.5 py-0.5 text-xs ${active ? 'border-primary bg-primary/10 text-foreground' : 'border-border text-muted-foreground hover:text-foreground'}`
+  return `rounded border px-2 py-0.5 text-[10px] uppercase tracking-wider ${active ? 'border-primary bg-primary/10 text-foreground' : 'border-border text-muted-foreground hover:text-foreground'}`
 }
 
 function SearchResults({ hits, query, onClear, onOpen }: { hits: PlannerSearchHit[]; query: string; onClear: () => void; onOpen: (h: PlannerSearchHit) => void }) {
   return (
     <section aria-label="Search results">
-      <div className="flex items-center justify-between px-4 py-3">
-        <p className="text-sm">
+      <div className="flex min-w-0 items-center justify-between gap-3 px-4 py-3 [overflow-wrap:anywhere]">
+        <p className="text-[13px]">
           {hits.length} result{hits.length === 1 ? '' : 's'} for <span className="font-medium">“{query}”</span>
         </p>
         <Button size="sm" variant="ghost" className="gap-1" onClick={onClear}>
@@ -373,15 +349,15 @@ function SearchResults({ hits, query, onClear, onOpen }: { hits: PlannerSearchHi
         </Button>
       </div>
       {hits.length === 0 ? (
-        <p className="px-4 pb-6 text-sm text-muted-foreground">Nothing matched. Every word has to appear in an item&apos;s id, title or text.</p>
+        <p className="px-4 pb-6 text-[13px] text-muted-foreground">Nothing matched. Every word has to appear in an item&apos;s id, title or text.</p>
       ) : (
         <ul className="border-t border-border">
           {hits.map((h) => (
             <li key={`${h.db}/${h.id}`} className="border-b border-border">
-              <button type="button" className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted/50" onClick={() => onOpen(h)} aria-label={`Open ${h.id}: ${h.title}`}>
+              <button type="button" className="flex w-full flex-wrap items-center gap-3 px-4 py-3 text-left hover:bg-muted/50" onClick={() => onOpen(h)} aria-label={`Open ${h.id}: ${h.title}`}>
                 <span className="w-24 shrink-0 text-xs uppercase tracking-wide text-muted-foreground">{plannerMeta(h.db).label}</span>
                 <span className="font-mono text-xs text-muted-foreground">{h.id}</span>
-                <span className="min-w-0 flex-1 truncate font-medium">{h.title}</span>
+                <span className="min-w-0 flex-1 [overflow-wrap:anywhere] text-[13px] font-medium">{h.title}</span>
                 <PlannerStatus status={h.status} />
               </button>
             </li>

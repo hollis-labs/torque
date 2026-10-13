@@ -52,7 +52,7 @@ const StaticRowMarkup = forwardRef<
   // drag (the in-flight ghost and the original).
   const draggingClass = isDragging ? 'opacity-0' : ''
   const overlayClass = isOverlay
-    ? 'border border-zinc-700 rounded-md shadow-2xl bg-zinc-900'
+    ? 'border border-zinc-700 bg-zinc-900'
     : ''
   return (
     <tr
@@ -70,21 +70,21 @@ const StaticRowMarkup = forwardRef<
         <GripVertical className="h-3.5 w-3.5" aria-hidden="true" />
       </td>
       {leading && <td className="w-8 py-2">{leading}</td>}
-      <td className="w-px whitespace-nowrap py-2 pr-2 align-middle">
+      <td className="hidden w-44 py-3 pr-3 align-middle lg:table-cell">
         <CopyableId id={task.id} />
       </td>
-      <td className="py-2 pr-3 align-middle">
+      <td className="min-w-0 py-3 pr-3 align-middle">
         <Link
           to={`/tasks/${task.id}`}
-          className="text-[13px] text-zinc-200 hover:text-zinc-100 hover:underline underline-offset-2"
+          className="block whitespace-normal [overflow-wrap:anywhere] font-sans text-[13px] leading-5 text-zinc-200 hover:text-zinc-100 hover:underline underline-offset-2"
         >
           {task.title}
         </Link>
       </td>
-      <td className="w-px whitespace-nowrap py-2 pr-2 align-middle">
+      <td className="w-24 py-3 pr-2 align-middle">
         <StatusBadge status={task.status} />
       </td>
-      <td className="w-px whitespace-nowrap py-2 pr-3 align-middle">
+      <td className="hidden w-16 py-3 pr-3 align-middle sm:table-cell">
         <PriorityBadge priority={task.priority} />
       </td>
       {trailing && <td className="w-8 py-2 pr-3">{trailing}</td>}

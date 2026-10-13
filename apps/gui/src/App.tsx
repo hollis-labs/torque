@@ -67,7 +67,7 @@ function AppShell() {
       <NavRail items={navItems} logo={<Cog className="h-5 w-5" />} logoLabel="Torque" />
 
       {/* Main content */}
-      <main className="flex-1 overflow-auto bg-bg">
+      <main className="min-w-0 flex-1 overflow-auto bg-bg">
         <Routes>
           <Route path="/" element={<Navigate to="/operations" replace />} />
           <Route path="/operations" element={<BoardPage />} />

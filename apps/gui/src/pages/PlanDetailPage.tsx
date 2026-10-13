@@ -25,8 +25,8 @@ function canExecute(status: string): boolean {
   return status === 'todo' || status === 'review'
 }
 
-// PlanDetailPage renders a plan as a header strip + Kanban-ish phase columns.
-// Columns are indexed by PlanPhase.id; children are bucketed via
+// PlanDetailPage renders a plan as a header strip and full-width phase sections.
+// Sections are indexed by PlanPhase.id; children are bucketed via
 // metadata.phase_id (see docs/plans-v1.md). Adding a task opens the local
 // dialog which creates it with parent_id + metadata.phase_id pre-filled.
 export default function PlanDetailPage() {
@@ -70,9 +70,9 @@ export default function PlanDetailPage() {
     load()
   }, [load])
 
-  const phaseColumns = useMemo(() => {
+  const phases = useMemo(() => {
     if (!plan) return []
-    return [...plan.plan.phases].sort((a, b) => a.order - b.order)
+    return [...(plan.plan.phases ?? [])].sort((a, b) => a.order - b.order)
   }, [plan])
 
   function bucket(phaseID: string): Task[] {
@@ -111,11 +111,11 @@ export default function PlanDetailPage() {
 
   if (loading) {
     return (
-      <div className="flex h-full flex-col">
+      <div className="flex h-full min-w-0 flex-col">
         <PageHeader title="Plan" />
-        <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="divide-y divide-zinc-800/80">
           {Array.from({ length: 3 }).map((_, i) => (
-            <Skeleton key={i} className="h-48 w-full rounded-md" />
+            <Skeleton key={i} className="h-32 w-full rounded-none" />
           ))}
         </div>
       </div>
@@ -124,15 +124,15 @@ export default function PlanDetailPage() {
 
   if (error || !plan) {
     return (
-      <div className="flex h-full flex-col">
+      <div className="flex h-full min-w-0 flex-col">
         <PageHeader title="Plan" />
-        <EmptyState variant="error" title="Something went wrong" description={error ?? 'Plan not found.'} />
+        <EmptyState variant="error" title="Something went wrong" description={error ?? 'Plan not found.'} action={{ label: 'Retry', onClick: () => { setLoading(true); void load() } }} />
       </div>
     )
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-w-0 flex-col">
       <PageHeader title="Plans">
         <Button variant="ghost" size="sm" onClick={() => navigate('/plans')} className="gap-1">
           <ArrowLeft className="h-3.5 w-3.5" />
@@ -142,9 +142,9 @@ export default function PlanDetailPage() {
 
       {/* Header strip: title + id + progress */}
       <div className="border-b border-zinc-800/80 bg-zinc-950 px-4 py-3">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="truncate text-lg font-semibold text-zinc-100">{plan.task.title}</h2>
+            <h2 className="[overflow-wrap:anywhere] text-sm font-semibold text-zinc-100">{plan.task.title}</h2>
             <div className="mt-1 flex items-center gap-2">
               <CopyableId id={plan.task.id} />
               <StatusBadge status={plan.task.status} />
@@ -173,18 +173,19 @@ export default function PlanDetailPage() {
           </div>
         </div>
         {plan.task.description ? (
-          <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-400">{plan.task.description}</p>
+          <p className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] text-[13px] text-zinc-400">{plan.task.description}</p>
         ) : null}
         <ProgressSummary progress={plan.progress} />
       </div>
 
-      <p className="px-4 py-1 text-xs text-muted-foreground">Phase columns group the loaded child task pages. Progress totals come from the plan; load more to see older or lower-priority tasks.</p>
+      <p className="px-4 py-1 text-xs text-muted-foreground">Tasks are grouped by phase. Load more to see additional tasks; progress includes all tasks.</p>
       <ListPageControls page={childPage} label="child tasks" />
-      {/* Phase columns */}
+      {/* Phase sections */}
       <div className="flex-1 overflow-auto">
-        <div className="flex h-full min-h-0 flex-row gap-3 overflow-x-auto p-4">
-          {phaseColumns.map((phase) => (
-            <PhaseColumn
+        <div className="flex min-w-0 flex-col border-t border-zinc-800/80">
+          {phases.length === 0 && <EmptyState variant="empty" title="No phases yet" description="Add a phase to organize this plan’s tasks." action={{ label: 'Add phase', onClick: () => setAddPhaseOpen(true) }} />}
+          {phases.map((phase) => (
+            <PhaseSection
               key={phase.id}
               phase={phase}
               rollup={plan.progress.by_phase[phase.id]}
@@ -203,7 +204,7 @@ export default function PlanDetailPage() {
             />
           ))}
           {unbucketed().length > 0 && (
-            <UnbucketedColumn tasks={unbucketed()} onTaskClick={(t) => navigate(`/tasks/${t.id}`)} />
+            <UnassignedSection tasks={unbucketed()} onTaskClick={(t) => navigate(`/tasks/${t.id}`)} />
           )}
         </div>
       </div>
@@ -269,7 +270,7 @@ function ProgressSummary({ progress }: { progress: PlanDetail['progress'] }) {
   )
 }
 
-function PhaseColumn({
+function PhaseSection({
   phase,
   rollup,
   tasks,
@@ -287,10 +288,10 @@ function PhaseColumn({
   const total = rollup?.total ?? 0
   const done = rollup?.done ?? 0
   return (
-    <div className="flex w-72 shrink-0 flex-col gap-2 rounded-md border border-zinc-800 bg-zinc-900/30 p-2">
-      <div className="flex items-start justify-between gap-2 px-1 pt-1">
+    <div className="flex min-w-0 flex-col border-b border-zinc-800/80">
+      <div className="flex items-start justify-between gap-3 bg-zinc-900/20 px-4 py-3">
         <div className="min-w-0">
-          <div className="truncate text-[11px] font-semibold uppercase tracking-[.18em] text-zinc-300">
+          <div className="[overflow-wrap:anywhere] text-[10px] font-semibold uppercase tracking-[.18em] text-zinc-300">
             {phase.name}
           </div>
           <div className="mt-0.5 flex items-center gap-2 text-[10px] text-zinc-500">
@@ -310,13 +311,13 @@ function PhaseColumn({
         </button>
       </div>
       {phase.acceptance ? (
-        <div className="rounded bg-zinc-950 px-2 py-1 text-[10px] text-zinc-500">
+        <div className="whitespace-pre-wrap [overflow-wrap:anywhere] border-b border-zinc-800/60 px-4 pb-3 text-[13px] text-zinc-400">
           {phase.acceptance}
         </div>
       ) : null}
-      <div className="flex flex-col gap-2">
+      <div className="flex min-w-0 flex-col divide-y divide-zinc-800/60">
         {tasks.length === 0 ? (
-          <div className="rounded border border-dashed border-zinc-800 px-2 py-4 text-center text-[11px] text-zinc-500">
+          <div className="px-4 py-4 text-[13px] text-zinc-500">
             No tasks yet
           </div>
         ) : (
@@ -325,18 +326,18 @@ function PhaseColumn({
               key={t.id}
               type="button"
               onClick={() => onTaskClick(t)}
-              className="flex flex-col gap-1 rounded border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-left transition-colors hover:border-zinc-700 hover:bg-zinc-900"
+              className="flex min-w-0 flex-col gap-2 px-4 py-3 text-left transition-colors hover:bg-zinc-900/35"
             >
-              <div className="truncate text-[12px] font-medium text-zinc-100">{t.title}</div>
+              <div className="[overflow-wrap:anywhere] text-[13px] font-medium text-zinc-100">{t.title}</div>
               <div className="flex items-center justify-between gap-2">
-                <StatusBadge status={t.status} className="py-0.5 text-[9px]" />
-                <span className="truncate font-mono text-[9px] text-zinc-500">{t.id}</span>
+                <StatusBadge status={t.status} className="py-0.5 text-[10px]" />
+                <span className="truncate font-mono text-[11px] text-zinc-500">{t.id}</span>
               </div>
             </button>
           ))
         )}
       </div>
-      <Button size="sm" variant="outline" onClick={onAddTask} className="mt-auto gap-1">
+      <Button size="sm" variant="outline" onClick={onAddTask} className="mx-4 my-3 w-fit gap-1">
         <Plus className="h-3.5 w-3.5" />
         Add task
       </Button>
@@ -344,7 +345,7 @@ function PhaseColumn({
   )
 }
 
-function UnbucketedColumn({
+function UnassignedSection({
   tasks,
   onTaskClick,
 }: {
@@ -352,22 +353,22 @@ function UnbucketedColumn({
   onTaskClick: (t: Task) => void
 }) {
   return (
-    <div className="flex w-72 shrink-0 flex-col gap-2 rounded-md border border-dashed border-zinc-800 bg-zinc-900/10 p-2">
-      <div className="px-1 pt-1 text-[11px] font-semibold uppercase tracking-[.18em] text-zinc-500">
+    <div className="flex min-w-0 flex-col border-b border-zinc-800/80">
+      <div className="bg-zinc-900/20 px-4 py-3 text-[10px] font-semibold uppercase tracking-[.18em] text-zinc-500">
         Unassigned
       </div>
-      <div className="flex flex-col gap-2">
+      <div className="flex min-w-0 flex-col divide-y divide-zinc-800/60">
         {tasks.map((t) => (
           <button
             key={t.id}
             type="button"
             onClick={() => onTaskClick(t)}
-            className="flex flex-col gap-1 rounded border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-left hover:bg-zinc-900"
+            className="flex min-w-0 flex-col gap-2 px-4 py-3 text-left hover:bg-zinc-900/35"
           >
-            <div className="truncate text-[12px] font-medium text-zinc-100">{t.title}</div>
+            <div className="[overflow-wrap:anywhere] text-[13px] font-medium text-zinc-100">{t.title}</div>
             <div className="flex items-center justify-between gap-2">
-              <StatusBadge status={t.status} className="py-0.5 text-[9px]" />
-              <span className="truncate font-mono text-[9px] text-zinc-500">{t.id}</span>
+              <StatusBadge status={t.status} className="py-0.5 text-[10px]" />
+              <span className="truncate font-mono text-[11px] text-zinc-500">{t.id}</span>
             </div>
           </button>
         ))}
@@ -470,7 +471,7 @@ function AddTaskDialog({
         <DialogHeader>
           <DialogTitle>Add task to {phase?.name ?? 'phase'}</DialogTitle>
           <DialogDescription>
-            Pre-fills parent_id + metadata.phase_id so this task rolls up under the plan.
+            The task will belong to this plan and phase.
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-3">

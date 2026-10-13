@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Check, X } from 'lucide-react'
 import { Button, EmptyState, PageHeader, Skeleton } from '@hollis-labs/sysop-ui'
+import { FilterSelect } from '@/components/domain/filter-select'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
 import { acceptanceRate, groupByBand, pct, questionLabel, type Band } from '@/lib/judge'
@@ -90,10 +91,10 @@ export default function SuggestionsPage() {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-w-0 flex-col">
       <PageHeader title="Suggestions" />
-      <div className="flex-1 overflow-y-auto p-4">
-        <p className="mb-3 text-[13px] text-zinc-400">
+      <div className="min-w-0 flex-1 overflow-y-auto">
+        <p className="border-b border-zinc-800/80 px-4 py-3 text-[13px] text-zinc-400">
           Tags a model proposes for tasks that don’t have them. Nothing changes until you accept.{' '}
           {status && (
             <span className="text-zinc-500">
@@ -106,7 +107,7 @@ export default function SuggestionsPage() {
           )}
         </p>
 
-        {error && <p role="alert" className="mb-3 text-[13px] text-red-400">{error}</p>}
+        {error && <p role="alert" className="border-b border-zinc-800/80 px-4 py-3 text-[13px] text-red-400">{error}</p>}
         {items === null && !error && <Skeleton className="h-24 w-full" />}
 
         {items !== null && items.length === 0 && (
@@ -118,10 +119,9 @@ export default function SuggestionsPage() {
         )}
 
         {questions.length > 1 && (
-          <label className="mb-3 flex items-center gap-2 text-[12px] text-zinc-400">
+          <label className="flex flex-wrap items-center gap-2 border-b border-zinc-800/80 px-4 py-3 text-[12px] text-zinc-400">
             Question
-            <select
-              className="h-8 rounded border border-zinc-800 bg-zinc-900 px-2 text-[13px] text-zinc-200"
+            <FilterSelect
               value={question}
               onChange={(e) => {
                 setQuestion(e.target.value)
@@ -137,14 +137,14 @@ export default function SuggestionsPage() {
                   </option>
                 )
               })}
-            </select>
+            </FilterSelect>
           </label>
         )}
 
         {groups.map(({ band, items: rows }) => (
-          <section key={band.key} className="mb-5" aria-label={`Confidence ${band.label}`}>
-            <div className="mb-1 flex items-center gap-2 border-b border-zinc-800 pb-1">
-              <h2 className="text-[11px] uppercase tracking-[.18em] text-zinc-400">
+          <section key={band.key} className="min-w-0 border-b border-zinc-800/80" aria-label={`Confidence ${band.label}`}>
+            <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800/80 bg-zinc-900/20 px-4 py-3">
+              <h2 className="text-[10px] uppercase tracking-[.18em] text-zinc-400">
                 {band.label} · {rows.length}
               </h2>
               <span className="ml-auto flex gap-1">
@@ -158,26 +158,26 @@ export default function SuggestionsPage() {
             </div>
             <ul>
               {rows.map((s) => (
-                <li key={s.id} className="flex items-center gap-3 border-b border-zinc-900 py-1.5 text-[13px]" data-testid="suggestion-row">
-                  <Link to={`/tasks/${s.subject_id}`} className="min-w-0 flex-1 truncate text-zinc-200 hover:underline" title={s.task_title}>
+                <li key={s.id} className="flex min-w-0 flex-wrap items-center gap-3 border-b border-zinc-800/60 px-4 py-3 text-[13px] last:border-b-0" data-testid="suggestion-row">
+                  <Link to={`/tasks/${s.subject_id}`} className="min-w-0 basis-full [overflow-wrap:anywhere] text-zinc-200 sm:flex-1 sm:basis-0 hover:underline" title={s.task_title}>
                     <span className="mr-2 font-mono text-[11px] text-zinc-500">{s.subject_id}</span>
                     {s.task_title ?? s.subject_id}
                   </Link>
-                  <span className="hidden gap-1 sm:flex">
+                  <span className="hidden min-w-0 max-w-full flex-wrap gap-1 sm:flex sm:max-w-48">
                     {(s.task_tags ?? []).map((t) => (
-                      <span key={t} className="rounded bg-zinc-900 px-1 font-mono text-[10px] text-zinc-500">{t}</span>
+                      <span key={t} className="max-w-full [overflow-wrap:anywhere] rounded bg-zinc-900 px-1 font-mono text-[10px] text-zinc-500">{t}</span>
                     ))}
                   </span>
-                  <span className="flex gap-1">
+                  <span className="flex min-w-0 max-w-full flex-wrap gap-1 sm:max-w-64">
                     {s.suggested.map((t) => (
-                      <span key={t} className="rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[11px] text-zinc-100">+ {t}</span>
+                      <span key={t} className="max-w-full [overflow-wrap:anywhere] rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[11px] text-zinc-100">+ {t}</span>
                     ))}
                   </span>
-                  <span className="w-10 text-right text-zinc-500">{pct(s.confidence)}</span>
-                  <Button size="sm" variant="outline" className="h-7 w-7 p-0" disabled={busy} onClick={() => void decideOne(s, true)} aria-label={`Accept ${s.suggested.join(', ')} for ${s.subject_id}`}>
+                  <span className="ml-auto w-10 shrink-0 text-right text-zinc-500">{pct(s.confidence)}</span>
+                  <Button size="sm" variant="outline" className="h-7 w-7 shrink-0 p-0" disabled={busy} onClick={() => void decideOne(s, true)} aria-label={`Accept ${s.suggested.join(', ')} for ${s.subject_id}`}>
                     <Check className="h-3.5 w-3.5" />
                   </Button>
-                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" disabled={busy} onClick={() => void decideOne(s, false)} aria-label={`Reject ${s.suggested.join(', ')} for ${s.subject_id}`}>
+                  <Button size="sm" variant="ghost" className="h-7 w-7 shrink-0 p-0" disabled={busy} onClick={() => void decideOne(s, false)} aria-label={`Reject ${s.suggested.join(', ')} for ${s.subject_id}`}>
                     <X className="h-3.5 w-3.5" />
                   </Button>
                 </li>
@@ -199,13 +199,13 @@ function Rates({ summary }: { summary: JudgeSummary }) {
   )
   if (rows.every((r) => r.rate === null)) return null
   return (
-    <section className="mt-6" aria-label="Acceptance rates">
-      <h2 className="mb-1 text-[11px] uppercase tracking-[.18em] text-zinc-400">Accepted so far</h2>
+    <section className="border-b border-zinc-800/80" aria-label="Acceptance rates">
+      <h2 className="border-b border-zinc-800/80 bg-zinc-900/20 px-4 py-3 text-[10px] uppercase tracking-[.18em] text-zinc-400">Accepted so far</h2>
       <ul className="text-[13px] text-zinc-400">
         {rows
           .filter((r) => r.rate !== null)
           .map((r) => (
-            <li key={`${r.set}/${r.key}`}>
+            <li key={`${r.set}/${r.key}`} className="border-b border-zinc-800/60 px-4 py-3 [overflow-wrap:anywhere] last:border-b-0">
               {questionLabel(r.set, r.key)}: {pct(r.rate!)}
             </li>
           ))}
