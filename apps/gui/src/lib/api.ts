@@ -1,5 +1,5 @@
 import { forumResourcePath } from './forums'
-import type { ForumCategory, ForumResource, ForumMutation, ForumParticipant, ForumAttachment, Forum, ForumTopic, ForumPost, ForumPage, ForumOptions } from './forums'
+import type { ForumActivity, ForumCategory, ForumResource, ForumMutation, ForumParticipant, ForumAttachment, Forum, ForumTopic, ForumPost, ForumPage, ForumOptions } from './forums'
 import type {
   Task,
   ListPage,
@@ -682,13 +682,16 @@ export class TorqueApiClient {
 
   // -------------------------
   // Forums: browser calls only Torque; operator credentials stay in the backend.
+  forumActivity(id: string, signal?: AbortSignal): Promise<ForumActivity> {
+    return this.get(`/forums/${encodeURIComponent(id)}/activity`, undefined, signal)
+  }
   forumCategories(opts?: ForumOptions, signal?: AbortSignal): Promise<ForumPage<ForumCategory>> {
     return this.get('/forums/categories', opts, signal)
   }
   forumCategory(id: string, signal?: AbortSignal): Promise<{ category: ForumCategory }> {
     return this.get(forumResourcePath('category', id), undefined, signal)
   }
-  forumCreateCategory(body: { id: string; namespace: string; title: string; description?: string; sort_order?: number }): Promise<{ category: ForumCategory }> {
+  forumCreateCategory(body: { id: string; title: string; description?: string; sort_order?: number }): Promise<{ category: ForumCategory }> {
     return this.post('/forums/categories', body)
   }
   forumUpdate(kind: ForumResource, id: string, changes: Record<string, unknown>): Promise<ForumMutation> {
@@ -715,8 +718,8 @@ export class TorqueApiClient {
   forumsList(opts?: ForumOptions, signal?: AbortSignal): Promise<ForumPage<Forum>> {
     return this.get('/forums', opts, signal)
   }
-  forumCreate(id: string, title: string, options?: { namespace?: string; category_id?: string; description?: string; sort_order?: number }): Promise<{ forum: Forum }> {
-    return this.post('/forums', { id, title, namespace: `app/torque/forum/${id}`, ...options })
+  forumCreate(id: string, title: string, options?: { category_id?: string; description?: string; sort_order?: number }): Promise<{ forum: Forum }> {
+    return this.post('/forums', { id, title, ...options })
   }
   forumGet(id: string, signal?: AbortSignal): Promise<{ forum: Forum }> {
     return this.get(`/forums/${encodeURIComponent(id)}`, { detail: 'full' }, signal)

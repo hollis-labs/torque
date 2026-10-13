@@ -811,7 +811,6 @@ function Thread({ forumId, topicId }: { forumId: string; topicId: string }) {
           <ForumManagement
             kind="topic"
             item={topic}
-            namespace={forum?.namespace}
             readOnly={readOnly}
             onChanged={(out, action) => {
               if (action === 'delete') navigate(`/forums/${encodeURIComponent(forumId)}`)
@@ -853,7 +852,6 @@ function Thread({ forumId, topicId }: { forumId: string; topicId: string }) {
           reply={() => focusComposer(post)}
           replyingDisabled={sending || readOnly}
           readOnly={readOnly}
-          namespace={forum?.namespace}
           onChanged={(out) => {
             if (out.topic) {
               navigate(
@@ -946,7 +944,6 @@ function PostRow({
   reply,
   replyingDisabled,
   readOnly,
-  namespace,
   onChanged,
 }: {
   post: ForumPost
@@ -954,7 +951,6 @@ function PostRow({
   reply: () => void
   replyingDisabled: boolean
   readOnly: boolean
-  namespace?: string
   onChanged: (out: ForumMutation) => void
 }) {
   const api = useApi()
@@ -1056,7 +1052,6 @@ function PostRow({
           <ForumManagement
             kind="post"
             item={post}
-            namespace={namespace}
             readOnly={readOnly}
             onChanged={onChanged}
           />

@@ -14,7 +14,7 @@ import {
 } from '@hollis-labs/sysop-ui'
 import { useApi } from '@/hooks/use-api'
 import { allForumPages, forumOrder } from '@/lib/forums'
-import type { Forum, ForumCategory } from '@/lib/forums'
+import type { Forum, ForumCategory, ForumActivity } from '@/lib/forums'
 import { ForumCreateDialog } from './forum-create-dialog'
 import { ForumManagement, forumFieldClass } from './forum-management'
 
@@ -22,11 +22,10 @@ export function ForumDirectory() {
   const api = useApi()
   const [forums, setForums] = useState<Forum[]>([])
   const [categories, setCategories] = useState<ForumCategory[]>([])
+  const [activity, setActivity] = useState<Record<string, ForumActivity | null>>({})
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState('')
   const [attempt, setAttempt] = useState(0)
-  const [namespaceInput, setNamespaceInput] = useState('')
-  const [namespace, setNamespace] = useState('')
   const [archived, setArchived] = useState('')
   const refresh = () => {
     setBusy(true)
@@ -37,43 +36,58 @@ export function ForumDirectory() {
     Promise.all([
       allForumPages(
         (opts, signal) => api.forumsList(opts, signal),
-        { namespace: namespace || undefined, archived: archived || undefined },
+        { archived: archived || undefined },
         c.signal,
       ),
-      allForumPages(
-        (opts, signal) => api.forumCategories(opts, signal),
-        { namespace: namespace || undefined },
-        c.signal,
-      ),
+      allForumPages((opts, signal) => api.forumCategories(opts, signal), {}, c.signal),
     ])
       .then(([boards, cats]) => {
         if (!c.signal.aborted) {
+          setActivity({})
           setForums(boards)
           setCategories(cats)
           setError('')
         }
       })
       .catch((e) => {
-        if (!c.signal.aborted) setError(e instanceof Error ? e.message : 'Could not load forums.')
+        if (!c.signal.aborted)
+          setError(e instanceof Error ? e.message : 'Could not load forums.')
       })
       .finally(() => {
         if (!c.signal.aborted) setBusy(false)
       })
     return () => c.abort()
-  }, [api, namespace, archived, attempt])
-  const namespaces = [...new Set([...forums, ...categories].map((f) => f.namespace))].sort()
+  }, [api, archived, attempt])
+  useEffect(() => {
+    const c = new AbortController()
+    let next = 0
+    async function worker() {
+      while (!c.signal.aborted && next < forums.length) {
+        const id = forums[next++].id
+        let value: ForumActivity | null = null
+        try {
+          value = await api.forumActivity(id, c.signal)
+        } catch {
+          /* Unavailable is distinct from zero. */
+        }
+        if (!c.signal.aborted) setActivity((old) => ({ ...old, [id]: value }))
+      }
+    }
+    void Promise.all(Array.from({ length: Math.min(4, forums.length) }, worker))
+    return () => c.abort()
+  }, [api, forums])
+  const columns = 'grid grid-cols-[minmax(10rem,1fr)_5rem_13rem_2rem] items-center gap-3'
   function boardRow(f: Forum, inheritedArchive = false) {
+    const stats = activity[f.id]
+    const last = stats?.last_post
     return (
-      <div
-        key={f.id}
-        className="flex items-center justify-between gap-3 border-b border-zinc-800/60 px-4 py-3"
-      >
+      <div key={f.id} className={`${columns} border-b border-zinc-800/60 py-3 pl-7 pr-4`}>
         <Link
-          className="min-w-0 flex-1 hover:text-primary"
+          className="min-w-0 hover:text-primary"
           to={`/forums/${encodeURIComponent(f.id)}`}
         >
           <h3 className="text-[13px] font-medium">
-            {f.title}{' '}
+            {f.title}
             {(f.archived || inheritedArchive) && (
               <span className="ml-2 text-[10px] uppercase text-zinc-500">
                 {f.archived ? 'Archived' : 'Category archived'}
@@ -82,6 +96,37 @@ export function ForumDirectory() {
           </h3>
           {f.description && <p className="mt-1 text-xs text-zinc-400">{f.description}</p>}
         </Link>
+        <div
+          aria-label={`${f.title} post count`}
+          className="self-stretch border-l border-zinc-800 px-3 text-center text-xs tabular-nums flex items-center justify-center"
+        >
+          {stats === undefined
+            ? '…'
+            : stats === null
+              ? '—'
+              : stats.post_count.toLocaleString()}
+        </div>
+        <div className="border-l border-zinc-800 pl-3 text-xs text-zinc-400">
+          {last ? (
+            <Link
+              className="hover:text-primary"
+              to={`/forums/${encodeURIComponent(f.id)}/topics/${encodeURIComponent(last.topic_id)}#post-${last.id}`}
+            >
+              <div className="truncate text-zinc-200">
+                {last.provenance.id || last.provenance.kind}
+              </div>
+              <time className="mt-1 block" dateTime={last.created_at}>
+                {new Date(last.created_at).toLocaleString()}
+              </time>
+            </Link>
+          ) : stats === undefined ? (
+            'Loading…'
+          ) : stats === null ? (
+            'Unavailable'
+          ) : (
+            'No posts yet'
+          )}
+        </div>
         <ForumManagement
           kind="forum"
           item={f}
@@ -91,36 +136,16 @@ export function ForumDirectory() {
       </div>
     )
   }
+  const ungrouped = forums.filter(
+    (f) => !f.category_id || !categories.some((c) => c.id === f.category_id),
+  )
   return (
     <>
       <PageHeader title="Forums">
-        <CategoryCreate onCreated={refresh} namespace={namespace || namespaces[0]} />
-        <ForumCreateDialog
-          disabled={busy}
-          namespaces={namespaces}
-          categories={categories}
-          onCreated={(f) => {
-            setForums((old) => [...old.filter((v) => v.id !== f.id), f].sort(forumOrder))
-            // Restart list cursors after insertion, retaining the successful create while loading.
-            refresh()
-          }}
-        />
+        <CategoryCreate onCreated={refresh} />
+        <ForumCreateDialog disabled={busy} categories={categories} onCreated={refresh} />
       </PageHeader>
-      <form
-        className="flex flex-wrap gap-2 border-b border-zinc-800 px-4 py-3"
-        onSubmit={(e) => {
-          e.preventDefault()
-          setNamespace(namespaceInput.trim())
-          refresh()
-        }}
-      >
-        <Input
-          className="max-w-sm rounded-none"
-          aria-label="Namespace filter"
-          placeholder="All namespaces"
-          value={namespaceInput}
-          onChange={(e) => setNamespaceInput(e.target.value)}
-        />
+      <div className="flex gap-2 border-b border-zinc-800 px-4 py-3">
         <select
           aria-label="Archive filter"
           className="border border-zinc-800 bg-zinc-950 px-2 text-xs"
@@ -130,28 +155,15 @@ export function ForumDirectory() {
             setArchived(e.target.value)
           }}
         >
-          <option value="">All boards</option>
-          <option value="false">Active boards</option>
-          <option value="true">Archived boards</option>
+          <option value="">All forums</option>
+          <option value="false">Active forums</option>
+          <option value="true">Archived forums</option>
         </select>
-        <Button type="submit" variant="outline" size="sm">
-          Apply
+        <Button variant="outline" size="sm" onClick={refresh}>
+          Refresh
         </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            setNamespaceInput('')
-            setNamespace('')
-            setArchived('')
-            refresh()
-          }}
-        >
-          Reset
-        </Button>
-      </form>
-      <section aria-label="Forum directory">
+      </div>
+      <section aria-label="Forum directory" className="overflow-x-auto">
         {error && (
           <div role="alert" className="flex gap-3 p-4 text-xs text-red-300">
             {error}
@@ -165,58 +177,58 @@ export function ForumDirectory() {
             Loading forums…
           </p>
         )}
-        {namespaces.map((ns) => (
-          <section key={ns} aria-label={ns}>
-            <div className="border-b border-zinc-800 bg-zinc-900/30 px-4 py-3 font-mono text-[11px] text-zinc-500">
-              {ns}
-            </div>
-            {forums
-              .filter((f) => f.namespace === ns && !f.category_id)
-              .sort(forumOrder)
-              .map((f) => boardRow(f))}
-            {categories
-              .filter((c) => c.namespace === ns)
-              .sort(forumOrder)
-              .map((c) => (
-                <section key={c.id} aria-label={c.title}>
-                  <div className="flex items-center justify-between gap-3 border-b border-zinc-800 bg-zinc-900/20 px-4 py-3">
-                    <div>
-                      <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                        {c.title}
-                        {c.archived && ' · Archived'}
-                      </h2>
-                      {c.description && (
-                        <p className="mt-1 text-xs text-zinc-500">{c.description}</p>
-                      )}
-                    </div>
-                    <ForumManagement
-                      kind="category"
-                      item={c}
-                      readOnly={c.archived}
-                      onChanged={refresh}
-                    />
+        <div className="min-w-[36rem]">
+          <div
+            className={`${columns} border-b border-zinc-800 py-2 pl-7 pr-4 text-[10px] uppercase tracking-wider text-zinc-500`}
+          >
+            <span>Forum</span>
+            <span className="text-center">Posts</span>
+            <span className="pl-3">Last post</span>
+            <span />
+          </div>
+          {categories
+            .slice()
+            .sort(forumOrder)
+            .map((c) => (
+              <section key={c.id} aria-label={c.title}>
+                <div className="flex items-center justify-between gap-3 border-b border-zinc-800 bg-zinc-900/30 px-4 py-3">
+                  <div>
+                    <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
+                      {c.title}
+                      {c.archived && ' · Archived'}
+                    </h2>
+                    {c.description && (
+                      <p className="mt-1 text-xs text-zinc-500">{c.description}</p>
+                    )}
                   </div>
-                  {forums
-                    .filter((f) => f.namespace === ns && f.category_id === c.id)
-                    .sort(forumOrder)
-                    .map((f) => boardRow(f, c.archived))}
-                  {!forums.some((f) => f.category_id === c.id) && (
-                    <p className="px-4 py-3 text-xs text-zinc-500">No boards match this view.</p>
-                  )}
-                </section>
-              ))}
-            {forums
-              .filter(
-                (f) =>
-                  f.namespace === ns &&
-                  f.category_id &&
-                  !categories.some((c) => c.id === f.category_id),
-              )
-              .sort(forumOrder)
-              .map((f) => boardRow(f))}
-          </section>
-        ))}
-        {!busy && !error && !namespaces.length && (
+                  <ForumManagement
+                    kind="category"
+                    item={c}
+                    readOnly={c.archived}
+                    onChanged={refresh}
+                  />
+                </div>
+                {forums
+                  .filter((f) => f.category_id === c.id)
+                  .sort(forumOrder)
+                  .map((f) => boardRow(f, c.archived))}
+                {!forums.some((f) => f.category_id === c.id) && (
+                  <p className="px-7 py-3 text-xs text-zinc-500">
+                    No forums match this view.
+                  </p>
+                )}
+              </section>
+            ))}
+          {ungrouped.length > 0 && (
+            <section aria-label="Uncategorized forums">
+              <h2 className="border-b border-zinc-800 bg-zinc-900/30 px-4 py-3 text-xs font-semibold uppercase tracking-wider text-zinc-300">
+                Forums
+              </h2>
+              {ungrouped.sort(forumOrder).map((f) => boardRow(f))}
+            </section>
+          )}
+        </div>
+        {!busy && !error && !forums.length && !categories.length && (
           <EmptyState
             variant="empty"
             title="No forums available"
@@ -228,10 +240,9 @@ export function ForumDirectory() {
   )
 }
 
-function CategoryCreate({ onCreated, namespace }: { onCreated: () => void; namespace?: string }) {
+function CategoryCreate({ onCreated }: { onCreated: () => void }) {
   const api = useApi()
   const [open, setOpen] = useState(false)
-  const [ns, setNS] = useState('')
   const [id, setID] = useState('')
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
@@ -245,7 +256,6 @@ function CategoryCreate({ onCreated, namespace }: { onCreated: () => void; names
         variant="outline"
         onClick={() => {
           setOpen(true)
-          setNS(namespace || 'app/torque/forum/general')
           setTitle('')
           setID('')
           setDescription('')
@@ -264,7 +274,7 @@ function CategoryCreate({ onCreated, namespace }: { onCreated: () => void; names
         <DialogContent className="rounded-none" widthClassName="max-w-md">
           <DialogHeader>
             <DialogTitle>New category</DialogTitle>
-            <DialogDescription>Group boards within a namespace.</DialogDescription>
+            <DialogDescription>Group related forums.</DialogDescription>
           </DialogHeader>
           <form
             className="space-y-3"
@@ -278,7 +288,6 @@ function CategoryCreate({ onCreated, namespace }: { onCreated: () => void; names
                   throw new Error('Sort order must be a safe integer.')
                 await api.forumCreateCategory({
                   id,
-                  namespace: ns,
                   title: title.trim(),
                   description,
                   sort_order: sort,
@@ -312,16 +321,6 @@ function CategoryCreate({ onCreated, namespace }: { onCreated: () => void; names
                   pattern="[a-zA-Z0-9][a-zA-Z0-9_\-]{0,127}"
                   value={id}
                   onChange={(e) => setID(e.target.value)}
-                />
-              </label>
-              <label className="block text-xs">
-                Namespace
-                <Input
-                  aria-label="Category namespace"
-                  className={forumFieldClass}
-                  required
-                  value={ns}
-                  onChange={(e) => setNS(e.target.value)}
                 />
               </label>
               <label className="block text-xs">

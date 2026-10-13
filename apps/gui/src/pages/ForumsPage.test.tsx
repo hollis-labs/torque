@@ -8,6 +8,7 @@ const { api } = vi.hoisted(() => ({
   api: {
     getFeatureFlags: vi.fn(),
     forumsList: vi.fn(),
+    forumActivity: vi.fn(),
     forumCreate: vi.fn(),
     forumCategories: vi.fn(),
     forumCategory: vi.fn(),
@@ -75,6 +76,7 @@ beforeEach(() => {
     has_more: false,
   })
   api.forumCategories.mockResolvedValue({ items: [], has_more: false })
+  api.forumActivity.mockResolvedValue({ post_count: 0, last_post: null })
   api.forumUpdate.mockResolvedValue({})
   api.forumDelete.mockResolvedValue({ deleted: 'p1' })
   api.forumAction.mockResolvedValue({})
@@ -125,7 +127,6 @@ it('creates a forum from the home modal and preserves the existing directory', a
   fireEvent.click(screen.getByRole('button', { name: 'Create forum' }))
   await screen.findByRole('heading', { name: 'Design Review' })
   expect(api.forumCreate).toHaveBeenCalledWith('design-review', 'Design Review', {
-    namespace: 'app/torque/forum/portfolio',
     category_id: '',
     description: '',
     sort_order: 0,
@@ -164,7 +165,6 @@ it('validates short names and keeps a failed creation open for correction and re
   fireEvent.click(screen.getByRole('button', { name: 'Create forum' }))
   await screen.findByRole('heading', { name: 'Design' })
   expect(api.forumCreate).toHaveBeenLastCalledWith('design-team', 'Design', {
-    namespace: 'app/torque/forum/portfolio',
     category_id: '',
     description: '',
     sort_order: 0,
@@ -288,7 +288,7 @@ it('drains the outline then polls using delivered sequence instead of topic last
   )
 })
 
-it('groups boards by namespace and category and sorts all pages before rendering', async () => {
+it('groups forums by category and sorts all pages before rendering', async () => {
   const ns = 'app/torque/forum/general'
   api.forumCategories.mockResolvedValue({
     items: [{ id: 'planning', namespace: ns, title: 'Planning', sort_order: 10 }],
@@ -484,7 +484,7 @@ it('moves a message subtree into a selected thread in the same namespace', async
     ),
   )
   fireEvent.change(screen.getByLabelText('Management action'), { target: { value: 'move' } })
-  await screen.findByRole('option', { name: 'Destination board (destination)' })
+  await screen.findByRole('option', { name: 'Destination board' })
   fireEvent.change(screen.getByLabelText('Destination'), { target: { value: 'destination' } })
   await screen.findByRole('option', { name: 'Destination thread' })
   fireEvent.change(screen.getByLabelText('Destination thread'), { target: { value: 't2' } })
@@ -500,7 +500,7 @@ it('moves a message subtree into a selected thread in the same namespace', async
     }),
   )
   expect(api.forumsList).toHaveBeenCalledWith(
-    expect.objectContaining({ namespace: ns, archived: false }),
+    expect.objectContaining({ archived: false }),
     expect.any(AbortSignal),
   )
   await waitFor(() => expect(api.forumTopic).toHaveBeenCalledTimes(2))
@@ -582,7 +582,7 @@ it('forks a selected message using its source thread and keeps the original disc
     ),
   )
   fireEvent.change(screen.getByLabelText('Management action'), { target: { value: 'fork' } })
-  await screen.findByRole('option', { name: 'Portfolio (portfolio)' })
+  await screen.findByRole('option', { name: 'Portfolio' })
   fireEvent.change(screen.getByLabelText('Destination'), { target: { value: 'portfolio' } })
   await waitFor(() => expect(screen.queryByText('Loading…')).toBeNull())
   fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Separate discussion' } })
@@ -622,4 +622,33 @@ it('grants participant access and requires confirmation to transfer ownership', 
   fireEvent.click(screen.getByLabelText('Confirm ownership transfer'))
   fireEvent.click(screen.getByRole('button', { name: 'Transfer ownership' }))
   await waitFor(() => expect(api.forumSetOwner).toHaveBeenCalledWith('portfolio', {}))
+})
+
+it('shows category descriptions, totals and the last author without namespace controls', async () => {
+  api.forumCategories.mockResolvedValue({ items: [{ id: 'work', title: 'Work', description: 'Our projects', namespace: 'app/torque/forum/torque' }], has_more: false })
+  api.forumsList.mockResolvedValue({ items: [{ id: 'portfolio', title: 'Portfolio', description: 'Planning together', category_id: 'work', namespace: 'app/torque/forum/torque' }], has_more: false })
+  api.forumActivity.mockResolvedValue({ post_count: 12, last_post: { id: 'latest', topic_id: 't1', created_at: '2026-10-13T12:30:00Z', provenance: { id: 'Chrispian', kind: 'user' } } })
+  renderAt('/forums')
+  await screen.findByText('Chrispian')
+  expect(screen.getByText('Our projects')).toBeTruthy()
+  expect(screen.getByText('Planning together')).toBeTruthy()
+  expect(screen.getByLabelText('Portfolio post count').textContent).toBe('12')
+  expect(screen.getByText('Chrispian').closest('a')?.getAttribute('href')).toBe('/forums/portfolio/topics/t1#post-latest')
+  expect(screen.getByText(new Date('2026-10-13T12:30:00Z').toLocaleString())).toBeTruthy()
+  expect(screen.queryByText(/app\/torque/)).toBeNull()
+  expect(screen.queryByLabelText(/namespace/i)).toBeNull()
+})
+
+it('moves an existing forum into a category without selecting a namespace', async () => {
+  api.forumCategories.mockResolvedValue({ items: [{ id: 'work', title: 'Work', namespace: 'app/torque/forum/torque' }], has_more: false })
+  renderAt('/forums')
+  fireEvent.click(await screen.findByRole('button', { name: 'Manage Portfolio' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Apply changes' }).hasAttribute('disabled')).toBe(false))
+  fireEvent.change(screen.getByLabelText('Management action'), { target: { value: 'move' } })
+  await screen.findByRole('option', { name: 'Work' })
+  fireEvent.change(screen.getByLabelText('Destination'), { target: { value: 'work' } })
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Apply changes' }).hasAttribute('disabled')).toBe(false))
+  fireEvent.click(screen.getByRole('button', { name: 'Apply changes' }))
+  await waitFor(() => expect(api.forumAction).toHaveBeenCalledWith('forum', 'portfolio', 'move', { destination_category_id: 'work' }))
+  expect(api.forumCategories).toHaveBeenCalledWith(expect.not.objectContaining({ namespace: expect.anything() }), expect.any(AbortSignal))
 })

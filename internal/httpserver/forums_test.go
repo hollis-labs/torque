@@ -78,6 +78,10 @@ func TestForumsHTTPContractAndIdentityBoundary(t *testing.T) {
 	for _, input := range []struct{ path, body string }{{"/forums", `{"id":"pilot","namespace":"app/torque/forum/pilot","title":"Pilot"}`}, {"/forums/portfolio/topics", `{"title":"Topic"}`}, {"/forums/topics/t1/posts", `{"body_md":"Reply","parent_post_id":"p0"}`}} {
 		require.Equal(t, 201, call("POST", input.path, input.body).Code)
 	}
+	for _, path := range []string{"/forums", "/forums/categories"} {
+		require.Equal(t, 201, call("POST", path, `{"id":"implicit","title":"Implicit root"}`).Code)
+		require.JSONEq(t, `{"id":"implicit","title":"Implicit root","namespace":"app/torque/forum/torque"}`, string(gotBody))
+	}
 	before := calls
 	for _, body := range []string{`{"body_md":"x","author":"spoof"}`, `{"body_md":"x","session_id":"spoof"}`, `{"body_md":"x","provenance":{}}`, `{"body_md":"x"} {}`, `null`, `[]`} {
 		require.Equal(t, 400, call("POST", "/forums/topics/t1/posts", body).Code)
@@ -109,7 +113,16 @@ func TestForumsHTTPContractAndIdentityBoundary(t *testing.T) {
 			require.Less(t, out.Code, 300, out.Body.String())
 			require.Equal(t, tc.method, gotMethod)
 			require.Equal(t, tc.path, gotPath)
-			require.JSONEq(t, tc.body, string(gotBody))
+			expected := tc.body
+			if tc.method == "POST" && (tc.path == "/forums" || tc.path == "/forums/categories") {
+				var body map[string]any
+				require.NoError(t, json.Unmarshal([]byte(tc.body), &body))
+				body["namespace"] = service.TorqueForumNamespace
+				encoded, err := json.Marshal(body)
+				require.NoError(t, err)
+				expected = string(encoded)
+			}
+			require.JSONEq(t, expected, string(gotBody))
 		})
 	}
 	for _, path := range []string{"/forums/categories/planning", "/forums/work", "/forums/topics/t1", "/forums/posts/p1"} {
@@ -128,7 +141,11 @@ func TestForumsHTTPContractAndIdentityBoundary(t *testing.T) {
 	}
 	for _, path := range []string{"/forums", "/forums/categories", "/forums/work/topics"} {
 		require.Equal(t, 200, call("GET", path+"?namespace=app%2Ftorque%2Fforum%2Fgeneral&category_id=&archived=false&session_id=spoof", "").Code)
-		require.Equal(t, []string{"app/torque/forum/general"}, gotQuery["namespace"])
+		expectedNS := "app/torque/forum/general"
+		if path == "/forums" || path == "/forums/categories" {
+			expectedNS = service.TorqueForumNamespace
+		}
+		require.Equal(t, []string{expectedNS}, gotQuery["namespace"])
 		require.Equal(t, []string{""}, gotQuery["category_id"])
 		require.Equal(t, []string{"false"}, gotQuery["archived"])
 	}

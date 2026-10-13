@@ -27,19 +27,16 @@ function suggestShortName(title: string) {
 
 export function ForumCreateDialog({
   disabled,
-  namespaces = [],
   categories = [],
   onCreated,
 }: {
   disabled?: boolean
-  namespaces?: string[]
   categories?: ForumCategory[]
   onCreated: (forum: Forum) => void
 }) {
   const api = useApi()
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState('')
-  const [namespace, setNamespace] = useState('')
   const [category, setCategory] = useState('')
   const [description, setDescription] = useState('')
   const [sort, setSort] = useState(0)
@@ -59,7 +56,6 @@ export function ForumCreateDialog({
     if (pending.current) return
     if (next) {
       setTitle('')
-      setNamespace(namespaces.length === 1 ? namespaces[0] : 'app/torque/forum/general')
       setCategory('')
       setDescription('')
       setSort(0)
@@ -76,22 +72,17 @@ export function ForumCreateDialog({
     setError('')
     try {
       if (!Number.isSafeInteger(sort)) throw new Error('Sort order must be a safe integer.')
-      const options =
-        namespace || category || description || sort
-          ? {
-              namespace: namespace || `app/torque/forum/${shortName}`,
-              category_id: category,
-              description,
-              sort_order: sort,
-            }
-          : undefined
-      const { forum } = options
-        ? await api.forumCreate(shortName, title.trim(), options)
-        : await api.forumCreate(shortName, title.trim())
+      const { forum } = await api.forumCreate(shortName, title.trim(), {
+        category_id: category,
+        description,
+        sort_order: sort,
+      })
       onCreated(forum)
       setOpen(false)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not create the forum. Please try again.')
+      setError(
+        err instanceof Error ? err.message : 'Could not create the forum. Please try again.',
+      )
     } finally {
       pending.current = false
       setSubmitting(false)
@@ -157,8 +148,8 @@ export function ForumCreateDialog({
                 }
               />
               <p id="forum-short-name-help" className="text-xs text-zinc-500">
-                Used in the forum’s address. Choose a unique name using letters, numbers, dashes or
-                underscores.
+                Used in the forum’s address. Choose a unique name using letters, numbers,
+                dashes or underscores.
               </p>
               {shortNameError && (
                 <p id="forum-short-name-error" className="text-xs text-red-300">
@@ -172,28 +163,6 @@ export function ForumCreateDialog({
               </summary>
               <div className="mt-3 space-y-3">
                 <label className="block text-xs">
-                  Namespace
-                  <Input
-                    aria-label="Board namespace"
-                    list="forum-namespaces"
-                    placeholder={`app/torque/forum/${shortName || 'general'}`}
-                    value={namespace}
-                    onChange={(e) => {
-                      setNamespace(e.target.value)
-                      setCategory('')
-                    }}
-                    disabled={submitting}
-                  />
-                </label>
-                <datalist id="forum-namespaces">
-                  {namespaces.map((ns) => (
-                    <option key={ns} value={ns} />
-                  ))}
-                </datalist>
-                <p className="text-xs text-zinc-500">
-                  Use the same namespace for boards you want to group or move discussions between.
-                </p>
-                <label className="block text-xs">
                   Category
                   <select
                     aria-label="Board category"
@@ -202,13 +171,9 @@ export function ForumCreateDialog({
                     onChange={(e) => setCategory(e.target.value)}
                     disabled={submitting}
                   >
-                    <option value="">Namespace root</option>
+                    <option value="">No category</option>
                     {categories
-                      .filter(
-                        (c) =>
-                          !c.archived &&
-                          c.namespace === (namespace || `app/torque/forum/${shortName}`),
-                      )
+                      .filter((c) => !c.archived)
                       .map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.title}
