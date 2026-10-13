@@ -13,7 +13,7 @@ import {
   Textarea,
 } from '@hollis-labs/sysop-ui'
 import { useApi } from '@/hooks/use-api'
-import { allForumPages, forumOrder } from '@/lib/forums'
+import { allForumPages, forumOrder, suggestForumShortName } from '@/lib/forums'
 import type { Forum, ForumCategory, ForumActivity } from '@/lib/forums'
 import { ForumCreateDialog } from './forum-create-dialog'
 import { ForumManagement, forumFieldClass } from './forum-management'
@@ -243,12 +243,14 @@ export function ForumDirectory() {
 function CategoryCreate({ onCreated }: { onCreated: () => void }) {
   const api = useApi()
   const [open, setOpen] = useState(false)
-  const [id, setID] = useState('')
+  const [customID, setCustomID] = useState<string | null>(null)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [sort, setSort] = useState(0)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const id = customID ?? suggestForumShortName(title)
+  const valid = !!title.trim() && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(id)
   return (
     <>
       <Button
@@ -257,7 +259,7 @@ function CategoryCreate({ onCreated }: { onCreated: () => void }) {
         onClick={() => {
           setOpen(true)
           setTitle('')
-          setID('')
+          setCustomID(null)
           setDescription('')
           setSort(0)
           setError('')
@@ -280,7 +282,7 @@ function CategoryCreate({ onCreated }: { onCreated: () => void }) {
             className="space-y-3"
             onSubmit={async (e) => {
               e.preventDefault()
-              if (busy) return
+              if (busy || !valid) return
               setBusy(true)
               setError('')
               try {
@@ -319,10 +321,15 @@ function CategoryCreate({ onCreated }: { onCreated: () => void }) {
                   className={forumFieldClass}
                   required
                   pattern="[a-zA-Z0-9][a-zA-Z0-9_\-]{0,127}"
+                  maxLength={128}
                   value={id}
-                  onChange={(e) => setID(e.target.value)}
+                  onChange={(e) => setCustomID(e.target.value)}
+                  aria-describedby="category-id-help"
                 />
               </label>
+              <p id="category-id-help" className="text-xs text-zinc-500">
+                Generated from the category name. You can change it if needed.
+              </p>
               <label className="block text-xs">
                 Description
                 <Textarea
@@ -352,7 +359,7 @@ function CategoryCreate({ onCreated }: { onCreated: () => void }) {
                 {error}
               </p>
             )}
-            <Button disabled={busy || !title.trim()} type="submit">
+            <Button disabled={busy || !valid} type="submit">
               {busy ? 'Creating…' : 'Create category'}
             </Button>
           </form>

@@ -13,17 +13,8 @@ import {
   Label,
 } from '@hollis-labs/sysop-ui'
 import { useApi } from '@/hooks/use-api'
+import { suggestForumShortName } from '@/lib/forums'
 import type { Forum, ForumCategory } from '@/lib/forums'
-
-function suggestShortName(title: string) {
-  return title
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 128)
-}
 
 export function ForumCreateDialog({
   disabled,
@@ -44,7 +35,7 @@ export function ForumCreateDialog({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const pending = useRef(false)
-  const shortName = customShortName ?? suggestShortName(title)
+  const shortName = customShortName ?? suggestForumShortName(title)
   const shortNameError = ['categories', 'topics', 'posts'].includes(shortName)
     ? 'This short name is reserved. Please choose another.'
     : shortName && !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(shortName)
