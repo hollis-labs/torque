@@ -683,6 +683,9 @@ export class TorqueApiClient {
   forumsList(opts?: ForumOptions, signal?: AbortSignal): Promise<ForumPage<Forum>> {
     return this.get('/forums', opts, signal)
   }
+  forumCreate(id: string, title: string): Promise<{ forum: Forum }> {
+    return this.post('/forums', { id, title, namespace: `app/torque/forum/${id}` })
+  }
   forumGet(id: string, signal?: AbortSignal): Promise<{ forum: Forum }> {
     return this.get(`/forums/${encodeURIComponent(id)}`, undefined, signal)
   }

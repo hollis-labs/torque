@@ -8,6 +8,7 @@ const { api } = vi.hoisted(() => ({
   api: {
     getFeatureFlags: vi.fn(),
     forumsList: vi.fn(),
+    forumCreate: vi.fn(),
     forumGet: vi.fn(),
     forumTopics: vi.fn(),
     forumSearch: vi.fn(),
@@ -66,15 +67,80 @@ beforeEach(() => {
   api.forumGet.mockResolvedValue({ forum: { id: 'portfolio', title: 'Portfolio' } })
   api.forumTopics.mockResolvedValue({ items: [topic], has_more: false })
   api.forumSearch.mockResolvedValue({ items: [post], has_more: false })
-  api.forumTopic.mockResolvedValue({ topic, outline: { items: [post], last_seq: 3, has_more: false } })
+  api.forumTopic.mockResolvedValue({
+    topic,
+    outline: { items: [post], last_seq: 3, has_more: false },
+  })
   api.forumPosts.mockResolvedValue({ items: [], has_more: false })
-  api.forumPost.mockResolvedValue({ post: { ...post, body_md: '**Expanded Markdown**', truncated: false } })
+  api.forumPost.mockResolvedValue({
+    post: { ...post, body_md: '**Expanded Markdown**', truncated: false },
+  })
   api.forumCreateTopic.mockResolvedValue({ topic })
-  api.forumCreatePost.mockResolvedValue({ post: { ...post, id: 'p2', seq: 4, snippet: 'My reply' } })
+  api.forumCreatePost.mockResolvedValue({
+    post: { ...post, id: 'p2', seq: 4, snippet: 'My reply' },
+  })
 })
 afterEach(() => {
   cleanup()
   vi.useRealTimers()
+})
+it('creates a forum from the home modal and preserves the existing directory', async () => {
+  const forum = {
+    id: 'design-review',
+    title: 'Design Review',
+    namespace: 'app/torque/forum/design-review',
+  }
+  api.forumCreate.mockResolvedValue({ forum })
+  renderAt()
+  await screen.findByText('Portfolio')
+  fireEvent.click(screen.getByRole('button', { name: 'New Forum' }))
+  await screen.findByRole('dialog', { name: 'New Forum' })
+  expect(screen.getByRole('button', { name: 'Create forum' }).hasAttribute('disabled')).toBe(true)
+  fireEvent.change(screen.getByLabelText('Forum name'), { target: { value: '  Design Review  ' } })
+  expect((screen.getByLabelText('Short name') as HTMLInputElement).value).toBe('design-review')
+  fireEvent.click(screen.getByRole('button', { name: 'Create forum' }))
+  await screen.findByRole('heading', { name: 'Design Review' })
+  expect(api.forumCreate).toHaveBeenCalledWith('design-review', 'Design Review')
+  expect(screen.getByRole('heading', { name: 'Portfolio' })).toBeTruthy()
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+})
+it('validates short names and keeps a failed creation open for correction and retry', async () => {
+  api.forumCreate
+    .mockRejectedValueOnce(new ApiError(409, 'Forum already exists.'))
+    .mockResolvedValueOnce({
+      forum: { id: 'design-team', title: 'Design', namespace: 'app/torque/forum/design-team' },
+    })
+  renderAt()
+  await screen.findByText('Portfolio')
+  fireEvent.click(screen.getByRole('button', { name: 'New Forum' }))
+  fireEvent.change(screen.getByLabelText('Forum name'), { target: { value: 'Design' } })
+  fireEvent.change(screen.getByLabelText('Short name'), { target: { value: 'invalid/name' } })
+  expect(screen.getByRole('button', { name: 'Create forum' }).hasAttribute('disabled')).toBe(true)
+  fireEvent.change(screen.getByLabelText('Short name'), { target: { value: 'topics' } })
+  expect(screen.getByText('This short name is reserved. Please choose another.')).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Create forum' }).hasAttribute('disabled')).toBe(true)
+  fireEvent.change(screen.getByLabelText('Short name'), { target: { value: '_design' } })
+  expect(screen.getByRole('button', { name: 'Create forum' }).hasAttribute('disabled')).toBe(true)
+  fireEvent.change(screen.getByLabelText('Short name'), { target: { value: 'design' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Create forum' }))
+  expect((await screen.findByRole('alert')).textContent).toBe('Forum already exists.')
+  expect((screen.getByLabelText('Forum name') as HTMLInputElement).value).toBe('Design')
+  fireEvent.change(screen.getByLabelText('Short name'), { target: { value: 'design-team' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Create forum' }))
+  await screen.findByRole('heading', { name: 'Design' })
+  expect(api.forumCreate).toHaveBeenLastCalledWith('design-team', 'Design')
+})
+it('cancels without creating a forum and resets the modal when reopened', async () => {
+  renderAt()
+  await screen.findByText('Portfolio')
+  fireEvent.click(screen.getByRole('button', { name: 'New Forum' }))
+  fireEvent.change(screen.getByLabelText('Forum name'), { target: { value: 'Discard this' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  expect(api.forumCreate).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'New Forum' }))
+  expect((screen.getByLabelText('Forum name') as HTMLInputElement).value).toBe('')
+  expect((screen.getByLabelText('Short name') as HTMLInputElement).value).toBe('')
 })
 it('gates the feature without contacting Tether and shows a degraded retry state', async () => {
   api.getFeatureFlags.mockResolvedValueOnce({ forums: false })
@@ -91,7 +157,10 @@ it('gates the feature without contacting Tether and shows a degraded retry state
 it('browses topics and preserves filters on pagination and search', async () => {
   api.forumTopics
     .mockResolvedValueOnce({ items: [topic], has_more: true, next_cursor: 'topic-page2' })
-    .mockResolvedValueOnce({ items: [{ ...topic, id: 't2', title: 'Second topic' }], has_more: false })
+    .mockResolvedValueOnce({
+      items: [{ ...topic, id: 't2', title: 'Second topic' }],
+      has_more: false,
+    })
   renderAt()
   fireEvent.click(await screen.findByText('Portfolio'))
   await screen.findByText('Pilot topic')
@@ -102,7 +171,9 @@ it('browses topics and preserves filters on pagination and search', async () => 
     { limit: 20, cursor: 'topic-page2' },
     undefined,
   )
+  fireEvent.click(screen.getByText('Filters'))
   fireEvent.change(screen.getByLabelText('Author kind filter'), { target: { value: 'agent' } })
+  fireEvent.click(screen.getByText('Apply filters'))
   await waitFor(() =>
     expect(api.forumTopics).toHaveBeenLastCalledWith(
       'portfolio',
@@ -123,6 +194,7 @@ it('browses topics and preserves filters on pagination and search', async () => 
 it('creates topics and expands individual Markdown bodies on demand', async () => {
   renderAt('/forums/portfolio')
   await screen.findByText('Pilot topic')
+  fireEvent.click(screen.getByRole('button', { name: 'New topic' }))
   fireEvent.change(screen.getByLabelText('New topic title'), { target: { value: 'New topic' } })
   fireEvent.click(screen.getByText('Create topic'))
   await screen.findByText('Compact preview')
@@ -143,7 +215,9 @@ it('posts replies with parent id and top-level posts without attribution fields'
   expect(api.forumCreatePost).toHaveBeenCalledWith('t1', 'My reply', 'p1')
   fireEvent.change(screen.getByLabelText('Post Markdown'), { target: { value: 'Top level' } })
   fireEvent.click(screen.getByRole('button', { name: /^Post$/ }))
-  await waitFor(() => expect(api.forumCreatePost).toHaveBeenLastCalledWith('t1', 'Top level', undefined))
+  await waitFor(() =>
+    expect(api.forumCreatePost).toHaveBeenLastCalledWith('t1', 'Top level', undefined),
+  )
 })
 it('drains the outline then polls using delivered sequence instead of topic last_seq', async () => {
   api.forumTopic.mockResolvedValueOnce({
