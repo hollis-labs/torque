@@ -1,3 +1,13 @@
+export function suggestForumShortName(title: string) {
+  return title
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 128)
+}
+
 export interface ForumActivity {
   post_count: number
   last_post: {
