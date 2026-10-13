@@ -19,7 +19,7 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
-import { Skeleton, Button, Input, Textarea, PageHeader, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '@hollis-labs/sysop-ui'
+import { Skeleton, Button, Input, Textarea, PageHeader, Tabs, TabsList, TabsTrigger, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '@hollis-labs/sysop-ui'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,6 +30,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@hollis-labs/sysop-ui'
+import { FilterSelect } from '@/components/domain/filter-select'
 import { CollectionCreateDialog } from '@/components/domain/collection-create-dialog'
 import { CollectionTaskRow } from '@/components/domain/collection-task-row'
 import { useApi } from '@/hooks/use-api'
@@ -79,9 +80,9 @@ function parseContainerID(id: string): { kind: 'container'; collectionId: string
 
 function PageSkeleton() {
   return (
-    <div className="flex flex-col gap-4 p-6">
-      <Skeleton className="h-32 w-full rounded-2xl" />
-      <Skeleton className="h-32 w-full rounded-2xl" />
+    <div className="flex flex-col divide-y divide-zinc-800/80">
+      <Skeleton className="h-24 w-full rounded-none" />
+      <Skeleton className="h-24 w-full rounded-none" />
     </div>
   )
 }
@@ -143,7 +144,7 @@ function CollectionHeader({ collection, taskCount, onUpdate, onArchive, onUnarch
   }
 
   return (
-    <div className="flex items-start justify-between gap-3 px-4 pt-4 pb-2">
+    <div className="flex items-start justify-between gap-3 border-b border-zinc-800/80 bg-zinc-900/20 px-4 py-3">
       <div className="min-w-0 flex-1">
         {editingName ? (
           <Input
@@ -162,13 +163,13 @@ function CollectionHeader({ collection, taskCount, onUpdate, onArchive, onUnarch
                 setEditingName(false)
               }
             }}
-            className="h-8 text-base font-semibold"
+            className="h-8 text-[13px] font-semibold"
           />
         ) : (
           <button
             type="button"
             onClick={startEditingName}
-            className="text-left text-base font-semibold text-zinc-100 hover:text-zinc-50"
+            className="max-w-full [overflow-wrap:anywhere] text-left text-[13px] font-semibold text-zinc-100 hover:text-zinc-50"
             title="Click to rename"
           >
             {collection.name}
@@ -203,7 +204,7 @@ function CollectionHeader({ collection, taskCount, onUpdate, onArchive, onUnarch
           <button
             type="button"
             onClick={startEditingDesc}
-            className="mt-1 block text-left text-[12px] text-zinc-400 hover:text-zinc-300"
+            className="mt-1 block max-w-full whitespace-pre-wrap [overflow-wrap:anywhere] text-left text-[13px] text-zinc-400 hover:text-zinc-300"
             title="Click to edit description"
           >
             {collection.description || (
@@ -238,7 +239,7 @@ interface CollectionTaskTableProps {
 
 /**
  * Renders one container's rows inside a SortableContext. The whole
- * container (rounded box) is registered as a droppable too — this is
+ * container is registered as a droppable too — this is
  * what makes empty containers accept drops, and what gives a "drop at
  * end" target when the user releases over blank space inside a
  * non-empty container.
@@ -252,7 +253,7 @@ function CollectionTaskTable({ collectionKey, tasks, emptyHint, rowControls }: C
   return (
     <div
       ref={setNodeRef}
-      className={`mx-4 mb-4 rounded-md border ${isOver ? 'border-zinc-500 bg-zinc-900/30' : 'border-zinc-800/80 bg-zinc-950'}`}
+      className={`min-w-0 border-b border-zinc-800/80 ${isOver ? 'bg-zinc-800/50' : ''}`}
       data-container-id={containerId}
     >
       <SortableContext items={tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
@@ -261,7 +262,7 @@ function CollectionTaskTable({ collectionKey, tasks, emptyHint, rowControls }: C
             {emptyHint}
           </div>
         ) : (
-          <table className="min-w-full">
+          <table className="w-full table-fixed">
             <tbody className="divide-y divide-zinc-800/60">
               {tasks.map((task) => (
                 <CollectionTaskRow key={task.id} task={task} {...rowControls(task, collectionKey)} />
@@ -673,7 +674,7 @@ export default function CollectionsPage() {
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
-      <div className="flex h-full min-h-0 flex-col">
+      <div className="flex h-full min-h-0 min-w-0 flex-col">
         <PageHeader title="Collections">
           <Button size="sm" onClick={() => setCreateOpen(true)}>
             <Plus className="mr-1 h-3.5 w-3.5" />
@@ -682,18 +683,19 @@ export default function CollectionsPage() {
         </PageHeader>
 
         <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3">
-          <Input aria-label="Search collections" placeholder="Search collections…" value={collectionSearch} onChange={event => { setCollectionSearch(event.target.value); setSelected({}) }} className="max-w-56" />
-          <select aria-label="Collection archive filter" className="rounded border border-border bg-background p-2 text-xs" value={collectionStatus} onChange={event => { setCollectionStatus(event.target.value as typeof collectionStatus); setSelected({}) }}>{['active', 'archived', 'all'].map(status => <option key={status} value={status}>{status} collections</option>)}</select>
-          <Input aria-label="Search collection tasks" placeholder="Search tasks in each collection…" value={taskSearch} onChange={event => { setTaskSearch(event.target.value); setSelected({}) }} className="max-w-64" />
-          <select aria-label="Sort collection tasks" className="rounded border border-border bg-background p-2 text-xs" value={taskSort} onChange={event => { setTaskSort(event.target.value); setSelected({}) }}>{['position', 'priority', 'status', 'updated_at', 'created_at'].map(sort => <option key={sort} value={sort}>{sort}</option>)}</select>
+          <Input aria-label="Search collections" placeholder="Search collections…" value={collectionSearch} onChange={event => { setCollectionSearch(event.target.value); setSelected({}) }} className="h-8 w-full sm:w-56" />
+          <FilterSelect aria-label="Collection archive filter" value={collectionStatus} onChange={event => { setCollectionStatus(event.target.value as typeof collectionStatus); setSelected({}) }}>{['active', 'archived', 'all'].map(status => <option key={status} value={status}>{status} collections</option>)}</FilterSelect>
+          <Input aria-label="Search collection tasks" placeholder="Search tasks in each collection…" value={taskSearch} onChange={event => { setTaskSearch(event.target.value); setSelected({}) }} className="h-8 w-full sm:w-64" />
+          <FilterSelect aria-label="Sort collection tasks" value={taskSort} onChange={event => { setTaskSort(event.target.value); setSelected({}) }}>{['position', 'priority', 'status', 'updated_at', 'created_at'].map(sort => <option key={sort} value={sort}>{sort}</option>)}</FilterSelect>
           <Button size="sm" variant="outline" onClick={() => { setTaskDir(previous => previous === 'asc' ? 'desc' : 'asc'); setSelected({}) }}>{taskDir === 'asc' ? 'Ascending' : 'Descending'}</Button>
           <Button size="sm" variant="ghost" onClick={() => { setTaskSearch(''); setTaskStatus(undefined); setTaskSort('position'); setTaskDir('asc'); setSelected({}) }}>Reset task filters</Button>
         </div>
-        <div className="flex flex-wrap items-center gap-1 px-4 py-2" aria-label="Task status filters">
-          <Button size="sm" variant={!taskStatus ? 'default' : 'outline'} aria-pressed={!taskStatus} onClick={() => { setTaskStatus(undefined); setSelected({}) }}>All statuses</Button>
-          {TASK_STATUSES.map(status => <Button key={status} size="sm" variant={taskStatus === status ? 'default' : 'outline'} aria-pressed={taskStatus === status} onClick={() => { setTaskStatus(status); setSelected({}) }}>{STATUS_LABEL[status]}</Button>)}
-        </div>
-        <p className="px-4 text-xs text-muted-foreground">Search, status and order apply on the server to each task cohort. Selection covers only checked loaded rows. Drag ordering is available with unfiltered position order and a fully loaded destination.</p>
+        <Tabs value={taskStatus ?? 'all'} onValueChange={value => { setTaskStatus(value === 'all' ? undefined : value as TaskStatus); setSelected({}) }} className="min-w-0 border-b border-zinc-800/80 px-4 py-3">
+          <TabsList aria-label="Task status filters" className="h-auto max-w-full flex-wrap justify-start">
+            <TabsTrigger value="all">All statuses</TabsTrigger>
+            {TASK_STATUSES.map(status => <TabsTrigger key={status} value={status}>{STATUS_LABEL[status]}</TabsTrigger>)}
+          </TabsList>
+        </Tabs>
         {selectedIds.length > 0 && <div className="flex flex-wrap items-center gap-2 px-4 py-2">
           <span>{selectedIds.length} selected</span>
           <DropdownMenu><DropdownMenuTrigger render={<Button size="sm" variant="outline" />} disabled={actionBusy || stale}>Change selected status</DropdownMenuTrigger><DropdownMenuContent>{TASK_STATUSES.map(status => <DropdownMenuItem key={status} onClick={() => void applyAction('Change selected status', selectedIds, async id => { await api.transitionTask(id, status) })}>{STATUS_LABEL[status]}</DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu>
@@ -701,7 +703,7 @@ export default function CollectionsPage() {
           <Button size="sm" variant="outline" disabled={actionBusy || stale || !selectedMembers.length} onClick={() => setRemoveTarget({ name: 'their collections', rows: selectedMembers })}>Remove {selectedMembers.length} collection assignments</Button>
           <Button size="sm" variant="ghost" disabled={actionBusy} onClick={() => setSelected({})}>Clear selection</Button>
         </div>}
-        {actionResult && <div role={actionResult.failed.length ? 'alert' : 'status'} className="mx-4 my-2 rounded border border-border p-3 text-xs">
+        {actionResult && <div role={actionResult.failed.length ? 'alert' : 'status'} className="border-b border-zinc-800/80 px-4 py-3 text-xs [overflow-wrap:anywhere]">
           {actionResult.label}: {actionResult.succeeded.length} {actionResult.label.startsWith('Remove') ? 'removed' : 'succeeded'}, {actionResult.failed.length} failed, {actionResult.notStarted.length} not attempted.
           {actionResult.failed.map(failure => <p key={failure.id}>{failure.id}: {failure.message}</p>)}
           {!!actionResult.notStarted.length && <p>Not attempted: {actionResult.notStarted.join(', ')}</p>}
@@ -711,15 +713,15 @@ export default function CollectionsPage() {
         {loading && collections.length === 0 ? (
           <PageSkeleton />
         ) : error ? (
-          <div className="m-6 rounded-md border border-rose-900/60 bg-rose-950/30 p-4 text-[13px] text-rose-300">
+          <div className="border-b border-rose-900/60 bg-rose-950/30 p-4 text-[13px] text-rose-300">
             {error.message}
           </div>
         ) : (
           <div className="flex-1 overflow-auto">
-            <section className="pb-2 pt-4">
-              <div className="flex items-baseline justify-between gap-3 px-4 pb-2">
+            <section className="border-t border-zinc-800/80">
+              <div className="flex items-baseline justify-between gap-3 border-b border-zinc-800/80 bg-zinc-900/20 px-4 py-3">
                 <div>
-                  <h2 className="text-base font-semibold text-zinc-100">Inbox</h2>
+                  <h2 className="text-[13px] font-semibold text-zinc-100">Inbox</h2>
                   <p className="text-[12px] text-zinc-500">tasks awaiting organization</p>
                 </div>
                 <span className="text-[11px] text-zinc-500">
@@ -762,7 +764,7 @@ export default function CollectionsPage() {
             ))}
 
             {sortedCollections.length === 0 && (
-              <div className="mx-4 my-6 rounded-md border border-dashed border-zinc-800 px-6 py-10 text-center text-[13px] text-zinc-500">
+              <div className="border-t border-zinc-800/80 px-4 py-10 text-center text-[13px] text-zinc-500">
                 No collections match this search and archive filter. Change the filters or create a collection.
               </div>
             )}
@@ -809,7 +811,7 @@ export default function CollectionsPage() {
           overlay is blank. */}
       <DragOverlay>
         {activeDragTask ? (
-          <table className="min-w-full">
+          <table className="w-full table-fixed">
             <tbody>
               <CollectionTaskRow task={activeDragTask} asOverlay />
             </tbody>

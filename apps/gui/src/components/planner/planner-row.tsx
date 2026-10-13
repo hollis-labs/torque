@@ -35,16 +35,16 @@ export function PlannerRow({ db, item, sortable, onOpen }: PlannerRowProps) {
         <GripVertical className="h-4 w-4" />
       </button>
       <button type="button" className="flex min-w-0 flex-1 flex-col gap-1 text-left" onClick={onOpen} aria-label={`Open ${item.id}: ${item.title}`}>
-        <span className="flex flex-wrap items-center gap-2">
-          <span className="font-mono text-xs text-muted-foreground">{item.id}</span>
-          <span className="font-medium">{item.title}</span>
+        <span className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
+          <span className="[overflow-wrap:anywhere] font-mono text-xs text-muted-foreground">{item.id}</span>
+          <span className="min-w-0 [overflow-wrap:anywhere] text-[13px] font-medium">{item.title}</span>
           {facts.map((f) => (
-            <span key={f} className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+            <span key={f} className="max-w-full [overflow-wrap:anywhere] rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
               {f}
             </span>
           ))}
         </span>
-        {item.tldr && <span className="line-clamp-2 text-sm text-muted-foreground">{item.tldr}</span>}
+        {item.tldr && <span className="line-clamp-2 [overflow-wrap:anywhere] text-[13px] text-muted-foreground">{item.tldr}</span>}
       </button>
       <span className="flex shrink-0 items-center gap-3">
         {comments > 0 && (

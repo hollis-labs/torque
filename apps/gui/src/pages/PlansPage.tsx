@@ -17,9 +17,9 @@ interface PlanRow {
 
 function PlansSkeleton() {
   return (
-    <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="divide-y divide-zinc-800/80 border-y border-zinc-800/80">
       {Array.from({ length: 6 }).map((_, i) => (
-        <Skeleton key={i} className="h-28 w-full rounded-md" />
+        <Skeleton key={i} className="h-20 w-full rounded-none" />
       ))}
     </div>
   )
@@ -50,7 +50,7 @@ export default function PlansPage() {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-w-0 flex-col">
       <PageHeader title="Plans">
         <Button size="sm" onClick={() => setDialogOpen(true)} className="gap-1">
           <Plus className="h-3.5 w-3.5" />
@@ -68,11 +68,11 @@ export default function PlansPage() {
           <EmptyState
             variant="empty"
             title="No plans yet"
-            description="Plans group phase-scoped execution children. Click New plan to create one."
+            description="Group tasks into phases and track their progress."
             action={{ label: 'New plan', onClick: () => setDialogOpen(true) }}
           />
         ) : (
-          <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="divide-y divide-zinc-800/80 border-y border-zinc-800/80">
             {rows.map((row) => (
               <PlanCard key={row.task.id} row={row} onClick={() => navigate(`/plans/${row.task.id}`)} />
             ))}
@@ -88,14 +88,12 @@ export default function PlansPage() {
 function PlanCard({ row, onClick }: { row: PlanRow; onClick: () => void }) {
   const pct = row.totalChildren === 0 ? 0 : Math.round((row.done / row.totalChildren) * 100)
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="group flex flex-col gap-3 rounded-md border border-zinc-800 bg-zinc-900/40 p-3 text-left transition-colors hover:border-zinc-700 hover:bg-zinc-900"
+    <div
+      className="group flex w-full min-w-0 flex-col gap-3 px-4 py-3 text-left transition-colors hover:bg-zinc-900/35 sm:flex-row sm:items-center sm:justify-between"
     >
-      <div className="flex items-start justify-between gap-2">
+      <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-zinc-100">{row.task.title}</div>
+          <button type="button" onClick={onClick} className="text-left [overflow-wrap:anywhere] text-[13px] font-medium text-zinc-100 hover:underline">{row.task.title}</button>
           <div className="mt-0.5">
             <CopyableId id={row.task.id} />
           </div>
@@ -105,7 +103,7 @@ function PlanCard({ row, onClick }: { row: PlanRow; onClick: () => void }) {
         </span>
       </div>
 
-      <div className="flex items-center gap-2 text-[11px] text-zinc-400">
+      <div className="flex w-full shrink-0 items-center gap-2 text-xs sm:ml-6 sm:w-52 text-zinc-400">
         <span>
           {row.done}/{row.totalChildren} done
         </span>
@@ -118,6 +116,6 @@ function PlanCard({ row, onClick }: { row: PlanRow; onClick: () => void }) {
         </div>
         <span className="w-8 text-right font-mono text-[10px] text-zinc-500">{pct}%</span>
       </div>
-    </button>
+    </div>
   )
 }

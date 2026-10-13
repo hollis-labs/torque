@@ -1024,7 +1024,9 @@ export class TorqueApiClient {
   }
 
   async getPlan(id: string): Promise<PlanDetail> {
-    return this.get<PlanDetail>(`/plans/${id}`)
+    const detail = await this.get<PlanDetail>(`/plans/${id}`)
+    // Older and phase-less plans serialize the Go slice as null.
+    return { ...detail, plan: { ...detail.plan, phases: detail.plan.phases ?? [] } }
   }
 
   async createPlan(data: {
@@ -1037,7 +1039,8 @@ export class TorqueApiClient {
     phases?: PlanPhaseInput[]
     tags?: string[]
   }): Promise<PlanDetail> {
-    return this.post<PlanDetail>('/plans', data)
+    const detail = await this.post<PlanDetail>('/plans', data)
+    return { ...detail, plan: { ...detail.plan, phases: detail.plan.phases ?? [] } }
   }
 
   async addPlanPhase(planId: string, data: { name: string; acceptance?: string }): Promise<{ phase_id: string }> {

@@ -700,3 +700,26 @@ describe('TorqueApiClient planner', () => {
     expect(err.details).toBeUndefined()
   })
 })
+
+describe('plan phase normalization', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it.each([null, undefined, []])('opens an existing plan with phases=%s', async phases => {
+    const wire = { task: { id: 'PLAN-1' }, plan: { version: 1, phases }, progress: { total_children: 0, done: 0, blocked: 0, by_phase: {} } }
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(wire))
+    const detail = await new TorqueApiClient('/api/v1').getPlan('PLAN-1')
+    expect(detail.plan.phases).toEqual([])
+    expect(detail.task).toEqual(wire.task)
+    expect(detail.progress).toEqual(wire.progress)
+  })
+
+  it('preserves existing phases and normalizes a newly created phase-less plan', async () => {
+    const phase = { id: 'ph-1', name: 'Build', order: 1 }
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ plan: { version: 1, phases: [phase] } }))
+      .mockResolvedValueOnce(jsonResponse({ plan: { version: 1, phases: null } }))
+    const client = new TorqueApiClient('/api/v1')
+    expect((await client.getPlan('PLAN-1')).plan.phases).toEqual([phase])
+    expect((await client.createPlan({ title: 'New plan' })).plan.phases).toEqual([])
+  })
+})
