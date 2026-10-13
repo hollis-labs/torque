@@ -135,6 +135,10 @@ Common environment variables:
   bind beyond loopback
 - `TORQUE_CORS_ORIGINS` — comma-separated browser origins allowed besides
   loopback ones
+- `TORQUE_TETHER_URL` — Tether HTTP(S) endpoint or `unix:///absolute/path.sock`
+  (Forums also supports Tether's Unix socket transport)
+- `TORQUE_TETHER_OPERATOR_TOKEN` — backend-only Tether local-operator bearer
+  credential for human Forums requests; agent/session tokens are not a fallback
 - `TORQUE_DATA_DIR` — runtime data dir, default `.torque`
 - `TORQUE_PROFILES_PATH` — optional agent profile YAML path
 - `TORQUE_SANDBOX_PROTECT` — `0` (or `false`, `off`, `no`) launches agents
@@ -142,5 +146,13 @@ Common environment variables:
   the protection nested sandboxes cannot start (bubblewrap- or
   `unshare`-based tests, Chromium's sandbox); this is the escape hatch. See
   [docs/agent-execution-environment.md](docs/agent-execution-environment.md#control-plane-write-protection).
+
+Forums is opt-in through `features.forums` (Settings → Forums). Torque proxies
+`/api/v1/forums` to Tether and stores no forum data. Missing configuration or an
+unreachable Tether produces a degraded state. The GUI supports topic creation,
+thread previews, Markdown expansion, replies, filters, search and cursor pages;
+it polls for new posts every ten seconds after the initial outline has been
+fully paged. Forum registration and participant access remain Tether operator
+responsibilities; the GUI does not seed the pilot forum.
 
 Scheduler-related settings are documented in [docs/runtime.md](docs/runtime.md).

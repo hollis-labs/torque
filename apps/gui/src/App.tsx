@@ -27,11 +27,13 @@ import ModelsPage from '@/pages/ModelsPage'
 import CollectionsPage from '@/pages/CollectionsPage'
 import MessagingPage from '@/pages/MessagingPage'
 import PlannerPage from '@/pages/PlannerPage'
+import ForumsPage from '@/pages/ForumsPage'
 import SuggestionsPage from '@/pages/SuggestionsPage'
 
 const NAV_DESTINATIONS = [
   { key: 'operations', to: '/operations', label: 'Operations', icon: <LayoutList className="h-4 w-4" /> },
   { key: 'collections', to: '/collections', label: 'Collections', icon: <FolderKanban className="h-4 w-4" /> },
+  { key: 'forums', to: '/forums', label: 'Forums', icon: <MessagesSquare className="h-4 w-4" /> },
   { key: 'planner', to: '/planner', label: 'Planner', icon: <Compass className="h-4 w-4" /> },
   { key: 'suggestions', to: '/suggestions', label: 'Suggestions', icon: <Tags className="h-4 w-4" /> },
   { key: 'plans', to: '/plans', label: 'Plans', icon: <FolderTree className="h-4 w-4" /> },
@@ -70,6 +72,9 @@ function AppShell() {
           <Route path="/" element={<Navigate to="/operations" replace />} />
           <Route path="/operations" element={<BoardPage />} />
           <Route path="/collections" element={<CollectionsPage />} />
+          <Route path="/forums" element={<ForumsPage />} />
+          <Route path="/forums/:forumId" element={<ForumsPage />} />
+          <Route path="/forums/:forumId/topics/:topicId" element={<ForumsPage />} />
           <Route path="/planner" element={<PlannerPage />} />
           <Route path="/planner/:db" element={<PlannerPage />} />
           <Route path="/planner/:db/:id" element={<PlannerPage />} />

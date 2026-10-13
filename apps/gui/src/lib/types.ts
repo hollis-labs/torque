@@ -276,6 +276,7 @@ export interface FeatureFlags {
   epics: boolean
   /** The portfolio planner. Older servers do not report it. */
   planner?: boolean
+  forums?: boolean
 }
 
 export type ContainerStatus = 'active' | 'inactive' | 'completed'

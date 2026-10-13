@@ -95,6 +95,13 @@ export default function SettingsPage() {
                       onCheckedChange={(v) => handleToggle('sprints', v)}
                     />
                     <FlagRow
+                      label="Forums"
+                      description="Browse and reply to durable discussions in Tether."
+                      checked={!!flags.forums}
+                      disabled={saving === 'forums'}
+                      onCheckedChange={(v) => handleToggle('forums', v)}
+                    />
+                    <FlagRow
                       label="Planner"
                       description="The portfolio planner: priorities, workstreams, roadmap, ideas, decisions, risks and an inbox. The MCP tools appear after the MCP process restarts."
                       checked={!!flags.planner}

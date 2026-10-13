@@ -1,3 +1,4 @@
+import type { Forum, ForumTopic, ForumPost, ForumPage, ForumOptions } from './forums'
 import type {
   Task,
   ListPage,
@@ -678,6 +679,38 @@ export class TorqueApiClient {
   }
 
   // -------------------------
+  // Forums: browser calls only Torque; operator credentials stay in the backend.
+  forumsList(opts?: ForumOptions, signal?: AbortSignal): Promise<ForumPage<Forum>> {
+    return this.get('/forums', opts, signal)
+  }
+  forumCreate(id: string, title: string): Promise<{ forum: Forum }> {
+    return this.post('/forums', { id, title, namespace: `app/torque/forum/${id}` })
+  }
+  forumGet(id: string, signal?: AbortSignal): Promise<{ forum: Forum }> {
+    return this.get(`/forums/${encodeURIComponent(id)}`, undefined, signal)
+  }
+  forumTopics(id: string, opts?: ForumOptions, signal?: AbortSignal): Promise<ForumPage<ForumTopic>> {
+    return this.get(`/forums/${encodeURIComponent(id)}/topics`, opts, signal)
+  }
+  forumTopic(id: string, opts?: ForumOptions, signal?: AbortSignal): Promise<{ topic: ForumTopic; outline: ForumPage<ForumPost> }> {
+    return this.get(`/forums/topics/${encodeURIComponent(id)}`, opts, signal)
+  }
+  forumPosts(id: string, opts?: ForumOptions, signal?: AbortSignal): Promise<ForumPage<ForumPost>> {
+    return this.get(`/forums/topics/${encodeURIComponent(id)}/posts`, opts, signal)
+  }
+  forumPost(id: string, signal?: AbortSignal): Promise<{ post: ForumPost }> {
+    return this.get(`/forums/posts/${encodeURIComponent(id)}`, { detail: 'full', max_chars: 100000 }, signal)
+  }
+  forumSearch(id: string, query: string, opts?: ForumOptions, signal?: AbortSignal): Promise<ForumPage<ForumPost>> {
+    return this.get(`/forums/${encodeURIComponent(id)}/search`, { ...opts, query }, signal)
+  }
+  forumCreateTopic(id: string, title: string): Promise<{ topic: ForumTopic }> {
+    return this.post(`/forums/${encodeURIComponent(id)}/topics`, { title })
+  }
+  forumCreatePost(id: string, body_md: string, parent_post_id?: string): Promise<{ post: ForumPost }> {
+    return this.post(`/forums/topics/${encodeURIComponent(id)}/posts`, { body_md, ...(parent_post_id ? { parent_post_id } : {}) })
+  }
+
   // Planner (features.planner)
   // -------------------------
 
