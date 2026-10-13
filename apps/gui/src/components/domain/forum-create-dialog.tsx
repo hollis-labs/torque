@@ -13,7 +13,7 @@ import {
   Label,
 } from '@hollis-labs/sysop-ui'
 import { useApi } from '@/hooks/use-api'
-import type { Forum } from '@/lib/forums'
+import type { Forum, ForumCategory } from '@/lib/forums'
 
 function suggestShortName(title: string) {
   return title
@@ -27,31 +27,42 @@ function suggestShortName(title: string) {
 
 export function ForumCreateDialog({
   disabled,
+  namespaces = [],
+  categories = [],
   onCreated,
 }: {
   disabled?: boolean
+  namespaces?: string[]
+  categories?: ForumCategory[]
   onCreated: (forum: Forum) => void
 }) {
   const api = useApi()
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState('')
+  const [namespace, setNamespace] = useState('')
+  const [category, setCategory] = useState('')
+  const [description, setDescription] = useState('')
+  const [sort, setSort] = useState(0)
   const [customShortName, setCustomShortName] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const pending = useRef(false)
   const shortName = customShortName ?? suggestShortName(title)
-  const shortNameError =
-    shortName === 'topics' || shortName === 'posts'
-      ? 'This short name is reserved. Please choose another.'
-      : shortName && !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(shortName)
-        ? 'Start with a letter or number, and use only letters, numbers, dashes or underscores (up to 128 characters).'
-        : ''
+  const shortNameError = ['categories', 'topics', 'posts'].includes(shortName)
+    ? 'This short name is reserved. Please choose another.'
+    : shortName && !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(shortName)
+      ? 'Start with a letter or number, and use only letters, numbers, dashes or underscores (up to 128 characters).'
+      : ''
   const valid = !!title.trim() && !!shortName && !shortNameError
 
   function changeOpen(next: boolean) {
     if (pending.current) return
     if (next) {
       setTitle('')
+      setNamespace(namespaces.length === 1 ? namespaces[0] : 'app/torque/forum/general')
+      setCategory('')
+      setDescription('')
+      setSort(0)
       setCustomShortName(null)
       setError('')
     }
@@ -64,7 +75,19 @@ export function ForumCreateDialog({
     setSubmitting(true)
     setError('')
     try {
-      const { forum } = await api.forumCreate(shortName, title.trim())
+      if (!Number.isSafeInteger(sort)) throw new Error('Sort order must be a safe integer.')
+      const options =
+        namespace || category || description || sort
+          ? {
+              namespace: namespace || `app/torque/forum/${shortName}`,
+              category_id: category,
+              description,
+              sort_order: sort,
+            }
+          : undefined
+      const { forum } = options
+        ? await api.forumCreate(shortName, title.trim(), options)
+        : await api.forumCreate(shortName, title.trim())
       onCreated(forum)
       setOpen(false)
     } catch (err) {
@@ -143,6 +166,81 @@ export function ForumCreateDialog({
                 </p>
               )}
             </div>
+            <details open>
+              <summary className="cursor-pointer text-xs text-zinc-400">
+                Organization and description
+              </summary>
+              <div className="mt-3 space-y-3">
+                <label className="block text-xs">
+                  Namespace
+                  <Input
+                    aria-label="Board namespace"
+                    list="forum-namespaces"
+                    placeholder={`app/torque/forum/${shortName || 'general'}`}
+                    value={namespace}
+                    onChange={(e) => {
+                      setNamespace(e.target.value)
+                      setCategory('')
+                    }}
+                    disabled={submitting}
+                  />
+                </label>
+                <datalist id="forum-namespaces">
+                  {namespaces.map((ns) => (
+                    <option key={ns} value={ns} />
+                  ))}
+                </datalist>
+                <p className="text-xs text-zinc-500">
+                  Use the same namespace for boards you want to group or move discussions between.
+                </p>
+                <label className="block text-xs">
+                  Category
+                  <select
+                    aria-label="Board category"
+                    className="w-full border border-zinc-800 bg-zinc-950 p-2"
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value)}
+                    disabled={submitting}
+                  >
+                    <option value="">Namespace root</option>
+                    {categories
+                      .filter(
+                        (c) =>
+                          !c.archived &&
+                          c.namespace === (namespace || `app/torque/forum/${shortName}`),
+                      )
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.title}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <label className="block text-xs">
+                  Description
+                  <Input
+                    aria-label="Board description"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    disabled={submitting}
+                  />
+                </label>
+                <label className="block text-xs">
+                  Sort order
+                  <Input
+                    aria-label="Board sort order"
+                    type="number"
+                    step="1"
+                    required
+                    min={Number.MIN_SAFE_INTEGER}
+                    max={Number.MAX_SAFE_INTEGER}
+                    value={sort}
+                    onChange={(e) => setSort(e.target.valueAsNumber)}
+                    disabled={submitting}
+                  />
+                </label>
+              </div>
+            </details>
             {error && (
               <p role="alert" className="text-xs text-red-300">
                 {error}

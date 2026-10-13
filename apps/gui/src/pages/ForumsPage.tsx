@@ -1,13 +1,27 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import Markdown from 'react-markdown'
-import { ChevronRight, MessageSquare, MessagesSquare, Plus, SlidersHorizontal } from 'lucide-react'
+import { ChevronRight, MessageSquare, Plus, SlidersHorizontal } from 'lucide-react'
 import { Button, EmptyState, Input, PageHeader, Skeleton, Textarea } from '@hollis-labs/sysop-ui'
 import { useApi } from '@/hooks/use-api'
-import { ForumCreateDialog } from '@/components/domain/forum-create-dialog'
+import { ForumDirectory } from '@/components/domain/forum-directory'
+import {
+  ForumManagement,
+  AttachmentFields,
+  AttachmentLinks,
+} from '@/components/domain/forum-management'
+import { ForumAccess } from '@/components/domain/forum-access'
 import { ApiError } from '@/lib/api'
 import { drainPostPoll, mergePosts } from '@/lib/forums'
-import type { Forum, ForumTopic, ForumPost, ForumPage, ForumOptions } from '@/lib/forums'
+import type {
+  Forum,
+  ForumTopic,
+  ForumPost,
+  ForumPage,
+  ForumOptions,
+  ForumAttachment,
+  ForumMutation,
+} from '@/lib/forums'
 
 const emptyPage = <T,>(): ForumPage<T> => ({ items: [], has_more: false })
 function message(err: unknown): string {
@@ -183,110 +197,9 @@ export default function ForumsPage() {
       ) : forumId ? (
         <ForumBrowse key={forumId} forumId={forumId} />
       ) : (
-        <ForumPicker />
+        <ForumDirectory />
       )}
     </div>
-  )
-}
-
-function ForumPicker() {
-  const api = useApi()
-  const [page, setPage] = useState(emptyPage<Forum>)
-  const [busy, setBusy] = useState(true)
-  const [error, setError] = useState('')
-  const [attempt, setAttempt] = useState(0)
-  useEffect(() => {
-    const controller = new AbortController()
-    api
-      .forumsList({ limit: 20 }, controller.signal)
-      .then((out) => {
-        setPage({ ...out, items: out.items ?? [] })
-        setError('')
-      })
-      .catch((err) => {
-        if (!isAborted(err)) setError(message(err))
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setBusy(false)
-      })
-    return () => controller.abort()
-  }, [api, attempt])
-  async function more() {
-    setBusy(true)
-    try {
-      const out = await api.forumsList({ cursor: page.next_cursor, limit: 20 })
-      setPage((old) => ({
-        ...out,
-        items: [
-          ...new Map(
-            [...old.items, ...(out.items ?? [])].map((forum) => [forum.id, forum]),
-          ).values(),
-        ],
-      }))
-      setError('')
-    } catch (err) {
-      setError(message(err))
-    } finally {
-      setBusy(false)
-    }
-  }
-  return (
-    <>
-      <PageHeader title="Forums">
-        <ForumCreateDialog
-          disabled={busy && !page.items.length}
-          onCreated={(forum) => {
-            setPage((old) => ({
-              ...old,
-              items: [forum, ...old.items.filter((item) => item.id !== forum.id)],
-            }))
-          }}
-        />
-      </PageHeader>
-      <section aria-label="Forum directory">
-        <div className={sectionHeading}>Discussion forums</div>
-        {error && (
-          <ErrorNotice
-            error={error}
-            retry={() => {
-              if (page.items.length) void more()
-              else {
-                setBusy(true)
-                setAttempt((n) => n + 1)
-              }
-            }}
-          />
-        )}
-        {busy && !page.items.length && <LoadingRows />}
-        <div className="divide-y divide-zinc-800/60 border-b border-zinc-800/80">
-          {page.items.map((forum) => (
-            <Link
-              key={forum.id}
-              to={`/forums/${encodeURIComponent(forum.id)}`}
-              className={`flex min-h-20 items-center gap-4 px-4 py-4 ${rowLink}`}
-            >
-              <MessagesSquare className="h-5 w-5 shrink-0 text-zinc-500" aria-hidden="true" />
-              <div className="min-w-0 flex-1">
-                <h2 className="text-[13px] font-medium text-zinc-100">{forum.title}</h2>
-                <p className="mt-1 break-all font-mono text-[11px] text-zinc-500">
-                  {forum.namespace}
-                </p>
-              </div>
-              <span className="hidden text-xs text-zinc-500 sm:block">View topics</span>
-              <ChevronRight className="h-4 w-4 shrink-0 text-zinc-600" aria-hidden="true" />
-            </Link>
-          ))}
-        </div>
-        {!busy && !error && !page.items.length && (
-          <EmptyState
-            variant="empty"
-            title="No forums available"
-            description="No forums are available to this operator."
-          />
-        )}
-        <More page={page} busy={busy} onClick={() => void more()} noun="forums" />
-      </section>
-    </>
   )
 }
 
@@ -294,6 +207,7 @@ function ForumBrowse({ forumId }: { forumId: string }) {
   const api = useApi()
   const navigate = useNavigate()
   const [forum, setForum] = useState<Forum | null>(null)
+  const [categoryArchived, setCategoryArchived] = useState(false)
   const [filters, setFilters] = useState<Record<string, string>>({})
   const [appliedFilters, setAppliedFilters] = useState<Record<string, string>>({})
   const [showCreate, setShowCreate] = useState(false)
@@ -308,7 +222,12 @@ function ForumBrowse({ forumId }: { forumId: string }) {
     const c = new AbortController()
     api
       .forumGet(forumId, c.signal)
-      .then((out) => {
+      .then(async (out) => {
+        const category = out.forum.category_id
+          ? (await api.forumCategory(out.forum.category_id, c.signal)).category
+          : undefined
+        if (c.signal.aborted) return
+        setCategoryArchived(!!category?.archived)
         setForum(out.forum)
         setForumError('')
       })
@@ -351,13 +270,14 @@ function ForumBrowse({ forumId }: { forumId: string }) {
         <div className="min-w-0">
           <h2 className="break-words text-base font-semibold text-zinc-100">
             {forum?.title ?? 'Topics'}
+            {(forum?.archived || categoryArchived) && ' · Archived'}
           </h2>
           <p className="mt-1 text-xs text-zinc-500">Browse discussions or start a new topic.</p>
         </div>
         <Button
           size="sm"
           className="shrink-0"
-          disabled={creating}
+          disabled={creating || !forum || !!forum.archived || categoryArchived}
           onClick={() => setShowCreate((v) => !v)}
           aria-expanded={showCreate}
           aria-controls="new-topic-form"
@@ -366,8 +286,24 @@ function ForumBrowse({ forumId }: { forumId: string }) {
           New topic
         </Button>
       </div>
+      {forum && (
+        <div className="flex gap-2 border-b border-zinc-800 px-4 py-2">
+          <ForumManagement
+            kind="forum"
+            item={forum}
+            readOnly={forum.archived || categoryArchived}
+            onChanged={(out, action) => {
+              if (action === 'delete') navigate('/forums')
+              else if (action === 'clone' && out.forum)
+                navigate(`/forums/${encodeURIComponent(out.forum.id)}`)
+              else setForumAttempt((n) => n + 1)
+            }}
+          />
+          <ForumAccess forum={forum} onChanged={() => setForumAttempt((n) => n + 1)} />
+        </div>
+      )}
       {forumError && <ErrorNotice error={forumError} retry={() => setForumAttempt((n) => n + 1)} />}
-      {showCreate && (
+      {showCreate && forum && !forum.archived && !categoryArchived && (
         <form
           id="new-topic-form"
           className="space-y-3 border-b border-zinc-800/80 bg-zinc-900/20 px-4 py-4"
@@ -470,6 +406,19 @@ function ForumBrowse({ forumId }: { forumId: string }) {
             </label>
           ))}
           <label className="flex flex-col gap-1.5 text-[11px] text-zinc-500">
+            Archive state
+            <select
+              aria-label="Thread archive filter"
+              className={selectClass}
+              value={filters.archived ?? ''}
+              onChange={(e) => filter('archived', e.target.value)}
+            >
+              <option value="">All threads</option>
+              <option value="false">Active threads</option>
+              <option value="true">Archived threads</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1.5 text-[11px] text-zinc-500">
             Author kind
             <select
               aria-label="Author kind filter"
@@ -526,7 +475,7 @@ function ForumBrowse({ forumId }: { forumId: string }) {
         </form>
       </details>
       <BrowseResults
-        key={JSON.stringify([query, opts])}
+        key={JSON.stringify([query, opts, forumAttempt])}
         forumId={forumId}
         query={query}
         opts={opts}
@@ -648,6 +597,7 @@ function BrowseResults({
                       {item.title}
                     </h3>
                     <Status value={item.status} />
+                    {item.archived && <Status value="archived" />}
                   </div>
                   <p className="mt-1 break-words text-[11px] text-zinc-500">
                     {item.created_by.id} · <DateLabel value={item.created_at} />
@@ -690,6 +640,9 @@ function BrowseResults({
 
 function Thread({ forumId, topicId }: { forumId: string; topicId: string }) {
   const api = useApi()
+  const navigate = useNavigate()
+  const [forum, setForum] = useState<Forum | null>(null)
+  const [categoryArchived, setCategoryArchived] = useState(false)
   const [topic, setTopic] = useState<ForumTopic | null>(null)
   const [page, setPage] = useState(emptyPage<ForumPost>)
   const [busy, setBusy] = useState(true)
@@ -697,18 +650,27 @@ function Thread({ forumId, topicId }: { forumId: string; topicId: string }) {
   const [attempt, setAttempt] = useState(0)
   const [replyTo, setReplyTo] = useState<ForumPost | null>(null)
   const [body, setBody] = useState('')
+  const [subject, setSubject] = useState('')
+  const [attachments, setAttachments] = useState<ForumAttachment[]>([])
   const [sending, setSending] = useState(false)
   const [writeError, setWriteError] = useState('')
   const composer = useRef<HTMLTextAreaElement>(null)
   const sequence = useRef(0)
   const initialized = useRef(false)
+  const loadEpoch = useRef(0)
   useEffect(() => {
     const c = new AbortController()
+    loadEpoch.current += 1
     initialized.current = false
     sequence.current = 0
-    api
-      .forumTopic(topicId, { limit: 20 }, c.signal)
-      .then((out) => {
+    Promise.all([api.forumTopic(topicId, { limit: 20 }, c.signal), api.forumGet(forumId, c.signal)])
+      .then(async ([out, board]) => {
+        const category = board.forum.category_id
+          ? (await api.forumCategory(board.forum.category_id, c.signal)).category
+          : undefined
+        if (c.signal.aborted) return
+        setForum(board.forum)
+        setCategoryArchived(!!category?.archived)
         if (out.topic.forum_id !== forumId)
           throw new Error('This topic belongs to a different forum.')
         setTopic(out.topic)
@@ -757,23 +719,29 @@ function Thread({ forumId, topicId }: { forumId: string; topicId: string }) {
   }, [api, topicId, page.has_more, busy, attempt])
   async function more() {
     setBusy(true)
+    const epoch = loadEpoch.current
     try {
       const out = await api.forumPosts(topicId, { cursor: page.next_cursor, limit: 20 })
+      if (loadEpoch.current !== epoch) return
       setPage((old) => ({ ...out, items: mergePosts(old.items, out.items ?? []) }))
       sequence.current = Math.max(sequence.current, out.last_seq ?? 0)
       setError('')
     } catch (err) {
       setError(message(err))
     } finally {
-      setBusy(false)
+      if (loadEpoch.current === epoch) setBusy(false)
     }
   }
+  const readOnly = !!(topic?.archived || forum?.archived || categoryArchived)
   async function send() {
-    if (sending || !body.trim()) return
+    if (sending || readOnly || !body.trim()) return
     setSending(true)
     setWriteError('')
     try {
-      const out = await api.forumCreatePost(topicId, body, replyTo?.id)
+      const extras = subject || attachments.length ? { subject, attachments } : undefined
+      const out = extras
+        ? await api.forumCreatePost(topicId, body, replyTo?.id, extras)
+        : await api.forumCreatePost(topicId, body, replyTo?.id)
       setPage((old) => ({
         ...old,
         items: mergePosts(
@@ -785,6 +753,8 @@ function Thread({ forumId, topicId }: { forumId: string; topicId: string }) {
       }))
       // Do not advance sequence here: concurrent unseen posts still need delivery.
       setBody('')
+      setSubject('')
+      setAttachments([])
       setReplyTo(null)
     } catch (err) {
       setWriteError(message(err))
@@ -800,7 +770,7 @@ function Thread({ forumId, topicId }: { forumId: string; topicId: string }) {
   }
   return (
     <section>
-      <ForumBreadcrumb forumId={forumId} thread />
+      <ForumBreadcrumb forumId={forumId} title={forum?.title} thread />
       <div className="flex items-center justify-between gap-4 border-b border-zinc-800/80 px-4 py-4">
         <div className="min-w-0">
           <h2 className="break-words text-base font-semibold text-zinc-100">
@@ -809,6 +779,7 @@ function Thread({ forumId, topicId }: { forumId: string; topicId: string }) {
           {topic && (
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
               <Status value={topic.status} />
+              {readOnly && <Status value="archived" />}
               <span>
                 Started by {topic.created_by.id} · <DateLabel value={topic.created_at} />
               </span>
@@ -819,7 +790,7 @@ function Thread({ forumId, topicId }: { forumId: string; topicId: string }) {
           <Button
             size="sm"
             className="shrink-0"
-            disabled={sending}
+            disabled={sending || readOnly}
             onClick={() => focusComposer(null)}
           >
             Reply to topic
@@ -835,14 +806,65 @@ function Thread({ forumId, topicId }: { forumId: string; topicId: string }) {
           }}
         />
       )}
+      {topic && (
+        <div className="flex gap-2 border-b border-zinc-800 px-4 py-2">
+          <ForumManagement
+            kind="topic"
+            item={topic}
+            namespace={forum?.namespace}
+            readOnly={readOnly}
+            onChanged={(out, action) => {
+              if (action === 'delete') navigate(`/forums/${encodeURIComponent(forumId)}`)
+              else if ((action === 'move' || action === 'clone') && out.topic)
+                navigate(
+                  `/forums/${encodeURIComponent(out.topic.forum_id)}/topics/${encodeURIComponent(out.topic.id)}`,
+                )
+              else {
+                setBusy(true)
+                setAttempt((n) => n + 1)
+              }
+            }}
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setBusy(true)
+              setReplyTo(null)
+              setAttempt((n) => n + 1)
+            }}
+          >
+            Refresh thread
+          </Button>
+        </div>
+      )}
+      {readOnly && (
+        <p className="border-b border-zinc-800 px-4 py-3 text-xs text-amber-300">
+          This discussion is archived, or belongs to an archived board or category. Restore the
+          archived item to resume posting.
+        </p>
+      )}
       {busy && !page.items.length && <LoadingRows label="Loading thread…" />}
       {page.items.map((post) => (
         <PostRow
-          key={post.id}
+          key={`${post.id}:${attempt}`}
           post={post}
           parent={post.parent_post_id ? postsById.get(post.parent_post_id) : undefined}
           reply={() => focusComposer(post)}
-          replyingDisabled={sending}
+          replyingDisabled={sending || readOnly}
+          readOnly={readOnly}
+          namespace={forum?.namespace}
+          onChanged={(out) => {
+            if (out.topic) {
+              navigate(
+                `/forums/${encodeURIComponent(out.topic.forum_id)}/topics/${encodeURIComponent(out.topic.id)}`,
+              )
+            } else {
+              setBusy(true)
+              setReplyTo(null)
+              setAttempt((n) => n + 1)
+            }
+          }}
         />
       ))}
       {!busy && !error && !page.items.length && (
@@ -853,7 +875,7 @@ function Thread({ forumId, topicId }: { forumId: string; topicId: string }) {
         />
       )}
       <More page={page} busy={busy} onClick={() => void more()} noun="posts" />
-      {topic && (
+      {topic && !readOnly && (
         <form
           onSubmit={(e) => {
             e.preventDefault()
@@ -883,6 +905,15 @@ function Thread({ forumId, topicId }: { forumId: string; topicId: string }) {
                 {replyTo.snippet ?? replyTo.body_md}
               </p>
             )}
+            <Input
+              aria-label="Post subject"
+              className={fieldClass}
+              placeholder="Subject (optional)"
+              maxLength={300}
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              disabled={sending}
+            />
             <Textarea
               ref={composer}
               id="forum-body"
@@ -894,6 +925,7 @@ function Thread({ forumId, topicId }: { forumId: string; topicId: string }) {
               rows={5}
               disabled={sending}
             />
+            <AttachmentFields value={attachments} onChange={setAttachments} disabled={sending} />
             <div className="flex items-center justify-between gap-3">
               <span className="text-[11px] text-zinc-500">Markdown supported</span>
               <Button size="sm" type="submit" disabled={sending || !body.trim()}>
@@ -913,11 +945,17 @@ function PostRow({
   parent,
   reply,
   replyingDisabled,
+  readOnly,
+  namespace,
+  onChanged,
 }: {
   post: ForumPost
   parent?: ForumPost
   reply: () => void
   replyingDisabled: boolean
+  readOnly: boolean
+  namespace?: string
+  onChanged: (out: ForumMutation) => void
 }) {
   const api = useApi()
   const [full, setFull] = useState<ForumPost | null>(null)
@@ -929,7 +967,7 @@ function PostRow({
       setExpanded(false)
       return
     }
-    if (full) {
+    if (full && full.seq === post.seq) {
       setExpanded(true)
       return
     }
@@ -949,7 +987,7 @@ function PostRow({
       setBusy(false)
     }
   }
-  const visiblePost = expanded && full ? full : post
+  const visiblePost = expanded && full?.seq === post.seq ? full : post
   const canExpand =
     post.truncated || (!post.body_md && post.body_chars > (post.snippet?.length ?? 0))
   return (
@@ -996,15 +1034,17 @@ function PostRow({
             )}
           </p>
         )}
+        {visiblePost.subject && <h3 className="mb-3 text-sm font-medium">{visiblePost.subject}</h3>}
         <div className="space-y-3 break-words text-[13px] leading-6 text-zinc-300 [&_a]:text-primary [&_a]:underline [&_pre]:max-w-full [&_pre]:overflow-auto [&_pre]:bg-zinc-900 [&_pre]:p-3 [&_h1]:text-lg [&_h2]:text-base [&_h3]:font-semibold [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_blockquote]:border-l-2 [&_blockquote]:border-zinc-700 [&_blockquote]:pl-3 [&_img]:max-w-full">
           <Markdown>
             {visiblePost.body_md ?? visiblePost.snippet ?? 'Expand to read this post.'}
           </Markdown>
-          {expanded && full?.truncated && (
+          {expanded && full?.seq === post.seq && full.truncated && (
             <p className="text-xs text-zinc-500">Body truncated ({full.body_chars} characters).</p>
           )}
         </div>
-        <div className="mt-4 flex items-center gap-2">
+        <AttachmentLinks attachments={visiblePost.attachments} />
+        <div className="mt-4 flex flex-wrap items-center gap-2">
           {canExpand && (
             <Button size="sm" variant="ghost" disabled={busy} onClick={() => void expand()}>
               {expanded ? 'Collapse' : busy ? 'Loading…' : 'Expand body'}
@@ -1013,6 +1053,13 @@ function PostRow({
           <Button size="sm" variant="ghost" disabled={replyingDisabled} onClick={reply}>
             Reply
           </Button>
+          <ForumManagement
+            kind="post"
+            item={post}
+            namespace={namespace}
+            readOnly={readOnly}
+            onChanged={onChanged}
+          />
           {post.reply_count > 0 && (
             <span className="ml-auto text-[11px] text-zinc-500">
               {post.reply_count} {post.reply_count === 1 ? 'reply' : 'replies'}

@@ -13,23 +13,47 @@ import (
 )
 
 func (s *Server) forumRoutes(r chi.Router) {
-	for _, route := range []struct {
-		path    string
-		methods []string
-		fields  []string
+	// Each method has its own field allowlist: moderation never accepts attribution.
+	register := func(method, path string, fields ...string) {
+		r.MethodFunc(method, path, s.forumHandler(path, fields))
+	}
+	register("GET", "/forums")
+	register("POST", "/forums", "id", "namespace", "title", "description", "category_id", "sort_order", "owner_type", "owner_id", "config_json", "metadata_json")
+	register("GET", "/forums/categories")
+	register("POST", "/forums/categories", "id", "namespace", "title", "description", "sort_order")
+	register("GET", "/forums/{forum_id}/topics")
+	register("POST", "/forums/{forum_id}/topics", "title")
+	register("GET", "/forums/topics/{topic_id}/posts")
+	register("POST", "/forums/topics/{topic_id}/posts", "body_md", "parent_post_id", "subject", "attachments")
+	register("GET", "/forums/{forum_id}/search")
+	register("GET", "/forums/{forum_id}/participants")
+	register("POST", "/forums/{forum_id}/participants", "principal_kind", "principal_id", "access")
+	register("POST", "/forums/{forum_id}/participants/revoke", "principal_kind", "principal_id")
+	register("POST", "/forums/{forum_id}/owner", "owner_type", "owner_id")
+	for _, item := range []struct {
+		path   string
+		fields []string
 	}{
-		{"/forums", []string{"GET", "POST"}, []string{"id", "namespace", "title", "owner_type", "owner_id", "config_json", "metadata_json"}},
-		{"/forums/{forum_id}", []string{"GET"}, nil},
-		{"/forums/{forum_id}/topics", []string{"GET", "POST"}, []string{"title"}},
-		{"/forums/topics/{topic_id}", []string{"GET"}, nil},
-		{"/forums/topics/{topic_id}/posts", []string{"GET", "POST"}, []string{"body_md", "parent_post_id"}},
-		{"/forums/posts/{post_id}", []string{"GET"}, nil},
-		{"/forums/{forum_id}/search", []string{"GET"}, nil},
+		{"/forums/categories/{category_id}", []string{"title", "description", "sort_order"}},
+		{"/forums/{forum_id}", []string{"title", "description", "sort_order", "config_json", "metadata_json"}},
+		{"/forums/topics/{topic_id}", []string{"title", "status"}},
+		{"/forums/posts/{post_id}", []string{"body_md", "subject", "attachments"}},
 	} {
-		for _, method := range route.methods {
-			r.MethodFunc(method, route.path, s.forumHandler(route.path, route.fields))
+		register("GET", item.path)
+		register("PATCH", item.path, item.fields...)
+		register("DELETE", item.path, "cascade")
+		if item.path != "/forums/posts/{post_id}" {
+			register("POST", item.path+"/archive")
+			register("POST", item.path+"/unarchive")
 		}
 	}
+	register("POST", "/forums/{forum_id}/move", "destination_category_id", "sort_order")
+	register("POST", "/forums/{forum_id}/clone", "id", "title", "destination_category_id", "sort_order")
+	register("POST", "/forums/topics/{topic_id}/move", "destination_forum_id")
+	register("POST", "/forums/topics/{topic_id}/clone", "destination_forum_id", "title")
+	register("POST", "/forums/topics/{topic_id}/fork", "post_id", "destination_forum_id", "title")
+	register("POST", "/forums/posts/{post_id}/move", "destination_topic_id", "parent_post_id")
+	register("POST", "/forums/posts/{post_id}/clone", "destination_topic_id", "parent_post_id")
 }
 
 func (s *Server) forumHandler(pattern string, fields []string) http.HandlerFunc {
@@ -40,7 +64,7 @@ func (s *Server) forumHandler(pattern string, fields []string) http.HandlerFunc 
 			return
 		}
 		path := pattern
-		for _, name := range []string{"forum_id", "topic_id", "post_id"} {
+		for _, name := range []string{"forum_id", "topic_id", "post_id", "category_id"} {
 			if strings.Contains(path, "{"+name+"}") {
 				id := chi.URLParam(r, name)
 				if id == "" || strings.ContainsAny(id, "/\\") || id == "." || id == ".." {
@@ -51,7 +75,7 @@ func (s *Server) forumHandler(pattern string, fields []string) http.HandlerFunc 
 			}
 		}
 		q := url.Values{}
-		for _, key := range []string{"cursor", "limit", "since_seq", "status", "author", "author_kind", "created_after", "created_before", "has_replies", "workstream_id", "project_id", "detail", "max_chars", "fields", "query"} {
+		for _, key := range []string{"cursor", "limit", "since_seq", "status", "author", "author_kind", "created_after", "created_before", "has_replies", "workstream_id", "project_id", "detail", "max_chars", "fields", "query", "namespace", "category_id", "archived"} {
 			if vals, ok := r.URL.Query()[key]; ok {
 				q[key] = vals
 			}
@@ -60,10 +84,13 @@ func (s *Server) forumHandler(pattern string, fields []string) http.HandlerFunc 
 			path += "?" + q.Encode()
 		}
 		var body json.RawMessage
-		if r.Method == http.MethodPost {
+		if r.Method == http.MethodPost || r.Method == http.MethodPatch || r.Method == http.MethodDelete {
 			var obj map[string]json.RawMessage
 			dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-			if err := dec.Decode(&obj); err != nil || obj == nil {
+			err := dec.Decode(&obj)
+			if err == io.EOF && r.Method == http.MethodDelete {
+				obj = map[string]json.RawMessage{}
+			} else if err != nil || obj == nil {
 				writeError(w, 400, "expected a JSON object")
 				return
 			}

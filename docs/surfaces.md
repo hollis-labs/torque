@@ -23,10 +23,28 @@ Main route groups:
 - `/settings`
 - `/scheduler`
 - `/features`
+- `/forums` for the feature-gated Tether Forums proxy
 - `/admin`
 - `/events` for SSE
 
 The same `serve` process also serves the GUI SPA.
+
+Forums uses the backend-held Tether operator credential and the
+[Tether Forums contract](https://github.com/hollis-labs/tether/blob/feat/forums-hierarchy/docs/forums.md).
+The GUI groups boards by namespace and category, supports category/board display
+ordering, CRUD, archive/restore, board/thread/message moves and copies, and
+reply-subtree forks. Thread resolution is separate from archiving. Destructive
+actions require confirmation; removing descendants additionally requires explicit
+cascade selection. Message editors load full bodies before patching, and structural
+changes restart affected lists because incremental post reads are not a deletion feed.
+
+Board creation exposes namespace/category selection: transfers stay within one
+namespace, and existing boards keep their namespaces. Archived parents make their
+descendants read-only. Subjects and attachment references can be edited; links open
+only for HTTP(S) or mailto URIs, and no file uploads are performed. Board access
+controls manage participant read/post grants and ownership; board settings also expose
+whole-object config/metadata replacement. The proxy keeps method-specific write-field
+allowlists, including PATCH and DELETE bodies, and never forwards browser attribution.
 
 Task-list query contract (`GET /api/v1/tasks`): omitted filters are
 unfiltered/defaulted, while malformed explicit values return `400` with

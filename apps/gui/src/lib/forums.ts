@@ -1,9 +1,21 @@
-export interface Forum {
+export interface ForumCategory {
   id: string
   namespace: string
   title: string
+  description?: string
+  archived?: boolean
+  sort_order?: number
+}
+export interface Forum extends ForumCategory {
+  category_id?: string
+  owner_type?: string
+  owner_id?: string
+  config_json?: Record<string, unknown>
+  metadata_json?: Record<string, unknown>
 }
 export interface ForumTopic {
+  archived?: boolean
+  source_topic_id?: string
   id: string
   forum_id: string
   title: string
@@ -14,7 +26,29 @@ export interface ForumTopic {
   last_activity_at: string
   last_seq: number
 }
+export interface ForumAttachment {
+  name: string
+  uri: string
+  media_type?: string
+}
+export interface ForumParticipant {
+  id: string
+  kind: 'user' | 'agent'
+  access: 'read' | 'post'
+}
+export type ForumResource = 'category' | 'forum' | 'topic' | 'post'
+export interface ForumMutation {
+  forum?: Forum
+  category?: ForumCategory
+  topic?: ForumTopic
+  post?: ForumPost
+  deleted?: string
+}
 export interface ForumPost {
+  subject?: string
+  attachments?: ForumAttachment[]
+  source_post_id?: string
+  edited_at?: string
   id: string
   topic_id: string
   forum_id: string
@@ -76,4 +110,49 @@ export async function drainPostPoll(
   } while (!signal?.aborted)
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
   return { posts, lastSeq }
+}
+
+export function forumResourcePath(kind: ForumResource, id: string): string {
+  const prefix = {
+    category: '/forums/categories',
+    forum: '/forums',
+    topic: '/forums/topics',
+    post: '/forums/posts',
+  }
+  return `${prefix[kind]}/${encodeURIComponent(id)}`
+}
+
+// Drain each filtered collection before offering destinations or grouping siblings.
+export async function allForumPages<T>(
+  fetchPage: (opts: ForumOptions, signal?: AbortSignal) => Promise<ForumPage<T>>,
+  opts: ForumOptions = {},
+  signal?: AbortSignal,
+): Promise<T[]> {
+  const items: T[] = []
+  const seen = new Set<string>()
+  let cursor: string | undefined
+  do {
+    const page = await fetchPage({ ...opts, limit: 100, cursor }, signal)
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+    items.push(...(page.items ?? []))
+    if (!page.has_more) return items
+    if (!page.next_cursor || seen.has(page.next_cursor))
+      throw new Error('Forums returned an invalid pagination cursor.')
+    cursor = page.next_cursor
+    seen.add(cursor)
+  } while (!signal?.aborted)
+  throw new DOMException('Aborted', 'AbortError')
+}
+
+export function forumOrder(a: ForumCategory, b: ForumCategory): number {
+  return (a.sort_order ?? 0) - (b.sort_order ?? 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+}
+
+export function safeAttachmentURL(uri: string): string | undefined {
+  try {
+    const url = new URL(uri)
+    return ['https:', 'http:', 'mailto:'].includes(url.protocol) ? url.href : undefined
+  } catch {
+    return undefined
+  }
 }

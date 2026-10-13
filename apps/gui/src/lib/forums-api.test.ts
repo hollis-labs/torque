@@ -51,3 +51,35 @@ it('sends only the Markdown and optional parent id for human posts', async () =>
   await api.forumCreatePost('t1', 'Top level')
   expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ body_md: 'Top level' })
 })
+
+it('preserves explicit zero, empty root and false archive filters', async () => {
+  const fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response('{}')))
+  vi.stubGlobal('fetch', fetch)
+  const api = new TorqueApiClient('/api/v1')
+  await api.forumsList({ namespace: 'app/torque/forum/general', category_id: '', archived: false })
+  const url = new URL(fetch.mock.calls[0][0], 'http://localhost')
+  expect(url.searchParams.get('category_id')).toBe('')
+  expect(url.searchParams.get('archived')).toBe('false')
+  await api.forumUpdate('category', 'planning', { sort_order: 0, description: '' })
+  expect(fetch.mock.calls[1][1].method).toBe('PATCH')
+  expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ sort_order: 0, description: '' })
+  await api.forumAction('forum', 'work', 'move', { destination_category_id: '', sort_order: 0 })
+  expect(fetch.mock.calls[2][0]).toBe('/api/v1/forums/work/move')
+  expect(JSON.parse(fetch.mock.calls[2][1].body)).toEqual({
+    destination_category_id: '',
+    sort_order: 0,
+  })
+})
+
+it('requires explicit cascade and never sends browser credentials for moderation', async () => {
+  const fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response('{}')))
+  vi.stubGlobal('fetch', fetch)
+  const api = new TorqueApiClient('/api/v1')
+  await api.forumDelete('post', 'p1')
+  await api.forumDelete('post', 'p1', true)
+  expect(fetch.mock.calls[0][0]).toBe('/api/v1/forums/posts/p1')
+  expect(fetch.mock.calls[0][1].method).toBe('DELETE')
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ cascade: false })
+  expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ cascade: true })
+  expect(fetch.mock.calls[1][1].headers.Authorization).toBeUndefined()
+})
