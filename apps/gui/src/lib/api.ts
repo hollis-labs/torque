@@ -1,4 +1,5 @@
-import type { Forum, ForumTopic, ForumPost, ForumPage, ForumOptions } from './forums'
+import { forumResourcePath } from './forums'
+import type { ForumCategory, ForumResource, ForumMutation, ForumParticipant, ForumAttachment, Forum, ForumTopic, ForumPost, ForumPage, ForumOptions } from './forums'
 import type {
   Task,
   ListPage,
@@ -344,10 +345,11 @@ export class TorqueApiClient {
     return parseResponse<T>(res)
   }
 
-  private async delete<T>(path: string): Promise<T> {
+  private async delete<T>(path: string, body?: unknown): Promise<T> {
     const res = await fetch(this.url(path), {
       method: 'DELETE',
-      headers: { 'Accept': 'application/json' },
+      headers: { 'Accept': 'application/json', ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
     })
     return parseResponse<T>(res)
   }
@@ -680,14 +682,44 @@ export class TorqueApiClient {
 
   // -------------------------
   // Forums: browser calls only Torque; operator credentials stay in the backend.
+  forumCategories(opts?: ForumOptions, signal?: AbortSignal): Promise<ForumPage<ForumCategory>> {
+    return this.get('/forums/categories', opts, signal)
+  }
+  forumCategory(id: string, signal?: AbortSignal): Promise<{ category: ForumCategory }> {
+    return this.get(forumResourcePath('category', id), undefined, signal)
+  }
+  forumCreateCategory(body: { id: string; namespace: string; title: string; description?: string; sort_order?: number }): Promise<{ category: ForumCategory }> {
+    return this.post('/forums/categories', body)
+  }
+  forumUpdate(kind: ForumResource, id: string, changes: Record<string, unknown>): Promise<ForumMutation> {
+    return this.patch(forumResourcePath(kind, id), changes)
+  }
+  forumDelete(kind: ForumResource, id: string, cascade = false): Promise<{ deleted: string }> {
+    return this.delete(forumResourcePath(kind, id), { cascade })
+  }
+  forumAction(kind: ForumResource, id: string, action: 'archive' | 'unarchive' | 'move' | 'clone' | 'fork', body: Record<string, unknown> = {}): Promise<ForumMutation> {
+    return this.post(`${forumResourcePath(kind, id)}/${action}`, body)
+  }
+  forumParticipants(id: string, opts?: ForumOptions, signal?: AbortSignal): Promise<ForumPage<ForumParticipant>> {
+    return this.get(`/forums/${encodeURIComponent(id)}/participants`, opts, signal)
+  }
+  forumGrant(id: string, body: { principal_kind: string; principal_id: string; access: string }): Promise<unknown> {
+    return this.post(`/forums/${encodeURIComponent(id)}/participants`, body)
+  }
+  forumRevoke(id: string, principal_kind: string, principal_id: string): Promise<unknown> {
+    return this.post(`/forums/${encodeURIComponent(id)}/participants/revoke`, { principal_kind, principal_id })
+  }
+  forumSetOwner(id: string, body: { owner_type?: string; owner_id?: string }): Promise<{ forum: Forum }> {
+    return this.post(`/forums/${encodeURIComponent(id)}/owner`, body)
+  }
   forumsList(opts?: ForumOptions, signal?: AbortSignal): Promise<ForumPage<Forum>> {
     return this.get('/forums', opts, signal)
   }
-  forumCreate(id: string, title: string): Promise<{ forum: Forum }> {
-    return this.post('/forums', { id, title, namespace: `app/torque/forum/${id}` })
+  forumCreate(id: string, title: string, options?: { namespace?: string; category_id?: string; description?: string; sort_order?: number }): Promise<{ forum: Forum }> {
+    return this.post('/forums', { id, title, namespace: `app/torque/forum/${id}`, ...options })
   }
   forumGet(id: string, signal?: AbortSignal): Promise<{ forum: Forum }> {
-    return this.get(`/forums/${encodeURIComponent(id)}`, undefined, signal)
+    return this.get(`/forums/${encodeURIComponent(id)}`, { detail: 'full' }, signal)
   }
   forumTopics(id: string, opts?: ForumOptions, signal?: AbortSignal): Promise<ForumPage<ForumTopic>> {
     return this.get(`/forums/${encodeURIComponent(id)}/topics`, opts, signal)
@@ -707,8 +739,8 @@ export class TorqueApiClient {
   forumCreateTopic(id: string, title: string): Promise<{ topic: ForumTopic }> {
     return this.post(`/forums/${encodeURIComponent(id)}/topics`, { title })
   }
-  forumCreatePost(id: string, body_md: string, parent_post_id?: string): Promise<{ post: ForumPost }> {
-    return this.post(`/forums/topics/${encodeURIComponent(id)}/posts`, { body_md, ...(parent_post_id ? { parent_post_id } : {}) })
+  forumCreatePost(id: string, body_md: string, parent_post_id?: string, extras?: { subject?: string; attachments?: ForumAttachment[] }): Promise<{ post: ForumPost }> {
+    return this.post(`/forums/topics/${encodeURIComponent(id)}/posts`, { body_md, ...(parent_post_id ? { parent_post_id } : {}), ...extras })
   }
 
   // Planner (features.planner)
