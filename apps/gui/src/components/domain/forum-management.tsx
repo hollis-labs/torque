@@ -1,3 +1,4 @@
+import { Settings } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import {
   Button,
@@ -24,7 +25,8 @@ import type {
 
 export const forumFieldClass =
   'w-full rounded-none border border-zinc-800 bg-zinc-950 p-2 text-xs text-zinc-200 [color-scheme:dark]'
-const errorMessage = (e: unknown) => (e instanceof Error ? e.message : 'The forum request failed.')
+const errorMessage = (e: unknown) =>
+  e instanceof Error ? e.message : 'The forum request failed.'
 
 type Resource = Forum | ForumCategory | ForumTopic | ForumPost
 type Action = 'edit' | 'archive' | 'unarchive' | 'delete' | 'move' | 'clone' | 'fork'
@@ -70,7 +72,9 @@ export function AttachmentFields({
             value={attachment.media_type ?? ''}
             className={forumFieldClass}
             onChange={(e) =>
-              onChange(value.map((a, n) => (n === i ? { ...a, media_type: e.target.value } : a)))
+              onChange(
+                value.map((a, n) => (n === i ? { ...a, media_type: e.target.value } : a)),
+              )
             }
           />
           <Button
@@ -128,13 +132,11 @@ export function AttachmentLinks({ attachments }: { attachments?: ForumAttachment
 export function ForumManagement({
   kind,
   item,
-  namespace,
   readOnly,
   onChanged,
 }: {
   kind: ForumResource
   item: Resource
-  namespace?: string
   readOnly?: boolean
   onChanged: (result: ForumMutation, action: Action) => void
 }) {
@@ -145,15 +147,16 @@ export function ForumManagement({
   return (
     <>
       <Button
-        size="sm"
+        size="icon-sm"
         variant="ghost"
+        title={`Manage ${title}`}
         aria-label={`Manage ${title}`}
         onClick={() => {
           setSnapshot(item)
           setOpen(true)
         }}
       >
-        Manage
+        <Settings className="h-4 w-4" aria-hidden="true" />
       </Button>
       <Dialog
         open={open}
@@ -162,7 +165,11 @@ export function ForumManagement({
         }}
       >
         {open && (
-          <DialogContent className="rounded-none" widthClassName="max-w-xl" showCloseButton={!busy}>
+          <DialogContent
+            className="rounded-none"
+            widthClassName="max-w-xl"
+            showCloseButton={!busy}
+          >
             <DialogHeader>
               <DialogTitle>Manage {title}</DialogTitle>
               <DialogDescription>
@@ -174,7 +181,6 @@ export function ForumManagement({
               kind={kind}
               item={snapshot}
               onBusy={setBusy}
-              namespace={namespace}
               readOnly={readOnly}
               onChanged={(out, action) => {
                 setOpen(false)
@@ -191,14 +197,12 @@ export function ForumManagement({
 function ManagementForm({
   kind,
   item,
-  namespace,
   readOnly,
   onChanged,
   onBusy,
 }: {
   kind: ForumResource
   item: Resource
-  namespace?: string
   readOnly?: boolean
   onChanged: (result: ForumMutation, action: Action) => void
   onBusy: (busy: boolean) => void
@@ -267,22 +271,16 @@ function ManagementForm({
           }
         }
         if (transfer) {
-          const ns =
-            namespace ??
-            ('namespace' in item
-              ? item.namespace
-              : (await api.forumGet((item as ForumTopic | ForumPost).forum_id, c.signal)).forum
-                  .namespace)
           const cats = await allForumPages(
             (opts, signal) => api.forumCategories(opts, signal),
-            { namespace: ns },
+            {},
             c.signal,
           )
           if (!c.signal.aborted) setCategories(cats)
           if (kind !== 'forum') {
             const boards = await allForumPages(
               (opts, signal) => api.forumsList(opts, signal),
-              { namespace: ns, archived: false },
+              { archived: false },
               c.signal,
             )
             if (!c.signal.aborted)
@@ -315,7 +313,7 @@ function ManagementForm({
     }
     void load()
     return () => c.abort()
-  }, [api, kind, item, namespace, action, transfer, attempt, destination, destinationTopic])
+  }, [api, kind, item, action, transfer, attempt, destination, destinationTopic])
 
   async function submit() {
     if (
@@ -362,7 +360,8 @@ function ManagementForm({
             }
             if (description !== ((item as ForumCategory).description ?? ''))
               changes.description = description
-            if (!Number.isSafeInteger(sort)) throw new Error('Sort order must be a safe integer.')
+            if (!Number.isSafeInteger(sort))
+              throw new Error('Sort order must be a safe integer.')
             if (sort !== ((item as ForumCategory).sort_order ?? 0)) changes.sort_order = sort
           }
         }
@@ -406,7 +405,9 @@ function ManagementForm({
     (kind === 'forum'
       ? !destination || categories.some((c) => c.id === destination && !c.archived)
       : forums.some((f) => f.id === destination) &&
-        (kind !== 'post' || action === 'fork' || topics.some((t) => t.id === destinationTopic)))
+        (kind !== 'post' ||
+          action === 'fork' ||
+          topics.some((t) => t.id === destinationTopic)))
   const invalid =
     loading ||
     !!loadError ||
@@ -510,7 +511,9 @@ function ManagementForm({
         )}
         {action === 'edit' && kind === 'forum' && (
           <details>
-            <summary className="cursor-pointer text-xs text-zinc-400">Advanced settings</summary>
+            <summary className="cursor-pointer text-xs text-zinc-400">
+              Advanced settings
+            </summary>
             <div className="mt-3 space-y-3">
               <label className="block text-xs">
                 Config JSON
@@ -578,7 +581,6 @@ function ManagementForm({
         {transfer && (
           <>
             <p className="text-xs text-zinc-400">
-              Destinations are within the same namespace.{' '}
               {kind === 'post'
                 ? 'Includes all replies in this subtree.'
                 : 'Includes all descendant content.'}
@@ -597,7 +599,7 @@ function ManagementForm({
               </label>
             )}
             <label className="block text-xs">
-              {kind === 'forum' ? 'Destination category' : 'Destination board'}
+              {kind === 'forum' ? 'Destination category' : 'Destination forum'}
               <select
                 aria-label="Destination"
                 className={forumFieldClass}
@@ -613,12 +615,16 @@ function ManagementForm({
                 }}
                 required={kind !== 'forum'}
               >
-                <option value="">{kind === 'forum' ? 'Namespace root' : 'Choose a board'}</option>
-                {(kind === 'forum' ? categories.filter((c) => !c.archived) : forums).map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.title} ({c.id})
-                  </option>
-                ))}
+                <option value="">
+                  {kind === 'forum' ? 'No category' : 'Choose a forum'}
+                </option>
+                {(kind === 'forum' ? categories.filter((c) => !c.archived) : forums).map(
+                  (c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.title}
+                    </option>
+                  ),
+                )}
               </select>
             </label>
             {kind === 'post' && action !== 'fork' && (
@@ -677,7 +683,9 @@ function ManagementForm({
         )}
         {action === 'delete' && (
           <div className="space-y-3 text-xs text-red-300">
-            <p>Permanent deletion cannot be undone. Archive instead to keep the discussion.</p>
+            <p>
+              Permanent deletion cannot be undone. Archive instead to keep the discussion.
+            </p>
             <label className="flex gap-2">
               <input
                 type="checkbox"

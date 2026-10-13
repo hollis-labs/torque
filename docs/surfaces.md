@@ -31,15 +31,28 @@ The same `serve` process also serves the GUI SPA.
 
 Forums uses the backend-held Tether operator credential and the
 [Tether Forums contract](https://github.com/hollis-labs/tether/blob/feat/forums-hierarchy/docs/forums.md).
-The GUI groups boards by namespace and category, supports category/board display
+The GUI groups forums by category with descriptions, post totals and last-post details.
+Gear controls support category/forum display
 ordering, CRUD, archive/restore, board/thread/message moves and copies, and
 reply-subtree forks. Thread resolution is separate from archiving. Destructive
 actions require confirmation; removing descendants additionally requires explicit
 cascade selection. Message editors load full bodies before patching, and structural
 changes restart affected lists because incremental post reads are not a deletion feed.
 
-Board creation exposes namespace/category selection: transfers stay within one
-namespace, and existing boards keep their namespaces. Archived parents make their
+Torque assigns `app/torque/forum/torque` to every new forum and category and scopes
+collection reads to that root, including move destinations. Namespace is never a GUI
+choice. Forum moves select a category; topic moves select a forum. Existing installations
+must consolidate legacy per-forum namespaces before deploying this version: run
+`scripts/consolidate-forum-namespaces.py /path/to/tether.db` to preview, then add
+`--apply --backup /new/backup/path.db`. This one-off transaction changes only namespace
+values, preserving IDs, messages, grants and metadata; it saves a database snapshot and
+original-namespace journal. Do not restore the full snapshot over subsequent writes;
+use the journal for a namespace-only rollback if needed.
+
+`GET /api/v1/forums/{forum_id}/activity` totals topic post counts and finds the newest
+post creation timestamp across paginated compact metadata. It includes replies and
+archived discussions. Directory activity loads independently with at most four concurrent
+requests; unavailable data is not displayed as zero. Archived parents make their
 descendants read-only. Subjects and attachment references can be edited; links open
 only for HTTP(S) or mailto URIs, and no file uploads are performed. Board access
 controls manage participant read/post grants and ownership; board settings also expose

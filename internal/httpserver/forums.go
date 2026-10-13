@@ -18,6 +18,7 @@ func (s *Server) forumRoutes(r chi.Router) {
 		r.MethodFunc(method, path, s.forumHandler(path, fields))
 	}
 	register("GET", "/forums")
+	register("GET", "/forums/{forum_id}/activity")
 	register("POST", "/forums", "id", "namespace", "title", "description", "category_id", "sort_order", "owner_type", "owner_id", "config_json", "metadata_json")
 	register("GET", "/forums/categories")
 	register("POST", "/forums/categories", "id", "namespace", "title", "description", "sort_order")
@@ -80,6 +81,9 @@ func (s *Server) forumHandler(pattern string, fields []string) http.HandlerFunc 
 				q[key] = vals
 			}
 		}
+		if r.Method == http.MethodGet && (pattern == "/forums" || pattern == "/forums/categories") {
+			q.Set("namespace", service.TorqueForumNamespace)
+		}
 		if len(q) > 0 {
 			path += "?" + q.Encode()
 		}
@@ -112,9 +116,24 @@ func (s *Server) forumHandler(pattern string, fields []string) http.HandlerFunc 
 					return
 				}
 			}
+			if r.Method == http.MethodPost && (pattern == "/forums" || pattern == "/forums/categories") {
+				obj["namespace"], _ = json.Marshal(service.TorqueForumNamespace)
+			}
 			body, _ = json.Marshal(obj)
 		}
-		out, status, err := s.svc.Forums.Do(r.Context(), r.Method, path, body)
+		var out json.RawMessage
+		var status int
+		var err error
+		if pattern == "/forums/{forum_id}/activity" {
+			var activity service.ForumActivity
+			activity, err = s.svc.Forums.Activity(r.Context(), chi.URLParam(r, "forum_id"))
+			if err == nil {
+				out, err = json.Marshal(activity)
+				status = http.StatusOK
+			}
+		} else {
+			out, status, err = s.svc.Forums.Do(r.Context(), r.Method, path, body)
+		}
 		if err != nil {
 			var fe *tetherclient.ForumsError
 			var disabled *service.FeatureDisabledError

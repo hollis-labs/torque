@@ -13,7 +13,6 @@ it('creates a Torque forum through the backend without sending ownership or cred
   expect(JSON.parse(options.body)).toEqual({
     id: 'design',
     title: 'Design',
-    namespace: 'app/torque/forum/design',
   })
   expect(options.headers.Authorization).toBeUndefined()
 })

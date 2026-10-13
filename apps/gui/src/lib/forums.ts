@@ -1,3 +1,12 @@
+export interface ForumActivity {
+  post_count: number
+  last_post: {
+    id: string
+    topic_id: string
+    created_at: string
+    provenance: { id: string; kind: string }
+  } | null
+}
 export interface ForumCategory {
   id: string
   namespace: string
