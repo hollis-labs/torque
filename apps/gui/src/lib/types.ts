@@ -845,7 +845,7 @@ export type PlannerBoardSectionKey = 'in_flight' | 'landed' | 'pre_flight' | 'ho
 
 /** One line of the departure board. Torque tasks have source "torque"; planner rows carry their database. */
 export interface PlannerBoardRow {
-  source: 'torque' | 'roadmap' | 'decision' | 'inbox' | 'risk'
+  source: 'torque' | 'roadmap' | 'decision' | 'inbox' | 'risk' | 'workstream'
   id: string
   title: string
   status: string
@@ -853,9 +853,21 @@ export interface PlannerBoardRow {
   workstream?: string
   updated: string
   db?: PlannerDb
+  /** Workstream rows of the curated board only. task_counts are counts per Torque status, never task rows. */
+  phase?: string
+  owner?: string
+  tldr?: string
+  next_step?: string
+  blockers?: string[]
+  tags?: string[]
+  task_counts?: Record<string, number>
 }
 
+/** curated: the workstreams tagged `board`; all: the activity feed with Torque tasks. */
+export type PlannerBoardScope = 'curated' | 'all'
+
 export interface PlannerBoard {
+  scope?: PlannerBoardScope
   generated_at: string
   recent_hours: number
   active_hours: number

@@ -359,8 +359,34 @@ export const BOARD_SECTIONS: Array<{ key: PlannerBoardSectionKey; title: string;
   { key: 'holds', title: 'Holds', empty: 'Nothing is waiting on you.', blurb: 'Decisions to make, open high risks, and an inbox to triage.' },
 ]
 
+/** The curated board's sections: the same four keys, worded for the workstreams we manage. */
+export const CURATED_SECTIONS: Array<{ key: PlannerBoardSectionKey; title: string; empty: string; blurb: string }> = [
+  { key: 'in_flight', title: 'In motion', empty: 'No board workstream is active.', blurb: 'Workstreams tagged board that are active.' },
+  { key: 'pre_flight', title: 'Next up', empty: 'No board workstream is planned.', blurb: 'Workstreams tagged board that are planned or paused.' },
+  { key: 'landed', title: 'Recently landed', empty: 'Nothing has landed in the window.', blurb: 'Board workstreams finished in the window.' },
+  { key: 'holds', title: 'Waiting on you', empty: 'Nothing is waiting on you.', blurb: 'Open decisions, risks and inbox items around the board, and workstreams with blockers.' },
+]
+
+/** "2 doing, 5 todo": a workstream's Torque task roll-up. */
+export function taskCountsText(counts?: Record<string, number>): string {
+  return Object.entries(counts ?? {})
+    .filter(([, n]) => n > 0)
+    .map(([status, n]) => `${n} ${status}`)
+    .join(', ')
+}
+
 /** The label a board row carries (what the departure board calls it), and the kit tone it borrows. */
 export function boardWord(section: PlannerBoardSectionKey, row: PlannerBoardRow): { word: string; tone: ToneKey } {
+  if (section === 'holds' && row.source === 'workstream') return { word: 'BLOCKED', tone: 'blocked' }
+  if (row.source === 'workstream') {
+    const WS: Record<string, { word: string; tone: ToneKey }> = {
+      active: { word: 'ACTIVE', tone: 'doing' },
+      planned: { word: 'PLANNED', tone: 'queued' },
+      paused: { word: 'PAUSED', tone: 'paused' },
+      done: { word: 'LANDED', tone: 'done' },
+    }
+    return WS[row.status] ?? { word: row.status.toUpperCase(), tone: statusToneKey(row.status) }
+  }
   if (section === 'holds') {
     const hold = { decision: 'DECIDE', inbox: 'TRIAGE', risk: 'RISK' }[row.source as 'decision' | 'inbox' | 'risk'] ?? 'HOLD'
     return { word: hold, tone: row.source === 'risk' ? 'blocked' : 'todo' }
@@ -385,9 +411,9 @@ export function boardWord(section: PlannerBoardSectionKey, row: PlannerBoardRow)
  * (`?open=<db>/<id>` for a planner item, `?task=<id>` for a Torque task), so
  * closing returns to the board and the view can be linked.
  */
-export function boardRowRoute(row: PlannerBoardRow): string {
-  if (row.source === 'torque' || !row.db) return `/planner/board?task=${encodeURIComponent(row.id)}`
-  return `/planner/board?open=${row.db}/${encodeURIComponent(row.id)}`
+export function boardRowRoute(row: PlannerBoardRow, base = '/planner/board'): string {
+  if (row.source === 'torque' || !row.db) return `${base}?task=${encodeURIComponent(row.id)}`
+  return `${base}?open=${row.db}/${encodeURIComponent(row.id)}`
 }
 
 /** What the board's query string asks to have open: a planner item or a Torque task. */

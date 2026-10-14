@@ -146,18 +146,22 @@ func plannerBoardCmd() *cobra.Command {
 	var recent, active float64
 	var limit int
 	var asJSON bool
+	var scope string
 	cmd := &cobra.Command{
 		Use:          "board",
 		SilenceUsage: true,
 		Short:        "Print the planner departure board (in flight, landed, pre-flight, holds)",
 		Long: `Print the departure board: what is in flight, what just landed, what is
-preparing, and what is waiting on the owner, one row per line. This is the
+preparing, and what is waiting on the owner, one row per line. By default it
+lists only the workstreams tagged "board" (--scope curated); --scope all
+prints the activity feed, Torque tasks included. This is the
 quick check-in an agent runs at the start of a session. It reads the Torque
 task store and the planner tables directly and needs features.planner.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPlannerBoard(cmd.Context(), cmd.OutOrStdout(), service.PlannerBoardOptions{RecentHours: recent, ActiveHours: active, Limit: limit}, asJSON)
+			return runPlannerBoard(cmd.Context(), cmd.OutOrStdout(), service.PlannerBoardOptions{RecentHours: recent, ActiveHours: active, Limit: limit, Scope: scope}, asJSON)
 		},
 	}
+	cmd.Flags().StringVar(&scope, "scope", "curated", "curated (workstreams tagged board) or all (the activity feed)")
 	cmd.Flags().Float64Var(&recent, "recent-hours", 0, "window for landed items (default 72)")
 	cmd.Flags().Float64Var(&active, "active-hours", 0, "a doing task idle longer than this is preparing (default 2)")
 	cmd.Flags().IntVar(&limit, "limit", 0, "rows per section (default 30)")

@@ -371,7 +371,54 @@ it('creates an item from the required fields', async () => {
 
 const brow = (over: Partial<PlannerBoardRow>): PlannerBoardRow => ({ source: 'torque', id: 'CW-20261011-0001', title: 'A task', status: 'doing', updated: '2026-10-11T10:00:00.000Z', ...over })
 
-it('shows the departure board with a row per line, the right words, and links to tasks and items', async () => {
+const wsrow = (over: Partial<PlannerBoardRow>): PlannerBoardRow => ({ source: 'workstream', db: 'workstreams', id: 'WS-a', title: 'Agents as data', status: 'active', updated: '2026-10-11T10:00:00.000Z', ...over })
+
+it('shows the curated board: tagged workstreams with owner, next step, blockers and task counts, and no task rows', async () => {
+  api.plannerBoard.mockResolvedValue(
+    emptyBoard({
+      scope: 'curated',
+      sections: {
+        in_flight: [wsrow({ owner: 'lead', next_step: 'Wire the registry', task_counts: { doing: 2, todo: 5 }, blockers: ['needs keys'] })],
+        pre_flight: [wsrow({ id: 'WS-b', title: 'Mesh teams', status: 'planned' })],
+        landed: [],
+        holds: [wsrow({ blockers: ['needs keys'] }), brow({ source: 'decision', db: 'decisions', id: 'DEC-052', title: 'Pick a registry', status: 'needs-decision' })],
+      },
+      counts: { in_flight: 1, landed: 0, pre_flight: 1, holds: 2 },
+      totals: { in_flight: 1, landed: 0, pre_flight: 1, holds: 2 },
+    }),
+  )
+  renderAt('/planner/board')
+  const motion = await screen.findByRole('region', { name: 'In motion' })
+  expect(api.plannerBoard).toHaveBeenCalledWith({ scope: 'curated' })
+  expect(within(motion).getByRole('link', { name: 'ACTIVE WS-a: Agents as data' }).getAttribute('href')).toBe('/planner/board?open=workstreams/WS-a')
+  expect(within(motion).getByText('Next: Wire the registry')).toBeTruthy()
+  expect(within(motion).getByText('tasks: 2 doing, 5 todo')).toBeTruthy()
+  expect(within(motion).getByText('Blocked: needs keys')).toBeTruthy()
+  expect(within(screen.getByRole('region', { name: 'Next up' })).getByRole('link', { name: 'PLANNED WS-b: Mesh teams' })).toBeTruthy()
+  const waiting = screen.getByRole('region', { name: 'Waiting on you' })
+  expect(within(waiting).getByRole('link', { name: 'BLOCKED WS-a: Agents as data' })).toBeTruthy()
+  expect(within(waiting).getByRole('link', { name: 'DECIDE DEC-052: Pick a registry' })).toBeTruthy()
+  expect(screen.queryByRole('link', { name: /CW-/ })).toBeNull()
+})
+
+it('explains an empty curated board and switches to the Activity feed', async () => {
+  api.plannerBoard.mockImplementation((opts?: { scope?: string }) =>
+    Promise.resolve(opts?.scope === 'all' ? emptyBoard({ scope: 'all', sections: { in_flight: [brow({ id: 'CW-20261011-0001', title: 'Build the API' })], landed: [], pre_flight: [], holds: [] }, counts: { in_flight: 1, landed: 0, pre_flight: 0, holds: 0 }, totals: { in_flight: 1, landed: 0, pre_flight: 0, holds: 0 } }) : emptyBoard({ scope: 'curated', notices: ['No planner items are tagged board. Tag a workstream with board to show it here (34 workstreams could be tagged).'] })),
+  )
+  renderAt('/planner/board')
+  expect((await screen.findByRole('status')).textContent).toContain('No planner items are tagged board')
+  expect(screen.queryByRole('region', { name: 'In flight' })).toBeNull()
+  fireEvent.click(screen.getByRole('tab', { name: 'Activity' }))
+  await waitFor(() => expect(path()).toBe('/planner/activity'))
+  await screen.findByRole('link', { name: 'IN FLIGHT CW-20261011-0001: Build the API' })
+  expect(api.plannerBoard).toHaveBeenLastCalledWith({ scope: 'all' })
+  expect(screen.getByRole('tab', { name: 'Activity' }).getAttribute('aria-selected')).toBe('true')
+  fireEvent.click(screen.getByRole('tab', { name: 'Board' }))
+  await waitFor(() => expect(path()).toBe('/planner/board'))
+  await screen.findByRole('region', { name: 'In motion' })
+})
+
+it('shows the activity feed with a row per line, the right words, and links to tasks and items', async () => {
   api.plannerBoard.mockResolvedValue(
     emptyBoard({
       sections: {
@@ -385,18 +432,18 @@ it('shows the departure board with a row per line, the right words, and links to
       notices: ['Task comments unavailable; every doing task is shown as in flight.'],
     }),
   )
-  renderAt('/planner/board')
+  renderAt('/planner/activity')
   const flight = await screen.findByRole('region', { name: 'In flight' })
   expect(within(flight).getByText('(+6 more)')).toBeTruthy()
-  expect(within(flight).getByRole('link', { name: 'IN FLIGHT CW-20261011-0001: Build the API' }).getAttribute('href')).toBe('/planner/board?task=CW-20261011-0001')
+  expect(within(flight).getByRole('link', { name: 'IN FLIGHT CW-20261011-0001: Build the API' }).getAttribute('href')).toBe('/planner/activity?task=CW-20261011-0001')
   expect(within(flight).getByRole('link', { name: 'ARRIVING CW-20261011-0002: Awaiting a look' })).toBeTruthy()
-  expect(within(flight).getByRole('link', { name: 'IN FLIGHT RM-gui: GUI platform' }).getAttribute('href')).toBe('/planner/board?open=roadmap/RM-gui')
+  expect(within(flight).getByRole('link', { name: 'IN FLIGHT RM-gui: GUI platform' }).getAttribute('href')).toBe('/planner/activity?open=roadmap/RM-gui')
   expect(within(flight).getByText('planner')).toBeTruthy() // workstream
   expect(within(flight).getAllByText('2h').length).toBeGreaterThan(0) // 10:00 against a 12:00 board
 
   const landed = screen.getByRole('region', { name: 'Recently landed' })
   expect(within(landed).getByRole('link', { name: 'LANDED CW-20261011-0003: Shipped it' })).toBeTruthy()
-  expect(within(landed).getByRole('link', { name: 'LANDED DEC-021: Typed tables' }).getAttribute('href')).toBe('/planner/board?open=decisions/DEC-021')
+  expect(within(landed).getByRole('link', { name: 'LANDED DEC-021: Typed tables' }).getAttribute('href')).toBe('/planner/activity?open=decisions/DEC-021')
 
   const pre = screen.getByRole('region', { name: 'Pre-flight' })
   expect(within(pre).getByRole('link', { name: 'PREPARING CW-20261011-0004: Quiet one' })).toBeTruthy() // doing, but in pre-flight
@@ -405,16 +452,16 @@ it('shows the departure board with a row per line, the right words, and links to
   const holds = screen.getByRole('region', { name: 'Holds' })
   expect(within(holds).getByRole('link', { name: 'DECIDE DEC-052: Inbox long-term' })).toBeTruthy()
   expect(within(holds).getByRole('link', { name: 'RISK RK-007: No backups' })).toBeTruthy()
-  expect(within(holds).getByRole('link', { name: 'TRIAGE IN-001: Look at JEV' }).getAttribute('href')).toBe('/planner/board?open=inbox/IN-001')
+  expect(within(holds).getByRole('link', { name: 'TRIAGE IN-001: Look at JEV' }).getAttribute('href')).toBe('/planner/activity?open=inbox/IN-001')
 
   expect(screen.getByRole('status').textContent).toContain('Task comments unavailable')
 })
 
 it('says so when a board section is empty', async () => {
   renderAt('/planner')
-  const holds = await screen.findByRole('region', { name: 'Holds' })
+  const holds = await screen.findByRole('region', { name: 'Waiting on you' })
   expect(within(holds).getByText('Nothing is waiting on you.')).toBeTruthy()
-  expect(within(screen.getByRole('region', { name: 'Pre-flight' })).getByText('Nothing is queued.')).toBeTruthy()
+  expect(within(screen.getByRole('region', { name: 'Next up' })).getByText('No board workstream is planned.')).toBeTruthy()
 })
 
 it('offers a retry when the board fails, and the New button adds to the inbox', async () => {
@@ -424,17 +471,17 @@ it('offers a retry when the board fails, and the New button adds to the inbox', 
   expect(screen.getByRole('button', { name: 'New inbox item' })).toBeTruthy()
   api.plannerBoard.mockResolvedValue(emptyBoard())
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
-  await screen.findByRole('region', { name: 'In flight' })
+  await screen.findByRole('region', { name: 'In motion' })
 })
 
 it('refreshes the board when a task changes', async () => {
-  const view = renderAt('/planner/board')
+  const view = renderAt('/planner/activity')
   await screen.findByRole('region', { name: 'In flight' })
   const before = api.plannerBoard.mock.calls.length
   api.plannerBoard.mockResolvedValue(emptyBoard({ sections: { in_flight: [brow({ id: 'CW-20261011-0009', title: 'Just started' })], landed: [], pre_flight: [], holds: [] }, counts: { in_flight: 1, landed: 0, pre_flight: 0, holds: 0 }, totals: { in_flight: 1, landed: 0, pre_flight: 0, holds: 0 } }))
   event.current = { type: 'task.transitioned', data: { id: 'CW-20261011-0009' } }
   view.rerender(
-    <MemoryRouter initialEntries={['/planner/board']}>
+    <MemoryRouter initialEntries={['/planner/activity']}>
       <Probe />
       <Routes>
         <Route path="/planner/:db" element={<PlannerPage />} />
@@ -525,7 +572,7 @@ it('opens a planner item in a modal over the board and returns to the board on c
   expect(within(dialog).getByRole('button', { name: 'Choose option a: Tangent' })).toBeTruthy()
   expect(path()).toBe('/planner/board?open=decisions/DEC-052')
   // An open modal hides what is behind it from assistive tech, so look past that: the board is still there.
-  expect(screen.getByRole('region', { name: 'Holds', hidden: true })).toBeTruthy()
+  expect(screen.getByRole('region', { name: 'Waiting on you', hidden: true })).toBeTruthy()
   expect(screen.getByRole('tab', { name: 'Board', hidden: true }).getAttribute('aria-selected')).toBe('true')
   expect(api.plannerList).not.toHaveBeenCalled() // no list was loaded behind the modal
 
@@ -585,5 +632,5 @@ it('keeps a related item open on the board when one is followed from inside a bo
   fireEvent.click(chip)
   await waitFor(() => expect(path()).toBe('/planner/board?open=roadmap/RM-messaging-inbox-pipeline'))
   await within(await screen.findByRole('dialog')).findByText('Single inbox')
-  expect(screen.getByRole('region', { name: 'In flight', hidden: true })).toBeTruthy() // still the board behind it
+  expect(screen.getByRole('region', { name: 'In motion', hidden: true })).toBeTruthy() // still the board behind it
 })
