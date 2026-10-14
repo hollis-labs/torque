@@ -222,3 +222,91 @@ func TestBoardText(t *testing.T) {
 	assert.Contains(t, lines, "NOTICE  Torque is unavailable")
 	assert.True(t, strings.HasPrefix(text, "DEPARTURES  2026-10-08T12:00:00.000Z"))
 }
+
+func wsItem(id, status string, kv ...any) PlannerItem {
+	m := it(append([]any{"id", id, "title", "Title " + id, "status", status, "tags", []any{"board"}, "updated", "2026-10-08"}, kv...)...)
+	return m
+}
+
+func curated(in boardInput) PlannerBoard {
+	in.Now, in.Scope = boardNow, BoardScopeCurated
+	return composeBoard(in)
+}
+
+func TestCuratedBoardSectionsAndHiddenStatuses(t *testing.T) {
+	b := curated(boardInput{
+		Workstreams: []PlannerItem{
+			wsItem("WS-a", "active", "priority", 2),
+			wsItem("WS-b", "active", "priority", 1),
+			wsItem("WS-c", "planned"),
+			wsItem("WS-d", "paused"),
+			wsItem("WS-e", "parked"),
+			wsItem("WS-f", "unreviewed"),
+			wsItem("WS-g", "done"),
+			wsItem("WS-old", "done", "updated", "2026-09-01"),
+			it("id", "WS-untagged", "title", "x", "status", "active"),
+		},
+		WSTasks: map[string]map[string]int{"WS-a": {"doing": 2, "todo": 5}},
+		Tasks:   map[string][]BoardTask{"doing": {btask(1, "doing", 1)}},
+	})
+	assert.Equal(t, "curated", b.Scope)
+	assert.Equal(t, []string{"WS-b", "WS-a"}, rowIDs(b.Sections["in_flight"]), "active, by priority")
+	assert.Equal(t, []string{"WS-c", "WS-d"}, rowIDs(b.Sections["pre_flight"]), "planned and paused")
+	assert.Equal(t, []string{"WS-g"}, rowIDs(b.Sections["landed"]), "done within the window only")
+	assert.Empty(t, b.Sections["holds"])
+	assert.Empty(t, b.Notices)
+	assert.Equal(t, map[string]int{"doing": 2, "todo": 5}, b.Sections["in_flight"][1].TaskCounts)
+	for _, k := range PlannerBoardSections {
+		for _, r := range b.Sections[k] {
+			assert.NotEqual(t, "torque", r.Source)
+			assert.False(t, strings.HasPrefix(r.ID, "CW-"), r.ID)
+		}
+	}
+}
+
+func TestCuratedBoardHoldsAndBlockers(t *testing.T) {
+	b := curated(boardInput{
+		Workstreams: []PlannerItem{
+			wsItem("WS-a", "active", "blockers", []any{"needs keys", "needs review"}),
+			wsItem("WS-b", "planned"),
+		},
+		Tracker: map[string][]PlannerItem{
+			"decisions": {
+				it("id", "DEC-1", "title", "linked", "status", "needs-decision", "workstream_ids", []any{"WS-b"}, "updated", "2026-10-07"),
+				it("id", "DEC-2", "title", "related", "status", "needs-decision", "related_ids", []any{"WS-a"}),
+				it("id", "DEC-3", "title", "tagged", "status", "needs-decision", "tags", []any{"board"}),
+				it("id", "DEC-4", "title", "unrelated", "status", "needs-decision"),
+				it("id", "DEC-5", "title", "decided", "status", "decided", "workstream_ids", []any{"WS-a"}),
+			},
+			"risks": {
+				it("id", "RK-1", "severity", "high", "status", "open", "workstream_ids", []any{"WS-a"}),
+				it("id", "RK-2", "severity", "low", "status", "open", "workstream_ids", []any{"WS-a"}),
+			},
+			"inbox": {it("id", "IN-1", "status", "new", "workstream_ids", []any{"WS-zzz"})},
+		},
+	})
+	holds := b.Sections["holds"]
+	assert.ElementsMatch(t, []string{"DEC-1", "DEC-2", "DEC-3", "RK-1", "WS-a"}, rowIDs(holds))
+	assert.Equal(t, "WS-a", holds[len(holds)-1].ID, "blocked workstreams follow the items")
+	assert.Equal(t, []string{"needs keys", "needs review"}, holds[len(holds)-1].Blockers)
+	assert.Equal(t, []string{"WS-a"}, rowIDs(b.Sections["in_flight"]), "a blocked workstream stays in its status section")
+	text := BoardText(b)
+	assert.Contains(t, text, "2 blockers")
+	assert.Contains(t, text, "- needs keys")
+}
+
+func TestCuratedBoardEmptyStateNamesTheTag(t *testing.T) {
+	b := curated(boardInput{Workstreams: []PlannerItem{it("id", "WS-a", "status", "active"), it("id", "WS-b", "status", "planned")}})
+	require.Len(t, b.Notices, 1)
+	assert.Contains(t, b.Notices[0], "No planner items are tagged board")
+	assert.Contains(t, b.Notices[0], "2 workstreams")
+}
+
+func TestAllScopeIsTheActivityFeed(t *testing.T) {
+	in := boardInput{Now: boardNow, Tasks: map[string][]BoardTask{"doing": {btask(1, "doing", 1)}}, Workstreams: []PlannerItem{wsItem("WS-a", "active")}}
+	feed := composeBoard(in)
+	in.Scope = BoardScopeAll
+	explicit := composeBoard(in)
+	assert.Equal(t, feed, explicit)
+	assert.Equal(t, []string{"CW-20261008-0001"}, rowIDs(feed.Sections["in_flight"]), "workstreams never reach the activity feed")
+}

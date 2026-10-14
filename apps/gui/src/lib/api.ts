@@ -763,8 +763,8 @@ export class TorqueApiClient {
     return this.get<PlannerDatabaseInfo[]>('/planner/databases')
   }
 
-  /** The departure board: in flight, landed, pre-flight, holds. */
-  async plannerBoard(opts?: { recent_hours?: number; active_hours?: number; limit?: number }, signal?: AbortSignal): Promise<PlannerBoard> {
+  /** The board: curated workstreams by default, or scope 'all' for the activity feed (in flight, landed, pre-flight, holds). */
+  async plannerBoard(opts?: { scope?: 'curated' | 'all'; recent_hours?: number; active_hours?: number; limit?: number }, signal?: AbortSignal): Promise<PlannerBoard> {
     return this.get<PlannerBoard>('/planner/board', { ...opts }, signal)
   }
 

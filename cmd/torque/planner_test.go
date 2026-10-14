@@ -66,7 +66,7 @@ func TestPlannerBoardCommand(t *testing.T) {
 	closeStore()
 
 	out.Reset()
-	require.NoError(t, runPlannerBoard(context.Background(), &out, service.PlannerBoardOptions{}, false))
+	require.NoError(t, runPlannerBoard(context.Background(), &out, service.PlannerBoardOptions{Scope: "all"}, false))
 	assert.Contains(t, out.String(), "DEPARTURES")
 	assert.Contains(t, out.String(), "TRIAGE")
 	assert.Contains(t, out.String(), "IN-001")
@@ -74,6 +74,7 @@ func TestPlannerBoardCommand(t *testing.T) {
 	out.Reset()
 	require.NoError(t, runPlannerBoard(context.Background(), &out, service.PlannerBoardOptions{Limit: 5}, true))
 	assert.Contains(t, out.String(), `"limit": 5`)
+	assert.Contains(t, out.String(), `"scope": "curated"`)
 }
 
 func TestJudgeCommands(t *testing.T) {

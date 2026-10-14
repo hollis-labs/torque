@@ -169,23 +169,54 @@ func TestPlannerBoardTool(t *testing.T) {
 	plannerTool(t, a, "torque_planner_inbox_add", map[string]any{"title": "Look at the board"})
 	plannerTool(t, a, "torque_planner_create", map[string]any{"db": "decisions", "item": map[string]any{"title": "Pick", "status": "needs-decision"}})
 
-	b := plannerTool(t, a, "torque_planner_board", map[string]any{})
+	b := plannerTool(t, a, "torque_planner_board", map[string]any{"scope": "all"})
 	sections := b["sections"].(map[string]any)
 	holds := sections["holds"].([]any)
 	require.Len(t, holds, 2)
 	assert.Equal(t, "DEC-001", holds[0].(map[string]any)["id"], "decisions first, then the inbox")
 	assert.EqualValues(t, 30, b["limit"])
 
-	small := plannerTool(t, a, "torque_planner_board", map[string]any{"limit": "1", "recent_hours": 24})
+	small := plannerTool(t, a, "torque_planner_board", map[string]any{"scope": "all", "limit": "1", "recent_hours": 24})
 	assert.EqualValues(t, 1, small["limit"])
 	assert.EqualValues(t, 24, small["recent_hours"])
 	assert.Len(t, small["sections"].(map[string]any)["holds"], 1)
 	assert.EqualValues(t, 2, small["totals"].(map[string]any)["holds"], "the total keeps the full count")
 
-	text := plannerTool(t, a, "torque_planner_board", map[string]any{"text": true})
+	text := plannerTool(t, a, "torque_planner_board", map[string]any{"scope": "all", "text": true})
 	assert.Contains(t, text["text"], "HOLDS (WAITING ON YOU)")
 	assert.Contains(t, text["text"], "DECIDE")
 
 	code, _ := plannerToolErr(t, a, "torque_planner_board", map[string]any{"limit": 999})
 	assert.Equal(t, "arg_invalid", code)
+	code, _ = plannerToolErr(t, a, "torque_planner_board", map[string]any{"scope": "everything"})
+	assert.Equal(t, "arg_invalid", code)
+}
+
+func TestPlannerBoardToolScope(t *testing.T) {
+	a := setupPlannerAdapter(t)
+	plannerTool(t, a, "torque_planner_create", map[string]any{"db": "workstreams", "item": map[string]any{
+		"id": "WS-shown", "title": "Shown", "status": "active", "tags": []any{"board"}, "next_step": "ship it", "blockers": []any{"waiting on keys"},
+	}})
+	plannerTool(t, a, "torque_planner_create", map[string]any{"db": "workstreams", "item": map[string]any{"id": "WS-hidden", "title": "Hidden", "status": "active"}})
+	plannerTool(t, a, "torque_planner_inbox_add", map[string]any{"title": "Unrelated"})
+
+	curated := plannerTool(t, a, "torque_planner_board", map[string]any{})
+	assert.Equal(t, "curated", curated["scope"], "curated is the default")
+	sections := curated["sections"].(map[string]any)
+	flight := sections["in_flight"].([]any)
+	require.Len(t, flight, 1)
+	assert.Equal(t, "WS-shown", flight[0].(map[string]any)["id"])
+	holds := sections["holds"].([]any)
+	require.Len(t, holds, 1, "only the blocked board workstream; the unrelated inbox item is not on the board")
+	assert.Equal(t, "WS-shown", holds[0].(map[string]any)["id"])
+
+	text := plannerTool(t, a, "torque_planner_board", map[string]any{"text": true})
+	assert.Contains(t, text["text"], "WS-shown")
+	assert.Contains(t, text["text"], "1 blocker")
+	assert.NotContains(t, text["text"], "WS-hidden")
+
+	all := plannerTool(t, a, "torque_planner_board", map[string]any{"scope": "all"})
+	assert.Equal(t, "all", all["scope"])
+	assert.Len(t, all["sections"].(map[string]any)["holds"], 1)
+	assert.Equal(t, "IN-001", all["sections"].(map[string]any)["holds"].([]any)[0].(map[string]any)["id"])
 }

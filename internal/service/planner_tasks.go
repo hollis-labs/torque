@@ -85,46 +85,20 @@ func (s *PlannerService) WorkstreamTasks(id string) (*PlannerWorkstreamTasks, er
 		return nil, err
 	}
 	out := &PlannerWorkstreamTasks{WorkstreamID: id, Counts: map[string]int{}, Open: []PlannerTaskBrief{}, ProjectIDs: []string{}}
-	for _, p := range asAnySlice(ws["torque_project_ids"]) {
-		out.ProjectIDs = append(out.ProjectIDs, fmt.Sprint(p))
-	}
-	out.Tag, _ = ws["torque_tag"].(string)
-	out.Tag = strings.TrimSpace(out.Tag)
+	out.ProjectIDs, out.Tag = workstreamScope(ws)
 	if len(out.ProjectIDs) == 0 && out.Tag == "" {
 		out.Note = "This workstream names no Torque project or tag."
 		return out, nil
 	}
-
-	// One filter per project (or one unscoped, for a tag-only workstream).
-	var scopes []sqlstore.TaskFilter
-	base := sqlstore.TaskFilter{ExcludeInternal: true}
-	if out.Tag != "" {
-		base.TagSlugs = []string{out.Tag}
-	}
-	if len(out.ProjectIDs) == 0 {
-		scopes = append(scopes, base)
-	}
-	for _, p := range out.ProjectIDs {
-		f := base
-		f.ProjectID = p
-		scopes = append(scopes, f)
+	scopes := workstreamFilters(out.ProjectIDs, out.Tag)
+	var err2 error
+	if out.Counts, out.Total, err2 = s.countScopes(scopes); err2 != nil {
+		return nil, err2
 	}
 
 	seen := map[string]bool{}
 	var open []sqlstore.TaskRecord
 	for _, f := range scopes {
-		for _, st := range CanonicalStatuses {
-			cf := f
-			cf.Status = st
-			n, err := s.store.CountTasks(cf)
-			if err != nil {
-				return nil, err
-			}
-			if n > 0 {
-				out.Counts[st] += n
-				out.Total += n
-			}
-		}
 		of := f
 		of.Statuses = openStatuses
 		of.SortBy, of.SortDir, of.Limit = "updated_at", "desc", workstreamTaskLimit
@@ -148,4 +122,63 @@ func (s *PlannerService) WorkstreamTasks(id string) (*PlannerWorkstreamTasks, er
 		out.Open = append(out.Open, briefOf(t))
 	}
 	return out, nil
+}
+
+// workstreamScope is the Torque projects and tag a workstream names.
+func workstreamScope(ws PlannerItem) (projectIDs []string, tag string) {
+	projectIDs = []string{}
+	for _, p := range asAnySlice(ws["torque_project_ids"]) {
+		projectIDs = append(projectIDs, fmt.Sprint(p))
+	}
+	tag, _ = ws["torque_tag"].(string)
+	return projectIDs, strings.TrimSpace(tag)
+}
+
+// workstreamFilters is one task filter per project (or one unscoped, for a
+// tag-only workstream).
+func workstreamFilters(projectIDs []string, tag string) []sqlstore.TaskFilter {
+	base := sqlstore.TaskFilter{ExcludeInternal: true}
+	if tag != "" {
+		base.TagSlugs = []string{tag}
+	}
+	if len(projectIDs) == 0 {
+		return []sqlstore.TaskFilter{base}
+	}
+	var scopes []sqlstore.TaskFilter
+	for _, p := range projectIDs {
+		f := base
+		f.ProjectID = p
+		scopes = append(scopes, f)
+	}
+	return scopes
+}
+
+func (s *PlannerService) countScopes(scopes []sqlstore.TaskFilter) (map[string]int, int, error) {
+	counts, total := map[string]int{}, 0
+	for _, f := range scopes {
+		for _, st := range CanonicalStatuses {
+			cf := f
+			cf.Status = st
+			n, err := s.store.CountTasks(cf)
+			if err != nil {
+				return nil, 0, err
+			}
+			if n > 0 {
+				counts[st] += n
+				total += n
+			}
+		}
+	}
+	return counts, total, nil
+}
+
+// workstreamCounts is the per-status Torque task count behind a workstream,
+// without listing any task: what the curated board carries. A workstream that
+// names no project or tag has none.
+func (s *PlannerService) workstreamCounts(ws PlannerItem) (map[string]int, int, error) {
+	projectIDs, tag := workstreamScope(ws)
+	if len(projectIDs) == 0 && tag == "" {
+		return map[string]int{}, 0, nil
+	}
+	return s.countScopes(workstreamFilters(projectIDs, tag))
 }

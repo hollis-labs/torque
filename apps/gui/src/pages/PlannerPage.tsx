@@ -26,8 +26,12 @@ export default function PlannerPage() {
   const navigate = useNavigate()
   const params = useParams<{ db?: string; id?: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
-  // /planner and /planner/board are the departure board; /planner/<db> is a list.
-  const isBoard = params.db === undefined || params.db === 'board'
+  // /planner and /planner/board are the curated board, /planner/activity the
+  // activity feed (scope=all); /planner/<db> is a list.
+  const isActivity = params.db === 'activity'
+  const isBoard = params.db === undefined || params.db === 'board' || isActivity
+  const boardScope = isActivity ? 'all' : 'curated'
+  const boardBase = isActivity ? '/planner/activity' : '/planner/board'
   const db: PlannerDb = isPlannerDb(params.db) ? params.db : 'priorities'
   const openId = params.id ? decodeURIComponent(params.id) : undefined
   const boardOpen = isBoard ? parseBoardOpen(searchParams) : {} // the board opens items in modals over itself
@@ -74,13 +78,13 @@ export default function PlannerPage() {
 
   const loadBoard = useCallback(async () => {
     try {
-      setBoard(await api.plannerBoard())
+      setBoard(await api.plannerBoard({ scope: boardScope }))
       setBoardError(null)
     } catch (err) {
       if (err instanceof ApiError && err.code === 'feature_disabled') setEnabled(false)
       else setBoardError(err instanceof Error ? err.message : 'Failed to load the board')
     }
-  }, [api])
+  }, [api, boardScope])
 
   useEffect(() => {
     void loadCounts()
@@ -89,6 +93,7 @@ export default function PlannerPage() {
   // The board loads when opened and then keeps itself fresh.
   useEffect(() => {
     if (!isBoard) return
+    setBoard(null) // the curated board and the activity feed are different documents
     void loadBoard()
     const t = setInterval(() => void loadBoard(), BOARD_REFRESH_MS)
     return () => clearInterval(t)
@@ -204,9 +209,10 @@ export default function PlannerPage() {
       <div className="border-b border-zinc-800/80 px-4 py-3">
         <Input className="h-8 w-full sm:w-72" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search everything…" aria-label="Search the planner" />
       </div>
-      <Tabs value={isBoard ? 'board' : db} onValueChange={value => { setSearch(''); navigate(`/planner/${value}`) }} className="min-w-0 border-b border-zinc-800/80 px-4 py-3">
+      <Tabs value={isActivity ? 'activity' : isBoard ? 'board' : db} onValueChange={value => { setSearch(''); navigate(`/planner/${value}`) }} className="min-w-0 border-b border-zinc-800/80 px-4 py-3">
         <TabsList aria-label="Planner views" className="h-auto max-w-full flex-wrap justify-start">
           <TabsTrigger value="board">Board</TabsTrigger>
+          <TabsTrigger value="activity">Activity</TabsTrigger>
           {PLANNER_DBS.map(d => <TabsTrigger key={d.key} value={d.key}>
             {d.label}{countOf(d.key) !== undefined && <span className="ml-1.5 text-[10px] text-zinc-500">{countOf(d.key)}</span>}
           </TabsTrigger>)}
@@ -229,7 +235,7 @@ export default function PlannerPage() {
               <Skeleton className="h-40 w-full" />
             </div>
           ) : (
-            <PlannerBoardView board={board} />
+            <PlannerBoardView board={board} scope={boardScope} base={boardBase} />
           )
         ) : (
           <>
@@ -309,7 +315,7 @@ export default function PlannerPage() {
             void loadCounts()
             void loadBoard()
           }}
-          onOpen={(nextDb, id) => navigate(`/planner/board?open=${nextDb}/${encodeURIComponent(id)}`)}
+          onOpen={(nextDb, id) => navigate(`${boardBase}?open=${nextDb}/${encodeURIComponent(id)}`)}
         />
       )}
 
