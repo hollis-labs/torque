@@ -20,7 +20,7 @@ const HISTORY_STYLE: Record<string, string> = {
 }
 
 /** Reorder motion: rows glide from their old slot to the new one. */
-function useFlip(order: string) {
+export function useFlip(order: string) {
   const ref = useRef<HTMLDivElement>(null)
   const prev = useRef(new Map<string, number>())
   useLayoutEffect(() => {
