@@ -266,7 +266,7 @@ export function validate(d: Draft, takenSlugs: string[] = []): Issue[] {
   if (d.charter.trim().length < 40) out.push({ level: 'warn', step: 'charter', text: 'The charter is very short.' })
   if (!d.rules.includes('no-secrets')) out.push({ level: 'error', step: 'charter', text: 'The no-secrets rule cannot be removed.' })
   if (d.skills.length === 0) out.push({ level: 'warn', step: 'skills', text: 'No skills; the agent will not know your routines.' })
-  if (d.permissionMode === 'bypass' && d.sandbox === 'unrestricted') out.push({ level: 'warn', step: 'powers', text: 'Bypass with an unrestricted sandbox is the widest footing there is.' })
+  if (d.permissionMode === 'bypass' && d.sandbox === 'unrestricted') out.push({ level: 'warn', step: 'run', text: 'Bypass with an unrestricted sandbox is the widest footing there is.' })
   if (!effectiveServers(d.project).includes('torque')) out.push({ level: 'warn', step: 'access', text: `Project ${d.project} does not grant torque, so this agent cannot read its tasks.` })
   if (!d.taskId.trim()) out.push({ level: 'error', step: 'review', text: 'Attach a Torque task id; every catalog change is audited against one.' })
   return out

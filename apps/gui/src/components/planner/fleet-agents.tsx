@@ -64,7 +64,7 @@ export function FleetAgentsView({ agents, error, now, live }: { agents: FleetAge
         {error && <span className="text-red-300">stale: {error}</span>}
       </div>
       {rows.length === 0 ? (
-        <div className="p-4"><EmptyState title="No agents running" description="The activity monitor reports no agent processes on this machine." /></div>
+        <div className="p-4"><EmptyState variant="empty" title="No agents running" description="The activity monitor reports no agent processes on this machine." /></div>
       ) : (
         <ul>{rows.map((a) => <Row key={a.id} agent={a} now={now} />)}</ul>
       )}
