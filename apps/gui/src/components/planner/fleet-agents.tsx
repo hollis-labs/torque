@@ -1,4 +1,5 @@
 import { EmptyState } from '@hollis-labs/sysop-ui'
+import { useFleetAgents } from '@/hooks/use-fleet-agents'
 import { PixelRobot } from '@/components/planner/agent-activity'
 import { ago, type AgentState } from '@/lib/agent-activity'
 import { cwdTail, fleetCounts, sortFleetAgents, type FleetAgent, type FleetState } from '@/lib/fleet-agents'
@@ -34,6 +35,12 @@ function Row({ agent, now }: { agent: FleetAgent; now: number }) {
       </div>
     </li>
   )
+}
+
+/** Owns the live feed, so the stream and polling exist only while this tab is open. */
+export function FleetAgentsPanel() {
+  const fleet = useFleetAgents()
+  return <FleetAgentsView agents={fleet.agents} error={fleet.error} now={fleet.now} live={fleet.live} />
 }
 
 export function FleetAgentsView({ agents, error, now, live }: { agents: FleetAgent[] | null; error: string | null; now: number; live: boolean }) {

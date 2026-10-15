@@ -12,8 +12,7 @@ import { TorqueTaskDialog } from '@/components/planner/torque-task-dialog'
 import { PlannerStatus } from '@/components/planner/planner-status'
 import { AgentActivityView } from '@/components/planner/agent-activity'
 import { AgentBuilderView } from '@/components/planner/agent-builder'
-import { FleetAgentsView } from '@/components/planner/fleet-agents'
-import { useFleetAgents } from '@/hooks/use-fleet-agents'
+import { FleetAgentsPanel } from '@/components/planner/fleet-agents'
 import { useAgentActivity } from '@/hooks/use-agent-activity'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
@@ -59,7 +58,6 @@ export default function PlannerPage() {
   const [refreshKey, setRefreshKey] = useState(0)
   const { lastEvent } = useSSE(SSE_EVENTS)
   const activity = useAgentActivity()
-  const fleet = useFleetAgents()
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }))
 
@@ -230,7 +228,7 @@ export default function PlannerPage() {
         {hits !== null ? (
           <SearchResults hits={hits} query={search.trim()} onClear={() => setSearch('')} onOpen={(h) => { setSearch(''); go(h.db, h.id) }} />
         ) : isAgents ? (
-          <FleetAgentsView agents={fleet.agents} error={fleet.error} now={fleet.now} live={fleet.live} />
+          <FleetAgentsPanel />
         ) : isAgentsDemo ? (
           <AgentActivityView agents={activity.agents} now={activity.now} live={activity.live} />
         ) : isBuilder ? (
