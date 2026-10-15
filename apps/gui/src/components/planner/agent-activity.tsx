@@ -67,8 +67,8 @@ export function PixelRobot({ id, size = 48, state = 'idle' }: { id: string; size
 }
 
 /** A stepped, 8-bit style bar graph of recent activity; the newest bar pulses while working. */
-export function ActivityBars({ series, state, width = 120, height = 32, fluid = false }: { series: number[]; state: AgentState; width?: number; height?: number; fluid?: boolean }) {
-  const max = Math.max(1, ...series)
+export function ActivityBars({ series, state, width = 120, height = 32, fluid = false, scaleMax }: { series: number[]; state: AgentState; width?: number; height?: number; fluid?: boolean; scaleMax?: number }) {
+  const max = scaleMax ?? Math.max(1, ...series)
   const gap = 1
   const bw = (width - gap * (series.length - 1)) / series.length
   const color = state === 'blocked' ? '#fbbf24' : state === 'offline' ? '#52525b' : '#34d399'
