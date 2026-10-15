@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyFleetEvent, cwdName, cwdTail, formatDuration, stateDurations, stateSegments, trackTransitions, timelineWindow, workingShare, fleetCounts, parseFleetAgents, sortFleetAgents } from './fleet-agents'
+import { busySeries, fleetScore, groupFleet, applyFleetEvent, cwdName, cwdTail, formatDuration, stateDurations, stateSegments, trackTransitions, timelineWindow, workingShare, fleetCounts, parseFleetAgents, sortFleetAgents } from './fleet-agents'
 
 describe('fleet agents', () => {
   it('parses rows defensively', () => {
@@ -87,5 +87,39 @@ describe('fleet agents', () => {
     expect(formatDuration(45_000)).toBe('45s')
     expect(formatDuration(4 * 60_000 + 5_000)).toBe('4m 05s')
     expect(formatDuration(3 * 3_600_000 + 12 * 60_000)).toBe('3h 12m')
+  })
+})
+
+describe('fleet grouping and score', () => {
+  const rows = (agents: object[]) => parseFleetAgents({ agents })
+  const now = Date.parse('2026-10-15T12:00:00Z')
+
+  it('groups by workstream, falling back to the working directory', () => {
+    const agents = rows([
+      { id: 'a', cwd: '/h/torque', state: 'busy', workstream_id: 'ws-1', workstream_name: 'Planner' },
+      { id: 'b', cwd: '/h/torque', state: 'idle', workstream_id: 'ws-1' },
+      { id: 'c', cwd: '/h/tether', state: 'idle' },
+    ])
+    const groups = groupFleet(agents, {}, now)
+    expect(groups.map((g) => g.name).sort()).toEqual(['Planner', 'tether'])
+    expect(groups.find((g) => g.name === 'Planner')?.workstreamId).toBe('ws-1')
+    expect(groups.find((g) => g.name === 'Planner')?.agents.map((a) => a.rank)).toEqual([1, 2])
+  })
+
+  it('parses the optional fields and leaves them null when absent', () => {
+    const [a, b] = rows([{ id: 'a', model: 'claude-opus-4-7', last_action: 'Searched tesseract', unread_messages: 3 }, { id: 'b' }])
+    expect([a.model, a.lastAction?.text, a.messages]).toEqual(['claude-opus-4-7', 'Searched tesseract', 3])
+    expect([b.model, b.lastAction, b.workstream, b.messages]).toEqual([null, null, null, null])
+  })
+
+  it('scores a working, recent agent above an unknown one', () => {
+    const [busy, unknown] = rows([{ id: 'a', state: 'busy', last_activity: '2026-10-15T11:59:00Z' }, { id: 'b', state: 'unknown' }])
+    expect(fleetScore(busy, [], now)).toBeGreaterThan(fleetScore(unknown, [], now))
+  })
+
+  it('reports the busy share per bucket', () => {
+    const entries = [{ at: now - 60_000, kind: 'seen' as const, state: 'busy' as const, waitingFor: null }]
+    const series = busySeries(entries, now, 60_000, 4)
+    expect(series).toEqual([100, 100, 100, 100])
   })
 })

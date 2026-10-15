@@ -1,53 +1,64 @@
 import { useState } from 'react'
+import { Crown, Zap } from 'lucide-react'
 import { EmptyState } from '@hollis-labs/sysop-ui'
-import { PixelRobot, useFlip } from '@/components/planner/agent-activity'
+import { MailBadge, ModelTag, Score, Stat } from '@/components/planner/fleet-parts'
+import { ActivityBars, PixelRobot, useFlip } from '@/components/planner/agent-activity'
 import { FleetAgentModal } from '@/components/planner/fleet-agent-modal'
 import { FLEET_STATE_STYLE } from '@/components/planner/fleet-style'
 import { StateTimeline } from '@/components/planner/fleet-timeline'
 import { useFleetAgents } from '@/hooks/use-fleet-agents'
-import { ago } from '@/lib/agent-activity'
-import { cwdName, cwdTail, fleetCounts, formatDuration, sortFleetAgents, timelineWindow, type FleetAgent, type FleetHistory } from '@/lib/fleet-agents'
+import { busySeries, whatNow, cwdName, cwdTail, fleetCounts, formatDuration, groupFleet, timelineWindow, workingShare, type FleetAgent, type FleetHistory } from '@/lib/fleet-agents'
 
-function Row({ agent, entries, now, onOpen }: { agent: FleetAgent; entries: FleetHistory[string]; now: number; onOpen: () => void }) {
+function Row({ agent, rank, score, leader, entries, now, onOpen }: { agent: FleetAgent; rank: number; score: number; leader: boolean; entries: FleetHistory[string]; now: number; onOpen: () => void }) {
   const s = FLEET_STATE_STYLE[agent.state]
   const waiting = agent.state === 'waiting'
   const name = cwdName(agent.cwd) || agent.provider
+  const top = leader
+  const windowMs = timelineWindow(entries, now)
+  const share = workingShare(entries, now, windowMs)
   return (
-    <li data-flip={agent.id} className="border-b border-zinc-800/80">
+    <li data-flip={agent.id} className="border-b border-border">
       <button
         type="button"
         onClick={onOpen}
         aria-label={`Open ${name}`}
-        className={`group flex w-full flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 text-left hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none ${waiting ? 'bg-amber-950/20' : ''}`}
+        className={`group flex w-full flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 text-left hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none ${waiting ? 'bg-amber-950/20' : ''} ${agent.state === 'unknown' ? 'opacity-70' : ''}`}
       >
+        <span className={`w-8 shrink-0 text-center font-mono text-xs ${top ? 'text-amber-300' : 'text-zinc-500'}`}>
+          {top ? <Crown className="mx-auto h-4 w-4" aria-label="Top of the leaderboard" /> : `#${rank}`}
+        </span>
         <span className="shrink-0 border-2 border-zinc-700 bg-zinc-950 p-1 group-hover:border-zinc-500">
-          <PixelRobot id={agent.id} size={36} state={s.avatar} />
+          <PixelRobot id={agent.id} size={40} state={s.avatar} />
         </span>
         <span className="min-w-0 flex-1 basis-48">
           <span className="flex items-center gap-2">
-            <span className="truncate font-mono text-sm font-semibold tracking-wide text-zinc-100">{name}</span>
-            <span className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-zinc-500">{agent.provider}</span>
+            <span className="truncate font-mono text-sm font-semibold uppercase tracking-wide">{name}</span>
+            <ModelTag agent={agent} />
+          </span>
+          <span className="mt-0.5 block truncate text-[12px] text-muted-foreground" title={agent.cwd}>
+            {waiting && agent.waitingFor ? <span className="text-amber-200">{agent.waitingFor}</span> : whatNow(agent, now)}
+            <span className="text-zinc-600"> · {cwdTail(agent.cwd)}</span>
           </span>
           <span className={`inline-flex items-center gap-1.5 font-mono text-[10px] tracking-widest ${s.text}`}>
             <span className={`h-1.5 w-1.5 ${s.dot} ${agent.state === 'busy' ? 'agent-pulse-bar' : ''}`} />
             {s.label}
             {agent.stateConfidence && <span className="text-zinc-500">· {agent.stateConfidence}</span>}
           </span>
-          <span className="block truncate font-mono text-xs text-zinc-400" title={agent.cwd}>{cwdTail(agent.cwd)}</span>
-          {waiting && agent.waitingFor && <span className="block truncate text-xs text-amber-200">{agent.waitingFor}</span>}
         </span>
-        <span className="hidden gap-4 font-mono sm:flex">
-          <span className="min-w-[3.25rem]">
-            <span className="block text-sm tabular-nums text-zinc-100">{agent.startedAt ? formatDuration(now - agent.startedAt) : '—'}</span>
-            <span className="block text-[9px] uppercase tracking-widest text-zinc-500">up</span>
+        <span className="hidden gap-4 sm:flex">
+          <Stat label="up" value={agent.startedAt ? formatDuration(now - agent.startedAt) : '—'} />
+          <Stat label="working" value={share === null ? '—' : `${share}%`} />
+        </span>
+        <span className="hidden md:flex md:flex-col md:gap-1">
+          <ActivityBars series={busySeries(entries, now, windowMs)} state={s.avatar} scaleMax={100} height={22} />
+          <StateTimeline entries={entries} now={now} windowMs={windowMs} height={6} />
+        </span>
+        <MailBadge count={agent.messages} />
+        <span className="w-20 shrink-0 text-right">
+          <span className="block text-sm text-amber-200">
+            <Score value={score} />
           </span>
-        </span>
-        <span className="hidden md:block">
-          <StateTimeline entries={entries} now={now} windowMs={timelineWindow(entries, now)} />
-        </span>
-        <span className="w-24 shrink-0 text-right font-mono text-[11px] text-zinc-500">
-          <span className="block">{agent.lastActivity ? ago(agent.lastActivity, now) : 'no activity data'}</span>
-          <span className="block">pid {agent.pid}</span>
+          <span className="block font-mono text-[9px] uppercase tracking-widest text-zinc-500">score</span>
         </span>
       </button>
     </li>
@@ -62,8 +73,8 @@ export function FleetAgentsPanel() {
 
 export function FleetAgentsView({ agents, history, error, now, live }: { agents: FleetAgent[] | null; history: FleetHistory; error: string | null; now: number; live: boolean }) {
   const [openId, setOpenId] = useState<string | null>(null)
-  const rows = sortFleetAgents(agents ?? [])
-  const ref = useFlip(rows.map((a) => a.id).join('|'))
+  const groups = groupFleet(agents ?? [], history, now)
+  const ref = useFlip(groups.map((g) => `${g.name}:${g.agents.map((a) => a.agent.id).join(',')}`).join('|'))
   if (agents === null) {
     return error ? (
       <div className="p-4"><EmptyState variant="error" title="Activity source unavailable" description={error} /></div>
@@ -72,23 +83,40 @@ export function FleetAgentsView({ agents, history, error, now, live }: { agents:
     )
   }
   const c = fleetCounts(agents)
-  const open = rows.find((a) => a.id === openId) ?? null
+  const leaderId = groups.flatMap((g) => g.agents).reduce<{ id: string | null; score: number }>((best, a) => (a.score > best.score && a.agent.state !== 'unknown' ? { id: a.agent.id, score: a.score } : best), { id: null, score: -1 }).id
+  const open = groups.flatMap((g) => g.agents).find((a) => a.agent.id === openId) ?? null
   return (
     <div ref={ref} className="agent-arcade">
-      <div className="flex flex-wrap gap-x-6 gap-y-1 border-b border-zinc-800/80 px-4 py-2 font-mono text-[11px] uppercase tracking-widest text-zinc-500">
-        <span className={c.waiting ? 'text-amber-300' : ''}>{c.waiting} waiting</span>
-        <span>{c.busy} working</span>
-        <span>{c.idle} idle</span>
-        <span>{c.unknown} unknown</span>
-        <span className={live ? 'text-emerald-300' : 'text-zinc-600'}>{live ? '● live' : '○ resyncing'}</span>
-        {error && <span className="text-red-300">stale: {error}</span>}
+      <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+        <p className="text-[13px] text-muted-foreground">Who is doing what, grouped by workstream and ranked on a provisional score.</p>
+        <span className="ml-auto inline-flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[10px] uppercase tracking-widest text-zinc-400">
+          <span className={c.waiting ? 'text-amber-300' : ''}>{c.waiting} waiting</span>
+          <span className="inline-flex items-center gap-1.5"><Zap className="h-3 w-3 text-emerald-400" />{c.busy}/{agents.length} working</span>
+          <span>{c.idle} idle</span>
+          <span>{c.unknown} unknown</span>
+          <span className={live ? 'text-emerald-300' : 'text-zinc-600'}>{live ? '● live' : '○ resyncing'}</span>
+          {error && <span className="text-red-300">stale: {error}</span>}
+        </span>
       </div>
-      {rows.length === 0 ? (
+      {groups.length === 0 && (
         <div className="p-4"><EmptyState variant="empty" title="No agents running" description="The activity monitor reports no agent processes on this machine." /></div>
-      ) : (
-        <ul>{rows.map((a) => <Row key={a.id} agent={a} entries={history[a.id] ?? []} now={now} onOpen={() => setOpenId(a.id)} />)}</ul>
       )}
-      {open && <FleetAgentModal agent={open} entries={history[open.id] ?? []} now={now} onClose={() => setOpenId(null)} />}
+      {groups.map((g) => (
+        <section key={g.workstreamId ?? `dir:${g.name}`} aria-label={g.name} data-flip={`group:${g.name}`}>
+          <h2 className="flex items-center gap-3 border-y border-border bg-zinc-950/60 px-4 py-1.5 font-mono text-[11px] uppercase tracking-widest text-zinc-300">
+            {g.name}
+            {g.workstreamId && <span className="normal-case tracking-normal text-zinc-500" title="Workstream id">{g.workstreamId}</span>}
+            <span className="text-zinc-600">{g.agents.length} agent{g.agents.length === 1 ? '' : 's'}</span>
+            <span className="ml-auto text-amber-200/80"><Score value={g.score} /></span>
+          </h2>
+          <ul aria-label={`${g.name} agents`}>
+            {g.agents.map((a) => (
+              <Row key={a.agent.id} agent={a.agent} rank={a.rank} score={a.score} leader={a.agent.id === leaderId} entries={history[a.agent.id] ?? []} now={now} onOpen={() => setOpenId(a.agent.id)} />
+            ))}
+          </ul>
+        </section>
+      ))}
+      {open && <FleetAgentModal agent={open.agent} score={open.score} rank={open.rank} entries={history[open.agent.id] ?? []} now={now} onClose={() => setOpenId(null)} />}
     </div>
   )
 }

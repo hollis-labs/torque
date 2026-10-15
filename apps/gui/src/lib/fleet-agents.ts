@@ -1,3 +1,4 @@
+import { ago } from '@/lib/agent-activity'
 // Live agent activity as served by the activity-monitor plugin (relayed by
 // Torque at /api/v1/activity/agents). Every string here comes from agent
 // processes, so it is untrusted: callers render it as text only.
@@ -20,6 +21,14 @@ export interface FleetAgent {
   stateConfidence: Confidence | null
   /** Tier per reported field (alive, cwd, state, ...). */
   confidence: Record<string, Confidence>
+  /** Exact model id (e.g. "claude-opus-4-7"), when the source reports it. */
+  model: string | null
+  /** What the agent last did, e.g. "Searched tesseract"; null until the source reports it. */
+  lastAction: { text: string; at: number | null } | null
+  /** Workstream the agent is working under, when the source knows it. */
+  workstream: { id: string; name: string | null } | null
+  /** Unread messages waiting for the agent; null when the source does not report mail. */
+  messages: number | null
 }
 
 const STATES: FleetState[] = ['waiting', 'busy', 'idle', 'unknown']
@@ -45,6 +54,19 @@ function confidenceMap(v: unknown): Record<string, Confidence> {
   return out
 }
 
+/** The fields the source may or may not carry yet; absent ones stay null and the page degrades. */
+function optionalFields(o: Record<string, unknown>): Pick<FleetAgent, 'model' | 'lastAction' | 'workstream' | 'messages'> {
+  const action = text(o.last_action)
+  const wsId = text(o.workstream_id)
+  const unread = o.unread_messages ?? o.messages
+  return {
+    model: text(o.model) || null,
+    lastAction: action ? { text: action, at: time(o.last_action_at) } : null,
+    workstream: wsId ? { id: wsId, name: text(o.workstream_name) || null } : null,
+    messages: typeof unread === 'number' && unread >= 0 ? Math.floor(unread) : null,
+  }
+}
+
 /** Validates the snapshot body; rows without an id are dropped, odd values degrade to 'unknown'. */
 export function parseFleetAgents(body: unknown): FleetAgent[] {
   const rows = (body as { agents?: unknown } | null)?.agents
@@ -58,6 +80,7 @@ export function parseFleetAgents(body: unknown): FleetAgent[] {
     const state = STATES.includes(o.state as FleetState) ? (o.state as FleetState) : 'unknown'
     const confMap = confidenceMap(o.confidence)
     out.push({
+      ...optionalFields(o),
       id,
       provider: text(o.provider) || 'unknown',
       pid: typeof o.pid === 'number' ? o.pid : 0,
@@ -127,6 +150,10 @@ export function applyFleetEvent(agents: FleetAgent[], kind: string, data: unknow
     lastActivity: kind === 'process.started' ? (prev?.lastActivity ?? at) : (at ?? prev?.lastActivity ?? null),
     stateConfidence: prev?.stateConfidence ?? null,
     confidence: prev?.confidence ?? {},
+    model: prev?.model ?? null,
+    lastAction: prev?.lastAction ?? null,
+    workstream: prev?.workstream ?? null,
+    messages: prev?.messages ?? null,
   }
   return prev ? agents.map((a) => (a.id === id ? next : a)) : [...agents, next]
 }
@@ -221,4 +248,73 @@ export const MAX_WINDOW_MS = 30 * 60_000
 export function timelineWindow(entries: FleetTransition[], now: number): number {
   const first = entries[0]?.at ?? now
   return Math.min(MAX_WINDOW_MS, Math.max(MIN_WINDOW_MS, now - first))
+}
+
+/** Per-bucket busy share (0-100) across the window, oldest first; unobserved time counts as not busy. */
+export function busySeries(entries: FleetTransition[], now: number, windowMs: number, buckets = 24): number[] {
+  const size = windowMs / buckets
+  const start = now - windowMs
+  const busy = Array<number>(buckets).fill(0)
+  for (const g of stateSegments(entries, now, windowMs)) {
+    if (g.state !== 'busy') continue
+    for (let i = 0; i < buckets; i++) {
+      const lo = start + i * size
+      const overlap = Math.min(g.to, lo + size) - Math.max(g.from, lo)
+      if (overlap > 0) busy[i] += overlap
+    }
+  }
+  return busy.map((ms) => Math.round((ms / size) * 100))
+}
+
+/**
+ * TEMPORARY leaderboard score, built only from what the live feed carries:
+ * observed working share, how long the agent has been up (capped at 12h), and
+ * how recently it did anything. An agent waiting on a person or with an unknown
+ * state is docked. To be replaced once longer history and token/cost data exist.
+ */
+export function fleetScore(agent: FleetAgent, entries: FleetTransition[], now: number): number {
+  const share = workingShare(entries, now, timelineWindow(entries, now)) ?? 0
+  const upHours = agent.startedAt ? Math.min(12, (now - agent.startedAt) / 3_600_000) : 0
+  const idleMin = agent.lastActivity ? Math.max(0, (now - agent.lastActivity) / 60_000) : 60
+  const recency = Math.max(0, 20 - idleMin / 3)
+  const dock = agent.state === 'unknown' ? 20 : agent.state === 'waiting' ? 5 : 0
+  return Math.max(0, Math.round(share * 5 + upHours * 10 + recency - dock))
+}
+
+export interface FleetGroup {
+  /** Workstream id when the group is a real workstream; null for the working-directory fallback. */
+  workstreamId: string | null
+  name: string
+  agents: Array<{ agent: FleetAgent; score: number; rank: number }>
+  score: number
+}
+
+/**
+ * Groups by workstream; agents the source has not placed in one fall back to
+ * their working-directory name. Rows are ranked by score inside a group and
+ * groups by their total, so the leaderboard reads top to bottom.
+ */
+export function groupFleet(agents: FleetAgent[], history: FleetHistory, now: number): FleetGroup[] {
+  const buckets = new Map<string, FleetGroup>()
+  for (const agent of agents) {
+    const ws = agent.workstream
+    const name = ws ? ws.name || ws.id : cwdName(agent.cwd) || agent.provider
+    const key = ws ? `ws:${ws.id}` : `dir:${name}`
+    const group = buckets.get(key) ?? { workstreamId: ws?.id ?? null, name, agents: [], score: 0 }
+    group.agents.push({ agent, score: fleetScore(agent, history[agent.id] ?? [], now), rank: 0 })
+    buckets.set(key, group)
+  }
+  const groups = [...buckets.values()]
+  for (const g of groups) {
+    g.agents.sort((a, b) => b.score - a.score || a.agent.id.localeCompare(b.agent.id))
+    g.agents.forEach((a, i) => (a.rank = i + 1))
+    g.score = g.agents.reduce((sum, a) => sum + a.score, 0)
+  }
+  return groups.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+}
+
+/** "Searched tesseract · just now" when the source reports an action, else when it was last active. */
+export function whatNow(agent: FleetAgent, now: number): string {
+  if (agent.lastAction) return `${agent.lastAction.text} · ${ago(agent.lastAction.at ?? agent.lastActivity ?? now, now)}`
+  return agent.lastActivity ? `Active ${ago(agent.lastActivity, now)}` : 'No activity data'
 }
