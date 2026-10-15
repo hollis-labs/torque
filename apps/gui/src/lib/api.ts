@@ -849,6 +849,11 @@ export class TorqueApiClient {
   // Scheduler
   // -------------------------
 
+  /** Raw activity-monitor snapshot; validate with parseFleetAgents. */
+  async getActivityAgents(): Promise<unknown> {
+    return this.get('/activity/agents')
+  }
+
   async getSchedulerStatus(): Promise<SchedulerStatus> {
     return this.get('/scheduler/status')
   }

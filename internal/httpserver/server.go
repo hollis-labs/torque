@@ -280,6 +280,9 @@ func (s *Server) routes() {
 		r.Get("/settings/{key}", s.getSetting)
 		r.Put("/settings/{key}", s.saveSetting)
 
+		// Activity — live agent snapshot relayed from the Chimera activity host.
+		r.Get("/activity/agents", s.activityAgents)
+
 		// Scheduler
 		r.Get("/scheduler/status", s.schedulerStatus)
 		r.Post("/scheduler/toggle", s.schedulerToggle)

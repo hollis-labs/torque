@@ -12,6 +12,8 @@ import { TorqueTaskDialog } from '@/components/planner/torque-task-dialog'
 import { PlannerStatus } from '@/components/planner/planner-status'
 import { AgentActivityView } from '@/components/planner/agent-activity'
 import { AgentBuilderView } from '@/components/planner/agent-builder'
+import { FleetAgentsView } from '@/components/planner/fleet-agents'
+import { useFleetAgents } from '@/hooks/use-fleet-agents'
 import { useAgentActivity } from '@/hooks/use-agent-activity'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
@@ -30,9 +32,10 @@ export default function PlannerPage() {
   const params = useParams<{ db?: string; id?: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   // /planner and /planner/board are the departure board; /planner/<db> is a list.
-  const isAgents = params.db === 'agents' // the activity monitor has its own data source
+  const isAgents = params.db === 'agents' // live activity monitor (relayed by /api/v1/activity)
+  const isAgentsDemo = params.db === 'agents-demo' // the leaderboard design spike, demo data; no tab
   const isBuilder = params.db === 'builder' // agent builder design spike (demo data)
-  const isDemo = isAgents || isBuilder
+  const isDemo = isAgents || isAgentsDemo || isBuilder
   const isBoard = params.db === undefined || params.db === 'board'
   const db: PlannerDb = isPlannerDb(params.db) ? params.db : 'priorities'
   const openId = params.id ? decodeURIComponent(params.id) : undefined
@@ -56,6 +59,7 @@ export default function PlannerPage() {
   const [refreshKey, setRefreshKey] = useState(0)
   const { lastEvent } = useSSE(SSE_EVENTS)
   const activity = useAgentActivity()
+  const fleet = useFleetAgents()
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }))
 
@@ -211,7 +215,7 @@ export default function PlannerPage() {
       <div className="border-b border-zinc-800/80 px-4 py-3">
         <Input className="h-8 w-full sm:w-72" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search everything…" aria-label="Search the planner" />
       </div>
-      <Tabs value={isBoard ? 'board' : isAgents ? 'agents' : isBuilder ? 'builder' : db} onValueChange={value => { setSearch(''); navigate(`/planner/${value}`) }} className="min-w-0 border-b border-zinc-800/80 px-4 py-3">
+      <Tabs value={isBoard ? 'board' : isAgents ? 'agents' : isAgentsDemo ? 'agents-demo' : isBuilder ? 'builder' : db} onValueChange={value => { setSearch(''); navigate(`/planner/${value}`) }} className="min-w-0 border-b border-zinc-800/80 px-4 py-3">
         <TabsList aria-label="Planner views" className="h-auto max-w-full flex-wrap justify-start">
           <TabsTrigger value="board">Board</TabsTrigger>
           {PLANNER_DBS.map(d => <TabsTrigger key={d.key} value={d.key}>
@@ -226,6 +230,8 @@ export default function PlannerPage() {
         {hits !== null ? (
           <SearchResults hits={hits} query={search.trim()} onClear={() => setSearch('')} onOpen={(h) => { setSearch(''); go(h.db, h.id) }} />
         ) : isAgents ? (
+          <FleetAgentsView agents={fleet.agents} error={fleet.error} now={fleet.now} />
+        ) : isAgentsDemo ? (
           <AgentActivityView agents={activity.agents} now={activity.now} live={activity.live} />
         ) : isBuilder ? (
           <AgentBuilderView />
