@@ -10,6 +10,9 @@ import { PlannerDetailDialog } from '@/components/planner/planner-detail-dialog'
 import { PlannerRow } from '@/components/planner/planner-row'
 import { TorqueTaskDialog } from '@/components/planner/torque-task-dialog'
 import { PlannerStatus } from '@/components/planner/planner-status'
+import { AgentActivityView } from '@/components/planner/agent-activity'
+import { AgentBuilderView } from '@/components/planner/agent-builder'
+import { useAgentActivity } from '@/hooks/use-agent-activity'
 import { useApi } from '@/hooks/use-api'
 import { useSSE } from '@/hooks/use-sse'
 import { ApiError } from '@/lib/api'
@@ -27,6 +30,9 @@ export default function PlannerPage() {
   const params = useParams<{ db?: string; id?: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   // /planner and /planner/board are the departure board; /planner/<db> is a list.
+  const isAgents = params.db === 'agents' // the activity monitor has its own data source
+  const isBuilder = params.db === 'builder' // agent builder design spike (demo data)
+  const isDemo = isAgents || isBuilder
   const isBoard = params.db === undefined || params.db === 'board'
   const db: PlannerDb = isPlannerDb(params.db) ? params.db : 'priorities'
   const openId = params.id ? decodeURIComponent(params.id) : undefined
@@ -49,6 +55,7 @@ export default function PlannerPage() {
   const [creating, setCreating] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const { lastEvent } = useSSE(SSE_EVENTS)
+  const activity = useAgentActivity()
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }))
 
@@ -101,8 +108,8 @@ export default function PlannerPage() {
     setQuery('')
     setShowSettled(false)
     setError(null)
-    if (!isBoard) void loadItems()
-  }, [loadItems, isBoard])
+    if (!isBoard && !isDemo) void loadItems()
+  }, [loadItems, isBoard, isDemo])
 
   // The server says something changed: reload the list, the counts and any open item.
   useEffect(() => {
@@ -113,7 +120,7 @@ export default function PlannerPage() {
       return
     }
     void loadCounts()
-    if (!isBoard) void loadItems()
+    if (!isBoard && !isDemo) void loadItems()
     setRefreshKey((k) => k + 1)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastEvent])
@@ -195,27 +202,33 @@ export default function PlannerPage() {
   return (
     <div className="flex h-full min-w-0 flex-col">
       <PageHeader title="Planner">
-        <Button size="sm" className="gap-1" onClick={() => setCreating(true)} disabled={enabled === null}>
+        {!isDemo && <Button size="sm" className="gap-1" onClick={() => setCreating(true)} disabled={enabled === null}>
           <Plus className="h-3.5 w-3.5" />
           New {createMeta.singular}
-        </Button>
+        </Button>}
       </PageHeader>
 
       <div className="border-b border-zinc-800/80 px-4 py-3">
         <Input className="h-8 w-full sm:w-72" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search everything…" aria-label="Search the planner" />
       </div>
-      <Tabs value={isBoard ? 'board' : db} onValueChange={value => { setSearch(''); navigate(`/planner/${value}`) }} className="min-w-0 border-b border-zinc-800/80 px-4 py-3">
+      <Tabs value={isBoard ? 'board' : isAgents ? 'agents' : isBuilder ? 'builder' : db} onValueChange={value => { setSearch(''); navigate(`/planner/${value}`) }} className="min-w-0 border-b border-zinc-800/80 px-4 py-3">
         <TabsList aria-label="Planner views" className="h-auto max-w-full flex-wrap justify-start">
           <TabsTrigger value="board">Board</TabsTrigger>
           {PLANNER_DBS.map(d => <TabsTrigger key={d.key} value={d.key}>
             {d.label}{countOf(d.key) !== undefined && <span className="ml-1.5 text-[10px] text-zinc-500">{countOf(d.key)}</span>}
           </TabsTrigger>)}
+          <TabsTrigger value="agents">Agents</TabsTrigger>
+          <TabsTrigger value="builder">Builder</TabsTrigger>
         </TabsList>
       </Tabs>
 
       <div className="flex-1 overflow-auto">
         {hits !== null ? (
           <SearchResults hits={hits} query={search.trim()} onClear={() => setSearch('')} onOpen={(h) => { setSearch(''); go(h.db, h.id) }} />
+        ) : isAgents ? (
+          <AgentActivityView agents={activity.agents} now={activity.now} live={activity.live} />
+        ) : isBuilder ? (
+          <AgentBuilderView />
         ) : isBoard ? (
           boardError ? (
             <div className="p-4">

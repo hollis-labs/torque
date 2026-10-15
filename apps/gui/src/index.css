@@ -1,2 +1,13 @@
 @import "@hollis-labs/sysop-ui/theme.css";
 @source "../node_modules/@hollis-labs/sysop-ui/dist";
+
+/* Agent activity monitor: 8-bit motion. Stepped timing keeps it pixel-like. */
+@keyframes agent-blink { 0%, 92%, 100% { opacity: 1 } 95% { opacity: 0 } }
+@keyframes agent-bob { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-1px) } }
+@keyframes agent-pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.3 } }
+.agent-blink { animation: agent-blink 4s steps(1) infinite }
+.agent-bob { animation: agent-bob 0.8s steps(2) infinite }
+.agent-pulse-bar { animation: agent-pulse 1s steps(2) infinite }
+@media (prefers-reduced-motion: reduce) {
+  .agent-blink, .agent-bob, .agent-pulse-bar { animation: none }
+}
