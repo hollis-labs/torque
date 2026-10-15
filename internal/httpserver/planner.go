@@ -380,10 +380,10 @@ func (s *Server) plannerInboxDismiss(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// plannerBoard: GET /planner/board?recent_hours=&active_hours=&limit=
+// plannerBoard: GET /planner/board?scope=&recent_hours=&active_hours=&limit=
 func (s *Server) plannerBoard(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	var opts service.PlannerBoardOptions
+	opts := service.PlannerBoardOptions{Scope: q.Get("scope")}
 	for _, f := range []struct {
 		name string
 		dst  *float64

@@ -34,6 +34,14 @@ import (
 // Board sections, in display order.
 var PlannerBoardSections = []string{"in_flight", "landed", "pre_flight", "holds"}
 
+// Board scopes: curated shows the planner items tagged "board"; all is the
+// whole activity feed (Torque tasks included).
+const (
+	BoardScopeCurated = "curated"
+	BoardScopeAll     = "all"
+	BoardTag          = "board"
+)
+
 // Board defaults and limits.
 const (
 	DefaultBoardRecentHours = 72
@@ -57,11 +65,21 @@ type PlannerBoardRow struct {
 	Updated    string `json:"updated"`
 	DB         string `json:"db,omitempty"` // planner rows only
 
+	// Workstream rows of the curated board; empty for every other row.
+	Phase      string         `json:"phase,omitempty"`
+	Owner      string         `json:"owner,omitempty"`
+	TLDR       string         `json:"tldr,omitempty"`
+	NextStep   string         `json:"next_step,omitempty"`
+	Blockers   []string       `json:"blockers,omitempty"`
+	Tags       []string       `json:"tags,omitempty"`
+	TaskCounts map[string]int `json:"task_counts,omitempty"` // Torque tasks behind the workstream, by status; counts only
+
 	edge time.Time // the instant window checks use (end of a plain day); zero = use Updated
 }
 
 // PlannerBoard is the composed board.
 type PlannerBoard struct {
+	Scope       string                       `json:"scope"` // curated | all
 	GeneratedAt string                       `json:"generated_at"`
 	RecentHours float64                      `json:"recent_hours"`
 	ActiveHours float64                      `json:"active_hours"`
@@ -92,6 +110,10 @@ type boardInput struct {
 	TaskTotals  map[string]int         // Torque's own totals per status, when more were not fetched
 	Activity    map[string]time.Time   // latest comment per task id; nil = the signal was unavailable
 	Tracker     map[string][]PlannerItem
+
+	Scope       string                    // BoardScopeCurated, or anything else for the whole feed
+	Workstreams []PlannerItem             // every workstream; the curated board picks the tagged ones
+	WSTasks     map[string]map[string]int // Torque task counts per workstream id
 }
 
 var (
@@ -229,6 +251,15 @@ func boardNewest(rows []PlannerBoardRow) {
 // composeBoard builds the four sections from the inputs. Untidy input (missing
 // titles, dates, empty lists) never panics.
 func composeBoard(in boardInput) PlannerBoard {
+	if in.Scope == BoardScopeCurated {
+		return composeCuratedBoard(in)
+	}
+	b := composeActivityBoard(in)
+	b.Scope = BoardScopeAll
+	return b
+}
+
+func composeActivityBoard(in boardInput) PlannerBoard {
 	now := in.Now
 	if in.RecentHours <= 0 {
 		in.RecentHours = DefaultBoardRecentHours
@@ -460,6 +491,9 @@ func BoardText(b PlannerBoard) string {
 	if idw > 30 {
 		idw = 30
 	}
+	if b.Scope == BoardScopeCurated {
+		return curatedBoardText(b, cut, idw)
+	}
 	out := []string{"DEPARTURES  " + b.GeneratedAt}
 	for _, k := range PlannerBoardSections {
 		rows := b.Sections[k]
@@ -504,6 +538,7 @@ type PlannerBoardOptions struct {
 	RecentHours float64
 	ActiveHours float64
 	Limit       int
+	Scope       string // BoardScopeCurated (default) or BoardScopeAll
 }
 
 // Board composes the board from the planner tables and the Torque task store.
@@ -520,6 +555,13 @@ func (s *PlannerService) Board(opts PlannerBoardOptions) (*PlannerBoard, error) 
 	if opts.Limit == 0 {
 		opts.Limit = DefaultBoardLimit
 	}
+	switch opts.Scope {
+	case "":
+		opts.Scope = BoardScopeCurated
+	case BoardScopeCurated, BoardScopeAll:
+	default:
+		return nil, &ValidationError{Field: "scope", Message: "scope must be curated or all"}
+	}
 	if !(opts.RecentHours > 0 && opts.RecentHours <= maxBoardRecentHours) {
 		return nil, &ValidationError{Field: "recent_hours", Message: fmt.Sprintf("recent_hours must be greater than 0 and at most %d", maxBoardRecentHours)}
 	}
@@ -532,7 +574,7 @@ func (s *PlannerService) Board(opts PlannerBoardOptions) (*PlannerBoard, error) 
 
 	now := s.now().UTC()
 	in := boardInput{
-		Now: now, RecentHours: opts.RecentHours, ActiveHours: opts.ActiveHours, Limit: opts.Limit,
+		Now: now, RecentHours: opts.RecentHours, ActiveHours: opts.ActiveHours, Limit: opts.Limit, Scope: opts.Scope,
 		Tasks: map[string][]BoardTask{}, TaskTotals: map[string]int{}, Tracker: map[string][]PlannerItem{},
 	}
 	for _, db := range []string{"roadmap", "decisions", "inbox", "risks"} {
@@ -543,6 +585,32 @@ func (s *PlannerService) Board(opts PlannerBoardOptions) (*PlannerBoard, error) 
 		for _, it := range items {
 			in.Tracker[db] = append(in.Tracker[db], plannerClone(it))
 		}
+	}
+
+	if opts.Scope == BoardScopeCurated {
+		items, err := s.store.PlannerList("workstreams")
+		if err != nil {
+			return nil, err
+		}
+		in.WSTasks = map[string]map[string]int{}
+		var notices []string
+		for _, it := range items {
+			ws := plannerClone(it)
+			in.Workstreams = append(in.Workstreams, ws)
+			if !boardHasTag(ws) {
+				continue
+			}
+			id := boardText(ws, "id")
+			counts, _, err := s.workstreamCounts(ws)
+			if err != nil {
+				notices = append(notices, fmt.Sprintf("Task counts for %s unavailable: %v", id, err))
+				continue
+			}
+			in.WSTasks[id] = counts
+		}
+		b := composeBoard(in)
+		b.Notices = append(b.Notices, notices...)
+		return &b, nil
 	}
 
 	var notices []string

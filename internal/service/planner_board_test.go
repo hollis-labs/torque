@@ -56,9 +56,10 @@ func TestPlannerBoardFromTheTaskStoreAndPlannerTables(t *testing.T) {
 	_, err = p.Create("roadmap", service.PlannerItem{"title": "Building", "area": "gui", "horizon": "now", "status": "in-progress"}, "t")
 	require.NoError(t, err)
 
-	b, err := p.Board(service.PlannerBoardOptions{})
+	b, err := p.Board(service.PlannerBoardOptions{Scope: "all"})
 	require.NoError(t, err)
 	assert.Empty(t, b.Notices)
+	assert.Equal(t, "all", b.Scope)
 
 	assert.Equal(t, []string{active, "RM-building", review}, boardIDs(b.Sections["in_flight"]))
 	assert.Equal(t, "alpha", b.Sections["in_flight"][0].Workstream, "the ws-<name> tag names the workstream")
@@ -86,7 +87,7 @@ func TestPlannerBoardLimitsAndValidation(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		boardTask(t, svc, "Doing", "doing", float64(i), 3)
 	}
-	b, err := svc.Planner.Board(service.PlannerBoardOptions{Limit: 2})
+	b, err := svc.Planner.Board(service.PlannerBoardOptions{Limit: 2, Scope: "all"})
 	require.NoError(t, err)
 	assert.Len(t, b.Sections["in_flight"], 2)
 	assert.Equal(t, 5, b.Totals["in_flight"], "the total counts rows beyond the limit")
@@ -195,4 +196,40 @@ func TestPlannerWorkstreamTasks(t *testing.T) {
 	require.True(t, errors.As(err, &nf))
 	_, err = svc.Planner.WorkstreamTasks("PR-01")
 	require.Error(t, err, "only workstreams have Torque scope")
+}
+
+func TestPlannerCuratedBoardLoadsTaggedWorkstreamsWithTaskCounts(t *testing.T) {
+	svc := setupService(t)
+	require.NoError(t, svc.Feature.Enable("planner"))
+	p := svc.Planner
+
+	doing := boardTask(t, svc, "Worked on now", "doing", 1, 2, "ws-alpha")
+	boardTask(t, svc, "Queued work", "queued", 1, 2, "ws-alpha")
+	boardTask(t, svc, "Other stuff", "doing", 1, 2)
+	_ = doing
+
+	_, err := p.Create("workstreams", service.PlannerItem{"id": "WS-alpha", "title": "Alpha", "status": "active", "tags": []any{"board", "topic"}, "torque_tag": "ws-alpha", "owner": "lead", "next_step": "do it", "blockers": []any{"a", "b"}}, "t")
+	require.NoError(t, err)
+	_, err = p.Create("workstreams", service.PlannerItem{"id": "WS-other", "title": "Not curated", "status": "active"}, "t")
+	require.NoError(t, err)
+
+	b, err := p.Board(service.PlannerBoardOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "curated", b.Scope)
+	assert.Empty(t, b.Notices)
+	require.Equal(t, []string{"WS-alpha"}, boardIDs(b.Sections["in_flight"]))
+	row := b.Sections["in_flight"][0]
+	assert.Equal(t, map[string]int{"doing": 1, "queued": 1}, row.TaskCounts, "counts come from the workstream's tag; the other tasks are not counted")
+	assert.Equal(t, []string{"a", "b"}, row.Blockers)
+	assert.Equal(t, "lead", row.Owner)
+	assert.Equal(t, []string{"WS-alpha"}, boardIDs(b.Sections["holds"]), "a blocked workstream is also held")
+
+	for _, k := range service.PlannerBoardSections {
+		for _, r := range b.Sections[k] {
+			assert.NotEqual(t, "torque", r.Source, "no Torque task rows on the curated board")
+		}
+	}
+
+	_, err = p.Board(service.PlannerBoardOptions{Scope: "nope"})
+	require.Error(t, err)
 }

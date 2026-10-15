@@ -206,7 +206,7 @@ func TestHTTP_Planner_Board(t *testing.T) {
 	plannerCall(t, http.MethodPost, ts.URL, "/inbox", map[string]any{"title": "triage me"}, nil)
 	plannerCall(t, http.MethodPost, ts.URL, "/risks", map[string]any{"title": "big", "kind": "risk", "severity": "high"}, nil)
 
-	status, body := plannerCall(t, http.MethodGet, ts.URL, "/board", nil, nil)
+	status, body := plannerCall(t, http.MethodGet, ts.URL, "/board?scope=all", nil, nil)
 	require.Equal(t, http.StatusOK, status, "%v", body)
 	b := obj(body)
 	assert.Equal(t, []any{"RK-001", "IN-001"}, []any{
@@ -217,17 +217,38 @@ func TestHTTP_Planner_Board(t *testing.T) {
 	assert.EqualValues(t, 30, b["limit"])
 	assert.Equal(t, []any{}, b["notices"])
 
-	status, body = plannerCall(t, http.MethodGet, ts.URL, "/board?limit=1&recent_hours=6&active_hours=1", nil, nil)
+	status, body = plannerCall(t, http.MethodGet, ts.URL, "/board?scope=all&limit=1&recent_hours=6&active_hours=1", nil, nil)
 	require.Equal(t, http.StatusOK, status)
 	assert.EqualValues(t, 1, obj(body)["limit"])
 	assert.EqualValues(t, 6, obj(body)["recent_hours"])
 	assert.EqualValues(t, 1, obj(body)["active_hours"])
 
-	for _, q := range []string{"?limit=abc", "?limit=0x", "?recent_hours=soon", "?limit=500", "?recent_hours=-3"} {
+	for _, q := range []string{"?scope=nope", "?limit=abc", "?limit=0x", "?recent_hours=soon", "?limit=500", "?recent_hours=-3"} {
 		status, body = plannerCall(t, http.MethodGet, ts.URL, "/board"+q, nil, nil)
 		assert.Equal(t, http.StatusBadRequest, status, q)
 		assert.Equal(t, "invalid", obj(body)["code"], q)
 	}
+}
+
+func TestHTTP_Planner_BoardScope(t *testing.T) {
+	ts := setupTestServer(t)
+	enablePlannerFeature(t, ts.URL)
+	plannerCall(t, http.MethodPost, ts.URL, "/workstreams", map[string]any{"id": "WS-on", "title": "On the board", "status": "planned", "tags": []any{"board"}}, nil)
+	plannerCall(t, http.MethodPost, ts.URL, "/inbox", map[string]any{"title": "triage me"}, nil)
+
+	status, body := plannerCall(t, http.MethodGet, ts.URL, "/board", nil, nil)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	b := obj(body)
+	assert.Equal(t, "curated", b["scope"], "curated is the default")
+	pre := obj(b["sections"])["pre_flight"].([]any)
+	require.Len(t, pre, 1)
+	assert.Equal(t, "WS-on", obj(pre[0])["id"])
+	assert.Empty(t, obj(b["sections"])["holds"])
+
+	status, body = plannerCall(t, http.MethodGet, ts.URL, "/board?scope=all", nil, nil)
+	require.Equal(t, http.StatusOK, status)
+	assert.Equal(t, "all", obj(body)["scope"])
+	assert.Len(t, obj(obj(body)["sections"])["holds"], 1)
 }
 
 func TestHTTP_Planner_TorqueReferences(t *testing.T) {

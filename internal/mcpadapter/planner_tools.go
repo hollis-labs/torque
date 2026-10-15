@@ -31,10 +31,11 @@ Example: {}`),
 
 	a.addTool(newTool("torque_planner_board",
 		withDescription(`The departure board: what is in flight, what just landed, what is preparing, and what is waiting on the owner `+plannerFlagNote+`.
-Use it for a quick check-in at the start of a session. in_flight: Torque doing tasks with activity (an update or comment) within active_hours, roadmap in-progress, Torque review (ARRIVING). landed: Torque done and decided decisions within recent_hours, roadmap landed/done within 7 days. pre_flight: Torque queued, doing tasks with no recent activity (PREPARING), roadmap adopting, roadmap planned for now/next; never the todo backlog. holds: decisions needing a decision, open high risks, new inbox items (waiting on the owner).
+Use it for a quick check-in at the start of a session. scope=curated (the default) lists only what the owner manages: workstreams tagged "board" (in_flight = active, pre_flight = planned or paused, landed = done within recent_hours) with owner, next_step, blockers and Torque task counts (counts only, never task rows), plus holds = open decisions, high risks and new inbox items tagged board or linked to a board workstream, and board workstreams with blockers. Tag a workstream with torque_planner_update {"tags":[...,"board"]} to put it on the board. scope=all is the activity feed. In scope=all: in_flight: Torque doing tasks with activity (an update or comment) within active_hours, roadmap in-progress, Torque review (ARRIVING). landed: Torque done and decided decisions within recent_hours, roadmap landed/done within 7 days. pre_flight: Torque queued, doing tasks with no recent activity (PREPARING), roadmap adopting, roadmap planned for now/next; never the todo backlog. holds: decisions needing a decision, open high risks, new inbox items (waiting on the owner).
 text=true returns the compact one-row-per-line board an agent can read at a glance instead of the JSON.
-Response shape: data = {generated_at, recent_hours, active_hours, limit, sections{in_flight,landed,pre_flight,holds:[{source,id,title,status,priority?,workstream?,updated,db?}]}, counts, totals, notices[]}; with text=true, data = {text}.
+Response shape: data = {scope, generated_at, recent_hours, active_hours, limit, sections{in_flight,landed,pre_flight,holds:[{source,id,title,status,priority?,workstream?,updated,db?, and for workstream rows phase?,owner?,tldr?,next_step?,blockers?,tags?,task_counts?}]}, counts, totals, notices[]}; with text=true, data = {text}.
 Example: {"text":true}`),
+		withString("scope", desc("curated (default): workstreams tagged board; all: the activity feed with Torque tasks")),
 		withString("recent_hours", desc("Window for landed (default 72, max 2160)")),
 		withString("active_hours", desc("A doing task with no update or comment in this long is preparing, not in flight (default 2)")),
 		withString("limit", desc("Rows per section (default 30, max 200)")),
@@ -432,7 +433,7 @@ func (a *Adapter) handlePlannerInboxDismiss(ctx context.Context, req map[string]
 }
 
 func (a *Adapter) handlePlannerBoard(ctx context.Context, req map[string]any) (any, error) {
-	opts := service.PlannerBoardOptions{Limit: reqInt(req, "limit")}
+	opts := service.PlannerBoardOptions{Limit: reqInt(req, "limit"), Scope: reqStr(req, "scope")}
 	for key, dst := range map[string]*float64{"recent_hours": &opts.RecentHours, "active_hours": &opts.ActiveHours} {
 		if reqHasArg(req, key) {
 			*dst = float64(reqInt(req, key))
