@@ -82,3 +82,38 @@ export function cwdTail(cwd: string): string {
   const parts = cwd.split('/').filter(Boolean)
   return parts.slice(-2).join('/') || cwd || '—'
 }
+
+const KINDS_STATE = new Set(['session.idle', 'session.processing', 'session.heartbeat'])
+
+/**
+ * Applies one stream event (a go-runtime-events envelope) to the agent list.
+ * process.exited removes the row; process.started and session.* upsert it from
+ * the payload, which carries the full state. Anything malformed is ignored.
+ * The envelope's `time` stands in for last activity: a state change is activity.
+ */
+export function applyFleetEvent(agents: FleetAgent[], kind: string, data: unknown): FleetAgent[] {
+  if (!data || typeof data !== 'object') return agents
+  const env = data as Record<string, unknown>
+  const id = text(env.session_id)
+  if (!id) return agents
+  if (kind === 'process.exited') return agents.filter((a) => a.id !== id)
+  if (kind !== 'process.started' && !KINDS_STATE.has(kind)) return agents
+  const payload = (env.payload ?? {}) as Record<string, unknown>
+  const proc = (env.process ?? {}) as Record<string, unknown>
+  const at = time(env.time)
+  const prev = agents.find((a) => a.id === id)
+  const state = STATES.includes(payload.state as FleetState) ? (payload.state as FleetState) : (prev?.state ?? 'unknown')
+  const next: FleetAgent = {
+    id,
+    provider: text(proc.provider) || prev?.provider || 'unknown',
+    pid: typeof proc.pid === 'number' ? proc.pid : (prev?.pid ?? 0),
+    sessionId: text(proc.provider_session_id) || prev?.sessionId || null,
+    cwd: text(payload.cwd) || prev?.cwd || '',
+    state,
+    waitingFor: text(payload.waiting_for) || null,
+    startedAt: prev?.startedAt ?? (kind === 'process.started' ? at : null),
+    lastActivity: kind === 'process.started' ? (prev?.lastActivity ?? at) : (at ?? prev?.lastActivity ?? null),
+    stateConfidence: prev?.stateConfidence ?? null,
+  }
+  return prev ? agents.map((a) => (a.id === id ? next : a)) : [...agents, next]
+}

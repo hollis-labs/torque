@@ -36,7 +36,7 @@ function Row({ agent, now }: { agent: FleetAgent; now: number }) {
   )
 }
 
-export function FleetAgentsView({ agents, error, now }: { agents: FleetAgent[] | null; error: string | null; now: number }) {
+export function FleetAgentsView({ agents, error, now, live }: { agents: FleetAgent[] | null; error: string | null; now: number; live: boolean }) {
   if (agents === null) {
     return error ? (
       <div className="p-4"><EmptyState variant="error" title="Activity source unavailable" description={error} /></div>
@@ -53,6 +53,7 @@ export function FleetAgentsView({ agents, error, now }: { agents: FleetAgent[] |
         <span>{c.busy} working</span>
         <span>{c.idle} idle</span>
         <span>{c.unknown} unknown</span>
+        <span className={live ? 'text-emerald-300' : 'text-zinc-600'}>{live ? '● live' : '○ resyncing'}</span>
         {error && <span className="text-red-300">stale: {error}</span>}
       </div>
       {rows.length === 0 ? (

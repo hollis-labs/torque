@@ -854,6 +854,31 @@ export class TorqueApiClient {
     return this.get('/activity/agents')
   }
 
+  /**
+   * Live activity events (SSE, relayed by Torque). EventSource reconnects by
+   * itself and resumes with Last-Event-ID; `onStatus('live')` fires on every
+   * (re)open so callers can resync their snapshot. Named events only reach
+   * listeners registered by name, hence the explicit kind list.
+   */
+  subscribeActivity(
+    onEvent: (kind: string, data: unknown) => void,
+    onStatus: (status: 'live' | 'error') => void,
+  ): () => void {
+    const es = new EventSource(this.url('/activity/stream'))
+    es.onopen = () => onStatus('live')
+    es.onerror = () => onStatus('error')
+    for (const kind of ['process.started', 'process.exited', 'session.idle', 'session.processing', 'session.heartbeat', 'gap']) {
+      es.addEventListener(kind, (e) => {
+        try {
+          onEvent(kind, JSON.parse((e as MessageEvent).data as string))
+        } catch {
+          // malformed event: ignore
+        }
+      })
+    }
+    return () => es.close()
+  }
+
   async getSchedulerStatus(): Promise<SchedulerStatus> {
     return this.get('/scheduler/status')
   }

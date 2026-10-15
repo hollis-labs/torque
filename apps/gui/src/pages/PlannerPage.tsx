@@ -230,7 +230,7 @@ export default function PlannerPage() {
         {hits !== null ? (
           <SearchResults hits={hits} query={search.trim()} onClear={() => setSearch('')} onOpen={(h) => { setSearch(''); go(h.db, h.id) }} />
         ) : isAgents ? (
-          <FleetAgentsView agents={fleet.agents} error={fleet.error} now={fleet.now} />
+          <FleetAgentsView agents={fleet.agents} error={fleet.error} now={fleet.now} live={fleet.live} />
         ) : isAgentsDemo ? (
           <AgentActivityView agents={activity.agents} now={activity.now} live={activity.live} />
         ) : isBuilder ? (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cwdTail, fleetCounts, parseFleetAgents, sortFleetAgents } from './fleet-agents'
+import { applyFleetEvent, cwdTail, fleetCounts, parseFleetAgents, sortFleetAgents } from './fleet-agents'
 
 describe('fleet agents', () => {
   it('parses rows defensively', () => {
@@ -28,5 +28,22 @@ describe('fleet agents', () => {
 
   it('shortens cwd', () => {
     expect(cwdTail('/home/c/dev/apps/torque')).toBe('apps/torque')
+  })
+
+  it('applies stream events', () => {
+    let rows = parseFleetAgents({ agents: [{ id: 'a', provider: 'claude', pid: 1, cwd: '/x/y', state: 'idle', confidence: { state: 'exact' } }] })
+    const ev = (state: string, waiting = '') => ({ session_id: 'a', time: '2026-10-15T07:00:00Z', process: { pid: 1, provider: 'claude' }, payload: { state, waiting_for: waiting, cwd: '/x/y' } })
+    rows = applyFleetEvent(rows, 'session.heartbeat', ev('waiting', 'permission prompt'))
+    expect(rows[0].state).toBe('waiting')
+    expect(rows[0].waitingFor).toBe('permission prompt')
+    expect(rows[0].stateConfidence).toBe('exact')
+    rows = applyFleetEvent(rows, 'session.processing', ev('busy'))
+    expect(rows[0].waitingFor).toBeNull()
+    rows = applyFleetEvent(rows, 'process.started', { ...ev('idle'), session_id: 'b' })
+    expect(rows.map((r) => r.id)).toEqual(['a', 'b'])
+    rows = applyFleetEvent(rows, 'process.exited', { session_id: 'a' })
+    expect(rows.map((r) => r.id)).toEqual(['b'])
+    expect(applyFleetEvent(rows, 'gap', {})).toBe(rows)
+    expect(applyFleetEvent(rows, 'session.idle', 'junk')).toBe(rows)
   })
 })
