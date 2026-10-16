@@ -112,7 +112,8 @@ func TestPhaseLifecycle_LastMemberStraightToDoneWritesStartedThenCompleted(t *te
 	rows := readOutbox(t, s)
 	require.Equal(t, []string{"task.state_changed", "phase.started", "phase.completed"}, kinds(rows))
 	require.Equal(t, rows[0].EventID, rows[1].Env.Corr.CausationID)
-	require.Equal(t, rows[1].EventID, rows[2].Env.Corr.CausationID, "completed follows the start in the same transaction")
+	require.Equal(t, rows[0].EventID, rows[2].Env.Corr.CausationID, "both edges share the cause")
+	require.NotEqual(t, rows[1].EventID, rows[2].EventID, "each has its own id")
 	require.Less(t, rows[1].Seq, rows[2].Seq)
 }
 
@@ -177,6 +178,110 @@ func TestPhaseLifecycle_ReopenBumpsGeneration(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rows[len(rows)-1].Env.Payload, &p))
 	require.Equal(t, 2, p.Generation)
 	require.Equal(t, 2, phaseState(t, s, plan).Generation)
+}
+
+func reopenedFlag(t *testing.T, r outboxRow) bool {
+	t.Helper()
+	var p struct {
+		Reopened bool `json:"reopened"`
+	}
+	require.NoError(t, json.Unmarshal(r.Env.Payload, &p))
+	return p.Reopened
+}
+
+func TestPhaseLifecycle_ReopenedMarksSecondAndLaterStarts(t *testing.T) {
+	s := setupTestStore(t)
+	plan, m := phasePlan(t, s, 1)
+	require.NoError(t, s.TransitionTask(m[0], "done"))
+	rows := readOutbox(t, s)
+	require.False(t, reopenedFlag(t, rows[1]), "the first start is not a reopen")
+	_, err := s.ReopenPlanPhase(context.Background(), plan, "ph-1")
+	require.NoError(t, err)
+	rows = readOutbox(t, s)
+	require.True(t, reopenedFlag(t, rows[len(rows)-1]))
+}
+
+func addMember(t *testing.T, s *sqlstore.Store, plan, id, status string) {
+	t.Helper()
+	require.NoError(t, s.CreateTask(&sqlstore.TaskRecord{
+		ID: id, Title: id, Priority: 2, Status: status,
+		ParentID: sql.NullString{String: plan, Valid: true},
+		PhaseID:  sql.NullString{String: "ph-1", Valid: true},
+	}))
+}
+
+// Membership changes re-evaluate the phase, so it cannot stay started (or
+// pending) after the change that settles it.
+func TestPhaseLifecycle_MembershipChangesReevaluate(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("created already done starts and completes", func(t *testing.T) {
+		s := setupTestStore(t)
+		plan, _ := phasePlan(t, s, 0)
+		addMember(t, s, plan, "CW-PH-X", "done")
+		require.Equal(t, []string{"phase.started", "phase.completed"}, kinds(readOutbox(t, s)))
+		require.Equal(t, sqlstore.PhaseCompleted, phaseState(t, s, plan).State)
+	})
+
+	t.Run("a done member added to a pending phase with open work starts it", func(t *testing.T) {
+		s := setupTestStore(t)
+		plan, _ := phasePlan(t, s, 1)
+		addMember(t, s, plan, "CW-PH-X", "done")
+		require.Equal(t, []string{"phase.started"}, kinds(readOutbox(t, s)))
+		require.Equal(t, sqlstore.PhaseStarted, phaseState(t, s, plan).State)
+	})
+
+	t.Run("a todo member joining a started phase changes nothing", func(t *testing.T) {
+		s := setupTestStore(t)
+		plan, m := phasePlan(t, s, 1)
+		require.NoError(t, s.TransitionTask(m[0], "doing"))
+		before := len(readOutbox(t, s))
+		addMember(t, s, plan, "CW-PH-X", "todo")
+		require.Len(t, readOutbox(t, s), before)
+		require.Equal(t, sqlstore.PhaseStarted, phaseState(t, s, plan).State)
+	})
+
+	t.Run("taking the last open member out completes it", func(t *testing.T) {
+		s := setupTestStore(t)
+		plan, m := phasePlan(t, s, 2)
+		require.NoError(t, s.TransitionTask(m[0], "done"))
+		require.Equal(t, sqlstore.PhaseStarted, phaseState(t, s, plan).State)
+		out := sql.NullString{}
+		require.NoError(t, s.UpdateTask(m[1], sqlstore.TaskUpdate{PhaseID: &out}))
+		require.Equal(t, sqlstore.PhaseCompleted, phaseState(t, s, plan).State)
+		rows := readOutbox(t, s)
+		require.Equal(t, "phase.completed", rows[len(rows)-1].Kind)
+		require.Empty(t, rows[len(rows)-1].Env.Corr.CausationID, "no task event caused it")
+	})
+
+	t.Run("moving the last open member to another plan completes it", func(t *testing.T) {
+		s := setupTestStore(t)
+		plan, m := phasePlan(t, s, 2)
+		require.NoError(t, s.TransitionTask(m[0], "done"))
+		require.NoError(t, s.CreateTask(&sqlstore.TaskRecord{ID: "CW-OTHER", Title: "o", Kind: "plan", Manual: true, Priority: 2}))
+		_, err := s.AddPlanPhases(ctx, "CW-OTHER", []sqlstore.PlanPhaseInput{{Name: "X"}})
+		require.NoError(t, err)
+		to := sql.NullString{String: "CW-OTHER", Valid: true}
+		ph := sql.NullString{String: "ph-1", Valid: true}
+		require.NoError(t, s.UpdateTask(m[1], sqlstore.TaskUpdate{ParentID: &to, PhaseID: &ph}))
+		require.Equal(t, sqlstore.PhaseCompleted, phaseState(t, s, plan).State)
+	})
+
+	t.Run("deleting the last open member completes it", func(t *testing.T) {
+		s := setupTestStore(t)
+		plan, m := phasePlan(t, s, 2)
+		require.NoError(t, s.TransitionTask(m[0], "done"))
+		require.NoError(t, s.DeleteTask(m[1]))
+		require.Equal(t, sqlstore.PhaseCompleted, phaseState(t, s, plan).State)
+	})
+
+	t.Run("deleting every member leaves the phase as it was", func(t *testing.T) {
+		s := setupTestStore(t)
+		plan, m := phasePlan(t, s, 1)
+		require.NoError(t, s.TransitionTask(m[0], "doing"))
+		require.NoError(t, s.DeleteTask(m[0]))
+		require.Equal(t, sqlstore.PhaseStarted, phaseState(t, s, plan).State, "an empty phase needs an explicit complete")
+	})
 }
 
 func TestTaskScope_PlanTaskIsItsOwnPlan(t *testing.T) {

@@ -15,9 +15,10 @@ import (
 // that causes them, and each edge appends a phase.started / phase.completed
 // event after the task.state_changed it follows.
 //
-//   - A pending phase starts when a member moves to doing (or review, blocked,
-//     paused, done). The last member going straight to done with no earlier
-//     start writes both edges, started then completed, in order.
+//   - A pending phase starts once any member is doing, review, blocked, paused
+//     or done. If that same change also leaves every member done (the last
+//     member going straight to done), both edges are written, started then
+//     completed, in order, sharing the same cause.
 //   - A phase completes when it has members and every member is done. Review,
 //     archived and the other states are not success.
 //   - A blocked member keeps the phase started; there is no phase.blocked.
@@ -25,12 +26,9 @@ import (
 //     the lifecycle generation.
 //   - An empty phase has no member to move it; it needs an explicit start or
 //     complete (not yet exposed).
-//   - Only a member's status change drives an edge. A member added to or taken
-//     out of a phase does not re-evaluate it.
-
-// startsPhase is the set of member statuses that mean work in the phase has
-// begun (the same set the 043 backfill used to derive a started phase).
-var startsPhase = map[string]bool{"doing": true, "review": true, "blocked": true, "paused": true, "done": true}
+//   - Anything that changes the members re-evaluates the phase in the same
+//     transaction: a status change, a member added, moved out, deleted, or
+//     created already done. A phase never waits on a change nobody notices.
 
 // phasePayload is phase.lifecycle@1 (urn:hollis-labs:events:phase.lifecycle@1);
 // unknown fields are allowed, so the lifecycle generation rides along.
@@ -41,6 +39,8 @@ type phasePayload struct {
 	Order      int           `json:"order"`
 	Progress   phaseProgress `json:"progress"`
 	Generation int           `json:"lifecycle_generation"`
+	// Reopened marks a start after the first (an explicit reopen).
+	Reopened bool `json:"reopened,omitempty"`
 }
 
 type phaseProgress struct {
@@ -73,14 +73,41 @@ func (w *WriteTx) taskScope(id string) (stateScope, error) {
 	return scope, nil
 }
 
-// reconcilePhase applies the lifecycle rules after a member's status changed
-// to newStatus. cause is the member's task.state_changed event id.
-func (w *WriteTx) reconcilePhase(member stateScope, newStatus string, trigger Trigger, cause string) error {
-	if member.PhaseID == "" || member.PlanID == "" {
+// phaseRef names a phase. The zero value (no phase) is ignored.
+type phaseRef struct{ PlanID, PhaseID string }
+
+// membership reads which phase a task currently belongs to.
+func (w *WriteTx) membership(taskID string) (phaseRef, error) {
+	var parent, phase sql.NullString
+	if err := w.tx.QueryRow(`SELECT parent_id, phase_id FROM tasks WHERE id = ?`, taskID).Scan(&parent, &phase); err != nil {
+		return phaseRef{}, err
+	}
+	if !parent.Valid || !phase.Valid {
+		return phaseRef{}, nil
+	}
+	return phaseRef{PlanID: parent.String, PhaseID: phase.String}, nil
+}
+
+// reconcileMembership re-evaluates a phase after a task joined it, left it or
+// was created in it. No task event caused the edge, so it has no causation.
+func (w *WriteTx) reconcileMembership(ref phaseRef) error {
+	return w.reconcilePhase(ref, resolveTrigger(w.ctx, TransitionOpts{}), "")
+}
+
+// reconcilePhase derives a phase's state from its members and writes the edge,
+// if any. It is the one place the rules apply, whatever changed the members: a
+// status change (cause is the member's task.state_changed id), or a member
+// added, removed, deleted or created.
+//
+// The phase row is read FOR UPDATE on Postgres (SQLite's BEGIN IMMEDIATE
+// already serializes writers) before the members are counted, so two
+// transactions finishing the last two members cannot both see "one left".
+func (w *WriteTx) reconcilePhase(ref phaseRef, trigger Trigger, cause string) error {
+	if ref.PlanID == "" || ref.PhaseID == "" {
 		return nil
 	}
 	for attempt := 0; attempt < 3; attempt++ {
-		done, err := w.reconcilePhaseOnce(member, newStatus, trigger, cause)
+		done, err := w.reconcilePhaseOnce(ref, trigger, cause)
 		if err != nil {
 			return err
 		}
@@ -88,28 +115,30 @@ func (w *WriteTx) reconcilePhase(member stateScope, newStatus string, trigger Tr
 			return nil
 		}
 	}
-	return fmt.Errorf("phase %s/%s: lost the revision race three times", member.PlanID, member.PhaseID)
+	return fmt.Errorf("phase %s/%s: lost the revision race three times", ref.PlanID, ref.PhaseID)
 }
 
 // reconcilePhaseOnce reports false when the revision-guarded update lost to a
 // concurrent writer, so the caller re-reads and decides again.
-func (w *WriteTx) reconcilePhaseOnce(member stateScope, newStatus string, trigger Trigger, cause string) (bool, error) {
-	ph, err := w.getPhase(member.PlanID, member.PhaseID)
+func (w *WriteTx) reconcilePhaseOnce(ref phaseRef, trigger Trigger, cause string) (bool, error) {
+	ph, err := w.getPhaseLocked(ref.PlanID, ref.PhaseID)
 	if err != nil {
 		return false, err
 	}
 	if ph.DeletedAt.Valid || ph.State == PhaseCompleted {
 		return true, nil
 	}
-	var done, total int
+	var total, done, begun int
 	if err := w.tx.QueryRow(
-		`SELECT COUNT(*), COALESCE(SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END), 0)
-		   FROM tasks WHERE parent_id = ? AND phase_id = ?`, member.PlanID, member.PhaseID,
-	).Scan(&total, &done); err != nil {
+		`SELECT COUNT(*),
+		        COALESCE(SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END), 0),
+		        COALESCE(SUM(CASE WHEN status IN ('doing','review','blocked','paused','done') THEN 1 ELSE 0 END), 0)
+		   FROM tasks WHERE parent_id = ? AND phase_id = ?`, ref.PlanID, ref.PhaseID,
+	).Scan(&total, &done, &begun); err != nil {
 		return false, err
 	}
 
-	start := ph.State == PhasePending && (startsPhase[newStatus] || (total > 0 && done == total))
+	start := ph.State == PhasePending && begun > 0
 	complete := (ph.State == PhaseStarted || start) && total > 0 && done == total
 	if !start && !complete {
 		return true, nil
@@ -139,21 +168,20 @@ func (w *WriteTx) reconcilePhaseOnce(member stateScope, newStatus string, trigge
 		return false, nil
 	}
 
-	scope, err := w.taskScope(member.PlanID)
+	scope, err := w.taskScope(ref.PlanID)
 	if err != nil {
 		return false, err
 	}
 	scope.PhaseID = ph.PhaseID
-	emit := func(kind string) error {
-		return w.appendPhaseEvent(kind, ph, phaseProgress{Done: done, Total: total}, scope, trigger, &cause)
-	}
+	prog := phaseProgress{Done: done, Total: total}
+	// Started and completed in one pass share the same cause; each has its own id.
 	if start {
-		if err := emit(catalog.KindPhaseStarted); err != nil {
+		if err := w.appendPhaseEvent(catalog.KindPhaseStarted, ph, prog, scope, trigger, cause); err != nil {
 			return false, err
 		}
 	}
 	if complete {
-		if err := emit(catalog.KindPhaseCompleted); err != nil {
+		if err := w.appendPhaseEvent(catalog.KindPhaseCompleted, ph, prog, scope, trigger, cause); err != nil {
 			return false, err
 		}
 	}
@@ -161,42 +189,46 @@ func (w *WriteTx) reconcilePhaseOnce(member stateScope, newStatus string, trigge
 }
 
 // appendPhaseEvent writes one phase edge. The subject is the phase
-// (msg://phase/torque/<plan>/<phase>); the scope carries the plan and phase.
-// A start that precedes a completion in the same transaction is the cause of
-// the completion.
-func (w *WriteTx) appendPhaseEvent(kind string, ph PlanPhaseRecord, prog phaseProgress, scope stateScope, trigger Trigger, cause *string) error {
+// (msg://phase/torque/<plan>/<phase>: phase ids are per plan, and the subject
+// never changes for a phase); the scope carries the plan and phase. A start
+// after the first (generation > 1) is marked reopened.
+func (w *WriteTx) appendPhaseEvent(kind string, ph PlanPhaseRecord, prog phaseProgress, scope stateScope, trigger Trigger, cause string) error {
 	payload, err := json.Marshal(phasePayload{
 		PlanID: ph.PlanID, PhaseID: ph.PhaseID, Name: ph.Name, Order: ph.Order,
 		Progress: prog, Generation: ph.Generation,
+		Reopened: kind == catalog.KindPhaseStarted && ph.Generation > 1,
 	})
 	if err != nil {
 		return fmt.Errorf("phase event payload: %w", err)
 	}
-	c := ""
-	if cause != nil {
-		c = *cause
-	}
-	id, err := w.appendEvent(eventSpec{
+	_, err = w.appendEvent(eventSpec{
 		Kind:       kind,
 		Category:   "state",
 		EntityType: "phase",
 		EntityID:   ph.PlanID + "/" + ph.PhaseID,
 		Payload:    payload,
 		Trigger:    trigger,
-		Causation:  c,
+		Causation:  cause,
 		Scope:      scope,
 	})
-	if err != nil {
-		return err
-	}
-	if cause != nil {
-		*cause = id
-	}
-	return nil
+	return err
 }
 
 func (w *WriteTx) getPhase(planID, phaseID string) (PlanPhaseRecord, error) {
-	r, err := scanPlanPhase(w.tx.QueryRow(`SELECT `+planPhaseCols+` FROM plan_phases WHERE plan_id = ? AND phase_id = ?`, planID, phaseID))
+	return w.readPhase(planID, phaseID, "")
+}
+
+// getPhaseLocked is getPhase taking a row lock on Postgres.
+func (w *WriteTx) getPhaseLocked(planID, phaseID string) (PlanPhaseRecord, error) {
+	lock := ""
+	if _, pg := w.store.dialect.(postgresDialect); pg {
+		lock = " FOR UPDATE"
+	}
+	return w.readPhase(planID, phaseID, lock)
+}
+
+func (w *WriteTx) readPhase(planID, phaseID, lock string) (PlanPhaseRecord, error) {
+	r, err := scanPlanPhase(w.tx.QueryRow(`SELECT `+planPhaseCols+` FROM plan_phases WHERE plan_id = ? AND phase_id = ?`+lock, planID, phaseID))
 	if err == sql.ErrNoRows {
 		return r, fmt.Errorf("%w: %s", ErrPhaseNotFound, phaseID)
 	}
@@ -256,7 +288,7 @@ func (s *Store) ReopenPlanPhase(ctx context.Context, planID, phaseID string) (Pl
 		return ph, err
 	}
 	scope.PhaseID = phaseID
-	if err := w.appendPhaseEvent(catalog.KindPhaseStarted, ph, phaseProgress{Done: done, Total: total}, scope, resolveTrigger(ctx, TransitionOpts{}), nil); err != nil {
+	if err := w.appendPhaseEvent(catalog.KindPhaseStarted, ph, phaseProgress{Done: done, Total: total}, scope, resolveTrigger(ctx, TransitionOpts{}), ""); err != nil {
 		return ph, err
 	}
 	if err := w.Commit(); err != nil {
