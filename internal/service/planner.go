@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -456,8 +457,11 @@ func plannerNextSeq(db string, ids []string) string {
 	}
 	for _, id := range ids {
 		if m := re.FindStringSubmatch(id); m != nil {
-			var n int
-			fmt.Sscan(m[1], &n)
+			// Zero padding is formatting, not an octal prefix.
+			n, err := strconv.Atoi(m[1])
+			if err != nil {
+				continue
+			}
 			if n > max {
 				max = n
 			}
@@ -659,8 +663,10 @@ func plannerAddComment(item PlannerItem, author, text, kind string, now time.Tim
 		m, _ := c.(map[string]any)
 		id, _ := m["id"].(string)
 		if sub := re.FindStringSubmatch(id); sub != nil {
-			var n int
-			fmt.Sscan(sub[1], &n)
+			n, err := strconv.Atoi(sub[1])
+			if err != nil {
+				continue
+			}
 			if n > max {
 				max = n
 			}
