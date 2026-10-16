@@ -24,7 +24,7 @@ ALTER TABLE runs ADD COLUMN attempt INTEGER CHECK (attempt > 0);
 WITH numbered AS (
     SELECT id, ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY id) AS n FROM runs
 )
-UPDATE runs SET attempt = (SELECT n FROM numbered WHERE numbered.id = runs.id);
+UPDATE runs SET attempt = numbered.n FROM numbered WHERE numbered.id = runs.id;
 CREATE UNIQUE INDEX idx_runs_task_attempt ON runs(task_id, attempt);
 
 CREATE TABLE task_run_counters (
