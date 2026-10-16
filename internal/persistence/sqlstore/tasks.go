@@ -152,6 +152,9 @@ func taskCursorArg(sortBy, sv string) (any, error) {
 
 // TaskRecord mirrors the tasks table row.
 type TaskRecord struct {
+	ProgressDetail       sql.NullString
+	ProgressDetailSource sql.NullString
+
 	ID                string
 	Title             string
 	Description       string
@@ -363,6 +366,9 @@ type TaskScopeStatusCount struct {
 
 // TaskUpdate holds optional fields to update; nil pointer = no change.
 type TaskUpdate struct {
+	ProgressDetail       *sql.NullString
+	ProgressDetailSource *sql.NullString
+
 	Title             *string
 	Description       *string
 	Status            *string
@@ -462,7 +468,7 @@ const taskSelectCols = `id, title, description, status, priority, manual,
 	sprint_id, project_id, epic_id, created_at, updated_at,
 	kind, source_type, source_ref, trust, checkpoint_mode, on_checkpoint_response,
 	parent_id,
-	collection_id, collection_position, added_to_collections_at`
+	collection_id, collection_position, added_to_collections_at, progress_detail, progress_detail_source`
 
 // scanTask scans a single row into a TaskRecord.
 func scanTask(row interface {
@@ -479,7 +485,7 @@ func scanTask(row interface {
 		&t.SprintID, &t.ProjectID, &t.EpicID, &t.CreatedAt, &t.UpdatedAt,
 		&t.Kind, &t.SourceType, &t.SourceRef, &t.Trust, &t.CheckpointMode, &t.OnCheckpointResponse,
 		&t.ParentID,
-		&t.CollectionID, &t.CollectionPosition, &t.AddedToCollectionsAt,
+		&t.CollectionID, &t.CollectionPosition, &t.AddedToCollectionsAt, &t.ProgressDetail, &t.ProgressDetailSource,
 	)
 	if err != nil {
 		return nil, err
@@ -508,8 +514,8 @@ func (s *Store) CreateTask(t *TaskRecord) error {
 		deliverable_preset, on_done_merge, blocked_reason, metadata,
 		sprint_id, project_id, epic_id,
 		kind, source_type, source_ref, trust, checkpoint_mode, on_checkpoint_response,
-		parent_id
-	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+		parent_id, progress_detail, progress_detail_source
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
 	_, err := s.db.Exec(q,
 		t.ID, t.Title, t.Description, t.Status, t.Priority, manual,
@@ -519,7 +525,7 @@ func (s *Store) CreateTask(t *TaskRecord) error {
 		t.DeliverablePreset, t.OnDoneMerge, t.BlockedReason, t.Metadata,
 		t.SprintID, t.ProjectID, t.EpicID,
 		t.Kind, t.SourceType, t.SourceRef, t.Trust, t.CheckpointMode, t.OnCheckpointResponse,
-		t.ParentID,
+		t.ParentID, t.ProgressDetail, t.ProgressDetailSource,
 	)
 	return err
 }
@@ -1210,6 +1216,14 @@ func updateTaskExec(ex dbExecer, id string, u TaskUpdate) error {
 	var setClauses []string
 	var args []any
 
+	if u.ProgressDetail != nil {
+		setClauses = append(setClauses, "progress_detail = ?")
+		args = append(args, *u.ProgressDetail)
+	}
+	if u.ProgressDetailSource != nil {
+		setClauses = append(setClauses, "progress_detail_source = ?")
+		args = append(args, *u.ProgressDetailSource)
+	}
 	if u.Title != nil {
 		setClauses = append(setClauses, "title = ?")
 		args = append(args, *u.Title)

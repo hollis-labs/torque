@@ -57,11 +57,11 @@ func TestMigration038PopulatedPostgres(t *testing.T) {
  CREATE TABLE tasks(id TEXT PRIMARY KEY);
  CREATE TABLE task_templates(id TEXT PRIMARY KEY, version INTEGER);
  CREATE TABLE sessions(id TEXT PRIMARY KEY);
- CREATE TABLE runs(id SERIAL PRIMARY KEY);
+ CREATE TABLE runs(id SERIAL PRIMARY KEY, task_id TEXT REFERENCES tasks(id));
  INSERT INTO tasks(id) VALUES ('T1');
  INSERT INTO task_templates(id, version) VALUES ('TT1', 1);
  INSERT INTO sessions(id) VALUES ('S1');
- INSERT INTO runs(id) VALUES (1);`)
+ INSERT INTO runs(id, task_id) VALUES (1, 'T1');`)
 	require.NoError(t, err)
 
 	markAppliedThrough(t, db, "037_drop_duration_indexes.sql")
@@ -76,11 +76,11 @@ func TestMigration038PopulatedSQLite(t *testing.T) {
  CREATE TABLE tasks(id TEXT PRIMARY KEY);
  CREATE TABLE task_templates(id TEXT PRIMARY KEY, version INTEGER);
  CREATE TABLE sessions(id TEXT PRIMARY KEY);
- CREATE TABLE runs(id INTEGER PRIMARY KEY);
+ CREATE TABLE runs(id INTEGER PRIMARY KEY, task_id TEXT REFERENCES tasks(id));
  INSERT INTO tasks(id) VALUES ('T1');
  INSERT INTO task_templates(id, version) VALUES ('TT1', 1);
  INSERT INTO sessions(id) VALUES ('S1');
- INSERT INTO runs(id) VALUES (1);`)
+ INSERT INTO runs(id, task_id) VALUES (1, 'T1');`)
 	require.NoError(t, err)
 
 	markAppliedThrough(t, db, "037_drop_duration_indexes.sql")

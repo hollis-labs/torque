@@ -20,6 +20,7 @@ type TemplateService struct {
 // TemplateCreateInput captures every templatable field. JSON-blob fields
 // are Go-native (slice/map) — the service marshals to TEXT before insert.
 type TemplateCreateInput struct {
+	ProgressDetail       string
 	ID                   string
 	Name                 string
 	Description          string
@@ -58,6 +59,7 @@ type TemplateCreateInput struct {
 // Update. A new row is inserted at version = max+1; the old row stays
 // for historical references.
 type TemplateUpdateInput struct {
+	ProgressDetail       *string
 	Name                 string
 	Description          string
 	Kind                 string
@@ -118,6 +120,10 @@ type TemplateListOpts struct {
 // the PRIMARY KEY constraint on (id, version); callers should Update to
 // add a new version of an existing template.
 func (s *TemplateService) Create(in TemplateCreateInput) (*sqlstore.TemplateRecord, error) {
+	if err := validateProgressDetail(in.ProgressDetail); err != nil {
+		return nil, err
+	}
+
 	if in.ID == "" {
 		return nil, &ValidationError{Field: "id", Message: "template id required"}
 	}
@@ -148,6 +154,12 @@ func (s *TemplateService) Create(in TemplateCreateInput) (*sqlstore.TemplateReco
 // on the latest version. Fields left zero on TemplateUpdateInput inherit
 // from the previous version.
 func (s *TemplateService) Update(id string, in TemplateUpdateInput) (*sqlstore.TemplateRecord, error) {
+	if in.ProgressDetail != nil {
+		if err := validateProgressDetail(*in.ProgressDetail); err != nil {
+			return nil, err
+		}
+	}
+
 	prev, err := s.store.GetLatestTemplate(id)
 	if err != nil {
 		if errors.Is(err, sqlstore.ErrTemplateNotFound) {
@@ -225,6 +237,12 @@ func (s *TemplateService) validateTemplateBudgets(cost *float64, retries *int, d
 // metadata.template_ref = {id, version} so callers can trace lineage
 // even after the template is archived or deleted-in-error.
 func (s *TemplateService) Instantiate(in TemplateInstantiateInput) (*sqlstore.TaskRecord, error) {
+	if v, ok := in.Overrides["progress_detail"]; ok {
+		if _, valid := v.(string); !valid {
+			return nil, &ValidationError{Field: "progress_detail", Message: "expected a string (empty clears)"}
+		}
+	}
+
 	if in.TemplateID == "" {
 		return nil, &ValidationError{Field: "template_id", Message: "template_id required"}
 	}
@@ -329,6 +347,8 @@ func (s *TemplateService) applyTemplateToInput(tpl *sqlstore.TemplateRecord, in 
 	}
 
 	input := TaskCreateInput{
+		ProgressDetail:       tpl.ProgressDetail.String,
+		progressDetailSource: "template",
 		Description:          tpl.Description,
 		Manual:               !tpl.AutoExecute,
 		Kind:                 tpl.Kind,
@@ -464,6 +484,10 @@ func applyOverrides(input *TaskCreateInput, overrides map[string]any) {
 	if len(overrides) == 0 {
 		return
 	}
+	if v, ok := overrides["progress_detail"].(string); ok {
+		input.ProgressDetail = v
+		input.progressDetailSource = "task"
+	}
 	if v, ok := overrides["description"].(string); ok && v != "" {
 		input.Description = v
 	}
@@ -494,6 +518,7 @@ func applyOverrides(input *TaskCreateInput, overrides map[string]any) {
 // Go-native JSON fields are marshaled here so the store stays JSON-agnostic.
 func buildTemplateRecord(in TemplateCreateInput, id string, version int) *sqlstore.TemplateRecord {
 	rec := &sqlstore.TemplateRecord{
+		ProgressDetail:       progressDetailValue(in.ProgressDetail),
 		ID:                   id,
 		Version:              version,
 		Name:                 in.Name,
@@ -593,6 +618,9 @@ func mergeTemplateUpdate(prev *sqlstore.TemplateRecord, in TemplateUpdateInput) 
 	}
 	if in.Executor != nil {
 		next.Executor = sql.NullString{String: *in.Executor, Valid: *in.Executor != ""}
+	}
+	if in.ProgressDetail != nil {
+		next.ProgressDetail = progressDetailValue(*in.ProgressDetail)
 	}
 	if in.LaunchProfile != nil {
 		next.LaunchProfile = sql.NullString{String: *in.LaunchProfile, Valid: *in.LaunchProfile != ""}
