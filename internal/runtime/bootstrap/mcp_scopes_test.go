@@ -69,14 +69,16 @@ func mcpScopeFixture(t *testing.T, mode auth.Mode) (url string, mint func(scope 
 	return srv.URL + "/mcp", mint, events
 }
 
-// call returns whether the tool call was refused by auth (a protocol error),
-// as opposed to reaching the tool.
+// call returns whether the call was refused (at the transport or by tool
+// scope), as opposed to reaching the tool.
 func call(t *testing.T, url, tok, tool string, args map[string]any) (refused bool) {
 	t.Helper()
 	ctx := context.Background()
 	cs, err := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test", Version: "test"}, nil).Connect(ctx,
 		&mcpsdk.StreamableClientTransport{Endpoint: url, HTTPClient: &http.Client{Transport: bearerRT{tok}}}, nil)
-	require.NoError(t, err)
+	if err != nil {
+		return true // refused at the transport (401)
+	}
 	defer cs.Close()
 	_, err = cs.CallTool(ctx, &mcpsdk.CallToolParams{Name: tool, Arguments: args})
 	return err != nil
@@ -95,13 +97,14 @@ func TestMCPToolScopes_Enforce(t *testing.T) {
 
 func TestMCPToolScopes_PermissiveLogsWouldDeny(t *testing.T) {
 	url, mint, events := mcpScopeFixture(t, auth.ModePermissive)
-	assert.False(t, call(t, url, mint("torque.read"), "torque_task_create", map[string]any{"title": "x"}), "permissive never refuses")
+	assert.False(t, call(t, url, mint("torque.write"), "torque_settings_save", map[string]any{}), "permissive never refuses a caller admitted to /mcp")
+	assert.False(t, call(t, url, mint("torque.write"), "torque_task_create", map[string]any{"title": "x"}), "permissive never refuses")
 	var found bool
 	for _, e := range events() {
-		if e.Tool == "torque_task_create" {
+		if e.Tool == "torque_settings_save" {
 			found = true
 			assert.True(t, e.WouldDeny)
-			assert.Equal(t, "torque.write", e.RequiredScope)
+			assert.Equal(t, "torque.admin", e.RequiredScope)
 			assert.False(t, e.Denied)
 		}
 	}
@@ -110,6 +113,11 @@ func TestMCPToolScopes_PermissiveLogsWouldDeny(t *testing.T) {
 
 func TestMCPToolScopes_OffChangesNothing(t *testing.T) {
 	url, mint, _ := mcpScopeFixture(t, auth.ModeOff)
-	assert.False(t, call(t, url, mint("torque.read"), "torque_task_create", map[string]any{"title": "x"}))
 	assert.False(t, call(t, url, "s3cret", "torque_settings_get", nil))
+	// A read-scoped JWT must not reach /mcp at all while auth is off: the
+	// legacy token gate decides, as before per-tool scopes.
+	assert.True(t, call(t, url, mint("torque.read"), "torque_task_list", nil))
+	assert.True(t, call(t, url, mint("torque.read"), "torque_settings_save", map[string]any{}))
+	// Write-scoped JWTs keep the old /mcp access.
+	assert.False(t, call(t, url, mint("torque.write"), "torque_task_list", nil))
 }
