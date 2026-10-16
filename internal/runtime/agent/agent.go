@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"fmt"
 	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 	"github.com/hollis-labs/libs/harness/core/adapters/provider"
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents/catalog"
 	"github.com/hollis-labs/libs/harness/core/sandbox"
 	llmtypes "github.com/hollis-labs/libs/llm/core/llmtypes"
 	"github.com/hollis-labs/torque/internal/runtime/executor"
@@ -12,6 +14,8 @@ import (
 // other fields parametrize the boot. Required vs optional is documented per
 // field; Validate enforces the cross-Mode constraints.
 type Options struct {
+	// ProgressDetail is an explicit setting for this launch, not inherited task detail.
+	ProgressDetail string
 	// Mode is the lifecycle policy. Defaults to ModeLongLived (zero-value).
 	Mode Mode
 
@@ -228,6 +232,9 @@ func (o Options) withResumeSignals(lost, progress chan<- struct{}) Options {
 
 // Validate enforces cross-Mode constraints. Called by Boot before any work.
 func (o Options) Validate() error {
+	if o.ProgressDetail != "" && !catalog.ProgressDetail(o.ProgressDetail).Valid() {
+		return fmt.Errorf("invalid progress_detail: expected off, milestone, step or verbose")
+	}
 	if o.LaunchProfile == "" && o.AgentProfile == "" {
 		return errLaunchProfileRequired
 	}

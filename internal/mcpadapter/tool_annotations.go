@@ -19,6 +19,8 @@ type toolHints struct {
 }
 
 var toolAnnotations = map[string]toolHints{
+	"torque_task_progress":             {false, false, false},
+	"torque_task_data_emit":            {false, false, false},
 	"torque_aar_submit":                {false, false, false},
 	"torque_artifact_create":           {false, false, false},
 	"torque_artifact_delete":           {false, true, false},

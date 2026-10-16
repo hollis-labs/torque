@@ -85,8 +85,10 @@ func triggerFromContext(ctx context.Context) (Trigger, bool) {
 // stateScope is the part of the dimension block Torque can verify from its own
 // rows. Missing is allowed; wrong is not.
 type stateScope struct {
-	ProjectID, EpicID, SprintID, TaskID string
-	RunID                               sql.NullInt64
+	ProjectID, EpicID, SprintID, TaskID     string
+	RunID                                   sql.NullInt64
+	Attempt                                 uint32
+	TetherSessionID, LaunchID, WorkstreamID string
 }
 
 // stateChange is one entity transition handed to appendStateEvent.
@@ -235,15 +237,19 @@ func (w *WriteTx) appendEvent(sp eventSpec) (string, error) {
 		Kind:          runtimeevents.EventKind(sp.Kind),
 		Time:          now,
 		App:           "torque",
+		SessionID:     sp.Scope.TetherSessionID,
 		Subject:       "msg://" + sp.EntityType + "/torque/" + sp.EntityID,
 		Source:        runtimeevents.Source{Channel: "torque", Confidence: runtimeevents.ConfidenceExact},
 		Payload:       sp.Payload,
 		Truncated:     sp.Truncated,
 		Scope: &runtimeevents.Scope{
-			ProjectID: sp.Scope.ProjectID,
-			EpicID:    sp.Scope.EpicID,
-			SprintID:  sp.Scope.SprintID,
-			TaskID:    sp.Scope.TaskID,
+			ProjectID:    sp.Scope.ProjectID,
+			EpicID:       sp.Scope.EpicID,
+			SprintID:     sp.Scope.SprintID,
+			TaskID:       sp.Scope.TaskID,
+			Attempt:      sp.Scope.Attempt,
+			LaunchID:     sp.Scope.LaunchID,
+			WorkstreamID: sp.Scope.WorkstreamID,
 		},
 		Corr:  w.eventCorr(sp),
 		Actor: stateActor(w.ctx),

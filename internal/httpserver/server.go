@@ -133,6 +133,8 @@ func (s *Server) routes() {
 		r.Put("/tasks/{id}", s.updateTask)
 		r.Delete("/tasks/{id}", s.deleteTask)
 		r.Post("/tasks/{id}/transition", s.transitionTask)
+		r.Post("/tasks/{id}/progress", s.taskProgress)
+		r.Post("/tasks/{id}/data", s.taskData)
 		r.Get("/tasks/{id}/checkpoints", s.listTaskCheckpoints)
 		r.Get("/tasks/{id}/comments", s.listComments)
 		r.Post("/tasks/{id}/comments", s.addComment)

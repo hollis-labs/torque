@@ -33,15 +33,16 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 type launchSessionBody struct {
-	LaunchProfile string            `json:"launch_profile,omitempty"`
-	AgentProfile  string            `json:"agent_profile,omitempty"`
-	Workdir       string            `json:"workdir"`
-	RepoRoot      string            `json:"repo_root,omitempty"`
-	ProjectID     string            `json:"project_id,omitempty"`
-	TaskID        string            `json:"task_id,omitempty"`
-	SystemPrompt  string            `json:"system_prompt,omitempty"`
-	Env           []string          `json:"env,omitempty"`
-	Meta          map[string]string `json:"meta,omitempty"`
+	ProgressDetail string            `json:"progress_detail,omitempty"`
+	LaunchProfile  string            `json:"launch_profile,omitempty"`
+	AgentProfile   string            `json:"agent_profile,omitempty"`
+	Workdir        string            `json:"workdir"`
+	RepoRoot       string            `json:"repo_root,omitempty"`
+	ProjectID      string            `json:"project_id,omitempty"`
+	TaskID         string            `json:"task_id,omitempty"`
+	SystemPrompt   string            `json:"system_prompt,omitempty"`
+	Env            []string          `json:"env,omitempty"`
+	Meta           map[string]string `json:"meta,omitempty"`
 }
 
 func (b *launchSessionBody) UnmarshalJSON(data []byte) error {
@@ -84,16 +85,17 @@ func (s *Server) launchSession(w http.ResponseWriter, r *http.Request) {
 	}
 	envMap := envSliceToMap(body.Env)
 	sess, err := s.sessions.BootExternal(r.Context(), agent.Options{
-		Mode:          agent.ModeLongLived,
-		LaunchProfile: body.LaunchProfile,
-		AgentProfile:  body.AgentProfile,
-		Workdir:       body.Workdir,
-		RepoRoot:      body.RepoRoot,
-		ProjectID:     body.ProjectID,
-		TaskID:        body.TaskID,
-		SystemPrompt:  body.SystemPrompt,
-		Env:           envMap,
-		SessionMeta:   body.Meta,
+		Mode:           agent.ModeLongLived,
+		ProgressDetail: body.ProgressDetail,
+		LaunchProfile:  body.LaunchProfile,
+		AgentProfile:   body.AgentProfile,
+		Workdir:        body.Workdir,
+		RepoRoot:       body.RepoRoot,
+		ProjectID:      body.ProjectID,
+		TaskID:         body.TaskID,
+		SystemPrompt:   body.SystemPrompt,
+		Env:            envMap,
+		SessionMeta:    body.Meta,
 	})
 	if err != nil {
 		// Distinguish caller-fault validation (400) from server-side Boot
