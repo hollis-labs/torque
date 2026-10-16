@@ -13,6 +13,7 @@ import (
 	feotel "github.com/hollis-labs/libs/core/util/otel"
 	"github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/sanitize"
 	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
+	"github.com/hollis-labs/libs/security/auth"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	otelprop "go.opentelemetry.io/otel/propagation"
@@ -36,6 +37,8 @@ type Adapter struct {
 	sched          *scheduler.Scheduler
 	server         *gomcp.Server
 	loopbackTaskID string
+	// guard, when set, scopes every tools/call (WithGuard).
+	guard *auth.Guard
 	// sessions wires the long-lived agent session manager (CW-20260503-0014).
 	// Nil disables torque_session_* tools — they reply with a domain error
 	// rather than panicking. Mirrors the sched=nil contract.
@@ -98,8 +101,20 @@ func (a *Adapter) Server() *gomcp.Server {
 			logger = slog.Default()
 		}
 		a.server.SDKServer().AddReceivingMiddleware(sanitize.Middleware(logger))
+		if a.guard != nil {
+			a.server.SDKServer().AddReceivingMiddleware(authorizeTools(a.guard))
+		}
 	})
 	return a.server
+}
+
+// WithGuard scopes every tools/call through g (libs/security/auth,
+// AuthorizeTool; table in internal/mcpscopes). Off mode never rejects,
+// permissive logs "would deny", enforce refuses. Must be called before any
+// MCP requests are served. Nil leaves tool calls unscoped (stdio).
+func (a *Adapter) WithGuard(g *auth.Guard) *Adapter {
+	a.guard = g
+	return a
 }
 
 // WithSessions attaches the unified agent session manager so the

@@ -23,7 +23,7 @@ func TestSessionLaunchDaemonMCP_PathPolicy(t *testing.T) {
 	deps := &agent.Dependencies{Store: store, WorkspacesRoot: t.TempDir(), Profiles: config.ProfileMap{"default": {Provider: "claude-code"}}, SessionAllowedRoots: []string{}}
 	mgr := agent.NewManager(deps)
 	deps.Sessions = mgr
-	srv := httptest.NewServer(bootstrap.DaemonMCPHandler(service.New(store), nil, mgr, nil))
+	srv := httptest.NewServer(bootstrap.DaemonMCPHandler(service.New(store), nil, mgr, nil, nil))
 	defer srv.Close()
 	ctx := context.Background()
 	client, err := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test", Version: "test"}, nil).Connect(ctx, &mcpsdk.StreamableClientTransport{Endpoint: srv.URL}, nil)

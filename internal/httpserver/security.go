@@ -135,7 +135,7 @@ func (s *Server) requireToken(next http.Handler) http.Handler {
 				// Off and permissive stamp an under-scoped verified caller
 				// without rejecting it, so admission also needs the scope
 				// this method requires; otherwise the legacy rules decide.
-				if p, ok := auth.FromContext(r.Context()); ok && p.Verified && p.HasScope(requiredScope(r.Method)) {
+				if p, ok := auth.FromContext(r.Context()); ok && p.Verified && (requiredScope(r) == "" || p.HasScope(requiredScope(r))) {
 					next.ServeHTTP(w, r)
 					return
 				}
@@ -179,9 +179,13 @@ func requestHostname(r *http.Request) string {
 	return r.Host
 }
 
-// requiredScope is the scope scopeTable demands for method.
-func requiredScope(method string) string {
-	if method == http.MethodGet || method == http.MethodHead {
+// requiredScope is the scope scopeTable demands for r at the transport.
+// /mcp needs none (each tool call is scoped separately).
+func requiredScope(r *http.Request) string {
+	if r.URL.Path == "/mcp" {
+		return ""
+	}
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		return AuthApp + ".read"
 	}
 	return AuthApp + ".write"

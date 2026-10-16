@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/hollis-labs/libs/security/auth"
+	"github.com/hollis-labs/torque/internal/mcpscopes"
 )
 
 // AuthApp is the app id Torque uses for its scope strings, its audience
@@ -86,10 +87,10 @@ func NewGuard(ctx context.Context, c AuthConfig) (*auth.Guard, error) {
 }
 
 // scopeTable maps the HTTP surface to two scopes: torque.read for safe
-// methods and torque.write for the rest, /mcp included (its tools are not
-// scoped individually yet).
+// methods and torque.write for the rest. /mcp needs authentication only at
+// the transport; each tool call is scoped by mcpscopes (AuthorizeTool).
 func scopeTable() *auth.ScopeTable {
-	return auth.NewScopeTable().
+	return mcpscopes.AddTo(auth.NewScopeTable()).
 		Route("GET", "*", AuthApp+".read").
 		Route("HEAD", "*", AuthApp+".read").
 		Route("*", "*", AuthApp+".write")
