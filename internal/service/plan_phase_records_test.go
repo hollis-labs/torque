@@ -177,6 +177,7 @@ func TestTaskUpdateDoesNotRederivePhaseFromUnchangedMetadata(t *testing.T) {
 	rec, err := svc.Task.Get("CW-L-PLAN")
 	require.NoError(t, err)
 	require.Equal(t, "ph-1", rec.PhaseID.String)
+}
 
 func TestPlanReopenPhase(t *testing.T) {
 	svc := setupService(t)
