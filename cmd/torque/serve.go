@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -87,6 +88,25 @@ refused. Browser origins other than loopback ones must be allowed with
 			// own graceful-shutdown path tears everything down cleanly.
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
+
+			// go-auth (libs/security/auth). Default mode is off: the token
+			// gate above still decides admission, so nothing changes until
+			// HOLLIS_AUTH_TORQUE / HOLLIS_AUTH say otherwise. enforce needs
+			// no loopback check, and off/permissive keep the token-required
+			// non-loopback rule in ValidateBind above.
+			guard, err := httpserver.NewGuard(ctx, httpserver.AuthConfig{
+				Issuer:           strings.TrimSpace(os.Getenv("TORQUE_AUTH_ISSUER")),
+				Audience:         strings.TrimSpace(os.Getenv("TORQUE_AUTH_AUDIENCE")),
+				JWKSURL:          strings.TrimSpace(os.Getenv("TORQUE_AUTH_JWKS_URL")),
+				BootstrapKeyFile: strings.TrimSpace(os.Getenv("TORQUE_AUTH_BOOTSTRAP_KEY_FILE")),
+				DenyListURL:      strings.TrimSpace(os.Getenv("TORQUE_AUTH_DENYLIST_URL")),
+				StaticToken:      sec.Token,
+			})
+			if err != nil {
+				return fmt.Errorf("auth: %w", err)
+			}
+			sec.Guard = guard
+			log.Printf("[serve] %s", guard.Status())
 
 			return runServe(ctx, ln, sec)
 		},

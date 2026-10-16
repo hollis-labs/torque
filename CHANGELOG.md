@@ -6,6 +6,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- `torque serve` adopts `github.com/hollis-labs/libs/security/auth` v0.1.0
+  (CW-20261016-0014). Tether-issued Ed25519 JWTs (audience `torque`, scopes
+  `torque.read` / `torque.write`) are verified offline against the issuer's
+  JWKS on `/api/v1` and `/mcp`. Configure with `TORQUE_AUTH_ISSUER`
+  (+ optional `TORQUE_AUTH_AUDIENCE`, `_JWKS_URL`, `_BOOTSTRAP_KEY_FILE`,
+  `_DENYLIST_URL`). Mode comes from `HOLLIS_AUTH_TORQUE` / `HOLLIS_AUTH` and
+  defaults to `off`: the existing `TORQUE_API_TOKEN` / loopback rules still
+  decide admission, so current clients are unaffected. `enforce` requires a
+  verified principal (the static token is accepted as an API key with
+  `torque.*`). Rollback: revert, or `HOLLIS_AUTH_TORQUE=off`. `/mcp` tools
+  are not scoped individually yet.
+
 ### Changed
 
 - Adopt published Harness v0.3.1, llm-core v0.1.0, agent v0.3.0 and

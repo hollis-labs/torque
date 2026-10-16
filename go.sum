@@ -43,6 +43,8 @@ github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
 github.com/hollis-labs/libs/plugin-mcp v0.2.0 h1:tBrmQ+JziEgUxtJJAXjVKS4aIzw+ebWvo1nO97rthDo=
 github.com/hollis-labs/libs/plugin-mcp v0.2.0/go.mod h1:3x5ZVgHJewzwEpdl1RNFfxXXkq9SKVNL6LJVcpLCGnQ=
+github.com/hollis-labs/libs/security/auth v0.1.0 h1:Bq4pmTr4bnRY7a1bQq2ycuutRlCD4RCh44xPdb0PnBw=
+github.com/hollis-labs/libs/security/auth v0.1.0/go.mod h1:GGJqJuSZwR57ygyml3kPt6Aw2rwPqAzTV2M9CXjTjo8=
 github.com/hollis-labs/libs/util v0.2.1 h1:FwkxCO7bmNB2vQM2pQXpENopKx3uFAMQk6vo0TCez/g=
 github.com/hollis-labs/libs/util v0.2.1/go.mod h1:4DmoHv5m5NlFg76GA6sj4PVpiV1v7vBUreU3d85gzBw=
 github.com/hollis-labs/plugin v0.0.0-20260410030617-741878c627b2 h1:Sz8MvbS5qTb2ne68y+Unt5BeHrdEQBpst5+r+MkA7vk=
