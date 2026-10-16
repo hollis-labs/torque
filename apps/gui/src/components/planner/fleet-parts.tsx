@@ -1,5 +1,7 @@
 import { Mail } from 'lucide-react'
 import type { FleetAgent } from '@/lib/fleet-agents'
+import { useAgentUnread } from '@/console/messaging/unread-hook'
+import { fleetAgentAddress } from '@/console/messaging/unread-store'
 
 export function Stat({ label, value, tone }: { label: string; value: string | number; tone?: string }) {
   return (
@@ -14,8 +16,14 @@ export function Score({ value }: { value: number }) {
   return <span className="font-mono tabular-nums">{String(Math.max(0, value)).padStart(5, '0')}</span>
 }
 
-/** Unread mail for the agent. Dimmed when there is none or the source does not report mail. */
-export function MailBadge({ count }: { count: number | null }) {
+/**
+ * Unread mail for the agent. Dimmed when there is none or the source does not report mail.
+ * When the feed has no count and `agent` is given, falls back to the Console's batched
+ * MessagingClient poll (null, and no poll, while the Console is disabled).
+ */
+export function MailBadge({ count: feedCount, agent }: { count: number | null; agent?: Pick<FleetAgent, 'id' | 'provider'> }) {
+  const fallback = useAgentUnread(feedCount === null && agent ? fleetAgentAddress(agent) : null)
+  const count = feedCount ?? fallback
   const has = (count ?? 0) > 0
   return (
     <span

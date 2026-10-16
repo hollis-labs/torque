@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import Markdown from 'react-markdown'
+import { linkifiedMarkdownComponents } from '@/console/autolink'
 import { ChevronRight, MessageSquare, Plus, SlidersHorizontal } from 'lucide-react'
 import { Button, EmptyState, Input, PageHeader, Skeleton, Textarea } from '@hollis-labs/sysop-ui'
 import { useApi } from '@/hooks/use-api'
@@ -23,6 +24,7 @@ import type {
   ForumMutation,
 } from '@/lib/forums'
 
+const FORUM_MD = linkifiedMarkdownComponents('forums')
 const emptyPage = <T,>(): ForumPage<T> => ({ items: [], has_more: false })
 function message(err: unknown): string {
   return err instanceof Error ? err.message : 'Forums request failed.'
@@ -1032,7 +1034,7 @@ function PostRow({
         )}
         {visiblePost.subject && <h3 className="mb-3 text-sm font-medium">{visiblePost.subject}</h3>}
         <div className="space-y-3 break-words text-[13px] leading-6 text-zinc-300 [&_a]:text-primary [&_a]:underline [&_pre]:max-w-full [&_pre]:overflow-auto [&_pre]:bg-zinc-900 [&_pre]:p-3 [&_h1]:text-lg [&_h2]:text-base [&_h3]:font-semibold [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_blockquote]:border-l-2 [&_blockquote]:border-zinc-700 [&_blockquote]:pl-3 [&_img]:max-w-full">
-          <Markdown>
+          <Markdown components={FORUM_MD}>
             {visiblePost.body_md ?? visiblePost.snippet ?? 'Expand to read this post.'}
           </Markdown>
           {expanded && full?.seq === post.seq && full.truncated && (

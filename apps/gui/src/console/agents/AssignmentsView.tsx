@@ -85,7 +85,7 @@ export function AssignmentsView({ agents, now: nowProp }: { agents: AgentRecord[
         <ul aria-label="Assignments">
           {groups.map(([key, items]) => (
             <li key={key} className="border-b border-zinc-800/80">
-              <div className="bg-zinc-900/40 px-4 py-1.5 font-mono text-[11px] uppercase tracking-widest text-zinc-400">{group === 'agent' ? nameOf.get(key) ?? key : key} <span className="text-zinc-600">· {items.length}</span></div>
+              <div className="bg-zinc-900/40 px-4 py-1.5 font-mono text-[11px] uppercase tracking-widest text-zinc-400">{group === 'agent' ? nameOf.get(key) ?? key : key} <span className="text-zinc-500">· {items.length}</span></div>
               <ul>
                 {items.map((r) => {
                   const releasing = removeIds.includes(r.id)
@@ -95,7 +95,7 @@ export function AssignmentsView({ agents, now: nowProp }: { agents: AgentRecord[
                         {group === 'agent' ? <><Chip>{r.target.type}</Chip> <span className="ml-1 font-mono">{r.target.id}</span>{r.target.label && <span className="ml-2 text-zinc-500">{r.target.label}</span>}</> : <span className="font-mono">{nameOf.get(r.agentId) ?? r.agentId}</span>}
                       </span>
                       {r.role && <span className="font-mono text-[11px] uppercase tracking-wider text-zinc-500">{r.role}</span>}
-                      <span className="font-mono text-[11px] text-zinc-600">{ago(r.since, now)}</span>
+                      <span className="font-mono text-[11px] text-zinc-500">{ago(r.since, now)}</span>
                       <Btn onClick={() => toggleRemove(r.id)} aria-label={`${releasing ? 'Keep' : 'Release'} ${r.agentId} ${r.target.id}`}>{releasing ? 'Keep' : 'Release'}</Btn>
                     </li>
                   )

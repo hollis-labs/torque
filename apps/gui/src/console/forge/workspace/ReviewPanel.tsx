@@ -45,7 +45,7 @@ export function ReviewPanel({ pending, onSubmit, onUnqueue, onClose }: ReviewPan
         placeholder="Leave a review summary…"
         aria-label="Review summary"
         disabled={busy}
-        className="mb-3 w-full max-w-3xl resize-y border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-[13px] text-zinc-100 placeholder:text-zinc-600 focus-visible:border-amber-300 focus-visible:outline-none"
+        className="mb-3 w-full max-w-3xl resize-y border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-[13px] text-zinc-100 placeholder:text-zinc-500 focus-visible:border-amber-300 focus-visible:outline-none"
       />
       <fieldset className="mb-3 space-y-1.5" disabled={busy}>
         <legend className="sr-only">Review verdict</legend>
@@ -76,7 +76,7 @@ export function ReviewPanel({ pending, onSubmit, onUnqueue, onClose }: ReviewPan
       {needsText && <p className="mb-2 text-[12px] text-amber-300">Requesting changes needs a summary or at least one inline comment.</p>}
       {error && <p className="mb-2 text-[12px] text-red-300" role="alert">{error}</p>}
       <div className="flex items-center gap-2">
-        <span className="mr-auto font-mono text-[10px] text-zinc-600">You will be asked to confirm your identity.</span>
+        <span className="mr-auto font-mono text-[10px] text-zinc-500">You will be asked to confirm your identity.</span>
         <Btn onClick={onClose} disabled={busy}>Cancel</Btn>
         <Btn tone="primary" onClick={() => void submit()} disabled={busy || blocked}>{busy ? 'Submitting…' : 'Submit review'}</Btn>
       </div>

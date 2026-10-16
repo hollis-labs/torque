@@ -81,7 +81,7 @@ export function LifecyclePanel({ agent, onClone, onChanged }: LifecyclePanelProp
       ) : (
         <Block title="Retire">
           <div className="mb-3 flex items-center gap-3"><RiskBadge risk="high" /><span className="text-[13px] text-zinc-400">Retiring is high risk: it needs a reason and a fresh identity confirmation.</span></div>
-          <h4 className="mb-1.5 font-mono text-[10px] uppercase tracking-widest text-zinc-600">Impact preview</h4>
+          <h4 className="mb-1.5 font-mono text-[10px] uppercase tracking-widest text-zinc-500">Impact preview</h4>
           {impact ? (
             <>
               <ImpactSummary impact={impact} />

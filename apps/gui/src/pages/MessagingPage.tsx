@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { LinkText } from '@/console/autolink'
 import { Link } from 'react-router-dom'
 import { Bot, Inbox, Send, User, X } from 'lucide-react'
 import {
@@ -612,7 +613,7 @@ function ConversationPanel({
                     </span>
                   </div>
                   <div className="whitespace-pre-wrap break-words text-[13px] leading-6 text-zinc-200">
-                    {messageBody(m) || '(no message text)'}
+                    {messageBody(m) ? <LinkText surface="messaging" text={messageBody(m)} /> : '(no message text)'}
                   </div>
                   {linked && (
                     <div className="mt-2 text-[11px] text-zinc-500">

@@ -18,6 +18,7 @@ import type { Alert, AlertMapper } from '../types'
 import { DEFER_CONTEXTS, defaultAlertActions, deferPresets, snoozePresets, type AlertActionId, type AlertActionResolver, type AlertActionSpec } from './actions'
 import { relatedEvents, replyTarget, structuredFields } from './detail-data'
 import { useAlertActions } from './use-alert-actions'
+import { useRestoreFocus } from '../../shell/restore-focus'
 
 const INTENT: Record<AlertActionSpec['intent'], string> = {
   primary: 'border-amber-300 bg-amber-300 text-zinc-950 hover:bg-amber-200',
@@ -26,7 +27,7 @@ const INTENT: Record<AlertActionSpec['intent'], string> = {
 }
 const FOCUS = 'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-300'
 const CHIP = `border border-zinc-700 px-2 py-1 font-mono text-[11px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-40 ${FOCUS}`
-const FIELD = `border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-xs text-zinc-100 placeholder:text-zinc-600 ${FOCUS}`
+const FIELD = `border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 ${FOCUS}`
 const H = 'font-mono text-[10px] uppercase tracking-widest text-zinc-500'
 
 type Panel = null | 'snooze' | 'defer' | 'settle' | 'reply' | 'decide'
@@ -67,11 +68,19 @@ export function AlertDetail({ alert, status, snoozeUntil, resolution, onClose, a
   const sev = SEVERITY_STYLE[alert.severity]
   const { markRead, now } = useAlertsController()
 
+  useRestoreFocus(true, '[data-alert-trigger]')
   useEffect(() => {
     ref.current?.focus()
     markRead(alert.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [alert.id])
+
+  // An action can remove the button that had focus (approve -> settled): pull focus back into the dialog
+  // so Escape and the Tab trap keep working.
+  useEffect(() => {
+    const el = ref.current
+    if (el && !el.contains(document.activeElement)) el.focus()
+  }, [shown.status, panel, runner.pending])
 
   const choose = (spec: AlertActionSpec) => {
     runner.clearMessages()
@@ -117,7 +126,7 @@ export function AlertDetail({ alert, status, snoozeUntil, resolution, onClose, a
   const refs = event?.subjects ?? []
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-black/60 px-3 pt-[8vh]" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div data-overlay="" className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-black/60 px-3 pt-[8vh]" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div
         ref={ref}
         role="dialog"
@@ -237,7 +246,7 @@ export function AlertDetail({ alert, status, snoozeUntil, resolution, onClose, a
           ) : runner.notice ? (
             <span role="status" className="text-emerald-300">{runner.notice}</span>
           ) : (
-            <span className="text-zinc-600">{specs.map((s) => `${s.shortcut.toUpperCase()} ${s.label.toLowerCase()}`).join(' · ')} · Esc close</span>
+            <span className="text-zinc-500">{specs.map((s) => `${s.shortcut.toUpperCase()} ${s.label.toLowerCase()}`).join(' · ')} · Esc close</span>
           )}
           {closed && (
             <button type="button" onClick={() => void runner.restore()} className={`ml-3 border border-zinc-700 px-1.5 py-px uppercase tracking-widest text-zinc-300 hover:bg-zinc-800 ${FOCUS}`}>

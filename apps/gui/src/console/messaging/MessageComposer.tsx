@@ -25,7 +25,7 @@ export interface MessageComposerProps {
   autoFocus?: boolean
 }
 
-const field = 'w-full border border-zinc-700 bg-zinc-950 px-2 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-600 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-300'
+const field = 'w-full border border-zinc-700 bg-zinc-950 px-2 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-300'
 const btn = 'border px-3 py-1.5 font-mono text-[11px] uppercase tracking-widest transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-300 disabled:cursor-not-allowed disabled:opacity-40'
 
 export function MessageComposer({ recipient, intent = 'message', replyTo, subject, vars, showThread = true, onSent, onCancel, autoFocus = true }: MessageComposerProps) {

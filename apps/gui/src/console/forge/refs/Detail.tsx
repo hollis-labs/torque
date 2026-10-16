@@ -41,7 +41,7 @@ function Section({ title, count, children }: { title: string; count?: number; ch
     <section className="border-t border-zinc-800/80 py-3 first:border-t-0 first:pt-0">
       <h3 className={`${LABEL} mb-2`}>
         {title}
-        {count !== undefined && <span className="ml-1.5 text-zinc-600">{count}</span>}
+        {count !== undefined && <span className="ml-1.5 text-zinc-500">{count}</span>}
       </h3>
       {children}
     </section>

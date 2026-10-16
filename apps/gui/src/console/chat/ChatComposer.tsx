@@ -49,7 +49,7 @@ export function ChatComposer({ onSend, capability, error }: { onSend: (body: str
           }
         }}
         placeholder="Message. Enter to send, Shift+Enter for a new line"
-        className="w-full resize-none border border-zinc-700 bg-zinc-950 px-2 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-600 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-300"
+        className="w-full resize-none border border-zinc-700 bg-zinc-950 px-2 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-300"
       />
       {error && <p role="alert" className="font-mono text-xs text-red-300">{error}</p>}
       <div className="flex items-center justify-between gap-3">

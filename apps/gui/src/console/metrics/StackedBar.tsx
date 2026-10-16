@@ -33,7 +33,7 @@ export function StackedBar({ segments, label = 'Breakdown', loading, height = 12
           {segments.filter((s) => s.count > 0).map((s, i) => (
             <li key={`${s.status}-${i}`} className="inline-flex items-center gap-1.5">
               <span className={`h-2 w-2 ${TONE[toneForStatus(s.status)].bg}`} aria-hidden />
-              {s.label ?? labelForStatus(s.status)} {s.count} <span className="text-zinc-600">{shares[i]}%</span>
+              {s.label ?? labelForStatus(s.status)} {s.count} <span className="text-zinc-500">{shares[i]}%</span>
             </li>
           ))}
         </Legend>

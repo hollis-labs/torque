@@ -3,13 +3,15 @@ import { PixelRobot } from '@/components/planner/agent-activity'
 import { MailBadge, Score } from '@/components/planner/fleet-parts'
 import { FLEET_STATE_STYLE } from '@/components/planner/fleet-style'
 import { StateTimeline } from '@/components/planner/fleet-timeline'
+import { LinkText } from '@/console/autolink'
+import { FleetMessageActions } from '@/console/messaging/FleetActions'
 import { ago } from '@/lib/agent-activity'
 import { cwdName, formatDuration, whatNow, stateDurations, stateSegments, timelineWindow, workingShare, type FleetAgent, type FleetTransition } from '@/lib/fleet-agents'
 
-function Fact({ label, value, title }: { label: string; value: string; title?: string }) {
+function Fact({ label, value, title, link }: { label: string; value: string; title?: string; link?: boolean }) {
   return (
     <div className="min-w-0">
-      <div className="truncate font-mono text-sm tabular-nums text-zinc-100" title={title ?? value}>{value}</div>
+      <div className="truncate font-mono text-sm tabular-nums text-zinc-100" title={title ?? value}>{link ? <LinkText surface="agents" text={value} /> : value}</div>
       <div className="font-mono text-[9px] uppercase tracking-widest text-zinc-500">{label}</div>
     </div>
   )
@@ -47,7 +49,7 @@ export function FleetAgentModal({ agent, score, rank, entries, now, onClose }: {
               </div>
             </div>
             <div className="ml-auto flex shrink-0 items-start gap-4 text-right">
-              <MailBadge count={agent.messages} />
+              <MailBadge count={agent.messages} agent={agent} />
               <div>
                 <div className="text-xl text-amber-200"><Score value={score} /></div>
                 <div className="font-mono text-[9px] uppercase tracking-widest text-zinc-500">score</div>
@@ -58,12 +60,12 @@ export function FleetAgentModal({ agent, score, rank, entries, now, onClose }: {
 
         {agent.state === 'waiting' && (
           <p className="border border-amber-500/40 bg-amber-950/20 px-3 py-2 text-[13px] text-amber-200">
-            Blocked on you{agent.waitingFor ? `: ${agent.waitingFor}` : ''}.
+            Blocked on you{agent.waitingFor ? <>: <LinkText surface="agents" text={agent.waitingFor} /></> : ''}.
           </p>
         )}
 
         <div className="grid grid-cols-2 gap-3 border-y border-border py-3 sm:grid-cols-4">
-          {agent.lastAction && <Fact label="doing" value={whatNow(agent, now)} />}
+          {agent.lastAction && <Fact label="doing" value={whatNow(agent, now)} link />}
           <Fact label="up for" value={agent.startedAt ? formatDuration(now - agent.startedAt) : '—'} title={agent.startedAt ? new Date(agent.startedAt).toLocaleString() : undefined} />
           <Fact label="last activity" value={agent.lastActivity ? ago(agent.lastActivity, now) : '—'} title={agent.lastActivity ? new Date(agent.lastActivity).toLocaleString() : undefined} />
           <Fact label="working (observed)" value={share === null ? '—' : `${share}%`} />
@@ -73,6 +75,8 @@ export function FleetAgentModal({ agent, score, rank, entries, now, onClose }: {
           <Fact label="agent id" value={agent.id} />
           <Fact label="observed for" value={observedMs > 0 ? formatDuration(observedMs) : '—'} />
         </div>
+
+        <FleetMessageActions agent={agent} onBeforeChat={onClose} />
 
         <section aria-label="Observed state timeline" className="mt-1">
           <h3 className="mb-1 font-mono text-[10px] uppercase tracking-widest text-zinc-500">Last {formatDuration(windowMs)} watched</h3>
@@ -90,7 +94,7 @@ export function FleetAgentModal({ agent, score, rank, entries, now, onClose }: {
                 <li key={`${h.at}-${i}`} className="flex items-baseline gap-3 border-b border-border px-3 py-1.5 last:border-b-0">
                   <span className="w-20 shrink-0 whitespace-nowrap font-mono text-[10px] uppercase tracking-wider text-zinc-500">{KIND_LABEL[h.kind]}</span>
                   <span className={`shrink-0 font-mono text-[10px] tracking-widest ${hs.text}`}>{hs.label}</span>
-                  <span className="min-w-0 flex-1 truncate text-[13px]">{h.waitingFor ?? ''}</span>
+                  <span className="min-w-0 flex-1 truncate text-[13px]">{h.waitingFor ? <LinkText surface="agents" text={h.waitingFor} /> : ''}</span>
                   <span className="shrink-0 font-mono text-[10px] text-zinc-500">{ago(h.at, now)}</span>
                 </li>
               )

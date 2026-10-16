@@ -38,7 +38,7 @@ export function ListField({ label, values, suggestions, tone, onChange }: { labe
         {all.map((x) => {
           const on = values.includes(x)
           return (
-            <button key={x} type="button" aria-pressed={on} onClick={() => toggle(x)} className={`border px-1.5 py-0.5 font-mono text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-300 ${on ? (tone ?? 'border-zinc-500 bg-zinc-800 text-zinc-100') : 'border-zinc-800 text-zinc-600 hover:text-zinc-300'}`}>
+            <button key={x} type="button" aria-pressed={on} onClick={() => toggle(x)} className={`border px-1.5 py-0.5 font-mono text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-300 ${on ? (tone ?? 'border-zinc-500 bg-zinc-800 text-zinc-100') : 'border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}>
               {on ? '' : '+ '}{x}
             </button>
           )

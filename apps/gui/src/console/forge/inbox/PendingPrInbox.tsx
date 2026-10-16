@@ -31,7 +31,7 @@ import {
 import { ASSIGN_TASKS } from './assign'
 import { useAgentsClient } from '../../agents/context'
 
-const field = 'border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-xs text-zinc-100 placeholder:text-zinc-600 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-300'
+const field = 'border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-300'
 const btn = 'border px-2 py-1 font-mono text-[10px] uppercase tracking-widest transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-300 disabled:cursor-not-allowed disabled:opacity-40'
 const ghost = `${btn} border-zinc-700 text-zinc-300 hover:bg-zinc-900`
 
@@ -285,7 +285,7 @@ export function PendingPrInbox({ forge: forgeProp, pollMs = 60_000, staleMs = DE
           <div key={g.id} role="group" aria-label={g.label}>
             {groupBy !== 'none' && (
               <h3 className="border-b border-zinc-800 bg-zinc-900/40 px-4 py-1.5 font-mono text-[10px] uppercase tracking-widest text-zinc-400">
-                {g.label} <span className="text-zinc-600">{g.items.length}</span>
+                {g.label} <span className="text-zinc-500">{g.items.length}</span>
               </h3>
             )}
             <ul>

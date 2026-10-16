@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { LinkText } from '@/console/autolink'
 import { Link } from 'react-router-dom'
 import { Check, ExternalLink, Pencil, Plus, Trash2 } from 'lucide-react'
 import {
@@ -427,7 +428,7 @@ function CommentsPanel({ item, busy, onAdd }: { item: PlannerItem; busy: boolean
               <span>{when(c.created)}</span>
               {c.kind === 'decision' && <span className="rounded bg-primary/10 px-1.5 py-0.5 text-primary">decision</span>}
             </div>
-            <p className="whitespace-pre-wrap break-words">{c.text}</p>
+            <p className="whitespace-pre-wrap break-words"><LinkText surface="planner-comments" text={c.text} /></p>
           </li>
         ))}
       </ul>
@@ -509,7 +510,7 @@ function DecisionPanel({ item, busy, write }: { item: PlannerItem; busy: boolean
                   </Button>
                 )}
               </div>
-              {o.summary && <p className="mt-1 text-muted-foreground">{o.summary}</p>}
+              {o.summary && <p className="mt-1 text-muted-foreground"><LinkText surface="planner-comments" text={o.summary} /></p>}
               {(o.pros || o.cons) && (
                 <div className="mt-2 grid gap-2 sm:grid-cols-2">
                   {o.pros && <p><span className="font-medium">Pros: </span>{o.pros}</p>}

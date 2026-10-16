@@ -90,7 +90,7 @@ export function PreviewCardView({ card, variant = 'hover', onRetry, now, childre
 
       <div className={`mt-2 min-w-0 text-sm font-medium text-zinc-100 [overflow-wrap:anywhere] ${card.phase === 'loading' && !card.subtitle ? 'animate-pulse' : ''}`}>{card.title}</div>
       {card.subtitle && <div className="mt-0.5 text-[12px] text-zinc-400 [overflow-wrap:anywhere]">{card.subtitle}</div>}
-      <div className="mt-0.5 font-mono text-[10px] text-zinc-600 [overflow-wrap:anywhere]">{card.canonical}</div>
+      <div className="mt-0.5 font-mono text-[10px] text-zinc-500 [overflow-wrap:anywhere]">{card.canonical}</div>
 
       {card.phase === 'loading' && !card.subtitle && (
         <div className="mt-3 space-y-1.5" aria-hidden>

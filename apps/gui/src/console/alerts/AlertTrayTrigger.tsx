@@ -18,6 +18,7 @@ export function AlertTrayTrigger() {
       aria-haspopup="dialog"
       aria-expanded={c.open}
       onClick={() => c.setOpen(!c.open)}
+      onKeyDown={(e) => e.key === 'Escape' && c.open && c.setOpen(false)}
       className={`relative flex h-9 w-9 items-center justify-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-300 ${c.open ? 'bg-accent text-foreground' : ''}`}
     >
       <Icon aria-hidden="true" className="h-4 w-4" />

@@ -10,3 +10,7 @@ export { createMailMessagingClient, toEnvelopeRequest, deliveryFromEnvelope } fr
 export { NUDGE_TEMPLATES, UPDATE_TEMPLATES, renderTemplate } from './templates'
 export type { MessagingClient } from './types'
 export * from './types'
+export { AgentUnreadProvider } from './unread'
+export { useAgentUnread } from './unread-hook'
+export { createUnreadStore, fleetAgentAddress, type UnreadStore } from './unread-store'
+export { FleetMessageActions } from './FleetActions'
