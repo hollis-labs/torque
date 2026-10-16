@@ -9,6 +9,7 @@ require (
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/google/uuid v1.6.0
 	github.com/hollis-labs/libs/plugin-mcp v0.2.0
+	github.com/hollis-labs/libs/security/auth v0.1.0
 	github.com/hollis-labs/libs/util v0.2.1
 	github.com/hollis-labs/plugin v0.0.0-20260410030617-741878c627b2
 	github.com/hollis-labs/substrate/agent v0.3.0
@@ -39,7 +40,6 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
-	github.com/hollis-labs/libs/security/auth v0.1.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
