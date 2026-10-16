@@ -269,3 +269,29 @@ func TestSchedulerBridgeForwardsEventsWithZeroFields(t *testing.T) {
 		t.Fatal("bridge did not exit after ctx cancel")
 	}
 }
+
+// task.transitioned is served from the durable outbox, once, with an id. The
+// bridge must not forward the bus copy as well, or every scheduler-driven
+// transition would reach /events twice.
+func TestSchedulerBridgeDoesNotForwardTaskTransitioned(t *testing.T) {
+	t.Parallel()
+
+	bus := scheduler.NewEventBus()
+	defer bus.Close()
+	hub := NewSSEHub()
+	sub := addTestSubscriber(hub)
+	defer removeTestSubscriber(hub, sub)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go NewSchedulerBridge(hub, bus).Run(ctx)
+	waitForSubscribed(t, bus, time.Second)
+
+	bus.Publish(scheduler.SchedulerEvent{Type: "task.transitioned", TaskID: "task-9"})
+	bus.Publish(scheduler.SchedulerEvent{Type: "run.started", TaskID: "task-9", RunID: 1})
+
+	// The next event out is run.started: the task.transitioned before it was skipped.
+	if ev := waitForEvent(t, sub, time.Second); ev.Type != "run.started" {
+		t.Fatalf("first forwarded event = %q, want run.started (task.transitioned must be skipped)", ev.Type)
+	}
+}

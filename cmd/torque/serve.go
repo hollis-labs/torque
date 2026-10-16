@@ -495,8 +495,28 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	// SSE bridge: scheduler.EventBus → httpserver.SSEHub
 	bridge := httpserver.NewSchedulerBridge(handler.SSEHub(), sched.EventBus())
 
+	// Durable state events on /events: ids, replay from Last-Event-ID, gap
+	// frames. Off on Postgres until its outbox cursor is commit-ordered.
+	outboxOn := store.OutboxSupported()
+	if outboxOn {
+		handler.SSEHub().EnableOutbox(store)
+	} else {
+		log.Printf("[serve] outbox reader disabled: the %s store does not allocate event_outbox seq in commit order (events are still written)", driver)
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(4)
+	if outboxOn {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			handler.SSEHub().RunOutbox(runCtx, store.OutboxWake())
+		}()
+		go func() {
+			defer wg.Done()
+			runOutboxJanitor(runCtx, store)
+		}()
+	}
 	go func() {
 		defer wg.Done()
 		bridge.Run(runCtx)

@@ -22,6 +22,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   request is `human` only when it carries `X-Client: browser`, which the GUI
   sends on every request, and an unmarked API call is `agent`. Identity goes
   only in the event's `actor` block.
+- `/events` serves the outbox (CW-20261016-0133, PR2): task state frames carry
+  an SSE `id` (`<generation>:<seq>`), `Last-Event-ID` resumes with replay, and
+  an unusable cursor gets a `gap` frame. A transition is one frame in the
+  legacy `task.transitioned` shape with the `task.state_changed` event in
+  `envelope`, for every path (MCP and scheduler transitions now show up).
+  The direct `task.transitioned` broadcasts and the scheduler bridge's copy are
+  gone. Events older than 180 days are trimmed hourly from the head.
 - `/mcp` tool calls are scoped per tool (CW-20261016-0081). Every Torque MCP
   tool maps to `torque.read`, `torque.write` or `torque.admin` in
   `internal/mcpscopes` (deny by default; a test fails if any registered tool

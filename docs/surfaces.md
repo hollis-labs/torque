@@ -25,9 +25,28 @@ Main route groups:
 - `/features`
 - `/forums` for the feature-gated Tether Forums proxy
 - `/admin`
-- `/events` for SSE
+- `/events` for SSE (see below)
 
 The same `serve` process also serves the GUI SPA.
+
+### `/events`
+
+Task state changes arrive on `/events` from a transactional outbox
+(`event_outbox`, migration 042): the event is written in the same transaction
+as the status change, whichever path made it (HTTP, MCP, scheduler, checkpoint
+park). Those frames carry an SSE `id` of `<generation>:<seq>`. Reconnect with
+`Last-Event-ID` (or `?since=`) to be replayed what you missed; with no id you
+get live events only. If the log cannot honour the id (a pruned prefix, another
+generation, a cursor ahead of the head, a malformed id) you get one `gap` frame
+with `reason`, `earliest_available` and `high_water`, then the events that
+remain. Delivery is at-least-once: dedupe on `envelope.id`.
+
+A task transition is one frame. Its top level keeps the shape older clients
+read (`type: "task.transitioned"`, `data.task_id`, `data.status`, plus
+`from`/`to`), and `envelope` carries the full `task.state_changed` event. A
+non-forced transition to the status the task already has writes no event. The
+other frames on the stream (CRUD pings, scheduler run events) are best effort
+and carry no id. The reader is SQLite-only for now.
 
 Forums uses the backend-held Tether operator credential and the
 [Tether Forums contract](https://github.com/hollis-labs/tether/blob/feat/forums-hierarchy/docs/forums.md).
