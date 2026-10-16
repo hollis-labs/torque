@@ -972,7 +972,7 @@ func (s *TaskService) Transition(ctx context.Context, id, newStatus string) (err
 			return err
 		}
 	}
-	if err := s.store.TransitionTask(id, newStatus); err != nil {
+	if err := s.store.TransitionTaskOpts(ctx, id, newStatus, sqlstore.TransitionOpts{}); err != nil {
 		return err
 	}
 	s.notifyTransition(ctx, id, task.Status, newStatus)
@@ -1018,7 +1018,7 @@ func (s *TaskService) ForceTransition(ctx context.Context, id, newStatus string)
 			),
 		}
 	}
-	if err := s.store.TransitionTask(id, newStatus); err != nil {
+	if err := s.store.TransitionTaskOpts(ctx, id, newStatus, sqlstore.TransitionOpts{Forced: true}); err != nil {
 		return err
 	}
 	s.notifyTransition(ctx, id, task.Status, newStatus)
@@ -1092,7 +1092,7 @@ func (s *TaskService) TransitionWithComment(ctx context.Context, id, newStatus, 
 	}
 	defer wtx.Rollback()
 
-	if err := wtx.TransitionTask(id, newStatus); err != nil {
+	if err := wtx.TransitionTaskOpts(id, newStatus, sqlstore.TransitionOpts{Forced: force}); err != nil {
 		return err
 	}
 	rec := &sqlstore.CommentRecord{

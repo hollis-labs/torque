@@ -31,19 +31,19 @@ func DispatchWait(
 
 	predType, params, err := parseWaitMetadata(task)
 	if err != nil {
-		return store.TransitionTaskWithReason(task.ID, "blocked", err.Error())
+		return store.TransitionTaskOpts(context.Background(), task.ID, "blocked", schedReason(err.Error()))
 	}
 
 	pred, ok := predicates.Get(predType)
 	if !ok {
-		return store.TransitionTaskWithReason(task.ID, "blocked",
-			fmt.Sprintf("unknown wait predicate: %s", predType))
+		return store.TransitionTaskOpts(context.Background(), task.ID, "blocked",
+			schedReason(fmt.Sprintf("unknown wait predicate: %s", predType)))
 	}
 
 	fired, err := pred.Evaluate(ctx, params)
 	if err != nil {
-		return store.TransitionTaskWithReason(task.ID, "blocked",
-			fmt.Sprintf("wait predicate %s: %v", predType, err))
+		return store.TransitionTaskOpts(context.Background(), task.ID, "blocked",
+			schedReason(fmt.Sprintf("wait predicate %s: %v", predType, err)))
 	}
 	if !fired {
 		// Still waiting — leave status=todo so the next tick re-polls.
@@ -88,11 +88,11 @@ func parseWaitMetadata(task *sqlstore.TaskRecord) (predType string, params map[s
 func applyWaitOnDone(store *sqlstore.Store, bus *EventBus, task *sqlstore.TaskRecord) error {
 	switch task.OnDone {
 	case "close":
-		if err := store.TransitionTask(task.ID, "done"); err != nil {
+		if err := store.TransitionTaskOpts(context.Background(), task.ID, "done", schedPlain()); err != nil {
 			return err
 		}
 	case "notify":
-		if err := store.TransitionTask(task.ID, "done"); err != nil {
+		if err := store.TransitionTaskOpts(context.Background(), task.ID, "done", schedPlain()); err != nil {
 			return err
 		}
 		if bus != nil {
@@ -103,7 +103,7 @@ func applyWaitOnDone(store *sqlstore.Store, bus *EventBus, task *sqlstore.TaskRe
 			})
 		}
 	default: // "review" and any unexpected value
-		if err := store.TransitionTask(task.ID, "review"); err != nil {
+		if err := store.TransitionTaskOpts(context.Background(), task.ID, "review", schedPlain()); err != nil {
 			return err
 		}
 	}

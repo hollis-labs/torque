@@ -951,7 +951,7 @@ func (m *Manager) reconcileInterruptedRun(ctx context.Context, sess *sqlstore.Se
 		if taskStatus != "doing" || manual != 0 || newerRuns != 0 {
 			return nil
 		}
-		if err := tx.TransitionTaskWithReason(taskID.String, "blocked", reason); err != nil {
+		if err := tx.TransitionTaskOpts(taskID.String, "blocked", sqlstore.TransitionOpts{Reason: &reason, Trigger: sqlstore.Trigger{Kind: sqlstore.TriggerSystem, Ref: "agent.reconcile"}}); err != nil {
 			return err
 		}
 		return nil

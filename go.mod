@@ -8,10 +8,10 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hollis-labs/libs/agent/core v0.4.0
 	github.com/hollis-labs/libs/core/util v0.4.0
-	github.com/hollis-labs/libs/harness/core v0.10.0
+	github.com/hollis-labs/libs/harness/core v0.11.0
 	github.com/hollis-labs/libs/llm/core v0.2.0
 	github.com/hollis-labs/libs/mcp/plugin-mcp v0.3.0
-	github.com/hollis-labs/libs/mesh/core v0.4.0
+	github.com/hollis-labs/libs/mesh/core v0.5.0
 	github.com/hollis-labs/libs/security/auth v0.1.0
 	github.com/hollis-labs/libs/security/policy v0.1.0
 	github.com/jackc/pgx/v5 v5.10.0
@@ -21,6 +21,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/otel v1.46.0
+	go.opentelemetry.io/otel/trace v1.46.0
 	go.uber.org/goleak v1.3.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.60.1
@@ -69,7 +70,6 @@ require (
 	go.opentelemetry.io/otel/sdk v1.46.0 // indirect
 	go.opentelemetry.io/otel/sdk/log v0.22.0 // indirect
 	go.opentelemetry.io/otel/sdk/metric v1.46.0 // indirect
-	go.opentelemetry.io/otel/trace v1.46.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect

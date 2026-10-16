@@ -113,7 +113,7 @@ type storeBlockerAdapter struct {
 }
 
 func (a *storeBlockerAdapter) TransitionTaskWithReason(taskID, status, reason string) error {
-	return a.store.TransitionTaskWithReason(taskID, status, reason)
+	return a.store.TransitionTaskOpts(context.Background(), taskID, status, sqlstore.TransitionOpts{Reason: &reason, Trigger: sqlstore.Trigger{Kind: sqlstore.TriggerReaction, Ref: "reactor"}})
 }
 
 // sessionStopAdapter bridges reactor.SessionStopper to agent.Manager.Stop.

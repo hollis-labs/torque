@@ -29,7 +29,10 @@ import (
 type WriteTx struct {
 	store       *Store
 	tx          *sql.Tx
+	ctx         context.Context
 	afterCommit []func()
+	// wakeOutbox is set by appendStateEvent; Commit signals the reader once.
+	wakeOutbox bool
 }
 
 // BeginWriteTx opens a write transaction against the store's writer handle.
@@ -42,13 +45,16 @@ func (s *Store) BeginWriteTx(ctx context.Context) (*WriteTx, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &WriteTx{store: s, tx: tx}, nil
+	return &WriteTx{store: s, tx: tx, ctx: ctx}, nil
 }
 
 // Commit commits the SQL transaction, then emits any deferred hooks.
 func (w *WriteTx) Commit() error {
 	if err := w.tx.Commit(); err != nil {
 		return err
+	}
+	if w.wakeOutbox {
+		w.store.signalOutbox()
 	}
 	for _, fn := range w.afterCommit {
 		fn()
@@ -367,26 +373,40 @@ func (w *WriteTx) UpdateSessionMeta(id, metaJSON string) error {
 }
 
 // TransitionTask writes a status transition and defers hook fanout until commit.
+// The state event is appended in the same transaction.
 func (w *WriteTx) TransitionTask(id, newStatus string) error {
-	oldStatus, err := w.transitionTask(id, newStatus, nil)
-	if err != nil {
-		return err
-	}
-	w.afterCommit = append(w.afterCommit, func() {
-		w.store.emitTaskTransition(TaskTransitionEvent{
-			TaskID:    id,
-			OldStatus: oldStatus,
-			NewStatus: newStatus,
-		})
-	})
-	return nil
+	return w.TransitionTaskOpts(id, newStatus, TransitionOpts{})
 }
 
 // TransitionTaskWithReason writes a status transition with blocked_reason.
 func (w *WriteTx) TransitionTaskWithReason(id, newStatus, reason string) error {
-	r := reason
-	oldStatus, err := w.transitionTask(id, newStatus, &r)
+	return w.TransitionTaskOpts(id, newStatus, TransitionOpts{Reason: &reason})
+}
+
+// TransitionTaskOpts is the one task-transition writer: it updates the task,
+// appends the state event in the same transaction, and queues the in-process
+// hook for after commit.
+func (w *WriteTx) TransitionTaskOpts(id, newStatus string, o TransitionOpts) error {
+	oldStatus, scope, err := w.transitionTask(id, newStatus, o.Reason)
 	if err != nil {
+		return err
+	}
+	reason := ""
+	if o.Reason != nil {
+		reason = *o.Reason
+	}
+	if err := w.appendStateEvent(stateChange{
+		EntityType: "task",
+		EntityID:   id,
+		From:       oldStatus,
+		To:         newStatus,
+		Reason:     reason,
+		Forced:     o.Forced,
+		Trigger:    resolveTrigger(w.ctx, o),
+		Guard:      o.Guard,
+		Causation:  o.CausationID,
+		Scope:      scope,
+	}); err != nil {
 		return err
 	}
 	w.afterCommit = append(w.afterCommit, func() {
@@ -400,14 +420,22 @@ func (w *WriteTx) TransitionTaskWithReason(id, newStatus, reason string) error {
 	return nil
 }
 
-func (w *WriteTx) transitionTask(id, newStatus string, reason *string) (string, error) {
-	var oldStatus string
-	if err := w.tx.QueryRow(`SELECT status FROM tasks WHERE id = ?`, id).Scan(&oldStatus); err != nil {
+func (w *WriteTx) transitionTask(id, newStatus string, reason *string) (string, stateScope, error) {
+	var (
+		oldStatus string
+		project   sql.NullString
+		epic      sql.NullString
+		sprint    sql.NullString
+	)
+	if err := w.tx.QueryRow(
+		`SELECT status, project_id, epic_id, sprint_id FROM tasks WHERE id = ?`, id,
+	).Scan(&oldStatus, &project, &epic, &sprint); err != nil {
 		if err == sql.ErrNoRows {
-			return "", fmt.Errorf("task %s not found", id)
+			return "", stateScope{}, fmt.Errorf("task %s not found", id)
 		}
-		return "", err
+		return "", stateScope{}, err
 	}
+	scope := stateScope{ProjectID: project.String, EpicID: epic.String, SprintID: sprint.String, TaskID: id}
 
 	var (
 		res sql.Result
@@ -425,16 +453,16 @@ func (w *WriteTx) transitionTask(id, newStatus string, reason *string) (string, 
 		)
 	}
 	if err != nil {
-		return "", err
+		return "", stateScope{}, err
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return "", err
+		return "", stateScope{}, err
 	}
 	if n == 0 {
-		return "", fmt.Errorf("task %s not found", id)
+		return "", stateScope{}, fmt.Errorf("task %s not found", id)
 	}
-	return oldStatus, nil
+	return oldStatus, scope, nil
 }
 
 // AddComment inserts a comment row inside the write transaction, populating

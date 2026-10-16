@@ -1,5 +1,10 @@
 package sqlstore
 
+// The in-process hook is NOT the event source. State events are written to
+// event_outbox in the same transaction as the change (state_events.go,
+// CW-20261016-0133); this hook only lets in-process observers react (cancel a
+// worker, feed the session lifecycle) and is not durable.
+//
 // TaskTransitionEvent is fired after a task's status column is successfully
 // updated by TransitionTask or TransitionTaskWithReason. Subscribers are
 // invoked synchronously in registration order; handlers must be non-blocking

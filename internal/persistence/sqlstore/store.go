@@ -23,6 +23,10 @@ type Store struct {
 	// cancel the corresponding in-flight worker. See task_hooks.go.
 	hooksMu         sync.RWMutex
 	transitionHooks []TaskTransitionHook
+
+	// outboxWake nudges the outbox reader after a commit that appended state
+	// events (state_events.go). Capacity 1; sends never block.
+	outboxWake chan struct{}
 }
 
 // New constructs a Store on top of the provided *sql.DB. When the driver is
@@ -79,7 +83,7 @@ func New(db *sql.DB, driver string) (*Store, error) {
 	default:
 		return nil, fmt.Errorf("unsupported driver: %s", driver)
 	}
-	return &Store{db: db, read: readDB, owned: ownedDB, dialect: d}, nil
+	return &Store{db: db, read: readDB, owned: ownedDB, dialect: d, outboxWake: make(chan struct{}, 1)}, nil
 }
 
 func (s *Store) DB() *sql.DB { return s.db }
