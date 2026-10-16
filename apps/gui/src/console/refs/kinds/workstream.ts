@@ -32,7 +32,7 @@ export function createWorkstreamKind(): RefKind {
       return hits
     },
     chipLabel: (ref) => ref.canonical,
-    // No dedicated workstream route yet; the planner opens a workstream by id.
-    open: (ref) => ({ type: 'route', to: `/planner?workstream=${encodeURIComponent(ref.canonical)}` }),
+    // Workstreams list at /planner/workstreams; /planner/workstreams/:id opens by WS- item id, not by tag name.
+    open: () => ({ type: 'route', to: '/planner/workstreams' }),
   }
 }
