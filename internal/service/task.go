@@ -871,7 +871,17 @@ func (s *TaskService) reconcilePhase(existing *sqlstore.TaskRecord, input *TaskU
 	if input.Metadata != nil && input.Metadata.Valid && input.Metadata.String != "" {
 		var overlay map[string]any
 		if err := unmarshalJSON([]byte(input.Metadata.String), &overlay); err == nil {
-			if raw, ok := overlay["phase_id"]; ok && parent.Valid {
+			// Only a metadata.phase_id that differs from what the task already
+			// carries is a phase move. A client that sends the metadata back
+			// unchanged (status edit, metadata merge) must not re-derive a
+			// phase, or a stale value would trip the validation triggers.
+			raw, ok := overlay["phase_id"]
+			if cur, _ := metadataPhase(existing.Metadata).(string); ok {
+				if now, _ := raw.(string); now == cur {
+					ok = false
+				}
+			}
+			if ok && parent.Valid {
 				if ph, _ := raw.(string); ph != "" {
 					if set := s.phaseFromMetadata(parent.String, overlay); set.Valid {
 						input.PhaseID = &set
@@ -888,6 +898,18 @@ func (s *TaskService) reconcilePhase(existing *sqlstore.TaskRecord, input *TaskU
 		(!parent.Valid || parent.String != existing.ParentID.String) {
 		input.PhaseID = &sql.NullString{}
 	}
+}
+
+// metadataPhase returns the value of metadata.phase_id, or nil.
+func metadataPhase(meta sql.NullString) any {
+	if !meta.Valid || meta.String == "" {
+		return nil
+	}
+	var m map[string]any
+	if err := unmarshalJSON([]byte(meta.String), &m); err != nil {
+		return nil
+	}
+	return m["phase_id"]
 }
 
 // Delete removes a task by ID.

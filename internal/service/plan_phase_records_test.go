@@ -1,6 +1,7 @@
 package service_test
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"testing"
@@ -130,4 +131,50 @@ func TestPlanProgressUsesPhaseColumn(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, kids, 1)
 	require.Equal(t, "in", kids[0].Title)
+}
+
+// metadata.phase_id is derived into phase_id on create and when it changes, not
+// on every update: rows whose metadata names a phase the parent does not have
+// (the hub's children of a decision, or a stale value under a plan) must stay
+// editable.
+func TestTaskUpdateDoesNotRederivePhaseFromUnchangedMetadata(t *testing.T) {
+	svc, store := setupServiceWithStore(t)
+	plan, err := svc.Plan.Create(service.PlanCreateInput{Title: "p", Phases: []service.PlanPhaseInput{{Name: "A"}}})
+	require.NoError(t, err)
+	decision, err := svc.Task.Create(service.TaskCreateInput{Title: "decision"})
+	require.NoError(t, err)
+
+	// Rows as migration 043 leaves them: metadata names a phase, phase_id NULL.
+	legacy := func(id, parent string) {
+		require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+			ID: id, Title: id, Priority: 2, Status: "doing", Executor: "cli",
+			ParentID: sql.NullString{String: parent, Valid: true},
+			Metadata: sql.NullString{String: `{"phase_id":"ph-5","note":"x"}`, Valid: true},
+		}))
+	}
+	legacy("CW-L-DEC", decision.ID) // non-plan parent
+	legacy("CW-L-PLAN", plan.ID)    // plan parent, but ph-5 is not one of its phases
+
+	for _, id := range []string{"CW-L-DEC", "CW-L-PLAN"} {
+		title := "renamed"
+		require.NoError(t, svc.Task.Update(id, service.TaskUpdateInput{TaskUpdate: sqlstore.TaskUpdate{Title: &title}}), id)
+		// A client round-tripping the whole metadata, phase_id included.
+		meta := sql.NullString{String: `{"phase_id":"ph-5","note":"edited"}`, Valid: true}
+		require.NoError(t, svc.Task.Update(id, service.TaskUpdateInput{TaskUpdate: sqlstore.TaskUpdate{Metadata: &meta}}), id)
+		require.NoError(t, svc.Task.Transition(context.Background(), id, "review"), id)
+		rec, err := svc.Task.Get(id)
+		require.NoError(t, err)
+		require.False(t, rec.PhaseID.Valid, id)
+	}
+
+	// Actually changing it to a phase the plan lacks is still rejected.
+	meta := sql.NullString{String: `{"phase_id":"ph-9"}`, Valid: true}
+	var vErr *service.ValidationError
+	require.ErrorAs(t, svc.Task.Update("CW-L-PLAN", service.TaskUpdateInput{TaskUpdate: sqlstore.TaskUpdate{Metadata: &meta}}), &vErr)
+	// And changing it to a live one is a move.
+	meta = sql.NullString{String: `{"phase_id":"ph-1"}`, Valid: true}
+	require.NoError(t, svc.Task.Update("CW-L-PLAN", service.TaskUpdateInput{TaskUpdate: sqlstore.TaskUpdate{Metadata: &meta}}))
+	rec, err := svc.Task.Get("CW-L-PLAN")
+	require.NoError(t, err)
+	require.Equal(t, "ph-1", rec.PhaseID.String)
 }
