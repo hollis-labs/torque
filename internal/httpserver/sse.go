@@ -70,7 +70,7 @@ func (h *SSEHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// The durable stream relies on a write deadline to shed a client that stops
 	// reading. If the connection cannot take one, say so now rather than serve a
 	// stream that can pin a goroutine for as long as TCP allows.
-	rc := connController(w, r)
+	rc := http.NewResponseController(w)
 	if h.outbox != nil {
 		if err := rc.SetWriteDeadline(time.Time{}); err != nil {
 			log.Printf("[sse] write deadlines unsupported on this connection (%v); refusing the stream", err)

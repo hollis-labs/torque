@@ -22,6 +22,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   request is `human` only when it carries `X-Client: browser`, which the GUI
   sends on every request, and an unmarked API call is `agent`. Identity goes
   only in the event's `actor` block.
+- libs `core/util` v0.5.0: `propagation.HTTPMiddleware`'s writer now unwraps, so
+  `http.ResponseController` reaches the connection through it. The `/events`
+  stream sets its write deadline directly and the `KeepRawWriter` workaround is
+  gone (CW-20261016-0216).
 - `/events` serves the outbox (CW-20261016-0133, PR2): task state frames carry
   an SSE `id` (`<generation>:<seq>`), `Last-Event-ID` resumes with replay, and
   an unusable cursor gets a `gap` frame. A transition is one frame in the
