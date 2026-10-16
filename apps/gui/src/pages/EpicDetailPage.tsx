@@ -6,6 +6,7 @@ import { DetailHeader } from '@hollis-labs/sysop-ui/layout'
 import { ScopeDetailHero } from '@/components/domain/scope-detail-hero'
 import { ScopeMetaCard } from '@/components/domain/scope-meta-card'
 import { ScopeTaskPanel } from '@/components/domain/scope-task-panel'
+import { ScopeMetricsPanel } from '@/console/metrics'
 import { useApi } from '@/hooks/use-api'
 import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
 import { usePagedTaskSummaries } from '@/hooks/use-paged-task-summaries'
@@ -139,6 +140,8 @@ export default function EpicDetailPage() {
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <ScopeMetaCard label="Description" value={epic.description || 'No description set.'} className="md:col-span-2 xl:col-span-4" />
           </div>
+
+          <ScopeMetricsPanel scope={`epic:${epic.id}`} title="Progress and burndown" />
 
           <ScopeTaskPanel
             tasks={taskPage.tasks}
