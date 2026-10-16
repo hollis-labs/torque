@@ -357,3 +357,20 @@ func TestPhaseLifecycle_EdgesInheritTheTrigger(t *testing.T) {
 	require.Equal(t, "phase.started", rows[1].Kind)
 	require.Equal(t, "scheduler", rows[1].Trigger)
 }
+
+// Run events for a phase member carry the plan and phase, like its task events.
+func TestRunEventsCarryPlanAndPhaseScope(t *testing.T) {
+	s := setupTestStore(t)
+	plan, m := phasePlan(t, s, 1)
+	_, err := s.CreateRun(&sqlstore.RunRecord{TaskID: m[0], Executor: "cli"})
+	require.NoError(t, err)
+	var found bool
+	for _, r := range readOutbox(t, s) {
+		if r.Kind == "run.state_changed" {
+			found = true
+			require.Equal(t, plan, r.Env.Scope.PlanID)
+			require.Equal(t, "ph-1", r.Env.Scope.PhaseID)
+		}
+	}
+	require.True(t, found, "a run.state_changed event")
+}

@@ -394,10 +394,14 @@ func (w *WriteTx) trigger(explicit Trigger) Trigger {
 }
 
 // scopeForTask reads the dimensions Torque can verify from the task row.
+// It is taskScope with a missing task tolerated: the scope then holds only the
+// task id. Plan and phase come from the plan_phases records.
 func (w *WriteTx) scopeForTask(taskID string) stateScope {
-	var project, epic, sprint sql.NullString
-	_ = w.tx.QueryRow(`SELECT project_id, epic_id, sprint_id FROM tasks WHERE id = ?`, taskID).Scan(&project, &epic, &sprint)
-	return stateScope{ProjectID: project.String, EpicID: epic.String, SprintID: sprint.String, TaskID: taskID}
+	scope, err := w.taskScope(taskID)
+	if err != nil {
+		return stateScope{TaskID: taskID}
+	}
+	return scope
 }
 
 // RecordRunStateChange appends a run.state_changed event for a run whose
