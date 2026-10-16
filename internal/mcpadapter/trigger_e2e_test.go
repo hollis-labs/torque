@@ -80,3 +80,17 @@ func TestTrigger_RemoteTransitionIsRecordedAsAgent(t *testing.T) {
 	require.Equal(t, "doing", to)
 	require.Equal(t, sqlstore.TriggerAgent, kind)
 }
+
+// The orchestrator/planner/reviewer loopback that bootstrap builds is
+// mcpadapter.New(svc, nil).WithSessions(...), served with no guard and no
+// principal. It is an MCP surface like the other two, so it is agent as well.
+func TestTrigger_OrchestratorShapedLoopbackIsRecordedAsAgent(t *testing.T) {
+	store, svc := newTriggerStore(t)
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: "CW-TRG-3", Title: "t", Priority: 2, Executor: "cli"}))
+
+	callOverProtocol(t, New(svc, nil).WithSessions(nil), "torque_task_transition", map[string]any{"id": "CW-TRG-3", "status": "doing"})
+
+	kind, to := lastOutboxTrigger(t, store, "CW-TRG-3")
+	require.Equal(t, "doing", to)
+	require.Equal(t, sqlstore.TriggerAgent, kind)
+}
