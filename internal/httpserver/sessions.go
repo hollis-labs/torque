@@ -109,7 +109,8 @@ func (s *Server) launchSession(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 		case errors.Is(err, agent.ErrAdapterNotFound):
 			writeError(w, http.StatusBadRequest, err.Error())
-		case errors.Is(err, agent.ErrLaunchPathRefused),
+		case errors.Is(err, agent.ErrProgressDetailInvalid),
+			errors.Is(err, agent.ErrLaunchPathRefused),
 			errors.Is(err, agent.ErrWorkdirRequired),
 			errors.Is(err, agent.ErrParentSessionRequired),
 			errors.Is(err, agent.ErrResumeCheckpointRequired):

@@ -251,3 +251,20 @@ func TestSelfReportReceiptsAndRateSurviveReopen(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "rate_limited", out["suppressed_reason"])
 }
+
+func TestSelfReportCanonicalDataInput(t *testing.T) {
+	svc := setupService(t)
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "canonical"})
+	require.NoError(t, err)
+	in := map[string]any{"task_id": task.ID, "schema": "numbers@1", "data": map[string]any{"n": json.Number("1.0")}, "idempotency_key": "n"}
+	first, err := svc.Task.EmitData(context.Background(), in)
+	require.NoError(t, err)
+	in["data"] = map[string]any{"n": json.Number("1e0")}
+	out, err := svc.Task.EmitData(context.Background(), in)
+	require.NoError(t, err)
+	require.Equal(t, true, out["duplicate"])
+	require.Equal(t, first["event_id"], out["event_id"])
+	in["data"] = map[string]any{"n": []any{"number", "1"}}
+	_, err = svc.Task.EmitData(context.Background(), in)
+	assertReportCode(t, err, "idempotency_conflict")
+}
