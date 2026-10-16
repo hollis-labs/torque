@@ -31,7 +31,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   gone. Events older than 180 days are trimmed hourly from the head.
 - Run and checkpoint state changes are events too (CW-20261016-0133, PR3):
   `run.state_changed` (start, completion, operator cancel, kill, supersede,
-  reclaim) and `checkpoint.state_changed` (emitted, responded, canceled, timed
+  reclaim; the operator paths record trigger `system` until they take a
+  request context) and `checkpoint.state_changed` (emitted, responded, canceled, timed
   out) are written in the same transaction as the change, with the trigger of
   whoever caused it. `/events` serves a checkpoint change under the names the
   GUI banner already listens for (`checkpoint.emitted`, `.responded`,

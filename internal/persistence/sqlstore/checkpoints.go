@@ -238,9 +238,14 @@ func (s *Store) SweepTimedOutCheckpoints(now time.Time) (int, error) {
 		return 0, err
 	}
 	defer w.Rollback()
+	// One statement flips the rows and returns exactly the ones it flipped, so
+	// an event is written only for a row this sweep changed (a respond that
+	// commits between a separate read and update cannot get a false
+	// pending -> timed_out event).
 	rows, err := w.tx.Query(`
-		SELECT correlation_id, task_id FROM checkpoints
-		WHERE status = 'pending' AND timeout_at IS NOT NULL AND timeout_at < ?`, now)
+		UPDATE checkpoints SET status = 'timed_out'
+		WHERE status = 'pending' AND timeout_at IS NOT NULL AND timeout_at < ?
+		RETURNING correlation_id, task_id`, now)
 	if err != nil {
 		return 0, err
 	}
@@ -261,11 +266,6 @@ func (s *Store) SweepTimedOutCheckpoints(now time.Time) (int, error) {
 	rows.Close()
 	if len(dues) == 0 {
 		return 0, nil
-	}
-	if _, err := w.tx.Exec(`
-		UPDATE checkpoints SET status = 'timed_out'
-		WHERE status = 'pending' AND timeout_at IS NOT NULL AND timeout_at < ?`, now); err != nil {
-		return 0, err
 	}
 	for _, d := range dues {
 		if err := w.recordCheckpointState(d.corr, d.task, "pending", "timed_out", "",

@@ -40,7 +40,7 @@ func TestRunStateEvents_CreateCompleteAndOperatorCancel(t *testing.T) {
 	assert.Equal(t, "msg://run/torque/"+runs[0].Payload.Entity.ID, runs[0].Env.Subject)
 	assert.Equal(t, "run", runs[0].Payload.Entity.Type)
 	assert.Equal(t, runs[0].Env.Scope.RunID, runs[0].Payload.Entity.ID)
-	assert.Equal(t, runs[0].Payload.Entity.ID, runs[0].Env.Corr.CorrelationID, "a run event correlates on the run, not the task already in scope")
+	assert.Equal(t, "msg://run/torque/"+runs[0].Payload.Entity.ID, runs[0].Env.Corr.CorrelationID, "a run event correlates on the run (same URN as its subject), not the task already in scope")
 }
 
 func TestRunStateEvents_CompleteWritesOnceAndOperatorLockedWritesNone(t *testing.T) {

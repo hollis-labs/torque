@@ -312,7 +312,7 @@ func (w *WriteTx) eventCorr(sp eventSpec) *runtimeevents.Corr {
 	// in scope.task_id), else the task.
 	switch {
 	case sp.Scope.RunID.Valid:
-		corr.CorrelationID = fmt.Sprintf("%d", sp.Scope.RunID.Int64)
+		corr.CorrelationID = fmt.Sprintf("msg://run/torque/%d", sp.Scope.RunID.Int64)
 	case sp.Scope.TaskID != "":
 		corr.CorrelationID = sp.Scope.TaskID
 	}
