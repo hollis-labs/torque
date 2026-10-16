@@ -3,6 +3,7 @@ package sqlstore_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -140,4 +141,44 @@ func TestCheckpointStateEvents_CancelAndSweep(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, n)
 	assert.Len(t, eventsFor(t, s, "checkpoint"), 4)
+}
+
+// The checkpoint event's subject is its correlation id, which is the table's
+// unique key: two checkpoints never share a subject, and a second checkpoint
+// cannot be created under an existing correlation id.
+func TestCheckpointStateEvents_SubjectIsTheUniqueCorrelationID(t *testing.T) {
+	s := setupTestStore(t)
+	setupTaskForCheckpoint(t, s, "CW-CP-4")
+
+	require.NoError(t, s.CreateCheckpoint(&sqlstore.CheckpointRecord{TaskID: "CW-CP-4", CorrelationID: "UNIQ1", Type: "x", PayloadJSON: `{}`, EmitterSourceType: "system"}))
+	require.NoError(t, s.CreateCheckpoint(&sqlstore.CheckpointRecord{TaskID: "CW-CP-4", CorrelationID: "UNIQ2", Type: "x", PayloadJSON: `{}`, EmitterSourceType: "system"}))
+	err := s.CreateCheckpoint(&sqlstore.CheckpointRecord{TaskID: "CW-CP-4", CorrelationID: "UNIQ1", Type: "x", PayloadJSON: `{}`, EmitterSourceType: "system"})
+	require.Error(t, err, "the correlation id is unique, so a subject cannot be reused")
+
+	subjects := map[string]int{}
+	for _, r := range eventsFor(t, s, "checkpoint") {
+		subjects[r.Env.Subject]++
+	}
+	assert.Equal(t, map[string]int{"msg://checkpoint/torque/UNIQ1": 1, "msg://checkpoint/torque/UNIQ2": 1}, subjects,
+		"two checkpoints, two subjects; the failed duplicate wrote no event")
+}
+
+// A create has no previous state: the payload omits "from" rather than
+// sending an empty string.
+func TestStateEvents_CreateOmitsFromEntirely(t *testing.T) {
+	s := setupTestStore(t)
+	require.NoError(t, s.CreateTask(sampleTask("CW-RUN-9")))
+	_, err := s.CreateRun(&sqlstore.RunRecord{TaskID: "CW-RUN-9", Executor: "cli"})
+	require.NoError(t, err)
+	setupTaskForCheckpoint(t, s, "CW-CP-9")
+	require.NoError(t, s.CreateCheckpoint(&sqlstore.CheckpointRecord{TaskID: "CW-CP-9", CorrelationID: "C9", Type: "x", PayloadJSON: `{}`, EmitterSourceType: "system"}))
+
+	for _, entity := range []string{"run", "checkpoint"} {
+		rows := eventsFor(t, s, entity)
+		require.NotEmpty(t, rows)
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal(rows[0].Env.Payload, &payload))
+		_, hasFrom := payload["from"]
+		assert.False(t, hasFrom, "%s create must omit 'from', not send an empty string", entity)
+	}
 }
