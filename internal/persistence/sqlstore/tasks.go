@@ -1509,10 +1509,8 @@ func (s *Store) ParkTaskOnCheckpointRef(ctx context.Context, id, reason, ref str
 	if n == 0 {
 		return false, nil
 	}
-	var project, epic, sprint sql.NullString
-	if err := w.tx.QueryRow(
-		`SELECT project_id, epic_id, sprint_id FROM tasks WHERE id = ?`, id,
-	).Scan(&project, &epic, &sprint); err != nil {
+	scope, err := w.taskScope(id)
+	if err != nil {
 		return false, err
 	}
 	// Park is always doing → review for a blocking-mode task.
@@ -1523,7 +1521,7 @@ func (s *Store) ParkTaskOnCheckpointRef(ctx context.Context, id, reason, ref str
 		To:         "review",
 		Reason:     reason,
 		Trigger:    TriggerWithRef(ctx, ref),
-		Scope:      stateScope{ProjectID: project.String, EpicID: epic.String, SprintID: sprint.String, TaskID: id},
+		Scope:      scope,
 	}); err != nil {
 		return false, err
 	}

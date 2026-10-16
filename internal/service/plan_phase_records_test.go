@@ -177,4 +177,29 @@ func TestTaskUpdateDoesNotRederivePhaseFromUnchangedMetadata(t *testing.T) {
 	rec, err := svc.Task.Get("CW-L-PLAN")
 	require.NoError(t, err)
 	require.Equal(t, "ph-1", rec.PhaseID.String)
+
+func TestPlanReopenPhase(t *testing.T) {
+	svc := setupService(t)
+	plan, err := svc.Plan.Create(service.PlanCreateInput{Title: "p", Phases: []service.PlanPhaseInput{{Name: "A"}}})
+	require.NoError(t, err)
+	child, err := svc.Task.Create(service.TaskCreateInput{Title: "c", ParentID: plan.ID, Metadata: map[string]any{"phase_id": "ph-1"}})
+	require.NoError(t, err)
+
+	var cErr *service.ConflictError
+	_, err = svc.Plan.ReopenPhase(plan.ID, "ph-1")
+	require.ErrorAs(t, err, &cErr, "a phase that is not completed cannot be reopened")
+
+	require.NoError(t, svc.Task.Transition(context.Background(), child.ID, "done"))
+	detail, err := svc.Plan.Get(plan.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", detail.Plan.Phases[0].State)
+
+	got, err := svc.Plan.ReopenPhase(plan.ID, "ph-1")
+	require.NoError(t, err)
+	require.Equal(t, "started", got.State)
+	require.Equal(t, 2, got.Generation)
+
+	var vErr *service.ValidationError
+	_, err = svc.Plan.ReopenPhase(plan.ID, "ph-9")
+	require.ErrorAs(t, err, &vErr)
 }

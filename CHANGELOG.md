@@ -23,7 +23,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   `metadata.phase_id`; a membership naming a missing phase is listed in
   `plan_phase_repairs`. The plan API keeps its shape (phases gain `state` and
   `lifecycle_generation`) and `metadata.phase_id` on a plan's child still sets
-  the phase. No events are emitted yet; that follows on the T1 append API.
+  the phase.
+- Phase lifecycle events (CW-20261016-0134, T2 part 2). A phase starts when a
+  member begins work and completes when every member is done; each edge appends
+  `phase.started` / `phase.completed` to the outbox in the member's transaction,
+  after the `task.state_changed` that caused it. `PlanService.ReopenPhase`
+  reopens a completed phase and bumps its lifecycle generation. Task, run and
+  checkpoint events now carry `scope.plan_id` and `scope.phase_id` from the
+  records.
 
 - Task state changes are written to a transactional outbox (CW-20261016-0133,
   PR1). Migration 042 adds `event_outbox`; every task transition (store,
