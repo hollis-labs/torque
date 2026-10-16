@@ -11,7 +11,7 @@ import { PlannerRow } from '@/components/planner/planner-row'
 import { TorqueTaskDialog } from '@/components/planner/torque-task-dialog'
 import { PlannerStatus } from '@/components/planner/planner-status'
 import { AgentActivityView } from '@/components/planner/agent-activity'
-import { AgentBuilderView } from '@/components/planner/agent-builder'
+import { AgentDirectoryView } from '@/console/agents'
 import { FleetAgentsPanel } from '@/components/planner/fleet-agents'
 import { useAgentActivity } from '@/hooks/use-agent-activity'
 import { useApi } from '@/hooks/use-api'
@@ -35,7 +35,7 @@ export default function PlannerPage() {
   const isActivity = params.db === 'activity'
   const isAgents = params.db === 'agents' // live agent monitor (relayed by /api/v1/activity)
   const isAgentsDemo = params.db === 'agents-demo' // the leaderboard design spike, demo data; no tab
-  const isBuilder = params.db === 'builder' // agent builder design spike (demo data)
+  const isBuilder = params.db === 'builder' // agent directory (read-only, mock-backed; see console/agents)
   const isDemo = isAgents || isAgentsDemo || isBuilder
   const isBoard = params.db === undefined || params.db === 'board' || isActivity
   const boardScope = isActivity ? 'all' : 'curated'
@@ -238,7 +238,7 @@ export default function PlannerPage() {
         ) : isAgentsDemo ? (
           <AgentActivityView agents={activity.agents} now={activity.now} live={activity.live} />
         ) : isBuilder ? (
-          <AgentBuilderView />
+          <AgentDirectoryView />
         ) : isBoard ? (
           boardError ? (
             <div className="p-4">
