@@ -12,7 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents"
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents/catalog"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
 	"github.com/stretchr/testify/require"
@@ -267,4 +269,45 @@ func TestSelfReportCanonicalDataInput(t *testing.T) {
 	in["data"] = map[string]any{"n": []any{"number", "1"}}
 	_, err = svc.Task.EmitData(context.Background(), in)
 	assertReportCode(t, err, "idempotency_conflict")
+}
+
+func TestSelfReportCatalogPayloadConformance(t *testing.T) {
+	svc, store := setupServiceWithStore(t)
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "conformance", ProgressDetail: "verbose"})
+	require.NoError(t, err)
+	artifact := &sqlstore.ArtifactRecord{TaskID: task.ID, Type: "json", Content: "{}"}
+	require.NoError(t, store.CreateArtifact(artifact))
+	for _, input := range []map[string]any{
+		{"task_id": task.ID, "schema": "test@1", "data": map[string]any{"x": true}},
+		{"task_id": task.ID, "schema": "test@1", "artifact_id": fmt.Sprint(artifact.ID)},
+		{"task_id": task.ID, "label": "conformance", "pct": 25, "step": 1, "total_steps": 4},
+	} {
+		var result map[string]any
+		if _, data := input["schema"]; data {
+			result, err = svc.Task.EmitData(context.Background(), input)
+		} else {
+			result, err = svc.Task.Progress(context.Background(), input)
+		}
+		require.NoError(t, err)
+		var raw string
+		require.NoError(t, store.DB().QueryRow(`SELECT envelope FROM event_outbox WHERE event_id=?`, result["event_id"]).Scan(&raw))
+		var event runtimeevents.Event
+		require.NoError(t, json.Unmarshal([]byte(raw), &event))
+		entry, ok := catalog.Lookup(string(event.Kind))
+		require.True(t, ok)
+		require.Equal(t, entry.Category, event.Class.Category)
+		require.Equal(t, entry.PayloadSchema, event.Class.PayloadSchema)
+		schemaRaw, err := catalog.PayloadSchema(entry.PayloadSchema)
+		require.NoError(t, err)
+		var schema jsonschema.Schema
+		require.NoError(t, json.Unmarshal(schemaRaw, &schema))
+		resolved, err := schema.Resolve(nil)
+		require.NoError(t, err)
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal(event.Payload, &payload))
+		require.NoError(t, resolved.Validate(payload))
+		if _, reference := input["artifact_id"]; reference {
+			require.Equal(t, fmt.Sprintf("msg://artifact/torque/%d", artifact.ID), payload["ref"])
+		}
+	}
 }

@@ -139,8 +139,8 @@ func (w *WriteTx) SelfReport(tool string, in map[string]any, digest string) (map
 		}
 	}
 	result := map[string]any{}
-	payload := map[string]any{"trigger": ResolveTrigger(w.ctx)}
-	kind, category := catalog.KindDataEmitted, "data"
+	payload := map[string]any{}
+	kind := catalog.KindDataEmitted
 	now := time.Now().UTC()
 	level := reportString(in, "level")
 	if level == "" {
@@ -177,13 +177,14 @@ func (w *WriteTx) SelfReport(tool string, in map[string]any, digest string) (map
 			}
 		}
 		payload["detail_level"], payload["effective_level"], payload["detail_source"] = level, string(effective), source
-		kind, category = catalog.KindProgressCheckpoint, "progress"
+		kind = catalog.KindProgressCheckpoint
 	} else {
 		payload["schema"] = in["schema"]
 		if data, ok := in["data"]; ok {
 			payload["data"] = data
 		} else {
-			payload["ref"] = in["artifact_id"]
+			artifactID, _ := SelfReportNumericID(reportString(in, "artifact_id"))
+			payload["ref"] = "msg://artifact/torque/" + strconv.FormatInt(artifactID, 10)
 		}
 		if label, ok := in["label"]; ok {
 			payload["label"] = label
@@ -193,7 +194,11 @@ func (w *WriteTx) SelfReport(tool string, in map[string]any, digest string) (map
 	if err != nil {
 		return nil, err
 	}
-	eventID, err := w.appendEvent(eventSpec{Kind: kind, Category: category, EntityType: "task", EntityID: taskID, Payload: raw, Trigger: ResolveTrigger(w.ctx), Scope: scope, IdempotencyKey: key})
+	entry, ok := catalog.Lookup(kind)
+	if !ok {
+		return nil, fmt.Errorf("unregistered self-report kind %q", kind)
+	}
+	eventID, err := w.appendEvent(eventSpec{Kind: kind, Category: entry.Category, EntityType: "task", EntityID: taskID, Payload: raw, Trigger: ResolveTrigger(w.ctx), Scope: scope, IdempotencyKey: key})
 	if err != nil {
 		return nil, err
 	}
