@@ -730,6 +730,35 @@ A done transition asks whether the work landed. It applies to `torque_task_trans
   `force=true` is the explicit override. PR state is read through `gh` in the
   project's `repo_path`.
 
+### Gate events
+
+Each gate that is configured for a task and evaluated on the way to a transition
+appends a `gate.evaluated` event to the outbox, in the transaction of that
+transition and ahead of its `task.state_changed`:
+
+- `gate.id` is `<task id>:<kind>` and `kind` is `deliverables`, `subtodos` or
+  `landing` (merge policy, `ci_green` and the clean-tree check together). The
+  subject is the task; `scope.run_id` is set on the scheduler path.
+- `result`: `pass` (verified), `fail` (evaluated and unmet), `blocked` (could not
+  decide yet: the PR or its checks could not be read, or checks have not
+  finished, or git status could not be read; or the check itself errored), `skipped` (a landing waiver, or a
+  forced `done` over a landing policy, with the reason; never reported as a pass).
+- `blocking` says whether the outcome stopped acceptance under the existing
+  policy. It differs from `result` for an evaluation error: unreadable
+  deliverables or subtodos report `blocked` with `blocking=false`, because
+  acceptance carries on as it did before. Failing closed on errors is a separate
+  change.
+- `reason` and `missing` (deliverable types, subtodo ids, landing requirements)
+  are carried inline; no evidence artifact is stored.
+- The `task.state_changed` the gates lead to names the deciding gate event as its
+  `corr.causation_id`: the first blocking evaluation, else the last one. This
+  holds on every path (scheduler, manual transition, forced done, parent
+  roll-up). Before writing, a manual transition confirms the task is still in
+  the status the gate was decided against (row-locked on Postgres); if it moved,
+  nothing is recorded and the caller gets a transition error to retry.
+- A gate that is not configured, or that the flow never reached because an
+  earlier one stopped it, is not reported.
+
 ## Workstream claims (CW-20261011-0015)
 
 Claim-next for team runs. Torque owns the queue and the go/pause switch; the

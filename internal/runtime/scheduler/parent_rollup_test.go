@@ -241,3 +241,34 @@ func TestParentRollup_LandingGateBlocksCloseAndDoesNotRepeat(t *testing.T) {
 	parent, _ = store.GetTask("CW-P-L2")
 	assert.Equal(t, "done", parent.Status)
 }
+
+// The roll-up evaluates the landing gate on the way to a transition, so it
+// records the evaluation with that transition, like the other gate paths.
+func TestParentRollup_RecordsTheLandingEvaluation(t *testing.T) {
+	store := setupRollupStore(t)
+	eval := func(res string, blocking bool) func(context.Context, *sqlstore.TaskRecord) sqlstore.GateEvaluation {
+		return func(context.Context, *sqlstore.TaskRecord) sqlstore.GateEvaluation {
+			return sqlstore.GateEvaluation{Kind: sqlstore.GateKindLanding, Result: res, Blocking: blocking, Reason: "landing evidence missing: x"}
+		}
+	}
+
+	createChildTask(t, store, "CW-C-G1", "done")
+	createParentTask(t, store, "CW-P-G1", []string{"CW-C-G1"}, "close")
+	require.NoError(t, scheduler.ParentRollupTickEvaluated(store, nil, eval(sqlstore.GateFail, true)))
+	rows := outboxRows(t, store)
+	require.Len(t, rows, 2, "the block and the evaluation that decided it")
+	assert.Equal(t, "gate.evaluated", rows[0].Kind)
+	assert.Equal(t, "fail", rows[0].Result)
+	assert.Equal(t, "CW-P-G1:landing", rows[0].GateID)
+	assert.Equal(t, "blocked", rows[1].To)
+	assert.Equal(t, rows[0].Env.ID, rows[1].Env.Corr.CausationID)
+
+	createChildTask(t, store, "CW-C-G2", "done")
+	createParentTask(t, store, "CW-P-G2", []string{"CW-C-G2"}, "close")
+	require.NoError(t, scheduler.ParentRollupTickEvaluated(store, nil, eval(sqlstore.GateSkipped, false)))
+	rows = outboxRows(t, store)
+	require.Len(t, rows, 4)
+	assert.Equal(t, "skipped", rows[2].Result)
+	assert.Equal(t, "done", rows[3].To)
+	assert.Equal(t, rows[2].Env.ID, rows[3].Env.Corr.CausationID)
+}

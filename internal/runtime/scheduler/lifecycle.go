@@ -28,6 +28,11 @@ type LifecycleManager struct {
 	// become done, or "". nil disables it. It guards only the close/notify
 	// on_done exits; the review exit already waits on a person.
 	landingGate func(context.Context, *sqlstore.TaskRecord) string
+	// landingEval is the typed form of landingGate. When set it is used in
+	// place of landingGate by handleDone, and its evaluation is recorded as a
+	// gate.evaluated event with the transition it leads to. A zero Kind means
+	// the gate does not apply to the task.
+	landingEval func(context.Context, *sqlstore.TaskRecord) sqlstore.GateEvaluation
 }
 
 // NewLifecycleManager creates a new lifecycle manager.
@@ -55,6 +60,22 @@ func (lm *LifecycleManager) SetTelemetryWriter(w writequeue.TelemetryWriter) {
 // moves a task to done.
 func (lm *LifecycleManager) SetLandingGate(g func(context.Context, *sqlstore.TaskRecord) string) {
 	lm.landingGate = g
+}
+
+// SetLandingEvaluator installs the typed landing check. It takes precedence
+// over SetLandingGate in handleDone; the string gate stays for callers that
+// only need the unmet requirements (parent roll-up).
+func (lm *LifecycleManager) SetLandingEvaluator(g func(context.Context, *sqlstore.TaskRecord) sqlstore.GateEvaluation) {
+	lm.landingEval = g
+}
+
+// landingEvaluation is the landing check as a typed evaluator: the typed one if
+// installed, else the string gate adapted, else nil.
+func (lm *LifecycleManager) landingEvaluation() func(context.Context, *sqlstore.TaskRecord) sqlstore.GateEvaluation {
+	if lm.landingEval != nil {
+		return lm.landingEval
+	}
+	return evaluationFromReason(lm.landingGate)
 }
 
 // SetStateWriter swaps the serialized state writer used for lifecycle-side
@@ -161,17 +182,35 @@ func (lm *LifecycleManager) handleDone(task *sqlstore.TaskRecord, runID int64, r
 		}
 	}
 
-	// Check deliverables before accepting "done"
+	// Acceptance gates. Each configured gate yields a typed evaluation; they
+	// are recorded as gate.evaluated events in the transaction of the
+	// transition they lead to, ahead of its task.state_changed. A gate that is
+	// not configured for the task is not evaluated and not reported, and a gate
+	// the flow never reaches (an earlier one stopped it) is omitted too.
+	var evals []sqlstore.GateEvaluation
+
+	// Deliverables before accepting "done".
 	if task.Deliverables.Valid && task.Deliverables.String != "" {
 		var required []executor.Deliverable
 		if err := json.Unmarshal([]byte(task.Deliverables.String), &required); err != nil {
 			log.Printf("[lifecycle] failed to parse deliverables for %s: %v", task.ID, err)
+			// Today's flow carries on past an unreadable policy. The event says
+			// the gate could not decide, and does not claim it blocked.
+			evals = append(evals, sqlstore.GateEvaluation{
+				Kind: sqlstore.GateKindDeliverables, Result: sqlstore.GateBlocked,
+				Reason: "cannot read deliverables: " + err.Error(),
+			})
 		} else {
 			missing := lm.checker.Check(required, result.Artifacts)
 			if len(missing) > 0 {
 				log.Printf("[lifecycle] task %s missing deliverables: %v", task.ID, missingTypes(missing))
-				return lm.retryOrBlock(task, runID, "missing required deliverables")
+				evals = append(evals, sqlstore.GateEvaluation{
+					Kind: sqlstore.GateKindDeliverables, Result: sqlstore.GateFail, Blocking: true,
+					Reason: "missing required deliverables", Missing: missingTypes(missing),
+				})
+				return lm.retryOrBlockGated(task, runID, "missing required deliverables", evals)
 			}
+			evals = append(evals, sqlstore.GateEvaluation{Kind: sqlstore.GateKindDeliverables, Result: sqlstore.GatePass})
 		}
 	}
 
@@ -179,30 +218,49 @@ func (lm *LifecycleManager) handleDone(task *sqlstore.TaskRecord, runID int64, r
 	// deliverables this is keyed by item_id + agent-provided evidence; agents
 	// tick items off via the torque_task_subtodo_done MCP tool during the
 	// run. Non-required items are ignored.
-	if missing, err := lm.missingRequiredSubtodos(task.ID); err != nil {
+	if required, missing, err := lm.missingRequiredSubtodos(task.ID); err != nil {
 		log.Printf("[lifecycle] subtodo check error for %s: %v", task.ID, err)
+		evals = append(evals, sqlstore.GateEvaluation{
+			Kind: sqlstore.GateKindSubtodos, Result: sqlstore.GateBlocked,
+			Reason: "cannot read subtodos: " + err.Error(),
+		})
 	} else if len(missing) > 0 {
 		reason := "missing required subtodos: " + strings.Join(missing, ", ")
 		log.Printf("[lifecycle] task %s blocked by subtodo gate (%s)", task.ID, reason)
-		return lm.transition(task, runID, "blocked", reason)
+		evals = append(evals, sqlstore.GateEvaluation{
+			Kind: sqlstore.GateKindSubtodos, Result: sqlstore.GateFail, Blocking: true,
+			Reason: reason, Missing: missing,
+		})
+		return lm.transitionGated(task, runID, "blocked", reason, evals)
+	} else if required > 0 {
+		evals = append(evals, sqlstore.GateEvaluation{Kind: sqlstore.GateKindSubtodos, Result: sqlstore.GatePass})
 	}
 
-	if (task.OnDone == "close" || task.OnDone == "notify") && lm.landingGate != nil {
-		if reason := lm.landingGate(context.Background(), task); reason != "" {
-			log.Printf("[lifecycle] task %s blocked by landing gate (%s)", task.ID, reason)
-			return lm.transition(task, runID, "blocked", reason)
+	if (task.OnDone == "close" || task.OnDone == "notify") && (lm.landingEval != nil || lm.landingGate != nil) {
+		var ev sqlstore.GateEvaluation
+		if lm.landingEval != nil {
+			ev = lm.landingEval(context.Background(), task)
+		} else if reason := lm.landingGate(context.Background(), task); reason != "" {
+			ev = sqlstore.GateEvaluation{Kind: sqlstore.GateKindLanding, Result: sqlstore.GateFail, Blocking: true, Reason: reason}
+		}
+		if ev.Kind != "" {
+			evals = append(evals, ev)
+		}
+		if ev.Blocking {
+			log.Printf("[lifecycle] task %s blocked by landing gate (%s)", task.ID, ev.Reason)
+			return lm.transitionGated(task, runID, "blocked", ev.Reason, evals)
 		}
 	}
 
 	// Apply OnDone rule
 	switch task.OnDone {
 	case "review":
-		return lm.transition(task, runID, "review", "")
+		return lm.transitionGated(task, runID, "review", "", evals)
 	case "close":
-		return lm.transition(task, runID, "done", "")
+		return lm.transitionGated(task, runID, "done", "", evals)
 	case "notify":
 		// Transition to done and emit a notify event
-		if err := lm.transition(task, runID, "done", ""); err != nil {
+		if err := lm.transitionGated(task, runID, "done", "", evals); err != nil {
 			return err
 		}
 		lm.bus.Publish(SchedulerEvent{
@@ -212,7 +270,7 @@ func (lm *LifecycleManager) handleDone(task *sqlstore.TaskRecord, runID int64, r
 		})
 		return nil
 	default:
-		return lm.transition(task, runID, "review", "")
+		return lm.transitionGated(task, runID, "review", "", evals)
 	}
 }
 
@@ -286,6 +344,12 @@ func (lm *LifecycleManager) handleEscalation(task *sqlstore.TaskRecord, runID in
 }
 
 func (lm *LifecycleManager) retryOrBlock(task *sqlstore.TaskRecord, runID int64, reason string) error {
+	return lm.retryOrBlockGated(task, runID, reason, nil)
+}
+
+// retryOrBlockGated is retryOrBlock with the gate evaluations that led here,
+// recorded with whichever transition (retry or block) follows.
+func (lm *LifecycleManager) retryOrBlockGated(task *sqlstore.TaskRecord, runID int64, reason string, evals []sqlstore.GateEvaluation) error {
 	var retryCount int
 	if err := lm.stateWriter.Submit(context.Background(), "lifecycle_retry_count", func(tx *sqlstore.WriteTx) error {
 		var err error
@@ -302,20 +366,32 @@ func (lm *LifecycleManager) retryOrBlock(task *sqlstore.TaskRecord, runID int64,
 	}
 
 	if retryCount < task.MaxRetries {
-		return lm.transition(task, runID, "todo", "")
+		return lm.transitionGated(task, runID, "todo", "", evals)
 	}
 
-	return lm.transition(task, runID, "blocked", fmt.Sprintf("retries exhausted (%d/%d): %s", retryCount, task.MaxRetries, reason))
+	return lm.transitionGated(task, runID, "blocked", fmt.Sprintf("retries exhausted (%d/%d): %s", retryCount, task.MaxRetries, reason), evals)
 }
 
 func (lm *LifecycleManager) transition(task *sqlstore.TaskRecord, runID int64, newStatus, blockedReason string) error {
+	return lm.transitionGated(task, runID, newStatus, blockedReason, nil)
+}
+
+// transitionGated moves the task and, in the same transaction and ahead of the
+// task.state_changed, records the gate evaluations that decided the move.
+func (lm *LifecycleManager) transitionGated(task *sqlstore.TaskRecord, runID int64, newStatus, blockedReason string, evals []sqlstore.GateEvaluation) error {
 	oldStatus := task.Status
 
 	if err := lm.stateWriter.Submit(context.Background(), "lifecycle_transition", func(tx *sqlstore.WriteTx) error {
+		opts := schedPlain()
 		if blockedReason != "" {
-			return tx.TransitionTaskOpts(task.ID, newStatus, schedReason(blockedReason))
+			opts = schedReason(blockedReason)
 		}
-		return tx.TransitionTaskOpts(task.ID, newStatus, schedPlain())
+		deciding, err := tx.AppendGateEvaluations(task.ID, runID, evals, opts.Trigger)
+		if err != nil {
+			return err
+		}
+		opts.CausationID = deciding
+		return tx.TransitionTaskOpts(task.ID, newStatus, opts)
 	}); err != nil {
 		return fmt.Errorf("lifecycle: transition %s -> %s: %w", task.ID, newStatus, err)
 	}
@@ -401,18 +477,21 @@ func (lm *LifecycleManager) emitRunFinished(taskID string, runID int64, result *
 // missingRequiredSubtodos returns the ids of required subtodos that are not
 // yet marked done. Returns a nil slice when the task has no subtodos or all
 // required items are ticked off.
-func (lm *LifecycleManager) missingRequiredSubtodos(taskID string) ([]string, error) {
+func (lm *LifecycleManager) missingRequiredSubtodos(taskID string) (required int, missing []string, err error) {
 	items, err := lm.store.GetSubtodos(taskID)
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
-	var missing []string
 	for _, it := range items {
-		if it.Required && !it.Done {
+		if !it.Required {
+			continue
+		}
+		required++
+		if !it.Done {
 			missing = append(missing, it.ID)
 		}
 	}
-	return missing, nil
+	return required, missing, nil
 }
 
 func missingTypes(missing []executor.Deliverable) []string {
