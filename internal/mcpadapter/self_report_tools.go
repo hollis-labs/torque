@@ -98,7 +98,6 @@ func (a *Adapter) handleSelfReport(ctx context.Context, tool string, req map[str
 		if session, ok := a.reportSession.Load().(string); ok {
 			ctx = sqlstore.ContextWithReportSession(ctx, session)
 		}
-		ctx = sqlstore.ContextWithTrigger(ctx, sqlstore.Trigger{Kind: sqlstore.TriggerAgent, Ref: tool})
 		if tool == "torque_task_progress" {
 			out, err = a.svc.Task.Progress(ctx, in)
 		} else {

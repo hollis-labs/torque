@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents/catalog"
+	"github.com/hollis-labs/torque/internal/httpserver"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/stretchr/testify/require"
 )
 
@@ -36,4 +39,28 @@ func TestHTTPSelfReport(t *testing.T) {
 	repeat := post(path+"/data", `{"schema":"example@1","data":{"value":1},"idempotency_key":"d"}`, 200)
 	require.Equal(t, true, repeat["duplicate"])
 	post(path+"/data", `{"schema":"example@1","data":null}`, 400)
+}
+
+func TestHTTPSelfReportTriggerFromSurface(t *testing.T) {
+	for _, route := range []struct{ path, body, kind string }{
+		{"progress", `{"label":"ready","level":"milestone"}`, catalog.KindProgressCheckpoint},
+		{"data", `{"schema":"example@1","data":{"value":1}}`, catalog.KindDataEmitted},
+	} {
+		for _, surface := range []struct{ name, marker, trigger string }{
+			{"api", "", "agent"},
+			{"gui", httpserver.GUIClientValue, "human"},
+			{"other_client", "curl", "agent"},
+		} {
+			t.Run(route.path+"/"+surface.name, func(t *testing.T) {
+				ts, store := triggerServer(t)
+				const taskID = "CW-SELF-REPORT-TRIGGER"
+				require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: taskID, Title: "report trigger", Priority: 2}))
+				post(t, ts.URL+"/api/v1/tasks/"+taskID+"/"+route.path, route.body, map[string]string{httpserver.GUIClientHeader: surface.marker})
+				var trigger, kind string
+				require.NoError(t, store.DB().QueryRow(`SELECT trigger_kind, kind FROM event_outbox WHERE task_id = ? ORDER BY seq DESC LIMIT 1`, taskID).Scan(&trigger, &kind))
+				require.Equal(t, surface.trigger, trigger)
+				require.Equal(t, route.kind, kind)
+			})
+		}
+	}
 }
