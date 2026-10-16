@@ -1321,8 +1321,7 @@ func subtodoIDTaken(items []sqlstore.Subtodo, id string) bool {
 // newSubtodoID returns a short random subtodo id under a dedicated "sub_"
 // prefix so generated ids can never collide with a caller-supplied
 // slug-style id (e.g. "check-auth-flow") — slugs are free to omit that
-// prefix entirely. Mirrors the crypto/rand + hex approach used by
-// internal/runtime/scheduler.newEventID: 8 random bytes (64 bits) is ample
+// prefix entirely. Uses crypto/rand + hex: 8 random bytes (64 bits) is ample
 // for uniqueness within a single task's checklist (typically low tens of
 // items), and subtodos have no global/cross-task query surface that would
 // call for a date-bucketed sequential scheme like the other entity IDs.
