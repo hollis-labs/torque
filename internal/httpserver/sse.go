@@ -97,6 +97,30 @@ func (h *SSEHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
+	// Where this stream starts is decided BEFORE the connected frame goes out:
+	// a client that treats "connected" as "ready" and then causes an event must
+	// not have it fall between connecting and the start position being read.
+	var (
+		feed *outboxFeed
+		cur  int64
+		gap  *SSEEvent
+	)
+	if feed = h.outbox; feed != nil {
+		lastID := r.Header.Get("Last-Event-ID")
+		if lastID == "" {
+			lastID = r.URL.Query().Get("since")
+		}
+		var err error
+		cur, gap, err = feed.start(ctx, lastID)
+		if err != nil {
+			// End the response: a stream that lives on with heartbeats but never
+			// sends a state change cannot be told from a quiet system. The browser's
+			// EventSource reconnects.
+			log.Printf("[sse] outbox start: %v", err)
+			return
+		}
+	}
+
 	// Send initial connection event
 	connEvent := SSEEvent{
 		Type:      "connected",
@@ -107,34 +131,12 @@ func (h *SSEHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "data: %s\n\n", data) //nolint:errcheck
 		flusher.Flush()
 	}
+	if gap != nil {
+		writeFrame(w, flusher, *gap)
+	}
 
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
-
-	// Durable frames: replay from Last-Event-ID (or ?since=), then follow.
-	var (
-		feed *outboxFeed
-		cur  int64
-	)
-	if feed = h.outbox; feed != nil {
-		lastID := r.Header.Get("Last-Event-ID")
-		if lastID == "" {
-			lastID = r.URL.Query().Get("since")
-		}
-		var gap *SSEEvent
-		var err error
-		cur, gap, err = feed.start(ctx, lastID)
-		if err != nil {
-			// End the response: a stream that lives on with heartbeats but never
-			// sends a state change cannot be told from a quiet system. The browser's
-			// EventSource reconnects.
-			log.Printf("[sse] outbox start: %v", err)
-			return
-		}
-		if gap != nil {
-			writeFrame(w, flusher, *gap)
-		}
-	}
 
 	for {
 		var outboxWake <-chan struct{}
