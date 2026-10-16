@@ -320,16 +320,19 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 
 	// HTTP handler — svc was constructed earlier so the executor path can
 	// claim it for per-task MCP loopback wiring.
-	commit := "unknown"
-	if info, ok := debug.ReadBuildInfo(); ok {
-		for _, setting := range info.Settings {
-			if setting.Key == "vcs.revision" && setting.Value != "" {
-				commit = setting.Value
-				break
+	buildCommit := commit
+	if buildCommit == "" {
+		buildCommit = "unknown"
+		if info, ok := debug.ReadBuildInfo(); ok {
+			for _, setting := range info.Settings {
+				if setting.Key == "vcs.revision" && setting.Value != "" {
+					buildCommit = setting.Value
+					break
+				}
 			}
 		}
 	}
-	handler := httpserver.New(svc, sched).WithBuildInfo(version, commit)
+	handler := httpserver.New(svc, sched).WithBuildInfo(version, buildCommit)
 	handler.WithSessions(agentDeps.Sessions)
 	handler.WithSecurity(sec)
 	// /mcp: the `torque mcp` tool surface for clients that must not open

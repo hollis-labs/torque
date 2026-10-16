@@ -9,6 +9,10 @@ import (
 
 var version = "0.1.1"
 
+// commit is stamped at link time by the Makefile (-X main.commit=<sha>); when
+// empty, serve falls back to the vcs.revision in the Go build info.
+var commit = ""
+
 func main() {
 	root := &cobra.Command{
 		Use:   "torque",

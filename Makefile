@@ -8,9 +8,13 @@ EMBED_DIR=internal/httpserver/webui/dist
 # BINDIR is where `make install` puts the binaries; override it per host,
 # e.g. `make install BINDIR=$HOME/.local/bin`.
 BINDIR ?= $(HOME)/go/bin
+# COMMIT is stamped into the binary so /healthz reports the deployed sha even when
+# the build has no VCS info (git worktrees, source tarballs). Override with COMMIT=<sha>.
+COMMIT ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null)
+LDFLAGS := -X main.commit=$(COMMIT)
 
 build:
-	go build -o $(BINARY) ./cmd/torque
+	go build -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/torque
 	go build -o $(APIKEY_HELPER) ./cmd/torque-apikey-helper
 
 build-all: build
@@ -36,7 +40,7 @@ build-prod: gui
 	rm -rf $(EMBED_DIR)
 	mkdir -p $(EMBED_DIR)
 	cp -R $(GUI_DIR)/dist/. $(EMBED_DIR)/
-	go build -tags embedgui -o $(BINARY) ./cmd/torque
+	go build -tags embedgui -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/torque
 	go build -o $(APIKEY_HELPER) ./cmd/torque-apikey-helper
 
 # install builds the GUI-embedded binary, since an installed binary runs from
