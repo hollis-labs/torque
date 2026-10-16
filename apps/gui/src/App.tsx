@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from
 import { LayoutList, Play, BarChart3, Settings, Cog, FileText, Inbox, FolderTree, Sparkles, FolderKanban, MessagesSquare, Compass, Tags } from 'lucide-react'
 import { NavRail, TooltipProvider, Toaster, type NavRailItem } from '@hollis-labs/sysop-ui'
 import { ApiProvider } from '@/hooks/use-api'
+import { ConsoleShell, AlertTrayTrigger } from '@/console'
 import { ActiveRunsProvider } from '@/hooks/use-active-runs'
 import BoardPage from '@/pages/BoardPage'
 import TaskDetailPage from '@/pages/TaskDetailPage'
@@ -64,7 +65,7 @@ function AppShell() {
 
   return (
     <div className="flex h-full w-full overflow-hidden bg-bg text-foreground">
-      <NavRail items={navItems} logo={<Cog className="h-5 w-5" />} logoLabel="Torque" />
+      <NavRail items={navItems} logo={<Cog className="h-5 w-5" />} logoLabel="Torque" footerExtra={<AlertTrayTrigger />} />
 
       {/* Main content */}
       <main className="min-w-0 flex-1 overflow-auto bg-bg">
@@ -112,7 +113,9 @@ export default function App() {
       <ActiveRunsProvider>
         <TooltipProvider>
           <BrowserRouter>
-            <AppShell />
+            <ConsoleShell>
+              <AppShell />
+            </ConsoleShell>
           </BrowserRouter>
           <Toaster position="bottom-right" />
         </TooltipProvider>
