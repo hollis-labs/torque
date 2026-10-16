@@ -8,6 +8,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- `make build` / `make build-prod` stamp the git sha into the binary with
+  `-ldflags "-X main.commit=<sha>"` (override with `COMMIT=`), so `/healthz`
+  reports the deployed commit even for worktree or tarball builds that carry
+  no VCS info. `torque serve` falls back to the Go build-info `vcs.revision`
+  when no sha was stamped (CW-20261016-0079).
 - `torque serve` adopts `github.com/hollis-labs/libs/security/auth` v0.1.0
   (CW-20261016-0014). Tether-issued Ed25519 JWTs (audience `torque`, scopes
   `torque.read` / `torque.write`) are verified offline against the issuer's
