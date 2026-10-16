@@ -105,7 +105,7 @@ func (a *Adapter) Server() *gomcp.Server {
 			logger = slog.Default()
 		}
 		a.server.SDKServer().AddReceivingMiddleware(sanitize.Middleware(logger))
-		a.server.SDKServer().AddReceivingMiddleware(stampTrigger())
+		a.server.SDKServer().AddReceivingMiddleware(stampTrigger(a.unverifiedTrigger()))
 		if a.guard != nil {
 			a.server.SDKServer().AddReceivingMiddleware(authorizeTools(a.guard))
 		}
