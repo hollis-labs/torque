@@ -11,7 +11,9 @@ type rawWriterKey struct{}
 // context. Put it OUTSIDE any middleware that wraps the writer: a wrapper that
 // does not implement Unwrap (propagation.HTTPMiddleware's statusWriter, in
 // libs core/util v0.4.0) hides the connection from http.ResponseController, so
-// SetWriteDeadline would fail with "feature not supported". The SSE stream
+// SetWriteDeadline would fail with "feature not supported". The real fix is an
+// Unwrap method on that statusWriter in libs (CW-20261016-0216); once libs has
+// it and Torque has adopted the release, this workaround can go. The SSE stream
 // sets its write deadline on the raw writer instead; the deadline belongs to the
 // connection, so it applies to writes made through any wrapper.
 func KeepRawWriter(next http.Handler) http.Handler {
