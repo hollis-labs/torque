@@ -12,6 +12,7 @@ import {
 import { useApi } from '@/hooks/use-api'
 import { usePagedList } from '@/hooks/use-paged-list'
 import { ConsoleProvider, ConsoleDebugPanel, FixtureSource } from '@/console'
+import { AutolinkShowcase } from '@/console/autolink/Showcase'
 import { ListPageControls } from '@/components/domain/list-page-controls'
 
 const consoleFixture = new FixtureSource()
@@ -45,6 +46,13 @@ export default function WidgetPreviewPage() {
           <ConsoleProvider source={consoleFixture}>
             <ConsoleDebugPanel />
           </ConsoleProvider>
+        </section>
+
+        <section className="rounded border border-border/60 bg-card/40 p-4">
+          <h2 className="mb-3 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+            Autolink (mock resolvers)
+          </h2>
+          <AutolinkShowcase />
         </section>
 
         <section className="rounded border border-border/60 bg-card/40 p-4">
