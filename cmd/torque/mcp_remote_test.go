@@ -82,7 +82,7 @@ func TestMCPRemoteNeverTouchesTheDatabase(t *testing.T) {
 	store := sqlitetest.OpenStore(t)
 	svc := service.New(store)
 	sessions := agent.NewManager(&agent.Dependencies{Store: store, WorkspacesRoot: testenv.WorkspacesRoot(t)})
-	daemon := httptest.NewServer(httpserver.New(svc, nil).WithMCP(bootstrap.DaemonMCPHandler(svc, nil, sessions, nil)))
+	daemon := httptest.NewServer(httpserver.New(svc, nil).WithMCP(bootstrap.DaemonMCPHandler(svc, nil, sessions, nil, nil)))
 	t.Cleanup(daemon.Close)
 
 	locked := filepath.Join(t.TempDir(), "locked")

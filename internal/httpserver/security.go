@@ -135,7 +135,7 @@ func (s *Server) requireToken(next http.Handler) http.Handler {
 				// Off and permissive stamp an under-scoped verified caller
 				// without rejecting it, so admission also needs the scope
 				// this method requires; otherwise the legacy rules decide.
-				if p, ok := auth.FromContext(r.Context()); ok && p.Verified && p.HasScope(requiredScope(r.Method)) {
+				if p, ok := auth.FromContext(r.Context()); ok && p.Verified && (requiredScope(r, g.Mode()) == "" || p.HasScope(requiredScope(r, g.Mode()))) {
 					next.ServeHTTP(w, r)
 					return
 				}
@@ -179,9 +179,17 @@ func requestHostname(r *http.Request) string {
 	return r.Host
 }
 
-// requiredScope is the scope scopeTable demands for method.
-func requiredScope(method string) string {
-	if method == http.MethodGet || method == http.MethodHead {
+// requiredScope is the scope the off/permissive fast path demands of r at
+// the transport. Under enforce /mcp needs none here: the guard has already
+// authenticated the caller and AuthorizeTool scopes each tool call. Under
+// off and permissive AuthorizeTool never refuses, so /mcp keeps its old
+// requirement (torque.write) and anyone short of it falls to the legacy
+// token rules.
+func requiredScope(r *http.Request, mode auth.Mode) string {
+	if r.URL.Path == "/mcp" && mode == auth.ModeEnforce {
+		return ""
+	}
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		return AuthApp + ".read"
 	}
 	return AuthApp + ".write"

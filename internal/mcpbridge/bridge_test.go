@@ -42,7 +42,7 @@ func newDaemon(t *testing.T, sec httpserver.Security, wrap func(http.Handler) ht
 	sessions := agent.NewManager(&agent.Dependencies{Store: store, WorkspacesRoot: testenv.WorkspacesRoot(t)})
 	var h http.Handler = httpserver.New(svc, nil).
 		WithSecurity(sec).
-		WithMCP(bootstrap.DaemonMCPHandler(svc, nil, sessions, nil))
+		WithMCP(bootstrap.DaemonMCPHandler(svc, nil, sessions, nil, nil))
 	if wrap != nil {
 		h = wrap(h)
 	}

@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	httptransport "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/transport/http"
+	"github.com/hollis-labs/libs/security/auth"
 
 	"github.com/hollis-labs/torque/internal/mcpadapter"
 	"github.com/hollis-labs/torque/internal/mcpbridge"
@@ -44,8 +45,8 @@ func StdioMCPAdapter(svc *service.Service, sessions *agent.Manager, logger *slog
 // polling that nothing drains and silence its own deliveries. Without a
 // registry torque_inbox_poll answers that polling is not available, as it
 // does over stdio.
-func DaemonMCPHandler(svc *service.Service, sched *scheduler.Scheduler, sessions *agent.Manager, logger *slog.Logger) http.Handler {
-	a := mcpadapter.New(svc, sched).WithSessions(sessions)
+func DaemonMCPHandler(svc *service.Service, sched *scheduler.Scheduler, sessions *agent.Manager, logger *slog.Logger, guard *auth.Guard) http.Handler {
+	a := mcpadapter.New(svc, sched).WithSessions(sessions).WithGuard(guard)
 	if logger != nil {
 		a = a.WithLogger(logger)
 	}

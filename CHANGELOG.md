@@ -8,6 +8,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- `/mcp` tool calls are scoped per tool (CW-20261016-0081). Every Torque MCP
+  tool maps to `torque.read`, `torque.write` or `torque.admin` in
+  `internal/mcpscopes` (deny by default; a test fails if any registered tool
+  is unmapped, stale, or read-scoped while not annotated read-only). The
+  `/mcp` transport itself needs authentication only. Off mode (default) is
+  unchanged; permissive logs "would deny" with the tool and required scope;
+  enforce refuses under-scoped calls. Admin covers settings, scheduler toggle,
+  bulk task delete and starting/resuming/stopping sessions and plans/sprints.
+  Pending: verification against a live Tether-issued JWT (CW-20261016-0017).
 - `make build` / `make build-prod` stamp the git sha into the binary with
   `-ldflags "-X main.commit=<sha>"` (override with `COMMIT=`), so `/healthz`
   reports the deployed commit even for worktree or tarball builds that carry
@@ -23,7 +32,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   decide admission, so current clients are unaffected. `enforce` requires a
   verified principal (the static token is accepted as an API key with
   `torque.*`). Rollback: revert, or `HOLLIS_AUTH_TORQUE=off`. `/mcp` tools
-  are not scoped individually yet.
+  are scoped per tool (CW-20261016-0081, above).
 
 ### Changed
 
