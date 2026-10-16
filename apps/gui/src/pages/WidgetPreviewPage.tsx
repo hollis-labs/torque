@@ -13,6 +13,7 @@ import {
 import { useApi } from '@/hooks/use-api'
 import { usePagedList } from '@/hooks/use-paged-list'
 import { ConsoleProvider, ConsoleDebugPanel, FixtureSource, AlertBadge, AlertListItem, AlertToast, sampleAlerts } from '@/console'
+import { MetricsPreview, ScopeMetricsPreview } from '@/console/metrics'
 import { CardsPreview } from '@/console/cards/CardsPreview'
 import { HitlPreview } from '@/console/hitl/HitlPreview'
 import { WorkflowPreview } from '@/console/workflow/WorkflowPreview'
@@ -52,6 +53,20 @@ export default function WidgetPreviewPage() {
           <ConsoleProvider source={consoleFixture}>
             <ConsoleDebugPanel />
           </ConsoleProvider>
+        </section>
+
+        <section className="rounded border border-border/60 bg-card/40 p-4">
+          <h2 className="mb-3 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+            Console Metrics Kit (fixture)
+          </h2>
+          <MetricsPreview />
+        </section>
+
+        <section className="rounded border border-border/60 bg-card/40 p-4">
+          <h2 className="mb-3 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+            Console Scope and Fleet Metrics (Torque-shaped fixtures)
+          </h2>
+          <ScopeMetricsPreview />
         </section>
 
         <section className="rounded border border-border/60 bg-card/40 p-4">

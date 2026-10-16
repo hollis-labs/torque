@@ -6,6 +6,7 @@ import { DetailHeader } from '@hollis-labs/sysop-ui/layout'
 import { ScopeDetailHero } from '@/components/domain/scope-detail-hero'
 import { ScopeMetaCard } from '@/components/domain/scope-meta-card'
 import { ScopeTaskPanel } from '@/components/domain/scope-task-panel'
+import { ScopeMetricsPanel } from '@/console/metrics'
 import { useApi } from '@/hooks/use-api'
 import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
 import { usePagedTaskSummaries } from '@/hooks/use-paged-task-summaries'
@@ -142,6 +143,8 @@ export default function SprintDetailPage() {
             <ScopeMetaCard label="Ended" value={sprint.ended_at ? new Date(sprint.ended_at).toLocaleDateString() : 'Not set'} />
             <ScopeMetaCard label="Updated" value={new Date(sprint.updated_at).toLocaleString()} />
           </div>
+
+          <ScopeMetricsPanel scope={`sprint:${sprint.id}`} title="Progress and burndown" />
 
           <ScopeTaskPanel
             tasks={taskPage.tasks}
