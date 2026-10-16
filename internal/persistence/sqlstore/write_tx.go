@@ -33,6 +33,9 @@ type WriteTx struct {
 	afterCommit []func()
 	// wakeOutbox is set by appendStateEvent; Commit signals the reader once.
 	wakeOutbox bool
+	// lastEventID is the id of the event appendEvent wrote most recently, so a
+	// follow-on event (a phase edge) can name its cause.
+	lastEventID string
 }
 
 // BeginWriteTx opens a write transaction against the store's writer handle.
@@ -403,6 +406,8 @@ func (w *WriteTx) TransitionTaskOpts(id, newStatus string, o TransitionOpts) err
 	if o.Reason != nil {
 		reason = *o.Reason
 	}
+	trigger := resolveTrigger(w.ctx, o)
+	w.lastEventID = ""
 	if err := w.appendStateEvent(stateChange{
 		EntityType: "task",
 		EntityID:   id,
@@ -410,12 +415,19 @@ func (w *WriteTx) TransitionTaskOpts(id, newStatus string, o TransitionOpts) err
 		To:         newStatus,
 		Reason:     reason,
 		Forced:     o.Forced,
-		Trigger:    resolveTrigger(w.ctx, o),
+		Trigger:    trigger,
 		Guard:      o.Guard,
 		Causation:  o.CausationID,
 		Scope:      scope,
 	}); err != nil {
 		return err
+	}
+	if w.lastEventID != "" {
+		// The phase edge this change causes, if any, follows its cause in the
+		// same transaction.
+		if err := w.reconcilePhase(scope, newStatus, trigger, w.lastEventID); err != nil {
+			return err
+		}
 	}
 	w.afterCommit = append(w.afterCommit, func() {
 		w.store.emitTaskTransition(TaskTransitionEvent{
@@ -429,26 +441,19 @@ func (w *WriteTx) TransitionTaskOpts(id, newStatus string, o TransitionOpts) err
 }
 
 func (w *WriteTx) transitionTask(id, newStatus string, reason *string) (string, stateScope, error) {
-	var (
-		oldStatus string
-		project   sql.NullString
-		epic      sql.NullString
-		sprint    sql.NullString
-	)
-	if err := w.tx.QueryRow(
-		`SELECT status, project_id, epic_id, sprint_id FROM tasks WHERE id = ?`, id,
-	).Scan(&oldStatus, &project, &epic, &sprint); err != nil {
+	var oldStatus string
+	if err := w.tx.QueryRow(`SELECT status FROM tasks WHERE id = ?`, id).Scan(&oldStatus); err != nil {
 		if err == sql.ErrNoRows {
 			return "", stateScope{}, fmt.Errorf("task %s not found", id)
 		}
 		return "", stateScope{}, err
 	}
-	scope := stateScope{ProjectID: project.String, EpicID: epic.String, SprintID: sprint.String, TaskID: id}
+	scope, err := w.taskScope(id)
+	if err != nil {
+		return "", stateScope{}, err
+	}
 
-	var (
-		res sql.Result
-		err error
-	)
+	var res sql.Result
 	if reason != nil {
 		res, err = w.tx.Exec(
 			`UPDATE tasks SET status = ?, blocked_reason = ?, updated_at = ? WHERE id = ?`,
