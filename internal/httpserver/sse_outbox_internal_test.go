@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/libs/core/util/otel/propagation"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
@@ -59,31 +60,43 @@ func wrapHidingConn(next http.Handler) http.Handler {
 	})
 }
 
-// The write deadline must work through a writer wrapper that has no Unwrap:
-// that is the production chain (propagation.HTTPMiddleware). KeepRawWriter
-// outside the wrapper is what makes it so.
-func TestSSE_WriteDeadlineSurvivesAWrapperWithoutUnwrap(t *testing.T) {
-	var deadlineErr error
+// The write deadline must work through the middleware Torque really serves
+// behind: propagation.HTTPMiddleware wraps the writer, and since libs core/util
+// v0.5.0 that wrapper has Unwrap, so http.ResponseController reaches the
+// connection. (With v0.4.0 it did not, and the deadline was a silent no-op.)
+func TestSSE_WriteDeadlineWorksThroughThePropagationMiddleware(t *testing.T) {
+	var deadlineErr, flushErr error
 	probe := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		deadlineErr = connController(w, r).SetWriteDeadline(time.Now().Add(time.Minute))
+		rc := http.NewResponseController(w)
+		deadlineErr = rc.SetWriteDeadline(time.Now().Add(time.Minute))
+		flushErr = rc.Flush()
 	})
+	ts := httptest.NewServer(propagation.HTTPMiddleware(probe))
+	defer ts.Close()
+	resp, err := http.Get(ts.URL)
+	require.NoError(t, err)
+	resp.Body.Close()
+	assert.NoError(t, deadlineErr)
+	assert.NoError(t, flushErr)
+}
 
-	t.Run("with KeepRawWriter outside the wrapper", func(t *testing.T) {
-		ts := httptest.NewServer(KeepRawWriter(wrapHidingConn(probe)))
-		defer ts.Close()
-		resp, err := http.Get(ts.URL)
-		require.NoError(t, err)
-		resp.Body.Close()
-		assert.NoError(t, deadlineErr)
-	})
-	t.Run("without it the wrapper hides the connection", func(t *testing.T) {
-		ts := httptest.NewServer(wrapHidingConn(probe))
-		defer ts.Close()
-		resp, err := http.Get(ts.URL)
-		require.NoError(t, err)
-		resp.Body.Close()
-		assert.Error(t, deadlineErr, "this is the bug the middleware fixes")
-	})
+// The durable stream, served through the real middleware, comes up (it is not
+// refused for lack of a write deadline) and sends its connected frame.
+func TestSSE_DurableStreamStartsBehindThePropagationMiddleware(t *testing.T) {
+	store := sqlitetest.OpenStore(t)
+	hub := NewSSEHub()
+	hub.EnableOutbox(store)
+	ts := httptest.NewServer(propagation.HTTPMiddleware(hub))
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	buf := make([]byte, 256)
+	n, err := resp.Body.Read(buf)
+	require.NoError(t, err)
+	assert.Contains(t, string(buf[:n]), `"type":"connected"`)
 }
 
 // A durable stream refuses to run on a connection that cannot take a write
