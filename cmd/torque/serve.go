@@ -499,6 +499,11 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	// frames. Off on Postgres until its outbox cursor is commit-ordered.
 	outboxOn := store.OutboxSupported()
 	if outboxOn {
+		if minted, err := store.OutboxMintGeneration(ctx); err != nil {
+			log.Printf("[serve] outbox generation: %v", err)
+		} else if minted {
+			log.Printf("[serve] outbox: minted a fresh generation for a new event log")
+		}
 		handler.SSEHub().EnableOutbox(store)
 	} else {
 		log.Printf("[serve] outbox reader disabled: the %s store does not allocate event_outbox seq in commit order (events are still written)", driver)

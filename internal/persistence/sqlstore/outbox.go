@@ -2,9 +2,11 @@ package sqlstore
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents"
@@ -80,7 +82,7 @@ func (s *Store) OutboxAfter(ctx context.Context, after int64, limit int) ([]Outb
 		return nil, err
 	}
 	rows, err := s.ReadDB().QueryContext(ctx,
-		`SELECT seq, occurred_at, envelope FROM event_outbox WHERE seq > ? ORDER BY seq LIMIT ?`, after, limit)
+		`SELECT seq, envelope FROM event_outbox WHERE seq > ? ORDER BY seq LIMIT ?`, after, limit)
 	if err != nil {
 		return nil, fmt.Errorf("outbox after %d: %w", after, err)
 	}
@@ -90,10 +92,9 @@ func (s *Store) OutboxAfter(ctx context.Context, after int64, limit int) ([]Outb
 	for rows.Next() {
 		var (
 			seq      int64
-			occurred string
 			envelope string
 		)
-		if err := rows.Scan(&seq, &occurred, &envelope); err != nil {
+		if err := rows.Scan(&seq, &envelope); err != nil {
 			return nil, err
 		}
 		var ev runtimeevents.Event
@@ -102,12 +103,48 @@ func (s *Store) OutboxAfter(ctx context.Context, after int64, limit int) ([]Outb
 		}
 		ev.Sequence = uint64(seq)
 		ev.Generation = uint64(meta.Generation)
-		if t, err := time.Parse(time.RFC3339Nano, occurred); err == nil {
-			ev.RecordedAt = &t
-		}
+		// recorded_at is the hub log's field, assigned when the hub appends; the
+		// event's own time is already the row's occurred_at.
 		out = append(out, OutboxEvent{Seq: seq, Generation: meta.Generation, Event: ev})
 	}
 	return out, rows.Err()
+}
+
+// maxGeneration keeps a minted generation exactly representable as a JSON
+// number (below 2^53).
+const maxGeneration = 1 << 53
+
+// OutboxMintGeneration gives a fresh outbox a random generation, so a database
+// that is deleted and recreated is distinguishable from the one a client
+// resumed against (a client's Last-Event-ID names the old generation and gets a
+// gap, not silently wrong replay). It acts only on a fresh outbox: the default
+// generation (1), no events and nothing trimmed. A generation bumped by hand
+// (a restore) or already minted is never touched. Call it at startup before
+// the reader is enabled. Reports whether it minted one.
+func (s *Store) OutboxMintGeneration(ctx context.Context) (bool, error) {
+	n, err := rand.Int(rand.Reader, big.NewInt(maxGeneration-2))
+	if err != nil {
+		return false, fmt.Errorf("mint outbox generation: %w", err)
+	}
+	gen := n.Int64() + 2 // in [2, 2^53)
+
+	w, err := s.BeginWriteTx(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer w.Rollback()
+	res, err := w.tx.Exec(`
+		UPDATE event_outbox_meta SET generation = ?
+		WHERE id = 1 AND generation = 1 AND pruned_through = 0
+		  AND NOT EXISTS (SELECT 1 FROM event_outbox)`, gen)
+	if err != nil {
+		return false, err
+	}
+	changed, _ := res.RowsAffected()
+	if err := w.Commit(); err != nil {
+		return false, err
+	}
+	return changed > 0, nil
 }
 
 // OutboxTrimBefore removes events older than cutoff from the head of the log

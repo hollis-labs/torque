@@ -23,7 +23,7 @@ func TestOutboxAfter_FillsLogAssignedFieldsAndPages(t *testing.T) {
 	for _, r := range all {
 		assert.EqualValues(t, r.Seq, r.Event.Sequence, "sequence is the outbox seq")
 		assert.EqualValues(t, 1, r.Event.Generation)
-		require.NotNil(t, r.Event.RecordedAt)
+		assert.Nil(t, r.Event.RecordedAt, "recorded_at is the hub log's field, left empty")
 		require.NoError(t, r.Event.Validate(), "a stored event validates once the log has assigned sequence")
 	}
 
@@ -70,4 +70,54 @@ func TestOutboxTrimBefore_RemovesOnlyTheHeadAndAdvancesPrunedThrough(t *testing.
 
 func TestOutboxSupported_SQLiteOnly(t *testing.T) {
 	assert.True(t, setupTestStore(t).OutboxSupported())
+}
+
+func TestOutboxMintGeneration_OnlyOnAFreshLog(t *testing.T) {
+	ctx := context.Background()
+
+	fresh := setupTestStore(t)
+	minted, err := fresh.OutboxMintGeneration(ctx)
+	require.NoError(t, err)
+	assert.True(t, minted)
+	m, err := fresh.OutboxMeta(ctx)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, m.Generation, int64(2))
+	assert.Less(t, m.Generation, int64(1)<<53, "exactly representable as a JSON number")
+
+	again, err := fresh.OutboxMintGeneration(ctx)
+	require.NoError(t, err)
+	assert.False(t, again, "an already minted generation is never changed")
+	m2, _ := fresh.OutboxMeta(ctx)
+	assert.Equal(t, m.Generation, m2.Generation)
+
+	// A log that already has events keeps generation 1: clients may hold ids.
+	used := setupTestStore(t)
+	require.NoError(t, used.CreateTask(sampleTask("CW-GEN-1")))
+	require.NoError(t, used.TransitionTask("CW-GEN-1", "doing"))
+	minted, err = used.OutboxMintGeneration(ctx)
+	require.NoError(t, err)
+	assert.False(t, minted)
+	m3, _ := used.OutboxMeta(ctx)
+	assert.EqualValues(t, 1, m3.Generation)
+
+	// A hand-bumped generation (a restore) is left alone.
+	bumped := setupTestStore(t)
+	_, err = bumped.DB().Exec(`UPDATE event_outbox_meta SET generation = 5`)
+	require.NoError(t, err)
+	minted, err = bumped.OutboxMintGeneration(ctx)
+	require.NoError(t, err)
+	assert.False(t, minted)
+	m4, _ := bumped.OutboxMeta(ctx)
+	assert.EqualValues(t, 5, m4.Generation)
+}
+
+func TestOutboxMintGeneration_TwoFreshLogsDiffer(t *testing.T) {
+	a, b := setupTestStore(t), setupTestStore(t)
+	_, err := a.OutboxMintGeneration(context.Background())
+	require.NoError(t, err)
+	_, err = b.OutboxMintGeneration(context.Background())
+	require.NoError(t, err)
+	ma, _ := a.OutboxMeta(context.Background())
+	mb, _ := b.OutboxMeta(context.Background())
+	assert.NotEqual(t, ma.Generation, mb.Generation, "a recreated database is distinguishable")
 }
