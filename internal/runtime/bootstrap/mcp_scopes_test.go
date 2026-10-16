@@ -121,3 +121,12 @@ func TestMCPToolScopes_OffChangesNothing(t *testing.T) {
 	// Write-scoped JWTs keep the old /mcp access.
 	assert.False(t, call(t, url, mint("torque.write"), "torque_task_list", nil))
 }
+
+// Permissive keeps the legacy gate: a read-scoped JWT does not get past it to
+// /mcp, so it cannot reach admin tools.
+func TestMCPToolScopes_PermissiveKeepsLegacyGate(t *testing.T) {
+	url, mint, _ := mcpScopeFixture(t, auth.ModePermissive)
+	assert.True(t, call(t, url, mint("torque.read"), "torque_settings_save", map[string]any{}))
+	assert.True(t, call(t, url, mint("torque.read"), "torque_task_list", nil))
+	assert.False(t, call(t, url, "s3cret", "torque_settings_get", nil))
+}
