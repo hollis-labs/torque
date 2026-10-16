@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/libs/util/sqlite/sqlitekit"
-	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
-	"github.com/hollis-labs/substrate/mesh/messaging/messagingtest"
+	"github.com/hollis-labs/libs/core/util/sqlite/sqlitekit"
+	gomsg "github.com/hollis-labs/libs/mesh/core/messaging"
+	"github.com/hollis-labs/libs/mesh/core/messaging/messagingtest"
 	_ "modernc.org/sqlite"
 
 	"github.com/hollis-labs/torque/internal/messaging"

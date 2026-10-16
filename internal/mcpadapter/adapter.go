@@ -10,9 +10,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/hollis-labs/libs/plugin-mcp/go-mcp/sanitize"
-	gomcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
-	feotel "github.com/hollis-labs/libs/util/otel"
+	feotel "github.com/hollis-labs/libs/core/util/otel"
+	"github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/sanitize"
+	gomcp "github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/server"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	otelprop "go.opentelemetry.io/otel/propagation"

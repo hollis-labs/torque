@@ -28,7 +28,7 @@ import (
 	"fmt"
 	"sort"
 
-	messaging "github.com/hollis-labs/substrate/mesh/messaging"
+	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
 )
 
 // Compile-time assertion: *Router satisfies messaging.Store, so it is

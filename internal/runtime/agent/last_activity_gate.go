@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	llmtypes "github.com/hollis-labs/substrate/llm-core/llmtypes"
+	llmtypes "github.com/hollis-labs/libs/llm/core/llmtypes"
 )
 
 // authErrorMarkers tags content-bearing payloads that should be treated as an

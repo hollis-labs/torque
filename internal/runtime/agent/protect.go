@@ -8,8 +8,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/hollis-labs/substrate/harness/adapters/runtimebind"
-	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimebind"
+	"github.com/hollis-labs/libs/llm/core/contracts/runtimes"
 
 	"github.com/hollis-labs/torque/internal/config"
 )

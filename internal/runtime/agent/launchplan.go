@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hollis-labs/substrate/harness/adapters/registry"
-	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
+	"github.com/hollis-labs/libs/harness/core/adapters/registry"
+	"github.com/hollis-labs/libs/llm/core/contracts/runtimes"
 
 	"github.com/hollis-labs/torque/internal/config"
 
-	gopermission "github.com/hollis-labs/substrate/harness/interception/permission"
+	gopermission "github.com/hollis-labs/libs/security/policy/permission"
 )
 
 // buildLaunchPlan and buildLaunchPlanInput moved to

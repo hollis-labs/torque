@@ -6,8 +6,8 @@ import (
 	"io"
 	"unicode/utf8"
 
-	"github.com/hollis-labs/substrate/harness/adapters/acp"
-	gopermission "github.com/hollis-labs/substrate/harness/interception/permission"
+	"github.com/hollis-labs/libs/harness/core/adapters/acp"
+	gopermission "github.com/hollis-labs/libs/security/policy/permission"
 )
 
 // ACP permission requests (CW-20261001-0113). An ACP agent that chooses to

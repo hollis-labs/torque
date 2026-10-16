@@ -7,8 +7,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	runtimeevents "github.com/hollis-labs/substrate/harness/adapters/runtimeevents"
-	llmtypes "github.com/hollis-labs/substrate/llm-core/llmtypes"
+	runtimeevents "github.com/hollis-labs/libs/harness/core/adapters/runtimeevents"
+	llmtypes "github.com/hollis-labs/libs/llm/core/llmtypes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 

@@ -6,9 +6,9 @@ import (
 	"io"
 	"strings"
 
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
-	runtimeevents "github.com/hollis-labs/substrate/harness/adapters/runtimeevents"
-	llmtypes "github.com/hollis-labs/substrate/llm-core/llmtypes"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	runtimeevents "github.com/hollis-labs/libs/harness/core/adapters/runtimeevents"
+	llmtypes "github.com/hollis-labs/libs/llm/core/llmtypes"
 
 	"github.com/hollis-labs/torque/internal/redact"
 )

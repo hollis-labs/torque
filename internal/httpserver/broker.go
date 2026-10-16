@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
+	gomsg "github.com/hollis-labs/libs/mesh/core/messaging"
 
 	"github.com/hollis-labs/torque/internal/broker"
 )

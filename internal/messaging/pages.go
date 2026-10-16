@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hollis-labs/libs/util/sqlite/txutil"
-	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
+	"github.com/hollis-labs/libs/core/util/sqlite/txutil"
+	gomsg "github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/torque/internal/service/pagination"
 )
 

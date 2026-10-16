@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	queue "github.com/hollis-labs/libs/util/queue"
-	qsqlite "github.com/hollis-labs/libs/util/queue/driver/sqlite"
-	"github.com/hollis-labs/libs/util/sqlite/sqlitekit"
+	queue "github.com/hollis-labs/libs/core/util/queue"
+	qsqlite "github.com/hollis-labs/libs/core/util/queue/driver/sqlite"
+	"github.com/hollis-labs/libs/core/util/sqlite/sqlitekit"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 

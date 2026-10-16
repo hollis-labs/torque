@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/libs/util/sqlite/sqlitekit"
-	"github.com/hollis-labs/substrate/harness/adapters/providertest"
+	"github.com/hollis-labs/libs/core/util/sqlite/sqlitekit"
+	"github.com/hollis-labs/libs/harness/core/adapters/providertest"
 	"github.com/oklog/ulid/v2"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 	"github.com/hollis-labs/torque/internal/config"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"

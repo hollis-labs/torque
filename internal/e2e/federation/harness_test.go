@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
+	gomsg "github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 

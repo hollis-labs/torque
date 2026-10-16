@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
+	gomsg "github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/hollis-labs/torque/internal/runtime/steering"

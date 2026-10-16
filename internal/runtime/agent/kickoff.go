@@ -4,7 +4,7 @@ import (
 	"log"
 	"path/filepath"
 
-	"github.com/hollis-labs/substrate/harness/adapters/turn"
+	"github.com/hollis-labs/libs/harness/core/adapters/turn"
 )
 
 // kickoffPayload returns the user-message body Boot fires (or planted as

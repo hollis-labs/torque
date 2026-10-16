@@ -37,8 +37,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hollis-labs/libs/util/otel/propagation"
-	messaging "github.com/hollis-labs/substrate/mesh/messaging"
+	"github.com/hollis-labs/libs/core/util/otel/propagation"
+	messaging "github.com/hollis-labs/libs/mesh/core/messaging"
 )
 
 // Compile-time assertion: *HTTPStore satisfies messaging.Store, so it is

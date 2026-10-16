@@ -11,8 +11,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/hollis-labs/substrate/harness/adapters/provider"
-	gopermission "github.com/hollis-labs/substrate/harness/interception/permission"
+	"github.com/hollis-labs/libs/harness/core/adapters/provider"
+	gopermission "github.com/hollis-labs/libs/security/policy/permission"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

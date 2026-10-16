@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
