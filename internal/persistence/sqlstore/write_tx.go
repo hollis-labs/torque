@@ -435,7 +435,7 @@ func (w *WriteTx) TransitionTaskOpts(id, newStatus string, o TransitionOpts) err
 	if w.lastEventID != "" {
 		// The phase edge this change causes, if any, follows its cause in the
 		// same transaction.
-		if err := w.reconcilePhase(scope, newStatus, trigger, w.lastEventID); err != nil {
+		if err := w.reconcilePhase(phaseRef{PlanID: scope.PlanID, PhaseID: scope.PhaseID}, trigger, w.lastEventID); err != nil {
 			return err
 		}
 	}
@@ -623,7 +623,11 @@ func (w *WriteTx) CreateTask(t *TaskRecord) error {
 		t.Kind, t.SourceType, t.SourceRef, t.Trust, t.CheckpointMode, t.OnCheckpointResponse,
 		t.ParentID, t.PhaseID, t.ProgressDetail, t.ProgressDetailSource,
 	)
-	return phaseWriteErr(err)
+	if err != nil {
+		return phaseWriteErr(err)
+	}
+	// A new member (even one created done) can start or complete its phase.
+	return w.reconcileMembership(phaseRef{PlanID: t.ParentID.String, PhaseID: t.PhaseID.String})
 }
 
 // UpdateTask applies non-nil pointer fields to the task row inside the write
@@ -633,7 +637,28 @@ func (w *WriteTx) CreateTask(t *TaskRecord) error {
 // SetTaskTags/SetTaskDependencies in the same WriteTx instead of as
 // independent calls (FIX-007).
 func (w *WriteTx) UpdateTask(id string, u TaskUpdate) error {
-	return updateTaskExec(w.tx, id, u)
+	if u.PhaseID == nil && u.ParentID == nil {
+		return updateTaskExec(w.tx, id, u)
+	}
+	// Re-evaluate the phase the task leaves and the one it joins.
+	before, err := w.membership(id)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if err := updateTaskExec(w.tx, id, u); err != nil {
+		return err
+	}
+	after, err := w.membership(id)
+	if err != nil {
+		return err
+	}
+	if before == after {
+		return nil
+	}
+	if err := w.reconcileMembership(before); err != nil {
+		return err
+	}
+	return w.reconcileMembership(after)
 }
 
 // SetTaskTags replaces all tags linked to the given task inside the write

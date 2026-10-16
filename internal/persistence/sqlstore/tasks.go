@@ -509,6 +509,18 @@ func scanTask(row interface {
 
 // CreateTask inserts a new task with defaults applied.
 func (s *Store) CreateTask(t *TaskRecord) error {
+	if t.PhaseID.Valid {
+		// A new member (even one created done) can start or complete its phase.
+		w, err := s.BeginWriteTx(context.Background())
+		if err != nil {
+			return err
+		}
+		defer w.Rollback()
+		if err := w.CreateTask(t); err != nil {
+			return err
+		}
+		return w.Commit()
+	}
 	applyDefaults(t)
 	now := time.Now().UTC()
 	t.CreatedAt = now
@@ -1221,7 +1233,20 @@ func (s *Store) listTasksRows(f TaskFilter, where []string, args []any) ([]TaskR
 
 // UpdateTask applies non-nil pointer fields to the task row.
 func (s *Store) UpdateTask(id string, u TaskUpdate) error {
-	return updateTaskExec(s.db, id, u)
+	if u.PhaseID == nil && u.ParentID == nil {
+		return updateTaskExec(s.db, id, u)
+	}
+	// A change of parent or phase can start or complete a phase, so it runs in
+	// a write transaction that re-evaluates the phases it touched.
+	w, err := s.BeginWriteTx(context.Background())
+	if err != nil {
+		return err
+	}
+	defer w.Rollback()
+	if err := w.UpdateTask(id, u); err != nil {
+		return err
+	}
+	return w.Commit()
 }
 
 // updateTaskExec holds UpdateTask's field-mapping logic, parameterized over
@@ -1542,7 +1567,17 @@ func (s *Store) ParkTaskOnCheckpointRef(ctx context.Context, id, reason, ref str
 
 // DeleteTask removes a task by ID.
 func (s *Store) DeleteTask(id string) error {
-	res, err := s.db.Exec(`DELETE FROM tasks WHERE id = ?`, id)
+	w, err := s.BeginWriteTx(context.Background())
+	if err != nil {
+		return err
+	}
+	defer w.Rollback()
+	// Deleting a member can complete its phase, so note the membership first.
+	member, err := w.membership(id)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	res, err := w.tx.Exec(`DELETE FROM tasks WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
@@ -1553,7 +1588,10 @@ func (s *Store) DeleteTask(id string) error {
 	if n == 0 {
 		return fmt.Errorf("task %s not found", id)
 	}
-	return nil
+	if err := w.reconcileMembership(member); err != nil {
+		return err
+	}
+	return w.Commit()
 }
 
 // SearchTasks does a LIKE search on id, title, and description.
