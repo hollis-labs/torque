@@ -22,6 +22,7 @@ func (errSC) PR(context.Context, string) (landing.PRState, error) {
 type outboxEv struct {
 	Kind, Trigger, Result, GateID, To string
 	Blocking                          bool
+	ID, Causation                     string
 }
 
 func outboxFor(t *testing.T, store *sqlstore.Store, taskID string) []outboxEv {
@@ -34,7 +35,13 @@ func outboxFor(t *testing.T, store *sqlstore.Store, taskID string) []outboxEv {
 		var e outboxEv
 		var env string
 		require.NoError(t, rows.Scan(&e.Kind, &e.Trigger, &env))
-		var ev struct{ Payload json.RawMessage }
+		var ev struct {
+			ID   string
+			Corr struct {
+				CausationID string `json:"causation_id"`
+			}
+			Payload json.RawMessage
+		}
 		require.NoError(t, json.Unmarshal([]byte(env), &ev))
 		var p struct {
 			Gate     struct{ ID string }
@@ -44,6 +51,7 @@ func outboxFor(t *testing.T, store *sqlstore.Store, taskID string) []outboxEv {
 		}
 		require.NoError(t, json.Unmarshal(ev.Payload, &p))
 		e.Result, e.GateID, e.Blocking, e.To = p.Result, p.Gate.ID, p.Blocking, p.To
+		e.ID, e.Causation = ev.ID, ev.Corr.CausationID
 		out = append(out, e)
 	}
 	require.NoError(t, rows.Err())
@@ -66,9 +74,10 @@ func TestEnforceLandingRecordsTheEvaluation(t *testing.T) {
 		require.Error(t, svc.Task.Transition(ctx, id, "done"))
 		ev := outboxFor(t, store, id)
 		require.Len(t, ev, 2)
-		require.Equal(t, outboxEv{Kind: "gate.evaluated", Trigger: "hook", Result: "fail", GateID: id + ":landing", Blocking: true}, ev[0])
+		require.Equal(t, outboxEv{Kind: "gate.evaluated", Trigger: "hook", Result: "fail", GateID: id + ":landing", Blocking: true, ID: ev[0].ID}, ev[0])
 		require.Equal(t, "task.state_changed", ev[1].Kind)
 		require.Equal(t, "blocked", ev[1].To)
+		require.Equal(t, ev[0].ID, ev[1].Causation, "the block names the gate that decided it")
 	})
 
 	t.Run("pass is recorded before the done it allows", func(t *testing.T) {
@@ -118,6 +127,7 @@ func TestEnforceLandingRecordsTheEvaluation(t *testing.T) {
 		require.Equal(t, "skipped", ev[0].Result)
 		require.False(t, ev[0].Blocking)
 		require.Equal(t, "done", ev[1].To)
+		require.Equal(t, ev[0].ID, ev[1].Causation)
 	})
 
 	t.Run("force through the comment path is a skip too", func(t *testing.T) {

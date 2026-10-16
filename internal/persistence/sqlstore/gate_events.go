@@ -71,20 +71,26 @@ const (
 // gate id is "<task id>:<kind>", stable across evaluations of the same gate;
 // the subject is the task. Evidence is carried inline (reason, missing); no
 // evidence artifact is stored.
-func (w *WriteTx) AppendGateEvaluations(taskID string, runID int64, evals []GateEvaluation, trigger Trigger) error {
+//
+// It returns the id of the deciding event, for the task.state_changed it leads
+// to to name as its causation: the first blocking evaluation, else the last
+// one. It is "" when there was nothing to append.
+func (w *WriteTx) AppendGateEvaluations(taskID string, runID int64, evals []GateEvaluation, trigger Trigger) (string, error) {
 	if len(evals) == 0 {
-		return nil
+		return "", nil
 	}
 	scope, err := w.taskScope(taskID)
 	if err != nil {
-		return err
+		return "", err
 	}
+	var deciding string
+	blockingSeen := false
 	if runID > 0 {
 		scope.RunID = sql.NullInt64{Int64: runID, Valid: true}
 	}
 	for _, e := range evals {
 		if e.Kind == "" {
-			return fmt.Errorf("gate evaluation for %s: kind is required", taskID)
+			return "", fmt.Errorf("gate evaluation for %s: kind is required", taskID)
 		}
 		reason, truncated := sanitizeReason(e.Reason)
 		var missing []string
@@ -107,9 +113,9 @@ func (w *WriteTx) AppendGateEvaluations(taskID string, runID int64, evals []Gate
 			Missing:  missing,
 		})
 		if err != nil {
-			return fmt.Errorf("gate event payload: %w", err)
+			return "", fmt.Errorf("gate event payload: %w", err)
 		}
-		if _, err := w.appendEvent(eventSpec{
+		id, err := w.appendEvent(eventSpec{
 			Kind:       catalog.KindGateEvaluated,
 			Category:   "state",
 			EntityType: "task",
@@ -118,9 +124,14 @@ func (w *WriteTx) AppendGateEvaluations(taskID string, runID int64, evals []Gate
 			Truncated:  truncated,
 			Trigger:    trigger,
 			Scope:      scope,
-		}); err != nil {
-			return err
+		})
+		if err != nil {
+			return "", err
+		}
+		if !blockingSeen {
+			deciding = id
+			blockingSeen = e.Blocking
 		}
 	}
-	return nil
+	return deciding, nil
 }

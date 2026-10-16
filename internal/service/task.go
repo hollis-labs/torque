@@ -1146,10 +1146,11 @@ func (s *TaskService) ForceTransition(ctx context.Context, id, newStatus string)
 			return err
 		}
 		defer wtx.Rollback()
-		if err := wtx.AppendGateEvaluations(id, 0, skips, sqlstore.ResolveTrigger(ctx)); err != nil {
+		deciding, err := wtx.AppendGateEvaluations(id, 0, skips, sqlstore.ResolveTrigger(ctx))
+		if err != nil {
 			return err
 		}
-		if err := wtx.TransitionTaskOpts(id, newStatus, sqlstore.TransitionOpts{Forced: true}); err != nil {
+		if err := wtx.TransitionTaskOpts(id, newStatus, sqlstore.TransitionOpts{Forced: true, CausationID: deciding}); err != nil {
 			return err
 		}
 		if err := wtx.Commit(); err != nil {
@@ -1229,12 +1230,14 @@ func (s *TaskService) TransitionWithComment(ctx context.Context, id, newStatus, 
 	}
 	defer wtx.Rollback()
 
+	var deciding string
 	if force {
-		if err := wtx.AppendGateEvaluations(id, 0, forcedGateSkips(task, newStatus), sqlstore.ResolveTrigger(ctx)); err != nil {
-			return err
+		var gerr error
+		if deciding, gerr = wtx.AppendGateEvaluations(id, 0, forcedGateSkips(task, newStatus), sqlstore.ResolveTrigger(ctx)); gerr != nil {
+			return gerr
 		}
 	}
-	if err := wtx.TransitionTaskOpts(id, newStatus, sqlstore.TransitionOpts{Forced: force}); err != nil {
+	if err := wtx.TransitionTaskOpts(id, newStatus, sqlstore.TransitionOpts{Forced: force, CausationID: deciding}); err != nil {
 		return err
 	}
 	rec := &sqlstore.CommentRecord{

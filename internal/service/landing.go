@@ -115,7 +115,7 @@ func (s *TaskService) EnforceLanding(ctx context.Context, task *sqlstore.TaskRec
 			return err
 		}
 		defer w.Rollback()
-		if err := w.AppendGateEvaluations(task.ID, 0, []sqlstore.GateEvaluation{ev}, trigger); err != nil {
+		if _, err := w.AppendGateEvaluations(task.ID, 0, []sqlstore.GateEvaluation{ev}, trigger); err != nil {
 			return err
 		}
 		return w.Commit()
@@ -126,10 +126,11 @@ func (s *TaskService) EnforceLanding(ctx context.Context, task *sqlstore.TaskRec
 		return err
 	}
 	defer w.Rollback()
-	if err := w.AppendGateEvaluations(task.ID, 0, []sqlstore.GateEvaluation{ev}, trigger); err != nil {
+	deciding, err := w.AppendGateEvaluations(task.ID, 0, []sqlstore.GateEvaluation{ev}, trigger)
+	if err != nil {
 		return err
 	}
-	if err := w.TransitionTaskOpts(task.ID, "blocked", sqlstore.TransitionOpts{Reason: &reason, Trigger: trigger}); err != nil {
+	if err := w.TransitionTaskOpts(task.ID, "blocked", sqlstore.TransitionOpts{Reason: &reason, Trigger: trigger, CausationID: deciding}); err != nil {
 		return err
 	}
 	if err := w.Commit(); err != nil {

@@ -377,9 +377,11 @@ func (lm *LifecycleManager) transitionGated(task *sqlstore.TaskRecord, runID int
 		if blockedReason != "" {
 			opts = schedReason(blockedReason)
 		}
-		if err := tx.AppendGateEvaluations(task.ID, runID, evals, opts.Trigger); err != nil {
+		deciding, err := tx.AppendGateEvaluations(task.ID, runID, evals, opts.Trigger)
+		if err != nil {
 			return err
 		}
+		opts.CausationID = deciding
 		return tx.TransitionTaskOpts(task.ID, newStatus, opts)
 	}); err != nil {
 		return fmt.Errorf("lifecycle: transition %s -> %s: %w", task.ID, newStatus, err)
