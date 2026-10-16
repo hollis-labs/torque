@@ -54,6 +54,7 @@ var (
 // Options configures Start. Workdir defaults to the plan task's
 // WorkingDir column when empty; explicit override wins.
 type Options struct {
+	ProgressDetail string
 	// Workdir for the orchestrator session. When empty, uses the
 	// plan task's WorkingDir column. Required (one or the other).
 	Workdir string
@@ -206,14 +207,15 @@ func Start(ctx context.Context, store Store, mgr SessionManager, planID string, 
 	}
 
 	bootOpts := agent.Options{
-		Mode:         agent.ModeLongLived,
-		AgentProfile: orchestrator.Profile,
-		Role:         orchestrator.SessionMetaRoleValue,
-		Workdir:      workdir,
-		ProjectID:    nullStr(plan.ProjectID),
-		TaskID:       planID,
-		SystemPrompt: orchestrator.SystemPromptForPlan(planID, ""),
-		Env:          envSliceToMap(opts.Env),
+		ProgressDetail: opts.ProgressDetail,
+		Mode:           agent.ModeLongLived,
+		AgentProfile:   orchestrator.Profile,
+		Role:           orchestrator.SessionMetaRoleValue,
+		Workdir:        workdir,
+		ProjectID:      nullStr(plan.ProjectID),
+		TaskID:         planID,
+		SystemPrompt:   orchestrator.SystemPromptForPlan(planID, ""),
+		Env:            envSliceToMap(opts.Env),
 		SessionMeta: map[string]string{
 			orchestrator.SessionMetaRole:   orchestrator.SessionMetaRoleValue,
 			orchestrator.SessionMetaPlanID: planID,
@@ -394,14 +396,15 @@ func Redispatch(ctx context.Context, store RedispatchStore, mgr SessionManager, 
 	}
 
 	bootOpts := agent.Options{
-		Mode:         agent.ModeLongLived,
-		AgentProfile: orchestrator.Profile,
-		Role:         orchestrator.SessionMetaRoleValue,
-		Workdir:      workdir,
-		ProjectID:    nullStr(plan.ProjectID),
-		TaskID:       planID,
-		SystemPrompt: systemPrompt,
-		Env:          envSliceToMap(opts.Env),
+		ProgressDetail: opts.ProgressDetail,
+		Mode:           agent.ModeLongLived,
+		AgentProfile:   orchestrator.Profile,
+		Role:           orchestrator.SessionMetaRoleValue,
+		Workdir:        workdir,
+		ProjectID:      nullStr(plan.ProjectID),
+		TaskID:         planID,
+		SystemPrompt:   systemPrompt,
+		Env:            envSliceToMap(opts.Env),
 		SessionMeta: map[string]string{
 			orchestrator.SessionMetaRole:   orchestrator.SessionMetaRoleValue,
 			orchestrator.SessionMetaPlanID: planID,

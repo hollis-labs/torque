@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	feotel "github.com/hollis-labs/libs/core/util/otel"
 	"github.com/hollis-labs/libs/mcp/plugin-mcp/go-mcp/sanitize"
@@ -33,10 +34,13 @@ import (
 // only act on its own task. Regular adapters (built via New) leave it empty
 // and do not register the loopback tool subset.
 type Adapter struct {
-	svc            *service.Service
-	sched          *scheduler.Scheduler
-	server         *gomcp.Server
-	loopbackTaskID string
+	reportSession                       atomic.Value
+	selfReportProxy                     bool
+	selfReportEndpoint, selfReportToken string
+	svc                                 *service.Service
+	sched                               *scheduler.Scheduler
+	server                              *gomcp.Server
+	loopbackTaskID                      string
 	// guard, when set, scopes every tools/call (WithGuard).
 	guard *auth.Guard
 	// sessions wires the long-lived agent session manager (CW-20260503-0014).
@@ -245,10 +249,15 @@ func (a *Adapter) addTool(spec toolSpec, h gomcp.ToolHandler) {
 		}
 		return finishListContinuation(result, toolName, req)
 	}
+	inputSchema := spec.InputSchema
+	if inputSchema == nil {
+		inputSchema = gomcp.ObjectSchema(spec.Properties, spec.Required...)
+	}
 	a.server.RegisterTool(gomcp.Tool{
 		Name:            toolName,
 		Description:     spec.Description,
-		InputSchema:     gomcp.ObjectSchema(spec.Properties, spec.Required...),
+		InputSchema:     inputSchema,
+		OutputSchema:    spec.OutputSchema,
 		Handler:         traced,
 		ReadOnlyHint:    hints.ReadOnly,
 		DestructiveHint: hints.Destructive,
@@ -335,6 +344,7 @@ Example: {}`),
 	a.registerSchedulerTools()
 	a.registerWorkstreamTools()
 	a.registerCheckpointTools()
+	a.registerSelfReportTools()
 	a.registerTemplateTools()
 	a.registerSubtodoTools()
 	a.registerPlanTools()

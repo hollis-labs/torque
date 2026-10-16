@@ -745,10 +745,12 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 		return nil, fmt.Errorf("%w: encode session meta: %v", ErrBootFailed, err)
 	}
 	rec := &sqlstore.SessionRecord{
-		ID:            sessID,
-		LaunchProfile: resolved.Profile.ID,
-		Role:          resolved.Profile.Role,
-		Tier:          resolved.Profile.Tier,
+		ProgressDetail: nullableString(opts.ProgressDetail),
+		RunID:          sql.NullInt64{Int64: opts.RunID, Valid: opts.RunID > 0},
+		ID:             sessID,
+		LaunchProfile:  resolved.Profile.ID,
+		Role:           resolved.Profile.Role,
+		Tier:           resolved.Profile.Tier,
 		CapabilityProfile: func() sql.NullString {
 			if resolved.Profile.CapabilityProfile != nil {
 				b, _ := json.Marshal(resolved.Profile.CapabilityProfile)
@@ -771,6 +773,7 @@ func bootLegacy(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opti
 		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: create session row: %v", ErrBootFailed, err)
 	}
+	bindReportSession(loopback, sessID)
 
 	// Sandbox profile: zero-value preserves "no sandbox" today (Phase F);
 	// when opts supplies a profile, force AllowLoopback=true so per-task
@@ -1436,23 +1439,26 @@ func bootWrapper(ctx context.Context, deps *Dependencies, mgr *Manager, opts Opt
 		return nil, fmt.Errorf("%w: encode session meta: %v", ErrBootFailed, err)
 	}
 	rec := &sqlstore.SessionRecord{
-		ID:            sessID,
-		LaunchProfile: pb.resolved.Profile.ID,
-		AgentProfile:  agentProfileName,
-		Provider:      profile.Provider,
-		RuntimeID:     "torque-cli/" + cliAdapter.Name(),
-		RuntimeKind:   string(runtimeKind),
-		Workdir:       opts.Workdir,
-		ProjectID:     nullableString(opts.ProjectID),
-		TaskID:        nullableString(opts.TaskID),
-		State:         string(StatusLaunching),
-		ResumeHint:    resumeHint,
-		MetaJSON:      metaJSON,
+		ProgressDetail: nullableString(opts.ProgressDetail),
+		RunID:          sql.NullInt64{Int64: opts.RunID, Valid: opts.RunID > 0},
+		ID:             sessID,
+		LaunchProfile:  pb.resolved.Profile.ID,
+		AgentProfile:   agentProfileName,
+		Provider:       profile.Provider,
+		RuntimeID:      "torque-cli/" + cliAdapter.Name(),
+		RuntimeKind:    string(runtimeKind),
+		Workdir:        opts.Workdir,
+		ProjectID:      nullableString(opts.ProjectID),
+		TaskID:         nullableString(opts.TaskID),
+		State:          string(StatusLaunching),
+		ResumeHint:     resumeHint,
+		MetaJSON:       metaJSON,
 	}
 	if err := deps.CreateSession(context.Background(), rec); err != nil {
 		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: create session row: %v", ErrBootFailed, err)
 	}
+	bindReportSession(loopback, sessID)
 
 	sandboxProfile := sandbox.Profile{}
 	if opts.SandboxProfile != nil {

@@ -164,8 +164,9 @@ func (s *Server) removePlanPhase(w http.ResponseWriter, r *http.Request) {
 // Both fields are optional — workdir defaults to the plan task's
 // WorkingDir column when empty (CW-20260503-0017, S2.1).
 type PlanStartRequest struct {
-	Workdir string   `json:"workdir,omitempty"`
-	Env     []string `json:"env,omitempty"`
+	ProgressDetail string   `json:"progress_detail,omitempty"`
+	Workdir        string   `json:"workdir,omitempty"`
+	Env            []string `json:"env,omitempty"`
 }
 
 // startPlan boots an Orchestrator session for the named plan and
@@ -193,8 +194,9 @@ func (s *Server) startPlan(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	res, err := planstart.Start(r.Context(), s.svc.Store(), s.sessions, id, planstart.Options{
-		Workdir: req.Workdir,
-		Env:     req.Env,
+		Workdir:        req.Workdir,
+		ProgressDetail: req.ProgressDetail,
+		Env:            req.Env,
 	})
 	if err != nil {
 		switch {

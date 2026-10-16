@@ -21,7 +21,7 @@ import (
 // scheduler: torque_scheduler_status proxies the daemon's, and
 // torque_scheduler_toggle reports itself unavailable.
 func StdioMCPAdapter(svc *service.Service, sessions *agent.Manager, logger *slog.Logger) *mcpadapter.Adapter {
-	a := mcpadapter.New(svc, nil).WithSessions(sessions)
+	a := mcpadapter.New(svc, nil).WithSessions(sessions).WithSelfReportProxy("", "")
 	if logger != nil {
 		a = a.WithLogger(logger)
 	}

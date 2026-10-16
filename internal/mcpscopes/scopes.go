@@ -24,6 +24,8 @@ const (
 // settings or the scheduler, hard-deletes in bulk, or starts/stops/resumes
 // agent sessions and plans (which run agents).
 var Tools = map[string]string{
+	"torque_task_progress":             write,
+	"torque_task_data_emit":            write,
 	"torque_aar_submit":                write,
 	"torque_artifact_create":           write,
 	"torque_artifact_delete":           write,

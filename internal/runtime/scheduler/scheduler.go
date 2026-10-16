@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents/catalog"
 	"log"
 	"os"
 	"sort"
@@ -1089,6 +1090,11 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	// validate errors fall through to the normal dispatch path; the
 	// existing retry/lifecycle path handles them.
 	preJob := s.buildJob(task, 0)
+	launchDetail, _ := ctx.Value(launchProgressDetailKey{}).(string)
+	if launchDetail != "" && !catalog.ProgressDetail(launchDetail).Valid() {
+		return fmt.Errorf("invalid launch progress_detail %q", launchDetail)
+	}
+	preJob.ProgressDetail = launchDetail
 	if verr := exec.Validate(preJob); verr != nil {
 		if executor.IsPermanent(verr) {
 			return s.handlePermanentValidationError(task, verr)
@@ -1146,6 +1152,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 			Executor:        task.Executor,
 			Status:          "running",
 			ProfileSnapshot: profileSnapshotStr,
+			ProgressDetail:  sql.NullString{String: launchDetail, Valid: launchDetail != ""},
 		})
 
 		if err != nil {
@@ -1176,6 +1183,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 	// executor can key stderr sidecars, the TORQUE_RUN_ID env var, and
 	// log messages on the same id observers see in runs table.
 	job := s.buildJob(task, runID)
+	job.ProgressDetail = launchDetail
 
 	// If per-run worktrees are enabled and the task has a working dir, try
 	// to create an ephemeral worktree branched from origin/main and route

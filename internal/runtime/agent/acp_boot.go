@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"log"
@@ -304,24 +305,27 @@ func bootACP(ctx context.Context, deps *Dependencies, mgr *Manager, opts Options
 	}
 	runtimeID := "torque-cli/" + pb.wrapperAdapter.Name()
 	rec := &sqlstore.SessionRecord{
-		ID:            sessID,
-		LaunchProfile: pb.resolved.Profile.ID,
-		AgentProfile:  pb.agentProfileName,
-		Provider:      profile.Provider,
-		RuntimeID:     runtimeID,
-		RuntimeKind:   string(runtimeKind),
-		Workdir:       opts.Workdir,
-		ProjectID:     nullableString(opts.ProjectID),
-		TaskID:        nullableString(opts.TaskID),
-		State:         string(StatusLaunching),
-		ResumeHint:    resumeHint,
-		MetaJSON:      metaJSON,
+		ProgressDetail: nullableString(opts.ProgressDetail),
+		RunID:          sql.NullInt64{Int64: opts.RunID, Valid: opts.RunID > 0},
+		ID:             sessID,
+		LaunchProfile:  pb.resolved.Profile.ID,
+		AgentProfile:   pb.agentProfileName,
+		Provider:       profile.Provider,
+		RuntimeID:      runtimeID,
+		RuntimeKind:    string(runtimeKind),
+		Workdir:        opts.Workdir,
+		ProjectID:      nullableString(opts.ProjectID),
+		TaskID:         nullableString(opts.TaskID),
+		State:          string(StatusLaunching),
+		ResumeHint:     resumeHint,
+		MetaJSON:       metaJSON,
 	}
 	if err := deps.CreateSession(context.Background(), rec); err != nil {
 		closeStderr()
 		shutdownLoopbackHandle(loopback)
 		return nil, fmt.Errorf("%w: create session row: %v", ErrBootFailed, err)
 	}
+	bindReportSession(loopback, sessID)
 
 	sidecar := openStreamSidecar(ws.LogDir)
 
