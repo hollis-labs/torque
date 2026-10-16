@@ -16,7 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   outbox yet (PR2 adds the SSE reader and replay). A non-forced transition to
   the same status writes no event. `reason` is truncated to 1 KiB; events say
   `class.sanitized=false` until the shared sanitize stage lands. Harness core
-  is now v0.11.0. `TaskUpdate.Status` is removed (nothing set it, and it
+  is now v0.11.0 (mesh/core follows to v0.5.0). `TaskUpdate.Status` is removed (nothing set it, and it
   bypassed the hook).
 - `/mcp` tool calls are scoped per tool (CW-20261016-0081). Every Torque MCP
   tool maps to `torque.read`, `torque.write` or `torque.admin` in

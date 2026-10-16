@@ -118,7 +118,7 @@ func (a *Adapter) handleCheckpointRespond(ctx context.Context, req map[string]an
 }
 
 func (a *Adapter) handleCheckpointCancel(ctx context.Context, req map[string]any) (any, error) {
-	err := a.svc.Checkpoint.Cancel(service.CheckpointCancelInput{
+	err := a.svc.Checkpoint.Cancel(ctx, service.CheckpointCancelInput{
 		CorrelationID:      reqStr(req, "correlation_id"),
 		Reason:             reqStr(req, "reason"),
 		CancelerSourceType: reqStr(req, "canceler_source_type"),

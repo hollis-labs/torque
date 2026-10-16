@@ -422,7 +422,7 @@ func TestCheckpointService_Cancel_UpdatesParkedTaskBlockedReason(t *testing.T) {
 	require.NoError(t, store.TransitionTaskWithReason(taskID, "review",
 		"awaiting checkpoint "+out.CorrelationID))
 
-	require.NoError(t, svc.Checkpoint.Cancel(service.CheckpointCancelInput{
+	require.NoError(t, svc.Checkpoint.Cancel(context.Background(), service.CheckpointCancelInput{
 		CorrelationID:      out.CorrelationID,
 		Reason:             "no longer relevant",
 		CancelerSourceType: "user",
@@ -447,7 +447,7 @@ func TestCheckpointService_Cancel_DefaultsCancelerSourceType(t *testing.T) {
 	require.NoError(t, err)
 
 	// Omit canceler_source_type — should default to "system" like Emit.
-	require.NoError(t, svc.Checkpoint.Cancel(service.CheckpointCancelInput{
+	require.NoError(t, svc.Checkpoint.Cancel(context.Background(), service.CheckpointCancelInput{
 		CorrelationID: out.CorrelationID,
 		Reason:        "no reason",
 	}))
@@ -466,7 +466,7 @@ func TestCheckpointService_Cancel_InvalidCancelerSourceType_422(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = svc.Checkpoint.Cancel(service.CheckpointCancelInput{
+	err = svc.Checkpoint.Cancel(context.Background(), service.CheckpointCancelInput{
 		CorrelationID:      out.CorrelationID,
 		CancelerSourceType: "bogus",
 	})
@@ -485,7 +485,7 @@ func TestCheckpointService_Cancel(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = svc.Checkpoint.Cancel(service.CheckpointCancelInput{
+	err = svc.Checkpoint.Cancel(context.Background(), service.CheckpointCancelInput{
 		CorrelationID:      out.CorrelationID,
 		Reason:             "no longer relevant",
 		CancelerSourceType: "user",
@@ -501,7 +501,7 @@ func TestCheckpointService_Cancel(t *testing.T) {
 
 func TestCheckpointService_Cancel_UnknownCorrelation(t *testing.T) {
 	svc := setupService(t)
-	err := svc.Checkpoint.Cancel(service.CheckpointCancelInput{
+	err := svc.Checkpoint.Cancel(context.Background(), service.CheckpointCancelInput{
 		CorrelationID:      "missing",
 		CancelerSourceType: "user",
 	})
@@ -958,4 +958,57 @@ func TestCheckpointService_Respond_NoRedispatcher_NoOp(t *testing.T) {
 		ResponseJSON:        `{"answer":"y"}`,
 		ResponderSourceType: "user",
 	}))
+}
+
+// Park and respond record who did it (the caller's trigger kind) and
+// which checkpoint (the ref), not an anonymous system change.
+func TestCheckpointService_StateEventsCarryTriggerAndCheckpointRef(t *testing.T) {
+	svc, store := setupServiceWithStore(t)
+	taskID := createBlockingDecisionTask(t, svc)
+
+	out, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID: taskID, Type: "x", PayloadJSON: `{}`, EmitterSourceType: "system",
+	})
+	require.NoError(t, err)
+
+	last := func() (kind, ref, to string) {
+		require.NoError(t, store.DB().QueryRow(
+			`SELECT trigger_kind, json_extract(json_extract(envelope, '$.payload'), '$.trigger.ref'),
+			        json_extract(json_extract(envelope, '$.payload'), '$.to')
+			 FROM event_outbox WHERE task_id = ? ORDER BY seq DESC LIMIT 1`, taskID).Scan(&kind, &ref, &to))
+		return
+	}
+
+	kind, ref, to := last()
+	assert.Equal(t, "review", to)
+	assert.Equal(t, "system", kind)
+	assert.Equal(t, "checkpoint:"+out.CorrelationID, ref, "park names the checkpoint")
+
+	ctx := sqlstore.ContextWithTrigger(context.Background(), sqlstore.Trigger{Kind: sqlstore.TriggerHuman, Ref: "http:POST respond"})
+	require.NoError(t, svc.Checkpoint.Respond(ctx, service.CheckpointRespondInput{
+		CorrelationID: out.CorrelationID, ResponseJSON: `{"answer":"yes"}`,
+		ResponderSourceType: "user", ResponderSourceRef: "chrispian",
+	}))
+	kind, ref, _ = last()
+	assert.Equal(t, "human", kind, "an operator answering is a human transition, not system")
+	assert.Equal(t, "checkpoint:"+out.CorrelationID, ref)
+
+	// Cancel keeps the task parked, so it is not a state change.
+	task2 := createBlockingDecisionTask(t, svc)
+	out2, err := svc.Checkpoint.Emit(service.CheckpointEmitInput{
+		TaskID: task2, Type: "x", PayloadJSON: `{}`, EmitterSourceType: "system",
+	})
+	require.NoError(t, err)
+	count := func() (n int) {
+		require.NoError(t, store.DB().QueryRow(`SELECT COUNT(*) FROM event_outbox WHERE task_id = ?`, task2).Scan(&n))
+		return
+	}
+	before := count()
+	actx := sqlstore.ContextWithTrigger(context.Background(), sqlstore.Trigger{Kind: sqlstore.TriggerAgent, Ref: "mcp:torque_checkpoint_cancel"})
+	require.NoError(t, svc.Checkpoint.Cancel(actx, service.CheckpointCancelInput{
+		CorrelationID: out2.CorrelationID, Reason: "stale", CancelerSourceType: "agent",
+	}))
+	// Cancel leaves the task in review and only rewrites blocked_reason: not a
+	// state change, so no state event (spec 4.5; architect ruling on from==to).
+	assert.Equal(t, before, count())
 }

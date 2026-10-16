@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -281,4 +282,39 @@ func TestStateEvent_WakeAfterCommit(t *testing.T) {
 	default:
 		t.Fatal("expected a wake-up after a committed state event")
 	}
+}
+
+// A 3-byte rune at a cut that is not a boundary exercises the walk-back; the
+// 2-byte case above never does, since its cap lands on a boundary.
+func TestStateEvent_ReasonCutStaysOnARuneBoundary3Byte(t *testing.T) {
+	store := setupTestStore(t)
+	require.NoError(t, store.CreateTask(sampleTask("CW-OB-0051")))
+	long := "aa" + strings.Repeat("€", 600) // runes start at 2+3k; 1024 is mid-rune
+	require.NoError(t, store.TransitionTaskWithReason("CW-OB-0051", "blocked", long))
+	r := readOutbox(t, store)[0]
+	assert.LessOrEqual(t, len(r.Payload.Reason), 1024)
+	assert.True(t, utf8.ValidString(r.Payload.Reason), "cut must not split a rune")
+	assert.True(t, strings.HasPrefix(long, r.Payload.Reason))
+	assert.Less(t, len(r.Payload.Reason), 1024, "walked back off the partial rune")
+}
+
+// Park records the checkpoint that caused it as the trigger ref.
+func TestStateEvent_ParkRefNamesTheCheckpoint(t *testing.T) {
+	store := setupTestStore(t)
+	task := sampleTask("CW-OB-0022")
+	task.CheckpointMode = "blocking"
+	require.NoError(t, store.CreateTask(task))
+	require.NoError(t, store.TransitionTask(task.ID, "doing"))
+	ok, err := store.ParkTaskOnCheckpointRef(context.Background(), task.ID, "awaiting checkpoint C1", "checkpoint:C1")
+	require.NoError(t, err)
+	require.True(t, ok)
+	rows := readOutbox(t, store)
+	assert.Equal(t, "checkpoint:C1", rows[len(rows)-1].Payload.Trig.Ref)
+}
+
+// A caller's trigger kind survives with the checkpoint as the ref.
+func TestTriggerWithRef(t *testing.T) {
+	assert.Equal(t, sqlstore.Trigger{Kind: sqlstore.TriggerSystem, Ref: "r"}, sqlstore.TriggerWithRef(context.Background(), "r"))
+	c := sqlstore.ContextWithTrigger(context.Background(), sqlstore.Trigger{Kind: sqlstore.TriggerHuman, Ref: "http:x"})
+	assert.Equal(t, sqlstore.Trigger{Kind: sqlstore.TriggerHuman, Ref: "r"}, sqlstore.TriggerWithRef(c, "r"))
 }
