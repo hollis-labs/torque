@@ -408,6 +408,7 @@ Example: {"title":"Fix auth bug","description":"Login returns 500","priority":"2
 		withString("priority", desc("Priority 1-5 (integer, default 2). A non-integer value returns error.code=arg_invalid; it is not coerced to the default.")),
 		withString("tags", desc("JSON array of tag strings")),
 		withString("executor", desc("Executor type (default cli)")),
+		withString("progress_detail", desc("off|milestone|step|verbose; unset inherits. Applies only to non-parking progress reports.")),
 		withString("launch_profile", desc("Torque launch_profile id (preferred). Drives the stable launch family at dispatch.")),
 		withString("role", desc("Torque role classifying the work (e.g. planner, worker).")),
 		withString("tier", desc("Torque tier classifying the work (e.g. baseline, advanced).")),
@@ -589,6 +590,7 @@ Example: {"id":"T-123","priority":"1","tags":"[\"p0\",\"backend\"]"}`),
 		withString("priority", desc("New priority (integer 1-5)")),
 		withBoolean("manual", desc("Manual flag")),
 		withString("executor", desc("Executor type")),
+		withString("progress_detail", desc("off|milestone|step|verbose; empty clears value and origin.")),
 		withString("launch_profile", desc("Torque launch_profile id (preferred). Empty string clears.")),
 		withString("role", desc("Torque role. Empty string clears.")),
 		withString("tier", desc("Torque tier. Empty string clears.")),
@@ -812,6 +814,7 @@ func (a *Adapter) handleTaskCreate(ctx context.Context, req map[string]any) (any
 		Priority:             priority,
 		Executor:             reqStr(req, "executor"),
 		LaunchProfile:        reqStr(req, "launch_profile"),
+		ProgressDetail:       reqStr(req, "progress_detail"),
 		Role:                 reqStr(req, "role"),
 		Tier:                 reqStr(req, "tier"),
 		AgentProfile:         reqStr(req, "agent_profile"),
@@ -1406,6 +1409,10 @@ func buildTaskUpdateInput(req map[string]any) (service.TaskUpdateInput, error) {
 	if _, ok := args["executor"]; ok {
 		v := reqStr(req, "executor")
 		update.Executor = &v
+	}
+	if _, ok := args["progress_detail"]; ok {
+		v := reqStr(req, "progress_detail")
+		update.ProgressDetail = &sql.NullString{String: v, Valid: v != ""}
 	}
 	if _, ok := args["launch_profile"]; ok {
 		v := reqStr(req, "launch_profile")

@@ -92,6 +92,10 @@ func checkTransition(from, to string) error {
 
 // TaskCreateInput holds user-facing fields for creating a task.
 type TaskCreateInput struct {
+	ProgressDetail string
+	// Only template instantiation can claim template provenance.
+	progressDetailSource string
+
 	Title             string
 	Description       string
 	Status            string
@@ -218,6 +222,10 @@ func (s *TaskService) SetCommentObserver(o CommentObserver) {
 
 // Create validates and creates a new task.
 func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error) {
+	if err := validateProgressDetail(input.ProgressDetail); err != nil {
+		return nil, err
+	}
+
 	if err := validateQualityGates(input.QualityGates); err != nil {
 		return nil, err
 	}
@@ -441,6 +449,14 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		CheckpointMode:       effectiveCheckpointMode,
 		OnCheckpointResponse: effectiveOnCheckpointResponse,
 	}
+	rec.ProgressDetail = progressDetailValue(input.ProgressDetail)
+	if rec.ProgressDetail.Valid {
+		source := "task"
+		if input.progressDetailSource == "template" {
+			source = "template"
+		}
+		rec.ProgressDetailSource = progressDetailValue(source)
+	}
 	if input.SourceRef != "" {
 		rec.SourceRef = sql.NullString{String: input.SourceRef, Valid: true}
 	}
@@ -621,6 +637,27 @@ func defaultCheckpointModeFor(kind string) string {
 // Update applies a partial update to a task. If Tags is non-nil, linked
 // tags are resolved and replaced.
 func (s *TaskService) Update(id string, input TaskUpdateInput) error {
+	// Origin is derived, never caller controlled. An explicit value, even
+	// equal to the copied template value, makes this a task override.
+	if input.ProgressDetail != nil {
+		value := ""
+		if input.ProgressDetail.Valid {
+			value = input.ProgressDetail.String
+		}
+		if err := validateProgressDetail(value); err != nil {
+			return err
+		}
+		normalized := progressDetailValue(value)
+		source := sql.NullString{}
+		if normalized.Valid {
+			source = progressDetailValue("task")
+		}
+		input.ProgressDetail = &normalized
+		input.ProgressDetailSource = &source
+	} else if input.ProgressDetailSource != nil {
+		return &ValidationError{Field: "progress_detail_source", Message: "origin is derived from progress_detail"}
+	}
+
 	// title is the one truly-required field (mirrors Create's check). Now that
 	// the MCP layer detects title presence-based (FIX-001), an explicit
 	// "title": "" reaches here and must be rejected with a clean

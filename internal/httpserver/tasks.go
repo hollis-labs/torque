@@ -57,15 +57,19 @@ func taskJSON(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, dependsOn []str
 		dependsOn = []string{}
 	}
 	body := map[string]interface{}{
-		"id":                 t.ID,
-		"title":              t.Title,
-		"description":        t.Description,
-		"status":             t.Status,
-		"priority":           t.Priority,
-		"tags":               tagsJSON(tags),
-		"manual":             t.Manual,
-		"executor":           t.Executor,
-		"launch_profile":     t.LaunchProfile,
+		"id":             t.ID,
+		"title":          t.Title,
+		"description":    t.Description,
+		"status":         t.Status,
+		"priority":       t.Priority,
+		"tags":           tagsJSON(tags),
+		"manual":         t.Manual,
+		"executor":       t.Executor,
+		"launch_profile": t.LaunchProfile,
+
+		"progress_detail":        nullStr(t.ProgressDetail),
+		"progress_detail_source": nullStr(t.ProgressDetailSource),
+
 		"role":               t.Role,
 		"tier":               t.Tier,
 		"capability_profile": parseFreeMap(t.CapabilityProfile),
@@ -287,6 +291,7 @@ type TaskCreateRequest struct {
 	Manual            bool                  `json:"manual,omitempty"`
 	Executor          string                `json:"executor,omitempty"`
 	LaunchProfile     string                `json:"launch_profile,omitempty"`
+	ProgressDetail    string                `json:"progress_detail,omitempty"`
 	Role              string                `json:"role,omitempty"`
 	Tier              string                `json:"tier,omitempty"`
 	CapabilityProfile map[string]any        `json:"capability_profile,omitempty"`
@@ -342,6 +347,7 @@ type TaskUpdateRequest struct {
 	Manual            *bool                  `json:"manual,omitempty"`
 	Executor          *string                `json:"executor,omitempty"`
 	LaunchProfile     *string                `json:"launch_profile,omitempty"`
+	ProgressDetail    *string                `json:"progress_detail,omitempty"`
 	Role              *string                `json:"role,omitempty"`
 	Tier              *string                `json:"tier,omitempty"`
 	CapabilityProfile *map[string]any        `json:"capability_profile,omitempty"`
@@ -1041,6 +1047,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		Manual:            req.Manual,
 		Executor:          req.Executor,
 		LaunchProfile:     req.LaunchProfile,
+		ProgressDetail:    req.ProgressDetail,
 		Role:              req.Role,
 		Tier:              req.Tier,
 		CapabilityProfile: req.CapabilityProfile,
@@ -1152,6 +1159,9 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 		BlockedReason:     req.BlockedReason,
 	}
 
+	if req.ProgressDetail != nil {
+		update.ProgressDetail = &sql.NullString{String: *req.ProgressDetail, Valid: *req.ProgressDetail != ""}
+	}
 	// JSON-blob fields wrap as *sql.NullString
 	if req.CapabilityProfile != nil {
 		update.CapabilityProfile = nullJSONString(*req.CapabilityProfile)

@@ -1,6 +1,7 @@
 package sqlstore
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
@@ -8,6 +9,13 @@ import (
 
 // RunRecord mirrors the runs table row.
 type RunRecord struct {
+	// Correlation is populated only from a verified Tether binding.
+	TetherSessionID sql.NullString
+	LaunchID        sql.NullString
+	WorkstreamID    sql.NullString
+	ProgressDetail  sql.NullString
+	// Attempt is the persisted per-task ordinal; zero means an older writer left it unknown.
+	Attempt          int
 	QuerySortValue   string `json:"-"`
 	ID               int64
 	TaskID           string
@@ -133,28 +141,18 @@ func (s *Store) GetTaskRunAggregate(taskID string) (*TaskRunAggregate, error) {
 
 // CreateRun inserts a new run and returns its auto-assigned ID.
 func (s *Store) CreateRun(r *RunRecord) (int64, error) {
-	if r.Status == "" {
-		r.Status = "running"
-	}
-	now := time.Now().UTC()
-	r.StartedAt = now
-
-	const q = `INSERT INTO runs (task_id, executor, status, started_at, prompt_tokens, completion_tokens, cost, exit_code, error_message, metadata, profile_snapshot)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-
-	res, err := s.db.Exec(q,
-		r.TaskID, r.Executor, r.Status, r.StartedAt,
-		r.PromptTokens, r.CompletionTokens, r.Cost,
-		r.ExitCode, r.ErrorMessage, r.Metadata, r.ProfileSnapshot,
-	)
+	tx, err := s.BeginWriteTx(context.Background())
 	if err != nil {
 		return 0, err
 	}
-	id, err := res.LastInsertId()
+	defer tx.Rollback()
+	id, err := tx.CreateRun(r)
 	if err != nil {
 		return 0, err
 	}
-	r.ID = id
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
 	return id, nil
 }
 
@@ -162,14 +160,14 @@ func (s *Store) CreateRun(r *RunRecord) (int64, error) {
 func (s *Store) GetRun(id int64) (*RunRecord, error) {
 	const q = `SELECT id, task_id, executor, status, started_at, ended_at,
 		prompt_tokens, completion_tokens, cost, exit_code, error_message, metadata,
-		cache_read_tokens, cache_write_tokens, cost_source, profile_snapshot
+		cache_read_tokens, cache_write_tokens, cost_source, profile_snapshot, progress_detail, COALESCE(attempt, 0), tether_session_id, launch_id, workstream_id
 		FROM runs WHERE id = ?`
 
 	var r RunRecord
 	err := s.ReadDB().QueryRow(q, id).Scan(
 		&r.ID, &r.TaskID, &r.Executor, &r.Status, &r.StartedAt, &r.EndedAt,
 		&r.PromptTokens, &r.CompletionTokens, &r.Cost, &r.ExitCode, &r.ErrorMessage, &r.Metadata,
-		&r.CacheReadTokens, &r.CacheWriteTokens, &r.CostSource, &r.ProfileSnapshot,
+		&r.CacheReadTokens, &r.CacheWriteTokens, &r.CostSource, &r.ProfileSnapshot, &r.ProgressDetail, &r.Attempt, &r.TetherSessionID, &r.LaunchID, &r.WorkstreamID,
 	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("run %d not found", id)
