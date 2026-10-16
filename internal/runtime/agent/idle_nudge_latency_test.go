@@ -63,6 +63,7 @@ func TestRunLongLived_SlowReplyToReminderIsNotRouted(t *testing.T) {
 		},
 		Reminder: steering.NewReminderRegistry(),
 	}
+	runID := createLaunchTestRun(t, store, taskID)
 	deps.Sessions = NewManager(deps)
 
 	// The worker signals once its reply is visible: the second turn's text.
@@ -76,7 +77,7 @@ func TestRunLongLived_SlowReplyToReminderIsNotRouted(t *testing.T) {
 	done := make(chan *executor.ExecutionResult, 1)
 	go func() {
 		res, err := NewExecutor(deps).Run(context.Background(), &executor.ExecutionJob{
-			TaskID: taskID, Kind: "agent", AgentProfile: "test", WorkingDir: t.TempDir(), RunID: 1,
+			TaskID: taskID, Kind: "agent", AgentProfile: "test", WorkingDir: t.TempDir(), RunID: runID,
 		}, onEvent)
 		assert.NoError(t, err)
 		done <- res

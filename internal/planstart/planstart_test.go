@@ -802,3 +802,15 @@ func TestPlanstart_Redispatch_RefusesTerminalPlan(t *testing.T) {
 	_, err := planstart.Redispatch(context.Background(), store, &stubMgr{}, "CW-PLAN-RD-DONE", planstart.Options{})
 	assert.ErrorIs(t, err, planstart.ErrPlanWrongStatus)
 }
+
+func TestPlanstartProgressDetail(t *testing.T) {
+	store := newStubStore()
+	store.tasks["plan-detail"] = &sqlstore.TaskRecord{ID: "plan-detail", Kind: "plan", Status: "todo", WorkingDir: "/tmp/plan"}
+	mgr := &stubMgr{bootSession: &agent.Session{ID: "SES-DETAIL"}}
+	_, err := planstart.Start(context.Background(), store, mgr, "plan-detail", planstart.Options{ProgressDetail: "typo"})
+	require.ErrorIs(t, err, agent.ErrProgressDetailInvalid)
+	require.Empty(t, store.updates)
+	_, err = planstart.Start(context.Background(), store, mgr, "plan-detail", planstart.Options{ProgressDetail: "verbose"})
+	require.NoError(t, err)
+	require.Equal(t, "verbose", mgr.lastOpts.ProgressDetail)
+}
